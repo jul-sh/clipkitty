@@ -1,10 +1,17 @@
 import SwiftUI
 import Carbon
 
+enum HotKeyEditState: Equatable {
+    case idle
+    case recording
+}
+
 struct SettingsView: View {
     @ObservedObject private var settings = AppSettings.shared
-    @State private var isRecordingHotKey = false
+    @State private var hotKeyState: HotKeyEditState = .idle
     let onHotKeyChanged: (HotKey) -> Void
+
+    private var isRecording: Bool { hotKeyState == .recording }
 
     var body: some View {
         Form {
@@ -12,19 +19,19 @@ struct SettingsView: View {
                 HStack {
                     Text("Toggle Clipboard")
                     Spacer()
-                    Button(action: { isRecordingHotKey = true }) {
-                        Text(isRecordingHotKey ? "Press keys..." : settings.hotKey.displayString)
+                    Button(action: { hotKeyState = .recording }) {
+                        Text(isRecording ? "Press keys..." : settings.hotKey.displayString)
                             .frame(minWidth: 100)
                             .padding(.horizontal, 8)
                             .padding(.vertical, 4)
-                            .background(isRecordingHotKey ? Color.accentColor.opacity(0.2) : Color.secondary.opacity(0.1))
+                            .background(isRecording ? Color.accentColor.opacity(0.2) : Color.secondary.opacity(0.1))
                             .cornerRadius(6)
                     }
                     .buttonStyle(.plain)
                 }
                 .background(
                     HotKeyRecorder(
-                        isRecording: $isRecordingHotKey,
+                        state: $hotKeyState,
                         onHotKeyRecorded: { hotKey in
                             settings.hotKey = hotKey
                             onHotKeyChanged(hotKey)
@@ -63,23 +70,23 @@ struct SettingsView: View {
 }
 
 struct HotKeyRecorder: NSViewRepresentable {
-    @Binding var isRecording: Bool
+    @Binding var state: HotKeyEditState
     let onHotKeyRecorded: (HotKey) -> Void
 
     func makeNSView(context: Context) -> HotKeyRecorderView {
         let view = HotKeyRecorderView()
         view.onHotKeyRecorded = { hotKey in
             onHotKeyRecorded(hotKey)
-            isRecording = false
+            state = .idle
         }
         view.onCancel = {
-            isRecording = false
+            state = .idle
         }
         return view
     }
 
     func updateNSView(_ nsView: HotKeyRecorderView, context: Context) {
-        if isRecording {
+        if state == .recording {
             nsView.window?.makeFirstResponder(nsView)
         }
     }
