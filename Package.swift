@@ -1,11 +1,11 @@
-// swift-tools-version: 6.2
+// swift-tools-version: 6.1
 
 import PackageDescription
 
 let package = Package(
     name: "ClippySwift",
     platforms: [
-        .macOS(.v26)
+        .macOS(.v15)
     ],
     dependencies: [
         .package(url: "https://github.com/groue/GRDB.swift.git", from: "7.0.0")
