@@ -35,6 +35,7 @@ final class ClipboardStore {
         lastChangeCount = NSPasteboard.general.changeCount
         setupDatabase()
         loadInitialItems()
+        pruneIfNeeded()
     }
 
     private func setupDatabase() {
@@ -338,6 +339,73 @@ final class ClipboardStore {
             } ?? 0
         } catch {
             return 0
+        }
+    }
+
+    func databaseSizeBytes() -> Int64 {
+        guard let dbQueue else { return 0 }
+        do {
+            return try dbQueue.read { db in
+                let pageCount = try Int64.fetchOne(db, sql: "PRAGMA page_count") ?? 0
+                let pageSize = try Int64.fetchOne(db, sql: "PRAGMA page_size") ?? 0
+                return pageCount * pageSize
+            }
+        } catch {
+            return 0
+        }
+    }
+
+    func pruneIfNeeded() {
+        let maxSizeMB = AppSettings.shared.maxDatabaseSizeMB
+        guard maxSizeMB > 0 else { return } // 0 means unlimited
+
+        let maxBytes = Int64(maxSizeMB) * 1024 * 1024
+        let currentSize = databaseSizeBytes()
+
+        guard currentSize > maxBytes else { return }
+
+        // Run pruning in background to not block UI
+        guard let dbQueue else { return }
+        Task.detached {
+            self.performPruning(currentSize: currentSize, maxBytes: maxBytes, dbQueue: dbQueue)
+        }
+    }
+
+    private nonisolated func performPruning(currentSize: Int64, maxBytes: Int64, dbQueue: DatabaseQueue) {
+        do {
+            // Calculate how many items to delete based on average item size
+            let count = try dbQueue.read { db in
+                try Int.fetchOne(db, sql: "SELECT COUNT(*) FROM items") ?? 0
+            }
+
+            guard count > 0 else { return }
+
+            let avgItemSize = currentSize / Int64(count)
+            let targetSize = Int64(Double(maxBytes) * 0.8)
+            let bytesToDelete = currentSize - targetSize
+            let itemsToDelete = max(100, Int(bytesToDelete / avgItemSize))
+
+            try dbQueue.write { db in
+                try db.execute(sql: """
+                    DELETE FROM items WHERE id IN (
+                        SELECT id FROM items ORDER BY timestamp ASC LIMIT ?
+                    )
+                """, arguments: [itemsToDelete])
+
+                try db.execute(sql: "INSERT INTO items_fts(items_fts) VALUES('rebuild')")
+            }
+
+            try dbQueue.vacuum()
+
+            let finalSize = try dbQueue.read { db in
+                let pageCount = try Int64.fetchOne(db, sql: "PRAGMA page_count") ?? 0
+                let pageSize = try Int64.fetchOne(db, sql: "PRAGMA page_size") ?? 0
+                return pageCount * pageSize
+            }
+
+            print("Pruned \(itemsToDelete) oldest items, DB size: \(finalSize / 1024 / 1024)MB")
+        } catch {
+            print("Failed to prune database: \(error)")
         }
     }
 }
