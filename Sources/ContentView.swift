@@ -96,53 +96,48 @@ struct ContentView: View {
     }
 
     private var itemList: some View {
-        ScrollViewReader { proxy in
-            ScrollView {
-                LazyVStack(spacing: 0) {
-                    ForEach(Array(displayedItems.enumerated()), id: \.element.stableId) { index, item in
-                        ItemRow(
-                            item: item,
-                            isSelected: index == selectedIndex,
-                            shortcutNumber: index < 9 ? index + 1 : nil,
-                            searchQuery: store.searchQuery
-                        )
-                        .id(item.stableId)
-                        .contentShape(Rectangle())
-                        .onTapGesture {
-                            selectedIndex = index
-                        }
-                        .onTapGesture(count: 2) {
-                            selectedIndex = index
-                            selectCurrentItem()
-                        }
-                        .onAppear {
-                            if index == displayedItems.count - 10 {
-                                store.loadMoreItems()
-                            }
+        ScrollView {
+            LazyVStack(spacing: 0) {
+                ForEach(Array(displayedItems.enumerated()), id: \.element.stableId) { index, item in
+                    ItemRow(
+                        item: item,
+                        isSelected: index == selectedIndex,
+                        shortcutNumber: index < 9 ? index + 1 : nil,
+                        searchQuery: store.searchQuery
+                    )
+                    .id(index)
+                    .contentShape(Rectangle())
+                    .onTapGesture {
+                        selectedIndex = index
+                    }
+                    .onTapGesture(count: 2) {
+                        selectedIndex = index
+                        selectCurrentItem()
+                    }
+                    .onAppear {
+                        if index == displayedItems.count - 10 {
+                            store.loadMoreItems()
                         }
                     }
+                }
 
-                    if store.hasMore && store.searchQuery.isEmpty {
-                        ProgressView()
-                            .frame(maxWidth: .infinity)
-                            .padding()
-                            .onAppear {
-                                store.loadMoreItems()
-                            }
-                    }
-                }
-                .padding(.vertical, 4)
-            }
-            .scrollIndicators(.automatic)
-            .onChange(of: selectedIndex) { _, newIndex in
-                if let item = displayedItems[safe: newIndex] {
-                    withAnimation(.easeOut(duration: 0.1)) {
-                        proxy.scrollTo(item.stableId, anchor: .center)
-                    }
+                if store.hasMore && store.searchQuery.isEmpty {
+                    ProgressView()
+                        .frame(maxWidth: .infinity)
+                        .padding()
+                        .onAppear {
+                            store.loadMoreItems()
+                        }
                 }
             }
+            .padding(.vertical, 4)
+            .scrollTargetLayout()
         }
+        .scrollPosition(id: $scrolledId, anchor: .center)
+        .scrollIndicators(.automatic)
     }
+
+    @State private var scrolledId: Int?
 
     private var previewPane: some View {
         Group {
@@ -188,6 +183,7 @@ struct ContentView: View {
         let newIndex = selectedIndex + offset
         if newIndex >= 0 && newIndex < displayedItems.count {
             selectedIndex = newIndex
+            scrolledId = newIndex
         }
     }
 
@@ -209,6 +205,7 @@ struct ContentView: View {
         guard index < displayedItems.count else { return .ignored }
 
         selectedIndex = index
+        scrolledId = index
         selectCurrentItem()
         return .handled
     }

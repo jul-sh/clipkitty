@@ -2,7 +2,7 @@ import AppKit
 import SwiftUI
 
 @MainActor
-final class FloatingPanelController {
+final class FloatingPanelController: NSObject, NSWindowDelegate {
     private var panel: NSPanel!
     private let store: ClipboardStore
     private let onPaste: () -> Void
@@ -10,6 +10,7 @@ final class FloatingPanelController {
     init(store: ClipboardStore, onPaste: @escaping () -> Void) {
         self.store = store
         self.onPaste = onPaste
+        super.init()
         setupPanel()
     }
 
@@ -30,6 +31,8 @@ final class FloatingPanelController {
         panel.backgroundColor = .clear
         panel.isOpaque = false
         panel.hasShadow = true
+        panel.delegate = self
+        panel.becomesKeyOnlyIfNeeded = false
 
         let contentView = ContentView(
             store: store,
@@ -42,6 +45,12 @@ final class FloatingPanelController {
         )
 
         panel.contentView = NSHostingView(rootView: contentView)
+    }
+
+    nonisolated func windowDidResignKey(_ notification: Notification) {
+        MainActor.assumeIsolated {
+            hide()
+        }
     }
 
     func toggle() {
