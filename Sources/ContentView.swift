@@ -9,9 +9,8 @@ struct ContentView: View {
     @State private var selection: String?
     @FocusState private var isSearchFocused: Bool
 
-    private var items: [ClipboardItem] {
-        store.filteredItems
-    }
+    // Derived from store state
+    private var items: [ClipboardItem] { store.items }
 
     private var selectedItem: ClipboardItem? {
         guard let selection else { return nil }
@@ -27,7 +26,7 @@ struct ContentView: View {
         VStack(spacing: 0) {
             searchBar
             Divider()
-            splitView
+            content
         }
         .frame(width: 720, height: 480)
         .background(.ultraThinMaterial)
@@ -37,24 +36,42 @@ struct ContentView: View {
                 .strokeBorder(.separator, lineWidth: 0.5)
         )
         .onAppear {
-            resetSelection()
-        }
-        .onChange(of: store.filteredItems) {
-            // When items change, validate selection still exists
-            if let selection, !items.contains(where: { $0.stableId == selection }) {
-                resetSelection()
-            }
-        }
-        .onChange(of: store.panelRevision) {
-            resetSelection()
             isSearchFocused = true
+            selectFirstItem()
+        }
+        .onChange(of: store.state) { _, _ in
+            // When state changes, ensure selection is valid
+            validateSelection()
         }
     }
 
-    private func resetSelection() {
+    // MARK: - Selection Management
+
+    private func selectFirstItem() {
         selection = items.first?.stableId
-        isSearchFocused = true
     }
+
+    private func validateSelection() {
+        if selection == nil || !items.contains(where: { $0.stableId == selection }) {
+            selectFirstItem()
+        }
+    }
+
+    private func moveSelection(by offset: Int) {
+        guard let currentIndex = selectedIndex else {
+            selectFirstItem()
+            return
+        }
+        let newIndex = max(0, min(items.count - 1, currentIndex + offset))
+        selection = items[newIndex].stableId
+    }
+
+    private func confirmSelection() {
+        guard let item = selectedItem else { return }
+        onSelect(item)
+    }
+
+    // MARK: - Search Bar
 
     private var searchBar: some View {
         HStack(spacing: 8) {
@@ -96,6 +113,56 @@ struct ContentView: View {
         .padding(.vertical, 12)
     }
 
+    private func handleNumberKey(_ keyPress: KeyPress) -> KeyPress.Result {
+        guard let number = Int(keyPress.characters),
+              number >= 1 && number <= 9,
+              keyPress.modifiers.contains(.command) else {
+            return .ignored
+        }
+
+        let index = number - 1
+        guard index < items.count else { return .ignored }
+
+        selection = items[index].stableId
+        confirmSelection()
+        return .handled
+    }
+
+    // MARK: - Content
+
+    @ViewBuilder
+    private var content: some View {
+        switch store.state {
+        case .idle, .loading:
+            loadingView
+        case .error(let message):
+            errorView(message)
+        case .loaded, .searchResults, .searching:
+            splitView
+        }
+    }
+
+    private var loadingView: some View {
+        HStack {
+            Spacer()
+            ProgressView()
+            Spacer()
+        }
+        .frame(maxHeight: .infinity)
+    }
+
+    private func errorView(_ message: String) -> some View {
+        VStack(spacing: 8) {
+            Image(systemName: "exclamationmark.triangle")
+                .font(.largeTitle)
+                .foregroundStyle(.secondary)
+            Text(message)
+                .font(.custom(FontManager.sansSerif, size: 14))
+                .foregroundStyle(.secondary)
+        }
+        .frame(maxWidth: .infinity, maxHeight: .infinity)
+    }
+
     private var splitView: some View {
         HStack(spacing: 0) {
             itemList
@@ -107,6 +174,8 @@ struct ContentView: View {
                 .frame(maxWidth: .infinity)
         }
     }
+
+    // MARK: - Item List
 
     private var itemList: some View {
         ScrollViewReader { proxy in
@@ -131,22 +200,13 @@ struct ContentView: View {
             .scrollContentBackground(.hidden)
             .onChange(of: selection) { _, newSelection in
                 if let newSelection {
-                    withAnimation(.easeOut(duration: 0.1)) {
-                        proxy.scrollTo(newSelection, anchor: .center)
-                    }
+                    proxy.scrollTo(newSelection, anchor: .center)
                 }
-            }
-
-            if store.hasMore && store.searchQuery.isEmpty && items.isEmpty == false {
-                ProgressView()
-                    .frame(maxWidth: .infinity)
-                    .padding()
-                    .onAppear {
-                        store.loadMoreItems()
-                    }
             }
         }
     }
+
+    // MARK: - Preview Pane
 
     private var previewPane: some View {
         Group {
@@ -158,6 +218,8 @@ struct ContentView: View {
                         .frame(maxWidth: .infinity, alignment: .leading)
                         .padding(16)
                 }
+            } else if items.isEmpty {
+                emptyStateView
             } else {
                 Text("No item selected")
                     .font(.custom(FontManager.sansSerif, size: 14))
@@ -166,6 +228,18 @@ struct ContentView: View {
             }
         }
         .background(.black.opacity(0.05))
+    }
+
+    private var emptyStateView: some View {
+        VStack(spacing: 8) {
+            Image(systemName: "clipboard")
+                .font(.largeTitle)
+                .foregroundStyle(.tertiary)
+            Text(store.searchQuery.isEmpty ? "No clipboard history" : "No results")
+                .font(.custom(FontManager.sansSerif, size: 14))
+                .foregroundStyle(.secondary)
+        }
+        .frame(maxWidth: .infinity, maxHeight: .infinity)
     }
 
     private func highlightedPreview(for item: ClipboardItem) -> AttributedString {
@@ -187,39 +261,9 @@ struct ContentView: View {
 
         return result
     }
-
-    private func moveSelection(by offset: Int) {
-        guard let currentIndex = selectedIndex else {
-            selection = items.first?.stableId
-            return
-        }
-
-        let newIndex = currentIndex + offset
-        guard newIndex >= 0 && newIndex < items.count else { return }
-        selection = items[newIndex].stableId
-    }
-
-    private func confirmSelection() {
-        guard let item = selectedItem else { return }
-        onSelect(item)
-    }
-
-    private func handleNumberKey(_ keyPress: KeyPress) -> KeyPress.Result {
-        guard let number = Int(keyPress.characters),
-              number >= 1 && number <= 9 else {
-            return .ignored
-        }
-
-        guard keyPress.modifiers.contains(.command) else { return .ignored }
-
-        let index = number - 1
-        guard index < items.count else { return .ignored }
-
-        selection = items[index].stableId
-        confirmSelection()
-        return .handled
-    }
 }
+
+// MARK: - Item Row
 
 struct ItemRow: View {
     let item: ClipboardItem
@@ -229,32 +273,8 @@ struct ItemRow: View {
 
     var body: some View {
         HStack(spacing: 8) {
-            if let number = shortcutNumber {
-                Text("⌘\(number)")
-                    .font(.custom(FontManager.mono, size: 11).weight(.medium))
-                    .foregroundStyle(.tertiary)
-                    .frame(width: 24)
-            } else {
-                Spacer()
-                    .frame(width: 24)
-            }
-
-            VStack(alignment: .leading, spacing: 2) {
-                highlightedText
-                    .lineLimit(1)
-                    .font(.custom(FontManager.sansSerif, size: 13))
-
-                HStack(spacing: 4) {
-                    Text(item.timeAgo)
-                    if item.content.count > 1000 {
-                        Text("•")
-                        Text("\(formatSize(item.content.count))")
-                    }
-                }
-                .font(.custom(FontManager.sansSerif, size: 11))
-                .foregroundStyle(.tertiary)
-            }
-
+            shortcutLabel
+            contentStack
             Spacer(minLength: 0)
         }
         .padding(.horizontal, 10)
@@ -263,13 +283,34 @@ struct ItemRow: View {
         .contentShape(Rectangle())
     }
 
-    private func formatSize(_ chars: Int) -> String {
-        if chars >= 1_000_000 {
-            return String(format: "%.1fM chars", Double(chars) / 1_000_000)
-        } else if chars >= 1000 {
-            return String(format: "%.1fK chars", Double(chars) / 1000)
+    @ViewBuilder
+    private var shortcutLabel: some View {
+        if let number = shortcutNumber {
+            Text("⌘\(number)")
+                .font(.custom(FontManager.mono, size: 11).weight(.medium))
+                .foregroundStyle(.tertiary)
+                .frame(width: 24)
+        } else {
+            Spacer().frame(width: 24)
         }
-        return "\(chars) chars"
+    }
+
+    private var contentStack: some View {
+        VStack(alignment: .leading, spacing: 2) {
+            highlightedText
+                .lineLimit(1)
+                .font(.custom(FontManager.sansSerif, size: 13))
+
+            HStack(spacing: 4) {
+                Text(item.timeAgo)
+                if item.content.count > 1000 {
+                    Text("•")
+                    Text(formatSize(item.content.count))
+                }
+            }
+            .font(.custom(FontManager.sansSerif, size: 11))
+            .foregroundStyle(.tertiary)
+        }
     }
 
     @ViewBuilder
@@ -278,11 +319,11 @@ struct ItemRow: View {
             Text(item.displayText)
                 .foregroundStyle(.primary)
         } else {
-            Text(attributedString)
+            Text(attributedDisplayText)
         }
     }
 
-    private var attributedString: AttributedString {
+    private var attributedDisplayText: AttributedString {
         var result = AttributedString(item.displayText)
         let queryLower = searchQuery.lowercased()
         let textLower = item.displayText.lowercased()
@@ -297,10 +338,13 @@ struct ItemRow: View {
 
         return result
     }
-}
 
-extension Collection {
-    subscript(safe index: Index) -> Element? {
-        indices.contains(index) ? self[index] : nil
+    private func formatSize(_ chars: Int) -> String {
+        if chars >= 1_000_000 {
+            return String(format: "%.1fM chars", Double(chars) / 1_000_000)
+        } else if chars >= 1000 {
+            return String(format: "%.1fK chars", Double(chars) / 1000)
+        }
+        return "\(chars) chars"
     }
 }
