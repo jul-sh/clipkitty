@@ -6,15 +6,21 @@ struct ContentView: View {
     let onSelect: (ClipboardItem) -> Void
     let onDismiss: () -> Void
 
-    @State private var selectedIndex: Int = 0
+    @State private var selection: String?
     @FocusState private var isSearchFocused: Bool
 
-    private var displayedItems: [ClipboardItem] {
+    private var items: [ClipboardItem] {
         store.filteredItems
     }
 
     private var selectedItem: ClipboardItem? {
-        displayedItems[safe: selectedIndex]
+        guard let selection else { return nil }
+        return items.first { $0.stableId == selection }
+    }
+
+    private var selectedIndex: Int? {
+        guard let selection else { return nil }
+        return items.firstIndex { $0.stableId == selection }
     }
 
     var body: some View {
@@ -31,16 +37,23 @@ struct ContentView: View {
                 .strokeBorder(.separator, lineWidth: 0.5)
         )
         .onAppear {
-            isSearchFocused = true
-            selectedIndex = 0
+            resetSelection()
         }
-        .onChange(of: store.searchQuery) {
-            selectedIndex = 0
+        .onChange(of: store.filteredItems) {
+            // When items change, validate selection still exists
+            if let selection, !items.contains(where: { $0.stableId == selection }) {
+                resetSelection()
+            }
         }
         .onChange(of: store.panelRevision) {
-            selectedIndex = 0
+            resetSelection()
             isSearchFocused = true
         }
+    }
+
+    private func resetSelection() {
+        selection = items.first?.stableId
+        isSearchFocused = true
     }
 
     private var searchBar: some View {
@@ -62,7 +75,7 @@ struct ContentView: View {
                     return .handled
                 }
                 .onKeyPress(.return) {
-                    selectCurrentItem()
+                    confirmSelection()
                     return .handled
                 }
                 .onKeyPress(.escape) {
@@ -96,48 +109,44 @@ struct ContentView: View {
     }
 
     private var itemList: some View {
-        ScrollView {
-            LazyVStack(spacing: 0) {
-                ForEach(Array(displayedItems.enumerated()), id: \.element.stableId) { index, item in
-                    ItemRow(
-                        item: item,
-                        isSelected: index == selectedIndex,
-                        shortcutNumber: index < 9 ? index + 1 : nil,
-                        searchQuery: store.searchQuery
-                    )
-                    .id(index)
-                    .contentShape(Rectangle())
-                    .onTapGesture {
-                        selectedIndex = index
+        ScrollViewReader { proxy in
+            List(items, id: \.stableId, selection: $selection) { item in
+                let index = items.firstIndex { $0.stableId == item.stableId } ?? 0
+                ItemRow(
+                    item: item,
+                    isSelected: item.stableId == selection,
+                    shortcutNumber: index < 9 ? index + 1 : nil,
+                    searchQuery: store.searchQuery
+                )
+                .listRowInsets(EdgeInsets())
+                .listRowSeparator(.hidden)
+                .listRowBackground(Color.clear)
+                .onAppear {
+                    if index == items.count - 10 {
+                        store.loadMoreItems()
                     }
-                    .onTapGesture(count: 2) {
-                        selectedIndex = index
-                        selectCurrentItem()
-                    }
-                    .onAppear {
-                        if index == displayedItems.count - 10 {
-                            store.loadMoreItems()
-                        }
-                    }
-                }
-
-                if store.hasMore && store.searchQuery.isEmpty {
-                    ProgressView()
-                        .frame(maxWidth: .infinity)
-                        .padding()
-                        .onAppear {
-                            store.loadMoreItems()
-                        }
                 }
             }
-            .padding(.vertical, 4)
-            .scrollTargetLayout()
-        }
-        .scrollPosition(id: $scrolledId, anchor: .center)
-        .scrollIndicators(.automatic)
-    }
+            .listStyle(.plain)
+            .scrollContentBackground(.hidden)
+            .onChange(of: selection) { _, newSelection in
+                if let newSelection {
+                    withAnimation(.easeOut(duration: 0.1)) {
+                        proxy.scrollTo(newSelection, anchor: .center)
+                    }
+                }
+            }
 
-    @State private var scrolledId: Int?
+            if store.hasMore && store.searchQuery.isEmpty && items.isEmpty == false {
+                ProgressView()
+                    .frame(maxWidth: .infinity)
+                    .padding()
+                    .onAppear {
+                        store.loadMoreItems()
+                    }
+            }
+        }
+    }
 
     private var previewPane: some View {
         Group {
@@ -180,15 +189,18 @@ struct ContentView: View {
     }
 
     private func moveSelection(by offset: Int) {
-        let newIndex = selectedIndex + offset
-        if newIndex >= 0 && newIndex < displayedItems.count {
-            selectedIndex = newIndex
-            scrolledId = newIndex
+        guard let currentIndex = selectedIndex else {
+            selection = items.first?.stableId
+            return
         }
+
+        let newIndex = currentIndex + offset
+        guard newIndex >= 0 && newIndex < items.count else { return }
+        selection = items[newIndex].stableId
     }
 
-    private func selectCurrentItem() {
-        guard let item = displayedItems[safe: selectedIndex] else { return }
+    private func confirmSelection() {
+        guard let item = selectedItem else { return }
         onSelect(item)
     }
 
@@ -198,15 +210,13 @@ struct ContentView: View {
             return .ignored
         }
 
-        let modifiers = keyPress.modifiers
-        guard modifiers.contains(.command) else { return .ignored }
+        guard keyPress.modifiers.contains(.command) else { return .ignored }
 
         let index = number - 1
-        guard index < displayedItems.count else { return .ignored }
+        guard index < items.count else { return .ignored }
 
-        selectedIndex = index
-        scrolledId = index
-        selectCurrentItem()
+        selection = items[index].stableId
+        confirmSelection()
         return .handled
     }
 }
