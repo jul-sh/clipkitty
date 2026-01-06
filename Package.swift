@@ -20,6 +20,13 @@ let package = Package(
             resources: [
                 .copy("Resources/Fonts")
             ]
+        ),
+        .executableTarget(
+            name: "PerformanceTests",
+            dependencies: [
+                .product(name: "GRDB", package: "GRDB.swift")
+            ],
+            path: "Tests"
         )
     ]
 )
