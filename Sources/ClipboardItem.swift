@@ -1,7 +1,7 @@
 import Foundation
 import GRDB
 
-struct ClipboardItem: Identifiable, Sendable, Codable, FetchableRecord, PersistableRecord {
+struct ClipboardItem: Identifiable, Sendable, Codable, Equatable, FetchableRecord, PersistableRecord {
     static let databaseTableName = "items"
 
     var id: Int64?
