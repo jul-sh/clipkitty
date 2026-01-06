@@ -197,22 +197,21 @@ final class ClipboardStore {
         }
 
         let searchResults = await Task.detached { [query] () -> [ClipboardItem] in
-            let escapedQuery = query
-                .replacingOccurrences(of: "%", with: "\\%")
-                .replacingOccurrences(of: "_", with: "\\_")
-
+            // Load candidates from database
+            let candidates: [ClipboardItem]
             do {
-                return try dbQueue.read { db in
-                    try ClipboardItem.fetchAll(db, sql: """
-                        SELECT * FROM items
-                        WHERE content LIKE ? ESCAPE '\\'
-                        ORDER BY timestamp DESC
-                        LIMIT 200
-                    """, arguments: ["%\(escapedQuery)%"])
+                candidates = try dbQueue.read { db in
+                    try ClipboardItem
+                        .order(Column("timestamp").desc)
+                        .limit(1000)  // Limit candidates for performance
+                        .fetchAll(db)
                 }
             } catch {
                 return []
             }
+
+            // Apply fuzzy matching and sort by score
+            return candidates.fuzzyMatch(query: query)
         }.value
 
         // Only update if still searching for this query

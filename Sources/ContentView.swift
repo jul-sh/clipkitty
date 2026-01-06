@@ -246,23 +246,7 @@ struct ContentView: View {
     }
 
     private func highlightedPreview(for item: ClipboardItem) -> AttributedString {
-        let previewText = item.contentPreview
-        var result = AttributedString(previewText)
-
-        guard !store.searchQuery.isEmpty else { return result }
-
-        let queryLower = store.searchQuery.lowercased()
-        let textLower = previewText.lowercased()
-
-        var searchStart = textLower.startIndex
-        while let range = textLower.range(of: queryLower, range: searchStart..<textLower.endIndex) {
-            if let attrRange = Range(range, in: result) {
-                result[attrRange].backgroundColor = .yellow.opacity(0.4)
-            }
-            searchStart = range.upperBound
-        }
-
-        return result
+        item.contentPreview.fuzzyHighlighted(query: searchText)
     }
 }
 
@@ -316,30 +300,8 @@ struct ItemRow: View {
         }
     }
 
-    @ViewBuilder
     private var highlightedText: some View {
-        if searchQuery.isEmpty {
-            Text(item.displayText)
-                .foregroundStyle(.primary)
-        } else {
-            Text(attributedDisplayText)
-        }
-    }
-
-    private var attributedDisplayText: AttributedString {
-        var result = AttributedString(item.displayText)
-        let queryLower = searchQuery.lowercased()
-        let textLower = item.displayText.lowercased()
-
-        var searchStart = textLower.startIndex
-        while let range = textLower.range(of: queryLower, range: searchStart..<textLower.endIndex) {
-            if let attrRange = Range(range, in: result) {
-                result[attrRange].backgroundColor = .yellow.opacity(0.4)
-            }
-            searchStart = range.upperBound
-        }
-
-        return result
+        Text(item.displayText.fuzzyHighlighted(query: searchQuery))
     }
 
     private func formatSize(_ chars: Int) -> String {
