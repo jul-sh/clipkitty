@@ -62,8 +62,7 @@ final class FloatingPanelController: NSObject, NSWindowDelegate {
     }
 
     func show() {
-        store.searchQuery = ""
-        store.panelRevision += 1
+        store.resetForDisplay()
         centerPanel()
         panel.makeKeyAndOrderFront(nil)
         NSApp.activate(ignoringOtherApps: true)
