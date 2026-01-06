@@ -2,7 +2,7 @@ import AppKit
 import SwiftUI
 
 @MainActor
-final class AppDelegate: NSObject, NSApplicationDelegate {
+final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate {
     private var panelController: FloatingPanelController!
     private var hotKeyManager: HotKeyManager!
     private var store: ClipboardStore!
@@ -72,18 +72,27 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
 
             let window = NSWindow(
                 contentRect: NSRect(x: 0, y: 0, width: 400, height: 250),
-                styleMask: [.titled, .closable],
+                styleMask: [.titled, .closable, .miniaturizable],
                 backing: .buffered,
                 defer: false
             )
             window.title = "Clippy Settings"
             window.contentView = NSHostingView(rootView: settingsView)
             window.center()
+            window.isReleasedWhenClosed = false
+            window.delegate = self
             settingsWindow = window
         }
 
+        NSApp.setActivationPolicy(.regular)
         settingsWindow?.makeKeyAndOrderFront(nil)
         NSApp.activate(ignoringOtherApps: true)
+    }
+
+    nonisolated func windowWillClose(_ notification: Notification) {
+        Task { @MainActor in
+            NSApp.setActivationPolicy(.accessory)
+        }
     }
 
     @objc private func quit() {
