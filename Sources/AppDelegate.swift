@@ -7,6 +7,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
     private var hotKeyManager: HotKeyManager!
     private var store: ClipboardStore!
     private var statusItem: NSStatusItem?
+    private var settingsWindow: NSWindow?
 
     func applicationDidFinishLaunching(_ notification: Notification) {
         FontManager.registerFonts()
@@ -23,7 +24,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
                 self?.panelController.toggle()
             }
         }
-        hotKeyManager.register()
+        hotKeyManager.register(hotKey: AppSettings.shared.hotKey)
 
         setupMenuBar()
     }
@@ -38,6 +39,8 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         menu.addItem(NSMenuItem(title: "Show Clipboard History", action: #selector(showPanel), keyEquivalent: ""))
         menu.addItem(NSMenuItem.separator())
         menu.addItem(NSMenuItem(title: "Clear History", action: #selector(clearHistory), keyEquivalent: ""))
+        menu.addItem(NSMenuItem.separator())
+        menu.addItem(NSMenuItem(title: "Settings...", action: #selector(openSettings), keyEquivalent: ","))
         menu.addItem(NSMenuItem.separator())
         menu.addItem(NSMenuItem(title: "Quit", action: #selector(quit), keyEquivalent: "q"))
 
@@ -59,6 +62,28 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         if alert.runModal() == .alertFirstButtonReturn {
             store.clear()
         }
+    }
+
+    @objc private func openSettings() {
+        if settingsWindow == nil {
+            let settingsView = SettingsView { [weak self] hotKey in
+                self?.hotKeyManager.register(hotKey: hotKey)
+            }
+
+            let window = NSWindow(
+                contentRect: NSRect(x: 0, y: 0, width: 400, height: 250),
+                styleMask: [.titled, .closable],
+                backing: .buffered,
+                defer: false
+            )
+            window.title = "Clippy Settings"
+            window.contentView = NSHostingView(rootView: settingsView)
+            window.center()
+            settingsWindow = window
+        }
+
+        settingsWindow?.makeKeyAndOrderFront(nil)
+        NSApp.activate(ignoringOtherApps: true)
     }
 
     @objc private func quit() {
