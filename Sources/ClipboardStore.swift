@@ -3,56 +3,53 @@ import AppKit
 import Observation
 import GRDB
 
-/// Represents the current state of clipboard items display
-enum ClipboardState: Equatable {
-    case idle
+/// Combined state for data display
+enum DisplayState: Equatable {
     case loading
     case loaded(items: [ClipboardItem], hasMore: Bool)
-    case searchResults(items: [ClipboardItem], query: String)
+    case searching(query: String, results: [ClipboardItem]?, isLoading: Bool)
     case error(String)
 
     var items: [ClipboardItem] {
         switch self {
-        case .loaded(let items, _), .searchResults(let items, _):
+        case .loaded(let items, _):
             return items
+        case .searching(_, let results, _):
+            return results ?? []
         default:
             return []
         }
     }
 
-    var isLoading: Bool {
-        if case .loading = self { return true }
+    var hasMore: Bool {
+        if case .loaded(_, let more) = self { return more }
         return false
     }
 
-    var hasMore: Bool {
-        if case .loaded(_, let hasMore) = self {
-            return hasMore
-        }
+    var isSearchLoading: Bool {
+        if case .searching(_, _, let loading) = self { return loading }
         return false
+    }
+
+    var searchQuery: String {
+        if case .searching(let query, _, _) = self { return query }
+        return ""
     }
 }
 
 @MainActor
 @Observable
 final class ClipboardStore {
-    // MARK: - Public State (Single Source of Truth)
+    // MARK: - State (Single Source of Truth)
 
-    private(set) var state: ClipboardState = .idle
-    private(set) var isSearching: Bool = false
-
-    var searchQuery: String = "" {
-        didSet {
-            if searchQuery != oldValue {
-                handleSearchQueryChange()
-            }
-        }
-    }
+    private(set) var state: DisplayState = .loading
 
     // MARK: - Derived Properties
 
     var items: [ClipboardItem] { state.items }
     var hasMore: Bool { state.hasMore }
+    var isSearching: Bool { state.isSearchLoading }
+    var searchQuery: String { state.searchQuery }
 
     // MARK: - Private State
 
@@ -123,12 +120,48 @@ final class ClipboardStore {
         }
     }
 
+    // MARK: - Public API
+
+    func setSearchQuery(_ newQuery: String) {
+        let query = newQuery.trimmingCharacters(in: .whitespacesAndNewlines)
+
+        searchTask?.cancel()
+
+        if query.isEmpty {
+            loadItems(reset: true)
+            return
+        }
+
+        // Preserve previous results while loading new ones
+        let previousResults: [ClipboardItem]?
+        if case .searching(_, let results, _) = state {
+            previousResults = results
+        } else {
+            previousResults = state.items.isEmpty ? nil : state.items
+        }
+
+        state = .searching(query: query, results: previousResults, isLoading: true)
+
+        searchTask = Task {
+            try? await Task.sleep(for: .milliseconds(50))
+            guard !Task.isCancelled else { return }
+            await performSearch(query: query)
+        }
+    }
+
+    func loadMoreItems() {
+        guard case .loaded(_, true) = state else { return }
+        loadItems(reset: false)
+    }
+
+    func resetForDisplay() {
+        searchTask?.cancel()
+        loadItems(reset: true)
+    }
+
     // MARK: - Loading
 
-    func loadItems(reset: Bool = false) {
-        // Don't load browse results while actively searching
-        guard searchQuery.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty else { return }
-
+    private func loadItems(reset: Bool) {
         if reset {
             currentOffset = 0
             state = .loading
@@ -155,37 +188,11 @@ final class ClipboardStore {
         }
     }
 
-    func loadMoreItems() {
-        guard case .loaded(_, true) = state, searchQuery.isEmpty else { return }
-        loadItems(reset: false)
-    }
-
     // MARK: - Search
-
-    private func handleSearchQueryChange() {
-        searchTask?.cancel()
-
-        let query = searchQuery.trimmingCharacters(in: .whitespacesAndNewlines)
-        if query.isEmpty {
-            isSearching = false
-            loadItems(reset: true)
-            return
-        }
-
-        isSearching = true
-
-        searchTask = Task {
-            // Short debounce for fast typers
-            try? await Task.sleep(for: .milliseconds(50))
-            guard !Task.isCancelled else { return }
-            await performSearch(query: query)
-        }
-    }
 
     private func performSearch(query: String) async {
         guard let dbQueue else {
             state = .error("Database not available")
-            isSearching = false
             return
         }
 
@@ -208,12 +215,10 @@ final class ClipboardStore {
             }
         }.value
 
-        // Only update state if this search is still current (user hasn't typed more)
-        let currentQuery = searchQuery.trimmingCharacters(in: .whitespacesAndNewlines)
-        guard currentQuery == query else { return }
+        // Only update if still searching for this query
+        guard case .searching(let currentQuery, _, _) = state, currentQuery == query else { return }
 
-        state = .searchResults(items: searchResults, query: query)
-        isSearching = false
+        state = .searching(query: query, results: searchResults, isLoading: false)
     }
 
     // MARK: - Clipboard Monitoring
@@ -248,12 +253,10 @@ final class ClipboardStore {
             if let existing = try dbQueue?.read({ db in
                 try ClipboardItem.filter(Column("contentHash") == hash).fetchOne(db)
             }) {
-                // Move to top
                 try dbQueue?.write { db in
                     try db.execute(sql: "UPDATE items SET timestamp = ? WHERE id = ?", arguments: [Date(), existing.id])
                 }
             } else {
-                // Insert new
                 let sourceApp = NSWorkspace.shared.frontmostApplication?.localizedName
                 try dbQueue?.write { db in
                     var item = ClipboardItem(content: content, sourceApp: sourceApp)
@@ -261,8 +264,8 @@ final class ClipboardStore {
                 }
             }
 
-            // Reload if not searching
-            if searchQuery.isEmpty {
+            // Only reload if browsing (not searching)
+            if case .loaded = state {
                 loadItems(reset: true)
             }
         } catch {
@@ -290,7 +293,7 @@ final class ClipboardStore {
             try dbQueue?.write { db in
                 try db.execute(sql: "UPDATE items SET timestamp = ? WHERE id = ?", arguments: [Date(), id])
             }
-            if searchQuery.isEmpty {
+            if case .loaded = state {
                 loadItems(reset: true)
             }
         } catch {
@@ -306,12 +309,12 @@ final class ClipboardStore {
                 try db.execute(sql: "DELETE FROM items WHERE id = ?", arguments: [id])
             }
 
-            // Update state immutably
+            // Update state by filtering out deleted item
             switch state {
             case .loaded(let items, let hasMore):
                 state = .loaded(items: items.filter { $0.id != id }, hasMore: hasMore)
-            case .searchResults(let items, let query):
-                state = .searchResults(items: items.filter { $0.id != id }, query: query)
+            case .searching(let query, let results, let isLoading):
+                state = .searching(query: query, results: results?.filter { $0.id != id }, isLoading: isLoading)
             default:
                 break
             }
@@ -330,11 +333,6 @@ final class ClipboardStore {
         } catch {
             print("Failed to clear: \(error)")
         }
-    }
-
-    func resetForDisplay() {
-        searchQuery = ""
-        loadItems(reset: true)
     }
 
     // MARK: - Pruning
