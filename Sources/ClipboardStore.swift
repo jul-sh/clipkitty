@@ -7,7 +7,6 @@ import GRDB
 enum ClipboardState: Equatable {
     case idle
     case loading
-    case searching
     case loaded(items: [ClipboardItem], hasMore: Bool)
     case searchResults(items: [ClipboardItem], query: String)
     case error(String)
@@ -22,12 +21,8 @@ enum ClipboardState: Equatable {
     }
 
     var isLoading: Bool {
-        switch self {
-        case .loading, .searching:
-            return true
-        default:
-            return false
-        }
+        if case .loading = self { return true }
+        return false
     }
 
     var hasMore: Bool {
@@ -44,6 +39,8 @@ final class ClipboardStore {
     // MARK: - Public State (Single Source of Truth)
 
     private(set) var state: ClipboardState = .idle
+    private(set) var isSearching: Bool = false
+
     var searchQuery: String = "" {
         didSet {
             if searchQuery != oldValue {
@@ -55,7 +52,6 @@ final class ClipboardStore {
     // MARK: - Derived Properties
 
     var items: [ClipboardItem] { state.items }
-    var isSearching: Bool { state.isLoading }
     var hasMore: Bool { state.hasMore }
 
     // MARK: - Private State
@@ -171,14 +167,16 @@ final class ClipboardStore {
 
         let query = searchQuery.trimmingCharacters(in: .whitespacesAndNewlines)
         if query.isEmpty {
+            isSearching = false
             loadItems(reset: true)
             return
         }
 
-        state = .searching
+        isSearching = true
 
         searchTask = Task {
-            try? await Task.sleep(for: .milliseconds(150))
+            // Short debounce for fast typers
+            try? await Task.sleep(for: .milliseconds(50))
             guard !Task.isCancelled else { return }
             await performSearch(query: query)
         }
@@ -187,21 +185,17 @@ final class ClipboardStore {
     private func performSearch(query: String) async {
         guard let dbQueue else {
             state = .error("Database not available")
+            isSearching = false
             return
         }
 
-        // Capture current query to check for staleness after async work
-        let searchingFor = query
-
-        let searchResults = await Task.detached { [searchingFor] () -> [ClipboardItem] in
-            // Use LIKE search - simple, reliable, case-insensitive by default in SQLite
-            let escapedQuery = searchingFor
+        let searchResults = await Task.detached { [query] () -> [ClipboardItem] in
+            let escapedQuery = query
                 .replacingOccurrences(of: "%", with: "\\%")
                 .replacingOccurrences(of: "_", with: "\\_")
 
             do {
                 return try dbQueue.read { db in
-                    // SQLite LIKE is case-insensitive for ASCII by default
                     try ClipboardItem.fetchAll(db, sql: """
                         SELECT * FROM items
                         WHERE content LIKE ? ESCAPE '\\'
@@ -214,11 +208,12 @@ final class ClipboardStore {
             }
         }.value
 
-        // Only update state if this search is still current
+        // Only update state if this search is still current (user hasn't typed more)
         let currentQuery = searchQuery.trimmingCharacters(in: .whitespacesAndNewlines)
-        guard currentQuery == searchingFor else { return }
+        guard currentQuery == query else { return }
 
-        state = .searchResults(items: searchResults, query: searchingFor)
+        state = .searchResults(items: searchResults, query: query)
+        isSearching = false
     }
 
     // MARK: - Clipboard Monitoring

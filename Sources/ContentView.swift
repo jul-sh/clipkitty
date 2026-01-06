@@ -137,7 +137,7 @@ struct ContentView: View {
             loadingView
         case .error(let message):
             errorView(message)
-        case .loaded, .searchResults, .searching:
+        case .loaded, .searchResults:
             splitView
         }
     }
