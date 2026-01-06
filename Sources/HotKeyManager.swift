@@ -10,16 +10,19 @@ final class HotKeyManager: @unchecked Sendable {
         self.callback = callback
     }
 
-    func register() {
+    func register(hotKey: HotKey = .default) {
+        // Unregister existing hotkey first
+        if hotKeyRef != nil {
+            unregisterHotKey()
+        }
+
         let hotKeyID = EventHotKeyID(signature: OSType(0x434C4950), id: 1) // "CLIP"
 
         var gMyHotKeyRef: EventHotKeyRef?
-        let optionKey: UInt32 = UInt32(optionKey)
-        let spaceKeyCode: UInt32 = 49
 
         let status = RegisterEventHotKey(
-            spaceKeyCode,
-            optionKey,
+            hotKey.keyCode,
+            hotKey.modifiers,
             hotKeyID,
             GetApplicationEventTarget(),
             0,
@@ -28,9 +31,18 @@ final class HotKeyManager: @unchecked Sendable {
 
         if status == noErr {
             hotKeyRef = gMyHotKeyRef
-            installEventHandler()
+            if eventHandler == nil {
+                installEventHandler()
+            }
         } else {
             print("Failed to register hotkey: \(status)")
+        }
+    }
+
+    private func unregisterHotKey() {
+        if let hotKeyRef = hotKeyRef {
+            UnregisterEventHotKey(hotKeyRef)
+            self.hotKeyRef = nil
         }
     }
 
@@ -57,10 +69,7 @@ final class HotKeyManager: @unchecked Sendable {
     }
 
     func unregister() {
-        if let hotKeyRef = hotKeyRef {
-            UnregisterEventHotKey(hotKeyRef)
-            self.hotKeyRef = nil
-        }
+        unregisterHotKey()
         if let eventHandler = eventHandler {
             RemoveEventHandler(eventHandler)
             self.eventHandler = nil
