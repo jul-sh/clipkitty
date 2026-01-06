@@ -130,7 +130,8 @@ final class ClipboardStore {
     // MARK: - Loading
 
     func loadItems(reset: Bool = false) {
-        guard !searchQuery.isEmpty == false else { return } // Don't load if searching
+        // Don't load browse results while actively searching
+        guard searchQuery.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty else { return }
 
         if reset {
             currentOffset = 0
@@ -174,6 +175,8 @@ final class ClipboardStore {
             return
         }
 
+        state = .searching
+
         searchTask = Task {
             try? await Task.sleep(for: .milliseconds(150))
             guard !Task.isCancelled else { return }
@@ -182,55 +185,40 @@ final class ClipboardStore {
     }
 
     private func performSearch(query: String) async {
-        state = .searching
-
-        let pattern = query
-            .components(separatedBy: .whitespaces)
-            .filter { !$0.isEmpty }
-            .map { "\($0)*" }
-            .joined(separator: " ")
-
         guard let dbQueue else {
             state = .error("Database not available")
             return
         }
 
-        let searchResults = await Task.detached { [pattern, query] () -> Result<[ClipboardItem], Error> in
-            // FTS search
+        // Capture current query to check for staleness after async work
+        let searchingFor = query
+
+        let searchResults = await Task.detached { [searchingFor] () -> [ClipboardItem] in
+            // Use LIKE search - simple, reliable, case-insensitive by default in SQLite
+            let escapedQuery = searchingFor
+                .replacingOccurrences(of: "%", with: "\\%")
+                .replacingOccurrences(of: "_", with: "\\_")
+
             do {
-                let results = try dbQueue.read { db -> [ClipboardItem] in
+                return try dbQueue.read { db in
+                    // SQLite LIKE is case-insensitive for ASCII by default
                     try ClipboardItem.fetchAll(db, sql: """
-                        SELECT items.* FROM items
-                        JOIN items_fts ON items.id = items_fts.rowid
-                        WHERE items_fts MATCH ?
-                        ORDER BY bm25(items_fts), items.timestamp DESC
-                        LIMIT 100
-                    """, arguments: [pattern])
+                        SELECT * FROM items
+                        WHERE content LIKE ? ESCAPE '\\'
+                        ORDER BY timestamp DESC
+                        LIMIT 200
+                    """, arguments: ["%\(escapedQuery)%"])
                 }
-                return .success(results)
             } catch {
-                // FTS failed, try LIKE fallback
-                do {
-                    let results = try dbQueue.read { db in
-                        try ClipboardItem
-                            .filter(Column("content").like("%\(query)%"))
-                            .order(Column("timestamp").desc)
-                            .limit(100)
-                            .fetchAll(db)
-                    }
-                    return .success(results)
-                } catch {
-                    return .failure(error)
-                }
+                return []
             }
         }.value
 
-        switch searchResults {
-        case .success(let results):
-            state = .searchResults(items: results, query: query)
-        case .failure(let error):
-            state = .error("Search failed: \(error.localizedDescription)")
-        }
+        // Only update state if this search is still current
+        let currentQuery = searchQuery.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard currentQuery == searchingFor else { return }
+
+        state = .searchResults(items: searchResults, query: searchingFor)
     }
 
     // MARK: - Clipboard Monitoring
