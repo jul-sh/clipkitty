@@ -2,14 +2,14 @@ import SwiftUI
 import AppKit
 
 struct ContentView: View {
-    @Bindable var store: ClipboardStore
+    var store: ClipboardStore
     let onSelect: (ClipboardItem) -> Void
     let onDismiss: () -> Void
 
     @State private var selection: String?
+    @State private var searchText: String = ""
     @FocusState private var isSearchFocused: Bool
 
-    // Derived from store state
     private var items: [ClipboardItem] { store.items }
 
     private var selectedItem: ClipboardItem? {
@@ -37,11 +37,14 @@ struct ContentView: View {
         )
         .onAppear {
             isSearchFocused = true
+            searchText = ""
             selectFirstItem()
         }
         .onChange(of: store.state) { _, _ in
-            // When state changes, ensure selection is valid
             validateSelection()
+        }
+        .onChange(of: searchText) { _, newValue in
+            store.setSearchQuery(newValue)
         }
     }
 
@@ -79,7 +82,7 @@ struct ContentView: View {
                 .foregroundStyle(.secondary)
                 .font(.custom(FontManager.sansSerif, size: 16).weight(.medium))
 
-            TextField("Search clipboard...", text: $store.searchQuery)
+            TextField("Search clipboard...", text: $searchText)
                 .textFieldStyle(.plain)
                 .font(.custom(FontManager.sansSerif, size: 16))
                 .focused($isSearchFocused)
@@ -133,11 +136,11 @@ struct ContentView: View {
     @ViewBuilder
     private var content: some View {
         switch store.state {
-        case .idle, .loading:
+        case .loading:
             loadingView
         case .error(let message):
             errorView(message)
-        case .loaded, .searchResults:
+        case .loaded, .searching:
             splitView
         }
     }
