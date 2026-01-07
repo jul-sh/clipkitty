@@ -1,8 +1,8 @@
 #!/bin/bash
 set -e
 
-APP_NAME="ClippySwift"
-BUNDLE_ID="com.clippy.ClippySwift"
+APP_NAME="PaperTrail"
+BUNDLE_ID="com.papertrail.app"
 
 echo "Building release..."
 GIT_CONFIG_COUNT=1 GIT_CONFIG_KEY_0=safe.bareRepository GIT_CONFIG_VALUE_0=all swift build -c release
@@ -13,11 +13,11 @@ mkdir -p "${APP_NAME}.app/Contents/MacOS"
 mkdir -p "${APP_NAME}.app/Contents/Resources"
 
 # Copy executable
-cp ".build/release/${APP_NAME}" "${APP_NAME}.app/Contents/MacOS/"
+cp ".build/release/ClippySwift" "${APP_NAME}.app/Contents/MacOS/${APP_NAME}"
 
 # Copy bundled resources (fonts, etc.)
-if [ -d ".build/release/${APP_NAME}_${APP_NAME}.bundle" ]; then
-    cp -R ".build/release/${APP_NAME}_${APP_NAME}.bundle/Contents/Resources/"* "${APP_NAME}.app/Contents/Resources/" 2>/dev/null || true
+if [ -d ".build/release/ClippySwift_ClippySwift.bundle" ]; then
+    cp -R ".build/release/ClippySwift_ClippySwift.bundle/Contents/Resources/"* "${APP_NAME}.app/Contents/Resources/" 2>/dev/null || true
 fi
 
 # Create Info.plist
@@ -33,7 +33,7 @@ cat > "${APP_NAME}.app/Contents/Info.plist" << EOF
     <key>CFBundleName</key>
     <string>${APP_NAME}</string>
     <key>CFBundleDisplayName</key>
-    <string>Clippy</string>
+    <string>Paper Trail</string>
     <key>CFBundleVersion</key>
     <string>1.0</string>
     <key>CFBundleShortVersionString</key>
