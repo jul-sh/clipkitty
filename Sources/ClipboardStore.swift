@@ -204,6 +204,22 @@ final class ClipboardStore {
         }
 
         let searchResults = await Task.detached { [query] () -> [ClipboardItem] in
+            // FTS5 trigram tokenizer requires at least 3 characters
+            // For shorter queries, use LIKE search directly
+            if query.count < 3 {
+                do {
+                    return try dbQueue.read { db in
+                        try ClipboardItem
+                            .filter(Column("content").like("%\(query)%"))
+                            .order(Column("timestamp").desc)
+                            .limit(200)
+                            .fetchAll(db)
+                    }
+                } catch {
+                    return []
+                }
+            }
+
             do {
                 return try dbQueue.read { db in
                     // Use FTS5 trigram MATCH for fast substring search
@@ -221,7 +237,7 @@ final class ClipboardStore {
                     return try ClipboardItem.fetchAll(db, sql: sql, arguments: ["\"\(escapedQuery)\""])
                 }
             } catch {
-                // Fallback to LIKE if FTS fails (e.g., query too short for trigram)
+                // Fallback to LIKE if FTS fails for any other reason
                 do {
                     return try dbQueue.read { db in
                         try ClipboardItem
