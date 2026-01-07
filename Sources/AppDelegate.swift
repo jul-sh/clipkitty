@@ -8,6 +8,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate {
     private var store: ClipboardStore!
     private var statusItem: NSStatusItem?
     private var settingsWindow: NSWindow?
+    private var showHistoryMenuItem: NSMenuItem?
 
     func applicationDidFinishLaunching(_ notification: Notification) {
         FontManager.registerFonts()
@@ -36,9 +37,10 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate {
         }
 
         let menu = NSMenu()
-        menu.addItem(NSMenuItem(title: "Show Clipboard History", action: #selector(showPanel), keyEquivalent: ""))
-        menu.addItem(NSMenuItem.separator())
-        menu.addItem(NSMenuItem(title: "Clear History", action: #selector(clearHistory), keyEquivalent: ""))
+        let hotKey = AppSettings.shared.hotKey
+        showHistoryMenuItem = NSMenuItem(title: "Show Clipboard History", action: #selector(showPanel), keyEquivalent: hotKey.keyEquivalent)
+        showHistoryMenuItem?.keyEquivalentModifierMask = hotKey.modifierMask
+        menu.addItem(showHistoryMenuItem!)
         menu.addItem(NSMenuItem.separator())
         menu.addItem(NSMenuItem(title: "Settings...", action: #selector(openSettings), keyEquivalent: ","))
         menu.addItem(NSMenuItem.separator())
@@ -47,27 +49,23 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate {
         statusItem?.menu = menu
     }
 
+    private func updateMenuHotKey() {
+        let hotKey = AppSettings.shared.hotKey
+        showHistoryMenuItem?.keyEquivalent = hotKey.keyEquivalent
+        showHistoryMenuItem?.keyEquivalentModifierMask = hotKey.modifierMask
+    }
+
     @objc private func showPanel() {
         panelController.show()
     }
 
-    @objc private func clearHistory() {
-        let alert = NSAlert()
-        alert.messageText = "Clear Clipboard History"
-        alert.informativeText = "Are you sure you want to delete all clipboard history? This cannot be undone."
-        alert.alertStyle = .warning
-        alert.addButton(withTitle: "Clear")
-        alert.addButton(withTitle: "Cancel")
 
-        if alert.runModal() == .alertFirstButtonReturn {
-            store.clear()
-        }
-    }
 
     @objc private func openSettings() {
         if settingsWindow == nil {
-            let settingsView = SettingsView { [weak self] hotKey in
+            let settingsView = SettingsView(store: store) { [weak self] hotKey in
                 self?.hotKeyManager.register(hotKey: hotKey)
+                self?.updateMenuHotKey()
             }
 
             let window = NSWindow(
