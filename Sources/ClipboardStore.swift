@@ -74,7 +74,7 @@ final class ClipboardStore {
     private func setupDatabase() {
         do {
             let appSupport = FileManager.default.urls(for: .applicationSupportDirectory, in: .userDomainMask).first!
-            let appDir = appSupport.appendingPathComponent("ClippySwift", isDirectory: true)
+            let appDir = appSupport.appendingPathComponent("PaperTrail", isDirectory: true)
             try FileManager.default.createDirectory(at: appDir, withIntermediateDirectories: true)
 
             let dbPath = appDir.appendingPathComponent("clipboard.sqlite").path
@@ -92,11 +92,18 @@ final class ClipboardStore {
                 try db.create(index: "idx_items_hash", on: "items", columns: ["contentHash"], ifNotExists: true)
                 try db.create(index: "idx_items_timestamp", on: "items", columns: ["timestamp"], ifNotExists: true)
 
+                // Use trigram tokenizer for fast substring matching
+                // Drop old FTS table if it exists with different tokenizer
+                try db.execute(sql: "DROP TABLE IF EXISTS items_fts")
+
                 try db.execute(sql: """
                     CREATE VIRTUAL TABLE IF NOT EXISTS items_fts USING fts5(
-                        content, content=items, content_rowid=id, tokenize='porter unicode61'
+                        content, content=items, content_rowid=id, tokenize='trigram'
                     )
                 """)
+
+                // Rebuild FTS index with existing data
+                try db.execute(sql: "INSERT INTO items_fts(items_fts) VALUES('rebuild')")
 
                 try db.execute(sql: """
                     CREATE TRIGGER IF NOT EXISTS items_ai AFTER INSERT ON items BEGIN
@@ -197,21 +204,36 @@ final class ClipboardStore {
         }
 
         let searchResults = await Task.detached { [query] () -> [ClipboardItem] in
-            // Load candidates from database
-            let candidates: [ClipboardItem]
             do {
-                candidates = try dbQueue.read { db in
-                    try ClipboardItem
-                        .order(Column("timestamp").desc)
-                        .limit(1000)  // Limit candidates for performance
-                        .fetchAll(db)
+                return try dbQueue.read { db in
+                    // Use FTS5 trigram MATCH for fast substring search
+                    // Escape special FTS5 characters and wrap in quotes for literal matching
+                    let escapedQuery = query.replacingOccurrences(of: "\"", with: "\"\"")
+
+                    // Use raw SQL to join with FTS5 virtual table
+                    let sql = """
+                        SELECT items.* FROM items
+                        INNER JOIN items_fts ON items.id = items_fts.rowid
+                        WHERE items_fts MATCH ?
+                        ORDER BY items.timestamp DESC
+                        LIMIT 200
+                    """
+                    return try ClipboardItem.fetchAll(db, sql: sql, arguments: ["\"\(escapedQuery)\""])
                 }
             } catch {
-                return []
+                // Fallback to LIKE if FTS fails (e.g., query too short for trigram)
+                do {
+                    return try dbQueue.read { db in
+                        try ClipboardItem
+                            .filter(Column("content").like("%\(query)%"))
+                            .order(Column("timestamp").desc)
+                            .limit(200)
+                            .fetchAll(db)
+                    }
+                } catch {
+                    return []
+                }
             }
-
-            // Apply fuzzy matching and sort by score
-            return candidates.fuzzyMatch(query: query)
         }.value
 
         // Only update if still searching for this query
