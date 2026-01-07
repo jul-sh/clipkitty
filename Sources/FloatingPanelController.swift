@@ -16,7 +16,7 @@ final class FloatingPanelController: NSObject, NSWindowDelegate {
 
     private func setupPanel() {
         panel = NSPanel(
-            contentRect: NSRect(x: 0, y: 0, width: 720, height: 480),
+            contentRect: NSRect(x: 0, y: 0, width: 778, height: 518),
             styleMask: [.nonactivatingPanel, .titled, .fullSizeContentView],
             backing: .buffered,
             defer: false
@@ -63,6 +63,19 @@ final class FloatingPanelController: NSObject, NSWindowDelegate {
 
     func show() {
         store.resetForDisplay()
+
+        // Recreate content view to reset all state (search text, selection, focus)
+        let contentView = ContentView(
+            store: store,
+            onSelect: { [weak self] item in
+                self?.selectItem(item)
+            },
+            onDismiss: { [weak self] in
+                self?.hide()
+            }
+        )
+        panel.contentView = NSHostingView(rootView: contentView)
+
         centerPanel()
         panel.makeKeyAndOrderFront(nil)
         NSApp.activate(ignoringOtherApps: true)

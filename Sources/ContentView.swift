@@ -28,7 +28,7 @@ struct ContentView: View {
             Divider()
             content
         }
-        .frame(width: 720, height: 480)
+        .frame(width: 778, height: 518)
         .background(.ultraThinMaterial)
         .clipShape(RoundedRectangle(cornerRadius: 12, style: .continuous))
         .overlay(
@@ -80,11 +80,11 @@ struct ContentView: View {
         HStack(spacing: 8) {
             Image(systemName: "magnifyingglass")
                 .foregroundStyle(.secondary)
-                .font(.custom(FontManager.sansSerif, size: 16).weight(.medium))
+                .font(.custom(FontManager.sansSerif, size: 17).weight(.medium))
 
             TextField("Search clipboard...", text: $searchText)
                 .textFieldStyle(.plain)
-                .font(.custom(FontManager.sansSerif, size: 16))
+                .font(.custom(FontManager.sansSerif, size: 17))
                 .focused($isSearchFocused)
                 .onKeyPress(.upArrow) {
                     moveSelection(by: -1)
@@ -112,8 +112,8 @@ struct ContentView: View {
                     .frame(width: 16, height: 16)
             }
         }
-        .padding(.horizontal, 16)
-        .padding(.vertical, 12)
+        .padding(.horizontal, 17)
+        .padding(.vertical, 13)
     }
 
     private func handleNumberKey(_ keyPress: KeyPress) -> KeyPress.Result {
@@ -160,7 +160,7 @@ struct ContentView: View {
                 .font(.largeTitle)
                 .foregroundStyle(.secondary)
             Text(message)
-                .font(.custom(FontManager.sansSerif, size: 14))
+                .font(.custom(FontManager.sansSerif, size: 15))
                 .foregroundStyle(.secondary)
         }
         .frame(maxWidth: .infinity, maxHeight: .infinity)
@@ -169,7 +169,7 @@ struct ContentView: View {
     private var splitView: some View {
         HStack(spacing: 0) {
             itemList
-                .frame(width: 300)
+                .frame(width: 324)
 
             Divider()
 
@@ -216,7 +216,7 @@ struct ContentView: View {
                 // Content
                 ScrollView {
                     Text(highlightedPreview(for: item))
-                        .font(.custom(FontManager.mono, size: 14))
+                        .font(.custom(FontManager.mono, size: 15))
                         .textSelection(.enabled)
                         .frame(maxWidth: .infinity, alignment: .leading)
                         .padding(16)
@@ -234,17 +234,18 @@ struct ContentView: View {
                         Label(app, systemImage: "app")
                     }
                     Spacer()
+                    Text("⏎ copy")
                 }
-                .font(.custom(FontManager.sansSerif, size: 12))
+                .font(.custom(FontManager.sansSerif, size: 13))
                 .foregroundStyle(.secondary)
-                .padding(.horizontal, 16)
-                .padding(.vertical, 10)
+                .padding(.horizontal, 17)
+                .padding(.vertical, 11)
                 .background(.black.opacity(0.03))
             } else if items.isEmpty {
                 emptyStateView
             } else {
                 Text("No item selected")
-                    .font(.custom(FontManager.sansSerif, size: 15))
+                    .font(.custom(FontManager.sansSerif, size: 16))
                     .foregroundStyle(.secondary)
                     .frame(maxWidth: .infinity, maxHeight: .infinity)
             }
@@ -267,7 +268,7 @@ struct ContentView: View {
                 .font(.largeTitle)
                 .foregroundStyle(.tertiary)
             Text(store.searchQuery.isEmpty ? "No clipboard history" : "No results")
-                .font(.custom(FontManager.sansSerif, size: 14))
+                .font(.custom(FontManager.sansSerif, size: 15))
                 .foregroundStyle(.secondary)
         }
         .frame(maxWidth: .infinity, maxHeight: .infinity)
@@ -285,13 +286,15 @@ struct ItemRow: View {
     let isSelected: Bool
     let searchQuery: String
 
+    // Fixed height for exactly 2 lines of text at font size 15
+    private let rowHeight: CGFloat = 52
+
     var body: some View {
         Text(item.displayText.fuzzyHighlighted(query: searchQuery))
             .lineLimit(2)
-            .font(.custom(FontManager.sansSerif, size: 14))
-            .frame(maxWidth: .infinity, alignment: .leading)
-            .padding(.horizontal, 12)
-            .padding(.vertical, 10)
+            .font(.custom(FontManager.sansSerif, size: 15))
+            .frame(maxWidth: .infinity, minHeight: rowHeight, maxHeight: rowHeight, alignment: .leading)
+            .padding(.horizontal, 13)
             .background(isSelected ? Color.accentColor.opacity(0.2) : .clear)
             .contentShape(Rectangle())
     }
