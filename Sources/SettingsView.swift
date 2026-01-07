@@ -9,6 +9,8 @@ enum HotKeyEditState: Equatable {
 struct SettingsView: View {
     @ObservedObject private var settings = AppSettings.shared
     @State private var hotKeyState: HotKeyEditState = .idle
+    @State private var showClearConfirmation = false
+    let store: ClipboardStore
     let onHotKeyChanged: (HotKey) -> Void
 
     private var isRecording: Bool { hotKeyState == .recording }
@@ -63,9 +65,32 @@ struct SettingsView: View {
                     .font(.caption)
                     .foregroundStyle(.secondary)
             }
+
+            Section("Data") {
+                Button(role: .destructive) {
+                    showClearConfirmation = true
+                } label: {
+                    HStack {
+                        Image(systemName: "trash")
+                        Text("Clear Clipboard History")
+                    }
+                }
+                .confirmationDialog(
+                    "Clear Clipboard History",
+                    isPresented: $showClearConfirmation,
+                    titleVisibility: .visible
+                ) {
+                    Button("Clear All History", role: .destructive) {
+                        store.clear()
+                    }
+                    Button("Cancel", role: .cancel) {}
+                } message: {
+                    Text("Are you sure you want to delete all clipboard history? This cannot be undone.")
+                }
+            }
         }
         .formStyle(.grouped)
-        .frame(width: 400, height: 250)
+        .frame(width: 400, height: 300)
     }
 }
 

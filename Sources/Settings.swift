@@ -1,5 +1,6 @@
 import Foundation
 import Carbon
+import AppKit
 
 struct HotKey: Codable, Equatable {
     var keyCode: UInt32
@@ -15,6 +16,30 @@ struct HotKey: Codable, Equatable {
         if modifiers & UInt32(cmdKey) != 0 { parts.append("⌘") }
         parts.append(keyCodeToString(keyCode))
         return parts.joined()
+    }
+
+    /// Key equivalent string for NSMenuItem
+    var keyEquivalent: String {
+        let keyMap: [UInt32: String] = [
+            0: "a", 1: "s", 2: "d", 3: "f", 4: "h", 5: "g", 6: "z", 7: "x",
+            8: "c", 9: "v", 11: "b", 12: "q", 13: "w", 14: "e", 15: "r",
+            16: "y", 17: "t", 31: "o", 32: "u", 34: "i", 35: "p", 37: "l",
+            38: "j", 40: "k", 45: "n", 46: "m",
+            49: " ", // Space
+            36: "\r", // Return
+            48: "\t", // Tab
+        ]
+        return keyMap[keyCode] ?? ""
+    }
+
+    /// Modifier mask for NSMenuItem
+    var modifierMask: NSEvent.ModifierFlags {
+        var mask: NSEvent.ModifierFlags = []
+        if modifiers & UInt32(controlKey) != 0 { mask.insert(.control) }
+        if modifiers & UInt32(optionKey) != 0 { mask.insert(.option) }
+        if modifiers & UInt32(shiftKey) != 0 { mask.insert(.shift) }
+        if modifiers & UInt32(cmdKey) != 0 { mask.insert(.command) }
+        return mask
     }
 
     private func keyCodeToString(_ code: UInt32) -> String {
