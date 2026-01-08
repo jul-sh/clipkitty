@@ -87,6 +87,25 @@ final class ClipboardStore {
                     t.column("contentHash", .text).notNull()
                     t.column("timestamp", .datetime).notNull()
                     t.column("sourceApp", .text)
+                    t.column("contentType", .text).defaults(to: "text")
+                    t.column("imageData", .blob)
+                    t.column("linkTitle", .text)
+                    t.column("linkImageData", .blob)
+                }
+
+                // Migration: Add new columns if they don't exist
+                let columns = try db.columns(in: "items").map { $0.name }
+                if !columns.contains("contentType") {
+                    try db.execute(sql: "ALTER TABLE items ADD COLUMN contentType TEXT DEFAULT 'text'")
+                }
+                if !columns.contains("imageData") {
+                    try db.execute(sql: "ALTER TABLE items ADD COLUMN imageData BLOB")
+                }
+                if !columns.contains("linkTitle") {
+                    try db.execute(sql: "ALTER TABLE items ADD COLUMN linkTitle TEXT")
+                }
+                if !columns.contains("linkImageData") {
+                    try db.execute(sql: "ALTER TABLE items ADD COLUMN linkImageData BLOB")
                 }
 
                 try db.create(index: "idx_items_hash", on: "items", columns: ["contentHash"], ifNotExists: true)
@@ -164,6 +183,19 @@ final class ClipboardStore {
     func resetForDisplay() {
         searchTask?.cancel()
         loadItems(reset: true)
+    }
+
+    /// Fetch link metadata on-demand if not already loaded
+    func fetchLinkMetadataIfNeeded(for item: ClipboardItem) {
+        // Only fetch for links that don't have metadata yet
+        guard item.contentType == .link,
+              item.linkTitle == nil,
+              item.linkImageData == nil,
+              let id = item.id else { return }
+
+        Task {
+            await fetchAndUpdateLinkMetadata(for: id, url: item.content)
+        }
     }
 
     // MARK: - Loading
@@ -282,6 +314,13 @@ final class ClipboardStore {
         guard currentCount != lastChangeCount else { return }
         lastChangeCount = currentCount
 
+        // Check for image data first
+        if let imageData = getImageData(from: pasteboard) {
+            saveImageItem(imageData: imageData)
+            return
+        }
+
+        // Otherwise check for text
         guard let content = pasteboard.string(forType: .string), !content.isEmpty else { return }
 
         let hash = hashContent(content)
@@ -295,9 +334,18 @@ final class ClipboardStore {
                 }
             } else {
                 let sourceApp = NSWorkspace.shared.frontmostApplication?.localizedName
+                var itemId: Int64?
                 try dbQueue?.write { db in
                     var item = ClipboardItem(content: content, sourceApp: sourceApp)
                     try item.insert(db)
+                    itemId = db.lastInsertedRowID
+                }
+
+                // If it's a URL, fetch metadata asynchronously
+                if ClipboardItem.isURL(content), let id = itemId {
+                    Task {
+                        await fetchAndUpdateLinkMetadata(for: id, url: content)
+                    }
                 }
             }
 
@@ -307,6 +355,79 @@ final class ClipboardStore {
             }
         } catch {
             print("Clipboard save failed: \(error)")
+        }
+    }
+
+    private func fetchAndUpdateLinkMetadata(for itemId: Int64, url: String) async {
+        guard let metadata = await LinkMetadataFetcher.shared.fetch(url: url) else { return }
+        guard let dbQueue else { return }
+
+        // Store in local vars for nonisolated access
+        let title = metadata.title
+        let imageData = metadata.imageData
+
+        // Database write needs to escape MainActor
+        await Task.detached { [dbQueue] in
+            do {
+                try dbQueue.write { db in
+                    try db.execute(
+                        sql: "UPDATE items SET linkTitle = ?, linkImageData = ? WHERE id = ?",
+                        arguments: [title, imageData, itemId]
+                    )
+                }
+            } catch {
+                print("Failed to update link metadata: \(error)")
+            }
+        }.value
+
+        // Reload items to show updated metadata (already on MainActor)
+        if case .loaded = state {
+            loadItems(reset: true)
+        }
+    }
+
+    private func getImageData(from pasteboard: NSPasteboard) -> Data? {
+        // Check for image types
+        let imageTypes: [NSPasteboard.PasteboardType] = [.tiff, .png]
+
+        for type in imageTypes {
+            if let data = pasteboard.data(forType: type) {
+                // Convert to compressed JPEG to save space
+                if let image = NSImage(data: data),
+                   let tiffData = image.tiffRepresentation,
+                   let bitmap = NSBitmapImageRep(data: tiffData),
+                   let jpegData = bitmap.representation(using: .jpeg, properties: [.compressionFactor: 0.7]) {
+                    return jpegData
+                }
+                return data
+            }
+        }
+        return nil
+    }
+
+    private func saveImageItem(imageData: Data) {
+        let hash = hashContent(String(imageData.count) + "-" + String(imageData.hashValue))
+        let sourceApp = NSWorkspace.shared.frontmostApplication?.localizedName
+
+        // Create description for the image
+        let description = "Image (\(imageData.count / 1024) KB)"
+
+        do {
+            try dbQueue?.write { db in
+                var item = ClipboardItem(
+                    content: description,
+                    sourceApp: sourceApp,
+                    contentType: .image,
+                    imageData: imageData
+                )
+                try item.insert(db)
+            }
+
+            if case .loaded = state {
+                loadItems(reset: true)
+            }
+        } catch {
+            print("Image save failed: \(error)")
         }
     }
 

@@ -222,11 +222,28 @@ struct ContentView: View {
             if let item = selectedItem {
                 // Content
                 ScrollView(.vertical, showsIndicators: true) {
-                    Text(highlightedPreview(for: item))
-                        .font(.custom(FontManager.mono, size: 15))
-                        .textSelection(.enabled)
-                        .frame(maxWidth: .infinity, alignment: .leading)
-                        .padding(16)
+                    if item.contentType == .image, let imageData = item.imageData,
+                       let nsImage = NSImage(data: imageData) {
+                        // Image preview
+                        Image(nsImage: nsImage)
+                            .resizable()
+                            .aspectRatio(contentMode: .fit)
+                            .frame(maxWidth: .infinity)
+                            .padding(16)
+                    } else if item.contentType == .link {
+                        // Link preview - fetch metadata on-demand if needed
+                        linkPreview(for: item)
+                            .task(id: item.stableId) {
+                                store.fetchLinkMetadataIfNeeded(for: item)
+                            }
+                    } else {
+                        // Text preview
+                        Text(highlightedPreview(for: item))
+                            .font(.custom(FontManager.mono, size: 15))
+                            .textSelection(.enabled)
+                            .frame(maxWidth: .infinity, alignment: .leading)
+                            .padding(16)
+                    }
                 }
 
                 Divider()
@@ -295,6 +312,58 @@ struct ContentView: View {
 
         return item.contentPreview.fuzzyHighlighted(query: searchText)
     }
+
+    @ViewBuilder
+    private func linkPreview(for item: ClipboardItem) -> some View {
+        VStack(spacing: 16) {
+            // OG Image if available
+            if let imageData = item.linkImageData,
+               let nsImage = NSImage(data: imageData) {
+                Image(nsImage: nsImage)
+                    .resizable()
+                    .aspectRatio(contentMode: .fit)
+                    .frame(maxWidth: .infinity)
+                    .clipShape(RoundedRectangle(cornerRadius: 8))
+            } else {
+                // Placeholder for loading/missing image
+                RoundedRectangle(cornerRadius: 8)
+                    .fill(Color.secondary.opacity(0.1))
+                    .frame(height: 120)
+                    .overlay {
+                        VStack(spacing: 8) {
+                            Image(systemName: "link")
+                                .font(.system(size: 32))
+                                .foregroundStyle(.secondary)
+                            if item.linkTitle == nil {
+                                Text("Loading preview...")
+                                    .font(.caption)
+                                    .foregroundStyle(.tertiary)
+                            }
+                        }
+                    }
+            }
+
+            // Title and URL
+            VStack(alignment: .leading, spacing: 8) {
+                if let title = item.linkTitle, !title.isEmpty {
+                    Text(title)
+                        .font(.system(size: 18, weight: .semibold))
+                        .foregroundStyle(.primary)
+                        .lineLimit(2)
+                }
+
+                Text(item.content)
+                    .font(.custom(FontManager.mono, size: 13))
+                    .foregroundStyle(.secondary)
+                    .lineLimit(1)
+                    .textSelection(.enabled)
+            }
+            .frame(maxWidth: .infinity, alignment: .leading)
+
+            Spacer()
+        }
+        .padding(16)
+    }
 }
 
 // MARK: - Item Row
@@ -320,28 +389,37 @@ struct ItemRow: View, Equatable {
     }
 
     var body: some View {
-        Text(truncatedText.fuzzyHighlighted(query: searchQuery))
-            .lineLimit(1)
-            .font(.custom(FontManager.sansSerif, size: 15))
-            .frame(maxWidth: .infinity, minHeight: rowHeight, maxHeight: rowHeight, alignment: .leading)
-            .padding(.horizontal, 13)
-            .padding(.vertical, 4)
-            .foregroundStyle(isSelected ? .white : .primary)
-            .background {
-                if isSelected {
-                    Color.accentColor
-                        .opacity(0.85)
-                        .saturation(0.9)
-                } else {
-                    Color.clear
-                }
+        HStack(spacing: 10) {
+            // Content type icon
+            Image(systemName: item.contentType.icon)
+                .font(.system(size: 13))
+                .foregroundStyle(isSelected ? .white.opacity(0.9) : .secondary)
+                .frame(width: 16)
+
+            // Text content
+            Text(truncatedText.fuzzyHighlighted(query: searchQuery))
+                .lineLimit(1)
+                .font(.custom(FontManager.sansSerif, size: 15))
+        }
+        .frame(maxWidth: .infinity, minHeight: rowHeight, maxHeight: rowHeight, alignment: .leading)
+        .padding(.horizontal, 13)
+        .padding(.vertical, 4)
+        .foregroundStyle(isSelected ? .white : .primary)
+        .background {
+            if isSelected {
+                Color.accentColor
+                    .opacity(0.85)
+                    .saturation(0.9)
+            } else {
+                Color.clear
             }
-            .clipShape(RoundedRectangle(cornerRadius: 10, style: .continuous))
-            .contentShape(Rectangle())
-            .accessibilityElement(children: .combine)
-            .accessibilityLabel(truncatedText)
-            .accessibilityHint("Double tap to paste")
-            .accessibilityAddTraits(.isButton)
-            .accessibilityAddTraits(isSelected ? .isSelected : [])
+        }
+        .clipShape(RoundedRectangle(cornerRadius: 10, style: .continuous))
+        .contentShape(Rectangle())
+        .accessibilityElement(children: .combine)
+        .accessibilityLabel(truncatedText)
+        .accessibilityHint("Double tap to paste")
+        .accessibilityAddTraits(.isButton)
+        .accessibilityAddTraits(isSelected ? .isSelected : [])
     }
 }
