@@ -28,13 +28,15 @@ struct ContentView: View {
             Divider()
             content
         }
-        .frame(width: 778, height: 518)
-        .background(.ultraThinMaterial)
-        .clipShape(RoundedRectangle(cornerRadius: 12, style: .continuous))
-        .overlay(
-            RoundedRectangle(cornerRadius: 12, style: .continuous)
-                .strokeBorder(.separator, lineWidth: 0.5)
-        )
+        // 1. Force the VStack to fill the entire available space
+        .frame(maxWidth: .infinity, maxHeight: .infinity)
+
+        // 2. Apply the glass effect/background so it fills that infinite frame
+        .glassEffect(.regular.interactive(), in: RoundedRectangle(cornerRadius: 12))
+
+        // 3. Finally, ignore the safe area to push the background into the title bar
+        .ignoresSafeArea(.all)
+
         .onAppear {
             isSearchFocused = true
             searchText = ""
@@ -189,6 +191,7 @@ struct ContentView: View {
                     isSelected: item.stableId == selection,
                     searchQuery: searchText
                 )
+                .equatable()
                 .listRowInsets(EdgeInsets())
                 .listRowSeparator(.hidden)
                 .listRowBackground(Color.clear)
@@ -218,7 +221,7 @@ struct ContentView: View {
         VStack(spacing: 0) {
             if let item = selectedItem {
                 // Content
-                ScrollView {
+                ScrollView(.vertical, showsIndicators: true) {
                     Text(highlightedPreview(for: item))
                         .font(.custom(FontManager.mono, size: 15))
                         .textSelection(.enabled)
@@ -240,11 +243,11 @@ struct ContentView: View {
                     Spacer()
                     Text("⏎ copy")
                 }
-                .font(.custom(FontManager.sansSerif, size: 13))
+                .font(.system(size: 13))
                 .foregroundStyle(.secondary)
                 .padding(.horizontal, 17)
                 .padding(.vertical, 11)
-                .background(.black.opacity(0.03))
+                .glassEffect(.regular, in: Rectangle())
             } else if items.isEmpty {
                 emptyStateView
             } else {
@@ -279,30 +282,64 @@ struct ContentView: View {
     }
 
     private func highlightedPreview(for item: ClipboardItem) -> AttributedString {
-        item.contentPreview.fuzzyHighlighted(query: searchText)
+        // If the content is massive, don't try to highlight the whole thing on the main thread.
+        // Cap it at ~2000 chars for the "fuzzy match" view.
+        if item.contentPreview.count > 2000 {
+            let prefix = String(item.contentPreview.prefix(2000))
+            var attributed = prefix.fuzzyHighlighted(query: searchText)
+
+            // Append a plain text suffix so the user knows there is more
+            attributed += AttributedString("\n\n... (text truncated for preview)")
+            return attributed
+        }
+
+        return item.contentPreview.fuzzyHighlighted(query: searchText)
     }
 }
 
 // MARK: - Item Row
 
-struct ItemRow: View {
+struct ItemRow: View, Equatable {
     let item: ClipboardItem
     let isSelected: Bool
     let searchQuery: String
 
-    // Fixed height for exactly 2 lines of text at font size 15
-    private let rowHeight: CGFloat = 52
+    // Fixed height for exactly 1 line of text at font size 15
+    private let rowHeight: CGFloat = 32
+
+    // Optimization: Cache the truncated text so we don't process massive strings
+    private var truncatedText: String {
+        String(item.displayText.prefix(300))
+    }
+
+    // Define exactly what constitutes a "change" for SwiftUI diffing
+    nonisolated static func == (lhs: ItemRow, rhs: ItemRow) -> Bool {
+        return lhs.isSelected == rhs.isSelected &&
+               lhs.searchQuery == rhs.searchQuery &&
+               lhs.item.stableId == rhs.item.stableId
+    }
 
     var body: some View {
-        Text(item.displayText.fuzzyHighlighted(query: searchQuery))
-            .lineLimit(2)
+        Text(truncatedText.fuzzyHighlighted(query: searchQuery))
+            .lineLimit(1)
             .font(.custom(FontManager.sansSerif, size: 15))
             .frame(maxWidth: .infinity, minHeight: rowHeight, maxHeight: rowHeight, alignment: .leading)
             .padding(.horizontal, 13)
-            .background(isSelected ? Color.accentColor.opacity(0.2) : .clear)
+            .padding(.vertical, 4)
+            .foregroundStyle(isSelected ? .white : .primary)
+            .background {
+                if isSelected {
+                    Color.accentColor
+                        .opacity(0.85)
+                        .saturation(0.9)
+                } else {
+                    Color.clear
+                }
+            }
+            .clipShape(RoundedRectangle(cornerRadius: 10, style: .continuous))
             .contentShape(Rectangle())
             .accessibilityElement(children: .combine)
-            .accessibilityLabel(item.displayText)
+            .accessibilityLabel(truncatedText)
             .accessibilityHint("Double tap to paste")
             .accessibilityAddTraits(.isButton)
             .accessibilityAddTraits(isSelected ? .isSelected : [])
