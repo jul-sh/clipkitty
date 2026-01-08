@@ -182,7 +182,7 @@ struct ContentView: View {
 
     private var itemList: some View {
         ScrollViewReader { proxy in
-            List(items, id: \.stableId, selection: $selection) { item in
+            List(items, id: \.stableId) { item in
                 let index = items.firstIndex { $0.stableId == item.stableId } ?? 0
                 ItemRow(
                     item: item,
@@ -192,6 +192,10 @@ struct ContentView: View {
                 .listRowInsets(EdgeInsets())
                 .listRowSeparator(.hidden)
                 .listRowBackground(Color.clear)
+                .onTapGesture {
+                    selection = item.stableId
+                    confirmSelection()
+                }
                 .onAppear {
                     if index == items.count - 10 {
                         store.loadMoreItems()
@@ -297,5 +301,10 @@ struct ItemRow: View {
             .padding(.horizontal, 13)
             .background(isSelected ? Color.accentColor.opacity(0.2) : .clear)
             .contentShape(Rectangle())
+            .accessibilityElement(children: .combine)
+            .accessibilityLabel(item.displayText)
+            .accessibilityHint("Double tap to paste")
+            .accessibilityAddTraits(.isButton)
+            .accessibilityAddTraits(isSelected ? .isSelected : [])
     }
 }
