@@ -1,5 +1,6 @@
 import AppKit
 import SwiftUI
+import ClipKittyCore
 
 @MainActor
 final class FloatingPanelController: NSObject, NSWindowDelegate {

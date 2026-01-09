@@ -2,12 +2,12 @@ import Foundation
 import GRDB
 
 /// Content type for clipboard items
-enum ContentType: String, Codable, DatabaseValueConvertible {
+public enum ContentType: String, Codable, DatabaseValueConvertible, Sendable {
     case text
     case link
     case image
 
-    var icon: String {
+    public var icon: String {
         switch self {
         case .text: return "doc.text"
         case .link: return "link"
@@ -16,34 +16,34 @@ enum ContentType: String, Codable, DatabaseValueConvertible {
     }
 }
 
-struct ClipboardItem: Identifiable, Sendable, Codable, Equatable, FetchableRecord, PersistableRecord {
-    static let databaseTableName = "items"
+public struct ClipboardItem: Identifiable, Sendable, Codable, Equatable, FetchableRecord, PersistableRecord {
+    public static let databaseTableName = "items"
 
-    var id: Int64?
-    let content: String
-    let contentHash: String
-    let timestamp: Date
-    let sourceApp: String?
-    let contentType: ContentType
-    let imageData: Data?
+    public var id: Int64?
+    public let content: String
+    public let contentHash: String
+    public let timestamp: Date
+    public let sourceApp: String?
+    public let contentType: ContentType
+    public let imageData: Data?
 
     // Link metadata (for URLs)
-    var linkTitle: String?
-    var linkImageData: Data?
+    public var linkTitle: String?
+    public var linkImageData: Data?
 
     // Stable identifier for SwiftUI - uses contentHash as fallback when id is nil
-    var stableId: String {
+    public var stableId: String {
         if let id = id {
             return String(id)
         }
         return contentHash
     }
 
-    init(content: String, sourceApp: String? = nil, contentType: ContentType? = nil, imageData: Data? = nil, linkTitle: String? = nil, linkImageData: Data? = nil) {
+    public init(content: String, sourceApp: String? = nil, contentType: ContentType? = nil, imageData: Data? = nil, linkTitle: String? = nil, linkImageData: Data? = nil, timestamp: Date = Date()) {
         self.id = nil
         self.content = content
         self.contentHash = ClipboardItem.hash(content)
-        self.timestamp = Date()
+        self.timestamp = timestamp
         self.sourceApp = sourceApp
         self.imageData = imageData
         self.linkTitle = linkTitle
@@ -61,7 +61,7 @@ struct ClipboardItem: Identifiable, Sendable, Codable, Equatable, FetchableRecor
         }
     }
 
-    static func isURL(_ string: String) -> Bool {
+    public static func isURL(_ string: String) -> Bool {
         let trimmed = string.trimmingCharacters(in: .whitespacesAndNewlines)
 
         // Quick validation: URLs shouldn't be too long or contain newlines
@@ -99,7 +99,7 @@ struct ClipboardItem: Identifiable, Sendable, Codable, Equatable, FetchableRecor
         return false
     }
 
-    var displayText: String {
+    public var displayText: String {
         let trimmed = content.trimmingCharacters(in: .whitespacesAndNewlines)
         let singleLine = trimmed
             .replacingOccurrences(of: "\n", with: " ")
@@ -112,20 +112,20 @@ struct ClipboardItem: Identifiable, Sendable, Codable, Equatable, FetchableRecor
         return singleLine
     }
 
-    var timeAgo: String {
+    public var timeAgo: String {
         let formatter = RelativeDateTimeFormatter()
         formatter.unitsStyle = .abbreviated
         return formatter.localizedString(for: timestamp, relativeTo: Date())
     }
 
-    var contentPreview: String {
+    public var contentPreview: String {
         if content.count > 10000 {
             return String(content.prefix(10000)) + "\n\n[Content truncated - \(content.count) characters total]"
         }
         return content
     }
 
-    mutating func didInsert(_ inserted: InsertionSuccess) {
+    public mutating func didInsert(_ inserted: InsertionSuccess) {
         id = inserted.rowID
     }
 
@@ -136,6 +136,6 @@ struct ClipboardItem: Identifiable, Sendable, Codable, Equatable, FetchableRecor
     }
 }
 
-struct ClipboardItemFTS: TableRecord {
-    static let databaseTableName = "items_fts"
+public struct ClipboardItemFTS: TableRecord {
+    public static let databaseTableName = "items_fts"
 }
