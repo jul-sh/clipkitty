@@ -74,8 +74,15 @@ public enum ClipboardContent: Sendable, Equatable {
         switch databaseType {
         case "link":
             let metadataState: LinkMetadataState
-            if linkTitle != nil || linkImageData != nil {
-                metadataState = .loaded(LinkMetadata(title: linkTitle, imageData: linkImageData))
+            // nil = pending (never fetched)
+            // empty string with no image = failed (fetched but no data)
+            // non-empty or has image = loaded
+            if let title = linkTitle {
+                if title.isEmpty && linkImageData == nil {
+                    metadataState = .failed
+                } else {
+                    metadataState = .loaded(LinkMetadata(title: title.isEmpty ? nil : title, imageData: linkImageData))
+                }
             } else {
                 metadataState = .pending
             }
