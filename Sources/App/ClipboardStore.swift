@@ -350,20 +350,24 @@ final class ClipboardStore {
     }
 
     private func fetchAndUpdateLinkMetadata(for itemId: Int64, url: String) async {
-        guard let metadata = await LinkMetadataFetcher.shared.fetch(url: url) else { return }
         guard let dbQueue else { return }
 
+        let metadata = await LinkMetadataFetcher.shared.fetch(url: url)
+
         // Store in local vars for nonisolated access
-        let title = metadata.title
-        let imageData = metadata.imageData
+        // If metadata is nil, we still need to update DB to mark as "failed" (empty title/image)
+        let title = metadata?.title
+        let imageData = metadata?.imageData
 
         // Database write needs to escape MainActor
         await Task.detached { [dbQueue] in
             do {
                 try dbQueue.write { db in
+                    // Use empty string for title to distinguish "failed" from "pending" (NULL)
+                    // NULL = pending, empty string = failed/no metadata, non-empty = loaded
                     try db.execute(
                         sql: "UPDATE items SET linkTitle = ?, linkImageData = ? WHERE id = ?",
-                        arguments: [title, imageData, itemId]
+                        arguments: [title ?? "", imageData, itemId]
                     )
                 }
             } catch {
