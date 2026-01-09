@@ -106,7 +106,7 @@ struct ContentView: View {
                 .foregroundStyle(.secondary)
                 .font(.custom(FontManager.sansSerif, size: 17).weight(.medium))
 
-            TextField("Search clipboard...", text: $searchText)
+            TextField("Search clipboard history", text: $searchText)
                 .textFieldStyle(.plain)
                 .font(.custom(FontManager.sansSerif, size: 17))
                 .focused($isSearchFocused)
