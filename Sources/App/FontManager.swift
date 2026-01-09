@@ -7,7 +7,7 @@ enum FontManager {
 
     static func registerFonts() {
         guard let resourceURL = Bundle.module.resourceURL else {
-            print("Could not find bundle resource URL")
+            logError("Could not find bundle resource URL")
             return
         }
 
@@ -23,12 +23,12 @@ enum FontManager {
                 var errorRef: Unmanaged<CFError>?
                 if !CTFontManagerRegisterFontsForURL(fontURL as CFURL, .process, &errorRef) {
                     if let error = errorRef?.takeRetainedValue() {
-                        print("Failed to register font \(fontURL.lastPathComponent): \(error)")
+                        logError("Failed to register font \(fontURL.lastPathComponent): \(error)")
                     }
                 }
             }
         } catch {
-            print("Failed to enumerate fonts directory: \(error)")
+            logError("Failed to enumerate fonts directory: \(error)")
         }
     }
 }

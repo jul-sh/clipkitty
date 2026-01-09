@@ -410,7 +410,7 @@ final class ClipboardStore {
                 }
             }
         } catch {
-            print("Clipboard save failed: \(error)")
+            logError("Clipboard save failed: \(error)")
             return nil
         }
     }
@@ -437,7 +437,7 @@ final class ClipboardStore {
                     )
                 }
             } catch {
-                print("Failed to update link metadata: \(error)")
+                logError("Failed to update link metadata: \(error)")
             }
         }.value
 
@@ -482,7 +482,7 @@ final class ClipboardStore {
                 try item.insert(db)
             }
         } catch {
-            print("Image save failed: \(error)")
+            logError("Image save failed: \(error)")
         }
     }
 
@@ -509,7 +509,7 @@ final class ClipboardStore {
                     try db.execute(sql: "UPDATE items SET timestamp = ? WHERE id = ?", arguments: [Date(), id])
                 }
             } catch {
-                print("Failed to update timestamp: \(error)")
+                logError("Failed to update timestamp: \(error)")
             }
         }
 
@@ -545,7 +545,7 @@ final class ClipboardStore {
                     try db.execute(sql: "DELETE FROM items WHERE id = ?", arguments: [id])
                 }
             } catch {
-                print("Failed to delete: \(error)")
+                logError("Failed to delete: \(error)")
             }
         }
     }
@@ -562,7 +562,7 @@ final class ClipboardStore {
                     try db.execute(sql: "INSERT INTO items_fts(items_fts) VALUES('rebuild')")
                 }
             } catch {
-                print("Failed to clear: \(error)")
+                logError("Failed to clear: \(error)")
             }
         }
     }
@@ -610,7 +610,7 @@ final class ClipboardStore {
 
             try dbQueue.vacuum()
         } catch {
-            print("Pruning failed: \(error)")
+            logError("Pruning failed: \(error)")
         }
     }
 }

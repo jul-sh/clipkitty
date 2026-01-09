@@ -69,7 +69,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate {
                 try SMAppService.mainApp.register()
             }
         } catch {
-            print("Failed to enable launch at login: \(error)")
+            logError("Failed to enable launch at login: \(error)")
         }
     }
 
