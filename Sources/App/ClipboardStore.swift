@@ -4,19 +4,30 @@ import Observation
 import GRDB
 import ClipKittyCore
 
+/// Search result state - makes loading/results states explicit
+enum SearchResultState: Equatable {
+    case loading(previousResults: [ClipboardItem])
+    case results([ClipboardItem])
+}
+
 /// Combined state for data display
 enum DisplayState: Equatable {
     case loading
     case loaded(items: [ClipboardItem], hasMore: Bool)
-    case searching(query: String, results: [ClipboardItem]?, isLoading: Bool)
+    case searching(query: String, state: SearchResultState)
     case error(String)
 
     var items: [ClipboardItem] {
         switch self {
         case .loaded(let items, _):
             return items
-        case .searching(_, let results, _):
-            return results ?? []
+        case .searching(_, let searchState):
+            switch searchState {
+            case .loading(let previous):
+                return previous
+            case .results(let results):
+                return results
+            }
         default:
             return []
         }
@@ -28,12 +39,12 @@ enum DisplayState: Equatable {
     }
 
     var isSearchLoading: Bool {
-        if case .searching(_, _, let loading) = self { return loading }
+        if case .searching(_, .loading) = self { return true }
         return false
     }
 
     var searchQuery: String {
-        if case .searching(let query, _, _) = self { return query }
+        if case .searching(let query, _) = self { return query }
         return ""
     }
 }
@@ -167,14 +178,9 @@ final class ClipboardStore {
         }
 
         // Preserve previous results while loading new ones
-        let previousResults: [ClipboardItem]?
-        if case .searching(_, let results, _) = state {
-            previousResults = results
-        } else {
-            previousResults = state.items.isEmpty ? nil : state.items
-        }
+        let previousResults = state.items
 
-        state = .searching(query: query, results: previousResults, isLoading: true)
+        state = .searching(query: query, state: .loading(previousResults: previousResults))
 
         searchTask = Task {
             try? await Task.sleep(for: .milliseconds(50))
@@ -195,9 +201,9 @@ final class ClipboardStore {
 
     /// Fetch link metadata on-demand if not already loaded
     func fetchLinkMetadataIfNeeded(for item: ClipboardItem) {
-        // Only fetch for links that don't have metadata yet
-        guard case .link(let url, let metadata) = item.content,
-              metadata == nil || metadata?.isEmpty == true,
+        // Only fetch for links with pending metadata
+        guard case .link(let url, let metadataState) = item.content,
+              metadataState.isPending,
               let id = item.id else { return }
 
         Task {
@@ -292,9 +298,9 @@ final class ClipboardStore {
         }.value
 
         // Only update if still searching for this query
-        guard case .searching(let currentQuery, _, _) = state, currentQuery == query else { return }
+        guard case .searching(let currentQuery, _) = state, currentQuery == query else { return }
 
-        state = .searching(query: query, results: searchResults, isLoading: false)
+        state = .searching(query: query, state: .results(searchResults))
     }
 
     // MARK: - Clipboard Monitoring
@@ -469,8 +475,15 @@ final class ClipboardStore {
             switch state {
             case .loaded(let items, let hasMore):
                 state = .loaded(items: items.filter { $0.id != id }, hasMore: hasMore)
-            case .searching(let query, let results, let isLoading):
-                state = .searching(query: query, results: results?.filter { $0.id != id }, isLoading: isLoading)
+            case .searching(let query, let searchState):
+                let newState: SearchResultState
+                switch searchState {
+                case .loading(let previous):
+                    newState = .loading(previousResults: previous.filter { $0.id != id })
+                case .results(let results):
+                    newState = .results(results.filter { $0.id != id })
+                }
+                state = .searching(query: query, state: newState)
             default:
                 break
             }

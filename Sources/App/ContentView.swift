@@ -338,11 +338,15 @@ struct ContentView: View {
 
     @ViewBuilder
     private func linkPreview(for item: ClipboardItem) -> some View {
-        let metadata = item.linkMetadata
+        // Extract metadata state for type-safe handling
+        let metadataState: LinkMetadataState = {
+            if case .link(_, let state) = item.content { return state }
+            return .pending
+        }()
 
         VStack(spacing: 16) {
             // OG Image if available
-            if let imageData = metadata?.imageData,
+            if let imageData = metadataState.metadata?.imageData,
                let nsImage = NSImage(data: imageData) {
                 Image(nsImage: nsImage)
                     .resizable()
@@ -350,7 +354,7 @@ struct ContentView: View {
                     .frame(maxWidth: .infinity)
                     .clipShape(RoundedRectangle(cornerRadius: 8))
             } else {
-                // Placeholder for loading/missing image
+                // Placeholder based on metadata state
                 RoundedRectangle(cornerRadius: 8)
                     .fill(Color.secondary.opacity(0.1))
                     .frame(height: 120)
@@ -359,10 +363,19 @@ struct ContentView: View {
                             Image(systemName: "link")
                                 .font(.system(size: 32))
                                 .foregroundStyle(.secondary)
-                            if metadata?.title == nil {
+                            switch metadataState {
+                            case .pending:
                                 Text("Loading preview...")
                                     .font(.caption)
                                     .foregroundStyle(.tertiary)
+                            case .failed:
+                                Text("Preview unavailable")
+                                    .font(.caption)
+                                    .foregroundStyle(.tertiary)
+                            case .loaded(let metadata) where metadata.imageData == nil:
+                                EmptyView()
+                            default:
+                                EmptyView()
                             }
                         }
                     }
@@ -370,7 +383,7 @@ struct ContentView: View {
 
             // Title and URL
             VStack(alignment: .leading, spacing: 8) {
-                if let title = metadata?.title, !title.isEmpty {
+                if let title = metadataState.metadata?.title, !title.isEmpty {
                     Text(title)
                         .font(.system(size: 18, weight: .semibold))
                         .foregroundStyle(.primary)

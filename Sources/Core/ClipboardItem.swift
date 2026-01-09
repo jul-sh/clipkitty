@@ -6,7 +6,7 @@ import GRDB
 /// Type-safe content representation that ensures only valid states are possible
 public enum ClipboardContent: Sendable, Equatable {
     case text(String)
-    case link(url: String, metadata: LinkMetadata?)
+    case link(url: String, metadataState: LinkMetadataState)
     case image(data: Data, description: String)
 
     /// The searchable/displayable text content
@@ -28,14 +28,71 @@ public enum ClipboardContent: Sendable, Equatable {
         case .image: return "photo"
         }
     }
+
+    /// Database storage type string
+    var databaseType: String {
+        switch self {
+        case .text: return "text"
+        case .link: return "link"
+        case .image: return "image"
+        }
+    }
+
+    /// Reconstruct from database row
+    static func from(
+        databaseType: String,
+        content: String,
+        imageData: Data?,
+        linkTitle: String?,
+        linkImageData: Data?
+    ) -> ClipboardContent {
+        switch databaseType {
+        case "link":
+            let metadataState: LinkMetadataState
+            if linkTitle != nil || linkImageData != nil {
+                metadataState = .loaded(LinkMetadata(title: linkTitle, imageData: linkImageData))
+            } else {
+                metadataState = .pending
+            }
+            return .link(url: content, metadataState: metadataState)
+        case "image":
+            return .image(data: imageData ?? Data(), description: content)
+        default:
+            return .text(content)
+        }
+    }
 }
 
-/// Metadata for link content
-public struct LinkMetadata: Sendable, Equatable, Codable {
-    public var title: String?
-    public var imageData: Data?
+/// Metadata fetch state for links - distinguishes between not-yet-fetched, loading, loaded, and failed
+public enum LinkMetadataState: Sendable, Equatable {
+    case pending
+    case loaded(LinkMetadata)
+    case failed
 
-    public init(title: String? = nil, imageData: Data? = nil) {
+    public var metadata: LinkMetadata? {
+        if case .loaded(let metadata) = self {
+            return metadata
+        }
+        return nil
+    }
+
+    public var isLoaded: Bool {
+        if case .loaded = self { return true }
+        return false
+    }
+
+    public var isPending: Bool {
+        if case .pending = self { return true }
+        return false
+    }
+}
+
+/// Metadata content for links
+public struct LinkMetadata: Sendable, Equatable, Codable {
+    public let title: String?
+    public let imageData: Data?
+
+    public init(title: String?, imageData: Data?) {
         self.title = title
         self.imageData = imageData
     }
@@ -43,15 +100,6 @@ public struct LinkMetadata: Sendable, Equatable, Codable {
     public var isEmpty: Bool {
         title == nil && imageData == nil
     }
-}
-
-// MARK: - Database Content Type (for storage)
-
-/// Raw content type stored in database
-public enum ContentType: String, Codable, DatabaseValueConvertible, Sendable {
-    case text
-    case link
-    case image
 }
 
 // MARK: - Clipboard Item
@@ -73,10 +121,10 @@ public struct ClipboardItem: Identifiable, Sendable, Equatable, FetchableRecord,
     /// Icon for the content type
     public var icon: String { content.icon }
 
-    /// Link metadata (only available for links)
+    /// Link metadata (only available for links with loaded metadata)
     public var linkMetadata: LinkMetadata? {
-        if case .link(_, let metadata) = content {
-            return metadata
+        if case .link(_, let metadataState) = content {
+            return metadataState.metadata
         }
         return nil
     }
@@ -119,19 +167,19 @@ public struct ClipboardItem: Identifiable, Sendable, Equatable, FetchableRecord,
         self.sourceApp = sourceApp
 
         if Self.isURL(text) {
-            self.content = .link(url: text, metadata: nil)
+            self.content = .link(url: text, metadataState: .pending)
         } else {
             self.content = .text(text)
         }
     }
 
     /// Create an explicit link item
-    public init(url: String, metadata: LinkMetadata? = nil, sourceApp: String? = nil, timestamp: Date = Date()) {
+    public init(url: String, metadataState: LinkMetadataState = .pending, sourceApp: String? = nil, timestamp: Date = Date()) {
         self.id = nil
         self.contentHash = Self.hash(url)
         self.timestamp = timestamp
         self.sourceApp = sourceApp
-        self.content = .link(url: url, metadata: metadata)
+        self.content = .link(url: url, metadataState: metadataState)
     }
 
     /// Create an image item
@@ -236,25 +284,23 @@ public struct ClipboardItem: Identifiable, Sendable, Equatable, FetchableRecord,
         container["contentHash"] = contentHash
         container["timestamp"] = timestamp
         container["sourceApp"] = sourceApp
+        container["contentType"] = content.databaseType
 
         switch content {
         case .text(let text):
             container["content"] = text
-            container["contentType"] = ContentType.text.rawValue
             container["imageData"] = nil as Data?
             container["linkTitle"] = nil as String?
             container["linkImageData"] = nil as Data?
 
-        case .link(let url, let metadata):
+        case .link(let url, let metadataState):
             container["content"] = url
-            container["contentType"] = ContentType.link.rawValue
             container["imageData"] = nil as Data?
-            container["linkTitle"] = metadata?.title
-            container["linkImageData"] = metadata?.imageData
+            container["linkTitle"] = metadataState.metadata?.title
+            container["linkImageData"] = metadataState.metadata?.imageData
 
         case .image(let data, let description):
             container["content"] = description
-            container["contentType"] = ContentType.image.rawValue
             container["imageData"] = data
             container["linkTitle"] = nil as String?
             container["linkImageData"] = nil as Data?
@@ -273,26 +319,13 @@ public struct ClipboardItem: Identifiable, Sendable, Equatable, FetchableRecord,
         timestamp = row["timestamp"]
         sourceApp = row["sourceApp"]
 
-        let rawContent: String = row["content"]
-        let contentTypeRaw: String = row["contentType"] ?? "text"
-        let contentType = ContentType(rawValue: contentTypeRaw) ?? .text
-
-        switch contentType {
-        case .text:
-            content = .text(rawContent)
-
-        case .link:
-            let title: String? = row["linkTitle"]
-            let imageData: Data? = row["linkImageData"]
-            let metadata = (title != nil || imageData != nil)
-                ? LinkMetadata(title: title, imageData: imageData)
-                : nil
-            content = .link(url: rawContent, metadata: metadata)
-
-        case .image:
-            let imageData: Data = row["imageData"] ?? Data()
-            content = .image(data: imageData, description: rawContent)
-        }
+        content = ClipboardContent.from(
+            databaseType: row["contentType"] ?? "text",
+            content: row["content"],
+            imageData: row["imageData"],
+            linkTitle: row["linkTitle"],
+            linkImageData: row["linkImageData"]
+        )
     }
 }
 
@@ -300,11 +333,11 @@ public struct ClipboardItem: Identifiable, Sendable, Equatable, FetchableRecord,
 
 extension ClipboardItem {
     /// Returns a copy with updated link metadata (only for link items)
-    public func withLinkMetadata(_ metadata: LinkMetadata) -> ClipboardItem {
+    public func withLinkMetadataState(_ metadataState: LinkMetadataState) -> ClipboardItem {
         guard case .link(let url, _) = content else { return self }
         return ClipboardItem(
             id: id,
-            content: .link(url: url, metadata: metadata),
+            content: .link(url: url, metadataState: metadataState),
             contentHash: contentHash,
             timestamp: timestamp,
             sourceApp: sourceApp
