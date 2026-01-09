@@ -9,6 +9,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate {
     private var statusItem: NSStatusItem?
     private var settingsWindow: NSWindow?
     private var showHistoryMenuItem: NSMenuItem?
+    private var statusMenu: NSMenu?
 
     func applicationDidFinishLaunching(_ notification: Notification) {
         FontManager.registerFonts()
@@ -34,6 +35,9 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate {
         statusItem = NSStatusBar.system.statusItem(withLength: NSStatusItem.squareLength)
         if let button = statusItem?.button {
             button.image = NSImage(systemSymbolName: "clipboard", accessibilityDescription: "ClipKitty")
+            button.target = self
+            button.action = #selector(handleStatusItemClick)
+            button.sendAction(on: [.leftMouseUp, .rightMouseUp])
         }
 
         let menu = NSMenu()
@@ -46,7 +50,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate {
         menu.addItem(NSMenuItem.separator())
         menu.addItem(NSMenuItem(title: "Quit", action: #selector(quit), keyEquivalent: "q"))
 
-        statusItem?.menu = menu
+        statusMenu = menu
     }
 
     private func updateMenuHotKey() {
@@ -57,6 +61,21 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate {
 
     @objc private func showPanel() {
         panelController.show()
+    }
+
+    @objc private func handleStatusItemClick() {
+        guard let event = NSApp.currentEvent else {
+            panelController.show()
+            return
+        }
+
+        if event.type == .rightMouseUp || event.type == .rightMouseDown {
+            if let menu = statusMenu, let button = statusItem?.button {
+                NSMenu.popUpContextMenu(menu, with: event, for: button)
+            }
+        } else {
+            panelController.show()
+        }
     }
 
 
