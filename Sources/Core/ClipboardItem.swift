@@ -7,6 +7,11 @@ import GRDB
 public enum ClipboardContent: Sendable, Equatable {
     case text(String)
     case link(url: String, metadataState: LinkMetadataState)
+    case email(address: String)
+    case phone(number: String)
+    case address(String)
+    case date(String)
+    case transit(String)
     case image(data: Data, description: String)
 
     /// The searchable/displayable text content
@@ -16,6 +21,16 @@ public enum ClipboardContent: Sendable, Equatable {
             return text
         case .link(let url, _):
             return url
+        case .email(let address):
+            return address
+        case .phone(let number):
+            return number
+        case .address(let address):
+            return address
+        case .date(let dateString):
+            return dateString
+        case .transit(let transitInfo):
+            return transitInfo
         case .image(_, let description):
             return description
         }
@@ -25,6 +40,11 @@ public enum ClipboardContent: Sendable, Equatable {
         switch self {
         case .text: return "doc.text"
         case .link: return "link"
+        case .email: return "envelope"
+        case .phone: return "phone"
+        case .address: return "map"
+        case .date: return "calendar"
+        case .transit: return "tram"
         case .image: return "photo"
         }
     }
@@ -34,6 +54,11 @@ public enum ClipboardContent: Sendable, Equatable {
         switch self {
         case .text: return "text"
         case .link: return "link"
+        case .email: return "email"
+        case .phone: return "phone"
+        case .address: return "address"
+        case .date: return "date"
+        case .transit: return "transit"
         case .image: return "image"
         }
     }
@@ -57,6 +82,16 @@ public enum ClipboardContent: Sendable, Equatable {
             return .link(url: content, metadataState: metadataState)
         case "image":
             return .image(data: imageData ?? Data(), description: content)
+        case "email":
+            return .email(address: content)
+        case "phone":
+            return .phone(number: content)
+        case "address":
+            return .address(content)
+        case "date":
+            return .date(content)
+        case "transit":
+            return .transit(content)
         default:
             return .text(content)
         }
@@ -119,18 +154,13 @@ public struct ClipboardItem: Identifiable, Sendable, Equatable, FetchableRecord,
 
     // MARK: - Initialization
 
-    /// Create a text item (auto-detects links)
+    /// Create a text item (auto-detects common structured content)
     public init(text: String, sourceApp: String? = nil, timestamp: Date = Date()) {
         self.id = nil
         self.contentHash = Self.hash(text)
         self.timestamp = timestamp
         self.sourceApp = sourceApp
-
-        if Self.isURL(text) {
-            self.content = .link(url: text, metadataState: .pending)
-        } else {
-            self.content = .text(text)
-        }
+        self.content = Self.detectContent(from: text)
     }
 
     /// Create an explicit link item
@@ -229,6 +259,59 @@ public struct ClipboardItem: Identifiable, Sendable, Equatable, FetchableRecord,
         return false
     }
 
+    private static func detectContent(from text: String) -> ClipboardContent {
+        let trimmed = text.trimmingCharacters(in: .whitespacesAndNewlines)
+        let range = NSRange(location: 0, length: trimmed.utf16.count)
+
+        if let detector = try? NSDataDetector(
+            types: NSTextCheckingResult.CheckingType.link.rawValue |
+                NSTextCheckingResult.CheckingType.phoneNumber.rawValue |
+                NSTextCheckingResult.CheckingType.date.rawValue |
+                NSTextCheckingResult.CheckingType.address.rawValue |
+                NSTextCheckingResult.CheckingType.transitInformation.rawValue
+        ),
+           let match = detector.firstMatch(in: trimmed, options: [], range: range),
+           match.range.length == range.length {
+            if match.resultType == .link, let url = match.url {
+                if url.scheme == "mailto" {
+                    let address: String = {
+                        if !url.path.isEmpty {
+                            return url.path
+                        }
+                        let raw = url.absoluteString
+                        if raw.lowercased().hasPrefix("mailto:") {
+                            let withoutScheme = String(raw.dropFirst("mailto:".count))
+                            return withoutScheme.split(separator: "?", maxSplits: 1).first.map(String.init) ?? trimmed
+                        }
+                        return trimmed
+                    }()
+                    return .email(address: address)
+                }
+                if isURL(trimmed) {
+                    return .link(url: trimmed, metadataState: .pending)
+                }
+            }
+
+            if match.resultType == .phoneNumber, let number = match.phoneNumber {
+                return .phone(number: number)
+            }
+
+            if match.resultType == .date, match.date != nil {
+                return .date(trimmed)
+            }
+
+            if match.resultType == .address, match.addressComponents != nil {
+                return .address(trimmed)
+            }
+
+            if match.resultType == .transitInformation {
+                return .transit(trimmed)
+            }
+        }
+
+        return .text(text)
+    }
+
     // MARK: - Hashing
 
     private static func hash(_ string: String) -> String {
@@ -258,6 +341,36 @@ public struct ClipboardItem: Identifiable, Sendable, Equatable, FetchableRecord,
             container["imageData"] = nil as Data?
             container["linkTitle"] = metadataState.metadata?.title
             container["linkImageData"] = metadataState.metadata?.imageData
+
+        case .email(let address):
+            container["content"] = address
+            container["imageData"] = nil as Data?
+            container["linkTitle"] = nil as String?
+            container["linkImageData"] = nil as Data?
+
+        case .phone(let number):
+            container["content"] = number
+            container["imageData"] = nil as Data?
+            container["linkTitle"] = nil as String?
+            container["linkImageData"] = nil as Data?
+
+        case .address(let address):
+            container["content"] = address
+            container["imageData"] = nil as Data?
+            container["linkTitle"] = nil as String?
+            container["linkImageData"] = nil as Data?
+
+        case .date(let dateString):
+            container["content"] = dateString
+            container["imageData"] = nil as Data?
+            container["linkTitle"] = nil as String?
+            container["linkImageData"] = nil as Data?
+
+        case .transit(let transitInfo):
+            container["content"] = transitInfo
+            container["imageData"] = nil as Data?
+            container["linkTitle"] = nil as String?
+            container["linkImageData"] = nil as Data?
 
         case .image(let data, let description):
             container["content"] = description
