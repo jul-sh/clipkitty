@@ -105,6 +105,9 @@ struct SettingsView: View {
         }
         .formStyle(.grouped)
         .frame(width: 400, height: 300)
+        .onAppear {
+            store.refreshDatabaseSize()
+        }
     }
 
     private func formatBytes(_ bytes: Int64) -> String {
