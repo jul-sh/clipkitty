@@ -20,8 +20,7 @@ jobs:
 
       - name: Build App
         run: |
-          chmod +x build-app.sh
-          ./build-app.sh
+          make
 
       - name: Populate Database
         run: swift run PopulateTestData
