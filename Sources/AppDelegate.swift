@@ -37,7 +37,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate {
     private func setupMenuBar() {
         statusItem = NSStatusBar.system.statusItem(withLength: NSStatusItem.squareLength)
         if let button = statusItem?.button {
-            button.image = NSImage(systemSymbolName: "clipboard", accessibilityDescription: "ClipKitty")
+            button.image = makeStatusItemImage() ?? NSImage(systemSymbolName: "clipboard", accessibilityDescription: "ClipKitty")
             button.target = self
             button.action = #selector(handleStatusItemClick)
             button.sendAction(on: [.leftMouseUp, .rightMouseUp])
@@ -70,6 +70,16 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate {
         let hotKey = AppSettings.shared.hotKey
         showHistoryMenuItem?.keyEquivalent = hotKey.keyEquivalent
         showHistoryMenuItem?.keyEquivalentModifierMask = hotKey.modifierMask
+    }
+
+    private func makeStatusItemImage() -> NSImage? {
+        guard let url = Bundle.module.url(forResource: "menu-bar", withExtension: "svg"),
+              let image = NSImage(contentsOf: url) else {
+            return nil
+        }
+        image.isTemplate = true
+        image.size = NSSize(width: 18, height: 18)
+        return image
     }
 
     @objc private func showPanel() {
