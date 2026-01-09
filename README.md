@@ -1,6 +1,6 @@
 # ClipKitty
 
-![ClipKitty icon](AppIcon.icon/Assets/Image%204.png)
+<img src="AppIcon.icon/Assets/Image%204.png" alt="ClipKitty icon" width="30">
 
 A fast, native clipboard manager for macOS.
 
