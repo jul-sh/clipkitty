@@ -19,3 +19,7 @@ open ClipKitty.app
 ```
 
 Requires Swift 6.1+ and macOS 15+.
+
+## Releases
+
+Every commit is released automatically; download the latest build from GitHub Releases.
