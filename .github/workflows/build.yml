@@ -3,8 +3,6 @@ name: Build and Release
 on:
   push:
     branches: [main]
-    tags:
-      - 'v*'
   pull_request:
     branches: [main]
 
@@ -28,19 +26,21 @@ jobs:
 
       - name: Create ZIP
         run: |
-          ditto -c -k --sequesterRsrc --keepParent PaperTrail.app PaperTrail.app.zip
+          ditto -c -k --sequesterRsrc --keepParent ClipKitty.app ClipKitty.app.zip
 
       - name: Upload Artifact
         uses: actions/upload-artifact@v4
         with:
-          name: PaperTrail
-          path: PaperTrail.app.zip
+          name: ClipKitty
+          path: ClipKitty.app.zip
 
       - name: Create Release
-        if: startsWith(github.ref, 'refs/tags/v')
+        if: github.event_name == 'push' && github.ref == 'refs/heads/main'
         uses: softprops/action-gh-release@v2
         with:
-          files: PaperTrail.app.zip
+          tag_name: commit-${{ github.sha }}
+          name: ClipKitty ${{ github.sha }}
+          files: ClipKitty.app.zip
           generate_release_notes: true
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
