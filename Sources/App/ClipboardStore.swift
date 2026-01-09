@@ -196,13 +196,12 @@ final class ClipboardStore {
     /// Fetch link metadata on-demand if not already loaded
     func fetchLinkMetadataIfNeeded(for item: ClipboardItem) {
         // Only fetch for links that don't have metadata yet
-        guard item.contentType == .link,
-              item.linkTitle == nil,
-              item.linkImageData == nil,
+        guard case .link(let url, let metadata) = item.content,
+              metadata == nil || metadata?.isEmpty == true,
               let id = item.id else { return }
 
         Task {
-            await fetchAndUpdateLinkMetadata(for: id, url: item.content)
+            await fetchAndUpdateLinkMetadata(for: id, url: url)
         }
     }
 
@@ -329,9 +328,9 @@ final class ClipboardStore {
         }
 
         // Otherwise check for text
-        guard let content = pasteboard.string(forType: .string), !content.isEmpty else { return }
+        guard let text = pasteboard.string(forType: .string), !text.isEmpty else { return }
 
-        let hash = hashContent(content)
+        let hash = hashContent(text)
 
         do {
             if let existing = try dbQueue?.read({ db in
@@ -344,15 +343,15 @@ final class ClipboardStore {
                 let sourceApp = NSWorkspace.shared.frontmostApplication?.localizedName
                 var itemId: Int64?
                 try dbQueue?.write { db in
-                    let item = ClipboardItem(content: content, sourceApp: sourceApp)
+                    let item = ClipboardItem(text: text, sourceApp: sourceApp)
                     try item.insert(db)
                     itemId = db.lastInsertedRowID
                 }
 
                 // If it's a URL, fetch metadata asynchronously
-                if ClipboardItem.isURL(content), let id = itemId {
+                if ClipboardItem.isURL(text), let id = itemId {
                     Task {
-                        await fetchAndUpdateLinkMetadata(for: id, url: content)
+                        await fetchAndUpdateLinkMetadata(for: id, url: text)
                     }
                 }
             }
@@ -416,17 +415,9 @@ final class ClipboardStore {
     private func saveImageItem(imageData: Data) {
         let sourceApp = NSWorkspace.shared.frontmostApplication?.localizedName
 
-        // Create description for the image
-        let description = "Image (\(imageData.count / 1024) KB)"
-
         do {
             try dbQueue?.write { db in
-                let item = ClipboardItem(
-                    content: description,
-                    sourceApp: sourceApp,
-                    contentType: .image,
-                    imageData: imageData
-                )
+                let item = ClipboardItem(imageData: imageData, sourceApp: sourceApp)
                 try item.insert(db)
             }
 
@@ -449,7 +440,7 @@ final class ClipboardStore {
     func paste(item: ClipboardItem) {
         let pasteboard = NSPasteboard.general
         pasteboard.clearContents()
-        pasteboard.setString(item.content, forType: .string)
+        pasteboard.setString(item.textContent, forType: .string)
         lastChangeCount = pasteboard.changeCount
 
         guard let id = item.id else { return }

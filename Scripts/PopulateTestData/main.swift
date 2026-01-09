@@ -4,18 +4,23 @@ import ClipKittyCore
 
 // MARK: - Test Data
 
-let testItems: [(content: String, sourceApp: String?, contentType: ContentType?)] = [
+enum TestContent {
+    case text(String, sourceApp: String?)
+    case link(String, sourceApp: String?)
+}
+
+let testItems: [TestContent] = [
     // Email address
-    ("sarah.johnson@techcorp.io", "Mail", nil),
+    .text("sarah.johnson@techcorp.io", sourceApp: "Mail"),
 
     // Phone number
-    ("+1 (555) 867-5309", "Contacts", nil),
+    .text("+1 (555) 867-5309", sourceApp: "Contacts"),
 
     // UUID
-    ("f47ac10b-58cc-4372-a567-0e02b2c3d479", "Terminal", nil),
+    .text("f47ac10b-58cc-4372-a567-0e02b2c3d479", sourceApp: "Terminal"),
 
     // JSON snippet
-    ("""
+    .text("""
     {
       "user": {
         "id": 42,
@@ -23,90 +28,90 @@ let testItems: [(content: String, sourceApp: String?, contentType: ContentType?)
         "roles": ["admin", "developer"]
       }
     }
-    """, "VS Code", nil),
+    """, sourceApp: "VS Code"),
 
     // URL - GitHub repo
-    ("https://github.com/apple/swift-collections", "Safari", .link),
+    .link("https://github.com/apple/swift-collections", sourceApp: "Safari"),
 
     // Swift code snippet
-    ("""
+    .text("""
     func fetchUsers() async throws -> [User] {
         let response = try await client.get("/api/users")
         return try decoder.decode([User].self, from: response.data)
     }
-    """, "Xcode", nil),
+    """, sourceApp: "Xcode"),
 
     // SQL query
-    ("""
+    .text("""
     SELECT u.name, COUNT(o.id) as order_count
     FROM users u
     LEFT JOIN orders o ON u.id = o.user_id
     WHERE u.created_at > '2024-01-01'
     GROUP BY u.id
     HAVING order_count > 5;
-    """, "TablePlus", nil),
+    """, sourceApp: "TablePlus"),
 
     // URL - Documentation
-    ("https://developer.apple.com/documentation/swiftui/view", "Safari", .link),
+    .link("https://developer.apple.com/documentation/swiftui/view", sourceApp: "Safari"),
 
     // Terminal command
-    ("git log --oneline --graph --all -20", "Terminal", nil),
+    .text("git log --oneline --graph --all -20", sourceApp: "Terminal"),
 
     // Street address
-    ("1 Infinite Loop, Cupertino, CA 95014", "Maps", nil),
+    .text("1 Infinite Loop, Cupertino, CA 95014", sourceApp: "Maps"),
 
     // CSS snippet
-    ("""
+    .text("""
     .container {
       display: flex;
       justify-content: center;
       gap: 1rem;
       padding: 2rem;
     }
-    """, "VS Code", nil),
+    """, sourceApp: "VS Code"),
 
     // URL - Stack Overflow
-    ("https://stackoverflow.com/questions/24002369/how-to-call-objective-c-code-from-swift", "Arc", .link),
+    .link("https://stackoverflow.com/questions/24002369/how-to-call-objective-c-code-from-swift", sourceApp: "Arc"),
 
     // Error message
-    ("Error: SQLITE_CONSTRAINT: UNIQUE constraint failed: users.email", "Terminal", nil),
+    .text("Error: SQLITE_CONSTRAINT: UNIQUE constraint failed: users.email", sourceApp: "Terminal"),
 
     // Python code
-    ("""
+    .text("""
     def calculate_metrics(data: list[dict]) -> dict:
         return {
             "count": len(data),
             "avg": sum(d["value"] for d in data) / len(data)
         }
-    """, "PyCharm", nil),
+    """, sourceApp: "PyCharm"),
 
     // Markdown text
-    ("""
+    .text("""
     ## Quick Start
 
     1. Install dependencies: `npm install`
     2. Run dev server: `npm run dev`
     3. Open http://localhost:3000
-    """, "Obsidian", nil),
+    """, sourceApp: "Obsidian"),
 
     // API endpoint
-    ("https://api.stripe.com/v1/customers", "Postman", .link),
+    .link("https://api.stripe.com/v1/customers", sourceApp: "Postman"),
 
     // Regex pattern
-    (#"^(?=.*[A-Z])(?=.*[a-z])(?=.*\d)[A-Za-z\d@$!%*?&]{8,}$"#, "VS Code", nil),
+    .text(#"^(?=.*[A-Z])(?=.*[a-z])(?=.*\d)[A-Za-z\d@$!%*?&]{8,}$"#, sourceApp: "VS Code"),
 
     // Shell script snippet
-    ("""
+    .text("""
     for file in *.json; do
         jq '.data[] | select(.active == true)' "$file"
     done
-    """, "Terminal", nil),
+    """, sourceApp: "Terminal"),
 
     // URL - YouTube
-    ("https://www.youtube.com/watch?v=dQw4w9WgXcQ", "Arc", .link),
+    .link("https://www.youtube.com/watch?v=dQw4w9WgXcQ", sourceApp: "Arc"),
 
     // TypeScript interface
-    ("""
+    .text("""
     interface UserProfile {
       id: string;
       email: string;
@@ -115,7 +120,7 @@ let testItems: [(content: String, sourceApp: String?, contentType: ContentType?)
         notifications: boolean;
       };
     }
-    """, "VS Code", nil),
+    """, sourceApp: "VS Code"),
 ]
 
 // MARK: - Database Operations
@@ -155,14 +160,17 @@ func populateDatabase() throws {
 
         // Insert test items with varying timestamps
         let now = Date()
-        for (index, testData) in testItems.enumerated() {
+        for (index, testContent) in testItems.enumerated() {
             let timestamp = now.addingTimeInterval(Double(-index * 300)) // 5 min apart
-            let item = ClipboardItem(
-                content: testData.0,
-                sourceApp: testData.1,
-                contentType: testData.2,
-                timestamp: timestamp
-            )
+
+            let item: ClipboardItem
+            switch testContent {
+            case .text(let content, let sourceApp):
+                item = ClipboardItem(text: content, sourceApp: sourceApp, timestamp: timestamp)
+            case .link(let url, let sourceApp):
+                item = ClipboardItem(url: url, sourceApp: sourceApp, timestamp: timestamp)
+            }
+
             try item.insert(db)
         }
 
