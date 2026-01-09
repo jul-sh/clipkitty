@@ -18,7 +18,7 @@ let package = Package(
             ],
             path: "Sources",
             resources: [
-                .copy("Resources/Fonts")
+                .copy("Resources")
             ]
         )
     ]
