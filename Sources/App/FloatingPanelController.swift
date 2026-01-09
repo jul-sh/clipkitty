@@ -4,6 +4,11 @@ import ClipKittyCore
 
 @MainActor
 final class FloatingPanelController: NSObject, NSWindowDelegate {
+    enum Visibility {
+        case visible
+        case hidden
+    }
+
     private var panel: NSPanel!
     private let store: ClipboardStore
     private let onPaste: () -> Void
@@ -60,6 +65,10 @@ final class FloatingPanelController: NSObject, NSWindowDelegate {
         } else {
             show()
         }
+    }
+
+    var visibility: Visibility {
+        panel.isVisible ? .visible : .hidden
     }
 
     func show() {
