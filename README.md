@@ -4,7 +4,7 @@
 
 A fast, native clipboard manager for macOS.
 
-<img src="[[https://raw.githubusercontent.com/julsh/clipkitty/gh-pages/screenshot.png](https://github.com/jul-sh/clipkitty/blob/gh-pages/screenshot.png?raw=true)](https://github.com/jul-sh/clipkitty/blob/gh-pages/screenshot.png?raw=true)" alt="ClipKitty screenshot" width="820">
+<img src="https://github.com/jul-sh/clipkitty/blob/gh-pages/screenshot.png?raw=true" alt="ClipKitty screenshot" width="820">
 
 ## Features
 
