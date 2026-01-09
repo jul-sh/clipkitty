@@ -223,21 +223,24 @@ struct ContentView: View {
             if let item = selectedItem {
                 // Content - wrapped in NonDraggableView to allow text selection
                 ScrollView(.vertical, showsIndicators: true) {
-                    if item.contentType == .image, let imageData = item.imageData,
-                       let nsImage = NSImage(data: imageData) {
-                        // Image preview
-                        Image(nsImage: nsImage)
-                            .resizable()
-                            .aspectRatio(contentMode: .fit)
-                            .frame(maxWidth: .infinity)
-                            .padding(16)
-                    } else if item.contentType == .link {
+                    switch item.content {
+                    case .image(let data, _):
+                        if let nsImage = NSImage(data: data) {
+                            Image(nsImage: nsImage)
+                                .resizable()
+                                .aspectRatio(contentMode: .fit)
+                                .frame(maxWidth: .infinity)
+                                .padding(16)
+                        }
+
+                    case .link:
                         // Link preview - fetch metadata on-demand if needed
                         linkPreview(for: item)
                             .task(id: item.stableId) {
                                 store.fetchLinkMetadataIfNeeded(for: item)
                             }
-                    } else {
+
+                    case .text:
                         // Text preview
                         Text(highlightedPreview(for: item))
                             .font(.custom(FontManager.mono, size: 15))
@@ -254,8 +257,8 @@ struct ContentView: View {
                 // Metadata footer
                 HStack(spacing: 12) {
                     Label(item.timeAgo, systemImage: "clock")
-                    if item.content.count > 100 {
-                        Label(formatSize(item.content.count), systemImage: "doc.text")
+                    if item.textContent.count > 100 {
+                        Label(formatSize(item.textContent.count), systemImage: "doc.text")
                     }
                     if let app = item.sourceApp {
                         Label(app, systemImage: "app")
@@ -335,9 +338,11 @@ struct ContentView: View {
 
     @ViewBuilder
     private func linkPreview(for item: ClipboardItem) -> some View {
+        let metadata = item.linkMetadata
+
         VStack(spacing: 16) {
             // OG Image if available
-            if let imageData = item.linkImageData,
+            if let imageData = metadata?.imageData,
                let nsImage = NSImage(data: imageData) {
                 Image(nsImage: nsImage)
                     .resizable()
@@ -354,7 +359,7 @@ struct ContentView: View {
                             Image(systemName: "link")
                                 .font(.system(size: 32))
                                 .foregroundStyle(.secondary)
-                            if item.linkTitle == nil {
+                            if metadata?.title == nil {
                                 Text("Loading preview...")
                                     .font(.caption)
                                     .foregroundStyle(.tertiary)
@@ -365,7 +370,7 @@ struct ContentView: View {
 
             // Title and URL
             VStack(alignment: .leading, spacing: 8) {
-                if let title = item.linkTitle, !title.isEmpty {
+                if let title = metadata?.title, !title.isEmpty {
                     Text(title)
                         .font(.system(size: 18, weight: .semibold))
                         .foregroundStyle(.primary)
@@ -374,7 +379,7 @@ struct ContentView: View {
                         .modifier(IBeamCursorOnHover())
                 }
 
-                Text(item.content)
+                Text(item.textContent)
                     .font(.custom(FontManager.mono, size: 13))
                     .foregroundStyle(.secondary)
                     .lineLimit(1)
@@ -498,7 +503,7 @@ struct ItemRow: View, Equatable {
     var body: some View {
         HStack(spacing: 10) {
             // Content type icon
-            Image(systemName: item.contentType.icon)
+            Image(systemName: item.icon)
                 .font(.system(size: 13))
                 .foregroundStyle(isSelected ? .white.opacity(0.9) : .secondary)
                 .frame(width: 16)
