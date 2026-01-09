@@ -31,9 +31,11 @@ icon:
 			--compile "$(APP_NAME).app/Contents/Resources" \
 			--platform macosx \
 			--target-device mac \
-			--minimum-deployment-target 15.0 \
+			--minimum-deployment-target 26.0 \
 			--app-icon "AppIcon" \
+			--include-all-app-icons \
 			--output-partial-info-plist /dev/null; \
+		rm -f "$(APP_NAME).app/Contents/Resources/AppIcon.icns"; \
 		echo "Assets.car generated successfully"; \
 	else \
 		echo "Warning: .icon source not found at $(ICON_SOURCE)"; \
@@ -62,7 +64,7 @@ plist:
 		'	<key>CFBundleShortVersionString</key>' \
 		'	<string>1.0</string>' \
 		'	<key>LSMinimumSystemVersion</key>' \
-		'	<string>15.0</string>' \
+		'	<string>26.0</string>' \
 		'	<key>LSUIElement</key>' \
 		'	<true/>' \
 		'</dict>' \
