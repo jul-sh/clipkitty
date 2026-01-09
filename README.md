@@ -1,10 +1,12 @@
 # ClipKitty
 
+![ClipKitty icon](AppIcon.icon/Assets/Image%204.png)
+
 A fast, native clipboard manager for macOS.
 
 ## Features
 
-- **Instant access** – ⌥Space to open
+- **Instant access** – Click the menu bar icon or press ⌥Space
 - **Fast search** – FTS5 trigram-powered substring matching
 - **Keyboard-driven** – Arrow keys to navigate, Return to paste
 - **Lightweight** – Lives in the menu bar, no dock icon
