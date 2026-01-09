@@ -8,6 +8,7 @@ struct ContentView: View {
 
     @State private var selection: String?
     @State private var searchText: String = ""
+    @State private var isCopyHovering: Bool = false
     @FocusState private var isSearchFocused: Bool
 
     private var items: [ClipboardItem] { store.items }
@@ -96,7 +97,7 @@ struct ContentView: View {
                     moveSelection(by: 1)
                     return .handled
                 }
-                .onKeyPress(.return) {
+                .onKeyPress(.return, phases: .down) { _ in
                     confirmSelection()
                     return .handled
                 }
@@ -197,7 +198,6 @@ struct ContentView: View {
                 .listRowBackground(Color.clear)
                 .onTapGesture {
                     selection = item.stableId
-                    confirmSelection()
                 }
                 .onAppear {
                     if index == items.count - 10 {
@@ -208,7 +208,7 @@ struct ContentView: View {
             .listStyle(.plain)
             .scrollContentBackground(.hidden)
             .onChange(of: selection) { _, newSelection in
-                if let newSelection {
+                if let newSelection, !isSearchFocused {
                     proxy.scrollTo(newSelection, anchor: .center)
                 }
             }
@@ -260,7 +260,19 @@ struct ContentView: View {
                         Label(app, systemImage: "app")
                     }
                     Spacer()
-                    Text("⏎ copy")
+                    Button("⏎ copy") {
+                        confirmSelection()
+                    }
+                    .buttonStyle(.plain)
+                    .padding(.horizontal, 6)
+                    .padding(.vertical, 2)
+                    .background(
+                        RoundedRectangle(cornerRadius: 4)
+                            .fill(isCopyHovering ? .black.opacity(0.08) : .clear)
+                    )
+                    .onHover { hovering in
+                        isCopyHovering = hovering
+                    }
                 }
                 .font(.system(size: 13))
                 .foregroundStyle(.secondary)
@@ -403,13 +415,60 @@ class NonDraggableNSView: NSView {
 
 struct IBeamCursorOnHover: ViewModifier {
     func body(content: Content) -> some View {
-        content.onHover { hovering in
-            if hovering {
-                NSCursor.iBeam.push()
-            } else {
-                NSCursor.pop()
-            }
+        content.background(IBeamCursorView())
+    }
+}
+
+struct IBeamCursorView: NSViewRepresentable {
+    func makeNSView(context: Context) -> NSView {
+        CursorTrackingView()
+    }
+
+    func updateNSView(_ nsView: NSView, context: Context) {}
+}
+
+private final class CursorTrackingView: NSView {
+    private var trackingArea: NSTrackingArea?
+
+    override func viewDidMoveToWindow() {
+        super.viewDidMoveToWindow()
+        window?.invalidateCursorRects(for: self)
+    }
+
+    override func resetCursorRects() {
+        discardCursorRects()
+        addCursorRect(bounds, cursor: .iBeam)
+    }
+
+    override func updateTrackingAreas() {
+        if let trackingArea {
+            removeTrackingArea(trackingArea)
         }
+        let options: NSTrackingArea.Options = [.mouseEnteredAndExited, .mouseMoved, .activeAlways, .inVisibleRect, .cursorUpdate]
+        let newArea = NSTrackingArea(rect: bounds, options: options, owner: self, userInfo: nil)
+        addTrackingArea(newArea)
+        trackingArea = newArea
+        super.updateTrackingAreas()
+    }
+
+    override func mouseEntered(with event: NSEvent) {
+        NSCursor.iBeam.set()
+    }
+
+    override func mouseMoved(with event: NSEvent) {
+        NSCursor.iBeam.set()
+    }
+
+    override func cursorUpdate(with event: NSEvent) {
+        NSCursor.iBeam.set()
+    }
+
+    override func mouseExited(with event: NSEvent) {
+        NSCursor.arrow.set()
+    }
+
+    override func hitTest(_ point: NSPoint) -> NSView? {
+        nil
     }
 }
 
