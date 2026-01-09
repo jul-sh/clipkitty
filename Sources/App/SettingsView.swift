@@ -59,6 +59,13 @@ struct SettingsView: View {
 
             Section("Storage") {
                 HStack {
+                    Text("Current Size")
+                    Spacer()
+                    Text(formatBytes(store.databaseSizeBytes))
+                        .foregroundStyle(.secondary)
+                }
+
+                HStack {
                     Text("Max Database Size")
                     Spacer()
                     TextField("Size", value: $settings.maxDatabaseSizeMB, format: .number)
@@ -98,6 +105,22 @@ struct SettingsView: View {
         }
         .formStyle(.grouped)
         .frame(width: 400, height: 300)
+    }
+
+    private func formatBytes(_ bytes: Int64) -> String {
+        let kb = Double(bytes) / 1024
+        let mb = kb / 1024
+        let gb = mb / 1024
+
+        if gb >= 1 {
+            return String(format: "%.2f GB", gb)
+        } else if mb >= 1 {
+            return String(format: "%.1f MB", mb)
+        } else if kb >= 1 {
+            return String(format: "%.0f KB", kb)
+        } else {
+            return "\(bytes) bytes"
+        }
     }
 }
 

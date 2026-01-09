@@ -45,6 +45,20 @@ final class ClipboardStore {
         pruneIfNeeded()
     }
 
+    /// Current database size in bytes
+    var databaseSizeBytes: Int64 {
+        guard let dbQueue else { return 0 }
+        do {
+            return try dbQueue.read { db -> Int64 in
+                let pageCount = try Int64.fetchOne(db, sql: "PRAGMA page_count") ?? 0
+                let pageSize = try Int64.fetchOne(db, sql: "PRAGMA page_size") ?? 0
+                return pageCount * pageSize
+            }
+        } catch {
+            return 0
+        }
+    }
+
     // MARK: - Database Setup
 
     private func setupDatabase() {
