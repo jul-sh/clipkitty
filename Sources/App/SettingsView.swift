@@ -13,8 +13,6 @@ struct SettingsView: View {
     let store: ClipboardStore
     let onHotKeyChanged: (HotKey) -> Void
 
-    private var isRecording: Bool { hotKeyState == .recording }
-
     var body: some View {
         Form {
             Section("Hotkey") {
@@ -22,11 +20,20 @@ struct SettingsView: View {
                     Text("Toggle Clipboard")
                     Spacer()
                     Button(action: { hotKeyState = .recording }) {
-                        Text(isRecording ? "Press keys..." : settings.hotKey.displayString)
+                        let (labelText, backgroundColor): (String, Color) = {
+                            switch hotKeyState {
+                            case .recording:
+                                return ("Press keys...", Color.accentColor.opacity(0.2))
+                            case .idle:
+                                return (settings.hotKey.displayString, Color.secondary.opacity(0.1))
+                            }
+                        }()
+
+                        Text(labelText)
                             .frame(minWidth: 100)
                             .padding(.horizontal, 8)
                             .padding(.vertical, 4)
-                            .background(isRecording ? Color.accentColor.opacity(0.2) : Color.secondary.opacity(0.1))
+                            .background(backgroundColor)
                             .cornerRadius(6)
                     }
                     .buttonStyle(.plain)
@@ -111,7 +118,7 @@ struct HotKeyRecorder: NSViewRepresentable {
     }
 
     func updateNSView(_ nsView: HotKeyRecorderView, context: Context) {
-        if state == .recording {
+        if case .recording = state {
             nsView.window?.makeFirstResponder(nsView)
         }
     }

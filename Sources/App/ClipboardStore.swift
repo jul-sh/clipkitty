@@ -16,37 +16,6 @@ enum DisplayState: Equatable {
     case loaded(items: [ClipboardItem], hasMore: Bool)
     case searching(query: String, state: SearchResultState)
     case error(String)
-
-    var items: [ClipboardItem] {
-        switch self {
-        case .loaded(let items, _):
-            return items
-        case .searching(_, let searchState):
-            switch searchState {
-            case .loading(let previous):
-                return previous
-            case .results(let results):
-                return results
-            }
-        default:
-            return []
-        }
-    }
-
-    var hasMore: Bool {
-        if case .loaded(_, let more) = self { return more }
-        return false
-    }
-
-    var isSearchLoading: Bool {
-        if case .searching(_, .loading) = self { return true }
-        return false
-    }
-
-    var searchQuery: String {
-        if case .searching(let query, _) = self { return query }
-        return ""
-    }
 }
 
 @MainActor
@@ -57,11 +26,6 @@ final class ClipboardStore {
     private(set) var state: DisplayState = .loading
 
     // MARK: - Derived Properties
-
-    var items: [ClipboardItem] { state.items }
-    var hasMore: Bool { state.hasMore }
-    var isSearching: Bool { state.isSearchLoading }
-    var searchQuery: String { state.searchQuery }
 
     // MARK: - Private State
 
@@ -178,7 +142,21 @@ final class ClipboardStore {
         }
 
         // Preserve previous results while loading new ones
-        let previousResults = state.items
+        let previousResults: [ClipboardItem] = {
+            switch state {
+            case .loaded(let items, _):
+                return items
+            case .searching(_, let searchState):
+                switch searchState {
+                case .loading(let previous):
+                    return previous
+                case .results(let results):
+                    return results
+                }
+            default:
+                return []
+            }
+        }()
 
         state = .searching(query: query, state: .loading(previousResults: previousResults))
 
@@ -203,7 +181,7 @@ final class ClipboardStore {
     func fetchLinkMetadataIfNeeded(for item: ClipboardItem) {
         // Only fetch for links with pending metadata
         guard case .link(let url, let metadataState) = item.content,
-              metadataState.isPending,
+              case .pending = metadataState,
               let id = item.id else { return }
 
         Task {

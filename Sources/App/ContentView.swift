@@ -12,7 +12,21 @@ struct ContentView: View {
     @State private var isCopyHovering: Bool = false
     @FocusState private var isSearchFocused: Bool
 
-    private var items: [ClipboardItem] { store.items }
+    private var items: [ClipboardItem] {
+        switch store.state {
+        case .loaded(let items, _):
+            return items
+        case .searching(_, let searchState):
+            switch searchState {
+            case .loading(let previous):
+                return previous
+            case .results(let results):
+                return results
+            }
+        default:
+            return []
+        }
+    }
 
     private var selectedItem: ClipboardItem? {
         guard let selection else { return nil }
@@ -110,7 +124,7 @@ struct ContentView: View {
                     handleNumberKey(keyPress)
                 }
 
-            if store.isSearching {
+            if case .searching(_, .loading) = store.state {
                 ProgressView()
                     .scaleEffect(0.5)
                     .frame(width: 16, height: 16)
@@ -233,9 +247,9 @@ struct ContentView: View {
                                 .padding(16)
                         }
 
-                    case .link:
+                    case .link(let url, let metadataState):
                         // Link preview - fetch metadata on-demand if needed
-                        linkPreview(for: item)
+                        linkPreview(url: url, metadataState: metadataState)
                             .task(id: item.stableId) {
                                 store.fetchLinkMetadataIfNeeded(for: item)
                             }
@@ -314,7 +328,16 @@ struct ContentView: View {
             Image(systemName: "clipboard")
                 .font(.largeTitle)
                 .foregroundStyle(.tertiary)
-            Text(store.searchQuery.isEmpty ? "No clipboard history" : "No results")
+            let emptyStateMessage: String = {
+                switch store.state {
+                case .searching(let query, _) where !query.isEmpty:
+                    return "No results"
+                default:
+                    return "No clipboard history"
+                }
+            }()
+
+            Text(emptyStateMessage)
                 .font(.custom(FontManager.sansSerif, size: 15))
                 .foregroundStyle(.secondary)
         }
@@ -337,13 +360,7 @@ struct ContentView: View {
     }
 
     @ViewBuilder
-    private func linkPreview(for item: ClipboardItem) -> some View {
-        // Extract metadata state for type-safe handling
-        let metadataState: LinkMetadataState = {
-            if case .link(_, let state) = item.content { return state }
-            return .pending
-        }()
-
+    private func linkPreview(url: String, metadataState: LinkMetadataState) -> some View {
         VStack(spacing: 16) {
             // OG Image if available
             if let imageData = metadataState.metadata?.imageData,
@@ -392,7 +409,7 @@ struct ContentView: View {
                         .modifier(IBeamCursorOnHover())
                 }
 
-                Text(item.textContent)
+                Text(url)
                     .font(.custom(FontManager.mono, size: 13))
                     .foregroundStyle(.secondary)
                     .lineLimit(1)
