@@ -1,4 +1,4 @@
-# Paper Trail
+# ClipKitty
 
 A fast, native clipboard manager for macOS.
 
@@ -13,7 +13,7 @@ A fast, native clipboard manager for macOS.
 
 ```bash
 ./build-app.sh
-open PaperTrail.app
+open ClipKitty.app
 ```
 
 Requires Swift 6.1+ and macOS 15+.

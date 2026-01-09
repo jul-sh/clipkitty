@@ -74,8 +74,15 @@ final class ClipboardStore {
     private func setupDatabase() {
         do {
             let appSupport = FileManager.default.urls(for: .applicationSupportDirectory, in: .userDomainMask).first!
-            let appDir = appSupport.appendingPathComponent("PaperTrail", isDirectory: true)
-            try FileManager.default.createDirectory(at: appDir, withIntermediateDirectories: true)
+            let appDir = appSupport.appendingPathComponent("ClipKitty", isDirectory: true)
+            let legacyDir = appSupport.appendingPathComponent("PaperTrail", isDirectory: true)
+
+            if FileManager.default.fileExists(atPath: legacyDir.path),
+               !FileManager.default.fileExists(atPath: appDir.path) {
+                try FileManager.default.moveItem(at: legacyDir, to: appDir)
+            } else {
+                try FileManager.default.createDirectory(at: appDir, withIntermediateDirectories: true)
+            }
 
             let dbPath = appDir.appendingPathComponent("clipboard.sqlite").path
             dbQueue = try DatabaseQueue(path: dbPath, configuration: Configuration())

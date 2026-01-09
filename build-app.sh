@@ -1,9 +1,11 @@
 #!/bin/bash
 set -e
 
-APP_NAME="PaperTrail"
-BUNDLE_ID="com.papertrail.app"
+APP_NAME="ClipKitty"
+BUNDLE_ID="com.clipkitty.app"
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+# Update this path to where your .icon folder is actually located
+ICON_SOURCE="${SCRIPT_DIR}/AppIcon.icon"
 
 echo "Building release..."
 GIT_CONFIG_COUNT=1 GIT_CONFIG_KEY_0=safe.bareRepository GIT_CONFIG_VALUE_0=all swift build -c release
@@ -14,40 +16,28 @@ mkdir -p "${APP_NAME}.app/Contents/MacOS"
 mkdir -p "${APP_NAME}.app/Contents/Resources"
 
 # Copy executable
-cp ".build/release/ClippySwift" "${APP_NAME}.app/Contents/MacOS/${APP_NAME}"
+cp ".build/release/ClipKitty" "${APP_NAME}.app/Contents/MacOS/${APP_NAME}"
 
-# Copy bundled resources (fonts, etc.)
-if [ -d ".build/release/ClippySwift_ClippySwift.bundle" ]; then
-    cp -R ".build/release/ClippySwift_ClippySwift.bundle/Contents/Resources/"* "${APP_NAME}.app/Contents/Resources/" 2>/dev/null || true
+# Copy bundled resources
+if [ -d ".build/release/ClipKitty_ClipKitty.bundle" ]; then
+    cp -R ".build/release/ClipKitty_ClipKitty.bundle/Contents/Resources/"* "${APP_NAME}.app/Contents/Resources/" 2>/dev/null || true
 fi
 
-# Generate app icon
-echo "Generating app icon..."
-ICONSET_DIR="${SCRIPT_DIR}/AppIcons/Assets.xcassets/AppIcon.appiconset"
-if [ -d "$ICONSET_DIR" ]; then
-    # Create temporary iconset directory with required naming
-    TEMP_ICONSET=$(mktemp -d)/AppIcon.iconset
-    mkdir -p "$TEMP_ICONSET"
-
-    # Convert and copy icons to match Apple's iconset naming convention
-    # Using sips to ensure proper PNG format (source files may be JPEG with .png extension)
-    sips -s format png "${ICONSET_DIR}/16.png" --out "${TEMP_ICONSET}/icon_16x16.png" > /dev/null
-    sips -s format png "${ICONSET_DIR}/32.png" --out "${TEMP_ICONSET}/icon_16x16@2x.png" > /dev/null
-    sips -s format png "${ICONSET_DIR}/32.png" --out "${TEMP_ICONSET}/icon_32x32.png" > /dev/null
-    sips -s format png "${ICONSET_DIR}/64.png" --out "${TEMP_ICONSET}/icon_32x32@2x.png" > /dev/null
-    sips -s format png "${ICONSET_DIR}/128.png" --out "${TEMP_ICONSET}/icon_128x128.png" > /dev/null
-    sips -s format png "${ICONSET_DIR}/256.png" --out "${TEMP_ICONSET}/icon_128x128@2x.png" > /dev/null
-    sips -s format png "${ICONSET_DIR}/256.png" --out "${TEMP_ICONSET}/icon_256x256.png" > /dev/null
-    sips -s format png "${ICONSET_DIR}/512.png" --out "${TEMP_ICONSET}/icon_256x256@2x.png" > /dev/null
-    sips -s format png "${ICONSET_DIR}/512.png" --out "${TEMP_ICONSET}/icon_512x512.png" > /dev/null
-    sips -s format png "${ICONSET_DIR}/1024.png" --out "${TEMP_ICONSET}/icon_512x512@2x.png" > /dev/null
-
-    # Generate icns file
-    iconutil -c icns "$TEMP_ICONSET" -o "${APP_NAME}.app/Contents/Resources/AppIcon.icns"
-    rm -rf "$(dirname "$TEMP_ICONSET")"
-    echo "App icon generated successfully"
+# Generate app icon (MODERN METHOD)
+echo "Compiling Liquid Glass icon..."
+if [ -d "$ICON_SOURCE" ]; then
+    # Compile the .icon file into Assets.car
+    xcrun actool "$ICON_SOURCE" \
+      --compile "${APP_NAME}.app/Contents/Resources" \
+      --platform macosx \
+      --target-device mac \
+      --minimum-deployment-target 15.0 \
+      --app-icon "AppIcon" \
+      --output-partial-info-plist /dev/null
+    
+    echo "Assets.car generated successfully"
 else
-    echo "Warning: Icon assets not found at $ICONSET_DIR"
+    echo "Warning: .icon source not found at $ICON_SOURCE"
 fi
 
 # Create Info.plist
@@ -63,24 +53,24 @@ cat > "${APP_NAME}.app/Contents/Info.plist" <<EOF
     <key>CFBundleName</key>
     <string>${APP_NAME}</string>
     <key>CFBundleDisplayName</key>
-    <string>Paper Trail</string>
-    <key>CFBundleIconFile</key>
+    <string>ClipKitty</string>
+    <key>CFBundleIconName</key>
     <string>AppIcon</string>
+    <key>CFBundlePackageType</key>
+    <string>APPL</string>
     <key>CFBundleVersion</key>
     <string>1.0</string>
     <key>CFBundleShortVersionString</key>
     <string>1.0</string>
-    <key>CFBundlePackageType</key>
-    <string>APPL</string>
     <key>LSMinimumSystemVersion</key>
     <string>15.0</string>
     <key>LSUIElement</key>
-    <true/>
-    <key>NSHighResolutionCapable</key>
     <true/>
 </dict>
 </plist>
 EOF
 
+# Force Finder to refresh the icon
+touch "${APP_NAME}.app"
+
 echo "Done! Created ${APP_NAME}.app"
-echo "Run with: open ${APP_NAME}.app"
