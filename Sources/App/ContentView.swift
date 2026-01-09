@@ -11,8 +11,6 @@ struct ContentView: View {
     @State private var searchText: String = ""
     @State private var isCopyHovering: Bool = false
     @FocusState private var isSearchFocused: Bool
-    @Environment(\.colorScheme) private var colorScheme
-
     private var items: [ClipboardItem] {
         switch store.state {
         case .loaded(let items, _):
@@ -49,13 +47,6 @@ struct ContentView: View {
         .frame(maxWidth: .infinity, maxHeight: .infinity)
 
         // 2. Apply the glass effect/background so it fills that infinite frame
-        .background(
-            RoundedRectangle(cornerRadius: 12)
-                .fill(
-                    (colorScheme == .dark ? Color.black : Color.white)
-                        .opacity(0.1)
-                )
-        )
         .glassEffect(.regular.interactive(), in: RoundedRectangle(cornerRadius: 12))
 
         // 3. Finally, ignore the safe area to push the background into the title bar
