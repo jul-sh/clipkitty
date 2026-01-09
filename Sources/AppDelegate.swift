@@ -32,6 +32,13 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate {
         hotKeyManager.register(hotKey: AppSettings.shared.hotKey)
 
         setupMenuBar()
+
+        // Support --show-panel launch argument for CI/screenshots
+        if CommandLine.arguments.contains("--show-panel") {
+            DispatchQueue.main.asyncAfter(deadline: .now() + 0.5) { [weak self] in
+                self?.panelController.show()
+            }
+        }
     }
 
     private func setupMenuBar() {
