@@ -76,15 +76,6 @@ public enum LinkMetadataState: Sendable, Equatable {
         return nil
     }
 
-    public var isLoaded: Bool {
-        if case .loaded = self { return true }
-        return false
-    }
-
-    public var isPending: Bool {
-        if case .pending = self { return true }
-        return false
-    }
 }
 
 /// Metadata content for links
@@ -97,9 +88,6 @@ public struct LinkMetadata: Sendable, Equatable, Codable {
         self.imageData = imageData
     }
 
-    public var isEmpty: Bool {
-        title == nil && imageData == nil
-    }
 }
 
 // MARK: - Clipboard Item
@@ -120,34 +108,6 @@ public struct ClipboardItem: Identifiable, Sendable, Equatable, FetchableRecord,
 
     /// Icon for the content type
     public var icon: String { content.icon }
-
-    /// Link metadata (only available for links with loaded metadata)
-    public var linkMetadata: LinkMetadata? {
-        if case .link(_, let metadataState) = content {
-            return metadataState.metadata
-        }
-        return nil
-    }
-
-    /// Image data (only available for images)
-    public var imageData: Data? {
-        if case .image(let data, _) = content {
-            return data
-        }
-        return nil
-    }
-
-    /// Whether this is a link type
-    public var isLink: Bool {
-        if case .link = content { return true }
-        return false
-    }
-
-    /// Whether this is an image type
-    public var isImage: Bool {
-        if case .image = content { return true }
-        return false
-    }
 
     /// Stable identifier for SwiftUI
     public var stableId: String {
@@ -325,22 +285,6 @@ public struct ClipboardItem: Identifiable, Sendable, Equatable, FetchableRecord,
             imageData: row["imageData"],
             linkTitle: row["linkTitle"],
             linkImageData: row["linkImageData"]
-        )
-    }
-}
-
-// MARK: - Mutating Link Metadata
-
-extension ClipboardItem {
-    /// Returns a copy with updated link metadata (only for link items)
-    public func withLinkMetadataState(_ metadataState: LinkMetadataState) -> ClipboardItem {
-        guard case .link(let url, _) = content else { return self }
-        return ClipboardItem(
-            id: id,
-            content: .link(url: url, metadataState: metadataState),
-            contentHash: contentHash,
-            timestamp: timestamp,
-            sourceApp: sourceApp
         )
     }
 }
