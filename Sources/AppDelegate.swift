@@ -33,7 +33,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate {
     private func setupMenuBar() {
         statusItem = NSStatusBar.system.statusItem(withLength: NSStatusItem.squareLength)
         if let button = statusItem?.button {
-            button.image = NSImage(systemSymbolName: "clipboard", accessibilityDescription: "Paper Trail")
+            button.image = NSImage(systemSymbolName: "clipboard", accessibilityDescription: "ClipKitty")
         }
 
         let menu = NSMenu()
@@ -74,7 +74,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate {
                 backing: .buffered,
                 defer: false
             )
-            window.title = "Paper Trail Settings"
+            window.title = "ClipKitty Settings"
             window.contentView = NSHostingView(rootView: settingsView)
             window.center()
             window.isReleasedWhenClosed = false

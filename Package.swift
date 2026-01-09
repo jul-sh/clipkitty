@@ -3,7 +3,7 @@
 import PackageDescription
 
 let package = Package(
-    name: "ClippySwift",
+    name: "ClipKitty",
     platforms: [
         .macOS(.v26)
     ],
@@ -12,7 +12,7 @@ let package = Package(
     ],
     targets: [
         .executableTarget(
-            name: "ClippySwift",
+            name: "ClipKitty",
             dependencies: [
                 .product(name: "GRDB", package: "GRDB.swift")
             ],

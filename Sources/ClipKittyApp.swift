@@ -1,7 +1,7 @@
 import SwiftUI
 
 @main
-struct ClippySwiftApp: App {
+struct ClipKittyApp: App {
     @NSApplicationDelegateAdaptor(AppDelegate.self) var appDelegate
 
     var body: some Scene {
