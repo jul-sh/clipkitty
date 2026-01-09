@@ -1,5 +1,6 @@
 import SwiftUI
 import AppKit
+import ClipKittyCore
 
 struct ContentView: View {
     var store: ClipboardStore
