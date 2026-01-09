@@ -10,6 +10,7 @@ struct SettingsView: View {
     @ObservedObject private var settings = AppSettings.shared
     @State private var hotKeyState: HotKeyEditState = .idle
     @State private var showClearConfirmation = false
+    @State private var showLogs = false
     let store: ClipboardStore
     let onHotKeyChanged: (HotKey) -> Void
 
@@ -102,11 +103,29 @@ struct SettingsView: View {
                     Text("Are you sure you want to delete all clipboard history? This cannot be undone.")
                 }
             }
+
+            Section("Diagnostics") {
+                Button {
+                    showLogs = true
+                } label: {
+                    HStack {
+                        Image(systemName: "doc.text")
+                        Text("View Logs")
+                        Spacer()
+                        Text("\(AppLogger.shared.entries.count)")
+                            .foregroundStyle(.secondary)
+                    }
+                }
+                .buttonStyle(.plain)
+            }
         }
         .formStyle(.grouped)
-        .frame(width: 400, height: 300)
+        .frame(width: 400, height: 340)
         .onAppear {
             store.refreshDatabaseSize()
+        }
+        .sheet(isPresented: $showLogs) {
+            LogsView()
         }
     }
 
@@ -177,5 +196,77 @@ class HotKeyRecorderView: NSView {
 
     override func flagsChanged(with event: NSEvent) {
         // Don't record modifier-only presses
+    }
+}
+
+struct LogsView: View {
+    @Environment(\.dismiss) private var dismiss
+    private let logger = AppLogger.shared
+    private let dateFormatter: DateFormatter = {
+        let f = DateFormatter()
+        f.dateFormat = "HH:mm:ss"
+        return f
+    }()
+
+    var body: some View {
+        VStack(spacing: 0) {
+            HStack {
+                Text("Logs")
+                    .font(.headline)
+                Spacer()
+                Button("Clear") {
+                    logger.clear()
+                }
+                .disabled(logger.entries.isEmpty)
+                Button("Done") {
+                    dismiss()
+                }
+                .keyboardShortcut(.escape, modifiers: [])
+            }
+            .padding()
+
+            Divider()
+
+            if logger.entries.isEmpty {
+                ContentUnavailableView {
+                    Label("No Logs", systemImage: "doc.text")
+                } description: {
+                    Text("Errors and warnings will appear here")
+                }
+            } else {
+                ScrollView {
+                    LazyVStack(alignment: .leading, spacing: 4) {
+                        ForEach(logger.entries.reversed()) { entry in
+                            HStack(alignment: .top, spacing: 8) {
+                                Text(dateFormatter.string(from: entry.timestamp))
+                                    .font(.system(.caption, design: .monospaced))
+                                    .foregroundStyle(.secondary)
+
+                                Text(entry.level.rawValue)
+                                    .font(.system(.caption, design: .monospaced))
+                                    .foregroundStyle(colorForLevel(entry.level))
+                                    .frame(width: 40, alignment: .leading)
+
+                                Text(entry.message)
+                                    .font(.system(.caption, design: .monospaced))
+                                    .textSelection(.enabled)
+                            }
+                            .padding(.horizontal)
+                            .padding(.vertical, 2)
+                        }
+                    }
+                    .padding(.vertical, 8)
+                }
+            }
+        }
+        .frame(width: 600, height: 400)
+    }
+
+    private func colorForLevel(_ level: LogEntry.LogLevel) -> Color {
+        switch level {
+        case .info: return .secondary
+        case .warning: return .orange
+        case .error: return .red
+        }
     }
 }

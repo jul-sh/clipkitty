@@ -35,7 +35,7 @@ final class HotKeyManager: @unchecked Sendable {
                 installEventHandler()
             }
         } else {
-            print("Failed to register hotkey: \(status)")
+            logError("Failed to register hotkey: \(status)")
         }
     }
 
