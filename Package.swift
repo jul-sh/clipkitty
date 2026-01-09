@@ -11,12 +11,20 @@ let package = Package(
         .package(url: "https://github.com/groue/GRDB.swift.git", from: "7.0.0")
     ],
     targets: [
-        .executableTarget(
-            name: "ClipKitty",
+        .target(
+            name: "ClipKittyCore",
             dependencies: [
                 .product(name: "GRDB", package: "GRDB.swift")
             ],
-            path: "Sources",
+            path: "Sources/Core"
+        ),
+        .executableTarget(
+            name: "ClipKitty",
+            dependencies: [
+                "ClipKittyCore",
+                .product(name: "GRDB", package: "GRDB.swift")
+            ],
+            path: "Sources/App",
             resources: [
                 .copy("Resources")
             ]
@@ -24,6 +32,7 @@ let package = Package(
         .executableTarget(
             name: "PopulateTestData",
             dependencies: [
+                "ClipKittyCore",
                 .product(name: "GRDB", package: "GRDB.swift")
             ],
             path: "Scripts/PopulateTestData"

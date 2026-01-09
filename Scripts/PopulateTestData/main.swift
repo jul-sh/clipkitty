@@ -1,108 +1,21 @@
 import Foundation
 import GRDB
-
-// MARK: - Types (mirroring ClipboardItem.swift)
-
-enum ContentType: String, Codable, DatabaseValueConvertible {
-    case text
-    case link
-    case image
-}
-
-struct ClipboardItem: Codable, FetchableRecord, PersistableRecord {
-    static let databaseTableName = "items"
-
-    var id: Int64?
-    let content: String
-    let contentHash: String
-    let timestamp: Date
-    let sourceApp: String?
-    let contentType: ContentType
-    let imageData: Data?
-    var linkTitle: String?
-    var linkImageData: Data?
-
-    init(content: String, sourceApp: String? = nil, contentType: ContentType? = nil, timestamp: Date = Date()) {
-        self.id = nil
-        self.content = content
-        self.contentHash = Self.hash(content)
-        self.timestamp = timestamp
-        self.sourceApp = sourceApp
-        self.imageData = nil
-        self.linkTitle = nil
-        self.linkImageData = nil
-
-        if let type = contentType {
-            self.contentType = type
-        } else if Self.isURL(content) {
-            self.contentType = .link
-        } else {
-            self.contentType = .text
-        }
-    }
-
-    static func isURL(_ string: String) -> Bool {
-        let trimmed = string.trimmingCharacters(in: .whitespacesAndNewlines)
-        guard trimmed.count < 2000, !trimmed.contains("\n") else { return false }
-
-        if trimmed.hasPrefix("http://") || trimmed.hasPrefix("https://") {
-            return URL(string: trimmed) != nil
-        }
-        if trimmed.hasPrefix("www.") {
-            return URL(string: "https://\(trimmed)") != nil
-        }
-
-        guard let detector = try? NSDataDetector(types: NSTextCheckingResult.CheckingType.link.rawValue) else {
-            return false
-        }
-        let range = NSRange(location: 0, length: trimmed.utf16.count)
-        guard let match = detector.firstMatch(in: trimmed, options: [], range: range) else {
-            return false
-        }
-        guard match.range.length == range.length else { return false }
-        if let url = match.url {
-            return url.scheme == "http" || url.scheme == "https"
-        }
-        return false
-    }
-
-    private static func hash(_ string: String) -> String {
-        var hasher = Hasher()
-        hasher.combine(string)
-        return String(hasher.finalize())
-    }
-
-    mutating func didInsert(_ inserted: InsertionSuccess) {
-        id = inserted.rowID
-    }
-}
+import ClipKittyCore
 
 // MARK: - Test Data
 
-struct TestData {
-    let content: String
-    let sourceApp: String?
-    let contentType: ContentType?
-
-    init(_ content: String, sourceApp: String? = nil, contentType: ContentType? = nil) {
-        self.content = content
-        self.sourceApp = sourceApp
-        self.contentType = contentType
-    }
-}
-
-let testItems: [TestData] = [
+let testItems: [(content: String, sourceApp: String?, contentType: ContentType?)] = [
     // Email address
-    TestData("sarah.johnson@techcorp.io", sourceApp: "Mail"),
+    ("sarah.johnson@techcorp.io", "Mail", nil),
 
     // Phone number
-    TestData("+1 (555) 867-5309", sourceApp: "Contacts"),
+    ("+1 (555) 867-5309", "Contacts", nil),
 
     // UUID
-    TestData("f47ac10b-58cc-4372-a567-0e02b2c3d479", sourceApp: "Terminal"),
+    ("f47ac10b-58cc-4372-a567-0e02b2c3d479", "Terminal", nil),
 
     // JSON snippet
-    TestData("""
+    ("""
     {
       "user": {
         "id": 42,
@@ -110,90 +23,90 @@ let testItems: [TestData] = [
         "roles": ["admin", "developer"]
       }
     }
-    """, sourceApp: "VS Code"),
+    """, "VS Code", nil),
 
     // URL - GitHub repo
-    TestData("https://github.com/apple/swift-collections", sourceApp: "Safari", contentType: .link),
+    ("https://github.com/apple/swift-collections", "Safari", .link),
 
     // Swift code snippet
-    TestData("""
+    ("""
     func fetchUsers() async throws -> [User] {
         let response = try await client.get("/api/users")
         return try decoder.decode([User].self, from: response.data)
     }
-    """, sourceApp: "Xcode"),
+    """, "Xcode", nil),
 
     // SQL query
-    TestData("""
+    ("""
     SELECT u.name, COUNT(o.id) as order_count
     FROM users u
     LEFT JOIN orders o ON u.id = o.user_id
     WHERE u.created_at > '2024-01-01'
     GROUP BY u.id
     HAVING order_count > 5;
-    """, sourceApp: "TablePlus"),
+    """, "TablePlus", nil),
 
     // URL - Documentation
-    TestData("https://developer.apple.com/documentation/swiftui/view", sourceApp: "Safari", contentType: .link),
+    ("https://developer.apple.com/documentation/swiftui/view", "Safari", .link),
 
     // Terminal command
-    TestData("git log --oneline --graph --all -20", sourceApp: "Terminal"),
+    ("git log --oneline --graph --all -20", "Terminal", nil),
 
     // Street address
-    TestData("1 Infinite Loop, Cupertino, CA 95014", sourceApp: "Maps"),
+    ("1 Infinite Loop, Cupertino, CA 95014", "Maps", nil),
 
     // CSS snippet
-    TestData("""
+    ("""
     .container {
       display: flex;
       justify-content: center;
       gap: 1rem;
       padding: 2rem;
     }
-    """, sourceApp: "VS Code"),
+    """, "VS Code", nil),
 
     // URL - Stack Overflow
-    TestData("https://stackoverflow.com/questions/24002369/how-to-call-objective-c-code-from-swift", sourceApp: "Arc", contentType: .link),
+    ("https://stackoverflow.com/questions/24002369/how-to-call-objective-c-code-from-swift", "Arc", .link),
 
     // Error message
-    TestData("Error: SQLITE_CONSTRAINT: UNIQUE constraint failed: users.email", sourceApp: "Terminal"),
+    ("Error: SQLITE_CONSTRAINT: UNIQUE constraint failed: users.email", "Terminal", nil),
 
     // Python code
-    TestData("""
+    ("""
     def calculate_metrics(data: list[dict]) -> dict:
         return {
             "count": len(data),
             "avg": sum(d["value"] for d in data) / len(data)
         }
-    """, sourceApp: "PyCharm"),
+    """, "PyCharm", nil),
 
     // Markdown text
-    TestData("""
+    ("""
     ## Quick Start
 
     1. Install dependencies: `npm install`
     2. Run dev server: `npm run dev`
     3. Open http://localhost:3000
-    """, sourceApp: "Obsidian"),
+    """, "Obsidian", nil),
 
     // API endpoint
-    TestData("https://api.stripe.com/v1/customers", sourceApp: "Postman", contentType: .link),
+    ("https://api.stripe.com/v1/customers", "Postman", .link),
 
     // Regex pattern
-    TestData(#"^(?=.*[A-Z])(?=.*[a-z])(?=.*\d)[A-Za-z\d@$!%*?&]{8,}$"#, sourceApp: "VS Code"),
+    (#"^(?=.*[A-Z])(?=.*[a-z])(?=.*\d)[A-Za-z\d@$!%*?&]{8,}$"#, "VS Code", nil),
 
     // Shell script snippet
-    TestData("""
+    ("""
     for file in *.json; do
         jq '.data[] | select(.active == true)' "$file"
     done
-    """, sourceApp: "Terminal"),
+    """, "Terminal", nil),
 
     // URL - YouTube
-    TestData("https://www.youtube.com/watch?v=dQw4w9WgXcQ", sourceApp: "Arc", contentType: .link),
+    ("https://www.youtube.com/watch?v=dQw4w9WgXcQ", "Arc", .link),
 
     // TypeScript interface
-    TestData("""
+    ("""
     interface UserProfile {
       id: string;
       email: string;
@@ -202,7 +115,7 @@ let testItems: [TestData] = [
         notifications: boolean;
       };
     }
-    """, sourceApp: "VS Code"),
+    """, "VS Code", nil),
 ]
 
 // MARK: - Database Operations
@@ -222,7 +135,7 @@ func populateDatabase() throws {
 
     try dbQueue.write { db in
         // Create table if not exists
-        try db.create(table: "items", ifNotExists: true) { t in
+        try db.create(table: ClipboardItem.databaseTableName, ifNotExists: true) { t in
             t.autoIncrementedPrimaryKey("id")
             t.column("content", .text).notNull()
             t.column("contentHash", .text).notNull()
@@ -245,9 +158,9 @@ func populateDatabase() throws {
         for (index, testData) in testItems.enumerated() {
             let timestamp = now.addingTimeInterval(Double(-index * 300)) // 5 min apart
             let item = ClipboardItem(
-                content: testData.content,
-                sourceApp: testData.sourceApp,
-                contentType: testData.contentType,
+                content: testData.0,
+                sourceApp: testData.1,
+                contentType: testData.2,
                 timestamp: timestamp
             )
             try item.insert(db)

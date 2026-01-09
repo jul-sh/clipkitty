@@ -2,6 +2,7 @@ import Foundation
 import AppKit
 import Observation
 import GRDB
+import ClipKittyCore
 
 /// Combined state for data display
 enum DisplayState: Equatable {
