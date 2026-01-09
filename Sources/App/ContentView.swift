@@ -48,7 +48,7 @@ struct ContentView: View {
         .frame(maxWidth: .infinity, maxHeight: .infinity)
 
         // 2. Apply the glass effect/background so it fills that infinite frame
-        .glassEffect(.regular.interactive(), in: RoundedRectangle(cornerRadius: 12))
+        .glassEffect(.thick.interactive(), in: RoundedRectangle(cornerRadius: 12))
 
         // 3. Finally, ignore the safe area to push the background into the title bar
         .ignoresSafeArea(.all)
