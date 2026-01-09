@@ -63,9 +63,40 @@ struct ClipboardItem: Identifiable, Sendable, Codable, Equatable, FetchableRecor
 
     static func isURL(_ string: String) -> Bool {
         let trimmed = string.trimmingCharacters(in: .whitespacesAndNewlines)
-        guard let url = URL(string: trimmed) else { return false }
-        return url.scheme == "http" || url.scheme == "https" ||
-               trimmed.hasPrefix("www.") || trimmed.contains("://")
+
+        // Quick validation: URLs shouldn't be too long or contain newlines
+        guard trimmed.count < 2000, !trimmed.contains("\n") else { return false }
+
+        // Check for explicit http/https URLs
+        if trimmed.hasPrefix("http://") || trimmed.hasPrefix("https://") {
+            return URL(string: trimmed) != nil
+        }
+
+        // Check for www. prefix (common URL format)
+        if trimmed.hasPrefix("www.") {
+            return URL(string: "https://\(trimmed)") != nil
+        }
+
+        // Use NSDataDetector for more sophisticated URL matching
+        guard let detector = try? NSDataDetector(types: NSTextCheckingResult.CheckingType.link.rawValue) else {
+            return false
+        }
+
+        let range = NSRange(location: 0, length: trimmed.utf16.count)
+        guard let match = detector.firstMatch(in: trimmed, options: [], range: range) else {
+            return false
+        }
+
+        // Only consider it a URL if the match covers the entire string
+        // This prevents false positives from strings that merely contain a URL-like substring
+        guard match.range.length == range.length else { return false }
+
+        // Only treat http/https URLs as "link" type for preview purposes
+        if let url = match.url {
+            return url.scheme == "http" || url.scheme == "https"
+        }
+
+        return false
     }
 
     var displayText: String {

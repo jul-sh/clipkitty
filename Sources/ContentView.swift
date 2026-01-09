@@ -220,7 +220,7 @@ struct ContentView: View {
     private var previewPane: some View {
         VStack(spacing: 0) {
             if let item = selectedItem {
-                // Content
+                // Content - wrapped in NonDraggableView to allow text selection
                 ScrollView(.vertical, showsIndicators: true) {
                     if item.contentType == .image, let imageData = item.imageData,
                        let nsImage = NSImage(data: imageData) {
@@ -241,10 +241,12 @@ struct ContentView: View {
                         Text(highlightedPreview(for: item))
                             .font(.custom(FontManager.mono, size: 15))
                             .textSelection(.enabled)
+                            .modifier(IBeamCursorOnHover())
                             .frame(maxWidth: .infinity, alignment: .leading)
                             .padding(16)
                     }
                 }
+                .background(NonDraggableView())
 
                 Divider()
 
@@ -264,7 +266,7 @@ struct ContentView: View {
                 .foregroundStyle(.secondary)
                 .padding(.horizontal, 17)
                 .padding(.vertical, 11)
-                .glassEffect(.regular, in: Rectangle())
+                .background(.black.opacity(0.05))
             } else if items.isEmpty {
                 emptyStateView
             } else {
@@ -275,6 +277,11 @@ struct ContentView: View {
             }
         }
         .background(.black.opacity(0.05))
+        .onHover { hovering in
+            if let window = NSApp.keyWindow ?? NSApp.mainWindow {
+                window.isMovableByWindowBackground = !hovering
+            }
+        }
     }
 
     private func formatSize(_ chars: Int) -> String {
@@ -350,6 +357,8 @@ struct ContentView: View {
                         .font(.system(size: 18, weight: .semibold))
                         .foregroundStyle(.primary)
                         .lineLimit(2)
+                        .textSelection(.enabled)
+                        .modifier(IBeamCursorOnHover())
                 }
 
                 Text(item.content)
@@ -357,12 +366,50 @@ struct ContentView: View {
                     .foregroundStyle(.secondary)
                     .lineLimit(1)
                     .textSelection(.enabled)
+                    .modifier(IBeamCursorOnHover())
             }
             .frame(maxWidth: .infinity, alignment: .leading)
 
             Spacer()
         }
         .padding(16)
+    }
+}
+
+// MARK: - Non-Draggable View
+// Prevents window dragging on the preview pane to allow text selection
+
+struct NonDraggableView: NSViewRepresentable {
+    func makeNSView(context: Context) -> NSView {
+        let view = NonDraggableNSView()
+        view.wantsLayer = true
+        view.layer?.backgroundColor = .clear
+        return view
+    }
+
+    func updateNSView(_ nsView: NSView, context: Context) {}
+}
+
+class NonDraggableNSView: NSView {
+    override var mouseDownCanMoveWindow: Bool { false }
+
+    override func hitTest(_ point: NSPoint) -> NSView? {
+        // Return self to capture mouse events and prevent window dragging
+        return self
+    }
+}
+
+// MARK: - Hover Cursor
+
+struct IBeamCursorOnHover: ViewModifier {
+    func body(content: Content) -> some View {
+        content.onHover { hovering in
+            if hovering {
+                NSCursor.iBeam.push()
+            } else {
+                NSCursor.pop()
+            }
+        }
     }
 }
 

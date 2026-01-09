@@ -336,7 +336,7 @@ final class ClipboardStore {
                 let sourceApp = NSWorkspace.shared.frontmostApplication?.localizedName
                 var itemId: Int64?
                 try dbQueue?.write { db in
-                    var item = ClipboardItem(content: content, sourceApp: sourceApp)
+                    let item = ClipboardItem(content: content, sourceApp: sourceApp)
                     try item.insert(db)
                     itemId = db.lastInsertedRowID
                 }
@@ -406,7 +406,6 @@ final class ClipboardStore {
     }
 
     private func saveImageItem(imageData: Data) {
-        let hash = hashContent(String(imageData.count) + "-" + String(imageData.hashValue))
         let sourceApp = NSWorkspace.shared.frontmostApplication?.localizedName
 
         // Create description for the image
@@ -414,7 +413,7 @@ final class ClipboardStore {
 
         do {
             try dbQueue?.write { db in
-                var item = ClipboardItem(
+                let item = ClipboardItem(
                     content: description,
                     sourceApp: sourceApp,
                     contentType: .image,
