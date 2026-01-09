@@ -104,7 +104,15 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate {
                 NSMenu.popUpContextMenu(menu, with: event, for: button)
             }
         } else {
-            panelController.show()
+            switch panelController.visibility {
+            case .visible:
+                panelController.hide()
+                if let menu = statusMenu, let button = statusItem?.button {
+                    NSMenu.popUpContextMenu(menu, with: event, for: button)
+                }
+            case .hidden:
+                panelController.show()
+            }
         }
     }
 
