@@ -45,9 +45,21 @@ final class ClipboardStore {
         pruneIfNeeded()
     }
 
-    /// Current database size in bytes
-    var databaseSizeBytes: Int64 {
-        guard let dbQueue else { return 0 }
+    /// Current database size in bytes (cached, updated async)
+    private(set) var databaseSizeBytes: Int64 = 0
+
+    /// Refresh database size asynchronously
+    func refreshDatabaseSize() {
+        guard let dbQueue else { return }
+        Task.detached {
+            let size = Self.fetchDatabaseSize(dbQueue: dbQueue)
+            await MainActor.run { [weak self] in
+                self?.databaseSizeBytes = size
+            }
+        }
+    }
+
+    private nonisolated static func fetchDatabaseSize(dbQueue: DatabaseQueue) -> Int64 {
         do {
             return try dbQueue.read { db -> Int64 in
                 let pageCount = try Int64.fetchOne(db, sql: "PRAGMA page_count") ?? 0
@@ -206,29 +218,56 @@ final class ClipboardStore {
     // MARK: - Loading
 
     private func loadItems(reset: Bool) {
+        let offset: Int
+        let existingItems: [ClipboardItem]
+
         if reset {
             currentOffset = 0
+            offset = 0
+            existingItems = []
             state = .loading
+        } else {
+            offset = currentOffset
+            if case .loaded(let items, _) = state {
+                existingItems = items
+            } else {
+                existingItems = []
+            }
         }
 
+        guard let dbQueue else { return }
+        let pageSizeCopy = pageSize
+        Task.detached {
+            let result = Self.fetchItems(dbQueue: dbQueue, pageSize: pageSizeCopy, offset: offset)
+
+            await MainActor.run { [weak self] in
+                switch result {
+                case .success(let (newItems, hasMore)):
+                    self?.currentOffset = offset + newItems.count
+                    if reset {
+                        self?.state = .loaded(items: newItems, hasMore: hasMore)
+                    } else {
+                        self?.state = .loaded(items: existingItems + newItems, hasMore: hasMore)
+                    }
+                case .failure(let error):
+                    self?.state = .error("Failed to load items: \(error.localizedDescription)")
+                }
+            }
+        }
+    }
+
+    private nonisolated static func fetchItems(dbQueue: DatabaseQueue, pageSize: Int, offset: Int) -> Result<([ClipboardItem], Bool), Error> {
         do {
-            let newItems = try dbQueue?.read { db in
+            let newItems = try dbQueue.read { db in
                 try ClipboardItem
                     .order(Column("timestamp").desc)
-                    .limit(pageSize, offset: currentOffset)
+                    .limit(pageSize, offset: offset)
                     .fetchAll(db)
-            } ?? []
-
-            let hasMore = newItems.count == pageSize
-            currentOffset += newItems.count
-
-            if reset {
-                state = .loaded(items: newItems, hasMore: hasMore)
-            } else if case .loaded(let existing, _) = state {
-                state = .loaded(items: existing + newItems, hasMore: hasMore)
             }
+            let hasMore = newItems.count == pageSize
+            return .success((newItems, hasMore))
         } catch {
-            state = .error("Failed to load items: \(error.localizedDescription)")
+            return .failure(error)
         }
     }
 
@@ -319,47 +358,60 @@ final class ClipboardStore {
         guard currentCount != lastChangeCount else { return }
         lastChangeCount = currentCount
 
-        // Check for image data first
-        if let imageData = getImageData(from: pasteboard) {
-            saveImageItem(imageData: imageData)
-            return
+        // Check for image data first - get raw data only, defer compression
+        let imageTypes: [NSPasteboard.PasteboardType] = [.tiff, .png]
+        for type in imageTypes {
+            if let rawData = pasteboard.data(forType: type) {
+                saveImageItem(rawImageData: rawData)
+                return
+            }
         }
 
         // Otherwise check for text
         guard let text = pasteboard.string(forType: .string), !text.isEmpty else { return }
 
         let hash = hashContent(text)
+        let sourceApp = NSWorkspace.shared.frontmostApplication?.localizedName
 
-        do {
-            if let existing = try dbQueue?.read({ db in
-                try ClipboardItem.filter(Column("contentHash") == hash).fetchOne(db)
-            }) {
-                try dbQueue?.write { db in
-                    try db.execute(sql: "UPDATE items SET timestamp = ? WHERE id = ?", arguments: [Date(), existing.id])
-                }
-            } else {
-                let sourceApp = NSWorkspace.shared.frontmostApplication?.localizedName
-                var itemId: Int64?
-                try dbQueue?.write { db in
-                    let item = ClipboardItem(text: text, sourceApp: sourceApp)
-                    try item.insert(db)
-                    itemId = db.lastInsertedRowID
-                }
+        // Move all DB operations to background
+        guard let dbQueue else { return }
+        Task.detached { [weak self] in
+            let newItemId = Self.saveTextItem(dbQueue: dbQueue, text: text, hash: hash, sourceApp: sourceApp)
 
-                // If it's a URL, fetch metadata asynchronously
-                if ClipboardItem.isURL(text), let id = itemId {
-                    Task {
-                        await fetchAndUpdateLinkMetadata(for: id, url: text)
-                    }
-                }
+            // If it's a URL, fetch metadata asynchronously
+            if ClipboardItem.isURL(text), let id = newItemId {
+                await self?.fetchAndUpdateLinkMetadata(for: id, url: text)
             }
 
-            // Only reload if browsing (not searching)
-            if case .loaded = state {
-                loadItems(reset: true)
+            // Reload on main actor if browsing
+            guard let self else { return }
+            await MainActor.run { [weak self] in
+                if case .loaded = self?.state {
+                    self?.loadItems(reset: true)
+                }
+            }
+        }
+    }
+
+    private nonisolated static func saveTextItem(dbQueue: DatabaseQueue, text: String, hash: String, sourceApp: String?) -> Int64? {
+        do {
+            if let existing = try dbQueue.read({ db in
+                try ClipboardItem.filter(Column("contentHash") == hash).fetchOne(db)
+            }) {
+                try dbQueue.write { db in
+                    try db.execute(sql: "UPDATE items SET timestamp = ? WHERE id = ?", arguments: [Date(), existing.id])
+                }
+                return nil
+            } else {
+                return try dbQueue.write { db -> Int64 in
+                    let item = ClipboardItem(text: text, sourceApp: sourceApp)
+                    try item.insert(db)
+                    return db.lastInsertedRowID
+                }
             }
         } catch {
             print("Clipboard save failed: \(error)")
+            return nil
         }
     }
 
@@ -395,36 +447,39 @@ final class ClipboardStore {
         }
     }
 
-    private func getImageData(from pasteboard: NSPasteboard) -> Data? {
-        // Check for image types
-        let imageTypes: [NSPasteboard.PasteboardType] = [.tiff, .png]
-
-        for type in imageTypes {
-            if let data = pasteboard.data(forType: type) {
-                // Convert to compressed JPEG to save space
-                if let image = NSImage(data: data),
-                   let tiffData = image.tiffRepresentation,
-                   let bitmap = NSBitmapImageRep(data: tiffData),
-                   let jpegData = bitmap.representation(using: .jpeg, properties: [.compressionFactor: 0.7]) {
-                    return jpegData
-                }
-                return data
-            }
-        }
-        return nil
-    }
-
-    private func saveImageItem(imageData: Data) {
+    private func saveImageItem(rawImageData: Data) {
         let sourceApp = NSWorkspace.shared.frontmostApplication?.localizedName
 
-        do {
-            try dbQueue?.write { db in
-                let item = ClipboardItem(imageData: imageData, sourceApp: sourceApp)
-                try item.insert(db)
-            }
+        // Move compression and DB write to background
+        guard let dbQueue else { return }
+        Task.detached { [weak self] in
+            Self.saveImageItemToDB(dbQueue: dbQueue, rawImageData: rawImageData, sourceApp: sourceApp)
 
-            if case .loaded = state {
-                loadItems(reset: true)
+            guard let self else { return }
+            await MainActor.run { [weak self] in
+                if case .loaded = self?.state {
+                    self?.loadItems(reset: true)
+                }
+            }
+        }
+    }
+
+    private nonisolated static func saveImageItemToDB(dbQueue: DatabaseQueue, rawImageData: Data, sourceApp: String?) {
+        // Compress image
+        let compressedData: Data
+        if let image = NSImage(data: rawImageData),
+           let tiffData = image.tiffRepresentation,
+           let bitmap = NSBitmapImageRep(data: tiffData),
+           let jpegData = bitmap.representation(using: .jpeg, properties: [.compressionFactor: 0.7]) {
+            compressedData = jpegData
+        } else {
+            compressedData = rawImageData
+        }
+
+        do {
+            try dbQueue.write { db in
+                let item = ClipboardItem(imageData: compressedData, sourceApp: sourceApp)
+                try item.insert(db)
             }
         } catch {
             print("Image save failed: \(error)")
@@ -447,56 +502,68 @@ final class ClipboardStore {
 
         guard let id = item.id else { return }
 
-        do {
-            try dbQueue?.write { db in
-                try db.execute(sql: "UPDATE items SET timestamp = ? WHERE id = ?", arguments: [Date(), id])
+        // Defer database operations to avoid blocking clipboard availability
+        Task.detached { [dbQueue] in
+            do {
+                try dbQueue?.write { db in
+                    try db.execute(sql: "UPDATE items SET timestamp = ? WHERE id = ?", arguments: [Date(), id])
+                }
+            } catch {
+                print("Failed to update timestamp: \(error)")
             }
-            if case .loaded = state {
-                loadItems(reset: true)
-            }
-        } catch {
-            print("Failed to update timestamp: \(error)")
+        }
+
+        if case .loaded = state {
+            loadItems(reset: true)
         }
     }
 
     func delete(item: ClipboardItem) {
         guard let id = item.id else { return }
 
-        do {
-            try dbQueue?.write { db in
-                try db.execute(sql: "DELETE FROM items WHERE id = ?", arguments: [id])
+        // Update UI immediately
+        switch state {
+        case .loaded(let items, let hasMore):
+            state = .loaded(items: items.filter { $0.id != id }, hasMore: hasMore)
+        case .searching(let query, let searchState):
+            let newState: SearchResultState
+            switch searchState {
+            case .loading(let previous):
+                newState = .loading(previousResults: previous.filter { $0.id != id })
+            case .results(let results):
+                newState = .results(results.filter { $0.id != id })
             }
+            state = .searching(query: query, state: newState)
+        default:
+            break
+        }
 
-            // Update state by filtering out deleted item
-            switch state {
-            case .loaded(let items, let hasMore):
-                state = .loaded(items: items.filter { $0.id != id }, hasMore: hasMore)
-            case .searching(let query, let searchState):
-                let newState: SearchResultState
-                switch searchState {
-                case .loading(let previous):
-                    newState = .loading(previousResults: previous.filter { $0.id != id })
-                case .results(let results):
-                    newState = .results(results.filter { $0.id != id })
+        // Perform DB delete in background
+        Task.detached { [dbQueue] in
+            do {
+                try dbQueue?.write { db in
+                    try db.execute(sql: "DELETE FROM items WHERE id = ?", arguments: [id])
                 }
-                state = .searching(query: query, state: newState)
-            default:
-                break
+            } catch {
+                print("Failed to delete: \(error)")
             }
-        } catch {
-            print("Failed to delete: \(error)")
         }
     }
 
     func clear() {
-        do {
-            try dbQueue?.write { db in
-                try db.execute(sql: "DELETE FROM items")
-                try db.execute(sql: "INSERT INTO items_fts(items_fts) VALUES('rebuild')")
+        // Update UI immediately
+        state = .loaded(items: [], hasMore: false)
+
+        // Perform expensive DB operations in background
+        Task.detached { [dbQueue] in
+            do {
+                try dbQueue?.write { db in
+                    try db.execute(sql: "DELETE FROM items")
+                    try db.execute(sql: "INSERT INTO items_fts(items_fts) VALUES('rebuild')")
+                }
+            } catch {
+                print("Failed to clear: \(error)")
             }
-            state = .loaded(items: [], hasMore: false)
-        } catch {
-            print("Failed to clear: \(error)")
         }
     }
 
