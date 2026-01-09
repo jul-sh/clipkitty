@@ -40,34 +40,33 @@ icon:
 	fi
 
 plist:
-	@cat > "$(APP_NAME).app/Contents/Info.plist" <<EOF
-<?xml version="1.0" encoding="UTF-8"?>
-<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
-<plist version="1.0">
-<dict>
-    <key>CFBundleExecutable</key>
-    <string>$(APP_NAME)</string>
-    <key>CFBundleIdentifier</key>
-    <string>$(BUNDLE_ID)</string>
-    <key>CFBundleName</key>
-    <string>$(APP_NAME)</string>
-    <key>CFBundleDisplayName</key>
-    <string>ClipKitty</string>
-    <key>CFBundleIconName</key>
-    <string>AppIcon</string>
-    <key>CFBundlePackageType</key>
-    <string>APPL</string>
-    <key>CFBundleVersion</key>
-    <string>1.0</string>
-    <key>CFBundleShortVersionString</key>
-    <string>1.0</string>
-    <key>LSMinimumSystemVersion</key>
-    <string>15.0</string>
-    <key>LSUIElement</key>
-    <true/>
-</dict>
-</plist>
-EOF
+	@printf '%s\n' \
+		'<?xml version="1.0" encoding="UTF-8"?>' \
+		'<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">' \
+		'<plist version="1.0">' \
+		'<dict>' \
+		'	<key>CFBundleExecutable</key>' \
+		'	<string>ClipKitty</string>' \
+		'	<key>CFBundleIdentifier</key>' \
+		'	<string>com.clipkitty.app</string>' \
+		'	<key>CFBundleName</key>' \
+		'	<string>ClipKitty</string>' \
+		'	<key>CFBundleDisplayName</key>' \
+		'	<string>ClipKitty</string>' \
+		'	<key>CFBundleIconName</key>' \
+		'	<string>AppIcon</string>' \
+		'	<key>CFBundlePackageType</key>' \
+		'	<string>APPL</string>' \
+		'	<key>CFBundleVersion</key>' \
+		'	<string>1.0</string>' \
+		'	<key>CFBundleShortVersionString</key>' \
+		'	<string>1.0</string>' \
+		'	<key>LSMinimumSystemVersion</key>' \
+		'	<string>15.0</string>' \
+		'	<key>LSUIElement</key>' \
+		'	<true/>' \
+		'</dict>' \
+		'</plist>' > "$(APP_NAME).app/Contents/Info.plist"
 	@touch "$(APP_NAME).app"
 	@echo "Done! Created $(APP_NAME).app"
 
