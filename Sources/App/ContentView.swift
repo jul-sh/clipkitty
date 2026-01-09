@@ -53,7 +53,7 @@ struct ContentView: View {
             RoundedRectangle(cornerRadius: 12)
                 .fill(
                     (colorScheme == .dark ? Color.black : Color.white)
-                        .opacity(0.18)
+                        .opacity(0.1)
                 )
         )
         .glassEffect(.regular.interactive(), in: RoundedRectangle(cornerRadius: 12))
@@ -279,7 +279,7 @@ struct ContentView: View {
                                 store.fetchLinkMetadataIfNeeded(for: item)
                             }
 
-                    case .text:
+                    case .text, .email, .phone, .address, .date, .transit:
                         // Text preview
                         Text(highlightedPreview(for: item))
                             .font(.custom(FontManager.mono, size: 15))
