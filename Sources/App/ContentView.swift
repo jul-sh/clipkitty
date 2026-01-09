@@ -3,18 +3,11 @@ import AppKit
 import ClipKittyCore
 
 struct ContentView: View {
-    private enum SelectionOrigin {
-        case keyboard
-        case mouse
-        case programmatic
-    }
-
     var store: ClipboardStore
     let onSelect: (ClipboardItem) -> Void
     let onDismiss: () -> Void
 
     @State private var selection: String?
-    @State private var selectionOrigin: SelectionOrigin = .programmatic
     @State private var searchText: String = ""
     @State private var isCopyHovering: Bool = false
     @FocusState private var isSearchFocused: Bool
@@ -84,7 +77,6 @@ struct ContentView: View {
     // MARK: - Selection Management
 
     private func selectFirstItem() {
-        selectionOrigin = .programmatic
         selection = items.first?.stableId
     }
 
@@ -100,7 +92,6 @@ struct ContentView: View {
             return
         }
         let newIndex = max(0, min(items.count - 1, currentIndex + offset))
-        selectionOrigin = .keyboard
         selection = items[newIndex].stableId
     }
 
@@ -161,10 +152,14 @@ struct ContentView: View {
         let index = number - 1
         guard index < items.count else { return .ignored }
 
-        selectionOrigin = .keyboard
         selection = items[index].stableId
         confirmSelection()
         return .handled
+    }
+
+    private func indexForSelection(_ selection: String?) -> Int? {
+        guard let selection else { return nil }
+        return items.firstIndex { $0.stableId == selection }
     }
 
     // MARK: - Content
@@ -230,7 +225,6 @@ struct ContentView: View {
                 .listRowSeparator(.hidden)
                 .listRowBackground(Color.clear)
                 .onTapGesture {
-                    selectionOrigin = .mouse
                     selection = item.stableId
                 }
                 .onAppear {
@@ -241,8 +235,20 @@ struct ContentView: View {
             }
             .listStyle(.plain)
             .scrollContentBackground(.hidden)
-            .onChange(of: selection) { _, newSelection in
-                if let newSelection, selectionOrigin == .keyboard {
+            .onChange(of: selection) { oldSelection, newSelection in
+                guard let newSelection else { return }
+                let oldIndex = indexForSelection(oldSelection)
+                let newIndex = indexForSelection(newSelection)
+                let shouldAnimate = {
+                    guard let oldIndex, let newIndex else { return true }
+                    return abs(newIndex - oldIndex) > 1
+                }()
+
+                if shouldAnimate {
+                    withAnimation(.easeInOut(duration: 0.2)) {
+                        proxy.scrollTo(newSelection, anchor: .center)
+                    }
+                } else {
                     proxy.scrollTo(newSelection, anchor: .center)
                 }
             }
