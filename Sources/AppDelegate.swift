@@ -1,4 +1,5 @@
 import AppKit
+import ServiceManagement
 import SwiftUI
 
 @MainActor
@@ -13,6 +14,8 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate {
 
     func applicationDidFinishLaunching(_ notification: Notification) {
         FontManager.registerFonts()
+
+        enableLaunchAtLogin()
 
         store = ClipboardStore()
         store.startMonitoring()
@@ -51,6 +54,16 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate {
         menu.addItem(NSMenuItem(title: "Quit", action: #selector(quit), keyEquivalent: "q"))
 
         statusMenu = menu
+    }
+
+    private func enableLaunchAtLogin() {
+        do {
+            if SMAppService.mainApp.status != .enabled {
+                try SMAppService.mainApp.register()
+            }
+        } catch {
+            print("Failed to enable launch at login: \(error)")
+        }
     }
 
     private func updateMenuHotKey() {
