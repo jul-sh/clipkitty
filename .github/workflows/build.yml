@@ -24,8 +24,7 @@ jobs:
 
       - name: Build App
         run: |
-          chmod +x build-app.sh
-          ./build-app.sh
+          make
 
       - name: Create ZIP
         run: |
