@@ -6,6 +6,9 @@ on:
   pull_request:
     branches: [main]
 
+permissions:
+  contents: write
+
 jobs:
   build:
     runs-on: macos-26
@@ -36,11 +39,10 @@ jobs:
 
       - name: Create Release
         if: github.event_name == 'push' && github.ref == 'refs/heads/main'
-        uses: softprops/action-gh-release@v2
-        with:
-          tag_name: commit-${{ github.sha }}
-          name: ClipKitty ${{ github.sha }}
-          files: ClipKitty.app.zip
-          generate_release_notes: true
+        run: |
+          gh release create "commit-${GITHUB_SHA}" \
+            --title "ClipKitty ${GITHUB_SHA}" \
+            --generate-notes \
+            ClipKitty.app.zip
         env:
-          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          GH_TOKEN: ${{ github.token }}
