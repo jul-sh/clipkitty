@@ -11,14 +11,6 @@ A fast, native clipboard manager for macOS.
 - **Keyboard-driven** – Arrow keys to navigate, Return to paste
 - **Lightweight** – Native Swift app in the menu bar, no dock icon
 
-## Build
-
-```bash
-./build-app.sh
-open ClipKitty.app
-```
-
-Requires Swift 6.1+ and macOS 15+.
 
 ## Releases
 
