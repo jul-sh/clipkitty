@@ -4,6 +4,8 @@
 
 A fast, native clipboard manager for macOS.
 
+<img src="https://raw.githubusercontent.com/julsh/clipkitty/main/screenshot-clipkitty.png" alt="ClipKitty screenshot" width="820">
+
 ## Features
 
 - **Instant access** – Click the menu bar icon or press ⌥Space
