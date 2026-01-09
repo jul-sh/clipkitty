@@ -53,9 +53,9 @@ struct ContentView: View {
         .ignoresSafeArea(.all)
 
         .onAppear {
-            isSearchFocused = true
             searchText = ""
             selectFirstItem()
+            focusSearchField()
         }
         .onChange(of: store.state) { _, _ in
             validateSelection()
@@ -66,6 +66,13 @@ struct ContentView: View {
     }
 
     // MARK: - Selection Management
+
+    private func focusSearchField() {
+        Task { @MainActor in
+            try? await Task.sleep(for: .milliseconds(10))
+            isSearchFocused = true
+        }
+    }
 
     private func selectFirstItem() {
         selection = items.first?.stableId
