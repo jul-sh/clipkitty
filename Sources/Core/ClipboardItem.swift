@@ -63,6 +63,35 @@ public enum ClipboardContent: Sendable, Equatable {
         }
     }
 
+    /// Database field values: (content, imageData, linkTitle, linkImageData)
+    /// Extracts the appropriate fields for each content type
+    var databaseFields: (String, Data?, String?, Data?) {
+        switch self {
+        case .text(let text):
+            return (text, nil, nil, nil)
+        case .link(let url, let metadataState):
+            // Encode metadata state: nil = pending, empty = failed, value = loaded
+            let (title, imageData): (String?, Data?) = switch metadataState {
+            case .pending: (nil, nil)
+            case .failed: ("", nil)
+            case .loaded(let t, let img): (t ?? "", img)
+            }
+            return (url, nil, title, imageData)
+        case .email(let address):
+            return (address, nil, nil, nil)
+        case .phone(let number):
+            return (number, nil, nil, nil)
+        case .address(let address):
+            return (address, nil, nil, nil)
+        case .date(let dateString):
+            return (dateString, nil, nil, nil)
+        case .transit(let transitInfo):
+            return (transitInfo, nil, nil, nil)
+        case .image(let data, let description):
+            return (description, data, nil, nil)
+        }
+    }
+
     /// Reconstruct from database row
     static func from(
         databaseType: String,
@@ -73,18 +102,14 @@ public enum ClipboardContent: Sendable, Equatable {
     ) -> ClipboardContent {
         switch databaseType {
         case "link":
-            let metadataState: LinkMetadataState
-            // nil = pending (never fetched)
-            // empty string with no image = failed (fetched but no data)
-            // non-empty or has image = loaded
-            if let title = linkTitle {
-                if title.isEmpty && linkImageData == nil {
-                    metadataState = .failed
-                } else {
-                    metadataState = .loaded(LinkMetadata(title: title.isEmpty ? nil : title, imageData: linkImageData))
-                }
-            } else {
-                metadataState = .pending
+            // Database encoding: nil title = pending, empty title with no image = failed, otherwise = loaded
+            let metadataState: LinkMetadataState = switch (linkTitle, linkImageData) {
+            case (nil, _):
+                .pending
+            case ("", nil):
+                .failed
+            case (let title, let imageData):
+                .loaded(title: title?.isEmpty == true ? nil : title, imageData: imageData)
             }
             return .link(url: content, metadataState: metadataState)
         case "image":
@@ -105,31 +130,35 @@ public enum ClipboardContent: Sendable, Equatable {
     }
 }
 
-/// Metadata fetch state for links - distinguishes between not-yet-fetched, loading, loaded, and failed
+/// Metadata fetch state for links - distinguishes between not-yet-fetched, loaded, and failed
+/// Uses sum type to make invalid states unrepresentable
 public enum LinkMetadataState: Sendable, Equatable {
     case pending
-    case loaded(LinkMetadata)
+    case loaded(title: String?, imageData: Data?)
     case failed
 
-    public var metadata: LinkMetadata? {
-        if case .loaded(let metadata) = self {
-            return metadata
+    /// Convenience accessor for loaded metadata
+    public var title: String? {
+        if case .loaded(let title, _) = self {
+            return title
         }
         return nil
     }
 
-}
-
-/// Metadata content for links
-public struct LinkMetadata: Sendable, Equatable, Codable {
-    public let title: String?
-    public let imageData: Data?
-
-    public init(title: String?, imageData: Data?) {
-        self.title = title
-        self.imageData = imageData
+    public var imageData: Data? {
+        if case .loaded(_, let imageData) = self {
+            return imageData
+        }
+        return nil
     }
 
+    /// Check if metadata has any content
+    public var hasContent: Bool {
+        if case .loaded(let title, let imageData) = self {
+            return title != nil || imageData != nil
+        }
+        return false
+    }
 }
 
 // MARK: - Clipboard Item
@@ -336,55 +365,12 @@ public struct ClipboardItem: Identifiable, Sendable, Equatable, FetchableRecord,
         container["sourceApp"] = sourceApp
         container["contentType"] = content.databaseType
 
-        switch content {
-        case .text(let text):
-            container["content"] = text
-            container["imageData"] = nil as Data?
-            container["linkTitle"] = nil as String?
-            container["linkImageData"] = nil as Data?
-
-        case .link(let url, let metadataState):
-            container["content"] = url
-            container["imageData"] = nil as Data?
-            container["linkTitle"] = metadataState.metadata?.title
-            container["linkImageData"] = metadataState.metadata?.imageData
-
-        case .email(let address):
-            container["content"] = address
-            container["imageData"] = nil as Data?
-            container["linkTitle"] = nil as String?
-            container["linkImageData"] = nil as Data?
-
-        case .phone(let number):
-            container["content"] = number
-            container["imageData"] = nil as Data?
-            container["linkTitle"] = nil as String?
-            container["linkImageData"] = nil as Data?
-
-        case .address(let address):
-            container["content"] = address
-            container["imageData"] = nil as Data?
-            container["linkTitle"] = nil as String?
-            container["linkImageData"] = nil as Data?
-
-        case .date(let dateString):
-            container["content"] = dateString
-            container["imageData"] = nil as Data?
-            container["linkTitle"] = nil as String?
-            container["linkImageData"] = nil as Data?
-
-        case .transit(let transitInfo):
-            container["content"] = transitInfo
-            container["imageData"] = nil as Data?
-            container["linkTitle"] = nil as String?
-            container["linkImageData"] = nil as Data?
-
-        case .image(let data, let description):
-            container["content"] = description
-            container["imageData"] = data
-            container["linkTitle"] = nil as String?
-            container["linkImageData"] = nil as Data?
-        }
+        // Extract content-specific fields based on content type
+        let (text, imageData, linkTitle, linkImageData) = content.databaseFields
+        container["content"] = text
+        container["imageData"] = imageData
+        container["linkTitle"] = linkTitle
+        container["linkImageData"] = linkImageData
     }
 
     public mutating func didInsert(_ inserted: InsertionSuccess) {

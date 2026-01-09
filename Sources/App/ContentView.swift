@@ -386,7 +386,7 @@ struct ContentView: View {
     private func linkPreview(url: String, metadataState: LinkMetadataState) -> some View {
         VStack(spacing: 16) {
             // OG Image if available
-            if let imageData = metadataState.metadata?.imageData,
+            if let imageData = metadataState.imageData,
                let nsImage = NSImage(data: imageData) {
                 Image(nsImage: nsImage)
                     .resizable()
@@ -412,9 +412,9 @@ struct ContentView: View {
                                 Text("Preview unavailable")
                                     .font(.caption)
                                     .foregroundStyle(.tertiary)
-                            case .loaded(let metadata) where metadata.imageData == nil:
+                            case .loaded(_, nil):
                                 EmptyView()
-                            default:
+                            case .loaded:
                                 EmptyView()
                             }
                         }
@@ -423,7 +423,7 @@ struct ContentView: View {
 
             // Title and URL
             VStack(alignment: .leading, spacing: 8) {
-                if let title = metadataState.metadata?.title, !title.isEmpty {
+                if let title = metadataState.title, !title.isEmpty {
                     Text(title)
                         .font(.system(size: 18, weight: .semibold))
                         .foregroundStyle(.primary)
