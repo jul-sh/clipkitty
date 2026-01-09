@@ -9,7 +9,7 @@ A fast, native clipboard manager for macOS.
 - **Instant access** – Click the menu bar icon or press ⌥Space
 - **Fast search** – FTS5 trigram-powered substring matching
 - **Keyboard-driven** – Arrow keys to navigate, Return to paste
-- **Lightweight** – Lives in the menu bar, no dock icon
+- **Lightweight** – Native Swift app in the menu bar, no dock icon
 
 ## Build
 
