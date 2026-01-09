@@ -1,11 +1,25 @@
 import Foundation
 import GRDB
 
-/// Content type for clipboard items
-public enum ContentType: String, Codable, DatabaseValueConvertible, Sendable {
-    case text
-    case link
-    case image
+// MARK: - Content Types with Associated Data
+
+/// Type-safe content representation that ensures only valid states are possible
+public enum ClipboardContent: Sendable, Equatable {
+    case text(String)
+    case link(url: String, metadata: LinkMetadata?)
+    case image(data: Data, description: String)
+
+    /// The searchable/displayable text content
+    public var textContent: String {
+        switch self {
+        case .text(let text):
+            return text
+        case .link(let url, _):
+            return url
+        case .image(_, let description):
+            return description
+        }
+    }
 
     public var icon: String {
         switch self {
@@ -16,22 +30,78 @@ public enum ContentType: String, Codable, DatabaseValueConvertible, Sendable {
     }
 }
 
-public struct ClipboardItem: Identifiable, Sendable, Codable, Equatable, FetchableRecord, PersistableRecord {
+/// Metadata for link content
+public struct LinkMetadata: Sendable, Equatable, Codable {
+    public var title: String?
+    public var imageData: Data?
+
+    public init(title: String? = nil, imageData: Data? = nil) {
+        self.title = title
+        self.imageData = imageData
+    }
+
+    public var isEmpty: Bool {
+        title == nil && imageData == nil
+    }
+}
+
+// MARK: - Database Content Type (for storage)
+
+/// Raw content type stored in database
+public enum ContentType: String, Codable, DatabaseValueConvertible, Sendable {
+    case text
+    case link
+    case image
+}
+
+// MARK: - Clipboard Item
+
+public struct ClipboardItem: Identifiable, Sendable, Equatable, FetchableRecord, PersistableRecord {
     public static let databaseTableName = "items"
 
     public var id: Int64?
-    public let content: String
+    public let content: ClipboardContent
     public let contentHash: String
     public let timestamp: Date
     public let sourceApp: String?
-    public let contentType: ContentType
-    public let imageData: Data?
 
-    // Link metadata (for URLs)
-    public var linkTitle: String?
-    public var linkImageData: Data?
+    // MARK: - Convenience Accessors
 
-    // Stable identifier for SwiftUI - uses contentHash as fallback when id is nil
+    /// The raw text content for searching and display
+    public var textContent: String { content.textContent }
+
+    /// Icon for the content type
+    public var icon: String { content.icon }
+
+    /// Link metadata (only available for links)
+    public var linkMetadata: LinkMetadata? {
+        if case .link(_, let metadata) = content {
+            return metadata
+        }
+        return nil
+    }
+
+    /// Image data (only available for images)
+    public var imageData: Data? {
+        if case .image(let data, _) = content {
+            return data
+        }
+        return nil
+    }
+
+    /// Whether this is a link type
+    public var isLink: Bool {
+        if case .link = content { return true }
+        return false
+    }
+
+    /// Whether this is an image type
+    public var isImage: Bool {
+        if case .image = content { return true }
+        return false
+    }
+
+    /// Stable identifier for SwiftUI
     public var stableId: String {
         if let id = id {
             return String(id)
@@ -39,69 +109,61 @@ public struct ClipboardItem: Identifiable, Sendable, Codable, Equatable, Fetchab
         return contentHash
     }
 
-    public init(content: String, sourceApp: String? = nil, contentType: ContentType? = nil, imageData: Data? = nil, linkTitle: String? = nil, linkImageData: Data? = nil, timestamp: Date = Date()) {
+    // MARK: - Initialization
+
+    /// Create a text item (auto-detects links)
+    public init(text: String, sourceApp: String? = nil, timestamp: Date = Date()) {
         self.id = nil
-        self.content = content
-        self.contentHash = ClipboardItem.hash(content)
+        self.contentHash = Self.hash(text)
         self.timestamp = timestamp
         self.sourceApp = sourceApp
-        self.imageData = imageData
-        self.linkTitle = linkTitle
-        self.linkImageData = linkImageData
 
-        // Auto-detect content type if not provided
-        if let type = contentType {
-            self.contentType = type
-        } else if imageData != nil {
-            self.contentType = .image
-        } else if ClipboardItem.isURL(content) {
-            self.contentType = .link
+        if Self.isURL(text) {
+            self.content = .link(url: text, metadata: nil)
         } else {
-            self.contentType = .text
+            self.content = .text(text)
         }
     }
 
-    public static func isURL(_ string: String) -> Bool {
-        let trimmed = string.trimmingCharacters(in: .whitespacesAndNewlines)
-
-        // Quick validation: URLs shouldn't be too long or contain newlines
-        guard trimmed.count < 2000, !trimmed.contains("\n") else { return false }
-
-        // Check for explicit http/https URLs
-        if trimmed.hasPrefix("http://") || trimmed.hasPrefix("https://") {
-            return URL(string: trimmed) != nil
-        }
-
-        // Check for www. prefix (common URL format)
-        if trimmed.hasPrefix("www.") {
-            return URL(string: "https://\(trimmed)") != nil
-        }
-
-        // Use NSDataDetector for more sophisticated URL matching
-        guard let detector = try? NSDataDetector(types: NSTextCheckingResult.CheckingType.link.rawValue) else {
-            return false
-        }
-
-        let range = NSRange(location: 0, length: trimmed.utf16.count)
-        guard let match = detector.firstMatch(in: trimmed, options: [], range: range) else {
-            return false
-        }
-
-        // Only consider it a URL if the match covers the entire string
-        // This prevents false positives from strings that merely contain a URL-like substring
-        guard match.range.length == range.length else { return false }
-
-        // Only treat http/https URLs as "link" type for preview purposes
-        if let url = match.url {
-            return url.scheme == "http" || url.scheme == "https"
-        }
-
-        return false
+    /// Create an explicit link item
+    public init(url: String, metadata: LinkMetadata? = nil, sourceApp: String? = nil, timestamp: Date = Date()) {
+        self.id = nil
+        self.contentHash = Self.hash(url)
+        self.timestamp = timestamp
+        self.sourceApp = sourceApp
+        self.content = .link(url: url, metadata: metadata)
     }
+
+    /// Create an image item
+    public init(imageData: Data, sourceApp: String? = nil, timestamp: Date = Date()) {
+        let description = "Image (\(imageData.count / 1024) KB)"
+        self.id = nil
+        self.contentHash = Self.hash(description + String(imageData.hashValue))
+        self.timestamp = timestamp
+        self.sourceApp = sourceApp
+        self.content = .image(data: imageData, description: description)
+    }
+
+    /// Internal initializer for database reconstruction
+    internal init(
+        id: Int64?,
+        content: ClipboardContent,
+        contentHash: String,
+        timestamp: Date,
+        sourceApp: String?
+    ) {
+        self.id = id
+        self.content = content
+        self.contentHash = contentHash
+        self.timestamp = timestamp
+        self.sourceApp = sourceApp
+    }
+
+    // MARK: - Display Helpers
 
     public var displayText: String {
-        let trimmed = content.trimmingCharacters(in: .whitespacesAndNewlines)
-        let singleLine = trimmed
+        let text = textContent.trimmingCharacters(in: .whitespacesAndNewlines)
+        let singleLine = text
             .replacingOccurrences(of: "\n", with: " ")
             .replacingOccurrences(of: "\t", with: " ")
             .replacingOccurrences(of: "  ", with: " ")
@@ -119,22 +181,138 @@ public struct ClipboardItem: Identifiable, Sendable, Codable, Equatable, Fetchab
     }
 
     public var contentPreview: String {
-        if content.count > 10000 {
-            return String(content.prefix(10000)) + "\n\n[Content truncated - \(content.count) characters total]"
+        let text = textContent
+        if text.count > 10000 {
+            return String(text.prefix(10000)) + "\n\n[Content truncated - \(text.count) characters total]"
         }
-        return content
+        return text
     }
 
-    public mutating func didInsert(_ inserted: InsertionSuccess) {
-        id = inserted.rowID
+    // MARK: - URL Detection
+
+    public static func isURL(_ string: String) -> Bool {
+        let trimmed = string.trimmingCharacters(in: .whitespacesAndNewlines)
+
+        guard trimmed.count < 2000, !trimmed.contains("\n") else { return false }
+
+        if trimmed.hasPrefix("http://") || trimmed.hasPrefix("https://") {
+            return URL(string: trimmed) != nil
+        }
+
+        if trimmed.hasPrefix("www.") {
+            return URL(string: "https://\(trimmed)") != nil
+        }
+
+        guard let detector = try? NSDataDetector(types: NSTextCheckingResult.CheckingType.link.rawValue) else {
+            return false
+        }
+
+        let range = NSRange(location: 0, length: trimmed.utf16.count)
+        guard let match = detector.firstMatch(in: trimmed, options: [], range: range) else {
+            return false
+        }
+
+        guard match.range.length == range.length else { return false }
+
+        if let url = match.url {
+            return url.scheme == "http" || url.scheme == "https"
+        }
+
+        return false
     }
+
+    // MARK: - Hashing
 
     private static func hash(_ string: String) -> String {
         var hasher = Hasher()
         hasher.combine(string)
         return String(hasher.finalize())
     }
+
+    // MARK: - GRDB PersistableRecord
+
+    public func encode(to container: inout PersistenceContainer) {
+        container["id"] = id
+        container["contentHash"] = contentHash
+        container["timestamp"] = timestamp
+        container["sourceApp"] = sourceApp
+
+        switch content {
+        case .text(let text):
+            container["content"] = text
+            container["contentType"] = ContentType.text.rawValue
+            container["imageData"] = nil as Data?
+            container["linkTitle"] = nil as String?
+            container["linkImageData"] = nil as Data?
+
+        case .link(let url, let metadata):
+            container["content"] = url
+            container["contentType"] = ContentType.link.rawValue
+            container["imageData"] = nil as Data?
+            container["linkTitle"] = metadata?.title
+            container["linkImageData"] = metadata?.imageData
+
+        case .image(let data, let description):
+            container["content"] = description
+            container["contentType"] = ContentType.image.rawValue
+            container["imageData"] = data
+            container["linkTitle"] = nil as String?
+            container["linkImageData"] = nil as Data?
+        }
+    }
+
+    public mutating func didInsert(_ inserted: InsertionSuccess) {
+        id = inserted.rowID
+    }
+
+    // MARK: - GRDB FetchableRecord
+
+    public init(row: Row) throws {
+        id = row["id"]
+        contentHash = row["contentHash"]
+        timestamp = row["timestamp"]
+        sourceApp = row["sourceApp"]
+
+        let rawContent: String = row["content"]
+        let contentTypeRaw: String = row["contentType"] ?? "text"
+        let contentType = ContentType(rawValue: contentTypeRaw) ?? .text
+
+        switch contentType {
+        case .text:
+            content = .text(rawContent)
+
+        case .link:
+            let title: String? = row["linkTitle"]
+            let imageData: Data? = row["linkImageData"]
+            let metadata = (title != nil || imageData != nil)
+                ? LinkMetadata(title: title, imageData: imageData)
+                : nil
+            content = .link(url: rawContent, metadata: metadata)
+
+        case .image:
+            let imageData: Data = row["imageData"] ?? Data()
+            content = .image(data: imageData, description: rawContent)
+        }
+    }
 }
+
+// MARK: - Mutating Link Metadata
+
+extension ClipboardItem {
+    /// Returns a copy with updated link metadata (only for link items)
+    public func withLinkMetadata(_ metadata: LinkMetadata) -> ClipboardItem {
+        guard case .link(let url, _) = content else { return self }
+        return ClipboardItem(
+            id: id,
+            content: .link(url: url, metadata: metadata),
+            contentHash: contentHash,
+            timestamp: timestamp,
+            sourceApp: sourceApp
+        )
+    }
+}
+
+// MARK: - FTS Table
 
 public struct ClipboardItemFTS: TableRecord {
     public static let databaseTableName = "items_fts"
