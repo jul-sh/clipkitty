@@ -11,6 +11,7 @@ struct ContentView: View {
     @State private var searchText: String = ""
     @State private var isCopyHovering: Bool = false
     @FocusState private var isSearchFocused: Bool
+    @Environment(\.colorScheme) private var colorScheme
 
     private var items: [ClipboardItem] {
         switch store.state {
@@ -50,7 +51,10 @@ struct ContentView: View {
         // 2. Apply the glass effect/background so it fills that infinite frame
         .background(
             RoundedRectangle(cornerRadius: 12)
-                .fill(Color.white.opacity(0.18))
+                .fill(
+                    (colorScheme == .dark ? Color.black : Color.white)
+                        .opacity(0.18)
+                )
         )
         .glassEffect(.regular.interactive(), in: RoundedRectangle(cornerRadius: 12))
 
