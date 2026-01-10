@@ -4,7 +4,7 @@
 
 A fast, native clipboard manager for macOS with support for unlimited clipboard history.
 
-<img src="https://github.com/jul-sh/clipkitty/blob/gh-pages/screenshot.png?raw=true" alt="ClipKitty screenshot" width="820">
+<img src="https://raw.githubusercontent.com/jul-sh/clipkitty/gh-pages/screenshot.png" alt="ClipKitty screenshot" width="820">
 
 ## Features
 
