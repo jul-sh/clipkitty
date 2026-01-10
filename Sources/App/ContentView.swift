@@ -231,7 +231,6 @@ struct ContentView: View {
                 }
                 .frame(maxWidth: .infinity)
             }
-            .padding(.horizontal, 8)
             .onChange(of: selection) { oldSelection, newSelection in
                 guard let newSelection else { return }
                 let oldIndex = indexForSelection(oldSelection)
