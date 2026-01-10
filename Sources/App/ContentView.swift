@@ -228,9 +228,8 @@ struct ContentView: View {
                 }
             }
             .listStyle(.plain)
-            .listSectionSpacing(0)
             .scrollContentBackground(.hidden)
-            .scrollContentInsets(EdgeInsets(top: 0, leading: 0, bottom: 0, trailing: 0))
+            .background(ScrollViewInsetsView())
             .onChange(of: selection) { oldSelection, newSelection in
                 guard let newSelection else { return }
                 let oldIndex = indexForSelection(oldSelection)
@@ -452,6 +451,25 @@ class NonDraggableNSView: NSView {
     override func hitTest(_ point: NSPoint) -> NSView? {
         // Return self to capture mouse events and prevent window dragging
         return self
+    }
+}
+
+// MARK: - ScrollView Insets
+// Prevent toolbar-induced scroll content insets on macOS.
+
+struct ScrollViewInsetsView: NSViewRepresentable {
+    func makeNSView(context: Context) -> NSView {
+        NSView()
+    }
+
+    func updateNSView(_ nsView: NSView, context: Context) {
+        guard let scrollView = nsView.enclosingScrollView else { return }
+        let zeroInsets = NSEdgeInsets(top: 0, left: 0, bottom: 0, right: 0)
+        if scrollView.automaticallyAdjustsContentInsets {
+            scrollView.automaticallyAdjustsContentInsets = false
+        }
+        scrollView.contentInsets = zeroInsets
+        scrollView.scrollerInsets = zeroInsets
     }
 }
 
