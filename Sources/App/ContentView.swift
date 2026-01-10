@@ -207,30 +207,30 @@ struct ContentView: View {
 
     private var itemList: some View {
         ScrollViewReader { proxy in
-            ScrollView(.vertical, showsIndicators: true) {
-                LazyVStack(spacing: 0) {
-                    ForEach(items, id: \.stableId) { item in
-                        let index = items.firstIndex { $0.stableId == item.stableId } ?? 0
-                        ItemRow(
-                            item: item,
-                            isSelected: item.stableId == selection,
-                            searchQuery: searchText
-                        )
-                        .equatable()
-                        .contentShape(Rectangle())
-                        .onTapGesture {
-                            selection = item.stableId
-                        }
-                        .onAppear {
-                            if index == items.count - 10 {
-                                store.loadMoreItems()
-                            }
-                        }
-                        .id(item.stableId)
+            List(items, id: \.stableId) { item in
+                let index = items.firstIndex { $0.stableId == item.stableId } ?? 0
+                ItemRow(
+                    item: item,
+                    isSelected: item.stableId == selection,
+                    searchQuery: searchText
+                )
+                .equatable()
+                .listRowInsets(EdgeInsets())
+                .listRowSeparator(.hidden)
+                .listRowBackground(Color.clear)
+                .onTapGesture {
+                    selection = item.stableId
+                }
+                .onAppear {
+                    if index == items.count - 10 {
+                        store.loadMoreItems()
                     }
                 }
-                .frame(maxWidth: .infinity)
             }
+            .listStyle(.plain)
+            .listSectionSpacing(0)
+            .scrollContentBackground(.hidden)
+            .scrollContentInsets(EdgeInsets(top: 0, leading: 0, bottom: 0, trailing: 0))
             .onChange(of: selection) { oldSelection, newSelection in
                 guard let newSelection else { return }
                 let oldIndex = indexForSelection(oldSelection)
