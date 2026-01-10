@@ -57,11 +57,12 @@ jobs:
             git worktree add --orphan /tmp/gh-pages gh-pages
           fi
 
-          cp screenshot.png /tmp/gh-pages/
           cd /tmp/gh-pages
+          git pull origin gh-pages || true
+          cp "$GITHUB_WORKSPACE/screenshot.png" .
           git add screenshot.png
           git commit -m "Update screenshot [skip ci]" || echo "No changes to commit"
-          git push origin HEAD:gh-pages --force
+          git push origin gh-pages
           cd -
           git worktree remove /tmp/gh-pages --force
 
