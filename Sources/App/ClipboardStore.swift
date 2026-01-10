@@ -358,6 +358,12 @@ final class ClipboardStore {
         guard currentCount != lastChangeCount else { return }
         lastChangeCount = currentCount
 
+        // Skip concealed/sensitive content (e.g. passwords from 1Password, Bitwarden)
+        let concealedType = NSPasteboard.PasteboardType("org.nspasteboard.ConcealedType")
+        if pasteboard.data(forType: concealedType) != nil {
+            return
+        }
+
         // Check for image data first - get raw data only, defer compression
         let imageTypes: [NSPasteboard.PasteboardType] = [.tiff, .png]
         for type in imageTypes {
