@@ -394,7 +394,7 @@ struct ContentView: View {
                                 .foregroundStyle(.secondary)
                             switch metadataState {
                             case .pending:
-                                Text("Loading preview...")
+                                Text("Loading preview…")
                                     .font(.caption)
                                     .foregroundStyle(.tertiary)
                             case .failed:
