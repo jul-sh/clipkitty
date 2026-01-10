@@ -251,16 +251,45 @@ public struct ClipboardItem: Identifiable, Sendable, Equatable, FetchableRecord,
     // MARK: - Display Helpers
 
     public var displayText: String {
-        let text = textContent.trimmingCharacters(in: .whitespacesAndNewlines)
-        let singleLine = text
-            .replacingOccurrences(of: "\n", with: " ")
-            .replacingOccurrences(of: "\t", with: " ")
-            .replacingOccurrences(of: "  ", with: " ")
+        let text = textContent
+        let maxChars = 200
+        var result = String()
+        result.reserveCapacity(maxChars + 1)
 
-        if singleLine.count > 200 {
-            return String(singleLine.prefix(200)) + "…"
+        var index = text.startIndex
+        while index < text.endIndex, text[index].isWhitespace {
+            index = text.index(after: index)
         }
-        return singleLine
+
+        var count = 0
+        var lastWasSpace = false
+        var hasMore = false
+
+        while index < text.endIndex, count < maxChars {
+            var character = text[index]
+            if character == "\n" || character == "\t" || character == "\r" {
+                character = " "
+            }
+            if character == " " {
+                if lastWasSpace {
+                    index = text.index(after: index)
+                    continue
+                }
+                lastWasSpace = true
+            } else {
+                lastWasSpace = false
+            }
+
+            result.append(character)
+            count += 1
+            index = text.index(after: index)
+        }
+
+        if index < text.endIndex {
+            hasMore = true
+        }
+
+        return hasMore ? result + "…" : result
     }
 
     public var timeAgo: String {
