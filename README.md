@@ -2,7 +2,7 @@
 
 <img src="AppIcon.icon/Assets/Image%204.png" alt="ClipKitty icon" width="30">
 
-A fast, native clipboard manager for macOS.
+A fast, native clipboard manager for macOS with support for unlimited clipboard history.
 
 <img src="https://github.com/jul-sh/clipkitty/blob/gh-pages/screenshot.png?raw=true" alt="ClipKitty screenshot" width="820">
 
