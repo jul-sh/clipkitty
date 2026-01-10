@@ -271,8 +271,13 @@ public struct ClipboardItem: Identifiable, Sendable, Equatable, FetchableRecord,
 
     public var contentPreview: String {
         let text = textContent
-        if text.count > 10000 {
-            return String(text.prefix(10000)) + "\n\n[Content truncated - \(text.count) characters total]"
+        let maxChars = 10000
+        if let endIndex = text.index(text.startIndex, offsetBy: maxChars, limitedBy: text.endIndex) {
+            let preview = String(text[..<endIndex])
+            if endIndex < text.endIndex {
+                return preview + "\n\n[Content truncated]"
+            }
+            return preview
         }
         return text
     }

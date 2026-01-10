@@ -277,12 +277,18 @@ struct ContentView: View {
 
                     case .text, .email, .phone, .address, .date, .transit:
                         // Text preview
-                        Text(highlightedPreview(for: item))
-                            .font(.custom(FontManager.mono, size: 15))
-                            .textSelection(.enabled)
-                            .modifier(IBeamCursorOnHover())
-                            .frame(maxWidth: .infinity, alignment: .leading)
-                            .padding(16)
+                        Group {
+                            if searchText.isEmpty {
+                                Text(item.contentPreview)
+                            } else {
+                                Text(highlightedPreview(for: item))
+                            }
+                        }
+                        .font(.custom(FontManager.mono, size: 15))
+                        .textSelection(.enabled)
+                        .modifier(IBeamCursorOnHover())
+                        .frame(maxWidth: .infinity, alignment: .leading)
+                        .padding(16)
                     }
                 }
                 .background(NonDraggableView())
@@ -547,9 +553,15 @@ struct ItemRow: View, Equatable {
                 .frame(width: 16)
 
             // Text content
-            Text(truncatedText.fuzzyHighlighted(query: searchQuery))
-                .lineLimit(1)
-                .font(.custom(FontManager.sansSerif, size: 15))
+            Group {
+                if searchQuery.isEmpty {
+                    Text(truncatedText)
+                } else {
+                    Text(truncatedText.fuzzyHighlighted(query: searchQuery))
+                }
+            }
+            .lineLimit(1)
+            .font(.custom(FontManager.sansSerif, size: 15))
         }
         .frame(maxWidth: .infinity, minHeight: rowHeight, maxHeight: rowHeight, alignment: .leading)
         .padding(.horizontal, 13)
