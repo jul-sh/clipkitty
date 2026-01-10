@@ -299,6 +299,10 @@ public struct ClipboardItem: Identifiable, Sendable, Equatable, FetchableRecord,
     }
 
     public var contentPreview: String {
+        textContent
+    }
+
+    public var searchPreview: String {
         let text = textContent
         let maxChars = 10000
         if let endIndex = text.index(text.startIndex, offsetBy: maxChars, limitedBy: text.endIndex) {

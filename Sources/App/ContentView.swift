@@ -389,7 +389,7 @@ struct ContentView: View {
     }
 
     private func highlightedPreview(for item: ClipboardItem) -> AttributedString {
-        item.contentPreview.fuzzyHighlighted(query: searchText)
+        item.searchPreview.fuzzyHighlighted(query: searchText)
     }
 
     @ViewBuilder
