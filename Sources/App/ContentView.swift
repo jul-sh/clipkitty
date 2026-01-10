@@ -41,8 +41,10 @@ struct ContentView: View {
         VStack(spacing: 0) {
             searchBar
             Divider()
-            content
-                .clipped()
+            GeometryReader { _ in
+                content
+            }
+            .clipped()
         }
         .frame(maxWidth: .infinity, maxHeight: .infinity)
         .glassEffect(.regular.interactive(), in: .rect)
