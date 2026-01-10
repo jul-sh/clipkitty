@@ -32,6 +32,7 @@ jobs:
 
       - name: Take Screenshot
         run: |
+          sleep 0.2
           screencapture -x screenshot.png
           ls -lh screenshot.png
 
