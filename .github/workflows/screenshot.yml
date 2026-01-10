@@ -62,7 +62,7 @@ jobs:
           cp "$GITHUB_WORKSPACE/screenshot.png" .
           git add screenshot.png
           git commit -m "Update screenshot [skip ci]" || echo "No changes to commit"
-          git push origin gh-pages
+          git push origin HEAD:gh-pages
           cd -
           git worktree remove /tmp/gh-pages --force
 
