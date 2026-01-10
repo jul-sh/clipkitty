@@ -364,18 +364,7 @@ struct ContentView: View {
     }
 
     private func highlightedPreview(for item: ClipboardItem) -> AttributedString {
-        // If the content is massive, don't try to highlight the whole thing on the main thread.
-        // Cap it at ~2000 chars for the "fuzzy match" view.
-        if item.contentPreview.count > 2000 {
-            let prefix = String(item.contentPreview.prefix(2000))
-            var attributed = prefix.fuzzyHighlighted(query: searchText)
-
-            // Append a plain text suffix so the user knows there is more
-            attributed += AttributedString("\n\n... (text truncated for preview)")
-            return attributed
-        }
-
-        return item.contentPreview.fuzzyHighlighted(query: searchText)
+        item.contentPreview.fuzzyHighlighted(query: searchText)
     }
 
     @ViewBuilder
