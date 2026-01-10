@@ -280,16 +280,21 @@ struct ContentView: View {
                         // Text preview
                         Group {
                             if searchText.isEmpty {
-                                Text(item.contentPreview)
+                                TextPreviewView(
+                                    text: item.contentPreview,
+                                    fontName: FontManager.mono,
+                                    fontSize: 15
+                                )
+                                .frame(maxWidth: .infinity, maxHeight: .infinity)
                             } else {
                                 Text(highlightedPreview(for: item))
+                                    .font(.custom(FontManager.mono, size: 15))
+                                    .textSelection(.enabled)
+                                    .modifier(IBeamCursorOnHover())
+                                    .frame(maxWidth: .infinity, alignment: .leading)
+                                    .padding(16)
                             }
                         }
-                        .font(.custom(FontManager.mono, size: 15))
-                        .textSelection(.enabled)
-                        .modifier(IBeamCursorOnHover())
-                        .frame(maxWidth: .infinity, alignment: .leading)
-                        .padding(16)
                     }
                 }
                 .background(NonDraggableView())
@@ -521,6 +526,56 @@ private final class CursorTrackingView: NSView {
     override func hitTest(_ point: NSPoint) -> NSView? {
         nil
     }
+}
+
+// MARK: - Text Preview (AppKit)
+
+struct TextPreviewView: NSViewRepresentable {
+    let text: String
+    let fontName: String
+    let fontSize: CGFloat
+
+    func makeNSView(context: Context) -> NSScrollView {
+        let scrollView = NonDraggableScrollView()
+        scrollView.hasVerticalScroller = true
+        scrollView.drawsBackground = false
+
+        let textView = NSTextView()
+        textView.isEditable = false
+        textView.isSelectable = true
+        textView.isRichText = false
+        textView.drawsBackground = false
+        textView.isVerticallyResizable = true
+        textView.isHorizontallyResizable = false
+        textView.autoresizingMask = [.width]
+        textView.textContainerInset = NSSize(width: 16, height: 16)
+        textView.textContainer?.widthTracksTextView = true
+        textView.textContainer?.containerSize = NSSize(width: scrollView.contentSize.width, height: .greatestFiniteMagnitude)
+        textView.font = NSFont(name: fontName, size: fontSize) ?? NSFont.monospacedSystemFont(ofSize: fontSize, weight: .regular)
+        textView.string = text
+
+        scrollView.documentView = textView
+        return scrollView
+    }
+
+    func updateNSView(_ nsView: NSScrollView, context: Context) {
+        guard let textView = nsView.documentView as? NSTextView else { return }
+        if textView.string != text {
+            textView.string = text
+        }
+        textView.textContainer?.containerSize = NSSize(
+            width: nsView.contentSize.width,
+            height: .greatestFiniteMagnitude
+        )
+        let desiredFont = NSFont(name: fontName, size: fontSize) ?? NSFont.monospacedSystemFont(ofSize: fontSize, weight: .regular)
+        if textView.font != desiredFont {
+            textView.font = desiredFont
+        }
+    }
+}
+
+final class NonDraggableScrollView: NSScrollView {
+    override var mouseDownCanMoveWindow: Bool { false }
 }
 
 // MARK: - Item Row
