@@ -48,32 +48,22 @@ jobs:
           git config --global user.name "github-actions[bot]"
           git config --global user.email "github-actions[bot]@users.noreply.github.com"
 
-          # Create orphan gh-pages branch if it doesn't exist
+          # Create or update gh-pages via worktree to avoid touching main working tree
           git fetch origin gh-pages || true
-
-          # Create temp directory for gh-pages content
-          mkdir -p /tmp/gh-pages
-
-          # If gh-pages exists, preserve existing files
+          rm -rf /tmp/gh-pages
           if git show-ref --verify --quiet refs/remotes/origin/gh-pages; then
-            git checkout origin/gh-pages -- . 2>/dev/null || true
-            cp -r * /tmp/gh-pages/ 2>/dev/null || true
+            git worktree add /tmp/gh-pages origin/gh-pages
+          else
+            git worktree add --orphan /tmp/gh-pages gh-pages
           fi
+
           cp screenshot.png /tmp/gh-pages/
-
-          # Switch to gh-pages branch
-          git checkout --orphan gh-pages-new || git checkout -B gh-pages-new
-
-          # Clear working directory
-          git rm -rf . 2>/dev/null || true
-
-          # Copy files back
-          cp -r /tmp/gh-pages/* . 2>/dev/null || cp /tmp/gh-pages/screenshot.png .
-
-          # Commit and push
+          cd /tmp/gh-pages
           git add screenshot.png
           git commit -m "Update screenshot [skip ci]" || echo "No changes to commit"
-          git push origin gh-pages-new:gh-pages --force
+          git push origin HEAD:gh-pages --force
+          cd -
+          git worktree remove /tmp/gh-pages --force
 
       - name: Output Screenshot URL
         if: github.ref == 'refs/heads/main'
