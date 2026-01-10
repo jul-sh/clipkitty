@@ -263,41 +263,47 @@ struct ContentView: View {
         VStack(spacing: 0) {
             if let item = selectedItem {
                 // Content - wrapped in NonDraggableView to allow text selection
-                ScrollView(.vertical, showsIndicators: true) {
+                Group {
                     switch item.content {
-                    case .image(let data, _):
-                        if let nsImage = NSImage(data: data) {
-                            Image(nsImage: nsImage)
-                                .resizable()
-                                .aspectRatio(contentMode: .fit)
-                                .frame(maxWidth: .infinity)
-                                .padding(16)
-                        }
-
-                    case .link(let url, let metadataState):
-                        // Link preview - fetch metadata on-demand if needed
-                        linkPreview(url: url, metadataState: metadataState)
-                            .task(id: item.stableId) {
-                                store.fetchLinkMetadataIfNeeded(for: item)
-                            }
-
                     case .text, .email, .phone, .address, .date, .transit:
-                        // Text preview
-                        Group {
-                            if searchText.isEmpty {
-                                TextPreviewView(
-                                    text: item.contentPreview,
-                                    fontName: FontManager.mono,
-                                    fontSize: 15
-                                )
-                                .frame(maxWidth: .infinity, maxHeight: .infinity)
-                            } else {
+                        if searchText.isEmpty {
+                            TextPreviewView(
+                                text: item.contentPreview,
+                                fontName: FontManager.mono,
+                                fontSize: 15
+                            )
+                            .frame(maxWidth: .infinity, maxHeight: .infinity)
+                        } else {
+                            ScrollView(.vertical, showsIndicators: true) {
                                 Text(highlightedPreview(for: item))
                                     .font(.custom(FontManager.mono, size: 15))
                                     .textSelection(.enabled)
                                     .modifier(IBeamCursorOnHover())
                                     .frame(maxWidth: .infinity, alignment: .leading)
                                     .padding(16)
+                            }
+                        }
+                    default:
+                        ScrollView(.vertical, showsIndicators: true) {
+                            switch item.content {
+                            case .image(let data, _):
+                                if let nsImage = NSImage(data: data) {
+                                    Image(nsImage: nsImage)
+                                        .resizable()
+                                        .aspectRatio(contentMode: .fit)
+                                        .frame(maxWidth: .infinity)
+                                        .padding(16)
+                                }
+
+                            case .link(let url, let metadataState):
+                                // Link preview - fetch metadata on-demand if needed
+                                linkPreview(url: url, metadataState: metadataState)
+                                    .task(id: item.stableId) {
+                                        store.fetchLinkMetadataIfNeeded(for: item)
+                                    }
+
+                            case .text, .email, .phone, .address, .date, .transit:
+                                EmptyView()
                             }
                         }
                     }
@@ -553,11 +559,14 @@ struct TextPreviewView: NSViewRepresentable {
         textView.isVerticallyResizable = true
         textView.isHorizontallyResizable = false
         textView.autoresizingMask = [.width]
+        textView.minSize = NSSize(width: 0, height: 0)
+        textView.maxSize = NSSize(width: .greatestFiniteMagnitude, height: .greatestFiniteMagnitude)
         textView.textContainerInset = NSSize(width: 16, height: 16)
         textView.textContainer?.widthTracksTextView = true
         textView.textContainer?.containerSize = NSSize(width: scrollView.contentSize.width, height: .greatestFiniteMagnitude)
         textView.font = NSFont(name: fontName, size: fontSize) ?? NSFont.monospacedSystemFont(ofSize: fontSize, weight: .regular)
         textView.string = text
+        textView.frame = NSRect(x: 0, y: 0, width: scrollView.contentSize.width, height: 0)
 
         scrollView.documentView = textView
         return scrollView
@@ -572,6 +581,7 @@ struct TextPreviewView: NSViewRepresentable {
             width: nsView.contentSize.width,
             height: .greatestFiniteMagnitude
         )
+        textView.frame = NSRect(x: 0, y: 0, width: nsView.contentSize.width, height: textView.frame.height)
         let desiredFont = NSFont(name: fontName, size: fontSize) ?? NSFont.monospacedSystemFont(ofSize: fontSize, weight: .regular)
         if textView.font != desiredFont {
             textView.font = desiredFont
