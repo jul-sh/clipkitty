@@ -1,5 +1,6 @@
 import Foundation
 import AppKit
+import ClipKittyCore
 
 /// Fetches Open Graph metadata from URLs
 actor LinkMetadataFetcher {
@@ -7,12 +8,7 @@ actor LinkMetadataFetcher {
 
     private init() {}
 
-    struct LinkMetadata: Sendable {
-        let title: String?
-        let imageData: Data?
-    }
-
-    func fetch(url urlString: String) async -> LinkMetadata? {
+    func fetch(url urlString: String) async -> LinkMetadataState? {
         guard let url = URL(string: urlString.trimmingCharacters(in: .whitespacesAndNewlines)) else {
             return nil
         }
@@ -36,7 +32,12 @@ actor LinkMetadataFetcher {
                 }
             }
 
-            return LinkMetadata(title: title, imageData: imageData)
+            let trimmedTitle = title?.trimmingCharacters(in: .whitespacesAndNewlines)
+            let normalizedTitle = trimmedTitle?.isEmpty == true ? nil : trimmedTitle
+            if normalizedTitle == nil && imageData == nil {
+                return nil
+            }
+            return .loaded(title: normalizedTitle, imageData: imageData)
         } catch {
             return nil
         }
