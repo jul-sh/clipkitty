@@ -42,10 +42,14 @@ struct ContentView: View {
             searchBar
             Divider()
             content
-                .clipped()
         }
+        // 1. Force the VStack to fill the entire available space
         .frame(maxWidth: .infinity, maxHeight: .infinity)
+
+        // 2. Apply the glass effect/background so it fills that infinite frame
         .glassEffect(.regular.interactive(), in: .rect)
+
+        // 3. Finally, ignore the safe area to push the background into the title bar
         .ignoresSafeArea(.all)
 
         .onAppear {
@@ -305,7 +309,7 @@ struct ContentView: View {
                     .padding(.horizontal, 6)
                     .padding(.vertical, 2)
                     .background(
-                        RoundedRectangle(cornerRadius: 6)
+                        RoundedRectangle(cornerRadius: 4)
                             .fill(isCopyHovering ? .black.opacity(0.08) : .clear)
                     )
                     .onHover { hovering in
@@ -378,10 +382,10 @@ struct ContentView: View {
                     .resizable()
                     .aspectRatio(contentMode: .fit)
                     .frame(maxWidth: .infinity)
-                    .clipShape(RoundedRectangle(cornerRadius: 10))
+                    .clipShape(RoundedRectangle(cornerRadius: 8))
             } else {
                 // Placeholder based on metadata state
-                RoundedRectangle(cornerRadius: 10)
+                RoundedRectangle(cornerRadius: 8)
                     .fill(Color.secondary.opacity(0.1))
                     .frame(height: 120)
                     .overlay {
@@ -582,7 +586,7 @@ struct ItemRow: View, Equatable {
                 Color.clear
             }
         }
-        .clipShape(RoundedRectangle(cornerRadius: 14, style: .continuous))
+        .clipShape(RoundedRectangle(cornerRadius: 10, style: .continuous))
         .contentShape(Rectangle())
         .accessibilityElement(children: .combine)
         .accessibilityLabel(truncatedText)
