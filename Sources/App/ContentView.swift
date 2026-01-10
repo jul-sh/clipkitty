@@ -397,8 +397,6 @@ struct ContentView: View {
                                 Text("Preview unavailable")
                                     .font(.caption)
                                     .foregroundStyle(.tertiary)
-                            case .loaded(_, nil):
-                                EmptyView()
                             case .loaded:
                                 EmptyView()
                             }

@@ -71,11 +71,7 @@ public enum ClipboardContent: Sendable, Equatable {
             return (text, nil, nil, nil)
         case .link(let url, let metadataState):
             // Encode metadata state: nil = pending, empty = failed, value = loaded
-            let (title, imageData): (String?, Data?) = switch metadataState {
-            case .pending: (nil, nil)
-            case .failed: ("", nil)
-            case .loaded(let t, let img): (t ?? "", img)
-            }
+            let (title, imageData): (String?, Data?) = metadataState.databaseFields
             return (url, nil, title, imageData)
         case .email(let address):
             return (address, nil, nil, nil)
@@ -102,15 +98,7 @@ public enum ClipboardContent: Sendable, Equatable {
     ) -> ClipboardContent {
         switch databaseType {
         case "link":
-            // Database encoding: nil title = pending, empty title with no image = failed, otherwise = loaded
-            let metadataState: LinkMetadataState = switch (linkTitle, linkImageData) {
-            case (nil, _):
-                .pending
-            case ("", nil):
-                .failed
-            case (let title, let imageData):
-                .loaded(title: title?.isEmpty == true ? nil : title, imageData: imageData)
-            }
+            let metadataState = LinkMetadataState.fromDatabase(title: linkTitle, imageData: linkImageData)
             return .link(url: content, metadataState: metadataState)
         case "image":
             return .image(data: imageData ?? Data(), description: content)
@@ -139,17 +127,21 @@ public enum LinkMetadataState: Sendable, Equatable {
 
     /// Convenience accessor for loaded metadata
     public var title: String? {
-        if case .loaded(let title, _) = self {
+        switch self {
+        case .loaded(let title, _):
             return title
+        case .pending, .failed:
+            return nil
         }
-        return nil
     }
 
     public var imageData: Data? {
-        if case .loaded(_, let imageData) = self {
+        switch self {
+        case .loaded(_, let imageData):
             return imageData
+        case .pending, .failed:
+            return nil
         }
-        return nil
     }
 
     /// Check if metadata has any content
@@ -158,6 +150,29 @@ public enum LinkMetadataState: Sendable, Equatable {
             return title != nil || imageData != nil
         }
         return false
+    }
+
+    /// Database encoding: nil title = pending, empty title with no image = failed, otherwise = loaded
+    public var databaseFields: (String?, Data?) {
+        switch self {
+        case .pending:
+            return (nil, nil)
+        case .failed:
+            return ("", nil)
+        case .loaded(let title, let imageData):
+            return (title ?? "", imageData)
+        }
+    }
+
+    static func fromDatabase(title: String?, imageData: Data?) -> LinkMetadataState {
+        switch (title, imageData) {
+        case (nil, nil):
+            return .pending
+        case ("", nil):
+            return .failed
+        case (let title, let imageData):
+            return .loaded(title: title?.isEmpty == true ? nil : title, imageData: imageData)
+        }
     }
 }
 

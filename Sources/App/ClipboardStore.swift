@@ -428,8 +428,7 @@ final class ClipboardStore {
 
         // Store in local vars for nonisolated access
         // If metadata is nil, we still need to update DB to mark as "failed" (empty title/image)
-        let title = metadata?.title
-        let imageData = metadata?.imageData
+        let (title, imageData) = metadata?.databaseFields ?? ("", nil)
 
         // Database write needs to escape MainActor
         await Task.detached { [dbQueue] in
@@ -439,7 +438,7 @@ final class ClipboardStore {
                     // NULL = pending, empty string = failed/no metadata, non-empty = loaded
                     try db.execute(
                         sql: "UPDATE items SET linkTitle = ?, linkImageData = ? WHERE id = ?",
-                        arguments: [title ?? "", imageData, itemId]
+                        arguments: [title, imageData, itemId]
                     )
                 }
             } catch {
