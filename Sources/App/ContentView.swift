@@ -209,23 +209,24 @@ struct ContentView: View {
 
     private var itemList: some View {
         ScrollViewReader { proxy in
-            List(items, id: \.stableId) { item in
-                let index = items.firstIndex { $0.stableId == item.stableId } ?? 0
-                ItemRow(
-                    item: item,
-                    isSelected: item.stableId == selection,
-                    searchQuery: searchText
-                )
-                .equatable()
-                .listRowInsets(EdgeInsets())
-                .listRowSeparator(.hidden)
-                .listRowBackground(Color.clear)
-                .onTapGesture {
-                    selection = item.stableId
-                }
-                .onAppear {
-                    if index == items.count - 10 {
-                        store.loadMoreItems()
+            List {
+                ForEach(Array(items.enumerated()), id: \.element.stableId) { index, item in
+                    ItemRow(
+                        item: item,
+                        isSelected: item.stableId == selection,
+                        searchQuery: searchText
+                    )
+                    .equatable()
+                    .listRowInsets(EdgeInsets())
+                    .listRowSeparator(.hidden)
+                    .listRowBackground(Color.clear)
+                    .onTapGesture {
+                        selection = item.stableId
+                    }
+                    .onAppear {
+                        if index == items.count - 10 {
+                            store.loadMoreItems()
+                        }
                     }
                 }
             }
@@ -532,9 +533,8 @@ struct ItemRow: View, Equatable {
     // Fixed height for exactly 1 line of text at font size 15
     private let rowHeight: CGFloat = 32
 
-    // Optimization: Cache the truncated text so we don't process massive strings
-    private var truncatedText: String {
-        String(item.displayText.prefix(300))
+    private var previewText: String {
+        item.displayText
     }
 
     // Define exactly what constitutes a "change" for SwiftUI diffing
@@ -555,9 +555,9 @@ struct ItemRow: View, Equatable {
             // Text content
             Group {
                 if searchQuery.isEmpty {
-                    Text(truncatedText)
+                    Text(previewText)
                 } else {
-                    Text(truncatedText.fuzzyHighlighted(query: searchQuery))
+                    Text(previewText.fuzzyHighlighted(query: searchQuery))
                 }
             }
             .lineLimit(1)
@@ -580,7 +580,7 @@ struct ItemRow: View, Equatable {
         .clipShape(RoundedRectangle(cornerRadius: 14, style: .continuous))
         .contentShape(Rectangle())
         .accessibilityElement(children: .combine)
-        .accessibilityLabel(truncatedText)
+        .accessibilityLabel(previewText)
         .accessibilityHint("Double tap to paste")
         .accessibilityAddTraits(.isButton)
         .accessibilityAddTraits(isSelected ? .isSelected : [])
