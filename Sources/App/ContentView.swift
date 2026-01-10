@@ -228,7 +228,9 @@ struct ContentView: View {
                 }
             }
             .listStyle(.plain)
+            .listSectionSpacing(0)
             .scrollContentBackground(.hidden)
+            .scrollContentInsets(EdgeInsets(top: 0, leading: 0, bottom: 0, trailing: 0))
             .onChange(of: selection) { oldSelection, newSelection in
                 guard let newSelection else { return }
                 let oldIndex = indexForSelection(oldSelection)
