@@ -53,13 +53,13 @@ jobs:
 
           # Create temp directory for gh-pages content
           mkdir -p /tmp/gh-pages
-          cp screenshot.png /tmp/gh-pages/
 
           # If gh-pages exists, preserve existing files
           if git show-ref --verify --quiet refs/remotes/origin/gh-pages; then
             git checkout origin/gh-pages -- . 2>/dev/null || true
             cp -r * /tmp/gh-pages/ 2>/dev/null || true
           fi
+          cp screenshot.png /tmp/gh-pages/
 
           # Switch to gh-pages branch
           git checkout --orphan gh-pages-new || git checkout -B gh-pages-new
