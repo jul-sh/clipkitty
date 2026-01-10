@@ -20,7 +20,7 @@ final class FloatingPanelController: NSObject, NSWindowDelegate {
 
     private func setupPanel() {
         panel = NSPanel(
-            contentRect: NSRect(x: 0, y: 0, width: 778, height: 505),
+            contentRect: NSRect(x: 0, y: 0, width: 778, height: 518),
             styleMask: [.nonactivatingPanel, .titled, .fullSizeContentView],
             backing: .buffered,
             defer: false
@@ -37,10 +37,6 @@ final class FloatingPanelController: NSObject, NSWindowDelegate {
         panel.hasShadow = true
         panel.delegate = self
         panel.becomesKeyOnlyIfNeeded = false
-
-        // Add empty toolbar to get macOS Tahoe's 26pt corner radius (vs 16pt for titlebar-only windows)
-        let toolbar = NSToolbar()
-        panel.toolbar = toolbar
 
         let contentView = ContentView(
             store: store,
