@@ -20,9 +20,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate {
         store = ClipboardStore()
         store.startMonitoring()
 
-        panelController = FloatingPanelController(store: store) { [weak self] in
-            self?.simulatePaste()
-        }
+        panelController = FloatingPanelController(store: store)
 
         hotKeyManager = HotKeyManager { [weak self] in
             Task { @MainActor in
@@ -152,18 +150,6 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate {
 
     @objc private func quit() {
         NSApp.terminate(nil)
-    }
-
-    private func simulatePaste() {
-        let source = CGEventSource(stateID: .hidSystemState)
-        let keyDown = CGEvent(keyboardEventSource: source, virtualKey: 0x09, keyDown: true)
-        let keyUp = CGEvent(keyboardEventSource: source, virtualKey: 0x09, keyDown: false)
-
-        keyDown?.flags = .maskCommand
-        keyUp?.flags = .maskCommand
-
-        keyDown?.post(tap: .cghidEventTap)
-        keyUp?.post(tap: .cghidEventTap)
     }
 
     func applicationWillTerminate(_ notification: Notification) {

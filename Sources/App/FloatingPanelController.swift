@@ -11,11 +11,9 @@ final class FloatingPanelController: NSObject, NSWindowDelegate {
 
     private var panel: NSPanel!
     private let store: ClipboardStore
-    private let onPaste: () -> Void
 
-    init(store: ClipboardStore, onPaste: @escaping () -> Void) {
+    init(store: ClipboardStore) {
         self.store = store
-        self.onPaste = onPaste
         super.init()
         setupPanel()
     }
@@ -113,10 +111,5 @@ final class FloatingPanelController: NSObject, NSWindowDelegate {
     private func selectItem(_ item: ClipboardItem) {
         store.paste(item: item)
         hide()
-
-        Task {
-            try? await Task.sleep(for: .milliseconds(50))
-            onPaste()
-        }
     }
 }
