@@ -560,8 +560,9 @@ struct ItemRow: View, Equatable {
         .background {
             if isSelected {
                 Color.accentColor
-                    .opacity(0.85)
+                    .opacity(0.9)
                     .saturation(0.9)
+                    .brightness(-0.06)
             } else {
                 Color.clear
             }
