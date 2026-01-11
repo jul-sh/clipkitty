@@ -389,6 +389,17 @@ final class ClipboardStore {
                 await self?.fetchAndUpdateLinkMetadata(for: id, url: text)
             }
 
+            if let id = newItemId {
+                let didUpdate = Self.detectAndUpdateJSONType(dbQueue: dbQueue, itemId: id, text: text)
+                if didUpdate {
+                    await MainActor.run { [weak self] in
+                        if case .loaded = self?.state {
+                            self?.loadItems(reset: true)
+                        }
+                    }
+                }
+            }
+
             // Reload on main actor if browsing
             guard let self else { return }
             await MainActor.run { [weak self] in
@@ -418,6 +429,29 @@ final class ClipboardStore {
         } catch {
             logError("Clipboard save failed: \(error)")
             return nil
+        }
+    }
+
+    private nonisolated static func detectAndUpdateJSONType(dbQueue: DatabaseQueue, itemId: Int64, text: String) -> Bool {
+        guard let data = text.data(using: .utf8) else { return false }
+        do {
+            _ = try JSONSerialization.jsonObject(with: data, options: [.fragmentsAllowed])
+        } catch {
+            return false
+        }
+
+        do {
+            let changes = try dbQueue.write { db in
+                try db.execute(
+                    sql: "UPDATE items SET contentType = ? WHERE id = ? AND contentType = ?",
+                    arguments: ["json", itemId, "text"]
+                )
+                return db.changesCount
+            }
+            return changes > 0
+        } catch {
+            logError("JSON type update failed: \(error)")
+            return false
         }
     }
 
