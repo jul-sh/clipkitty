@@ -50,7 +50,7 @@ struct ContentView: View {
         .frame(maxWidth: .infinity, maxHeight: .infinity)
 
         // 2. Apply the glass effect/background so it fills that infinite frame
-        .glassEffect(.regular.interactive(), in: .rect)
+        .clipKittyGlassBackground()
 
         // 3. Finally, ignore the safe area to push the background into the title bar
         .ignoresSafeArea(.all)
@@ -455,6 +455,17 @@ struct ContentView: View {
             Spacer()
         }
         .padding(16)
+    }
+}
+
+private extension View {
+    @ViewBuilder
+    func clipKittyGlassBackground() -> some View {
+        if #available(macOS 26.0, *) {
+            self.glassEffect(.regular.interactive(), in: .rect)
+        } else {
+            self.background(.regularMaterial)
+        }
     }
 }
 
