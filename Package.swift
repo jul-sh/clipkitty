@@ -26,7 +26,8 @@ let package = Package(
             ],
             path: "Sources/App",
             resources: [
-                .copy("Resources")
+                .copy("Resources/Fonts"),
+                .copy("Resources/menu-bar.svg")
             ]
         ),
         .executableTarget(
