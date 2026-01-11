@@ -12,6 +12,7 @@ A fast, native clipboard manager for macOS with support for unlimited clipboard 
 - **Fast search** – FTS5 trigram-powered substring matching
 - **Keyboard-driven** – Arrow keys to navigate, Return to paste
 - **Lightweight** – Native Swift app in the menu bar, no dock icon
+- **Universal** – Apple Silicon and Intel Macs supported
 
 
 ## Releases
