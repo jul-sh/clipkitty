@@ -124,7 +124,6 @@ final class ClipboardStore {
                 try db.create(index: "idx_items_timestamp", on: "items", columns: ["timestamp"], ifNotExists: true)
 
                 // Use trigram tokenizer for fast substring matching
-                // Only create if it doesn't exist - avoid expensive rebuild on every launch
                 let ftsExists = try Bool.fetchOne(db, sql: """
                     SELECT 1 FROM sqlite_master WHERE type='table' AND name='items_fts'
                 """) ?? false
@@ -135,8 +134,14 @@ final class ClipboardStore {
                             content, content=items, content_rowid=id, tokenize='trigram'
                         )
                     """)
-                    // Only rebuild when creating new FTS table
                     try db.execute(sql: "INSERT INTO items_fts(items_fts) VALUES('rebuild')")
+                } else {
+                    // Verify FTS index is in sync - compare row counts
+                    let itemCount = try Int.fetchOne(db, sql: "SELECT COUNT(*) FROM items") ?? 0
+                    let ftsCount = try Int.fetchOne(db, sql: "SELECT COUNT(*) FROM items_fts") ?? 0
+                    if itemCount != ftsCount {
+                        try db.execute(sql: "INSERT INTO items_fts(items_fts) VALUES('rebuild')")
+                    }
                 }
 
                 try db.execute(sql: """
