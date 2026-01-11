@@ -5,6 +5,8 @@ APP_NAME := ClipKitty
 BUNDLE_ID := com.clipkitty.app
 SCRIPT_DIR := $(abspath $(dir $(lastword $(MAKEFILE_LIST))))
 ICON_SOURCE := $(SCRIPT_DIR)/AppIcon.icon
+ARCHS ?= arm64 x86_64
+SWIFT_ARCH_FLAGS := $(foreach arch,$(ARCHS),--arch $(arch))
 
 .PHONY: all build bundle icon plist clean
 
@@ -12,7 +14,7 @@ all: build bundle icon plist
 
 build:
 	@echo "Building release..."
-	@GIT_CONFIG_COUNT=1 GIT_CONFIG_KEY_0=safe.bareRepository GIT_CONFIG_VALUE_0=all swift build -c release
+	@GIT_CONFIG_COUNT=1 GIT_CONFIG_KEY_0=safe.bareRepository GIT_CONFIG_VALUE_0=all swift build -c release $(SWIFT_ARCH_FLAGS)
 
 bundle:
 	@echo "Creating app bundle..."
