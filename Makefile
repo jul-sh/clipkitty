@@ -21,7 +21,13 @@ bundle:
 	@rm -rf "$(APP_NAME).app"
 	@mkdir -p "$(APP_NAME).app/Contents/MacOS"
 	@mkdir -p "$(APP_NAME).app/Contents/Resources"
-	@cp ".build/release/$(APP_NAME)" "$(APP_NAME).app/Contents/MacOS/$(APP_NAME)"
+	@BIN_PATH="$$(swift build -c release $(SWIFT_ARCH_FLAGS) --show-bin-path)"; \
+	if [ -f "$$BIN_PATH/$(APP_NAME)" ]; then \
+		cp "$$BIN_PATH/$(APP_NAME)" "$(APP_NAME).app/Contents/MacOS/$(APP_NAME)"; \
+	else \
+		echo "Error: built binary not found at $$BIN_PATH/$(APP_NAME)" >&2; \
+		exit 1; \
+	fi
 	@if [ -d ".build/release/$(APP_NAME)_$(APP_NAME).bundle" ]; then \
 		cp -R ".build/release/$(APP_NAME)_$(APP_NAME).bundle/Contents/Resources/"* "$(APP_NAME).app/Contents/Resources/" 2>/dev/null || true; \
 	fi
