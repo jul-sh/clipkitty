@@ -60,6 +60,13 @@ struct ContentView: View {
             selectFirstItem()
             focusSearchField()
         }
+        .onChange(of: store.displayVersion) { _, _ in
+            // Reset local state when store signals a display reset
+            searchText = ""
+            selection = nil
+            selectFirstItem()
+            focusSearchField()
+        }
         .onChange(of: store.state) { _, _ in
             validateSelection()
         }
