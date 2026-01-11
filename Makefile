@@ -28,8 +28,9 @@ bundle:
 		echo "Error: built binary not found at $$BIN_PATH/$(APP_NAME)" >&2; \
 		exit 1; \
 	fi
-	@if [ -d ".build/release/$(APP_NAME)_$(APP_NAME).bundle" ]; then \
-		cp -R ".build/release/$(APP_NAME)_$(APP_NAME).bundle/Contents/Resources/"* "$(APP_NAME).app/Contents/Resources/" 2>/dev/null || true; \
+	@BIN_PATH="$$(swift build -c release $(SWIFT_ARCH_FLAGS) --show-bin-path)"; \
+	if [ -d "$$BIN_PATH/$(APP_NAME)_$(APP_NAME).bundle" ]; then \
+		cp -R "$$BIN_PATH/$(APP_NAME)_$(APP_NAME).bundle" "$(APP_NAME).app/"; \
 	fi
 
 icon:
