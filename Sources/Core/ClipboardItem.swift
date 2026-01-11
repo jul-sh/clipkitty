@@ -6,7 +6,6 @@ import GRDB
 /// Type-safe content representation that ensures only valid states are possible
 public enum ClipboardContent: Sendable, Equatable {
     case text(String)
-    case json(String)
     case link(url: String, metadataState: LinkMetadataState)
     case email(address: String)
     case phone(number: String)
@@ -19,8 +18,6 @@ public enum ClipboardContent: Sendable, Equatable {
     public var textContent: String {
         switch self {
         case .text(let text):
-            return text
-        case .json(let text):
             return text
         case .link(let url, _):
             return url
@@ -42,7 +39,6 @@ public enum ClipboardContent: Sendable, Equatable {
     public var icon: String {
         switch self {
         case .text: return "doc.text"
-        case .json: return "curlybraces"
         case .link: return "link"
         case .email: return "envelope"
         case .phone: return "phone"
@@ -57,7 +53,6 @@ public enum ClipboardContent: Sendable, Equatable {
     var databaseType: String {
         switch self {
         case .text: return "text"
-        case .json: return "json"
         case .link: return "link"
         case .email: return "email"
         case .phone: return "phone"
@@ -73,8 +68,6 @@ public enum ClipboardContent: Sendable, Equatable {
     var databaseFields: (String, Data?, String?, Data?) {
         switch self {
         case .text(let text):
-            return (text, nil, nil, nil)
-        case .json(let text):
             return (text, nil, nil, nil)
         case .link(let url, let metadataState):
             // Encode metadata state: nil = pending, empty = failed, value = loaded
@@ -104,8 +97,6 @@ public enum ClipboardContent: Sendable, Equatable {
         linkImageData: Data?
     ) -> ClipboardContent {
         switch databaseType {
-        case "json":
-            return .json(content)
         case "link":
             let metadataState = LinkMetadataState.fromDatabase(title: linkTitle, imageData: linkImageData)
             return .link(url: content, metadataState: metadataState)
