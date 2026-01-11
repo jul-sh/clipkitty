@@ -36,6 +36,9 @@ final class ClipboardStore {
     private var currentOffset = 0
     private let pageSize = 50
 
+    /// Increments each time the display is reset - views observe this to reset local state
+    private(set) var displayVersion: Int = 0
+
     // MARK: - Initialization
 
     init() {
@@ -200,6 +203,7 @@ final class ClipboardStore {
 
     func resetForDisplay() {
         searchTask?.cancel()
+        displayVersion += 1
         loadItems(reset: true)
     }
 
@@ -221,11 +225,32 @@ final class ClipboardStore {
         let offset: Int
         let existingItems: [ClipboardItem]
 
+        // Extract current items from any state to preserve during refresh
+        let currentItems: [ClipboardItem] = {
+            switch state {
+            case .loaded(let items, _):
+                return items
+            case .searching(_, let searchState):
+                switch searchState {
+                case .loading(let previous):
+                    return previous
+                case .results(let results):
+                    return results
+                }
+            default:
+                return []
+            }
+        }()
+
         if reset {
             currentOffset = 0
             offset = 0
             existingItems = []
-            state = .loading
+            // Only show loading spinner if we have no cached items to display
+            if currentItems.isEmpty {
+                state = .loading
+            }
+            // Otherwise keep showing current items - they'll be replaced when load completes
         } else {
             offset = currentOffset
             if case .loaded(let items, _) = state {
