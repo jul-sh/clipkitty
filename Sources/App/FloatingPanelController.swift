@@ -71,19 +71,6 @@ final class FloatingPanelController: NSObject, NSWindowDelegate {
 
     func show() {
         store.resetForDisplay()
-
-        // Recreate content view to reset all state (search text, selection, focus)
-        let contentView = ContentView(
-            store: store,
-            onSelect: { [weak self] item in
-                self?.selectItem(item)
-            },
-            onDismiss: { [weak self] in
-                self?.hide()
-            }
-        )
-        panel.contentView = NSHostingView(rootView: contentView)
-
         centerPanel()
         panel.makeKeyAndOrderFront(nil)
         NSApp.activate(ignoringOtherApps: true)
