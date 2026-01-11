@@ -124,17 +124,20 @@ final class ClipboardStore {
                 try db.create(index: "idx_items_timestamp", on: "items", columns: ["timestamp"], ifNotExists: true)
 
                 // Use trigram tokenizer for fast substring matching
-                // Drop old FTS table if it exists with different tokenizer
-                try db.execute(sql: "DROP TABLE IF EXISTS items_fts")
+                // Only create if it doesn't exist - avoid expensive rebuild on every launch
+                let ftsExists = try Bool.fetchOne(db, sql: """
+                    SELECT 1 FROM sqlite_master WHERE type='table' AND name='items_fts'
+                """) ?? false
 
-                try db.execute(sql: """
-                    CREATE VIRTUAL TABLE IF NOT EXISTS items_fts USING fts5(
-                        content, content=items, content_rowid=id, tokenize='trigram'
-                    )
-                """)
-
-                // Rebuild FTS index with existing data
-                try db.execute(sql: "INSERT INTO items_fts(items_fts) VALUES('rebuild')")
+                if !ftsExists {
+                    try db.execute(sql: """
+                        CREATE VIRTUAL TABLE items_fts USING fts5(
+                            content, content=items, content_rowid=id, tokenize='trigram'
+                        )
+                    """)
+                    // Only rebuild when creating new FTS table
+                    try db.execute(sql: "INSERT INTO items_fts(items_fts) VALUES('rebuild')")
+                }
 
                 try db.execute(sql: """
                     CREATE TRIGGER IF NOT EXISTS items_ai AFTER INSERT ON items BEGIN
