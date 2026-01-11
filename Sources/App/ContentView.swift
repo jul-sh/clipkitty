@@ -283,9 +283,6 @@ struct ContentView: View {
                                     .padding(16)
                             }
                         }
-                    case .json:
-                        JSONTreeView(jsonString: item.contentPreview)
-                            .frame(maxWidth: .infinity, maxHeight: .infinity)
                     default:
                         ScrollView(.vertical, showsIndicators: true) {
                             switch item.content {
@@ -305,7 +302,7 @@ struct ContentView: View {
                                         store.fetchLinkMetadataIfNeeded(for: item)
                                     }
 
-                            case .text, .json, .email, .phone, .address, .date, .transit:
+                            case .text, .email, .phone, .address, .date, .transit:
                                 EmptyView()
                             }
                         }
