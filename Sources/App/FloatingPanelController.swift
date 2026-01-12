@@ -72,7 +72,6 @@ final class FloatingPanelController: NSObject, NSWindowDelegate {
 
     func show() {
         previousApp = NSWorkspace.shared.frontmostApplication
-        store.resetForDisplay()
         centerPanel()
         panel.makeKeyAndOrderFront(nil)
         NSApp.activate(ignoringOtherApps: true)
@@ -80,6 +79,7 @@ final class FloatingPanelController: NSObject, NSWindowDelegate {
 
     func hide() {
         panel.orderOut(nil)
+        store.resetForDisplay()
         previousApp?.activate()
         previousApp = nil
     }
