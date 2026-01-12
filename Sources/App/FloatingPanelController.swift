@@ -11,6 +11,7 @@ final class FloatingPanelController: NSObject, NSWindowDelegate {
 
     private var panel: NSPanel!
     private let store: ClipboardStore
+    private var previousApp: NSRunningApplication?
 
     init(store: ClipboardStore) {
         self.store = store
@@ -70,6 +71,7 @@ final class FloatingPanelController: NSObject, NSWindowDelegate {
     }
 
     func show() {
+        previousApp = NSWorkspace.shared.frontmostApplication
         store.resetForDisplay()
         centerPanel()
         panel.makeKeyAndOrderFront(nil)
@@ -78,6 +80,8 @@ final class FloatingPanelController: NSObject, NSWindowDelegate {
 
     func hide() {
         panel.orderOut(nil)
+        previousApp?.activate()
+        previousApp = nil
     }
 
     private func centerPanel() {
