@@ -57,8 +57,8 @@ jobs:
             cd /tmp/gh-pages
             git pull origin gh-pages || true
           else
-            # Create orphan branch: worktree from current HEAD, then reset to orphan
-            git worktree add -B gh-pages /tmp/gh-pages HEAD
+            # Create orphan branch: detached worktree, then create orphan inside
+            git worktree add --detach /tmp/gh-pages
             cd /tmp/gh-pages
             git checkout --orphan gh-pages
             git reset --hard
