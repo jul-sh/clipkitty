@@ -46,6 +46,28 @@ final class ClipboardStore {
         setupDatabase()
         loadItems(reset: true)
         pruneIfNeeded()
+        verifyFTSIntegrityAsync()
+    }
+
+    /// Check FTS index integrity in background and rebuild if needed
+    private func verifyFTSIntegrityAsync() {
+        guard let dbQueue else { return }
+        Task.detached {
+            do {
+                let needsRebuild = try dbQueue.read { db -> Bool in
+                    let itemCount = try Int.fetchOne(db, sql: "SELECT COUNT(*) FROM items") ?? 0
+                    let ftsCount = try Int.fetchOne(db, sql: "SELECT COUNT(*) FROM items_fts") ?? 0
+                    return itemCount != ftsCount
+                }
+                if needsRebuild {
+                    try dbQueue.write { db in
+                        try db.execute(sql: "INSERT INTO items_fts(items_fts) VALUES('rebuild')")
+                    }
+                }
+            } catch {
+                logError("FTS integrity check failed: \(error)")
+            }
+        }
     }
 
     /// Current database size in bytes (cached, updated async)
@@ -124,25 +146,12 @@ final class ClipboardStore {
                 try db.create(index: "idx_items_timestamp", on: "items", columns: ["timestamp"], ifNotExists: true)
 
                 // Use trigram tokenizer for fast substring matching
-                let ftsExists = try Bool.fetchOne(db, sql: """
-                    SELECT 1 FROM sqlite_master WHERE type='table' AND name='items_fts'
-                """) ?? false
-
-                if !ftsExists {
-                    try db.execute(sql: """
-                        CREATE VIRTUAL TABLE items_fts USING fts5(
-                            content, content=items, content_rowid=id, tokenize='trigram'
-                        )
-                    """)
-                    try db.execute(sql: "INSERT INTO items_fts(items_fts) VALUES('rebuild')")
-                } else {
-                    // Verify FTS index is in sync - compare row counts
-                    let itemCount = try Int.fetchOne(db, sql: "SELECT COUNT(*) FROM items") ?? 0
-                    let ftsCount = try Int.fetchOne(db, sql: "SELECT COUNT(*) FROM items_fts") ?? 0
-                    if itemCount != ftsCount {
-                        try db.execute(sql: "INSERT INTO items_fts(items_fts) VALUES('rebuild')")
-                    }
-                }
+                // Just ensure table exists - integrity check runs async after startup
+                try db.execute(sql: """
+                    CREATE VIRTUAL TABLE IF NOT EXISTS items_fts USING fts5(
+                        content, content=items, content_rowid=id, tokenize='trigram'
+                    )
+                """)
 
                 try db.execute(sql: """
                     CREATE TRIGGER IF NOT EXISTS items_ai AFTER INSERT ON items BEGIN
