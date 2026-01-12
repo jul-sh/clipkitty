@@ -72,6 +72,7 @@ final class FloatingPanelController: NSObject, NSWindowDelegate {
 
     func show() {
         previousApp = NSWorkspace.shared.frontmostApplication
+        store.prepareForDisplay()
         centerPanel()
         panel.makeKeyAndOrderFront(nil)
         NSApp.activate(ignoringOtherApps: true)
