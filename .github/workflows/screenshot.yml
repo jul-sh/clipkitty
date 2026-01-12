@@ -53,17 +53,21 @@ jobs:
           git fetch origin gh-pages || true
           rm -rf /tmp/gh-pages
           if git show-ref --verify --quiet refs/remotes/origin/gh-pages; then
-            git worktree add /tmp/gh-pages origin/gh-pages
+            git worktree add /tmp/gh-pages gh-pages
+            cd /tmp/gh-pages
+            git pull origin gh-pages || true
           else
-            git worktree add --orphan /tmp/gh-pages gh-pages
+            # Create orphan branch: worktree from current HEAD, then reset to orphan
+            git worktree add -B gh-pages /tmp/gh-pages HEAD
+            cd /tmp/gh-pages
+            git checkout --orphan gh-pages
+            git reset --hard
           fi
 
-          cd /tmp/gh-pages
-          git pull origin gh-pages || true
           cp "$GITHUB_WORKSPACE/screenshot.png" .
           git add screenshot.png
           git commit -m "Update screenshot [skip ci]" || echo "No changes to commit"
-          git push origin HEAD:gh-pages
+          git push origin gh-pages
           cd -
           git worktree remove /tmp/gh-pages --force
 
