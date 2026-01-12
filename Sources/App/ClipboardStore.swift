@@ -224,6 +224,12 @@ final class ClipboardStore {
         loadItems(reset: true)
     }
 
+    /// Reset selection state for a new display session (called on show)
+    func prepareForDisplay() {
+        searchTask?.cancel()
+        displayVersion += 1
+    }
+
     /// Fetch link metadata on-demand if not already loaded
     func fetchLinkMetadataIfNeeded(for item: ClipboardItem) {
         // Only fetch for links with pending metadata
