@@ -6,12 +6,11 @@
     <key>com.apple.security.app-sandbox</key>
     <true/>
 
-    <!-- File System: Restricted to app-only container. No "Full Disk Access" needed. -->
-    <!-- User can only "Save" files if they explicitly select them via system dialog. -->
-    <key>com.apple.security.files.user-selected.read-write</key>
-    <true/>
+    <!-- File System Lock: Full isolation. Not even "user-selected" access is allowed. -->
+    <!-- The app is strictly confined to its own container. -->
 
     <!-- To prove our privacy, the following entitlements are MISSING: -->
+    <!-- com.apple.security.files.user-selected.read-write (Full FS isolation) -->
     <!-- com.apple.security.network.client (Offline) -->
     <!-- com.apple.security.network.server (Offline) -->
     <!-- com.apple.security.device.camera (No camera access) -->
