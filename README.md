@@ -14,6 +14,19 @@ A fast, native clipboard manager for macOS with support for unlimited clipboard 
 - **Lightweight** – Native Swift app in the menu bar, no dock icon
 
 
+## Privacy
+
+ClipKitty is 100% private. It does not send data to any server. This is enforced by the macOS App Sandbox:
+
+1. **Hard-Disabled Network**: The app is built without any network entitlements. macOS will physically prevent the app from making outgoing or incoming connections.
+2. **Open for Verification**: You can verify this yourself using the Terminal:
+
+```bash
+codesign -d --entitlements - /path/to/ClipKitty.app
+```
+
+If the output does not contain `com.apple.security.network.client`, the app is unable to talk to the internet.
+
 ## Releases
 
 Every commit is released automatically; download the latest build from GitHub Releases.

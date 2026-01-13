@@ -30,7 +30,7 @@ bundle:
 	fi
 	@BIN_PATH="$$(swift build -c release $(SWIFT_ARCH_FLAGS) --show-bin-path)"; \
 	if [ -d "$$BIN_PATH/$(APP_NAME)_$(APP_NAME).bundle" ]; then \
-		cp -R "$$BIN_PATH/$(APP_NAME)_$(APP_NAME).bundle" "$(APP_NAME).app/"; \
+		cp -R "$$BIN_PATH/$(APP_NAME)_$(APP_NAME).bundle" "$(APP_NAME).app/Contents/Resources/"; \
 	fi
 
 icon:
@@ -80,6 +80,10 @@ plist:
 		'</plist>' > "$(APP_NAME).app/Contents/Info.plist"
 	@touch "$(APP_NAME).app"
 	@echo "Done! Created $(APP_NAME).app"
+
+sign:
+	@echo "Signing with entitlements..."
+	@codesign --force --options runtime --entitlements Sources/App/ClipKitty.entitlements --sign - "$(APP_NAME).app"
 
 clean:
 	@rm -rf "$(APP_NAME).app"
