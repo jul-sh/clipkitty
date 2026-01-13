@@ -14,18 +14,31 @@ A fast, native clipboard manager for macOS with support for unlimited clipboard 
 - **Lightweight** – Native Swift app in the menu bar, no dock icon
 
 
-## Privacy
+## Privacy & Security Audit
 
-ClipKitty is 100% private. It does not send data to any server. This is enforced by the macOS App Sandbox:
+ClipKitty is built as a **"Zero-Trust"** application. Since it is unsigned and local-first, we provide you with the tools to verify its privacy promises yourself.
 
-1. **Hard-Disabled Network**: The app is built without any network entitlements. macOS will physically prevent the app from making outgoing or incoming connections.
-2. **Open for Verification**: You can verify this yourself using the Terminal:
+### Our "Zero-Trust" Promise
+
+1. **Hard-Boxed Sandbox**: The app is trapped in its own container (`~/Library/Containers/com.clipkitty.app`). It cannot "crawl" your home folder.
+2. **Read-Only File System**: It can only touch files you explicitly select via a "Save" or "Open" dialog.
+3. **Hardware Kill-Switch**: Access to your camera, microphone, and location is blocked at the macOS kernel level.
+4. **Offline by Design**: There are no network entitlements. The app is unable to talk to the internet.
+5. **Anti-Snoop Lock**: The app cannot "ask" other apps for data using Apple Events. It only knows what you actively copy.
+
+### Self-Verify (The "Show Your Receipts" Command)
+
+Run this command on the ClipKitty app bundle to see the cryptographic proof of these restrictions:
 
 ```bash
-codesign -d --entitlements - /path/to/ClipKitty.app
+codesign -d --entitlements - ClipKitty.app
 ```
 
-If the output does not contain `com.apple.security.network.client`, the app is unable to talk to the internet.
+**What you will see:**
+* `com.apple.security.app-sandbox`: **TRUE** (We are in a cage)
+* `com.apple.security.network.client`: **MISSING** (We can't send data)
+* `com.apple.security.device.camera`: **MISSING** (We can't see you)
+* `com.apple.security.automation.apple-events`: **MISSING** (No snooping)
 
 ## Releases
 

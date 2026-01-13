@@ -2,9 +2,22 @@
 <!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
 <plist version="1.0">
 <dict>
+    <!-- Core Sandbox: The "Cage" -->
     <key>com.apple.security.app-sandbox</key>
     <true/>
+
+    <!-- File System: Restricted to app-only container. No "Full Disk Access" needed. -->
+    <!-- User can only "Save" files if they explicitly select them via system dialog. -->
     <key>com.apple.security.files.user-selected.read-write</key>
     <true/>
+
+    <!-- To prove our privacy, the following entitlements are MISSING: -->
+    <!-- com.apple.security.network.client (Offline) -->
+    <!-- com.apple.security.network.server (Offline) -->
+    <!-- com.apple.security.device.camera (No camera access) -->
+    <!-- com.apple.security.device.microphone (No mic access) -->
+    <!-- com.apple.security.personal-information.location (No location access) -->
+    <!-- com.apple.security.personal-information.addressbook (No contacts access) -->
+    <!-- com.apple.security.automation.apple-events (No snooping on other apps) -->
 </dict>
 </plist>
