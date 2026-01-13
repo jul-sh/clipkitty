@@ -43,9 +43,6 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate {
         statusItem = NSStatusBar.system.statusItem(withLength: NSStatusItem.squareLength)
         if let button = statusItem?.button {
             button.image = makeStatusItemImage() ?? NSImage(systemSymbolName: "clipboard", accessibilityDescription: "ClipKitty")
-            button.target = self
-            button.action = #selector(handleStatusItemClick)
-            button.sendAction(on: [.leftMouseUp, .rightMouseUp])
         }
 
         let menu = NSMenu()
@@ -59,6 +56,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate {
         menu.addItem(NSMenuItem(title: "Quit", action: #selector(quit), keyEquivalent: "q"))
 
         statusMenu = menu
+        statusItem?.menu = menu
     }
 
     private func enableLaunchAtLogin() {
@@ -90,30 +88,6 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate {
     @objc private func showPanel() {
         panelController.show()
     }
-
-    @objc private func handleStatusItemClick() {
-        guard let event = NSApp.currentEvent else {
-            panelController.show()
-            return
-        }
-
-        if event.type == .rightMouseUp || event.type == .rightMouseDown {
-            if let menu = statusMenu, let button = statusItem?.button {
-                NSMenu.popUpContextMenu(menu, with: event, for: button)
-            }
-        } else {
-            switch panelController.visibility {
-            case .visible:
-                panelController.hide()
-                if let menu = statusMenu, let button = statusItem?.button {
-                    NSMenu.popUpContextMenu(menu, with: event, for: button)
-                }
-            case .hidden:
-                panelController.show()
-            }
-        }
-    }
-
 
 
     @objc private func openSettings() {
