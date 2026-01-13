@@ -14,31 +14,30 @@ A fast, native clipboard manager for macOS with support for unlimited clipboard 
 - **Lightweight** – Native Swift app in the menu bar, no dock icon
 
 
-## Privacy & Security Audit
+## Security Audit
 
-ClipKitty is built as a **"Zero-Trust"** application. Since it is unsigned and local-first, we provide you with the tools to verify its privacy promises yourself.
+ClipKitty execution is local-only; security is enforced by the macOS App Sandbox kernel subsystem.
 
-### Our "Zero-Trust" Promise
+### Constraints
 
-1. **Hard-Boxed Sandbox**: The app is trapped in its own container (`~/Library/Containers/com.clipkitty.app`). It cannot "crawl" your home folder.
-2. **Full File System Isolation**: The app has **zero** access to your files. It cannot even touch files you select; it is strictly limited to its internal storage.
-3. **Hardware Kill-Switch**: Access to your camera, microphone, and location is blocked at the macOS kernel level.
-4. **Offline by Design**: There are no network entitlements. The app is unable to talk to the internet.
-5. **Anti-Snoop Lock**: The app cannot "ask" other apps for data using Apple Events. It only knows what you actively copy.
+1. **Sandbox**: Process resides in a containerized root (`~/Library/Containers/com.clipkitty.app`); no access to the user home directory.
+2. **FileSystem**: Entitlements for disk access are omitted; app state is restricted to the internal container.
+3. **Hardware**: No camera, microphone, or location entitlements; the kernel denies access to all telemetry and capture devices.
+4. **Network**: No `com.apple.security.network.*` entitlements; socket creation for external traffic is blocked.
+5. **Automation**: No Apple Events entitlements; the app cannot script other processes or exfiltrate cross-app state.
 
-### Self-Verify (The "Show Your Receipts" Command)
+### Verification
 
-Run this command on the ClipKitty app bundle to see the cryptographic proof of these restrictions:
+Audit the cryptographic entitlements of the binary:
 
 ```bash
 codesign -d --entitlements - ClipKitty.app
 ```
 
-**What you will see:**
-* `com.apple.security.app-sandbox`: **TRUE** (We are in a cage)
-* `com.apple.security.network.client`: **MISSING** (We can't send data)
-* `com.apple.security.device.camera`: **MISSING** (We can't see you)
-* `com.apple.security.automation.apple-events`: **MISSING** (No snooping)
+Expected output:
+* `com.apple.security.app-sandbox`: **true**
+* `com.apple.security.network.client`: **missing**
+* `com.apple.security.automation.apple-events`: **missing**
 
 ## Releases
 
