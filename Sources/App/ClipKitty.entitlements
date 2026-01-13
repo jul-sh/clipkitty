@@ -2,21 +2,34 @@
 <!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
 <plist version="1.0">
 <dict>
-    <!-- Core Sandbox: The "Cage" -->
+    <!-- [ENABLED] App Sandbox: This is the mandatory security cage for ClipKitty. -->
     <key>com.apple.security.app-sandbox</key>
     <true/>
 
-    <!-- File System Lock: Full isolation. Not even "user-selected" access is allowed. -->
-    <!-- The app is strictly confined to its own container. -->
+    <!-- [HARD-LOCKED] The following capabilities are EXPLICITLY OMITTED to ensure privacy.
+         If any of these keys are missing from a 'codesign' audit, the macOS kernel
+         physically prevents the app from performing these actions. -->
 
-    <!-- To prove our privacy, the following entitlements are MISSING: -->
-    <!-- com.apple.security.files.user-selected.read-write (Full FS isolation) -->
-    <!-- com.apple.security.network.client (Offline) -->
-    <!-- com.apple.security.network.server (Offline) -->
-    <!-- com.apple.security.device.camera (No camera access) -->
-    <!-- com.apple.security.device.microphone (No mic access) -->
-    <!-- com.apple.security.personal-information.location (No location access) -->
-    <!-- com.apple.security.personal-information.addressbook (No contacts access) -->
-    <!-- com.apple.security.automation.apple-events (No snooping on other apps) -->
+    <!-- 1. FULL NETWORK BLOCK (Offline Only)
+         Missing: com.apple.security.network.client
+         Missing: com.apple.security.network.server
+         Proof: The app cannot send data to any server or listen for incoming connections. -->
+
+    <!-- 2. FULL FILE SYSTEM ISOLATION (Zero Disk Access)
+         Missing: com.apple.security.files.user-selected.read-write
+         Missing: com.apple.security.files.downloads.read-write
+         Proof: The app has NO access to your documents, downloads, or desktop.
+         It is strictly confined to its own container at ~/Library/Containers/com.clipkitty.app -->
+
+    <!-- 3. HARDWARE KILL-SWITCH (No Sensors)
+         Missing: com.apple.security.device.camera
+         Missing: com.apple.security.device.microphone
+         Missing: com.apple.security.personal-information.location
+         Proof: The app cannot see you, hear you, or track your movements. -->
+
+    <!-- 4. ANTI-SNOOOPING LOCK (No Cross-App Communication)
+         Missing: com.apple.security.automation.apple-events
+         Proof: The app cannot "ask" other apps (like Safari or Mail) for data.
+         It only knows what you manually copy to the clipboard. -->
 </dict>
 </plist>
