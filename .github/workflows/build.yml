@@ -22,6 +22,10 @@ jobs:
         with:
           swift-version: '6.2'
 
+      - name: Run Tests
+        run: |
+          swift test
+
       - name: Build App
         run: |
           make

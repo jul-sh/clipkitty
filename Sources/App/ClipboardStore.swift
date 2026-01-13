@@ -38,6 +38,9 @@ final class ClipboardStore {
 
     /// Increments each time the display is reset - views observe this to reset local state
     private(set) var displayVersion: Int = 0
+    
+    /// Callback when a new item is added locally (set by AppDelegate to trigger sync)
+    var onItemAdded: (@Sendable (Int64, Int) -> Void)?
 
     // MARK: - Initialization
 
@@ -141,9 +144,25 @@ final class ClipboardStore {
                 if !columns.contains("linkImageData") {
                     try db.execute(sql: "ALTER TABLE items ADD COLUMN linkImageData BLOB")
                 }
+                
+                // Sync columns
+                if !columns.contains("syncRecordID") {
+                    try db.execute(sql: "ALTER TABLE items ADD COLUMN syncRecordID TEXT")
+                }
+                if !columns.contains("syncStatus") {
+                    try db.execute(sql: "ALTER TABLE items ADD COLUMN syncStatus TEXT DEFAULT 'local'")
+                }
+                if !columns.contains("modifiedAt") {
+                    try db.execute(sql: "ALTER TABLE items ADD COLUMN modifiedAt REAL")
+                }
+                if !columns.contains("deviceID") {
+                    try db.execute(sql: "ALTER TABLE items ADD COLUMN deviceID TEXT")
+                }
 
                 try db.create(index: "idx_items_hash", on: "items", columns: ["contentHash"], ifNotExists: true)
                 try db.create(index: "idx_items_timestamp", on: "items", columns: ["timestamp"], ifNotExists: true)
+                try db.create(index: "idx_items_sync", on: "items", columns: ["syncStatus"], ifNotExists: true)
+                try db.create(index: "idx_items_syncRecordID", on: "items", columns: ["syncRecordID"], ifNotExists: true)
 
                 // Use trigram tokenizer for fast substring matching
                 // Just ensure table exists - integrity check runs async after startup
@@ -432,9 +451,15 @@ final class ClipboardStore {
         Task.detached { [weak self] in
             let newItemId = Self.saveTextItem(dbQueue: dbQueue, text: text, hash: hash, sourceApp: sourceApp)
 
-            // If it's a URL, fetch metadata asynchronously
-            if ClipboardItem.isURL(text), let id = newItemId {
-                await self?.fetchAndUpdateLinkMetadata(for: id, url: text)
+            if let id = newItemId {
+                // Trigger sync if enabled
+                let size = text.utf8.count
+                await self?.onItemAdded?(id, size)
+                
+                // If it's a URL, fetch metadata asynchronously
+                if ClipboardItem.isURL(text) {
+                    await self?.fetchAndUpdateLinkMetadata(for: id, url: text)
+                }
             }
 
             // Reload on main actor if browsing
@@ -449,15 +474,11 @@ final class ClipboardStore {
 
     private nonisolated static func saveTextItem(dbQueue: DatabaseQueue, text: String, hash: String, sourceApp: String?) -> Int64? {
         do {
-            if let existing = try dbQueue.read({ db in
-                try ClipboardItem.filter(Column("contentHash") == hash).fetchOne(db)
-            }) {
-                try dbQueue.write { db in
+            return try dbQueue.write { db -> Int64? in
+                if let existing = try ClipboardItem.filter(Column("contentHash") == hash).fetchOne(db) {
                     try db.execute(sql: "UPDATE items SET timestamp = ? WHERE id = ?", arguments: [Date(), existing.id])
-                }
-                return nil
-            } else {
-                return try dbQueue.write { db -> Int64 in
+                    return nil
+                } else {
                     let item = ClipboardItem(text: text, sourceApp: sourceApp)
                     try item.insert(db)
                     return db.lastInsertedRowID
@@ -506,7 +527,9 @@ final class ClipboardStore {
         // Move compression and DB write to background
         guard let dbQueue else { return }
         Task.detached { [weak self] in
-            Self.saveImageItemToDB(dbQueue: dbQueue, rawImageData: rawImageData, sourceApp: sourceApp)
+            if let result = Self.saveImageItemToDB(dbQueue: dbQueue, rawImageData: rawImageData, sourceApp: sourceApp) {
+                await self?.onItemAdded?(result.id, result.size)
+            }
 
             guard let self else { return }
             await MainActor.run { [weak self] in
@@ -517,7 +540,7 @@ final class ClipboardStore {
         }
     }
 
-    private nonisolated static func saveImageItemToDB(dbQueue: DatabaseQueue, rawImageData: Data, sourceApp: String?) {
+    private nonisolated static func saveImageItemToDB(dbQueue: DatabaseQueue, rawImageData: Data, sourceApp: String?) -> (id: Int64, size: Int)? {
         // Compress image
         let compressedData: Data
         if let image = NSImage(data: rawImageData),
@@ -530,12 +553,14 @@ final class ClipboardStore {
         }
 
         do {
-            try dbQueue.write { db in
+            return try dbQueue.write { db -> (id: Int64, size: Int) in
                 let item = ClipboardItem(imageData: compressedData, sourceApp: sourceApp)
                 try item.insert(db)
+                return (db.lastInsertedRowID, compressedData.count)
             }
         } catch {
             logError("Image save failed: \(error)")
+            return nil
         }
     }
 
@@ -665,5 +690,278 @@ final class ClipboardStore {
         } catch {
             logError("Pruning failed: \(error)")
         }
+    }
+    
+    // MARK: - Sync Operations
+    
+    /// Get items pending sync that are under the size limit
+    func getPendingSyncItems(maxSize: Int) async -> [SyncableClipboardItem] {
+        guard let dbQueue else { return [] }
+        
+        do {
+            return try await dbQueue.read { db -> [SyncableClipboardItem] in
+                let rows = try Row.fetchAll(db, sql: """
+                    SELECT * FROM items 
+                    WHERE syncStatus = 'pending'
+                    ORDER BY timestamp DESC
+                    LIMIT 100
+                """)
+                    
+                    return rows.compactMap { row -> SyncableClipboardItem? in
+                        guard let item = try? ClipboardItem(row: row) else { return nil }
+                        
+                        // Estimate size and skip large items
+                        var size = item.textContent.utf8.count
+                        if case .image(let data, _) = item.content {
+                            size += data.count
+                        }
+                        if case .link(_, let metadata) = item.content {
+                            if let imageData = metadata.imageData {
+                                size += imageData.count
+                            }
+                        }
+                        guard size <= maxSize else { return nil }
+                        
+                        return SyncableClipboardItem(
+                            item: item,
+                            syncRecordID: row["syncRecordID"],
+                            syncStatus: SyncStatus.from(databaseValue: row["syncStatus"]),
+                            modifiedAt: row["modifiedAt"] ?? item.timestamp,
+                            deviceID: row["deviceID"]
+                        )
+                }
+            }
+        } catch {
+            logError("Failed to get pending sync items: \(error)")
+            return []
+        }
+    }
+    
+    /// Mark an item as synced after successful push to CloudKit
+    /// Note: recordID is derived from contentHash in this implementation
+    func markItemAsSynced(recordID: String) async {
+        guard let dbQueue else { return }
+
+        let deviceID = SyncableClipboardItem.currentDeviceID
+        let now = Date()
+
+        await Task.detached {
+            do {
+                try dbQueue.write { db in
+                    // recordID equals contentHash in our implementation (see toCKRecord)
+                    try db.execute(
+                        sql: """
+                            UPDATE items
+                            SET syncStatus = 'synced', syncRecordID = ?, modifiedAt = ?, deviceID = ?
+                            WHERE contentHash = ?
+                        """,
+                        arguments: [recordID, now, deviceID, recordID]
+                    )
+                }
+            } catch {
+                logError("Failed to mark item as synced: \(error)")
+            }
+        }.value
+    }
+    
+    /// Insert or update an item from CloudKit
+    /// Uses last-writer-wins conflict resolution based on modifiedAt timestamp
+    func upsertFromCloud(syncableItem: SyncableClipboardItem) async {
+        guard let dbQueue else { return }
+
+        let item = syncableItem.item
+        let recordID = syncableItem.syncRecordID
+        let remoteModifiedAt = syncableItem.modifiedAt
+        let remoteDeviceID = syncableItem.deviceID
+
+        await Task.detached {
+            do {
+                try dbQueue.write { db in
+                    // Check if item exists by contentHash
+                    let existing = try Row.fetchOne(
+                        db,
+                        sql: "SELECT id, modifiedAt, deviceID, syncStatus FROM items WHERE contentHash = ?",
+                        arguments: [item.contentHash]
+                    )
+
+                    if let existing = existing {
+                        // Item exists - apply last-writer-wins based on timestamp only
+                        let localModifiedAt = existing["modifiedAt"] as? Date ?? Date.distantPast
+                        let localStatus = existing["syncStatus"] as? String
+
+                        // Only update if remote is strictly newer
+                        // If local is pending (has local changes), prefer local unless remote is newer
+                        let shouldUpdate: Bool
+                        if localStatus == "pending" {
+                            // Local has uncommitted changes - only overwrite if remote is newer
+                            shouldUpdate = remoteModifiedAt > localModifiedAt
+                        } else {
+                            // Local is synced or local-only - update if remote is newer or equal
+                            // (equal handles the case where this is our own upload coming back)
+                            shouldUpdate = remoteModifiedAt >= localModifiedAt
+                        }
+
+                        if shouldUpdate {
+                            try db.execute(
+                                sql: """
+                                    UPDATE items SET
+                                        timestamp = ?,
+                                        modifiedAt = ?,
+                                        syncRecordID = ?,
+                                        syncStatus = 'synced',
+                                        deviceID = ?
+                                    WHERE contentHash = ?
+                                """,
+                                arguments: [item.timestamp, remoteModifiedAt, recordID, remoteDeviceID, item.contentHash]
+                            )
+                        }
+                    } else {
+                        // New item from cloud - insert it
+                        var newItem = item
+                        try newItem.insert(db)
+
+                        // Update sync fields
+                        if let id = newItem.id {
+                            try db.execute(
+                                sql: "UPDATE items SET syncRecordID = ?, syncStatus = 'synced', modifiedAt = ?, deviceID = ? WHERE id = ?",
+                                arguments: [recordID, remoteModifiedAt, remoteDeviceID, id]
+                            )
+                        }
+                    }
+                }
+            } catch {
+                logError("Failed to upsert from cloud: \(error)")
+            }
+        }.value
+
+        // Reload items on main thread
+        if case .loaded = state {
+            loadItems(reset: true)
+        }
+    }
+    
+    /// Delete an item that was deleted from CloudKit
+    func deleteFromCloud(syncRecordID: String) async {
+        guard let dbQueue else { return }
+        
+        await Task.detached {
+            do {
+                try dbQueue.write { db in
+                    try db.execute(
+                        sql: "DELETE FROM items WHERE syncRecordID = ?",
+                        arguments: [syncRecordID]
+                    )
+                }
+            } catch {
+                logError("Failed to delete from cloud: \(error)")
+            }
+        }.value
+        
+        // Reload items on main thread
+        if case .loaded = state {
+            loadItems(reset: true)
+        }
+    }
+    
+    /// Mark new items as pending sync when sync is enabled
+    func markNewItemForSync(id: Int64, sizeBytes: Int) {
+        let maxItemSize = Int(AppSettings.shared.maxSyncItemSizeMB * 1024 * 1024)
+        guard AppSettings.shared.iCloudSyncEnabled,
+              sizeBytes <= maxItemSize,
+              let dbQueue else { return }
+        
+        let deviceID = SyncableClipboardItem.currentDeviceID
+        
+        Task.detached {
+            do {
+                try dbQueue.write { db in
+                    try db.execute(
+                        sql: "UPDATE items SET syncStatus = 'pending', modifiedAt = ?, deviceID = ? WHERE id = ?",
+                        arguments: [Date(), deviceID, id]
+                    )
+                }
+            } catch {
+                logError("Failed to mark item for sync: \(error)")
+            }
+        }
+    }
+    
+    /// Get the total size of all synced items in bytes
+    func getSyncedLibrarySize() async -> Int64 {
+        guard let dbQueue else { return 0 }
+        
+        return await Task.detached {
+            do {
+                return try dbQueue.read { db -> Int64 in
+                    let rows = try Row.fetchAll(db, sql: "SELECT * FROM items WHERE syncStatus = 'synced'")
+                    return rows.reduce(0) { total, row in
+                        guard let item = try? ClipboardItem(row: row) else { return total }
+                        var size = item.textContent.utf8.count
+                        if case .image(let data, _) = item.content {
+                            size += data.count
+                        }
+                        if case .link(_, let metadata) = item.content {
+                            if let imageData = metadata.imageData {
+                                size += imageData.count
+                            }
+                        }
+                        return total + Int64(size)
+                    }
+                }
+            } catch {
+                logError("Failed to calculate synced library size: \(error)")
+                return 0
+            }
+        }.value
+    }
+    
+    /// Delete oldest synced items until total size is within limit
+    func pruneSyncedLibrary(maxSizeBytes: Int64) async {
+        guard let dbQueue else { return }
+        
+        await Task.detached {
+            do {
+                try dbQueue.write { db in
+                    // This is a bit complex without a dedicated size column, 
+                    // so we'll fetch all synced items ordered by timestamp
+                    let rows = try Row.fetchAll(db, sql: "SELECT * FROM items WHERE syncStatus = 'synced' ORDER BY timestamp ASC")
+                    
+                    var currentTotalSize: Int64 = 0
+                    var itemsToKeep: [Int64] = []
+                    
+                    // We go backwards (newest first) to see what to keep
+                    let reversedRows = rows.reversed()
+                    for row in reversedRows {
+                        guard let item = try? ClipboardItem(row: row) else { continue }
+                        var size = item.textContent.utf8.count
+                        if case .image(let data, _) = item.content {
+                            size += data.count
+                        }
+                        if case .link(_, let metadata) = item.content {
+                            if let imageData = metadata.imageData {
+                                size += imageData.count
+                            }
+                        }
+                        
+                        if currentTotalSize + Int64(size) <= maxSizeBytes {
+                            currentTotalSize += Int64(size)
+                            if let id = row["id"] as? Int64 {
+                                itemsToKeep.append(id)
+                            }
+                        } else {
+                            // This item and all older items should be deleted (or marked as local-only)
+                            // For simplicity, we delete them from cloud (remote deletion handled by engine)
+                            if row["syncRecordID"] is String {
+                                // We store recordIDs to be deleted from cloud by the engine
+                                // but for now we just delete locally or mark as local
+                                try db.execute(sql: "UPDATE items SET syncStatus = 'local', syncRecordID = NULL WHERE id = ?", arguments: [row["id"]])
+                            }
+                        }
+                    }
+                }
+            } catch {
+                logError("Synced library pruning failed: \(error)")
+            }
+        }.value
     }
 }

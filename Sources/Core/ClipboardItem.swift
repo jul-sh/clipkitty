@@ -233,8 +233,8 @@ public struct ClipboardItem: Identifiable, Sendable, Equatable, FetchableRecord,
         self.content = .image(data: imageData, description: description)
     }
 
-    /// Internal initializer for database reconstruction
-    internal init(
+    /// Initializer for database/sync reconstruction
+    public init(
         id: Int64?,
         content: ClipboardContent,
         contentHash: String,

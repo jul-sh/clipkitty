@@ -8,9 +8,9 @@ ICON_SOURCE := $(SCRIPT_DIR)/AppIcon.icon
 ARCHS ?= arm64 x86_64
 SWIFT_ARCH_FLAGS := $(foreach arch,$(ARCHS),--arch $(arch))
 
-.PHONY: all build bundle icon plist clean
+.PHONY: all build bundle icon plist sign deploy clean
 
-all: build bundle icon plist
+all: build bundle icon plist sign
 
 build:
 	@echo "Building release..."
@@ -30,7 +30,7 @@ bundle:
 	fi
 	@BIN_PATH="$$(swift build -c release $(SWIFT_ARCH_FLAGS) --show-bin-path)"; \
 	if [ -d "$$BIN_PATH/$(APP_NAME)_$(APP_NAME).bundle" ]; then \
-		cp -R "$$BIN_PATH/$(APP_NAME)_$(APP_NAME).bundle" "$(APP_NAME).app/"; \
+		cp -R "$$BIN_PATH/$(APP_NAME)_$(APP_NAME).bundle" "$(APP_NAME).app/Contents/Resources/"; \
 	fi
 
 icon:
@@ -80,6 +80,17 @@ plist:
 		'</plist>' > "$(APP_NAME).app/Contents/Info.plist"
 	@touch "$(APP_NAME).app"
 	@echo "Done! Created $(APP_NAME).app"
+
+sign:
+	@echo "Signing with entitlements..."
+	@codesign --force --options runtime --sign - --entitlements Sources/App/ClipKitty.entitlements "$(APP_NAME).app"
+
+deploy: all
+	@echo "Deploying to /Applications..."
+	@osascript -e 'quit app "$(APP_NAME)"' || true
+	@rm -rf "/Applications/$(APP_NAME).app"
+	@cp -R "$(APP_NAME).app" "/Applications/"
+	@echo "Deployed successfully!"
 
 clean:
 	@rm -rf "$(APP_NAME).app"

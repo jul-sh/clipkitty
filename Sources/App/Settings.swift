@@ -66,12 +66,36 @@ final class AppSettings: ObservableObject {
     @Published var maxDatabaseSizeMB: Int {
         didSet { save() }
     }
+    
+    @Published var iCloudSyncEnabled: Bool {
+        didSet {
+            save()
+            onSyncSettingChanged?(iCloudSyncEnabled)
+        }
+    }
+    
+    @Published var maxSyncItemSizeMB: Double {
+        didSet { save() }
+    }
+    
+    @Published var maxSyncLibrarySizeMB: Int {
+        didSet { save() }
+    }
+    
+    /// Callback when sync setting changes (set by AppDelegate)
+    var onSyncSettingChanged: ((Bool) -> Void)?
 
     private let defaults = UserDefaults.standard
     private let hotKeyKey = "hotKey"
     private let maxDbSizeKey = "maxDatabaseSizeMB"
+    private let iCloudSyncKey = "iCloudSyncEnabled"
+    private let maxSyncItemSizeKey = "maxSyncItemSizeMB"
+    private let maxSyncLibrarySizeKey = "maxSyncLibrarySizeMB"
 
     private init() {
+        // Initialize iCloudSyncEnabled first to satisfy property initialization requirements
+        iCloudSyncEnabled = UserDefaults.standard.bool(forKey: iCloudSyncKey)
+        
         if let data = defaults.data(forKey: hotKeyKey),
            let decoded = try? JSONDecoder().decode(HotKey.self, from: data) {
             hotKey = decoded
@@ -79,10 +103,14 @@ final class AppSettings: ObservableObject {
             hotKey = .default
         }
 
-        maxDatabaseSizeMB = defaults.integer(forKey: maxDbSizeKey)
-        if maxDatabaseSizeMB == 0 {
-            maxDatabaseSizeMB = 2048 // Default 2 GB
-        }
+        let storedSize = defaults.integer(forKey: maxDbSizeKey)
+        maxDatabaseSizeMB = storedSize == 0 ? 2048 : storedSize // Default 2 GB
+        
+        let storedSyncItemSize = defaults.double(forKey: maxSyncItemSizeKey)
+        maxSyncItemSizeMB = storedSyncItemSize == 0 ? 0.5 : storedSyncItemSize // Default 0.5 MB
+        
+        let storedSyncLibSize = defaults.integer(forKey: maxSyncLibrarySizeKey)
+        maxSyncLibrarySizeMB = storedSyncLibSize == 0 ? 100 : storedSyncLibSize // Default 100 MB
     }
 
     private func save() {
@@ -90,5 +118,8 @@ final class AppSettings: ObservableObject {
             defaults.set(data, forKey: hotKeyKey)
         }
         defaults.set(maxDatabaseSizeMB, forKey: maxDbSizeKey)
+        defaults.set(iCloudSyncEnabled, forKey: iCloudSyncKey)
+        defaults.set(maxSyncItemSizeMB, forKey: maxSyncItemSizeKey)
+        defaults.set(maxSyncLibrarySizeMB, forKey: maxSyncLibrarySizeKey)
     }
 }

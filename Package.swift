@@ -8,7 +8,8 @@ let package = Package(
         .macOS(.v15)
     ],
     dependencies: [
-        .package(url: "https://github.com/groue/GRDB.swift.git", from: "7.0.0")
+        .package(url: "https://github.com/groue/GRDB.swift.git", from: "7.0.0"),
+        .package(url: "https://github.com/appstefan/HighlightSwift.git", from: "1.0.0")
     ],
     targets: [
         .target(
@@ -37,6 +38,14 @@ let package = Package(
                 .product(name: "GRDB", package: "GRDB.swift")
             ],
             path: "Scripts/PopulateTestData"
+        ),
+        .testTarget(
+            name: "ClipKittyCoreTests",
+            dependencies: [
+                "ClipKittyCore",
+                .product(name: "GRDB", package: "GRDB.swift")
+            ],
+            path: "Tests/ClipKittyCoreTests"
         )
     ]
 )

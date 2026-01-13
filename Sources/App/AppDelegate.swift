@@ -7,6 +7,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate {
     private var panelController: FloatingPanelController!
     private var hotKeyManager: HotKeyManager!
     private var store: ClipboardStore!
+    private var syncEngine: SyncEngine!
     private var statusItem: NSStatusItem?
     private var settingsWindow: NSWindow?
     private var showHistoryMenuItem: NSMenuItem?
@@ -19,8 +20,49 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate {
 
         store = ClipboardStore()
         store.startMonitoring()
+        
+        // Initialize sync engine
+        syncEngine = SyncEngine()
+        syncEngine.configure(clipboardStore: store)
+        
+        let localStore = store!
+        let localSyncEngine = syncEngine!
+        
+        // Set up sync setting change handler
+        AppSettings.shared.onSyncSettingChanged = { enabled in
+            Task {
+                if enabled {
+                    do {
+                        try await localSyncEngine.enable()
+                    } catch {
+                        logError("Failed to enable sync: \(error)")
+                    }
+                } else {
+                    localSyncEngine.disable()
+                }
+            }
+        }
+        
+        // Enable sync if it was previously enabled
+        if AppSettings.shared.iCloudSyncEnabled {
+            Task {
+                do {
+                    try await localSyncEngine.enable()
+                } catch {
+                    logError("Failed to enable sync on launch: \(error)")
+                }
+            }
+        }
+        
+        // Connect store changes to sync engine
+        localStore.onItemAdded = { [weak localStore, weak localSyncEngine] id, size in
+            Task { @MainActor in
+                localStore?.markNewItemForSync(id: id, sizeBytes: size)
+                localSyncEngine?.itemAdded(contentHash: "", sizeBytes: size)
+            }
+        }
 
-        panelController = FloatingPanelController(store: store)
+        panelController = FloatingPanelController(store: localStore)
 
         hotKeyManager = HotKeyManager { [weak self] in
             Task { @MainActor in
@@ -118,7 +160,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate {
 
     @objc private func openSettings() {
         if settingsWindow == nil {
-            let settingsView = SettingsView(store: store) { [weak self] hotKey in
+            let settingsView = SettingsView(store: store, syncEngine: syncEngine) { [weak self] hotKey in
                 self?.hotKeyManager.register(hotKey: hotKey)
                 self?.updateMenuHotKey()
             }

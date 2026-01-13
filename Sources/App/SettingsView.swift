@@ -12,6 +12,7 @@ struct SettingsView: View {
     @State private var showClearConfirmation = false
     @State private var showLogs = false
     let store: ClipboardStore
+    let syncEngine: SyncEngine?
     let onHotKeyChanged: (HotKey) -> Void
 
     var body: some View {
@@ -118,6 +119,57 @@ struct SettingsView: View {
                 }
                 .buttonStyle(.plain)
             }
+            
+            Section("iCloud Sync") {
+                Toggle(isOn: $settings.iCloudSyncEnabled) {
+                    HStack {
+                        Image(systemName: "icloud")
+                        Text("Sync with iCloud")
+                    }
+                }
+                
+                if settings.iCloudSyncEnabled {
+                    HStack {
+                        Text("Status")
+                        Spacer()
+                        Text(syncStatusText)
+                            .foregroundStyle(.secondary)
+                    }
+                    
+                    HStack {
+                        Text("Max Item Size")
+                        Spacer()
+                        TextField("Size", value: $settings.maxSyncItemSizeMB, format: .number)
+                            .textFieldStyle(.roundedBorder)
+                            .frame(width: 80)
+                        Text("MB")
+                            .foregroundStyle(.secondary)
+                    }
+                    
+                    HStack {
+                        Text("Max Library Size")
+                        Spacer()
+                        TextField("Size", value: $settings.maxSyncLibrarySizeMB, format: .number)
+                            .textFieldStyle(.roundedBorder)
+                            .frame(width: 80)
+                        Text("MB")
+                            .foregroundStyle(.secondary)
+                    }
+                    
+                    Button {
+                        syncNow()
+                    } label: {
+                        HStack {
+                            Image(systemName: "arrow.triangle.2.circlepath")
+                            Text("Sync Now")
+                        }
+                    }
+                }
+                
+                Text("Changes in sync limits will apply to new or modified items. Sync requires iCloud to be signed in.")
+                    .font(.caption)
+                    .foregroundStyle(.secondary)
+            }
         }
         .formStyle(.grouped)
         .frame(width: 400, height: 340)
@@ -142,6 +194,47 @@ struct SettingsView: View {
             return String(format: "%.0f KB", kb)
         } else {
             return "\(bytes) bytes"
+        }
+    }
+    
+    private var syncStatusText: String {
+        guard let engine = syncEngine else {
+            return "Not available"
+        }
+        switch engine.state {
+        case .disabled:
+            return "Disabled"
+        case .idle(let lastSync):
+            if let lastSync = lastSync {
+                let formatter = RelativeDateTimeFormatter()
+                formatter.unitsStyle = .abbreviated
+                return "Synced \(formatter.localizedString(for: lastSync, relativeTo: Date()))"
+            }
+            return "Ready"
+        case .syncing(let operation):
+            switch operation {
+            case .initializing:
+                return "Initializing..."
+            case .pushing(let count):
+                return "Pushing \(count) item\(count == 1 ? "" : "s")..."
+            case .pulling:
+                return "Pulling changes..."
+            case .pruning:
+                return "Cleaning up..."
+            }
+        case .failed(let failure):
+            return "Error: \(failure.message)"
+        }
+    }
+    
+    private func syncNow() {
+        guard let engine = syncEngine else { return }
+        Task {
+            do {
+                try await engine.syncNow()
+            } catch {
+                logError("Manual sync failed: \(error)")
+            }
         }
     }
 }
