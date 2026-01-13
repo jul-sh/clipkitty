@@ -44,7 +44,6 @@ icon:
 			--app-icon "AppIcon" \
 			--include-all-app-icons \
 			--output-partial-info-plist /dev/null; \
-		rm -f "$(APP_NAME).app/Contents/Resources/AppIcon.icns"; \
 		echo "Assets.car generated successfully"; \
 	else \
 		echo "Warning: .icon source not found at $(ICON_SOURCE)"; \
