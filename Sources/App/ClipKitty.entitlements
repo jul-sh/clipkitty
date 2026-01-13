@@ -2,34 +2,18 @@
 <!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
 <plist version="1.0">
 <dict>
-    <!-- [ENABLED] App Sandbox: This is the mandatory security cage for ClipKitty. -->
+    <!-- macOS App Sandbox; enforces mandatory access control -->
     <key>com.apple.security.app-sandbox</key>
     <true/>
 
-    <!-- [HARD-LOCKED] The following capabilities are EXPLICITLY OMITTED to ensure privacy.
-         If any of these keys are missing from a 'codesign' audit, the macOS kernel
-         physically prevents the app from performing these actions. -->
+    <!-- Omitted Entitlements; kernel denies access to these subsystems -->
 
-    <!-- 1. FULL NETWORK BLOCK (Offline Only)
-         Missing: com.apple.security.network.client
-         Missing: com.apple.security.network.server
-         Proof: The app cannot send data to any server or listen for incoming connections. -->
+    <!-- Network: com.apple.security.network.* is omitted; app is offline-only. -->
 
-    <!-- 2. FULL FILE SYSTEM ISOLATION (Zero Disk Access)
-         Missing: com.apple.security.files.user-selected.read-write
-         Missing: com.apple.security.files.downloads.read-write
-         Proof: The app has NO access to your documents, downloads, or desktop.
-         It is strictly confined to its own container at ~/Library/Containers/com.clipkitty.app -->
+    <!-- FileSystem: files.user-selected.* is omitted; no access to host directories. -->
 
-    <!-- 3. HARDWARE KILL-SWITCH (No Sensors)
-         Missing: com.apple.security.device.camera
-         Missing: com.apple.security.device.microphone
-         Missing: com.apple.security.personal-information.location
-         Proof: The app cannot see you, hear you, or track your movements. -->
+    <!-- Hardware: camera/microphone/location are omitted; no sensor access. -->
 
-    <!-- 4. ANTI-SNOOOPING LOCK (No Cross-App Communication)
-         Missing: com.apple.security.automation.apple-events
-         Proof: The app cannot "ask" other apps (like Safari or Mail) for data.
-         It only knows what you manually copy to the clipboard. -->
+    <!-- Automation: automation.apple-events is omitted; no cross-app scripting. -->
 </dict>
 </plist>
