@@ -36,11 +36,19 @@ jobs:
           screencapture -x screenshot.png
           ls -lh screenshot.png
 
+      - name: Generate Icon PNG
+        run: |
+          # Convert compiled .icns to .png for documentation
+          sips -s format png ClipKitty.app/Contents/Resources/AppIcon.icns --out icon.png
+          ls -lh icon.png
+
       - name: Upload Screenshot Artifact
         uses: actions/upload-artifact@v4
         with:
-          name: screenshot
-          path: screenshot.png
+          name: assets
+          path: |
+            screenshot.png
+            icon.png
 
       - name: Deploy to gh-pages
         if: github.ref == 'refs/heads/main'
@@ -65,18 +73,22 @@ jobs:
           fi
 
           cp "$GITHUB_WORKSPACE/screenshot.png" .
-          git add screenshot.png
-          git commit -m "Update screenshot [skip ci]" || echo "No changes to commit"
+          cp "$GITHUB_WORKSPACE/icon.png" .
+          git add screenshot.png icon.png
+          git commit -m "Update screenshot and icon [skip ci]" || echo "No changes to commit"
           git push origin gh-pages
           cd -
           git worktree remove /tmp/gh-pages --force
 
-      - name: Output Screenshot URL
+      - name: Output URLs
         if: github.ref == 'refs/heads/main'
         run: |
           REPO="${{ github.repository }}"
           echo "📸 Screenshot URL:"
           echo "https://raw.githubusercontent.com/$REPO/gh-pages/screenshot.png"
+          echo "🖼️ Icon URL:"
+          echo "https://raw.githubusercontent.com/$REPO/gh-pages/icon.png"
           echo ""
           echo "Markdown for README:"
           echo "![ClipKitty Screenshot](https://raw.githubusercontent.com/$REPO/gh-pages/screenshot.png)"
+          echo "![ClipKitty Icon](https://raw.githubusercontent.com/$REPO/gh-pages/icon.png)"
