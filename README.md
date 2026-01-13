@@ -21,7 +21,7 @@ ClipKitty is built as a **"Zero-Trust"** application. Since it is unsigned and l
 ### Our "Zero-Trust" Promise
 
 1. **Hard-Boxed Sandbox**: The app is trapped in its own container (`~/Library/Containers/com.clipkitty.app`). It cannot "crawl" your home folder.
-2. **Read-Only File System**: It can only touch files you explicitly select via a "Save" or "Open" dialog.
+2. **Full File System Isolation**: The app has **zero** access to your files. It cannot even touch files you select; it is strictly limited to its internal storage.
 3. **Hardware Kill-Switch**: Access to your camera, microphone, and location is blocked at the macOS kernel level.
 4. **Offline by Design**: There are no network entitlements. The app is unable to talk to the internet.
 5. **Anti-Snoop Lock**: The app cannot "ask" other apps for data using Apple Events. It only knows what you actively copy.
