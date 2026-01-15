@@ -32,7 +32,9 @@ struct ContentView: View {
                 switch searchState {
                 case .loading(let previous):
                     return previous
-                case .results(let results):
+                case .loadingMore(let results):
+                    return results
+                case .results(let results, _):
                     return results
                 }
             default:
@@ -86,12 +88,29 @@ struct ContentView: View {
         .onChange(of: store.state) { _, newState in
             validateSelection()
             // Show spinner only after 200ms delay to avoid flicker on fast searches
-            if case .searching(_, .loading) = newState {
+            let isLoading: Bool = {
+                if case .searching(_, let searchState) = newState {
+                    switch searchState {
+                    case .loading, .loadingMore:
+                        return true
+                    case .results:
+                        return false
+                    }
+                }
+                return false
+            }()
+
+            if isLoading {
                 Task {
                     try? await Task.sleep(for: .milliseconds(200))
                     // Only show if still loading
-                    if case .searching(_, .loading) = store.state {
-                        showSearchSpinner = true
+                    if case .searching(_, let searchState) = store.state {
+                        switch searchState {
+                        case .loading, .loadingMore:
+                            showSearchSpinner = true
+                        case .results:
+                            break
+                        }
                     }
                 }
             } else {
@@ -268,6 +287,7 @@ struct ContentView: View {
                     .onAppear {
                         if index == items.count - 10 {
                             store.loadMoreItems()
+                            store.loadMoreSearchResults()
                         }
                     }
                 }
