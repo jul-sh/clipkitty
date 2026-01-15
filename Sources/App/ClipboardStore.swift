@@ -3,6 +3,36 @@ import AppKit
 import Observation
 import GRDB
 import ClipKittyCore
+import os.signpost
+import os.log
+
+// MARK: - Performance Tracing
+
+private let performanceLog = OSLog(subsystem: "com.clipkitty.app", category: "Performance")
+private let logger = Logger(subsystem: "com.clipkitty.app", category: "Performance")
+
+private enum TraceID {
+    static let loadItems = OSSignpostID(log: performanceLog)
+    static let search = OSSignpostID(log: performanceLog)
+    static let metadata = OSSignpostID(log: performanceLog)
+}
+
+/// Simple timing helper - uses os_log for reliable capture
+private func measureTime<T>(_ label: String, _ block: () throws -> T) rethrows -> T {
+    let start = CFAbsoluteTimeGetCurrent()
+    let result = try block()
+    let elapsed = (CFAbsoluteTimeGetCurrent() - start) * 1000
+    os_log(.default, log: performanceLog, "%{public}s: %.2fms", label, elapsed)
+    return result
+}
+
+private func measureTimeAsync<T>(_ label: String, _ block: () async throws -> T) async rethrows -> T {
+    let start = CFAbsoluteTimeGetCurrent()
+    let result = try await block()
+    let elapsed = (CFAbsoluteTimeGetCurrent() - start) * 1000
+    os_log(.default, log: performanceLog, "%{public}s: %.2fms", label, elapsed)
+    return result
+}
 
 /// Search result state - makes loading/results states explicit
 enum SearchResultState: Equatable {
@@ -33,7 +63,8 @@ final class ClipboardStore {
     private var lastChangeCount: Int = 0
     private var pollingTask: Task<Void, Never>?
     private var searchTask: Task<Void, Never>?
-    private var currentOffset = 0
+    /// Cursor for keyset pagination - timestamp of the oldest loaded item
+    private var oldestLoadedTimestamp: Date?
     private let pageSize = 50
 
     /// Increments each time the display is reset - views observe this to reset local state
@@ -245,7 +276,7 @@ final class ClipboardStore {
     // MARK: - Loading
 
     private func loadItems(reset: Bool) {
-        let offset: Int
+        let cursorTimestamp: Date?
         let existingItems: [ClipboardItem]
 
         // Extract current items from any state to preserve during refresh
@@ -266,8 +297,8 @@ final class ClipboardStore {
         }()
 
         if reset {
-            currentOffset = 0
-            offset = 0
+            oldestLoadedTimestamp = nil
+            cursorTimestamp = nil
             existingItems = []
             // Only show loading spinner if we have no cached items to display
             if currentItems.isEmpty {
@@ -275,7 +306,7 @@ final class ClipboardStore {
             }
             // Otherwise keep showing current items - they'll be replaced when load completes
         } else {
-            offset = currentOffset
+            cursorTimestamp = oldestLoadedTimestamp
             if case .loaded(let items, _) = state {
                 existingItems = items
             } else {
@@ -285,13 +316,20 @@ final class ClipboardStore {
 
         guard let dbQueue else { return }
         let pageSizeCopy = pageSize
+        let signpostID = OSSignpostID(log: performanceLog)
+        os_signpost(.begin, log: performanceLog, name: "loadItems", signpostID: signpostID, "reset=%d", reset ? 1 : 0)
+
         Task.detached {
-            let result = Self.fetchItems(dbQueue: dbQueue, pageSize: pageSizeCopy, offset: offset)
+            let result = Self.fetchItems(dbQueue: dbQueue, pageSize: pageSizeCopy, beforeTimestamp: cursorTimestamp)
 
             await MainActor.run { [weak self] in
+                os_signpost(.end, log: performanceLog, name: "loadItems", signpostID: signpostID)
                 switch result {
                 case .success(let (newItems, hasMore)):
-                    self?.currentOffset = offset + newItems.count
+                    // Update cursor to oldest item's timestamp for next page
+                    if let oldestItem = newItems.last {
+                        self?.oldestLoadedTimestamp = oldestItem.timestamp
+                    }
                     if reset {
                         self?.state = .loaded(items: newItems, hasMore: hasMore)
                     } else {
@@ -304,17 +342,26 @@ final class ClipboardStore {
         }
     }
 
-    private nonisolated static func fetchItems(dbQueue: DatabaseQueue, pageSize: Int, offset: Int) -> Result<([ClipboardItem], Bool), Error> {
+    /// Keyset pagination: fetches items older than the cursor timestamp
+    /// This is O(log n) via index vs O(n) for OFFSET-based pagination
+    private nonisolated static func fetchItems(dbQueue: DatabaseQueue, pageSize: Int, beforeTimestamp: Date?) -> Result<([ClipboardItem], Bool), Error> {
+        let signpostID = OSSignpostID(log: performanceLog)
+        os_signpost(.begin, log: performanceLog, name: "fetchItems.db", signpostID: signpostID)
         do {
-            let newItems = try dbQueue.read { db in
-                try ClipboardItem
-                    .order(Column("timestamp").desc)
-                    .limit(pageSize, offset: offset)
-                    .fetchAll(db)
+            let newItems = try measureTime("fetchItems.db") {
+                try dbQueue.read { db in
+                    var query = ClipboardItem.order(Column("timestamp").desc)
+                    if let cursor = beforeTimestamp {
+                        query = query.filter(Column("timestamp") < cursor)
+                    }
+                    return try query.limit(pageSize).fetchAll(db)
+                }
             }
+            os_signpost(.end, log: performanceLog, name: "fetchItems.db", signpostID: signpostID, "count=%d", newItems.count)
             let hasMore = newItems.count == pageSize
             return .success((newItems, hasMore))
         } catch {
+            os_signpost(.end, log: performanceLog, name: "fetchItems.db", signpostID: signpostID, "error")
             return .failure(error)
         }
     }
@@ -327,54 +374,61 @@ final class ClipboardStore {
             return
         }
 
+        let signpostID = OSSignpostID(log: performanceLog)
+        os_signpost(.begin, log: performanceLog, name: "search", signpostID: signpostID, "query=%{public}s", query)
+
         let searchResults = await Task.detached { [query] () -> [ClipboardItem] in
-            // FTS5 trigram tokenizer requires at least 3 characters
-            // For shorter queries, use LIKE search directly
-            if query.count < 3 {
+            measureTime("search.db[\(query.prefix(10))]") {
+                // FTS5 trigram tokenizer requires at least 3 characters
+                // For shorter queries, use LIKE search directly
+                if query.count < 3 {
+                    do {
+                        return try dbQueue.read { db in
+                            try ClipboardItem
+                                .filter(Column("content").like("%\(query)%"))
+                                .order(Column("timestamp").desc)
+                                .limit(200)
+                                .fetchAll(db)
+                        }
+                    } catch {
+                        return []
+                    }
+                }
+
                 do {
                     return try dbQueue.read { db in
-                        try ClipboardItem
-                            .filter(Column("content").like("%\(query)%"))
-                            .order(Column("timestamp").desc)
-                            .limit(200)
-                            .fetchAll(db)
+                        // Use FTS5 trigram MATCH for fast substring search
+                        // Escape special FTS5 characters and wrap in quotes for literal matching
+                        let escapedQuery = query.replacingOccurrences(of: "\"", with: "\"\"")
+
+                        // Use raw SQL to join with FTS5 virtual table
+                        let sql = """
+                            SELECT items.* FROM items
+                            INNER JOIN items_fts ON items.id = items_fts.rowid
+                            WHERE items_fts MATCH ?
+                            ORDER BY items.timestamp DESC
+                            LIMIT 200
+                        """
+                        return try ClipboardItem.fetchAll(db, sql: sql, arguments: ["\"\(escapedQuery)\""])
                     }
                 } catch {
-                    return []
-                }
-            }
-
-            do {
-                return try dbQueue.read { db in
-                    // Use FTS5 trigram MATCH for fast substring search
-                    // Escape special FTS5 characters and wrap in quotes for literal matching
-                    let escapedQuery = query.replacingOccurrences(of: "\"", with: "\"\"")
-
-                    // Use raw SQL to join with FTS5 virtual table
-                    let sql = """
-                        SELECT items.* FROM items
-                        INNER JOIN items_fts ON items.id = items_fts.rowid
-                        WHERE items_fts MATCH ?
-                        ORDER BY items.timestamp DESC
-                        LIMIT 200
-                    """
-                    return try ClipboardItem.fetchAll(db, sql: sql, arguments: ["\"\(escapedQuery)\""])
-                }
-            } catch {
-                // Fallback to LIKE if FTS fails for any other reason
-                do {
-                    return try dbQueue.read { db in
-                        try ClipboardItem
-                            .filter(Column("content").like("%\(query)%"))
-                            .order(Column("timestamp").desc)
-                            .limit(200)
-                            .fetchAll(db)
+                    // Fallback to LIKE if FTS fails for any other reason
+                    do {
+                        return try dbQueue.read { db in
+                            try ClipboardItem
+                                .filter(Column("content").like("%\(query)%"))
+                                .order(Column("timestamp").desc)
+                                .limit(200)
+                                .fetchAll(db)
+                        }
+                    } catch {
+                        return []
                     }
-                } catch {
-                    return []
                 }
             }
         }.value
+
+        os_signpost(.end, log: performanceLog, name: "search", signpostID: signpostID, "results=%d", searchResults.count)
 
         // Only update if still searching for this query
         guard case .searching(let currentQuery, _) = state, currentQuery == query else { return }
@@ -494,9 +548,51 @@ final class ClipboardStore {
             }
         }.value
 
-        // Reload items to show updated metadata (already on MainActor)
-        if case .loaded = state {
-            loadItems(reset: true)
+        // Update the specific item in-place instead of reloading the entire list
+        let newMetadataState = LinkMetadataState.fromDatabase(title: title, imageData: imageData)
+        updateItemMetadata(itemId: itemId, url: url, metadataState: newMetadataState)
+    }
+
+    /// Updates a single item's metadata in-place without reloading the entire list
+    private func updateItemMetadata(itemId: Int64, url: String, metadataState: LinkMetadataState) {
+        switch state {
+        case .loaded(let items, let hasMore):
+            let updatedItems = items.map { item -> ClipboardItem in
+                guard item.id == itemId else { return item }
+                return ClipboardItem(
+                    id: item.id,
+                    content: .link(url: url, metadataState: metadataState),
+                    contentHash: item.contentHash,
+                    timestamp: item.timestamp,
+                    sourceApp: item.sourceApp
+                )
+            }
+            state = .loaded(items: updatedItems, hasMore: hasMore)
+
+        case .searching(let query, let searchState):
+            let updateItems: ([ClipboardItem]) -> [ClipboardItem] = { items in
+                items.map { item -> ClipboardItem in
+                    guard item.id == itemId else { return item }
+                    return ClipboardItem(
+                        id: item.id,
+                        content: .link(url: url, metadataState: metadataState),
+                        contentHash: item.contentHash,
+                        timestamp: item.timestamp,
+                        sourceApp: item.sourceApp
+                    )
+                }
+            }
+            let newSearchState: SearchResultState
+            switch searchState {
+            case .loading(let previous):
+                newSearchState = .loading(previousResults: updateItems(previous))
+            case .results(let results):
+                newSearchState = .results(updateItems(results))
+            }
+            state = .searching(query: query, state: newSearchState)
+
+        default:
+            break
         }
     }
 

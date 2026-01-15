@@ -164,7 +164,7 @@ public enum LinkMetadataState: Sendable, Equatable {
         }
     }
 
-    static func fromDatabase(title: String?, imageData: Data?) -> LinkMetadataState {
+    public static func fromDatabase(title: String?, imageData: Data?) -> LinkMetadataState {
         switch (title, imageData) {
         case (nil, nil):
             return .pending
@@ -233,8 +233,8 @@ public struct ClipboardItem: Identifiable, Sendable, Equatable, FetchableRecord,
         self.content = .image(data: imageData, description: description)
     }
 
-    /// Internal initializer for database reconstruction
-    internal init(
+    /// Initializer with explicit content - used for in-place updates
+    public init(
         id: Int64?,
         content: ClipboardContent,
         contentHash: String,
@@ -292,10 +292,16 @@ public struct ClipboardItem: Identifiable, Sendable, Equatable, FetchableRecord,
         return hasMore ? result + "…" : result
     }
 
-    public var timeAgo: String {
+    @MainActor
+    private static let timeAgoFormatter: RelativeDateTimeFormatter = {
         let formatter = RelativeDateTimeFormatter()
         formatter.unitsStyle = .abbreviated
-        return formatter.localizedString(for: timestamp, relativeTo: Date())
+        return formatter
+    }()
+
+    @MainActor
+    public var timeAgo: String {
+        Self.timeAgoFormatter.localizedString(for: timestamp, relativeTo: Date())
     }
 
     public var contentPreview: String {
