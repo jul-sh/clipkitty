@@ -1,6 +1,17 @@
 import SwiftUI
 import AppKit
 import ClipKittyCore
+import os.log
+
+private let perfLog = OSLog(subsystem: "com.clipkitty.app", category: "UI")
+
+private func measure<T>(_ label: String, _ block: () -> T) -> T {
+    let start = CFAbsoluteTimeGetCurrent()
+    let result = block()
+    let elapsed = (CFAbsoluteTimeGetCurrent() - start) * 1000
+    os_log(.default, log: perfLog, "%{public}s: %.2fms", label, elapsed)
+    return result
+}
 
 struct ContentView: View {
     var store: ClipboardStore
@@ -12,24 +23,28 @@ struct ContentView: View {
     @State private var isCopyHovering: Bool = false
     @FocusState private var isSearchFocused: Bool
     private var items: [ClipboardItem] {
-        switch store.state {
-        case .loaded(let items, _):
-            return items
-        case .searching(_, let searchState):
-            switch searchState {
-            case .loading(let previous):
-                return previous
-            case .results(let results):
-                return results
+        measure("items.get") {
+            switch store.state {
+            case .loaded(let items, _):
+                return items
+            case .searching(_, let searchState):
+                switch searchState {
+                case .loading(let previous):
+                    return previous
+                case .results(let results):
+                    return results
+                }
+            default:
+                return []
             }
-        default:
-            return []
         }
     }
 
     private var selectedItem: ClipboardItem? {
-        guard let selection else { return nil }
-        return items.first { $0.stableId == selection }
+        measure("selectedItem.get") {
+            guard let selection else { return nil }
+            return items.first { $0.stableId == selection }
+        }
     }
 
     private var selectedIndex: Int? {
@@ -95,12 +110,14 @@ struct ContentView: View {
     }
 
     private func moveSelection(by offset: Int) {
-        guard let currentIndex = selectedIndex else {
-            selectFirstItem()
-            return
+        measure("moveSelection") {
+            guard let currentIndex = selectedIndex else {
+                selectFirstItem()
+                return
+            }
+            let newIndex = max(0, min(items.count - 1, currentIndex + offset))
+            selection = items[newIndex].stableId
         }
-        let newIndex = max(0, min(items.count - 1, currentIndex + offset))
-        selection = items[newIndex].stableId
     }
 
     private func confirmSelection() {
@@ -273,23 +290,14 @@ struct ContentView: View {
                 Group {
                     switch item.content {
                     case .text, .email, .phone, .address, .date, .transit:
-                        if searchText.isEmpty {
-                            TextPreviewView(
-                                text: item.contentPreview,
-                                fontName: FontManager.mono,
-                                fontSize: 15
-                            )
-                            .frame(maxWidth: .infinity, maxHeight: .infinity)
-                        } else {
-                            ScrollView(.vertical, showsIndicators: true) {
-                                Text(highlightedPreview(for: item))
-                                    .font(.custom(FontManager.mono, size: 15))
-                                    .textSelection(.enabled)
-                                    .modifier(IBeamCursorOnHover())
-                                    .frame(maxWidth: .infinity, alignment: .leading)
-                                    .padding(16)
-                            }
-                        }
+                        // Use AppKit text view - SwiftUI Text with AttributedString is slow
+                        TextPreviewView(
+                            text: item.contentPreview,
+                            fontName: FontManager.mono,
+                            fontSize: 15,
+                            searchQuery: searchText
+                        )
+                        .frame(maxWidth: .infinity, maxHeight: .infinity)
                     default:
                         ScrollView(.vertical, showsIndicators: true) {
                             switch item.content {
@@ -393,10 +401,6 @@ struct ContentView: View {
                 .foregroundStyle(.secondary)
         }
         .frame(maxWidth: .infinity, maxHeight: .infinity)
-    }
-
-    private func highlightedPreview(for item: ClipboardItem) -> AttributedString {
-        item.searchPreview.fuzzyHighlighted(query: searchText)
     }
 
     @ViewBuilder
@@ -563,6 +567,7 @@ struct TextPreviewView: NSViewRepresentable {
     let text: String
     let fontName: String
     let fontSize: CGFloat
+    var searchQuery: String = ""
 
     func makeNSView(context: Context) -> NSScrollView {
         let scrollView = NonDraggableScrollView()
@@ -572,7 +577,7 @@ struct TextPreviewView: NSViewRepresentable {
         let textView = NSTextView()
         textView.isEditable = false
         textView.isSelectable = true
-        textView.isRichText = false
+        textView.isRichText = true  // Enable rich text for highlighting
         textView.drawsBackground = false
         textView.isVerticallyResizable = true
         textView.isHorizontallyResizable = false
@@ -582,8 +587,6 @@ struct TextPreviewView: NSViewRepresentable {
         textView.textContainerInset = NSSize(width: 16, height: 16)
         textView.textContainer?.widthTracksTextView = true
         textView.textContainer?.containerSize = NSSize(width: scrollView.contentSize.width, height: .greatestFiniteMagnitude)
-        textView.font = NSFont(name: fontName, size: fontSize) ?? NSFont.monospacedSystemFont(ofSize: fontSize, weight: .regular)
-        textView.string = text
         textView.frame = NSRect(x: 0, y: 0, width: scrollView.contentSize.width, height: 0)
 
         scrollView.documentView = textView
@@ -592,18 +595,41 @@ struct TextPreviewView: NSViewRepresentable {
 
     func updateNSView(_ nsView: NSScrollView, context: Context) {
         guard let textView = nsView.documentView as? NSTextView else { return }
-        if textView.string != text {
-            textView.string = text
+
+        let font = NSFont(name: fontName, size: fontSize) ?? NSFont.monospacedSystemFont(ofSize: fontSize, weight: .regular)
+
+        // Only update if text or query changed
+        let currentText = textView.string
+        if currentText != text || context.coordinator.lastQuery != searchQuery {
+            context.coordinator.lastQuery = searchQuery
+
+            if searchQuery.isEmpty {
+                textView.string = text
+                textView.font = font
+                textView.textColor = .labelColor
+            } else {
+                let attributed = text.highlightedNSAttributedString(
+                    query: searchQuery,
+                    font: font,
+                    textColor: .labelColor
+                )
+                textView.textStorage?.setAttributedString(attributed)
+            }
         }
+
         textView.textContainer?.containerSize = NSSize(
             width: nsView.contentSize.width,
             height: .greatestFiniteMagnitude
         )
         textView.frame = NSRect(x: 0, y: 0, width: nsView.contentSize.width, height: textView.frame.height)
-        let desiredFont = NSFont(name: fontName, size: fontSize) ?? NSFont.monospacedSystemFont(ofSize: fontSize, weight: .regular)
-        if textView.font != desiredFont {
-            textView.font = desiredFont
-        }
+    }
+
+    func makeCoordinator() -> Coordinator {
+        Coordinator()
+    }
+
+    class Coordinator {
+        var lastQuery: String = ""
     }
 }
 
@@ -628,8 +654,8 @@ struct ItemRow: View, Equatable {
     // Define exactly what constitutes a "change" for SwiftUI diffing
     nonisolated static func == (lhs: ItemRow, rhs: ItemRow) -> Bool {
         return lhs.isSelected == rhs.isSelected &&
-               lhs.searchQuery == rhs.searchQuery &&
-               lhs.item.stableId == rhs.item.stableId
+               lhs.item.stableId == rhs.item.stableId &&
+               lhs.searchQuery == rhs.searchQuery
     }
 
     var body: some View {
@@ -640,21 +666,17 @@ struct ItemRow: View, Equatable {
                 .foregroundStyle(isSelected ? .white.opacity(0.9) : .secondary)
                 .frame(width: 16)
 
-            // Text content
-            Group {
-                if searchQuery.isEmpty {
-                    Text(previewText)
-                } else {
-                    Text(previewText.fuzzyHighlighted(query: searchQuery))
-                }
-            }
-            .lineLimit(1)
-            .font(.custom(FontManager.sansSerif, size: 15))
+            // Text content - use AppKit for fast highlighting
+            HighlightedTextView(
+                text: previewText,
+                query: searchQuery,
+                isSelected: isSelected
+            )
+            .frame(maxWidth: .infinity, alignment: .leading)
         }
         .frame(maxWidth: .infinity, minHeight: rowHeight, maxHeight: rowHeight, alignment: .leading)
         .padding(.horizontal, 13)
         .padding(.vertical, 4)
-        .foregroundStyle(isSelected ? .white : .primary)
         .background {
             if isSelected {
                 Color.accentColor
@@ -672,5 +694,44 @@ struct ItemRow: View, Equatable {
         .accessibilityHint("Double tap to paste")
         .accessibilityAddTraits(.isButton)
         .accessibilityAddTraits(isSelected ? .isSelected : [])
+    }
+}
+
+// MARK: - AppKit Highlighted Text (Fast)
+
+/// AppKit-based text view for fast search highlighting
+/// NSTextField is much faster than SwiftUI Text with AttributedString
+struct HighlightedTextView: NSViewRepresentable {
+    let text: String
+    let query: String
+    let isSelected: Bool
+
+    func makeNSView(context: Context) -> NSTextField {
+        let field = NSTextField(labelWithString: "")
+        field.isEditable = false
+        field.isSelectable = false
+        field.isBordered = false
+        field.drawsBackground = false
+        field.lineBreakMode = .byTruncatingTail
+        field.maximumNumberOfLines = 1
+        field.cell?.truncatesLastVisibleLine = true
+        return field
+    }
+
+    func updateNSView(_ field: NSTextField, context: Context) {
+        let font = NSFont(name: FontManager.sansSerif, size: 15) ?? NSFont.systemFont(ofSize: 15)
+        let textColor: NSColor = isSelected ? .white : .labelColor
+
+        if query.isEmpty {
+            field.stringValue = text
+            field.font = font
+            field.textColor = textColor
+        } else {
+            field.attributedStringValue = text.highlightedNSAttributedString(
+                query: query,
+                font: font,
+                textColor: textColor
+            )
+        }
     }
 }
