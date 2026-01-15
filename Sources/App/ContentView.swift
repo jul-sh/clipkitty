@@ -21,6 +21,7 @@ struct ContentView: View {
     @State private var selection: String?
     @State private var searchText: String = ""
     @State private var isCopyHovering: Bool = false
+    @State private var showSearchSpinner: Bool = false
     @FocusState private var isSearchFocused: Bool
     private var items: [ClipboardItem] {
         measure("items.get") {
@@ -82,8 +83,20 @@ struct ContentView: View {
             selectFirstItem()
             focusSearchField()
         }
-        .onChange(of: store.state) { _, _ in
+        .onChange(of: store.state) { _, newState in
             validateSelection()
+            // Show spinner only after 200ms delay to avoid flicker on fast searches
+            if case .searching(_, .loading) = newState {
+                Task {
+                    try? await Task.sleep(for: .milliseconds(200))
+                    // Only show if still loading
+                    if case .searching(_, .loading) = store.state {
+                        showSearchSpinner = true
+                    }
+                }
+            } else {
+                showSearchSpinner = false
+            }
         }
         .onChange(of: searchText) { _, newValue in
             store.setSearchQuery(newValue)
@@ -157,7 +170,7 @@ struct ContentView: View {
                     handleNumberKey(keyPress)
                 }
 
-            if case .searching(_, .loading) = store.state {
+            if showSearchSpinner {
                 ProgressView()
                     .scaleEffect(0.5)
                     .frame(width: 16, height: 16)
@@ -715,6 +728,9 @@ struct HighlightedTextView: NSViewRepresentable {
         field.lineBreakMode = .byTruncatingTail
         field.maximumNumberOfLines = 1
         field.cell?.truncatesLastVisibleLine = true
+        // Allow field to expand to fill available width
+        field.setContentHuggingPriority(.defaultLow, for: .horizontal)
+        field.setContentCompressionResistancePriority(.defaultLow, for: .horizontal)
         return field
     }
 
