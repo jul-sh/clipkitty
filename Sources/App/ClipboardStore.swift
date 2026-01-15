@@ -423,21 +423,51 @@ final class ClipboardStore {
         let cursorTimestamp = isLoadingMore ? oldestSearchTimestamp : nil
         let limit = searchPageSize
 
-        // Use streaming search that yields results incrementally and checks cancellation
+        // For short queries, use streaming search that updates UI as results arrive
+        if query.count < 3 {
+            var streamedResults = existingResults
+            var lastUpdateTime = CFAbsoluteTimeGetCurrent()
+            let minUpdateInterval: Double = 0.016  // ~60fps, 16ms between updates
+
+            let stream = Self.streamingLikeSearch(
+                dbQueue: dbQueue,
+                query: query,
+                beforeTimestamp: cursorTimestamp,
+                limit: limit
+            )
+
+            for await item in stream {
+                guard !Task.isCancelled else { break }
+                guard case .searching(let currentQuery, _) = state, currentQuery == query else { break }
+
+                streamedResults.append(item)
+
+                // Batch UI updates to ~60fps max
+                let now = CFAbsoluteTimeGetCurrent()
+                if now - lastUpdateTime >= minUpdateInterval {
+                    state = .searching(query: query, state: .results(streamedResults, hasMore: true))
+                    lastUpdateTime = now
+                }
+            }
+
+            os_signpost(.end, log: performanceLog, name: "search", signpostID: signpostID, "results=%d", streamedResults.count - existingResults.count)
+
+            guard !Task.isCancelled else { return }
+            guard case .searching(let currentQuery, _) = state, currentQuery == query else { return }
+
+            // Update cursor and finalize
+            if let oldestItem = streamedResults.last {
+                oldestSearchTimestamp = oldestItem.timestamp
+            }
+            let newResultsCount = streamedResults.count - existingResults.count
+            let hasMore = newResultsCount == limit
+            state = .searching(query: query, state: .results(streamedResults, hasMore: hasMore))
+            return
+        }
+
+        // FTS search (fast, indexed) - fetch all at once
         let searchResults = await Task.detached { [query, cursorTimestamp, limit] () -> [ClipboardItem] in
             measureTime("search.db[\(query.prefix(10))]") {
-                // FTS5 trigram tokenizer requires at least 3 characters
-                // For shorter queries, use streaming LIKE search with row-by-row cancellation
-                if query.count < 3 {
-                    return Self.streamingLikeSearch(
-                        dbQueue: dbQueue,
-                        query: query,
-                        beforeTimestamp: cursorTimestamp,
-                        limit: limit
-                    )
-                }
-
-                // Try FTS first (fast, indexed)
                 do {
                     return try dbQueue.read { db in
                         let escapedQuery = query.replacingOccurrences(of: "\"", with: "\"\"")
@@ -459,14 +489,8 @@ final class ClipboardStore {
                         return try ClipboardItem.fetchAll(db, sql: sql, arguments: StatementArguments(arguments))
                     }
                 } catch {
-                    // Fallback to streaming LIKE if FTS fails - log for visibility
-                    logError("FTS search failed, falling back to LIKE: \(error)")
-                    return Self.streamingLikeSearch(
-                        dbQueue: dbQueue,
-                        query: query,
-                        beforeTimestamp: cursorTimestamp,
-                        limit: limit
-                    )
+                    logError("FTS search failed: \(error)")
+                    return []
                 }
             }
         }.value
@@ -489,49 +513,49 @@ final class ClipboardStore {
         state = .searching(query: query, state: .results(finalResults, hasMore: hasMore))
     }
 
-    /// Streaming LIKE search that checks cancellation periodically
-    /// Fetches rows one at a time to allow early cancellation on expensive queries
+    /// Streaming LIKE search that yields results one at a time via AsyncStream
+    /// Allows UI to update immediately as each result is found
     private nonisolated static func streamingLikeSearch(
         dbQueue: DatabaseQueue,
         query: String,
         beforeTimestamp: Date?,
         limit: Int
-    ) -> [ClipboardItem] {
-        var results: [ClipboardItem] = []
-        results.reserveCapacity(limit)
+    ) -> AsyncStream<ClipboardItem> {
+        AsyncStream { continuation in
+            Task.detached {
+                var count = 0
+                do {
+                    try dbQueue.read { db in
+                        var sql = "SELECT * FROM items WHERE content LIKE ?"
+                        var arguments: [DatabaseValueConvertible] = ["%\(query)%"]
 
-        do {
-            try dbQueue.read { db in
-                var sql = "SELECT * FROM items WHERE content LIKE ?"
-                var arguments: [DatabaseValueConvertible] = ["%\(query)%"]
+                        if let cursor = beforeTimestamp {
+                            sql += " AND timestamp < ?"
+                            arguments.append(cursor)
+                        }
 
-                if let cursor = beforeTimestamp {
-                    sql += " AND timestamp < ?"
-                    arguments.append(cursor)
-                }
+                        sql += " ORDER BY timestamp DESC"
 
-                sql += " ORDER BY timestamp DESC"
-                // Note: no LIMIT in SQL - we limit manually to check cancellation per row
+                        let statement = try db.makeStatement(sql: sql)
+                        try statement.setArguments(StatementArguments(arguments))
+                        let cursor = try Row.fetchCursor(statement)
 
-                let statement = try db.makeStatement(sql: sql)
-                try statement.setArguments(StatementArguments(arguments))
-                let cursor = try Row.fetchCursor(statement)
+                        while let row = try cursor.next() {
+                            if Task.isCancelled { break }
 
-                while let row = try cursor.next() {
-                    // Check cancellation every row
-                    if Task.isCancelled { break }
-
-                    if let item = try? ClipboardItem(row: row) {
-                        results.append(item)
-                        if results.count >= limit { break }
+                            if let item = try? ClipboardItem(row: row) {
+                                continuation.yield(item)
+                                count += 1
+                                if count >= limit { break }
+                            }
+                        }
                     }
+                } catch {
+                    logError("Streaming LIKE search failed: \(error)")
                 }
+                continuation.finish()
             }
-        } catch {
-            logError("Streaming LIKE search failed: \(error)")
         }
-
-        return results
     }
 
     // MARK: - Clipboard Monitoring
