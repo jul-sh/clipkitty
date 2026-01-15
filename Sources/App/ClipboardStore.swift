@@ -37,7 +37,8 @@ private func measureTimeAsync<T>(_ label: String, _ block: () async throws -> T)
 /// Search result state - makes loading/results states explicit
 enum SearchResultState: Equatable {
     case loading(previousResults: [ClipboardItem])
-    case results([ClipboardItem])
+    case loadingMore(results: [ClipboardItem])  // Loading additional results via scroll
+    case results([ClipboardItem], hasMore: Bool)
 }
 
 /// Combined state for data display
@@ -65,7 +66,12 @@ final class ClipboardStore {
     private var searchTask: Task<Void, Never>?
     /// Cursor for keyset pagination - timestamp of the oldest loaded item
     private var oldestLoadedTimestamp: Date?
+    /// Cursor for search pagination - timestamp of oldest search result
+    private var oldestSearchTimestamp: Date?
+    /// Current search query (for pagination continuity)
+    private var currentSearchQuery: String = ""
     private let pageSize = 50
+    private let searchPageSize = 50
 
     /// Increments each time the display is reset - views observe this to reset local state
     private(set) var displayVersion: Int = 0
@@ -214,9 +220,15 @@ final class ClipboardStore {
         searchTask?.cancel()
 
         if query.isEmpty {
+            currentSearchQuery = ""
+            oldestSearchTimestamp = nil
             loadItems(reset: true)
             return
         }
+
+        // Reset search cursor when query changes
+        currentSearchQuery = query
+        oldestSearchTimestamp = nil
 
         // Preserve previous results while loading new ones
         let previousResults: [ClipboardItem] = {
@@ -227,7 +239,9 @@ final class ClipboardStore {
                 switch searchState {
                 case .loading(let previous):
                     return previous
-                case .results(let results):
+                case .loadingMore(let results):
+                    return results
+                case .results(let results, _):
                     return results
                 }
             default:
@@ -240,7 +254,26 @@ final class ClipboardStore {
         searchTask = Task {
             try? await Task.sleep(for: .milliseconds(50))
             guard !Task.isCancelled else { return }
-            await performSearch(query: query)
+            await performSearch(query: query, isLoadingMore: false)
+        }
+    }
+
+    /// Load more search results when user scrolls to bottom
+    func loadMoreSearchResults() {
+        guard case .searching(let query, let searchState) = state else { return }
+
+        // Only load more if we have results with more available
+        switch searchState {
+        case .results(let items, let hasMore):
+            guard hasMore, !items.isEmpty else { return }
+            state = .searching(query: query, state: .loadingMore(results: items))
+
+            searchTask = Task {
+                guard !Task.isCancelled else { return }
+                await performSearch(query: query, isLoadingMore: true)
+            }
+        default:
+            return
         }
     }
 
@@ -288,7 +321,9 @@ final class ClipboardStore {
                 switch searchState {
                 case .loading(let previous):
                     return previous
-                case .results(let results):
+                case .loadingMore(let results):
+                    return results
+                case .results(let results, _):
                     return results
                 }
             default:
@@ -368,72 +403,135 @@ final class ClipboardStore {
 
     // MARK: - Search
 
-    private func performSearch(query: String) async {
+    private func performSearch(query: String, isLoadingMore: Bool) async {
         guard let dbQueue else {
             state = .error("Database not available")
             return
         }
 
         let signpostID = OSSignpostID(log: performanceLog)
-        os_signpost(.begin, log: performanceLog, name: "search", signpostID: signpostID, "query=%{public}s", query)
+        os_signpost(.begin, log: performanceLog, name: "search", signpostID: signpostID, "query=%{public}s,more=%d", query, isLoadingMore ? 1 : 0)
 
-        let searchResults = await Task.detached { [query] () -> [ClipboardItem] in
+        // Capture existing results for load-more
+        let existingResults: [ClipboardItem]
+        if isLoadingMore, case .searching(_, .loadingMore(let results)) = state {
+            existingResults = results
+        } else {
+            existingResults = []
+        }
+
+        let cursorTimestamp = isLoadingMore ? oldestSearchTimestamp : nil
+        let limit = searchPageSize
+
+        // Use streaming search that yields results incrementally and checks cancellation
+        let searchResults = await Task.detached { [query, cursorTimestamp, limit] () -> [ClipboardItem] in
             measureTime("search.db[\(query.prefix(10))]") {
                 // FTS5 trigram tokenizer requires at least 3 characters
-                // For shorter queries, use LIKE search directly
+                // For shorter queries, use streaming LIKE search with row-by-row cancellation
                 if query.count < 3 {
-                    do {
-                        return try dbQueue.read { db in
-                            try ClipboardItem
-                                .filter(Column("content").like("%\(query)%"))
-                                .order(Column("timestamp").desc)
-                                .limit(200)
-                                .fetchAll(db)
-                        }
-                    } catch {
-                        return []
-                    }
+                    return Self.streamingLikeSearch(
+                        dbQueue: dbQueue,
+                        query: query,
+                        beforeTimestamp: cursorTimestamp,
+                        limit: limit
+                    )
                 }
 
+                // Try FTS first (fast, indexed)
                 do {
                     return try dbQueue.read { db in
-                        // Use FTS5 trigram MATCH for fast substring search
-                        // Escape special FTS5 characters and wrap in quotes for literal matching
                         let escapedQuery = query.replacingOccurrences(of: "\"", with: "\"\"")
-
-                        // Use raw SQL to join with FTS5 virtual table
-                        let sql = """
+                        var sql = """
                             SELECT items.* FROM items
                             INNER JOIN items_fts ON items.id = items_fts.rowid
                             WHERE items_fts MATCH ?
-                            ORDER BY items.timestamp DESC
-                            LIMIT 200
                         """
-                        return try ClipboardItem.fetchAll(db, sql: sql, arguments: ["\"\(escapedQuery)\""])
+                        var arguments: [DatabaseValueConvertible] = ["\"\(escapedQuery)\""]
+
+                        if let cursor = cursorTimestamp {
+                            sql += " AND items.timestamp < ?"
+                            arguments.append(cursor)
+                        }
+
+                        sql += " ORDER BY items.timestamp DESC LIMIT ?"
+                        arguments.append(limit)
+
+                        return try ClipboardItem.fetchAll(db, sql: sql, arguments: StatementArguments(arguments))
                     }
                 } catch {
-                    // Fallback to LIKE if FTS fails for any other reason
-                    do {
-                        return try dbQueue.read { db in
-                            try ClipboardItem
-                                .filter(Column("content").like("%\(query)%"))
-                                .order(Column("timestamp").desc)
-                                .limit(200)
-                                .fetchAll(db)
-                        }
-                    } catch {
-                        return []
-                    }
+                    // Fallback to streaming LIKE if FTS fails - log for visibility
+                    logError("FTS search failed, falling back to LIKE: \(error)")
+                    return Self.streamingLikeSearch(
+                        dbQueue: dbQueue,
+                        query: query,
+                        beforeTimestamp: cursorTimestamp,
+                        limit: limit
+                    )
                 }
             }
         }.value
 
         os_signpost(.end, log: performanceLog, name: "search", signpostID: signpostID, "results=%d", searchResults.count)
 
+        // Check cancellation before updating state
+        guard !Task.isCancelled else { return }
+
         // Only update if still searching for this query
         guard case .searching(let currentQuery, _) = state, currentQuery == query else { return }
 
-        state = .searching(query: query, state: .results(searchResults))
+        // Update cursor for pagination
+        if let oldestItem = searchResults.last {
+            oldestSearchTimestamp = oldestItem.timestamp
+        }
+
+        let hasMore = searchResults.count == limit
+        let finalResults = isLoadingMore ? existingResults + searchResults : searchResults
+        state = .searching(query: query, state: .results(finalResults, hasMore: hasMore))
+    }
+
+    /// Streaming LIKE search that checks cancellation periodically
+    /// Fetches rows one at a time to allow early cancellation on expensive queries
+    private nonisolated static func streamingLikeSearch(
+        dbQueue: DatabaseQueue,
+        query: String,
+        beforeTimestamp: Date?,
+        limit: Int
+    ) -> [ClipboardItem] {
+        var results: [ClipboardItem] = []
+        results.reserveCapacity(limit)
+
+        do {
+            try dbQueue.read { db in
+                var sql = "SELECT * FROM items WHERE content LIKE ?"
+                var arguments: [DatabaseValueConvertible] = ["%\(query)%"]
+
+                if let cursor = beforeTimestamp {
+                    sql += " AND timestamp < ?"
+                    arguments.append(cursor)
+                }
+
+                sql += " ORDER BY timestamp DESC"
+                // Note: no LIMIT in SQL - we limit manually to check cancellation per row
+
+                let statement = try db.makeStatement(sql: sql)
+                try statement.setArguments(StatementArguments(arguments))
+                let cursor = try Row.fetchCursor(statement)
+
+                while let row = try cursor.next() {
+                    // Check cancellation every row
+                    if Task.isCancelled { break }
+
+                    if let item = try? ClipboardItem(row: row) {
+                        results.append(item)
+                        if results.count >= limit { break }
+                    }
+                }
+            }
+        } catch {
+            logError("Streaming LIKE search failed: \(error)")
+        }
+
+        return results
     }
 
     // MARK: - Clipboard Monitoring
@@ -586,8 +684,10 @@ final class ClipboardStore {
             switch searchState {
             case .loading(let previous):
                 newSearchState = .loading(previousResults: updateItems(previous))
-            case .results(let results):
-                newSearchState = .results(updateItems(results))
+            case .loadingMore(let results):
+                newSearchState = .loadingMore(results: updateItems(results))
+            case .results(let results, let hasMore):
+                newSearchState = .results(updateItems(results), hasMore: hasMore)
             }
             state = .searching(query: query, state: newSearchState)
 
@@ -679,8 +779,10 @@ final class ClipboardStore {
             switch searchState {
             case .loading(let previous):
                 newState = .loading(previousResults: previous.filter { $0.id != id })
-            case .results(let results):
-                newState = .results(results.filter { $0.id != id })
+            case .loadingMore(let results):
+                newState = .loadingMore(results: results.filter { $0.id != id })
+            case .results(let results, let hasMore):
+                newState = .results(results.filter { $0.id != id }, hasMore: hasMore)
             }
             state = .searching(query: query, state: newState)
         default:
