@@ -79,6 +79,30 @@ struct SettingsView: View {
                 Text("Oldest clipboard items will be automatically deleted when the database exceeds this size. Set to 0 for unlimited.")
                     .font(.caption)
                     .foregroundStyle(.secondary)
+
+                HStack {
+                    Text("Max Image Size")
+                    Spacer()
+                    TextField("MP", value: $settings.maxImageMegapixels, format: .number.precision(.fractionLength(1)))
+                        .textFieldStyle(.roundedBorder)
+                        .frame(width: 80)
+                    Text("MP")
+                        .foregroundStyle(.secondary)
+                }
+
+                HStack {
+                    Text("Image Quality")
+                    Spacer()
+                    Slider(value: $settings.imageCompressionQuality, in: 0.1...1.0, step: 0.1)
+                        .frame(width: 120)
+                    Text(String(format: "%.1f", settings.imageCompressionQuality))
+                        .foregroundStyle(.secondary)
+                        .frame(width: 30)
+                }
+
+                Text("Images are compressed with HEVC. Lower quality = smaller file size.")
+                    .font(.caption)
+                    .foregroundStyle(.secondary)
             }
 
             Section("Data") {
@@ -120,7 +144,7 @@ struct SettingsView: View {
             }
         }
         .formStyle(.grouped)
-        .frame(width: 400, height: 340)
+        .frame(width: 400, height: 470)
         .onAppear {
             store.refreshDatabaseSize()
         }

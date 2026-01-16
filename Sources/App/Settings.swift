@@ -67,11 +67,22 @@ final class AppSettings: ObservableObject {
         didSet { save() }
     }
 
+    @Published var maxImageMegapixels: Double {
+        didSet { save() }
+    }
+
+    @Published var imageCompressionQuality: Double {
+        didSet { save() }
+    }
+
     private let defaults = UserDefaults.standard
     private let hotKeyKey = "hotKey"
     private let maxDbSizeKey = "maxDatabaseSizeMB"
+    private let maxImageMPKey = "maxImageMegapixels"
+    private let imageQualityKey = "imageCompressionQuality"
 
     private init() {
+        // Initialize all stored properties first
         if let data = defaults.data(forKey: hotKeyKey),
            let decoded = try? JSONDecoder().decode(HotKey.self, from: data) {
             hotKey = decoded
@@ -79,10 +90,14 @@ final class AppSettings: ObservableObject {
             hotKey = .default
         }
 
-        maxDatabaseSizeMB = defaults.integer(forKey: maxDbSizeKey)
-        if maxDatabaseSizeMB == 0 {
-            maxDatabaseSizeMB = 2048 // Default 2 GB
-        }
+        let dbSize = defaults.integer(forKey: maxDbSizeKey)
+        maxDatabaseSizeMB = dbSize != 0 ? dbSize : 2048  // Default 2 GB
+
+        let imageMP = defaults.double(forKey: maxImageMPKey)
+        maxImageMegapixels = imageMP != 0 ? imageMP : 2.0  // Default 2 MP
+
+        let quality = defaults.double(forKey: imageQualityKey)
+        imageCompressionQuality = quality != 0 ? quality : 0.3  // Default 0.3
     }
 
     private func save() {
@@ -90,5 +105,7 @@ final class AppSettings: ObservableObject {
             defaults.set(data, forKey: hotKeyKey)
         }
         defaults.set(maxDatabaseSizeMB, forKey: maxDbSizeKey)
+        defaults.set(maxImageMegapixels, forKey: maxImageMPKey)
+        defaults.set(imageCompressionQuality, forKey: imageQualityKey)
     }
 }

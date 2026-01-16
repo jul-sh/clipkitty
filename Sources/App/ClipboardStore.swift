@@ -5,6 +5,7 @@ import GRDB
 import ClipKittyCore
 import os.signpost
 import os.log
+import ImageIO
 
 // MARK: - Performance Tracing
 
@@ -722,11 +723,13 @@ final class ClipboardStore {
 
     private func saveImageItem(rawImageData: Data) {
         let sourceApp = NSWorkspace.shared.frontmostApplication?.localizedName
+        let maxPixels = Int(AppSettings.shared.maxImageMegapixels * 1_000_000)
+        let quality = AppSettings.shared.imageCompressionQuality
 
         // Move compression and DB write to background
         guard let dbQueue else { return }
         Task.detached { [weak self] in
-            Self.saveImageItemToDB(dbQueue: dbQueue, rawImageData: rawImageData, sourceApp: sourceApp)
+            Self.saveImageItemToDB(dbQueue: dbQueue, rawImageData: rawImageData, sourceApp: sourceApp, maxPixels: maxPixels, quality: quality)
 
             guard let self else { return }
             await MainActor.run { [weak self] in
@@ -737,16 +740,11 @@ final class ClipboardStore {
         }
     }
 
-    private nonisolated static func saveImageItemToDB(dbQueue: DatabaseQueue, rawImageData: Data, sourceApp: String?) {
-        // Compress image
-        let compressedData: Data
-        if let image = NSImage(data: rawImageData),
-           let tiffData = image.tiffRepresentation,
-           let bitmap = NSBitmapImageRep(data: tiffData),
-           let jpegData = bitmap.representation(using: .jpeg, properties: [.compressionFactor: 0.7]) {
-            compressedData = jpegData
-        } else {
-            compressedData = rawImageData
+    private nonisolated static func saveImageItemToDB(dbQueue: DatabaseQueue, rawImageData: Data, sourceApp: String?, maxPixels: Int, quality: Double) {
+        // Compress image with HEIC (HEVC)
+        guard let compressedData = compressToHEIC(rawImageData, quality: quality, maxPixels: maxPixels) else {
+            logError("Image compression failed, skipping")
+            return
         }
 
         do {
@@ -759,6 +757,68 @@ final class ClipboardStore {
         }
     }
 
+    /// Compress image data to HEIC format using HEVC compression
+    /// Resizes to maxPixels if larger, then compresses
+    private nonisolated static func compressToHEIC(_ imageData: Data, quality: CGFloat, maxPixels: Int) -> Data? {
+        guard let imageSource = CGImageSourceCreateWithData(imageData as CFData, nil),
+              var cgImage = CGImageSourceCreateImageAtIndex(imageSource, 0, nil) else {
+            return nil
+        }
+
+        // Resize if exceeds max pixels
+        let width = cgImage.width
+        let height = cgImage.height
+        let pixels = width * height
+
+        if pixels > maxPixels {
+            let scale = sqrt(Double(maxPixels) / Double(pixels))
+            let newWidth = Int(Double(width) * scale)
+            let newHeight = Int(Double(height) * scale)
+
+            guard let context = CGContext(
+                data: nil,
+                width: newWidth,
+                height: newHeight,
+                bitsPerComponent: 8,
+                bytesPerRow: 0,
+                space: CGColorSpaceCreateDeviceRGB(),
+                bitmapInfo: CGImageAlphaInfo.premultipliedLast.rawValue
+            ) else {
+                return nil
+            }
+
+            context.interpolationQuality = .high
+            context.draw(cgImage, in: CGRect(x: 0, y: 0, width: newWidth, height: newHeight))
+
+            guard let resized = context.makeImage() else {
+                return nil
+            }
+            cgImage = resized
+        }
+
+        let data = NSMutableData()
+        guard let destination = CGImageDestinationCreateWithData(
+            data as CFMutableData,
+            "public.heic" as CFString,
+            1,
+            nil
+        ) else {
+            return nil
+        }
+
+        let options: [CFString: Any] = [
+            kCGImageDestinationLossyCompressionQuality: quality
+        ]
+
+        CGImageDestinationAddImage(destination, cgImage, options as CFDictionary)
+
+        guard CGImageDestinationFinalize(destination) else {
+            return nil
+        }
+
+        return data as Data
+    }
+
     private func hashContent(_ string: String) -> String {
         var hasher = Hasher()
         hasher.combine(string)
@@ -768,15 +828,59 @@ final class ClipboardStore {
     // MARK: - Actions
 
     func paste(item: ClipboardItem) {
+        // Handle images differently - convert off main thread
+        if case .image(let data, _) = item.content {
+            pasteImage(data: data, itemId: item.id)
+            return
+        }
+
         let pasteboard = NSPasteboard.general
         pasteboard.clearContents()
         pasteboard.setString(item.textContent, forType: .string)
         lastChangeCount = pasteboard.changeCount
 
-        guard let id = item.id else { return }
+        if let id = item.id {
+            Task {
+                await updateItemTimestamp(id: id)
+            }
+        }
+    }
 
+    private func pasteImage(data: Data, itemId: Int64?) {
+        // Pre-increment to avoid race with checkForChanges polling
+        // The pasteboard changeCount will increment when we set data
+        lastChangeCount = NSPasteboard.general.changeCount + 1
+
+        Task {
+            // Convert from stored format (HEIC) to TIFF off main thread
+            let tiffData = await Task.detached {
+                guard let image = NSImage(data: data),
+                      let tiff = image.tiffRepresentation else {
+                    return nil as Data?
+                }
+                return tiff
+            }.value
+
+            guard let tiffData else {
+                // Conversion failed, reset the change count
+                lastChangeCount = NSPasteboard.general.changeCount
+                return
+            }
+
+            let pasteboard = NSPasteboard.general
+            pasteboard.clearContents()
+            pasteboard.setData(tiffData, forType: .tiff)
+            lastChangeCount = pasteboard.changeCount
+
+            if let itemId {
+                await updateItemTimestamp(id: itemId)
+            }
+        }
+    }
+
+    private func updateItemTimestamp(id: Int64) async {
         // Defer database operations to avoid blocking clipboard availability
-        Task.detached { [dbQueue] in
+        await Task.detached { [dbQueue] in
             do {
                 try dbQueue?.write { db in
                     try db.execute(sql: "UPDATE items SET timestamp = ? WHERE id = ?", arguments: [Date(), id])
@@ -784,7 +888,7 @@ final class ClipboardStore {
             } catch {
                 logError("Failed to update timestamp: \(error)")
             }
-        }
+        }.value
 
         if case .loaded = state {
             loadItems(reset: true)
