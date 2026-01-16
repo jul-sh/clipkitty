@@ -726,7 +726,7 @@ struct ItemRow: View, Equatable {
     }
 
     var body: some View {
-        HStack(spacing: 10) {
+        HStack(spacing: 6) {
             // Content type icon
             Group {
                 if let bundleID = item.sourceAppBundleID,
@@ -735,7 +735,9 @@ struct ItemRow: View, Equatable {
                         .resizable()
                 } else {
                     Image(systemName: item.icon)
-                        .font(.system(size: 13))
+                        .resizable()
+                        .aspectRatio(contentMode: .fit)
+                        .padding(6) // Add some padding so it's not edge-to-edge
                         .foregroundStyle(isSelected ? .white.opacity(0.9) : .secondary)
                 }
             }
@@ -750,7 +752,7 @@ struct ItemRow: View, Equatable {
             .frame(maxWidth: .infinity, alignment: .leading)
         }
         .frame(maxWidth: .infinity, minHeight: rowHeight, maxHeight: rowHeight, alignment: .leading)
-        .padding(.horizontal, 13)
+        .padding(.horizontal, 6)
         .padding(.vertical, 4)
         .background {
             if isSelected {
