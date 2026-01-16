@@ -637,9 +637,14 @@ struct TextPreviewView: NSViewRepresentable {
             context.coordinator.lastQuery = searchQuery
 
             if searchQuery.isEmpty {
+                // Clear any previous highlighting by setting plain string
                 textView.string = text
                 textView.font = font
                 textView.textColor = .labelColor
+                // Remove any lingering background colors from previous search
+                if let textStorage = textView.textStorage, textStorage.length > 0 {
+                    textStorage.removeAttribute(.backgroundColor, range: NSRange(location: 0, length: textStorage.length))
+                }
             } else {
                 let attributed = text.highlightedNSAttributedString(
                     query: searchQuery,
@@ -763,11 +768,28 @@ struct HighlightedTextView: NSViewRepresentable {
             field.font = font
             field.textColor = textColor
         } else {
-            field.attributedStringValue = text.highlightedNSAttributedString(
-                query: query,
-                font: font,
-                textColor: textColor
-            )
+            // Build attributed string that matches NSTextField's default rendering
+            field.stringValue = text
+            field.font = font
+            field.textColor = textColor
+
+            // Now get the field's attributed string and add highlights to it
+            let mutable = field.attributedStringValue.mutableCopy() as! NSMutableAttributedString
+            let nsString = text as NSString
+            var searchRange = NSRange(location: 0, length: nsString.length)
+            let highlightColor = NSColor.yellow.withAlphaComponent(0.4)
+            var matchCount = 0
+
+            while matchCount < 50, searchRange.location < nsString.length {
+                let foundRange = nsString.range(of: query, options: .caseInsensitive, range: searchRange)
+                guard foundRange.location != NSNotFound else { break }
+                mutable.addAttribute(.backgroundColor, value: highlightColor, range: foundRange)
+                searchRange.location = foundRange.location + foundRange.length
+                searchRange.length = nsString.length - searchRange.location
+                matchCount += 1
+            }
+
+            field.attributedStringValue = mutable
         }
     }
 }
