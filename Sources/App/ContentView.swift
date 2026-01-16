@@ -334,13 +334,19 @@ struct ContentView: View {
                     default:
                         ScrollView(.vertical, showsIndicators: true) {
                             switch item.content {
-                            case .image(let data, _):
+                            case .image(let data, let description):
                                 if let nsImage = NSImage(data: data) {
-                                    Image(nsImage: nsImage)
-                                        .resizable()
-                                        .aspectRatio(contentMode: .fit)
-                                        .frame(maxWidth: .infinity)
-                                        .padding(16)
+                                    VStack(spacing: 8) {
+                                        Image(nsImage: nsImage)
+                                            .resizable()
+                                            .aspectRatio(contentMode: .fit)
+                                            .frame(maxWidth: .infinity)
+                                        Text(description)
+                                            .font(.callout)
+                                            .foregroundStyle(.secondary)
+                                            .frame(maxWidth: .infinity, alignment: .leading)
+                                    }
+                                    .padding(16)
                                 }
 
                             case .link(let url, let metadataState):

@@ -721,6 +721,68 @@ final class ClipboardStore {
         }
     }
 
+    private func generateAndUpdateImageDescription(itemId: Int64, imageData: Data) async {
+        guard let description = await ImageDescriptionGenerator.generateDescription(from: imageData) else { return }
+        let trimmed = description.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard !trimmed.isEmpty else { return }
+
+        guard let dbQueue else { return }
+        await Task.detached { [dbQueue] in
+            do {
+                try dbQueue.write { db in
+                    try db.execute(
+                        sql: "UPDATE items SET content = ? WHERE id = ? AND contentType = 'image'",
+                        arguments: [trimmed, itemId]
+                    )
+                }
+            } catch {
+                logError("Failed to update image description: \(error)")
+            }
+        }.value
+
+        await MainActor.run { [weak self] in
+            self?.updateItemImageDescription(itemId: itemId, description: trimmed)
+        }
+    }
+
+    private func updateItemImageDescription(itemId: Int64, description: String) {
+        let updateItem: (ClipboardItem) -> ClipboardItem = { item in
+            guard item.id == itemId else { return item }
+            guard case .image(let data, let existingDescription) = item.content else { return item }
+            guard existingDescription != description else { return item }
+            return ClipboardItem(
+                id: item.id,
+                content: .image(data: data, description: description),
+                contentHash: item.contentHash,
+                timestamp: item.timestamp,
+                sourceApp: item.sourceApp
+            )
+        }
+
+        switch state {
+        case .loaded(let items, let hasMore):
+            state = .loaded(items: items.map(updateItem), hasMore: hasMore)
+
+        case .searching(let query, let searchState):
+            let updatedResults: ([ClipboardItem]) -> [ClipboardItem] = { items in
+                items.map(updateItem)
+            }
+            let newSearchState: SearchResultState
+            switch searchState {
+            case .loading(let previous):
+                newSearchState = .loading(previousResults: updatedResults(previous))
+            case .loadingMore(let results):
+                newSearchState = .loadingMore(results: updatedResults(results))
+            case .results(let results, let hasMore):
+                newSearchState = .results(updatedResults(results), hasMore: hasMore)
+            }
+            state = .searching(query: query, state: newSearchState)
+
+        default:
+            break
+        }
+    }
+
     private func saveImageItem(rawImageData: Data) {
         let sourceApp = NSWorkspace.shared.frontmostApplication?.localizedName
         let maxPixels = Int(AppSettings.shared.maxImageMegapixels * 1_000_000)
@@ -729,7 +791,13 @@ final class ClipboardStore {
         // Move compression and DB write to background
         guard let dbQueue else { return }
         Task.detached { [weak self] in
-            Self.saveImageItemToDB(dbQueue: dbQueue, rawImageData: rawImageData, sourceApp: sourceApp, maxPixels: maxPixels, quality: quality)
+            let saveResult = Self.saveImageItemToDB(
+                dbQueue: dbQueue,
+                rawImageData: rawImageData,
+                sourceApp: sourceApp,
+                maxPixels: maxPixels,
+                quality: quality
+            )
 
             guard let self else { return }
             await MainActor.run { [weak self] in
@@ -737,23 +805,37 @@ final class ClipboardStore {
                     self?.loadItems(reset: true)
                 }
             }
+
+            guard let saveResult else { return }
+            Task.detached { [weak self] in
+                await self?.generateAndUpdateImageDescription(itemId: saveResult.itemId, imageData: saveResult.imageData)
+            }
         }
     }
 
-    private nonisolated static func saveImageItemToDB(dbQueue: DatabaseQueue, rawImageData: Data, sourceApp: String?, maxPixels: Int, quality: Double) {
+    private nonisolated static func saveImageItemToDB(
+        dbQueue: DatabaseQueue,
+        rawImageData: Data,
+        sourceApp: String?,
+        maxPixels: Int,
+        quality: Double
+    ) -> (itemId: Int64, imageData: Data)? {
         // Compress image with HEIC (HEVC)
         guard let compressedData = compressToHEIC(rawImageData, quality: quality, maxPixels: maxPixels) else {
             logError("Image compression failed, skipping")
-            return
+            return nil
         }
 
         do {
-            try dbQueue.write { db in
+            let itemId = try dbQueue.write { db -> Int64 in
                 let item = ClipboardItem(imageData: compressedData, sourceApp: sourceApp)
                 try item.insert(db)
+                return db.lastInsertedRowID
             }
+            return (itemId: itemId, imageData: compressedData)
         } catch {
             logError("Image save failed: \(error)")
+            return nil
         }
     }
 
