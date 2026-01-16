@@ -2,111 +2,123 @@ import Foundation
 import ImageIO
 import Vision
 
-enum ImageDescriptionGenerator {
-    private final class CancellationToken: @unchecked Sendable {
-        private let lock = NSLock()
-        private var cancelled = false
+struct ImageDescriptionGenerator {
 
-        var isCancelled: Bool {
-            lock.lock()
-            defer { lock.unlock() }
-            return cancelled
-        }
+    struct Configuration {
+        /// Minimum confidence to accept a label (0.0 - 1.0).
+        var minConfidence: Float = 0.35
 
-        func cancel() {
-            lock.lock()
-            cancelled = true
-            lock.unlock()
-        }
+        /// Maximum number of classification labels to include.
+        var maxLabelCount: Int = 100
+
+        /// Maximum number of characters for the recognized text before truncating.
+        var maxTextLength: Int = 50_000
     }
 
-    static func generateDescription(from imageData: Data) async -> String? {
-        guard let cgImage = cgImage(from: imageData) else { return nil }
-        return await describeImage(from: cgImage)
-    }
-
-    private static func cgImage(from imageData: Data) -> CGImage? {
+    static func generateDescription(from imageData: Data, config: Configuration = .init()) async -> String? {
+        // 1. Create source to read properties efficiently
         guard let source = CGImageSourceCreateWithData(imageData as CFData, nil) else { return nil }
-        return CGImageSourceCreateImageAtIndex(source, 0, nil)
+
+        // 2. Extract EXIF orientation so Vision reads the image "right side up"
+        let orientation = CGImagePropertyOrientation(source: source)
+
+        // 3. Create the underlying CGImage
+        guard let cgImage = CGImageSourceCreateImageAtIndex(source, 0, nil) else { return nil }
+
+        // 4. Run Vision requests
+        return await processImage(cgImage, orientation: orientation, config: config)
     }
 
-    private static func describeImage(from cgImage: CGImage) async -> String {
-        async let labels = classifyImageLabels(from: cgImage)
-        async let recognizedText = recognizeText(from: cgImage)
-        let (labelResults, textResult) = await (labels, recognizedText)
+    private static func processImage(
+        _ image: CGImage,
+        orientation: CGImagePropertyOrientation,
+        config: Configuration
+    ) async -> String? {
 
+        // Setup Requests
+        let labelRequest = VNClassifyImageRequest()
+        let textRequest = VNRecognizeTextRequest()
+
+        textRequest.recognitionLevel = .accurate
+        textRequest.usesLanguageCorrection = true
+
+        // Run blocking Vision work in a detached task
+        let results = await Task.detached(priority: .userInitiated) { () -> (labels: [String], text: String?)? in
+
+            if Task.isCancelled { return nil }
+
+            let handler = VNImageRequestHandler(cgImage: image, orientation: orientation, options: [:])
+
+            do {
+                try handler.perform([labelRequest, textRequest])
+
+                if Task.isCancelled { return nil }
+
+                // Process Labels
+                let labels = (labelRequest.results ?? [])
+                    .filter { $0.confidence >= config.minConfidence }
+                    .map { $0.identifier }
+                    .prefix(config.maxLabelCount) // Limit count
+
+                // Process Text
+                let strings = (textRequest.results ?? [])
+                    .compactMap { $0.topCandidates(1).first?.string }
+                    .map { $0.trimmingCharacters(in: .whitespacesAndNewlines) }
+                    .filter { !$0.isEmpty }
+
+                // Join lines naturally with spaces
+                let text = strings.isEmpty ? nil : strings.joined(separator: " ")
+
+                return (Array(labels), text)
+
+            } catch {
+                print("Vision processing failed: \(error)")
+                return nil
+            }
+        }.value
+
+        guard let (labels, recognizedText) = results else { return nil }
+
+        return formatOutput(labels: labels, text: recognizedText, config: config)
+    }
+
+    private static func formatOutput(labels: [String], text: String?, config: Configuration) -> String {
         var parts: [String] = []
-        if !labelResults.isEmpty {
-            let list = ListFormatter().string(from: labelResults) ?? labelResults.joined(separator: ", ")
+
+        // Format Labels
+        if !labels.isEmpty {
+            let list = labels.formatted(.list(type: .and, width: .standard))
             parts.append("Image: \(list)")
         } else {
             parts.append("Image")
         }
 
-        if let textResult, !textResult.isEmpty {
-            parts.append("Text: \(textResult)")
+        // Format Text with Truncation
+        if let text, !text.isEmpty {
+            let truncated: String
+            if text.count > config.maxTextLength {
+                // Truncate and add proper ellipsis (…)
+                truncated = "\(text.prefix(config.maxTextLength))…"
+            } else {
+                truncated = text
+            }
+            parts.append("Text: \(truncated)")
         }
 
         return parts.joined(separator: ". ")
     }
+}
 
-    private static func classifyImageLabels(from cgImage: CGImage) async -> [String] {
-        let request = ClassifyImageRequest()
-        do {
-            let results = try await request.perform(on: cgImage, orientation: .up)
-            return results
-                .filter { $0.confidence >= 0.35 }
-                .prefix(3)
-                .map { $0.identifier }
-        } catch {
-            logInfo("Vision classifyImageRequest failed: \(error)")
-            return []
+// MARK: - Helpers
+
+extension CGImagePropertyOrientation {
+    init(source: CGImageSource) {
+        let properties = CGImageSourceCopyPropertiesAtIndex(source, 0, nil) as? [CFString: Any]
+        if let rawValue = properties?[kCGImagePropertyOrientation] as? UInt32,
+           let orientation = CGImagePropertyOrientation(rawValue: rawValue) {
+            self = orientation
+        } else {
+            self = .up
         }
-    }
-
-    private static func recognizeText(from cgImage: CGImage) async -> String? {
-        if Task.isCancelled { return nil }
-        let token = CancellationToken()
-
-        return await withTaskCancellationHandler(operation: {
-            await withCheckedContinuation { continuation in
-                DispatchQueue.global(qos: .userInitiated).async {
-                    if token.isCancelled {
-                        continuation.resume(returning: nil)
-                        return
-                    }
-
-                    let request = VNRecognizeTextRequest()
-                    request.recognitionLevel = .fast
-                    request.usesLanguageCorrection = true
-                    let handler = VNImageRequestHandler(cgImage: cgImage, orientation: .up, options: [:])
-                    do {
-                        try handler.perform([request])
-                        if token.isCancelled {
-                            continuation.resume(returning: nil)
-                            return
-                        }
-                        let results = request.results ?? []
-                        let strings = results
-                            .compactMap { $0.topCandidates(1).first?.string }
-                            .filter { !$0.trimmingCharacters(in: CharacterSet.whitespacesAndNewlines).isEmpty }
-                            .prefix(3)
-                        let combined = strings.joined(separator: " / ")
-                        continuation.resume(returning: truncateText(combined, maxLength: 80))
-                    } catch {
-                        logInfo("Vision recognizeTextRequest failed: \(error)")
-                        continuation.resume(returning: nil)
-                    }
-                }
-            }
-        }, onCancel: {
-            token.cancel()
-        })
-    }
-
-    private static func truncateText(_ text: String, maxLength: Int) -> String {
-        guard text.count > maxLength else { return text }
-        let index = text.index(text.startIndex, offsetBy: maxLength)
-        return String(text[..<index]) + "..."
     }
 }
