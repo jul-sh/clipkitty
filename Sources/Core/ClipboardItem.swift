@@ -186,6 +186,7 @@ public struct ClipboardItem: Identifiable, Sendable, Equatable, FetchableRecord,
     public let contentHash: String
     public let timestamp: Date
     public let sourceApp: String?
+    public let sourceAppBundleID: String?
 
     // MARK: - Convenience Accessors
 
@@ -206,30 +207,33 @@ public struct ClipboardItem: Identifiable, Sendable, Equatable, FetchableRecord,
     // MARK: - Initialization
 
     /// Create a text item (auto-detects common structured content)
-    public init(text: String, sourceApp: String? = nil, timestamp: Date = Date()) {
+    public init(text: String, sourceApp: String? = nil, sourceAppBundleID: String? = nil, timestamp: Date = Date()) {
         self.id = nil
         self.contentHash = Self.hash(text)
         self.timestamp = timestamp
         self.sourceApp = sourceApp
+        self.sourceAppBundleID = sourceAppBundleID
         self.content = Self.detectContent(from: text)
     }
 
     /// Create an explicit link item
-    public init(url: String, metadataState: LinkMetadataState = .pending, sourceApp: String? = nil, timestamp: Date = Date()) {
+    public init(url: String, metadataState: LinkMetadataState = .pending, sourceApp: String? = nil, sourceAppBundleID: String? = nil, timestamp: Date = Date()) {
         self.id = nil
         self.contentHash = Self.hash(url)
         self.timestamp = timestamp
         self.sourceApp = sourceApp
+        self.sourceAppBundleID = sourceAppBundleID
         self.content = .link(url: url, metadataState: metadataState)
     }
 
     /// Create an image item
-    public init(imageData: Data, sourceApp: String? = nil, timestamp: Date = Date()) {
+    public init(imageData: Data, sourceApp: String? = nil, sourceAppBundleID: String? = nil, timestamp: Date = Date()) {
         let description = "Image"
         self.id = nil
         self.contentHash = Self.hash(description + String(imageData.hashValue))
         self.timestamp = timestamp
         self.sourceApp = sourceApp
+        self.sourceAppBundleID = sourceAppBundleID
         self.content = .image(data: imageData, description: description)
     }
 
@@ -239,13 +243,15 @@ public struct ClipboardItem: Identifiable, Sendable, Equatable, FetchableRecord,
         content: ClipboardContent,
         contentHash: String,
         timestamp: Date,
-        sourceApp: String?
+        sourceApp: String?,
+        sourceAppBundleID: String? = nil
     ) {
         self.id = id
         self.content = content
         self.contentHash = contentHash
         self.timestamp = timestamp
         self.sourceApp = sourceApp
+        self.sourceAppBundleID = sourceAppBundleID
     }
 
     // MARK: - Display Helpers
@@ -422,6 +428,7 @@ public struct ClipboardItem: Identifiable, Sendable, Equatable, FetchableRecord,
         container["contentHash"] = contentHash
         container["timestamp"] = timestamp
         container["sourceApp"] = sourceApp
+        container["sourceAppBundleID"] = sourceAppBundleID
         container["contentType"] = content.databaseType
 
         // Extract content-specific fields based on content type
@@ -443,6 +450,7 @@ public struct ClipboardItem: Identifiable, Sendable, Equatable, FetchableRecord,
         contentHash = row["contentHash"]
         timestamp = row["timestamp"]
         sourceApp = row["sourceApp"]
+        sourceAppBundleID = row["sourceAppBundleID"]
 
         content = ClipboardContent.from(
             databaseType: row["contentType"] ?? "text",
