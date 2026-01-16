@@ -1031,10 +1031,10 @@ final class ClipboardStore {
     // MARK: - Pruning
 
     func pruneIfNeeded() {
-        let maxSizeMB = AppSettings.shared.maxDatabaseSizeMB
-        guard maxSizeMB > 0, let dbQueue else { return }
+        let maxSizeGB = AppSettings.shared.maxDatabaseSizeGB
+        guard maxSizeGB > 0, let dbQueue else { return }
 
-        let maxBytes = Int64(maxSizeMB) * 1024 * 1024
+        let maxBytes = Int64(maxSizeGB * 1024 * 1024 * 1024)
 
         Task.detached {
             self.performPruning(maxBytes: maxBytes, dbQueue: dbQueue)
