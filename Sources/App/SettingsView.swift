@@ -13,6 +13,10 @@ struct SettingsView: View {
     @State private var showLogs = false
     let store: ClipboardStore
     let onHotKeyChanged: (HotKey) -> Void
+    private let minDatabaseSizeGB = 0.5
+    private let maxDatabaseSizeGB = 64.0
+    private let minImageMegapixels = 0.5
+    private let maxImageMegapixels = 8.0
 
     var body: some View {
         Form {
@@ -65,37 +69,53 @@ struct SettingsView: View {
                 }
 
                 LabeledContent("Max Database Size") {
-                    HStack(spacing: 6) {
-                        TextField("Size", value: $settings.maxDatabaseSizeGB, format: .number.precision(.fractionLength(1)))
-                            .textFieldStyle(.roundedBorder)
-                            .frame(width: 70)
-                        Text("GB")
+                    HStack(spacing: 8) {
+                        Slider(value: databaseSizeSlider, in: 0...1)
+                            .frame(maxWidth: .infinity)
+                        Text(databaseSizeLabel)
                             .foregroundStyle(.secondary)
+                            .frame(width: 80, alignment: .trailing)
                     }
+                    .frame(maxWidth: .infinity)
                 }
 
-                Text("Oldest clipboard items will be automatically deleted when the database exceeds this size. Set to 0 for unlimited.")
+                Text("Oldest clipboard items will be automatically deleted when the database exceeds this size.")
                     .font(.caption)
                     .foregroundStyle(.secondary)
 
                 LabeledContent("Max Image Size") {
-                    HStack(spacing: 6) {
-                        TextField("MP", value: $settings.maxImageMegapixels, format: .number.precision(.fractionLength(1)))
-                            .textFieldStyle(.roundedBorder)
-                            .frame(width: 70)
-                        Text("MP")
-                            .foregroundStyle(.secondary)
+                    VStack(alignment: .leading, spacing: 6) {
+                        HStack(spacing: 8) {
+                            Slider(
+                                value: $settings.maxImageMegapixels,
+                                in: minImageMegapixels...maxImageMegapixels,
+                                step: 0.1
+                            ) {
+                                EmptyView()
+                            } minimumValueLabel: {
+                                Text(formatMegapixelMark(minImageMegapixels))
+                            } maximumValueLabel: {
+                                Text(formatMegapixelMark(maxImageMegapixels))
+                            }
+                            .labelsHidden()
+                            .frame(maxWidth: .infinity)
+                            Text(String(format: "%.1f MP", settings.maxImageMegapixels))
+                                .foregroundStyle(.secondary)
+                                .frame(width: 60, alignment: .trailing)
+                        }
                     }
+                    .frame(maxWidth: .infinity, alignment: .leading)
                 }
 
                 LabeledContent("Image Quality") {
                     HStack(spacing: 8) {
                         Slider(value: $settings.imageCompressionQuality, in: 0.1...1.0, step: 0.1)
-                            .frame(width: 130)
+                            .frame(maxWidth: .infinity)
                         Text(String(format: "%.1f", settings.imageCompressionQuality))
                             .foregroundStyle(.secondary)
                             .frame(width: 30, alignment: .trailing)
                     }
+                    .frame(maxWidth: .infinity, alignment: .leading)
                 }
 
                 Text("Images are compressed with HEVC. Lower quality = smaller file size.")
@@ -145,10 +165,54 @@ struct SettingsView: View {
         .frame(width: 420, height: 480)
         .onAppear {
             store.refreshDatabaseSize()
+            if settings.maxDatabaseSizeGB <= 0 {
+                settings.maxDatabaseSizeGB = minDatabaseSizeGB
+            }
         }
         .sheet(isPresented: $showLogs) {
             LogsView()
         }
+    }
+
+    private var databaseSizeSlider: Binding<Double> {
+        Binding(
+            get: {
+                sliderValue(for: max(settings.maxDatabaseSizeGB, minDatabaseSizeGB))
+            },
+            set: { newValue in
+                let gb = gbValue(for: newValue)
+                settings.maxDatabaseSizeGB = gb
+            }
+        )
+    }
+
+    private var databaseSizeLabel: String {
+        return String(format: "%.1f GB", settings.maxDatabaseSizeGB)
+    }
+
+    private func sliderValue(for gb: Double) -> Double {
+        let clamped = min(max(gb, minDatabaseSizeGB), maxDatabaseSizeGB)
+        let ratio = maxDatabaseSizeGB / minDatabaseSizeGB
+        return log(clamped / minDatabaseSizeGB) / log(ratio)
+    }
+
+    private func gbValue(for sliderValue: Double) -> Double {
+        let ratio = maxDatabaseSizeGB / minDatabaseSizeGB
+        let value = minDatabaseSizeGB * pow(ratio, sliderValue)
+        let rounded: Double
+        if value >= 1.0 {
+            rounded = value.rounded()
+        } else {
+            rounded = (value * 10).rounded() / 10
+        }
+        return min(max(rounded, minDatabaseSizeGB), maxDatabaseSizeGB)
+    }
+
+    private func formatMegapixelMark(_ value: Double) -> String {
+        if value >= 1 {
+            return String(format: "%.0f", value)
+        }
+        return String(format: "%.1f", value)
     }
 
     private func formatBytes(_ bytes: Int64) -> String {
