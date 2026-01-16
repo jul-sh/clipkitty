@@ -225,7 +225,7 @@ public struct ClipboardItem: Identifiable, Sendable, Equatable, FetchableRecord,
 
     /// Create an image item
     public init(imageData: Data, sourceApp: String? = nil, timestamp: Date = Date()) {
-        let description = "Image (\(imageData.count / 1024) KB)"
+        let description = "Image"
         self.id = nil
         self.contentHash = Self.hash(description + String(imageData.hashValue))
         self.timestamp = timestamp
