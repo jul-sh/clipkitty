@@ -373,7 +373,17 @@ struct ContentView: View {
                         Label(formatSize(item.textContent.count), systemImage: "doc.text")
                     }
                     if let app = item.sourceApp {
-                        Label(app, systemImage: "app")
+                        HStack(spacing: 4) {
+                            if let bundleID = item.sourceAppBundleID,
+                               let appURL = NSWorkspace.shared.urlForApplication(withBundleIdentifier: bundleID) {
+                                Image(nsImage: NSWorkspace.shared.icon(forFile: appURL.path))
+                                    .resizable()
+                                    .frame(width: 14, height: 14)
+                            } else {
+                                Image(systemName: "app")
+                            }
+                            Text(app)
+                        }
                     }
                     Spacer()
                     Button("⏎ copy") {
@@ -718,10 +728,18 @@ struct ItemRow: View, Equatable {
     var body: some View {
         HStack(spacing: 10) {
             // Content type icon
-            Image(systemName: item.icon)
-                .font(.system(size: 13))
-                .foregroundStyle(isSelected ? .white.opacity(0.9) : .secondary)
-                .frame(width: 16)
+            Group {
+                if let bundleID = item.sourceAppBundleID,
+                   let appURL = NSWorkspace.shared.urlForApplication(withBundleIdentifier: bundleID) {
+                    Image(nsImage: NSWorkspace.shared.icon(forFile: appURL.path))
+                        .resizable()
+                } else {
+                    Image(systemName: item.icon)
+                        .font(.system(size: 13))
+                        .foregroundStyle(isSelected ? .white.opacity(0.9) : .secondary)
+                }
+            }
+            .frame(width: 28, height: 28)
 
             // Text content - use AppKit for fast highlighting
             HighlightedTextView(
