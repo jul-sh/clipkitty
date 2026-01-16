@@ -15,8 +15,6 @@ struct SettingsView: View {
     let onHotKeyChanged: (HotKey) -> Void
     private let minDatabaseSizeGB = 0.5
     private let maxDatabaseSizeGB = 64.0
-    private let minImageMegapixels = 0.5
-    private let maxImageMegapixels = 8.0
 
     var body: some View {
         Form {
@@ -83,44 +81,6 @@ struct SettingsView: View {
                     .font(.caption)
                     .foregroundStyle(.secondary)
 
-                LabeledContent("Max Image Size") {
-                    VStack(alignment: .leading, spacing: 6) {
-                        HStack(spacing: 8) {
-                            Slider(
-                                value: $settings.maxImageMegapixels,
-                                in: minImageMegapixels...maxImageMegapixels,
-                                step: 0.1
-                            ) {
-                                EmptyView()
-                            } minimumValueLabel: {
-                                Text(formatMegapixelMark(minImageMegapixels))
-                            } maximumValueLabel: {
-                                Text(formatMegapixelMark(maxImageMegapixels))
-                            }
-                            .labelsHidden()
-                            .frame(maxWidth: .infinity)
-                            Text(String(format: "%.1f MP", settings.maxImageMegapixels))
-                                .foregroundStyle(.secondary)
-                                .frame(width: 60, alignment: .trailing)
-                        }
-                    }
-                    .frame(maxWidth: .infinity, alignment: .leading)
-                }
-
-                LabeledContent("Image Quality") {
-                    HStack(spacing: 8) {
-                        Slider(value: $settings.imageCompressionQuality, in: 0.1...1.0, step: 0.1)
-                            .frame(maxWidth: .infinity)
-                        Text(String(format: "%.1f", settings.imageCompressionQuality))
-                            .foregroundStyle(.secondary)
-                            .frame(width: 30, alignment: .trailing)
-                    }
-                    .frame(maxWidth: .infinity, alignment: .leading)
-                }
-
-                Text("Images are compressed with HEVC. Lower quality = smaller file size.")
-                    .font(.caption)
-                    .foregroundStyle(.secondary)
             }
 
             Section("Data") {
@@ -162,7 +122,7 @@ struct SettingsView: View {
             }
         }
         .formStyle(.grouped)
-        .frame(width: 420, height: 480)
+        .frame(width: 420, height: 420)
         .onAppear {
             store.refreshDatabaseSize()
             if settings.maxDatabaseSizeGB <= 0 {
@@ -206,13 +166,6 @@ struct SettingsView: View {
             rounded = (value * 10).rounded() / 10
         }
         return min(max(rounded, minDatabaseSizeGB), maxDatabaseSizeGB)
-    }
-
-    private func formatMegapixelMark(_ value: Double) -> String {
-        if value >= 1 {
-            return String(format: "%.0f", value)
-        }
-        return String(format: "%.1f", value)
     }
 
     private func formatBytes(_ bytes: Int64) -> String {

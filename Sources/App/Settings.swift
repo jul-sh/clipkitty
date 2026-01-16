@@ -67,20 +67,13 @@ final class AppSettings: ObservableObject {
         didSet { save() }
     }
 
-    @Published var maxImageMegapixels: Double {
-        didSet { save() }
-    }
-
-    @Published var imageCompressionQuality: Double {
-        didSet { save() }
-    }
+    let maxImageMegapixels: Double
+    let imageCompressionQuality: Double
 
     private let defaults = UserDefaults.standard
     private let hotKeyKey = "hotKey"
     private let maxDbSizeKey = "maxDatabaseSizeGB"
     private let legacyMaxDbSizeKey = "maxDatabaseSizeMB"
-    private let maxImageMPKey = "maxImageMegapixels"
-    private let imageQualityKey = "imageCompressionQuality"
 
     private init() {
         // Initialize all stored properties first
@@ -99,11 +92,8 @@ final class AppSettings: ObservableObject {
             maxDatabaseSizeGB = 2.0
         }
 
-        let imageMP = defaults.double(forKey: maxImageMPKey)
-        maxImageMegapixels = imageMP != 0 ? imageMP : 2.0  // Default 2 MP
-
-        let quality = defaults.double(forKey: imageQualityKey)
-        imageCompressionQuality = quality != 0 ? quality : 0.3  // Default 0.3
+        maxImageMegapixels = 2.0
+        imageCompressionQuality = 0.3
     }
 
     private func save() {
@@ -111,7 +101,5 @@ final class AppSettings: ObservableObject {
             defaults.set(data, forKey: hotKeyKey)
         }
         defaults.set(maxDatabaseSizeGB, forKey: maxDbSizeKey)
-        defaults.set(maxImageMegapixels, forKey: maxImageMPKey)
-        defaults.set(imageCompressionQuality, forKey: imageQualityKey)
     }
 }
