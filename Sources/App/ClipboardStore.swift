@@ -179,6 +179,9 @@ final class ClipboardStore {
                 if !columns.contains("linkImageData") {
                     try db.execute(sql: "ALTER TABLE items ADD COLUMN linkImageData BLOB")
                 }
+                if !columns.contains("sourceAppBundleID") {
+                    try db.execute(sql: "ALTER TABLE items ADD COLUMN sourceAppBundleID TEXT")
+                }
 
                 try db.create(index: "idx_items_hash", on: "items", columns: ["contentHash"], ifNotExists: true)
                 try db.create(index: "idx_items_timestamp", on: "items", columns: ["timestamp"], ifNotExists: true)
@@ -603,11 +606,12 @@ final class ClipboardStore {
 
         let hash = hashContent(text)
         let sourceApp = NSWorkspace.shared.frontmostApplication?.localizedName
+        let sourceAppBundleID = NSWorkspace.shared.frontmostApplication?.bundleIdentifier
 
         // Move all DB operations to background
         guard let dbQueue else { return }
         Task.detached { [weak self] in
-            let newItemId = Self.saveTextItem(dbQueue: dbQueue, text: text, hash: hash, sourceApp: sourceApp)
+            let newItemId = Self.saveTextItem(dbQueue: dbQueue, text: text, hash: hash, sourceApp: sourceApp, sourceAppBundleID: sourceAppBundleID)
 
             // If it's a URL, fetch metadata asynchronously
             if ClipboardItem.isURL(text), let id = newItemId {
@@ -624,7 +628,7 @@ final class ClipboardStore {
         }
     }
 
-    private nonisolated static func saveTextItem(dbQueue: DatabaseQueue, text: String, hash: String, sourceApp: String?) -> Int64? {
+    private nonisolated static func saveTextItem(dbQueue: DatabaseQueue, text: String, hash: String, sourceApp: String?, sourceAppBundleID: String?) -> Int64? {
         do {
             if let existing = try dbQueue.read({ db in
                 try ClipboardItem.filter(Column("contentHash") == hash).fetchOne(db)
@@ -635,7 +639,7 @@ final class ClipboardStore {
                 return nil
             } else {
                 return try dbQueue.write { db -> Int64 in
-                    let item = ClipboardItem(text: text, sourceApp: sourceApp)
+                    let item = ClipboardItem(text: text, sourceApp: sourceApp, sourceAppBundleID: sourceAppBundleID)
                     try item.insert(db)
                     return db.lastInsertedRowID
                 }
@@ -687,7 +691,8 @@ final class ClipboardStore {
                     content: .link(url: url, metadataState: metadataState),
                     contentHash: item.contentHash,
                     timestamp: item.timestamp,
-                    sourceApp: item.sourceApp
+                    sourceApp: item.sourceApp,
+                    sourceAppBundleID: item.sourceAppBundleID
                 )
             }
             state = .loaded(items: updatedItems, hasMore: hasMore)
@@ -701,7 +706,8 @@ final class ClipboardStore {
                         content: .link(url: url, metadataState: metadataState),
                         contentHash: item.contentHash,
                         timestamp: item.timestamp,
-                        sourceApp: item.sourceApp
+                        sourceApp: item.sourceApp,
+                        sourceAppBundleID: item.sourceAppBundleID
                     )
                 }
             }
@@ -755,7 +761,8 @@ final class ClipboardStore {
                 content: .image(data: data, description: description),
                 contentHash: item.contentHash,
                 timestamp: item.timestamp,
-                sourceApp: item.sourceApp
+                sourceApp: item.sourceApp,
+                sourceAppBundleID: item.sourceAppBundleID
             )
         }
 
@@ -785,6 +792,7 @@ final class ClipboardStore {
 
     private func saveImageItem(rawImageData: Data) {
         let sourceApp = NSWorkspace.shared.frontmostApplication?.localizedName
+        let sourceAppBundleID = NSWorkspace.shared.frontmostApplication?.bundleIdentifier
         let maxPixels = Int(AppSettings.shared.maxImageMegapixels * 1_000_000)
         let quality = AppSettings.shared.imageCompressionQuality
 
@@ -795,6 +803,7 @@ final class ClipboardStore {
                 dbQueue: dbQueue,
                 rawImageData: rawImageData,
                 sourceApp: sourceApp,
+                sourceAppBundleID: sourceAppBundleID,
                 maxPixels: maxPixels,
                 quality: quality
             )
@@ -817,6 +826,7 @@ final class ClipboardStore {
         dbQueue: DatabaseQueue,
         rawImageData: Data,
         sourceApp: String?,
+        sourceAppBundleID: String?,
         maxPixels: Int,
         quality: Double
     ) -> (itemId: Int64, imageData: Data)? {
@@ -828,7 +838,7 @@ final class ClipboardStore {
 
         do {
             let itemId = try dbQueue.write { db -> Int64 in
-                let item = ClipboardItem(imageData: compressedData, sourceApp: sourceApp)
+                let item = ClipboardItem(imageData: compressedData, sourceApp: sourceApp, sourceAppBundleID: sourceAppBundleID)
                 try item.insert(db)
                 return db.lastInsertedRowID
             }
