@@ -63,7 +63,7 @@ final class AppSettings: ObservableObject {
         didSet { save() }
     }
 
-    @Published var maxDatabaseSizeMB: Int {
+    @Published var maxDatabaseSizeGB: Double {
         didSet { save() }
     }
 
@@ -77,7 +77,8 @@ final class AppSettings: ObservableObject {
 
     private let defaults = UserDefaults.standard
     private let hotKeyKey = "hotKey"
-    private let maxDbSizeKey = "maxDatabaseSizeMB"
+    private let maxDbSizeKey = "maxDatabaseSizeGB"
+    private let legacyMaxDbSizeKey = "maxDatabaseSizeMB"
     private let maxImageMPKey = "maxImageMegapixels"
     private let imageQualityKey = "imageCompressionQuality"
 
@@ -90,8 +91,13 @@ final class AppSettings: ObservableObject {
             hotKey = .default
         }
 
-        let dbSize = defaults.integer(forKey: maxDbSizeKey)
-        maxDatabaseSizeMB = dbSize != 0 ? dbSize : 2048  // Default 2 GB
+        if let stored = defaults.object(forKey: maxDbSizeKey) as? NSNumber {
+            maxDatabaseSizeGB = stored.doubleValue
+        } else if let legacyStored = defaults.object(forKey: legacyMaxDbSizeKey) as? NSNumber {
+            maxDatabaseSizeGB = legacyStored.doubleValue / 1024.0
+        } else {
+            maxDatabaseSizeGB = 2.0
+        }
 
         let imageMP = defaults.double(forKey: maxImageMPKey)
         maxImageMegapixels = imageMP != 0 ? imageMP : 2.0  // Default 2 MP
@@ -104,7 +110,7 @@ final class AppSettings: ObservableObject {
         if let data = try? JSONEncoder().encode(hotKey) {
             defaults.set(data, forKey: hotKeyKey)
         }
-        defaults.set(maxDatabaseSizeMB, forKey: maxDbSizeKey)
+        defaults.set(maxDatabaseSizeGB, forKey: maxDbSizeKey)
         defaults.set(maxImageMegapixels, forKey: maxImageMPKey)
         defaults.set(imageCompressionQuality, forKey: imageQualityKey)
     }
