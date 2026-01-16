@@ -341,7 +341,7 @@ struct ContentView: View {
                                             .resizable()
                                             .aspectRatio(contentMode: .fit)
                                             .frame(maxWidth: .infinity)
-                                        Text(description)
+                                        Text(imageDescriptionAttributed(description))
                                             .font(.callout)
                                             .foregroundStyle(.secondary)
                                             .frame(maxWidth: .infinity, alignment: .leading)
@@ -419,6 +419,19 @@ struct ContentView: View {
             return String(format: "%.1fK", Double(chars) / 1000)
         }
         return "\(chars)"
+    }
+
+    private func imageDescriptionAttributed(_ text: String) -> AttributedString {
+        guard !searchText.isEmpty else {
+            return AttributedString(text)
+        }
+        let font = NSFont.preferredFont(forTextStyle: .callout)
+        let attributed = text.highlightedNSAttributedString(
+            query: searchText,
+            font: font,
+            textColor: NSColor.secondaryLabelColor
+        )
+        return AttributedString(attributed)
     }
 
     private var emptyStateView: some View {
