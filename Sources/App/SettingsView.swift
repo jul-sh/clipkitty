@@ -59,45 +59,43 @@ struct SettingsView: View {
             }
 
             Section("Storage") {
-                HStack {
-                    Text("Current Size")
-                    Spacer()
+                LabeledContent("Current Size") {
                     Text(formatBytes(store.databaseSizeBytes))
                         .foregroundStyle(.secondary)
                 }
 
-                HStack {
-                    Text("Max Database Size")
-                    Spacer()
-                    TextField("Size", value: $settings.maxDatabaseSizeMB, format: .number)
-                        .textFieldStyle(.roundedBorder)
-                        .frame(width: 80)
-                    Text("MB")
-                        .foregroundStyle(.secondary)
+                LabeledContent("Max Database Size") {
+                    HStack(spacing: 6) {
+                        TextField("Size", value: $settings.maxDatabaseSizeGB, format: .number.precision(.fractionLength(1)))
+                            .textFieldStyle(.roundedBorder)
+                            .frame(width: 70)
+                        Text("GB")
+                            .foregroundStyle(.secondary)
+                    }
                 }
 
                 Text("Oldest clipboard items will be automatically deleted when the database exceeds this size. Set to 0 for unlimited.")
                     .font(.caption)
                     .foregroundStyle(.secondary)
 
-                HStack {
-                    Text("Max Image Size")
-                    Spacer()
-                    TextField("MP", value: $settings.maxImageMegapixels, format: .number.precision(.fractionLength(1)))
-                        .textFieldStyle(.roundedBorder)
-                        .frame(width: 80)
-                    Text("MP")
-                        .foregroundStyle(.secondary)
+                LabeledContent("Max Image Size") {
+                    HStack(spacing: 6) {
+                        TextField("MP", value: $settings.maxImageMegapixels, format: .number.precision(.fractionLength(1)))
+                            .textFieldStyle(.roundedBorder)
+                            .frame(width: 70)
+                        Text("MP")
+                            .foregroundStyle(.secondary)
+                    }
                 }
 
-                HStack {
-                    Text("Image Quality")
-                    Spacer()
-                    Slider(value: $settings.imageCompressionQuality, in: 0.1...1.0, step: 0.1)
-                        .frame(width: 120)
-                    Text(String(format: "%.1f", settings.imageCompressionQuality))
-                        .foregroundStyle(.secondary)
-                        .frame(width: 30)
+                LabeledContent("Image Quality") {
+                    HStack(spacing: 8) {
+                        Slider(value: $settings.imageCompressionQuality, in: 0.1...1.0, step: 0.1)
+                            .frame(width: 130)
+                        Text(String(format: "%.1f", settings.imageCompressionQuality))
+                            .foregroundStyle(.secondary)
+                            .frame(width: 30, alignment: .trailing)
+                    }
                 }
 
                 Text("Images are compressed with HEVC. Lower quality = smaller file size.")
@@ -144,7 +142,7 @@ struct SettingsView: View {
             }
         }
         .formStyle(.grouped)
-        .frame(width: 400, height: 470)
+        .frame(width: 420, height: 480)
         .onAppear {
             store.refreshDatabaseSize()
         }
