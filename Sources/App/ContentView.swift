@@ -739,7 +739,7 @@ struct ItemRow: View, Equatable {
                         .foregroundStyle(isSelected ? .white.opacity(0.9) : .secondary)
                 }
             }
-            .frame(width: 28, height: 28)
+            .frame(width: 32, height: 32)
 
             // Text content - use AppKit for fast highlighting
             HighlightedTextView(
