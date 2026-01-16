@@ -5,19 +5,19 @@ import ClipKittyCore
 // MARK: - Test Data
 
 enum TestContent {
-    case text(String, sourceApp: String?)
-    case link(String, sourceApp: String?)
+    case text(String, sourceApp: String?, bundleID: String?)
+    case link(String, sourceApp: String?, bundleID: String?)
 }
 
 let testItems: [TestContent] = [
     // Email address
-    .text("sarah.johnson@techcorp.io", sourceApp: "Mail"),
+    .text("sarah.johnson@techcorp.io", sourceApp: "Mail", bundleID: "com.apple.mail"),
 
     // Phone number
-    .text("+1 (555) 867-5309", sourceApp: "Contacts"),
+    .text("+1 (555) 867-5309", sourceApp: "Contacts", bundleID: "com.apple.AddressBook"),
 
     // UUID
-    .text("f47ac10b-58cc-4372-a567-0e02b2c3d479", sourceApp: "Terminal"),
+    .text("f47ac10b-58cc-4372-a567-0e02b2c3d479", sourceApp: "Terminal", bundleID: "com.apple.Terminal"),
 
     // JSON snippet
     .text("""
@@ -28,10 +28,10 @@ let testItems: [TestContent] = [
         "roles": ["admin", "developer"]
       }
     }
-    """, sourceApp: "VS Code"),
+    """, sourceApp: "VS Code", bundleID: "com.microsoft.VSCode"),
 
     // URL - GitHub repo
-    .link("https://github.com/apple/swift-collections", sourceApp: "Safari"),
+    .link("https://github.com/apple/swift-collections", sourceApp: "Safari", bundleID: "com.apple.Safari"),
 
     // Swift code snippet
     .text("""
@@ -39,7 +39,7 @@ let testItems: [TestContent] = [
         let response = try await client.get("/api/users")
         return try decoder.decode([User].self, from: response.data)
     }
-    """, sourceApp: "Xcode"),
+    """, sourceApp: "Xcode", bundleID: "com.apple.dt.Xcode"),
 
     // SQL query
     .text("""
@@ -49,16 +49,16 @@ let testItems: [TestContent] = [
     WHERE u.created_at > '2024-01-01'
     GROUP BY u.id
     HAVING order_count > 5;
-    """, sourceApp: "TablePlus"),
+    """, sourceApp: "TablePlus", bundleID: "com.tinyapp.TablePlus"),
 
     // URL - Documentation
-    .link("https://developer.apple.com/documentation/swiftui/view", sourceApp: "Safari"),
+    .link("https://developer.apple.com/documentation/swiftui/view", sourceApp: "Safari", bundleID: "com.apple.Safari"),
 
     // Terminal command
-    .text("git log --oneline --graph --all -20", sourceApp: "Terminal"),
+    .text("git log --oneline --graph --all -20", sourceApp: "Terminal", bundleID: "com.apple.Terminal"),
 
     // Street address
-    .text("1 Infinite Loop, Cupertino, CA 95014", sourceApp: "Maps"),
+    .text("1 Infinite Loop, Cupertino, CA 95014", sourceApp: "Maps", bundleID: "com.apple.Maps"),
 
     // CSS snippet
     .text("""
@@ -68,13 +68,13 @@ let testItems: [TestContent] = [
       gap: 1rem;
       padding: 2rem;
     }
-    """, sourceApp: "VS Code"),
+    """, sourceApp: "VS Code", bundleID: "com.microsoft.VSCode"),
 
     // URL - Stack Overflow
-    .link("https://stackoverflow.com/questions/24002369/how-to-call-objective-c-code-from-swift", sourceApp: "Arc"),
+    .link("https://stackoverflow.com/questions/24002369/how-to-call-objective-c-code-from-swift", sourceApp: "Arc", bundleID: "company.thebrowser.Browser"),
 
     // Error message
-    .text("Error: SQLITE_CONSTRAINT: UNIQUE constraint failed: users.email", sourceApp: "Terminal"),
+    .text("Error: SQLITE_CONSTRAINT: UNIQUE constraint failed: users.email", sourceApp: "Terminal", bundleID: "com.apple.Terminal"),
 
     // Python code
     .text("""
@@ -83,7 +83,7 @@ let testItems: [TestContent] = [
             "count": len(data),
             "avg": sum(d["value"] for d in data) / len(data)
         }
-    """, sourceApp: "PyCharm"),
+    """, sourceApp: "PyCharm", bundleID: "com.jetbrains.pycharm"),
 
     // Markdown text
     .text("""
@@ -92,23 +92,23 @@ let testItems: [TestContent] = [
     1. Install dependencies: `npm install`
     2. Run dev server: `npm run dev`
     3. Open http://localhost:3000
-    """, sourceApp: "Obsidian"),
+    """, sourceApp: "Obsidian", bundleID: "md.obsidian"),
 
     // API endpoint
-    .link("https://api.stripe.com/v1/customers", sourceApp: "Postman"),
+    .link("https://api.stripe.com/v1/customers", sourceApp: "Postman", bundleID: "com.postmanlabs.mac"),
 
     // Regex pattern
-    .text(#"^(?=.*[A-Z])(?=.*[a-z])(?=.*\d)[A-Za-z\d@$!%*?&]{8,}$"#, sourceApp: "VS Code"),
+    .text(#"^(?=.*[A-Z])(?=.*[a-z])(?=.*\d)[A-Za-z\d@$!%*?&]{8,}$"#, sourceApp: "VS Code", bundleID: "com.microsoft.VSCode"),
 
     // Shell script snippet
     .text("""
     for file in *.json; do
         jq '.data[] | select(.active == true)' "$file"
     done
-    """, sourceApp: "Terminal"),
+    """, sourceApp: "Terminal", bundleID: "com.apple.Terminal"),
 
     // URL - YouTube
-    .link("https://www.youtube.com/watch?v=dQw4w9WgXcQ", sourceApp: "Arc"),
+    .link("https://www.youtube.com/watch?v=dQw4w9WgXcQ", sourceApp: "Arc", bundleID: "company.thebrowser.Browser"),
 
     // TypeScript interface
     .text("""
@@ -120,7 +120,7 @@ let testItems: [TestContent] = [
         notifications: boolean;
       };
     }
-    """, sourceApp: "VS Code"),
+    """, sourceApp: "VS Code", bundleID: "com.microsoft.VSCode"),
 ]
 
 // MARK: - Database Operations
@@ -146,6 +146,7 @@ func populateDatabase() throws {
             t.column("contentHash", .text).notNull()
             t.column("timestamp", .datetime).notNull()
             t.column("sourceApp", .text)
+            t.column("sourceAppBundleID", .text)
             t.column("contentType", .text).defaults(to: "text")
             t.column("imageData", .blob)
             t.column("linkTitle", .text)
@@ -165,10 +166,10 @@ func populateDatabase() throws {
 
             let item: ClipboardItem
             switch testContent {
-            case .text(let content, let sourceApp):
-                item = ClipboardItem(text: content, sourceApp: sourceApp, timestamp: timestamp)
-            case .link(let url, let sourceApp):
-                item = ClipboardItem(url: url, sourceApp: sourceApp, timestamp: timestamp)
+            case .text(let content, let sourceApp, let bundleID):
+                item = ClipboardItem(text: content, sourceApp: sourceApp, sourceAppBundleID: bundleID, timestamp: timestamp)
+            case .link(let url, let sourceApp, let bundleID):
+                item = ClipboardItem(url: url, sourceApp: sourceApp, sourceAppBundleID: bundleID, timestamp: timestamp)
             }
 
             try item.insert(db)
