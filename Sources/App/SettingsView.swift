@@ -60,6 +60,13 @@ struct SettingsView: View {
                 }
             }
 
+            Section("Behavior") {
+                Toggle("Paste after selecting", isOn: $settings.pasteOnSelect)
+                Text("When enabled, pressing Enter pastes into the previous app. When disabled, it only copies to the clipboard.")
+                    .font(.caption)
+                    .foregroundStyle(.secondary)
+            }
+
             Section("Storage") {
                 LabeledContent("Current Size") {
                     Text(formatBytes(store.databaseSizeBytes))
