@@ -21,7 +21,6 @@ struct ContentView: View {
 
     @State private var selectedItemId: String?
     @State private var searchText: String = ""
-    @State private var isCopyHovering: Bool = false
     @State private var showSearchSpinner: Bool = false
     @FocusState private var isSearchFocused: Bool
     private var items: [ClipboardItem] {
@@ -282,9 +281,6 @@ struct ContentView: View {
                     .listRowInsets(EdgeInsets(top: 2, leading: 0, bottom: 2, trailing: 0))
                     .listRowSeparator(.hidden)
                     .listRowBackground(Color.clear)
-                    .onTapGesture {
-                        selectedItemId = item.stableId
-                    }
                     .onAppear {
                         if index == items.count - 10 {
                             store.loadMoreItems()
@@ -363,7 +359,6 @@ struct ContentView: View {
                         }
                     }
                 }
-                .background(NonDraggableView())
 
                 Divider()
 
@@ -393,13 +388,6 @@ struct ContentView: View {
                     .buttonStyle(.plain)
                     .padding(.horizontal, 6)
                     .padding(.vertical, 2)
-                    .background(
-                        RoundedRectangle(cornerRadius: 4)
-                            .fill(isCopyHovering ? .black.opacity(0.08) : .clear)
-                    )
-                    .onHover { hovering in
-                        isCopyHovering = hovering
-                    }
                 }
                 .font(.system(size: 13))
                 .foregroundStyle(.secondary)
@@ -416,11 +404,6 @@ struct ContentView: View {
             }
         }
         .background(.black.opacity(0.05))
-        .onHover { hovering in
-            if let window = NSApp.keyWindow ?? NSApp.mainWindow {
-                window.isMovableByWindowBackground = !hovering
-            }
-        }
     }
 
     private func formatSize(_ chars: Int) -> String {
@@ -511,7 +494,6 @@ struct ContentView: View {
                         .foregroundStyle(.primary)
                         .lineLimit(2)
                         .textSelection(.enabled)
-                        .modifier(IBeamCursorOnHover())
                 }
 
                 Text(url)
@@ -519,7 +501,6 @@ struct ContentView: View {
                     .foregroundStyle(.secondary)
                     .lineLimit(1)
                     .textSelection(.enabled)
-                    .modifier(IBeamCursorOnHover())
             }
             .frame(maxWidth: .infinity, alignment: .leading)
 
@@ -540,90 +521,6 @@ private extension View {
     }
 }
 
-// MARK: - Non-Draggable View
-// Prevents window dragging on the preview pane to allow text selection
-
-struct NonDraggableView: NSViewRepresentable {
-    func makeNSView(context: Context) -> NSView {
-        let view = NonDraggableNSView()
-        view.wantsLayer = true
-        view.layer?.backgroundColor = .clear
-        return view
-    }
-
-    func updateNSView(_ nsView: NSView, context: Context) {}
-}
-
-class NonDraggableNSView: NSView {
-    override var mouseDownCanMoveWindow: Bool { false }
-
-    override func hitTest(_ point: NSPoint) -> NSView? {
-        // Return self to capture mouse events and prevent window dragging
-        return self
-    }
-}
-
-// MARK: - Hover Cursor
-
-struct IBeamCursorOnHover: ViewModifier {
-    func body(content: Content) -> some View {
-        content.background(IBeamCursorView())
-    }
-}
-
-struct IBeamCursorView: NSViewRepresentable {
-    func makeNSView(context: Context) -> NSView {
-        CursorTrackingView()
-    }
-
-    func updateNSView(_ nsView: NSView, context: Context) {}
-}
-
-private final class CursorTrackingView: NSView {
-    private var trackingArea: NSTrackingArea?
-
-    override func viewDidMoveToWindow() {
-        super.viewDidMoveToWindow()
-        window?.invalidateCursorRects(for: self)
-    }
-
-    override func resetCursorRects() {
-        discardCursorRects()
-        addCursorRect(bounds, cursor: .iBeam)
-    }
-
-    override func updateTrackingAreas() {
-        if let trackingArea {
-            removeTrackingArea(trackingArea)
-        }
-        let options: NSTrackingArea.Options = [.mouseEnteredAndExited, .mouseMoved, .activeAlways, .inVisibleRect, .cursorUpdate]
-        let newArea = NSTrackingArea(rect: bounds, options: options, owner: self, userInfo: nil)
-        addTrackingArea(newArea)
-        trackingArea = newArea
-        super.updateTrackingAreas()
-    }
-
-    override func mouseEntered(with event: NSEvent) {
-        NSCursor.iBeam.set()
-    }
-
-    override func mouseMoved(with event: NSEvent) {
-        NSCursor.iBeam.set()
-    }
-
-    override func cursorUpdate(with event: NSEvent) {
-        NSCursor.iBeam.set()
-    }
-
-    override func mouseExited(with event: NSEvent) {
-        NSCursor.arrow.set()
-    }
-
-    override func hitTest(_ point: NSPoint) -> NSView? {
-        nil
-    }
-}
-
 // MARK: - Text Preview (AppKit)
 
 struct TextPreviewView: NSViewRepresentable {
@@ -633,7 +530,7 @@ struct TextPreviewView: NSViewRepresentable {
     var searchQuery: String = ""
 
     func makeNSView(context: Context) -> NSScrollView {
-        let scrollView = NonDraggableScrollView()
+        let scrollView = NSScrollView()
         scrollView.hasVerticalScroller = true
         scrollView.drawsBackground = false
 
@@ -699,10 +596,6 @@ struct TextPreviewView: NSViewRepresentable {
     class Coordinator {
         var lastQuery: String = ""
     }
-}
-
-final class NonDraggableScrollView: NSScrollView {
-    override var mouseDownCanMoveWindow: Bool { false }
 }
 
 // MARK: - Item Row
