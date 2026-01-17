@@ -295,6 +295,12 @@ struct ContentView: View {
             }
             .listStyle(.plain)
             .scrollContentBackground(.hidden)
+            .onChange(of: searchText) { _, _ in
+                // Scroll to top when search query changes
+                if let firstItemId = items.first?.stableId {
+                    proxy.scrollTo(firstItemId, anchor: .top)
+                }
+            }
             .onChange(of: selectedItemId) { oldItemId, newItemId in
                 guard let newItemId else { return }
                 let oldIndex = indexForItem(oldItemId)
