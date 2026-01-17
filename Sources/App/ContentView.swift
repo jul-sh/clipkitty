@@ -749,8 +749,8 @@ struct ItemRow: View, Equatable {
                 .frame(width: 32, height: 32)
                 .clipShape(RoundedRectangle(cornerRadius: 4))
 
-                // Badge: Source app icon
-                if let bundleID = item.sourceAppBundleID,
+                // Badge: Source app icon (skip for links since browser icon is already shown)
+                if case .link = item.content {} else if let bundleID = item.sourceAppBundleID,
                    let appURL = NSWorkspace.shared.urlForApplication(withBundleIdentifier: bundleID) {
                     Image(nsImage: NSWorkspace.shared.icon(forFile: appURL.path))
                         .resizable()
@@ -771,7 +771,7 @@ struct ItemRow: View, Equatable {
             .frame(maxWidth: .infinity, alignment: .leading)
         }
         .frame(maxWidth: .infinity, minHeight: rowHeight, maxHeight: rowHeight, alignment: .leading)
-        .padding(.horizontal, 6)
+        .padding(.horizontal, 4)
         .padding(.vertical, 4)
         .background {
             if isSelected {
