@@ -35,6 +35,39 @@ private func measureTimeAsync<T>(_ label: String, _ block: () async throws -> T)
     return result
 }
 
+/// Calculate Levenshtein distance between two strings
+private func levenshteinDistance(_ s1: String, _ s2: String) -> Int {
+    let s1Array = Array(s1.lowercased())
+    let s2Array = Array(s2.lowercased())
+    let s1Len = s1Array.count
+    let s2Len = s2Array.count
+
+    guard s1Len > 0 else { return s2Len }
+    guard s2Len > 0 else { return s1Len }
+
+    var matrix = Array(repeating: Array(repeating: 0, count: s2Len + 1), count: s1Len + 1)
+
+    for i in 0...s1Len {
+        matrix[i][0] = i
+    }
+    for j in 0...s2Len {
+        matrix[0][j] = j
+    }
+
+    for i in 1...s1Len {
+        for j in 1...s2Len {
+            let cost = s1Array[i - 1] == s2Array[j - 1] ? 0 : 1
+            matrix[i][j] = min(
+                matrix[i - 1][j] + 1,      // deletion
+                matrix[i][j - 1] + 1,      // insertion
+                matrix[i - 1][j - 1] + cost // substitution
+            )
+        }
+    }
+
+    return matrix[s1Len][s2Len]
+}
+
 /// Search result state - makes loading/results states explicit
 enum SearchResultState: Equatable {
     case loading(previousResults: [ClipboardItem])
@@ -475,52 +508,137 @@ final class ClipboardStore {
             return
         }
 
-        // FTS search (fast, indexed) - fetch all at once
-        let searchResults = await Task.detached { [query, cursorTimestamp, limit] () -> [ClipboardItem] in
-            measureTime("search.db[\(query.prefix(10))]") {
+        // THREE-PHASE SEARCH STRATEGY
+        // Phase 1: FTS5 Prefix Search (instant, no limit) - exact prefix matches
+        let phase1Results = await Task.detached { [query] () -> [ClipboardItem] in
+            measureTime("search.phase1[\(query.prefix(10))]") {
                 do {
                     return try dbQueue.read { db in
                         let escapedQuery = query.replacingOccurrences(of: "\"", with: "\"\"")
-                        var sql = """
+                        // Use prefix search: query* for exact prefix matching
+                        let sql = """
                             SELECT items.* FROM items
                             INNER JOIN items_fts ON items.id = items_fts.rowid
                             WHERE items_fts MATCH ?
+                            ORDER BY items.timestamp DESC
                         """
-                        var arguments: [DatabaseValueConvertible] = ["\"\(escapedQuery)\""]
-
-                        if let cursor = cursorTimestamp {
-                            sql += " AND items.timestamp < ?"
-                            arguments.append(cursor)
-                        }
-
-                        sql += " ORDER BY items.timestamp DESC LIMIT ?"
-                        arguments.append(limit)
-
-                        return try ClipboardItem.fetchAll(db, sql: sql, arguments: StatementArguments(arguments))
+                        return try ClipboardItem.fetchAll(db, sql: sql, arguments: ["\(escapedQuery)*"])
                     }
                 } catch {
-                    logError("FTS search failed: \(error)")
+                    logError("Phase 1 prefix search failed: \(error)")
                     return []
                 }
             }
         }.value
 
-        os_signpost(.end, log: performanceLog, name: "search", signpostID: signpostID, "results=%d", searchResults.count)
-
-        // Check cancellation before updating state
+        // Update UI with Phase 1 results immediately
         guard !Task.isCancelled else { return }
-
-        // Only update if still searching for this query
         guard case .searching(let currentQuery, _) = state, currentQuery == query else { return }
 
+        let phase1Combined = isLoadingMore ? existingResults + phase1Results : phase1Results
+        state = .searching(query: query, state: .results(phase1Combined, hasMore: true))
+
+        let phase1IDs = Set(phase1Results.map { $0.id })
+
+        // Phase 2 & 3: Run asynchronously in parallel
+        let phase2And3Task = Task.detached { [query] () -> [ClipboardItem] in
+            // PHASE 2: Fuzzy search using trigram OR matching for typo tolerance
+            // Build OR query from trigrams to find partial matches
+            let phase2Results: [ClipboardItem] = measureTime("search.phase2[\(query.prefix(10))]") {
+                do {
+                    return try dbQueue.read { db in
+                        // Generate trigrams from query and search with OR to allow partial matches
+                        let queryLower = query.lowercased()
+                        var trigrams: [String] = []
+                        let chars = Array(queryLower)
+                        for i in 0..<max(0, chars.count - 2) {
+                            let trigram = String(chars[i..<i+3])
+                            // Escape special FTS characters
+                            let escaped = trigram
+                                .replacingOccurrences(of: "\"", with: "\"\"")
+                                .replacingOccurrences(of: "*", with: "")
+                                .replacingOccurrences(of: "-", with: "")
+                            if !escaped.isEmpty && escaped.count == 3 {
+                                trigrams.append("\"\(escaped)\"")
+                            }
+                        }
+
+                        guard !trigrams.isEmpty else { return [] }
+
+                        // Use OR to find items matching ANY trigram (fuzzy matching)
+                        let orQuery = trigrams.joined(separator: " OR ")
+                        let sql = """
+                            SELECT items.* FROM items
+                            INNER JOIN items_fts ON items.id = items_fts.rowid
+                            WHERE items_fts MATCH ?
+                            ORDER BY items.timestamp DESC
+                            LIMIT 500
+                        """
+                        let allResults = try ClipboardItem.fetchAll(db, sql: sql, arguments: [orQuery])
+                        // Filter out Phase 1 results
+                        return allResults.filter { !phase1IDs.contains($0.id) }
+                    }
+                } catch {
+                    logError("Phase 2 trigram search failed: \(error)")
+                    return []
+                }
+            }
+
+            // PHASE 3: Filter and rank by Levenshtein distance
+            // Only keep items within reasonable edit distance, then sort by closeness
+            let phase3Results: [ClipboardItem] = measureTime("search.phase3[\(query.prefix(10))]") {
+                let maxDistance = max(query.count / 2, 3)  // Allow ~50% edits or at least 3
+
+                return phase2Results
+                    .compactMap { item -> (ClipboardItem, Int)? in
+                        let content = item.content.textContent.lowercased()
+                        let queryLower = query.lowercased()
+
+                        // Find best matching substring in content
+                        var bestDistance = Int.max
+                        let windowSize = min(query.count + maxDistance, content.count)
+
+                        // Slide window through content to find best match
+                        if content.count >= query.count {
+                            let contentChars = Array(content)
+                            for start in 0..<min(contentChars.count - query.count + 1, 100) {
+                                let end = min(start + windowSize, contentChars.count)
+                                let substring = String(contentChars[start..<end])
+                                let dist = levenshteinDistance(queryLower, substring)
+                                bestDistance = min(bestDistance, dist)
+                                if bestDistance <= 1 { break }  // Good enough, stop early
+                            }
+                        } else {
+                            bestDistance = levenshteinDistance(queryLower, content)
+                        }
+
+                        return bestDistance <= maxDistance ? (item, bestDistance) : nil
+                    }
+                    .sorted { $0.1 < $1.1 }  // Sort by distance (lower = better)
+                    .map { $0.0 }  // Extract just the items
+            }
+
+            return phase3Results
+        }
+
+        // Await Phase 2 & 3 completion and merge results
+        let phase2And3Results = await phase2And3Task.value
+
+        // Final update with all results combined
+        guard !Task.isCancelled else { return }
+        guard case .searching(let currentQuery, _) = state, currentQuery == query else { return }
+
+        let finalResults = phase1Combined + phase2And3Results
+
         // Update cursor for pagination
-        if let oldestItem = searchResults.last {
+        if let oldestItem = finalResults.last {
             oldestSearchTimestamp = oldestItem.timestamp
         }
 
-        let hasMore = searchResults.count == limit
-        let finalResults = isLoadingMore ? existingResults + searchResults : searchResults
-        state = .searching(query: query, state: .results(finalResults, hasMore: hasMore))
+        state = .searching(query: query, state: .results(finalResults, hasMore: false))
+
+        os_signpost(.end, log: performanceLog, name: "search", signpostID: signpostID, "phase1=%d,phase2+3=%d,total=%d",
+                    phase1Results.count, phase2And3Results.count, finalResults.count)
     }
 
     /// Streaming LIKE search that yields results one at a time via AsyncStream
