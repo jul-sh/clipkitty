@@ -2,6 +2,7 @@ import SwiftUI
 import AppKit
 import ClipKittyCore
 import os.log
+import UniformTypeIdentifiers
 
 private let perfLog = OSLog(subsystem: "com.clipkitty.app", category: "UI")
 
@@ -278,7 +279,7 @@ struct ContentView: View {
                         searchQuery: searchText
                     )
                     .equatable()
-                    .listRowInsets(EdgeInsets())
+                    .listRowInsets(EdgeInsets(top: 2, leading: 0, bottom: 2, trailing: 0))
                     .listRowSeparator(.hidden)
                     .listRowBackground(Color.clear)
                     .onTapGesture {
@@ -727,21 +728,39 @@ struct ItemRow: View, Equatable {
 
     var body: some View {
         HStack(spacing: 6) {
-            // Content type icon
-            Group {
+            // Content type icon with source app badge overlay
+            ZStack(alignment: .bottomTrailing) {
+                // Main icon: image thumbnail, browser icon for links, or UTType system icon
+                Group {
+                    if case .image(let data, _) = item.content,
+                       let nsImage = NSImage(data: data) {
+                        Image(nsImage: nsImage)
+                            .resizable()
+                            .aspectRatio(contentMode: .fill)
+                    } else if case .link = item.content,
+                              let browserURL = NSWorkspace.shared.urlForApplication(toOpen: URL(string: "https://")!) {
+                        Image(nsImage: NSWorkspace.shared.icon(forFile: browserURL.path))
+                            .resizable()
+                    } else {
+                        Image(nsImage: NSWorkspace.shared.icon(for: item.content.utType))
+                            .resizable()
+                    }
+                }
+                .frame(width: 32, height: 32)
+                .clipShape(RoundedRectangle(cornerRadius: 4))
+
+                // Badge: Source app icon
                 if let bundleID = item.sourceAppBundleID,
                    let appURL = NSWorkspace.shared.urlForApplication(withBundleIdentifier: bundleID) {
                     Image(nsImage: NSWorkspace.shared.icon(forFile: appURL.path))
                         .resizable()
-                } else {
-                    Image(systemName: item.icon)
-                        .resizable()
-                        .aspectRatio(contentMode: .fit)
-                        .padding(6) // Add some padding so it's not edge-to-edge
-                        .foregroundStyle(isSelected ? .white.opacity(0.9) : .secondary)
+                        .frame(width: 16, height: 16)
+                        .clipShape(RoundedRectangle(cornerRadius: 3))
+                        .shadow(color: .black.opacity(0.3), radius: 1, x: 0, y: 1)
+                        .offset(x: 4, y: 4)
                 }
             }
-            .frame(width: 32, height: 32)
+            .frame(width: 38, height: 38)
 
             // Text content - use AppKit for fast highlighting
             HighlightedTextView(
