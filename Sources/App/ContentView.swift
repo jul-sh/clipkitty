@@ -287,6 +287,10 @@ struct ContentView: View {
                             store.loadMoreSearchResults()
                         }
                     }
+                    .onTapGesture {
+                        selectedItemId = item.stableId
+                        focusSearchField()
+                    }
                 }
             }
             .listStyle(.plain)
