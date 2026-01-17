@@ -1,5 +1,6 @@
 import Foundation
 import GRDB
+import UniformTypeIdentifiers
 
 // MARK: - Content Types with Associated Data
 
@@ -46,6 +47,20 @@ public enum ClipboardContent: Sendable, Equatable {
         case .date: return "calendar"
         case .transit: return "tram"
         case .image: return "photo"
+        }
+    }
+
+    /// UTType for fetching system file-type icons via NSWorkspace
+    public var utType: UTType {
+        switch self {
+        case .text: return .text
+        case .link: return .url
+        case .email: return .emailMessage
+        case .phone: return .vCard
+        case .address: return .text
+        case .date: return .calendarEvent
+        case .transit: return .text
+        case .image: return .image
         }
     }
 
