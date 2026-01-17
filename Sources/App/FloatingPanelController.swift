@@ -99,5 +99,26 @@ final class FloatingPanelController: NSObject, NSWindowDelegate {
     private func selectItem(_ item: ClipboardItem) {
         store.paste(item: item)
         hide()
+        if AppSettings.shared.pasteOnSelect {
+            simulatePaste()
+        }
+    }
+
+    /// Simulate Cmd+V keystroke to paste into the previous app
+    private func simulatePaste() {
+        // Small delay to ensure the previous app is focused
+        DispatchQueue.main.asyncAfter(deadline: .now() + 0.05) {
+            let source = CGEventSource(stateID: .combinedSessionState)
+
+            // Key down: Cmd+V
+            let keyDown = CGEvent(keyboardEventSource: source, virtualKey: 0x09, keyDown: true) // 0x09 = V
+            keyDown?.flags = .maskCommand
+            keyDown?.post(tap: .cghidEventTap)
+
+            // Key up: Cmd+V
+            let keyUp = CGEvent(keyboardEventSource: source, virtualKey: 0x09, keyDown: false)
+            keyUp?.flags = .maskCommand
+            keyUp?.post(tap: .cghidEventTap)
+        }
     }
 }

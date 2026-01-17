@@ -19,7 +19,7 @@ struct ContentView: View {
     let onSelect: (ClipboardItem) -> Void
     let onDismiss: () -> Void
 
-    @State private var selection: String?
+    @State private var selectedItemId: String?
     @State private var searchText: String = ""
     @State private var isCopyHovering: Bool = false
     @State private var showSearchSpinner: Bool = false
@@ -46,14 +46,14 @@ struct ContentView: View {
 
     private var selectedItem: ClipboardItem? {
         measure("selectedItem.get") {
-            guard let selection else { return nil }
-            return items.first { $0.stableId == selection }
+            guard let selectedItemId else { return nil }
+            return items.first { $0.stableId == selectedItemId }
         }
     }
 
     private var selectedIndex: Int? {
-        guard let selection else { return nil }
-        return items.firstIndex { $0.stableId == selection }
+        guard let selectedItemId else { return nil }
+        return items.firstIndex { $0.stableId == selectedItemId }
     }
 
     var body: some View {
@@ -82,7 +82,7 @@ struct ContentView: View {
         .onChange(of: store.displayVersion) { _, _ in
             // Reset local state when store signals a display reset
             searchText = ""
-            selection = nil
+            selectedItemId = nil
             selectFirstItem()
             focusSearchField()
         }
@@ -133,11 +133,11 @@ struct ContentView: View {
     }
 
     private func selectFirstItem() {
-        selection = items.first?.stableId
+        selectedItemId = items.first?.stableId
     }
 
     private func validateSelection() {
-        if selection == nil || !items.contains(where: { $0.stableId == selection }) {
+        if selectedItemId == nil || !items.contains(where: { $0.stableId == selectedItemId }) {
             selectFirstItem()
         }
     }
@@ -149,7 +149,7 @@ struct ContentView: View {
                 return
             }
             let newIndex = max(0, min(items.count - 1, currentIndex + offset))
-            selection = items[newIndex].stableId
+            selectedItemId = items[newIndex].stableId
         }
     }
 
@@ -210,14 +210,14 @@ struct ContentView: View {
         let index = number - 1
         guard index < items.count else { return .ignored }
 
-        selection = items[index].stableId
+        selectedItemId = items[index].stableId
         confirmSelection()
         return .handled
     }
 
-    private func indexForSelection(_ selection: String?) -> Int? {
-        guard let selection else { return nil }
-        return items.firstIndex { $0.stableId == selection }
+    private func indexForItem(_ itemId: String?) -> Int? {
+        guard let itemId else { return nil }
+        return items.firstIndex { $0.stableId == itemId }
     }
 
     // MARK: - Content
@@ -275,7 +275,7 @@ struct ContentView: View {
                 ForEach(Array(items.enumerated()), id: \.element.stableId) { index, item in
                     ItemRow(
                         item: item,
-                        isSelected: item.stableId == selection,
+                        isSelected: item.stableId == selectedItemId,
                         searchQuery: searchText
                     )
                     .equatable()
@@ -283,7 +283,7 @@ struct ContentView: View {
                     .listRowSeparator(.hidden)
                     .listRowBackground(Color.clear)
                     .onTapGesture {
-                        selection = item.stableId
+                        selectedItemId = item.stableId
                     }
                     .onAppear {
                         if index == items.count - 10 {
@@ -295,10 +295,10 @@ struct ContentView: View {
             }
             .listStyle(.plain)
             .scrollContentBackground(.hidden)
-            .onChange(of: selection) { oldSelection, newSelection in
-                guard let newSelection else { return }
-                let oldIndex = indexForSelection(oldSelection)
-                let newIndex = indexForSelection(newSelection)
+            .onChange(of: selectedItemId) { oldItemId, newItemId in
+                guard let newItemId else { return }
+                let oldIndex = indexForItem(oldItemId)
+                let newIndex = indexForItem(newItemId)
                 let shouldAnimate = {
                     guard let oldIndex, let newIndex else { return true }
                     return abs(newIndex - oldIndex) > 1
@@ -306,10 +306,10 @@ struct ContentView: View {
 
                 if shouldAnimate {
                     withAnimation(.easeInOut(duration: 0.2)) {
-                        proxy.scrollTo(newSelection, anchor: .center)
+                        proxy.scrollTo(newItemId, anchor: .center)
                     }
                 } else {
-                    proxy.scrollTo(newSelection, anchor: .center)
+                    proxy.scrollTo(newItemId, anchor: .center)
                 }
             }
         }
@@ -387,7 +387,7 @@ struct ContentView: View {
                         }
                     }
                     Spacer()
-                    Button("⏎ copy") {
+                    Button(AppSettings.shared.pasteOnSelect ? "⏎ paste" : "⏎ copy") {
                         confirmSelection()
                     }
                     .buttonStyle(.plain)
@@ -754,7 +754,7 @@ struct ItemRow: View, Equatable {
                    let appURL = NSWorkspace.shared.urlForApplication(withBundleIdentifier: bundleID) {
                     Image(nsImage: NSWorkspace.shared.icon(forFile: appURL.path))
                         .resizable()
-                        .frame(width: 16, height: 16)
+                        .frame(width: 22, height: 22)
                         .clipShape(RoundedRectangle(cornerRadius: 3))
                         .shadow(color: .black.opacity(0.3), radius: 1, x: 0, y: 1)
                         .offset(x: 4, y: 4)
