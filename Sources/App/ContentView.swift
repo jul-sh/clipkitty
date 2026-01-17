@@ -275,7 +275,11 @@ struct ContentView: View {
                     ItemRow(
                         item: item,
                         isSelected: item.stableId == selectedItemId,
-                        searchQuery: searchText
+                        searchQuery: searchText,
+                        onTap: {
+                            selectedItemId = item.stableId
+                            focusSearchField()
+                        }
                     )
                     .equatable()
                     .listRowInsets(EdgeInsets(top: 2, leading: 0, bottom: 2, trailing: 0))
@@ -286,10 +290,6 @@ struct ContentView: View {
                             store.loadMoreItems()
                             store.loadMoreSearchResults()
                         }
-                    }
-                    .onTapGesture {
-                        selectedItemId = item.stableId
-                        focusSearchField()
                     }
                 }
             }
@@ -608,6 +608,7 @@ struct ItemRow: View, Equatable {
     let item: ClipboardItem
     let isSelected: Bool
     let searchQuery: String
+    let onTap: () -> Void
 
     // Fixed height for exactly 1 line of text at font size 15
     private let rowHeight: CGFloat = 32
@@ -635,6 +636,7 @@ struct ItemRow: View, Equatable {
     }
 
     // Define exactly what constitutes a "change" for SwiftUI diffing
+    // Note: onTap closure is intentionally excluded from equality comparison
     nonisolated static func == (lhs: ItemRow, rhs: ItemRow) -> Bool {
         return lhs.isSelected == rhs.isSelected &&
                lhs.item.stableId == rhs.item.stableId &&
@@ -700,6 +702,7 @@ struct ItemRow: View, Equatable {
         }
         .clipShape(RoundedRectangle(cornerRadius: 10, style: .continuous))
         .contentShape(Rectangle())
+        .onTapGesture(perform: onTap)
         .accessibilityElement(children: .combine)
         .accessibilityLabel(previewText)
         .accessibilityHint("Double tap to paste")
