@@ -2,44 +2,80 @@
 
 <img src="https://raw.githubusercontent.com/jul-sh/clipkitty/gh-pages/icon.png" alt="ClipKitty icon" width="60">
 
-A fast, native clipboard manager for macOS with support for unlimited clipboard history.
+**Never lose a copy again.** ClipKitty is a fast, native clipboard manager for macOS that keeps your entire copy history searchable and instantly accessible—without cluttering your screen.
 
 <img src="https://raw.githubusercontent.com/jul-sh/clipkitty/gh-pages/screenshot.png" alt="ClipKitty screenshot" width="820">
 
-## Features
+## What it does
 
-- **Instant access** – Press ⌥Space (customizable) or click the menu bar icon
-- **Fast search** – FTS5 trigram-powered substring matching
-- **Keyboard-driven** – Arrow keys to navigate, Return to paste
-- **Lightweight** – Native Swift app in the menu bar, no dock icon
-- **Scales to millions** – O(log n) keyset pagination, streaming results, cancellable queries
+- **One hotkey away** – Press ⌥Space to open your clipboard history (customizable)
+- **Search anything** – Find text, links, images, and more with instant full-text search
+- **Keyboard-first** – Navigate with arrows, press Return to paste. Or click to select
+- **Always available** – Lives in your menu bar, never in your dock
+- **Handle anything** – From single characters to millions of items, lightning-fast performance
 
+## Why you'll love it
 
-## Security Audit
+- **Capture everything** – Unlimited clipboard history without performance hits
+- **Search like a pro** – Powerful FTS5 search with substring matching; type as you think
+- **Respectfully minimal** – No ads, no accounts, no telemetry. Just your data, locally
+- **Built right** – Native Swift on macOS, optimized for speed and battery life
 
-ClipKitty execution is local-only; security is enforced by the macOS App Sandbox kernel subsystem.
+## Quick Start
 
-### Constraints
+1. **Download** from [GitHub Releases](https://github.com/jul-sh/clipkitty/releases)
+2. **Open** ClipKitty.app (or drag to Applications)
+3. **Press ⌥Space** to open your clipboard history
+4. **Search** by typing, or use arrow keys to navigate
+5. **Paste** by pressing Return
 
-1. **Sandbox**: Process resides in a containerized root (`~/Library/Containers/com.clipkitty.app`); no access to the user home directory.
-2. **FileSystem**: Entitlements for disk access are omitted; app state is restricted to the internal container.
-3. **Hardware**: No camera, microphone, or location entitlements; the kernel denies access to all telemetry and capture devices.
-4. **Network**: No `com.apple.security.network.*` entitlements; socket creation for external traffic is blocked.
-5. **Automation**: No Apple Events entitlements; the app cannot script other processes or exfiltrate cross-app state.
+That's it. Start copying things, and they'll automatically appear in your history.
 
-### Verification
+## Keyboard Shortcuts
 
-Audit the cryptographic entitlements of the binary:
+| Shortcut | Action |
+|----------|--------|
+| ⌥Space | Toggle clipboard history panel |
+| ↑ / ↓ | Navigate list |
+| Return | Paste selected item |
+| Escape | Close panel |
+| ⌘1–9 | Jump to item 1–9 |
+| Click item | Select & focus search |
+
+All shortcuts are customizable in Settings.
+
+## Privacy & Security
+
+Your clipboard data is **never sent anywhere**. ClipKitty runs entirely offline on your machine.
+
+**What it can access:**
+- Your clipboard (when you copy)
+- Your clipboard history (stored locally in `~/Library/Application Support/ClipKitty`)
+
+**What it cannot access:**
+- Your files, folders, or home directory
+- The internet or any external servers
+- Your camera, microphone, or location
+- Other apps or system processes
+
+This is enforced by macOS itself through [App Sandbox](https://developer.apple.com/app-sandboxing/). Verify the permissions yourself:
 
 ```bash
-codesign -d --entitlements - ClipKitty.app
+codesign -d --entitlements - /Applications/ClipKitty.app
 ```
 
-Expected output:
-* `com.apple.security.app-sandbox`: **true**
-* `com.apple.security.network.client`: **missing**
-* `com.apple.security.automation.apple-events`: **missing**
+You'll see `app-sandbox` is enabled and network/automation entitlements are absent.
 
-## Releases
+## Download
 
-Every commit is released automatically; download the latest build from GitHub Releases.
+Get the latest build from [GitHub Releases](https://github.com/jul-sh/clipkitty/releases). Every commit is automatically built and released.
+
+## Build from Source
+
+```bash
+git clone https://github.com/jul-sh/clipkitty
+cd clipkitty
+make build bundle icon plist
+```
+
+The app will be created at `ClipKitty.app`. Requires macOS 15+ and Swift 6.2+.
