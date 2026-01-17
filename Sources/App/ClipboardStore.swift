@@ -64,6 +64,12 @@ final class ClipboardStore {
     private var dbQueue: DatabaseQueue?
     private var lastChangeCount: Int = 0
     private var pollingTask: Task<Void, Never>?
+
+    // MARK: - Adaptive Polling State
+    private var lastActivityTime: Date = Date()
+    private var isSystemSleeping: Bool = false
+    private var sleepObserver: NSObjectProtocol?
+    private var wakeObserver: NSObjectProtocol?
     private var searchTask: Task<Void, Never>?
     /// Cursor for keyset pagination - timestamp of the oldest loaded item
     private var oldestLoadedTimestamp: Date?
@@ -566,10 +572,21 @@ final class ClipboardStore {
 
     func startMonitoring() {
         pollingTask?.cancel()
+        setupSystemObservers()
+
         pollingTask = Task { [weak self] in
             while !Task.isCancelled {
-                self?.checkForChanges()
-                try? await Task.sleep(for: .milliseconds(500))
+                guard let self else { return }
+
+                // Skip polling entirely while system is sleeping
+                if self.isSystemSleeping {
+                    try? await Task.sleep(for: .milliseconds(500))
+                    continue
+                }
+
+                self.checkForChanges()
+                let interval = self.adaptivePollingInterval()
+                try? await Task.sleep(for: .milliseconds(interval))
             }
         }
     }
@@ -577,6 +594,72 @@ final class ClipboardStore {
     func stopMonitoring() {
         pollingTask?.cancel()
         pollingTask = nil
+        removeSystemObservers()
+    }
+
+    private func setupSystemObservers() {
+        let workspace = NSWorkspace.shared
+        let nc = workspace.notificationCenter
+
+        sleepObserver = nc.addObserver(
+            forName: NSWorkspace.willSleepNotification,
+            object: nil,
+            queue: .main
+        ) { [weak self] _ in
+            Task { @MainActor in
+                self?.isSystemSleeping = true
+            }
+        }
+
+        wakeObserver = nc.addObserver(
+            forName: NSWorkspace.didWakeNotification,
+            object: nil,
+            queue: .main
+        ) { [weak self] _ in
+            Task { @MainActor in
+                self?.isSystemSleeping = false
+                // Brief burst of faster polling after wake to catch any changes
+                self?.lastActivityTime = Date()
+            }
+        }
+    }
+
+    private func removeSystemObservers() {
+        let nc = NSWorkspace.shared.notificationCenter
+        if let observer = sleepObserver {
+            nc.removeObserver(observer)
+            sleepObserver = nil
+        }
+        if let observer = wakeObserver {
+            nc.removeObserver(observer)
+            wakeObserver = nil
+        }
+    }
+
+    /// Returns polling interval in milliseconds based on system state and activity
+    private func adaptivePollingInterval() -> Int {
+        let idleTime = Date().timeIntervalSince(lastActivityTime)
+
+        // Low power mode: always use slower polling
+        if ProcessInfo.processInfo.isLowPowerModeEnabled {
+            return 2000
+        }
+
+        // Adaptive based on idle time
+        switch idleTime {
+        case ..<5:
+            // Recently active: fast polling for responsiveness
+            return 250
+        case ..<30:
+            // Normal usage: balanced polling
+            return 500
+        case ..<120:
+            // Idle: reduce polling frequency
+            return 1000
+        default:
+            // Long idle: minimal polling
+            return 1500
+        }
     }
 
     private func checkForChanges() {
@@ -585,6 +668,9 @@ final class ClipboardStore {
 
         guard currentCount != lastChangeCount else { return }
         lastChangeCount = currentCount
+
+        // User is actively copying - enable faster polling
+        lastActivityTime = Date()
 
         // Skip concealed/sensitive content (e.g. passwords from 1Password, Bitwarden)
         let concealedType = NSPasteboard.PasteboardType("org.nspasteboard.ConcealedType")

@@ -67,6 +67,11 @@ final class AppSettings: ObservableObject {
         didSet { save() }
     }
 
+    /// When true, selecting an item (Enter) pastes into the previous app. When false, just copies to clipboard.
+    @Published var pasteOnSelect: Bool {
+        didSet { save() }
+    }
+
     let maxImageMegapixels: Double
     let imageCompressionQuality: Double
 
@@ -74,6 +79,7 @@ final class AppSettings: ObservableObject {
     private let hotKeyKey = "hotKey"
     private let maxDbSizeKey = "maxDatabaseSizeGB"
     private let legacyMaxDbSizeKey = "maxDatabaseSizeMB"
+    private let pasteOnSelectKey = "pasteOnSelect"
 
     private init() {
         // Initialize all stored properties first
@@ -92,6 +98,9 @@ final class AppSettings: ObservableObject {
             maxDatabaseSizeGB = 2.0
         }
 
+        // Default to true (paste on select) for new installs
+        pasteOnSelect = defaults.object(forKey: pasteOnSelectKey) as? Bool ?? true
+
         maxImageMegapixels = 2.0
         imageCompressionQuality = 0.3
     }
@@ -101,5 +110,6 @@ final class AppSettings: ObservableObject {
             defaults.set(data, forKey: hotKeyKey)
         }
         defaults.set(maxDatabaseSizeGB, forKey: maxDbSizeKey)
+        defaults.set(pasteOnSelect, forKey: pasteOnSelectKey)
     }
 }
