@@ -678,6 +678,7 @@ struct ItemRow: View, Equatable {
                 }
             }
             .frame(width: 38, height: 38)
+            .allowsHitTesting(false)
 
             // Text content - use AppKit for fast highlighting
             HighlightedTextView(
@@ -686,6 +687,7 @@ struct ItemRow: View, Equatable {
                 isSelected: isSelected
             )
             .frame(maxWidth: .infinity, alignment: .leading)
+            .allowsHitTesting(false)
         }
         .frame(maxWidth: .infinity, minHeight: rowHeight, maxHeight: rowHeight, alignment: .leading)
         .padding(.horizontal, 4)
@@ -702,7 +704,10 @@ struct ItemRow: View, Equatable {
         }
         .clipShape(RoundedRectangle(cornerRadius: 10, style: .continuous))
         .contentShape(Rectangle())
-        .onTapGesture(perform: onTap)
+        .onTapGesture {
+            print("DEBUG: ItemRow tapped for item: \(item.displayText.prefix(20))")
+            onTap()
+        }
         .accessibilityElement(children: .combine)
         .accessibilityLabel(previewText)
         .accessibilityHint("Double tap to paste")
