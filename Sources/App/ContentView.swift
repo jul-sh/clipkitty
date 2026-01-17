@@ -704,10 +704,7 @@ struct ItemRow: View, Equatable {
         }
         .clipShape(RoundedRectangle(cornerRadius: 10, style: .continuous))
         .contentShape(Rectangle())
-        .onTapGesture {
-            print("DEBUG: ItemRow tapped for item: \(item.displayText.prefix(20))")
-            onTap()
-        }
+        .onTapGesture(perform: onTap)
         .accessibilityElement(children: .combine)
         .accessibilityLabel(previewText)
         .accessibilityHint("Double tap to paste")
