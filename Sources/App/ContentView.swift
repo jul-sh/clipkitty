@@ -716,7 +716,25 @@ struct ItemRow: View, Equatable {
     private let rowHeight: CGFloat = 32
 
     private var previewText: String {
-        item.displayText
+        let text = item.displayText
+        guard !searchQuery.isEmpty else { return text }
+
+        // Find the first match
+        guard let range = text.range(of: searchQuery, options: .caseInsensitive) else {
+            return text
+        }
+
+        let matchStart = text.distance(from: text.startIndex, to: range.lowerBound)
+
+        // If match is near the start, just show from beginning
+        if matchStart < 20 {
+            return text
+        }
+
+        // Otherwise, start a bit before the match with ellipsis
+        let startOffset = max(0, matchStart - 10)
+        let startIndex = text.index(text.startIndex, offsetBy: startOffset)
+        return "…" + String(text[startIndex...])
     }
 
     // Define exactly what constitutes a "change" for SwiftUI diffing
