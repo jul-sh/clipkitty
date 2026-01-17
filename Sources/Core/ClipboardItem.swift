@@ -57,7 +57,7 @@ public enum ClipboardContent: Sendable, Equatable {
         case .link: return .url
         case .email: return .emailMessage
         case .phone: return .vCard
-        case .address: return .text
+        case .address: return .vCard
         case .date: return .calendarEvent
         case .transit: return .text
         case .image: return .image
