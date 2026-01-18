@@ -104,19 +104,35 @@ let testItems: [TestContent] = [
 
 // MARK: - Database Operations
 
-func getDatabasePath() -> String {
-    // Write to the sandboxed container location that the signed app will read from
+func getDatabasePaths() -> [String] {
     let home = FileManager.default.homeDirectoryForCurrentUser
+
+    // Container path (for sandboxed app)
     let containerPath = home
         .appendingPathComponent("Library/Containers/com.clipkitty.app/Data/Library/Application Support/ClipKitty", isDirectory: true)
+
+    // Regular path (for non-sandboxed app / ad-hoc signed)
+    let regularPath = home
+        .appendingPathComponent("Library/Application Support/ClipKitty", isDirectory: true)
+
     try? FileManager.default.createDirectory(at: containerPath, withIntermediateDirectories: true)
-    return containerPath.appendingPathComponent("clipboard.sqlite").path
+    try? FileManager.default.createDirectory(at: regularPath, withIntermediateDirectories: true)
+
+    return [
+        containerPath.appendingPathComponent("clipboard.sqlite").path,
+        regularPath.appendingPathComponent("clipboard.sqlite").path
+    ]
 }
 
 func populateDatabase() throws {
-    let dbPath = getDatabasePath()
-    print("📂 Database: \(dbPath)")
+    // Populate both paths since ad-hoc signing may not enforce sandbox
+    for dbPath in getDatabasePaths() {
+        print("📂 Database: \(dbPath)")
+        try populateDatabaseAt(path: dbPath)
+    }
+}
 
+func populateDatabaseAt(path dbPath: String) throws {
     let dbQueue = try DatabaseQueue(path: dbPath)
 
     try dbQueue.write { db in
@@ -188,7 +204,6 @@ func populateDatabase() throws {
         """)
     }
 
-    print("✅ Inserted \(testItems.count) items")
 }
 
 // MARK: - Main
@@ -197,7 +212,7 @@ print("📋 Populating ClipKitty database with test data...")
 
 do {
     try populateDatabase()
-    print("✅ Done!")
+    print("✅ Inserted \(testItems.count) items to both database locations")
 } catch {
     print("❌ Error: \(error)")
     exit(1)
