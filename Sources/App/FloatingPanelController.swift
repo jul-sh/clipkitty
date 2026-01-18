@@ -16,6 +16,9 @@ final class FloatingPanelController: NSObject, NSWindowDelegate {
     /// When true, panel won't auto-hide on focus loss (for CI screenshots)
     var keepOpen = false
 
+    /// Initial search query to pre-fill (for CI screenshots)
+    var initialSearchQuery: String?
+
     init(store: ClipboardStore) {
         self.store = store
         super.init()
@@ -42,6 +45,10 @@ final class FloatingPanelController: NSObject, NSWindowDelegate {
         panel.delegate = self
         panel.becomesKeyOnlyIfNeeded = false
 
+        updatePanelContent()
+    }
+
+    private func updatePanelContent() {
         let contentView = ContentView(
             store: store,
             onSelect: { [weak self] item in
@@ -49,9 +56,9 @@ final class FloatingPanelController: NSObject, NSWindowDelegate {
             },
             onDismiss: { [weak self] in
                 self?.hide()
-            }
+            },
+            initialSearchQuery: initialSearchQuery ?? ""
         )
-
         panel.contentView = NSHostingView(rootView: contentView)
     }
 
@@ -77,6 +84,10 @@ final class FloatingPanelController: NSObject, NSWindowDelegate {
 
     func show() {
         previousApp = NSWorkspace.shared.frontmostApplication
+        // Update content to apply any initial search query
+        if initialSearchQuery != nil {
+            updatePanelContent()
+        }
         store.prepareForDisplay()
         centerPanel()
         panel.makeKeyAndOrderFront(nil)
