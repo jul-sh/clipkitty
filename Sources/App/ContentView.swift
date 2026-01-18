@@ -623,22 +623,35 @@ struct ItemRow: View, Equatable {
         let text = item.displayText
         guard !searchQuery.isEmpty else { return text }
 
-        // Find the first match
-        guard let range = text.range(of: searchQuery, options: .caseInsensitive) else {
-            return text
+        // Try exact match first
+        if let range = text.range(of: searchQuery, options: .caseInsensitive) {
+            let matchStart = text.distance(from: text.startIndex, to: range.lowerBound)
+            if matchStart < 20 {
+                return text
+            }
+            let startOffset = max(0, matchStart - 10)
+            let startIndex = text.index(text.startIndex, offsetBy: startOffset)
+            return "…" + String(text[startIndex...])
         }
 
-        let matchStart = text.distance(from: text.startIndex, to: range.lowerBound)
-
-        // If match is near the start, just show from beginning
-        if matchStart < 20 {
-            return text
+        // Fall back to first trigram match
+        if searchQuery.count >= 3 {
+            let chars = Array(searchQuery.lowercased())
+            for i in 0..<(chars.count - 2) {
+                let trigram = String(chars[i..<i+3])
+                if let range = text.range(of: trigram, options: .caseInsensitive) {
+                    let matchStart = text.distance(from: text.startIndex, to: range.lowerBound)
+                    if matchStart < 20 {
+                        return text
+                    }
+                    let startOffset = max(0, matchStart - 10)
+                    let startIndex = text.index(text.startIndex, offsetBy: startOffset)
+                    return "…" + String(text[startIndex...])
+                }
+            }
         }
 
-        // Otherwise, start a bit before the match with ellipsis
-        let startOffset = max(0, matchStart - 10)
-        let startIndex = text.index(text.startIndex, offsetBy: startOffset)
-        return "…" + String(text[startIndex...])
+        return text
     }
 
     // Define exactly what constitutes a "change" for SwiftUI diffing
@@ -760,17 +773,42 @@ struct HighlightedTextView: NSViewRepresentable {
             // Now get the field's attributed string and add highlights to it
             let mutable = field.attributedStringValue.mutableCopy() as! NSMutableAttributedString
             let nsString = text as NSString
-            var searchRange = NSRange(location: 0, length: nsString.length)
             let highlightColor = NSColor.yellow.withAlphaComponent(0.4)
+            var highlightedRanges = Set<NSRange>()
             var matchCount = 0
 
+            // Try exact match first
+            var searchRange = NSRange(location: 0, length: nsString.length)
             while matchCount < 50, searchRange.location < nsString.length {
                 let foundRange = nsString.range(of: query, options: .caseInsensitive, range: searchRange)
                 guard foundRange.location != NSNotFound else { break }
                 mutable.addAttribute(.backgroundColor, value: highlightColor, range: foundRange)
+                highlightedRanges.insert(foundRange)
                 searchRange.location = foundRange.location + foundRange.length
                 searchRange.length = nsString.length - searchRange.location
                 matchCount += 1
+            }
+
+            // If no exact matches, use trigram highlighting
+            if highlightedRanges.isEmpty && query.count >= 3 {
+                let queryLower = query.lowercased()
+                let chars = Array(queryLower)
+                for i in 0..<(chars.count - 2) {
+                    let trigram = String(chars[i..<i+3])
+                    searchRange = NSRange(location: 0, length: nsString.length)
+                    while matchCount < 50, searchRange.location < nsString.length {
+                        let foundRange = nsString.range(of: trigram, options: .caseInsensitive, range: searchRange)
+                        guard foundRange.location != NSNotFound else { break }
+                        let alreadyHighlighted = highlightedRanges.contains { NSIntersectionRange($0, foundRange).length > 0 }
+                        if !alreadyHighlighted {
+                            mutable.addAttribute(.backgroundColor, value: highlightColor, range: foundRange)
+                            highlightedRanges.insert(foundRange)
+                            matchCount += 1
+                        }
+                        searchRange.location = foundRange.location + foundRange.length
+                        searchRange.length = nsString.length - searchRange.location
+                    }
+                }
             }
 
             field.attributedStringValue = mutable
