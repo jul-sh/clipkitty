@@ -40,22 +40,41 @@ jobs:
 
       - name: Take Screenshot
         run: |
-          # Launch app with panel visible and a search query to showcase fuzzy search
-          open -a "$PWD/ClipKitty.app" --args --show-panel --search "fetch"
-          sleep 2
+          # Debug: Check if app exists
+          ls -la "$PWD/ClipKitty.app/Contents/MacOS/"
 
-          # Get the window ID for ClipKitty panel
-          WINDOW_ID=$(osascript -e 'tell application "System Events" to get id of first window of (first process whose name is "ClipKitty")' 2>/dev/null || echo "")
+          # Launch app with panel visible
+          echo "Launching ClipKitty..."
+          "$PWD/ClipKitty.app/Contents/MacOS/ClipKitty" --show-panel --search "fetch" &
+          APP_PID=$!
+          echo "App PID: $APP_PID"
 
-          if [ -n "$WINDOW_ID" ]; then
-            # Capture just the app window (with shadow for nice presentation)
-            screencapture -l "$WINDOW_ID" screenshot.png
-          else
-            # Fallback: capture the front window
-            screencapture -w screenshot.png
-          fi
+          # Wait for app to fully launch
+          sleep 4
+
+          # Debug: Check if app is running
+          echo "Running processes:"
+          pgrep -l ClipKitty || echo "ClipKitty not found in process list"
+          ps aux | grep -i clipkitty | grep -v grep || true
+
+          # Debug: Get app logs
+          echo "App logs:"
+          log show --predicate 'subsystem == "com.clipkitty.app" OR process == "ClipKitty"' --last 30s 2>/dev/null | tail -50 || true
+
+          # Debug: List all windows
+          echo "Windows:"
+          osascript -e 'tell application "System Events" to get name of every window of every process whose visible is true' 2>/dev/null || true
+
+          # Take full screen capture
+          screencapture -x screenshot.png
 
           ls -lh screenshot.png
+
+          # Debug: Check screenshot dimensions
+          sips -g pixelWidth -g pixelHeight screenshot.png
+
+          # Kill the app
+          kill $APP_PID 2>/dev/null || true
 
       - name: Generate Icon PNG
         run: |
