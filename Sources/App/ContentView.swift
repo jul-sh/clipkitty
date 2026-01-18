@@ -77,14 +77,9 @@ struct ContentView: View {
 
         .onAppear {
             // Apply initial search query if provided (for CI screenshots)
-            // Delay slightly to allow items to load first
             if !initialSearchQuery.isEmpty && !didApplyInitialSearch {
+                searchText = initialSearchQuery
                 didApplyInitialSearch = true
-                Task {
-                    // Wait for items to load
-                    try? await Task.sleep(for: .milliseconds(500))
-                    searchText = initialSearchQuery
-                }
             } else {
                 searchText = ""
             }

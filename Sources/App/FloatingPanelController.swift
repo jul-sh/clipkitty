@@ -83,19 +83,15 @@ final class FloatingPanelController: NSObject, NSWindowDelegate {
     }
 
     func show() {
-        NSLog("ClipKitty: FloatingPanelController.show() called")
         previousApp = NSWorkspace.shared.frontmostApplication
         // Update content to apply any initial search query
         if initialSearchQuery != nil {
-            NSLog("ClipKitty: Updating panel content with search query")
             updatePanelContent()
         }
         store.prepareForDisplay()
         centerPanel()
-        NSLog("ClipKitty: Panel frame: \(panel.frame)")
         panel.makeKeyAndOrderFront(nil)
         NSApp.activate(ignoringOtherApps: true)
-        NSLog("ClipKitty: Panel visible: \(panel.isVisible), isKeyWindow: \(panel.isKeyWindow)")
     }
 
     func hide() {

@@ -32,25 +32,16 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate {
         setupMenuBar()
 
         // Support --show-panel launch argument for CI/screenshots
-        let args = CommandLine.arguments
-        NSLog("ClipKitty: Launch arguments: \(args)")
-
-        if args.contains("--show-panel") {
-            NSLog("ClipKitty: --show-panel detected, will show panel")
+        if CommandLine.arguments.contains("--show-panel") {
             panelController.keepOpen = true
 
             // Check for --search argument
-            if let searchIndex = args.firstIndex(of: "--search"),
-               searchIndex + 1 < args.count {
-                let searchQuery = args[searchIndex + 1]
-                panelController.initialSearchQuery = searchQuery
-                NSLog("ClipKitty: Initial search query: \(searchQuery)")
+            if let searchIndex = CommandLine.arguments.firstIndex(of: "--search"),
+               searchIndex + 1 < CommandLine.arguments.count {
+                panelController.initialSearchQuery = CommandLine.arguments[searchIndex + 1]
             }
 
-            // Show panel immediately (no delay needed since app is already set up)
-            NSLog("ClipKitty: Showing panel now")
             panelController.show()
-            NSLog("ClipKitty: Panel show() called")
         }
     }
 
