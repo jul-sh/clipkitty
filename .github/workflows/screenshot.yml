@@ -27,9 +27,21 @@ jobs:
 
       - name: Take Screenshot
         run: |
-          open -a "$PWD/ClipKitty.app" --args --show-panel
-          sleep 3
-          screencapture -x screenshot.png
+          # Launch app with panel visible and a search query to showcase fuzzy search
+          open -a "$PWD/ClipKitty.app" --args --show-panel --search "fetch"
+          sleep 2
+
+          # Get the window ID for ClipKitty panel
+          WINDOW_ID=$(osascript -e 'tell application "System Events" to get id of first window of (first process whose name is "ClipKitty")' 2>/dev/null || echo "")
+
+          if [ -n "$WINDOW_ID" ]; then
+            # Capture just the app window with shadow
+            screencapture -l "$WINDOW_ID" -o screenshot.png
+          else
+            # Fallback: capture the front window
+            screencapture -w -o screenshot.png
+          fi
+
           ls -lh screenshot.png
 
       - name: Generate Icon PNG

@@ -9,118 +9,97 @@ enum TestContent {
     case link(String, sourceApp: String?, bundleID: String?)
 }
 
+// Items ordered for best screenshot appearance - most recent at top
 let testItems: [TestContent] = [
-    // Email address
-    .text("sarah.johnson@techcorp.io", sourceApp: "Mail", bundleID: "com.apple.mail"),
+    // 1. Swift code - will be selected and shown in preview
+    .text("""
+    func fetchUsers() async throws -> [User] {
+        let url = URL(string: "https://api.example.com/users")!
+        let (data, _) = try await URLSession.shared.data(from: url)
+        return try JSONDecoder().decode([User].self, from: data)
+    }
+    """, sourceApp: "Xcode", bundleID: "com.apple.dt.Xcode"),
 
-    // Phone number
-    .text("+1 (555) 867-5309", sourceApp: "Contacts", bundleID: "com.apple.AddressBook"),
-
-    // UUID
-    .text("f47ac10b-58cc-4372-a567-0e02b2c3d479", sourceApp: "Terminal", bundleID: "com.apple.Terminal"),
-
-    // JSON snippet
+    // 2. JSON - shows multiline content handling
     .text("""
     {
       "user": {
         "id": 42,
         "name": "Alice Chen",
+        "email": "alice@example.com",
         "roles": ["admin", "developer"]
       }
     }
     """, sourceApp: "VS Code", bundleID: "com.microsoft.VSCode"),
 
-    // URL - GitHub repo
-    .link("https://github.com/apple/swift-collections", sourceApp: "Safari", bundleID: "com.apple.Safari"),
+    // 3. GitHub link
+    .link("https://github.com/apple/swift", sourceApp: "Safari", bundleID: "com.apple.Safari"),
 
-    // Swift code snippet
+    // 4. SQL query - shows another code type
     .text("""
-    func fetchUsers() async throws -> [User] {
-        let response = try await client.get("/api/users")
-        return try decoder.decode([User].self, from: response.data)
-    }
-    """, sourceApp: "Xcode", bundleID: "com.apple.dt.Xcode"),
-
-    // SQL query
-    .text("""
-    SELECT u.name, COUNT(o.id) as order_count
-    FROM users u
-    LEFT JOIN orders o ON u.id = o.user_id
-    WHERE u.created_at > '2024-01-01'
-    GROUP BY u.id
-    HAVING order_count > 5;
+    SELECT users.name, COUNT(orders.id) AS total
+    FROM users
+    JOIN orders ON users.id = orders.user_id
+    GROUP BY users.id
+    ORDER BY total DESC
+    LIMIT 10;
     """, sourceApp: "TablePlus", bundleID: "com.tinyapp.TablePlus"),
 
-    // URL - Documentation
-    .link("https://developer.apple.com/documentation/swiftui/view", sourceApp: "Safari", bundleID: "com.apple.Safari"),
+    // 5. Terminal command
+    .text("docker compose up -d --build", sourceApp: "Terminal", bundleID: "com.apple.Terminal"),
 
-    // Terminal command
-    .text("git log --oneline --graph --all -20", sourceApp: "Terminal", bundleID: "com.apple.Terminal"),
+    // 6. Email
+    .text("team@clipkitty.app", sourceApp: "Mail", bundleID: "com.apple.mail"),
 
-    // Street address
-    .text("1 Infinite Loop, Cupertino, CA 95014", sourceApp: "Maps", bundleID: "com.apple.Maps"),
-
-    // CSS snippet
+    // 7. Python code
     .text("""
-    .container {
-      display: flex;
-      justify-content: center;
-      gap: 1rem;
-      padding: 2rem;
-    }
-    """, sourceApp: "VS Code", bundleID: "com.microsoft.VSCode"),
-
-    // URL - Stack Overflow
-    .link("https://stackoverflow.com/questions/24002369/how-to-call-objective-c-code-from-swift", sourceApp: "Arc", bundleID: "company.thebrowser.Browser"),
-
-    // Error message
-    .text("Error: SQLITE_CONSTRAINT: UNIQUE constraint failed: users.email", sourceApp: "Terminal", bundleID: "com.apple.Terminal"),
-
-    // Python code
-    .text("""
-    def calculate_metrics(data: list[dict]) -> dict:
-        return {
-            "count": len(data),
-            "avg": sum(d["value"] for d in data) / len(data)
-        }
+    async def fetch_data(url: str) -> dict:
+        async with aiohttp.ClientSession() as session:
+            async with session.get(url) as response:
+                return await response.json()
     """, sourceApp: "PyCharm", bundleID: "com.jetbrains.pycharm"),
 
-    // Markdown text
+    // 8. Documentation link
+    .link("https://developer.apple.com/documentation/swiftui", sourceApp: "Safari", bundleID: "com.apple.Safari"),
+
+    // 9. UUID
+    .text("550e8400-e29b-41d4-a716-446655440000", sourceApp: "Terminal", bundleID: "com.apple.Terminal"),
+
+    // 10. CSS
     .text("""
-    ## Quick Start
-
-    1. Install dependencies: `npm install`
-    2. Run dev server: `npm run dev`
-    3. Open http://localhost:3000
-    """, sourceApp: "Obsidian", bundleID: "md.obsidian"),
-
-    // API endpoint
-    .link("https://api.stripe.com/v1/customers", sourceApp: "Postman", bundleID: "com.postmanlabs.mac"),
-
-    // Regex pattern
-    .text(#"^(?=.*[A-Z])(?=.*[a-z])(?=.*\d)[A-Za-z\d@$!%*?&]{8,}$"#, sourceApp: "VS Code", bundleID: "com.microsoft.VSCode"),
-
-    // Shell script snippet
-    .text("""
-    for file in *.json; do
-        jq '.data[] | select(.active == true)' "$file"
-    done
-    """, sourceApp: "Terminal", bundleID: "com.apple.Terminal"),
-
-    // URL - YouTube
-    .link("https://www.youtube.com/watch?v=dQw4w9WgXcQ", sourceApp: "Arc", bundleID: "company.thebrowser.Browser"),
-
-    // TypeScript interface
-    .text("""
-    interface UserProfile {
-      id: string;
-      email: string;
-      preferences: {
-        theme: 'light' | 'dark';
-        notifications: boolean;
-      };
+    .container {
+      display: grid;
+      grid-template-columns: repeat(auto-fit, minmax(300px, 1fr));
+      gap: 1.5rem;
     }
     """, sourceApp: "VS Code", bundleID: "com.microsoft.VSCode"),
+
+    // 11. TypeScript
+    .text("""
+    interface APIResponse<T> {
+      data: T;
+      status: number;
+      timestamp: Date;
+    }
+    """, sourceApp: "VS Code", bundleID: "com.microsoft.VSCode"),
+
+    // 12. Shell command
+    .text("git rebase -i HEAD~5", sourceApp: "Terminal", bundleID: "com.apple.Terminal"),
+
+    // 13. API endpoint
+    .link("https://api.stripe.com/v1/charges", sourceApp: "Postman", bundleID: "com.postmanlabs.mac"),
+
+    // 14. Error message
+    .text("TypeError: Cannot read property 'map' of undefined", sourceApp: "Chrome", bundleID: "com.google.Chrome"),
+
+    // 15. Markdown
+    .text("""
+    ## Installation
+
+    ```bash
+    brew install clipkitty
+    ```
+    """, sourceApp: "Obsidian", bundleID: "md.obsidian"),
 ]
 
 // MARK: - Database Operations
