@@ -105,12 +105,12 @@ let testItems: [TestContent] = [
 // MARK: - Database Operations
 
 func getDatabasePath() -> String {
-    // Use the same path resolution as the app - applicationSupportDirectory
-    // automatically resolves to container path if sandboxed, regular path if not
-    let appSupport = FileManager.default.urls(for: .applicationSupportDirectory, in: .userDomainMask).first!
-    let appDir = appSupport.appendingPathComponent("ClipKitty", isDirectory: true)
-    try? FileManager.default.createDirectory(at: appDir, withIntermediateDirectories: true)
-    return appDir.appendingPathComponent("clipboard.sqlite").path
+    // Write to the sandboxed container location that the signed app will read from
+    let home = FileManager.default.homeDirectoryForCurrentUser
+    let containerPath = home
+        .appendingPathComponent("Library/Containers/com.clipkitty.app/Data/Library/Application Support/ClipKitty", isDirectory: true)
+    try? FileManager.default.createDirectory(at: containerPath, withIntermediateDirectories: true)
+    return containerPath.appendingPathComponent("clipboard.sqlite").path
 }
 
 func populateDatabase() throws {
