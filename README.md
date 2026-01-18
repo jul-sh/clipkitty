@@ -2,24 +2,26 @@
 
 <img src="https://raw.githubusercontent.com/jul-sh/clipkitty/gh-pages/icon.png" alt="ClipKitty icon" width="60">
 
-**Never lose a copy again.** ClipKitty is a fast, native clipboard manager for macOS that keeps your entire copy history searchable and instantly accessible—without cluttering your screen.
+**The clipboard manager for power users.** ClipKitty is a native macOS app that gives you instant preview, fuzzy search, and a history that scales to millions of items—without slowing down.
 
 <img src="https://raw.githubusercontent.com/jul-sh/clipkitty/gh-pages/screenshot.png" alt="ClipKitty screenshot" width="820">
 
-## What it does
+## Why ClipKitty?
 
-- **One hotkey away** – Press ⌥Space to open your clipboard history (customizable)
-- **Search anything** – Find text, links, images, and more with instant full-text search
-- **Keyboard-first** – Navigate with arrows, press Return to paste. Or click to select
-- **Always available** – Lives in your menu bar, never in your dock
-- **Handle anything** – From single characters to millions of items, lightning-fast performance
+**Instant preview.** See the full content of any item before you paste. Code snippets, multiline text, JSON blobs—no more guessing which "https://..." is the right one.
 
-## Why you'll love it
+**Fuzzy search.** Find what you need even with typos. Search "improt" and still find "import". Whitespace-aware phrase matching when you need precision.
 
-- **Capture everything** – Unlimited clipboard history without performance hits
-- **Search like a pro** – Powerful FTS5 search with substring matching; type as you think
-- **Respectfully minimal** – No ads, no accounts, no telemetry. Just your data, locally
-- **Built right** – Native Swift on macOS, optimized for speed and battery life
+**Scales forever.** Built on SQLite FTS5 with trigram indexing. Your first item loads as fast as your millionth. No lag, no memory bloat, no cleanup prompts.
+
+## Features
+
+- **One hotkey** – ⌥Space opens your history (customizable)
+- **Keyboard-first** – Arrow keys to navigate, Return to paste
+- **Live preview** – See full content in the preview pane as you navigate
+- **Smart search** – Substring matching, fuzzy tolerance, phrase search with trailing space
+- **Images & links** – Stores screenshots, copies link metadata automatically
+- **Privacy-first** – Sandboxed, offline-only, no telemetry
 
 ## Quick Start
 
