@@ -47,11 +47,10 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate {
                 NSLog("ClipKitty: Initial search query: \(searchQuery)")
             }
 
-            DispatchQueue.main.asyncAfter(deadline: .now() + 0.5) { [weak self] in
-                NSLog("ClipKitty: Showing panel now")
-                self?.panelController.show()
-                NSLog("ClipKitty: Panel show() called")
-            }
+            // Show panel immediately (no delay needed since app is already set up)
+            NSLog("ClipKitty: Showing panel now")
+            panelController.show()
+            NSLog("ClipKitty: Panel show() called")
         }
     }
 
