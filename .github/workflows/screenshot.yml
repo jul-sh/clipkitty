@@ -18,20 +18,11 @@ jobs:
         with:
           swift-version: "6.2"
 
-      - name: Build App
-        run: |
-          make
-          make sign
-
-      - name: Populate Database
-        run: swift run PopulateTestData
-
       - name: Set Desktop Background
         run: |
-          # Use a nice macOS Sequoia wallpaper
+          # Use a nice macOS wallpaper
           WALLPAPER="/System/Library/Desktop Pictures/Sequoia Sunrise.heic"
           if [ ! -f "$WALLPAPER" ]; then
-            # Fallback to another system wallpaper
             WALLPAPER=$(find /System/Library/Desktop\ Pictures -name "*.heic" | head -1)
           fi
           if [ -n "$WALLPAPER" ] && [ -f "$WALLPAPER" ]; then
@@ -39,27 +30,13 @@ jobs:
             sleep 1
           fi
 
-      - name: Take Screenshot
-        run: |
-          # Launch app with panel visible (no search - just show items)
-          "$PWD/ClipKitty.app/Contents/MacOS/ClipKitty" --show-panel &
-          APP_PID=$!
-
-          # Wait for app to fully launch and render
-          sleep 3
-
-          # Take screenshot
-          screencapture -x screenshot.png
-          ls -lh screenshot.png
-
-          # Kill the app
-          kill $APP_PID 2>/dev/null || true
+      - name: Build and Screenshot
+        run: make screenshot
 
       - name: Generate Icon PNG
         run: |
-          # Convert compiled .icns to .png for documentation
           sips -s format png ClipKitty.app/Contents/Resources/AppIcon.icns --out icon.png
-          ls -lh icon.png
+          ls -lh screenshot.png icon.png
 
       - name: Upload Screenshot Artifact
         uses: actions/upload-artifact@v4
@@ -72,11 +49,9 @@ jobs:
       - name: Deploy to gh-pages
         if: github.ref == 'refs/heads/main'
         run: |
-          # Configure git
           git config --global user.name "github-actions[bot]"
           git config --global user.email "github-actions[bot]@users.noreply.github.com"
 
-          # Create or update gh-pages via worktree to avoid touching main working tree
           git fetch origin gh-pages || true
           rm -rf /tmp/gh-pages
           if git show-ref --verify --quiet refs/remotes/origin/gh-pages; then
@@ -84,7 +59,6 @@ jobs:
             cd /tmp/gh-pages
             git pull origin gh-pages || true
           else
-            # Create orphan branch: detached worktree, then create orphan inside
             git worktree add --detach /tmp/gh-pages
             cd /tmp/gh-pages
             git checkout --orphan gh-pages
@@ -103,11 +77,5 @@ jobs:
         if: github.ref == 'refs/heads/main'
         run: |
           REPO="${{ github.repository }}"
-          echo "📸 Screenshot URL:"
-          echo "https://raw.githubusercontent.com/$REPO/gh-pages/screenshot.png"
-          echo "🖼️ Icon URL:"
-          echo "https://raw.githubusercontent.com/$REPO/gh-pages/icon.png"
-          echo ""
-          echo "Markdown for README:"
-          echo "![ClipKitty Screenshot](https://raw.githubusercontent.com/$REPO/gh-pages/screenshot.png)"
-          echo "![ClipKitty Icon](https://raw.githubusercontent.com/$REPO/gh-pages/icon.png)"
+          echo "Screenshot: https://raw.githubusercontent.com/$REPO/gh-pages/screenshot.png"
+          echo "Icon: https://raw.githubusercontent.com/$REPO/gh-pages/icon.png"

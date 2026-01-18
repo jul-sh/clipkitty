@@ -8,7 +8,7 @@ ICON_SOURCE := $(SCRIPT_DIR)/AppIcon.icon
 ARCHS ?= arm64 x86_64
 SWIFT_ARCH_FLAGS := $(foreach arch,$(ARCHS),--arch $(arch))
 
-.PHONY: all build bundle icon plist clean
+.PHONY: all build bundle icon plist clean sign screenshot
 
 all: build bundle icon plist
 
@@ -86,3 +86,12 @@ sign:
 
 clean:
 	@rm -rf "$(APP_NAME).app"
+
+screenshot: all
+	@echo "Taking screenshot..."
+	@"$(APP_NAME).app/Contents/MacOS/$(APP_NAME)" --screenshot-mode --show-panel & \
+	APP_PID=$$!; \
+	sleep 2; \
+	screencapture -x screenshot.png; \
+	kill $$APP_PID 2>/dev/null || true
+	@echo "Screenshot saved to screenshot.png"
