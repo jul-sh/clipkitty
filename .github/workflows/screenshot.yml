@@ -25,6 +25,19 @@ jobs:
       - name: Populate Database
         run: swift run PopulateTestData
 
+      - name: Set Desktop Background
+        run: |
+          # Use a nice macOS Sequoia wallpaper
+          WALLPAPER="/System/Library/Desktop Pictures/Sequoia Sunrise.heic"
+          if [ ! -f "$WALLPAPER" ]; then
+            # Fallback to another system wallpaper
+            WALLPAPER=$(find /System/Library/Desktop\ Pictures -name "*.heic" | head -1)
+          fi
+          if [ -n "$WALLPAPER" ] && [ -f "$WALLPAPER" ]; then
+            osascript -e "tell application \"System Events\" to tell every desktop to set picture to \"$WALLPAPER\""
+            sleep 1
+          fi
+
       - name: Take Screenshot
         run: |
           # Launch app with panel visible and a search query to showcase fuzzy search
@@ -35,11 +48,11 @@ jobs:
           WINDOW_ID=$(osascript -e 'tell application "System Events" to get id of first window of (first process whose name is "ClipKitty")' 2>/dev/null || echo "")
 
           if [ -n "$WINDOW_ID" ]; then
-            # Capture just the app window with shadow
-            screencapture -l "$WINDOW_ID" -o screenshot.png
+            # Capture just the app window (with shadow for nice presentation)
+            screencapture -l "$WINDOW_ID" screenshot.png
           else
             # Fallback: capture the front window
-            screencapture -w -o screenshot.png
+            screencapture -w screenshot.png
           fi
 
           ls -lh screenshot.png
