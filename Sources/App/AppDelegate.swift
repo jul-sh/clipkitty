@@ -33,6 +33,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate {
 
         // Support --show-panel launch argument for CI/screenshots
         if CommandLine.arguments.contains("--show-panel") {
+            panelController.keepOpen = true
             DispatchQueue.main.asyncAfter(deadline: .now() + 0.5) { [weak self] in
                 self?.panelController.show()
             }
