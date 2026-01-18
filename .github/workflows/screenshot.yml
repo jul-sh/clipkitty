@@ -49,8 +49,8 @@ jobs:
           APP_PID=$!
           echo "App PID: $APP_PID"
 
-          # Wait for app to fully launch
-          sleep 4
+          # Wait for app to fully launch and load items
+          sleep 5
 
           # Debug: Check if app is running
           echo "Running processes:"
