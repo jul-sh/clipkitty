@@ -34,6 +34,12 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate {
         // Support --show-panel launch argument for CI/screenshots
         if CommandLine.arguments.contains("--show-panel") {
             panelController.keepOpen = true
+            // Check for --search argument
+            if let searchIndex = CommandLine.arguments.firstIndex(of: "--search"),
+               searchIndex + 1 < CommandLine.arguments.count {
+                let searchQuery = CommandLine.arguments[searchIndex + 1]
+                panelController.initialSearchQuery = searchQuery
+            }
             DispatchQueue.main.asyncAfter(deadline: .now() + 0.5) { [weak self] in
                 self?.panelController.show()
             }

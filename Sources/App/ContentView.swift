@@ -18,9 +18,11 @@ struct ContentView: View {
     var store: ClipboardStore
     let onSelect: (ClipboardItem) -> Void
     let onDismiss: () -> Void
+    var initialSearchQuery: String = ""
 
     @State private var selectedItemId: String?
     @State private var searchText: String = ""
+    @State private var didApplyInitialSearch = false
     @State private var showSearchSpinner: Bool = false
     @FocusState private var isSearchFocused: Bool
     private var items: [ClipboardItem] {
@@ -74,13 +76,24 @@ struct ContentView: View {
         .ignoresSafeArea(.all)
 
         .onAppear {
-            searchText = ""
+            // Apply initial search query if provided (for CI screenshots)
+            if !initialSearchQuery.isEmpty && !didApplyInitialSearch {
+                searchText = initialSearchQuery
+                didApplyInitialSearch = true
+            } else {
+                searchText = ""
+            }
             selectFirstItem()
             focusSearchField()
         }
         .onChange(of: store.displayVersion) { _, _ in
             // Reset local state when store signals a display reset
-            searchText = ""
+            // But preserve initial search if it was just applied
+            if didApplyInitialSearch && !initialSearchQuery.isEmpty {
+                didApplyInitialSearch = false // Allow reset next time
+            } else {
+                searchText = ""
+            }
             selectedItemId = nil
             selectFirstItem()
             focusSearchField()
