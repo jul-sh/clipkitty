@@ -13,6 +13,9 @@ final class FloatingPanelController: NSObject, NSWindowDelegate {
     private let store: ClipboardStore
     private var previousApp: NSRunningApplication?
 
+    /// When true, panel won't auto-hide on focus loss (for CI screenshots)
+    var keepOpen = false
+
     init(store: ClipboardStore) {
         self.store = store
         super.init()
@@ -54,7 +57,9 @@ final class FloatingPanelController: NSObject, NSWindowDelegate {
 
     nonisolated func windowDidResignKey(_ notification: Notification) {
         MainActor.assumeIsolated {
-            hide()
+            if !keepOpen {
+                hide()
+            }
         }
     }
 
