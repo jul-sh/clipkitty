@@ -105,6 +105,8 @@ let testItems: [TestContent] = [
 // MARK: - Database Operations
 
 func getDatabasePath() -> String {
+    // Use the same path resolution as the app - applicationSupportDirectory
+    // automatically resolves to container path if sandboxed, regular path if not
     let appSupport = FileManager.default.urls(for: .applicationSupportDirectory, in: .userDomainMask).first!
     let appDir = appSupport.appendingPathComponent("ClipKitty", isDirectory: true)
     try? FileManager.default.createDirectory(at: appDir, withIntermediateDirectories: true)
