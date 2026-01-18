@@ -87,7 +87,8 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate {
             return nil
         }
         image.isTemplate = true
-        image.size = NSSize(width: 18, height: 18)
+        // SVG is 267x168, maintain aspect ratio with height 18
+        image.size = NSSize(width: 29, height: 18)
         return image
     }
 

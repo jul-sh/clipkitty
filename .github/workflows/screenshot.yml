@@ -21,6 +21,7 @@ jobs:
       - name: Build App
         run: |
           make
+          make sign
 
       - name: Populate Database
         run: swift run PopulateTestData
