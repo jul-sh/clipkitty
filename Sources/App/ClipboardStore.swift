@@ -258,11 +258,12 @@ final class ClipboardStore {
     // MARK: - Public API
 
     func setSearchQuery(_ newQuery: String) {
-        let query = newQuery.trimmingCharacters(in: .whitespacesAndNewlines)
+        // No trimming - fuzzy search handles accidental spaces
+        let query = newQuery
 
         searchTask?.cancel()
 
-        if query.isEmpty {
+        if query.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty {
             currentSearchQuery = ""
             oldestSearchTimestamp = nil
             loadItems(reset: true)
@@ -509,56 +510,61 @@ final class ClipboardStore {
         }
 
         // THREE-PHASE SEARCH STRATEGY
-        // Phase 1: FTS5 Prefix Search (instant, no limit) - exact prefix matches
-        let phase1Results = await Task.detached { [query] () -> [ClipboardItem] in
-            measureTime("search.phase1[\(query.prefix(10))]") {
+        // Use the full query including any trailing whitespace for FTS matching
+        let searchTerm = query
+
+        // Phase 1: FTS5 Phrase Search (instant, no limit) - exact substring matches including spaces
+        let phase1Results = await Task.detached { [searchTerm] () -> [ClipboardItem] in
+            measureTime("search.phase1[\(searchTerm.prefix(10))]") {
                 do {
                     return try dbQueue.read { db in
-                        let escapedQuery = query.replacingOccurrences(of: "\"", with: "\"\"")
-                        // Use prefix search: query* for exact prefix matching
+                        let escapedQuery = searchTerm.replacingOccurrences(of: "\"", with: "\"\"")
+                        // Use quoted phrase search for exact substring matching (preserves spaces)
                         let sql = """
                             SELECT items.* FROM items
                             INNER JOIN items_fts ON items.id = items_fts.rowid
                             WHERE items_fts MATCH ?
                             ORDER BY items.timestamp DESC
                         """
-                        return try ClipboardItem.fetchAll(db, sql: sql, arguments: ["\(escapedQuery)*"])
+                        return try ClipboardItem.fetchAll(db, sql: sql, arguments: ["\"\(escapedQuery)\""])
                     }
                 } catch {
-                    logError("Phase 1 prefix search failed: \(error)")
+                    logError("Phase 1 phrase search failed: \(error)")
                     return []
                 }
             }
         }.value
 
+        let rankedPhase1Results = phase1Results
+
         // Update UI with Phase 1 results immediately
         guard !Task.isCancelled else { return }
         guard case .searching(let currentQuery, _) = state, currentQuery == query else { return }
 
-        let phase1Combined = isLoadingMore ? existingResults + phase1Results : phase1Results
+        let phase1Combined = isLoadingMore ? existingResults + rankedPhase1Results : rankedPhase1Results
         state = .searching(query: query, state: .results(phase1Combined, hasMore: true))
 
         let phase1IDs = Set(phase1Results.map { $0.id })
 
         // Phase 2 & 3: Run asynchronously in parallel
-        let phase2And3Task = Task.detached { [query] () -> [ClipboardItem] in
+        let phase2And3Task = Task.detached { [searchTerm] () -> [ClipboardItem] in
             // PHASE 2: Fuzzy search using trigram OR matching for typo tolerance
-            // Build OR query from trigrams to find partial matches
-            let phase2Results: [ClipboardItem] = measureTime("search.phase2[\(query.prefix(10))]") {
+            // Build OR query from trigrams to find partial matches (including spaces)
+            let phase2Results: [ClipboardItem] = measureTime("search.phase2[\(searchTerm.prefix(10))]") {
                 do {
                     return try dbQueue.read { db in
-                        // Generate trigrams from query and search with OR to allow partial matches
-                        let queryLower = query.lowercased()
+                        // Generate trigrams from searchTerm including spaces
+                        let termLower = searchTerm.lowercased()
                         var trigrams: [String] = []
-                        let chars = Array(queryLower)
+                        let chars = Array(termLower)
                         for i in 0..<max(0, chars.count - 2) {
                             let trigram = String(chars[i..<i+3])
-                            // Escape special FTS characters
+                            // Escape special FTS characters but keep spaces
                             let escaped = trigram
                                 .replacingOccurrences(of: "\"", with: "\"\"")
                                 .replacingOccurrences(of: "*", with: "")
-                                .replacingOccurrences(of: "-", with: "")
-                            if !escaped.isEmpty && escaped.count == 3 {
+                            // Keep trigram if it has 3 chars (spaces count)
+                            if escaped.count == 3 {
                                 trigrams.append("\"\(escaped)\"")
                             }
                         }
@@ -586,36 +592,36 @@ final class ClipboardStore {
 
             // PHASE 3: Filter and rank by Levenshtein distance
             // Only keep items within reasonable edit distance, then sort by closeness
-            let phase3Results: [ClipboardItem] = measureTime("search.phase3[\(query.prefix(10))]") {
-                let maxDistance = max(query.count / 2, 3)  // Allow ~50% edits or at least 3
+            let phase3Results: [ClipboardItem] = measureTime("search.phase3[\(searchTerm.prefix(10))]") {
+                let maxDistance = max(searchTerm.count / 2, 3)  // Allow ~50% edits or at least 3
+                let termLower = searchTerm.lowercased()
 
                 return phase2Results
                     .compactMap { item -> (ClipboardItem, Int)? in
                         let content = item.content.textContent.lowercased()
-                        let queryLower = query.lowercased()
 
                         // Find best matching substring in content
                         var bestDistance = Int.max
-                        let windowSize = min(query.count + maxDistance, content.count)
+                        let windowSize = min(searchTerm.count + maxDistance, content.count)
 
                         // Slide window through content to find best match
-                        if content.count >= query.count {
+                        if content.count >= searchTerm.count {
                             let contentChars = Array(content)
-                            for start in 0..<min(contentChars.count - query.count + 1, 100) {
+                            for start in 0..<min(contentChars.count - searchTerm.count + 1, 100) {
                                 let end = min(start + windowSize, contentChars.count)
                                 let substring = String(contentChars[start..<end])
-                                let dist = levenshteinDistance(queryLower, substring)
+                                let dist = levenshteinDistance(termLower, substring)
                                 bestDistance = min(bestDistance, dist)
                                 if bestDistance <= 1 { break }  // Good enough, stop early
                             }
                         } else {
-                            bestDistance = levenshteinDistance(queryLower, content)
+                            bestDistance = levenshteinDistance(termLower, content)
                         }
 
                         return bestDistance <= maxDistance ? (item, bestDistance) : nil
                     }
                     .sorted { $0.1 < $1.1 }  // Sort by distance (lower = better)
-                    .map { $0.0 }  // Extract just the items
+                    .map { $0.0 }
             }
 
             return phase3Results
