@@ -66,6 +66,9 @@ struct ContentView: View {
             }
             .clipped()
         }
+        // Hidden element for UI testing - exposes selected index
+        .accessibilityElement(children: .contain)
+        .accessibilityIdentifier("SelectedIndex_\(selectedIndex ?? -1)")
         // 1. Force the VStack to fill the entire available space
         .frame(maxWidth: .infinity, maxHeight: .infinity)
 
@@ -183,6 +186,7 @@ struct ContentView: View {
                 .textFieldStyle(.plain)
                 .font(.custom(FontManager.sansSerif, size: 17))
                 .focused($isSearchFocused)
+                .accessibilityIdentifier("SearchField")
                 .onKeyPress(.upArrow) {
                     moveSelection(by: -1)
                     return .handled
@@ -296,6 +300,7 @@ struct ContentView: View {
                         }
                     )
                     .equatable()
+                    .accessibilityIdentifier("ItemRow_\(index)")
                     .listRowInsets(EdgeInsets(top: 2, leading: 0, bottom: 2, trailing: 0))
                     .listRowSeparator(.hidden)
                     .listRowBackground(Color.clear)
