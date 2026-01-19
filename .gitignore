@@ -4,5 +4,8 @@ Package.resolved
 *.xcodeproj/
 *.xcworkspace/
 DerivedData/
+*.xcresult/
+screenshot.png
+screenshot-*.png
 .DS_Store
 *.app
