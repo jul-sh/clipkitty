@@ -92,6 +92,9 @@ let testItems: [TestContent] = [
 
 // MARK: - Database Operations
 
+// Use separate database for screenshots to preserve user's real data
+let screenshotDatabaseFilename = "clipboard-screenshot.sqlite"
+
 func getDatabasePaths() -> [String] {
     let home = FileManager.default.homeDirectoryForCurrentUser
 
@@ -107,8 +110,8 @@ func getDatabasePaths() -> [String] {
     try? FileManager.default.createDirectory(at: regularPath, withIntermediateDirectories: true)
 
     return [
-        containerPath.appendingPathComponent("clipboard.sqlite").path,
-        regularPath.appendingPathComponent("clipboard.sqlite").path
+        containerPath.appendingPathComponent(screenshotDatabaseFilename).path,
+        regularPath.appendingPathComponent(screenshotDatabaseFilename).path
     ]
 }
 
