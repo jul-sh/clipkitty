@@ -1,3 +1,4 @@
+# Swift
 .build/
 .swiftpm/
 Package.resolved
@@ -5,8 +6,26 @@ Package.resolved
 *.xcworkspace/
 DerivedData/
 *.xcresult/
+
+# Rust
+rust-core/target/
+rust-core/Cargo.lock
+rust-core/generated/
+rust-core/include/
+rust-core/*.a
+
+# Generated UniFFI bindings (regenerate with: rust-core/scripts/generate-bindings.sh)
+Sources/ClipKittyRust/clipkitty_core.swift
+Sources/ClipKittyRust/clipkitty_coreFFI.h
+Sources/ClipKittyRust/module.modulemap
+Sources/ClipKittyRust/*.a
+Sources/ClipKittyRustWrapper/clipkitty_core.swift
+
+# Screenshots
 screenshot.png
 screenshot-*.png
+
+# macOS
 .DS_Store
 *.app
 

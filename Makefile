@@ -8,11 +8,15 @@ ICON_SOURCE := $(SCRIPT_DIR)/AppIcon.icon
 ARCHS ?= arm64 x86_64
 SWIFT_ARCH_FLAGS := $(foreach arch,$(ARCHS),--arch $(arch))
 
-.PHONY: all build bundle icon plist clean sign screenshot
+.PHONY: all build bundle icon plist clean sign screenshot rust
 
 all: build bundle icon plist
 
-build:
+rust:
+	@echo "Building Rust core..."
+	@cd rust-core && cargo run --bin generate-bindings
+
+build: rust
 	@echo "Building release..."
 	@GIT_CONFIG_COUNT=1 GIT_CONFIG_KEY_0=safe.bareRepository GIT_CONFIG_VALUE_0=all swift build -c release $(SWIFT_ARCH_FLAGS)
 
@@ -89,7 +93,9 @@ clean:
 
 screenshot: all
 	@echo "Generating Xcode project..."
-	@python3 Scripts/GenXcodeproj.py
+	@swift Scripts/GenXcodeproj.swift
+	@echo "Registering app with LaunchServices..."
+	@/System/Library/Frameworks/CoreServices.framework/Frameworks/LaunchServices.framework/Support/lsregister -f ClipKitty.app
 	@echo "Running UI Tests..."
 	@rm -rf DerivedData
 	@xcodebuild test -project ClipKitty.xcodeproj -scheme ClipKittyUITests -destination 'platform=macOS' -derivedDataPath DerivedData
