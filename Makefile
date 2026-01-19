@@ -89,6 +89,10 @@ clean:
 
 screenshot: all
 	@echo "Taking screenshot..."
+	@if [ "$$CI" = "true" ]; then \
+		defaults write com.apple.screencapture location $(pwd); \
+		killall SystemUIServer; \
+	fi
 	@"$(APP_NAME).app/Contents/MacOS/$(APP_NAME)" --screenshot-mode --show-panel & \
 	APP_PID=$$!; \
 	sleep 2; \
