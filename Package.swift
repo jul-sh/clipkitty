@@ -37,6 +37,14 @@ let package = Package(
                 .product(name: "GRDB", package: "GRDB.swift")
             ],
             path: "Scripts/PopulateTestData"
+        ),
+        .testTarget(
+            name: "ClipKittyTests",
+            dependencies: [
+                "ClipKittyCore",
+                .product(name: "GRDB", package: "GRDB.swift")
+            ],
+            path: "Tests"
         )
     ]
 )
