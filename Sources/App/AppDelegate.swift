@@ -25,7 +25,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate {
 
         enableLaunchAtLogin()
 
-        store = ClipboardStore()
+        store = ClipboardStore(screenshotMode: isScreenshotMode)
         if !isScreenshotMode {
             store.startMonitoring()
         }
@@ -55,14 +55,14 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate {
         }
     }
 
-    /// Populate database with test data for screenshots (uses same paths as ClipboardStore)
+    /// Populate database with test data for screenshots (uses separate database to preserve user data)
     private func populateTestDatabase() {
         let appSupport = FileManager.default.urls(for: .applicationSupportDirectory, in: .userDomainMask).first!
         let appDir = appSupport.appendingPathComponent("ClipKitty", isDirectory: true)
         try? FileManager.default.createDirectory(at: appDir, withIntermediateDirectories: true)
-        let dbPath = appDir.appendingPathComponent("clipboard.sqlite").path
+        let dbPath = appDir.appendingPathComponent(ClipboardStore.databaseFilename(screenshotMode: true)).path
 
-        // Remove existing database for clean state
+        // Remove existing screenshot database for clean state (never touches the real database)
         try? FileManager.default.removeItem(atPath: dbPath)
 
         do {
@@ -111,18 +111,18 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate {
                     END
                 """)
 
-                // Insert test items
+                // Insert test items (only built-in macOS apps)
                 let testItems: [(String, String, String)] = [
-                    ("func fibonacci(_ n: Int) -> Int {\n    guard n > 1 else { return n }\n    return fibonacci(n - 1) + fibonacci(n - 2)\n}", "Xcode", "com.apple.dt.Xcode"),
-                    ("SELECT users.name, orders.total\nFROM users\nJOIN orders ON users.id = orders.user_id\nWHERE orders.status = 'completed';", "TablePlus", "com.tinyapp.TablePlus"),
-                    ("The quick brown fox jumps over the lazy dog", "Notes", "com.apple.Notes"),
+                    ("func fibonacci(_ n: Int) -> Int {\n    guard n > 1 else { return n }\n    return fibonacci(n - 1) + fibonacci(n - 2)\n}", "Terminal", "com.apple.Terminal"),
+                    ("SELECT users.name, orders.total\nFROM users\nJOIN orders ON users.id = orders.user_id\nWHERE orders.status = 'completed';", "Terminal", "com.apple.Terminal"),
+                    ("The quick brown fox jumps over the lazy dog", "Mail", "com.apple.mail"),
                     ("https://github.com/anthropics/claude-code", "Safari", "com.apple.Safari"),
                     ("#!/bin/bash\nset -euo pipefail\necho \"Deploying to production...\"", "Terminal", "com.apple.Terminal"),
                     ("meeting@3pm re: Q4 planning", "Mail", "com.apple.mail"),
-                    ("{ \"name\": \"ClipKitty\", \"version\": \"1.0.0\" }", "VS Code", "com.microsoft.VSCode"),
-                    ("rgba(59, 130, 246, 0.5)", "Figma", "com.figma.Desktop"),
+                    ("{ \"name\": \"ClipKitty\", \"version\": \"1.0.0\" }", "Terminal", "com.apple.Terminal"),
+                    ("https://developer.apple.com/documentation/swiftui", "Safari", "com.apple.Safari"),
                     ("npm install --save-dev typescript @types/node", "Terminal", "com.apple.Terminal"),
-                    ("Remember to update the API documentation", "Notion", "notion.id"),
+                    ("Remember to update the API documentation", "Mail", "com.apple.mail"),
                 ]
 
                 let now = Date()
