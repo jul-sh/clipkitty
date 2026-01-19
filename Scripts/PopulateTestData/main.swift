@@ -10,6 +10,7 @@ enum TestContent {
 }
 
 // Items ordered for best screenshot appearance - most recent at top
+// Only uses built-in macOS apps that are guaranteed on every system
 let testItems: [TestContent] = [
     // 1. Swift code - will be selected and shown in preview
     .text("""
@@ -18,7 +19,7 @@ let testItems: [TestContent] = [
         let (data, _) = try await URLSession.shared.data(from: url)
         return try JSONDecoder().decode([User].self, from: data)
     }
-    """, sourceApp: "Xcode", bundleID: "com.apple.dt.Xcode"),
+    """, sourceApp: "Terminal", bundleID: "com.apple.Terminal"),
 
     // 2. JSON - shows multiline content handling
     .text("""
@@ -30,7 +31,7 @@ let testItems: [TestContent] = [
         "roles": ["admin", "developer"]
       }
     }
-    """, sourceApp: "VS Code", bundleID: "com.microsoft.VSCode"),
+    """, sourceApp: "Mail", bundleID: "com.apple.mail"),
 
     // 3. GitHub link
     .link("https://github.com/apple/swift", sourceApp: "Safari", bundleID: "com.apple.Safari"),
@@ -43,63 +44,50 @@ let testItems: [TestContent] = [
     GROUP BY users.id
     ORDER BY total DESC
     LIMIT 10;
-    """, sourceApp: "TablePlus", bundleID: "com.tinyapp.TablePlus"),
+    """, sourceApp: "Terminal", bundleID: "com.apple.Terminal"),
 
     // 5. Terminal command
-    .text("docker compose up -d --build", sourceApp: "Terminal", bundleID: "com.apple.Terminal"),
+    .text("git clone https://github.com/clipkitty/clipkitty.git", sourceApp: "Terminal", bundleID: "com.apple.Terminal"),
 
-    // 6. Email
-    .text("team@clipkitty.app", sourceApp: "Mail", bundleID: "com.apple.mail"),
+    // 6. Email address
+    .text("contact@example.com", sourceApp: "Mail", bundleID: "com.apple.mail"),
 
-    // 7. Python code
+    // 7. Configuration text
     .text("""
-    async def fetch_data(url: str) -> dict:
-        async with aiohttp.ClientSession() as session:
-            async with session.get(url) as response:
-                return await response.json()
-    """, sourceApp: "PyCharm", bundleID: "com.jetbrains.pycharm"),
+    server {
+        listen 80;
+        server_name example.com;
+        root /var/www/html;
+    }
+    """, sourceApp: "Terminal", bundleID: "com.apple.Terminal"),
 
-    // 8. Documentation link
+    // 8. Apple Developer documentation link
     .link("https://developer.apple.com/documentation/swiftui", sourceApp: "Safari", bundleID: "com.apple.Safari"),
 
     // 9. UUID
     .text("550e8400-e29b-41d4-a716-446655440000", sourceApp: "Terminal", bundleID: "com.apple.Terminal"),
 
-    // 10. CSS
+    // 10. SSH command
+    .text("ssh -i ~/.ssh/id_rsa user@example.com -p 2222", sourceApp: "Terminal", bundleID: "com.apple.Terminal"),
+
+    // 11. API endpoint URL
+    .link("https://api.example.com/v1/users", sourceApp: "Safari", bundleID: "com.apple.Safari"),
+
+    // 12. Environment variables
     .text("""
-    .container {
-      display: grid;
-      grid-template-columns: repeat(auto-fit, minmax(300px, 1fr));
-      gap: 1.5rem;
-    }
-    """, sourceApp: "VS Code", bundleID: "com.microsoft.VSCode"),
+    export DATABASE_URL=postgresql://user:pass@localhost/db
+    export API_KEY=sk_live_abc123xyz
+    export DEBUG=true
+    """, sourceApp: "Terminal", bundleID: "com.apple.Terminal"),
 
-    // 11. TypeScript
-    .text("""
-    interface APIResponse<T> {
-      data: T;
-      status: number;
-      timestamp: Date;
-    }
-    """, sourceApp: "VS Code", bundleID: "com.microsoft.VSCode"),
+    // 13. Documentation link
+    .link("https://www.apple.com", sourceApp: "Safari", bundleID: "com.apple.Safari"),
 
-    // 12. Shell command
-    .text("git rebase -i HEAD~5", sourceApp: "Terminal", bundleID: "com.apple.Terminal"),
+    // 14. Code snippet
+    .text("let timer = Timer.scheduledTimer(withTimeInterval: 1.0, repeats: true) { _ in print(\"tick\") }", sourceApp: "Mail", bundleID: "com.apple.mail"),
 
-    // 13. API endpoint
-    .link("https://api.stripe.com/v1/charges", sourceApp: "Postman", bundleID: "com.postmanlabs.mac"),
-
-    // 14. Error message
-    .text("TypeError: Cannot read property 'map' of undefined", sourceApp: "Chrome", bundleID: "com.google.Chrome"),
-
-    // 15. Markdown
-    .text("""
-    ## Installation
-
-    ```bash
-    brew install clipkitty
-    ```
-    """, sourceApp: "Obsidian", bundleID: "md.obsidian"),
+    // 15. Quick note
+    .text("Remember to update the changelog and tag the release before pushing to production", sourceApp: "Terminal", bundleID: "com.apple.Terminal"),
 ]
 
 // MARK: - Database Operations
