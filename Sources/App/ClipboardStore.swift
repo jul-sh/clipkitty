@@ -475,45 +475,51 @@ final class ClipboardStore {
         let cursorTimestamp = isLoadingMore ? oldestSearchTimestamp : nil
         let limit = searchPageSize
 
-        // For short queries, use streaming search that updates UI as results arrive
+        // For short queries (< 3 chars), use simple LIKE search
+        // Trigrams require at least 3 characters, so we fall back to exact substring matching
         if query.count < 3 {
-            var streamedResults = existingResults
-            var lastUpdateTime = CFAbsoluteTimeGetCurrent()
-            let minUpdateInterval: Double = 0.016  // ~60fps, 16ms between updates
+            let likeResults = await Task.detached { [cursorTimestamp, limit] () -> [ClipboardItem] in
+                measureTime("search.like[\(query)]") {
+                    do {
+                        return try dbQueue.read { db in
+                            var sql = "SELECT * FROM items WHERE content LIKE ? ESCAPE '\\'"
+                            // Escape LIKE special characters (%, _, \) in the query
+                            let escapedQuery = query
+                                .replacingOccurrences(of: "\\", with: "\\\\")
+                                .replacingOccurrences(of: "%", with: "\\%")
+                                .replacingOccurrences(of: "_", with: "\\_")
+                            var arguments: [DatabaseValueConvertible] = ["%\(escapedQuery)%"]
 
-            let stream = Self.streamingLikeSearch(
-                dbQueue: dbQueue,
-                query: query,
-                beforeTimestamp: cursorTimestamp,
-                limit: limit
-            )
+                            if let cursor = cursorTimestamp {
+                                sql += " AND timestamp < ?"
+                                arguments.append(cursor)
+                            }
 
-            for await item in stream {
-                guard !Task.isCancelled else { break }
-                guard case .searching(let currentQuery, _) = state, currentQuery == query else { break }
+                            sql += " ORDER BY timestamp DESC LIMIT ?"
+                            arguments.append(limit)
 
-                streamedResults.append(item)
-
-                // Batch UI updates to ~60fps max
-                let now = CFAbsoluteTimeGetCurrent()
-                if now - lastUpdateTime >= minUpdateInterval {
-                    state = .searching(query: query, state: .results(streamedResults, hasMore: true))
-                    lastUpdateTime = now
+                            return try ClipboardItem.fetchAll(db, sql: sql, arguments: StatementArguments(arguments))
+                        }
+                    } catch {
+                        logError("LIKE search failed: \(error)")
+                        return []
+                    }
                 }
-            }
+            }.value
 
-            os_signpost(.end, log: performanceLog, name: "search", signpostID: signpostID, "results=%d", streamedResults.count - existingResults.count)
+            os_signpost(.end, log: performanceLog, name: "search", signpostID: signpostID, "results=%d", likeResults.count)
 
             guard !Task.isCancelled else { return }
             guard case .searching(let currentQuery, _) = state, currentQuery == query else { return }
 
-            // Update cursor and finalize
-            if let oldestItem = streamedResults.last {
+            let finalResults = isLoadingMore ? existingResults + likeResults : likeResults
+
+            // Update cursor for pagination
+            if let oldestItem = finalResults.last {
                 oldestSearchTimestamp = oldestItem.timestamp
             }
-            let newResultsCount = streamedResults.count - existingResults.count
-            let hasMore = newResultsCount == limit
-            state = .searching(query: query, state: .results(streamedResults, hasMore: hasMore))
+            let hasMore = likeResults.count == limit
+            state = .searching(query: query, state: .results(finalResults, hasMore: hasMore))
             return
         }
 
@@ -653,51 +659,6 @@ final class ClipboardStore {
 
         os_signpost(.end, log: performanceLog, name: "search", signpostID: signpostID, "phase1=%d,phase2+3=%d,total=%d",
                     phase1Results.count, phase2And3Results.count, finalResults.count)
-    }
-
-    /// Streaming LIKE search that yields results one at a time via AsyncStream
-    /// Allows UI to update immediately as each result is found
-    private nonisolated static func streamingLikeSearch(
-        dbQueue: DatabaseQueue,
-        query: String,
-        beforeTimestamp: Date?,
-        limit: Int
-    ) -> AsyncStream<ClipboardItem> {
-        AsyncStream { continuation in
-            Task.detached {
-                var count = 0
-                do {
-                    try dbQueue.read { db in
-                        var sql = "SELECT * FROM items WHERE content LIKE ?"
-                        var arguments: [DatabaseValueConvertible] = ["%\(query)%"]
-
-                        if let cursor = beforeTimestamp {
-                            sql += " AND timestamp < ?"
-                            arguments.append(cursor)
-                        }
-
-                        sql += " ORDER BY timestamp DESC"
-
-                        let statement = try db.makeStatement(sql: sql)
-                        try statement.setArguments(StatementArguments(arguments))
-                        let cursor = try Row.fetchCursor(statement)
-
-                        while let row = try cursor.next() {
-                            if Task.isCancelled { break }
-
-                            if let item = try? ClipboardItem(row: row) {
-                                continuation.yield(item)
-                                count += 1
-                                if count >= limit { break }
-                            }
-                        }
-                    }
-                } catch {
-                    logError("Streaming LIKE search failed: \(error)")
-                }
-                continuation.finish()
-            }
-        }
     }
 
     // MARK: - Clipboard Monitoring
