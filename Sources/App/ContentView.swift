@@ -631,18 +631,49 @@ struct ItemRow: View, Equatable {
     private let rowHeight: CGFloat = 32
 
     private var previewText: String {
-        let text = item.displayText
-        guard !searchQuery.isEmpty else { return text }
+        let displayText = item.displayText
+        guard !searchQuery.isEmpty else { return displayText }
+
+        // Search in full content (flattened) to find match position,
+        // since displayText is truncated to 200 chars and may not contain the match
+        let fullText = item.textContent
+
+        // Helper to flatten text (replace newlines/tabs with spaces, collapse consecutive spaces)
+        func flatten(_ text: String, maxChars: Int) -> String {
+            var result = String()
+            result.reserveCapacity(min(maxChars + 1, text.count))
+            var lastWasSpace = false
+            var count = 0
+            for char in text {
+                guard count < maxChars else { break }
+                var c = char
+                if c == "\n" || c == "\t" || c == "\r" { c = " " }
+                if c == " " {
+                    if lastWasSpace { continue }
+                    lastWasSpace = true
+                } else {
+                    lastWasSpace = false
+                }
+                result.append(c)
+                count += 1
+            }
+            return result
+        }
 
         // Try exact match first
-        if let range = text.range(of: searchQuery, options: .caseInsensitive) {
-            let matchStart = text.distance(from: text.startIndex, to: range.lowerBound)
+        if let range = fullText.range(of: searchQuery, options: .caseInsensitive) {
+            let matchStart = fullText.distance(from: fullText.startIndex, to: range.lowerBound)
+            // If match is early in the text, just return displayText (already flattened/truncated)
             if matchStart < 20 {
-                return text
+                return displayText
             }
-            let startOffset = max(0, matchStart - 10)
-            let startIndex = text.index(text.startIndex, offsetBy: startOffset)
-            return "…" + String(text[startIndex...])
+            // Extract context around the match and flatten it
+            let contextStart = max(0, matchStart - 10)
+            let contextEnd = min(fullText.count, matchStart + 200)
+            let startIndex = fullText.index(fullText.startIndex, offsetBy: contextStart)
+            let endIndex = fullText.index(fullText.startIndex, offsetBy: contextEnd)
+            let context = String(fullText[startIndex..<endIndex])
+            return "…" + flatten(context, maxChars: 200)
         }
 
         // Fall back to first trigram match
@@ -650,19 +681,22 @@ struct ItemRow: View, Equatable {
             let chars = Array(searchQuery.lowercased())
             for i in 0..<(chars.count - 2) {
                 let trigram = String(chars[i..<i+3])
-                if let range = text.range(of: trigram, options: .caseInsensitive) {
-                    let matchStart = text.distance(from: text.startIndex, to: range.lowerBound)
+                if let range = fullText.range(of: trigram, options: .caseInsensitive) {
+                    let matchStart = fullText.distance(from: fullText.startIndex, to: range.lowerBound)
                     if matchStart < 20 {
-                        return text
+                        return displayText
                     }
-                    let startOffset = max(0, matchStart - 10)
-                    let startIndex = text.index(text.startIndex, offsetBy: startOffset)
-                    return "…" + String(text[startIndex...])
+                    let contextStart = max(0, matchStart - 10)
+                    let contextEnd = min(fullText.count, matchStart + 200)
+                    let startIndex = fullText.index(fullText.startIndex, offsetBy: contextStart)
+                    let endIndex = fullText.index(fullText.startIndex, offsetBy: contextEnd)
+                    let context = String(fullText[startIndex..<endIndex])
+                    return "…" + flatten(context, maxChars: 200)
                 }
             }
         }
 
-        return text
+        return displayText
     }
 
     // Define exactly what constitutes a "change" for SwiftUI diffing
