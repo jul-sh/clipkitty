@@ -41,8 +41,8 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate {
 
         setupMenuBar()
 
-        // Support --show-panel launch argument for CI/screenshots
-        if CommandLine.arguments.contains("--show-panel") {
+        // Support --screenshot-mode launch argument for CI/screenshots
+        if CommandLine.arguments.contains("--screenshot-mode") {
             panelController.keepOpen = true
 
             // Check for --search argument
