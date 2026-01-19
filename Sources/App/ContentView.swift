@@ -132,6 +132,7 @@ struct ContentView: View {
         }
         .onChange(of: searchText) { _, newValue in
             store.setSearchQuery(newValue)
+            selectFirstItem()
         }
     }
 
@@ -388,9 +389,6 @@ struct ContentView: View {
                 // Metadata footer
                 HStack(spacing: 12) {
                     Label(item.timeAgo, systemImage: "clock")
-                    if item.textContent.count > 100 {
-                        Label(formatSize(item.textContent.count), systemImage: "doc.text")
-                    }
                     if let app = item.sourceApp {
                         HStack(spacing: 4) {
                             if let bundleID = item.sourceAppBundleID,
