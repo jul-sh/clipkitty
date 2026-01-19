@@ -93,7 +93,7 @@ screenshot: all
 		defaults write com.apple.screencapture location $(pwd); \
 		killall SystemUIServer; \
 	fi
-	@"$(APP_NAME).app/Contents/MacOS/$(APP_NAME)" --screenshot-mode --show-panel & \
+	@"$(APP_NAME).app/Contents/MacOS/$(APP_NAME)" --screenshot-mode & \
 	APP_PID=$$!; \
 	sleep 2; \
 	screencapture -x screenshot.png; \
