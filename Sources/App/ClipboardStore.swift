@@ -118,7 +118,10 @@ final class ClipboardStore {
 
     // MARK: - Initialization
 
-    init() {
+    private let isScreenshotMode: Bool
+
+    init(screenshotMode: Bool = false) {
+        self.isScreenshotMode = screenshotMode
         lastChangeCount = NSPasteboard.general.changeCount
         setupDatabase()
         loadItems(reset: true)
@@ -175,6 +178,11 @@ final class ClipboardStore {
 
     // MARK: - Database Setup
 
+    /// Returns the database filename based on mode
+    static func databaseFilename(screenshotMode: Bool) -> String {
+        screenshotMode ? "clipboard-screenshot.sqlite" : "clipboard.sqlite"
+    }
+
     private func setupDatabase() {
         do {
             let appSupport = FileManager.default.urls(for: .applicationSupportDirectory, in: .userDomainMask).first!
@@ -188,7 +196,7 @@ final class ClipboardStore {
                 try FileManager.default.createDirectory(at: appDir, withIntermediateDirectories: true)
             }
 
-            let dbPath = appDir.appendingPathComponent("clipboard.sqlite").path
+            let dbPath = appDir.appendingPathComponent(Self.databaseFilename(screenshotMode: isScreenshotMode)).path
             dbQueue = try DatabaseQueue(path: dbPath, configuration: Configuration())
 
             try dbQueue?.write { db in
