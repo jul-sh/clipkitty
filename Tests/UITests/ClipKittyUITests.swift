@@ -59,64 +59,30 @@ final class ClipKittyUITests: XCTestCase {
 
     // MARK: - Tests
 
-    /// Tests that selection resets to top (index 0) when search text is modified with backspace.
-    /// This test reproduces a race condition where rapid backspace presses could cause
-    /// the selection reset to not take effect due to timing issues with async state updates.
-    func testSearchBackspaceResetsSelectionToTop() throws {
-        // Search field is the first text field (has placeholder "Search clipboard history")
+    /// Tests that selection resets to first when the selected item's position changes in the list.
+    /// Selection should only reset when items are reordered, not on every search text change.
+    func testSelectionResetsWhenItemPositionChanges() throws {
         let searchField = app.textFields.firstMatch
         XCTAssertTrue(searchField.waitForExistence(timeout: 5), "Search field not found")
 
         // Initial state: first item should be selected
         XCTAssertTrue(waitForSelectedIndex(0), "Initial selection should be index 0")
 
-        // Move selection down to item 3 (there are 10 test items)
+        // Move selection down to item 3
         searchField.click()
         for _ in 0..<3 {
             searchField.typeText(XCUIKeyboardKey.downArrow.rawValue)
         }
         Thread.sleep(forTimeInterval: 0.1)
+        XCTAssertEqual(getSelectedIndex(), 3, "Selection should have moved to index 3")
 
-        // Verify selection moved
-        let startIndex = getSelectedIndex()
-        XCTAssertEqual(startIndex, 3, "Selection should have moved to index 3")
-
-        // Type a search query - this should reset selection to 0
+        // Type a search query that filters results - this changes item positions
+        // so selection should reset to first
         searchField.typeText("the")
-        Thread.sleep(forTimeInterval: 0.15)
+        Thread.sleep(forTimeInterval: 0.3)
 
-        // Selection should be at 0 after typing
-        XCTAssertTrue(waitForSelectedIndex(0, timeout: 1), "Selection should reset to top after typing search")
-
-        // Move selection down again
-        searchField.typeText(XCUIKeyboardKey.downArrow.rawValue)
-        Thread.sleep(forTimeInterval: 0.05)
-
-        // Now rapidly delete characters with backspace
-        // Each backspace should reset selection to 0, but the race condition may prevent this
-        var failures: [(queryLen: Int, selectedIndex: Int?)] = []
-
-        for i in (0..<3).reversed() {
-            searchField.typeText(XCUIKeyboardKey.delete.rawValue)
-
-            // Very short delay to trigger race condition
-            Thread.sleep(forTimeInterval: 0.02)
-
-            let currentIndex = getSelectedIndex()
-            if currentIndex != 0 {
-                failures.append((queryLen: i, selectedIndex: currentIndex))
-            }
-        }
-
-        // Report all failures at once for better debugging
-        if !failures.isEmpty {
-            let failureDesc = failures.map { "query length \($0.queryLen): selected \($0.selectedIndex ?? -1)" }.joined(separator: ", ")
-            XCTFail("Selection did not reset to top after backspace: \(failureDesc)")
-        }
-
-        // Final verification after all deletions
-        Thread.sleep(forTimeInterval: 0.2)
-        XCTAssertTrue(waitForSelectedIndex(0, timeout: 1), "Final selection should be at top after clearing search")
+        // Selection should reset because the item order changed
+        XCTAssertTrue(waitForSelectedIndex(0, timeout: 2), "Selection should reset when item positions change")
     }
 
     func testTakeScreenshot() throws {
