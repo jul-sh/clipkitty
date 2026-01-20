@@ -75,11 +75,17 @@ final class AppSettings: ObservableObject {
     let maxImageMegapixels: Double
     let imageCompressionQuality: Double
 
+    /// Whether the user wants launch at login enabled (persisted preference)
+    @Published var launchAtLoginEnabled: Bool {
+        didSet { save() }
+    }
+
     private let defaults = UserDefaults.standard
     private let hotKeyKey = "hotKey"
     private let maxDbSizeKey = "maxDatabaseSizeGB"
     private let legacyMaxDbSizeKey = "maxDatabaseSizeMB"
     private let pasteOnSelectKey = "pasteOnSelect"
+    private let launchAtLoginKey = "launchAtLogin"
 
     private init() {
         // Initialize all stored properties first
@@ -101,6 +107,9 @@ final class AppSettings: ObservableObject {
         // Default to true (paste on select) for new installs
         pasteOnSelect = defaults.object(forKey: pasteOnSelectKey) as? Bool ?? true
 
+        // Default to false - user must explicitly enable launch at login
+        launchAtLoginEnabled = defaults.object(forKey: launchAtLoginKey) as? Bool ?? false
+
         maxImageMegapixels = 2.0
         imageCompressionQuality = 0.3
     }
@@ -111,5 +120,6 @@ final class AppSettings: ObservableObject {
         }
         defaults.set(maxDatabaseSizeGB, forKey: maxDbSizeKey)
         defaults.set(pasteOnSelect, forKey: pasteOnSelectKey)
+        defaults.set(launchAtLoginEnabled, forKey: launchAtLoginKey)
     }
 }
