@@ -1,5 +1,4 @@
 import AppKit
-import ServiceManagement
 import SwiftUI
 import GRDB
 import ClipKittyCore
@@ -22,8 +21,6 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate {
         if isScreenshotMode {
             populateTestDatabase()
         }
-
-        enableLaunchAtLogin()
 
         store = ClipboardStore(screenshotMode: isScreenshotMode)
         if !isScreenshotMode {
@@ -155,16 +152,6 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate {
 
         statusMenu = menu
         statusItem?.menu = menu
-    }
-
-    private func enableLaunchAtLogin() {
-        do {
-            if SMAppService.mainApp.status != .enabled {
-                try SMAppService.mainApp.register()
-            }
-        } catch {
-            logError("Failed to enable launch at login: \(error)")
-        }
     }
 
     private func updateMenuHotKey() {
