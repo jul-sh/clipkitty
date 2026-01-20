@@ -142,8 +142,6 @@ struct ContentView: View {
         }
         .onChange(of: searchText) { _, newValue in
             store.setSearchQuery(newValue)
-            // Reset selection to first item when search text changes
-            selectedItemId = items.first?.stableId
         }
         .onChange(of: itemsOrderSignature) { oldOrder, newOrder in
             // Select first item by default if nothing is selected
@@ -151,7 +149,7 @@ struct ContentView: View {
                 self.selectedItemId = items.first?.stableId
                 return
             }
-            // Reset selection if the selected item's position changed
+            // Reset selection to first if the selected item's position changed
             let oldIndex = oldOrder.firstIndex(of: selectedItemId)
             let newIndex = newOrder.firstIndex(of: selectedItemId)
             if oldIndex != newIndex {
