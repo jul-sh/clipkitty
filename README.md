@@ -3,7 +3,6 @@
 <img src="https://raw.githubusercontent.com/jul-sh/clipkitty/gh-pages/icon.png" alt="ClipKitty icon" width="60">
 
 **The clipboard manager that actually remembers.**
-*When 999 items isn’t enough.*
 
 Most clipboard managers cap out at a few hundred items and call it a day. ClipKitty stores everything; your first item loads as fast as your millionth. Built for people who copy thousands of things and need to find them again.
 
