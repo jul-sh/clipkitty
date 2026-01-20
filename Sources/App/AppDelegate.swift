@@ -16,6 +16,9 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate {
     func applicationDidFinishLaunching(_ notification: Notification) {
         FontManager.registerFonts()
 
+        // Sync launch at login state with user preference
+        syncLaunchAtLogin()
+
         // Use simulated database with test data (for UI tests and screenshots)
         let useSimulatedDb = CommandLine.arguments.contains("--use-simulated-db")
         if useSimulatedDb {
@@ -207,6 +210,35 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate {
 
     @objc private func quit() {
         NSApp.terminate(nil)
+    }
+
+    /// Synchronize launch at login state with user preference on startup.
+    /// This handles cases where:
+    /// - The app was moved to/from Applications directory
+    /// - The system state differs from user preference
+    private func syncLaunchAtLogin() {
+        let launchAtLogin = LaunchAtLogin.shared
+        let settings = AppSettings.shared
+
+        // Refresh the actual system state
+        launchAtLogin.refresh()
+
+        // If user wants launch at login enabled and we're in Applications
+        if settings.launchAtLoginEnabled && launchAtLogin.isInApplicationsDirectory {
+            if !launchAtLogin.isEnabled {
+                // Re-register (handles app being moved/updated)
+                launchAtLogin.enable()
+            }
+        } else if settings.launchAtLoginEnabled && !launchAtLogin.isInApplicationsDirectory {
+            // User wants it enabled but app is not in Applications - disable the preference
+            settings.launchAtLoginEnabled = false
+            if launchAtLogin.isEnabled {
+                launchAtLogin.disable()
+            }
+        } else if !settings.launchAtLoginEnabled && launchAtLogin.isEnabled {
+            // User doesn't want it but it's enabled - disable it
+            launchAtLogin.disable()
+        }
     }
 
     func applicationWillTerminate(_ notification: Notification) {

@@ -8,6 +8,7 @@ enum HotKeyEditState: Equatable {
 
 struct SettingsView: View {
     @ObservedObject private var settings = AppSettings.shared
+    @ObservedObject private var launchAtLogin = LaunchAtLogin.shared
     @State private var hotKeyState: HotKeyEditState = .idle
     @State private var showClearConfirmation = false
     @State private var showLogs = false
@@ -65,6 +66,17 @@ struct SettingsView: View {
                 Text("When enabled, pressing Enter pastes into the previous app. When disabled, it only copies to the clipboard.")
                     .font(.caption)
                     .foregroundStyle(.secondary)
+            }
+
+            Section("Startup") {
+                Toggle("Launch at login", isOn: launchAtLoginBinding)
+                    .disabled(!launchAtLogin.isInApplicationsDirectory)
+
+                if !launchAtLogin.isInApplicationsDirectory {
+                    Text("Move ClipKitty to the Applications folder to enable this option.")
+                        .font(.caption)
+                        .foregroundStyle(.secondary)
+                }
             }
 
             Section("Storage") {
@@ -139,6 +151,17 @@ struct SettingsView: View {
         .sheet(isPresented: $showLogs) {
             LogsView()
         }
+    }
+
+    private var launchAtLoginBinding: Binding<Bool> {
+        Binding(
+            get: { launchAtLogin.isEnabled },
+            set: { newValue in
+                if launchAtLogin.setEnabled(newValue) {
+                    settings.launchAtLoginEnabled = newValue
+                }
+            }
+        )
     }
 
     private var databaseSizeSlider: Binding<Double> {
