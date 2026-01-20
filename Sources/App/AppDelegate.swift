@@ -16,14 +16,14 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate {
     func applicationDidFinishLaunching(_ notification: Notification) {
         FontManager.registerFonts()
 
-        // Screenshot mode: populate fresh database with test data
-        let isScreenshotMode = CommandLine.arguments.contains("--screenshot-mode")
-        if isScreenshotMode {
+        // Use simulated database with test data (for UI tests and screenshots)
+        let useSimulatedDb = CommandLine.arguments.contains("--use-simulated-db")
+        if useSimulatedDb {
             populateTestDatabase()
         }
 
-        store = ClipboardStore(screenshotMode: isScreenshotMode)
-        if !isScreenshotMode {
+        store = ClipboardStore(screenshotMode: useSimulatedDb)
+        if !useSimulatedDb {
             store.startMonitoring()
         }
 
@@ -38,8 +38,8 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate {
 
         setupMenuBar()
 
-        // Support --screenshot-mode launch argument for CI/screenshots
-        if CommandLine.arguments.contains("--screenshot-mode") {
+        // When using simulated DB, show the panel immediately and keep it open
+        if useSimulatedDb {
             panelController.keepOpen = true
 
             // Check for --search argument

@@ -22,7 +22,7 @@ final class ClipKittyUITests: XCTestCase {
         }
         let appURL = URL(fileURLWithPath: appPath)
         app = XCUIApplication(url: appURL)
-        app.launchArguments = ["--screenshot-mode"]
+        app.launchArguments = ["--use-simulated-db"]
         app.launch()
 
         let window = app.dialogs.firstMatch
