@@ -38,10 +38,8 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate {
 
         setupMenuBar()
 
-        // When using simulated DB, show the panel immediately and keep it open
+        // When using simulated DB, show the panel immediately
         if useSimulatedDb {
-            panelController.keepOpen = true
-
             // Check for --search argument
             if let searchIndex = CommandLine.arguments.firstIndex(of: "--search"),
                searchIndex + 1 < CommandLine.arguments.count {
