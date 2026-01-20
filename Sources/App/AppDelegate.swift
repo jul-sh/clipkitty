@@ -53,6 +53,12 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate {
         }
     }
 
+    func applicationDidBecomeActive(_ notification: Notification) {
+        if panelController?.visibility == .hidden {
+            panelController?.show()
+        }
+    }
+
     /// Populate database with test data for screenshots (uses separate database to preserve user data)
     private func populateTestDatabase() {
         let appSupport = FileManager.default.urls(for: .applicationSupportDirectory, in: .userDomainMask).first!
