@@ -9,3 +9,7 @@ screenshot.png
 screenshot-*.png
 .DS_Store
 *.app
+
+# Rust build artifacts
+rust-core/target/
+rust-core/Cargo.lock
