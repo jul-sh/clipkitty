@@ -4,7 +4,7 @@
 
 **The clipboard manager that actually remembers.**
 
-Most clipboard managers cap out at a few hundred items and call it a day. ClipKitty stores everything; your first item loads as fast as your millionth. Built for people who copy thousands of things and need to find them again.
+Most clipboard managers cap out at a few hundred items and call it a day. ClipKitty stores everything; optimized fuzzy search let's you find your last item as quickly as your millionth. Built for people who copy thousands of things and need to find them again.
 
 <img src="https://raw.githubusercontent.com/jul-sh/clipkitty/gh-pages/screenshot.png" alt="ClipKitty screenshot" width="820">
 
