@@ -70,6 +70,21 @@ jobs:
         with:
           swift-version: '6.2'
 
+      - name: Setup Rust
+        uses: dtolnay/rust-toolchain@stable
+        with:
+          targets: aarch64-apple-darwin,x86_64-apple-darwin
+
+      - name: Generate Rust Bindings
+        run: |
+          cd rust-core
+          chmod +x scripts/generate-bindings.sh
+          scripts/generate-bindings.sh
+
+      - name: Build App
+        run: |
+          make
+
       - name: Run UI Tests
         run: |
           make screenshot
