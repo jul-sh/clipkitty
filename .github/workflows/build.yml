@@ -42,6 +42,7 @@ jobs:
           gh release create "commit-${GITHUB_SHA}" \
             --title "ClipKitty ${GITHUB_SHA}" \
             --generate-notes \
+            --prerelease \
             ClipKitty.app.zip
         env:
           GH_TOKEN: ${{ github.token }}
