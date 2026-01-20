@@ -2,77 +2,63 @@
 
 <img src="https://raw.githubusercontent.com/jul-sh/clipkitty/gh-pages/icon.png" alt="ClipKitty icon" width="60">
 
-**The clipboard manager for power users.** ClipKitty is a native macOS app that gives you instant preview, fuzzy search, and a history that scales to millions of items—without slowing down.
+**The clipboard manager that actually remembers.**
+*When 999 items isn’t enough.*
+
+Most clipboard managers cap out at a few hundred items and call it a day. ClipKitty stores everything; your first item loads as fast as your millionth. Built for people who copy thousands of things and need to find them again.
 
 <img src="https://raw.githubusercontent.com/jul-sh/clipkitty/gh-pages/screenshot.png" alt="ClipKitty screenshot" width="820">
 
-## Why ClipKitty?
+## The problem
 
-**Instant preview.** See the full content of any item before you paste. Code snippets, multiline text, JSON blobs—no more guessing which "https://..." is the right one.
+You copied that API response last week. That error message yesterday. That address three months ago. Your clipboard manager either forgot it, slowed to a crawl searching for it, or truncated half of it.
 
-**Fuzzy search.** Find what you need even with typos. Search "improt" and still find "import". Whitespace-aware phrase matching when you need precision.
+**ClipKitty doesn’t forget.** SQLite FTS5 with trigram indexing means search stays instant at any scale. No item limits, no time limits, no character limits.
 
-**Scales forever.** Built on SQLite FTS5 with trigram indexing. Your first item loads as fast as your millionth. No lag, no memory bloat, no cleanup prompts.
+## Why ClipKitty over alternatives?
+
+**vs Maccy**: Maccy caps at 999 items, and its search slows down past 200. ClipKitty keeps unlimited history, scaling to millions with no performance degradation. With ClipKitty offers a life multi-line preview pane instead of waiting for tooltips.
+
+**vs Raycast**: Raycast truncates items at ~32k characters and limits free history to 3 months. ClipKitty has no character limits and keeps everything forever. Fully offline; your clipboard never touches the cloud.
+
+**vs Paste**: ClipKitty forces no no subscription. Just a fast, local clipboard manager you own outright. Fast fuzzy search on top.
 
 ## Features
 
-- **One hotkey** – ⌥Space opens your history (customizable)
-- **Keyboard-first** – Arrow keys to navigate, Return to paste
-- **Live preview** – See full content in the preview pane as you navigate
-- **Smart search** – Substring matching, fuzzy tolerance, phrase search with trailing space
-- **Images & links** – Stores screenshots, copies link metadata automatically
-- **Privacy-first** – Sandboxed, offline-only, no telemetry
+- **Fuzzy search that scales**: Type “improt” and find “import”. Stays fast whether you have 100 items or 100,000.
+- **Live preview**: See full content as you navigate. No truncation, no waiting for tooltips.
+- **Keyboard-first**: ⌥Space to open, arrow keys to navigate, Return to paste.
+- **Privacy-first**: Sandboxed, offline-only, no telemetry. Verify it yourself with `codesign -d --entitlements -`.
 
-## Quick Start
+## Quick start
 
-1. **Download** from [GitHub Releases](https://github.com/jul-sh/clipkitty/releases)
-2. **Open** ClipKitty.app (or drag to Applications)
-3. **Press ⌥Space** to open your clipboard history
-4. **Search** by typing, or use arrow keys to navigate
-5. **Paste** by pressing Return
+1. Download from [GitHub Releases](https://github.com/jul-sh/clipkitty/releases)
+1. Press **⌥Space** to open your clipboard history
+1. Type to search, arrow keys to navigate, Return to paste
 
-That's it. Start copying things, and they'll automatically appear in your history.
+## Keyboard shortcuts
 
-## Keyboard Shortcuts
-
-| Shortcut | Action |
-|----------|--------|
-| ⌥Space | Toggle clipboard history panel |
-| ↑ / ↓ | Navigate list |
-| Return | Paste selected item |
-| Escape | Close panel |
-| ⌘1–9 | Jump to item 1–9 |
-| Click item | Select & focus search |
+|Shortcut|Action                |
+|--------|----------------------|
+|⌥Space  |Open clipboard history|
+|↑ / ↓   |Navigate              |
+|Return  |Paste selected item   |
+|⌘1–9    |Jump to item 1–9      |
+|Escape  |Close                 |
 
 All shortcuts are customizable in Settings.
 
-## Privacy & Security
+## Privacy
 
-Your clipboard data is **never sent anywhere**. ClipKitty runs entirely offline on your machine.
+Your clipboard data never leaves your machine. ClipKitty runs entirely offline.
 
-**What it can access:**
-- Your clipboard (when you copy)
-- Your clipboard history (stored locally in `~/Library/Application Support/ClipKitty`)
-
-**What it cannot access:**
-- Your files, folders, or home directory
-- The internet or any external servers
-- Your camera, microphone, or location
-- Other apps or system processes
-
-This is enforced by macOS itself through [App Sandbox](https://developer.apple.com/app-sandboxing/). Verify the permissions yourself:
+The app is sandboxed by macOS. It can access your clipboard and its own local storage (`~/Library/Application Support/ClipKitty`). It cannot access the internet, your files, or other apps. You can verify:
 
 ```bash
 codesign -d --entitlements - /Applications/ClipKitty.app
 ```
 
-You'll see `app-sandbox` is enabled and network/automation entitlements are absent.
-
-## Download
-
-Get the latest build from [GitHub Releases](https://github.com/jul-sh/clipkitty/releases). Every commit is automatically built and released.
-
-## Build from Source
+## Building from source
 
 ```bash
 git clone https://github.com/jul-sh/clipkitty
@@ -80,4 +66,4 @@ cd clipkitty
 make build bundle icon plist
 ```
 
-The app will be created at `ClipKitty.app`. Requires macOS 15+ and Swift 6.2+.
+Requires macOS 15+ and Swift 6.2+.
