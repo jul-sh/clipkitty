@@ -499,7 +499,7 @@ struct ContentView: View {
                     .resizable()
                     .aspectRatio(contentMode: .fit)
                     .frame(maxWidth: .infinity)
-                    .clipShape(RoundedRectangle(cornerRadius: 8))
+                    .clipShape(RoundedRectangle(cornerRadius: 10))
             } else {
                 // Placeholder based on metadata state
                 RoundedRectangle(cornerRadius: 8)
@@ -573,6 +573,9 @@ struct TextPreviewView: NSViewRepresentable {
         let scrollView = NSScrollView()
         scrollView.hasVerticalScroller = true
         scrollView.drawsBackground = false
+        scrollView.automaticallyAdjustsContentInsets = false
+        scrollView.contentInsets = NSEdgeInsets(top: 0, left: 0, bottom: 0, right: 0)
+        scrollView.scrollerInsets = NSEdgeInsets(top: 0, left: 0, bottom: 0, right: 0)
 
         let textView = NSTextView()
         textView.isEditable = false
@@ -595,6 +598,11 @@ struct TextPreviewView: NSViewRepresentable {
 
     func updateNSView(_ nsView: NSScrollView, context: Context) {
         guard let textView = nsView.documentView as? NSTextView else { return }
+
+        // Ensure insets are zero even if the system tries to adjust them
+        nsView.automaticallyAdjustsContentInsets = false
+        nsView.contentInsets = NSEdgeInsets(top: 0, left: 0, bottom: 0, right: 0)
+        nsView.scrollerInsets = NSEdgeInsets(top: 0, left: 0, bottom: 0, right: 0)
 
         let font = NSFont(name: fontName, size: fontSize) ?? NSFont.monospacedSystemFont(ofSize: fontSize, weight: .regular)
 
@@ -747,7 +755,7 @@ struct ItemRow: View, Equatable {
                     }
                 }
                 .frame(width: 32, height: 32)
-                .clipShape(RoundedRectangle(cornerRadius: 4))
+                .clipShape(RoundedRectangle(cornerRadius: 6))
 
                 // Badge: Source app icon (skip for links since browser icon is already shown)
                 if case .link = item.content {} else if let bundleID = item.sourceAppBundleID,
@@ -785,7 +793,7 @@ struct ItemRow: View, Equatable {
                 Color.clear
             }
         }
-        .clipShape(RoundedRectangle(cornerRadius: 10, style: .continuous))
+        .clipShape(RoundedRectangle(cornerRadius: 14, style: .continuous))
         .contentShape(Rectangle())
         .onTapGesture(perform: onTap)
         .accessibilityElement(children: .combine)

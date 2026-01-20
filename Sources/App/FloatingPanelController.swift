@@ -42,6 +42,11 @@ final class FloatingPanelController: NSObject, NSWindowDelegate {
         panel.delegate = self
         panel.becomesKeyOnlyIfNeeded = false
 
+        // Add empty toolbar to get macOS Tahoe's 26pt corner radius (vs 16pt for titlebar-only windows)
+        let toolbar = NSToolbar()
+        panel.toolbar = toolbar
+        panel.toolbar?.isVisible = false
+
         updatePanelContent()
     }
 
