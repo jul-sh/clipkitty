@@ -91,6 +91,10 @@ struct ContentView: View {
             } else {
                 searchText = ""
             }
+            // Select first item if nothing selected
+            if selectedItemId == nil {
+                selectedItemId = items.first?.stableId
+            }
             focusSearchField()
         }
         .onChange(of: store.displayVersion) { _, _ in
