@@ -57,6 +57,11 @@ struct ContentView: View {
         return items.firstIndex { $0.stableId == selectedItemId }
     }
 
+    /// The order signature of displayed items - changes when items are reordered
+    private var itemsOrderSignature: [String] {
+        items.map { $0.stableId }
+    }
+
     var body: some View {
         VStack(spacing: 0) {
             searchBar
@@ -86,7 +91,6 @@ struct ContentView: View {
             } else {
                 searchText = ""
             }
-            selectFirstItem()
             focusSearchField()
         }
         .onChange(of: store.displayVersion) { _, _ in
@@ -98,11 +102,14 @@ struct ContentView: View {
                 searchText = ""
             }
             selectedItemId = nil
-            selectFirstItem()
             focusSearchField()
         }
         .onChange(of: store.state) { _, newState in
-            validateSelection()
+            // Validate selection - ensure selected item still exists in results
+            if let selectedItemId, !items.contains(where: { $0.stableId == selectedItemId }) {
+                self.selectedItemId = items.first?.stableId
+            }
+
             // Show spinner only after 200ms delay to avoid flicker on fast searches
             let isLoading: Bool = {
                 if case .searching(_, let searchState) = newState {
@@ -135,7 +142,21 @@ struct ContentView: View {
         }
         .onChange(of: searchText) { _, newValue in
             store.setSearchQuery(newValue)
-            selectFirstItem()
+            // Reset selection to first item when search text changes
+            selectedItemId = items.first?.stableId
+        }
+        .onChange(of: itemsOrderSignature) { oldOrder, newOrder in
+            // Select first item by default if nothing is selected
+            guard let selectedItemId else {
+                self.selectedItemId = items.first?.stableId
+                return
+            }
+            // Reset selection if the selected item's position changed
+            let oldIndex = oldOrder.firstIndex(of: selectedItemId)
+            let newIndex = newOrder.firstIndex(of: selectedItemId)
+            if oldIndex != newIndex {
+                self.selectedItemId = items.first?.stableId
+            }
         }
     }
 
@@ -148,20 +169,10 @@ struct ContentView: View {
         }
     }
 
-    private func selectFirstItem() {
-        selectedItemId = items.first?.stableId
-    }
-
-    private func validateSelection() {
-        if selectedItemId == nil || !items.contains(where: { $0.stableId == selectedItemId }) {
-            selectFirstItem()
-        }
-    }
-
     private func moveSelection(by offset: Int) {
         measure("moveSelection") {
             guard let currentIndex = selectedIndex else {
-                selectFirstItem()
+                selectedItemId = items.first?.stableId
                 return
             }
             let newIndex = max(0, min(items.count - 1, currentIndex + offset))
