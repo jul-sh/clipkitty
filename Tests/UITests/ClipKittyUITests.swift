@@ -59,6 +59,17 @@ final class ClipKittyUITests: XCTestCase {
 
     // MARK: - Tests
 
+    /// Tests that first item is selected on initial open.
+    /// There should always be an item selected when items exist.
+    func testFirstItemSelectedOnOpen() throws {
+        // First item should be selected immediately after open
+        XCTAssertTrue(waitForSelectedIndex(0, timeout: 3), "First item should be selected on open")
+
+        // Verify we actually have items
+        let buttons = app.outlines.firstMatch.buttons.allElementsBoundByIndex
+        XCTAssertGreaterThan(buttons.count, 0, "Should have items in the list")
+    }
+
     /// Tests that selection resets to first when the selected item's position changes in the list.
     /// Selection should only reset when items are reordered, not on every search text change.
     func testSelectionResetsWhenItemPositionChanges() throws {
