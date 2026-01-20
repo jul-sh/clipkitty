@@ -96,6 +96,22 @@ final class ClipKittyUITests: XCTestCase {
         XCTAssertTrue(waitForSelectedIndex(0, timeout: 2), "Selection should reset when item positions change")
     }
 
+    /// Tests that the panel hides when focus moves to another application.
+    /// This is Spotlight-like behavior - the panel should auto-dismiss on focus loss.
+    func testPanelHidesOnFocusLoss() throws {
+        let window = app.dialogs.firstMatch
+        XCTAssertTrue(window.exists, "Window should be visible initially")
+
+        // Click somewhere outside the app to lose focus
+        // We'll use Finder as the other app
+        let finder = XCUIApplication(bundleIdentifier: "com.apple.finder")
+        finder.activate()
+
+        // Wait for the window to disappear
+        let disappeared = window.waitForNonExistence(timeout: 3)
+        XCTAssertTrue(disappeared, "Window should hide when focus moves to another app")
+    }
+
     func testTakeScreenshot() throws {
         // Wait for animations or loading
         sleep(2)
