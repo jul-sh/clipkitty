@@ -10,14 +10,16 @@ func generateUUID() -> String {
 let projectName = "ClipKitty"
 let targetName = "ClipKittyUITests"
 let bundleId = "com.clipkitty.UITests"
-let sourceFile = "Tests/UITests/ClipKittyUITests.swift"
+
+// Find all swift files in Tests/UITests
+let fm = FileManager.default
+let uiTestsPath = "Tests/UITests"
+let sourceFiles: [String] = (try? fm.contentsOfDirectory(atPath: uiTestsPath))?.filter { $0.hasSuffix(".swift") }.map { "\(uiTestsPath)/\($0)" } ?? []
 
 // UUIDs
 let pbxProjectId = generateUUID()
 let pbxGroupMainId = generateUUID()
 let pbxGroupTestsId = generateUUID()
-let pbxFileSourceId = generateUUID()
-let pbxBuildFileId = generateUUID()
 let pbxNativeTargetId = generateUUID()
 let pbxConfigListProjectId = generateUUID()
 let pbxConfigListTargetId = generateUUID()
@@ -31,9 +33,18 @@ let pbxResourcesBuildPhaseId = generateUUID()
 let pbxProductRefId = generateUUID()
 let pbxGroupProductsId = generateUUID()
 
-let sourceBasename = URL(fileURLWithPath: sourceFile).lastPathComponent
+struct SourceFile {
+    let path: String
+    let basename: String
+    let fileId: String
+    let buildId: String
+}
 
-let content = """
+let sources = sourceFiles.map { path -> SourceFile in
+    SourceFile(path: path, basename: URL(fileURLWithPath: path).lastPathComponent, fileId: generateUUID(), buildId: generateUUID())
+}
+
+var content = """
 // !$*UTF8*$!
 {
 	archiveVersion = 1;
@@ -43,12 +54,26 @@ let content = """
 	objects = {
 
 /* Begin PBXBuildFile section */
-		\(pbxBuildFileId) /* \(sourceBasename) in Sources */ = {isa = PBXBuildFile; fileRef = \(pbxFileSourceId) /* \(sourceBasename) */; };
+"""
+
+for source in sources {
+    content += "\n\t\t\(source.buildId) /* \(source.basename) in Sources */ = {isa = PBXBuildFile; fileRef = \(source.fileId) /* \(source.basename) */; };"
+}
+
+content += """
+
 /* End PBXBuildFile section */
 
 /* Begin PBXFileReference section */
-		\(pbxFileSourceId) /* \(sourceBasename) */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = "\(sourceFile)"; sourceTree = "<group>"; };
-		\(pbxProductRefId) /* \(targetName).xctest */ = {isa = PBXFileReference; explicitFileType = wrapper.cfbundle; includeInIndex = 0; path = "\(targetName).xctest"; sourceTree = BUILT_PRODUCTS_DIR; };
+"""
+
+for source in sources {
+    content += "\n\t\t\(source.fileId) /* \(source.basename) */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = \"\(source.path)\"; sourceTree = \"<group>\"; };"
+}
+
+content += """
+
+		\(pbxProductRefId) /* \(targetName).xctest */ = {isa = PBXFileReference; explicitFileType = wrapper.cfbundle; includeInIndex = 0; path = \"\(targetName).xctest\"; sourceTree = BUILT_PRODUCTS_DIR; };
 /* End PBXFileReference section */
 
 /* Begin PBXGroup section */
@@ -58,7 +83,7 @@ let content = """
 				\(pbxGroupTestsId) /* Tests */,
 				\(pbxGroupProductsId) /* Products */,
 			);
-			sourceTree = "<group>";
+			sourceTree = \"<group>\";
 		};
 		\(pbxGroupProductsId) /* Products */ = {
 			isa = PBXGroup;
@@ -66,22 +91,29 @@ let content = """
 				\(pbxProductRefId) /* \(targetName).xctest */,
 			);
 			name = Products;
-			sourceTree = "<group>";
+			sourceTree = \"<group>\";
 		};
 		\(pbxGroupTestsId) /* Tests */ = {
 			isa = PBXGroup;
 			children = (
-				\(pbxFileSourceId) /* \(sourceBasename) */,
+"""
+
+for source in sources {
+    content += "\n\t\t\t\t\(source.fileId) /* \(source.basename) */,"
+}
+
+content += """
+
 			);
 			path = ".";
-			sourceTree = "<group>";
+			sourceTree = \"<group>\";
 		};
 /* End PBXGroup section */
 
 /* Begin PBXNativeTarget section */
 		\(pbxNativeTargetId) /* \(targetName) */ = {
 			isa = PBXNativeTarget;
-			buildConfigurationList = \(pbxConfigListTargetId) /* Build configuration list for PBXNativeTarget "\(targetName)" */;
+			buildConfigurationList = \(pbxConfigListTargetId) /* Build configuration list for PBXNativeTarget \"\(targetName)\" */;
 			buildPhases = (
 				\(pbxSourcesBuildPhaseId) /* Sources */,
 				\(pbxFrameworksBuildPhaseId) /* Frameworks */,
@@ -91,10 +123,10 @@ let content = """
 			);
 			dependencies = (
 			);
-			name = "\(targetName)";
-			productName = "\(targetName)";
+			name = \"\(targetName)\";
+			productName = \"\(targetName)\";
 			productReference = \(pbxProductRefId) /* \(targetName).xctest */;
-			productType = "com.apple.product-type.bundle.ui-testing";
+			productType = \"com.apple.product-type.bundle.ui-testing\";
 		};
 /* End PBXNativeTarget section */
 
@@ -110,7 +142,7 @@ let content = """
 					};
 				};
 			};
-			buildConfigurationList = \(pbxConfigListProjectId) /* Build configuration list for PBXProject "\(projectName)" */;
+			buildConfigurationList = \(pbxConfigListProjectId) /* Build configuration list for PBXProject \"\(projectName)\" */;
 			compatibilityVersion = "Xcode 14.0";
 			developmentRegion = en;
 			hasScannedForEncodings = 0;
@@ -133,7 +165,14 @@ let content = """
 			isa = PBXSourcesBuildPhase;
 			buildActionMask = 2147483647;
 			files = (
-				\(pbxBuildFileId) /* \(sourceBasename) in Sources */,
+"""
+
+for source in sources {
+    content += "\n\t\t\t\t\(source.buildId) /* \(source.basename) in Sources */,"
+}
+
+content += """
+
 			);
 			runOnlyForDeploymentPostprocessing = 0;
 		};
@@ -166,7 +205,7 @@ let content = """
 				ALWAYS_SEARCH_USER_PATHS = NO;
 				CLANG_ANALYZER_NONNULL = YES;
 				CLANG_ANALYZER_NUMBER_OBJECT_CONVERSION = YES_AGGRESSIVE;
-				CLANG_CXX_LANGUAGE_STANDARD = "gnu++20";
+				CLANG_CXX_LANGUAGE_STANDARD = \"gnu++20\";
 				CLANG_ENABLE_MODULES = YES;
 				CLANG_ENABLE_OBJC_ARC = YES;
 				CLANG_ENABLE_OBJC_WEAK = YES;
@@ -226,7 +265,7 @@ let content = """
 				ALWAYS_SEARCH_USER_PATHS = NO;
 				CLANG_ANALYZER_NONNULL = YES;
 				CLANG_ANALYZER_NUMBER_OBJECT_CONVERSION = YES_AGGRESSIVE;
-				CLANG_CXX_LANGUAGE_STANDARD = "gnu++20";
+				CLANG_CXX_LANGUAGE_STANDARD = \"gnu++20\";
 				CLANG_ENABLE_MODULES = YES;
 				CLANG_ENABLE_OBJC_ARC = YES;
 				CLANG_ENABLE_OBJC_WEAK = YES;
@@ -316,7 +355,7 @@ let content = """
 /* End XCBuildConfiguration section */
 
 /* Begin XCConfigurationList section */
-		\(pbxConfigListProjectId) /* Build configuration list for PBXProject "\(projectName)" */ = {
+		\(pbxConfigListProjectId) /* Build configuration list for PBXProject \"\(projectName)\" */ = {
 			isa = XCConfigurationList;
 			buildConfigurations = (
 				\(pbxConfigDebugProjId) /* Debug */,
@@ -325,7 +364,7 @@ let content = """
 			defaultConfigurationIsVisible = 0;
 			defaultConfigurationName = Release;
 		};
-		\(pbxConfigListTargetId) /* Build configuration list for PBXNativeTarget "\(targetName)" */ = {
+		\(pbxConfigListTargetId) /* Build configuration list for PBXNativeTarget \"\(targetName)\" */ = {
 			isa = XCConfigurationList;
 			buildConfigurations = (
 				\(pbxConfigDebugTargetId) /* Debug */,
@@ -338,7 +377,7 @@ let content = """
 	};
 	rootObject = \(pbxProjectId) /* Project object */;
 }
-"""
+""";
 
 let schemeContent = """
 <?xml version="1.0" encoding="UTF-8"?>
@@ -357,9 +396,9 @@ let schemeContent = """
             buildForAnalyzing = "NO">
             <BuildableReference
                BuildableIdentifier = "primary"
-               BlueprintIdentifier = "\(pbxNativeTargetId)"
-               BuildableName = "\(targetName).xctest"
-               BlueprintName = "\(targetName)"
+               BlueprintIdentifier = \"\(pbxNativeTargetId)\" 
+               BuildableName = \"\(targetName).xctest\"
+               BlueprintName = \"\(targetName)\" 
                ReferencedContainer = "container:\(projectName).xcodeproj">
             </BuildableReference>
          </BuildActionEntry>
@@ -382,9 +421,9 @@ let schemeContent = """
             skipped = "NO">
             <BuildableReference
                BuildableIdentifier = "primary"
-               BlueprintIdentifier = "\(pbxNativeTargetId)"
-               BuildableName = "\(targetName).xctest"
-               BlueprintName = "\(targetName)"
+               BlueprintIdentifier = \"\(pbxNativeTargetId)\" 
+               BuildableName = \"\(targetName).xctest\"
+               BlueprintName = \"\(targetName)\" 
                ReferencedContainer = "container:\(projectName).xcodeproj">
             </BuildableReference>
          </TestableReference>
@@ -423,9 +462,8 @@ let schemeContent = """
       revealArchiveInOrganizer = "YES">
    </ArchiveAction>
 </Scheme>
-"""
+""";
 
-let fm = FileManager.default
 let projectDir = "\(projectName).xcodeproj"
 let schemesDir = "\(projectDir)/xcshareddata/schemes"
 
