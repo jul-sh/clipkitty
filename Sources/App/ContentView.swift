@@ -105,7 +105,8 @@ struct ContentView: View {
             } else {
                 searchText = ""
             }
-            selectedItemId = nil
+            // Select first item whenever display resets (re-open)
+            selectedItemId = items.first?.stableId
             focusSearchField()
         }
         .onChange(of: store.state) { _, newState in
