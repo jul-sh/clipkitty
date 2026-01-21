@@ -18,8 +18,12 @@ APP_ICONS := $(APP_BUNDLE)/Contents/Resources/Assets.car
 
 all: $(APP_BUNDLE) $(APP_ICONS)
 
+rust:
+	@echo "Building Rust core..."
+	@cd rust-core && cargo run --release --bin generate-bindings
+
 # Build just the binary using SwiftPM
-build-binary:
+build-binary: rust
 	@echo "Building binary..."
 	@GIT_CONFIG_COUNT=1 GIT_CONFIG_KEY_0=safe.bareRepository GIT_CONFIG_VALUE_0=all swift build -c release $(SWIFT_ARCH_FLAGS)
 
@@ -108,14 +112,14 @@ sign: $(APP_BUNDLE)
 	@codesign --force --options runtime --entitlements Sources/App/ClipKitty.entitlements --sign - "$(APP_BUNDLE)"
 
 # Perf runs without icons and only runs perf tests
-perf: $(APP_BUNDLE) ClipKitty.xcodeproj
+perf: sign ClipKitty.xcodeproj
 	@echo "Running UI Performance Tests..."
 	@rm -rf DerivedData
 	@xcodebuild test -project ClipKitty.xcodeproj -scheme ClipKittyUITests -destination 'platform=macOS' -derivedDataPath DerivedData -only-testing:ClipKittyUITests/ClipKittyPerformanceTests | tee xcodebuild.log
 	@swift Scripts/PrintPerfResults.swift
 
 # Screenshot runs everything
-screenshot: all ClipKitty.xcodeproj
+screenshot: sign ClipKitty.xcodeproj
 	@echo "Running UI Tests..."
 	@rm -rf DerivedData
 	@xcodebuild test -project ClipKitty.xcodeproj -scheme ClipKittyUITests -destination 'platform=macOS' -derivedDataPath DerivedData | tee xcodebuild.log
