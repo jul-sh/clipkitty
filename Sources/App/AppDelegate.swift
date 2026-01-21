@@ -1,7 +1,6 @@
 import AppKit
 import SwiftUI
-import GRDB
-import ClipKittyCore
+import ClipKittyRust
 
 @MainActor
 final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate {
@@ -70,70 +69,30 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate {
         try? FileManager.default.removeItem(atPath: dbPath)
 
         do {
-            let dbQueue = try DatabaseQueue(path: dbPath)
+            // Use the Rust store to populate test data
+            let rustStore = try ClipKittyRust.ClipboardStore(dbPath: dbPath)
 
-            try dbQueue.write { db in
-                // Create tables (same schema as ClipboardStore)
-                try db.create(table: "items", ifNotExists: true) { t in
-                    t.autoIncrementedPrimaryKey("id")
-                    t.column("content", .text).notNull()
-                    t.column("contentHash", .text).notNull()
-                    t.column("timestamp", .datetime).notNull()
-                    t.column("sourceApp", .text)
-                    t.column("contentType", .text).defaults(to: "text")
-                    t.column("imageData", .blob)
-                    t.column("linkTitle", .text)
-                    t.column("linkImageData", .blob)
-                    t.column("sourceAppBundleID", .text)
-                }
+            // Insert test items (only built-in macOS apps)
+            let testItems: [(String, String, String)] = [
+                ("func fibonacci(_ n: Int) -> Int {\n    guard n > 1 else { return n }\n    return fibonacci(n - 1) + fibonacci(n - 2)\n}", "Terminal", "com.apple.Terminal"),
+                ("SELECT users.name, orders.total\nFROM users\nJOIN orders ON users.id = orders.user_id\nWHERE orders.status = 'completed';", "Terminal", "com.apple.Terminal"),
+                ("The quick brown fox jumps over the lazy dog", "Mail", "com.apple.mail"),
+                ("https://github.com/anthropics/claude-code", "Safari", "com.apple.Safari"),
+                ("#!/bin/bash\nset -euo pipefail\necho \"Deploying to production...\"", "Terminal", "com.apple.Terminal"),
+                ("meeting@3pm re: Q4 planning", "Mail", "com.apple.mail"),
+                ("{ \"name\": \"ClipKitty\", \"version\": \"1.0.0\" }", "Terminal", "com.apple.Terminal"),
+                ("https://developer.apple.com/documentation/swiftui", "Safari", "com.apple.Safari"),
+                ("npm install --save-dev typescript @types/node", "Terminal", "com.apple.Terminal"),
+                ("Remember to update the API documentation", "Mail", "com.apple.mail"),
+            ]
 
-                try db.create(index: "idx_items_hash", on: "items", columns: ["contentHash"], ifNotExists: true)
-                try db.create(index: "idx_items_timestamp", on: "items", columns: ["timestamp"], ifNotExists: true)
-
-                // FTS table
-                try db.execute(sql: """
-                    CREATE VIRTUAL TABLE IF NOT EXISTS items_fts USING fts5(
-                        content, content=items, content_rowid=id, tokenize='trigram'
-                    )
-                """)
-
-                // Triggers
-                try db.execute(sql: """
-                    CREATE TRIGGER IF NOT EXISTS items_ai AFTER INSERT ON items BEGIN
-                        INSERT INTO items_fts(rowid, content) VALUES (new.id, new.content);
-                    END
-                """)
-                try db.execute(sql: """
-                    CREATE TRIGGER IF NOT EXISTS items_ad AFTER DELETE ON items BEGIN
-                        INSERT INTO items_fts(items_fts, rowid, content) VALUES('delete', old.id, old.content);
-                    END
-                """)
-                try db.execute(sql: """
-                    CREATE TRIGGER IF NOT EXISTS items_au AFTER UPDATE ON items BEGIN
-                        INSERT INTO items_fts(items_fts, rowid, content) VALUES('delete', old.id, old.content);
-                        INSERT INTO items_fts(rowid, content) VALUES (new.id, new.content);
-                    END
-                """)
-
-                // Insert test items (only built-in macOS apps)
-                let testItems: [(String, String, String)] = [
-                    ("func fibonacci(_ n: Int) -> Int {\n    guard n > 1 else { return n }\n    return fibonacci(n - 1) + fibonacci(n - 2)\n}", "Terminal", "com.apple.Terminal"),
-                    ("SELECT users.name, orders.total\nFROM users\nJOIN orders ON users.id = orders.user_id\nWHERE orders.status = 'completed';", "Terminal", "com.apple.Terminal"),
-                    ("The quick brown fox jumps over the lazy dog", "Mail", "com.apple.mail"),
-                    ("https://github.com/anthropics/claude-code", "Safari", "com.apple.Safari"),
-                    ("#!/bin/bash\nset -euo pipefail\necho \"Deploying to production...\"", "Terminal", "com.apple.Terminal"),
-                    ("meeting@3pm re: Q4 planning", "Mail", "com.apple.mail"),
-                    ("{ \"name\": \"ClipKitty\", \"version\": \"1.0.0\" }", "Terminal", "com.apple.Terminal"),
-                    ("https://developer.apple.com/documentation/swiftui", "Safari", "com.apple.Safari"),
-                    ("npm install --save-dev typescript @types/node", "Terminal", "com.apple.Terminal"),
-                    ("Remember to update the API documentation", "Mail", "com.apple.mail"),
-                ]
-
-                let now = Date()
-                for (index, (content, sourceApp, bundleID)) in testItems.enumerated() {
-                    let timestamp = now.addingTimeInterval(Double(-index * 300))
-                    let item = ClipboardItem(text: content, sourceApp: sourceApp, sourceAppBundleID: bundleID, timestamp: timestamp)
-                    try item.insert(db)
+            // Insert items in reverse order (oldest first) so most recent is at the top
+            for (index, (content, sourceApp, bundleID)) in testItems.enumerated().reversed() {
+                // Add a small delay between inserts to ensure different timestamps
+                _ = try rustStore.saveText(text: content, sourceApp: sourceApp, sourceAppBundleId: bundleID)
+                // Sleep a tiny bit to space out timestamps
+                if index > 0 {
+                    Thread.sleep(forTimeInterval: 0.01)
                 }
             }
         } catch {

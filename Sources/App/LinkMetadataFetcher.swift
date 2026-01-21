@@ -1,6 +1,6 @@
 import Foundation
 import AppKit
-import ClipKittyCore
+import ClipKittyRust
 
 /// Fetches Open Graph metadata from URLs
 actor LinkMetadataFetcher {
@@ -37,7 +37,7 @@ actor LinkMetadataFetcher {
             if normalizedTitle == nil && imageData == nil {
                 return nil
             }
-            return .loaded(title: normalizedTitle, imageData: imageData)
+            return .loaded(title: normalizedTitle, imageData: imageData.map { Array($0) })
         } catch {
             return nil
         }
