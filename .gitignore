@@ -13,3 +13,4 @@ screenshot-*.png
 # Rust build artifacts
 rust-core/target/
 rust-core/Cargo.lock
+xcodebuild.log
