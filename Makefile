@@ -150,9 +150,14 @@ screenshot: sign ClipKitty.xcodeproj
 	@rm -rf DerivedData
 	@xcodebuild test -project ClipKitty.xcodeproj -scheme ClipKittyUITests -destination 'platform=macOS' -derivedDataPath DerivedData | tee xcodebuild.log
 	@swift Scripts/PrintPerfResults.swift
-	@echo "Copying screenshot..."
+	@echo "Copying and upscaling screenshot..."
 	@cp /tmp/clipkitty_screenshot.png screenshot.png || true
-	@echo "Screenshot saved to screenshot.png"
+	@if [ -f screenshot.png ]; then \
+		WIDTH=$$(sips -g pixelWidth screenshot.png | tail -1 | awk '{print $$2}'); \
+		HEIGHT=$$(sips -g pixelHeight screenshot.png | tail -1 | awk '{print $$2}'); \
+		sips --resampleHeightWidth $$((HEIGHT * 2)) $$((WIDTH * 2)) screenshot.png --out screenshot.png; \
+	fi
+	@echo "Screenshot saved to screenshot.png (2x upscaled)"
 
 # Export app icon as PNG (for README, gh-pages, etc.)
 # Compiles the .icon format to .icns, then extracts 1024x1024 PNG
