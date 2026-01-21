@@ -77,9 +77,10 @@ $(APP_PLIST):
 		'</plist>' > "$(APP_PLIST)"
 	@touch "$(APP_BUNDLE)"
 
-# Compile icons (skipped by perf)
-$(APP_ICONS): $(ICON_SOURCE)
+# Compile icons - depends on APP_BUNDLE to ensure Resources dir exists
+$(APP_ICONS): $(ICON_SOURCE) $(APP_BUNDLE)
 	@echo "Compiling icons..."
+	@mkdir -p "$(APP_BUNDLE)/Contents/Resources"
 	@if [ -d "$(ICON_SOURCE)" ]; then \
 		xcrun actool "$(ICON_SOURCE)" \
 			--compile "$(APP_BUNDLE)/Contents/Resources" \
@@ -102,11 +103,9 @@ ClipKitty.xcodeproj: Scripts/GenXcodeproj.swift $(wildcard Tests/UITests/*.swift
 	@swift Scripts/GenXcodeproj.swift
 
 clean:
-	@rm -rf "$(APP_BUNDLE)"
-	@rm -rf ClipKitty.xcodeproj
-	@rm -rf DerivedData
-	@rm -f xcodebuild.log
-	@rm -f "$(APP_NAME).dmg"
+	@git stash push --quiet
+	@git clean -fdx
+	@git stash pop --quiet || true
 
 sign: $(APP_BUNDLE)
 	@echo "Signing with entitlements..."
