@@ -61,6 +61,10 @@ let package = Package(
             resources: [
                 .copy("Resources/Fonts"),
                 .copy("Resources/menu-bar.svg")
+            ],
+            swiftSettings: [
+                // SANDBOXED flag is set via: swift build -Xswiftc -DSANDBOXED
+                // When set, disables paste functionality (sandbox blocks CGEvent posting)
             ]
         ),
         .testTarget(
