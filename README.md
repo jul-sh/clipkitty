@@ -36,14 +36,10 @@ You copied that API response last week. That error message yesterday. That addre
 If you have [Homebrew](https://brew.sh) installed, run:
 
 ```bash
-# Standard version (full power, automatic paste)
 brew install jul-sh/tap/clipkitty
-
-# OR Sandboxed version (more secure, no automatic paste)
-brew install jul-sh/tap/clipkitty-sandboxed
 ```
 
-*Note: The standard version automatically bypasses the "Unidentified Developer" warning and strips the quarantine flag for you.*
+*Note: This automatically bypasses the "Unidentified Developer" warning and strips the quarantine flag for you.*
 
 ### Manual Download
 
