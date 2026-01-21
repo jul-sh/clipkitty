@@ -24,6 +24,11 @@ jobs:
         with:
           swift-version: "6.2"
 
+      - name: Setup Rust
+        uses: dtolnay/rust-toolchain@stable
+        with:
+          targets: aarch64-apple-darwin,x86_64-apple-darwin
+
       - name: Install create-dmg
         run: brew install create-dmg
 
