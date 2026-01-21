@@ -35,6 +35,14 @@ jobs:
             sleep 1
           fi
 
+      - name: Set Retina Resolution
+        run: |
+          # Install displayplacer to enable HiDPI resolution
+          brew install displayplacer
+          # Set a common Retina resolution (2560x1600) with scaling enabled
+          displayplacer "res:2560x1600 scaling:on" || displayplacer "res:2880x1800 scaling:on" || echo "Could not set retina resolution, continuing with default"
+          displayplacer list
+
       - name: Build and Screenshot
         run: make screenshot
 
