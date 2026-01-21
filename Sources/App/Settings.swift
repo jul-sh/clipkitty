@@ -68,8 +68,21 @@ final class AppSettings: ObservableObject {
     }
 
     /// When true, selecting an item (Enter) pastes into the previous app. When false, just copies to clipboard.
-    @Published var pasteOnSelect: Bool {
+    @Published var _pasteOnSelect: Bool {
         didSet { save() }
+    }
+
+    var pasteOnSelect: Bool {
+        get {
+            #if SANDBOXED
+            return false
+            #else
+            return _pasteOnSelect
+            #endif
+        }
+        set {
+            _pasteOnSelect = newValue
+        }
     }
 
     let maxImageMegapixels: Double
@@ -105,7 +118,7 @@ final class AppSettings: ObservableObject {
         }
 
         // Default to true (paste on select) for new installs
-        pasteOnSelect = defaults.object(forKey: pasteOnSelectKey) as? Bool ?? true
+        _pasteOnSelect = defaults.object(forKey: pasteOnSelectKey) as? Bool ?? true
 
         // Default to false - user must explicitly enable launch at login
         launchAtLoginEnabled = defaults.object(forKey: launchAtLoginKey) as? Bool ?? false
@@ -119,7 +132,7 @@ final class AppSettings: ObservableObject {
             defaults.set(data, forKey: hotKeyKey)
         }
         defaults.set(maxDatabaseSizeGB, forKey: maxDbSizeKey)
-        defaults.set(pasteOnSelect, forKey: pasteOnSelectKey)
+        defaults.set(_pasteOnSelect, forKey: pasteOnSelectKey)
         defaults.set(launchAtLoginEnabled, forKey: launchAtLoginKey)
     }
 }

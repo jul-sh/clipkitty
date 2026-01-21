@@ -111,11 +111,14 @@ final class FloatingPanelController: NSObject, NSWindowDelegate {
         store.paste(item: item)
         let targetApp = previousApp
         hide()
+        #if !SANDBOXED
         if AppSettings.shared.pasteOnSelect {
             simulatePaste(targetApp: targetApp)
         }
+        #endif
     }
 
+    #if !SANDBOXED
     /// Simulate Cmd+V keystroke to paste into the target app
     private func simulatePaste(targetApp: NSRunningApplication?) {
         guard let targetApp = targetApp else {
@@ -167,4 +170,5 @@ final class FloatingPanelController: NSObject, NSWindowDelegate {
             }
         }
     }
+    #endif
 }

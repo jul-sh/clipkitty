@@ -10,13 +10,16 @@ SWIFT_ARCH_FLAGS := $(foreach arch,$(ARCHS),--arch $(arch))
 
 # The core app bundle components
 APP_BUNDLE := $(APP_NAME).app
+APP_BUNDLE_SANDBOXED := $(APP_NAME)-Sandboxed.app
 APP_BINARY := $(APP_BUNDLE)/Contents/MacOS/$(APP_NAME)
 APP_PLIST := $(APP_BUNDLE)/Contents/Info.plist
 APP_ICONS := $(APP_BUNDLE)/Contents/Resources/Assets.car
 
-.PHONY: all clean sign screenshot perf build-binary dmg
+.PHONY: all clean sign sign-sandboxed screenshot perf build-binary build-binary-sandboxed dmg dmg-sandboxed all-variants
 
 all: $(APP_BUNDLE) $(APP_ICONS)
+
+all-variants: all build-sandboxed sign-sandboxed
 
 rust:
 	@echo "Building Rust core..."
@@ -26,6 +29,10 @@ rust:
 build-binary: rust
 	@echo "Building binary..."
 	@GIT_CONFIG_COUNT=1 GIT_CONFIG_KEY_0=safe.bareRepository GIT_CONFIG_VALUE_0=all swift build -c release $(SWIFT_ARCH_FLAGS)
+
+build-binary-sandboxed: rust
+	@echo "Building sandboxed binary..."
+	@GIT_CONFIG_COUNT=1 GIT_CONFIG_KEY_0=safe.bareRepository GIT_CONFIG_VALUE_0=all swift build -c release $(SWIFT_ARCH_FLAGS) -Xswiftc -DSANDBOXED
 
 # Create the bundle structure and copy the binary
 $(APP_BINARY): build-binary
@@ -43,6 +50,27 @@ $(APP_BINARY): build-binary
 	if [ -d "$$BIN_PATH/$(APP_NAME)_$(APP_NAME).bundle" ]; then \
 		cp -R "$$BIN_PATH/$(APP_NAME)_$(APP_NAME).bundle" "$(APP_BUNDLE)/Contents/Resources/"; \
 	fi
+
+build-sandboxed: build-binary-sandboxed $(APP_PLIST) $(ICON_SOURCE)
+	@echo "Creating sandboxed app bundle structure..."
+	@mkdir -p "$(APP_BUNDLE_SANDBOXED)/Contents/MacOS"
+	@mkdir -p "$(APP_BUNDLE_SANDBOXED)/Contents/Resources"
+	@BIN_PATH="$$(swift build -c release $(SWIFT_ARCH_FLAGS) --show-bin-path)"; \
+	cp "$$BIN_PATH/$(APP_NAME)" "$(APP_BUNDLE_SANDBOXED)/Contents/MacOS/$(APP_NAME)"
+	@if [ -d "$$BIN_PATH/$(APP_NAME)_$(APP_NAME).bundle" ]; then \
+		cp -R "$$BIN_PATH/$(APP_NAME)_$(APP_NAME).bundle" "$(APP_BUNDLE_SANDBOXED)/Contents/Resources/"; \
+	fi
+	@cp "$(APP_PLIST)" "$(APP_BUNDLE_SANDBOXED)/Contents/Info.plist"
+	@# Compile icons for sandboxed version
+	@xcrun actool "$(ICON_SOURCE)" \
+		--compile "$(APP_BUNDLE_SANDBOXED)/Contents/Resources" \
+		--platform macosx \
+		--target-device mac \
+		--minimum-deployment-target 15.0 \
+		--app-icon "AppIcon" \
+		--include-all-app-icons \
+		--output-partial-info-plist /dev/null
+	@$(MAKE) sign-sandboxed
 
 # Generate Info.plist
 $(APP_PLIST):
@@ -108,8 +136,12 @@ clean:
 	@git stash pop --quiet || true
 
 sign: $(APP_BUNDLE)
-	@echo "Signing with entitlements..."
-	@codesign --force --deep --sign - "$(APP_BUNDLE)"
+	@echo "Signing with standard entitlements..."
+	@codesign --force --deep --sign - --entitlements Sources/App/ClipKitty.entitlements "$(APP_BUNDLE)"
+
+sign-sandboxed: $(APP_BUNDLE_SANDBOXED)
+	@echo "Signing with sandbox entitlements..."
+	@codesign --force --deep --sign - --entitlements Sources/App/ClipKitty-Sandboxed.entitlements "$(APP_BUNDLE_SANDBOXED)"
 
 # Perf runs without icons and only runs perf tests
 perf: sign ClipKitty.xcodeproj
@@ -119,9 +151,13 @@ perf: sign ClipKitty.xcodeproj
 	@swift Scripts/PrintPerfResults.swift
 
 # Build DMG installer
-dmg: all
+dmg: all sign
 	@echo "Building DMG installer..."
 	@./Scripts/build-dmg.sh "$(APP_BUNDLE)" "$(APP_NAME).dmg"
+
+dmg-sandboxed: build-sandboxed
+	@echo "Building Sandboxed DMG installer..."
+	@./Scripts/build-dmg.sh "$(APP_BUNDLE_SANDBOXED)" "$(APP_NAME)-Sandboxed.dmg"
 
 # Screenshot runs everything
 screenshot: sign ClipKitty.xcodeproj

@@ -62,10 +62,22 @@ struct SettingsView: View {
             }
 
             Section("Behavior") {
+                #if SANDBOXED
+                HStack {
+                    Image(systemName: "lock.shield")
+                        .foregroundStyle(.secondary)
+                    Text("Sandboxed Mode")
+                        .font(.headline)
+                }
+                Text("Automatic pasting is disabled in sandboxed mode for security. Items will only be copied to the clipboard.")
+                    .font(.caption)
+                    .foregroundStyle(.secondary)
+                #else
                 Toggle("Paste after selecting", isOn: $settings.pasteOnSelect)
                 Text("When enabled, pressing Enter pastes into the previous app. When disabled, it only copies to the clipboard.")
                     .font(.caption)
                     .foregroundStyle(.secondary)
+                #endif
             }
 
             Section("Startup") {

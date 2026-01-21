@@ -32,34 +32,36 @@ jobs:
       - name: Install create-dmg
         run: brew install create-dmg
 
-      - name: Build App
+      - name: Build App Variants
         run: |
-          make
+          make all-variants
 
-      - name: Build DMG
+      - name: Build DMGs
         run: |
           chmod +x Scripts/build-dmg.sh
-          ./Scripts/build-dmg.sh ClipKitty.app ClipKitty.dmg
+          make dmg
+          make dmg-sandboxed
 
-      - name: Upload DMG Artifact
+      - name: Upload Artifacts
         uses: actions/upload-artifact@v4
         with:
-          name: ClipKitty-DMG
-          path: ClipKitty.dmg
+          name: ClipKitty-DMGs
+          path: |
+            ClipKitty.dmg
+            ClipKitty-Sandboxed.dmg
 
-      - name: Upload App Artifact
-        uses: actions/upload-artifact@v4
-        with:
-          name: ClipKitty-App
-          path: ClipKitty.app
-
-      # Upload DMG to release when a release is created
-      - name: Upload Release Asset
+      # Upload DMGs to release when a release is created
+      - name: Upload Release Assets
         if: github.event_name == 'release'
         run: |
           gh release upload "${{ github.event.release.tag_name }}" \
             ClipKitty.dmg \
+            ClipKitty-Sandboxed.dmg \
             --clobber
+          
+          # Append note about sandboxed version
+          NOTE="\n\n### Note on Sandboxed Version\n\nThe sandboxed version (ClipKitty-Sandboxed.dmg) is more secure but less powerful. It does not support automatic pasting (Cmd+V) into other apps due to system restrictions. Use the standard version if you want the full experience."
+          gh release edit "${{ github.event.release.tag_name }}" --notes "$(gh release view "${{ github.event.release.tag_name }}" --json body -q .body)$NOTE"
         env:
           GH_TOKEN: ${{ github.token }}
 
@@ -67,11 +69,13 @@ jobs:
       - name: Create Development Release
         if: github.event_name == 'push' && github.ref == 'refs/heads/main'
         run: |
+          NOTE="Note: The sandboxed version is less powerful and doesn't support pasting automatically."
           gh release create "commit-${GITHUB_SHA}" \
             --title "ClipKitty ${GITHUB_SHA}" \
-            --generate-notes \
+            --notes "$NOTE" \
             --prerelease \
-            ClipKitty.dmg
+            ClipKitty.dmg \
+            ClipKitty-Sandboxed.dmg
         env:
           GH_TOKEN: ${{ github.token }}
 

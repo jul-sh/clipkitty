@@ -419,7 +419,7 @@ struct ContentView: View {
                         }
                     }
                     Spacer()
-                    Button(AppSettings.shared.pasteOnSelect ? "⏎ paste" : "⏎ copy") {
+                    Button(buttonLabel) {
                         confirmSelection()
                     }
                     .buttonStyle(.plain)
@@ -441,6 +441,14 @@ struct ContentView: View {
             }
         }
         .background(.black.opacity(0.05))
+    }
+
+    private var buttonLabel: String {
+        #if SANDBOXED
+        return "⏎ copy"
+        #else
+        return AppSettings.shared.pasteOnSelect ? "⏎ paste" : "⏎ copy"
+        #endif
     }
 
     private func formatSize(_ chars: Int) -> String {
@@ -793,7 +801,11 @@ struct ItemRow: View, Equatable {
         .onTapGesture(perform: onTap)
         .accessibilityElement(children: .combine)
         .accessibilityLabel(previewText)
+        #if SANDBOXED
+        .accessibilityHint("Double tap to copy")
+        #else
         .accessibilityHint("Double tap to paste")
+        #endif
         .accessibilityAddTraits(.isButton)
         .accessibilityAddTraits(isSelected ? .isSelected : [])
     }
