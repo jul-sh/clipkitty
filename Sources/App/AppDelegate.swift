@@ -52,7 +52,16 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate {
             if let screenshotIndex = CommandLine.arguments.firstIndex(of: "--take-screenshot"),
                screenshotIndex + 1 < CommandLine.arguments.count {
                 let outputPath = CommandLine.arguments[screenshotIndex + 1]
-                takeScreenshot(to: outputPath)
+
+                // Check for optional --display-id to target a specific display (e.g., virtual HiDPI)
+                var displayID: CGDirectDisplayID? = nil
+                if let displayIndex = CommandLine.arguments.firstIndex(of: "--display-id"),
+                   displayIndex + 1 < CommandLine.arguments.count,
+                   let id = UInt32(CommandLine.arguments[displayIndex + 1]) {
+                    displayID = id
+                }
+
+                takeScreenshot(to: outputPath, displayID: displayID)
                 return
             }
 
@@ -63,7 +72,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate {
     /// Render the ContentView at 2x scale to a PNG file and exit
     private var screenshotWindow: NSWindow?
 
-    private func takeScreenshot(to outputPath: String) {
+    private func takeScreenshot(to outputPath: String, displayID: CGDirectDisplayID? = nil) {
         let scaleFactor: CGFloat = 2.0
         let viewSize = NSSize(width: 778, height: 518)  // Same as panel size
 
@@ -85,10 +94,29 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate {
         window.backgroundColor = .clear
         window.isOpaque = false
 
-        // Position offscreen but make it "visible" to trigger SwiftUI rendering
-        window.setFrameOrigin(NSPoint(x: -10000, y: -10000))
-        window.orderFront(nil)
+        // Position the window on the target display (if specified) to get native HiDPI
+        if let displayID = displayID {
+            // Get the screen for the specified display ID
+            if let targetScreen = NSScreen.screens.first(where: { screen in
+                guard let screenNumber = screen.deviceDescription[NSDeviceDescriptionKey("NSScreenNumber")] as? CGDirectDisplayID else {
+                    return false
+                }
+                return screenNumber == displayID
+            }) {
+                // Position window on the HiDPI display
+                let screenFrame = targetScreen.frame
+                window.setFrameOrigin(NSPoint(x: screenFrame.minX + 100, y: screenFrame.minY + 100))
+                logInfo("Targeting display \(displayID) with backing scale: \(targetScreen.backingScaleFactor)")
+            } else {
+                logInfo("Display \(displayID) not found in NSScreen.screens, using default positioning")
+                window.setFrameOrigin(NSPoint(x: -10000, y: -10000))
+            }
+        } else {
+            // Position offscreen but make it "visible" to trigger SwiftUI rendering
+            window.setFrameOrigin(NSPoint(x: -10000, y: -10000))
+        }
 
+        window.orderFront(nil)
         self.screenshotWindow = window  // Keep reference
 
         // Wait for SwiftUI to fully render

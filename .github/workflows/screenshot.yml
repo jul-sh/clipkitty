@@ -2,7 +2,7 @@ name: Screenshot
 
 on:
   push:
-    branches: [main]
+    branches: [main, feat/virtual-display-screenshot]
   workflow_dispatch:
 
 jobs:
@@ -29,24 +29,43 @@ jobs:
           swiftc Scripts/create_virtual_display.swift -o virtual-display
 
           # Run in background, capture PID
-          # stdout = display ID, stderr = status messages
-          ./virtual-display > display_id.txt 2>&1 &
+          # The tool outputs display ID to stdout, status to stderr
+          ./virtual-display > display_id.txt 2> display.log &
           echo $! > display_pid.txt
 
           # Wait for display to initialize
           sleep 3
 
-          # Verify the display was created
+          # Show logs
+          cat display.log || true
+
+          # Extract display ID (it's the last line that's just a number)
           if [ -s display_id.txt ]; then
-            echo "Virtual display created with ID: $(head -1 display_id.txt)"
-            system_profiler SPDisplaysDataType || true
+            DISPLAY_ID=$(grep -E '^[0-9]+$' display_id.txt | tail -1 || true)
+            if [ -n "$DISPLAY_ID" ]; then
+              echo "Virtual display created with ID: $DISPLAY_ID"
+              echo "$DISPLAY_ID" > display_id_clean.txt
+              system_profiler SPDisplaysDataType || true
+            else
+              echo "Warning: Could not parse display ID from output:"
+              cat display_id.txt
+            fi
           else
             echo "Warning: Virtual display may not have initialized properly"
-            cat display_id.txt || true
+            cat display.log || true
           fi
 
       - name: Build and Take High-Res Screenshot
-        run: make screenshot-hires
+        run: |
+          # Use virtual display if available
+          if [ -f display_id_clean.txt ]; then
+            DISPLAY_ID=$(cat display_id_clean.txt)
+            echo "Using virtual display: $DISPLAY_ID"
+            make screenshot-hires-display DISPLAY_ID="$DISPLAY_ID"
+          else
+            echo "No virtual display, using default screenshot method"
+            make screenshot-hires
+          fi
 
       - name: Generate Icon PNG
         run: |

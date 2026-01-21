@@ -184,6 +184,13 @@ screenshot-hires: sign
 	@"$(APP_BUNDLE)/Contents/MacOS/$(APP_NAME)" --use-simulated-db --take-screenshot screenshot.png
 	@echo "Screenshot saved to screenshot.png"
 
+# High-resolution screenshot targeting a specific display (for virtual HiDPI in CI)
+# Usage: make screenshot-hires-display DISPLAY_ID=12345
+screenshot-hires-display: sign
+	@echo "Taking high-resolution screenshot on display $(DISPLAY_ID)..."
+	@"$(APP_BUNDLE)/Contents/MacOS/$(APP_NAME)" --use-simulated-db --take-screenshot screenshot.png --display-id $(DISPLAY_ID)
+	@echo "Screenshot saved to screenshot.png"
+
 # ============================================================================
 # App Store Submission
 # ============================================================================
