@@ -37,16 +37,22 @@ jobs:
 
       - name: Force Retina (HiDPI) Resolution
         run: |
+          # Use VMware Tools to set resolution
+          "/Library/Application Support/VMware Tools/vmware-resolutionSet" 2560 1440 || echo "::warning::Failed to set resolution via VMware Tools"
+          sleep 5
+
           # Install displayplacer to enable HiDPI resolution
           brew install displayplacer
 
-          # 1440x900 with 'scaling:on' forces macOS to render 2880x1800 (Retina)
-          # even on a headless CI runner.
-          displayplacer "res:1440x900 scaling:on"
+          # Get the persistent display ID
+          DISPLAY_ID=$(displayplacer list | grep 'Persistent screen id:' | awk '{print $4}')
+          echo "Display ID: $DISPLAY_ID"
 
-          # Give the WindowServer a second to adjust the UI scale
-          sleep 3
-          displayplacer list
+          # Set to max resolution (2560x1600)
+          displayplacer "id:$DISPLAY_ID res:2560x1600 hz:60 color_depth:8 scaling:on"
+
+          # Disable font smoothing (cleaner screenshots)
+          defaults write -g CGFontRenderingFontSmoothingDisabled -bool YES
 
       - name: Build and Screenshot
         run: make screenshot
