@@ -255,3 +255,54 @@ list-identities:
 	@echo ""
 	@echo "Set SIGNING_IDENTITY and INSTALLER_IDENTITY in your environment or pass to make:"
 	@echo "  make appstore SIGNING_IDENTITY=\"3rd Party Mac Developer Application: Your Name (TEAMID)\""
+
+# ============================================================================
+# Marketing Assets (Screenshots & Preview Video)
+# ============================================================================
+# Prerequisites:
+#   1. ImageMagick: brew install imagemagick
+#   2. ffmpeg: brew install ffmpeg
+#
+# Configuration
+BACKGROUND_IMAGE := /System/Library/Desktop Pictures/Solid Colors/Space Gray.png
+#
+# Usage:
+#   make marketing-screenshots    # Generate App Store screenshots with captions
+#   make preview-video            # Record App Store preview video
+#   make marketing                # Generate all marketing assets
+# ============================================================================
+
+.PHONY: marketing marketing-screenshots marketing-screenshots-capture preview-video print-background-image
+
+# Print background image path (used by CI/scripts)
+print-background-image:
+	@echo $(BACKGROUND_IMAGE)
+
+# Capture raw marketing screenshots via UI test (with clean environment)
+marketing-screenshots-capture: sign ClipKitty.xcodeproj
+	@echo "Capturing marketing screenshots..."
+	@rm -rf DerivedData
+	@./Scripts/prepare-screenshot-environment.sh 'xcodebuild test -project ClipKitty.xcodeproj -scheme ClipKittyUITests -destination "platform=macOS" -derivedDataPath DerivedData -only-testing:ClipKittyUITests/ClipKittyUITests/testTakeMarketingScreenshots 2>&1 | grep -E "(Test Case|passed|failed)" || true'
+	@echo "Raw screenshots saved to /tmp/clipkitty_marketing_*.png"
+
+# Process raw screenshots into marketing-ready images
+marketing-screenshots-process:
+	@echo "Processing screenshots..."
+	@BACKGROUND_IMAGE="$(BACKGROUND_IMAGE)" ./Scripts/generate-marketing-screenshots.sh
+
+# Full screenshot pipeline: capture + process
+marketing-screenshots: marketing-screenshots-capture marketing-screenshots-process
+	@echo "Marketing screenshots complete! See marketing/ directory"
+
+# Record App Store preview video
+preview-video: sign ClipKitty.xcodeproj
+	@echo "Recording preview video..."
+	@./Scripts/record-preview-video.sh
+
+# Generate all marketing assets
+marketing: marketing-screenshots preview-video
+	@echo ""
+	@echo "=== All Marketing Assets Generated ==="
+	@echo "Screenshots: marketing/screenshot_*.png"
+	@echo "Video: marketing/app_preview.mov"
+	@ls -lh marketing/ 2>/dev/null || true

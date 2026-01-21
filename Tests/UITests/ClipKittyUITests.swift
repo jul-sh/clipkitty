@@ -16,7 +16,7 @@ final class ClipKittyUITests: XCTestCase {
             // Go up 3 levels to project root
             let projectRoot = sourceFileURL.deletingLastPathComponent().deletingLastPathComponent().deletingLastPathComponent()
             let appURL = projectRoot.appendingPathComponent("ClipKitty.app")
-            
+
             if FileManager.default.fileExists(atPath: appURL.path) {
                 appPath = appURL.path
             } else {
@@ -111,10 +111,10 @@ final class ClipKittyUITests: XCTestCase {
 
         let window = app.dialogs.firstMatch
         XCTAssertTrue(window.waitForExistence(timeout: 5), "Window should be visible initially")
-        
+
         // Initial state: first item should be selected
         XCTAssertTrue(waitForSelectedIndex(0), "Initial selection should be index 0")
-        
+
         // Move selection down to item 3 (index 2)
         let searchField = app.textFields.firstMatch
         searchField.click()
@@ -123,24 +123,24 @@ final class ClipKittyUITests: XCTestCase {
         }
         Thread.sleep(forTimeInterval: 0.1)
         XCTAssertEqual(getSelectedIndex(), 2, "Selection should have moved to index 2")
-        
+
         // Hide the app by activating Finder
         let finder = XCUIApplication(bundleIdentifier: "com.apple.finder")
         finder.activate()
-        
+
         // Wait for window to disappear
         XCTAssertTrue(window.waitForNonExistence(timeout: 3), "Window should hide")
-        
+
         Thread.sleep(forTimeInterval: 1.0)
-        
+
         // Re-activate the app
         app.activate()
         XCTAssertTrue(app.wait(for: .runningForeground, timeout: 5), "App failed to become foreground")
-        
+
         // Wait for window to reappear - check both dialogs and windows
         let windowExists = window.waitForExistence(timeout: 10) || app.windows.firstMatch.waitForExistence(timeout: 10)
         XCTAssertTrue(windowExists, "Window should reappear")
-        
+
         // Selection should have reset to index 0
         XCTAssertTrue(waitForSelectedIndex(0, timeout: 2), "Selection should reset to first item on reopen, but was \(getSelectedIndex() ?? -1)")
     }
@@ -243,5 +243,104 @@ final class ClipKittyUITests: XCTestCase {
             try? png.write(to: url)
             print("Saved screenshot to: \(url.path)")
         }
+    }
+
+    // MARK: - Marketing Assets
+
+    /// Helper to save a screenshot of just the app window to a specific path
+    private func saveScreenshot(name: String) {
+        // Get the app's window and capture only that
+        let window = app.dialogs.firstMatch
+        if !window.exists {
+            print("Warning: Window not found for \(name)")
+            return
+        }
+
+        let screenshot = window.screenshot()
+        let attachment = XCTAttachment(screenshot: screenshot)
+        attachment.name = name
+        attachment.lifetime = .keepAlways
+        add(attachment)
+
+        let image = screenshot.image
+        if let tiff = image.tiffRepresentation,
+           let bitmap = NSBitmapImageRep(data: tiff),
+           let png = bitmap.representation(using: .png, properties: [:]) {
+            let url = URL(fileURLWithPath: "/tmp/clipkitty_\(name).png")
+            try? png.write(to: url)
+            print("Saved screenshot to: \(url.path)")
+        }
+    }
+
+    /// Records a demo of the search functionality for App Store preview video.
+    /// Run with: make preview-video
+    /// This test types slowly to create a visually appealing demo.
+    func testRecordSearchDemo() throws {
+        let searchField = app.textFields.firstMatch
+        XCTAssertTrue(searchField.waitForExistence(timeout: 5), "Search field not found")
+
+        // Initial pause to show the app with history
+        Thread.sleep(forTimeInterval: 1)
+
+        // Click into search field
+        searchField.click()
+        Thread.sleep(forTimeInterval: 0.25)
+
+        // Type search query character by character with delays for visual effect
+        let query = "meeting"
+        for char in query {
+            searchField.typeText(String(char))
+            Thread.sleep(forTimeInterval: 0.75)  // 120ms between keys - natural typing speed
+        }
+
+        // Pause to show filtered results
+        Thread.sleep(forTimeInterval: 1.5)
+
+        // Navigate down through results with arrow keys
+        searchField.typeText(XCUIKeyboardKey.downArrow.rawValue)
+        Thread.sleep(forTimeInterval: 0.6)
+        searchField.typeText(XCUIKeyboardKey.downArrow.rawValue)
+        Thread.sleep(forTimeInterval: 0.6)
+        searchField.typeText(XCUIKeyboardKey.upArrow.rawValue)
+        Thread.sleep(forTimeInterval: 1.0)
+
+        // Clear and try another search
+        searchField.typeKey("a", modifierFlags: .command)  // Select all
+        Thread.sleep(forTimeInterval: 0.2)
+
+        let query2 = "http"
+        for char in query2 {
+            searchField.typeText(String(char))
+            Thread.sleep(forTimeInterval: 0.75)
+        }
+
+        // Final pause to show results
+        Thread.sleep(forTimeInterval: 2.0)
+    }
+
+    /// Captures multiple screenshot states for marketing materials.
+    /// Run with: make marketing-screenshots
+    func testTakeMarketingScreenshots() throws {
+        let searchField = app.textFields.firstMatch
+        XCTAssertTrue(searchField.waitForExistence(timeout: 5), "Search field not found")
+
+        // Screenshot 1: Initial state showing clipboard history
+        Thread.sleep(forTimeInterval: 1.0)
+        saveScreenshot(name: "marketing_1_history")
+
+        // Screenshot 2: Fuzzy search in action
+        searchField.click()
+        searchField.typeText("meeting")
+        Thread.sleep(forTimeInterval: 0.5)
+        saveScreenshot(name: "marketing_2_search")
+
+        // Screenshot 3: Different search showing variety
+        searchField.typeKey("a", modifierFlags: .command)
+        searchField.typeText("http")
+        Thread.sleep(forTimeInterval: 0.5)
+        // Navigate to show selection
+        searchField.typeText(XCUIKeyboardKey.downArrow.rawValue)
+        Thread.sleep(forTimeInterval: 0.3)
+        saveScreenshot(name: "marketing_3_preview")
     }
 }

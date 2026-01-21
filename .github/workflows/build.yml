@@ -27,20 +27,10 @@ jobs:
       - name: Install Nix
         uses: DeterminateSystems/nix-installer-action@main
 
-      - name: Install create-dmg
-        run: brew install create-dmg
-
-      - name: Set Desktop Background
-        if: github.ref == 'refs/heads/main'
+      - name: Install Build Dependencies
         run: |
-      - name: Set Desktop Background
-        if: github.ref == 'refs/heads/main'
-        run: |
-          osascript -e 'tell application "Finder" to set desktop picture to POSIX file "/System/Library/Desktop Pictures/Solid Colors/Space Gray.png"'
-          defaults write com.apple.dock persistent-apps -array
-          defaults write com.apple.dock persistent-apps -array-add '<dict><key>tile-data</key><dict><key>file-data</key><dict><key>_CFURLString</key><string>/Applications/Safari.app</string><key>_CFURLStringType</key><integer>0</integer></dict></dict></dict>'
-          killall Dock
-
+          # Install dependencies needed for app building, marketing assets, and release
+          brew install create-dmg imagemagick ffmpeg
 
       - name: Build App Variants
         run: |
@@ -61,6 +51,12 @@ jobs:
             HEIGHT=$(sips -g pixelHeight screenshot.png | tail -1 | awk '{print $2}')
             sips --resampleHeightWidth $((HEIGHT * 2)) $((WIDTH * 2)) screenshot.png --out screenshot.png
           fi
+
+      - name: Generate Marketing Assets
+        run: |
+          # Generate App Store screenshots and preview video
+          make marketing-screenshots
+          make preview-video
 
       - name: Generate Icon PNG
         run: make icon-png
@@ -86,6 +82,8 @@ jobs:
           path: |
             screenshot.png
             icon.png
+            marketing/screenshot_*.png
+            marketing/app_preview.mov
 
       - name: Deploy to gh-pages
         if: github.event_name == 'push' && github.ref == 'refs/heads/main'
