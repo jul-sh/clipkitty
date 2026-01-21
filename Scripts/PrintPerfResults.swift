@@ -1,7 +1,7 @@
 import Foundation
 
 let logPath = "xcodebuild.log"
-guard let content = try? String(contentsOfFile: logPath) else {
+guard let content = try? String(contentsOfFile: logPath, encoding: .utf8) else {
     print("Could not read xcodebuild.log. Make sure to run xcodebuild and pipe output to this file.")
     exit(0)
 }
@@ -14,7 +14,7 @@ print("================================")
 
 let testCasePattern = "Test Case '-\\[(.*?)\\]'"
 let averagePattern = "average: ([0-9.]+), "
-let metricPattern = "measured \\\\[(.*?)\\\]"
+let metricPattern = "measured \\[(.*?)\\]"
 let rsdPattern = "relative standard deviation: ([0-9.]+%?), "
 
 func match(pattern: String, in text: String) -> String? {
