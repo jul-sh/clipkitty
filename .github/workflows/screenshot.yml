@@ -35,6 +35,19 @@ jobs:
             sleep 1
           fi
 
+      - name: Force Retina (HiDPI) Resolution
+        run: |
+          # Install displayplacer to enable HiDPI resolution
+          brew install displayplacer
+
+          # 1440x900 with 'scaling:on' forces macOS to render 2880x1800 (Retina)
+          # even on a headless CI runner.
+          displayplacer "res:1440x900 scaling:on"
+
+          # Give the WindowServer a second to adjust the UI scale
+          sleep 3
+          displayplacer list
+
       - name: Build and Screenshot
         run: make screenshot
 
