@@ -190,6 +190,40 @@ final class ClipKittyUITests: XCTestCase {
         XCTAssertFalse(panel.exists, "Panel should NOT appear when settings is opened")
     }
 
+    /// Tests that clicking on the preview text area allows text selection
+    /// instead of dragging the window.
+    func testPreviewTextIsSelectable() throws {
+        let window = app.dialogs.firstMatch
+        XCTAssertTrue(window.exists, "Window should be visible")
+
+        // Record initial window position
+        let initialFrame = window.frame
+
+        // Find the text view in the preview pane (it's a scroll view with text)
+        let scrollViews = window.scrollViews
+        XCTAssertGreaterThan(scrollViews.count, 0, "Should have scroll views")
+
+        // The preview pane's scroll view - try to find the text area
+        // Click and drag on the preview text area
+        let previewArea = scrollViews.element(boundBy: scrollViews.count - 1)
+        XCTAssertTrue(previewArea.exists, "Preview scroll view should exist")
+
+        // Perform a click-drag that would normally move the window
+        let startPoint = previewArea.coordinate(withNormalizedOffset: CGVector(dx: 0.3, dy: 0.3))
+        let endPoint = previewArea.coordinate(withNormalizedOffset: CGVector(dx: 0.7, dy: 0.3))
+        startPoint.click(forDuration: 0.1, thenDragTo: endPoint)
+
+        // Wait a moment for any potential window movement
+        Thread.sleep(forTimeInterval: 0.3)
+
+        // Window should NOT have moved - the drag should select text, not move window
+        let finalFrame = window.frame
+        XCTAssertEqual(initialFrame.origin.x, finalFrame.origin.x, accuracy: 5,
+                       "Window X position should not change when clicking preview text")
+        XCTAssertEqual(initialFrame.origin.y, finalFrame.origin.y, accuracy: 5,
+                       "Window Y position should not change when clicking preview text")
+    }
+
     func testTakeScreenshot() throws {
         // Wait for animations or loading
         sleep(2)
