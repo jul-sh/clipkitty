@@ -28,6 +28,7 @@ screenshot-*.png
 # macOS
 .DS_Store
 *.app
+*.dmg
 
 # Rust build artifacts
 rust-core/target/

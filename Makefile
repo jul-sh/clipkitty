@@ -14,7 +14,7 @@ APP_BINARY := $(APP_BUNDLE)/Contents/MacOS/$(APP_NAME)
 APP_PLIST := $(APP_BUNDLE)/Contents/Info.plist
 APP_ICONS := $(APP_BUNDLE)/Contents/Resources/Assets.car
 
-.PHONY: all clean sign screenshot perf build-binary
+.PHONY: all clean sign screenshot perf build-binary dmg
 
 all: $(APP_BUNDLE) $(APP_ICONS)
 
@@ -106,6 +106,7 @@ clean:
 	@rm -rf ClipKitty.xcodeproj
 	@rm -rf DerivedData
 	@rm -f xcodebuild.log
+	@rm -f "$(APP_NAME).dmg"
 
 sign: $(APP_BUNDLE)
 	@echo "Signing with entitlements..."
@@ -117,6 +118,11 @@ perf: sign ClipKitty.xcodeproj
 	@rm -rf DerivedData
 	@xcodebuild test -project ClipKitty.xcodeproj -scheme ClipKittyUITests -destination 'platform=macOS' -derivedDataPath DerivedData -only-testing:ClipKittyUITests/ClipKittyPerformanceTests | tee xcodebuild.log
 	@swift Scripts/PrintPerfResults.swift
+
+# Build DMG installer
+dmg: all
+	@echo "Building DMG installer..."
+	@./Scripts/build-dmg.sh "$(APP_BUNDLE)" "$(APP_NAME).dmg"
 
 # Screenshot runs everything
 screenshot: sign ClipKitty.xcodeproj
