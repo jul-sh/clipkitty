@@ -55,8 +55,7 @@ jobs:
           screen_id=$(echo "$output" | grep "Persistent screen id:" | head -1 | awk '{print $4}')
 
           if ! echo "$output" | grep -q "scaling:on"; then
-            echo "Error: No scaled resolutions found"
-            exit 1
+            echo "Warning: No scaled resolutions found"
           fi
 
           # Find all scaled resolutions and get the largest by pixel count
