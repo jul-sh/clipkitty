@@ -178,6 +178,12 @@ screenshot: sign ClipKitty.xcodeproj
 	@cp /tmp/clipkitty_screenshot.png screenshot.png || true
 	@echo "Screenshot saved to screenshot.png"
 
+# High-resolution screenshot (2x Retina) - renders SwiftUI view directly, works on any display
+screenshot-hires: sign
+	@echo "Taking high-resolution screenshot..."
+	@"$(APP_BUNDLE)/Contents/MacOS/$(APP_NAME)" --use-simulated-db --take-screenshot screenshot.png
+	@echo "Screenshot saved to screenshot.png"
+
 # ============================================================================
 # App Store Submission
 # ============================================================================

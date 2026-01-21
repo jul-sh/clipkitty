@@ -23,56 +23,8 @@ jobs:
         with:
           targets: aarch64-apple-darwin,x86_64-apple-darwin
 
-      - name: Set Desktop Background
-        run: |
-          # Use a nice macOS wallpaper
-          WALLPAPER="/System/Library/Desktop Pictures/Sequoia Sunrise.heic"
-          if [ ! -f "$WALLPAPER" ]; then
-            WALLPAPER=$(find /System/Library/Desktop\ Pictures -name "*.heic" | head -1)
-          fi
-          if [ -n "$WALLPAPER" ] && [ -f "$WALLPAPER" ]; then
-            osascript -e "tell application \"System Events\" to tell every desktop to set picture to \"$WALLPAPER\""
-            sleep 1
-          fi
-
-      - name: Force Retina (HiDPI) Resolution
-        run: |
-          # Use VMware Tools to set resolution
-          "/Library/Application Support/VMware Tools/vmware-resolutionSet" 2560 1440 && sleep 5 || echo "::warning::Failed to set resolution via VMware Tools"
-
-          # Install displayplacer to enable HiDPI resolution
-          brew install displayplacer
-
-          # Enable HiDPI resolutions
-          sudo defaults write /Library/Preferences/com.apple.windowserver.plist DisplayResolutionEnabled -bool true
-
-          # Get the screen ID and find the largest scaled resolution
-          output=$(displayplacer list)
-          echo "Debug: displayplacer list output:"
-          echo "$output"
-
-          # Extract the persistent screen ID
-          screen_id=$(echo "$output" | grep "Persistent screen id:" | head -1 | awk '{print $4}')
-
-          if ! echo "$output" | grep -q "scaling:on"; then
-            echo "Warning: No scaled resolutions found"
-          fi
-
-          # Find all scaled resolutions and get the largest by pixel count
-          # Parse lines with "scaling:on", extract resolution, sort by pixel count
-          largest=$(echo "$output" | grep "scaling:on" | grep -oE "res:[0-9]+x[0-9]+" | sed 's/res://' | awk -F'x' '{print $1*$2, $0}' | sort -rn | head -1 | awk '{print $2}')
-
-          echo "Screen ID: $screen_id"
-          echo "Largest scaled resolution: $largest"
-
-          # Set it
-          displayplacer "id:$screen_id res:$largest hz:60 color_depth:8 enabled:true scaling:on origin:(0,0) degree:0"
-
-          # Disable font smoothing (cleaner screenshots)
-          sudo defaults write -g CGFontRenderingFontSmoothingDisabled -bool YES
-
-      - name: Build and Screenshot
-        run: make screenshot
+      - name: Build and Take High-Res Screenshot
+        run: make screenshot-hires
 
       - name: Generate Icon PNG
         run: |

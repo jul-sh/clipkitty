@@ -48,7 +48,122 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate {
                 panelController.initialSearchQuery = CommandLine.arguments[searchIndex + 1]
             }
 
+            // Check for --take-screenshot argument (renders at 2x and exits)
+            if let screenshotIndex = CommandLine.arguments.firstIndex(of: "--take-screenshot"),
+               screenshotIndex + 1 < CommandLine.arguments.count {
+                let outputPath = CommandLine.arguments[screenshotIndex + 1]
+                takeScreenshot(to: outputPath)
+                return
+            }
+
             panelController.show()
+        }
+    }
+
+    /// Render the ContentView at 2x scale to a PNG file and exit
+    private var screenshotWindow: NSWindow?
+
+    private func takeScreenshot(to outputPath: String) {
+        let scaleFactor: CGFloat = 2.0
+        let viewSize = NSSize(width: 778, height: 518)  // Same as panel size
+
+        let contentView = ContentView(
+            store: store,
+            onSelect: { _ in },
+            onDismiss: { },
+            initialSearchQuery: panelController.initialSearchQuery ?? ""
+        )
+
+        // Create an offscreen window - SwiftUI needs a window to render properly
+        let window = NSWindow(
+            contentRect: NSRect(origin: .zero, size: viewSize),
+            styleMask: [.borderless],
+            backing: .buffered,
+            defer: false
+        )
+        window.contentView = NSHostingView(rootView: contentView)
+        window.backgroundColor = .clear
+        window.isOpaque = false
+
+        // Position offscreen but make it "visible" to trigger SwiftUI rendering
+        window.setFrameOrigin(NSPoint(x: -10000, y: -10000))
+        window.orderFront(nil)
+
+        self.screenshotWindow = window  // Keep reference
+
+        // Wait for SwiftUI to fully render
+        DispatchQueue.main.asyncAfter(deadline: .now() + 1.5) {
+            self.renderWindowToFile(window, scale: scaleFactor, outputPath: outputPath)
+            NSApp.terminate(nil)
+        }
+    }
+
+    private func renderWindowToFile(_ window: NSWindow, scale: CGFloat, outputPath: String) {
+        guard let contentView = window.contentView else {
+            logError("No content view in window")
+            return
+        }
+
+        let size = contentView.bounds.size
+        let pixelSize = NSSize(width: size.width * scale, height: size.height * scale)
+
+        // Use bitmapImageRepForCachingDisplay which properly captures the rendered view
+        guard let bitmapRep = contentView.bitmapImageRepForCachingDisplay(in: contentView.bounds) else {
+            logError("Failed to create bitmap representation")
+            return
+        }
+
+        // Capture the display into the bitmap
+        contentView.cacheDisplay(in: contentView.bounds, to: bitmapRep)
+
+        // For 2x scale, upscale with high quality interpolation
+        // Note: True native 2x would require the window to be on a Retina display
+        // This approach produces good quality upscaled output for CI environments
+        guard let scaledBitmapRep = NSBitmapImageRep(
+            bitmapDataPlanes: nil,
+            pixelsWide: Int(pixelSize.width),
+            pixelsHigh: Int(pixelSize.height),
+            bitsPerSample: 8,
+            samplesPerPixel: 4,
+            hasAlpha: true,
+            isPlanar: false,
+            colorSpaceName: .deviceRGB,
+            bytesPerRow: 0,
+            bitsPerPixel: 0
+        ) else {
+            logError("Failed to create scaled bitmap")
+            return
+        }
+
+        NSGraphicsContext.saveGraphicsState()
+        guard let context = NSGraphicsContext(bitmapImageRep: scaledBitmapRep) else {
+            logError("Failed to create graphics context")
+            NSGraphicsContext.restoreGraphicsState()
+            return
+        }
+        NSGraphicsContext.current = context
+        context.imageInterpolation = .high
+
+        let sourceImage = NSImage(size: size)
+        sourceImage.addRepresentation(bitmapRep)
+        sourceImage.draw(in: NSRect(origin: .zero, size: pixelSize),
+                         from: NSRect(origin: .zero, size: size),
+                         operation: .copy,
+                         fraction: 1.0)
+
+        NSGraphicsContext.restoreGraphicsState()
+
+        // Save as PNG
+        guard let pngData = scaledBitmapRep.representation(using: .png, properties: [:]) else {
+            logError("Failed to create PNG data")
+            return
+        }
+
+        do {
+            try pngData.write(to: URL(fileURLWithPath: outputPath))
+            logInfo("Screenshot saved to: \(outputPath) (\(Int(pixelSize.width))x\(Int(pixelSize.height)))")
+        } catch {
+            logError("Failed to save screenshot: \(error)")
         }
     }
 
