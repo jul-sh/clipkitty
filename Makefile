@@ -89,7 +89,7 @@ clean:
 
 screenshot: all
 	@echo "Generating Xcode project..."
-	@python3 Scripts/GenXcodeproj.py
+	@swift Scripts/GenXcodeproj.swift
 	@echo "Running UI Tests..."
 	@rm -rf DerivedData
 	@xcodebuild test -project ClipKitty.xcodeproj -scheme ClipKittyUITests -destination 'platform=macOS' -derivedDataPath DerivedData
