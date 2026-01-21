@@ -91,12 +91,7 @@ sign:
 clean:
 	@rm -rf "$(APP_NAME).app"
 
-screenshot: all
-	@echo "Generating Xcode project..."
-	@swift Scripts/GenXcodeproj.swift
-	@echo "Running UI Tests..."
-	@rm -rf DerivedData
-	@xcodebuild test -project ClipKitty.xcodeproj -scheme ClipKittyUITests -destination 'platform=macOS' -derivedDataPath DerivedData
-	@echo "Copying screenshot..."
-	@cp /tmp/clipkitty_screenshot.png screenshot.png
+screenshot:
+	@echo "Taking fullscreen screenshot..."
+	@screencapture screenshot.png
 	@echo "Screenshot saved to screenshot.png"
