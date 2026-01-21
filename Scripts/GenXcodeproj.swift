@@ -1,110 +1,116 @@
-import os
-import uuid
+#!/usr/bin/env swift
+// Generates minimal Xcode project for UI Tests
 
-def generate_uuid():
-    return str(uuid.uuid4()).replace('-', '')[:24].upper()
+import Foundation
 
-PROJECT_NAME = "ClipKitty"
-TARGET_NAME = "ClipKittyUITests"
-BUNDLE_ID = "com.clipkitty.UITests"
-SOURCE_FILE = "Tests/UITests/ClipKittyUITests.swift"
+func generateUUID() -> String {
+    UUID().uuidString.replacingOccurrences(of: "-", with: "").prefix(24).uppercased()
+}
 
-# UUIDs
-PBX_PROJECT_ID = generate_uuid()
-PBX_GROUP_MAIN_ID = generate_uuid()
-PBX_GROUP_TESTS_ID = generate_uuid()
-PBX_FILE_SOURCE_ID = generate_uuid()
-PBX_BUILD_FILE_ID = generate_uuid()
-PBX_NATIVE_TARGET_ID = generate_uuid()
-PBX_CONFIG_LIST_PROJECT_ID = generate_uuid()
-PBX_CONFIG_LIST_TARGET_ID = generate_uuid()
-PBX_CONFIG_DEBUG_PROJ_ID = generate_uuid()
-PBX_CONFIG_RELEASE_PROJ_ID = generate_uuid()
-PBX_CONFIG_DEBUG_TARGET_ID = generate_uuid()
-PBX_CONFIG_RELEASE_TARGET_ID = generate_uuid()
-PBX_SOURCES_BUILD_PHASE_ID = generate_uuid()
-PBX_FRAMEWORKS_BUILD_PHASE_ID = generate_uuid()
-PBX_RESOURCES_BUILD_PHASE_ID = generate_uuid()
-PBX_PRODUCT_REF_ID = generate_uuid()
-PBX_GROUP_PRODUCTS_ID = generate_uuid()
+let projectName = "ClipKitty"
+let targetName = "ClipKittyUITests"
+let bundleId = "com.clipkitty.UITests"
+let sourceFile = "Tests/UITests/ClipKittyUITests.swift"
 
-CONTENT = f"""// !$*UTF8*$!
-{{
+// UUIDs
+let pbxProjectId = generateUUID()
+let pbxGroupMainId = generateUUID()
+let pbxGroupTestsId = generateUUID()
+let pbxFileSourceId = generateUUID()
+let pbxBuildFileId = generateUUID()
+let pbxNativeTargetId = generateUUID()
+let pbxConfigListProjectId = generateUUID()
+let pbxConfigListTargetId = generateUUID()
+let pbxConfigDebugProjId = generateUUID()
+let pbxConfigReleaseProjId = generateUUID()
+let pbxConfigDebugTargetId = generateUUID()
+let pbxConfigReleaseTargetId = generateUUID()
+let pbxSourcesBuildPhaseId = generateUUID()
+let pbxFrameworksBuildPhaseId = generateUUID()
+let pbxResourcesBuildPhaseId = generateUUID()
+let pbxProductRefId = generateUUID()
+let pbxGroupProductsId = generateUUID()
+
+let sourceBasename = URL(fileURLWithPath: sourceFile).lastPathComponent
+
+let content = """
+// !$*UTF8*$!
+{
 	archiveVersion = 1;
-	classes = {{
-	}};
+	classes = {
+	};
 	objectVersion = 55;
-	objects = {{
+	objects = {
 
 /* Begin PBXBuildFile section */
-		{PBX_BUILD_FILE_ID} /* {os.path.basename(SOURCE_FILE)} in Sources */ = {{isa = PBXBuildFile; fileRef = {PBX_FILE_SOURCE_ID} /* {os.path.basename(SOURCE_FILE)} */; }};
+		\(pbxBuildFileId) /* \(sourceBasename) in Sources */ = {isa = PBXBuildFile; fileRef = \(pbxFileSourceId) /* \(sourceBasename) */; };
 /* End PBXBuildFile section */
 
 /* Begin PBXFileReference section */
-		{PBX_FILE_SOURCE_ID} /* {os.path.basename(SOURCE_FILE)} */ = {{isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = "{SOURCE_FILE}"; sourceTree = "<group>"; }};
-		{PBX_PRODUCT_REF_ID} /* {TARGET_NAME}.xctest */ = {{isa = PBXFileReference; explicitFileType = wrapper.cfbundle; includeInIndex = 0; path = "{TARGET_NAME}.xctest"; sourceTree = BUILT_PRODUCTS_DIR; }};
+		\(pbxFileSourceId) /* \(sourceBasename) */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = "\(sourceFile)"; sourceTree = "<group>"; };
+		\(pbxProductRefId) /* \(targetName).xctest */ = {isa = PBXFileReference; explicitFileType = wrapper.cfbundle; includeInIndex = 0; path = "\(targetName).xctest"; sourceTree = BUILT_PRODUCTS_DIR; };
 /* End PBXFileReference section */
 
 /* Begin PBXGroup section */
-		{PBX_GROUP_MAIN_ID} = {{
+		\(pbxGroupMainId) = {
 			isa = PBXGroup;
 			children = (
-				{PBX_GROUP_TESTS_ID} /* Tests */,
-				{PBX_GROUP_PRODUCTS_ID} /* Products */,
+				\(pbxGroupTestsId) /* Tests */,
+				\(pbxGroupProductsId) /* Products */,
 			);
 			sourceTree = "<group>";
-		}};
-		{PBX_GROUP_PRODUCTS_ID} /* Products */ = {{
+		};
+		\(pbxGroupProductsId) /* Products */ = {
 			isa = PBXGroup;
 			children = (
-				{PBX_PRODUCT_REF_ID} /* {TARGET_NAME}.xctest */,
+				\(pbxProductRefId) /* \(targetName).xctest */,
 			);
 			name = Products;
 			sourceTree = "<group>";
-		}};
-		{PBX_GROUP_TESTS_ID} /* Tests */ = {{
+		};
+		\(pbxGroupTestsId) /* Tests */ = {
 			isa = PBXGroup;
 			children = (
-				{PBX_FILE_SOURCE_ID} /* {os.path.basename(SOURCE_FILE)} */,
+				\(pbxFileSourceId) /* \(sourceBasename) */,
 			);
 			path = ".";
 			sourceTree = "<group>";
-		}};
+		};
 /* End PBXGroup section */
 
 /* Begin PBXNativeTarget section */
-		{PBX_NATIVE_TARGET_ID} /* {TARGET_NAME} */ = {{
+		\(pbxNativeTargetId) /* \(targetName) */ = {
 			isa = PBXNativeTarget;
-			buildConfigurationList = {PBX_CONFIG_LIST_TARGET_ID} /* Build configuration list for PBXNativeTarget "{TARGET_NAME}" */;
+			buildConfigurationList = \(pbxConfigListTargetId) /* Build configuration list for PBXNativeTarget "\(targetName)" */;
 			buildPhases = (
-				{PBX_SOURCES_BUILD_PHASE_ID} /* Sources */,
-				{PBX_FRAMEWORKS_BUILD_PHASE_ID} /* Frameworks */,
-				{PBX_RESOURCES_BUILD_PHASE_ID} /* Resources */,
+				\(pbxSourcesBuildPhaseId) /* Sources */,
+				\(pbxFrameworksBuildPhaseId) /* Frameworks */,
+				\(pbxResourcesBuildPhaseId) /* Resources */,
 			);
 			buildRules = (
 			);
 			dependencies = (
 			);
-			name = "{TARGET_NAME}";
-			productName = "{TARGET_NAME}";
-			productReference = {PBX_PRODUCT_REF_ID} /* {TARGET_NAME}.xctest */;
+			name = "\(targetName)";
+			productName = "\(targetName)";
+			productReference = \(pbxProductRefId) /* \(targetName).xctest */;
 			productType = "com.apple.product-type.bundle.ui-testing";
-		}};
+		};
 /* End PBXNativeTarget section */
 
 /* Begin PBXProject section */
-		{PBX_PROJECT_ID} /* Project object */ = {{
+		\(pbxProjectId) /* Project object */ = {
 			isa = PBXProject;
-			attributes = {{
+			attributes = {
 				LastUpgradeCheck = 1500;
-				TargetAttributes = {{
-					{PBX_NATIVE_TARGET_ID} = {{
+				TargetAttributes = {
+					\(pbxNativeTargetId) = {
 						CreatedOnToolsVersion = 15.0;
-						TestTargetID = {PBX_NATIVE_TARGET_ID};
-					}};
-				}};
-			}};
-			buildConfigurationList = {PBX_CONFIG_LIST_PROJECT_ID} /* Build configuration list for PBXProject "{PROJECT_NAME}" */;
+						TestTargetID = \(pbxNativeTargetId);
+					};
+				};
+			};
+			buildConfigurationList = \(pbxConfigListProjectId) /* Build configuration list for PBXProject "\(projectName)" */;
 			compatibilityVersion = "Xcode 14.0";
 			developmentRegion = en;
 			hasScannedForEncodings = 0;
@@ -112,51 +118,51 @@ CONTENT = f"""// !$*UTF8*$!
 				en,
 				Base,
 			);
-			mainGroup = {PBX_GROUP_MAIN_ID};
-			productRefGroup = {PBX_GROUP_PRODUCTS_ID} /* Products */;
+			mainGroup = \(pbxGroupMainId);
+			productRefGroup = \(pbxGroupProductsId) /* Products */;
 			projectDirPath = "";
 			projectRoot = "";
 			targets = (
-				{PBX_NATIVE_TARGET_ID} /* {TARGET_NAME} */,
+				\(pbxNativeTargetId) /* \(targetName) */,
 			);
-		}};
+		};
 /* End PBXProject section */
 
 /* Begin PBXSourcesBuildPhase section */
-		{PBX_SOURCES_BUILD_PHASE_ID} /* Sources */ = {{
+		\(pbxSourcesBuildPhaseId) /* Sources */ = {
 			isa = PBXSourcesBuildPhase;
 			buildActionMask = 2147483647;
 			files = (
-				{PBX_BUILD_FILE_ID} /* {os.path.basename(SOURCE_FILE)} in Sources */,
+				\(pbxBuildFileId) /* \(sourceBasename) in Sources */,
 			);
 			runOnlyForDeploymentPostprocessing = 0;
-		}};
+		};
 /* End PBXSourcesBuildPhase section */
 
 /* Begin PBXFrameworksBuildPhase section */
-		{PBX_FRAMEWORKS_BUILD_PHASE_ID} /* Frameworks */ = {{
+		\(pbxFrameworksBuildPhaseId) /* Frameworks */ = {
 			isa = PBXFrameworksBuildPhase;
 			buildActionMask = 2147483647;
 			files = (
 			);
 			runOnlyForDeploymentPostprocessing = 0;
-		}};
+		};
 /* End PBXFrameworksBuildPhase section */
 
 /* Begin PBXResourcesBuildPhase section */
-		{PBX_RESOURCES_BUILD_PHASE_ID} /* Resources */ = {{
+		\(pbxResourcesBuildPhaseId) /* Resources */ = {
 			isa = PBXResourcesBuildPhase;
 			buildActionMask = 2147483647;
 			files = (
 			);
 			runOnlyForDeploymentPostprocessing = 0;
-		}};
+		};
 /* End PBXResourcesBuildPhase section */
 
 /* Begin XCBuildConfiguration section */
-		{PBX_CONFIG_DEBUG_PROJ_ID} /* Debug */ = {{
+		\(pbxConfigDebugProjId) /* Debug */ = {
 			isa = XCBuildConfiguration;
-			buildSettings = {{
+			buildSettings = {
 				ALWAYS_SEARCH_USER_PATHS = NO;
 				CLANG_ANALYZER_NONNULL = YES;
 				CLANG_ANALYZER_NUMBER_OBJECT_CONVERSION = YES_AGGRESSIVE;
@@ -211,12 +217,12 @@ CONTENT = f"""// !$*UTF8*$!
 				SDKROOT = macosx;
 				SWIFT_ACTIVE_COMPILATION_CONDITIONS = DEBUG;
 				SWIFT_OPTIMIZATION_LEVEL = "-Onone";
-			}};
+			};
 			name = Debug;
-		}};
-		{PBX_CONFIG_RELEASE_PROJ_ID} /* Release */ = {{
+		};
+		\(pbxConfigReleaseProjId) /* Release */ = {
 			isa = XCBuildConfiguration;
-			buildSettings = {{
+			buildSettings = {
 				ALWAYS_SEARCH_USER_PATHS = NO;
 				CLANG_ANALYZER_NONNULL = YES;
 				CLANG_ANALYZER_NUMBER_OBJECT_CONVERSION = YES_AGGRESSIVE;
@@ -264,18 +270,18 @@ CONTENT = f"""// !$*UTF8*$!
 				SDKROOT = macosx;
 				SWIFT_COMPILATION_MODE = wholemodule;
 				SWIFT_OPTIMIZATION_LEVEL = "-O";
-			}};
+			};
 			name = Release;
-		}};
-		{PBX_CONFIG_DEBUG_TARGET_ID} /* Debug */ = {{
+		};
+		\(pbxConfigDebugTargetId) /* Debug */ = {
 			isa = XCBuildConfiguration;
-			buildSettings = {{
+			buildSettings = {
 				CODE_SIGN_STYLE = Automatic;
 				CODE_SIGN_ENTITLEMENTS = "Tests/UITests/ClipKittyUITests.entitlements";
 				CURRENT_PROJECT_VERSION = 1;
 				GENERATE_INFOPLIST_FILE = YES;
 				MARKETING_VERSION = 1.0;
-				PRODUCT_BUNDLE_IDENTIFIER = {BUNDLE_ID};
+				PRODUCT_BUNDLE_IDENTIFIER = \(bundleId);
 				PRODUCT_NAME = "$(TARGET_NAME)";
 				SWIFT_EMIT_LOC_STRINGS = NO;
 				SWIFT_VERSION = 5.0;
@@ -284,18 +290,18 @@ CONTENT = f"""// !$*UTF8*$!
                     "@executable_path/../Frameworks",
                     "@loader_path/../Frameworks",
                 );
-			}};
+			};
 			name = Debug;
-		}};
-		{PBX_CONFIG_RELEASE_TARGET_ID} /* Release */ = {{
+		};
+		\(pbxConfigReleaseTargetId) /* Release */ = {
 			isa = XCBuildConfiguration;
-			buildSettings = {{
+			buildSettings = {
 				CODE_SIGN_STYLE = Automatic;
 				CODE_SIGN_ENTITLEMENTS = "Tests/UITests/ClipKittyUITests.entitlements";
 				CURRENT_PROJECT_VERSION = 1;
 				GENERATE_INFOPLIST_FILE = YES;
 				MARKETING_VERSION = 1.0;
-				PRODUCT_BUNDLE_IDENTIFIER = {BUNDLE_ID};
+				PRODUCT_BUNDLE_IDENTIFIER = \(bundleId);
 				PRODUCT_NAME = "$(TARGET_NAME)";
 				SWIFT_EMIT_LOC_STRINGS = NO;
 				SWIFT_VERSION = 5.0;
@@ -304,42 +310,38 @@ CONTENT = f"""// !$*UTF8*$!
                     "@executable_path/../Frameworks",
                     "@loader_path/../Frameworks",
                 );
-			}};
+			};
 			name = Release;
-		}};
+		};
 /* End XCBuildConfiguration section */
 
 /* Begin XCConfigurationList section */
-		{PBX_CONFIG_LIST_PROJECT_ID} /* Build configuration list for PBXProject "{PROJECT_NAME}" */ = {{
+		\(pbxConfigListProjectId) /* Build configuration list for PBXProject "\(projectName)" */ = {
 			isa = XCConfigurationList;
 			buildConfigurations = (
-				{PBX_CONFIG_DEBUG_PROJ_ID} /* Debug */,
-				{PBX_CONFIG_RELEASE_PROJ_ID} /* Release */,
+				\(pbxConfigDebugProjId) /* Debug */,
+				\(pbxConfigReleaseProjId) /* Release */,
 			);
 			defaultConfigurationIsVisible = 0;
 			defaultConfigurationName = Release;
-		}};
-		{PBX_CONFIG_LIST_TARGET_ID} /* Build configuration list for PBXNativeTarget "{TARGET_NAME}" */ = {{
+		};
+		\(pbxConfigListTargetId) /* Build configuration list for PBXNativeTarget "\(targetName)" */ = {
 			isa = XCConfigurationList;
 			buildConfigurations = (
-				{PBX_CONFIG_DEBUG_TARGET_ID} /* Debug */,
-				{PBX_CONFIG_RELEASE_TARGET_ID} /* Release */,
+				\(pbxConfigDebugTargetId) /* Debug */,
+				\(pbxConfigReleaseTargetId) /* Release */,
 			);
 			defaultConfigurationIsVisible = 0;
 			defaultConfigurationName = Release;
-		}};
+		};
 /* End XCConfigurationList section */
-	}};
-	rootObject = {PBX_PROJECT_ID} /* Project object */;
-}}
+	};
+	rootObject = \(pbxProjectId) /* Project object */;
+}
 """
 
-os.makedirs(f"{PROJECT_NAME}.xcodeproj", exist_ok=True)
-with open(f"{PROJECT_NAME}.xcodeproj/project.pbxproj", "w") as f:
-    f.write(CONTENT)
-
-# Scheme
-SCHEME_CONTENT = f"""<?xml version="1.0" encoding="UTF-8"?>
+let schemeContent = """
+<?xml version="1.0" encoding="UTF-8"?>
 <Scheme
    LastUpgradeVersion = "1500"
    version = "1.3">
@@ -355,10 +357,10 @@ SCHEME_CONTENT = f"""<?xml version="1.0" encoding="UTF-8"?>
             buildForAnalyzing = "NO">
             <BuildableReference
                BuildableIdentifier = "primary"
-               BlueprintIdentifier = "{PBX_NATIVE_TARGET_ID}"
-               BuildableName = "{TARGET_NAME}.xctest"
-               BlueprintName = "{TARGET_NAME}"
-               ReferencedContainer = "container:{PROJECT_NAME}.xcodeproj">
+               BlueprintIdentifier = "\(pbxNativeTargetId)"
+               BuildableName = "\(targetName).xctest"
+               BlueprintName = "\(targetName)"
+               ReferencedContainer = "container:\(projectName).xcodeproj">
             </BuildableReference>
          </BuildActionEntry>
       </BuildActionEntries>
@@ -368,15 +370,22 @@ SCHEME_CONTENT = f"""<?xml version="1.0" encoding="UTF-8"?>
       selectedDebuggerIdentifier = "Xcode.DebuggerFoundation.Debugger.LLDB"
       selectedLauncherIdentifier = "Xcode.DebuggerFoundation.Launcher.LLDB"
       shouldUseLaunchSchemeArgsEnv = "YES">
+      <EnvironmentVariables>
+         <EnvironmentVariable
+            key = "CLIPKITTY_APP_PATH"
+            value = "$(PROJECT_DIR)/ClipKitty.app"
+            isEnabled = "YES">
+         </EnvironmentVariable>
+      </EnvironmentVariables>
       <Testables>
          <TestableReference
             skipped = "NO">
             <BuildableReference
                BuildableIdentifier = "primary"
-               BlueprintIdentifier = "{PBX_NATIVE_TARGET_ID}"
-               BuildableName = "{TARGET_NAME}.xctest"
-               BlueprintName = "{TARGET_NAME}"
-               ReferencedContainer = "container:{PROJECT_NAME}.xcodeproj">
+               BlueprintIdentifier = "\(pbxNativeTargetId)"
+               BuildableName = "\(targetName).xctest"
+               BlueprintName = "\(targetName)"
+               ReferencedContainer = "container:\(projectName).xcodeproj">
             </BuildableReference>
          </TestableReference>
       </Testables>
@@ -391,6 +400,13 @@ SCHEME_CONTENT = f"""<?xml version="1.0" encoding="UTF-8"?>
       debugDocumentVersioning = "YES"
       debugServiceExtension = "internal"
       allowLocationSimulation = "YES">
+      <EnvironmentVariables>
+         <EnvironmentVariable
+            key = "CLIPKITTY_APP_PATH"
+            value = "$(PROJECT_DIR)/ClipKitty.app"
+            isEnabled = "YES">
+         </EnvironmentVariable>
+      </EnvironmentVariables>
    </LaunchAction>
    <ProfileAction
       buildConfiguration = "Release"
@@ -409,8 +425,14 @@ SCHEME_CONTENT = f"""<?xml version="1.0" encoding="UTF-8"?>
 </Scheme>
 """
 
-os.makedirs(f"{PROJECT_NAME}.xcodeproj/xcshareddata/schemes", exist_ok=True)
-with open(f"{PROJECT_NAME}.xcodeproj/xcshareddata/schemes/{TARGET_NAME}.xcscheme", "w") as f:
-    f.write(SCHEME_CONTENT)
+let fm = FileManager.default
+let projectDir = "\(projectName).xcodeproj"
+let schemesDir = "\(projectDir)/xcshareddata/schemes"
 
-print(f"Generated {PROJECT_NAME}.xcodeproj")
+try fm.createDirectory(atPath: projectDir, withIntermediateDirectories: true)
+try fm.createDirectory(atPath: schemesDir, withIntermediateDirectories: true)
+
+try content.write(toFile: "\(projectDir)/project.pbxproj", atomically: true, encoding: .utf8)
+try schemeContent.write(toFile: "\(schemesDir)/\(targetName).xcscheme", atomically: true, encoding: .utf8)
+
+print("Generated \(projectName).xcodeproj")
