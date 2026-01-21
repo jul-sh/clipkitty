@@ -17,6 +17,7 @@
 
         # Rust toolchain with both ARM and x86_64 targets for universal binaries
         rustToolchain = pkgs.rust-bin.stable.latest.default.override {
+          extensions = [ "rust-src" "rust-std" ];
           targets = [ "aarch64-apple-darwin" "x86_64-apple-darwin" ];
         };
       in
