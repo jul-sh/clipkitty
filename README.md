@@ -2,17 +2,17 @@
 
 <img src="https://raw.githubusercontent.com/jul-sh/clipkitty/gh-pages/icon.png" alt="ClipKitty icon" width="60">
 
-**The clipboard manager that actually remembers.**
+**Your clipboard history from day one. Searchable in milliseconds.**
 
-Most clipboard managers cap out at a few hundred items and call it a day. ClipKitty stores everything; optimized fuzzy search let's you find your last item as quickly as your millionth. Built for people who copy thousands of things and need to find them again.
+Most clipboard managers cap out at a few hundred items and call it a day. ClipKitty stores everything. And with optimized fuzzy search you'll find your last item as quickly as your millionth. Built for people who copy lots of things and need to find them again.
 
 <img src="https://raw.githubusercontent.com/jul-sh/clipkitty/gh-pages/screenshot.png" alt="ClipKitty screenshot" width="820">
 
-## The problem
+## Why it exists
 
-You copied that API response last week. That error message yesterday. That address three months ago. Your clipboard manager either forgot it, slowed to a crawl searching for it, or truncated half of it.
+You copied that command last week. That error message yesterday. That address three months ago. Your clipboard manager either forgot it, slowed to a crawl searching for it, or truncated half of it.
 
-**ClipKitty doesn’t forget.** SQLite FTS5 with trigram indexing means search stays instant at any scale. No item limits, no time limits, no character limits.
+ClipKitty's search uses nucleo and tantivy; the same fuzzy matching and search infrastructure behind modern code editors and production search engines. Type "improt" and find "import". Results in under 50ms whether your history holds 100 items or 1,000,000.
 
 ## Why ClipKitty over alternatives?
 
@@ -24,10 +24,10 @@ You copied that API response last week. That error message yesterday. That addre
 
 ## Features
 
-- **Fuzzy search that scales**: Type “improt” and find “import”. Stays fast whether you have 100 items or 100,000.
+- **Fuzzy search that scales**: Type “improt” and find “import”. Stays fast whether you have 100 items or 1,000,000.
 - **Live preview**: See full content as you navigate. No truncation, no waiting for tooltips.
 - **Keyboard-first**: ⌥Space to open, arrow keys to navigate, Return to paste.
-- **Privacy-first**: Available in both fully Sandboxed and Standard versions. Offline-only, no telemetry.
+- **Privacy-first**: On device, fully offline, no telemetry.
 
 ## Installation
 
@@ -36,14 +36,8 @@ You copied that API response last week. That error message yesterday. That addre
 If you have [Homebrew](https://brew.sh) installed, run:
 
 ```bash
-# Standard version (full power, automatic paste)
 brew install jul-sh/tap/clipkitty
-
-# OR Sandboxed version (more secure, no automatic paste)
-brew install jul-sh/tap/clipkitty-sandboxed
 ```
-
-*Note: The standard version automatically bypasses the "Unidentified Developer" warning and strips the quarantine flag for you.*
 
 ### Manual Download
 

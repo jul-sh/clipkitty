@@ -29,6 +29,9 @@ fn main() {
     let rust_dir = PathBuf::from(env!("CARGO_MANIFEST_DIR"));
     let project_root = rust_dir.parent().expect("No parent directory");
 
+    // Ensure Rust is built with the same deployment target as the Swift app
+    env::set_var("MACOSX_DEPLOYMENT_TARGET", "15.0");
+
     println!("Building Rust library...");
     run_cmd("cargo", &["build", "--release"], &rust_dir);
 

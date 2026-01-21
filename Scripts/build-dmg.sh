@@ -33,9 +33,6 @@ STAGING_DIR="$TEMP_DIR/staging"
 mkdir -p "$STAGING_DIR"
 cp -R "$APP_PATH" "$STAGING_DIR/"
 
-# Create Applications symlink
-ln -s /Applications "$STAGING_DIR/Applications"
-
 # Add background image to staging
 mkdir -p "$STAGING_DIR/.background"
 cp "$BACKGROUND_PATH" "$STAGING_DIR/.background/background.png"
@@ -52,13 +49,16 @@ if command -v create-dmg &> /dev/null; then
         --window-pos 200 120 \
         --window-size 660 500 \
         --icon-size 100 \
-        --icon "ClipKitty.app" 165 280 \
-        --hide-extension "ClipKitty.app" \
+        --icon "$(basename "$APP_PATH")" 165 280 \
+        --hide-extension "$(basename "$APP_PATH")" \
         --app-drop-link 495 280 \
         "$OUTPUT_DMG" \
         "$STAGING_DIR/"
 else
     echo "Building DMG with hdiutil (install create-dmg for prettier results)..."
+
+    # Create Applications symlink for manual build
+    ln -s /Applications "$STAGING_DIR/Applications"
 
     # Create a temporary DMG
     TEMP_DMG="$TEMP_DIR/temp.dmg"

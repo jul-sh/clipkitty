@@ -24,10 +24,8 @@ jobs:
         with:
           swift-version: "6.2"
 
-      - name: Setup Rust
-        uses: dtolnay/rust-toolchain@stable
-        with:
-          targets: aarch64-apple-darwin,x86_64-apple-darwin
+      - name: Install Nix
+        uses: DeterminateSystems/nix-installer-action@main
 
       - name: Install create-dmg
         run: brew install create-dmg
@@ -58,7 +56,7 @@ jobs:
             ClipKitty.dmg \
             ClipKitty-Sandboxed.dmg \
             --clobber
-          
+
           # Append note about sandboxed version
           NOTE="\n\n### Note on Sandboxed Version\n\nThe sandboxed version (ClipKitty-Sandboxed.dmg) is more secure but less powerful. It does not support automatic pasting (Cmd+V) into other apps due to system restrictions. Use the standard version if you want the full experience."
           gh release edit "${{ github.event.release.tag_name }}" --notes "$(gh release view "${{ github.event.release.tag_name }}" --json body -q .body)$NOTE"
@@ -91,10 +89,8 @@ jobs:
         with:
           swift-version: "6.2"
 
-      - name: Setup Rust
-        uses: dtolnay/rust-toolchain@stable
-        with:
-          targets: aarch64-apple-darwin,x86_64-apple-darwin
+      - name: Install Nix
+        uses: DeterminateSystems/nix-installer-action@main
 
       - name: Generate Rust Bindings
         run: |

@@ -228,10 +228,10 @@ final class ClipKittyUITests: XCTestCase {
         // Wait for animations or loading
         sleep(2)
 
-        let window = app.dialogs.firstMatch
-        let screenshot = window.screenshot()
+        // Capture the entire screen
+        let screenshot = XCUIScreen.main.screenshot()
         let attachment = XCTAttachment(screenshot: screenshot)
-        attachment.name = "Application Screenshot"
+        attachment.name = "Full Screen Screenshot"
         attachment.lifetime = .keepAlways
         add(attachment)
 
