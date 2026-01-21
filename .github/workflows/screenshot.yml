@@ -23,6 +23,28 @@ jobs:
         with:
           targets: aarch64-apple-darwin,x86_64-apple-darwin
 
+      - name: Create Virtual HiDPI Display
+        run: |
+          # Compile the virtual display tool
+          swiftc Scripts/create_virtual_display.swift -o virtual-display
+
+          # Run in background, capture PID
+          # stdout = display ID, stderr = status messages
+          ./virtual-display > display_id.txt 2>&1 &
+          echo $! > display_pid.txt
+
+          # Wait for display to initialize
+          sleep 3
+
+          # Verify the display was created
+          if [ -s display_id.txt ]; then
+            echo "Virtual display created with ID: $(head -1 display_id.txt)"
+            system_profiler SPDisplaysDataType || true
+          else
+            echo "Warning: Virtual display may not have initialized properly"
+            cat display_id.txt || true
+          fi
+
       - name: Build and Take High-Res Screenshot
         run: make screenshot-hires
 
@@ -88,3 +110,12 @@ jobs:
           REPO="${{ github.repository }}"
           echo "Screenshot: https://raw.githubusercontent.com/$REPO/gh-pages/screenshot.png"
           echo "Icon: https://raw.githubusercontent.com/$REPO/gh-pages/icon.png"
+
+      - name: Cleanup Virtual Display
+        if: always()
+        run: |
+          if [ -f display_pid.txt ]; then
+            PID=$(cat display_pid.txt)
+            echo "Terminating virtual display process (PID: $PID)"
+            kill "$PID" 2>/dev/null || true
+          fi
