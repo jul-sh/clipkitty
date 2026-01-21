@@ -43,7 +43,7 @@ brew install jul-sh/tap/clipkitty
 
 1. Download from [GitHub Releases](https://github.com/jul-sh/clipkitty/releases)
 1. Press **⌥Space** to open your clipboard history
-1. Type to search, arrow keys to navigate, Return to paste (in standard version)
+1. Type to search, arrow keys to navigate, Return to paste
 
 ## Keyboard shortcuts
 
