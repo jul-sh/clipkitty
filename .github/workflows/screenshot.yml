@@ -48,6 +48,12 @@ jobs:
           DISPLAY_ID=$(displayplacer list | grep 'Persistent screen id:' | awk '{print $4}')
           echo "Display ID: $DISPLAY_ID"
 
+          # Set to max resolution (2560x1440)
+          displayplacer "id:$DISPLAY_ID res:2560x1440 hz:60 color_depth:8 scaling:on"
+          # Get the persistent display ID
+          DISPLAY_ID=$(displayplacer list | grep 'Persistent screen id:' | awk '{print $4}')
+          echo "Display ID: $DISPLAY_ID"
+
           # Set to max resolution (2560x1600)
           displayplacer "id:$DISPLAY_ID res:2560x1600 hz:60 color_depth:8 scaling:on"
 
