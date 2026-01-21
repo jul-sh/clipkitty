@@ -1,6 +1,6 @@
 import SwiftUI
 import AppKit
-import ClipKittyCore
+import ClipKittyRust
 import os.log
 import UniformTypeIdentifiers
 
@@ -33,11 +33,9 @@ struct ContentView: View {
             case .searching(_, let searchState):
                 switch searchState {
                 case .loading(let previous):
-                    return previous
-                case .loadingMore(let results):
-                    return results
+                    return previous.map { $0.item }
                 case .results(let results, _):
-                    return results
+                    return results.map { $0.item }
                 }
             default:
                 return []
@@ -119,7 +117,7 @@ struct ContentView: View {
             let isLoading: Bool = {
                 if case .searching(_, let searchState) = newState {
                     switch searchState {
-                    case .loading, .loadingMore:
+                    case .loading:
                         return true
                     case .results:
                         return false
@@ -134,7 +132,7 @@ struct ContentView: View {
                     // Only show if still loading
                     if case .searching(_, let searchState) = store.state {
                         switch searchState {
-                        case .loading, .loadingMore:
+                        case .loading:
                             showSearchSpinner = true
                         case .results:
                             break
@@ -321,7 +319,6 @@ struct ContentView: View {
                     .onAppear {
                         if index == items.count - 10 {
                             store.loadMoreItems()
-                            store.loadMoreSearchResults()
                         }
                     }
                 }
@@ -375,7 +372,7 @@ struct ContentView: View {
                         ScrollView(.vertical, showsIndicators: true) {
                             switch item.content {
                             case .image(let data, let description):
-                                if let nsImage = NSImage(data: data) {
+                                if let nsImage = NSImage(data: Data(data)) {
                                     VStack(spacing: 8) {
                                         Image(nsImage: nsImage)
                                             .resizable()
@@ -733,7 +730,7 @@ struct ItemRow: View, Equatable {
                 // Main icon: image thumbnail, browser icon for links, or UTType system icon
                 Group {
                     if case .image(let data, _) = item.content,
-                       let nsImage = NSImage(data: data) {
+                       let nsImage = NSImage(data: Data(data)) {
                         Image(nsImage: nsImage)
                             .resizable()
                             .aspectRatio(contentMode: .fill)

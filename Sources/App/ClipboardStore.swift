@@ -1,8 +1,7 @@
 import Foundation
 import AppKit
 import Observation
-import GRDB
-import ClipKittyCore
+import ClipKittyRust
 import os.signpost
 import os.log
 import ImageIO
@@ -35,44 +34,16 @@ private func measureTimeAsync<T>(_ label: String, _ block: () async throws -> T)
     return result
 }
 
-/// Calculate Levenshtein distance between two strings
-private func levenshteinDistance(_ s1: String, _ s2: String) -> Int {
-    let s1Array = Array(s1.lowercased())
-    let s2Array = Array(s2.lowercased())
-    let s1Len = s1Array.count
-    let s2Len = s2Array.count
-
-    guard s1Len > 0 else { return s2Len }
-    guard s2Len > 0 else { return s1Len }
-
-    var matrix = Array(repeating: Array(repeating: 0, count: s2Len + 1), count: s1Len + 1)
-
-    for i in 0...s1Len {
-        matrix[i][0] = i
-    }
-    for j in 0...s2Len {
-        matrix[0][j] = j
-    }
-
-    for i in 1...s1Len {
-        for j in 1...s2Len {
-            let cost = s1Array[i - 1] == s2Array[j - 1] ? 0 : 1
-            matrix[i][j] = min(
-                matrix[i - 1][j] + 1,      // deletion
-                matrix[i][j - 1] + 1,      // insertion
-                matrix[i - 1][j - 1] + cost // substitution
-            )
-        }
-    }
-
-    return matrix[s1Len][s2Len]
+/// Search result item with highlights
+struct SearchResultItem: Equatable {
+    let item: ClipboardItem
+    let highlights: [HighlightRange]
 }
 
 /// Search result state - makes loading/results states explicit
 enum SearchResultState: Equatable {
-    case loading(previousResults: [ClipboardItem])
-    case loadingMore(results: [ClipboardItem])  // Loading additional results via scroll
-    case results([ClipboardItem], hasMore: Bool)
+    case loading(previousResults: [SearchResultItem])
+    case results([SearchResultItem], hasMore: Bool)
 }
 
 /// Combined state for data display
@@ -90,11 +61,11 @@ final class ClipboardStore {
 
     private(set) var state: DisplayState = .loading
 
-    // MARK: - Derived Properties
-
     // MARK: - Private State
 
-    private var dbQueue: DatabaseQueue?
+    /// Rust-backed clipboard store
+    private var rustStore: ClipKittyRust.ClipboardStore?
+
     private var lastChangeCount: Int = 0
     private var pollingTask: Task<Void, Never>?
 
@@ -104,14 +75,11 @@ final class ClipboardStore {
     private var sleepObserver: NSObjectProtocol?
     private var wakeObserver: NSObjectProtocol?
     private var searchTask: Task<Void, Never>?
-    /// Cursor for keyset pagination - timestamp of the oldest loaded item
-    private var oldestLoadedTimestamp: Date?
-    /// Cursor for search pagination - timestamp of oldest search result
-    private var oldestSearchTimestamp: Date?
+    /// Cursor for keyset pagination - timestamp of the oldest loaded item (unix)
+    private var oldestLoadedTimestampUnix: Int64?
     /// Current search query (for pagination continuity)
     private var currentSearchQuery: String = ""
-    private let pageSize = 50
-    private let searchPageSize = 50
+    private let pageSize: UInt64 = 50
 
     /// Increments each time the display is reset - views observe this to reset local state
     private(set) var displayVersion: Int = 0
@@ -131,21 +99,12 @@ final class ClipboardStore {
 
     /// Check FTS index integrity in background and rebuild if needed
     private func verifyFTSIntegrityAsync() {
-        guard let dbQueue else { return }
+        guard let rustStore else { return }
         Task.detached {
-            do {
-                let needsRebuild = try dbQueue.read { db -> Bool in
-                    let itemCount = try Int.fetchOne(db, sql: "SELECT COUNT(*) FROM items") ?? 0
-                    let ftsCount = try Int.fetchOne(db, sql: "SELECT COUNT(*) FROM items_fts") ?? 0
-                    return itemCount != ftsCount
-                }
-                if needsRebuild {
-                    try dbQueue.write { db in
-                        try db.execute(sql: "INSERT INTO items_fts(items_fts) VALUES('rebuild')")
-                    }
-                }
-            } catch {
-                logError("FTS integrity check failed: \(error)")
+            let needsRebuild = !rustStore.verifyFtsIntegrity()
+            if needsRebuild {
+                // FTS rebuild happens automatically via verifyFtsIntegrity
+                logError("FTS index was rebuilt")
             }
         }
     }
@@ -155,24 +114,12 @@ final class ClipboardStore {
 
     /// Refresh database size asynchronously
     func refreshDatabaseSize() {
-        guard let dbQueue else { return }
+        guard let rustStore else { return }
         Task.detached {
-            let size = Self.fetchDatabaseSize(dbQueue: dbQueue)
+            let size = rustStore.databaseSize()
             await MainActor.run { [weak self] in
                 self?.databaseSizeBytes = size
             }
-        }
-    }
-
-    private nonisolated static func fetchDatabaseSize(dbQueue: DatabaseQueue) -> Int64 {
-        do {
-            return try dbQueue.read { db -> Int64 in
-                let pageCount = try Int64.fetchOne(db, sql: "PRAGMA page_count") ?? 0
-                let pageSize = try Int64.fetchOne(db, sql: "PRAGMA page_size") ?? 0
-                return pageCount * pageSize
-            }
-        } catch {
-            return 0
         }
     }
 
@@ -197,67 +144,9 @@ final class ClipboardStore {
             }
 
             let dbPath = appDir.appendingPathComponent(Self.databaseFilename(screenshotMode: isScreenshotMode)).path
-            dbQueue = try DatabaseQueue(path: dbPath, configuration: Configuration())
 
-            try dbQueue?.write { db in
-                try db.create(table: "items", ifNotExists: true) { t in
-                    t.autoIncrementedPrimaryKey("id")
-                    t.column("content", .text).notNull()
-                    t.column("contentHash", .text).notNull()
-                    t.column("timestamp", .datetime).notNull()
-                    t.column("sourceApp", .text)
-                    t.column("contentType", .text).defaults(to: "text")
-                    t.column("imageData", .blob)
-                    t.column("linkTitle", .text)
-                    t.column("linkImageData", .blob)
-                }
-
-                // Migration: Add new columns if they don't exist
-                let columns = try db.columns(in: "items").map { $0.name }
-                if !columns.contains("contentType") {
-                    try db.execute(sql: "ALTER TABLE items ADD COLUMN contentType TEXT DEFAULT 'text'")
-                }
-                if !columns.contains("imageData") {
-                    try db.execute(sql: "ALTER TABLE items ADD COLUMN imageData BLOB")
-                }
-                if !columns.contains("linkTitle") {
-                    try db.execute(sql: "ALTER TABLE items ADD COLUMN linkTitle TEXT")
-                }
-                if !columns.contains("linkImageData") {
-                    try db.execute(sql: "ALTER TABLE items ADD COLUMN linkImageData BLOB")
-                }
-                if !columns.contains("sourceAppBundleID") {
-                    try db.execute(sql: "ALTER TABLE items ADD COLUMN sourceAppBundleID TEXT")
-                }
-
-                try db.create(index: "idx_items_hash", on: "items", columns: ["contentHash"], ifNotExists: true)
-                try db.create(index: "idx_items_timestamp", on: "items", columns: ["timestamp"], ifNotExists: true)
-
-                // Use trigram tokenizer for fast substring matching
-                // Just ensure table exists - integrity check runs async after startup
-                try db.execute(sql: """
-                    CREATE VIRTUAL TABLE IF NOT EXISTS items_fts USING fts5(
-                        content, content=items, content_rowid=id, tokenize='trigram'
-                    )
-                """)
-
-                try db.execute(sql: """
-                    CREATE TRIGGER IF NOT EXISTS items_ai AFTER INSERT ON items BEGIN
-                        INSERT INTO items_fts(rowid, content) VALUES (new.id, new.content);
-                    END
-                """)
-                try db.execute(sql: """
-                    CREATE TRIGGER IF NOT EXISTS items_ad AFTER DELETE ON items BEGIN
-                        INSERT INTO items_fts(items_fts, rowid, content) VALUES('delete', old.id, old.content);
-                    END
-                """)
-                try db.execute(sql: """
-                    CREATE TRIGGER IF NOT EXISTS items_au AFTER UPDATE ON items BEGIN
-                        INSERT INTO items_fts(items_fts, rowid, content) VALUES('delete', old.id, old.content);
-                        INSERT INTO items_fts(rowid, content) VALUES (new.id, new.content);
-                    END
-                """)
-            }
+            // Initialize the Rust store
+            rustStore = try ClipKittyRust.ClipboardStore(dbPath: dbPath)
         } catch {
             state = .error("Database setup failed: \(error.localizedDescription)")
         }
@@ -266,33 +155,25 @@ final class ClipboardStore {
     // MARK: - Public API
 
     func setSearchQuery(_ newQuery: String) {
-        // No trimming - fuzzy search handles accidental spaces
         let query = newQuery
 
         searchTask?.cancel()
 
         if query.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty {
             currentSearchQuery = ""
-            oldestSearchTimestamp = nil
             loadItems(reset: true)
             return
         }
 
-        // Reset search cursor when query changes
         currentSearchQuery = query
-        oldestSearchTimestamp = nil
 
         // Preserve previous results while loading new ones
-        let previousResults: [ClipboardItem] = {
+        let previousResults: [SearchResultItem] = {
             switch state {
-            case .loaded(let items, _):
-                return items
             case .searching(_, let searchState):
                 switch searchState {
                 case .loading(let previous):
                     return previous
-                case .loadingMore(let results):
-                    return results
                 case .results(let results, _):
                     return results
                 }
@@ -306,26 +187,7 @@ final class ClipboardStore {
         searchTask = Task {
             try? await Task.sleep(for: .milliseconds(50))
             guard !Task.isCancelled else { return }
-            await performSearch(query: query, isLoadingMore: false)
-        }
-    }
-
-    /// Load more search results when user scrolls to bottom
-    func loadMoreSearchResults() {
-        guard case .searching(let query, let searchState) = state else { return }
-
-        // Only load more if we have results with more available
-        switch searchState {
-        case .results(let items, let hasMore):
-            guard hasMore, !items.isEmpty else { return }
-            state = .searching(query: query, state: .loadingMore(results: items))
-
-            searchTask = Task {
-                guard !Task.isCancelled else { return }
-                await performSearch(query: query, isLoadingMore: true)
-            }
-        default:
-            return
+            await performSearch(query: query)
         }
     }
 
@@ -361,7 +223,7 @@ final class ClipboardStore {
     // MARK: - Loading
 
     private func loadItems(reset: Bool) {
-        let cursorTimestamp: Date?
+        let cursorTimestamp: Int64?
         let existingItems: [ClipboardItem]
 
         // Extract current items from any state to preserve during refresh
@@ -372,11 +234,9 @@ final class ClipboardStore {
             case .searching(_, let searchState):
                 switch searchState {
                 case .loading(let previous):
-                    return previous
-                case .loadingMore(let results):
-                    return results
+                    return previous.map { $0.item }
                 case .results(let results, _):
-                    return results
+                    return results.map { $0.item }
                 }
             default:
                 return []
@@ -384,16 +244,15 @@ final class ClipboardStore {
         }()
 
         if reset {
-            oldestLoadedTimestamp = nil
+            oldestLoadedTimestampUnix = nil
             cursorTimestamp = nil
             existingItems = []
             // Only show loading spinner if we have no cached items to display
             if currentItems.isEmpty {
                 state = .loading
             }
-            // Otherwise keep showing current items - they'll be replaced when load completes
         } else {
-            cursorTimestamp = oldestLoadedTimestamp
+            cursorTimestamp = oldestLoadedTimestampUnix
             if case .loaded(let items, _) = state {
                 existingItems = items
             } else {
@@ -401,264 +260,111 @@ final class ClipboardStore {
             }
         }
 
-        guard let dbQueue else { return }
+        guard let rustStore else { return }
         let pageSizeCopy = pageSize
         let signpostID = OSSignpostID(log: performanceLog)
         os_signpost(.begin, log: performanceLog, name: "loadItems", signpostID: signpostID, "reset=%d", reset ? 1 : 0)
 
         Task.detached {
-            let result = Self.fetchItems(dbQueue: dbQueue, pageSize: pageSizeCopy, beforeTimestamp: cursorTimestamp)
+            do {
+                let result = try rustStore.fetchItems(beforeTimestampUnix: cursorTimestamp, limit: pageSizeCopy)
 
-            await MainActor.run { [weak self] in
-                os_signpost(.end, log: performanceLog, name: "loadItems", signpostID: signpostID)
-                switch result {
-                case .success(let (newItems, hasMore)):
+                await MainActor.run { [weak self] in
+                    os_signpost(.end, log: performanceLog, name: "loadItems", signpostID: signpostID)
                     // Update cursor to oldest item's timestamp for next page
-                    if let oldestItem = newItems.last {
-                        self?.oldestLoadedTimestamp = oldestItem.timestamp
+                    if let oldestItem = result.items.last {
+                        self?.oldestLoadedTimestampUnix = oldestItem.timestampUnix
                     }
                     if reset {
-                        self?.state = .loaded(items: newItems, hasMore: hasMore)
+                        self?.state = .loaded(items: result.items, hasMore: result.hasMore)
                     } else {
-                        self?.state = .loaded(items: existingItems + newItems, hasMore: hasMore)
+                        self?.state = .loaded(items: existingItems + result.items, hasMore: result.hasMore)
                     }
-                case .failure(let error):
+                }
+            } catch {
+                await MainActor.run { [weak self] in
+                    os_signpost(.end, log: performanceLog, name: "loadItems", signpostID: signpostID, "error")
                     self?.state = .error("Failed to load items: \(error.localizedDescription)")
                 }
             }
         }
     }
 
-    /// Keyset pagination: fetches items older than the cursor timestamp
-    /// This is O(log n) via index vs O(n) for OFFSET-based pagination
-    private nonisolated static func fetchItems(dbQueue: DatabaseQueue, pageSize: Int, beforeTimestamp: Date?) -> Result<([ClipboardItem], Bool), Error> {
-        let signpostID = OSSignpostID(log: performanceLog)
-        os_signpost(.begin, log: performanceLog, name: "fetchItems.db", signpostID: signpostID)
-        do {
-            let newItems = try measureTime("fetchItems.db") {
-                try dbQueue.read { db in
-                    var query = ClipboardItem.order(Column("timestamp").desc)
-                    if let cursor = beforeTimestamp {
-                        query = query.filter(Column("timestamp") < cursor)
-                    }
-                    return try query.limit(pageSize).fetchAll(db)
-                }
-            }
-            os_signpost(.end, log: performanceLog, name: "fetchItems.db", signpostID: signpostID, "count=%d", newItems.count)
-            let hasMore = newItems.count == pageSize
-            return .success((newItems, hasMore))
-        } catch {
-            os_signpost(.end, log: performanceLog, name: "fetchItems.db", signpostID: signpostID, "error")
-            return .failure(error)
-        }
-    }
-
     // MARK: - Search
+    //
+    // ════════════════════════════════════════════════════════════════════════════════
+    // SEARCH ARCHITECTURE: Two-Layer Search (Tantivy + Nucleo)
+    // ════════════════════════════════════════════════════════════════════════════════
+    //
+    // 1. search(query) - Returns SearchResult with IDs + highlight ranges
+    // 2. fetchByIds(ids) - Hydrates items from database
+    //
+    // ════════════════════════════════════════════════════════════════════════════════
 
-    private func performSearch(query: String, isLoadingMore: Bool) async {
-        guard let dbQueue else {
+    private func performSearch(query: String) async {
+        guard let rustStore else {
             state = .error("Database not available")
             return
         }
 
         let signpostID = OSSignpostID(log: performanceLog)
-        os_signpost(.begin, log: performanceLog, name: "search", signpostID: signpostID, "query=%{public}s,more=%d", query, isLoadingMore ? 1 : 0)
+        os_signpost(.begin, log: performanceLog, name: "search", signpostID: signpostID, "query=%{public}s", query)
 
-        // Capture existing results for load-more
-        let existingResults: [ClipboardItem]
-        if isLoadingMore, case .searching(_, .loadingMore(let results)) = state {
-            existingResults = results
-        } else {
-            existingResults = []
-        }
-
-        let cursorTimestamp = isLoadingMore ? oldestSearchTimestamp : nil
-        let limit = searchPageSize
-
-        // For short queries (< 3 chars), use simple LIKE search
-        // Trigrams require at least 3 characters, so we fall back to exact substring matching
-        if query.count < 3 {
-            let likeResults = await Task.detached { [cursorTimestamp, limit] () -> [ClipboardItem] in
-                measureTime("search.like[\(query)]") {
-                    do {
-                        return try dbQueue.read { db in
-                            var sql = "SELECT * FROM items WHERE content LIKE ? ESCAPE '\\'"
-                            // Escape LIKE special characters (%, _, \) in the query
-                            let escapedQuery = query
-                                .replacingOccurrences(of: "\\", with: "\\\\")
-                                .replacingOccurrences(of: "%", with: "\\%")
-                                .replacingOccurrences(of: "_", with: "\\_")
-                            var arguments: [DatabaseValueConvertible] = ["%\(escapedQuery)%"]
-
-                            if let cursor = cursorTimestamp {
-                                sql += " AND timestamp < ?"
-                                arguments.append(cursor)
-                            }
-
-                            sql += " ORDER BY timestamp DESC LIMIT ?"
-                            arguments.append(limit)
-
-                            return try ClipboardItem.fetchAll(db, sql: sql, arguments: StatementArguments(arguments))
-                        }
-                    } catch {
-                        logError("LIKE search failed: \(error)")
-                        return []
-                    }
-                }
+        do {
+            // Get search results (IDs + highlights) from Rust
+            let searchResult = try await Task.detached {
+                try rustStore.search(query: query)
             }.value
-
-            os_signpost(.end, log: performanceLog, name: "search", signpostID: signpostID, "results=%d", likeResults.count)
 
             guard !Task.isCancelled else { return }
             guard case .searching(let currentQuery, _) = state, currentQuery == query else { return }
 
-            let finalResults = isLoadingMore ? existingResults + likeResults : likeResults
-
-            // Update cursor for pagination
-            if let oldestItem = finalResults.last {
-                oldestSearchTimestamp = oldestItem.timestamp
+            if searchResult.matches.isEmpty {
+                state = .searching(query: query, state: .results([], hasMore: false))
+                os_signpost(.end, log: performanceLog, name: "search", signpostID: signpostID, "count=0")
+                return
             }
-            let hasMore = likeResults.count == limit
-            state = .searching(query: query, state: .results(finalResults, hasMore: hasMore))
-            return
-        }
 
-        // THREE-PHASE SEARCH STRATEGY
-        // Use the full query including any trailing whitespace for FTS matching
-        let searchTerm = query
+            // Extract IDs and fetch full items
+            let ids = searchResult.matches.map { $0.itemId }
+            let items = try await Task.detached {
+                try rustStore.fetchByIds(ids: ids)
+            }.value
 
-        // Phase 1: FTS5 Phrase Search (instant, no limit) - exact substring matches including spaces
-        let phase1Results = await Task.detached { [searchTerm] () -> [ClipboardItem] in
-            measureTime("search.phase1[\(searchTerm.prefix(10))]") {
-                do {
-                    return try dbQueue.read { db in
-                        let escapedQuery = searchTerm.replacingOccurrences(of: "\"", with: "\"\"")
-                        // Use quoted phrase search for exact substring matching (preserves spaces)
-                        let sql = """
-                            SELECT items.* FROM items
-                            INNER JOIN items_fts ON items.id = items_fts.rowid
-                            WHERE items_fts MATCH ?
-                            ORDER BY items.timestamp DESC
-                        """
-                        return try ClipboardItem.fetchAll(db, sql: sql, arguments: ["\"\(escapedQuery)\""])
-                    }
-                } catch {
-                    logError("Phase 1 phrase search failed: \(error)")
-                    return []
-                }
+            guard !Task.isCancelled else { return }
+            guard case .searching(let currentQuery2, _) = state, currentQuery2 == query else { return }
+
+            // Build ID -> highlights map
+            var highlightsMap: [Int64: [HighlightRange]] = [:]
+            for match in searchResult.matches {
+                highlightsMap[match.itemId] = match.highlights
             }
-        }.value
 
-        let rankedPhase1Results = phase1Results
-
-        // Update UI with Phase 1 results immediately
-        guard !Task.isCancelled else { return }
-        guard case .searching(let currentQuery, _) = state, currentQuery == query else { return }
-
-        let phase1Combined = isLoadingMore ? existingResults + rankedPhase1Results : rankedPhase1Results
-        state = .searching(query: query, state: .results(phase1Combined, hasMore: true))
-
-        let phase1IDs = Set(phase1Results.map { $0.id })
-
-        // Phase 2 & 3: Run asynchronously in parallel
-        let phase2And3Task = Task.detached { [searchTerm] () -> [ClipboardItem] in
-            // PHASE 2: Fuzzy search using trigram OR matching for typo tolerance
-            // Build OR query from trigrams to find partial matches (including spaces)
-            let phase2Results: [ClipboardItem] = measureTime("search.phase2[\(searchTerm.prefix(10))]") {
-                do {
-                    return try dbQueue.read { db in
-                        // Generate trigrams from searchTerm including spaces
-                        let termLower = searchTerm.lowercased()
-                        var trigrams: [String] = []
-                        let chars = Array(termLower)
-                        for i in 0..<max(0, chars.count - 2) {
-                            let trigram = String(chars[i..<i+3])
-                            // Escape special FTS characters but keep spaces
-                            let escaped = trigram
-                                .replacingOccurrences(of: "\"", with: "\"\"")
-                                .replacingOccurrences(of: "*", with: "")
-                            // Keep trigram if it has 3 chars (spaces count)
-                            if escaped.count == 3 {
-                                trigrams.append("\"\(escaped)\"")
-                            }
-                        }
-
-                        guard !trigrams.isEmpty else { return [] }
-
-                        // Use OR to find items matching ANY trigram (fuzzy matching)
-                        let orQuery = trigrams.joined(separator: " OR ")
-                        let sql = """
-                            SELECT items.* FROM items
-                            INNER JOIN items_fts ON items.id = items_fts.rowid
-                            WHERE items_fts MATCH ?
-                            ORDER BY items.timestamp DESC
-                            LIMIT 500
-                        """
-                        let allResults = try ClipboardItem.fetchAll(db, sql: sql, arguments: [orQuery])
-                        // Filter out Phase 1 results
-                        return allResults.filter { !phase1IDs.contains($0.id) }
-                    }
-                } catch {
-                    logError("Phase 2 trigram search failed: \(error)")
-                    return []
+            // Combine items with highlights, preserving search order
+            var resultItems: [SearchResultItem] = []
+            var itemsById: [Int64: ClipboardItem] = [:]
+            for item in items {
+                if let id = item.id {
+                    itemsById[id] = item
                 }
             }
 
-            // PHASE 3: Filter and rank by Levenshtein distance
-            // Only keep items within reasonable edit distance, then sort by closeness
-            let phase3Results: [ClipboardItem] = measureTime("search.phase3[\(searchTerm.prefix(10))]") {
-                let maxDistance = max(searchTerm.count / 2, 3)  // Allow ~50% edits or at least 3
-                let termLower = searchTerm.lowercased()
-
-                return phase2Results
-                    .compactMap { item -> (ClipboardItem, Int)? in
-                        let content = item.content.textContent.lowercased()
-
-                        // Find best matching substring in content
-                        var bestDistance = Int.max
-                        let windowSize = min(searchTerm.count + maxDistance, content.count)
-
-                        // Slide window through content to find best match
-                        if content.count >= searchTerm.count {
-                            let contentChars = Array(content)
-                            for start in 0..<min(contentChars.count - searchTerm.count + 1, 100) {
-                                let end = min(start + windowSize, contentChars.count)
-                                let substring = String(contentChars[start..<end])
-                                let dist = levenshteinDistance(termLower, substring)
-                                bestDistance = min(bestDistance, dist)
-                                if bestDistance <= 1 { break }  // Good enough, stop early
-                            }
-                        } else {
-                            bestDistance = levenshteinDistance(termLower, content)
-                        }
-
-                        return bestDistance <= maxDistance ? (item, bestDistance) : nil
-                    }
-                    .sorted { $0.1 < $1.1 }  // Sort by distance (lower = better)
-                    .map { $0.0 }
+            for match in searchResult.matches {
+                if let item = itemsById[match.itemId] {
+                    resultItems.append(SearchResultItem(
+                        item: item,
+                        highlights: highlightsMap[match.itemId] ?? []
+                    ))
+                }
             }
 
-            return phase3Results
+            state = .searching(query: query, state: .results(resultItems, hasMore: false))
+            os_signpost(.end, log: performanceLog, name: "search", signpostID: signpostID, "total_hits=%d", searchResult.totalCount)
+        } catch {
+            guard !Task.isCancelled else { return }
+            state = .error("Search failed: \(error.localizedDescription)")
+            os_signpost(.end, log: performanceLog, name: "search", signpostID: signpostID, "error")
         }
-
-        // Await Phase 2 & 3 completion and merge results
-        let phase2And3Results = await phase2And3Task.value
-
-        // Final update with all results combined
-        guard !Task.isCancelled else { return }
-        guard case .searching(let currentQuery, _) = state, currentQuery == query else { return }
-
-        let finalResults = phase1Combined + phase2And3Results
-
-        // Update cursor for pagination
-        if let oldestItem = finalResults.last {
-            oldestSearchTimestamp = oldestItem.timestamp
-        }
-
-        state = .searching(query: query, state: .results(finalResults, hasMore: false))
-
-        os_signpost(.end, log: performanceLog, name: "search", signpostID: signpostID, "phase1=%d,phase2+3=%d,total=%d",
-                    phase1Results.count, phase2And3Results.count, finalResults.count)
     }
 
     // MARK: - Clipboard Monitoring
@@ -783,54 +489,35 @@ final class ClipboardStore {
         // Otherwise check for text
         guard let text = pasteboard.string(forType: .string), !text.isEmpty else { return }
 
-        let hash = hashContent(text)
         let sourceApp = NSWorkspace.shared.frontmostApplication?.localizedName
         let sourceAppBundleID = NSWorkspace.shared.frontmostApplication?.bundleIdentifier
 
         // Move all DB operations to background
-        guard let dbQueue else { return }
+        guard let rustStore else { return }
         Task.detached { [weak self] in
-            let newItemId = Self.saveTextItem(dbQueue: dbQueue, text: text, hash: hash, sourceApp: sourceApp, sourceAppBundleID: sourceAppBundleID)
+            do {
+                let newItemId = try rustStore.saveText(text: text, sourceApp: sourceApp, sourceAppBundleId: sourceAppBundleID)
 
-            // If it's a URL, fetch metadata asynchronously
-            if ClipboardItem.isURL(text), let id = newItemId {
-                await self?.fetchAndUpdateLinkMetadata(for: id, url: text)
-            }
+                // If it's a URL, fetch metadata asynchronously
+                if isUrl(text: text) {
+                    await self?.fetchAndUpdateLinkMetadata(for: newItemId, url: text)
+                }
 
-            // Reload on main actor if browsing
-            guard let self else { return }
-            await MainActor.run { [weak self] in
-                if case .loaded = self?.state {
-                    self?.loadItems(reset: true)
+                // Reload on main actor if browsing
+                guard let self else { return }
+                await MainActor.run { [weak self] in
+                    if case .loaded = self?.state {
+                        self?.loadItems(reset: true)
+                    }
                 }
+            } catch {
+                logError("Clipboard save failed: \(error)")
             }
-        }
-    }
-
-    private nonisolated static func saveTextItem(dbQueue: DatabaseQueue, text: String, hash: String, sourceApp: String?, sourceAppBundleID: String?) -> Int64? {
-        do {
-            if let existing = try dbQueue.read({ db in
-                try ClipboardItem.filter(Column("contentHash") == hash).fetchOne(db)
-            }) {
-                try dbQueue.write { db in
-                    try db.execute(sql: "UPDATE items SET timestamp = ? WHERE id = ?", arguments: [Date(), existing.id])
-                }
-                return nil
-            } else {
-                return try dbQueue.write { db -> Int64 in
-                    let item = ClipboardItem(text: text, sourceApp: sourceApp, sourceAppBundleID: sourceAppBundleID)
-                    try item.insert(db)
-                    return db.lastInsertedRowID
-                }
-            }
-        } catch {
-            logError("Clipboard save failed: \(error)")
-            return nil
         }
     }
 
     private func fetchAndUpdateLinkMetadata(for itemId: Int64, url: String) async {
-        guard let dbQueue else { return }
+        guard let rustStore else { return }
 
         let metadata = await LinkMetadataFetcher.shared.fetch(url: url)
 
@@ -839,24 +526,36 @@ final class ClipboardStore {
         let (title, imageData) = metadata?.databaseFields ?? ("", nil)
 
         // Database write needs to escape MainActor
-        await Task.detached { [dbQueue] in
+        await Task.detached { [rustStore] in
             do {
-                try dbQueue.write { db in
-                    // Use empty string for title to distinguish "failed" from "pending" (NULL)
-                    // NULL = pending, empty string = failed/no metadata, non-empty = loaded
-                    try db.execute(
-                        sql: "UPDATE items SET linkTitle = ?, linkImageData = ? WHERE id = ?",
-                        arguments: [title, imageData, itemId]
-                    )
-                }
+                try rustStore.updateLinkMetadata(
+                    itemId: itemId,
+                    title: title,
+                    imageData: imageData.map { Array($0) }
+                )
             } catch {
                 logError("Failed to update link metadata: \(error)")
             }
         }.value
 
         // Update the specific item in-place instead of reloading the entire list
-        let newMetadataState = LinkMetadataState.fromDatabase(title: title, imageData: imageData)
+        let newMetadataState = metadataStateFromDatabase(title: title, imageData: imageData)
         updateItemMetadata(itemId: itemId, url: url, metadataState: newMetadataState)
+    }
+
+    /// Reconstruct LinkMetadataState from database values
+    private func metadataStateFromDatabase(title: String?, imageData: Data?) -> LinkMetadataState {
+        switch (title, imageData) {
+        case (nil, nil):
+            return .pending
+        case ("", nil):
+            return .failed
+        case (let title, let imageData):
+            return .loaded(
+                title: title?.isEmpty == true ? nil : title,
+                imageData: imageData.map { Array($0) }
+            )
+        }
     }
 
     /// Updates a single item's metadata in-place without reloading the entire list
@@ -869,33 +568,32 @@ final class ClipboardStore {
                     id: item.id,
                     content: .link(url: url, metadataState: metadataState),
                     contentHash: item.contentHash,
-                    timestamp: item.timestamp,
+                    timestampUnix: item.timestampUnix,
                     sourceApp: item.sourceApp,
-                    sourceAppBundleID: item.sourceAppBundleID
+                    sourceAppBundleId: item.sourceAppBundleId
                 )
             }
             state = .loaded(items: updatedItems, hasMore: hasMore)
 
         case .searching(let query, let searchState):
-            let updateItems: ([ClipboardItem]) -> [ClipboardItem] = { items in
-                items.map { item -> ClipboardItem in
-                    guard item.id == itemId else { return item }
-                    return ClipboardItem(
-                        id: item.id,
+            let updateItems: ([SearchResultItem]) -> [SearchResultItem] = { items in
+                items.map { resultItem -> SearchResultItem in
+                    guard resultItem.item.id == itemId else { return resultItem }
+                    let updatedItem = ClipboardItem(
+                        id: resultItem.item.id,
                         content: .link(url: url, metadataState: metadataState),
-                        contentHash: item.contentHash,
-                        timestamp: item.timestamp,
-                        sourceApp: item.sourceApp,
-                        sourceAppBundleID: item.sourceAppBundleID
+                        contentHash: resultItem.item.contentHash,
+                        timestampUnix: resultItem.item.timestampUnix,
+                        sourceApp: resultItem.item.sourceApp,
+                        sourceAppBundleId: resultItem.item.sourceAppBundleId
                     )
+                    return SearchResultItem(item: updatedItem, highlights: resultItem.highlights)
                 }
             }
             let newSearchState: SearchResultState
             switch searchState {
             case .loading(let previous):
                 newSearchState = .loading(previousResults: updateItems(previous))
-            case .loadingMore(let results):
-                newSearchState = .loadingMore(results: updateItems(results))
             case .results(let results, let hasMore):
                 newSearchState = .results(updateItems(results), hasMore: hasMore)
             }
@@ -911,15 +609,10 @@ final class ClipboardStore {
         let trimmed = description.trimmingCharacters(in: .whitespacesAndNewlines)
         guard !trimmed.isEmpty else { return }
 
-        guard let dbQueue else { return }
-        await Task.detached { [dbQueue] in
+        guard let rustStore else { return }
+        await Task.detached { [rustStore] in
             do {
-                try dbQueue.write { db in
-                    try db.execute(
-                        sql: "UPDATE items SET content = ? WHERE id = ? AND contentType = 'image'",
-                        arguments: [trimmed, itemId]
-                    )
-                }
+                try rustStore.updateImageDescription(itemId: itemId, description: trimmed)
             } catch {
                 logError("Failed to update image description: \(error)")
             }
@@ -939,9 +632,9 @@ final class ClipboardStore {
                 id: item.id,
                 content: .image(data: data, description: description),
                 contentHash: item.contentHash,
-                timestamp: item.timestamp,
+                timestampUnix: item.timestampUnix,
                 sourceApp: item.sourceApp,
-                sourceAppBundleID: item.sourceAppBundleID
+                sourceAppBundleId: item.sourceAppBundleId
             )
         }
 
@@ -950,15 +643,15 @@ final class ClipboardStore {
             state = .loaded(items: items.map(updateItem), hasMore: hasMore)
 
         case .searching(let query, let searchState):
-            let updatedResults: ([ClipboardItem]) -> [ClipboardItem] = { items in
-                items.map(updateItem)
+            let updatedResults: ([SearchResultItem]) -> [SearchResultItem] = { items in
+                items.map { resultItem in
+                    SearchResultItem(item: updateItem(resultItem.item), highlights: resultItem.highlights)
+                }
             }
             let newSearchState: SearchResultState
             switch searchState {
             case .loading(let previous):
                 newSearchState = .loading(previousResults: updatedResults(previous))
-            case .loadingMore(let results):
-                newSearchState = .loadingMore(results: updatedResults(results))
             case .results(let results, let hasMore):
                 newSearchState = .results(updatedResults(results), hasMore: hasMore)
             }
@@ -976,55 +669,34 @@ final class ClipboardStore {
         let quality = AppSettings.shared.imageCompressionQuality
 
         // Move compression and DB write to background
-        guard let dbQueue else { return }
+        guard let rustStore else { return }
         Task.detached { [weak self] in
-            let saveResult = Self.saveImageItemToDB(
-                dbQueue: dbQueue,
-                rawImageData: rawImageData,
-                sourceApp: sourceApp,
-                sourceAppBundleID: sourceAppBundleID,
-                maxPixels: maxPixels,
-                quality: quality
-            )
+            // Compress image with HEIC (HEVC)
+            guard let compressedData = Self.compressToHEIC(rawImageData, quality: quality, maxPixels: maxPixels) else {
+                logError("Image compression failed, skipping")
+                return
+            }
 
-            guard let self else { return }
-            await MainActor.run { [weak self] in
-                if case .loaded = self?.state {
-                    self?.loadItems(reset: true)
+            do {
+                let itemId = try rustStore.saveImage(
+                    imageData: Array(compressedData),
+                    sourceApp: sourceApp,
+                    sourceAppBundleId: sourceAppBundleID
+                )
+
+                guard let self else { return }
+                await MainActor.run { [weak self] in
+                    if case .loaded = self?.state {
+                        self?.loadItems(reset: true)
+                    }
                 }
-            }
 
-            guard let saveResult else { return }
-            Task.detached { [weak self] in
-                await self?.generateAndUpdateImageDescription(itemId: saveResult.itemId, imageData: saveResult.imageData)
+                Task.detached { [weak self] in
+                    await self?.generateAndUpdateImageDescription(itemId: itemId, imageData: compressedData)
+                }
+            } catch {
+                logError("Image save failed: \(error)")
             }
-        }
-    }
-
-    private nonisolated static func saveImageItemToDB(
-        dbQueue: DatabaseQueue,
-        rawImageData: Data,
-        sourceApp: String?,
-        sourceAppBundleID: String?,
-        maxPixels: Int,
-        quality: Double
-    ) -> (itemId: Int64, imageData: Data)? {
-        // Compress image with HEIC (HEVC)
-        guard let compressedData = compressToHEIC(rawImageData, quality: quality, maxPixels: maxPixels) else {
-            logError("Image compression failed, skipping")
-            return nil
-        }
-
-        do {
-            let itemId = try dbQueue.write { db -> Int64 in
-                let item = ClipboardItem(imageData: compressedData, sourceApp: sourceApp, sourceAppBundleID: sourceAppBundleID)
-                try item.insert(db)
-                return db.lastInsertedRowID
-            }
-            return (itemId: itemId, imageData: compressedData)
-        } catch {
-            logError("Image save failed: \(error)")
-            return nil
         }
     }
 
@@ -1090,18 +762,12 @@ final class ClipboardStore {
         return data as Data
     }
 
-    private func hashContent(_ string: String) -> String {
-        var hasher = Hasher()
-        hasher.combine(string)
-        return String(hasher.finalize())
-    }
-
     // MARK: - Actions
 
     func paste(item: ClipboardItem) {
         // Handle images differently - convert off main thread
         if case .image(let data, _) = item.content {
-            pasteImage(data: data, itemId: item.id)
+            pasteImage(data: Data(data), itemId: item.id)
             return
         }
 
@@ -1150,12 +816,11 @@ final class ClipboardStore {
     }
 
     private func updateItemTimestamp(id: Int64) async {
+        guard let rustStore else { return }
         // Defer database operations to avoid blocking clipboard availability
-        await Task.detached { [dbQueue] in
+        await Task.detached { [rustStore] in
             do {
-                try dbQueue?.write { db in
-                    try db.execute(sql: "UPDATE items SET timestamp = ? WHERE id = ?", arguments: [Date(), id])
-                }
+                try rustStore.updateTimestamp(itemId: id)
             } catch {
                 logError("Failed to update timestamp: \(error)")
             }
@@ -1177,11 +842,9 @@ final class ClipboardStore {
             let newState: SearchResultState
             switch searchState {
             case .loading(let previous):
-                newState = .loading(previousResults: previous.filter { $0.id != id })
-            case .loadingMore(let results):
-                newState = .loadingMore(results: results.filter { $0.id != id })
+                newState = .loading(previousResults: previous.filter { $0.item.id != id })
             case .results(let results, let hasMore):
-                newState = .results(results.filter { $0.id != id }, hasMore: hasMore)
+                newState = .results(results.filter { $0.item.id != id }, hasMore: hasMore)
             }
             state = .searching(query: query, state: newState)
         default:
@@ -1189,11 +852,10 @@ final class ClipboardStore {
         }
 
         // Perform DB delete in background
-        Task.detached { [dbQueue] in
+        guard let rustStore else { return }
+        Task.detached { [rustStore] in
             do {
-                try dbQueue?.write { db in
-                    try db.execute(sql: "DELETE FROM items WHERE id = ?", arguments: [id])
-                }
+                try rustStore.deleteItem(itemId: id)
             } catch {
                 logError("Failed to delete: \(error)")
             }
@@ -1205,12 +867,10 @@ final class ClipboardStore {
         state = .loaded(items: [], hasMore: false)
 
         // Perform expensive DB operations in background
-        Task.detached { [dbQueue] in
+        guard let rustStore else { return }
+        Task.detached { [rustStore] in
             do {
-                try dbQueue?.write { db in
-                    try db.execute(sql: "DELETE FROM items")
-                    try db.execute(sql: "INSERT INTO items_fts(items_fts) VALUES('rebuild')")
-                }
+                try rustStore.clearAll()
             } catch {
                 logError("Failed to clear: \(error)")
             }
@@ -1221,46 +881,16 @@ final class ClipboardStore {
 
     func pruneIfNeeded() {
         let maxSizeGB = AppSettings.shared.maxDatabaseSizeGB
-        guard maxSizeGB > 0, let dbQueue else { return }
+        guard maxSizeGB > 0, let rustStore else { return }
 
         let maxBytes = Int64(maxSizeGB * 1024 * 1024 * 1024)
 
-        Task.detached {
-            self.performPruning(maxBytes: maxBytes, dbQueue: dbQueue)
-        }
-    }
-
-    private nonisolated func performPruning(maxBytes: Int64, dbQueue: DatabaseQueue) {
-        do {
-            let currentSize = try dbQueue.read { db -> Int64 in
-                let pageCount = try Int64.fetchOne(db, sql: "PRAGMA page_count") ?? 0
-                let pageSize = try Int64.fetchOne(db, sql: "PRAGMA page_size") ?? 0
-                return pageCount * pageSize
+        Task.detached { [rustStore] in
+            do {
+                _ = try rustStore.pruneToSize(maxBytes: maxBytes, keepRatio: 0.8)
+            } catch {
+                logError("Pruning failed: \(error)")
             }
-
-            guard currentSize > maxBytes else { return }
-
-            let count = try dbQueue.read { db in
-                try Int.fetchOne(db, sql: "SELECT COUNT(*) FROM items") ?? 0
-            }
-            guard count > 0 else { return }
-
-            let avgItemSize = currentSize / Int64(count)
-            let targetSize = Int64(Double(maxBytes) * 0.8)
-            let itemsToDelete = max(100, Int((currentSize - targetSize) / avgItemSize))
-
-            try dbQueue.write { db in
-                try db.execute(sql: """
-                    DELETE FROM items WHERE id IN (
-                        SELECT id FROM items ORDER BY timestamp ASC LIMIT ?
-                    )
-                """, arguments: [itemsToDelete])
-                try db.execute(sql: "INSERT INTO items_fts(items_fts) VALUES('rebuild')")
-            }
-
-            try dbQueue.vacuum()
-        } catch {
-            logError("Pruning failed: \(error)")
         }
     }
 }
