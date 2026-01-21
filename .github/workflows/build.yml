@@ -33,14 +33,14 @@ jobs:
       - name: Set Desktop Background
         if: github.ref == 'refs/heads/main'
         run: |
-          WALLPAPER="/System/Library/Desktop Pictures/Sequoia Sunrise.heic"
-          if [ ! -f "$WALLPAPER" ]; then
-            WALLPAPER=$(find /System/Library/Desktop\ Pictures -name "*.heic" | head -1)
-          fi
-          if [ -n "$WALLPAPER" ] && [ -f "$WALLPAPER" ]; then
-            osascript -e "tell application \"System Events\" to tell every desktop to set picture to \"$WALLPAPER\""
-            sleep 1
-          fi
+      - name: Set Desktop Background
+        if: github.ref == 'refs/heads/main'
+        run: |
+          osascript -e 'tell application "Finder" to set desktop picture to POSIX file "/System/Library/Desktop Pictures/Solid Colors/Space Gray.png"'
+          defaults write com.apple.dock persistent-apps -array
+          defaults write com.apple.dock persistent-apps -array-add '<dict><key>tile-data</key><dict><key>file-data</key><dict><key>_CFURLString</key><string>/Applications/Safari.app</string><key>_CFURLStringType</key><integer>0</integer></dict></dict></dict>'
+          killall Dock
+
 
       - name: Build App Variants
         run: |
