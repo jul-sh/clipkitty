@@ -27,13 +27,29 @@ You copied that API response last week. That error message yesterday. That addre
 - **Fuzzy search that scales**: Type “improt” and find “import”. Stays fast whether you have 100 items or 100,000.
 - **Live preview**: See full content as you navigate. No truncation, no waiting for tooltips.
 - **Keyboard-first**: ⌥Space to open, arrow keys to navigate, Return to paste.
-- **Privacy-first**: Sandboxed, offline-only, no telemetry. Verify it yourself with `codesign -d --entitlements -`.
+- **Privacy-first**: Available in both fully Sandboxed and Standard versions. Offline-only, no telemetry.
 
-## Quick start
+## Installation
+
+### Easy Install via Homebrew
+
+If you have [Homebrew](https://brew.sh) installed, run:
+
+```bash
+# Standard version (full power, automatic paste)
+brew install jul-sh/tap/clipkitty
+
+# OR Sandboxed version (more secure, no automatic paste)
+brew install jul-sh/tap/clipkitty-sandboxed
+```
+
+*Note: The standard version automatically bypasses the "Unidentified Developer" warning and strips the quarantine flag for you.*
+
+### Manual Download
 
 1. Download from [GitHub Releases](https://github.com/jul-sh/clipkitty/releases)
 1. Press **⌥Space** to open your clipboard history
-1. Type to search, arrow keys to navigate, Return to paste
+1. Type to search, arrow keys to navigate, Return to paste (in standard version)
 
 ## Keyboard shortcuts
 
