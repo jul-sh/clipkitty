@@ -44,7 +44,7 @@ jobs:
           brew install displayplacer
 
           # Enable HiDPI resolutions
-          defaults write /Library/Preferences/com.apple.windowserver.plist DisplayResolutionEnabled -bool true
+          sudo defaults write /Library/Preferences/com.apple.windowserver.plist DisplayResolutionEnabled -bool true
 
           # Get the screen ID and find the largest scaled resolution
           output=$(displayplacer list)
@@ -70,7 +70,7 @@ jobs:
           displayplacer "id:$screen_id res:$largest hz:60 color_depth:8 enabled:true scaling:on origin:(0,0) degree:0"
 
           # Disable font smoothing (cleaner screenshots)
-          defaults write -g CGFontRenderingFontSmoothingDisabled -bool YES
+          suddo defaults write -g CGFontRenderingFontSmoothingDisabled -bool YES
 
       - name: Build and Screenshot
         run: make screenshot
