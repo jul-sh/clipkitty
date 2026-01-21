@@ -41,15 +41,8 @@ jobs:
           "/Library/Application Support/VMware Tools/vmware-resolutionSet" 2560 1440 || echo "::warning::Failed to set resolution via VMware Tools"
           sleep 5
 
-          # Install displayplacer to enable HiDPI resolution
-          brew install displayplacer
-
-          # Get the persistent display ID
-          DISPLAY_ID=$(displayplacer list | grep 'Persistent screen id:' | awk '{print $4}')
-          echo "Display ID: $DISPLAY_ID"
-
-          # Set to max resolution (2560x1440)
-          displayplacer "id:$DISPLAY_ID res:2560x1440 hz:60 color_depth:8 scaling:on"
+          # Set 2x scale factor for Retina-like rendering
+          defaults write NSGlobalDomain AppleDisplayScaleFactor -int 2
 
           # Disable font smoothing (cleaner screenshots)
           defaults write -g CGFontRenderingFontSmoothingDisabled -bool YES
