@@ -109,27 +109,62 @@ final class FloatingPanelController: NSObject, NSWindowDelegate {
 
     private func selectItem(_ item: ClipboardItem) {
         store.paste(item: item)
+        let targetApp = previousApp
         hide()
         if AppSettings.shared.pasteOnSelect {
-            simulatePaste()
+            simulatePaste(targetApp: targetApp)
         }
     }
 
-    /// Simulate Cmd+V keystroke to paste into the previous app
-    private func simulatePaste() {
-        // Small delay to ensure the previous app is focused
-        DispatchQueue.main.asyncAfter(deadline: .now() + 0.05) {
-            let source = CGEventSource(stateID: .combinedSessionState)
+    /// Simulate Cmd+V keystroke to paste into the target app
+    private func simulatePaste(targetApp: NSRunningApplication?) {
+        guard let targetApp = targetApp else {
+            logError("No target app to paste into")
+            return
+        }
 
-            // Key down: Cmd+V
-            let keyDown = CGEvent(keyboardEventSource: source, virtualKey: 0x09, keyDown: true) // 0x09 = V
-            keyDown?.flags = .maskCommand
-            keyDown?.post(tap: .cghidEventTap)
+        logInfo("simulatePaste: targeting \(targetApp.localizedName ?? "unknown")")
 
-            // Key up: Cmd+V
-            let keyUp = CGEvent(keyboardEventSource: source, virtualKey: 0x09, keyDown: false)
-            keyUp?.flags = .maskCommand
-            keyUp?.post(tap: .cghidEventTap)
+        // Wait for the target app to become active before sending keystroke
+        Task {
+            // Poll until the target app is active (max ~500ms)
+            var attempts = 0
+            for _ in 0..<50 {
+                attempts += 1
+                if NSWorkspace.shared.frontmostApplication == targetApp {
+                    break
+                }
+                try? await Task.sleep(nanoseconds: 10_000_000) // 10ms
+            }
+
+            let frontmost = NSWorkspace.shared.frontmostApplication?.localizedName ?? "unknown"
+            logInfo("simulatePaste: after \(attempts) attempts, frontmost app is \(frontmost)")
+
+            await MainActor.run {
+                guard let source = CGEventSource(stateID: .hidSystemState) else {
+                    logError("Failed to create CGEventSource - check Accessibility permissions")
+                    return
+                }
+                logInfo("simulatePaste: CGEventSource created")
+
+                // Key down: Cmd+V
+                guard let keyDown = CGEvent(keyboardEventSource: source, virtualKey: 0x09, keyDown: true) else {
+                    logError("Failed to create keyDown event")
+                    return
+                }
+                keyDown.flags = .maskCommand
+                keyDown.post(tap: .cgSessionEventTap)
+                logInfo("simulatePaste: keyDown posted")
+
+                // Key up: Cmd+V
+                guard let keyUp = CGEvent(keyboardEventSource: source, virtualKey: 0x09, keyDown: false) else {
+                    logError("Failed to create keyUp event")
+                    return
+                }
+                keyUp.flags = .maskCommand
+                keyUp.post(tap: .cgSessionEventTap)
+                logInfo("simulatePaste: keyUp posted - paste complete")
+            }
         }
     }
 }
