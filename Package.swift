@@ -60,7 +60,8 @@ let package = Package(
             path: "Sources/App",
             resources: [
                 .copy("Resources/Fonts"),
-                .copy("Resources/menu-bar.svg")
+                .copy("Resources/menu-bar.svg"),
+                .copy("PrivacyInfo.xcprivacy")
             ],
             swiftSettings: [
                 // SANDBOXED flag is set via: swift build -Xswiftc -DSANDBOXED

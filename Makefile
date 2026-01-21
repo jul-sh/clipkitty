@@ -1,5 +1,9 @@
-SHELL := /bin/bash
-.SHELLFLAGS := -eu -o pipefail -c
+#      (\_/)
+#      (o.o)
+#      / > [nix-shell]  <-- for Rust commands
+
+# Use Nix wrapper for Rust commands only (Swift needs native Xcode tools)
+NIX_SHELL := ./Scripts/run-in-nix.sh -c
 
 APP_NAME := ClipKitty
 BUNDLE_ID := com.clipkitty.app
@@ -15,7 +19,12 @@ APP_BINARY := $(APP_BUNDLE)/Contents/MacOS/$(APP_NAME)
 APP_PLIST := $(APP_BUNDLE)/Contents/Info.plist
 APP_ICONS := $(APP_BUNDLE)/Contents/Resources/Assets.car
 
-.PHONY: all clean sign sign-sandboxed screenshot perf build-binary build-binary-sandboxed dmg dmg-sandboxed all-variants
+.PHONY: all clean sign sign-sandboxed screenshot perf build-binary build-binary-sandboxed dmg dmg-sandboxed all-variants appstore validate upload
+
+# App Store signing identity (find yours with: security find-identity -v -p codesigning)
+# Set via environment or override: make appstore SIGNING_IDENTITY="Developer ID Application: ..."
+SIGNING_IDENTITY ?= 3rd Party Mac Developer Application
+INSTALLER_IDENTITY ?= 3rd Party Mac Developer Installer
 
 all: $(APP_BUNDLE) $(APP_ICONS)
 
@@ -23,7 +32,7 @@ all-variants: all build-sandboxed sign-sandboxed
 
 rust:
 	@echo "Building Rust core..."
-	@cd rust-core && cargo run --release --bin generate-bindings
+	@$(NIX_SHELL) "cd rust-core && cargo run --release --bin generate-bindings"
 
 # Build just the binary using SwiftPM
 build-binary: rust
@@ -50,6 +59,7 @@ $(APP_BINARY): build-binary
 	if [ -d "$$BIN_PATH/$(APP_NAME)_$(APP_NAME).bundle" ]; then \
 		cp -R "$$BIN_PATH/$(APP_NAME)_$(APP_NAME).bundle" "$(APP_BUNDLE)/Contents/Resources/"; \
 	fi
+	@cp "Sources/App/PrivacyInfo.xcprivacy" "$(APP_BUNDLE)/Contents/Resources/"
 
 build-sandboxed: build-binary-sandboxed $(APP_PLIST) $(ICON_SOURCE)
 	@echo "Creating sandboxed app bundle structure..."
@@ -61,6 +71,7 @@ build-sandboxed: build-binary-sandboxed $(APP_PLIST) $(ICON_SOURCE)
 		cp -R "$$BIN_PATH/$(APP_NAME)_$(APP_NAME).bundle" "$(APP_BUNDLE_SANDBOXED)/Contents/Resources/"; \
 	fi
 	@cp "$(APP_PLIST)" "$(APP_BUNDLE_SANDBOXED)/Contents/Info.plist"
+	@cp "Sources/App/PrivacyInfo.xcprivacy" "$(APP_BUNDLE_SANDBOXED)/Contents/Resources/"
 	@# Compile icons for sandboxed version
 	@xcrun actool "$(ICON_SOURCE)" \
 		--compile "$(APP_BUNDLE_SANDBOXED)/Contents/Resources" \
@@ -76,33 +87,7 @@ build-sandboxed: build-binary-sandboxed $(APP_PLIST) $(ICON_SOURCE)
 $(APP_PLIST):
 	@echo "Generating Info.plist..."
 	@mkdir -p "$(APP_BUNDLE)/Contents"
-	@printf '%s\n' \
-		'<?xml version="1.0" encoding="UTF-8"?>' \
-		'<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">' \
-		'<plist version="1.0">' \
-		'<dict>' \
-		'\t<key>CFBundleExecutable</key>' \
-		'\t<string>$(APP_NAME)</string>' \
-		'\t<key>CFBundleIdentifier</key>' \
-		'\t<string>$(BUNDLE_ID)</string>' \
-		'\t<key>CFBundleName</key>' \
-		'\t<string>$(APP_NAME)</string>' \
-		'\t<key>CFBundleDisplayName</key>' \
-		'\t<string>$(APP_NAME)</string>' \
-		'\t<key>CFBundleIconName</key>' \
-		'\t<string>AppIcon</string>' \
-		'\t<key>CFBundlePackageType</key>' \
-		'\t<string>APPL</string>' \
-		'\t<key>CFBundleVersion</key>' \
-		'\t<string>1.0</string>' \
-		'\t<key>CFBundleShortVersionString</key>' \
-		'\t<string>1.0</string>' \
-		'\t<key>LSMinimumSystemVersion</key>' \
-		'\t<string>15.0</string>' \
-		'\t<key>LSUIElement</key>' \
-		'\t<true/>' \
-		'</dict>' \
-		'</plist>' > "$(APP_PLIST)"
+	@swift Scripts/GenInfoPlist.swift "$(APP_PLIST)"
 	@touch "$(APP_BUNDLE)"
 
 # Compile icons - depends on APP_BUNDLE to ensure Resources dir exists
@@ -168,3 +153,100 @@ screenshot: sign ClipKitty.xcodeproj
 	@echo "Copying screenshot..."
 	@cp /tmp/clipkitty_screenshot.png screenshot.png || true
 	@echo "Screenshot saved to screenshot.png"
+
+# Export app icon as PNG (for README, gh-pages, etc.)
+# Compiles the .icon format to .icns, then extracts 1024x1024 PNG
+icon-png:
+	@echo "Compiling icon..."
+	@rm -rf .icon-build && mkdir -p .icon-build
+	@xcrun actool "$(ICON_SOURCE)" \
+		--compile .icon-build \
+		--platform macosx \
+		--target-device mac \
+		--minimum-deployment-target 15.0 \
+		--app-icon "AppIcon" \
+		--include-all-app-icons \
+		--output-partial-info-plist /dev/null
+	@echo "Extracting PNG from compiled icon..."
+	@sips -s format png .icon-build/AppIcon.icns --out icon.png
+	@rm -rf .icon-build
+	@echo "Icon saved to icon.png"
+
+# ============================================================================
+# App Store Submission
+# ============================================================================
+# Prerequisites:
+#   1. Apple Developer account with Mac App Store distribution
+#   2. App-specific password for notarytool (store in keychain):
+#      xcrun notarytool store-credentials "ClipKitty-AppStore" \
+#        --apple-id "your@email.com" --team-id "TEAMID" --password "app-specific-password"
+#   3. Provisioning profile installed (~/Library/MobileDevice/Provisioning Profiles/)
+#   4. Certificates installed in Keychain:
+#      - "3rd Party Mac Developer Application: Your Name (TEAMID)"
+#      - "3rd Party Mac Developer Installer: Your Name (TEAMID)"
+#
+# Usage:
+#   make appstore                    # Build, sign, package for App Store
+#   make validate                    # Validate the package with App Store Connect
+#   make upload                      # Upload to App Store Connect
+#   make appstore-all                # Build, validate, and upload in one step
+# ============================================================================
+
+# Build and sign for App Store
+appstore: build-sandboxed
+	@echo "Signing for App Store distribution..."
+	@rm -rf "$(APP_BUNDLE_SANDBOXED)"
+	@$(MAKE) build-binary-sandboxed
+	@mkdir -p "$(APP_BUNDLE_SANDBOXED)/Contents/MacOS"
+	@mkdir -p "$(APP_BUNDLE_SANDBOXED)/Contents/Resources"
+	@BIN_PATH="$$(swift build -c release $(SWIFT_ARCH_FLAGS) --show-bin-path)"; \
+	cp "$$BIN_PATH/$(APP_NAME)" "$(APP_BUNDLE_SANDBOXED)/Contents/MacOS/$(APP_NAME)"
+	@BIN_PATH="$$(swift build -c release $(SWIFT_ARCH_FLAGS) --show-bin-path)"; \
+	if [ -d "$$BIN_PATH/$(APP_NAME)_$(APP_NAME).bundle" ]; then \
+		cp -R "$$BIN_PATH/$(APP_NAME)_$(APP_NAME).bundle" "$(APP_BUNDLE_SANDBOXED)/Contents/Resources/"; \
+	fi
+	@cp "$(APP_PLIST)" "$(APP_BUNDLE_SANDBOXED)/Contents/Info.plist"
+	@cp "Sources/App/PrivacyInfo.xcprivacy" "$(APP_BUNDLE_SANDBOXED)/Contents/Resources/"
+	@xcrun actool "$(ICON_SOURCE)" \
+		--compile "$(APP_BUNDLE_SANDBOXED)/Contents/Resources" \
+		--platform macosx \
+		--target-device mac \
+		--minimum-deployment-target 15.0 \
+		--app-icon "AppIcon" \
+		--include-all-app-icons \
+		--output-partial-info-plist /dev/null
+	@# Sign with App Store distribution certificate
+	@codesign --force --deep --options runtime \
+		--sign "$(SIGNING_IDENTITY)" \
+		--entitlements Sources/App/ClipKitty-Sandboxed.entitlements \
+		"$(APP_BUNDLE_SANDBOXED)"
+	@echo "Creating installer package..."
+	@rm -f "$(APP_NAME).pkg"
+	@productbuild --component "$(APP_BUNDLE_SANDBOXED)" /Applications \
+		--sign "$(INSTALLER_IDENTITY)" \
+		"$(APP_NAME).pkg"
+	@echo "App Store package created: $(APP_NAME).pkg"
+
+# Validate the package with App Store Connect
+validate: $(APP_NAME).pkg
+	@echo "Validating with App Store Connect..."
+	@xcrun altool --validate-app -f "$(APP_NAME).pkg" -t macos \
+		--apiKey "$(APPSTORE_API_KEY)" --apiIssuer "$(APPSTORE_API_ISSUER)"
+
+# Upload to App Store Connect
+upload: $(APP_NAME).pkg
+	@echo "Uploading to App Store Connect..."
+	@xcrun altool --upload-app -f "$(APP_NAME).pkg" -t macos \
+		--apiKey "$(APPSTORE_API_KEY)" --apiIssuer "$(APPSTORE_API_ISSUER)"
+	@echo "Upload complete! Check App Store Connect for processing status."
+
+# All-in-one: build, validate, upload
+appstore-all: appstore validate upload
+
+# Show available signing identities (helpful for setup)
+list-identities:
+	@echo "Available signing identities:"
+	@security find-identity -v -p codesigning | grep -E "(Developer|3rd Party)"
+	@echo ""
+	@echo "Set SIGNING_IDENTITY and INSTALLER_IDENTITY in your environment or pass to make:"
+	@echo "  make appstore SIGNING_IDENTITY=\"3rd Party Mac Developer Application: Your Name (TEAMID)\""
