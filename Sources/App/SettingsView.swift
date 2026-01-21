@@ -270,10 +270,11 @@ class HotKeyRecorderView: NSView {
 
 struct LogsView: View {
     @Environment(\.dismiss) private var dismiss
+    @State private var copied = false
     private let logger = AppLogger.shared
     private let dateFormatter: DateFormatter = {
         let f = DateFormatter()
-        f.dateFormat = "HH:mm:ss"
+        f.dateFormat = "HH:mm:ss.SSS"
         return f
     }()
 
@@ -283,6 +284,12 @@ struct LogsView: View {
                 Text("Logs")
                     .font(.headline)
                 Spacer()
+                Button {
+                    copyAllLogs()
+                } label: {
+                    Text(copied ? "Copied!" : "Copy All")
+                }
+                .disabled(logger.entries.isEmpty)
                 Button("Clear") {
                     logger.clear()
                 }
@@ -336,6 +343,20 @@ struct LogsView: View {
         case .info: return .secondary
         case .warning: return .orange
         case .error: return .red
+        }
+    }
+
+    private func copyAllLogs() {
+        let text = logger.entries.map { entry in
+            "\(dateFormatter.string(from: entry.timestamp)) [\(entry.level.rawValue)] \(entry.message)"
+        }.joined(separator: "\n")
+
+        NSPasteboard.general.clearContents()
+        NSPasteboard.general.setString(text, forType: .string)
+
+        copied = true
+        DispatchQueue.main.asyncAfter(deadline: .now() + 1.5) {
+            copied = false
         }
     }
 }

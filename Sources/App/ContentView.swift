@@ -560,6 +560,12 @@ private extension View {
 
 // MARK: - Text Preview (AppKit)
 
+/// Custom NSTextView that prevents mouse events from triggering window drag
+/// when isMovableByWindowBackground is enabled on the window.
+private class SelectableTextView: NSTextView {
+    override var mouseDownCanMoveWindow: Bool { false }
+}
+
 struct TextPreviewView: NSViewRepresentable {
     let text: String
     let fontName: String
@@ -571,7 +577,7 @@ struct TextPreviewView: NSViewRepresentable {
         scrollView.hasVerticalScroller = true
         scrollView.drawsBackground = false
 
-        let textView = NSTextView()
+        let textView = SelectableTextView()
         textView.isEditable = false
         textView.isSelectable = true
         textView.isRichText = true  // Enable rich text for highlighting
