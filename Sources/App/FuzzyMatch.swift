@@ -2,12 +2,11 @@ import Foundation
 import SwiftUI
 import AppKit
 
-/// Simple string highlighting for search matches
+/// Simple string highlighting for search matches using native trigram matching
 extension String {
 
     /// Create an NSAttributedString with search query matches highlighted (AppKit - fast)
-    /// Uses trigram matching: highlights all 3-char substrings of query found in text
-    /// Optimized: limits matches to first 50 occurrences to avoid pathological cases
+    /// Uses native trigram matching for fuzzy highlighting
     func highlightedNSAttributedString(
         query: String,
         font: NSFont,
@@ -26,12 +25,11 @@ extension String {
         let result = NSMutableAttributedString(string: self, attributes: baseAttributes)
         let nsString = self as NSString
 
-        // First try exact query match
+        // First try exact query match (High Priority)
         var highlightedRanges = Set<NSRange>()
         var matchCount = 0
-        let maxMatches = 50
+        let maxMatches = 100
 
-        // Try exact match first
         var searchRange = NSRange(location: 0, length: nsString.length)
         while matchCount < maxMatches, searchRange.location < nsString.length {
             let foundRange = nsString.range(of: query, options: .caseInsensitive, range: searchRange)
@@ -45,19 +43,16 @@ extension String {
             matchCount += 1
         }
 
-        // If no exact matches, use trigram highlighting
+        // If no exact matches, use trigram highlighting (same as SQLite FTS5 trigram tokenizer)
         if highlightedRanges.isEmpty && query.count >= 3 {
-            // Generate trigrams from query
             let queryLower = query.lowercased()
             let chars = Array(queryLower)
-            var trigrams: [String] = []
-            for i in 0..<(chars.count - 2) {
-                trigrams.append(String(chars[i..<i+3]))
-            }
 
-            // Highlight each trigram found in text
-            for trigram in trigrams {
+            // Extract trigrams from query and highlight matching regions
+            for i in 0..<(chars.count - 2) {
+                let trigram = String(chars[i..<i+3])
                 searchRange = NSRange(location: 0, length: nsString.length)
+
                 while matchCount < maxMatches, searchRange.location < nsString.length {
                     let foundRange = nsString.range(of: trigram, options: .caseInsensitive, range: searchRange)
                     guard foundRange.location != NSNotFound else { break }
@@ -66,6 +61,7 @@ extension String {
                     let alreadyHighlighted = highlightedRanges.contains { existing in
                         NSIntersectionRange(existing, foundRange).length > 0
                     }
+
                     if !alreadyHighlighted {
                         result.addAttribute(.backgroundColor, value: highlightColor, range: foundRange)
                         highlightedRanges.insert(foundRange)
