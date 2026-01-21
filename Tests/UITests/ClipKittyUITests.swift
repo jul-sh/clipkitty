@@ -228,7 +228,7 @@ final class ClipKittyUITests: XCTestCase {
         // Wait for animations or loading
         sleep(2)
 
-        // Capture the entire screen, not just the app window
+        // Capture the entire screen
         let screenshot = XCUIScreen.main.screenshot()
         let attachment = XCTAttachment(screenshot: screenshot)
         attachment.name = "Full Screen Screenshot"

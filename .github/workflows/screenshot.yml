@@ -69,7 +69,7 @@ jobs:
           displayplacer "id:$screen_id res:$largest hz:60 color_depth:8 enabled:true scaling:on origin:(0,0) degree:0"
 
           # Disable font smoothing (cleaner screenshots)
-          suddo defaults write -g CGFontRenderingFontSmoothingDisabled -bool YES
+          sudo defaults write -g CGFontRenderingFontSmoothingDisabled -bool YES
 
       - name: Build and Screenshot
         run: make screenshot
