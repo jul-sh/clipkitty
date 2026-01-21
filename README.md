@@ -51,12 +51,6 @@ All shortcuts are customizable in Settings.
 
 Your clipboard data never leaves your machine. ClipKitty runs entirely offline.
 
-The app is sandboxed by macOS. It can access your clipboard and its own local storage (`~/Library/Application Support/ClipKitty`). It cannot access the internet, your files, or other apps. You can verify:
-
-```bash
-codesign -d --entitlements - /Applications/ClipKitty.app
-```
-
 ## Building from source
 
 ```bash
