@@ -30,9 +30,40 @@ jobs:
       - name: Install create-dmg
         run: brew install create-dmg
 
+      - name: Set Desktop Background
+        if: github.ref == 'refs/heads/main'
+        run: |
+          WALLPAPER="/System/Library/Desktop Pictures/Sequoia Sunrise.heic"
+          if [ ! -f "$WALLPAPER" ]; then
+            WALLPAPER=$(find /System/Library/Desktop\ Pictures -name "*.heic" | head -1)
+          fi
+          if [ -n "$WALLPAPER" ] && [ -f "$WALLPAPER" ]; then
+            osascript -e "tell application \"System Events\" to tell every desktop to set picture to \"$WALLPAPER\""
+            sleep 1
+          fi
+
       - name: Build App Variants
         run: |
           make all-variants
+
+      - name: Run UI Tests
+        run: |
+          make ClipKitty.xcodeproj
+          xcodebuild test -project ClipKitty.xcodeproj -scheme ClipKittyUITests -destination 'platform=macOS' -derivedDataPath DerivedData | tee xcodebuild.log
+          echo "### UI Performance Results" >> $GITHUB_STEP_SUMMARY
+          echo '```' >> $GITHUB_STEP_SUMMARY
+          swift Scripts/PrintPerfResults.swift >> $GITHUB_STEP_SUMMARY
+          echo '```' >> $GITHUB_STEP_SUMMARY
+          # Copy and upscale screenshot
+          cp /tmp/clipkitty_screenshot.png screenshot.png || true
+          if [ -f screenshot.png ]; then
+            WIDTH=$(sips -g pixelWidth screenshot.png | tail -1 | awk '{print $2}')
+            HEIGHT=$(sips -g pixelHeight screenshot.png | tail -1 | awk '{print $2}')
+            sips --resampleHeightWidth $((HEIGHT * 2)) $((WIDTH * 2)) screenshot.png --out screenshot.png
+          fi
+
+      - name: Generate Icon PNG
+        run: make icon-png
 
       - name: Build DMGs
         run: |
@@ -40,13 +71,52 @@ jobs:
           make dmg
           make dmg-sandboxed
 
-      - name: Upload Artifacts
+      - name: Upload DMG Artifacts
         uses: actions/upload-artifact@v4
         with:
           name: ClipKitty-DMGs
           path: |
             ClipKitty.dmg
             ClipKitty-Sandboxed.dmg
+
+      - name: Upload Screenshot Artifacts
+        uses: actions/upload-artifact@v4
+        with:
+          name: assets
+          path: |
+            screenshot.png
+            icon.png
+
+      - name: Deploy to gh-pages
+        if: github.event_name == 'push' && github.ref == 'refs/heads/main'
+        run: |
+          git config --global user.name "github-actions[bot]"
+          git config --global user.email "github-actions[bot]@users.noreply.github.com"
+
+          git fetch origin gh-pages || true
+          rm -rf /tmp/gh-pages
+          if git show-ref --verify --quiet refs/remotes/origin/gh-pages; then
+            git worktree add /tmp/gh-pages gh-pages
+            cd /tmp/gh-pages
+            git pull origin gh-pages || true
+          else
+            git worktree add --detach /tmp/gh-pages
+            cd /tmp/gh-pages
+            git checkout --orphan gh-pages
+            git reset --hard
+          fi
+
+          cp "$GITHUB_WORKSPACE/screenshot.png" .
+          cp "$GITHUB_WORKSPACE/icon.png" .
+          git add screenshot.png icon.png
+          git commit -m "Update screenshot and icon [skip ci]" || echo "No changes to commit"
+          git push origin gh-pages
+          cd -
+          git worktree remove /tmp/gh-pages --force
+
+          REPO="${{ github.repository }}"
+          echo "Screenshot: https://raw.githubusercontent.com/$REPO/gh-pages/screenshot.png"
+          echo "Icon: https://raw.githubusercontent.com/$REPO/gh-pages/icon.png"
 
       # Upload DMGs to release when a release is created
       - name: Upload Release Assets
@@ -76,36 +146,3 @@ jobs:
             ClipKitty-Sandboxed.dmg
         env:
           GH_TOKEN: ${{ github.token }}
-
-  ui-tests:
-    runs-on: macos-26
-
-    steps:
-      - name: Checkout
-        uses: actions/checkout@v4
-
-      - name: Setup Swift
-        uses: swift-actions/setup-swift@v2
-        with:
-          swift-version: "6.2"
-
-      - name: Install Nix
-        uses: DeterminateSystems/nix-installer-action@main
-
-      - name: Generate Rust Bindings
-        run: |
-          cd rust-core
-          chmod +x scripts/generate-bindings.sh
-          scripts/generate-bindings.sh
-
-      - name: Build App
-        run: |
-          make
-
-      - name: Run UI Tests
-        run: |
-          make screenshot
-          echo "### UI Performance Results" >> $GITHUB_STEP_SUMMARY
-          echo '```' >> $GITHUB_STEP_SUMMARY
-          swift Scripts/PrintPerfResults.swift >> $GITHUB_STEP_SUMMARY
-          echo '```' >> $GITHUB_STEP_SUMMARY
