@@ -23,6 +23,9 @@ Sources/ClipKittyRustWrapper/clipkitty_core.swift
 screenshot.png
 screenshot-*.png
 
+# Marketing assets (generated)
+marketing/
+
 # macOS
 .DS_Store
 *.app
