@@ -28,7 +28,23 @@ jobs:
 
       - name: Generate Icon PNG
         run: |
-          sips -s format png ClipKitty.app/Contents/Resources/AppIcon.icns --out icon.png
+          # Create iconset from source images and compile to .icns
+          mkdir -p AppIcon.iconset
+          # Use the highest resolution source image for all sizes
+          sips -z 1024 1024 "AppIcon.icon/Assets/Image 3.png" --out AppIcon.iconset/icon_512x512@2x.png
+          sips -z 512 512 "AppIcon.icon/Assets/Image 3.png" --out AppIcon.iconset/icon_512x512.png
+          sips -z 512 512 "AppIcon.icon/Assets/Image 3.png" --out AppIcon.iconset/icon_256x256@2x.png
+          sips -z 256 256 "AppIcon.icon/Assets/Image 3.png" --out AppIcon.iconset/icon_256x256.png
+          sips -z 256 256 "AppIcon.icon/Assets/Image 3.png" --out AppIcon.iconset/icon_128x128@2x.png
+          sips -z 128 128 "AppIcon.icon/Assets/Image 3.png" --out AppIcon.iconset/icon_128x128.png
+          sips -z 64 64 "AppIcon.icon/Assets/Image 3.png" --out AppIcon.iconset/icon_32x32@2x.png
+          sips -z 32 32 "AppIcon.icon/Assets/Image 3.png" --out AppIcon.iconset/icon_32x32.png
+          sips -z 32 32 "AppIcon.icon/Assets/Image 3.png" --out AppIcon.iconset/icon_16x16@2x.png
+          sips -z 16 16 "AppIcon.icon/Assets/Image 3.png" --out AppIcon.iconset/icon_16x16.png
+          # Compile to .icns
+          iconutil -c icns AppIcon.iconset -o AppIcon.icns
+          # Extract PNG from compiled icon
+          sips -s format png AppIcon.icns --out icon.png
           ls -lh screenshot.png icon.png
 
       - name: Upload Screenshot Artifact
