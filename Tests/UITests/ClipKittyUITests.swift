@@ -161,6 +161,35 @@ final class ClipKittyUITests: XCTestCase {
         XCTAssertTrue(disappeared, "Window should hide when focus moves to another app")
     }
 
+    /// Tests that the panel does NOT auto-show when the app is activated/focused.
+    /// The panel should only appear via hotkey or menu - not automatically on app focus.
+    /// This ensures settings and other interactions don't get overlaid by the panel.
+    func testPanelDoesNotAutoShowOnAppFocus() throws {
+        let panel = app.dialogs.firstMatch
+        XCTAssertTrue(panel.exists, "Panel should be visible initially")
+
+        // First, hide the panel by activating another app
+        let finder = XCUIApplication(bundleIdentifier: "com.apple.finder")
+        finder.activate()
+        XCTAssertTrue(panel.waitForNonExistence(timeout: 3), "Panel should hide when focus lost")
+
+        // Re-activate the app - panel should NOT auto-show
+        app.activate()
+        Thread.sleep(forTimeInterval: 0.5)
+
+        // Panel should still be hidden - it should only show via hotkey/menu
+        XCTAssertFalse(panel.exists, "Panel should NOT auto-show when app is activated")
+
+        // Now open settings - it should work without panel overlay
+        app.typeKey(",", modifierFlags: .command)
+        let settingsWindow = app.windows["ClipKitty Settings"]
+        XCTAssertTrue(settingsWindow.waitForExistence(timeout: 3), "Settings window should appear")
+        XCTAssertTrue(settingsWindow.isHittable, "Settings window should be interactable")
+
+        // Panel should still not be visible
+        XCTAssertFalse(panel.exists, "Panel should NOT appear when settings is opened")
+    }
+
     func testTakeScreenshot() throws {
         // Wait for animations or loading
         sleep(2)
