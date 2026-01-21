@@ -109,7 +109,7 @@ clean:
 
 sign: $(APP_BUNDLE)
 	@echo "Signing with entitlements..."
-	@codesign --force --options runtime --entitlements Sources/App/ClipKitty.entitlements --sign - "$(APP_BUNDLE)"
+	@codesign --force --deep --sign - "$(APP_BUNDLE)"
 
 # Perf runs without icons and only runs perf tests
 perf: sign ClipKitty.xcodeproj
