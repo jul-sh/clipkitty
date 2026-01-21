@@ -5,6 +5,8 @@ on:
     branches: [main]
   pull_request:
     branches: [main]
+  release:
+    types: [created]
 
 permissions:
   contents: write
@@ -22,28 +24,49 @@ jobs:
         with:
           swift-version: "6.2"
 
+      - name: Install create-dmg
+        run: brew install create-dmg
+
       - name: Build App
         run: |
           make
 
-      - name: Create ZIP
+      - name: Build DMG
         run: |
-          ditto -c -k --sequesterRsrc --keepParent ClipKitty.app ClipKitty.app.zip
+          chmod +x Scripts/build-dmg.sh
+          ./Scripts/build-dmg.sh ClipKitty.app ClipKitty.dmg
 
-      - name: Upload Artifact
+      - name: Upload DMG Artifact
         uses: actions/upload-artifact@v4
         with:
-          name: ClipKitty
-          path: ClipKitty.app.zip
+          name: ClipKitty-DMG
+          path: ClipKitty.dmg
 
-      - name: Create Release
+      - name: Upload App Artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: ClipKitty-App
+          path: ClipKitty.app
+
+      # Upload DMG to release when a release is created
+      - name: Upload Release Asset
+        if: github.event_name == 'release'
+        run: |
+          gh release upload "${{ github.event.release.tag_name }}" \
+            ClipKitty.dmg \
+            --clobber
+        env:
+          GH_TOKEN: ${{ github.token }}
+
+      # Create automatic pre-release on push to main (for development builds)
+      - name: Create Development Release
         if: github.event_name == 'push' && github.ref == 'refs/heads/main'
         run: |
           gh release create "commit-${GITHUB_SHA}" \
             --title "ClipKitty ${GITHUB_SHA}" \
             --generate-notes \
             --prerelease \
-            ClipKitty.app.zip
+            ClipKitty.dmg
         env:
           GH_TOKEN: ${{ github.token }}
 
@@ -77,7 +100,7 @@ jobs:
       - name: Run UI Tests
         run: |
           make screenshot
-          echo "### 🚀 UI Performance Results" >> $GITHUB_STEP_SUMMARY
+          echo "### UI Performance Results" >> $GITHUB_STEP_SUMMARY
           echo '```' >> $GITHUB_STEP_SUMMARY
           swift Scripts/PrintPerfResults.swift >> $GITHUB_STEP_SUMMARY
           echo '```' >> $GITHUB_STEP_SUMMARY
