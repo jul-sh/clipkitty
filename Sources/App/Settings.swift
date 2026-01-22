@@ -68,15 +68,6 @@ final class AppSettings: ObservableObject {
         didSet { save() }
     }
 
-    /// Whether the app has been launched before (used for accessibility permission prompting)
-    @Published private(set) var hasLaunchedBefore: Bool
-
-    /// Mark that the app has completed its first launch (called after first paste attempt)
-    func markFirstLaunchComplete() {
-        hasLaunchedBefore = true
-        defaults.set(true, forKey: hasLaunchedBeforeKey)
-    }
-
     /// Check if accessibility permissions are granted
     var hasAccessibilityPermission: Bool {
         #if SANDBOXED
@@ -100,15 +91,11 @@ final class AppSettings: ObservableObject {
 
     /// Whether the button should show "paste" or "copy"
     /// - Sandboxed: always "copy"
-    /// - First launch: "paste" (will prompt for permissions)
-    /// - After first launch: "paste" if has permission, "copy" otherwise
+    /// - Non-sandboxed: "paste" if has permission, "copy" otherwise
     var shouldShowPasteLabel: Bool {
         #if SANDBOXED
         return false
         #else
-        if !hasLaunchedBefore {
-            return true
-        }
         return hasAccessibilityPermission
         #endif
     }
@@ -126,7 +113,6 @@ final class AppSettings: ObservableObject {
     private let maxDbSizeKey = "maxDatabaseSizeGB"
     private let legacyMaxDbSizeKey = "maxDatabaseSizeMB"
     private let launchAtLoginKey = "launchAtLogin"
-    private let hasLaunchedBeforeKey = "hasLaunchedBefore"
 
     private init() {
         // Initialize all stored properties first
@@ -147,9 +133,6 @@ final class AppSettings: ObservableObject {
 
         // Default to false - user must explicitly enable launch at login
         launchAtLoginEnabled = defaults.object(forKey: launchAtLoginKey) as? Bool ?? false
-
-        // Track whether this is the first launch (for accessibility permission prompting)
-        hasLaunchedBefore = defaults.bool(forKey: hasLaunchedBeforeKey)
 
         maxImageMegapixels = 2.0
         imageCompressionQuality = 0.3

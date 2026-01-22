@@ -112,12 +112,6 @@ final class FloatingPanelController: NSObject, NSWindowDelegate {
         let targetApp = previousApp
         hide()
         #if !SANDBOXED
-        // On first launch, request accessibility permission (shows system dialog)
-        let settings = AppSettings.shared
-        if !settings.hasLaunchedBefore {
-            settings.requestAccessibilityPermission()
-            settings.markFirstLaunchComplete()
-        }
         // Always attempt to paste in non-sandboxed mode
         simulatePaste(targetApp: targetApp)
         #endif
