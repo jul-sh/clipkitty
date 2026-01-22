@@ -61,45 +61,6 @@ struct SettingsView: View {
                 }
             }
 
-            Section("Behavior") {
-                #if SANDBOXED
-                HStack {
-                    Image(systemName: "lock.shield")
-                        .foregroundStyle(.secondary)
-                    Text("Sandboxed Mode")
-                        .font(.headline)
-                }
-                Text("Automatic pasting is disabled in sandboxed mode for security. Items will only be copied to the clipboard.")
-                    .font(.caption)
-                    .foregroundStyle(.secondary)
-                #else
-                HStack {
-                    Text("Automatic Paste")
-                    Spacer()
-                    if settings.hasAccessibilityPermission {
-                        Label("Enabled", systemImage: "checkmark.circle.fill")
-                            .foregroundStyle(.green)
-                    } else {
-                        Label("Requires Permission", systemImage: "exclamationmark.triangle.fill")
-                            .foregroundStyle(.orange)
-                    }
-                }
-                if settings.hasAccessibilityPermission {
-                    Text("ClipKitty will automatically paste items into the previous app when you press Enter.")
-                        .font(.caption)
-                        .foregroundStyle(.secondary)
-                } else {
-                    Text("Grant Accessibility permission to enable automatic pasting. Without it, items will only be copied to the clipboard.")
-                        .font(.caption)
-                        .foregroundStyle(.secondary)
-                    Button("Open Accessibility Settings") {
-                        NSWorkspace.shared.open(URL(string: "x-apple.systempreferences:com.apple.preference.security?Privacy_Accessibility")!)
-                    }
-                    .font(.caption)
-                }
-                #endif
-            }
-
             Section("Startup") {
                 Toggle("Launch at login", isOn: launchAtLoginBinding)
                     .disabled(!launchAtLogin.isInApplicationsDirectory)
@@ -133,6 +94,49 @@ struct SettingsView: View {
                     .foregroundStyle(.secondary)
 
             }
+
+            #if !SANDBOXED
+            Section("Behavior") {
+                HStack {
+                    Text("Automatic Paste")
+                    Spacer()
+                    if settings.hasAccessibilityPermission {
+                        Label("Enabled", systemImage: "checkmark.circle.fill")
+                            .foregroundStyle(.green)
+                    } else {
+                        Label("Requires Permission", systemImage: "exclamationmark.triangle.fill")
+                            .foregroundStyle(.orange)
+                    }
+                }
+                if settings.hasAccessibilityPermission {
+                    Text("ClipKitty will automatically paste items into the previous app when you press Enter.")
+                        .font(.caption)
+                        .foregroundStyle(.secondary)
+                } else {
+                    Text("Grant Accessibility permission to enable automatic pasting. Without it, items will only be copied to the clipboard.")
+                        .font(.caption)
+                        .foregroundStyle(.secondary)
+                    Button("Open Accessibility Settings") {
+                        NSWorkspace.shared.open(URL(string: "x-apple.systempreferences:com.apple.preference.security?Privacy_Accessibility")!)
+                    }
+                    .font(.caption)
+                }
+            }
+            #endif
+
+            #if SANDBOXED
+            Section("Security") {
+                HStack {
+                    Image(systemName: "lock.shield")
+                        .foregroundStyle(.secondary)
+                    Text("Sandboxed")
+                        .font(.headline)
+                }
+                Text("ClipKitty runs in an isolated environment, protecting your privacy and keeping your data secure.")
+                    .font(.caption)
+                    .foregroundStyle(.secondary)
+            }
+            #endif
 
             Section("Data") {
                 Button(role: .destructive) {
