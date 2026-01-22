@@ -19,15 +19,14 @@
       "blur-material" : null,
       "layers" : [
         {
-          "glass" : true,
           "hidden" : false,
-          "image-name" : "Image 4.png",
-          "name" : "Image 4",
+          "image-name" : "cat.png",
+          "name" : "cat",
           "position" : {
-            "scale" : 1.16,
+            "scale" : 1,
             "translation-in-points" : [
-              132.81721862317636,
-              -26.604659017268432
+              55.36343511492521,
+              -39.64316106500246
             ]
           }
         }
@@ -48,20 +47,14 @@
       "hidden" : false,
       "layers" : [
         {
-          "blend-mode-specializations" : [
-            {
-              "appearance" : "tinted",
-              "value" : "normal"
-            }
-          ],
-          "glass" : true,
-          "image-name" : "Image 3.png",
-          "name" : "Image 3",
+          "hidden" : false,
+          "image-name" : "clip.png",
+          "name" : "clip",
           "position" : {
-            "scale" : 1.14,
+            "scale" : 1.03,
             "translation-in-points" : [
-              0,
-              157.7807391886829
+              -57.60343511492533,
+              95.55375915944785
             ]
           }
         }
@@ -75,48 +68,6 @@
       "translucency" : {
         "enabled" : true,
         "value" : 0.2
-      }
-    },
-    {
-      "hidden" : true,
-      "layers" : [
-
-      ],
-      "lighting" : "combined",
-      "shadow" : {
-        "kind" : "neutral",
-        "opacity" : 0.5
-      },
-      "translucency" : {
-        "enabled" : true,
-        "value" : 0.5
-      }
-    },
-    {
-      "hidden" : true,
-      "layers" : [
-
-      ],
-      "shadow" : {
-        "kind" : "neutral",
-        "opacity" : 0.5
-      },
-      "translucency" : {
-        "enabled" : true,
-        "value" : 0.5
-      }
-    },
-    {
-      "layers" : [
-
-      ],
-      "shadow" : {
-        "kind" : "neutral",
-        "opacity" : 0.5
-      },
-      "translucency" : {
-        "enabled" : true,
-        "value" : 0.5
       }
     }
   ],
