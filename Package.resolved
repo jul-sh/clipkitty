@@ -1,5 +1,5 @@
 {
-  "originHash" : "ef3ff03d797a10b47cfd00c65ba6ce38503ca1d8dc66ae1d660c7518b229f319",
+  "originHash" : "b29a8d9b9f96f29a02954b5a4de9e9e1fe7bcfb2dcc7fa2093fb5a52760875a2",
   "pins" : [
     {
       "identity" : "grdb.swift",
@@ -8,6 +8,15 @@
       "state" : {
         "revision" : "aa0079aeb82a4bf00324561a40bffe68c6fe1c26",
         "version" : "7.9.0"
+      }
+    },
+    {
+      "identity" : "wfcolorcode",
+      "kind" : "remoteSourceControl",
+      "location" : "https://github.com/1024jp/WFColorCode.git",
+      "state" : {
+        "revision" : "f256e6b832184953e0e9a1846b7836fff8d37888",
+        "version" : "2.10.0"
       }
     }
   ],
