@@ -168,6 +168,7 @@ final class ClipboardStore {
         currentSearchQuery = query
 
         // Preserve previous results while loading new ones
+        // When transitioning from .loaded to .searching, use loaded items to avoid empty flash
         let previousResults: [SearchResultItem] = {
             switch state {
             case .searching(_, let searchState):
@@ -177,6 +178,9 @@ final class ClipboardStore {
                 case .results(let results, _):
                     return results
                 }
+            case .loaded(let items, _):
+                // Convert loaded items to search results (no highlights yet)
+                return items.map { SearchResultItem(item: $0, highlights: []) }
             default:
                 return []
             }
