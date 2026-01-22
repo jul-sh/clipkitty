@@ -26,7 +26,7 @@ APP_ICONS := $(APP_BUNDLE)/Contents/Resources/Assets.car
 SIGNING_IDENTITY ?= 3rd Party Mac Developer Application
 INSTALLER_IDENTITY ?= 3rd Party Mac Developer Installer
 
-all: $(APP_BUNDLE) $(APP_ICONS)
+all: $(APP_BUNDLE): $(APP_BINARY) $(APP_PLIST)
 
 all-variants: all build-sandboxed sign-sandboxed
 
@@ -109,7 +109,6 @@ $(APP_ICONS): $(ICON_SOURCE) $(APP_BUNDLE)
 
 # Minimal app bundle for tests
 $(APP_BUNDLE): $(APP_BINARY) $(APP_PLIST) $(APP_ICONS)
-
 # Xcode project generation
 ClipKitty.xcodeproj: Scripts/GenXcodeproj.swift $(wildcard Tests/UITests/*.swift)
 	@echo "Generating Xcode project..."
