@@ -32,9 +32,9 @@ jobs:
           # Install dependencies needed for app building, marketing assets, and release
           brew install create-dmg imagemagick ffmpeg
 
-      - name: Build App Variants
+      - name: Build Non-Sandboxed Variant
         run: |
-          make all-variants
+          make all SANDBOX=false
 
       - name: Run UI Tests
         run: |
@@ -64,8 +64,8 @@ jobs:
       - name: Build DMGs
         run: |
           chmod +x Scripts/build-dmg.sh
-          make dmg
-          make dmg-sandboxed
+          make dmg SANDBOX=false
+          make dmg SANDBOX=true
 
       - name: Upload DMG Artifacts
         uses: actions/upload-artifact@v4
