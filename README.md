@@ -16,7 +16,7 @@ ClipKitty stores everything. And with optimized fuzzy search you'll find your la
 
 ## Why ClipKitty over alternatives?
 
-**vs Maccy**: Maccy caps at 999 items, and its search slows down past 200. ClipKitty keeps unlimited history, scaling to millions with no performance degradation. With ClipKitty offers a life multi-line preview pane instead of waiting for tooltips.
+**vs Maccy**: Maccy caps at 999 items, and its search slows down past 200. ClipKitty keeps unlimited history, scaling to millions with no performance degradation. ClipKitty offers quick navigation with a live multi-line preview pane instead of waiting for tooltips.
 
 **vs Raycast**: Raycast truncates items at ~32k characters and limits free history to 3 months. ClipKitty has no character limits and keeps everything forever. Fully offline; your clipboard never touches the cloud.
 
