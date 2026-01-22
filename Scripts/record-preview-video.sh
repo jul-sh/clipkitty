@@ -50,16 +50,11 @@ echo "NOTE: If this fails, ensure Terminal has Screen Recording permission:"
 echo "  System Settings > Privacy & Security > Screen Recording"
 echo ""
 
-# Use macOS screencapture for recording the app window
-echo "Using macOS screencapture for recording..."
-# Start recording with screencapture (30 second max, app window only)
-# Note: screencapture -w captures the focused window
-screencapture -v -V 30 -w "$RAW_VIDEO" &  # Do NOT use -i (interactive) with -V; it causes "video not valid with -i" error
-RECORD_PID=$!
-sleep 2
+# Clean up any previous marker files
+rm -f /tmp/clipkitty_demo_start.txt
 
-echo "Running search demo UI test..."
-# Run only the search demo test
+echo "Starting UI test (will signal when ready)..."
+# Run the test in background - it will create a marker file when demo starts
 cd "$PROJECT_ROOT"
 xcodebuild test \
     -project ClipKitty.xcodeproj \
@@ -67,10 +62,33 @@ xcodebuild test \
     -destination 'platform=macOS' \
     -derivedDataPath DerivedData \
     -only-testing:ClipKittyUITests/ClipKittyUITests/testRecordSearchDemo \
-    2>&1 | grep -E "(Test Case|passed|failed)" || true
+    2>&1 | grep -E "(Test Case|passed|failed)" &
+TEST_PID=$!
 
-# Wait a moment for the test to fully complete
-sleep 1
+# Wait for the demo start signal (written by UI test when ready)
+echo "Waiting for demo to start..."
+WAIT_COUNT=0
+while [ ! -f /tmp/clipkitty_demo_start.txt ] && [ $WAIT_COUNT -lt 60 ]; do
+    sleep 0.5
+    WAIT_COUNT=$((WAIT_COUNT + 1))
+done
+
+if [ ! -f /tmp/clipkitty_demo_start.txt ]; then
+    echo "Error: Demo did not start within 30 seconds"
+    kill $TEST_PID 2>/dev/null || true
+    exit 1
+fi
+rm -f /tmp/clipkitty_demo_start.txt
+
+# Use macOS screencapture for recording
+echo "Using macOS screencapture for recording..."
+screencapture -v -D 1 "$RAW_VIDEO" &
+RECORD_PID=$!
+sleep 0.5
+
+# Wait for test to complete
+echo "Recording search demo..."
+wait $TEST_PID 2>/dev/null || true
 
 # Stop recording
 echo ""
@@ -90,20 +108,42 @@ echo "Post-processing video..."
 DURATION=$(ffprobe -v error -show_entries format=duration -of default=noprint_wrappers=1:nokey=1 "$RAW_VIDEO" 2>/dev/null | cut -d. -f1)
 echo "Raw video duration: ${DURATION}s"
 
-# Calculate fade out start time (1 second before end)
-FADE_OUT_START=$((DURATION - 1))
-if [ $FADE_OUT_START -lt 1 ]; then
-    FADE_OUT_START=1
+# Check duration limit (App Store allows 15-30s, we use 25s as a safe limit)
+if [ "$DURATION" -gt 25 ]; then
+    echo "Error: Video duration (${DURATION}s) exceeds 25 second limit"
+    echo "Please shorten the testRecordSearchDemo test"
+    rm -f "$RAW_VIDEO"
+    exit 1
+fi
+
+# Check for window bounds file (written by the UI test)
+BOUNDS_FILE="/tmp/clipkitty_window_bounds.txt"
+CROP_FILTER=""
+if [ -f "$BOUNDS_FILE" ]; then
+    BOUNDS=$(cat "$BOUNDS_FILE")
+    echo "Window bounds: $BOUNDS"
+    # Parse x,y,width,height
+    CROP_X=$(echo "$BOUNDS" | cut -d, -f1)
+    CROP_Y=$(echo "$BOUNDS" | cut -d, -f2)
+    CROP_W=$(echo "$BOUNDS" | cut -d, -f3)
+    CROP_H=$(echo "$BOUNDS" | cut -d, -f4)
+    # Create crop filter (note: ffmpeg crop is crop=w:h:x:y)
+    CROP_FILTER="crop=${CROP_W}:${CROP_H}:${CROP_X}:${CROP_Y},"
+    echo "Cropping to window: ${CROP_W}x${CROP_H}+${CROP_X}+${CROP_Y}"
+    rm -f "$BOUNDS_FILE"
+else
+    echo "No window bounds file found, using full screen"
 fi
 
 # Post-process:
-# - Trim to reasonable length (max 25 seconds for App Store's 15-30s requirement)
-# - Add fade in/out
+# - Crop to window bounds (if available)
+# - Use actual video duration (capped at 30s for App Store)
 # - Ensure proper encoding for App Store (H.264, AAC)
 # - Scale to App Store dimensions (2880x1800 or 1280x800)
+MAX_DURATION=$((DURATION > 30 ? 30 : DURATION))
 ffmpeg -y -i "$RAW_VIDEO" \
-    -t 25 \
-    -vf "fade=t=in:st=0:d=0.5,fade=t=out:st=24:d=1,scale=2880:1800:force_original_aspect_ratio=decrease,pad=2880:1800:(ow-iw)/2:(oh-ih)/2:color=gray" \
+    -t $MAX_DURATION \
+    -vf "${CROP_FILTER}scale=2880:1800:force_original_aspect_ratio=decrease,pad=2880:1800:(ow-iw)/2:(oh-ih)/2:color=gray" \
     -c:v libx264 -preset slow -crf 18 -profile:v high -level 4.0 \
     -pix_fmt yuv420p \
     -movflags +faststart \

@@ -260,7 +260,7 @@ list-identities:
 # Marketing Assets (Screenshots & Preview Video)
 # ============================================================================
 # Prerequisites:
-#   1. ImageMagick: brew install imagemagick
+#   1. ImageMagick (full): brew install imagemagick-full (required for font rendering)
 #   2. ffmpeg: brew install ffmpeg
 #
 # Configuration

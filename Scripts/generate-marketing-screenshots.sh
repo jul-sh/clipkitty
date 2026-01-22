@@ -26,16 +26,24 @@ SHADOW_OPACITY=50
 SHADOW_BLUR=30
 SHADOW_OFFSET=20
 CAPTION_SIZE=72
-CAPTION_COLOR="white"
+CAPTION_COLOR="black"
 CAPTION_Y_OFFSET=80
 
 # Create output directories
 mkdir -p "$OUTPUT_DIR"
 mkdir -p "$ASSETS_DIR"
 
-# Check for ImageMagick
-if ! command -v magick &> /dev/null; then
-    echo "Error: ImageMagick is required. Install with: brew install imagemagick"
+# Check for ImageMagick - prefer imagemagick-full for font rendering support
+MAGICK_FULL="/opt/homebrew/opt/imagemagick-full/bin/magick"
+if [ -x "$MAGICK_FULL" ]; then
+    MAGICK="$MAGICK_FULL"
+    echo "Using imagemagick-full (with font support)"
+elif command -v magick &> /dev/null; then
+    MAGICK="magick"
+    echo "Warning: Using regular imagemagick (captions may not render)"
+    echo "For full font support, run: brew install imagemagick-full"
+else
+    echo "Error: ImageMagick is required. Install with: brew install imagemagick-full"
     exit 1
 fi
 
@@ -49,7 +57,7 @@ BG_RESIZED="$ASSETS_DIR/background_resized.png"
 if [ ! -f "$BG_RESIZED" ]; then
     echo "Preparing background..."
     # Resize background file to App Store dimensions
-    magick "$BACKGROUND_IMAGE" -resize "${FINAL_WIDTH}x${FINAL_HEIGHT}!" "$BG_RESIZED"
+    $MAGICK "$BACKGROUND_IMAGE" -resize "${FINAL_WIDTH}x${FINAL_HEIGHT}!" "$BG_RESIZED"
     echo "Created: $BG_RESIZED"
 fi
 
@@ -71,17 +79,17 @@ process_screenshot() {
     echo "  Caption: \"$CAPTION\""
 
     # Get input dimensions
-    local INPUT_WIDTH=$(magick identify -format "%w" "$INPUT")
-    local INPUT_HEIGHT=$(magick identify -format "%h" "$INPUT")
+    local INPUT_WIDTH=$($MAGICK identify -format "%w" "$INPUT")
+    local INPUT_HEIGHT=$($MAGICK identify -format "%h" "$INPUT")
     echo "  Input size: ${INPUT_WIDTH}x${INPUT_HEIGHT}"
 
     # Scale down the screenshot to fit nicely on the background
     # Leave room for caption at top
-    local SCALE_WIDTH=$((FINAL_WIDTH - 300))
-    local SCALE_HEIGHT=$((FINAL_HEIGHT - 300))
+    local SCALE_WIDTH=$((FINAL_WIDTH - 200))
+    local SCALE_HEIGHT=$((FINAL_HEIGHT - 200))
 
     # Step 1: Add rounded corners using a mask approach
-    magick "$INPUT" \
+    $MAGICK "$INPUT" \
         -alpha set \
         \( +clone -alpha extract \
             -draw "fill black rectangle 0,0 ${INPUT_WIDTH},${INPUT_HEIGHT}" \
@@ -92,24 +100,39 @@ process_screenshot() {
         "/tmp/clipkitty_rounded.png"
 
     # Step 2: Add drop shadow
-    magick "/tmp/clipkitty_rounded.png" \
+    $MAGICK "/tmp/clipkitty_rounded.png" \
         \( +clone -background "rgba(0,0,0,0.5)" -shadow "${SHADOW_OPACITY}x${SHADOW_BLUR}+0+${SHADOW_OFFSET}" \) \
         +swap -background none -layers merge +repage \
         "/tmp/clipkitty_shadowed.png"
 
     # Step 3: Resize to fit
-    magick "/tmp/clipkitty_shadowed.png" \
+    $MAGICK "/tmp/clipkitty_shadowed.png" \
         -resize "${SCALE_WIDTH}x${SCALE_HEIGHT}>" \
         "/tmp/clipkitty_resized.png"
 
     # Step 4: Composite onto background with caption
-    # Use Arial-Bold which is available on macOS
-    magick "$GRADIENT_BG" \
-        "/tmp/clipkitty_resized.png" -gravity center -geometry +0+50 -composite \
-        -gravity north -fill "$CAPTION_COLOR" \
-        -font "Arial-Bold" -pointsize $CAPTION_SIZE \
-        -annotate +0+$CAPTION_Y_OFFSET "$CAPTION" \
-        "$OUTPUT"
+    # First, try to render caption using pango (works if pango support is built-in)
+    # Fall back to no caption if font rendering isn't available
+    FONT_PATH="/System/Library/Fonts/SFNS.ttf"
+
+    # Create the caption as a separate image, then composite
+    if $MAGICK -background none -fill "$CAPTION_COLOR" \
+        -font "$FONT_PATH" -pointsize $CAPTION_SIZE \
+        -gravity center "label:$CAPTION" \
+        "/tmp/clipkitty_caption.png" 2>/dev/null; then
+        # Caption created successfully, composite everything
+        $MAGICK "$GRADIENT_BG" \
+            "/tmp/clipkitty_resized.png" -gravity center -geometry +0+50 -composite \
+            "/tmp/clipkitty_caption.png" -gravity north -geometry +0+$CAPTION_Y_OFFSET -composite \
+            "$OUTPUT"
+        rm -f "/tmp/clipkitty_caption.png"
+    else
+        # Font rendering not available, skip caption
+        echo "  Warning: Font rendering unavailable, skipping caption"
+        $MAGICK "$GRADIENT_BG" \
+            "/tmp/clipkitty_resized.png" -gravity center -geometry +0+50 -composite \
+            "$OUTPUT"
+    fi
 
     # Clean up temp files
     rm -f "/tmp/clipkitty_rounded.png" "/tmp/clipkitty_shadowed.png" "/tmp/clipkitty_resized.png"

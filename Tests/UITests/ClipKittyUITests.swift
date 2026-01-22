@@ -279,12 +279,50 @@ final class ClipKittyUITests: XCTestCase {
         let searchField = app.textFields.firstMatch
         XCTAssertTrue(searchField.waitForExistence(timeout: 5), "Search field not found")
 
+        // Save window bounds to temp file for video cropping
+        let window = app.dialogs.firstMatch
+        if window.exists {
+            let frame = window.frame
+            // XCUIElement.frame is in points, but screen recording is in pixels
+            // Get the scale factor by comparing screenshot pixel size to screen bounds
+            let screenshot = XCUIScreen.main.screenshot()
+            let screenPixelHeight = screenshot.image.size.height
+            let screenPixelWidth = screenshot.image.size.width
+
+            // Get the actual scale factor from NSScreen (works for any display)
+            let scaleFactor = NSScreen.main?.backingScaleFactor ?? 2.0
+
+            // Convert frame from points to pixels
+            let pixelX = frame.origin.x * scaleFactor
+            let pixelY = frame.origin.y * scaleFactor
+            let pixelWidth = frame.width * scaleFactor
+            let pixelHeight = frame.height * scaleFactor
+
+            // Convert from bottom-left origin (AppKit) to top-left origin (video/ffmpeg)
+            // NOTE: XCTest actually uses top-left origin already, so no flip needed
+            let topLeftY = pixelY  // Use directly, no conversion
+
+            // Format: x,y,width,height (with some padding for shadow/border)
+            let padding: CGFloat = 80  // N points * 2 for scaling
+            let boundsString = String(format: "%.0f,%.0f,%.0f,%.0f",
+                                       max(0, pixelX - padding),
+                                       max(0, topLeftY - padding),
+                                       pixelWidth + padding * 2,
+                                       pixelHeight + padding * 2)
+            try? boundsString.write(toFile: "/tmp/clipkitty_window_bounds.txt",
+                                    atomically: true, encoding: .utf8)
+            print("Window frame (points): \(frame)")
+            print("Screen pixels: \(screenPixelWidth)x\(screenPixelHeight)")
+            print("Saved window bounds (pixels): \(boundsString)")
+        }
+
+        // Signal that the demo is about to start (for video sync)
+        try? "start".write(toFile: "/tmp/clipkitty_demo_start.txt", atomically: true, encoding: .utf8)
+
         // Initial pause to show the app with history
         Thread.sleep(forTimeInterval: 1)
 
-        // Click into search field
-        searchField.click()
-        Thread.sleep(forTimeInterval: 0.25)
+        // Search field is already focused, just start typing
 
         // Type search query character by character with delays for visual effect
         let query = "meeting"
