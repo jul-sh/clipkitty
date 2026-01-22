@@ -73,10 +73,30 @@ struct SettingsView: View {
                     .font(.caption)
                     .foregroundStyle(.secondary)
                 #else
-                Toggle("Paste after selecting", isOn: $settings.pasteOnSelect)
-                Text("When enabled, pressing Enter pastes into the previous app. When disabled, it only copies to the clipboard.")
+                HStack {
+                    Text("Automatic Paste")
+                    Spacer()
+                    if settings.hasAccessibilityPermission {
+                        Label("Enabled", systemImage: "checkmark.circle.fill")
+                            .foregroundStyle(.green)
+                    } else {
+                        Label("Requires Permission", systemImage: "exclamationmark.triangle.fill")
+                            .foregroundStyle(.orange)
+                    }
+                }
+                if settings.hasAccessibilityPermission {
+                    Text("ClipKitty will automatically paste items into the previous app when you press Enter.")
+                        .font(.caption)
+                        .foregroundStyle(.secondary)
+                } else {
+                    Text("Grant Accessibility permission to enable automatic pasting. Without it, items will only be copied to the clipboard.")
+                        .font(.caption)
+                        .foregroundStyle(.secondary)
+                    Button("Open Accessibility Settings") {
+                        NSWorkspace.shared.open(URL(string: "x-apple.systempreferences:com.apple.preference.security?Privacy_Accessibility")!)
+                    }
                     .font(.caption)
-                    .foregroundStyle(.secondary)
+                }
                 #endif
             }
 
