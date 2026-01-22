@@ -2,15 +2,11 @@
   "color-space-for-untagged-svg-colors" : "display-p3",
   "fill-specializations" : [
     {
-      "value" : {
-        "automatic-gradient" : "display-p3:0.98824,0.86667,0.89804,1.00000"
-      }
+      "value" : "system-light"
     },
     {
       "appearance" : "dark",
-      "value" : {
-        "automatic-gradient" : "display-p3:0.56259,0.49338,0.51068,1.00000"
-      }
+      "value" : "system-dark"
     }
   ],
   "groups" : [
