@@ -1,6 +1,7 @@
 import Foundation
 import Carbon
 import AppKit
+@preconcurrency import ApplicationServices
 
 struct HotKey: Codable, Equatable {
     var keyCode: UInt32
@@ -67,22 +68,49 @@ final class AppSettings: ObservableObject {
         didSet { save() }
     }
 
-    /// When true, selecting an item (Enter) pastes into the previous app. When false, just copies to clipboard.
-    @Published var _pasteOnSelect: Bool {
-        didSet { save() }
+    /// Whether the app has been launched before (used for accessibility permission prompting)
+    @Published private(set) var hasLaunchedBefore: Bool
+
+    /// Mark that the app has completed its first launch (called after first paste attempt)
+    func markFirstLaunchComplete() {
+        hasLaunchedBefore = true
+        defaults.set(true, forKey: hasLaunchedBeforeKey)
     }
 
-    var pasteOnSelect: Bool {
-        get {
-            #if SANDBOXED
-            return false
-            #else
-            return _pasteOnSelect
-            #endif
+    /// Check if accessibility permissions are granted
+    var hasAccessibilityPermission: Bool {
+        #if SANDBOXED
+        return false
+        #else
+        return AXIsProcessTrusted()
+        #endif
+    }
+
+    /// Request accessibility permissions (shows system dialog if not yet prompted)
+    /// Returns true if permissions are already granted
+    @discardableResult
+    func requestAccessibilityPermission() -> Bool {
+        #if SANDBOXED
+        return false
+        #else
+        let options = [kAXTrustedCheckOptionPrompt.takeUnretainedValue() as String: true] as CFDictionary
+        return AXIsProcessTrustedWithOptions(options)
+        #endif
+    }
+
+    /// Whether the button should show "paste" or "copy"
+    /// - Sandboxed: always "copy"
+    /// - First launch: "paste" (will prompt for permissions)
+    /// - After first launch: "paste" if has permission, "copy" otherwise
+    var shouldShowPasteLabel: Bool {
+        #if SANDBOXED
+        return false
+        #else
+        if !hasLaunchedBefore {
+            return true
         }
-        set {
-            _pasteOnSelect = newValue
-        }
+        return hasAccessibilityPermission
+        #endif
     }
 
     let maxImageMegapixels: Double
@@ -97,8 +125,8 @@ final class AppSettings: ObservableObject {
     private let hotKeyKey = "hotKey"
     private let maxDbSizeKey = "maxDatabaseSizeGB"
     private let legacyMaxDbSizeKey = "maxDatabaseSizeMB"
-    private let pasteOnSelectKey = "pasteOnSelect"
     private let launchAtLoginKey = "launchAtLogin"
+    private let hasLaunchedBeforeKey = "hasLaunchedBefore"
 
     private init() {
         // Initialize all stored properties first
@@ -117,11 +145,11 @@ final class AppSettings: ObservableObject {
             maxDatabaseSizeGB = 2.0
         }
 
-        // Default to true (paste on select) for new installs
-        _pasteOnSelect = defaults.object(forKey: pasteOnSelectKey) as? Bool ?? true
-
         // Default to false - user must explicitly enable launch at login
         launchAtLoginEnabled = defaults.object(forKey: launchAtLoginKey) as? Bool ?? false
+
+        // Track whether this is the first launch (for accessibility permission prompting)
+        hasLaunchedBefore = defaults.bool(forKey: hasLaunchedBeforeKey)
 
         maxImageMegapixels = 2.0
         imageCompressionQuality = 0.3
@@ -132,7 +160,6 @@ final class AppSettings: ObservableObject {
             defaults.set(data, forKey: hotKeyKey)
         }
         defaults.set(maxDatabaseSizeGB, forKey: maxDbSizeKey)
-        defaults.set(_pasteOnSelect, forKey: pasteOnSelectKey)
         defaults.set(launchAtLoginEnabled, forKey: launchAtLoginKey)
     }
 }

@@ -26,7 +26,7 @@ APP_ICONS := $(APP_BUNDLE)/Contents/Resources/Assets.car
 SIGNING_IDENTITY ?= 3rd Party Mac Developer Application
 INSTALLER_IDENTITY ?= 3rd Party Mac Developer Installer
 
-all: $(APP_BUNDLE): $(APP_BINARY) $(APP_PLIST)
+all: $(APP_BUNDLE)
 
 all-variants: all build-sandboxed sign-sandboxed
 
@@ -90,8 +90,8 @@ $(APP_PLIST):
 	@swift Scripts/GenInfoPlist.swift "$(APP_PLIST)"
 	@touch "$(APP_BUNDLE)"
 
-# Compile icons - depends on APP_BUNDLE to ensure Resources dir exists
-$(APP_ICONS): $(ICON_SOURCE) $(APP_BUNDLE)
+# Compile icons
+$(APP_ICONS): $(ICON_SOURCE)
 	@echo "Compiling icons..."
 	@mkdir -p "$(APP_BUNDLE)/Contents/Resources"
 	@if [ -d "$(ICON_SOURCE)" ]; then \
@@ -109,6 +109,8 @@ $(APP_ICONS): $(ICON_SOURCE) $(APP_BUNDLE)
 
 # Minimal app bundle for tests
 $(APP_BUNDLE): $(APP_BINARY) $(APP_PLIST) $(APP_ICONS)
+	@touch "$(APP_BUNDLE)"
+
 # Xcode project generation
 ClipKitty.xcodeproj: Scripts/GenXcodeproj.swift $(wildcard Tests/UITests/*.swift)
 	@echo "Generating Xcode project..."

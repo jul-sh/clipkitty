@@ -444,11 +444,7 @@ struct ContentView: View {
     }
 
     private var buttonLabel: String {
-        #if SANDBOXED
-        return "⏎ copy"
-        #else
-        return AppSettings.shared.pasteOnSelect ? "⏎ paste" : "⏎ copy"
-        #endif
+        AppSettings.shared.shouldShowPasteLabel ? "⏎ paste" : "⏎ copy"
     }
 
     private func formatSize(_ chars: Int) -> String {
