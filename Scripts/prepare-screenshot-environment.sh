@@ -22,13 +22,6 @@ cleanup() {
         osascript -e "tell application \"Finder\" to set desktop picture to POSIX file \"$PREV_BG_FILE\"" 2>/dev/null || true
         rm -f "$PREV_BG_FILE"
     fi
-
-    # Restore dock apps
-    if [ -f "$PREV_APPS_FILE" ]; then
-        defaults write com.apple.dock persistent-apps -array-add "$(cat "$PREV_APPS_FILE")" 2>/dev/null || true
-        rm -f "$PREV_APPS_FILE"
-        killall Dock 2>/dev/null || true
-    fi
 }
 
 # Set trap to cleanup on exit
@@ -36,36 +29,24 @@ trap cleanup EXIT
 
 echo "Setting up screenshot environment..."
 
-# Save and hide all windows except Finder
-echo "Hiding other applications..."
-osascript <<'APPLESCRIPT'
-tell application "System Events"
-    set visibleApps to (name of every application process whose visible is true)
-    repeat with appName in visibleApps
-        if appName is not "Finder" and appName is not "System Events" and appName is not "loginwindow" then
-            tell application appName
-                try
-                    set visible of every window to false
-                end try
-            end tell
-        end if
-    end repeat
-end tell
-APPLESCRIPT
-
-# Save current desktop background and Dock apps
+# Save current desktop background
 echo "Saving current desktop configuration..."
 osascript -e 'tell application "Finder" to get desktop picture' > "$PREV_BG_FILE" 2>/dev/null || true
-defaults read com.apple.dock persistent-apps | head -1 > "$PREV_APPS_FILE" 2>/dev/null || true
 
 # Set clean background
 echo "Setting desktop background to: $BACKGROUND_IMAGE"
 osascript -e "tell application \"Finder\" to set desktop picture to POSIX file \"$BACKGROUND_IMAGE\""
 
-# Clean dock (remove apps, keep only Finder)
-defaults write com.apple.dock persistent-apps -array
-killall Dock 2>/dev/null || true
-sleep 1
+# Clean dock (only in CI)
+if [ -n "$CI" ]; then
+    echo "CI detected - cleaning dock..."
+    defaults read com.apple.dock persistent-apps | head -1 > "$PREV_APPS_FILE" 2>/dev/null || true
+    defaults write com.apple.dock persistent-apps -array
+    killall Dock 2>/dev/null || true
+    sleep 1
+else
+    echo "Local environment detected - preserving dock configuration"
+fi
 
 echo "Environment ready. Running command..."
 echo ""

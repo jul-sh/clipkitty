@@ -3,13 +3,13 @@
   "fill-specializations" : [
     {
       "value" : {
-        "automatic-gradient" : "display-p3:1.00000,0.92578,0.95105,1.00000"
+        "automatic-gradient" : "display-p3:0.98824,0.86667,0.89804,1.00000"
       }
     },
     {
       "appearance" : "dark",
       "value" : {
-        "automatic-gradient" : "display-p3:0.02359,0.07984,0.06866,1.00000"
+        "automatic-gradient" : "display-p3:0.56259,0.49338,0.51068,1.00000"
       }
     }
   ],
@@ -20,6 +20,7 @@
       "layers" : [
         {
           "glass" : true,
+          "hidden" : false,
           "image-name" : "Image 4.png",
           "name" : "Image 4",
           "position" : {

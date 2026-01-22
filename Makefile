@@ -12,19 +12,25 @@ ICON_SOURCE := $(SCRIPT_DIR)/AppIcon.icon
 ARCHS ?= arm64 x86_64
 SWIFT_ARCH_FLAGS := $(foreach arch,$(ARCHS),--arch $(arch))
 
-# The core app bundle components
+# Sandboxing control (default true)
+SANDBOX ?= true
+
+# The core app bundle components (bundle name is always the same)
 APP_BUNDLE := $(APP_NAME).app
-APP_BUNDLE_SANDBOXED := $(APP_NAME)-Sandboxed.app
 APP_BINARY := $(APP_BUNDLE)/Contents/MacOS/$(APP_NAME)
 APP_PLIST := $(APP_BUNDLE)/Contents/Info.plist
 APP_ICONS := $(APP_BUNDLE)/Contents/Resources/Assets.car
+ENTITLEMENTS := $(if $(filter true,$(SANDBOX)),Sources/App/ClipKitty-Sandboxed.entitlements,Sources/App/ClipKitty.entitlements)
+DMG_SUFFIX := $(if $(filter true,$(SANDBOX)),-Sandboxed,)
+DMG_NAME := $(APP_NAME)$(DMG_SUFFIX).dmg
 
 # Rust build marker and outputs
 RUST_MARKER := .make/rust.marker
 RUST_LIB := Sources/ClipKittyRust/libclipkitty_core.a
 
 # Common Swift build command
-SWIFT_BUILD := GIT_CONFIG_COUNT=1 GIT_CONFIG_KEY_0=safe.bareRepository GIT_CONFIG_VALUE_0=all swift build -c release $(SWIFT_ARCH_FLAGS)
+SWIFT_SANDBOX_FLAG := $(if $(filter true,$(SANDBOX)),-Xswiftc -DSANDBOXED,)
+SWIFT_BUILD := GIT_CONFIG_COUNT=1 GIT_CONFIG_KEY_0=safe.bareRepository GIT_CONFIG_VALUE_0=all swift build -c release $(SWIFT_ARCH_FLAGS) $(SWIFT_SANDBOX_FLAG)
 
 # Icon compilation helper (usage: $(call compile-icons,destination-dir))
 define compile-icons
@@ -33,7 +39,7 @@ xcrun actool "$(ICON_SOURCE)" --compile $(1) --platform macosx --target-device m
 	--output-partial-info-plist /dev/null
 endef
 
-.PHONY: all clean sign sign-sandboxed screenshot perf build-binary build-binary-sandboxed dmg dmg-sandboxed all-variants appstore validate upload rust rust-force
+.PHONY: all clean sign screenshot perf build-binary dmg appstore validate upload rust rust-force
 
 # App Store signing identity (find yours with: security find-identity -v -p codesigning)
 # Set via environment or override: make appstore SIGNING_IDENTITY="Developer ID Application: ..."
@@ -41,8 +47,6 @@ SIGNING_IDENTITY ?= 3rd Party Mac Developer Application
 INSTALLER_IDENTITY ?= 3rd Party Mac Developer Installer
 
 all: $(APP_BUNDLE)
-
-all-variants: all build-sandboxed sign-sandboxed
 
 # Marker-based Rust build - only rebuilds if sources changed
 # Uses git ls-files to get all tracked files in rust-core (respects .gitignore)
@@ -63,12 +67,8 @@ rust-force:
 
 # Build just the binary using SwiftPM
 build-binary: rust
-	@echo "Building binary..."
+	@echo "Building binary (SANDBOX=$(SANDBOX))..."
 	@$(SWIFT_BUILD)
-
-build-binary-sandboxed: rust
-	@echo "Building sandboxed binary..."
-	@$(SWIFT_BUILD) -Xswiftc -DSANDBOXED
 
 # Create the bundle structure and copy the binary
 $(APP_BINARY): build-binary
@@ -80,17 +80,6 @@ $(APP_BINARY): build-binary
 		cp -R "$$BIN/$(APP_NAME)_$(APP_NAME).bundle" "$(APP_BUNDLE)/Contents/Resources/" || true
 	@cp "Sources/App/PrivacyInfo.xcprivacy" "$(APP_BUNDLE)/Contents/Resources/"
 
-build-sandboxed: build-binary-sandboxed $(APP_PLIST) $(ICON_SOURCE)
-	@echo "Creating sandboxed app bundle..."
-	@mkdir -p "$(APP_BUNDLE_SANDBOXED)/Contents/MacOS" "$(APP_BUNDLE_SANDBOXED)/Contents/Resources"
-	@BIN=$$($(SWIFT_BUILD) --show-bin-path); \
-		cp "$$BIN/$(APP_NAME)" "$(APP_BUNDLE_SANDBOXED)/Contents/MacOS/$(APP_NAME)"; \
-		test -d "$$BIN/$(APP_NAME)_$(APP_NAME).bundle" && \
-		cp -R "$$BIN/$(APP_NAME)_$(APP_NAME).bundle" "$(APP_BUNDLE_SANDBOXED)/Contents/Resources/" || true
-	@cp "$(APP_PLIST)" "$(APP_BUNDLE_SANDBOXED)/Contents/Info.plist"
-	@cp "Sources/App/PrivacyInfo.xcprivacy" "$(APP_BUNDLE_SANDBOXED)/Contents/Resources/"
-	@$(call compile-icons,"$(APP_BUNDLE_SANDBOXED)/Contents/Resources")
-	@$(MAKE) sign-sandboxed
 
 # Generate Info.plist
 $(APP_PLIST):
@@ -121,15 +110,13 @@ clean:
 	@rm -rf .make
 
 sign: $(APP_BUNDLE)
-	@echo "Signing with standard entitlements..."
-	@codesign --force --deep --sign - --entitlements Sources/App/ClipKitty.entitlements "$(APP_BUNDLE)"
+	@echo "Signing with $(if $(filter true,$(SANDBOX)),sandboxed,standard) entitlements..."
+	@codesign --force --deep --sign - --entitlements "$(ENTITLEMENTS)" "$(APP_BUNDLE)"
 
-sign-sandboxed: $(APP_BUNDLE_SANDBOXED)
-	@echo "Signing with sandbox entitlements..."
-	@codesign --force --deep --sign - --entitlements Sources/App/ClipKitty-Sandboxed.entitlements "$(APP_BUNDLE_SANDBOXED)"
-
-# Perf runs without icons and only runs perf tests
-perf: sign ClipKitty.xcodeproj
+# Perf runs without icons and only runs perf tests (uses non-sandboxed for UI testing)
+perf:
+	@$(MAKE) sign SANDBOX=false
+	@$(MAKE) ClipKitty.xcodeproj
 	@echo "Running UI Performance Tests..."
 	@rm -rf DerivedData
 	@xcodebuild test -project ClipKitty.xcodeproj -scheme ClipKittyUITests -destination 'platform=macOS' -derivedDataPath DerivedData -only-testing:ClipKittyUITests/ClipKittyPerformanceTests | tee xcodebuild.log
@@ -137,15 +124,13 @@ perf: sign ClipKitty.xcodeproj
 
 # Build DMG installer
 dmg: all sign
-	@echo "Building DMG installer..."
-	@./Scripts/build-dmg.sh "$(APP_BUNDLE)" "$(APP_NAME).dmg"
+	@echo "Building$(if $(filter true,$(SANDBOX)), sandboxed,) DMG installer..."
+	@./Scripts/build-dmg.sh "$(APP_BUNDLE)" "$(DMG_NAME)"
 
-dmg-sandboxed: build-sandboxed
-	@echo "Building Sandboxed DMG installer..."
-	@./Scripts/build-dmg.sh "$(APP_BUNDLE_SANDBOXED)" "$(APP_NAME)-Sandboxed.dmg"
-
-# Screenshot runs everything
-screenshot: sign ClipKitty.xcodeproj
+# Screenshot runs everything (uses non-sandboxed for UI testing)
+screenshot:
+	@$(MAKE) sign SANDBOX=false
+	@$(MAKE) ClipKitty.xcodeproj
 	@echo "Running UI Tests..."
 	@rm -rf DerivedData
 	@xcodebuild test -project ClipKitty.xcodeproj -scheme ClipKittyUITests -destination 'platform=macOS' -derivedDataPath DerivedData | tee xcodebuild.log
@@ -187,16 +172,17 @@ icon-png:
 #   make appstore-all                # Build, validate, and upload in one step
 # ============================================================================
 
-# Build and sign for App Store (reuses build-sandboxed, then re-signs with distribution cert)
-appstore: build-sandboxed
+# Build and sign for App Store (always uses sandboxed)
+appstore:
+	@$(MAKE) all SANDBOX=true
 	@echo "Re-signing for App Store distribution..."
 	@codesign --force --deep --options runtime \
 		--sign "$(SIGNING_IDENTITY)" \
 		--entitlements Sources/App/ClipKitty-Sandboxed.entitlements \
-		"$(APP_BUNDLE_SANDBOXED)"
+		"$(APP_BUNDLE)"
 	@echo "Creating installer package..."
 	@rm -f "$(APP_NAME).pkg"
-	@productbuild --component "$(APP_BUNDLE_SANDBOXED)" /Applications \
+	@productbuild --component "$(APP_BUNDLE)" /Applications \
 		--sign "$(INSTALLER_IDENTITY)" \
 		"$(APP_NAME).pkg"
 	@echo "App Store package created: $(APP_NAME).pkg"
@@ -233,7 +219,7 @@ list-identities:
 #   2. ffmpeg: brew install ffmpeg
 #
 # Configuration
-BACKGROUND_IMAGE := /System/Library/Desktop Pictures/Solid Colors/Space Gray.png
+BACKGROUND_IMAGE := /System/Library/Desktop Pictures/Solid Colors/Soft Pink.png
 #
 # Usage:
 #   make marketing-screenshots    # Generate App Store screenshots with captions
@@ -247,8 +233,10 @@ BACKGROUND_IMAGE := /System/Library/Desktop Pictures/Solid Colors/Space Gray.png
 print-background-image:
 	@echo $(BACKGROUND_IMAGE)
 
-# Capture raw marketing screenshots via UI test (with clean environment)
-marketing-screenshots-capture: sign ClipKitty.xcodeproj
+# Capture raw marketing screenshots via UI test (with clean environment, uses non-sandboxed)
+marketing-screenshots-capture:
+	@$(MAKE) sign SANDBOX=false
+	@$(MAKE) ClipKitty.xcodeproj
 	@echo "Capturing marketing screenshots..."
 	@rm -rf DerivedData
 	@./Scripts/prepare-screenshot-environment.sh 'xcodebuild test -project ClipKitty.xcodeproj -scheme ClipKittyUITests -destination "platform=macOS" -derivedDataPath DerivedData -only-testing:ClipKittyUITests/ClipKittyUITests/testTakeMarketingScreenshots 2>&1 | grep -E "(Test Case|passed|failed)" || true'
@@ -263,8 +251,10 @@ marketing-screenshots-process:
 marketing-screenshots: marketing-screenshots-capture marketing-screenshots-process
 	@echo "Marketing screenshots complete! See marketing/ directory"
 
-# Record App Store preview video
-preview-video: sign ClipKitty.xcodeproj
+# Record App Store preview video (uses non-sandboxed for UI testing)
+preview-video:
+	@$(MAKE) sign SANDBOX=false
+	@$(MAKE) ClipKitty.xcodeproj
 	@echo "Recording preview video..."
 	@./Scripts/record-preview-video.sh
 
