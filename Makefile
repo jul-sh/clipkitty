@@ -19,12 +19,12 @@ APP_BINARY := $(APP_BUNDLE)/Contents/MacOS/$(APP_NAME)
 APP_PLIST := $(APP_BUNDLE)/Contents/Info.plist
 APP_ICONS := $(APP_BUNDLE)/Contents/Resources/Assets.car
 
-# Rust build marker - sources are checked dynamically via git ls-files
+# Rust build marker and outputs
 RUST_MARKER := .make/rust.marker
+RUST_LIB := Sources/ClipKittyRust/libclipkitty_core.a
 
 # Common Swift build command
 SWIFT_BUILD := GIT_CONFIG_COUNT=1 GIT_CONFIG_KEY_0=safe.bareRepository GIT_CONFIG_VALUE_0=all swift build -c release $(SWIFT_ARCH_FLAGS)
-BIN_PATH = $(shell $(SWIFT_BUILD) --show-bin-path)
 
 # Icon compilation helper (usage: $(call compile-icons,destination-dir))
 define compile-icons
@@ -33,7 +33,7 @@ xcrun actool "$(ICON_SOURCE)" --compile $(1) --platform macosx --target-device m
 	--output-partial-info-plist /dev/null
 endef
 
-.PHONY: all clean sign sign-sandboxed screenshot perf build-binary build-binary-sandboxed dmg dmg-sandboxed all-variants appstore validate upload rust-force
+.PHONY: all clean sign sign-sandboxed screenshot perf build-binary build-binary-sandboxed dmg dmg-sandboxed all-variants appstore validate upload rust rust-force
 
 # App Store signing identity (find yours with: security find-identity -v -p codesigning)
 # Set via environment or override: make appstore SIGNING_IDENTITY="Developer ID Application: ..."
@@ -52,7 +52,9 @@ $(RUST_MARKER): $(shell git ls-files rust-core 2>/dev/null)
 	@mkdir -p .make
 	@touch $(RUST_MARKER)
 
+# Also rebuild if the output library is missing
 rust: $(RUST_MARKER)
+	@test -f $(RUST_LIB) || (rm -f $(RUST_MARKER) && $(MAKE) $(RUST_MARKER))
 
 # Force rebuild Rust (ignore marker)
 rust-force:
@@ -72,17 +74,19 @@ build-binary-sandboxed: rust
 $(APP_BINARY): build-binary
 	@echo "Creating app bundle structure..."
 	@mkdir -p "$(APP_BUNDLE)/Contents/MacOS" "$(APP_BUNDLE)/Contents/Resources"
-	@cp "$(BIN_PATH)/$(APP_NAME)" "$(APP_BINARY)"
-	@test -d "$(BIN_PATH)/$(APP_NAME)_$(APP_NAME).bundle" && \
-		cp -R "$(BIN_PATH)/$(APP_NAME)_$(APP_NAME).bundle" "$(APP_BUNDLE)/Contents/Resources/" || true
+	@BIN=$$($(SWIFT_BUILD) --show-bin-path); \
+		cp "$$BIN/$(APP_NAME)" "$(APP_BINARY)"; \
+		test -d "$$BIN/$(APP_NAME)_$(APP_NAME).bundle" && \
+		cp -R "$$BIN/$(APP_NAME)_$(APP_NAME).bundle" "$(APP_BUNDLE)/Contents/Resources/" || true
 	@cp "Sources/App/PrivacyInfo.xcprivacy" "$(APP_BUNDLE)/Contents/Resources/"
 
 build-sandboxed: build-binary-sandboxed $(APP_PLIST) $(ICON_SOURCE)
 	@echo "Creating sandboxed app bundle..."
 	@mkdir -p "$(APP_BUNDLE_SANDBOXED)/Contents/MacOS" "$(APP_BUNDLE_SANDBOXED)/Contents/Resources"
-	@cp "$(BIN_PATH)/$(APP_NAME)" "$(APP_BUNDLE_SANDBOXED)/Contents/MacOS/$(APP_NAME)"
-	@test -d "$(BIN_PATH)/$(APP_NAME)_$(APP_NAME).bundle" && \
-		cp -R "$(BIN_PATH)/$(APP_NAME)_$(APP_NAME).bundle" "$(APP_BUNDLE_SANDBOXED)/Contents/Resources/" || true
+	@BIN=$$($(SWIFT_BUILD) --show-bin-path); \
+		cp "$$BIN/$(APP_NAME)" "$(APP_BUNDLE_SANDBOXED)/Contents/MacOS/$(APP_NAME)"; \
+		test -d "$$BIN/$(APP_NAME)_$(APP_NAME).bundle" && \
+		cp -R "$$BIN/$(APP_NAME)_$(APP_NAME).bundle" "$(APP_BUNDLE_SANDBOXED)/Contents/Resources/" || true
 	@cp "$(APP_PLIST)" "$(APP_BUNDLE_SANDBOXED)/Contents/Info.plist"
 	@cp "Sources/App/PrivacyInfo.xcprivacy" "$(APP_BUNDLE_SANDBOXED)/Contents/Resources/"
 	@$(call compile-icons,"$(APP_BUNDLE_SANDBOXED)/Contents/Resources")
