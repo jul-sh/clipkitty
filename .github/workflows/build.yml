@@ -38,19 +38,11 @@ jobs:
 
       - name: Run UI Tests
         run: |
-          make ClipKitty.xcodeproj
-          xcodebuild test -project ClipKitty.xcodeproj -scheme ClipKittyUITests -destination 'platform=macOS' -derivedDataPath DerivedData | tee xcodebuild.log
+          make screenshot
           echo "### UI Performance Results" >> $GITHUB_STEP_SUMMARY
           echo '```' >> $GITHUB_STEP_SUMMARY
           swift Scripts/PrintPerfResults.swift >> $GITHUB_STEP_SUMMARY
           echo '```' >> $GITHUB_STEP_SUMMARY
-          # Copy and upscale screenshot
-          cp /tmp/clipkitty_screenshot.png screenshot.png || true
-          if [ -f screenshot.png ]; then
-            WIDTH=$(sips -g pixelWidth screenshot.png | tail -1 | awk '{print $2}')
-            HEIGHT=$(sips -g pixelHeight screenshot.png | tail -1 | awk '{print $2}')
-            sips --resampleHeightWidth $((HEIGHT * 2)) $((WIDTH * 2)) screenshot.png --out screenshot.png
-          fi
 
       - name: Generate Marketing Assets
         run: |
