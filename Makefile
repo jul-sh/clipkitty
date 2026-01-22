@@ -133,7 +133,7 @@ screenshot:
 	@$(MAKE) ClipKitty.xcodeproj
 	@echo "Running UI Tests..."
 	@rm -rf DerivedData
-	@xcodebuild test -project ClipKitty.xcodeproj -scheme ClipKittyUITests -destination 'platform=macOS' -derivedDataPath DerivedData | tee xcodebuild.log
+	@./Scripts/prepare-screenshot-environment.sh 'xcodebuild test -project ClipKitty.xcodeproj -scheme ClipKittyUITests -destination "platform=macOS" -derivedDataPath DerivedData 2>&1 | tee xcodebuild.log'
 	@swift Scripts/PrintPerfResults.swift
 	@echo "Copying and upscaling screenshot..."
 	@cp /tmp/clipkitty_screenshot.png screenshot.png || true
