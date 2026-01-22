@@ -4,7 +4,7 @@
 
 **Your clipboard history from day one. Searchable in milliseconds.**
 
-Most clipboard managers cap out at a few hundred items and call it a day. ClipKitty stores everything. And with optimized fuzzy search you'll find your last item as quickly as your millionth. Built for people who copy lots of things and need to find them again.
+Unlimited history • Instant fuzzy search • Live multi-line preview • Private
 
 <img src="https://raw.githubusercontent.com/jul-sh/clipkitty/gh-pages/screenshot.png" alt="ClipKitty screenshot" width="820">
 
@@ -12,7 +12,7 @@ Most clipboard managers cap out at a few hundred items and call it a day. ClipKi
 
 You copied that command last week. That error message yesterday. That address three months ago. Your clipboard manager either forgot it, slowed to a crawl searching for it, or truncated half of it.
 
-ClipKitty's search uses nucleo and tantivy; the same fuzzy matching and search infrastructure behind modern code editors and production search engines. Type "improt" and find "import". Results in under 50ms whether your history holds 100 items or 1,000,000.
+ClipKitty stores everything. And with optimized fuzzy search you'll find your last item as quickly as your millionth. Built for people who copy lots of things and need to find them again.
 
 ## Why ClipKitty over alternatives?
 
@@ -20,11 +20,12 @@ ClipKitty's search uses nucleo and tantivy; the same fuzzy matching and search i
 
 **vs Raycast**: Raycast truncates items at ~32k characters and limits free history to 3 months. ClipKitty has no character limits and keeps everything forever. Fully offline; your clipboard never touches the cloud.
 
-**vs Paste**: ClipKitty forces no no subscription. Just a fast, local clipboard manager you own outright. Fast fuzzy search on top.
+**vs Paste**: ClipKitty forces no subscription. Just a fast, local clipboard manager you own outright. Fast fuzzy search on top.
 
 ## Features
 
-- **Fuzzy search that scales**: Type “improt” and find “import”. Stays fast whether you have 100 items or 1,000,000.
+- **Unlimited clipboard history**: Clipboard history that doesn’t forget, doesn’t truncate, and stays fast.
+- **Fuzzy search that scales**: Type “improt” and find “import”. Stays fast whether you have 100 items or 1,000,000. ClipKitty uses nucleo and tantivy; the same infrastructure as production search engines. Results in under 50ms whether your history holds 100 items or 1,000,000.
 - **Live preview**: See full content as you navigate. No truncation, no waiting for tooltips.
 - **Keyboard-first**: ⌥Space to open, arrow keys to navigate, Return to paste.
 - **Privacy-first**: On device, fully offline, no telemetry.
