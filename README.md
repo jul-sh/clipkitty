@@ -4,7 +4,7 @@
 
 **Your clipboard history from day one. Searchable in milliseconds.**
 
-Unlimited history • Instant fuzzy search • Live multi-line preview • Private
+Unlimited history • Instant fuzzy search • Multi-line preview • Private
 
 <img src="https://raw.githubusercontent.com/jul-sh/clipkitty/gh-pages/screenshot.png" alt="ClipKitty screenshot" width="820">
 
