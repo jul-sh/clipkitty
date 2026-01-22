@@ -26,7 +26,9 @@ let package = Package(
     ],
     dependencies: [
         // GRDB used only for FTS integration tests
-        .package(url: "https://github.com/groue/GRDB.swift.git", from: "7.0.0")
+        .package(url: "https://github.com/groue/GRDB.swift.git", from: "7.0.0"),
+        // CSS color code parsing (hex, rgb, hsl, keywords)
+        .package(url: "https://github.com/1024jp/WFColorCode.git", from: "2.0.0")
     ],
     targets: [
         // Rust Core library FFI bridge
@@ -55,7 +57,8 @@ let package = Package(
         .executableTarget(
             name: "ClipKitty",
             dependencies: [
-                "ClipKittyRust"
+                "ClipKittyRust",
+                .product(name: "ColorCode", package: "WFColorCode")
             ],
             path: "Sources/App",
             resources: [

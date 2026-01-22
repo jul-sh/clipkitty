@@ -1,6 +1,7 @@
 import SwiftUI
 import AppKit
 import ClipKittyRust
+import ColorCode
 import os.log
 import UniformTypeIdentifiers
 
@@ -759,7 +760,7 @@ struct ItemRow: View, Equatable {
         HStack(spacing: 6) {
             // Content type icon with source app badge overlay
             ZStack(alignment: .bottomTrailing) {
-                // Main icon: image thumbnail, browser icon for links, or UTType system icon
+                // Main icon: image thumbnail, browser icon for links, color swatch, or UTType system icon
                 Group {
                     if case .image(let data, _) = item.content,
                        let nsImage = NSImage(data: Data(data)) {
@@ -770,6 +771,16 @@ struct ItemRow: View, Equatable {
                               let browserURL = NSWorkspace.shared.urlForApplication(toOpen: URL(string: "https://")!) {
                         Image(nsImage: NSWorkspace.shared.icon(forFile: browserURL.path))
                             .resizable()
+                    } else if case .text(let textValue) = item.content,
+                              textValue.count < 500,
+                              let color = NSColor(colorCode: textValue.trimmingCharacters(in: .whitespacesAndNewlines)) {
+                        // Color swatch for text items that are valid CSS colors
+                        RoundedRectangle(cornerRadius: 6)
+                            .fill(Color(nsColor: color))
+                            .overlay(
+                                RoundedRectangle(cornerRadius: 6)
+                                    .strokeBorder(Color.primary.opacity(0.15), lineWidth: 1)
+                            )
                     } else {
                         Image(nsImage: NSWorkspace.shared.icon(for: item.content.utType))
                             .resizable()
