@@ -219,7 +219,7 @@ list-identities:
 #   2. ffmpeg: brew install ffmpeg
 #
 # Configuration
-BACKGROUND_IMAGE := /System/Library/Desktop Pictures/Solid Colors/Soft Pink.png
+BACKGROUND_IMAGE := /System/Library/Desktop Pictures/Solid Colors/Silver.png
 #
 # Usage:
 #   make marketing-screenshots    # Generate App Store screenshots with captions
