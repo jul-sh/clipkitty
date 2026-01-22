@@ -23,9 +23,6 @@ cleanup() {
         rm -f "$PREV_BG_FILE"
     fi
 
-    # Show all hidden windows
-    osascript -e "tell application \"Finder\" to set visible of every window to true" 2>/dev/null || true
-
     # Restore dock apps
     if [ -f "$PREV_APPS_FILE" ]; then
         defaults write com.apple.dock persistent-apps -array-add "$(cat "$PREV_APPS_FILE")" 2>/dev/null || true
