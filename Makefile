@@ -108,7 +108,7 @@ $(APP_ICONS): $(ICON_SOURCE) $(APP_BUNDLE)
 	fi
 
 # Minimal app bundle for tests
-$(APP_BUNDLE): $(APP_BINARY) $(APP_PLIST)
+$(APP_BUNDLE): $(APP_BINARY) $(APP_PLIST) $(APP_ICONS)
 
 # Xcode project generation
 ClipKitty.xcodeproj: Scripts/GenXcodeproj.swift $(wildcard Tests/UITests/*.swift)
