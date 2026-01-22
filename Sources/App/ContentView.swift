@@ -686,20 +686,38 @@ struct ItemRow: View, Equatable {
             return result
         }
 
+        // Helper to count line number (1-indexed) at a given character offset
+        func lineNumber(at offset: Int, in text: String) -> Int {
+            var line = 1
+            var idx = text.startIndex
+            let targetIdx = text.index(text.startIndex, offsetBy: min(offset, text.count))
+            while idx < targetIdx {
+                if text[idx] == "\n" { line += 1 }
+                idx = text.index(after: idx)
+            }
+            return line
+        }
+
         // Try exact match first
         if let range = fullText.range(of: searchQuery, options: .caseInsensitive) {
             let matchStart = fullText.distance(from: fullText.startIndex, to: range.lowerBound)
-            // If match is early in the text, just return displayText (already flattened/truncated)
-            if matchStart < 20 {
+            let line = lineNumber(at: matchStart, in: fullText)
+
+            // If match is early in the text and on line 1, just return displayText
+            if matchStart < 20 && line == 1 {
                 return displayText
             }
+
+            // Build prefix: show line number if not on first line
+            let prefix = line > 1 ? "L\(line): …" : "…"
+
             // Extract context around the match and flatten it
             let contextStart = max(0, matchStart - 10)
             let contextEnd = min(fullText.count, matchStart + 200)
             let startIndex = fullText.index(fullText.startIndex, offsetBy: contextStart)
             let endIndex = fullText.index(fullText.startIndex, offsetBy: contextEnd)
             let context = String(fullText[startIndex..<endIndex])
-            return "…" + flatten(context, maxChars: 200)
+            return prefix + flatten(context, maxChars: 200)
         }
 
         // Fall back to first trigram match
@@ -709,15 +727,19 @@ struct ItemRow: View, Equatable {
                 let trigram = String(chars[i..<i+3])
                 if let range = fullText.range(of: trigram, options: .caseInsensitive) {
                     let matchStart = fullText.distance(from: fullText.startIndex, to: range.lowerBound)
-                    if matchStart < 20 {
+                    let line = lineNumber(at: matchStart, in: fullText)
+
+                    if matchStart < 20 && line == 1 {
                         return displayText
                     }
+
+                    let prefix = line > 1 ? "L\(line): …" : "…"
                     let contextStart = max(0, matchStart - 10)
                     let contextEnd = min(fullText.count, matchStart + 200)
                     let startIndex = fullText.index(fullText.startIndex, offsetBy: contextStart)
                     let endIndex = fullText.index(fullText.startIndex, offsetBy: contextEnd)
                     let context = String(fullText[startIndex..<endIndex])
-                    return "…" + flatten(context, maxChars: 200)
+                    return prefix + flatten(context, maxChars: 200)
                 }
             }
         }
