@@ -71,19 +71,32 @@ sleep 0.5
 echo "Getting window bounds..."
 BOUNDS_FILE="/tmp/clipkitty_window_bounds.txt"
 rm -f "$BOUNDS_FILE"
+if [ -n "$CI" ] || [ "$SCREEN_WIDTH" -le 1920 ]; then
+    echo "Detected CI/Non-Retina environment. Using 1x scale."
+    SCALE_FACTOR=1
+fi
+
 osascript -e 'tell application "System Events"
     tell process "ClipKitty"
         set win to first window
         set {x, y} to position of win
         set {w, h} to size of win
-        -- Scale for retina (2x) and add padding for shadow
+        
+        -- Use dynamic scale factor passed from bash
+        set scaleFactor to '$SCALE_FACTOR'
+        
+        -- Scale padding logic
         set padding to 40
-        set px to (x * 2) - padding
-        set py to (y * 2) - padding
-        set pw to (w * 2) + (padding * 2)
-        set ph to (h * 2) + (padding * 2)
+        
+        -- Calculate pixel coordinates
+        set px to (x * scaleFactor) - padding
+        set py to (y * scaleFactor) - padding
+        set pw to (w * scaleFactor) + (padding * 2)
+        set ph to (h * scaleFactor) + (padding * 2)
+        
         if px < 0 then set px to 0
         if py < 0 then set py to 0
+        
         return (px as integer as text) & "," & (py as integer as text) & "," & (pw as integer as text) & "," & (ph as integer as text)
     end tell
 end tell' > "$BOUNDS_FILE" 2>/dev/null || true
