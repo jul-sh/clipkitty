@@ -241,19 +241,18 @@ jobs:
           cd /tmp/homebrew
 
           mkdir -p Casks
-          cat > Casks/clipkitty.rb << EOF
-cask "clipkitty" do
-  version "$VERSION"
-  sha256 "$SHA256"
-
-  url "https://github.com/jul-sh/clipkitty/releases/download/v#{version}/ClipKitty.dmg"
-  name "ClipKitty"
-  desc "Clipboard history manager with instant fuzzy search"
-  homepage "https://github.com/jul-sh/clipkitty"
-
-  app "ClipKitty.app"
-end
-EOF
+          printf '%s\n' \
+            'cask "clipkitty" do' \
+            "  version \"$VERSION\"" \
+            "  sha256 \"$SHA256\"" \
+            '' \
+            '  url "https://github.com/jul-sh/clipkitty/releases/download/v#{version}/ClipKitty.dmg"' \
+            '  name "ClipKitty"' \
+            '  desc "Clipboard history manager with instant fuzzy search"' \
+            '  homepage "https://github.com/jul-sh/clipkitty"' \
+            '' \
+            '  app "ClipKitty.app"' \
+            'end' > Casks/clipkitty.rb
 
           git config user.name "github-actions[bot]"
           git config user.email "github-actions[bot]@users.noreply.github.com"
