@@ -1,11 +1,12 @@
 #!/bin/bash
 # Records an App Store preview video of ClipKitty's search functionality
-# Requires: ffmpeg (brew install ffmpeg)
+# Uses cliclick for UI automation (no XCUITest "Automation Running" overlay)
+# Requires: ffmpeg (brew install ffmpeg), cliclick (brew install cliclick)
 # Output: marketing/app_preview.mov (H.264, 30fps, ready for App Store)
 #
-# NOTE: You must grant screen recording permission to Terminal/your shell:
-#   System Settings > Privacy & Security > Screen Recording > [Enable Terminal]
-# After enabling, restart your terminal.
+# NOTE: You must grant permissions:
+#   1. Terminal needs Screen Recording: System Settings > Privacy & Security > Screen Recording
+#   2. Terminal needs Accessibility: System Settings > Privacy & Security > Accessibility
 
 set -e
 
@@ -14,17 +15,30 @@ PROJECT_ROOT="$(dirname "$SCRIPT_DIR")"
 OUTPUT_DIR="$PROJECT_ROOT/marketing"
 RAW_VIDEO="/tmp/clipkitty_raw_preview.mov"
 FINAL_VIDEO="$OUTPUT_DIR/app_preview.mov"
+APP_PATH="$PROJECT_ROOT/ClipKitty.app"
 
 # Create output directory
 mkdir -p "$OUTPUT_DIR"
 
-# Check for ffmpeg
+# Check for required tools
 if ! command -v ffmpeg &> /dev/null; then
     echo "Error: ffmpeg is required. Install with: brew install ffmpeg"
     exit 1
 fi
 
+if ! command -v cliclick &> /dev/null; then
+    echo "Error: cliclick is required. Install with: brew install cliclick"
+    exit 1
+fi
+
+# Check app exists
+if [ ! -d "$APP_PATH" ]; then
+    echo "Error: ClipKitty.app not found. Run 'make' first."
+    exit 1
+fi
+
 echo "=== ClipKitty App Store Preview Video Recording ==="
+echo "(Using cliclick - no automation overlay)"
 echo ""
 
 # Get screen dimensions for recording
@@ -32,69 +46,109 @@ SCREEN_WIDTH=$(system_profiler SPDisplaysDataType | grep Resolution | head -1 | 
 SCREEN_HEIGHT=$(system_profiler SPDisplaysDataType | grep Resolution | head -1 | awk '{print $4}')
 echo "Screen resolution: ${SCREEN_WIDTH}x${SCREEN_HEIGHT}"
 
-# Set a clean desktop background (solid gray)
-echo "Setting desktop background..."
-osascript -e 'tell application "System Events" to tell every desktop to set picture to ""' 2>/dev/null || true
-osascript -e 'tell application "Finder" to set desktop picture to POSIX file "/System/Library/Desktop Pictures/Solid Colors/Stone.png"' 2>/dev/null || true
-
-# Give time for background to change
-sleep 1
-
-# Clean up any existing raw video
+# Clean up
 rm -f "$RAW_VIDEO"
-
-echo "Starting screen recording..."
-echo "(Recording will capture the search demo test)"
-echo ""
-echo "NOTE: If this fails, ensure Terminal has Screen Recording permission:"
-echo "  System Settings > Privacy & Security > Screen Recording"
-echo ""
-
-# Clean up any previous marker files
-rm -f /tmp/clipkitty_demo_start.txt
-
-echo "Starting UI test (will signal when ready)..."
-# Run the test in background - it will create a marker file when demo starts
-cd "$PROJECT_ROOT"
-xcodebuild test \
-    -project ClipKitty.xcodeproj \
-    -scheme ClipKittyUITests \
-    -destination 'platform=macOS' \
-    -derivedDataPath DerivedData \
-    -only-testing:ClipKittyUITests/ClipKittyUITests/testRecordSearchDemo \
-    2>&1 | grep -E "(Test Case|passed|failed)" &
-TEST_PID=$!
-
-# Wait for the demo start signal (written by UI test when ready)
-echo "Waiting for demo to start..."
-WAIT_COUNT=0
-while [ ! -f /tmp/clipkitty_demo_start.txt ] && [ $WAIT_COUNT -lt 60 ]; do
-    sleep 0.5
-    WAIT_COUNT=$((WAIT_COUNT + 1))
-done
-
-if [ ! -f /tmp/clipkitty_demo_start.txt ]; then
-    echo "Error: Demo did not start within 30 seconds"
-    kill $TEST_PID 2>/dev/null || true
-    exit 1
-fi
-rm -f /tmp/clipkitty_demo_start.txt
-
-# Use macOS screencapture for recording
-echo "Using macOS screencapture for recording..."
-screencapture -v -D 1 "$RAW_VIDEO" &
-RECORD_PID=$!
+echo "Cleaning up previous app instances..."
+pkill -9 ClipKitty 2>/dev/null || true
 sleep 0.5
 
-# Wait for test to complete
-echo "Recording search demo..."
-wait $TEST_PID 2>/dev/null || true
+echo ""
+echo "NOTE: If this fails, ensure Terminal has:"
+echo "  - Screen Recording permission"
+echo "  - Accessibility permission (for cliclick)"
+echo ""
 
-# Stop recording
+# Launch the app with simulated database
+echo "Launching ClipKitty..."
+open -a "$APP_PATH" --args --use-simulated-db
+sleep 3
+
+# Make sure the app is frontmost
+osascript -e 'tell application "ClipKitty" to activate' 2>/dev/null || true
+sleep 0.5
+
+# Get window bounds for cropping (using AppleScript)
+echo "Getting window bounds..."
+BOUNDS_FILE="/tmp/clipkitty_window_bounds.txt"
+rm -f "$BOUNDS_FILE"
+osascript -e 'tell application "System Events"
+    tell process "ClipKitty"
+        set win to first window
+        set {x, y} to position of win
+        set {w, h} to size of win
+        -- Scale for retina (2x) and add padding for shadow
+        set padding to 40
+        set px to (x * 2) - padding
+        set py to (y * 2) - padding
+        set pw to (w * 2) + (padding * 2)
+        set ph to (h * 2) + (padding * 2)
+        if px < 0 then set px to 0
+        if py < 0 then set py to 0
+        return (px as integer as text) & "," & (py as integer as text) & "," & (pw as integer as text) & "," & (ph as integer as text)
+    end tell
+end tell' > "$BOUNDS_FILE" 2>/dev/null || true
+
+if [ -s "$BOUNDS_FILE" ]; then
+    echo "Window bounds: $(cat $BOUNDS_FILE)"
+else
+    echo "Warning: Could not get window bounds"
+fi
+
+# Calculate demo duration for recording
+# Initial: 1s, "meeting": 7*0.2=1.4s, pause: 1.5s, arrows: 1.8s,
+# select: 0.3s, "http": 4*0.2=0.8s, final: 2s = ~9s + 3s buffer
+DEMO_DURATION=15
+
+# Use macOS screencapture for recording (timed mode, starts immediately)
+echo "Starting screen recording (${DEMO_DURATION}s)..."
+screencapture -V $DEMO_DURATION "$RAW_VIDEO" &
+RECORD_PID=$!
+sleep 1
+
+# Initial pause to show the app
+sleep 1
+
+# Run the demo using cliclick
+echo "Running demo..."
+
+# Type "meeting" character by character with delays
+for char in m e e t i n g; do
+    cliclick -w 50 "t:$char"
+    sleep 0.2
+done
+
+# Pause to show results
+sleep 1.5
+
+# Navigate with arrow keys
+cliclick -w 50 kp:arrow-down
+sleep 0.5
+cliclick -w 50 kp:arrow-down
+sleep 0.5
+cliclick -w 50 kp:arrow-up
+sleep 0.8
+
+# Select all and type new search
+cliclick -w 50 kd:cmd t:a ku:cmd
+sleep 0.3
+
+# Type "http" character by character
+for char in h t t p; do
+    cliclick -w 50 "t:$char"
+    sleep 0.2
+done
+
+# Final pause
+sleep 2
+
+# Stop recording (screencapture will auto-stop at DEMO_DURATION)
 echo ""
 echo "Stopping recording..."
 kill -INT $RECORD_PID 2>/dev/null || true
 wait $RECORD_PID 2>/dev/null || true
+
+# Close the app
+pkill ClipKitty 2>/dev/null || true
 
 # Check if recording was captured
 if [ ! -f "$RAW_VIDEO" ]; then
@@ -108,18 +162,9 @@ echo "Post-processing video..."
 DURATION=$(ffprobe -v error -show_entries format=duration -of default=noprint_wrappers=1:nokey=1 "$RAW_VIDEO" 2>/dev/null | cut -d. -f1)
 echo "Raw video duration: ${DURATION}s"
 
-# Check duration limit (App Store allows 15-30s, we use 25s as a safe limit)
-if [ "$DURATION" -gt 25 ]; then
-    echo "Error: Video duration (${DURATION}s) exceeds 25 second limit"
-    echo "Please shorten the testRecordSearchDemo test"
-    rm -f "$RAW_VIDEO"
-    exit 1
-fi
-
-# Check for window bounds file (written by the UI test)
-BOUNDS_FILE="/tmp/clipkitty_window_bounds.txt"
+# Check for window bounds file
 CROP_FILTER=""
-if [ -f "$BOUNDS_FILE" ]; then
+if [ -f "$BOUNDS_FILE" ] && [ -s "$BOUNDS_FILE" ]; then
     BOUNDS=$(cat "$BOUNDS_FILE")
     echo "Window bounds: $BOUNDS"
     # Parse x,y,width,height
@@ -138,8 +183,8 @@ fi
 # Post-process:
 # - Crop to window bounds (if available)
 # - Use actual video duration (capped at 30s for App Store)
-# - Ensure proper encoding for App Store (H.264, AAC)
-# - Scale to App Store dimensions (2880x1800 or 1280x800)
+# - Ensure proper encoding for App Store (H.264)
+# - Scale to App Store dimensions (2880x1800)
 MAX_DURATION=$((DURATION > 30 ? 30 : DURATION))
 ffmpeg -y -i "$RAW_VIDEO" \
     -t $MAX_DURATION \
@@ -153,16 +198,18 @@ ffmpeg -y -i "$RAW_VIDEO" \
 # Clean up raw video
 rm -f "$RAW_VIDEO"
 
-# Get final file size
+# Get final video info
+FINAL_DURATION=$(ffprobe -v error -show_entries format=duration -of default=noprint_wrappers=1:nokey=1 "$FINAL_VIDEO" 2>/dev/null | cut -d. -f1)
 FILE_SIZE=$(ls -lh "$FINAL_VIDEO" | awk '{print $5}')
 
 echo ""
 echo "=== Video Recording Complete ==="
 echo "Output: $FINAL_VIDEO"
+echo "Duration: ${FINAL_DURATION}s"
 echo "Size: $FILE_SIZE"
 echo ""
 echo "App Store Requirements:"
-echo "  - Duration: 15-30 seconds ✓"
+echo "  - Duration: 15-30 seconds (yours: ${FINAL_DURATION}s)"
 echo "  - Format: H.264 .mov ✓"
 echo "  - Resolution: 2880x1800 ✓"
 echo "  - Max size: 500MB (yours: $FILE_SIZE)"
