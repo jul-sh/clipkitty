@@ -28,9 +28,7 @@ jobs:
         uses: DeterminateSystems/nix-installer-action@main
 
       - name: Install Build Dependencies
-        run: |
-          # Install dependencies needed for app building, marketing assets, and release
-          brew install create-dmg imagemagick ffmpeg
+        run: ./Scripts/install-deps.sh
 
       - name: Build Non-Sandboxed Variant
         run: |
@@ -156,8 +154,7 @@ jobs:
         uses: DeterminateSystems/nix-installer-action@main
 
       - name: Install Build Dependencies
-        run: |
-          brew install create-dmg imagemagick ffmpeg
+        run: ./Scripts/install-deps.sh
 
       - name: Build Non-Sandboxed Variant
         run: |
