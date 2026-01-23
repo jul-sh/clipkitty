@@ -41,6 +41,13 @@ final class ClipKittyUITests: XCTestCase {
         Thread.sleep(forTimeInterval: 0.5)
     }
 
+    override func tearDownWithError() throws {
+        // Terminate the app to prevent it from interfering with subsequent test runs
+        app?.terminate()
+        app = nil
+        try super.tearDownWithError()
+    }
+
     /// Helper to get the currently selected index by finding the button with isSelected trait
     private func getSelectedIndex() -> Int? {
         // Items are Button elements inside Cell elements inside the Outline
@@ -270,90 +277,6 @@ final class ClipKittyUITests: XCTestCase {
             try? png.write(to: url)
             print("Saved screenshot to: \(url.path)")
         }
-    }
-
-    /// Records a demo of the search functionality for App Store preview video.
-    /// Run with: make preview-video
-    /// This test types slowly to create a visually appealing demo.
-    func testRecordSearchDemo() throws {
-        let searchField = app.textFields.firstMatch
-        XCTAssertTrue(searchField.waitForExistence(timeout: 5), "Search field not found")
-
-        // Save window bounds to temp file for video cropping
-        let window = app.dialogs.firstMatch
-        if window.exists {
-            let frame = window.frame
-            // XCUIElement.frame is in points, but screen recording is in pixels
-            // Get the scale factor by comparing screenshot pixel size to screen bounds
-            let screenshot = XCUIScreen.main.screenshot()
-            let screenPixelHeight = screenshot.image.size.height
-            let screenPixelWidth = screenshot.image.size.width
-
-            // Get the actual scale factor from NSScreen (works for any display)
-            let scaleFactor = NSScreen.main?.backingScaleFactor ?? 2.0
-
-            // Convert frame from points to pixels
-            let pixelX = frame.origin.x * scaleFactor
-            let pixelY = frame.origin.y * scaleFactor
-            let pixelWidth = frame.width * scaleFactor
-            let pixelHeight = frame.height * scaleFactor
-
-            // Convert from bottom-left origin (AppKit) to top-left origin (video/ffmpeg)
-            // NOTE: XCTest actually uses top-left origin already, so no flip needed
-            let topLeftY = pixelY  // Use directly, no conversion
-
-            // Format: x,y,width,height (with some padding for shadow/border)
-            let padding: CGFloat = 80  // N points * 2 for scaling
-            let boundsString = String(format: "%.0f,%.0f,%.0f,%.0f",
-                                       max(0, pixelX - padding),
-                                       max(0, topLeftY - padding),
-                                       pixelWidth + padding * 2,
-                                       pixelHeight + padding * 2)
-            try? boundsString.write(toFile: "/tmp/clipkitty_window_bounds.txt",
-                                    atomically: true, encoding: .utf8)
-            print("Window frame (points): \(frame)")
-            print("Screen pixels: \(screenPixelWidth)x\(screenPixelHeight)")
-            print("Saved window bounds (pixels): \(boundsString)")
-        }
-
-        // Signal that the demo is about to start (for video sync)
-        try? "start".write(toFile: "/tmp/clipkitty_demo_start.txt", atomically: true, encoding: .utf8)
-
-        // Initial pause to show the app with history
-        Thread.sleep(forTimeInterval: 1)
-
-        // Search field is already focused, just start typing
-
-        // Type search query character by character with delays for visual effect
-        let query = "meeting"
-        for char in query {
-            searchField.typeText(String(char))
-            Thread.sleep(forTimeInterval: 0.75)  // 120ms between keys - natural typing speed
-        }
-
-        // Pause to show filtered results
-        Thread.sleep(forTimeInterval: 1.5)
-
-        // Navigate down through results with arrow keys
-        searchField.typeText(XCUIKeyboardKey.downArrow.rawValue)
-        Thread.sleep(forTimeInterval: 0.6)
-        searchField.typeText(XCUIKeyboardKey.downArrow.rawValue)
-        Thread.sleep(forTimeInterval: 0.6)
-        searchField.typeText(XCUIKeyboardKey.upArrow.rawValue)
-        Thread.sleep(forTimeInterval: 1.0)
-
-        // Clear and try another search
-        searchField.typeKey("a", modifierFlags: .command)  // Select all
-        Thread.sleep(forTimeInterval: 0.2)
-
-        let query2 = "http"
-        for char in query2 {
-            searchField.typeText(String(char))
-            Thread.sleep(forTimeInterval: 0.75)
-        }
-
-        // Final pause to show results
-        Thread.sleep(forTimeInterval: 2.0)
     }
 
     /// Captures multiple screenshot states for marketing materials.
