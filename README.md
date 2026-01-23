@@ -35,7 +35,7 @@ ClipKitty stores everything. Advanced fuzzy search means zero lag, whether you'r
 If you have [Homebrew](https://brew.sh) installed, run:
 
 ```bash
-brew install jul-sh/tap/clipkitty
+brew install jul-sh/clipkitty/clipkitty
 ```
 
 ### Manual Download
