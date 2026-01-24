@@ -210,6 +210,7 @@ jobs:
           # Delete existing release if overriding
           gh release delete "$TAG" --yes 2>/dev/null || true
           git push origin --delete "$TAG" 2>/dev/null || true
+          git tag -d "$TAG" 2>/dev/null || true
 
           # Create new release
           NOTE="### Note on Sandboxed Version
@@ -217,6 +218,7 @@ jobs:
           The standard version of ClippKitty supports automatic pasting (Cmd+V) into other apps. The sandboxed version (ClipKitty-Sandboxed.dmg) cannot do this due to system restrictions. If that's a feature you rely on, download the standard version."
 
           gh release create "$TAG" \
+            --target "$GITHUB_SHA" \
             --title "ClipKitty $VERSION" \
             --notes "$NOTE" \
             ClipKitty.dmg ClipKitty-Sandboxed.dmg
