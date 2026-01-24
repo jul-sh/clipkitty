@@ -112,6 +112,9 @@ interface ClipboardStore {
     void update_timestamp(i64 item_id);
 
     [Throws=ClipKittyError]
+    void set_timestamp(i64 item_id, i64 timestamp_unix);
+
+    [Throws=ClipKittyError]
     void delete_item(i64 item_id);
 
     [Throws=ClipKittyError]
