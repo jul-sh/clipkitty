@@ -1,0 +1,242 @@
+{
+  "apps": [
+    {
+      "name": "Notes",
+      "bundleId": "com.apple.Notes",
+      "weight": 15
+    },
+    {
+      "name": "TextEdit",
+      "bundleId": "com.apple.TextEdit",
+      "weight": 20
+    },
+    {
+      "name": "Safari",
+      "bundleId": "com.apple.Safari",
+      "weight": 15
+    },
+    {
+      "name": "Terminal",
+      "bundleId": "com.apple.Terminal",
+      "weight": 8
+    },
+    {
+      "name": "Finder",
+      "bundleId": "com.apple.finder",
+      "weight": 10
+    },
+    {
+      "name": "Mail",
+      "bundleId": "com.apple.mail",
+      "weight": 8
+    },
+    {
+      "name": "Numbers",
+      "bundleId": "com.apple.Numbers",
+      "weight": 5
+    },
+    {
+      "name": "Pages",
+      "bundleId": "com.apple.iWork.Pages",
+      "weight": 5
+    },
+    {
+      "name": "Freeform",
+      "bundleId": "com.apple.freeform",
+      "weight": 3
+    },
+    {
+      "name": "Preview",
+      "bundleId": "com.apple.Preview",
+      "weight": 3
+    },
+    {
+      "name": "Passwords",
+      "bundleId": "com.apple.Passwords",
+      "weight": 2
+    },
+    {
+      "name": "Reminders",
+      "bundleId": "com.apple.reminders",
+      "weight": 3
+    },
+    {
+      "name": "Stickies",
+      "bundleId": "com.apple.Stickies",
+      "weight": 2
+    },
+    {
+      "name": "Automator",
+      "bundleId": "com.apple.Automator",
+      "weight": 1
+    }
+  ],
+  "lengthDistribution": {
+    "short": {
+      "lines": [
+        1,
+        4
+      ],
+      "chars": [
+        50,
+        200
+      ],
+      "weight": 20
+    },
+    "medium": {
+      "lines": [
+        5,
+        15
+      ],
+      "chars": [
+        200,
+        800
+      ],
+      "weight": 60
+    },
+    "long": {
+      "lines": [
+        30,
+        80
+      ],
+      "chars": [
+        1500,
+        4000
+      ],
+      "weight": 20
+    }
+  },
+  "categories": [
+    {
+      "type": "code_snippet",
+      "weight": 22,
+      "apps": [
+        "TextEdit",
+        "Terminal",
+        "Automator"
+      ],
+      "description": "Code snippets in JS/TS, Python, Swift, Rust, Go, Java. Include full functions, class definitions, API handlers, React components, database queries, config files."
+    },
+    {
+      "type": "documentation",
+      "weight": 12,
+      "apps": [
+        "Safari",
+        "Notes",
+        "Pages"
+      ],
+      "description": "Technical documentation excerpts, README sections, API docs, tutorial content, changelog entries, specification text."
+    },
+    {
+      "type": "url",
+      "weight": 6,
+      "apps": [
+        "Safari",
+        "Mail"
+      ],
+      "description": "URLs to GitHub repos, documentation, Stack Overflow, npm packages, API endpoints, blog posts."
+    },
+    {
+      "type": "file_path",
+      "weight": 5,
+      "apps": [
+        "Finder",
+        "Terminal",
+        "TextEdit"
+      ],
+      "description": "File paths: /Users/dev/projects/..., config files, package paths, asset directories."
+    },
+    {
+      "type": "shell_command",
+      "weight": 8,
+      "apps": [
+        "Terminal"
+      ],
+      "description": "Shell commands and scripts: git workflows, docker commands, CI/CD pipelines, deployment scripts, build commands."
+    },
+    {
+      "type": "note",
+      "weight": 15,
+      "apps": [
+        "Notes",
+        "Stickies",
+        "Reminders",
+        "Pages"
+      ],
+      "description": "Personal/work notes: meeting notes with action items, project planning, brainstorming, travel itineraries, research notes, book notes."
+    },
+    {
+      "type": "email",
+      "weight": 8,
+      "apps": [
+        "Mail"
+      ],
+      "description": "Email content: professional correspondence, project updates, feedback, meeting requests, status reports."
+    },
+    {
+      "type": "json_yaml_config",
+      "weight": 8,
+      "apps": [
+        "TextEdit",
+        "Safari"
+      ],
+      "description": "JSON/YAML: API responses, package.json excerpts, docker-compose, k8s manifests, eslint configs, tsconfig."
+    },
+    {
+      "type": "sql_query",
+      "weight": 5,
+      "apps": [
+        "Numbers",
+        "TextEdit"
+      ],
+      "description": "SQL: complex queries with JOINs, CTEs, window functions, migrations, schema definitions."
+    },
+    {
+      "type": "log_output",
+      "weight": 4,
+      "apps": [
+        "Terminal",
+        "TextEdit"
+      ],
+      "description": "Log output: error traces, build logs, test results, server logs, debug output."
+    },
+    {
+      "type": "markdown",
+      "weight": 4,
+      "apps": [
+        "TextEdit",
+        "Notes"
+      ],
+      "description": "Markdown: PR descriptions, issue templates, wiki pages, changelogs, technical specs."
+    },
+    {
+      "type": "hex_color",
+      "weight": 1,
+      "apps": [
+        "Freeform",
+        "Preview"
+      ],
+      "description": "Hex color codes: #RRGGBB format only."
+    },
+    {
+      "type": "api_key",
+      "weight": 1,
+      "apps": [
+        "Passwords",
+        "TextEdit"
+      ],
+      "description": "API keys/tokens (fake): sk-xxx, ghp_xxx, AKIA..., Bearer tokens."
+    },
+    {
+      "type": "address_contact",
+      "weight": 1,
+      "apps": [
+        "Notes",
+        "Mail"
+      ],
+      "description": "Addresses, phone numbers, contact info blocks."
+    }
+  ],
+  "totalItems": 4000,
+  "batchSize": 25
+}

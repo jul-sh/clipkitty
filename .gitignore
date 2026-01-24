@@ -7,6 +7,10 @@
 DerivedData/
 *.xcresult/
 
+# Node
+node_modules
+yarn-error.log
+
 # Rust
 rust-core/target/
 rust-core/generated/
@@ -35,3 +39,13 @@ marketing/
 # Rust build artifacts
 rust-core/target/
 xcodebuild.log
+xcodebuild_verify*.log
+
+# SQLite temporary files
+*.sqlite-journal
+*.sqlite-shm
+*.sqlite-wal
+
+# Data Generation and Indexing
+Sources/App/tantivy_index/
+Scripts/data-gen/progress_rust.json

@@ -31,6 +31,33 @@ final class ClipKittyUITests: XCTestCase {
         }
         let appURL = URL(fileURLWithPath: appPath)
         app = XCUIApplication(url: appURL)
+
+        // Find the project's synthetic database
+        let sourceFileURL = URL(fileURLWithPath: #filePath)
+        let projectRoot = sourceFileURL.deletingLastPathComponent().deletingLastPathComponent().deletingLastPathComponent()
+        let sqliteSourceURL = projectRoot.appendingPathComponent("Sources/App/SyntheticData.sqlite")
+
+        // Prepare the target directory in the app's container (sandboxed or standard)
+        let bundleID = "com.clipkitty.app"
+        let homeDir = URL(fileURLWithPath: NSHomeDirectory())
+        let appSupportDir: URL
+
+        let containerURL = homeDir.appendingPathComponent("Library/Containers/\(bundleID)/Data/Library/Application Support/ClipKitty")
+        if FileManager.default.fileExists(atPath: containerURL.deletingLastPathComponent().deletingLastPathComponent().deletingLastPathComponent().path) {
+            // App is likely sandboxed or has a container dir
+            appSupportDir = containerURL
+        } else {
+            // Standard non-sandboxed location
+            appSupportDir = homeDir.appendingPathComponent("Library/Application Support/ClipKitty")
+        }
+
+        try? FileManager.default.createDirectory(at: appSupportDir, withIntermediateDirectories: true)
+        let targetURL = appSupportDir.appendingPathComponent("clipboard-screenshot.sqlite")
+
+        // Remove existing and copy fresh synthetic data
+        try? FileManager.default.removeItem(at: targetURL)
+        try? FileManager.default.copyItem(at: sqliteSourceURL, to: targetURL)
+
         app.launchArguments = ["--use-simulated-db"]
         app.launch()
 
