@@ -349,7 +349,7 @@ final class ClipKittyUITests: XCTestCase {
         try? "start".write(toFile: "/tmp/clipkitty_demo_start.txt", atomically: true, encoding: .utf8)
 
         // Helper to type with natural delays
-        func typeSlowly(_ text: String, delay: TimeInterval = 0.15) {
+        func typeSlowly(_ text: String, delay: TimeInterval = 0.08) {
             for char in text {
                 searchField.typeText(String(char))
                 Thread.sleep(forTimeInterval: delay)
@@ -367,70 +367,61 @@ final class ClipKittyUITests: XCTestCase {
         // SCENE 1: Meta Pitch - Fuzzy search refinement (0:00 - 0:08)
         // ============================================================
 
-        // 0:00 - Initial pause to show the app with history (SQL query on top)
-        Thread.sleep(forTimeInterval: 2.0)
+        // 0:00 - Initial pause
+        Thread.sleep(forTimeInterval: 1.0)
 
-        // 0:02 - Type "h" (surfaces Hello onboarding doc)
+        // Type "h"
         typeSlowly("h")
-        Thread.sleep(forTimeInterval: 1.5)
+        Thread.sleep(forTimeInterval: 0.8)
 
-        // 0:04 - Continue to "hello" (still shows onboarding doc)
+        // Continue to "hello"
         typeSlowly("ello")
-        Thread.sleep(forTimeInterval: 1.5)
+        Thread.sleep(forTimeInterval: 0.8)
 
-        // 0:06 - Continue to "hello clip" (now surfaces the marketing blurb)
+        // Continue to "hello clip"
         typeSlowly(" clip")
-        Thread.sleep(forTimeInterval: 2.0)  // Hold at 0:06-0:08 to let preview register
+        Thread.sleep(forTimeInterval: 1.5)
 
         // ============================================================
         // SCENE 2: Color and Image Preview (0:08 - 0:14)
         // ============================================================
 
-        // 0:08 - Clear to empty (back to default state)
+        // Scene 2
         clearSearch()
+        Thread.sleep(forTimeInterval: 0.3)
+
+        typeSlowly("#")
         Thread.sleep(forTimeInterval: 0.5)
 
-        // 0:09 - Type "#" (surfaces color hex codes with swatches)
-        typeSlowly("#")
+        typeSlowly("f")
         Thread.sleep(forTimeInterval: 0.8)
 
-        // 0:10 - Type "#f" (surfaces orange #FF5733 with large swatch in preview)
-        typeSlowly("f")
-        Thread.sleep(forTimeInterval: 1.0)
-
-        // Clear and search for cat image
         clearSearch()
-
-        // 0:11 - Type "cat" (surfaces AI-labeled cat image)
         typeSlowly("cat")
-        Thread.sleep(forTimeInterval: 3.0)  // Hold at 0:11-0:14 to show cat image with AI label
+        Thread.sleep(forTimeInterval: 2.0)
 
         // ============================================================
         // SCENE 3: Typo Forgiveness, Six Months Deep (0:14 - 0:20)
         // ============================================================
 
-        // 0:14 - Clear to empty (back to default state - establishes loop point)
+        // Scene 3
         clearSearch()
-        Thread.sleep(forTimeInterval: 0.5)
+        Thread.sleep(forTimeInterval: 0.3)
 
-        // 0:15 - Type "r" (shows various r-starting items)
         typeSlowly("r")
+        Thread.sleep(forTimeInterval: 0.3)
+
+        typeSlowly("iv")
         Thread.sleep(forTimeInterval: 0.5)
 
-        // 0:16 - Type "riv" (surfaces apartment walkthrough notes)
-        typeSlowly("iv")
-        Thread.sleep(forTimeInterval: 0.8)
-
-        // 0:17 - Type "rivresid" - typo! (missing space and 'e', but fuzzy matching finds "Riverside")
-        // This demonstrates typo forgiveness with the old timestamp visible
         typeSlowly("resid")
-        Thread.sleep(forTimeInterval: 2.0)  // Hold to show "Jul 14, 2025" timestamp in preview
+        Thread.sleep(forTimeInterval: 1.5)
 
-        // 0:19 - Clear search to return to empty state
         clearSearch()
+        Thread.sleep(forTimeInterval: 0.5)
 
-        // 0:20 - Final pause at empty state (seamless loop back to 0:00)
-        Thread.sleep(forTimeInterval: 1.0)
+        // Signal that the demo is finished
+        try? "stop".write(toFile: "/tmp/clipkitty_demo_stop.txt", atomically: true, encoding: .utf8)
     }
 
     /// Captures multiple screenshot states for marketing materials.

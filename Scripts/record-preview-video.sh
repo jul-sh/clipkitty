@@ -53,6 +53,7 @@ echo ""
 
 # Clean up any previous marker files
 rm -f /tmp/clipkitty_demo_start.txt
+rm -f /tmp/clipkitty_demo_stop.txt
 
 echo "Starting UI test (will signal when ready)..."
 # Run the test in background - it will create a marker file when demo starts
@@ -87,14 +88,28 @@ screencapture -v -D 1 "$RAW_VIDEO" &
 RECORD_PID=$!
 sleep 0.5
 
-# Wait for test to complete
+# Wait for the demo stop signal (written by UI test when demo finished)
 echo "Recording search demo..."
-wait $TEST_PID 2>/dev/null || true
+STOP_WAIT_COUNT=0
+# Loop until stop file exists or test process dies or timeout (60s)
+while [ ! -f /tmp/clipkitty_demo_stop.txt ] && kill -0 $TEST_PID 2>/dev/null && [ $STOP_WAIT_COUNT -lt 120 ]; do
+    sleep 0.5
+    STOP_WAIT_COUNT=$((STOP_WAIT_COUNT + 1))
+done
 
-# Stop recording
+# Stop recording immediately
 echo ""
 echo "Stopping recording..."
 kill -INT $RECORD_PID 2>/dev/null || true
+
+# Clean up marker
+rm -f /tmp/clipkitty_demo_stop.txt
+
+# Finish waiting for test process if still running
+wait $TEST_PID 2>/dev/null || true
+
+# Give screencapture a moment to flush the file
+sleep 2
 wait $RECORD_PID 2>/dev/null || true
 
 # Check if recording was captured

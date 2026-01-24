@@ -1,0 +1,66 @@
+Building binary (SANDBOX=false)...
+0%: Compute target dependency graph
+Building targets in dependency order
+Target dependency graph (7 targets)
+0%: Gather provisioning inputs
+0%: Create build description
+0%: Discovering version info for clang
+0%: Discovering version info for swiftc
+0%: Discovering version info for clang
+0%: Discovering version info for ld
+0%: Discovering version info for clang
+Build description signature: 9fb5ae85e2914f73ed97e7671d86421e
+
+Build description path: /Users/julsh/git/clipkitty/.build/apple/Intermediates.noindex/XCBuildData/9fb5ae85e2914f73ed97e7671d86421e.xcbuilddata
+
+0%: Build stat cache for /Applications/Xcode.app/Contents/Developer/Platforms/MacOSX.platform/Developer/SDKs/MacOSX26.2.sdk
+0%: Process empty-ClipKitty_ClipKitty.plist
+0%: Link ClipKitty (arm64)
+67%: Link ClipKitty (x86_64)
+73%: Create universal binary ClipKitty
+73%: Generate ClipKitty.dSYM for ClipKitty
+100%: Register execution policy exception for ClipKitty
+100%: Build succeeded
+Build complete!
+Creating app bundle structure...
+Signing with standard entitlements...
+Generating Xcode project...
+Generated ClipKitty.xcodeproj
+Recording preview video...
+=== ClipKitty App Store Preview Video Recording ===
+
+Screen resolution: 2560x1600
+Starting screen recording...
+(Recording will capture the search demo test)
+
+NOTE: If this fails, ensure Terminal has Screen Recording permission:
+  System Settings > Privacy & Security > Screen Recording
+
+Starting UI test (will signal when ready)...
+Waiting for demo to start...
+Using macOS screencapture for recording...
+Recording search demo...
+Test Case '-[ClipKittyUITests.ClipKittyUITests testRecordSearchDemo]' started.
+Test Case '-[ClipKittyUITests.ClipKittyUITests testRecordSearchDemo]' passed (24.943 seconds).
+Test Suite 'ClipKittyUITests' passed at 2026-01-24 18:43:55.040.
+Test Suite 'ClipKittyUITests.xctest' passed at 2026-01-24 18:43:55.041.
+Test Suite 'Selected tests' passed at 2026-01-24 18:43:55.042.
+Test case 'ClipKittyUITests.testRecordSearchDemo()' passed on 'My Mac - ClipKittyUITests-Runner (86521)' (24.943 seconds)
+
+Stopping recording...
+Post-processing video...
+Raw video duration: 3s
+Video duration: 3s (App Store limit: 30s)
+Window bounds: 636,158,1716,1196
+Cropping to window: 1716x1196+636+158
+
+=== Video Recording Complete ===
+Output: /Users/julsh/git/clipkitty/marketing/app_preview.mov
+Size: 998K
+
+App Store Requirements:
+  - Duration: 15-30 seconds ✓
+  - Format: H.264 .mov ✓
+  - Resolution: 2880x1800 ✓
+  - Max size: 500MB (yours: 998K)
+Closing ClipKitty...
