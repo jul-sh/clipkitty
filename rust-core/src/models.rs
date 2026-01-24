@@ -7,6 +7,8 @@ use std::hash::{Hash, Hasher};
 
 /// Link metadata fetch state
 #[derive(Debug, Clone, PartialEq, Eq)]
+#[cfg_attr(feature = "serde", derive(serde::Serialize, serde::Deserialize))]
+#[cfg_attr(feature = "serde", serde(tag = "type", rename_all = "snake_case"))]
 pub enum LinkMetadataState {
     /// Metadata not yet fetched
     Pending,
@@ -51,6 +53,8 @@ impl LinkMetadataState {
 
 /// Type-safe content representation
 #[derive(Debug, Clone, PartialEq)]
+#[cfg_attr(feature = "serde", derive(serde::Serialize, serde::Deserialize))]
+#[cfg_attr(feature = "serde", serde(tag = "type", rename_all = "snake_case"))]
 pub enum ClipboardContent {
     Text { value: String },
     Link {
@@ -167,6 +171,7 @@ impl ClipboardContent {
 
 /// A clipboard item with metadata (UniFFI-compatible)
 #[derive(Debug, Clone, PartialEq)]
+#[cfg_attr(feature = "serde", derive(serde::Serialize, serde::Deserialize))]
 pub struct ClipboardItem {
     pub id: Option<i64>,
     pub content: ClipboardContent,
