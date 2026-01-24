@@ -37,25 +37,22 @@ final class ClipKittyUITests: XCTestCase {
         let projectRoot = sourceFileURL.deletingLastPathComponent().deletingLastPathComponent().deletingLastPathComponent()
         let sqliteSourceURL = projectRoot.appendingPathComponent("Sources/App/SyntheticData.sqlite")
 
-        // Prepare the target directory in the app's container (sandboxed or standard)
+        // Prepare the target directory in the app's container
+        // We use the actual user's home to ensure we reach the real container
         let bundleID = "com.clipkitty.app"
-        let homeDir = URL(fileURLWithPath: NSHomeDirectory())
-        let appSupportDir: URL
-
-        let containerURL = homeDir.appendingPathComponent("Library/Containers/\(bundleID)/Data/Library/Application Support/ClipKitty")
-        if FileManager.default.fileExists(atPath: containerURL.deletingLastPathComponent().deletingLastPathComponent().deletingLastPathComponent().path) {
-            // App is likely sandboxed or has a container dir
-            appSupportDir = containerURL
-        } else {
-            // Standard non-sandboxed location
-            appSupportDir = homeDir.appendingPathComponent("Library/Application Support/ClipKitty")
-        }
-
-        try? FileManager.default.createDirectory(at: appSupportDir, withIntermediateDirectories: true)
+        let userHome = URL(fileURLWithPath: "/Users/\(NSUserName())")
+        let appSupportDir = userHome.appendingPathComponent("Library/Containers/\(bundleID)/Data/Library/Application Support/ClipKitty")
         let targetURL = appSupportDir.appendingPathComponent("clipboard-screenshot.sqlite")
+        let indexDirURL = appSupportDir.appendingPathComponent("tantivy_index")
 
-        // Remove existing and copy fresh synthetic data
+        // Ensure directory exists
+        try? FileManager.default.createDirectory(at: appSupportDir, withIntermediateDirectories: true)
+
+        // Remove existing database and search index to ensure a clean re-index for the video
         try? FileManager.default.removeItem(at: targetURL)
+        try? FileManager.default.removeItem(at: indexDirURL)
+
+        // Copy fresh synthetic data
         try? FileManager.default.copyItem(at: sqliteSourceURL, to: targetURL)
 
         app.launchArguments = ["--use-simulated-db"]

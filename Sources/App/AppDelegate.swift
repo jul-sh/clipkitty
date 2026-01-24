@@ -49,6 +49,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate {
             }
 
             panelController.show()
+            NSApp.activate(ignoringOtherApps: true)
         }
     }
 
