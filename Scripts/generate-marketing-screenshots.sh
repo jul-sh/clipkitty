@@ -107,7 +107,7 @@ process_screenshot() {
 
     # Step 3: Resize to fit
     $MAGICK "/tmp/clipkitty_shadowed.png" \
-        -resize "${SCALE_WIDTH}x${SCALE_HEIGHT}>" \
+        -resize "${SCALE_WIDTH}x${SCALE_HEIGHT}" \
         "/tmp/clipkitty_resized.png"
 
     # Step 4: Composite onto background with caption
