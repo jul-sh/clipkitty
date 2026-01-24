@@ -275,6 +275,11 @@ final class ClipKittyUITests: XCTestCase {
     /// Records a demo of the search functionality for App Store preview video.
     /// Run with: make preview-video
     /// This test types slowly to create a visually appealing demo.
+    ///
+    /// Script timing (20 seconds total):
+    /// Scene 1 (0:00-0:08): Meta pitch - fuzzy search refinement "hello" -> "hello clip"
+    /// Scene 2 (0:08-0:14): Color swatches "#" -> "#f", then image "cat"
+    /// Scene 3 (0:14-0:20): Typo forgiveness "rivresid" finds "Riverside", loop back to empty
     func testRecordSearchDemo() throws {
         let searchField = app.textFields.firstMatch
         XCTAssertTrue(searchField.waitForExistence(timeout: 5), "Search field not found")
@@ -319,41 +324,89 @@ final class ClipKittyUITests: XCTestCase {
         // Signal that the demo is about to start (for video sync)
         try? "start".write(toFile: "/tmp/clipkitty_demo_start.txt", atomically: true, encoding: .utf8)
 
-        // Initial pause to show the app with history
-        Thread.sleep(forTimeInterval: 1)
-
-        // Search field is already focused, just start typing
-
-        // Type search query character by character with delays for visual effect
-        let query = "meeting"
-        for char in query {
-            searchField.typeText(String(char))
-            Thread.sleep(forTimeInterval: 0.75)  // 120ms between keys - natural typing speed
+        // Helper to type with natural delays
+        func typeSlowly(_ text: String, delay: TimeInterval = 0.15) {
+            for char in text {
+                searchField.typeText(String(char))
+                Thread.sleep(forTimeInterval: delay)
+            }
         }
 
-        // Pause to show filtered results
+        // Helper to clear search field
+        func clearSearch() {
+            searchField.typeKey("a", modifierFlags: .command)  // Select all
+            searchField.typeKey(.delete, modifierFlags: [])
+            Thread.sleep(forTimeInterval: 0.3)
+        }
+
+        // ============================================================
+        // SCENE 1: Meta Pitch - Fuzzy search refinement (0:00 - 0:08)
+        // ============================================================
+
+        // 0:00 - Initial pause to show the app with history (SQL query on top)
+        Thread.sleep(forTimeInterval: 2.0)
+
+        // 0:02 - Type "h" (surfaces Hello onboarding doc)
+        typeSlowly("h")
         Thread.sleep(forTimeInterval: 1.5)
 
-        // Navigate down through results with arrow keys
-        searchField.typeText(XCUIKeyboardKey.downArrow.rawValue)
-        Thread.sleep(forTimeInterval: 0.6)
-        searchField.typeText(XCUIKeyboardKey.downArrow.rawValue)
-        Thread.sleep(forTimeInterval: 0.6)
-        searchField.typeText(XCUIKeyboardKey.upArrow.rawValue)
+        // 0:04 - Continue to "hello" (still shows onboarding doc)
+        typeSlowly("ello")
+        Thread.sleep(forTimeInterval: 1.5)
+
+        // 0:06 - Continue to "hello clip" (now surfaces the marketing blurb)
+        typeSlowly(" clip")
+        Thread.sleep(forTimeInterval: 2.0)  // Hold at 0:06-0:08 to let preview register
+
+        // ============================================================
+        // SCENE 2: Color and Image Preview (0:08 - 0:14)
+        // ============================================================
+
+        // 0:08 - Clear to empty (back to default state)
+        clearSearch()
+        Thread.sleep(forTimeInterval: 0.5)
+
+        // 0:09 - Type "#" (surfaces color hex codes with swatches)
+        typeSlowly("#")
+        Thread.sleep(forTimeInterval: 0.8)
+
+        // 0:10 - Type "#f" (surfaces orange #FF5733 with large swatch in preview)
+        typeSlowly("f")
         Thread.sleep(forTimeInterval: 1.0)
 
-        // Clear and try another search
-        searchField.typeKey("a", modifierFlags: .command)  // Select all
-        Thread.sleep(forTimeInterval: 0.2)
+        // Clear and search for cat image
+        clearSearch()
 
-        let query2 = "http"
-        for char in query2 {
-            searchField.typeText(String(char))
-            Thread.sleep(forTimeInterval: 0.75)
-        }
+        // 0:11 - Type "cat" (surfaces AI-labeled cat image)
+        typeSlowly("cat")
+        Thread.sleep(forTimeInterval: 3.0)  // Hold at 0:11-0:14 to show cat image with AI label
 
-        // Final pause to show results
-        Thread.sleep(forTimeInterval: 2.0)
+        // ============================================================
+        // SCENE 3: Typo Forgiveness, Six Months Deep (0:14 - 0:20)
+        // ============================================================
+
+        // 0:14 - Clear to empty (back to default state - establishes loop point)
+        clearSearch()
+        Thread.sleep(forTimeInterval: 0.5)
+
+        // 0:15 - Type "r" (shows various r-starting items)
+        typeSlowly("r")
+        Thread.sleep(forTimeInterval: 0.5)
+
+        // 0:16 - Type "riv" (surfaces apartment walkthrough notes)
+        typeSlowly("iv")
+        Thread.sleep(forTimeInterval: 0.8)
+
+        // 0:17 - Type "rivresid" - typo! (missing space and 'e', but fuzzy matching finds "Riverside")
+        // This demonstrates typo forgiveness with the old timestamp visible
+        typeSlowly("resid")
+        Thread.sleep(forTimeInterval: 2.0)  // Hold to show "Jul 14, 2025" timestamp in preview
+
+        // 0:19 - Clear search to return to empty state
+        clearSearch()
+
+        // 0:20 - Final pause at empty state (seamless loop back to 0:00)
+        Thread.sleep(forTimeInterval: 1.0)
     }
 
     /// Captures multiple screenshot states for marketing materials.

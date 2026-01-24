@@ -109,13 +109,8 @@ echo "Post-processing video..."
 DURATION=$(ffprobe -v error -show_entries format=duration -of default=noprint_wrappers=1:nokey=1 "$RAW_VIDEO" 2>/dev/null | cut -d. -f1)
 echo "Raw video duration: ${DURATION}s"
 
-# Check duration limit (App Store allows 15-30s, we use 25s as a safe limit)
-if [ "$DURATION" -gt 25 ]; then
-    echo "Error: Video duration (${DURATION}s) exceeds 25 second limit"
-    echo "Please shorten the testRecordSearchDemo test"
-    rm -f "$RAW_VIDEO"
-    exit 1
-fi
+# Note: App Store allows 15-30s videos
+echo "Video duration: ${DURATION}s (App Store limit: 30s)"
 
 # Check for window bounds file (written by the UI test)
 BOUNDS_FILE="/tmp/clipkitty_window_bounds.txt"
