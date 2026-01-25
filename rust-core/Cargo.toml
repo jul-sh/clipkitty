@@ -17,19 +17,36 @@ path = "uniffi-bindgen.rs"
 name = "generate-bindings"
 path = "src/bin/generate_bindings.rs"
 
+[[bin]]
+name = "generate-synthetic-data"
+path = "src/bin/generate_synthetic_data.rs"
+
 [dependencies]
 rusqlite = { version = "*", features = ["bundled", "modern_sqlite"] }
 regex = "*"
 once_cell = "*"
 thiserror = "*"
 chrono = { version = "*", features = ["serde"] }
-serde = { version = "*", features = ["derive"] }
-serde_json = "*"
+serde = { version = "1", features = ["derive"] }
+serde_json = "1"
 parking_lot = "*"
 url = "*"
 uniffi = { version = "*", features = ["cli"] }
 tantivy = "*"
 nucleo-matcher = "*"
+tokio = { version = "1", features = ["full"] }
+reqwest = { version = "0.11", features = ["json"] }
+rand = "0.8"
+schemars = "0.8"
+indicatif = "0.17"
+anyhow = "1"
+clap = { version = "4", features = ["derive"] }
+futures = "0.3"
+
+[features]
+default = ["serde"]
+serde = ["chrono/serde"]
+data-gen = []
 
 [build-dependencies]
 uniffi = { version = "*", features = ["build"] }
@@ -49,3 +66,6 @@ codegen-units = 1
 
 [profile.dev]
 opt-level = 1
+
+[dev-dependencies]
+tempfile = "3.24.0"

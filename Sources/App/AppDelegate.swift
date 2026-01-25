@@ -49,49 +49,17 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate {
             }
 
             panelController.show()
+            NSApp.activate(ignoringOtherApps: true)
         }
     }
 
-    /// Populate database with test data for screenshots (uses separate database to preserve user data)
+    /// Ensure the simulated database directory exists (UI Test runner handles file placement)
     private func populateTestDatabase() {
         let appSupport = FileManager.default.urls(for: .applicationSupportDirectory, in: .userDomainMask).first!
         let appDir = appSupport.appendingPathComponent("ClipKitty", isDirectory: true)
         try? FileManager.default.createDirectory(at: appDir, withIntermediateDirectories: true)
-        let dbPath = appDir.appendingPathComponent(ClipboardStore.databaseFilename(screenshotMode: true)).path
 
-        // Remove existing screenshot database for clean state (never touches the real database)
-        try? FileManager.default.removeItem(atPath: dbPath)
-
-        do {
-            // Use the Rust store to populate test data
-            let rustStore = try ClipKittyRust.ClipboardStore(dbPath: dbPath)
-
-            // Insert test items (only built-in macOS apps)
-            let testItems: [(String, String, String)] = [
-                ("func fibonacci(_ n: Int) -> Int {\n    guard n > 1 else { return n }\n    return fibonacci(n - 1) + fibonacci(n - 2)\n}", "Terminal", "com.apple.Terminal"),
-                ("SELECT users.name, orders.total\nFROM users\nJOIN orders ON users.id = orders.user_id\nWHERE orders.status = 'completed';", "Terminal", "com.apple.Terminal"),
-                ("The quick brown fox jumps over the lazy dog", "Mail", "com.apple.mail"),
-                ("https://github.com/anthropics/claude-code", "Safari", "com.apple.Safari"),
-                ("#!/bin/bash\nset -euo pipefail\necho \"Deploying to production...\"", "Terminal", "com.apple.Terminal"),
-                ("meeting@3pm re: Q4 planning", "Mail", "com.apple.mail"),
-                ("{ \"name\": \"ClipKitty\", \"version\": \"1.0.0\" }", "Terminal", "com.apple.Terminal"),
-                ("https://developer.apple.com/documentation/swiftui", "Safari", "com.apple.Safari"),
-                ("npm install --save-dev typescript @types/node", "Terminal", "com.apple.Terminal"),
-                ("Remember to update the API documentation", "Mail", "com.apple.mail"),
-            ]
-
-            // Insert items in reverse order (oldest first) so most recent is at the top
-            for (index, (content, sourceApp, bundleID)) in testItems.enumerated().reversed() {
-                // Add a small delay between inserts to ensure different timestamps
-                _ = try rustStore.saveText(text: content, sourceApp: sourceApp, sourceAppBundleId: bundleID)
-                // Sleep a tiny bit to space out timestamps
-                if index > 0 {
-                    Thread.sleep(forTimeInterval: 0.01)
-                }
-            }
-        } catch {
-            logError("Failed to populate test database: \(error)")
-        }
+        logInfo("Simulated database mode active")
     }
 
     private func setupMenuBar() {
@@ -209,3 +177,4 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate {
         true
     }
 }
+

@@ -210,6 +210,7 @@ jobs:
           # Delete existing release if overriding
           gh release delete "$TAG" --yes 2>/dev/null || true
           git push origin --delete "$TAG" 2>/dev/null || true
+          git tag -d "$TAG" 2>/dev/null || true
 
           # Create new release
           NOTE="### Note on Sandboxed Version
@@ -217,29 +218,21 @@ jobs:
           The standard version of ClippKitty supports automatic pasting (Cmd+V) into other apps. The sandboxed version (ClipKitty-Sandboxed.dmg) cannot do this due to system restrictions. If that's a feature you rely on, download the standard version."
 
           gh release create "$TAG" \
+            --target "$GITHUB_SHA" \
             --title "ClipKitty $VERSION" \
             --notes "$NOTE" \
             ClipKitty.dmg ClipKitty-Sandboxed.dmg
         env:
           GH_TOKEN: ${{ github.token }}
 
-      - name: Update Homebrew Branch
+      - name: Update Homebrew Tap
         run: |
           SHA256=$(shasum -a 256 ClipKitty.dmg | cut -d' ' -f1)
           VERSION="${{ steps.version.outputs.version }}"
 
-          git fetch origin homebrew || true
-          if git show-ref --verify --quiet refs/remotes/origin/homebrew; then
-            git worktree add /tmp/homebrew homebrew
-          else
-            git worktree add --detach /tmp/homebrew
-            cd /tmp/homebrew
-            git checkout --orphan homebrew
-            git reset --hard
-            mkdir -p Casks
-            cd -
-          fi
-          cd /tmp/homebrew
+          # Clone the homebrew-clipkitty tap repository
+          git clone https://x-access-token:${{ secrets.HOMEBREW_TAP_TOKEN }}@github.com/jul-sh/homebrew-clipkitty.git /tmp/homebrew-tap
+          cd /tmp/homebrew-tap
 
           mkdir -p Casks
           printf '%s\n' \
@@ -259,7 +252,7 @@ jobs:
           git config user.email "github-actions[bot]@users.noreply.github.com"
           git add Casks/clipkitty.rb
           git commit -m "Update ClipKitty to $VERSION" || echo "No changes"
-          git push origin homebrew
+          git push
 
           cd -
-          git worktree remove /tmp/homebrew --force
+          rm -rf /tmp/homebrew-tap
