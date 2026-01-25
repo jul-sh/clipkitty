@@ -97,10 +97,10 @@ interface ClipboardStore {
 
     // Item operations
     [Throws=ClipKittyError]
-    i64 save_text(string text, string? source_app, string? source_app_bundle_id);
+    i64 save_text(string text, string? source_app, string? source_app_bundle_id, i64? timestamp_unix);
 
     [Throws=ClipKittyError]
-    i64 save_image(sequence<u8> image_data, string? source_app, string? source_app_bundle_id);
+    i64 save_image(sequence<u8> image_data, string? source_app, string? source_app_bundle_id, i64? timestamp_unix);
 
     [Throws=ClipKittyError]
     void update_link_metadata(i64 item_id, string? title, sequence<u8>? image_data);
@@ -110,9 +110,6 @@ interface ClipboardStore {
 
     [Throws=ClipKittyError]
     void update_timestamp(i64 item_id);
-
-    [Throws=ClipKittyError]
-    void set_timestamp(i64 item_id, i64 timestamp_unix);
 
     [Throws=ClipKittyError]
     void delete_item(i64 item_id);

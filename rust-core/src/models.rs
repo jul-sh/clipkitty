@@ -187,6 +187,7 @@ impl ClipboardItem {
         text: String,
         source_app: Option<String>,
         source_app_bundle_id: Option<String>,
+        timestamp_unix: Option<i64>,
     ) -> Self {
         let content_hash = Self::hash_string(&text);
         let content = crate::content_detection::detect_content(&text);
@@ -194,7 +195,7 @@ impl ClipboardItem {
             id: None,
             content,
             content_hash,
-            timestamp_unix: chrono::Utc::now().timestamp(),
+            timestamp_unix: timestamp_unix.unwrap_or_else(|| chrono::Utc::now().timestamp()),
             source_app,
             source_app_bundle_id,
         }
@@ -206,13 +207,14 @@ impl ClipboardItem {
         metadata_state: LinkMetadataState,
         source_app: Option<String>,
         source_app_bundle_id: Option<String>,
+        timestamp_unix: Option<i64>,
     ) -> Self {
         let content_hash = Self::hash_string(&url);
         Self {
             id: None,
             content: ClipboardContent::Link { url, metadata_state },
             content_hash,
-            timestamp_unix: chrono::Utc::now().timestamp(),
+            timestamp_unix: timestamp_unix.unwrap_or_else(|| chrono::Utc::now().timestamp()),
             source_app,
             source_app_bundle_id,
         }
@@ -223,6 +225,7 @@ impl ClipboardItem {
         image_data: Vec<u8>,
         source_app: Option<String>,
         source_app_bundle_id: Option<String>,
+        timestamp_unix: Option<i64>,
     ) -> Self {
         let description = "Image".to_string();
         let hash_input = format!("{}{}", description, image_data.len());
@@ -234,7 +237,7 @@ impl ClipboardItem {
                 description,
             },
             content_hash,
-            timestamp_unix: chrono::Utc::now().timestamp(),
+            timestamp_unix: timestamp_unix.unwrap_or_else(|| chrono::Utc::now().timestamp()),
             source_app,
             source_app_bundle_id,
         }
@@ -351,6 +354,7 @@ mod tests {
             "Hello World".to_string(),
             Some("Test App".to_string()),
             None,
+            None,
         );
         assert_eq!(item.text_content(), "Hello World");
         assert_eq!(item.icon(), "doc.text");
@@ -359,7 +363,7 @@ mod tests {
     #[test]
     fn test_display_text_truncation() {
         let long_text = "a".repeat(300);
-        let item = ClipboardItem::new_text(long_text, None, None);
+        let item = ClipboardItem::new_text(long_text, None, None, None);
         let display = item.display_text();
         assert!(display.chars().count() == 201); // 200 chars + ellipsis (1 char)
         assert!(display.ends_with('…'));
@@ -367,7 +371,7 @@ mod tests {
 
     #[test]
     fn test_display_text_whitespace_normalization() {
-        let item = ClipboardItem::new_text("  hello\n\nworld  ".to_string(), None, None);
+        let item = ClipboardItem::new_text("  hello\n\nworld  ".to_string(), None, None, None);
         assert_eq!(item.display_text(), "hello world");
     }
 

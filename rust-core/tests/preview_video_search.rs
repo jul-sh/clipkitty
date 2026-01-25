@@ -136,6 +136,7 @@ fn create_preview_video_store() -> (ClipboardStore, TempDir) {
                 content.to_string(),
                 Some(source_app.to_string()),
                 Some(bundle_id.to_string()),
+                None,
             )
             .unwrap();
         // Small sleep to ensure different timestamps

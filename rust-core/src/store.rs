@@ -124,8 +124,9 @@ impl ClipboardStore {
         text: String,
         source_app: Option<String>,
         source_app_bundle_id: Option<String>,
+        timestamp_unix: Option<i64>,
     ) -> Result<i64, ClipKittyError> {
-        let item = ClipboardItem::new_text(text, source_app, source_app_bundle_id);
+        let item = ClipboardItem::new_text(text, source_app, source_app_bundle_id, timestamp_unix);
 
         // Check for duplicate
         if let Some(existing) = self.db.find_by_hash(&item.content_hash)? {
@@ -160,12 +161,13 @@ impl ClipboardStore {
         image_data: Vec<u8>,
         source_app: Option<String>,
         source_app_bundle_id: Option<String>,
+        timestamp_unix: Option<i64>,
     ) -> Result<i64, ClipKittyError> {
         if image_data.is_empty() {
             return Err(ClipKittyError::InvalidInput("Empty image data".into()));
         }
 
-        let item = ClipboardItem::new_image(image_data, source_app, source_app_bundle_id);
+        let item = ClipboardItem::new_image(image_data, source_app, source_app_bundle_id, timestamp_unix);
         let id = self.db.insert_item(&item)?;
 
         // Index with description (images can be searched by their description)
@@ -216,22 +218,6 @@ impl ClipboardStore {
         if let Some(item) = self.get_item(item_id)? {
             self.indexer
                 .add_document(item_id, item.text_content(), now.timestamp())?;
-            self.indexer.commit()?;
-        }
-
-        Ok(())
-    }
-
-    /// Set item timestamp to a specific unix timestamp
-    pub fn set_timestamp(&self, item_id: i64, timestamp_unix: i64) -> Result<(), ClipKittyError> {
-        let dt = Utc.timestamp_opt(timestamp_unix, 0).single()
-            .ok_or_else(|| ClipKittyError::InvalidInput(format!("Invalid timestamp: {}", timestamp_unix)))?;
-        self.db.update_timestamp(item_id, dt)?;
-
-        // Update index timestamp
-        if let Some(item) = self.get_item(item_id)? {
-            self.indexer
-                .add_document(item_id, item.text_content(), timestamp_unix)?;
             self.indexer.commit()?;
         }
 
@@ -395,7 +381,7 @@ mod tests {
         let store = ClipboardStore::new_in_memory().unwrap();
 
         let id = store
-            .save_text("Hello World".to_string(), None, None)
+            .save_text("Hello World".to_string(), None, None, None)
             .unwrap();
         assert!(id > 0);
 
@@ -409,12 +395,12 @@ mod tests {
         let store = ClipboardStore::new_in_memory().unwrap();
 
         let id1 = store
-            .save_text("Same content".to_string(), None, None)
+            .save_text("Same content".to_string(), None, None, None)
             .unwrap();
         assert!(id1 > 0);
 
         let id2 = store
-            .save_text("Same content".to_string(), None, None)
+            .save_text("Same content".to_string(), None, None, None)
             .unwrap();
         assert_eq!(id2, 0); // Duplicate returns 0
 
@@ -427,7 +413,7 @@ mod tests {
         let store = ClipboardStore::new_in_memory().unwrap();
 
         let id = store
-            .save_text("To delete".to_string(), None, None)
+            .save_text("To delete".to_string(), None, None, None)
             .unwrap();
         assert_eq!(store.fetch_items(None, 10).unwrap().items.len(), 1);
 
