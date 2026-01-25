@@ -222,6 +222,22 @@ impl ClipboardStore {
         Ok(())
     }
 
+    /// Set item timestamp to a specific unix timestamp
+    pub fn set_timestamp(&self, item_id: i64, timestamp_unix: i64) -> Result<(), ClipKittyError> {
+        let dt = Utc.timestamp_opt(timestamp_unix, 0).single()
+            .ok_or_else(|| ClipKittyError::InvalidInput(format!("Invalid timestamp: {}", timestamp_unix)))?;
+        self.db.update_timestamp(item_id, dt)?;
+
+        // Update index timestamp
+        if let Some(item) = self.get_item(item_id)? {
+            self.indexer
+                .add_document(item_id, item.text_content(), timestamp_unix)?;
+            self.indexer.commit()?;
+        }
+
+        Ok(())
+    }
+
     /// Delete an item by ID from both database and index
     pub fn delete_item(&self, item_id: i64) -> Result<(), ClipKittyError> {
         self.db.delete_item(item_id)?;
