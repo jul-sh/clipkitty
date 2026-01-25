@@ -180,12 +180,8 @@ fn insert_demo_items(store: &ClipboardStore) -> Result<()> {
         ("SELECT users.name, orders.total FROM orders JOIN users ON users.id = orders.user_id WHERE orders.status = 'completed';", "Numbers", "com.apple.Numbers", now - 10),
     ];
 
-    for (content, app, bundle, ts) in demo_items {
-        if let Ok(id) = store.save_text(content.to_string(), Some(app.to_string()), Some(bundle.to_string())) {
-            if id > 0 {
-                let _ = store.set_timestamp(id, ts);
-            }
-        }
+    for (content, app, bundle, _ts) in demo_items {
+        let _ = store.save_text(content.to_string(), Some(app.to_string()), Some(bundle.to_string()));
     }
     Ok(())
 }
@@ -234,16 +230,8 @@ async fn main() -> Result<()> {
                             let app = pick_weighted(&valid_apps, |a| a.weight);
                             if let Ok(id) = st.save_text(content, Some(app.name.clone()), Some(app.bundle_id.clone())) {
                                 if id > 0 {
-                                    let now = Utc::now().timestamp();
-                                    let mut rng = rand::thread_rng();
-                                    // 18 months in seconds
-                                    let eighteen_months_secs = 18 * 30 * 24 * 60 * 60;
-                                    // Linear distribution over the last 18 months
-                                    let random_ts = now - rng.gen_range(0..eighteen_months_secs);
-                                    if st.set_timestamp(id, random_ts).is_ok() {
-                                        bar.inc(1);
-                                        bar.set_message(format!("{} ({})", category.category_type, tier));
-                                    }
+                                    bar.inc(1);
+                                    bar.set_message(format!("{} ({})", category.category_type, tier));
                                 }
                             }
                         }
