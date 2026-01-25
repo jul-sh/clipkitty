@@ -116,7 +116,7 @@ jobs:
             --clobber
 
           # Append note about sandboxed version
-          NOTE="\n\n### Note on Sandboxed Version\n\nThe sandboxed version (ClipKitty-Sandboxed.dmg) is more secure but less powerful. It does not support automatic pasting (Cmd+V) into other apps due to system restrictions. Use the standard version if you want the full experience."
+          NOTE="\n\n### Note on Sandboxed Version\n\nThe sandboxed version (ClipKitty-Sandboxed.dmg) does not support automatic pasting (Cmd+V) into other apps due to system restrictions. Use the standard version if that feature is important to you."
           gh release edit "${{ github.event.release.tag_name }}" --notes "$(gh release view "${{ github.event.release.tag_name }}" --json body -q .body)$NOTE"
         env:
           GH_TOKEN: ${{ github.token }}
@@ -125,7 +125,7 @@ jobs:
       - name: Create Development Release
         if: github.event_name == 'push' && github.ref == 'refs/heads/main'
         run: |
-          NOTE="Note: The sandboxed version is less powerful and doesn't support pasting automatically."
+          NOTE="### Note on Sandboxed Version\n\nThe sandboxed version (ClipKitty-Sandboxed.dmg) does not support automatic pasting (Cmd+V) into other apps due to system restrictions. Use the standard version if that feature is important to you"
           gh release create "commit-${GITHUB_SHA}" \
             --title "ClipKitty ${GITHUB_SHA}" \
             --notes "$NOTE" \
