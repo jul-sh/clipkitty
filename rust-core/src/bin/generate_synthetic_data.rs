@@ -181,7 +181,11 @@ fn insert_demo_items(store: &ClipboardStore) -> Result<()> {
     ];
 
     for (content, app, bundle, ts) in demo_items {
-        let _ = store.save_text(content.to_string(), Some(app.to_string()), Some(bundle.to_string()), Some(ts));
+        if let Ok(id) = store.save_text(content.to_string(), Some(app.to_string()), Some(bundle.to_string())) {
+            if id > 0 {
+                let _ = store.set_timestamp(id, ts);
+            }
+        }
     }
     Ok(())
 }
@@ -228,17 +232,18 @@ async fn main() -> Result<()> {
                         for content in items {
                             let valid_apps: Vec<_> = tax.apps.iter().filter(|a| category.apps.contains(&a.name)).collect();
                             let app = pick_weighted(&valid_apps, |a| a.weight);
-                            let now = Utc::now().timestamp();
-                            let mut rng = rand::thread_rng();
-                            // 18 months in seconds
-                            let eighteen_months_secs = 18 * 30 * 24 * 60 * 60;
-                            // Linear distribution over the last 18 months
-                            let random_ts = now - rng.gen_range(0..eighteen_months_secs);
-
-                            if let Ok(id) = st.save_text(content, Some(app.name.clone()), Some(app.bundle_id.clone()), Some(random_ts)) {
+                            if let Ok(id) = st.save_text(content, Some(app.name.clone()), Some(app.bundle_id.clone())) {
                                 if id > 0 {
-                                    bar.inc(1);
-                                    bar.set_message(format!("{} ({})", category.category_type, tier));
+                                    let now = Utc::now().timestamp();
+                                    let mut rng = rand::thread_rng();
+                                    // 18 months in seconds
+                                    let eighteen_months_secs = 18 * 30 * 24 * 60 * 60;
+                                    // Linear distribution over the last 18 months
+                                    let random_ts = now - rng.gen_range(0..eighteen_months_secs);
+                                    if st.set_timestamp(id, random_ts).is_ok() {
+                                        bar.inc(1);
+                                        bar.set_message(format!("{} ({})", category.category_type, tier));
+                                    }
                                 }
                             }
                         }
