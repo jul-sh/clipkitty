@@ -20,6 +20,7 @@ path = "src/bin/generate_bindings.rs"
 [[bin]]
 name = "generate-synthetic-data"
 path = "src/bin/generate_synthetic_data.rs"
+required-features = ["data-gen"]
 
 [dependencies]
 rusqlite = { version = "*", features = ["bundled", "modern_sqlite"] }

@@ -222,6 +222,22 @@ impl ClipboardStore {
         Ok(())
     }
 
+    /// Set item timestamp to a specific value (for synthetic data generation)
+    #[cfg(feature = "data-gen")]
+    pub fn set_timestamp(&self, item_id: i64, timestamp_unix: i64) -> Result<(), ClipKittyError> {
+        let timestamp = Utc.timestamp_opt(timestamp_unix, 0).single().unwrap_or_else(Utc::now);
+        self.db.update_timestamp(item_id, timestamp)?;
+
+        // Update index timestamp
+        if let Some(item) = self.get_item(item_id)? {
+            self.indexer
+                .add_document(item_id, item.text_content(), timestamp_unix)?;
+            self.indexer.commit()?;
+        }
+
+        Ok(())
+    }
+
     /// Delete an item by ID from both database and index
     pub fn delete_item(&self, item_id: i64) -> Result<(), ClipKittyError> {
         self.db.delete_item(item_id)?;
