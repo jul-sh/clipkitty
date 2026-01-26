@@ -125,7 +125,7 @@ Clipboard change detected
 │                                                             │
 │ - Trigram tokenization (3-grams)                            │
 │ - Fast narrowing: millions → ~5000 candidates               │
-│ - Handles typos via trigram overlap                         │
+│ - Returns BM25 score + timestamp for each candidate         │
 └─────────────────────────────────────────────────────────────┘
                            │
                            ▼
@@ -135,6 +135,25 @@ Clipboard change detected
 │ - Fuzzy scoring with matched character indices              │
 │ - Re-ranks candidates by match quality                      │
 │ - Returns indices for highlight rendering                   │
+│                                                             │
+│ Matched items: FuzzyMatch::Matched { score, indices, ... }  │
+│ Typo fallback: FuzzyMatch::Fallback { id, timestamp }       │
+└─────────────────────────────────────────────────────────────┘
+                           │
+                           ▼
+┌─────────────────────────────────────────────────────────────┐
+│ Ranking                                                     │
+│                                                             │
+│ Nucleo matches: score * (1 + 0.1 * recency_factor)          │
+│ - Multiplicative boost preserves quality ordering           │
+│ - Recency: exponential decay with 7-day half-life           │
+│ - Max 10% boost for brand-new items                         │
+│                                                             │
+│ Fallback matches (typo tolerance):                          │
+│ - Tantivy matched but Nucleo couldn't (missing chars)       │
+│ - Sorted by recency, appended after Nucleo matches          │
+│ - No highlighting (indices unavailable)                     │
+│ - Capped at 50 results                                      │
 └─────────────────────────────────────────────────────────────┘
 ```
 
@@ -196,8 +215,8 @@ Manual extensions (must sync with .udl):
 
 ## Type Mapping
 
-| Rust (models.rs) | UDL | Swift |
-|------------------|-----|-------|
+| Rust | UDL | Swift |
+|------|-----|-------|
 | `ClipboardItem` | dictionary | struct |
 | `ClipboardContent` | [Enum] interface | enum with associated values |
 | `LinkMetadataState` | [Enum] interface | enum with associated values |
@@ -206,6 +225,14 @@ Manual extensions (must sync with .udl):
 | `SearchMatch` | dictionary | struct |
 | `HighlightRange` | dictionary | struct |
 | `FetchResult` | dictionary | struct |
+
+### Internal Search Types (not exposed via FFI)
+
+| Rust Type | Description |
+|-----------|-------------|
+| `SearchCandidate` | Tantivy result with id, content, timestamp, tantivy_score |
+| `FuzzyMatch::Matched` | Nucleo match with score and highlight indices |
+| `FuzzyMatch::Fallback` | Typo tolerance fallback (no highlighting) |
 
 ## Performance Characteristics
 
