@@ -3,6 +3,36 @@ import XCTest
 final class ClipKittyUITests: XCTestCase {
     var app: XCUIApplication!
 
+    /// Check if an app has the sandbox entitlement enabled
+    private func isAppSandboxed(at appURL: URL) -> Bool {
+        let task = Process()
+        task.executableURL = URL(fileURLWithPath: "/usr/bin/codesign")
+        task.arguments = ["-d", "--entitlements", "-", "--xml", appURL.path]
+
+        let pipe = Pipe()
+        task.standardOutput = pipe
+        task.standardError = FileHandle.nullDevice
+
+        do {
+            try task.run()
+            task.waitUntilExit()
+
+            let data = pipe.fileHandleForReading.readDataToEndOfFile()
+            // Check if the entitlements contain app-sandbox = true
+            if let plist = try? PropertyListSerialization.propertyList(from: data, format: nil) as? [String: Any],
+               let entitlements = plist["com.apple.security.app-sandbox"] as? Bool {
+                return entitlements
+            }
+            // Also check for the string in raw output (fallback)
+            if let output = String(data: data, encoding: .utf8) {
+                return output.contains("com.apple.security.app-sandbox") && output.contains("<true/>")
+            }
+        } catch {
+            // If we can't determine, assume non-sandboxed
+        }
+        return false
+    }
+
     override func setUpWithError() throws {
         continueAfterFailure = false
         // Use the app from a known location - either from env var or project directory
@@ -37,10 +67,17 @@ final class ClipKittyUITests: XCTestCase {
         let projectRoot = sourceFileURL.deletingLastPathComponent().deletingLastPathComponent().deletingLastPathComponent()
         let sqliteSourceURL = projectRoot.appendingPathComponent("Sources/App/SyntheticData.sqlite")
 
-        // Prepare the target directory in the app's container (sandboxed path)
-        let bundleID = "com.clipkitty.app"
+        // Determine the correct Application Support directory based on sandbox status
         let userHome = URL(fileURLWithPath: "/Users/\(NSUserName())")
-        let appSupportDir = userHome.appendingPathComponent("Library/Containers/\(bundleID)/Data/Library/Application Support/ClipKitty")
+        let appSupportDir: URL
+        if isAppSandboxed(at: appURL) {
+            // Sandboxed: use container path
+            let bundleID = "com.clipkitty.app"
+            appSupportDir = userHome.appendingPathComponent("Library/Containers/\(bundleID)/Data/Library/Application Support/ClipKitty")
+        } else {
+            // Non-sandboxed: use regular Application Support
+            appSupportDir = userHome.appendingPathComponent("Library/Application Support/ClipKitty")
+        }
         let targetURL = appSupportDir.appendingPathComponent("clipboard-screenshot.sqlite")
         let indexDirURL = appSupportDir.appendingPathComponent("tantivy_index")
 
