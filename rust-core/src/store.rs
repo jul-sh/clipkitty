@@ -354,8 +354,21 @@ impl ClipboardStore {
             offset += BATCH_SIZE;
         }
 
-        // Sort by score descending
-        results.sort_by(|a, b| b.score.cmp(&a.score));
+        // Sort by blended score (fuzzy + recency)
+        let now = chrono::Utc::now().timestamp();
+        results.sort_by(|a, b| {
+            // Inline blended score calculation (same formula as search.rs)
+            let calc_score = |m: &FuzzyMatch| -> f64 {
+                let base_score = m.score as f64;
+                let age_secs = (now - m.timestamp).max(0) as f64;
+                let half_life = 7.0 * 24.0 * 60.0 * 60.0; // 7 days
+                let recency_factor = (-age_secs * 2.0_f64.ln() / half_life).exp();
+                base_score * (1.0 + 0.1 * recency_factor) // 10% max boost
+            };
+            calc_score(b)
+                .partial_cmp(&calc_score(a))
+                .unwrap_or(std::cmp::Ordering::Equal)
+        });
         results.truncate(max_results);
 
         Ok(results)
@@ -435,4 +448,123 @@ mod tests {
         assert_eq!(store.fetch_items(None, 10).unwrap().items.len(), 0);
     }
 
+    #[test]
+    fn test_search_ranking_recent_vs_old() {
+        // Integration test for the full search flow through Tantivy
+        // Tests that recent items with equal fuzzy scores beat old items
+        let store = ClipboardStore::new_in_memory().unwrap();
+
+        // Insert old item first (will have earlier timestamp)
+        let id1 = store
+            .save_text(
+                "def hello(name: str) -> str: return f'Hello, {name}!'".to_string(),
+                None,
+                None,
+            )
+            .unwrap();
+
+        // Sleep to ensure different timestamps (timestamps are in seconds, need >1s)
+        std::thread::sleep(std::time::Duration::from_millis(1100));
+
+        // Insert recent item
+        let id2 = store
+            .save_text(
+                "Hello and welcome to the onboarding flow for new team members...".to_string(),
+                None,
+                None,
+            )
+            .unwrap();
+
+        // Debug: fetch items to see their timestamps
+        let items = store.fetch_items(None, 10).unwrap();
+        println!("Items in store:");
+        for item in &items.items {
+            println!("  id={}, ts={}, content={:.50}",
+                item.id.unwrap_or(-1),
+                item.timestamp_unix,
+                item.text_content());
+        }
+
+        // Debug: check what Tantivy returns
+        let candidates = store.indexer.search("hello ").unwrap();
+        println!("Tantivy candidates:");
+        for c in &candidates {
+            println!("  id={}, ts={}, content={:.50}", c.id, c.timestamp, c.content);
+        }
+
+        // Search for "hello "
+        let result = store.search("hello ".to_string()).unwrap();
+
+        println!("Search results for 'hello ':");
+        for (i, m) in result.matches.iter().enumerate() {
+            println!("  {}: id={}", i, m.item_id);
+        }
+
+        assert_eq!(result.matches.len(), 2, "Should find both items");
+        assert_eq!(
+            result.matches[0].item_id, id2,
+            "Recent 'Hello and welcome...' (id={}) should be first, but got id={}",
+            id2, result.matches[0].item_id
+        );
+        assert_eq!(
+            result.matches[1].item_id, id1,
+            "Old code snippet (id={}) should be second",
+            id1
+        );
+    }
+
+    #[test]
+    fn test_timestamps_stored_and_used_in_search() {
+        // Comprehensive test verifying timestamps flow correctly through the system:
+        // 1. Database stores correct timestamps
+        // 2. Tantivy index stores correct timestamps
+        // 3. Timestamps match between database and index
+        // 4. Recency boost affects search ranking
+        let store = ClipboardStore::new_in_memory().unwrap();
+
+        // Insert items with forced timestamp separation
+        let id1 = store.save_text("config file one".to_string(), None, None).unwrap();
+        std::thread::sleep(std::time::Duration::from_millis(1100));
+        let id2 = store.save_text("config file two".to_string(), None, None).unwrap();
+        std::thread::sleep(std::time::Duration::from_millis(1100));
+        let id3 = store.save_text("config file three".to_string(), None, None).unwrap();
+
+        // 1. Verify database timestamps are in correct order (most recent first)
+        let db_items = store.fetch_items(None, 10).unwrap();
+        assert_eq!(db_items.items.len(), 3);
+        let db_ts: Vec<(i64, i64)> = db_items.items.iter()
+            .map(|i| (i.id.unwrap(), i.timestamp_unix))
+            .collect();
+
+        // Most recent (id3) should have highest timestamp
+        assert!(db_ts[0].0 == id3, "Most recent item should be first in fetch");
+        assert!(db_ts[0].1 > db_ts[1].1, "id3 timestamp should be > id2 timestamp");
+        assert!(db_ts[1].1 > db_ts[2].1, "id2 timestamp should be > id1 timestamp");
+
+        // 2. Verify Tantivy index timestamps match database
+        let candidates = store.indexer.search("config").unwrap();
+        assert_eq!(candidates.len(), 3, "Tantivy should find all 3 items");
+
+        for candidate in &candidates {
+            let db_item = db_items.items.iter()
+                .find(|i| i.id == Some(candidate.id))
+                .expect("Candidate should exist in database");
+
+            assert_eq!(
+                candidate.timestamp, db_item.timestamp_unix,
+                "Tantivy timestamp for id={} should match database: index={} vs db={}",
+                candidate.id, candidate.timestamp, db_item.timestamp_unix
+            );
+            assert!(candidate.timestamp > 0, "Timestamp should not be 0 for id={}", candidate.id);
+        }
+
+        // 3. Verify search results respect recency (most recent first for equal scores)
+        let result = store.search("config file".to_string()).unwrap();
+        assert_eq!(result.matches.len(), 3);
+
+        // All have same base fuzzy score, so recency should determine order
+        assert_eq!(result.matches[0].item_id, id3, "Most recent (id3) should be first");
+        assert_eq!(result.matches[1].item_id, id2, "Middle (id2) should be second");
+        assert_eq!(result.matches[2].item_id, id1, "Oldest (id1) should be third");
+    }
 }

@@ -31,6 +31,7 @@ pub type IndexerResult<T> = Result<T, IndexerError>;
 pub struct SearchCandidate {
     pub id: i64,
     pub content: String,
+    pub timestamp: i64,
 }
 
 /// Tantivy-based indexer with trigram tokenization
@@ -118,8 +119,8 @@ impl Indexer {
             .set_stored();
         schema_builder.add_text_field("content", text_options);
 
-        // Timestamp for sorting
-        schema_builder.add_i64_field("timestamp", FAST);
+        // Timestamp for sorting and retrieval (STORED needed for doc.get_first())
+        schema_builder.add_i64_field("timestamp", STORED | FAST);
 
         schema_builder.build()
     }
@@ -220,7 +221,16 @@ impl Indexer {
                 .unwrap_or("")
                 .to_string();
 
-            candidates.push(SearchCandidate { id, content });
+            let timestamp = doc
+                .get_first(self.schema.get_field("timestamp").unwrap())
+                .and_then(|v| v.as_i64())
+                .unwrap_or(0);
+
+            candidates.push(SearchCandidate {
+                id,
+                content,
+                timestamp,
+            });
         }
 
         Ok(candidates)

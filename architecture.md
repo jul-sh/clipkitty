@@ -125,7 +125,7 @@ Clipboard change detected
 │                                                             │
 │ - Trigram tokenization (3-grams)                            │
 │ - Fast narrowing: millions → ~5000 candidates               │
-│ - Handles typos via trigram overlap                         │
+│ - Returns id, content, timestamp for each candidate         │
 └─────────────────────────────────────────────────────────────┘
                            │
                            ▼
@@ -135,6 +135,20 @@ Clipboard change detected
 │ - Fuzzy scoring with matched character indices              │
 │ - Re-ranks candidates by match quality                      │
 │ - Returns indices for highlight rendering                   │
+│ - Typos with MISSING letters work (subsequence matching)    │
+│   e.g., "helo" matches "hello" (h-e-l-o is a subsequence)   │
+└─────────────────────────────────────────────────────────────┘
+                           │
+                           ▼
+┌─────────────────────────────────────────────────────────────┐
+│ Ranking                                                     │
+│                                                             │
+│ Final score: nucleo_score * (1 + 0.1 * recency_factor)      │
+│ - Multiplicative boost preserves quality ordering           │
+│ - Recency: exponential decay with 7-day half-life           │
+│ - Max 10% boost for brand-new items                         │
+│ - Exact matches always beat fuzzy (Nucleo gives them higher │
+│   scores), regardless of recency                            │
 └─────────────────────────────────────────────────────────────┘
 ```
 
@@ -196,8 +210,8 @@ Manual extensions (must sync with .udl):
 
 ## Type Mapping
 
-| Rust (models.rs) | UDL | Swift |
-|------------------|-----|-------|
+| Rust | UDL | Swift |
+|------|-----|-------|
 | `ClipboardItem` | dictionary | struct |
 | `ClipboardContent` | [Enum] interface | enum with associated values |
 | `LinkMetadataState` | [Enum] interface | enum with associated values |
@@ -206,6 +220,13 @@ Manual extensions (must sync with .udl):
 | `SearchMatch` | dictionary | struct |
 | `HighlightRange` | dictionary | struct |
 | `FetchResult` | dictionary | struct |
+
+### Internal Search Types (not exposed via FFI)
+
+| Rust Type | Description |
+|-----------|-------------|
+| `SearchCandidate` | Tantivy result with id, content, timestamp |
+| `FuzzyMatch` | Nucleo match with id, score, matched_indices, timestamp |
 
 ## Performance Characteristics
 
