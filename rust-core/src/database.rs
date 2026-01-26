@@ -313,20 +313,24 @@ impl Database {
         Ok(ids)
     }
 
-    /// Fetch a batch of (id, content) pairs for streaming search
+    /// Fetch a batch of (id, content, timestamp_unix) tuples for streaming search
     /// Uses offset-based pagination for simplicity
     pub fn fetch_content_batch(
         &self,
         offset: usize,
         limit: usize,
-    ) -> DatabaseResult<Vec<(i64, String)>> {
+    ) -> DatabaseResult<Vec<(i64, String, i64)>> {
         let conn = self.conn.lock();
         let mut stmt = conn.prepare(
-            "SELECT id, content FROM items ORDER BY timestamp DESC LIMIT ?1 OFFSET ?2"
+            "SELECT id, content, CAST(strftime('%s', timestamp) AS INTEGER) FROM items ORDER BY timestamp DESC LIMIT ?1 OFFSET ?2"
         )?;
         let results = stmt
             .query_map(params![limit as i64, offset as i64], |row| {
-                Ok((row.get::<_, i64>(0)?, row.get::<_, String>(1)?))
+                Ok((
+                    row.get::<_, i64>(0)?,
+                    row.get::<_, String>(1)?,
+                    row.get::<_, i64>(2)?,
+                ))
             })?
             .collect::<Result<Vec<_>, _>>()?;
         Ok(results)
