@@ -119,8 +119,8 @@ impl Indexer {
             .set_stored();
         schema_builder.add_text_field("content", text_options);
 
-        // Timestamp for sorting
-        schema_builder.add_i64_field("timestamp", FAST);
+        // Timestamp for sorting and retrieval (STORED needed for doc.get_first())
+        schema_builder.add_i64_field("timestamp", STORED | FAST);
 
         schema_builder.build()
     }
