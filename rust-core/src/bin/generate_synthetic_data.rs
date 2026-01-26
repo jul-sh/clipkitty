@@ -211,6 +211,23 @@ fn insert_demo_items(store: &ClipboardStore) -> Result<()> {
             }
         }
     }
+
+    // Add kitty image (most recent item)
+    let base_path = PathBuf::from(env!("CARGO_MANIFEST_DIR"));
+    let kitty_path = base_path.join("../marketing/assets/kitty.jpg");
+    if let Ok(image_data) = fs::read(&kitty_path) {
+        if let Ok(id) = store.save_image_with_description(
+            image_data,
+            "kitty".to_string(),
+            Some("Photos".to_string()),
+            Some("com.apple.Photos".to_string()),
+        ) {
+            if id > 0 {
+                let _ = store.set_timestamp(id, now - 5); // Most recent demo item
+            }
+        }
+    }
+
     Ok(())
 }
 
