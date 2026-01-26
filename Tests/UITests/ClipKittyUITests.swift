@@ -37,8 +37,7 @@ final class ClipKittyUITests: XCTestCase {
         let projectRoot = sourceFileURL.deletingLastPathComponent().deletingLastPathComponent().deletingLastPathComponent()
         let sqliteSourceURL = projectRoot.appendingPathComponent("Sources/App/SyntheticData.sqlite")
 
-        // Prepare the target directory in the app's container
-        // We use the actual user's home to ensure we reach the real container
+        // Prepare the target directory in the app's container (sandboxed path)
         let bundleID = "com.clipkitty.app"
         let userHome = URL(fileURLWithPath: "/Users/\(NSUserName())")
         let appSupportDir = userHome.appendingPathComponent("Library/Containers/\(bundleID)/Data/Library/Application Support/ClipKitty")
@@ -345,8 +344,17 @@ final class ClipKittyUITests: XCTestCase {
             print("Saved window bounds (pixels): \(boundsString)")
         }
 
-        // Signal that the demo is about to start (for video sync)
+        // Signal that the demo is ready to start (shell script will start recording)
         try? "start".write(toFile: "/tmp/clipkitty_demo_start.txt", atomically: true, encoding: .utf8)
+
+        // Wait for recording to start (shell script signals when screencapture is running)
+        let recordingStartedPath = "/tmp/clipkitty_recording_started.txt"
+        var waitCount = 0
+        while !FileManager.default.fileExists(atPath: recordingStartedPath) && waitCount < 20 {
+            Thread.sleep(forTimeInterval: 0.5)
+            waitCount += 1
+        }
+        try? FileManager.default.removeItem(atPath: recordingStartedPath)
 
         // Helper to type with natural delays
         func typeSlowly(_ text: String, delay: TimeInterval = 0.08) {
@@ -367,7 +375,7 @@ final class ClipKittyUITests: XCTestCase {
         // SCENE 1: Meta Pitch - Fuzzy search refinement (0:00 - 0:08)
         // ============================================================
 
-        // 0:00 - Initial pause
+        // 0:00 - Initial pause (ensure recording has captured initial state)
         Thread.sleep(forTimeInterval: 1.0)
 
         // Type "h"
