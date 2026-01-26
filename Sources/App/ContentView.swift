@@ -326,28 +326,16 @@ struct ContentView: View {
             }
             .listStyle(.plain)
             .scrollContentBackground(.hidden)
+            .animation(nil, value: items.map { $0.stableId })
             .onChange(of: searchText) { _, _ in
-                // Scroll to top when search query changes
+                // Scroll to top when search query changes (no animation)
                 if let firstItemId = items.first?.stableId {
                     proxy.scrollTo(firstItemId, anchor: .top)
                 }
             }
-            .onChange(of: selectedItemId) { oldItemId, newItemId in
+            .onChange(of: selectedItemId) { _, newItemId in
                 guard let newItemId else { return }
-                let oldIndex = indexForItem(oldItemId)
-                let newIndex = indexForItem(newItemId)
-                let shouldAnimate = {
-                    guard let oldIndex, let newIndex else { return true }
-                    return abs(newIndex - oldIndex) > 1
-                }()
-
-                if shouldAnimate {
-                    withAnimation(.easeInOut(duration: 0.2)) {
-                        proxy.scrollTo(newItemId, anchor: .center)
-                    }
-                } else {
-                    proxy.scrollTo(newItemId, anchor: .center)
-                }
+                proxy.scrollTo(newItemId, anchor: .center)
             }
         }
     }
