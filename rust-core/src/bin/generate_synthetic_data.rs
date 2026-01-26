@@ -2,6 +2,8 @@
 //!
 //! Rebuild of generate.mjs in Rust, utilizing the real ClipboardStore.
 //! Generates data directly into a SQLite database.
+//!
+//! Requires the `data-gen` feature to be enabled.
 
 use anyhow::{Context, Result};
 use chrono::Utc;
@@ -9,13 +11,15 @@ use clap::Parser;
 use clipkitty_core::ClipboardStore;
 use futures::StreamExt;
 use indicatif::{ProgressBar, ProgressStyle};
-use rand::Rng;
+use rand::{Rng, SeedableRng};
+use rand::rngs::StdRng;
 use schemars::JsonSchema;
 use serde::{Deserialize, Serialize};
 use serde_json::json;
 use std::fs;
 use std::path::PathBuf;
 use std::sync::Arc;
+use std::sync::atomic::{AtomicUsize, Ordering};
 use tokio::sync::Semaphore;
 
 #[derive(Parser, Debug)]
@@ -159,6 +163,26 @@ fn build_prompt(category: &CategoryInfo, length_tier: &str, count: usize) -> Str
     )
 }
 
+/// Generate a deterministic timestamp based on item index.
+/// Distribution: exponential decay - many recent items, very few old (up to 24 months).
+/// Uses seeded RNG for reproducibility.
+fn generate_timestamp(item_index: usize, now: i64) -> i64 {
+    const MAX_AGE_SECONDS: i64 = 24 * 30 * 24 * 60 * 60; // ~24 months
+    const SEED: u64 = 0xC11B0A8D;
+
+    // Create deterministic RNG from seed + item index
+    let mut rng = StdRng::seed_from_u64(SEED.wrapping_add(item_index as u64));
+
+    // Exponential distribution: -ln(U) / lambda
+    // lambda controls the decay rate - higher = more recent items
+    // With lambda = 4.0 / MAX_AGE, ~98% of items are in the first half of the range
+    let lambda = 4.0 / MAX_AGE_SECONDS as f64;
+    let u: f64 = rng.gen_range(0.0001..1.0); // Avoid ln(0)
+    let age_seconds = (-u.ln() / lambda).min(MAX_AGE_SECONDS as f64) as i64;
+
+    now - age_seconds
+}
+
 fn insert_demo_items(store: &ClipboardStore) -> Result<()> {
     let now = Utc::now().timestamp();
     let demo_items = vec![
@@ -182,7 +206,9 @@ fn insert_demo_items(store: &ClipboardStore) -> Result<()> {
 
     for (content, app, bundle, ts) in demo_items {
         if let Ok(id) = store.save_text(content.to_string(), Some(app.to_string()), Some(bundle.to_string())) {
-            let _ = store.set_timestamp(id, ts);
+            if id > 0 {
+                let _ = store.set_timestamp(id, ts);
+            }
         }
     }
     Ok(())
@@ -209,6 +235,8 @@ async fn main() -> Result<()> {
     let semaphore = Arc::new(Semaphore::new(args.concurrency));
     let api_key = Arc::new(args.api_key.or_else(|| std::env::var("GEMINI_API_KEY").ok()).context("Missing API Key")?);
     let taxonomy = Arc::new(taxonomy);
+    let item_counter = Arc::new(AtomicUsize::new(0));
+    let now = Utc::now().timestamp();
 
     let stream = futures::stream::unfold(0, |state| {
         if state >= target_total { return futures::future::ready(None); }
@@ -219,7 +247,15 @@ async fn main() -> Result<()> {
 
     stream
         .map(|(tier, batch_size)| {
-            let (sem, key, tax, st, bar) = (semaphore.clone(), api_key.clone(), taxonomy.clone(), store.clone(), pb.clone());
+            let (sem, key, tax, st, bar, counter) = (
+                semaphore.clone(),
+                api_key.clone(),
+                taxonomy.clone(),
+                store.clone(),
+                pb.clone(),
+                item_counter.clone(),
+            );
+            let now = now;
             tokio::spawn(async move {
                 let _permit = sem.acquire_owned().await.unwrap();
                 let category = pick_weighted(&tax.categories, |c| c.weight);
@@ -232,10 +268,9 @@ async fn main() -> Result<()> {
                             let app = pick_weighted(&valid_apps, |a| a.weight);
                             if let Ok(id) = st.save_text(content, Some(app.name.clone()), Some(app.bundle_id.clone())) {
                                 if id > 0 {
-                                    let now = Utc::now().timestamp();
-                                    let mut rng = rand::thread_rng();
-                                    let random_ts = now - rng.gen_range(0..180 * 24 * 60 * 60);
-                                    let _ = st.set_timestamp(id, random_ts);
+                                    let item_index = counter.fetch_add(1, Ordering::Relaxed);
+                                    let timestamp = generate_timestamp(item_index, now);
+                                    let _ = st.set_timestamp(id, timestamp);
                                     bar.inc(1);
                                     bar.set_message(format!("{} ({})", category.category_type, tier));
                                 }
