@@ -354,8 +354,21 @@ impl ClipboardStore {
             offset += BATCH_SIZE;
         }
 
-        // Sort by score descending
-        results.sort_by(|a, b| b.score.cmp(&a.score));
+        // Sort by blended score (fuzzy + recency)
+        let now = chrono::Utc::now().timestamp();
+        results.sort_by(|a, b| {
+            // Inline blended score calculation (same formula as search.rs)
+            let score = |m: &FuzzyMatch| -> f64 {
+                let fuzzy_norm = (m.score as f64).ln_1p() / (u32::MAX as f64).ln_1p();
+                let age_secs = (now - m.timestamp).max(0) as f64;
+                let half_life = 7.0 * 24.0 * 60.0 * 60.0; // 7 days
+                let recency = (-age_secs * 2.0_f64.ln() / half_life).exp();
+                0.8 * fuzzy_norm + 0.2 * recency
+            };
+            score(b)
+                .partial_cmp(&score(a))
+                .unwrap_or(std::cmp::Ordering::Equal)
+        });
         results.truncate(max_results);
 
         Ok(results)
