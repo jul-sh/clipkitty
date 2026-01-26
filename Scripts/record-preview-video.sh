@@ -54,6 +54,7 @@ echo ""
 # Clean up any previous marker files
 rm -f /tmp/clipkitty_demo_start.txt
 rm -f /tmp/clipkitty_demo_stop.txt
+rm -f /tmp/clipkitty_recording_started.txt
 
 echo "Starting UI test (will signal when ready)..."
 # Run the test in background - it will create a marker file when demo starts
@@ -82,22 +83,27 @@ if [ ! -f /tmp/clipkitty_demo_start.txt ]; then
 fi
 rm -f /tmp/clipkitty_demo_start.txt
 
-# Use macOS screencapture for recording
-echo "Using macOS screencapture for recording..."
-screencapture -v -D 1 "$RAW_VIDEO" &
+# Use macOS screencapture for recording (non-interactive with 35s timeout)
+echo "Using macOS screencapture for recording (35s max)..."
+# -V <seconds> records video for specified duration without requiring keyboard input
+screencapture -V 35 -D 1 "$RAW_VIDEO" &
 RECORD_PID=$!
-sleep 0.5
+sleep 1
+
+# Signal to the UI test that recording has started
+touch /tmp/clipkitty_recording_started.txt
 
 # Wait for the demo stop signal (written by UI test when demo finished)
 echo "Recording search demo..."
 STOP_WAIT_COUNT=0
-# Loop until stop file exists or test process dies or timeout (60s)
-while [ ! -f /tmp/clipkitty_demo_stop.txt ] && kill -0 $TEST_PID 2>/dev/null && [ $STOP_WAIT_COUNT -lt 120 ]; do
+# Loop until stop file exists or timeout (60s)
+# Note: Don't check TEST_PID - xcodebuild exits early, spawning test runner as subprocess
+while [ ! -f /tmp/clipkitty_demo_stop.txt ] && [ $STOP_WAIT_COUNT -lt 120 ]; do
     sleep 0.5
     STOP_WAIT_COUNT=$((STOP_WAIT_COUNT + 1))
 done
 
-# Stop recording immediately
+# Stop recording
 echo ""
 echo "Stopping recording..."
 kill -INT $RECORD_PID 2>/dev/null || true
