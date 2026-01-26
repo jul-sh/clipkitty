@@ -120,7 +120,7 @@ rm -f /tmp/clipkitty_demo_stop.txt
 wait $TEST_PID 2>/dev/null || true
 
 # Give screencapture a moment to flush the file
-sleep 2
+sleep 0.1
 wait $RECORD_PID 2>/dev/null || true
 
 # Check if recording was captured
