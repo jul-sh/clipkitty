@@ -300,10 +300,11 @@ impl ClipboardStore {
         }
 
         // Choose search strategy based on query length
+        // Pass original query to preserve trailing space for exact match boost
         let matches = if trimmed.len() < MIN_TRIGRAM_QUERY_LEN {
             self.search_streaming(trimmed)?
         } else {
-            self.search_engine.search(&self.indexer, trimmed)?
+            self.search_engine.search(&self.indexer, &query)?
         };
 
         let search_matches: Vec<SearchMatch> = matches
@@ -523,11 +524,12 @@ mod tests {
         let store = ClipboardStore::new_in_memory().unwrap();
 
         // Insert items with forced timestamp separation
-        let id1 = store.save_text("config file one".to_string(), None, None).unwrap();
+        // Use content with same prefix to get similar Tantivy scores
+        let id1 = store.save_text("config file A1".to_string(), None, None).unwrap();
         std::thread::sleep(std::time::Duration::from_millis(1100));
-        let id2 = store.save_text("config file two".to_string(), None, None).unwrap();
+        let id2 = store.save_text("config file B2".to_string(), None, None).unwrap();
         std::thread::sleep(std::time::Duration::from_millis(1100));
-        let id3 = store.save_text("config file three".to_string(), None, None).unwrap();
+        let id3 = store.save_text("config file C3".to_string(), None, None).unwrap();
 
         // 1. Verify database timestamps are in correct order (most recent first)
         let db_items = store.fetch_items(None, 10).unwrap();

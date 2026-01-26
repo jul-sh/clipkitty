@@ -1,10 +1,10 @@
 //! Two-Layer Search Engine
 //!
 //! Layer 1 (Retrieval): Tantivy trigram index narrows down to ~5k candidates
-//! Layer 2 (Precision): Nucleo re-ranks and generates character indices for highlighting
+//! Layer 2 (Precision): For 3+ char queries, uses trigram overlap scoring (typo-tolerant).
+//!                      For <3 char queries, uses Nucleo subsequence matching.
 //!
-//! Final ranking blends Nucleo's fuzzy score with recency, trusting Nucleo to naturally
-//! boost exact/contiguous matches while giving recent items a slight edge.
+//! Final ranking blends fuzzy score with recency, giving recent items a slight edge.
 
 use crate::indexer::{Indexer, IndexerResult, SearchCandidate};
 use crate::models::HighlightRange;
@@ -20,9 +20,6 @@ pub const MIN_TRIGRAM_QUERY_LEN: usize = 3;
 
 /// Minimum Nucleo score for short query matches (stricter to filter poor matches)
 const MIN_SCORE_SHORT_QUERY: u32 = 0;
-
-/// Minimum Nucleo score for trigram-backed matches (looser since pre-filtered)
-const MIN_SCORE_TRIGRAM: u32 = 0;
 
 /// Maximum recency boost multiplier (e.g., 0.1 = up to 10% boost for brand new items)
 const RECENCY_BOOST_MAX: f64 = 0.1;
@@ -53,12 +50,16 @@ impl SearchEngine {
 
     /// Perform two-layer search:
     /// 1. Get candidates from Tantivy (trigram retrieval)
-    /// 2. Re-rank with Nucleo matcher and extract character indices
+    /// 2. For 3+ char queries: score by trigram overlap (typo-tolerant)
+    ///    For <3 char queries: use Nucleo subsequence matching
     pub fn search(&self, indexer: &Indexer, query: &str) -> IndexerResult<Vec<FuzzyMatch>> {
         let trimmed = query.trim();
         if trimmed.is_empty() {
             return Ok(Vec::new());
         }
+
+        // Preserve trailing space for exact match boost
+        let has_trailing_space = query.ends_with(' ');
 
         // Layer 1: Get candidates from Tantivy
         let candidates = indexer.search(query)?;
@@ -67,10 +68,16 @@ impl SearchEngine {
             return Ok(Vec::new());
         }
 
-        // Layer 2: Fuzzy re-rank and extract indices
-        let mut matches = self.fuzzy_rerank(candidates, trimmed);
+        // Layer 2: Score and extract indices
+        // For 3+ char queries, use trigram overlap scoring (typo-tolerant)
+        // For shorter queries, use Nucleo subsequence matching
+        let mut matches = if trimmed.chars().count() >= MIN_TRIGRAM_QUERY_LEN {
+            self.trigram_rerank(candidates, trimmed, has_trailing_space)
+        } else {
+            self.fuzzy_rerank(candidates, trimmed, has_trailing_space)
+        };
 
-        // Sort by blended score: Nucleo fuzzy score + recency boost
+        // Sort by blended score: fuzzy score + recency boost
         let now = Utc::now().timestamp();
         matches.sort_by(|a, b| {
             let score_a = blended_score(a.score, a.timestamp, now);
@@ -87,17 +94,23 @@ impl SearchEngine {
     }
 
     /// Re-rank candidates using Nucleo fuzzy matching and extract character indices
-    fn fuzzy_rerank(&self, candidates: Vec<SearchCandidate>, query: &str) -> Vec<FuzzyMatch> {
+    /// Used for short queries (<3 chars) where trigram matching isn't available
+    fn fuzzy_rerank(
+        &self,
+        candidates: Vec<SearchCandidate>,
+        query: &str,
+        has_trailing_space: bool,
+    ) -> Vec<FuzzyMatch> {
         let mut matches = Vec::with_capacity(candidates.len());
         let mut matcher = Matcher::new(self.config.clone());
 
         // Parse the query pattern (case-insensitive, unicode normalized)
         let pattern = Pattern::parse(query, CaseMatching::Ignore, Normalization::Smart);
 
-        // For exact substring boost: only compute if query has trailing space
+        // For exact substring boost: check if original query had trailing space
         // (Pattern::parse ignores trailing spaces, so we boost exact matches manually)
-        let trailing_space_query = if query.ends_with(' ') {
-            Some(query.to_lowercase())
+        let trailing_space_query = if has_trailing_space {
+            Some(format!("{} ", query.to_lowercase()))
         } else {
             None
         };
@@ -132,6 +145,87 @@ impl SearchEngine {
         matches
     }
 
+    /// Hybrid scoring: Tantivy for retrieval (typo tolerant) + Nucleo for scoring (contiguity bonuses)
+    /// Falls back to Tantivy score when Nucleo doesn't match (typo cases)
+    fn trigram_rerank(
+        &self,
+        candidates: Vec<SearchCandidate>,
+        query: &str,
+        has_trailing_space: bool,
+    ) -> Vec<FuzzyMatch> {
+        let mut matches = Vec::with_capacity(candidates.len());
+        let mut matcher = Matcher::new(self.config.clone());
+
+        // Parse query for Nucleo matching
+        let pattern = Pattern::parse(query, CaseMatching::Ignore, Normalization::Smart);
+
+        // For exact match check with trailing space
+        let exact_match_query = if has_trailing_space {
+            format!("{} ", query.to_lowercase())
+        } else {
+            query.to_lowercase()
+        };
+
+        for candidate in candidates {
+            let mut haystack_buf = Vec::new();
+            let haystack = Utf32Str::new(&candidate.content, &mut haystack_buf);
+            let mut indices = Vec::new();
+
+            // Try Nucleo scoring first - gives us contiguity/order bonuses for free
+            let score = if let Some(nucleo_score) = pattern.indices(haystack, &mut matcher, &mut indices) {
+                // Nucleo matched: use its score (includes contiguity bonuses)
+                let mut score = nucleo_score;
+
+                // Apply exact substring bonus for trailing space queries
+                if has_trailing_space {
+                    let content_lower = candidate.content.to_lowercase();
+                    if content_lower.contains(&exact_match_query) {
+                        score = (score as f64 * 1.5) as u32;
+                    }
+                }
+
+                score
+            } else {
+                // Nucleo didn't match (typo case) - fall back to Tantivy score
+                // Use trigram-based highlighting instead
+                indices.clear();
+                let content_lower = candidate.content.to_lowercase();
+                let query_lower = query.to_lowercase();
+                let query_chars: Vec<char> = query_lower.chars().collect();
+
+                // Generate trigrams and find positions
+                for i in 0..query_chars.len().saturating_sub(2) {
+                    let trigram: String = query_chars[i..i + 3].iter().collect();
+                    let mut start = 0;
+                    while let Some(pos) = content_lower[start..].find(&trigram) {
+                        let abs_pos = start + pos;
+                        for offset in 0..3 {
+                            let idx = (abs_pos + offset) as u32;
+                            if !indices.contains(&idx) {
+                                indices.push(idx);
+                            }
+                        }
+                        start = abs_pos + 1;
+                    }
+                }
+                indices.sort();
+
+                // Scale Tantivy score to be comparable with Nucleo scores
+                // Nucleo scores are typically in the hundreds, Tantivy in 0-10 range
+                (candidate.tantivy_score * 50.0) as u32
+            };
+
+            matches.push(FuzzyMatch {
+                id: candidate.id,
+                score,
+                matched_indices: indices,
+                timestamp: candidate.timestamp,
+            });
+        }
+
+        matches
+    }
+
     /// Filter a batch of candidates directly with Nucleo (for streaming search)
     /// Adds matches to the provided results vector, returns number of matches found
     /// For short queries, requires minimum score to filter out poor matches
@@ -154,12 +248,8 @@ impl SearchEngine {
             None
         };
 
-        // Minimum score threshold (stricter for short queries to filter scattered matches)
-        let min_score = if query.chars().count() < MIN_TRIGRAM_QUERY_LEN {
-            MIN_SCORE_SHORT_QUERY
-        } else {
-            MIN_SCORE_TRIGRAM
-        };
+        // Minimum score threshold for short queries
+        let min_score = MIN_SCORE_SHORT_QUERY;
 
         for (id, content, timestamp) in candidates {
             if results.len() >= max_results {
@@ -334,13 +424,15 @@ mod ranking_tests {
             id,
             content: content.to_string(),
             timestamp: now - (days_ago * DAY),
+            tantivy_score: 1.0, // Default score for tests
         }
     }
 
     /// Run search and return ordered IDs
     fn search_order(candidates: Vec<SearchCandidate>, query: &str) -> Vec<i64> {
         let engine = SearchEngine::new();
-        let mut matches = engine.fuzzy_rerank(candidates, query);
+        let has_trailing_space = query.ends_with(' ');
+        let mut matches = engine.fuzzy_rerank(candidates, query.trim(), has_trailing_space);
 
         let now = 1700000000i64;
         matches.sort_by(|a, b| {
@@ -374,7 +466,8 @@ mod ranking_tests {
     /// Get Nucleo scores for analysis
     fn get_scores(candidates: Vec<SearchCandidate>, query: &str) -> Vec<(i64, u32, String)> {
         let engine = SearchEngine::new();
-        let matches = engine.fuzzy_rerank(candidates, query);
+        let has_trailing_space = query.ends_with(' ');
+        let matches = engine.fuzzy_rerank(candidates, query.trim(), has_trailing_space);
         matches
             .into_iter()
             .map(|m| (m.id, m.score, format!("{:?}", m.matched_indices)))
@@ -810,5 +903,97 @@ mod ranking_tests {
             "Boost should be ~20%: ratio was {}",
             ratio
         );
+    }
+}
+
+#[cfg(test)]
+mod perf_tests {
+    use super::*;
+    use crate::indexer::Indexer;
+    use std::time::Instant;
+
+    fn run_benchmark(doc_count: usize) {
+        let indexer = Indexer::new_in_memory().unwrap();
+        let engine = SearchEngine::new();
+
+        let contents = vec![
+            "Hello world this is a test document",
+            "The quick brown fox jumps over the lazy dog",
+            "Rust programming language is fast and safe",
+            "ClipKitty clipboard manager for macOS",
+            "SELECT * FROM users WHERE id = 123",
+            "https://github.com/example/repository",
+            "Error: Connection refused at localhost:8080",
+            "def hello(name): return f'Hello {name}'",
+            "The riverside apartment has a great view",
+            "Configuration file settings and options",
+        ];
+
+        let now = chrono::Utc::now().timestamp();
+        for i in 0..doc_count {
+            let content = format!("{} - item number {}", contents[i % contents.len()], i);
+            indexer.add_document(i as i64, &content, now - i as i64).unwrap();
+        }
+        indexer.commit().unwrap();
+
+        println!("\n=== Benchmark: {} documents ===", doc_count);
+
+        let queries = vec![
+            ("hello", "hello"),
+            ("riverside", "riverside"),
+            ("typo", "rivreside"),
+            ("phrase", "hello world"),
+        ];
+
+        for (name, query) in queries {
+            let _ = engine.search(&indexer, query); // warm up
+
+            // Measure just ID lookup (no content loading)
+            let start = Instant::now();
+            let id_count = indexer.search_ids_only(query).unwrap_or(0);
+            let ids_only_time = start.elapsed();
+
+            // Measure with content loading
+            let start = Instant::now();
+            let candidates = indexer.search(query).unwrap();
+            let with_content_time = start.elapsed();
+
+            let start = Instant::now();
+            let results = engine.search(&indexer, query).unwrap();
+            let total_time = start.elapsed();
+
+            let rerank_time = total_time.saturating_sub(with_content_time);
+
+            println!(
+                "{:12} | cand: {:5} | ids: {:>6.2}ms | +content: {:>6.2}ms | rerank: {:>6.2}ms | total: {:>7.2}ms",
+                name,
+                candidates.len(),
+                ids_only_time.as_secs_f64() * 1000.0,
+                with_content_time.as_secs_f64() * 1000.0,
+                rerank_time.as_secs_f64() * 1000.0,
+                total_time.as_secs_f64() * 1000.0,
+            );
+        }
+    }
+
+    #[test]
+    fn benchmark_5k() {
+        run_benchmark(5_000);
+    }
+
+    #[test]
+    fn benchmark_50k() {
+        run_benchmark(50_000);
+    }
+
+    #[test]
+    fn benchmark_500k() {
+        run_benchmark(500_000);
+    }
+
+    #[test]
+    #[ignore] // Run with: cargo test benchmark_5m --release -- --ignored --nocapture
+    fn benchmark_5m() {
+        run_benchmark(5_000_000);
     }
 }

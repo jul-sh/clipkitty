@@ -32,6 +32,8 @@ pub struct SearchCandidate {
     pub id: i64,
     pub content: String,
     pub timestamp: i64,
+    /// Tantivy's BM25-style relevance score
+    pub tantivy_score: f32,
 }
 
 /// Tantivy-based indexer with trigram tokenization
@@ -207,7 +209,7 @@ impl Indexer {
 
         let mut candidates = Vec::with_capacity(top_docs.len());
 
-        for (_score, doc_address) in top_docs {
+        for (score, doc_address) in top_docs {
             let doc: tantivy::TantivyDocument = searcher.doc(doc_address)?;
 
             let id = doc
@@ -230,10 +232,41 @@ impl Indexer {
                 id,
                 content,
                 timestamp,
+                tantivy_score: score,
             });
         }
 
         Ok(candidates)
+    }
+
+    /// Search returning only count (for benchmarking query speed without content loading)
+    pub fn search_ids_only(&self, query: &str) -> IndexerResult<usize> {
+        let reader = self.reader.read();
+        let searcher = reader.searcher();
+
+        let mut tokenizer = self.index.tokenizers().get("trigram").unwrap();
+        let mut token_stream = tokenizer.token_stream(query);
+        let mut terms = Vec::new();
+        while let Some(token) = token_stream.next() {
+            terms.push(Term::from_field_text(self.content_field, &token.text));
+        }
+
+        if terms.is_empty() {
+            return Ok(0);
+        }
+
+        let subqueries: Vec<_> = terms
+            .into_iter()
+            .map(|term| {
+                let q: Box<dyn tantivy::query::Query> =
+                    Box::new(TermQuery::new(term, IndexRecordOption::WithFreqs));
+                (Occur::Should, q)
+            })
+            .collect();
+        let tantivy_query = BooleanQuery::new(subqueries);
+
+        let top_docs = searcher.search(&tantivy_query, &TopDocs::with_limit(5000))?;
+        Ok(top_docs.len())
     }
 
     /// Clear all documents from the index
