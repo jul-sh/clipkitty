@@ -728,4 +728,25 @@ mod ranking_tests {
         let order = search_order(candidates, "url");
         assert_before(&order, 1, 2, "urlParser should beat curl for 'url' query");
     }
+
+    #[test]
+    fn regression_hello_space_recent_short_beats_old_long() {
+        // Reported: searching "hello " ranks old code snippet above recent simple match
+        // Recent "Hello and welcome..." should beat old code snippet
+        let candidates = vec![
+            candidate(1, "def hello(name: str) -> str: return f'Hello, {name}!'", 90), // 3 months old
+            candidate(2, "Hello and welcome to the onboarding flow for new team members...", 2), // 2 days old
+        ];
+
+        let scores = get_scores(candidates.clone(), "hello ");
+        println!("Scores for regression_hello_space_recent_short_beats_old_long: {:?}", scores);
+
+        let order = search_order(candidates, "hello ");
+        assert_before(
+            &order,
+            2,
+            1,
+            "Recent 'Hello and welcome...' should beat old code snippet for 'hello ' query",
+        );
+    }
 }

@@ -448,4 +448,68 @@ mod tests {
         assert_eq!(store.fetch_items(None, 10).unwrap().items.len(), 0);
     }
 
+    #[test]
+    fn test_search_ranking_recent_vs_old() {
+        // Integration test for the full search flow through Tantivy
+        // Tests that recent items with equal fuzzy scores beat old items
+        let store = ClipboardStore::new_in_memory().unwrap();
+
+        // Insert old item first (will have earlier timestamp)
+        let id1 = store
+            .save_text(
+                "def hello(name: str) -> str: return f'Hello, {name}!'".to_string(),
+                None,
+                None,
+            )
+            .unwrap();
+
+        // Sleep to ensure different timestamps (timestamps are in seconds, need >1s)
+        std::thread::sleep(std::time::Duration::from_millis(1100));
+
+        // Insert recent item
+        let id2 = store
+            .save_text(
+                "Hello and welcome to the onboarding flow for new team members...".to_string(),
+                None,
+                None,
+            )
+            .unwrap();
+
+        // Debug: fetch items to see their timestamps
+        let items = store.fetch_items(None, 10).unwrap();
+        println!("Items in store:");
+        for item in &items.items {
+            println!("  id={}, ts={}, content={:.50}",
+                item.id.unwrap_or(-1),
+                item.timestamp_unix,
+                item.text_content());
+        }
+
+        // Debug: check what Tantivy returns
+        let candidates = store.indexer.search("hello ").unwrap();
+        println!("Tantivy candidates:");
+        for c in &candidates {
+            println!("  id={}, ts={}, content={:.50}", c.id, c.timestamp, c.content);
+        }
+
+        // Search for "hello "
+        let result = store.search("hello ".to_string()).unwrap();
+
+        println!("Search results for 'hello ':");
+        for (i, m) in result.matches.iter().enumerate() {
+            println!("  {}: id={}", i, m.item_id);
+        }
+
+        assert_eq!(result.matches.len(), 2, "Should find both items");
+        assert_eq!(
+            result.matches[0].item_id, id2,
+            "Recent 'Hello and welcome...' (id={}) should be first, but got id={}",
+            id2, result.matches[0].item_id
+        );
+        assert_eq!(
+            result.matches[1].item_id, id1,
+            "Old code snippet (id={}) should be second",
+            id1
+        );
+    }
 }
