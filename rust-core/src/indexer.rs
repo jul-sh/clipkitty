@@ -32,6 +32,8 @@ pub struct SearchCandidate {
     pub id: i64,
     pub content: String,
     pub timestamp: i64,
+    /// Tantivy BM25 score - used for fallback ranking when Nucleo doesn't match
+    pub tantivy_score: f32,
 }
 
 /// Tantivy-based indexer with trigram tokenization
@@ -207,7 +209,7 @@ impl Indexer {
 
         let mut candidates = Vec::with_capacity(top_docs.len());
 
-        for (_score, doc_address) in top_docs {
+        for (tantivy_score, doc_address) in top_docs {
             let doc: tantivy::TantivyDocument = searcher.doc(doc_address)?;
 
             let id = doc
@@ -226,7 +228,12 @@ impl Indexer {
                 .and_then(|v| v.as_i64())
                 .unwrap_or(0);
 
-            candidates.push(SearchCandidate { id, content, timestamp });
+            candidates.push(SearchCandidate {
+                id,
+                content,
+                timestamp,
+                tantivy_score,
+            });
         }
 
         Ok(candidates)

@@ -309,9 +309,9 @@ impl ClipboardStore {
         let search_matches: Vec<SearchMatch> = matches
             .into_iter()
             .map(|m| {
-                let highlights = SearchEngine::indices_to_ranges(&m.matched_indices);
+                let highlights = SearchEngine::indices_to_ranges(m.matched_indices());
                 SearchMatch {
-                    item_id: m.id,
+                    item_id: m.id(),
                     highlights,
                 }
             })
@@ -358,15 +358,15 @@ impl ClipboardStore {
         let now = chrono::Utc::now().timestamp();
         results.sort_by(|a, b| {
             // Inline blended score calculation (same formula as search.rs)
-            let score = |m: &FuzzyMatch| -> f64 {
-                let base_score = m.score as f64;
-                let age_secs = (now - m.timestamp).max(0) as f64;
+            let calc_score = |m: &FuzzyMatch| -> f64 {
+                let base_score = m.score() as f64;
+                let age_secs = (now - m.timestamp()).max(0) as f64;
                 let half_life = 7.0 * 24.0 * 60.0 * 60.0; // 7 days
                 let recency_factor = (-age_secs * 2.0_f64.ln() / half_life).exp();
                 base_score * (1.0 + 0.1 * recency_factor) // 10% max boost
             };
-            score(b)
-                .partial_cmp(&score(a))
+            calc_score(b)
+                .partial_cmp(&calc_score(a))
                 .unwrap_or(std::cmp::Ordering::Equal)
         });
         results.truncate(max_results);
