@@ -336,10 +336,15 @@ final class ClipKittyUITests: XCTestCase {
     /// Run with: make preview-video
     /// This test types slowly to create a visually appealing demo.
     ///
+    /// NOTE: Relies entirely on demo items in SyntheticData.sqlite (generated with --demo flag)
+    ///
     /// Script timing (20 seconds total):
     /// Scene 1 (0:00-0:08): Meta pitch - fuzzy search refinement "hello" -> "hello clip"
+    ///   - Matches: Hello ClipKitty, hello_world.py, sayHello, Hello and welcome...
     /// Scene 2 (0:08-0:14): Color swatches "#" -> "#f", then image "cat"
+    ///   - Matches: #7C3AED, #FF5733, #2DD4BF, #F472B6, Orange tabby cat...
     /// Scene 3 (0:14-0:20): Typo forgiveness "rivresid" finds "Riverside", loop back to empty
+    ///   - Matches: Apartment walkthrough...437 Riverside Dr...
     func testRecordSearchDemo() throws {
         let searchField = app.textFields.firstMatch
         XCTAssertTrue(searchField.waitForExistence(timeout: 5), "Search field not found")
@@ -471,6 +476,7 @@ final class ClipKittyUITests: XCTestCase {
 
     /// Captures multiple screenshot states for marketing materials.
     /// Run with: make marketing-screenshots
+    /// NOTE: Relies entirely on demo items in SyntheticData.sqlite (generated with --demo flag)
     func testTakeMarketingScreenshots() throws {
         let searchField = app.textFields.firstMatch
         XCTAssertTrue(searchField.waitForExistence(timeout: 5), "Search field not found")
@@ -479,15 +485,15 @@ final class ClipKittyUITests: XCTestCase {
         Thread.sleep(forTimeInterval: 1.0)
         saveScreenshot(name: "marketing_1_history")
 
-        // Screenshot 2: Fuzzy search in action
+        // Screenshot 2: Fuzzy search in action (matches demo items: Hello ClipKitty, hello_world.py, sayHello, etc.)
         searchField.click()
-        searchField.typeText("meeting")
+        searchField.typeText("hello")
         Thread.sleep(forTimeInterval: 0.5)
         saveScreenshot(name: "marketing_2_search")
 
-        // Screenshot 3: Different search showing variety
+        // Screenshot 3: Color swatch search showing preview (matches demo items: #7C3AED, #FF5733, etc.)
         searchField.typeKey("a", modifierFlags: .command)
-        searchField.typeText("http")
+        searchField.typeText("#")
         Thread.sleep(forTimeInterval: 0.5)
         // Navigate to show selection
         searchField.typeText(XCUIKeyboardKey.downArrow.rawValue)

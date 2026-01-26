@@ -217,17 +217,26 @@ list-identities:
 # Prerequisites:
 #   1. ImageMagick (full): brew install imagemagick-full (required for font rendering)
 #   2. ffmpeg: brew install ffmpeg
+#   3. Synthetic data with demo items: make synthetic-data
 #
 # Configuration
 BACKGROUND_IMAGE := /System/Library/Desktop Pictures/Solid Colors/Silver.png
 #
 # Usage:
+#   make synthetic-data           # Generate synthetic data with demo items
 #   make marketing-screenshots    # Generate App Store screenshots with captions
 #   make preview-video            # Record App Store preview video
 #   make marketing                # Generate all marketing assets
 # ============================================================================
 
-.PHONY: marketing marketing-screenshots marketing-screenshots-capture preview-video print-background-image
+# Generate synthetic data with demo items for UI tests and marketing
+# Requires GEMINI_API_KEY environment variable for AI-generated content
+synthetic-data:
+	@echo "Generating synthetic data with demo items..."
+	@$(NIX_SHELL) "cd rust-core && cargo run --release --features data-gen --bin generate_synthetic_data -- --demo --db-path ../Sources/App/SyntheticData.sqlite"
+	@echo "Synthetic data generated at Sources/App/SyntheticData.sqlite"
+
+.PHONY: marketing marketing-screenshots marketing-screenshots-capture preview-video print-background-image synthetic-data
 
 # Print background image path (used by CI/scripts)
 print-background-image:
