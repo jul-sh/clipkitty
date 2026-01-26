@@ -233,9 +233,9 @@ BACKGROUND_IMAGE := /System/Library/Desktop Pictures/Solid Colors/Silver.png
 print-background-image:
 	@echo $(BACKGROUND_IMAGE)
 
-# Capture raw marketing screenshots via UI test (with clean environment, uses non-sandboxed)
+# Capture raw marketing screenshots via UI test (with clean environment, uses sandboxed)
 marketing-screenshots-capture:
-	@$(MAKE) sign SANDBOX=false
+	@$(MAKE) sign SANDBOX=true
 	@$(MAKE) ClipKitty.xcodeproj
 	@echo "Capturing marketing screenshots..."
 	@rm -rf DerivedData
@@ -251,9 +251,9 @@ marketing-screenshots-process:
 marketing-screenshots: marketing-screenshots-capture marketing-screenshots-process
 	@echo "Marketing screenshots complete! See marketing/ directory"
 
-# Record App Store preview video (uses non-sandboxed for UI testing)
+# Record App Store preview video (uses sandboxed)
 preview-video:
-	@$(MAKE) sign SANDBOX=false
+	@$(MAKE) sign SANDBOX=true
 	@$(MAKE) ClipKitty.xcodeproj
 	@echo "Recording preview video..."
 	@./Scripts/record-preview-video.sh
