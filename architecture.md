@@ -125,7 +125,7 @@ Clipboard change detected
 │                                                             │
 │ - Trigram tokenization (3-grams)                            │
 │ - Fast narrowing: millions → ~5000 candidates               │
-│ - Returns BM25 score + timestamp for each candidate         │
+│ - Returns id, content, timestamp for each candidate         │
 └─────────────────────────────────────────────────────────────┘
                            │
                            ▼
@@ -135,25 +135,20 @@ Clipboard change detected
 │ - Fuzzy scoring with matched character indices              │
 │ - Re-ranks candidates by match quality                      │
 │ - Returns indices for highlight rendering                   │
-│                                                             │
-│ Matched items: FuzzyMatch::Matched { score, indices, ... }  │
-│ Typo fallback: FuzzyMatch::Fallback { id, timestamp }       │
+│ - Typos with MISSING letters work (subsequence matching)    │
+│   e.g., "helo" matches "hello" (h-e-l-o is a subsequence)   │
 └─────────────────────────────────────────────────────────────┘
                            │
                            ▼
 ┌─────────────────────────────────────────────────────────────┐
 │ Ranking                                                     │
 │                                                             │
-│ Nucleo matches: score * (1 + 0.1 * recency_factor)          │
+│ Final score: nucleo_score * (1 + 0.1 * recency_factor)      │
 │ - Multiplicative boost preserves quality ordering           │
 │ - Recency: exponential decay with 7-day half-life           │
 │ - Max 10% boost for brand-new items                         │
-│                                                             │
-│ Fallback matches (typo tolerance):                          │
-│ - Tantivy matched but Nucleo couldn't (missing chars)       │
-│ - Sorted by recency, appended after Nucleo matches          │
-│ - No highlighting (indices unavailable)                     │
-│ - Capped at 50 results                                      │
+│ - Exact matches always beat fuzzy (Nucleo gives them higher │
+│   scores), regardless of recency                            │
 └─────────────────────────────────────────────────────────────┘
 ```
 
@@ -230,9 +225,8 @@ Manual extensions (must sync with .udl):
 
 | Rust Type | Description |
 |-----------|-------------|
-| `SearchCandidate` | Tantivy result with id, content, timestamp, tantivy_score |
-| `FuzzyMatch::Matched` | Nucleo match with score and highlight indices |
-| `FuzzyMatch::Fallback` | Typo tolerance fallback (no highlighting) |
+| `SearchCandidate` | Tantivy result with id, content, timestamp |
+| `FuzzyMatch` | Nucleo match with id, score, matched_indices, timestamp |
 
 ## Performance Characteristics
 
