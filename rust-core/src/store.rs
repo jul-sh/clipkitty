@@ -161,11 +161,22 @@ impl ClipboardStore {
         source_app: Option<String>,
         source_app_bundle_id: Option<String>,
     ) -> Result<i64, ClipKittyError> {
+        self.save_image_with_description(image_data, "Image".to_string(), source_app, source_app_bundle_id)
+    }
+
+    /// Save an image item with a custom description (for searchability)
+    pub fn save_image_with_description(
+        &self,
+        image_data: Vec<u8>,
+        description: String,
+        source_app: Option<String>,
+        source_app_bundle_id: Option<String>,
+    ) -> Result<i64, ClipKittyError> {
         if image_data.is_empty() {
             return Err(ClipKittyError::InvalidInput("Empty image data".into()));
         }
 
-        let item = ClipboardItem::new_image(image_data, source_app, source_app_bundle_id);
+        let item = ClipboardItem::new_image_with_description(image_data, description, source_app, source_app_bundle_id);
         let id = self.db.insert_item(&item)?;
 
         // Index with description (images can be searched by their description)

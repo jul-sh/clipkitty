@@ -224,7 +224,16 @@ impl ClipboardItem {
         source_app: Option<String>,
         source_app_bundle_id: Option<String>,
     ) -> Self {
-        let description = "Image".to_string();
+        Self::new_image_with_description(image_data, "Image".to_string(), source_app, source_app_bundle_id)
+    }
+
+    /// Create an image item with a custom description (for searchability)
+    pub fn new_image_with_description(
+        image_data: Vec<u8>,
+        description: String,
+        source_app: Option<String>,
+        source_app_bundle_id: Option<String>,
+    ) -> Self {
         let hash_input = format!("{}{}", description, image_data.len());
         let content_hash = Self::hash_string(&hash_input);
         Self {
