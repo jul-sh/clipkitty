@@ -512,4 +512,59 @@ mod tests {
             id1
         );
     }
+
+    #[test]
+    fn test_timestamps_stored_and_used_in_search() {
+        // Comprehensive test verifying timestamps flow correctly through the system:
+        // 1. Database stores correct timestamps
+        // 2. Tantivy index stores correct timestamps
+        // 3. Timestamps match between database and index
+        // 4. Recency boost affects search ranking
+        let store = ClipboardStore::new_in_memory().unwrap();
+
+        // Insert items with forced timestamp separation
+        let id1 = store.save_text("config file one".to_string(), None, None).unwrap();
+        std::thread::sleep(std::time::Duration::from_millis(1100));
+        let id2 = store.save_text("config file two".to_string(), None, None).unwrap();
+        std::thread::sleep(std::time::Duration::from_millis(1100));
+        let id3 = store.save_text("config file three".to_string(), None, None).unwrap();
+
+        // 1. Verify database timestamps are in correct order (most recent first)
+        let db_items = store.fetch_items(None, 10).unwrap();
+        assert_eq!(db_items.items.len(), 3);
+        let db_ts: Vec<(i64, i64)> = db_items.items.iter()
+            .map(|i| (i.id.unwrap(), i.timestamp_unix))
+            .collect();
+
+        // Most recent (id3) should have highest timestamp
+        assert!(db_ts[0].0 == id3, "Most recent item should be first in fetch");
+        assert!(db_ts[0].1 > db_ts[1].1, "id3 timestamp should be > id2 timestamp");
+        assert!(db_ts[1].1 > db_ts[2].1, "id2 timestamp should be > id1 timestamp");
+
+        // 2. Verify Tantivy index timestamps match database
+        let candidates = store.indexer.search("config").unwrap();
+        assert_eq!(candidates.len(), 3, "Tantivy should find all 3 items");
+
+        for candidate in &candidates {
+            let db_item = db_items.items.iter()
+                .find(|i| i.id == Some(candidate.id))
+                .expect("Candidate should exist in database");
+
+            assert_eq!(
+                candidate.timestamp, db_item.timestamp_unix,
+                "Tantivy timestamp for id={} should match database: index={} vs db={}",
+                candidate.id, candidate.timestamp, db_item.timestamp_unix
+            );
+            assert!(candidate.timestamp > 0, "Timestamp should not be 0 for id={}", candidate.id);
+        }
+
+        // 3. Verify search results respect recency (most recent first for equal scores)
+        let result = store.search("config file".to_string()).unwrap();
+        assert_eq!(result.matches.len(), 3);
+
+        // All have same base fuzzy score, so recency should determine order
+        assert_eq!(result.matches[0].item_id, id3, "Most recent (id3) should be first");
+        assert_eq!(result.matches[1].item_id, id2, "Middle (id2) should be second");
+        assert_eq!(result.matches[2].item_id, id1, "Oldest (id1) should be third");
+    }
 }
