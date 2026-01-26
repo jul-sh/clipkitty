@@ -30,13 +30,60 @@ const RECENCY_BOOST_MAX: f64 = 0.1;
 /// Half-life for recency decay in seconds (7 days)
 const RECENCY_HALF_LIFE_SECS: f64 = 7.0 * 24.0 * 60.0 * 60.0;
 
-/// A match result with fuzzy score and highlight indices
+/// Minimum Tantivy score to keep as fallback (typo tolerance)
+/// Candidates below this threshold are discarded if Nucleo doesn't match
+const MIN_TANTIVY_FALLBACK_SCORE: f32 = 5.0;
+
+/// Maximum fallback results to include (typo tolerance shouldn't dominate)
+const MAX_FALLBACK_RESULTS: usize = 50;
+
+/// A match result from the search engine
 #[derive(Debug, Clone)]
-pub struct FuzzyMatch {
-    pub id: i64,
-    pub score: u32,
-    pub matched_indices: Vec<u32>,
-    pub timestamp: i64,
+pub enum FuzzyMatch {
+    /// Nucleo matched - has score and character indices for highlighting
+    Matched {
+        id: i64,
+        score: u32,
+        matched_indices: Vec<u32>,
+        timestamp: i64,
+    },
+    /// Tantivy matched but Nucleo didn't (typo tolerance)
+    /// No highlighting available, ranks below Matched results
+    Fallback { id: i64, timestamp: i64 },
+}
+
+impl FuzzyMatch {
+    pub fn id(&self) -> i64 {
+        match self {
+            FuzzyMatch::Matched { id, .. } => *id,
+            FuzzyMatch::Fallback { id, .. } => *id,
+        }
+    }
+
+    pub fn timestamp(&self) -> i64 {
+        match self {
+            FuzzyMatch::Matched { timestamp, .. } => *timestamp,
+            FuzzyMatch::Fallback { timestamp, .. } => *timestamp,
+        }
+    }
+
+    pub fn score(&self) -> u32 {
+        match self {
+            FuzzyMatch::Matched { score, .. } => *score,
+            FuzzyMatch::Fallback { .. } => 0,
+        }
+    }
+
+    pub fn matched_indices(&self) -> &[u32] {
+        match self {
+            FuzzyMatch::Matched { matched_indices, .. } => matched_indices,
+            FuzzyMatch::Fallback { .. } => &[],
+        }
+    }
+
+    pub fn is_fallback(&self) -> bool {
+        matches!(self, FuzzyMatch::Fallback { .. })
+    }
 }
 
 /// Two-layer search engine using Nucleo for fast fuzzy matching
@@ -54,6 +101,7 @@ impl SearchEngine {
     /// Perform two-layer search:
     /// 1. Get candidates from Tantivy (trigram retrieval)
     /// 2. Re-rank with Nucleo matcher and extract character indices
+    /// 3. Include high-scoring Tantivy candidates as fallback (typo tolerance)
     pub fn search(&self, indexer: &Indexer, query: &str) -> IndexerResult<Vec<FuzzyMatch>> {
         let trimmed = query.trim();
         if trimmed.is_empty() {
@@ -68,27 +116,39 @@ impl SearchEngine {
         }
 
         // Layer 2: Fuzzy re-rank and extract indices
-        let mut matches = self.fuzzy_rerank(candidates, trimmed);
+        let (mut matches, mut fallbacks) = self.fuzzy_rerank_with_fallback(candidates, trimmed);
 
-        // Sort by blended score: Nucleo fuzzy score + recency boost
+        // Sort Nucleo matches by blended score
         let now = Utc::now().timestamp();
         matches.sort_by(|a, b| {
-            let score_a = blended_score(a.score, a.timestamp, now);
-            let score_b = blended_score(b.score, b.timestamp, now);
+            let score_a = blended_score(a.score(), a.timestamp(), now);
+            let score_b = blended_score(b.score(), b.timestamp(), now);
             score_b
                 .partial_cmp(&score_a)
                 .unwrap_or(std::cmp::Ordering::Equal)
         });
 
-        // Limit results
-        matches.truncate(MAX_RESULTS);
+        // Sort fallbacks by recency (Tantivy already filtered by score threshold)
+        fallbacks.sort_by(|a, b| b.timestamp().cmp(&a.timestamp()));
+        fallbacks.truncate(MAX_FALLBACK_RESULTS);
+
+        // Combine: Nucleo matches first, then fallbacks
+        matches.truncate(MAX_RESULTS - fallbacks.len().min(MAX_FALLBACK_RESULTS));
+        matches.extend(fallbacks);
 
         Ok(matches)
     }
 
     /// Re-rank candidates using Nucleo fuzzy matching and extract character indices
-    fn fuzzy_rerank(&self, candidates: Vec<SearchCandidate>, query: &str) -> Vec<FuzzyMatch> {
+    /// Returns (nucleo_matches, fallback_matches)
+    /// Fallbacks are high-scoring Tantivy candidates that Nucleo couldn't match (typo tolerance)
+    fn fuzzy_rerank_with_fallback(
+        &self,
+        candidates: Vec<SearchCandidate>,
+        query: &str,
+    ) -> (Vec<FuzzyMatch>, Vec<FuzzyMatch>) {
         let mut matches = Vec::with_capacity(candidates.len());
+        let mut fallbacks = Vec::new();
         let mut matcher = Matcher::new(self.config.clone());
 
         // Parse the query pattern (case-insensitive, unicode normalized)
@@ -104,16 +164,29 @@ impl SearchEngine {
 
             // Run Nucleo matcher
             if let Some(score) = pattern.indices(haystack, &mut matcher, &mut indices) {
-                matches.push(FuzzyMatch {
+                matches.push(FuzzyMatch::Matched {
                     id: candidate.id,
                     score,
                     matched_indices: indices,
                     timestamp: candidate.timestamp,
                 });
+            } else if candidate.tantivy_score >= MIN_TANTIVY_FALLBACK_SCORE {
+                // Nucleo didn't match, but Tantivy score is high enough for fallback
+                // This provides typo tolerance (e.g., "helo" matching "hello")
+                fallbacks.push(FuzzyMatch::Fallback {
+                    id: candidate.id,
+                    timestamp: candidate.timestamp,
+                });
             }
         }
 
-        matches
+        (matches, fallbacks)
+    }
+
+    /// Re-rank candidates using Nucleo fuzzy matching (no fallback, for tests)
+    #[cfg(test)]
+    fn fuzzy_rerank(&self, candidates: Vec<SearchCandidate>, query: &str) -> Vec<FuzzyMatch> {
+        self.fuzzy_rerank_with_fallback(candidates, query).0
     }
 
     /// Filter a batch of candidates directly with Nucleo (for streaming search)
@@ -149,7 +222,7 @@ impl SearchEngine {
 
             if let Some(score) = pattern.indices(haystack, &mut matcher, &mut indices) {
                 if score >= min_score {
-                    results.push(FuzzyMatch {
+                    results.push(FuzzyMatch::Matched {
                         id,
                         score,
                         matched_indices: indices,
@@ -247,7 +320,7 @@ mod tests {
 
         engine.filter_batch(candidates_with_ids.into_iter(), "t", &mut results, 10);
 
-        let matched_ids: Vec<i64> = results.iter().map(|m| m.id).collect();
+        let matched_ids: Vec<i64> = results.iter().map(|m| m.id()).collect();
         assert!(matched_ids.contains(&1), "Should match 'the'");
         assert!(matched_ids.contains(&3), "Should match 'test'");
         assert!(matched_ids.contains(&4), "Should match 'application'");
@@ -303,6 +376,7 @@ mod ranking_tests {
         SearchCandidate {
             id,
             content: content.to_string(),
+            tantivy_score: 10.0, // Default high enough for fallback
             timestamp: now - (days_ago * DAY),
         }
     }
@@ -314,14 +388,14 @@ mod ranking_tests {
 
         let now = 1700000000i64;
         matches.sort_by(|a, b| {
-            let score_a = blended_score(a.score, a.timestamp, now);
-            let score_b = blended_score(b.score, b.timestamp, now);
+            let score_a = blended_score(a.score(), a.timestamp(), now);
+            let score_b = blended_score(b.score(), b.timestamp(), now);
             score_b
                 .partial_cmp(&score_a)
                 .unwrap_or(std::cmp::Ordering::Equal)
         });
 
-        matches.into_iter().map(|m| m.id).collect()
+        matches.into_iter().map(|m| m.id()).collect()
     }
 
     /// Assert that id_a comes before id_b in results
@@ -347,7 +421,7 @@ mod ranking_tests {
         let matches = engine.fuzzy_rerank(candidates, query);
         matches
             .into_iter()
-            .map(|m| (m.id, m.score, format!("{:?}", m.matched_indices)))
+            .map(|m| (m.id(), m.score(), format!("{:?}", m.matched_indices())))
             .collect()
     }
 
@@ -694,6 +768,77 @@ mod ranking_tests {
             order,
             vec![1, 2, 3, 4],
             "Identical content should be ordered by recency"
+        );
+    }
+
+    // =========================================================================
+    // TYPO TOLERANCE (FALLBACK) TESTS
+    // =========================================================================
+
+    #[test]
+    fn typo_tolerance_returns_fallback() {
+        // "helllo" (extra 'l') won't match "helo" with Nucleo
+        // but should appear as fallback due to trigram overlap
+        let engine = SearchEngine::new();
+
+        // Create candidates with high Tantivy score to trigger fallback
+        let candidates = vec![SearchCandidate {
+            id: 1,
+            content: "helo typo".to_string(), // Only one 'l'
+            timestamp: 1700000000,
+            tantivy_score: 10.0, // Above MIN_TANTIVY_FALLBACK_SCORE
+        }];
+
+        let (matches, fallbacks) = engine.fuzzy_rerank_with_fallback(candidates, "helllo");
+
+        // "helllo" (3 l's) can't match "helo" (1 l) with Nucleo
+        // but should appear as fallback due to trigram overlap ("hel")
+        assert!(
+            matches.is_empty(),
+            "Nucleo shouldn't match 'helllo' to 'helo'"
+        );
+        assert_eq!(fallbacks.len(), 1, "Should have fallback");
+        assert!(fallbacks[0].is_fallback(), "Should be marked as fallback");
+        assert_eq!(fallbacks[0].id(), 1);
+    }
+
+    #[test]
+    fn nucleo_matches_typo_as_subsequence() {
+        // Note: Nucleo CAN match "helo" to "hello" because h-e-l-o is a subsequence
+        // This test documents this behavior
+        let engine = SearchEngine::new();
+
+        let candidates = vec![SearchCandidate {
+            id: 1,
+            content: "hello world".to_string(),
+            timestamp: 1700000000,
+            tantivy_score: 10.0,
+        }];
+
+        let (matches, _fallbacks) = engine.fuzzy_rerank_with_fallback(candidates, "helo");
+
+        // "helo" matches "hello" as subsequence (h-e-l-o skipping one 'l')
+        assert_eq!(matches.len(), 1, "Nucleo should match 'helo' to 'hello'");
+        assert!(!matches[0].is_fallback());
+    }
+
+    #[test]
+    fn fallback_excluded_if_tantivy_score_too_low() {
+        let engine = SearchEngine::new();
+
+        let candidates = vec![SearchCandidate {
+            id: 1,
+            content: "hello world".to_string(),
+            timestamp: 1700000000,
+            tantivy_score: 1.0, // Below MIN_TANTIVY_FALLBACK_SCORE
+        }];
+
+        let (matches, fallbacks) = engine.fuzzy_rerank_with_fallback(candidates, "xyz");
+
+        assert!(matches.is_empty());
+        assert!(
+            fallbacks.is_empty(),
+            "Low Tantivy score should not produce fallback"
         );
     }
 
