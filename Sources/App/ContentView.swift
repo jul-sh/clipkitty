@@ -25,6 +25,7 @@ struct ContentView: View {
     @State private var searchText: String = ""
     @State private var didApplyInitialSearch = false
     @State private var showSearchSpinner: Bool = false
+    @State private var lastItemsSignature: [String] = []  // Track when items change to suppress animation
     @FocusState private var isSearchFocused: Bool
     private var items: [ClipboardItem] {
         measure("items.get") {
@@ -94,6 +95,8 @@ struct ContentView: View {
             if selectedItemId == nil {
                 selectedItemId = items.first?.stableId
             }
+            // Initialize items signature for animation tracking
+            lastItemsSignature = items.map { $0.stableId }
             focusSearchField()
         }
         .onChange(of: store.displayVersion) { _, _ in
@@ -333,9 +336,32 @@ struct ContentView: View {
                     proxy.scrollTo(firstItemId, anchor: .top)
                 }
             }
-            .onChange(of: selectedItemId) { _, newItemId in
+            .onChange(of: selectedItemId) { oldItemId, newItemId in
                 guard let newItemId else { return }
-                proxy.scrollTo(newItemId, anchor: .center)
+
+                let currentSignature = items.map { $0.stableId }
+                let itemsChanged = currentSignature != lastItemsSignature
+
+                // Update signature for next comparison
+                if itemsChanged {
+                    lastItemsSignature = currentSignature
+                }
+
+                // Only animate if items didn't change (user is navigating within same list)
+                let oldIndex = indexForItem(oldItemId)
+                let newIndex = indexForItem(newItemId)
+                let isBigJump = {
+                    guard let oldIndex, let newIndex else { return false }
+                    return abs(newIndex - oldIndex) > 1
+                }()
+
+                if !itemsChanged && isBigJump {
+                    withAnimation(.easeInOut(duration: 0.15)) {
+                        proxy.scrollTo(newItemId, anchor: .center)
+                    }
+                } else {
+                    proxy.scrollTo(newItemId, anchor: .center)
+                }
             }
         }
     }
