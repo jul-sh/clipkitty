@@ -94,6 +94,14 @@ impl SearchEngine {
         // Parse the query pattern (case-insensitive, unicode normalized)
         let pattern = Pattern::parse(query, CaseMatching::Ignore, Normalization::Smart);
 
+        // For exact substring boost: only compute if query has trailing space
+        // (Pattern::parse ignores trailing spaces, so we boost exact matches manually)
+        let trailing_space_query = if query.ends_with(' ') {
+            Some(query.to_lowercase())
+        } else {
+            None
+        };
+
         for candidate in candidates {
             // Convert content to Utf32Str for Nucleo
             let mut haystack_buf = Vec::new();
@@ -103,7 +111,15 @@ impl SearchEngine {
             let mut indices = Vec::new();
 
             // Run Nucleo matcher
-            if let Some(score) = pattern.indices(haystack, &mut matcher, &mut indices) {
+            if let Some(mut score) = pattern.indices(haystack, &mut matcher, &mut indices) {
+                // Boost score if query (with trailing space) appears as exact substring
+                // e.g., "hello " should rank "Hello and..." higher than "def hello(..."
+                if let Some(ref query_lower) = trailing_space_query {
+                    if candidate.content.to_lowercase().contains(query_lower) {
+                        score = (score as f64 * 1.2) as u32;
+                    }
+                }
+
                 matches.push(FuzzyMatch {
                     id: candidate.id,
                     score,
@@ -131,6 +147,13 @@ impl SearchEngine {
         let pattern = Pattern::parse(query, CaseMatching::Ignore, Normalization::Smart);
         let mut found = 0;
 
+        // For exact substring boost (only if query has trailing space)
+        let trailing_space_query = if query.ends_with(' ') {
+            Some(query.to_lowercase())
+        } else {
+            None
+        };
+
         // Minimum score threshold (stricter for short queries to filter scattered matches)
         let min_score = if query.chars().count() < MIN_TRIGRAM_QUERY_LEN {
             MIN_SCORE_SHORT_QUERY
@@ -147,7 +170,14 @@ impl SearchEngine {
             let haystack = Utf32Str::new(&content, &mut haystack_buf);
             let mut indices = Vec::new();
 
-            if let Some(score) = pattern.indices(haystack, &mut matcher, &mut indices) {
+            if let Some(mut score) = pattern.indices(haystack, &mut matcher, &mut indices) {
+                // Boost score if query (with trailing space) appears as exact substring
+                if let Some(ref query_lower) = trailing_space_query {
+                    if content.to_lowercase().contains(query_lower) {
+                        score = (score as f64 * 1.2) as u32;
+                    }
+                }
+
                 if score >= min_score {
                     results.push(FuzzyMatch {
                         id,
@@ -747,6 +777,38 @@ mod ranking_tests {
             2,
             1,
             "Recent 'Hello and welcome...' should beat old code snippet for 'hello ' query",
+        );
+    }
+
+    #[test]
+    fn trailing_space_boosts_exact_substring_match() {
+        // When query has trailing space, content with matching space should score higher
+        // "hello " should boost "Hello and..." (has "Hello ") over "def hello(" (has "hello(")
+        let candidates = vec![
+            candidate(1, "def hello(name: str)", 0),           // "hello(" - no space after
+            candidate(2, "Hello and welcome to the team", 0),  // "Hello " - has space after
+        ];
+
+        // Same age, so only fuzzy score + trailing space boost matters
+        let scores = get_scores(candidates.clone(), "hello ");
+        println!("Trailing space boost test scores: {:?}", scores);
+
+        // With trailing space boost, id=2 should have higher score
+        let score_1 = scores.iter().find(|(id, _, _)| *id == 1).map(|(_, s, _)| *s).unwrap();
+        let score_2 = scores.iter().find(|(id, _, _)| *id == 2).map(|(_, s, _)| *s).unwrap();
+
+        assert!(
+            score_2 > score_1,
+            "Content with 'Hello ' should score higher than 'hello(' for query 'hello ': {} vs {}",
+            score_2, score_1
+        );
+
+        // Verify the boost is ~20% (1.2x)
+        let ratio = score_2 as f64 / score_1 as f64;
+        assert!(
+            ratio >= 1.15 && ratio <= 1.25,
+            "Boost should be ~20%: ratio was {}",
+            ratio
         );
     }
 }
