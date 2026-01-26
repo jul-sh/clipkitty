@@ -236,7 +236,19 @@ synthetic-data:
 	@$(NIX_SHELL) "cd rust-core && cargo run --release --features data-gen --bin generate_synthetic_data -- --demo --db-path ../Sources/App/SyntheticData.sqlite"
 	@echo "Synthetic data generated at Sources/App/SyntheticData.sqlite"
 
-.PHONY: marketing marketing-screenshots marketing-screenshots-capture preview-video print-background-image synthetic-data
+# Open app with synthetic data for manual testing
+# Uses non-sandboxed build for simpler file access
+run-synthetic:
+	@$(MAKE) sign SANDBOX=false
+	@echo "Setting up synthetic data..."
+	@mkdir -p ~/Library/Application\ Support/ClipKitty
+	@rm -f ~/Library/Application\ Support/ClipKitty/clipboard-screenshot.sqlite
+	@rm -rf ~/Library/Application\ Support/ClipKitty/tantivy_index
+	@cp Sources/App/SyntheticData.sqlite ~/Library/Application\ Support/ClipKitty/clipboard-screenshot.sqlite
+	@echo "Launching app with synthetic data..."
+	@open ClipKitty.app --args --use-simulated-db
+
+.PHONY: marketing marketing-screenshots marketing-screenshots-capture preview-video print-background-image synthetic-data run-synthetic
 
 # Print background image path (used by CI/scripts)
 print-background-image:
