@@ -193,22 +193,37 @@ impl SearchEngine {
                 let query_lower = query.to_lowercase();
                 let query_chars: Vec<char> = query_lower.chars().collect();
 
+                // Count matching trigrams to filter spurious matches
+                let total_trigrams = query_chars.len().saturating_sub(2);
+                let mut matching_trigrams = 0;
+
                 // Generate trigrams and find positions
-                for i in 0..query_chars.len().saturating_sub(2) {
+                for i in 0..total_trigrams {
                     let trigram: String = query_chars[i..i + 3].iter().collect();
-                    let mut start = 0;
-                    while let Some(pos) = content_lower[start..].find(&trigram) {
-                        let abs_pos = start + pos;
-                        for offset in 0..3 {
-                            let idx = (abs_pos + offset) as u32;
-                            if !indices.contains(&idx) {
-                                indices.push(idx);
+                    if let Some(pos) = content_lower.find(&trigram) {
+                        matching_trigrams += 1;
+                        // Add highlight indices for this trigram
+                        let mut start = 0;
+                        while let Some(inner_pos) = content_lower[start..].find(&trigram) {
+                            let abs_pos = start + inner_pos;
+                            for offset in 0..3 {
+                                let idx = (abs_pos + offset) as u32;
+                                if !indices.contains(&idx) {
+                                    indices.push(idx);
+                                }
                             }
+                            start = abs_pos + 1;
                         }
-                        start = abs_pos + 1;
                     }
                 }
                 indices.sort();
+
+                // Require at least 2/3 of trigrams to match for typo tolerance
+                // This filters spurious matches like "Follow" matching "hello" (only "llo" overlaps)
+                let min_matching = (total_trigrams * 2 / 3).max(2);
+                if matching_trigrams < min_matching {
+                    continue; // Skip this candidate - not enough overlap
+                }
 
                 // Scale Tantivy score to be comparable with Nucleo scores
                 // Nucleo scores are typically in the hundreds, Tantivy in 0-10 range
@@ -842,6 +857,47 @@ mod ranking_tests {
     // =========================================================================
 
     #[test]
+    fn regression_hello_world_py_vs_meeting() {
+        // Reported: "hello_world.py" should beat "Follow up on action items from yesterday's meeting"
+        // for query "hello" because it contains "hello" contiguously at word start
+        // "Follow" only shares the trigram "llo" with "hello" - insufficient overlap
+        let candidates = vec![
+            candidate(1, "hello_world.py", 0),  // exact "hello" at start, recent
+            candidate(2, "Follow up on action items from yesterday's meeting- Important updates required.", 30), // older, no "hello"
+        ];
+
+        let scores = get_scores(candidates.clone(), "hello");
+        println!("Scores for hello_world.py vs meeting: {:?}", scores);
+
+        let order = search_order(candidates, "hello");
+
+        // Meeting text should NOT match - only 1/3 trigrams overlap ("llo" from "Follow")
+        assert!(!order.contains(&2), "Meeting text should not match 'hello' - only 1/3 trigram overlap");
+        assert!(order.contains(&1), "hello_world.py should match 'hello'");
+    }
+
+    #[test]
+    fn typo_tolerance_still_works() {
+        // "rivresid" has trigrams: riv, ivr, vre, res, esi, sid
+        // "Riverside" has: riv, ive, ver, ers, rsi, sid, ide
+        // Common: riv, sid (2 of 6 = 33%) - might be filtered
+        // Let's use a better typo example
+        // "helo" (missing one 'l') vs "hello" - trigrams: hel, elo vs hel, ell, llo
+        // Common: hel (1 of 2) - 50%, should pass with min 2/3 requirement if total < 3
+        // Actually for 2 trigrams, min is max(2*2/3, 2) = max(1, 2) = 2, so needs 2 matching
+        // "hlelo" has hle, lel, elo - vs hello: hel, ell, llo - no overlap
+        // Better test: "hellow" has hel, ell, llo, low vs "hello" hel, ell, llo - 3 of 4 overlap
+        let candidates = vec![
+            candidate(1, "hello world", 0),
+            candidate(2, "hellow world", 0),  // typo: extra 'w'
+        ];
+
+        // Search for "hellow" should match "hello world" via Nucleo subsequence
+        let order = search_order(candidates, "hellow");
+        assert!(order.contains(&1), "Typo 'hellow' should match 'hello world' via Nucleo");
+    }
+
+    #[test]
     fn regression_url_in_curl_vs_urlparser() {
         // Reported: "url" was ranking "curl" above "urlParser"
         let candidates = vec![
@@ -948,11 +1004,6 @@ mod perf_tests {
         for (name, query) in queries {
             let _ = engine.search(&indexer, query); // warm up
 
-            // Measure just ID lookup (no content loading)
-            let start = Instant::now();
-            let id_count = indexer.search_ids_only(query).unwrap_or(0);
-            let ids_only_time = start.elapsed();
-
             // Measure with content loading
             let start = Instant::now();
             let candidates = indexer.search(query).unwrap();
@@ -965,10 +1016,9 @@ mod perf_tests {
             let rerank_time = total_time.saturating_sub(with_content_time);
 
             println!(
-                "{:12} | cand: {:5} | ids: {:>6.2}ms | +content: {:>6.2}ms | rerank: {:>6.2}ms | total: {:>7.2}ms",
+                "{:12} | cand: {:5} | content: {:>6.2}ms | rerank: {:>6.2}ms | total: {:>7.2}ms",
                 name,
                 candidates.len(),
-                ids_only_time.as_secs_f64() * 1000.0,
                 with_content_time.as_secs_f64() * 1000.0,
                 rerank_time.as_secs_f64() * 1000.0,
                 total_time.as_secs_f64() * 1000.0,

@@ -229,12 +229,14 @@ BACKGROUND_IMAGE := /System/Library/Desktop Pictures/Solid Colors/Silver.png
 #   make marketing                # Generate all marketing assets
 # ============================================================================
 
-# Generate synthetic data with demo items for UI tests and marketing
+# Generate synthetic data for UI tests and marketing
 # Requires GEMINI_API_KEY environment variable for AI-generated content
+# Run Scripts/patch-demo-items.sh after to add demo-specific items
 synthetic-data:
-	@echo "Generating synthetic data with demo items..."
-	@$(NIX_SHELL) "cd rust-core && cargo run --release --features data-gen --bin generate_synthetic_data -- --demo --db-path ../Sources/App/SyntheticData.sqlite"
+	@echo "Generating synthetic data..."
+	@$(NIX_SHELL) "cd rust-core && cargo run --release --features data-gen --bin generate-synthetic-data -- --db-path ../Sources/App/SyntheticData.sqlite"
 	@echo "Synthetic data generated at Sources/App/SyntheticData.sqlite"
+	@echo "Run ./Scripts/patch-demo-items.sh to add demo items"
 
 # Open app with synthetic data for manual testing
 # Uses non-sandboxed build for simpler file access
@@ -256,6 +258,7 @@ print-background-image:
 
 # Capture raw marketing screenshots via UI test (with clean environment, uses sandboxed)
 marketing-screenshots-capture:
+	@./Scripts/patch-demo-items.sh
 	@$(MAKE) sign SANDBOX=true
 	@$(MAKE) ClipKitty.xcodeproj
 	@echo "Capturing marketing screenshots..."
@@ -274,6 +277,7 @@ marketing-screenshots: marketing-screenshots-capture marketing-screenshots-proce
 
 # Record App Store preview video (uses sandboxed)
 preview-video:
+	@./Scripts/patch-demo-items.sh
 	@$(MAKE) sign SANDBOX=true
 	@$(MAKE) ClipKitty.xcodeproj
 	@echo "Recording preview video..."
