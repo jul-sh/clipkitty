@@ -44,6 +44,10 @@ struct Args {
     /// Add specific items for the video demo
     #[arg(long)]
     demo: bool,
+
+    /// Only insert demo items (skip AI generation, requires existing db)
+    #[arg(long)]
+    demo_only: bool,
 }
 
 #[derive(Debug, Deserialize, Serialize, Clone)]
@@ -235,14 +239,22 @@ fn insert_demo_items(store: &ClipboardStore) -> Result<()> {
 async fn main() -> Result<()> {
     let args = Args::parse();
 
+    let abs_db_path = std::env::current_dir()?.join(&args.db_path).to_str().unwrap().to_string();
+    let store = Arc::new(ClipboardStore::new(abs_db_path).context("Failed to open database")?);
+
+    // Demo-only mode: skip AI generation, just insert demo items
+    if args.demo_only {
+        println!("Inserting demo items only...");
+        insert_demo_items(&store)?;
+        println!("Demo items inserted.");
+        return Ok(());
+    }
+
     let base_path = PathBuf::from(env!("CARGO_MANIFEST_DIR"));
     let tax_path = base_path.join("../Scripts/data-gen/taxonomy.json");
     let tax_str = fs::read_to_string(&tax_path).context("Failed to read taxonomy.json")?;
     let taxonomy: Taxonomy = serde_json::from_str(&tax_str)?;
     let target_total = args.count.unwrap_or(taxonomy.total_items);
-
-    let abs_db_path = std::env::current_dir()?.join(&args.db_path).to_str().unwrap().to_string();
-    let store = Arc::new(ClipboardStore::new(abs_db_path).context("Failed to open database")?);
 
     let pb = ProgressBar::new(target_total as u64);
     pb.set_style(ProgressStyle::default_bar()
