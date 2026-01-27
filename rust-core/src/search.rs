@@ -200,7 +200,7 @@ impl SearchEngine {
                 // Generate trigrams and find positions
                 for i in 0..total_trigrams {
                     let trigram: String = query_chars[i..i + 3].iter().collect();
-                    if let Some(pos) = content_lower.find(&trigram) {
+                    if content_lower.contains(&trigram) {
                         matching_trigrams += 1;
                         // Add highlight indices for this trigram
                         let mut start = 0;
