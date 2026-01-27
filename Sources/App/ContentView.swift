@@ -28,20 +28,19 @@ struct ContentView: View {
     @State private var lastItemsSignature: [String] = []  // Track when items change to suppress animation
     @FocusState private var isSearchFocused: Bool
     private var items: [ClipboardItem] {
-        measure("items.get") {
-            switch store.state {
-            case .loaded(let items, _):
-                return items
-            case .searching(_, let searchState):
-                switch searchState {
-                case .loading(let previous):
-                    return previous.map { $0.item }
-                case .results(let results, _):
-                    return results.map { $0.item }
-                }
-            default:
-                return []
+        // Note: Don't wrap in measure() - it can break @Observable tracking
+        switch store.state {
+        case .loaded(let items, _):
+            return items
+        case .searching(_, let searchState):
+            switch searchState {
+            case .loading(let previous):
+                return previous.map { $0.item }
+            case .results(let results, _):
+                return results.map { $0.item }
             }
+        default:
+            return []
         }
     }
 

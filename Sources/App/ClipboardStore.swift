@@ -167,8 +167,8 @@ final class ClipboardStore {
 
         currentSearchQuery = query
 
-        // Preserve previous results while loading new ones
-        // When transitioning from .loaded to .searching, use loaded items to avoid empty flash
+        // Preserve previous results while loading new ones to avoid UI flash.
+        // When new results arrive, they fully replace previous results (no mixing).
         let previousResults: [SearchResultItem] = {
             switch state {
             case .searching(_, let searchState):
