@@ -217,17 +217,40 @@ list-identities:
 # Prerequisites:
 #   1. ImageMagick (full): brew install imagemagick-full (required for font rendering)
 #   2. ffmpeg: brew install ffmpeg
+#   3. Synthetic data with demo items: make synthetic-data
 #
 # Configuration
 BACKGROUND_IMAGE := /System/Library/Desktop Pictures/Solid Colors/Silver.png
 #
 # Usage:
+#   make synthetic-data           # Generate synthetic data with demo items
 #   make marketing-screenshots    # Generate App Store screenshots with captions
 #   make preview-video            # Record App Store preview video
 #   make marketing                # Generate all marketing assets
 # ============================================================================
 
-.PHONY: marketing marketing-screenshots marketing-screenshots-capture preview-video print-background-image
+# Generate synthetic data for UI tests and marketing
+# Requires GEMINI_API_KEY environment variable for AI-generated content
+# Run Scripts/patch-demo-items.sh after to add demo-specific items
+synthetic-data:
+	@echo "Generating synthetic data..."
+	@$(NIX_SHELL) "cd rust-core && cargo run --release --features data-gen --bin generate-synthetic-data -- --db-path ../Sources/App/SyntheticData.sqlite"
+	@echo "Synthetic data generated at Sources/App/SyntheticData.sqlite"
+	@echo "Run ./Scripts/patch-demo-items.sh to add demo items"
+
+# Open app with synthetic data for manual testing
+# Uses non-sandboxed build for simpler file access
+run-synthetic:
+	@$(MAKE) sign SANDBOX=false
+	@echo "Setting up synthetic data..."
+	@mkdir -p ~/Library/Application\ Support/ClipKitty
+	@rm -f ~/Library/Application\ Support/ClipKitty/clipboard-screenshot.sqlite
+	@rm -rf ~/Library/Application\ Support/ClipKitty/tantivy_index
+	@cp Sources/App/SyntheticData.sqlite ~/Library/Application\ Support/ClipKitty/clipboard-screenshot.sqlite
+	@echo "Launching app with synthetic data..."
+	@open ClipKitty.app --args --use-simulated-db
+
+.PHONY: marketing marketing-screenshots marketing-screenshots-capture preview-video print-background-image synthetic-data run-synthetic
 
 # Print background image path (used by CI/scripts)
 print-background-image:
@@ -235,6 +258,7 @@ print-background-image:
 
 # Capture raw marketing screenshots via UI test (with clean environment, uses sandboxed)
 marketing-screenshots-capture:
+	@./Scripts/patch-demo-items.sh
 	@$(MAKE) sign SANDBOX=true
 	@$(MAKE) ClipKitty.xcodeproj
 	@echo "Capturing marketing screenshots..."
@@ -253,6 +277,7 @@ marketing-screenshots: marketing-screenshots-capture marketing-screenshots-proce
 
 # Record App Store preview video (uses sandboxed)
 preview-video:
+	@./Scripts/patch-demo-items.sh
 	@$(MAKE) sign SANDBOX=true
 	@$(MAKE) ClipKitty.xcodeproj
 	@echo "Recording preview video..."

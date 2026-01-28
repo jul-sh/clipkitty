@@ -3,6 +3,36 @@ import XCTest
 final class ClipKittyUITests: XCTestCase {
     var app: XCUIApplication!
 
+    /// Check if an app has the sandbox entitlement enabled
+    private func isAppSandboxed(at appURL: URL) -> Bool {
+        let task = Process()
+        task.executableURL = URL(fileURLWithPath: "/usr/bin/codesign")
+        task.arguments = ["-d", "--entitlements", "-", "--xml", appURL.path]
+
+        let pipe = Pipe()
+        task.standardOutput = pipe
+        task.standardError = FileHandle.nullDevice
+
+        do {
+            try task.run()
+            task.waitUntilExit()
+
+            let data = pipe.fileHandleForReading.readDataToEndOfFile()
+            // Check if the entitlements contain app-sandbox = true
+            if let plist = try? PropertyListSerialization.propertyList(from: data, format: nil) as? [String: Any],
+               let entitlements = plist["com.apple.security.app-sandbox"] as? Bool {
+                return entitlements
+            }
+            // Also check for the string in raw output (fallback)
+            if let output = String(data: data, encoding: .utf8) {
+                return output.contains("com.apple.security.app-sandbox") && output.contains("<true/>")
+            }
+        } catch {
+            // If we can't determine, assume non-sandboxed
+        }
+        return false
+    }
+
     override func setUpWithError() throws {
         continueAfterFailure = false
         // Use the app from a known location - either from env var or project directory
@@ -37,10 +67,17 @@ final class ClipKittyUITests: XCTestCase {
         let projectRoot = sourceFileURL.deletingLastPathComponent().deletingLastPathComponent().deletingLastPathComponent()
         let sqliteSourceURL = projectRoot.appendingPathComponent("Sources/App/SyntheticData.sqlite")
 
-        // Prepare the target directory in the app's container (sandboxed path)
-        let bundleID = "com.clipkitty.app"
+        // Determine the correct Application Support directory based on sandbox status
         let userHome = URL(fileURLWithPath: "/Users/\(NSUserName())")
-        let appSupportDir = userHome.appendingPathComponent("Library/Containers/\(bundleID)/Data/Library/Application Support/ClipKitty")
+        let appSupportDir: URL
+        if isAppSandboxed(at: appURL) {
+            // Sandboxed: use container path
+            let bundleID = "com.clipkitty.app"
+            appSupportDir = userHome.appendingPathComponent("Library/Containers/\(bundleID)/Data/Library/Application Support/ClipKitty")
+        } else {
+            // Non-sandboxed: use regular Application Support
+            appSupportDir = userHome.appendingPathComponent("Library/Application Support/ClipKitty")
+        }
         let targetURL = appSupportDir.appendingPathComponent("clipboard-screenshot.sqlite")
         let indexDirURL = appSupportDir.appendingPathComponent("tantivy_index")
 
@@ -299,10 +336,15 @@ final class ClipKittyUITests: XCTestCase {
     /// Run with: make preview-video
     /// This test types slowly to create a visually appealing demo.
     ///
+    /// NOTE: Relies entirely on demo items in SyntheticData.sqlite (generated with --demo flag)
+    ///
     /// Script timing (20 seconds total):
     /// Scene 1 (0:00-0:08): Meta pitch - fuzzy search refinement "hello" -> "hello clip"
+    ///   - Matches: Hello ClipKitty, hello_world.py, sayHello, Hello and welcome...
     /// Scene 2 (0:08-0:14): Color swatches "#" -> "#f", then image "cat"
+    ///   - Matches: #7C3AED, #FF5733, #2DD4BF, #F472B6, Orange tabby cat...
     /// Scene 3 (0:14-0:20): Typo forgiveness "rivresid" finds "Riverside", loop back to empty
+    ///   - Matches: Apartment walkthrough...437 Riverside Dr...
     func testRecordSearchDemo() throws {
         let searchField = app.textFields.firstMatch
         XCTAssertTrue(searchField.waitForExistence(timeout: 5), "Search field not found")
@@ -434,6 +476,7 @@ final class ClipKittyUITests: XCTestCase {
 
     /// Captures multiple screenshot states for marketing materials.
     /// Run with: make marketing-screenshots
+    /// NOTE: Relies entirely on demo items in SyntheticData.sqlite (generated with --demo flag)
     func testTakeMarketingScreenshots() throws {
         let searchField = app.textFields.firstMatch
         XCTAssertTrue(searchField.waitForExistence(timeout: 5), "Search field not found")
@@ -442,15 +485,15 @@ final class ClipKittyUITests: XCTestCase {
         Thread.sleep(forTimeInterval: 1.0)
         saveScreenshot(name: "marketing_1_history")
 
-        // Screenshot 2: Fuzzy search in action
+        // Screenshot 2: Fuzzy search in action (matches demo items: Hello ClipKitty, hello_world.py, sayHello, etc.)
         searchField.click()
-        searchField.typeText("meeting")
+        searchField.typeText("hello")
         Thread.sleep(forTimeInterval: 0.5)
         saveScreenshot(name: "marketing_2_search")
 
-        // Screenshot 3: Different search showing variety
+        // Screenshot 3: Color swatch search showing preview (matches demo items: #7C3AED, #FF5733, etc.)
         searchField.typeKey("a", modifierFlags: .command)
-        searchField.typeText("http")
+        searchField.typeText("#")
         Thread.sleep(forTimeInterval: 0.5)
         // Navigate to show selection
         searchField.typeText(XCUIKeyboardKey.downArrow.rawValue)

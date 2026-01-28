@@ -167,26 +167,10 @@ final class ClipboardStore {
 
         currentSearchQuery = query
 
-        // Preserve previous results while loading new ones
-        // When transitioning from .loaded to .searching, use loaded items to avoid empty flash
-        let previousResults: [SearchResultItem] = {
-            switch state {
-            case .searching(_, let searchState):
-                switch searchState {
-                case .loading(let previous):
-                    return previous
-                case .results(let results, _):
-                    return results
-                }
-            case .loaded(let items, _):
-                // Convert loaded items to search results (no highlights yet)
-                return items.map { SearchResultItem(item: $0, highlights: []) }
-            default:
-                return []
-            }
-        }()
-
-        state = .searching(query: query, state: .loading(previousResults: previousResults))
+        // Don't show previous results during loading - they may not match the new query.
+        // For example, "hello_world.py" matches "hello" but not "hello cl".
+        // The 200ms spinner delay prevents UI flicker for fast searches.
+        state = .searching(query: query, state: .loading(previousResults: []))
 
         searchTask = Task {
             try? await Task.sleep(for: .milliseconds(50))

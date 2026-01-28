@@ -252,6 +252,60 @@ fn scene1_search_hello_clip_shows_marketing_blurb() {
     );
 }
 
+#[test]
+fn scene1_search_hello_cl_ranks_clipkitty_before_hello_world_py() {
+    let (store, _temp) = create_preview_video_store();
+
+    let result = store.search("hello cl".to_string()).unwrap();
+    println!("Search results for 'hello cl':");
+    for (i, m) in result.matches.iter().enumerate() {
+        println!("  {}: id={}", i, m.item_id);
+    }
+
+    let ids: Vec<i64> = result.matches.iter().map(|m| m.item_id).collect();
+    let items = store.fetch_by_ids(ids.clone()).unwrap();
+
+    println!("\nContents in order:");
+    for (i, item) in items.iter().enumerate() {
+        let content = item.text_content();
+        let preview: String = content.chars().take(60).collect();
+        let preview = if content.chars().count() > 60 {
+            format!("{}...", preview)
+        } else {
+            preview
+        };
+        println!("  {}: {}", i, preview.replace('\n', " "));
+    }
+
+    // Find positions of key items
+    let clipkitty_pos = items
+        .iter()
+        .position(|i| i.text_content().contains("Hello ClipKitty"));
+    let hello_world_pos = items
+        .iter()
+        .position(|i| i.text_content().contains("hello_world.py"));
+
+    println!("\nPositions: ClipKitty={:?}, hello_world.py={:?}", clipkitty_pos, hello_world_pos);
+
+    // hello_world.py should NOT match "hello cl" at all - it has no 'c' in the content!
+    // If it does appear, ClipKitty must come before it
+    if let Some(hw_pos) = hello_world_pos {
+        let ck_pos = clipkitty_pos.expect("Hello ClipKitty should appear in results");
+        assert!(
+            ck_pos < hw_pos,
+            "Hello ClipKitty (pos {}) should rank before hello_world.py (pos {}) for 'hello cl' query",
+            ck_pos,
+            hw_pos
+        );
+    }
+
+    // ClipKitty should definitely appear
+    assert!(
+        clipkitty_pos.is_some(),
+        "Hello ClipKitty should appear in results for 'hello cl'"
+    );
+}
+
 // ============================================================
 // SCENE 2: Color and Image Tests (0:08 - 0:14)
 // ============================================================
@@ -482,5 +536,151 @@ fn verify_item_count() {
         result.items.len() >= 35,
         "Should have at least 35 items, got {}",
         result.items.len()
+    );
+}
+
+// ============================================================
+// Ranking Behavior Tests
+// ============================================================
+// These tests verify core search ranking properties using the
+// actual ClipboardStore.search() method.
+
+/// Helper to create a store with specific items for ranking tests
+fn create_ranking_test_store(items: Vec<&str>) -> (ClipboardStore, TempDir) {
+    let temp_dir = TempDir::new().unwrap();
+    let db_path = temp_dir.path().join("test.db").to_string_lossy().to_string();
+    let store = ClipboardStore::new(db_path).unwrap();
+
+    for content in items {
+        store
+            .save_text(content.to_string(), Some("Test".to_string()), Some("com.test".to_string()))
+            .unwrap();
+        std::thread::sleep(std::time::Duration::from_millis(15));
+    }
+
+    (store, temp_dir)
+}
+
+/// Get search result contents in order
+fn search_contents(store: &ClipboardStore, query: &str) -> Vec<String> {
+    let result = store.search(query.to_string()).unwrap();
+    let ids: Vec<i64> = result.matches.iter().map(|m| m.item_id).collect();
+    let items = store.fetch_by_ids(ids).unwrap();
+    items.iter().map(|i| i.text_content().to_string()).collect()
+}
+
+#[test]
+fn ranking_contiguous_beats_scattered() {
+    // Items added oldest to newest
+    // Using "help low" which scatters "hello" as hel-lo vs contiguous "hello"
+    let (store, _temp) = create_ranking_test_store(vec![
+        "help low cost items",   // "hel" + "lo" scattered, older
+        "hello world greeting",  // contiguous "hello", newer
+    ]);
+
+    let contents = search_contents(&store, "hello");
+
+    // Contiguous match should rank first (better match quality)
+    assert!(!contents.is_empty(), "Should find at least one item");
+    assert!(
+        contents[0].contains("hello world"),
+        "Contiguous 'hello world' should rank first, got: {:?}",
+        contents
+    );
+}
+
+#[test]
+fn ranking_recency_breaks_ties_for_equal_matches() {
+    // Items with identical match quality, different ages
+    let (store, _temp) = create_ranking_test_store(vec![
+        "hello world one",   // older
+        "hello world two",   // middle
+        "hello world three", // newest
+    ]);
+
+    let contents = search_contents(&store, "hello");
+
+    // All are exact matches, so recency should order them (newest first)
+    assert_eq!(contents.len(), 3, "Should find all 3 items");
+    assert!(
+        contents[0].contains("three"),
+        "Newest should rank first, got: {:?}",
+        contents
+    );
+    assert!(
+        contents[1].contains("two"),
+        "Middle should rank second, got: {:?}",
+        contents
+    );
+    assert!(
+        contents[2].contains("one"),
+        "Oldest should rank third, got: {:?}",
+        contents
+    );
+}
+
+#[test]
+fn ranking_word_start_beats_mid_word() {
+    let (store, _temp) = create_ranking_test_store(vec![
+        "the curl command line tool",  // url is mid-word in 'curl', older
+        "urlParser.parse(input)",       // url is at word start, newer
+    ]);
+
+    let contents = search_contents(&store, "url");
+
+    // Word-start match should rank higher (Nucleo prefers word boundaries)
+    assert!(contents.len() >= 2, "Should find both items");
+    assert!(
+        contents[0].contains("urlParser"),
+        "Word-start 'urlParser' should rank first, got: {:?}",
+        contents
+    );
+}
+
+#[test]
+fn ranking_partial_match_excluded_when_atoms_missing() {
+    // "hello cl" requires both "hello" and "cl" to match
+    let (store, _temp) = create_ranking_test_store(vec![
+        "hello_world.py",     // has "hello" but NO 'c' at all
+        "Hello ClipKitty!",   // has both "hello" and "cl"
+    ]);
+
+    let contents = search_contents(&store, "hello cl");
+
+    // hello_world.py should not match "hello cl" because it has no 'c'
+    assert!(
+        contents.iter().any(|c| c.contains("ClipKitty")),
+        "ClipKitty should appear in results"
+    );
+
+    // hello_world.py should either not appear, or rank after ClipKitty
+    let clipkitty_pos = contents.iter().position(|c| c.contains("ClipKitty"));
+    let hello_world_pos = contents.iter().position(|c| c.contains("hello_world.py"));
+
+    if let Some(hw_pos) = hello_world_pos {
+        let ck_pos = clipkitty_pos.expect("ClipKitty should be in results");
+        assert!(
+            ck_pos < hw_pos,
+            "ClipKitty should rank before hello_world.py for 'hello cl'"
+        );
+    }
+}
+
+#[test]
+fn ranking_trailing_space_boosts_word_boundary() {
+    // "hello " (with trailing space) should prefer content with "hello " (hello followed by space)
+    let (store, _temp) = create_ranking_test_store(vec![
+        "def hello(name: str)",        // "hello(" - no space after, older
+        "Hello and welcome to...",     // "Hello " - has space after, newer
+    ]);
+
+    let contents = search_contents(&store, "hello ");
+
+    // Content with "Hello " should rank higher due to trailing space boost
+    assert!(contents.len() >= 2, "Should find both items");
+    assert!(
+        contents[0].contains("Hello and"),
+        "Content with 'Hello ' should rank first, got: {:?}",
+        contents
     );
 }

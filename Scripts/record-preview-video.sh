@@ -54,6 +54,7 @@ echo ""
 # Clean up any previous marker files
 rm -f /tmp/clipkitty_demo_start.txt
 rm -f /tmp/clipkitty_demo_stop.txt
+rm -f /tmp/clipkitty_recording_started.txt
 
 echo "Starting UI test (will signal when ready)..."
 # Run the test in background - it will create a marker file when demo starts
@@ -82,24 +83,34 @@ if [ ! -f /tmp/clipkitty_demo_start.txt ]; then
 fi
 rm -f /tmp/clipkitty_demo_start.txt
 
-# Use macOS screencapture for recording
-echo "Using macOS screencapture for recording..."
-screencapture -v -D 1 "$RAW_VIDEO" &
+# Use macOS screencapture for recording (non-interactive with 35s timeout)
+echo "Using macOS screencapture for recording (35s max)..."
+# -V <seconds> records video for specified duration without requiring keyboard input
+screencapture -V 35 -D 1 "$RAW_VIDEO" &
 RECORD_PID=$!
-sleep 0.5
+sleep 1
+
+# Signal to the UI test that recording has started
+touch /tmp/clipkitty_recording_started.txt
 
 # Wait for the demo stop signal (written by UI test when demo finished)
 echo "Recording search demo..."
 STOP_WAIT_COUNT=0
-# Loop until stop file exists or test process dies or timeout (60s)
-while [ ! -f /tmp/clipkitty_demo_stop.txt ] && kill -0 $TEST_PID 2>/dev/null && [ $STOP_WAIT_COUNT -lt 120 ]; do
+DEMO_START_TIME=$(date +%s)
+# Loop until stop file exists or timeout (60s)
+# Note: Don't check TEST_PID - xcodebuild exits early, spawning test runner as subprocess
+while [ ! -f /tmp/clipkitty_demo_stop.txt ] && [ $STOP_WAIT_COUNT -lt 120 ]; do
     sleep 0.5
     STOP_WAIT_COUNT=$((STOP_WAIT_COUNT + 1))
 done
+DEMO_END_TIME=$(date +%s)
+DEMO_DURATION=$((DEMO_END_TIME - DEMO_START_TIME + 2))  # Add 2s buffer
+echo "Demo completed in approximately ${DEMO_DURATION}s"
 
-# Stop recording immediately
+# Signal to stop recording (screencapture -V may not respond, but we'll trim in post)
 echo ""
-echo "Stopping recording..."
+echo "Demo finished, waiting for recording to complete..."
+# Try INT signal, but screencapture -V often ignores it and runs full duration
 kill -INT $RECORD_PID 2>/dev/null || true
 
 # Clean up marker
@@ -109,7 +120,7 @@ rm -f /tmp/clipkitty_demo_stop.txt
 wait $TEST_PID 2>/dev/null || true
 
 # Give screencapture a moment to flush the file
-sleep 2
+sleep 0.1
 wait $RECORD_PID 2>/dev/null || true
 
 # Check if recording was captured
@@ -148,12 +159,16 @@ fi
 
 # Post-process:
 # - Crop to window bounds (if available)
-# - Use actual video duration (capped at 30s for App Store)
+# - Use demo duration (not full recording), capped at 30s for App Store
 # - Ensure proper encoding for App Store (H.264, AAC)
 # - Scale to App Store dimensions (2880x1800 or 1280x800)
-MAX_DURATION=$((DURATION > 30 ? 30 : DURATION))
+# Use the shorter of: demo duration, raw video duration, or 30s App Store limit
+TRIM_DURATION=$DEMO_DURATION
+[ "$DURATION" -lt "$TRIM_DURATION" ] 2>/dev/null && TRIM_DURATION=$DURATION
+[ "$TRIM_DURATION" -gt 30 ] && TRIM_DURATION=30
+echo "Trimming to ${TRIM_DURATION}s (demo: ${DEMO_DURATION}s, raw: ${DURATION}s, limit: 30s)"
 ffmpeg -y -i "$RAW_VIDEO" \
-    -t $MAX_DURATION \
+    -t $TRIM_DURATION \
     -vf "${CROP_FILTER}scale=2880:1800:force_original_aspect_ratio=decrease,pad=2880:1800:(ow-iw)/2:(oh-ih)/2:color=gray" \
     -c:v libx264 -preset slow -crf 18 -profile:v high -level 4.0 \
     -pix_fmt yuv420p \

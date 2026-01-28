@@ -25,22 +25,22 @@ struct ContentView: View {
     @State private var searchText: String = ""
     @State private var didApplyInitialSearch = false
     @State private var showSearchSpinner: Bool = false
+    @State private var lastItemsSignature: [String] = []  // Track when items change to suppress animation
     @FocusState private var isSearchFocused: Bool
     private var items: [ClipboardItem] {
-        measure("items.get") {
-            switch store.state {
-            case .loaded(let items, _):
-                return items
-            case .searching(_, let searchState):
-                switch searchState {
-                case .loading(let previous):
-                    return previous.map { $0.item }
-                case .results(let results, _):
-                    return results.map { $0.item }
-                }
-            default:
-                return []
+        // Note: Don't wrap in measure() - it can break @Observable tracking
+        switch store.state {
+        case .loaded(let items, _):
+            return items
+        case .searching(_, let searchState):
+            switch searchState {
+            case .loading(let previous):
+                return previous.map { $0.item }
+            case .results(let results, _):
+                return results.map { $0.item }
             }
+        default:
+            return []
         }
     }
 
@@ -94,6 +94,8 @@ struct ContentView: View {
             if selectedItemId == nil {
                 selectedItemId = items.first?.stableId
             }
+            // Initialize items signature for animation tracking
+            lastItemsSignature = items.map { $0.stableId }
             focusSearchField()
         }
         .onChange(of: store.displayVersion) { _, _ in
@@ -326,23 +328,34 @@ struct ContentView: View {
             }
             .listStyle(.plain)
             .scrollContentBackground(.hidden)
+            .animation(nil, value: items.map { $0.stableId })
             .onChange(of: searchText) { _, _ in
-                // Scroll to top when search query changes
+                // Scroll to top when search query changes (no animation)
                 if let firstItemId = items.first?.stableId {
                     proxy.scrollTo(firstItemId, anchor: .top)
                 }
             }
             .onChange(of: selectedItemId) { oldItemId, newItemId in
                 guard let newItemId else { return }
+
+                let currentSignature = items.map { $0.stableId }
+                let itemsChanged = currentSignature != lastItemsSignature
+
+                // Update signature for next comparison
+                if itemsChanged {
+                    lastItemsSignature = currentSignature
+                }
+
+                // Only animate if items didn't change (user is navigating within same list)
                 let oldIndex = indexForItem(oldItemId)
                 let newIndex = indexForItem(newItemId)
-                let shouldAnimate = {
-                    guard let oldIndex, let newIndex else { return true }
+                let isBigJump = {
+                    guard let oldIndex, let newIndex else { return false }
                     return abs(newIndex - oldIndex) > 1
                 }()
 
-                if shouldAnimate {
-                    withAnimation(.easeInOut(duration: 0.2)) {
+                if !itemsChanged && isBigJump {
+                    withAnimation(.easeInOut(duration: 0.15)) {
                         proxy.scrollTo(newItemId, anchor: .center)
                     }
                 } else {
