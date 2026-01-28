@@ -26,13 +26,14 @@ pub enum IndexerError {
 
 pub type IndexerResult<T> = Result<T, IndexerError>;
 
-/// A search candidate from Tantivy (before fuzzy re-ranking)
+/// A search candidate from Tantivy (before re-ranking)
 #[derive(Debug, Clone)]
 pub struct SearchCandidate {
     pub id: i64,
     pub content: String,
     pub timestamp: i64,
-    /// Tantivy's BM25-style relevance score
+    /// Tantivy's BM25-style relevance score (kept for reference, may be used in future)
+    #[allow(dead_code)]
     pub tantivy_score: f32,
 }
 
