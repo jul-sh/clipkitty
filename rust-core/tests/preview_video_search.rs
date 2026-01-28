@@ -555,7 +555,7 @@ fn create_ranking_test_store(items: Vec<&str>) -> (ClipboardStore, TempDir) {
         store
             .save_text(content.to_string(), Some("Test".to_string()), Some("com.test".to_string()))
             .unwrap();
-        std::thread::sleep(std::time::Duration::from_millis(15));
+        std::thread::sleep(std::time::Duration::from_millis(50));
     }
 
     (store, temp_dir)
@@ -591,30 +591,65 @@ fn ranking_contiguous_beats_scattered() {
 
 #[test]
 fn ranking_recency_breaks_ties_for_equal_matches() {
-    // Items with identical match quality, different ages
-    let (store, _temp) = create_ranking_test_store(vec![
-        "hello world one",   // older
-        "hello world two",   // middle
-        "hello world three", // newest
-    ]);
+    // This test verifies that timestamp is used as a tiebreaker for identical Nucleo scores.
+    // We use content that produces identical Nucleo scores: "hello world one/two/three"
+    // all score 140 for query "hello ".
+    //
+    // IMPORTANT: Unix timestamps have 1-second resolution, so we need 1+ second gaps
+    // between insertions for the timestamps to differ.
+    let temp_dir = TempDir::new().unwrap();
+    let db_path = temp_dir.path().join("test.db").to_string_lossy().to_string();
+    let store = ClipboardStore::new(db_path).unwrap();
 
-    let contents = search_contents(&store, "hello");
+    // Insert items with 1.1 second gaps to ensure distinct timestamps
+    let id1 = store
+        .save_text("hello world one".to_string(), Some("Test".to_string()), Some("com.test".to_string()))
+        .unwrap();
+    std::thread::sleep(std::time::Duration::from_millis(1100));
 
-    // All are exact matches, so recency should order them (newest first)
-    assert_eq!(contents.len(), 3, "Should find all 3 items");
+    let id2 = store
+        .save_text("hello world two".to_string(), Some("Test".to_string()), Some("com.test".to_string()))
+        .unwrap();
+    std::thread::sleep(std::time::Duration::from_millis(1100));
+
+    let id3 = store
+        .save_text("hello world three".to_string(), Some("Test".to_string()), Some("com.test".to_string()))
+        .unwrap();
+
+    // Verify all 3 were inserted (not deduplicated)
+    assert!(id1 > 0 && id2 > 0 && id3 > 0, "All items should be inserted");
+
+    // Search for "hello " - all 3 have identical Nucleo scores (140)
+    let result = store.search("hello ".to_string()).unwrap();
+    let ids: Vec<i64> = result.matches.iter().map(|m| m.item_id).collect();
+    let items = store.fetch_by_ids(ids.clone()).unwrap();
+    let contents: Vec<String> = items.iter().map(|i| i.text_content().to_string()).collect();
+
+    // All 3 items should be found
+    assert_eq!(contents.len(), 3, "Should find all 3 items, got: {:?}", contents);
+
+    // Verify deterministic ordering - with distinct timestamps, results should be stable
+    for _ in 0..3 {
+        let result2 = store.search("hello ".to_string()).unwrap();
+        let ids2: Vec<i64> = result2.matches.iter().map(|m| m.item_id).collect();
+        assert_eq!(ids, ids2, "Search ordering should be deterministic");
+    }
+
+    // With identical Nucleo scores and the timestamp tiebreaker,
+    // newest (item 3) should be first, oldest (item 1) should be last
     assert!(
         contents[0].contains("three"),
-        "Newest should rank first, got: {:?}",
+        "Newest (three) should rank first, got: {:?}",
         contents
     );
     assert!(
         contents[1].contains("two"),
-        "Middle should rank second, got: {:?}",
+        "Middle (two) should rank second, got: {:?}",
         contents
     );
     assert!(
         contents[2].contains("one"),
-        "Oldest should rank third, got: {:?}",
+        "Oldest (one) should rank last, got: {:?}",
         contents
     );
 }
