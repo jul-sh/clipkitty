@@ -78,13 +78,15 @@ impl SearchEngine {
         };
 
         // Sort by blended score: fuzzy score + recency boost
+        // Use timestamp as tiebreaker when scores are equal (newest first)
         let now = Utc::now().timestamp();
         matches.sort_by(|a, b| {
             let score_a = blended_score(a.score, a.timestamp, now);
             let score_b = blended_score(b.score, b.timestamp, now);
-            score_b
-                .partial_cmp(&score_a)
-                .unwrap_or(std::cmp::Ordering::Equal)
+            match score_b.partial_cmp(&score_a) {
+                Some(std::cmp::Ordering::Equal) | None => b.timestamp.cmp(&a.timestamp),
+                Some(ord) => ord,
+            }
         });
 
         // Limit results

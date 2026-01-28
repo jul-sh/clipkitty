@@ -193,6 +193,8 @@ impl Indexer {
             return Ok(Vec::new());
         }
 
+        let num_terms = terms.len();
+
         // Build OR query from all trigram terms
         let subqueries: Vec<_> = terms
             .into_iter()
@@ -202,7 +204,20 @@ impl Indexer {
                 (Occur::Should, q)
             })
             .collect();
-        let tantivy_query = BooleanQuery::new(subqueries);
+        let mut tantivy_query = BooleanQuery::new(subqueries);
+
+        // For long queries (10+ trigrams, ~12+ chars), require at least 2/3 to match.
+        // This filters "soup" matches at the index level - documents that only
+        // contain scattered trigrams (like long paths with random char overlaps)
+        // are never fetched. E.g., "hello how are you" won't match a path that
+        // only happens to contain a few of the ~15 trigrams by coincidence.
+        //
+        // We use 2/3 for stricter filtering. Short queries (< 10 trigrams) skip
+        // this filter entirely to preserve typo tolerance for shorter searches.
+        if num_terms >= 10 {
+            let min_match = (num_terms * 2 / 3).max(5);
+            tantivy_query.set_minimum_number_should_match(min_match);
+        }
 
         // Get top 5000 candidates (will be re-ranked by fuzzy matcher)
         let top_docs = searcher.search(&tantivy_query, &TopDocs::with_limit(5000))?;
