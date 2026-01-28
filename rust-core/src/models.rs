@@ -3,6 +3,7 @@
 //! These models are designed for UniFFI export to Swift.
 
 use std::collections::hash_map::DefaultHasher;
+use std::collections::HashMap;
 use std::hash::{Hash, Hasher};
 
 /// Link metadata fetch state
@@ -334,6 +335,8 @@ pub struct HighlightRange {
 pub struct SearchMatch {
     pub item_id: i64,
     pub highlights: Vec<HighlightRange>,
+    /// Debug info map (key-value pairs for debugging display)
+    pub debug_info: HashMap<String, String>,
 }
 
 /// Search result with matches (IDs + highlights)

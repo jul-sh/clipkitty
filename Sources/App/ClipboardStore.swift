@@ -34,10 +34,12 @@ private func measureTimeAsync<T>(_ label: String, _ block: () async throws -> T)
     return result
 }
 
-/// Search result item with highlights
+/// Search result item with highlights and debug info
 struct SearchResultItem: Equatable {
     let item: ClipboardItem
     let highlights: [HighlightRange]
+    /// Debug info from search engine (only used when debug mode enabled)
+    let debugInfo: [String: String]
 }
 
 /// Search result state - makes loading/results states explicit
@@ -180,7 +182,7 @@ final class ClipboardStore {
                 }
             case .loaded(let items, _):
                 // Convert loaded items to search results (no highlights yet)
-                return items.map { SearchResultItem(item: $0, highlights: []) }
+                return items.map { SearchResultItem(item: $0, highlights: [], debugInfo: [:]) }
             default:
                 return []
             }
@@ -338,10 +340,12 @@ final class ClipboardStore {
             guard !Task.isCancelled else { return }
             guard case .searching(let currentQuery2, _) = state, currentQuery2 == query else { return }
 
-            // Build ID -> highlights map
+            // Build ID -> highlights map and debug info map
             var highlightsMap: [Int64: [HighlightRange]] = [:]
+            var debugInfoMap: [Int64: [String: String]] = [:]
             for match in searchResult.matches {
                 highlightsMap[match.itemId] = match.highlights
+                debugInfoMap[match.itemId] = match.debugInfo
             }
 
             // Combine items with highlights, preserving search order
@@ -357,7 +361,8 @@ final class ClipboardStore {
                 if let item = itemsById[match.itemId] {
                     resultItems.append(SearchResultItem(
                         item: item,
-                        highlights: highlightsMap[match.itemId] ?? []
+                        highlights: highlightsMap[match.itemId] ?? [],
+                        debugInfo: debugInfoMap[match.itemId] ?? [:]
                     ))
                 }
             }
@@ -591,7 +596,7 @@ final class ClipboardStore {
                         sourceApp: resultItem.item.sourceApp,
                         sourceAppBundleId: resultItem.item.sourceAppBundleId
                     )
-                    return SearchResultItem(item: updatedItem, highlights: resultItem.highlights)
+                    return SearchResultItem(item: updatedItem, highlights: resultItem.highlights, debugInfo: resultItem.debugInfo)
                 }
             }
             let newSearchState: SearchResultState
@@ -649,7 +654,7 @@ final class ClipboardStore {
         case .searching(let query, let searchState):
             let updatedResults: ([SearchResultItem]) -> [SearchResultItem] = { items in
                 items.map { resultItem in
-                    SearchResultItem(item: updateItem(resultItem.item), highlights: resultItem.highlights)
+                    SearchResultItem(item: updateItem(resultItem.item), highlights: resultItem.highlights, debugInfo: resultItem.debugInfo)
                 }
             }
             let newSearchState: SearchResultState

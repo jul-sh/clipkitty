@@ -63,6 +63,7 @@ dictionary HighlightRange {
 dictionary SearchMatch {
     i64 item_id;
     sequence<HighlightRange> highlights;
+    record<DOMString, string> debug_info;
 };
 
 // Search result with matches (IDs + highlights)

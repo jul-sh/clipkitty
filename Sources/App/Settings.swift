@@ -108,11 +108,19 @@ final class AppSettings: ObservableObject {
         didSet { save() }
     }
 
+    #if !SANDBOXED
+    /// Whether to show debug scores in search results (developer feature)
+    @Published var showDebugScores: Bool {
+        didSet { save() }
+    }
+    #endif
+
     private let defaults = UserDefaults.standard
     private let hotKeyKey = "hotKey"
     private let maxDbSizeKey = "maxDatabaseSizeGB"
     private let legacyMaxDbSizeKey = "maxDatabaseSizeMB"
     private let launchAtLoginKey = "launchAtLogin"
+    private let showDebugScoresKey = "showDebugScores"
 
     private init() {
         // Initialize all stored properties first
@@ -134,6 +142,10 @@ final class AppSettings: ObservableObject {
         // Default to false - user must explicitly enable launch at login
         launchAtLoginEnabled = defaults.object(forKey: launchAtLoginKey) as? Bool ?? false
 
+        #if !SANDBOXED
+        showDebugScores = defaults.object(forKey: showDebugScoresKey) as? Bool ?? false
+        #endif
+
         maxImageMegapixels = 2.0
         imageCompressionQuality = 0.3
     }
@@ -144,5 +156,8 @@ final class AppSettings: ObservableObject {
         }
         defaults.set(maxDatabaseSizeGB, forKey: maxDbSizeKey)
         defaults.set(launchAtLoginEnabled, forKey: launchAtLoginKey)
+        #if !SANDBOXED
+        defaults.set(showDebugScores, forKey: showDebugScoresKey)
+        #endif
     }
 }
