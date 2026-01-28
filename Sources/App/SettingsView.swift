@@ -174,6 +174,11 @@ struct SettingsView: View {
                     }
                 }
                 .buttonStyle(.plain)
+
+                #if !SANDBOXED
+                Toggle("Show Debug Scores", isOn: $settings.showDebugScores)
+                    .help("Display search relevance scores on each result (for debugging)")
+                #endif
             }
         }
         .formStyle(.grouped)

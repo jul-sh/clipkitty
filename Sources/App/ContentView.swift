@@ -44,6 +44,17 @@ struct ContentView: View {
         }
     }
 
+    /// Get debug info for an item by stableId (only available during search)
+    private func debugInfo(for item: ClipboardItem) -> [String: String] {
+        guard case .searching(_, let searchState) = store.state else { return [:] }
+        let results: [SearchResultItem]
+        switch searchState {
+        case .loading(let previous): results = previous
+        case .results(let r, _): results = r
+        }
+        return results.first { $0.item.stableId == item.stableId }?.debugInfo ?? [:]
+    }
+
     private var selectedItem: ClipboardItem? {
         measure("selectedItem.get") {
             guard let selectedItemId else { return nil }
@@ -309,6 +320,7 @@ struct ContentView: View {
                         item: item,
                         isSelected: item.stableId == selectedItemId,
                         searchQuery: searchText,
+                        debugInfo: debugInfo(for: item),
                         onTap: {
                             selectedItemId = item.stableId
                             focusSearchField()
@@ -659,6 +671,7 @@ struct ItemRow: View, Equatable {
     let item: ClipboardItem
     let isSelected: Bool
     let searchQuery: String
+    let debugInfo: [String: String]
     let onTap: () -> Void
 
     // Fixed height for exactly 1 line of text at font size 15
@@ -760,7 +773,8 @@ struct ItemRow: View, Equatable {
     nonisolated static func == (lhs: ItemRow, rhs: ItemRow) -> Bool {
         return lhs.isSelected == rhs.isSelected &&
                lhs.item.stableId == rhs.item.stableId &&
-               lhs.searchQuery == rhs.searchQuery
+               lhs.searchQuery == rhs.searchQuery &&
+               lhs.debugInfo == rhs.debugInfo
     }
 
     var body: some View {
@@ -818,6 +832,19 @@ struct ItemRow: View, Equatable {
             )
             .frame(maxWidth: .infinity, alignment: .leading)
             .allowsHitTesting(false)
+
+            // Debug score display (non-sandboxed only, when enabled)
+            #if !SANDBOXED
+            if AppSettings.shared.showDebugScores, let score = debugInfo["score"] {
+                Text(score)
+                    .font(.system(size: 10, weight: .medium, design: .monospaced))
+                    .foregroundStyle(isSelected ? .white.opacity(0.7) : .secondary)
+                    .padding(.horizontal, 4)
+                    .padding(.vertical, 2)
+                    .background(isSelected ? Color.white.opacity(0.2) : Color.secondary.opacity(0.1))
+                    .clipShape(RoundedRectangle(cornerRadius: 4))
+            }
+            #endif
         }
         .frame(maxWidth: .infinity, minHeight: rowHeight, maxHeight: rowHeight, alignment: .leading)
         .padding(.horizontal, 4)
