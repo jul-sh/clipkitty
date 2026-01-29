@@ -719,3 +719,216 @@ fn ranking_trailing_space_boosts_word_boundary() {
         contents
     );
 }
+
+// ============================================================
+// Proximity/Scatter Rejection Tests
+// ============================================================
+
+#[test]
+fn scattered_match_should_not_appear() {
+    // This test demonstrates the problem: searching for "hello how are you doing today y"
+    // matches a long technical document where all characters exist but are completely
+    // scattered with no proximity to each other.
+    //
+    // To a human, this match is counterintuitive - none of the query words appear
+    // contiguously in the text.
+
+    let long_technical_text = r#"You are absolutely on the right track. Moving this logic into Tantivy (the retrieval step) is the **correct architectural fix**.
+
+Currently, your system is doing "Over-Fetching": it asks Tantivy for *everything* that vaguely matches, transfers it all to your application memory, and then your Rust code spends CPU cycles filtering out 90% of it.
+
+You can "bake" this into Tantivy using a **`BooleanQuery`** with a **`minimum_number_should_match`** parameter. This pushes the logic down to the Inverted Index, so documents that don't meet your threshold are never even touched or deserialized.
+
+Here is the strategy:
+
+1. **Don't** use the standard `QueryParser` for this specific fallback.
+2. **Do** manually tokenize your query string into trigrams.
+3. **Do** construct a `BooleanQuery` where each trigram is a "Should" clause.
+4. **Do** set `minimum_number_should_match` to your 2/3 threshold.
+
+### The Implementation
+
+You will need to replace your "Branch B" (or the query construction part of it) with this logic.
+
+```rust
+use tantivy::query::{BooleanQuery, TermQuery, Query};
+use tantivy::schema::{IndexRecordOption, Term};
+
+fn build_trigram_query(
+    &self,
+    query_str: &str,
+    field: Field
+) -> Box<dyn Query> {
+    let query_lower = query_str.to_lowercase();
+    let chars: Vec<char> = query_lower.chars().collect();
+
+    // 1. Generate Trigrams
+    if chars.len() < 3 {
+        // Fallback for tiny queries (just do a standard term query or prefix)
+        return Box::new(TermQuery::new(
+            Term::from_field_text(field, &query_lower),
+            IndexRecordOption::Basic,
+        ));
+    }
+
+    let mut clauses: Vec<(Occur, Box<dyn Query>)> = Vec::new();
+    let total_trigrams = chars.len() - 2;
+
+    // 2. Create a "Should" clause for every trigram
+    for i in 0..total_trigrams {
+        let trigram: String = chars[i..i+3].iter().collect();
+        let term = Term::from_field_text(field, &trigram);
+        let query = Box::new(TermQuery::new(term, IndexRecordOption::Basic));
+
+        // Occur::Should means "OR" - it contributes to the score but isn't strictly required...
+        // ...UNTIL we apply the minimum_match logic below.
+        clauses.push((Occur::Should, query));
+    }
+
+    // 3. Calculate Threshold (e.g. 66% match)
+    // "hello world" (~9 trigrams) -> needs ~6 matching trigrams
+    let min_match = (total_trigrams * 2 / 3).max(2);
+
+    // 4. Bake it into the Query
+    let mut bool_query = BooleanQuery::from(clauses);
+
+    // This is the magic sauce. Tantivy will optimize the intersection
+    // and skip documents that cannot possibly meet this count.
+    bool_query.set_minimum_number_should_match(min_match);
+
+    Box::new(bool_query)
+}
+
+```
+
+### Why this solves your problem
+
+#### 1. The "Soup" is Filtered at the Source
+
+Imagine your query is `"hello"`.
+
+* **Trigrams:** `hel`, `ell`, `llo` (Total: 3).
+* **Threshold:** Needs 2 matches.
+* **Candidate:** `/tmp/.../s_h_e_l_l...`
+* It might contain `hel` (maybe), but it definitely doesn't contain `ell` or `llo` as contiguous blocks.
+* Tantivy sees it only matches 1 clause. It knows 1 < 2. **It discards the document ID immediately.**
+* Your Rust code never sees this candidate.
+
+
+
+#### 2. Performance (BitSet Magic)
+
+Tantivy is columnar. It doesn't scan text; it scans integer lists (Postings Lists).
+
+* `hel`: `[doc1, doc5, doc100]`
+* `ell`: `[doc1, doc99]`
+* `llo`: `[doc1, doc200]`
+
+When you say "Minimum match 2", Tantivy essentially performs an optimized intersection/union algorithm on these lists. It sees that `doc1` appears in all 3 (Keep), but `doc100` only appears in 1 (Discard). This happens in microseconds using SIMD instructions.
+
+### Integration Guide
+
+You currently have a standard search path (likely using `QueryParser`). You should branch *before* searching:
+
+```rust
+// In your search handler
+let query = if use_fuzzy_trigrams {
+    // Use the custom logic above
+    build_trigram_query(self, query_str, content_field)
+} else {
+    // Use your existing standard parser
+    parser.parse_query(query_str)?
+};
+
+// Now run the search
+let top_docs = searcher.search(&query, &TopDocs::with_limit(50))?;
+
+```
+
+**Note on Indexing:**
+For this to work optimally, you must ensure your data is indexed in a way that supports trigrams.
+
+* **Option A (Standard):** If you are using a standard analyzer, Tantivy splits by whitespace. This approach works well if your trigrams are actual words, but if you want to match substrings *inside* words (like "serve" inside "server"), you need to be careful.
+* **Option B (N-Gram Tokenizer):** Ideally, your schema for the `content` field should use an `NgramTokenizer` (min_gram=3, max_gram=3) at indexing time. If you do this, `TermQuery` works perfectly. If you are using a standard tokenizer, you are searching for *tokens*, not strict substrings.
+
+If you are using a standard tokenizer (split on whitespace), the `build_trigram_query` above will search for *tokens* that match those trigrams, which might not be what you want. **If you want true substring matching (like FZF/Nucleo), you must use an Ngram Tokenizer in your Tantivy Schema.**"#;
+
+    let (store, _temp) = create_ranking_test_store(vec![long_technical_text]);
+
+    // This query has characters that all exist somewhere in the text,
+    // but none of the words appear as contiguous substrings
+    let contents = search_contents(&store, "hello how are you doing today y");
+
+    // CURRENT BEHAVIOR (what we want to fix):
+    // The text currently matches because Nucleo finds a subsequence.
+    // This is counterintuitive - the query "hello how are you doing today y"
+    // has NO words that appear contiguously in the technical text.
+
+    // Print what we got for debugging
+    println!("Search 'hello how are you doing today y' returned {} results", contents.len());
+    for (i, c) in contents.iter().enumerate() {
+        let preview: String = c.chars().take(80).collect();
+        println!("  {}: {}...", i, preview.replace('\n', " "));
+    }
+
+    // EXPECTED BEHAVIOR (after fix):
+    // This search should return NO results because the match has no proximity.
+    // All the query words are scattered across thousands of characters.
+    //
+    // VERIFIED: The current implementation correctly rejects this match!
+    // The trigram-based filtering in Tantivy requires 2/3 of trigrams to match
+    // in the candidate set, and Nucleo's subsequence matching doesn't find
+    // a viable match either.
+    assert!(
+        contents.is_empty(),
+        "Scattered matches with no proximity should NOT appear in results. Got: {} results",
+        contents.len()
+    );
+}
+
+#[test]
+fn dense_clusters_with_gap_should_match() {
+    // This test verifies that documents with dense match clusters separated by gaps
+    // SHOULD still match. This is a valid use case we must preserve.
+    //
+    // Example: "hello world ... [long gap] ... goodbye friend"
+    // Query: "hello world goodbye friend"
+    //
+    // Both "hello world" and "goodbye friend" are contiguous in the document,
+    // just separated by unrelated content. This is a valid match.
+
+    let doc_with_gap = r#"hello world - this is the start of the document.
+
+Lorem ipsum dolor sit amet, consectetur adipiscing elit. Sed do eiusmod tempor
+incididunt ut labore et dolore magna aliqua. Ut enim ad minim veniam, quis nostrud
+exercitation ullamco laboris nisi ut aliquip ex ea commodo consequat. Duis aute
+irure dolor in reprehenderit in voluptate velit esse cillum dolore eu fugiat nulla
+pariatur. Excepteur sint occaecat cupidatat non proident, sunt in culpa qui officia
+deserunt mollit anim id est laborum. Curabitur pretium tincidunt lacus. Nulla gravida
+orci a odio. Nullam varius, turpis et commodo pharetra, est eros bibendum elit.
+
+goodbye friend - this is the end of the document."#;
+
+    let (store, _temp) = create_ranking_test_store(vec![doc_with_gap]);
+
+    // This query matches content at start ("hello world") and end ("goodbye friend")
+    let contents = search_contents(&store, "hello world goodbye friend");
+
+    // Print for debugging
+    println!("Search 'hello world goodbye friend' returned {} results", contents.len());
+    for (i, c) in contents.iter().enumerate() {
+        let preview: String = c.chars().take(60).collect();
+        println!("  {}: {}...", i, preview.replace('\n', " "));
+    }
+
+    // This SHOULD match - the query terms appear contiguously at start and end
+    assert!(
+        !contents.is_empty(),
+        "Dense clusters with gap should STILL match - got 0 results"
+    );
+    assert!(
+        contents[0].contains("hello world") && contents[0].contains("goodbye friend"),
+        "Should find the document with both clusters"
+    );
+}
+
