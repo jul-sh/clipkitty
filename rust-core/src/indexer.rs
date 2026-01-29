@@ -1,7 +1,7 @@
 //! Tantivy Indexer for ClipKitty
 //!
 //! Provides full-text search with trigram (ngram) tokenization for efficient fuzzy matching.
-//! Uses Manual reload policy for immediate visibility after commits.
+//! For queries under 3 characters, returns empty (handled by search.rs streaming fallback).
 
 use parking_lot::RwLock;
 use std::path::Path;
@@ -52,65 +52,41 @@ impl Indexer {
         std::fs::create_dir_all(path)?;
         let dir = MmapDirectory::open(path)?;
         let schema = Self::build_schema();
-
-        // Try to open existing index or create new
         let index = Index::open_or_create(dir, schema.clone())?;
-
-        // Register trigram tokenizer
         Self::register_tokenizer(&index);
 
-        let writer = index.writer(50_000_000)?; // 50MB buffer
-        let reader = index
-            .reader_builder()
-            .reload_policy(ReloadPolicy::Manual)
-            .try_into()?;
+        let writer = index.writer(50_000_000)?;
+        let reader = index.reader_builder().reload_policy(ReloadPolicy::Manual).try_into()?;
 
-        let id_field = schema.get_field("id").unwrap();
-        let content_field = schema.get_field("content").unwrap();
-
-        Ok(Self {
-            index,
-            writer: RwLock::new(writer),
-            reader: RwLock::new(reader),
-            schema,
-            id_field,
-            content_field,
-        })
+        Ok(Self::from_parts(index, writer, reader, schema))
     }
 
     /// Create an in-memory indexer (for testing)
     pub fn new_in_memory() -> IndexerResult<Self> {
         let schema = Self::build_schema();
         let index = Index::create_in_ram(schema.clone());
-
-        // Register trigram tokenizer
         Self::register_tokenizer(&index);
 
-        let writer = index.writer(15_000_000)?; // 15MB buffer for tests
-        let reader = index
-            .reader_builder()
-            .reload_policy(ReloadPolicy::Manual)
-            .try_into()?;
+        let writer = index.writer(15_000_000)?;
+        let reader = index.reader_builder().reload_policy(ReloadPolicy::Manual).try_into()?;
 
-        let id_field = schema.get_field("id").unwrap();
-        let content_field = schema.get_field("content").unwrap();
+        Ok(Self::from_parts(index, writer, reader, schema))
+    }
 
-        Ok(Self {
+    fn from_parts(index: Index, writer: IndexWriter, reader: IndexReader, schema: Schema) -> Self {
+        Self {
+            id_field: schema.get_field("id").unwrap(),
+            content_field: schema.get_field("content").unwrap(),
+            schema,
             index,
             writer: RwLock::new(writer),
             reader: RwLock::new(reader),
-            schema,
-            id_field,
-            content_field,
-        })
+        }
     }
 
-    /// Build the schema with trigram tokenization on content field
     fn build_schema() -> Schema {
-        let mut schema_builder = Schema::builder();
-
-        // ID field - stored, fast access, and indexed for deletion
-        schema_builder.add_i64_field("id", STORED | FAST | INDEXED);
+        let mut builder = Schema::builder();
+        builder.add_i64_field("id", STORED | FAST | INDEXED);
 
         // Content field with trigram tokenization
         let text_field_indexing = TextFieldIndexing::default()
@@ -119,12 +95,10 @@ impl Indexer {
         let text_options = TextOptions::default()
             .set_indexing_options(text_field_indexing)
             .set_stored();
-        schema_builder.add_text_field("content", text_options);
+        builder.add_text_field("content", text_options);
 
-        // Timestamp for sorting and retrieval (STORED needed for doc.get_first())
-        schema_builder.add_i64_field("timestamp", STORED | FAST);
-
-        schema_builder.build()
+        builder.add_i64_field("timestamp", STORED | FAST);
+        builder.build()
     }
 
     /// Register the trigram tokenizer with the index
@@ -154,18 +128,12 @@ impl Indexer {
         Ok(())
     }
 
-    /// Commit pending changes and reload reader
     pub fn commit(&self) -> IndexerResult<()> {
-        {
-            let mut writer = self.writer.write();
-            writer.commit()?;
-        }
-        // Reload reader to see new commits
+        self.writer.write().commit()?;
         self.reader.write().reload()?;
         Ok(())
     }
 
-    /// Delete a document by ID
     pub fn delete_document(&self, id: i64) -> IndexerResult<()> {
         let writer = self.writer.write();
         let id_term = tantivy::Term::from_field_i64(self.id_field, id);
@@ -173,14 +141,11 @@ impl Indexer {
         Ok(())
     }
 
-    /// Search for documents matching the query
-    /// Returns candidates for fuzzy re-ranking
     pub fn search(&self, query: &str) -> IndexerResult<Vec<SearchCandidate>> {
         let reader = self.reader.read();
         let searcher = reader.searcher();
 
-        // Tokenize query using the same trigram tokenizer and build query directly
-        // This bypasses the query parser entirely, treating all input as literal text
+        // Tokenize query using the same trigram tokenizer
         let mut tokenizer = self.index.tokenizers().get("trigram").unwrap();
         let mut token_stream = tokenizer.token_stream(query);
         let mut terms = Vec::new();
@@ -189,6 +154,7 @@ impl Indexer {
         }
 
         // Query too short for trigrams - return empty (minimum 3 chars required)
+        // search.rs handles <3 char queries via streaming Nucleo fallback
         if terms.is_empty() {
             return Ok(Vec::new());
         }
@@ -223,10 +189,8 @@ impl Indexer {
         let top_docs = searcher.search(&tantivy_query, &TopDocs::with_limit(5000))?;
 
         let mut candidates = Vec::with_capacity(top_docs.len());
-
         for (score, doc_address) in top_docs {
             let doc: tantivy::TantivyDocument = searcher.doc(doc_address)?;
-
             let id = doc
                 .get_first(self.id_field)
                 .and_then(|v| v.as_i64())
@@ -254,7 +218,7 @@ impl Indexer {
         Ok(candidates)
     }
 
-    /// Clear all documents from the index
+
     pub fn clear(&self) -> IndexerResult<()> {
         let mut writer = self.writer.write();
         writer.delete_all_documents()?;
@@ -266,14 +230,11 @@ impl Indexer {
 
     /// Get the number of documents in the index
     pub fn num_docs(&self) -> u64 {
-        let reader = self.reader.read();
-        reader.searcher().num_docs()
+        self.reader.read().searcher().num_docs()
     }
 }
 
-// Thread safety for UniFFI
-unsafe impl Send for Indexer {}
-unsafe impl Sync for Indexer {}
+
 
 #[cfg(test)]
 mod tests {

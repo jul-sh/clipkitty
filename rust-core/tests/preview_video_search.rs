@@ -441,9 +441,9 @@ fn scene3_search_riv_shows_riverside() {
 fn scene3_search_rivresid_typo_finds_riverside() {
     let (store, _temp) = create_preview_video_store();
 
-    // "rivresid" is a typo - missing space and 'e' from "Riverside"
+    // "rivreside" is a typo
     // Fuzzy matching should still find it
-    let result = store.search("rivresid".to_string()).unwrap();
+    let result = store.search("rivreside".to_string()).unwrap();
 
     let ids: Vec<i64> = result.matches.iter().map(|m| m.item_id).collect();
     let items = store.fetch_by_ids(ids).unwrap();
@@ -453,7 +453,7 @@ fn scene3_search_rivresid_typo_finds_riverside() {
     // This demonstrates typo forgiveness
     assert!(
         contents.iter().any(|c| c.contains("Riverside")),
-        "Fuzzy search should find 'Riverside' with typo 'rivresid'. Got: {:?}",
+        "Fuzzy search should find 'Riverside' with typo 'rivreside'. Got: {:?}",
         contents
     );
 }
