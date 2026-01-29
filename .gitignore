@@ -9,7 +9,6 @@ DerivedData/
 
 # Node
 node_modules
-yarn-error.log
 
 # Rust
 rust-core/target/
@@ -38,8 +37,9 @@ marketing/
 
 # Rust build artifacts
 rust-core/target/
-xcodebuild.log
-xcodebuild_verify*.log
+
+# Log files
+*.log
 
 # SQLite temporary files
 *.sqlite-journal
