@@ -32,6 +32,8 @@ const RECENCY_HALF_LIFE_SECS: f64 = 7.0 * 24.0 * 60.0 * 60.0;
 pub struct FuzzyMatch {
     pub id: i64,
     pub score: u32,
+    pub nucleo_score: Option<u32>,
+    pub tantivy_score: Option<f32>,
     pub matched_indices: Vec<u32>,
     pub timestamp: i64,
 }
@@ -127,6 +129,7 @@ impl SearchEngine {
 
             // Run Nucleo matcher
             if let Some(mut score) = pattern.indices(haystack, &mut matcher, &mut indices) {
+                let nucleo_raw = score;
                 // Boost score if query (with trailing space) appears as exact substring
                 // e.g., "hello " should rank "Hello and..." higher than "def hello(..."
                 if let Some(ref query_lower) = trailing_space_query {
@@ -138,6 +141,8 @@ impl SearchEngine {
                 matches.push(FuzzyMatch {
                     id: candidate.id,
                     score,
+                    nucleo_score: Some(nucleo_raw),
+                    tantivy_score: Some(candidate.tantivy_score),
                     matched_indices: indices,
                     timestamp: candidate.timestamp,
                 });
@@ -174,9 +179,9 @@ impl SearchEngine {
             let mut indices = Vec::new();
 
             // Try Nucleo scoring first - gives us contiguity/order bonuses for free
-            let score = if let Some(nucleo_score) = pattern.indices(haystack, &mut matcher, &mut indices) {
+            let (score, nucleo_score) = if let Some(nucleo_raw) = pattern.indices(haystack, &mut matcher, &mut indices) {
                 // Nucleo matched: use its score (includes contiguity bonuses)
-                let mut score = nucleo_score;
+                let mut score = nucleo_raw;
 
                 // Apply exact substring bonus for trailing space queries
                 if has_trailing_space {
@@ -186,7 +191,7 @@ impl SearchEngine {
                     }
                 }
 
-                score
+                (score, Some(nucleo_raw))
             } else {
                 // Nucleo didn't match (typo case) - fall back to Tantivy score
                 // Use trigram-based highlighting instead
@@ -229,12 +234,14 @@ impl SearchEngine {
 
                 // Scale Tantivy score to be comparable with Nucleo scores
                 // Nucleo scores are typically in the hundreds, Tantivy in 0-10 range
-                (candidate.tantivy_score * 50.0) as u32
+                ((candidate.tantivy_score * 50.0) as u32, None)
             };
 
             matches.push(FuzzyMatch {
                 id: candidate.id,
                 score,
+                nucleo_score,
+                tantivy_score: Some(candidate.tantivy_score),
                 matched_indices: indices,
                 timestamp: candidate.timestamp,
             });
@@ -278,6 +285,7 @@ impl SearchEngine {
             let mut indices = Vec::new();
 
             if let Some(mut score) = pattern.indices(haystack, &mut matcher, &mut indices) {
+                let nucleo_raw = score;
                 // Boost score if query (with trailing space) appears as exact substring
                 if let Some(ref query_lower) = trailing_space_query {
                     if content.to_lowercase().contains(query_lower) {
@@ -289,6 +297,8 @@ impl SearchEngine {
                     results.push(FuzzyMatch {
                         id,
                         score,
+                        nucleo_score: Some(nucleo_raw),
+                        tantivy_score: None, // Streaming search doesn't use Tantivy
                         matched_indices: indices,
                         timestamp,
                     });
