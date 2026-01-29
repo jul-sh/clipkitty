@@ -131,12 +131,11 @@ Clipboard change detected
                            │
                            ▼
 ┌─────────────────────────────────────────────────────────────┐
-│ Layer 2: Nucleo (Precision) with Quality Filters            │
+│ Layer 2: Nucleo (Precision)                                 │
 │                                                             │
 │ - Fuzzy scoring with matched character indices              │
 │ - Re-ranks candidates by match quality                      │
 │ - Density check: 25% adjacent pairs required (words >3 ch)  │
-│ - Typo fallback: 50% trigram match if Nucleo fails          │
 │ - Missing atom exclusion: all query words must match        │
 │ - Trailing space boost: 20% if match ends at whitespace     │
 └─────────────────────────────────────────────────────────────┘
