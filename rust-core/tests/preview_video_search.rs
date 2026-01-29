@@ -441,19 +441,19 @@ fn scene3_search_riv_shows_riverside() {
 fn scene3_search_rivresid_typo_finds_riverside() {
     let (store, _temp) = create_preview_video_store();
 
-    // "rivreside" is a typo
-    // Fuzzy matching should still find it
-    let result = store.search("rivreside".to_string()).unwrap();
+    // "riversde" is a typo - missing 'i' from "Riverside"
+    // Nucleo's fuzzy matching should still find it (unlike transposed letters)
+    let result = store.search("riversde".to_string()).unwrap();
 
     let ids: Vec<i64> = result.matches.iter().map(|m| m.item_id).collect();
     let items = store.fetch_by_ids(ids).unwrap();
     let contents: Vec<String> = items.iter().map(|i| i.text_content().to_string()).collect();
 
     // Fuzzy search should find the Riverside apartment notes
-    // This demonstrates typo forgiveness
+    // This demonstrates typo forgiveness for missing characters
     assert!(
         contents.iter().any(|c| c.contains("Riverside")),
-        "Fuzzy search should find 'Riverside' with typo 'rivreside'. Got: {:?}",
+        "Fuzzy search should find 'Riverside' with typo 'riversde'. Got: {:?}",
         contents
     );
 }

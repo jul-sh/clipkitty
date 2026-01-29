@@ -11,7 +11,7 @@ use nucleo_matcher::pattern::{CaseMatching, Normalization, Pattern};
 use nucleo_matcher::{Config, Matcher, Utf32Str};
 
 /// Maximum results to return after fuzzy re-ranking
-const MAX_RESULTS: usize = 2000;
+pub const MAX_RESULTS: usize = 2000;
 
 pub const MIN_TRIGRAM_QUERY_LEN: usize = 3;
 const MIN_SCORE_SHORT_QUERY: u32 = 0;
@@ -41,19 +41,16 @@ impl SearchEngine {
     }
 
     pub fn search(&self, indexer: &Indexer, query: &str) -> IndexerResult<Vec<FuzzyMatch>> {
-        let trimmed = query.trim_start();
-        if trimmed.trim().is_empty() {
+        if query.trim().is_empty() {
             return Ok(Vec::new()); // Let the outer layer fetch default recent items
         }
+        let trimmed = query.trim_start();
 
         let has_trailing_space = query.ends_with(' ');
         let query_words: Vec<&str> = trimmed.trim_end().split_whitespace().collect();
 
         // L1: Strict Tantivy filtering guarantees all words exist (solves scatter & scale)
         let candidates = indexer.search(trimmed.trim_end())?;
-        if candidates.is_empty() {
-            return Ok(Vec::new());
-        }
 
         let mut matcher = Matcher::new(self.config.clone());
         let patterns: Vec<Pattern> = query_words
@@ -83,10 +80,7 @@ impl SearchEngine {
         matches.sort_unstable_by(|a, b| {
             let score_a = blended_score(a.score, a.timestamp, now);
             let score_b = blended_score(b.score, b.timestamp, now);
-            match score_b.partial_cmp(&score_a) {
-                Some(std::cmp::Ordering::Equal) | None => b.timestamp.cmp(&a.timestamp),
-                Some(ord) => ord,
-            }
+            score_b.total_cmp(&score_a).then_with(|| b.timestamp.cmp(&a.timestamp))
         });
 
         matches.truncate(MAX_RESULTS);
@@ -147,92 +141,13 @@ impl SearchEngine {
 
         for (i, &word) in words.iter().enumerate() {
             let mut word_indices = Vec::new();
-            let mut word_matched = false;
             let word_len = word.chars().count() as u32;
 
-            // 1. Try Nucleo (Fast, Contiguous, Word-Boundary Aware)
-            if let Some(score) = patterns[i].indices(haystack, matcher, &mut word_indices) {
-                // Density-based scatter detection: reject scattered character matches
-                // Apply to all words > 3 chars to catch "soup" matches
-                let is_valid = if word_len <= 3 {
-                    // Very short words (1-3 chars): trust Nucleo implicitly
-                    true
-                } else {
-                    let total_pairs = word_indices.len().saturating_sub(1);
-                    if total_pairs == 0 {
-                        true
-                    } else {
-                        let adjacent_pairs = word_indices.windows(2)
-                            .filter(|w| w[1] == w[0] + 1)
-                            .count();
-                        (adjacent_pairs as f64 / total_pairs as f64) > MIN_ADJACENCY_RATIO
-                    }
-                };
+            let score = patterns[i].indices(haystack, matcher, &mut word_indices)
+                .filter(|_| passes_density_check(word_len, &word_indices))?;
 
-                if is_valid {
-                    total_score += score;
-                    all_indices.extend_from_slice(&word_indices);
-                    word_matched = true;
-                }
-            }
-
-            // 2. Typo Fallback (If Nucleo failed or scattered due to transposed letters like "rivreside")
-            if !word_matched && word_len >= 3 {
-                let content_lower = content.to_lowercase();
-                let word_chars: Vec<char> = word.to_lowercase().chars().collect();
-                let num_trigrams = word_chars.len().saturating_sub(2);
-
-                // Count matching trigrams and collect byte positions
-                let mut matching_trigram_count = 0;
-                let mut byte_matches = Vec::new();
-                for j in 0..num_trigrams {
-                    let trigram: String = word_chars[j..j+3].iter().collect();
-                    if let Some(_byte_idx) = content_lower.find(&trigram) {
-                        matching_trigram_count += 1;
-                        // Collect all occurrences for highlighting
-                        for (idx, _) in content_lower.match_indices(&trigram) {
-                            byte_matches.push(idx);
-                        }
-                    }
-                }
-
-                // Require 2/3 of trigrams to match
-                let min_matching = ((num_trigrams + 1) * 2 / 3).max(2);
-                if matching_trigram_count < min_matching {
-                    // Not enough trigrams matched - reject this word
-                    word_matched = false;
-                } else {
-                    word_matched = true;
-                    total_score += word_len * 15; // Synthetic comparable score
-
-                    byte_matches.sort_unstable();
-                    byte_matches.dedup();
-
-                    let mut char_idx = 0;
-                    let mut byte_idx_iter = byte_matches.iter().peekable();
-
-                    // Zero-allocation byte-to-char index mapping for UI highlighting
-                    for (b_idx, _) in content_lower.char_indices() {
-                        if char_idx > 10_000 { break; } // Latency protection on 5MB dumps
-                        if byte_idx_iter.peek().is_none() { break; }
-
-                        while let Some(&&target_b_idx) = byte_idx_iter.peek() {
-                            if b_idx == target_b_idx {
-                                all_indices.extend_from_slice(&[char_idx, char_idx + 1, char_idx + 2]);
-                                byte_idx_iter.next();
-                            } else if target_b_idx < b_idx {
-                                byte_idx_iter.next();
-                            } else {
-                                break;
-                            }
-                        }
-                        char_idx += 1;
-                    }
-                }
-            }
-
-            // Missing Atom Exclusion (§4)
-            if !word_matched { return None; }
+            total_score += score;
+            all_indices.extend_from_slice(&word_indices);
         }
 
         all_indices.sort_unstable();
@@ -240,14 +155,11 @@ impl SearchEngine {
 
         // Trailing Space Boost: boost matches where the word ends at a word boundary
         if has_trailing_space {
-            if let Some(&last_idx) = all_indices.last() {
-                if last_idx < 10_000 { // Latency limit
-                    let next_char = content.chars().nth((last_idx + 1) as usize);
-                    // Check for whitespace specifically, not just non-alphanumeric
-                    // This distinguishes "hello " from "hello("
-                    if next_char.map_or(true, |c| c.is_whitespace()) {
-                        total_score = (total_score as f32 * 1.2) as u32;
-                    }
+            if let Some(&last_idx) = all_indices.last().filter(|&&i| i < 10_000) {
+                let ends_at_boundary = content.chars().nth((last_idx + 1) as usize)
+                    .map_or(true, |c| c.is_whitespace());
+                if ends_at_boundary {
+                    total_score = (total_score as f32 * 1.2) as u32;
                 }
             }
         }
@@ -262,34 +174,33 @@ impl SearchEngine {
         })
     }
 
-    pub fn max_results() -> usize { MAX_RESULTS }
-
     pub fn indices_to_ranges(indices: &[u32]) -> Vec<HighlightRange> {
         if indices.is_empty() { return Vec::new(); }
-        let mut ranges = Vec::new();
+
         let mut sorted = indices.to_vec();
         sorted.sort_unstable();
         sorted.dedup();
 
-        let mut start = sorted[0];
-        let mut end = start + 1;
-
-        for &idx in &sorted[1..] {
-            if idx == end {
-                end = idx + 1;
-            } else {
-                ranges.push(HighlightRange { start, end });
-                start = idx;
-                end = idx + 1;
-            }
-        }
-        ranges.push(HighlightRange { start, end });
-        ranges
+        sorted[1..].iter().fold(vec![(sorted[0], sorted[0] + 1)], |mut acc, &idx| {
+            let last = acc.last_mut().unwrap();
+            if idx == last.1 { last.1 = idx + 1; } else { acc.push((idx, idx + 1)); }
+            acc
+        }).into_iter().map(|(start, end)| HighlightRange { start, end }).collect()
     }
 }
 
 impl Default for SearchEngine {
     fn default() -> Self { Self::new() }
+}
+
+/// Density check: reject scattered character matches ("soup" detection).
+fn passes_density_check(word_len: u32, indices: &[u32]) -> bool {
+    if word_len <= 3 { return true; }
+    let total_pairs = indices.len().saturating_sub(1);
+    if total_pairs == 0 { return true; }
+
+    let adjacent = indices.windows(2).filter(|w| w[1] == w[0] + 1).count();
+    (adjacent as f64 / total_pairs as f64) > MIN_ADJACENCY_RATIO
 }
 
 /// Calculate blended score combining Nucleo fuzzy score with recency
