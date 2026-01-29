@@ -6,7 +6,7 @@
 use crate::database::Database;
 use crate::indexer::Indexer;
 use crate::models::{ClipboardItem, FetchResult, SearchMatch, SearchResult};
-use crate::search::{FuzzyMatch, SearchEngine, MIN_TRIGRAM_QUERY_LEN};
+use crate::search::{FuzzyMatch, SearchEngine, MIN_TRIGRAM_QUERY_LEN, MAX_RESULTS};
 use chrono::{TimeZone, Utc};
 use std::path::PathBuf;
 use std::sync::Arc;
@@ -339,7 +339,7 @@ impl ClipboardStore {
     /// Streaming search for short queries - fetches from DB in batches and applies Nucleo
     fn search_streaming(&self, query: &str) -> Result<Vec<FuzzyMatch>, ClipKittyError> {
         const BATCH_SIZE: usize = 1000;
-        let max_results = SearchEngine::max_results();
+        let max_results = MAX_RESULTS;
 
         let mut results = Vec::new();
         let mut offset = 0;

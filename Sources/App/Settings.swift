@@ -103,7 +103,6 @@ final class AppSettings: ObservableObject {
     let maxImageMegapixels: Double
     let imageCompressionQuality: Double
 
-    /// Whether the user wants launch at login enabled (persisted preference)
     @Published var launchAtLoginEnabled: Bool {
         didSet { save() }
     }

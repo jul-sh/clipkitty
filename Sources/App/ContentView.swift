@@ -818,6 +818,9 @@ struct ItemRow: View, Equatable {
             )
             .frame(maxWidth: .infinity, alignment: .leading)
             .allowsHitTesting(false)
+            .layoutPriority(1)
+
+
         }
         .frame(maxWidth: .infinity, minHeight: rowHeight, maxHeight: rowHeight, alignment: .leading)
         .padding(.horizontal, 4)

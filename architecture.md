@@ -125,6 +125,7 @@ Clipboard change detected
 │                                                             │
 │ - Trigram tokenization (3-grams)                            │
 │ - Fast narrowing: millions → ~5000 candidates               │
+│ - Long queries (10+ trigrams): 2/3 must match               │
 │ - Returns id, content, timestamp for each candidate         │
 └─────────────────────────────────────────────────────────────┘
                            │
@@ -134,9 +135,9 @@ Clipboard change detected
 │                                                             │
 │ - Fuzzy scoring with matched character indices              │
 │ - Re-ranks candidates by match quality                      │
-│ - Returns indices for highlight rendering                   │
-│ - Typos with MISSING letters work (subsequence matching)    │
-│   e.g., "helo" matches "hello" (h-e-l-o is a subsequence)   │
+│ - Density check: 25% adjacent pairs required (words >3 ch)  │
+│ - Missing atom exclusion: all query words must match        │
+│ - Trailing space boost: 20% if match ends at whitespace     │
 └─────────────────────────────────────────────────────────────┘
                            │
                            ▼
