@@ -46,13 +46,20 @@ struct ContentView: View {
 
     /// Get debug info for an item by stableId (only available during search)
     private func debugInfo(for item: ClipboardItem) -> [String: String] {
-        guard case .searching(_, let searchState) = store.state else { return [:] }
+        guard case .searching(_, let searchState) = store.state else {
+            // print("[DEBUG debugInfo] Not in search state")
+            return [:]
+        }
         let results: [SearchResultItem]
         switch searchState {
         case .loading(let previous): results = previous
         case .results(let r, _): results = r
         }
-        return results.first { $0.item.stableId == item.stableId }?.debugInfo ?? [:]
+        let found = results.first { $0.item.stableId == item.stableId }?.debugInfo ?? [:]
+        if !results.isEmpty {
+            print("[DEBUG debugInfo] Looking for stableId=\(item.stableId), first result stableId=\(results.first?.item.stableId ?? "none"), found=\(found)")
+        }
+        return found
     }
 
     private var selectedItem: ClipboardItem? {
@@ -444,6 +451,14 @@ struct ContentView: View {
                             Text(app)
                         }
                     }
+                    #if !SANDBOXED
+                    if AppSettings.shared.showDebugScores {
+                        let info = debugInfo(for: item)
+                        let nucleo = info["nucleo"] ?? "-"
+                        let tantivy = info["tantivy"] ?? "-"
+                        Label("N:\(nucleo) T:\(tantivy)", systemImage: "gauge.with.dots.needle.bottom.50percent")
+                    }
+                    #endif
                     Spacer()
                     Button(buttonLabel) {
                         confirmSelection()
@@ -832,19 +847,9 @@ struct ItemRow: View, Equatable {
             )
             .frame(maxWidth: .infinity, alignment: .leading)
             .allowsHitTesting(false)
+            .layoutPriority(1)
 
-            // Debug score display (non-sandboxed only, when enabled)
-            #if !SANDBOXED
-            if AppSettings.shared.showDebugScores, let score = debugInfo["score"] {
-                Text(score)
-                    .font(.system(size: 10, weight: .medium, design: .monospaced))
-                    .foregroundStyle(isSelected ? .white.opacity(0.7) : .secondary)
-                    .padding(.horizontal, 4)
-                    .padding(.vertical, 2)
-                    .background(isSelected ? Color.white.opacity(0.2) : Color.secondary.opacity(0.1))
-                    .clipShape(RoundedRectangle(cornerRadius: 4))
-            }
-            #endif
+
         }
         .frame(maxWidth: .infinity, minHeight: rowHeight, maxHeight: rowHeight, alignment: .leading)
         .padding(.horizontal, 4)

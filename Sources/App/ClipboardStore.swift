@@ -308,6 +308,7 @@ final class ClipboardStore {
     // ════════════════════════════════════════════════════════════════════════════════
 
     private func performSearch(query: String) async {
+        print("[DEBUG performSearch] ENTRY with query=\(query)")
         guard let rustStore else {
             state = .error("Database not available")
             return
@@ -346,6 +347,10 @@ final class ClipboardStore {
             for match in searchResult.matches {
                 highlightsMap[match.itemId] = match.highlights
                 debugInfoMap[match.itemId] = match.debugInfo
+                // DEBUG: Print first match's debug info
+                if debugInfoMap.count == 1 {
+                    print("[DEBUG] First match debugInfo: \(match.debugInfo)")
+                }
             }
 
             // Combine items with highlights, preserving search order
@@ -359,10 +364,12 @@ final class ClipboardStore {
 
             for match in searchResult.matches {
                 if let item = itemsById[match.itemId] {
+                    let dInfo = debugInfoMap[match.itemId] ?? [:]
+                    print("[DEBUG SearchResultItem] Creating with stableId=\(item.stableId), debugInfo=\(dInfo)")
                     resultItems.append(SearchResultItem(
                         item: item,
                         highlights: highlightsMap[match.itemId] ?? [],
-                        debugInfo: debugInfoMap[match.itemId] ?? [:]
+                        debugInfo: dInfo
                     ))
                 }
             }
