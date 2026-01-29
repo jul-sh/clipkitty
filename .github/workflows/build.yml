@@ -185,7 +185,7 @@ jobs:
           # Get merge commit message (contains PR title)
           MSG=$(git log -1 --pretty=%B)
 
-          # Determine bump type from PR title
+          # Determine bump type from PR title (defaults to patch)
           if echo "$MSG" | grep -qi '\[major\]'; then
             MAJOR=$((MAJOR + 1))
             MINOR=0
@@ -193,24 +193,26 @@ jobs:
           elif echo "$MSG" | grep -qi '\[minor\]'; then
             MINOR=$((MINOR + 1))
             PATCH=0
-          elif echo "$MSG" | grep -qi '\[patch\]'; then
+          else
+            # Default to patch bump
             PATCH=$((PATCH + 1))
           fi
-          # If no keyword, keep same version (override mode)
+
+          # Increment patch until we find an unused version
+          while git tag -l "v$MAJOR.$MINOR.$PATCH" | grep -q .; do
+            echo "Version $MAJOR.$MINOR.$PATCH already exists, incrementing..."
+            PATCH=$((PATCH + 1))
+          done
 
           VERSION="$MAJOR.$MINOR.$PATCH"
           echo "version=$VERSION" >> $GITHUB_OUTPUT
           echo "Releasing version: $VERSION"
 
-      - name: Create/Update Release
+      - name: Create Release
         run: |
           VERSION="${{ steps.version.outputs.version }}"
           TAG="v$VERSION"
 
-          # Delete existing release if overriding
-          gh release delete "$TAG" --yes 2>/dev/null || true
-          git push origin --delete "$TAG" 2>/dev/null || true
-          git tag -d "$TAG" 2>/dev/null || true
 
           # Create new release
           NOTE="### Note on Sandboxed Version
