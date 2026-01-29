@@ -44,24 +44,6 @@ struct ContentView: View {
         }
     }
 
-    /// Get debug info for an item by stableId (only available during search)
-    private func debugInfo(for item: ClipboardItem) -> [String: String] {
-        guard case .searching(_, let searchState) = store.state else {
-            // print("[DEBUG debugInfo] Not in search state")
-            return [:]
-        }
-        let results: [SearchResultItem]
-        switch searchState {
-        case .loading(let previous): results = previous
-        case .results(let r, _): results = r
-        }
-        let found = results.first { $0.item.stableId == item.stableId }?.debugInfo ?? [:]
-        if !results.isEmpty {
-            print("[DEBUG debugInfo] Looking for stableId=\(item.stableId), first result stableId=\(results.first?.item.stableId ?? "none"), found=\(found)")
-        }
-        return found
-    }
-
     private var selectedItem: ClipboardItem? {
         measure("selectedItem.get") {
             guard let selectedItemId else { return nil }
@@ -327,7 +309,6 @@ struct ContentView: View {
                         item: item,
                         isSelected: item.stableId == selectedItemId,
                         searchQuery: searchText,
-                        debugInfo: debugInfo(for: item),
                         onTap: {
                             selectedItemId = item.stableId
                             focusSearchField()
@@ -451,14 +432,6 @@ struct ContentView: View {
                             Text(app)
                         }
                     }
-                    #if !SANDBOXED
-                    if AppSettings.shared.showDebugScores {
-                        let info = debugInfo(for: item)
-                        let nucleo = info["nucleo"] ?? "-"
-                        let tantivy = info["tantivy"] ?? "-"
-                        Label("N:\(nucleo) T:\(tantivy)", systemImage: "gauge.with.dots.needle.bottom.50percent")
-                    }
-                    #endif
                     Spacer()
                     Button(buttonLabel) {
                         confirmSelection()
@@ -686,7 +659,6 @@ struct ItemRow: View, Equatable {
     let item: ClipboardItem
     let isSelected: Bool
     let searchQuery: String
-    let debugInfo: [String: String]
     let onTap: () -> Void
 
     // Fixed height for exactly 1 line of text at font size 15
@@ -788,8 +760,7 @@ struct ItemRow: View, Equatable {
     nonisolated static func == (lhs: ItemRow, rhs: ItemRow) -> Bool {
         return lhs.isSelected == rhs.isSelected &&
                lhs.item.stableId == rhs.item.stableId &&
-               lhs.searchQuery == rhs.searchQuery &&
-               lhs.debugInfo == rhs.debugInfo
+               lhs.searchQuery == rhs.searchQuery
     }
 
     var body: some View {

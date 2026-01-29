@@ -32,7 +32,8 @@ pub struct SearchCandidate {
     pub id: i64,
     pub content: String,
     pub timestamp: i64,
-    /// Tantivy's BM25-style relevance score
+    /// Tantivy's BM25-style relevance score (kept for diagnostics)
+    #[allow(dead_code)]
     pub tantivy_score: f32,
 }
 

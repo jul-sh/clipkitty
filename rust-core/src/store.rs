@@ -322,18 +322,9 @@ impl ClipboardStore {
             .into_iter()
             .map(|m| {
                 let highlights = SearchEngine::indices_to_ranges(&m.matched_indices);
-                let mut debug_info = std::collections::HashMap::new();
-                debug_info.insert("score".to_string(), m.score.to_string());
-                if let Some(nucleo) = m.nucleo_score {
-                    debug_info.insert("nucleo".to_string(), nucleo.to_string());
-                }
-                if let Some(tantivy) = m.tantivy_score {
-                    debug_info.insert("tantivy".to_string(), format!("{:.2}", tantivy));
-                }
                 SearchMatch {
                     item_id: m.id,
                     highlights,
-                    debug_info,
                 }
             })
             .collect();
