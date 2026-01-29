@@ -25,8 +25,6 @@ const MIN_ADJACENCY_RATIO: f64 = 0.25;
 pub struct FuzzyMatch {
     pub id: i64,
     pub score: u32,
-    pub nucleo_score: Option<u32>,
-    pub tantivy_score: Option<f32>,
     pub matched_indices: Vec<u32>,
     pub timestamp: i64,
 }
@@ -67,7 +65,6 @@ impl SearchEngine {
                 candidate.id,
                 &candidate.content,
                 candidate.timestamp,
-                Some(candidate.tantivy_score),
                 &query_words,
                 &patterns,
                 has_trailing_space,
@@ -111,7 +108,7 @@ impl SearchEngine {
         for (id, content, timestamp) in candidates.take(max_results * 10) {
             if results.len() >= max_results { break; }
             if let Some(fuzzy_match) = self.score_candidate(
-                id, &content, timestamp, None, &query_words, &patterns, has_trailing_space, &mut matcher,
+                id, &content, timestamp, &query_words, &patterns, has_trailing_space, &mut matcher,
             ) {
                 if query_len < 3 && fuzzy_match.score < MIN_SCORE_SHORT_QUERY { continue; }
                 results.push(fuzzy_match);
@@ -127,7 +124,6 @@ impl SearchEngine {
         id: i64,
         content: &str,
         timestamp: i64,
-        tantivy_score: Option<f32>,
         words: &[&str],
         patterns: &[Pattern],
         has_trailing_space: bool,
@@ -167,8 +163,6 @@ impl SearchEngine {
         Some(FuzzyMatch {
             id,
             score: total_score,
-            nucleo_score: Some(total_score),
-            tantivy_score,
             matched_indices: all_indices,
             timestamp,
         })
