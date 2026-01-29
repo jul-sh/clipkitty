@@ -163,14 +163,14 @@ impl SearchEngine {
         let mut matches = Vec::with_capacity(candidates.len());
         let mut matcher = Matcher::new(self.config.clone());
 
-        // Parse query for Nucleo matching
         let pattern = Pattern::parse(query, CaseMatching::Ignore, Normalization::Smart);
+        let query_lower = query.to_lowercase();
 
-        // For exact match check with trailing space
+        // Pre-compute exact match string for the bonus check
         let exact_match_query = if has_trailing_space {
-            format!("{} ", query.to_lowercase())
+            format!("{} ", query_lower)
         } else {
-            query.to_lowercase()
+            query_lower.clone()
         };
 
         for candidate in candidates {
@@ -178,41 +178,69 @@ impl SearchEngine {
             let haystack = Utf32Str::new(&candidate.content, &mut haystack_buf);
             let mut indices = Vec::new();
 
-            // Try Nucleo scoring first - gives us contiguity/order bonuses for free
-            let (score, nucleo_score) = if let Some(nucleo_raw) = pattern.indices(haystack, &mut matcher, &mut indices) {
-                // Nucleo matched: use its score (includes contiguity bonuses)
-                let mut score = nucleo_raw;
+            // Run Nucleo scoring
+            let nucleo_result = pattern.indices(haystack, &mut matcher, &mut indices);
 
-                // Apply exact substring bonus for trailing space queries
+            // --- 1. THE REFINED "DENSITY CHECK" ---
+            let is_valid_nucleo = if nucleo_result.is_none() {
+                false
+            } else if query.len() <= 5 {
+                // Short queries: Trust Nucleo implicitly (scattering is rare/harmless here)
+                true
+            } else {
+                // Long queries: Check adjacency density
+                let total_pairs = indices.len().saturating_sub(1);
+                if total_pairs == 0 {
+                    true
+                } else {
+                    let adjacent_pairs = indices.windows(2)
+                        .filter(|w| w[1] == w[0] + 1)
+                        .count();
+
+                    // Require > 30% of characters to be touching their neighbor.
+                    // "hello world" = 80%. "h...e...l...l...o" = 0%.
+                    (adjacent_pairs as f64 / total_pairs as f64) > 0.3
+                }
+            };
+
+            let (score, nucleo_score) = if is_valid_nucleo {
+                // Nucleo matched and passed the density check
+                let mut score = nucleo_result.unwrap();
+
                 if has_trailing_space {
                     let content_lower = candidate.content.to_lowercase();
                     if content_lower.contains(&exact_match_query) {
                         score = (score as f64 * 1.5) as u32;
                     }
                 }
-
-                (score, Some(nucleo_raw))
+                (score, Some(nucleo_result.unwrap()))
             } else {
-                // Nucleo didn't match (typo case) - fall back to Tantivy score
-                // Use trigram-based highlighting instead
+                // Nucleo failed OR was "scattered soup" -> Fallback to Trigrams
                 indices.clear();
                 let content_lower = candidate.content.to_lowercase();
-                let query_lower = query.to_lowercase();
-                let query_chars: Vec<char> = query_lower.chars().collect();
 
-                // Count matching trigrams to filter spurious matches
-                let total_trigrams = query_chars.len().saturating_sub(2);
+                // --- 2. FIX "TRIGRAM SOUP" ---
+                // Split by whitespace prevents "o h" from matching "hello how"
+                let mut valid_trigrams = Vec::new();
+                for word in query_lower.split_whitespace() {
+                    let chars: Vec<char> = word.chars().collect();
+                    if chars.len() >= 3 {
+                        for i in 0..chars.len() - 2 {
+                            valid_trigrams.push(chars[i..i + 3].iter().collect::<String>());
+                        }
+                    }
+                }
+
+                let total_trigrams = valid_trigrams.len();
                 let mut matching_trigrams = 0;
 
-                // Generate trigrams and find positions
-                for i in 0..total_trigrams {
-                    let trigram: String = query_chars[i..i + 3].iter().collect();
-                    if content_lower.contains(&trigram) {
+                for trigram in &valid_trigrams {
+                    if content_lower.contains(trigram) {
                         matching_trigrams += 1;
-                        // Add highlight indices for this trigram
                         let mut start = 0;
-                        while let Some(inner_pos) = content_lower[start..].find(&trigram) {
+                        while let Some(inner_pos) = content_lower[start..].find(trigram) {
                             let abs_pos = start + inner_pos;
+                            // Highlight all 3 chars of the trigram
                             for offset in 0..3 {
                                 let idx = (abs_pos + offset) as u32;
                                 if !indices.contains(&idx) {
@@ -223,17 +251,21 @@ impl SearchEngine {
                         }
                     }
                 }
-                indices.sort();
+                indices.sort_unstable();
 
-                // Require at least 2/3 of trigrams to match for typo tolerance
-                // This filters spurious matches like "Follow" matching "hello" (only "llo" overlaps)
-                let min_matching = (total_trigrams * 2 / 3).max(2);
-                if matching_trigrams < min_matching {
-                    continue; // Skip this candidate - not enough overlap
+                if total_trigrams > 0 {
+                    // Require 2/3rds of trigrams to match
+                    let min_matching = (total_trigrams * 2 / 3).max(2);
+                    if matching_trigrams < min_matching {
+                        continue; // ❌ Match rejected!
+                    }
+                } else {
+                     // If query has no valid trigrams (e.g. "yo"), rely purely on Tantivy score
+                     // or drop it. Here we drop it if Nucleo failed.
+                     continue;
                 }
 
-                // Scale Tantivy score to be comparable with Nucleo scores
-                // Nucleo scores are typically in the hundreds, Tantivy in 0-10 range
+                // Arbitrary fallback score based on Tantivy rank
                 ((candidate.tantivy_score * 50.0) as u32, None)
             };
 
