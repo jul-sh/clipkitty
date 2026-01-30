@@ -13,6 +13,9 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate {
     private var statusMenu: NSMenu?
 
     func applicationDidFinishLaunching(_ notification: Notification) {
+        // Disable scrollbar flash animation globally
+        NSScrollView.disableFlashScrollers()
+
         FontManager.registerFonts()
 
         // Sync launch at login state with user preference
