@@ -517,7 +517,7 @@ struct ContentView: View {
                     .resizable()
                     .aspectRatio(contentMode: .fit)
                     .frame(maxWidth: .infinity)
-                    .clipShape(RoundedRectangle(cornerRadius: 8))
+                    .clipShape(RoundedRectangle(cornerRadius: 10))
             } else {
                 // Placeholder based on metadata state
                 RoundedRectangle(cornerRadius: 8)
@@ -799,7 +799,7 @@ struct ItemRow: View, Equatable {
                     }
                 }
                 .frame(width: 32, height: 32)
-                .clipShape(RoundedRectangle(cornerRadius: 4))
+                .clipShape(RoundedRectangle(cornerRadius: 6))
 
                 // Badge: Source app icon (skip for links since browser icon is already shown)
                 if case .link = item.content {} else if let bundleID = item.sourceAppBundleID,
@@ -840,7 +840,7 @@ struct ItemRow: View, Equatable {
                 Color.clear
             }
         }
-        .clipShape(RoundedRectangle(cornerRadius: 10, style: .continuous))
+        .clipShape(RoundedRectangle(cornerRadius: 14, style: .continuous))
         .contentShape(Rectangle())
         }
         // 2. Apply the plain style so it behaves like a standard row instead of a system button
