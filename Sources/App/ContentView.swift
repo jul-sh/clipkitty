@@ -65,10 +65,7 @@ struct ContentView: View {
         VStack(spacing: 0) {
             searchBar
             Divider()
-            GeometryReader { _ in
-                content
-            }
-            .clipped()
+            content
         }
         // Hidden element for UI testing - exposes selected index
         .accessibilityElement(children: .contain)
@@ -76,11 +73,17 @@ struct ContentView: View {
         // 1. Force the VStack to fill the entire available space
         .frame(maxWidth: .infinity, maxHeight: .infinity)
 
-        // 2. Apply the glass effect/background so it fills that infinite frame
-        .clipKittyGlassBackground()
+        // 2 & 3. Isolate the glass effect into its own background layer
+        // and apply ignoresSafeArea ONLY to the background.
+        .background(
+            Color.clear
+                .clipKittyGlassBackground()
+                .ignoresSafeArea(.all)
+        )
 
-        // 3. Finally, ignore the safe area to push the background into the title bar
-        .ignoresSafeArea(.all)
+        // 2. Ignore ONLY the top safe area for the main content.
+        // This fixes the white gap at the top without breaking the scrollbars!
+        .ignoresSafeArea(edges: .top)
 
         .onAppear {
             // Apply initial search query if provided (for CI screenshots)
@@ -764,7 +767,9 @@ struct ItemRow: View, Equatable {
     }
 
     var body: some View {
-        HStack(spacing: 6) {
+        // 1. Wrap the content inside a Button
+        Button(action: onTap) {
+            HStack(spacing: 6) {
             // Content type icon with source app badge overlay
             ZStack(alignment: .bottomTrailing) {
                 // Main icon: image thumbnail, browser icon for links, color swatch, or UTType system icon
@@ -837,7 +842,9 @@ struct ItemRow: View, Equatable {
         }
         .clipShape(RoundedRectangle(cornerRadius: 10, style: .continuous))
         .contentShape(Rectangle())
-        .onTapGesture(perform: onTap)
+        }
+        // 2. Apply the plain style so it behaves like a standard row instead of a system button
+        .buttonStyle(.plain)
         .accessibilityElement(children: .combine)
         .accessibilityLabel(previewText)
         #if SANDBOXED
