@@ -341,6 +341,7 @@ pub struct SearchMatch {
 pub struct SearchResult {
     pub matches: Vec<SearchMatch>,
     pub total_count: u64,
+    pub has_more: bool,
 }
 
 /// Fetch result with pagination info for UniFFI

@@ -14,6 +14,7 @@ use nucleo_matcher::{Config, Matcher, Utf32Str};
 pub const MAX_RESULTS: usize = 2000;
 
 pub const MIN_TRIGRAM_QUERY_LEN: usize = 3;
+const MIN_SCORE_SHORT_QUERY: u32 = 0;
 /// Maximum recency boost multiplier (e.g., 0.1 = up to 10% boost for brand new items)
 const RECENCY_BOOST_MAX: f64 = 0.1;
 const RECENCY_HALF_LIFE_SECS: f64 = 7.0 * 24.0 * 60.0 * 60.0;
@@ -83,6 +84,39 @@ impl SearchEngine {
         Ok(matches)
     }
 
+    pub fn filter_batch(
+        &self,
+        candidates: impl Iterator<Item = (i64, String, i64)>,
+        query: &str,
+        results: &mut Vec<FuzzyMatch>,
+        max_results: usize,
+    ) -> usize {
+        let trimmed = query.trim_start();
+        if trimmed.trim().is_empty() { return 0; }
+
+        let has_trailing_space = query.ends_with(' ');
+        let query_words: Vec<&str> = trimmed.trim_end().split_whitespace().collect();
+        let mut matcher = Matcher::new(self.config.clone());
+        let patterns: Vec<Pattern> = query_words
+            .iter()
+            .map(|w| Pattern::parse(w, CaseMatching::Ignore, Normalization::Smart))
+            .collect();
+
+        let mut found = 0;
+        let query_len = trimmed.trim_end().chars().count();
+
+        for (id, content, timestamp) in candidates.take(max_results * 10) {
+            if results.len() >= max_results { break; }
+            if let Some(fuzzy_match) = self.score_candidate(
+                id, &content, timestamp, &query_words, &patterns, has_trailing_space, &mut matcher,
+            ) {
+                if query_len < 3 && fuzzy_match.score < MIN_SCORE_SHORT_QUERY { continue; }
+                results.push(fuzzy_match);
+                found += 1;
+            }
+        }
+        found
+    }
 
     /// Core Scoring Logic: Analyzes a document against split query words
     fn score_candidate(
@@ -186,6 +220,29 @@ mod tests {
     #[test]
     fn test_indices_to_ranges() {
         // ... (existing code)
+    }
+
+    #[test]
+    fn test_short_query_scores() {
+        let engine = SearchEngine::new();
+        let mut results = Vec::new();
+        let now = 1700000000i64;
+        let candidates_with_ids = vec![
+            (1, "the".to_string(), now),
+            (2, "apple".to_string(), now - 100),
+            (3, "test".to_string(), now - 200),
+            (4, "application".to_string(), now - 300),
+            (5, "cat".to_string(), now - 400),
+        ];
+
+        engine.filter_batch(candidates_with_ids.into_iter(), "t", &mut results, 10);
+
+        let matched_ids: Vec<i64> = results.iter().map(|m| m.id).collect();
+        assert!(matched_ids.contains(&1), "Should match 'the'");
+        assert!(matched_ids.contains(&3), "Should match 'test'");
+        assert!(matched_ids.contains(&4), "Should match 'application'");
+        assert!(matched_ids.contains(&5), "Should match 'cat'");
+        assert!(!matched_ids.contains(&2), "Should NOT match 'apple'");
     }
 
     #[test]

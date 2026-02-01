@@ -321,8 +321,9 @@ final class ClipboardStore {
 
         do {
             // Get search results (IDs + highlights) from Rust
+            let limit: UInt64 = 20
             let searchResult = try await Task.detached {
-                try rustStore.search(query: query)
+                try rustStore.search(query: query, beforeTimestampUnix: nil, limit: limit)
             }.value
 
             guard !Task.isCancelled else { return }
@@ -367,12 +368,77 @@ final class ClipboardStore {
                 }
             }
 
-            state = .searching(query: query, state: .results(resultItems, hasMore: false))
-            os_signpost(.end, log: performanceLog, name: "search", signpostID: signpostID, "total_hits=%d", searchResult.totalCount)
+            state = .searching(query: query, state: .results(resultItems, hasMore: searchResult.hasMore))
+            os_signpost(.end, log: performanceLog, name: "search", signpostID: signpostID, "count=%d", resultItems.count)
         } catch {
             guard !Task.isCancelled else { return }
             state = .error("Search failed: \(error.localizedDescription)")
             os_signpost(.end, log: performanceLog, name: "search", signpostID: signpostID, "error")
+        }
+    }
+
+    func loadMoreSearch() {
+        guard case .searching(let query, let searchState) = state,
+              case .results(let currentItems, let hasMore) = searchState,
+              hasMore,
+              let lastItemTimestamp = currentItems.last?.item.timestampUnix,
+              let rustStore = rustStore else {
+            return
+        }
+
+        // Set state to loading to prevent multiple simultaneous requests
+        state = .searching(query: query, state: .loading(previousResults: currentItems))
+
+        Task {
+            do {
+                let limit: UInt64 = 20
+                let searchResult = try await Task.detached {
+                    try rustStore.search(query: query, beforeTimestampUnix: lastItemTimestamp, limit: limit)
+                }.value
+
+                guard !Task.isCancelled else { return }
+                // Re-verify we are still searching for the same thing
+                guard case .searching(let currentQuery, _) = self.state, currentQuery == query else { return }
+
+                // Extract IDs and fetch full items
+                let ids = searchResult.matches.map { $0.itemId }
+                let items = try await Task.detached {
+                    try rustStore.fetchByIds(ids: ids)
+                }.value
+
+                // Build ID -> highlights map
+                var highlightsMap: [Int64: [HighlightRange]] = [:]
+                for match in searchResult.matches {
+                    highlightsMap[match.itemId] = match.highlights
+                }
+
+                // Hydrate items
+                var itemsById: [Int64: ClipboardItem] = [:]
+                for item in items {
+                    if let id = item.id {
+                        itemsById[id] = item
+                    }
+                }
+
+                var nextBatch: [DisplayItem] = []
+                for match in searchResult.matches {
+                    if let item = itemsById[match.itemId] {
+                        nextBatch.append(DisplayItem(
+                            item: item,
+                            highlights: highlightsMap[match.itemId] ?? []
+                        ))
+                    }
+                }
+
+                await MainActor.run { [weak self] in
+                    self?.state = .searching(query: query, state: .results(currentItems + nextBatch, hasMore: searchResult.hasMore))
+                }
+            } catch {
+                logError("Failed to load more search results: \(error)")
+                await MainActor.run { [weak self] in
+                    self?.state = .searching(query: query, state: .results(currentItems, hasMore: false))
+                }
+            }
         }
     }
 

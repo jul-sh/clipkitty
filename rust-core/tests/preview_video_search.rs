@@ -399,10 +399,10 @@ fn scene3_search_r_shows_return_and_riverside() {
     let items = store.fetch_by_ids(ids).unwrap();
     let contents: Vec<String> = items.iter().map(|i| i.text_content().to_string()).collect();
 
-    // Should find items starting with 'r'
+    // Should find items with 'r'
     assert!(
-        contents.iter().any(|c| c.contains("riverside_park")),
-        "Should find Riverside directions (starts with r)"
+        contents.iter().any(|c| c.contains("Riverside")),
+        "Should find Riverside apartment notes"
     );
     assert!(
         contents.iter().any(|c| c.contains("README.md")),

@@ -313,37 +313,35 @@ impl Database {
         Ok(ids)
     }
 
-    /// Search for items starting with the given prefix (optimized for short queries)
-    pub fn search_prefix(
+    /// Batch fetch (id, content, timestamp_unix) for SQL LIKE search with pagination
+    pub fn search_like(
         &self,
-        prefix: &str,
+        query: &str,
+        before_timestamp: Option<DateTime<Utc>>,
         limit: usize,
-    ) -> DatabaseResult<Vec<(i64, String, i64)>> {
+    ) -> DatabaseResult<Vec<ClipboardItem>> {
         let conn = self.conn.lock();
-        let mut stmt = conn.prepare(
-            "SELECT id, content, CAST(strftime('%s', timestamp) AS INTEGER)
-             FROM items
-             WHERE content LIKE ?1 ESCAPE '\\'
-             ORDER BY timestamp DESC
-             LIMIT ?2"
-        )?;
+        let pattern = format!("%{}%", query);
 
-        // Escape special LIKE characters (% and _)
-        let escaped_prefix = prefix.replace('\\', "\\\\").replace('%', "\\%").replace('_', "\\_");
-        let like_pattern = format!("{}%", escaped_prefix);
+        let sql = if before_timestamp.is_some() {
+            "SELECT * FROM items WHERE content LIKE ?1 AND timestamp < ?2 ORDER BY timestamp DESC LIMIT ?3"
+        } else {
+            "SELECT * FROM items WHERE content LIKE ?1 ORDER BY timestamp DESC LIMIT ?2"
+        };
 
-        let results = stmt
-            .query_map(params![like_pattern, limit as i64], |row| {
-                Ok((
-                    row.get::<_, i64>(0)?,
-                    row.get::<_, String>(1)?,
-                    row.get::<_, i64>(2)?,
-                ))
-            })?
-            .collect::<Result<Vec<_>, _>>()?;
+        let mut stmt = conn.prepare(sql)?;
+        let items = if let Some(ts) = before_timestamp {
+            let ts_str = ts.format("%Y-%m-%d %H:%M:%S%.f").to_string();
+            stmt.query_map(params![pattern, ts_str, limit as i64], Self::row_to_item)?
+                .collect::<Result<Vec<_>, _>>()?
+        } else {
+            stmt.query_map(params![pattern, limit as i64], Self::row_to_item)?
+                .collect::<Result<Vec<_>, _>>()?
+        };
 
-        Ok(results)
+        Ok(items)
     }
+
 
     /// Prune old items to stay under max size
     pub fn prune_to_size(&self, max_bytes: i64, keep_ratio: f64) -> DatabaseResult<usize> {

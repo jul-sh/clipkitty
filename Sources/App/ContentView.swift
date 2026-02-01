@@ -321,10 +321,16 @@ struct ContentView: View {
                     .accessibilityIdentifier("ItemRow_\(index)")
                     .listRowInsets(EdgeInsets(top: 2, leading: 0, bottom: 2, trailing: 0))
                     .listRowSeparator(.hidden)
-                    .listRowBackground(Color.clear)
                     .onAppear {
-                        if index == items.count - 10 {
-                            store.loadMoreItems()
+                        if index == items.count - 10 || (items.count < 10 && index == items.count - 1) {
+                            switch store.state {
+                            case .searching:
+                                store.loadMoreSearch()
+                            case .loaded:
+                                store.loadMoreItems()
+                            default:
+                                break
+                            }
                         }
                     }
                 }

@@ -69,6 +69,7 @@ dictionary SearchMatch {
 dictionary SearchResult {
     sequence<SearchMatch> matches;
     u64 total_count;
+    boolean has_more;
 };
 
 // Fetch result with pagination info
@@ -126,7 +127,7 @@ interface ClipboardStore {
 
     // Search - returns IDs + highlight ranges (Swift caches items)
     [Throws=ClipKittyError]
-    SearchResult search(string query);
+    SearchResult search(string query, i64? before_timestamp_unix, u64 limit);
 
     // Fetch items by IDs (for cache misses)
     [Throws=ClipKittyError]
