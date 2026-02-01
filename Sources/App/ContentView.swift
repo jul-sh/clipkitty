@@ -27,7 +27,7 @@ struct ContentView: View {
     @State private var showSearchSpinner: Bool = false
     @State private var lastItemsSignature: [String] = []  // Track when items change to suppress animation
     @FocusState private var isSearchFocused: Bool
-    private var items: [ClipboardItem] {
+    private var items: [DisplayItem] {
         // Note: Don't wrap in measure() - it can break @Observable tracking
         switch store.state {
         case .loaded(let items, _):
@@ -35,16 +35,16 @@ struct ContentView: View {
         case .searching(_, let searchState):
             switch searchState {
             case .loading(let previous):
-                return previous.map { $0.item }
+                return previous
             case .results(let results, _):
-                return results.map { $0.item }
+                return results
             }
         default:
             return []
         }
     }
 
-    private var selectedItem: ClipboardItem? {
+    private var selectedItem: DisplayItem? {
         measure("selectedItem.get") {
             guard let selectedItemId else { return nil }
             return items.first { $0.stableId == selectedItemId }
@@ -309,7 +309,7 @@ struct ContentView: View {
             List {
                 ForEach(Array(items.enumerated()), id: \.element.stableId) { index, item in
                     ItemRow(
-                        item: item,
+                        displayItem: item,
                         isSelected: item.stableId == selectedItemId,
                         searchQuery: searchText,
                         onTap: {
@@ -380,10 +380,10 @@ struct ContentView: View {
                     case .text, .email, .phone, .address, .date, .transit:
                         // Use AppKit text view - SwiftUI Text with AttributedString is slow
                         TextPreviewView(
-                            text: item.contentPreview,
+                            text: item.item.contentPreview,
                             fontName: FontManager.mono,
                             fontSize: 15,
-                            searchQuery: searchText
+                            highlights: item.highlights
                         )
                         .frame(maxWidth: .infinity, maxHeight: .infinity)
                     default:
@@ -396,7 +396,7 @@ struct ContentView: View {
                                             .resizable()
                                             .aspectRatio(contentMode: .fit)
                                             .frame(maxWidth: .infinity)
-                                        Text(imageDescriptionAttributed(description))
+                                        Text(imageDescriptionAttributed(description, highlights: item.highlights))
                                             .font(.callout)
                                             .foregroundStyle(.secondary)
                                             .frame(maxWidth: .infinity, alignment: .leading)
@@ -408,7 +408,7 @@ struct ContentView: View {
                                 // Link preview - fetch metadata on-demand if needed
                                 linkPreview(url: url, metadataState: metadataState)
                                     .task(id: item.stableId) {
-                                        store.fetchLinkMetadataIfNeeded(for: item)
+                                        store.fetchLinkMetadataIfNeeded(for: item.item)
                                     }
 
                             case .text, .email, .phone, .address, .date, .transit:
@@ -422,10 +422,10 @@ struct ContentView: View {
 
                 // Metadata footer
                 HStack(spacing: 12) {
-                    Label(item.timeAgo, systemImage: "clock")
-                    if let app = item.sourceApp {
+                    Label(item.item.timeAgo, systemImage: "clock")
+                    if let app = item.item.sourceApp {
                         HStack(spacing: 4) {
-                            if let bundleID = item.sourceAppBundleID,
+                            if let bundleID = item.item.sourceAppBundleID,
                                let appURL = NSWorkspace.shared.urlForApplication(withBundleIdentifier: bundleID) {
                                 Image(nsImage: NSWorkspace.shared.icon(forFile: appURL.path))
                                     .resizable()
@@ -474,17 +474,24 @@ struct ContentView: View {
         return "\(chars)"
     }
 
-    private func imageDescriptionAttributed(_ text: String) -> AttributedString {
-        guard !searchText.isEmpty else {
+    private func imageDescriptionAttributed(_ text: String, highlights: [HighlightRange]) -> AttributedString {
+        guard !highlights.isEmpty else {
             return AttributedString(text)
         }
         let font = NSFont.preferredFont(forTextStyle: .callout)
-        let attributed = text.highlightedNSAttributedString(
-            query: searchText,
-            font: font,
-            textColor: NSColor.secondaryLabelColor
-        )
-        return AttributedString(attributed)
+        let mutable = NSMutableAttributedString(string: text)
+        let fullRange = NSRange(location: 0, length: (text as NSString).length)
+        mutable.addAttribute(.font, value: font, range: fullRange)
+        mutable.addAttribute(.foregroundColor, value: NSColor.secondaryLabelColor, range: fullRange)
+
+        let highlightColor = NSColor.yellow.withAlphaComponent(0.4)
+        for h in highlights {
+            let range = NSRange(location: Int(h.start), length: Int(h.end - h.start))
+            if range.location + range.length <= mutable.length {
+                mutable.addAttribute(.backgroundColor, value: highlightColor, range: range)
+            }
+        }
+        return AttributedString(mutable)
     }
 
     private var emptyStateView: some View {
@@ -586,7 +593,7 @@ struct TextPreviewView: NSViewRepresentable {
     let text: String
     let fontName: String
     let fontSize: CGFloat
-    var searchQuery: String = ""
+    let highlights: [HighlightRange]
 
     func makeNSView(context: Context) -> NSScrollView {
         let scrollView = NSScrollView()
@@ -617,12 +624,12 @@ struct TextPreviewView: NSViewRepresentable {
 
         let font = NSFont(name: fontName, size: fontSize) ?? NSFont.monospacedSystemFont(ofSize: fontSize, weight: .regular)
 
-        // Only update if text or query changed
+        // Only update if text or highlights changed
         let currentText = textView.string
-        if currentText != text || context.coordinator.lastQuery != searchQuery {
-            context.coordinator.lastQuery = searchQuery
+        if currentText != text || context.coordinator.lastHighlights != highlights {
+            context.coordinator.lastHighlights = highlights
 
-            if searchQuery.isEmpty {
+            if highlights.isEmpty {
                 // Clear any previous highlighting by setting plain string
                 textView.string = text
                 textView.font = font
@@ -632,12 +639,20 @@ struct TextPreviewView: NSViewRepresentable {
                     textStorage.removeAttribute(.backgroundColor, range: NSRange(location: 0, length: textStorage.length))
                 }
             } else {
-                let attributed = text.highlightedNSAttributedString(
-                    query: searchQuery,
-                    font: font,
-                    textColor: .labelColor
-                )
-                textView.textStorage?.setAttributedString(attributed)
+                // Build attributed string with highlights
+                let mutable = NSMutableAttributedString(string: text)
+                let fullRange = NSRange(location: 0, length: (text as NSString).length)
+                mutable.addAttribute(.font, value: font, range: fullRange)
+                mutable.addAttribute(.foregroundColor, value: NSColor.labelColor, range: fullRange)
+
+                let highlightColor = NSColor.yellow.withAlphaComponent(0.4)
+                for h in highlights {
+                    let range = NSRange(location: Int(h.start), length: Int(h.end - h.start))
+                    if range.location + range.length <= mutable.length {
+                        mutable.addAttribute(.backgroundColor, value: highlightColor, range: range)
+                    }
+                }
+                textView.textStorage?.setAttributedString(mutable)
             }
         }
 
@@ -653,17 +668,19 @@ struct TextPreviewView: NSViewRepresentable {
     }
 
     class Coordinator {
-        var lastQuery: String = ""
+        var lastHighlights: [HighlightRange] = []
     }
 }
 
 // MARK: - Item Row
 
 struct ItemRow: View, Equatable {
-    let item: ClipboardItem
+    let displayItem: DisplayItem
     let isSelected: Bool
     let searchQuery: String
     let onTap: () -> Void
+
+    var item: ClipboardItem { displayItem.item }
 
     // Fixed height for exactly 1 line of text at font size 15
     private let rowHeight: CGFloat = 32
@@ -672,11 +689,55 @@ struct ItemRow: View, Equatable {
         let displayText = item.displayText
         guard !searchQuery.isEmpty else { return displayText }
 
-        // Search in full content (flattened) to find match position,
-        // since displayText is truncated to 200 chars and may not contain the match
-        let fullText = item.textContent
+        // Helper to find the best context window from highlights
+        func findContextWindow(fullText: String, highlights: [HighlightRange], maxChars: Int) -> (String, [HighlightRange]) {
+            guard !highlights.isEmpty else {
+                return (flatten(fullText, maxChars: maxChars), [])
+            }
 
-        // Helper to flatten text (replace newlines/tabs with spaces, collapse consecutive spaces)
+            // Find the "best" highlight to center around (usually the first one)
+            let firstHighlight = highlights[0]
+            let matchStart = Int(firstHighlight.start)
+            let line = lineNumber(at: matchStart, in: fullText)
+
+            // If match is early and on line 1, just show the beginning
+            if matchStart < 20 && line == 1 {
+                let context = flatten(String(fullText.prefix(maxChars)), maxChars: maxChars)
+                // Filter highlights that fit in the prefix
+                let filtered = highlights.filter { $0.end <= UInt32(context.count) }
+                return (context, filtered)
+            }
+
+            let prefix = line > 1 ? "L\(line): …" : "…"
+            let prefixCount = prefix.count
+
+            // Calculate context window
+            let contextStart = max(0, matchStart - 20)
+            let contextEnd = min(fullText.count, contextStart + maxChars - prefixCount)
+            let startIndex = fullText.index(fullText.startIndex, offsetBy: contextStart)
+            let endIndex = fullText.index(fullText.startIndex, offsetBy: contextEnd)
+            let context = String(fullText[startIndex..<endIndex])
+
+            // Map highlights to context window
+            let mappedHighlights = highlights.compactMap { h -> HighlightRange? in
+                let start = Int(h.start) - contextStart + prefixCount
+                let end = Int(h.end) - contextStart + prefixCount
+                guard start >= prefixCount && end <= maxChars else { return nil }
+                return HighlightRange(start: UInt32(start), end: UInt32(end))
+            }
+
+            return (prefix + flatten(context, maxChars: maxChars - prefixCount), mappedHighlights)
+        }
+
+        let (text, _) = findContextWindow(fullText: fullText, highlights: displayItem.highlights, maxChars: 200)
+        return text
+    }
+
+    // Helper to get highlights mapped to the preview text
+    private var previewHighlights: [HighlightRange] {
+        let fullText = item.textContent
+        guard !displayItem.highlights.isEmpty else { return [] }
+
         func flatten(_ text: String, maxChars: Int) -> String {
             var result = String()
             result.reserveCapacity(min(maxChars + 1, text.count))
@@ -698,7 +759,6 @@ struct ItemRow: View, Equatable {
             return result
         }
 
-        // Helper to count line number (1-indexed) at a given character offset
         func lineNumber(at offset: Int, in text: String) -> Int {
             var line = 1
             var idx = text.startIndex
@@ -710,61 +770,35 @@ struct ItemRow: View, Equatable {
             return line
         }
 
-        // Try exact match first
-        if let range = fullText.range(of: searchQuery, options: .caseInsensitive) {
-            let matchStart = fullText.distance(from: fullText.startIndex, to: range.lowerBound)
-            let line = lineNumber(at: matchStart, in: fullText)
+        let maxChars = 200
+        let firstHighlight = displayItem.highlights[0]
+        let matchStart = Int(firstHighlight.start)
+        let line = lineNumber(at: matchStart, in: fullText)
 
-            // If match is early in the text and on line 1, just return displayText
-            if matchStart < 20 && line == 1 {
-                return displayText
-            }
-
-            // Build prefix: show line number if not on first line
-            let prefix = line > 1 ? "L\(line): …" : "…"
-
-            // Extract context around the match and flatten it
-            let contextStart = max(0, matchStart - 10)
-            let contextEnd = min(fullText.count, matchStart + 200)
-            let startIndex = fullText.index(fullText.startIndex, offsetBy: contextStart)
-            let endIndex = fullText.index(fullText.startIndex, offsetBy: contextEnd)
-            let context = String(fullText[startIndex..<endIndex])
-            return prefix + flatten(context, maxChars: 200)
+        if matchStart < 20 && line == 1 {
+            let context = flatten(String(fullText.prefix(maxChars)), maxChars: maxChars)
+            return displayItem.highlights.filter { $0.end <= UInt32(context.count) }
         }
 
-        // Fall back to first trigram match
-        if searchQuery.count >= 3 {
-            let chars = Array(searchQuery.lowercased())
-            for i in 0..<(chars.count - 2) {
-                let trigram = String(chars[i..<i+3])
-                if let range = fullText.range(of: trigram, options: .caseInsensitive) {
-                    let matchStart = fullText.distance(from: fullText.startIndex, to: range.lowerBound)
-                    let line = lineNumber(at: matchStart, in: fullText)
+        let prefix = line > 1 ? "L\(line): …" : "…"
+        let prefixCount = prefix.count
+        let contextStart = max(0, matchStart - 20)
 
-                    if matchStart < 20 && line == 1 {
-                        return displayText
-                    }
-
-                    let prefix = line > 1 ? "L\(line): …" : "…"
-                    let contextStart = max(0, matchStart - 10)
-                    let contextEnd = min(fullText.count, matchStart + 200)
-                    let startIndex = fullText.index(fullText.startIndex, offsetBy: contextStart)
-                    let endIndex = fullText.index(fullText.startIndex, offsetBy: contextEnd)
-                    let context = String(fullText[startIndex..<endIndex])
-                    return prefix + flatten(context, maxChars: 200)
-                }
-            }
+        return displayItem.highlights.compactMap { h -> HighlightRange? in
+            let start = Int(h.start) - contextStart + prefixCount
+            let end = Int(h.end) - contextStart + prefixCount
+            guard start >= prefixCount && end <= maxChars else { return nil }
+            return HighlightRange(start: UInt32(start), end: UInt32(end))
         }
-
-        return displayText
     }
 
     // Define exactly what constitutes a "change" for SwiftUI diffing
     // Note: onTap closure is intentionally excluded from equality comparison
     nonisolated static func == (lhs: ItemRow, rhs: ItemRow) -> Bool {
         return lhs.isSelected == rhs.isSelected &&
-               lhs.item.stableId == rhs.item.stableId &&
-               lhs.searchQuery == rhs.searchQuery
+               lhs.displayItem.stableId == rhs.displayItem.stableId &&
+               lhs.searchQuery == rhs.searchQuery &&
+               lhs.displayItem.highlights == rhs.displayItem.highlights
     }
 
     var body: some View {
@@ -819,7 +853,7 @@ struct ItemRow: View, Equatable {
             // Text content - use AppKit for fast highlighting
             HighlightedTextView(
                 text: previewText,
-                query: searchQuery,
+                highlights: previewHighlights,
                 isSelected: isSelected
             )
             .frame(maxWidth: .infinity, alignment: .leading)
@@ -864,7 +898,7 @@ struct ItemRow: View, Equatable {
 /// NSTextField is much faster than SwiftUI Text with AttributedString
 struct HighlightedTextView: NSViewRepresentable {
     let text: String
-    let query: String
+    let highlights: [HighlightRange]
     let isSelected: Bool
 
     func makeNSView(context: Context) -> NSTextField {
@@ -886,7 +920,7 @@ struct HighlightedTextView: NSViewRepresentable {
         let font = NSFont(name: FontManager.sansSerif, size: 15) ?? NSFont.systemFont(ofSize: 15)
         let textColor: NSColor = isSelected ? .white : .labelColor
 
-        if query.isEmpty {
+        if highlights.isEmpty {
             field.stringValue = text
             field.font = font
             field.textColor = textColor
@@ -898,42 +932,12 @@ struct HighlightedTextView: NSViewRepresentable {
 
             // Now get the field's attributed string and add highlights to it
             let mutable = field.attributedStringValue.mutableCopy() as! NSMutableAttributedString
-            let nsString = text as NSString
             let highlightColor = NSColor.yellow.withAlphaComponent(0.4)
-            var highlightedRanges = Set<NSRange>()
-            var matchCount = 0
 
-            // Try exact match first
-            var searchRange = NSRange(location: 0, length: nsString.length)
-            while matchCount < 50, searchRange.location < nsString.length {
-                let foundRange = nsString.range(of: query, options: .caseInsensitive, range: searchRange)
-                guard foundRange.location != NSNotFound else { break }
-                mutable.addAttribute(.backgroundColor, value: highlightColor, range: foundRange)
-                highlightedRanges.insert(foundRange)
-                searchRange.location = foundRange.location + foundRange.length
-                searchRange.length = nsString.length - searchRange.location
-                matchCount += 1
-            }
-
-            // If no exact matches, use trigram highlighting
-            if highlightedRanges.isEmpty && query.count >= 3 {
-                let queryLower = query.lowercased()
-                let chars = Array(queryLower)
-                for i in 0..<(chars.count - 2) {
-                    let trigram = String(chars[i..<i+3])
-                    searchRange = NSRange(location: 0, length: nsString.length)
-                    while matchCount < 50, searchRange.location < nsString.length {
-                        let foundRange = nsString.range(of: trigram, options: .caseInsensitive, range: searchRange)
-                        guard foundRange.location != NSNotFound else { break }
-                        let alreadyHighlighted = highlightedRanges.contains { NSIntersectionRange($0, foundRange).length > 0 }
-                        if !alreadyHighlighted {
-                            mutable.addAttribute(.backgroundColor, value: highlightColor, range: foundRange)
-                            highlightedRanges.insert(foundRange)
-                            matchCount += 1
-                        }
-                        searchRange.location = foundRange.location + foundRange.length
-                        searchRange.length = nsString.length - searchRange.location
-                    }
+            for h in highlights {
+                let range = NSRange(location: Int(h.start), length: Int(h.end - h.start))
+                if range.location + range.length <= mutable.length {
+                    mutable.addAttribute(.backgroundColor, value: highlightColor, range: range)
                 }
             }
 

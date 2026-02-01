@@ -34,22 +34,25 @@ private func measureTimeAsync<T>(_ label: String, _ block: () async throws -> T)
     return result
 }
 
-/// Search result item with highlights
-struct SearchResultItem: Equatable {
+/// A clipboard item bundled with its search highlights
+struct DisplayItem: Equatable {
     let item: ClipboardItem
     let highlights: [HighlightRange]
+
+    /// Stable identifier from the underlying item
+    var stableId: String { item.stableId }
 }
 
 /// Search result state - makes loading/results states explicit
 enum SearchResultState: Equatable {
-    case loading(previousResults: [SearchResultItem])
-    case results([SearchResultItem], hasMore: Bool)
+    case loading(previousResults: [DisplayItem])
+    case results([DisplayItem], hasMore: Bool)
 }
 
 /// Combined state for data display
 enum DisplayState: Equatable {
     case loading
-    case loaded(items: [ClipboardItem], hasMore: Bool)
+    case loaded(items: [DisplayItem], hasMore: Bool)
     case searching(query: String, state: SearchResultState)
     case error(String)
 }
@@ -169,7 +172,7 @@ final class ClipboardStore {
 
         // Preserve previous results while loading new ones to avoid UI flash.
         // When new results arrive, they fully replace previous results (no mixing).
-        let previousResults: [SearchResultItem] = {
+        let previousResults: [DisplayItem] = {
             switch state {
             case .searching(_, let searchState):
                 switch searchState {
@@ -179,8 +182,7 @@ final class ClipboardStore {
                     return results
                 }
             case .loaded(let items, _):
-                // Convert loaded items to search results (no highlights yet)
-                return items.map { SearchResultItem(item: $0, highlights: []) }
+                return items
             default:
                 return []
             }
@@ -231,16 +233,16 @@ final class ClipboardStore {
         let existingItems: [ClipboardItem]
 
         // Extract current items from any state to preserve during refresh
-        let currentItems: [ClipboardItem] = {
+        let currentItems: [DisplayItem] = {
             switch state {
             case .loaded(let items, _):
                 return items
             case .searching(_, let searchState):
                 switch searchState {
                 case .loading(let previous):
-                    return previous.map { $0.item }
+                    return previous
                 case .results(let results, _):
-                    return results.map { $0.item }
+                    return results
                 }
             default:
                 return []
@@ -279,10 +281,13 @@ final class ClipboardStore {
                     if let oldestItem = result.items.last {
                         self?.oldestLoadedTimestampUnix = oldestItem.timestampUnix
                     }
+
+                    let displayItems = result.items.map { DisplayItem(item: $0, highlights: []) }
+
                     if reset {
-                        self?.state = .loaded(items: result.items, hasMore: result.hasMore)
+                        self?.state = .loaded(items: displayItems, hasMore: result.hasMore)
                     } else {
-                        self?.state = .loaded(items: existingItems + result.items, hasMore: result.hasMore)
+                        self?.state = .loaded(items: existingItems + displayItems, hasMore: result.hasMore)
                     }
                 }
             } catch {
@@ -345,7 +350,7 @@ final class ClipboardStore {
             }
 
             // Combine items with highlights, preserving search order
-            var resultItems: [SearchResultItem] = []
+            var resultItems: [DisplayItem] = []
             var itemsById: [Int64: ClipboardItem] = [:]
             for item in items {
                 if let id = item.id {
@@ -355,7 +360,7 @@ final class ClipboardStore {
 
             for match in searchResult.matches {
                 if let item = itemsById[match.itemId] {
-                    resultItems.append(SearchResultItem(
+                    resultItems.append(DisplayItem(
                         item: item,
                         highlights: highlightsMap[match.itemId] ?? []
                     ))
@@ -580,18 +585,18 @@ final class ClipboardStore {
             state = .loaded(items: updatedItems, hasMore: hasMore)
 
         case .searching(let query, let searchState):
-            let updateItems: ([SearchResultItem]) -> [SearchResultItem] = { items in
-                items.map { resultItem -> SearchResultItem in
-                    guard resultItem.item.id == itemId else { return resultItem }
+            let updateItems: ([DisplayItem]) -> [DisplayItem] = { items in
+                items.map { displayItem -> DisplayItem in
+                    guard displayItem.item.id == itemId else { return displayItem }
                     let updatedItem = ClipboardItem(
-                        id: resultItem.item.id,
+                        id: displayItem.item.id,
                         content: .link(url: url, metadataState: metadataState),
-                        contentHash: resultItem.item.contentHash,
-                        timestampUnix: resultItem.item.timestampUnix,
-                        sourceApp: resultItem.item.sourceApp,
-                        sourceAppBundleId: resultItem.item.sourceAppBundleId
+                        contentHash: displayItem.item.contentHash,
+                        timestampUnix: displayItem.item.timestampUnix,
+                        sourceApp: displayItem.item.sourceApp,
+                        sourceAppBundleId: displayItem.item.sourceAppBundleId
                     )
-                    return SearchResultItem(item: updatedItem, highlights: resultItem.highlights)
+                    return DisplayItem(item: updatedItem, highlights: displayItem.highlights)
                 }
             }
             let newSearchState: SearchResultState
@@ -647,9 +652,9 @@ final class ClipboardStore {
             state = .loaded(items: items.map(updateItem), hasMore: hasMore)
 
         case .searching(let query, let searchState):
-            let updatedResults: ([SearchResultItem]) -> [SearchResultItem] = { items in
-                items.map { resultItem in
-                    SearchResultItem(item: updateItem(resultItem.item), highlights: resultItem.highlights)
+            let updatedResults: ([DisplayItem]) -> [DisplayItem] = { items in
+                items.map { displayItem in
+                    DisplayItem(item: updateItem(displayItem.item), highlights: displayItem.highlights)
                 }
             }
             let newSearchState: SearchResultState
