@@ -313,19 +313,27 @@ impl Database {
         Ok(ids)
     }
 
-    /// Fetch a batch of (id, content, timestamp_unix) tuples for streaming search
-    /// Uses offset-based pagination for simplicity
-    pub fn fetch_content_batch(
+    /// Search for items starting with the given prefix (optimized for short queries)
+    pub fn search_prefix(
         &self,
-        offset: usize,
+        prefix: &str,
         limit: usize,
     ) -> DatabaseResult<Vec<(i64, String, i64)>> {
         let conn = self.conn.lock();
         let mut stmt = conn.prepare(
-            "SELECT id, content, CAST(strftime('%s', timestamp) AS INTEGER) FROM items ORDER BY timestamp DESC LIMIT ?1 OFFSET ?2"
+            "SELECT id, content, CAST(strftime('%s', timestamp) AS INTEGER)
+             FROM items
+             WHERE content LIKE ?1 ESCAPE '\\'
+             ORDER BY timestamp DESC
+             LIMIT ?2"
         )?;
+
+        // Escape special LIKE characters (% and _)
+        let escaped_prefix = prefix.replace('\\', "\\\\").replace('%', "\\%").replace('_', "\\_");
+        let like_pattern = format!("{}%", escaped_prefix);
+
         let results = stmt
-            .query_map(params![limit as i64, offset as i64], |row| {
+            .query_map(params![like_pattern, limit as i64], |row| {
                 Ok((
                     row.get::<_, i64>(0)?,
                     row.get::<_, String>(1)?,
@@ -333,6 +341,7 @@ impl Database {
                 ))
             })?
             .collect::<Result<Vec<_>, _>>()?;
+
         Ok(results)
     }
 

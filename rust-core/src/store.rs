@@ -311,9 +311,19 @@ impl ClipboardStore {
         }
 
         // Choose search strategy based on query length
-        // Pass original query to preserve trailing space for exact match boost
-        let matches = if trimmed.len() < MIN_TRIGRAM_QUERY_LEN {
-            self.search_streaming(trimmed)?
+        // For short queries (< 3 chars), use indexed prefix search
+        // For long queries, use Tantivy + fuzzy-matcher
+        let matches = if trimmed.chars().count() < MIN_TRIGRAM_QUERY_LEN {
+            let results = self.db.search_prefix(trimmed, MAX_RESULTS)?;
+            results
+                .into_iter()
+                .map(|(id, content, timestamp)| FuzzyMatch {
+                    id,
+                    score: 100, // Fixed high score for prefix matches
+                    matched_indices: (0..trimmed.chars().count() as u32).collect(),
+                    timestamp,
+                })
+                .collect()
         } else {
             self.search_engine.search(&self.indexer, &query)?
         };
@@ -336,55 +346,6 @@ impl ClipboardStore {
         })
     }
 
-    /// Streaming search for short queries - fetches from DB in batches and applies Nucleo
-    fn search_streaming(&self, query: &str) -> Result<Vec<FuzzyMatch>, ClipKittyError> {
-        const BATCH_SIZE: usize = 1000;
-        let max_results = MAX_RESULTS;
-
-        let mut results = Vec::new();
-        let mut offset = 0;
-
-        loop {
-            let batch = self.db.fetch_content_batch(offset, BATCH_SIZE)?;
-            if batch.is_empty() {
-                break;
-            }
-
-            let batch_len = batch.len();
-            self.search_engine.filter_batch(
-                batch.into_iter(),
-                query,
-                &mut results,
-                max_results,
-            );
-
-            // Stop if we have enough results or exhausted all items
-            if results.len() >= max_results || batch_len < BATCH_SIZE {
-                break;
-            }
-
-            offset += BATCH_SIZE;
-        }
-
-        // Sort by blended score (fuzzy + recency)
-        let now = chrono::Utc::now().timestamp();
-        results.sort_by(|a, b| {
-            // Inline blended score calculation (same formula as search.rs)
-            let calc_score = |m: &FuzzyMatch| -> f64 {
-                let base_score = m.score as f64;
-                let age_secs = (now - m.timestamp).max(0) as f64;
-                let half_life = 7.0 * 24.0 * 60.0 * 60.0; // 7 days
-                let recency_factor = (-age_secs * 2.0_f64.ln() / half_life).exp();
-                base_score * (1.0 + 0.1 * recency_factor) // 10% max boost
-            };
-            calc_score(b)
-                .partial_cmp(&calc_score(a))
-                .unwrap_or(std::cmp::Ordering::Equal)
-        });
-        results.truncate(max_results);
-
-        Ok(results)
-    }
 
     /// Fetch items by their IDs (for cache misses)
     pub fn fetch_by_ids(&self, ids: Vec<i64>) -> Result<Vec<ClipboardItem>, ClipKittyError> {
