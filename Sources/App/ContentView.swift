@@ -332,6 +332,7 @@ struct ContentView: View {
             .listStyle(.plain)
             .scrollContentBackground(.hidden)
             .animation(nil, value: items.map { $0.stableId })
+            .modifier(HideScrollIndicatorsWhenOverlay())
             .onChange(of: searchText) { _, _ in
                 // Scroll to top when search query changes (no animation)
                 if let firstItemId = items.first?.stableId {
@@ -937,6 +938,31 @@ struct HighlightedTextView: NSViewRepresentable {
             }
 
             field.attributedStringValue = mutable
+        }
+    }
+}
+
+// MARK: - Hide Scroll Indicators When System Uses Overlay Style
+
+/// Hides scroll indicators when the system preference is "Show scroll bars: When scrolling" (overlay style).
+/// Detects scrolling via ScrollView geometry and shows indicators only while actively scrolling.
+/// This prevents the brief scrollbar flash when the panel appears.
+private struct HideScrollIndicatorsWhenOverlay: ViewModifier {
+    @State private var hasScrolled = false
+
+    func body(content: Content) -> some View {
+        if NSScroller.preferredScrollerStyle == .overlay {
+            content
+                .scrollIndicators(hasScrolled ? .automatic : .never)
+                .onScrollGeometryChange(for: CGFloat.self) { geometry in
+                    geometry.contentOffset.y
+                } action: { _, _ in
+                    if !hasScrolled {
+                        hasScrolled = true
+                    }
+                }
+        } else {
+            content
         }
     }
 }
