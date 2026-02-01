@@ -32,6 +32,14 @@ impl Database {
     /// Open or create a database at the given path
     pub fn open<P: AsRef<Path>>(path: P) -> DatabaseResult<Self> {
         let conn = Connection::open(path)?;
+
+        // Memory optimization: WAL mode + mmap for faster reads
+        conn.execute_batch("
+            PRAGMA journal_mode=WAL;
+            PRAGMA mmap_size=67108864;
+            PRAGMA cache_size=-32000;
+        ")?;
+
         let db = Self {
             conn: Arc::new(Mutex::new(conn)),
         };
@@ -79,43 +87,6 @@ impl Database {
         )?;
         conn.execute(
             "CREATE INDEX IF NOT EXISTS idx_items_timestamp ON items(timestamp)",
-            [],
-        )?;
-
-        // Create FTS5 virtual table with trigram tokenizer
-        conn.execute(
-            r#"
-            CREATE VIRTUAL TABLE IF NOT EXISTS items_fts USING fts5(
-                content, content=items, content_rowid=id, tokenize='trigram'
-            )
-            "#,
-            [],
-        )?;
-
-        // Create triggers for FTS sync
-        conn.execute(
-            r#"
-            CREATE TRIGGER IF NOT EXISTS items_ai AFTER INSERT ON items BEGIN
-                INSERT INTO items_fts(rowid, content) VALUES (new.id, new.content);
-            END
-            "#,
-            [],
-        )?;
-        conn.execute(
-            r#"
-            CREATE TRIGGER IF NOT EXISTS items_ad AFTER DELETE ON items BEGIN
-                INSERT INTO items_fts(items_fts, rowid, content) VALUES('delete', old.id, old.content);
-            END
-            "#,
-            [],
-        )?;
-        conn.execute(
-            r#"
-            CREATE TRIGGER IF NOT EXISTS items_au AFTER UPDATE ON items BEGIN
-                INSERT INTO items_fts(items_fts, rowid, content) VALUES('delete', old.id, old.content);
-                INSERT INTO items_fts(rowid, content) VALUES (new.id, new.content);
-            END
-            "#,
             [],
         )?;
 
@@ -221,7 +192,6 @@ impl Database {
     pub fn clear_all(&self) -> DatabaseResult<()> {
         let conn = self.conn.lock();
         conn.execute("DELETE FROM items", [])?;
-        conn.execute("INSERT INTO items_fts(items_fts) VALUES('rebuild')", [])?;
         Ok(())
     }
 
@@ -313,19 +283,24 @@ impl Database {
         Ok(ids)
     }
 
-    /// Fetch a batch of (id, content, timestamp_unix) tuples for streaming search
-    /// Uses offset-based pagination for simplicity
-    pub fn fetch_content_batch(
+    /// Search for short queries (<3 chars) using LIKE
+    /// Returns (id, content, timestamp_unix) tuples ordered by timestamp DESC
+    pub fn search_short_query(
         &self,
-        offset: usize,
+        query: &str,
         limit: usize,
     ) -> DatabaseResult<Vec<(i64, String, i64)>> {
         let conn = self.conn.lock();
+        let pattern = format!("%{}%", query.replace('%', "\\%").replace('_', "\\_"));
         let mut stmt = conn.prepare(
-            "SELECT id, content, CAST(strftime('%s', timestamp) AS INTEGER) FROM items ORDER BY timestamp DESC LIMIT ?1 OFFSET ?2"
+            "SELECT id, content, CAST(strftime('%s', timestamp) AS INTEGER)
+             FROM items
+             WHERE content LIKE ?1 ESCAPE '\\'
+             ORDER BY timestamp DESC
+             LIMIT ?2"
         )?;
         let results = stmt
-            .query_map(params![limit as i64, offset as i64], |row| {
+            .query_map(params![pattern, limit as i64], |row| {
                 Ok((
                     row.get::<_, i64>(0)?,
                     row.get::<_, String>(1)?,
@@ -362,8 +337,6 @@ impl Database {
             "#,
             [items_to_delete as i64],
         )?;
-
-        conn.execute("INSERT INTO items_fts(items_fts) VALUES('rebuild')", [])?;
 
         Ok(items_to_delete)
     }

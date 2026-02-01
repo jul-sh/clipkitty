@@ -336,52 +336,39 @@ impl ClipboardStore {
         })
     }
 
-    /// Streaming search for short queries - fetches from DB in batches and applies Nucleo
+    /// Short query search using SQLite LIKE + Nucleo fuzzy matching
     fn search_streaming(&self, query: &str) -> Result<Vec<FuzzyMatch>, ClipKittyError> {
-        const BATCH_SIZE: usize = 1000;
-        let max_results = MAX_RESULTS;
+        // Use SQLite LIKE for initial filtering (much faster than scanning all items)
+        let candidates = self.db.search_short_query(query, MAX_RESULTS * 5)?;
 
-        let mut results = Vec::new();
-        let mut offset = 0;
-
-        loop {
-            let batch = self.db.fetch_content_batch(offset, BATCH_SIZE)?;
-            if batch.is_empty() {
-                break;
-            }
-
-            let batch_len = batch.len();
-            self.search_engine.filter_batch(
-                batch.into_iter(),
-                query,
-                &mut results,
-                max_results,
-            );
-
-            // Stop if we have enough results or exhausted all items
-            if results.len() >= max_results || batch_len < BATCH_SIZE {
-                break;
-            }
-
-            offset += BATCH_SIZE;
+        if candidates.is_empty() {
+            return Ok(Vec::new());
         }
+
+        // Apply Nucleo fuzzy matching for scoring and highlighting
+        let mut results = Vec::with_capacity(candidates.len());
+        self.search_engine.filter_batch(
+            candidates.into_iter(),
+            query,
+            &mut results,
+            MAX_RESULTS,
+        );
 
         // Sort by blended score (fuzzy + recency)
         let now = chrono::Utc::now().timestamp();
         results.sort_by(|a, b| {
-            // Inline blended score calculation (same formula as search.rs)
             let calc_score = |m: &FuzzyMatch| -> f64 {
                 let base_score = m.score as f64;
                 let age_secs = (now - m.timestamp).max(0) as f64;
-                let half_life = 7.0 * 24.0 * 60.0 * 60.0; // 7 days
+                let half_life = 7.0 * 24.0 * 60.0 * 60.0;
                 let recency_factor = (-age_secs * 2.0_f64.ln() / half_life).exp();
-                base_score * (1.0 + 0.1 * recency_factor) // 10% max boost
+                base_score * (1.0 + 0.1 * recency_factor)
             };
             calc_score(b)
                 .partial_cmp(&calc_score(a))
                 .unwrap_or(std::cmp::Ordering::Equal)
         });
-        results.truncate(max_results);
+        results.truncate(MAX_RESULTS);
 
         Ok(results)
     }
