@@ -43,37 +43,56 @@ extension String {
             matchCount += 1
         }
 
-        // If no exact matches, use trigram highlighting (same as SQLite FTS5 trigram tokenizer)
-        if highlightedRanges.isEmpty && query.count >= 3 {
+        // If no exact matches, use fuzzy highlighting (trigrams for 3+ chars, individual chars for 2 chars)
+        if highlightedRanges.isEmpty && query.count >= 2 {
             let queryLower = query.lowercased()
             let chars = Array(queryLower)
 
-            // Extract trigrams from query and highlight matching regions
-            for i in 0..<(chars.count - 2) {
-                let trigram = String(chars[i..<i+3])
-                searchRange = NSRange(location: 0, length: nsString.length)
-
-                while matchCount < maxMatches, searchRange.location < nsString.length {
-                    let foundRange = nsString.range(of: trigram, options: .caseInsensitive, range: searchRange)
-                    guard foundRange.location != NSNotFound else { break }
-
-                    // Only highlight if not already highlighted
-                    let alreadyHighlighted = highlightedRanges.contains { existing in
-                        NSIntersectionRange(existing, foundRange).length > 0
-                    }
-
-                    if !alreadyHighlighted {
-                        result.addAttribute(.backgroundColor, value: highlightColor, range: foundRange)
-                        highlightedRanges.insert(foundRange)
-                        matchCount += 1
-                    }
-
-                    searchRange.location = foundRange.location + foundRange.length
-                    searchRange.length = nsString.length - searchRange.location
+            if chars.count >= 3 {
+                // Extract trigrams from query and highlight matching regions
+                for i in 0..<(chars.count - 2) {
+                    let trigram = String(chars[i..<i+3])
+                    highlightRanges(for: trigram, in: nsString, result: result, highlightColor: highlightColor, highlightedRanges: &highlightedRanges, matchCount: &matchCount, maxMatches: maxMatches)
+                }
+            } else if chars.count == 2 {
+                // For 2-char queries, highlight individual characters if no exact match
+                for char in chars {
+                    let charString = String(char)
+                    highlightRanges(for: charString, in: nsString, result: result, highlightColor: highlightColor, highlightedRanges: &highlightedRanges, matchCount: &matchCount, maxMatches: maxMatches)
                 }
             }
         }
 
         return result
+    }
+
+    private func highlightRanges(
+        for pattern: String,
+        in nsString: NSString,
+        result: NSMutableAttributedString,
+        highlightColor: NSColor,
+        highlightedRanges: inout Set<NSRange>,
+        matchCount: inout Int,
+        maxMatches: Int
+    ) {
+        var searchRange = NSRange(location: 0, length: nsString.length)
+        while matchCount < maxMatches, searchRange.location < nsString.length {
+            let foundRange = nsString.range(of: pattern, options: .caseInsensitive, range: searchRange)
+            guard foundRange.location != NSNotFound else { break }
+
+            // Only highlight if not already highlighted
+            let alreadyHighlighted = highlightedRanges.contains { existing in
+                NSIntersectionRange(existing, foundRange).length > 0
+            }
+
+            if !alreadyHighlighted {
+                result.addAttribute(.backgroundColor, value: highlightColor, range: foundRange)
+                highlightedRanges.insert(foundRange)
+                matchCount += 1
+            }
+
+            searchRange.location = foundRange.location + foundRange.length
+            searchRange.length = nsString.length - searchRange.location
+        }
     }
 }
