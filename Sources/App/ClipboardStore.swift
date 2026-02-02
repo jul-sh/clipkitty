@@ -41,7 +41,10 @@ enum DisplayState: Equatable {
     /// Browse mode - showing recent items (no search query)
     case browse([ItemMetadata])
     /// Search mode - actively searching with a query
-    case search(query: String, items: [ItemMatch])
+    /// - query: The search term
+    /// - results: Current search results (may be empty while searching)
+    /// - previousBrowseItems: Items from browse mode shown as fallback during search
+    case search(query: String, results: [ItemMatch], previousBrowseItems: [ItemMetadata])
     /// Error state
     case error(String)
 }
@@ -156,15 +159,19 @@ final class ClipboardStore {
 
         currentSearchQuery = query
 
-        // Preserve previous search results while searching to avoid UI flash
-        let previousItems: [ItemMatch] = {
-            if case .search(_, let items) = state {
-                return items
+        // Capture browse items as fallback, or preserve existing fallback
+        let (previousResults, browseItems): ([ItemMatch], [ItemMetadata]) = {
+            switch state {
+            case .browse(let items):
+                return ([], items)
+            case .search(_, let results, let previous):
+                return (results, previous)
+            default:
+                return ([], [])
             }
-            return []
         }()
 
-        state = .search(query: query, items: previousItems)
+        state = .search(query: query, results: previousResults, previousBrowseItems: browseItems)
 
         searchTask = Task {
             try? await Task.sleep(for: .milliseconds(50))
@@ -276,9 +283,9 @@ final class ClipboardStore {
             }.value
 
             guard !Task.isCancelled else { return }
-            guard case .search(let currentQuery, _) = state, currentQuery == query else { return }
+            guard case .search(let currentQuery, _, let browseItems) = state, currentQuery == query else { return }
 
-            state = .search(query: query, items: searchResult.matches)
+            state = .search(query: query, results: searchResult.matches, previousBrowseItems: browseItems)
             os_signpost(.end, log: performanceLog, name: "search", signpostID: signpostID, "total_hits=%d", searchResult.totalCount)
         } catch {
             guard !Task.isCancelled else { return }
@@ -678,10 +685,11 @@ final class ClipboardStore {
         switch state {
         case .browse(let items):
             state = .browse(items.filter { $0.itemId != itemId })
-        case .search(let query, let items):
+        case .search(let query, let results, let browseItems):
             state = .search(
                 query: query,
-                items: items.filter { $0.itemMetadata.itemId != itemId }
+                results: results.filter { $0.itemMetadata.itemId != itemId },
+                previousBrowseItems: browseItems.filter { $0.itemId != itemId }
             )
         default:
             break
