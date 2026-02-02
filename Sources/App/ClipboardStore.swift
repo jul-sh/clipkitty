@@ -224,21 +224,21 @@ final class ClipboardStore {
         let signpostID = OSSignpostID(log: performanceLog)
         os_signpost(.begin, log: performanceLog, name: "loadItems", signpostID: signpostID)
 
-        Task.detached {
+        Task {
             do {
                 // Browse mode: search with empty query, extract just metadata
-                let result = try rustStore.search(query: "")
+                // Rust search is now async
+                let result = try await rustStore.search(query: "")
                 let metadata = result.matches.map { $0.itemMetadata }
 
-                await MainActor.run { [weak self] in
-                    os_signpost(.end, log: performanceLog, name: "loadItems", signpostID: signpostID)
-                    self?.state = .browse(metadata)
-                }
+                os_signpost(.end, log: performanceLog, name: "loadItems", signpostID: signpostID)
+                state = .browse(metadata)
+            } catch let error as ClipKittyError where error == .cancelled {
+                // Silently ignore cancellation
+                os_signpost(.end, log: performanceLog, name: "loadItems", signpostID: signpostID, "cancelled")
             } catch {
-                await MainActor.run { [weak self] in
-                    os_signpost(.end, log: performanceLog, name: "loadItems", signpostID: signpostID, "error")
-                    self?.state = .error("Failed to load items: \(error.localizedDescription)")
-                }
+                os_signpost(.end, log: performanceLog, name: "loadItems", signpostID: signpostID, "error")
+                state = .error("Failed to load items: \(error.localizedDescription)")
             }
         }
     }
@@ -263,32 +263,27 @@ final class ClipboardStore {
             return
         }
 
-        // NOTE: Rust Search Concurrency & Cancellation
-        // While we run this in a detached task that can be cancelled on the Swift side,
-        // the underlying Rust `search` call is synchronous and will run to completion
-        // on a background thread even if the Swift task is cancelled.
-        //
-        // This means rapid typing can spawn multiple "zombie" search threads in Rust
-        // that compete for CPU and Database locks (Database uses a Mutex, serializing reads).
-        //
-        // Future optimization:
-        // 1. Move to connection pooling (r2d2) in Rust to allow concurrent DB reads.
-        // 2. Implement cancellation points in the Rust search (Check signals/atomic bools).
+        // Async Cancellation Architecture:
+        // The Rust search() is now async with native cancellation support.
+        // When this Swift Task is cancelled, the Rust Future is dropped,
+        // triggering a CancellationToken that aborts the search mid-flight.
+        // This allows rapid typing to cancel stale searches without zombie threads.
 
         let signpostID = OSSignpostID(log: performanceLog)
         os_signpost(.begin, log: performanceLog, name: "search", signpostID: signpostID, "query=%{public}s", query)
 
         do {
-            // Get search results with all match data from Rust
-            let searchResult = try await Task.detached {
-                try rustStore.search(query: query)
-            }.value
+            // Rust search is now async - Swift Task cancellation propagates to Rust
+            let searchResult = try await rustStore.search(query: query)
 
             guard !Task.isCancelled else { return }
             guard case .searchLoading(let currentQuery, _) = state, currentQuery == query else { return }
 
             state = .searchResults(query: query, results: searchResult.matches)
             os_signpost(.end, log: performanceLog, name: "search", signpostID: signpostID, "total_hits=%d", searchResult.totalCount)
+        } catch let error as ClipKittyError where error == .cancelled {
+            // Silently ignore cancellation - this is expected during rapid typing
+            os_signpost(.end, log: performanceLog, name: "search", signpostID: signpostID, "cancelled")
         } catch {
             guard !Task.isCancelled else { return }
             state = .error("Search failed: \(error.localizedDescription)")

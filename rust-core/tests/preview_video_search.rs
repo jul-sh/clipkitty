@@ -170,7 +170,7 @@ async fn scene1_empty_query_shows_sql_first() {
     let (store, _temp) = create_preview_video_store();
 
     // With empty query, fetch items by timestamp (newest first)
-    let result = store.search("".to_string()).unwrap();
+    let result = store.search("".to_string()).await.unwrap();
     let items = &result.matches;
 
     assert!(items.len() >= 6, "Should have at least 6 items");
@@ -202,7 +202,7 @@ async fn scene1_empty_query_shows_sql_first() {
 async fn scene1_search_h_shows_hello_content() {
     let (store, _temp) = create_preview_video_store();
 
-    let result = store.search("h".to_string()).unwrap();
+    let result = store.search("h".to_string()).await.unwrap();
 
     // "h" should match Hello-containing items
     let ids: Vec<i64> = result.matches.iter().map(|m| m.item_metadata.item_id).collect();
@@ -220,7 +220,7 @@ async fn scene1_search_h_shows_hello_content() {
 async fn scene1_search_hello_shows_onboarding_first() {
     let (store, _temp) = create_preview_video_store();
 
-    let result = store.search("hello".to_string()).unwrap();
+    let result = store.search("hello".to_string()).await.unwrap();
     assert!(!result.matches.is_empty(), "Should find matches for 'hello'");
 
     let ids: Vec<i64> = result.matches.iter().map(|m| m.item_metadata.item_id).collect();
@@ -250,7 +250,7 @@ async fn scene1_search_hello_shows_onboarding_first() {
 async fn scene1_search_hello_clip_shows_marketing_blurb() {
     let (store, _temp) = create_preview_video_store();
 
-    let result = store.search("hello clip".to_string()).unwrap();
+    let result = store.search("hello clip".to_string()).await.unwrap();
     assert!(
         !result.matches.is_empty(),
         "Should find matches for 'hello clip'"
@@ -272,7 +272,7 @@ async fn scene1_search_hello_clip_shows_marketing_blurb() {
 async fn scene1_search_hello_cl_ranks_clipkitty_before_hello_world_py() {
     let (store, _temp) = create_preview_video_store();
 
-    let result = store.search("hello cl".to_string()).unwrap();
+    let result = store.search("hello cl".to_string()).await.unwrap();
     println!("Search results for 'hello cl':");
     for (i, m) in result.matches.iter().enumerate() {
         println!("  {}: id={}", i, m.item_metadata.item_id);
@@ -330,7 +330,7 @@ async fn scene1_search_hello_cl_ranks_clipkitty_before_hello_world_py() {
 async fn scene2_search_hash_shows_hex_colors() {
     let (store, _temp) = create_preview_video_store();
 
-    let result = store.search("#".to_string()).unwrap();
+    let result = store.search("#".to_string()).await.unwrap();
 
     let ids: Vec<i64> = result.matches.iter().map(|m| m.item_metadata.item_id).collect();
     let items = store.fetch_by_ids(ids, None).unwrap();
@@ -356,7 +356,7 @@ async fn scene2_search_hash_shows_hex_colors() {
 async fn scene2_search_hash_f_shows_orange_color() {
     let (store, _temp) = create_preview_video_store();
 
-    let result = store.search("#f".to_string()).unwrap();
+    let result = store.search("#f".to_string()).await.unwrap();
 
     let ids: Vec<i64> = result.matches.iter().map(|m| m.item_metadata.item_id).collect();
     let items = store.fetch_by_ids(ids, None).unwrap();
@@ -378,7 +378,7 @@ async fn scene2_search_hash_f_shows_orange_color() {
 async fn scene2_search_cat_shows_cat_image() {
     let (store, _temp) = create_preview_video_store();
 
-    let result = store.search("cat".to_string()).unwrap();
+    let result = store.search("cat".to_string()).await.unwrap();
     assert!(!result.matches.is_empty(), "Should find matches for 'cat'");
 
     let ids: Vec<i64> = result.matches.iter().map(|m| m.item_metadata.item_id).collect();
@@ -409,7 +409,7 @@ async fn scene2_search_cat_shows_cat_image() {
 async fn scene3_search_r_shows_return_and_riverside() {
     let (store, _temp) = create_preview_video_store();
 
-    let result = store.search("r".to_string()).unwrap();
+    let result = store.search("r".to_string()).await.unwrap();
 
     let ids: Vec<i64> = result.matches.iter().map(|m| m.item_metadata.item_id).collect();
     let items = store.fetch_by_ids(ids, None).unwrap();
@@ -430,7 +430,7 @@ async fn scene3_search_r_shows_return_and_riverside() {
 async fn scene3_search_riv_shows_riverside() {
     let (store, _temp) = create_preview_video_store();
 
-    let result = store.search("riv".to_string()).unwrap();
+    let result = store.search("riv".to_string()).await.unwrap();
     assert!(!result.matches.is_empty(), "Should find matches for 'riv'");
 
     let ids: Vec<i64> = result.matches.iter().map(|m| m.item_metadata.item_id).collect();
@@ -459,7 +459,7 @@ async fn scene3_search_rivresid_typo_finds_riverside() {
 
     // "riversde" is a typo - missing 'i' from "Riverside"
     // Nucleo's fuzzy matching should still find it (unlike transposed letters)
-    let result = store.search("riversde".to_string()).unwrap();
+    let result = store.search("riversde".to_string()).await.unwrap();
 
     let ids: Vec<i64> = result.matches.iter().map(|m| m.item_metadata.item_id).collect();
     let items = store.fetch_by_ids(ids, None).unwrap();
@@ -483,7 +483,7 @@ async fn verify_all_expected_items_exist() {
     let (store, _temp) = create_preview_video_store();
 
     // Fetch all items
-    let result = store.search("".to_string()).unwrap();
+    let result = store.search("".to_string()).await.unwrap();
     let previews: Vec<&str> = result.matches.iter().map(|i| i.item_metadata.preview.as_str()).collect();
 
     // Verify key items from each scene exist
@@ -545,7 +545,7 @@ async fn verify_all_expected_items_exist() {
 async fn verify_item_count() {
     let (store, _temp) = create_preview_video_store();
 
-    let result = store.search("".to_string()).unwrap();
+    let result = store.search("".to_string()).await.unwrap();
 
     // We should have approximately 39 items based on the data
     assert!(
@@ -578,8 +578,8 @@ fn create_ranking_test_store(items: Vec<&str>) -> (ClipboardStore, TempDir) {
 }
 
 /// Get search result contents in order
-fn search_contents(store: &ClipboardStore, query: &str) -> Vec<String> {
-    let result = store.search(query.to_string()).unwrap();
+async fn search_contents(store: &ClipboardStore, query: &str) -> Vec<String> {
+    let result = store.search(query.to_string()).await.unwrap();
     let ids: Vec<i64> = result.matches.iter().map(|m| m.item_metadata.item_id).collect();
     let items = store.fetch_by_ids(ids, None).unwrap();
     items.iter().map(|i| get_content_text(i)).collect()
@@ -594,7 +594,7 @@ async fn ranking_contiguous_beats_scattered() {
         "hello world greeting",  // contiguous "hello", newer
     ]);
 
-    let contents = search_contents(&store, "hello");
+    let contents = search_contents(&store, "hello").await;
 
     // Contiguous match should rank first (better match quality)
     assert!(!contents.is_empty(), "Should find at least one item");
@@ -636,7 +636,7 @@ async fn ranking_recency_breaks_ties_for_equal_matches() {
     assert!(id1 > 0 && id2 > 0 && id3 > 0, "All items should be inserted");
 
     // Search for "hello " - all 3 have identical Nucleo scores (140)
-    let result = store.search("hello ".to_string()).unwrap();
+    let result = store.search("hello ".to_string()).await.unwrap();
     let ids: Vec<i64> = result.matches.iter().map(|m| m.item_metadata.item_id).collect();
     let items = store.fetch_by_ids(ids.clone(), None).unwrap();
     let contents: Vec<String> = items.iter().map(|i| get_content_text(i)).collect();
@@ -646,7 +646,7 @@ async fn ranking_recency_breaks_ties_for_equal_matches() {
 
     // Verify deterministic ordering - with distinct timestamps, results should be stable
     for _ in 0..3 {
-        let result2 = store.search("hello ".to_string()).unwrap();
+        let result2 = store.search("hello ".to_string()).await.unwrap();
         let ids2: Vec<i64> = result2.matches.iter().map(|m| m.item_metadata.item_id).collect();
         assert_eq!(ids, ids2, "Search ordering should be deterministic");
     }
@@ -677,7 +677,7 @@ async fn ranking_word_start_beats_mid_word() {
         "urlParser.parse(input)",       // url is at word start, newer
     ]);
 
-    let contents = search_contents(&store, "url");
+    let contents = search_contents(&store, "url").await;
 
     // Word-start match should rank higher (Nucleo prefers word boundaries)
     assert!(contents.len() >= 2, "Should find both items");
@@ -696,7 +696,7 @@ async fn ranking_partial_match_excluded_when_atoms_missing() {
         "Hello ClipKitty!",   // has both "hello" and "cl"
     ]);
 
-    let contents = search_contents(&store, "hello cl");
+    let contents = search_contents(&store, "hello cl").await;
 
     // hello_world.py should not match "hello cl" because it has no 'c'
     assert!(
@@ -725,7 +725,7 @@ async fn ranking_trailing_space_boosts_word_boundary() {
         "Hello and welcome to...",     // "Hello " - has space after, newer
     ]);
 
-    let contents = search_contents(&store, "hello ");
+    let contents = search_contents(&store, "hello ").await;
 
     // Content with "Hello " should rank higher due to trailing space boost
     assert!(contents.len() >= 2, "Should find both items");
@@ -873,7 +873,7 @@ If you are using a standard tokenizer (split on whitespace), the `build_trigram_
 
     // This query has characters that all exist somewhere in the text,
     // but none of the words appear as contiguous substrings
-    let contents = search_contents(&store, "hello how are you doing today y");
+    let contents = search_contents(&store, "hello how are you doing today y").await;
 
     // CURRENT BEHAVIOR (what we want to fix):
     // The text currently matches because Nucleo finds a subsequence.
@@ -928,7 +928,7 @@ goodbye friend - this is the end of the document."#;
     let (store, _temp) = create_ranking_test_store(vec![doc_with_gap]);
 
     // This query matches content at start ("hello world") and end ("goodbye friend")
-    let contents = search_contents(&store, "hello world goodbye friend");
+    let contents = search_contents(&store, "hello world goodbye friend").await;
 
     // Print for debugging
     println!("Search 'hello world goodbye friend' returned {} results", contents.len());

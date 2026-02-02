@@ -257,6 +257,8 @@ pub enum ClipKittyError {
     NotInitialized,
     #[error("Invalid input: {0}")]
     InvalidInput(String),
+    #[error("Operation cancelled")]
+    Cancelled,
 }
 
 // ═══════════════════════════════════════════════════════════════════════════════
@@ -265,10 +267,11 @@ pub enum ClipKittyError {
 
 /// The primary interface for accessing the Clipboard ClipboardStore.
 /// This matches the functionality exposed by the `ClipboardStore` object.
-#[uniffi::export]
+#[uniffi::export(with_foreign)]
+#[async_trait::async_trait]
 pub trait ClipboardStoreApi: Send + Sync {
     fn save_text(&self, text: String, source_app: Option<String>, source_app_bundle_id: Option<String>) -> Result<i64, ClipKittyError>;
-    fn search(&self, query: String) -> Result<SearchResult, ClipKittyError>;
+    async fn search(&self, query: String) -> Result<SearchResult, ClipKittyError>;
     fn fetch_by_ids(&self, item_ids: Vec<i64>, search_query: Option<String>) -> Result<Vec<ClipboardItem>, ClipKittyError>;
     fn delete_item(&self, item_id: i64) -> Result<(), ClipKittyError>;
     fn clear(&self) -> Result<(), ClipKittyError>;

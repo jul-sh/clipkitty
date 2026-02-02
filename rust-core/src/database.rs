@@ -1,14 +1,15 @@
 //! SQLite database layer for clipboard storage
 //!
 //! Implements the database schema and operations for clipboard storage.
+//! Uses r2d2 connection pooling to allow concurrent reads without mutex blocking.
 
 use crate::interface::{ClipboardContent, ItemMetadata, ItemIcon, IconType};
 use crate::models::{StoredItem, normalize_preview};
 use chrono::{DateTime, TimeZone, Utc};
-use parking_lot::Mutex;
-use rusqlite::{params, Connection};
+use r2d2::{Pool, PooledConnection};
+use r2d2_sqlite::SqliteConnectionManager;
+use rusqlite::{params, InterruptHandle};
 use std::path::Path;
-use std::sync::Arc;
 use thiserror::Error;
 
 #[derive(Error, Debug)]
@@ -19,6 +20,8 @@ pub enum DatabaseError {
     NotInitialized,
     #[error("IO error: {0}")]
     Io(#[from] std::io::Error),
+    #[error("Connection pool error: {0}")]
+    Pool(#[from] r2d2::Error),
 }
 
 pub type DatabaseResult<T> = Result<T, DatabaseError>;
@@ -31,43 +34,75 @@ fn parse_db_timestamp(timestamp_str: &str) -> DateTime<Utc> {
         .unwrap_or_else(|_| Utc::now())
 }
 
-/// Thread-safe database wrapper
+/// Thread-safe database wrapper using connection pooling
+///
+/// Uses r2d2 connection pool for concurrent read access.
+/// WAL mode enables readers to proceed without blocking each other.
 pub struct Database {
-    pub(crate) conn: Arc<Mutex<Connection>>,
+    pool: Pool<SqliteConnectionManager>,
 }
 
 impl Database {
-    /// Open or create a database at the given path
+    /// Open or create a database at the given path with connection pooling
     pub fn open<P: AsRef<Path>>(path: P) -> DatabaseResult<Self> {
-        let conn = Connection::open(path)?;
+        let manager = SqliteConnectionManager::file(path)
+            .with_init(|conn| {
+                // WAL mode + synchronous=NORMAL for concurrent reads without blocking
+                conn.execute_batch("
+                    PRAGMA journal_mode=WAL;
+                    PRAGMA synchronous=NORMAL;
+                    PRAGMA mmap_size=67108864;
+                    PRAGMA cache_size=-32000;
+                ")?;
+                Ok(())
+            });
 
-        // Memory optimization: WAL mode + mmap for faster reads
-        conn.execute_batch("
-            PRAGMA journal_mode=WAL;
-            PRAGMA mmap_size=67108864;
-            PRAGMA cache_size=-32000;
-        ")?;
+        let pool = Pool::builder()
+            .max_size(8) // Allow multiple concurrent readers
+            .build(manager)?;
 
-        let db = Self {
-            conn: Arc::new(Mutex::new(conn)),
-        };
+        let db = Self { pool };
         db.setup_schema()?;
         Ok(db)
     }
 
     /// Open an in-memory database (for testing)
     pub fn open_in_memory() -> DatabaseResult<Self> {
-        let conn = Connection::open_in_memory()?;
-        let db = Self {
-            conn: Arc::new(Mutex::new(conn)),
-        };
+        // For in-memory databases, we need shared cache to allow pool connections
+        // to see the same database
+        let manager = SqliteConnectionManager::memory()
+            .with_init(|conn| {
+                conn.execute_batch("
+                    PRAGMA journal_mode=WAL;
+                    PRAGMA synchronous=NORMAL;
+                ")?;
+                Ok(())
+            });
+
+        // In-memory needs single connection to maintain state
+        let pool = Pool::builder()
+            .max_size(1)
+            .build(manager)?;
+
+        let db = Self { pool };
         db.setup_schema()?;
         Ok(db)
     }
 
+    /// Get a connection from the pool
+    fn get_conn(&self) -> DatabaseResult<PooledConnection<SqliteConnectionManager>> {
+        Ok(self.pool.get()?)
+    }
+
+    /// Get an interrupt handle for a connection (for cancellation)
+    pub fn get_interrupt_handle(&self) -> DatabaseResult<InterruptHandle> {
+        let conn = self.get_conn()?;
+        Ok(conn.get_interrupt_handle())
+    }
+
     /// Set up the database schema
     fn setup_schema(&self) -> DatabaseResult<()> {
-        let conn = self.conn.lock();
+        let conn = self.get_conn()?;
 
         // Create items table
         conn.execute(
@@ -110,7 +145,7 @@ impl Database {
 
     /// Get the database size in bytes
     pub fn database_size(&self) -> DatabaseResult<i64> {
-        let conn = self.conn.lock();
+        let conn = self.get_conn()?;
         let page_count: i64 = conn.query_row("PRAGMA page_count", [], |row| row.get(0))?;
         let page_size: i64 = conn.query_row("PRAGMA page_size", [], |row| row.get(0))?;
         Ok(page_count * page_size)
@@ -118,7 +153,7 @@ impl Database {
 
     /// Insert a new clipboard item, returns the row ID
     pub fn insert_item(&self, item: &StoredItem) -> DatabaseResult<i64> {
-        let conn = self.conn.lock();
+        let conn = self.get_conn()?;
         let (content, image_data, link_title, link_image_data, color_rgba) = item.content.to_database_fields();
         let timestamp = Utc.timestamp_opt(item.timestamp_unix, 0).single().unwrap_or_else(Utc::now);
         let timestamp_str = timestamp.format("%Y-%m-%d %H:%M:%S%.f").to_string();
@@ -148,7 +183,7 @@ impl Database {
 
     /// Find an existing item by content hash
     pub fn find_by_hash(&self, hash: &str) -> DatabaseResult<Option<StoredItem>> {
-        let conn = self.conn.lock();
+        let conn = self.get_conn()?;
         let mut stmt = conn.prepare(
             "SELECT * FROM items WHERE contentHash = ?1 LIMIT 1"
         )?;
@@ -164,7 +199,7 @@ impl Database {
 
     /// Update the timestamp of an existing item
     pub fn update_timestamp(&self, id: i64, timestamp: DateTime<Utc>) -> DatabaseResult<()> {
-        let conn = self.conn.lock();
+        let conn = self.get_conn()?;
         let timestamp_str = timestamp.format("%Y-%m-%d %H:%M:%S%.f").to_string();
         conn.execute(
             "UPDATE items SET timestamp = ?1 WHERE id = ?2",
@@ -180,7 +215,7 @@ impl Database {
         title: Option<&str>,
         image_data: Option<&[u8]>,
     ) -> DatabaseResult<()> {
-        let conn = self.conn.lock();
+        let conn = self.get_conn()?;
         conn.execute(
             "UPDATE items SET linkTitle = ?1, linkImageData = ?2 WHERE id = ?3",
             params![title.unwrap_or(""), image_data, id],
@@ -190,7 +225,7 @@ impl Database {
 
     /// Update image description
     pub fn update_image_description(&self, id: i64, description: &str) -> DatabaseResult<()> {
-        let conn = self.conn.lock();
+        let conn = self.get_conn()?;
         conn.execute(
             "UPDATE items SET content = ?1 WHERE id = ?2 AND contentType = 'image'",
             params![description, id],
@@ -200,14 +235,14 @@ impl Database {
 
     /// Delete an item by ID
     pub fn delete_item(&self, id: i64) -> DatabaseResult<()> {
-        let conn = self.conn.lock();
+        let conn = self.get_conn()?;
         conn.execute("DELETE FROM items WHERE id = ?1", [id])?;
         Ok(())
     }
 
     /// Delete all items
     pub fn clear_all(&self) -> DatabaseResult<()> {
-        let conn = self.conn.lock();
+        let conn = self.get_conn()?;
         conn.execute("DELETE FROM items", [])?;
         Ok(())
     }
@@ -218,7 +253,7 @@ impl Database {
         before_timestamp: Option<DateTime<Utc>>,
         limit: usize,
     ) -> DatabaseResult<(Vec<ItemMetadata>, u64)> {
-        let conn = self.conn.lock();
+        let conn = self.get_conn()?;
 
         // Get total count
         let total_count: i64 = conn.query_row(
@@ -255,7 +290,7 @@ impl Database {
             return Ok(Vec::new());
         }
 
-        let conn = self.conn.lock();
+        let conn = self.get_conn()?;
         let placeholders = ids.iter().map(|_| "?").collect::<Vec<_>>().join(",");
         let sql = format!("SELECT * FROM items WHERE id IN ({})", placeholders);
 
@@ -276,7 +311,7 @@ impl Database {
 
     /// Fetch all items (for index rebuilding)
     pub fn fetch_all_items(&self) -> DatabaseResult<Vec<StoredItem>> {
-        let conn = self.conn.lock();
+        let conn = self.get_conn()?;
         let mut stmt = conn.prepare("SELECT * FROM items ORDER BY timestamp DESC")?;
         let items = stmt
             .query_map([], Self::row_to_stored_item)?
@@ -291,7 +326,7 @@ impl Database {
             return Ok(Vec::new());
         }
 
-        let conn = self.conn.lock();
+        let conn = self.get_conn()?;
 
         let count: i64 = conn.query_row("SELECT COUNT(*) FROM items", [], |row| row.get(0))?;
         if count == 0 {
@@ -320,7 +355,7 @@ impl Database {
         query: &str,
         limit: usize,
     ) -> DatabaseResult<Vec<(i64, String, i64)>> {
-        let conn = self.conn.lock();
+        let conn = self.get_conn()?;
         let query_lower = query.to_lowercase();
 
         // Part 1: Prefix match - content starts with query (case insensitive)
@@ -392,7 +427,7 @@ impl Database {
             return Ok(0);
         }
 
-        let conn = self.conn.lock();
+        let conn = self.get_conn()?;
 
         let count: i64 = conn.query_row("SELECT COUNT(*) FROM items", [], |row| row.get(0))?;
         if count == 0 {
@@ -516,6 +551,6 @@ impl Database {
     }
 }
 
-// Ensure Database is thread-safe
+// Database is now inherently thread-safe via r2d2 pool
 unsafe impl Send for Database {}
 unsafe impl Sync for Database {}
