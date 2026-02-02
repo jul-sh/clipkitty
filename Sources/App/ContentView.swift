@@ -1,7 +1,6 @@
 import SwiftUI
 import AppKit
 import ClipKittyRust
-import ColorCode
 import os.log
 import UniformTypeIdentifiers
 
