@@ -31,8 +31,12 @@ struct ContentView: View {
         switch store.state {
         case .browse(let items):
             return items.map { $0.itemId }
-        case .search(_, let items):
-            return items.map { $0.itemMetadata.itemId }
+        case .search(_, let results, let browseItems):
+            // Show results if available, otherwise fall back to browse items
+            if !results.isEmpty {
+                return results.map { $0.itemMetadata.itemId }
+            }
+            return browseItems.map { $0.itemId }
         default:
             return []
         }
@@ -309,22 +313,43 @@ struct ContentView: View {
                         .listRowSeparator(.hidden)
                         .listRowBackground(Color.clear)
                     }
-                case .search(_, let items):
-                    ForEach(Array(items.enumerated()), id: \.element.itemMetadata.itemId) { index, match in
-                        ItemRow(
-                            metadata: match.itemMetadata,
-                            matchData: match.matchData,
-                            isSelected: match.itemMetadata.itemId == selectedItemId,
-                            onTap: {
-                                selectedItemId = match.itemMetadata.itemId
-                                focusSearchField()
-                            }
-                        )
-                        .equatable()
-                        .accessibilityIdentifier("ItemRow_\(index)")
-                        .listRowInsets(EdgeInsets(top: 2, leading: 0, bottom: 2, trailing: 0))
-                        .listRowSeparator(.hidden)
-                        .listRowBackground(Color.clear)
+                case .search(_, let results, let browseItems):
+                    if !results.isEmpty {
+                        // Show search results with highlights
+                        ForEach(Array(results.enumerated()), id: \.element.itemMetadata.itemId) { index, match in
+                            ItemRow(
+                                metadata: match.itemMetadata,
+                                matchData: match.matchData,
+                                isSelected: match.itemMetadata.itemId == selectedItemId,
+                                onTap: {
+                                    selectedItemId = match.itemMetadata.itemId
+                                    focusSearchField()
+                                }
+                            )
+                            .equatable()
+                            .accessibilityIdentifier("ItemRow_\(index)")
+                            .listRowInsets(EdgeInsets(top: 2, leading: 0, bottom: 2, trailing: 0))
+                            .listRowSeparator(.hidden)
+                            .listRowBackground(Color.clear)
+                        }
+                    } else {
+                        // Fall back to browse items while searching
+                        ForEach(Array(browseItems.enumerated()), id: \.element.itemId) { index, metadata in
+                            ItemRow(
+                                metadata: metadata,
+                                matchData: nil,
+                                isSelected: metadata.itemId == selectedItemId,
+                                onTap: {
+                                    selectedItemId = metadata.itemId
+                                    focusSearchField()
+                                }
+                            )
+                            .equatable()
+                            .accessibilityIdentifier("ItemRow_\(index)")
+                            .listRowInsets(EdgeInsets(top: 2, leading: 0, bottom: 2, trailing: 0))
+                            .listRowSeparator(.hidden)
+                            .listRowBackground(Color.clear)
+                        }
                     }
                 default:
                     EmptyView()
