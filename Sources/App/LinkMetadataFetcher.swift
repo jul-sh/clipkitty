@@ -37,7 +37,7 @@ actor LinkMetadataFetcher {
             if normalizedTitle == nil && imageData == nil {
                 return nil
             }
-            return .loaded(title: normalizedTitle, imageData: imageData.map { Array($0) })
+            return .loaded(title: normalizedTitle, imageData: imageData)
         } catch {
             return nil
         }
