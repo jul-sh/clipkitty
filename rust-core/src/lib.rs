@@ -3,13 +3,7 @@
 //! This library implements the core business logic for the ClipKitty clipboard manager,
 //! with efficient search using Tantivy (trigram retrieval) + Nucleo (fuzzy precision).
 //!
-//! # Architecture
-//! - `models`: Data models (ClipboardContent, ClipboardItem, ItemMetadata, etc.)
-//! - `database`: SQLite database layer
-//! - `indexer`: Tantivy trigram index
-//! - `search`: Two-layer search engine with Nucleo
-//! - `content_detection`: Automatic content type detection (URLs, colors, etc.)
-//! - `store`: Main API for Swift interop via UniFFI
+//! Types are exported via UniFFI proc-macros (#[derive(uniffi::Record/Enum)]).
 
 mod content_detection;
 mod database;
@@ -18,8 +12,15 @@ mod models;
 mod search;
 mod store;
 
-pub use content_detection::{detect_content, detect_content_type, is_url};
+// Internal use only - not exposed via FFI
+pub(crate) use content_detection::detect_content;
 pub use models::*;
 pub use store::*;
 
-uniffi::include_scaffolding!("clipkitty_core");
+// FFI-exported free function
+#[uniffi::export]
+pub fn is_url(text: String) -> bool {
+    content_detection::is_url(text)
+}
+
+uniffi::setup_scaffolding!();
