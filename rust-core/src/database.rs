@@ -104,9 +104,6 @@ impl Database {
             [],
         )?;
 
-        // Add new columns if they don't exist (migration for existing DBs)
-        let _ = conn.execute("ALTER TABLE items ADD COLUMN thumbnail BLOB", []);
-        let _ = conn.execute("ALTER TABLE items ADD COLUMN colorRgba INTEGER", []);
 
         Ok(())
     }
