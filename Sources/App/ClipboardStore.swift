@@ -186,11 +186,6 @@ final class ClipboardStore {
         }
     }
 
-    func loadMoreItems() {
-        guard case .loaded(_, true) = state else { return }
-        loadItems(reset: false)
-    }
-
     func resetForDisplay() {
         searchTask?.cancel()
         displayVersion += 1
