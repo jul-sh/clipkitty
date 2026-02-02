@@ -34,17 +34,19 @@ private func measureTimeAsync<T>(_ label: String, _ block: () async throws -> T)
     return result
 }
 
-/// Search result state - makes loading/results states explicit
-enum SearchResultState: Equatable {
-    case loading(previousResults: [ItemMatch])
-    case results([ItemMatch], hasMore: Bool)
-}
-
-/// Combined state for data display
+/// Display state - explicit variants for browse and search modes
+/// Both use ItemMatch from the Rust search() API (browse is search with empty query)
 enum DisplayState: Equatable {
+    /// Initial loading state before any data
     case loading
-    case loaded(items: [ItemMetadata], hasMore: Bool)
-    case searching(query: String, state: SearchResultState)
+    /// Browse mode - showing recent items (no search query)
+    case browse([ItemMatch])
+    /// Search mode - actively searching with a query
+    /// - query: The search term (non-empty)
+    /// - items: Current results to display
+    /// - isSearching: True while new results are loading (shows previous results)
+    case search(query: String, items: [ItemMatch], isSearching: Bool)
+    /// Error state
     case error(String)
 }
 
@@ -69,11 +71,8 @@ final class ClipboardStore {
     private var sleepObserver: NSObjectProtocol?
     private var wakeObserver: NSObjectProtocol?
     private var searchTask: Task<Void, Never>?
-    /// Cursor for keyset pagination - timestamp of the oldest loaded item (unix)
-    private var oldestLoadedTimestampUnix: Int64?
-    /// Current search query (for pagination continuity)
+    /// Current search query
     private var currentSearchQuery: String = ""
-    private let pageSize: UInt64 = 50
 
     /// Increments each time the display is reset - views observe this to reset local state
     private(set) var displayVersion: Int = 0
@@ -161,23 +160,19 @@ final class ClipboardStore {
 
         currentSearchQuery = query
 
-        // Preserve previous results while loading new ones to avoid UI flash.
-        // When new results arrive, they fully replace previous results (no mixing).
-        let previousResults: [ItemMatch] = {
+        // Preserve previous results while searching to avoid UI flash
+        let previousItems: [ItemMatch] = {
             switch state {
-            case .searching(_, let searchState):
-                switch searchState {
-                case .loading(let previous):
-                    return previous
-                case .results(let results, _):
-                    return results
-                }
+            case .browse(let items):
+                return items
+            case .search(_, let items, _):
+                return items
             default:
                 return []
             }
         }()
 
-        state = .searching(query: query, state: .loading(previousResults: previousResults))
+        state = .search(query: query, items: previousItems, isSearching: true)
 
         searchTask = Task {
             try? await Task.sleep(for: .milliseconds(50))
@@ -221,64 +216,33 @@ final class ClipboardStore {
 
     // MARK: - Loading
 
+    /// Load items for browse mode (search with empty query)
     private func loadItems(reset: Bool) {
-        let cursorTimestamp: Int64?
-        let existingItems: [ItemMetadata]
-
-        // Extract current items from any state to preserve during refresh
-        let currentItems: [ItemMetadata] = {
-            switch state {
-            case .loaded(let items, _):
+        // Extract current items to preserve during refresh (avoid flash)
+        let currentItems: [ItemMatch] = {
+            if case .browse(let items) = state {
                 return items
-            case .searching(_, let searchState):
-                switch searchState {
-                case .loading(let previous):
-                    return previous.map { $0.itemMetadata }
-                case .results(let results, _):
-                    return results.map { $0.itemMetadata }
-                }
-            default:
-                return []
             }
+            return []
         }()
 
-        if reset {
-            oldestLoadedTimestampUnix = nil
-            cursorTimestamp = nil
-            existingItems = []
-            // Only show loading spinner if we have no cached items to display
-            if currentItems.isEmpty {
-                state = .loading
-            }
-        } else {
-            cursorTimestamp = oldestLoadedTimestampUnix
-            if case .loaded(let items, _) = state {
-                existingItems = items
-            } else {
-                existingItems = []
-            }
+        // Only show loading spinner if we have no cached items
+        if reset && currentItems.isEmpty {
+            state = .loading
         }
 
         guard let rustStore else { return }
-        let pageSizeCopy = pageSize
         let signpostID = OSSignpostID(log: performanceLog)
-        os_signpost(.begin, log: performanceLog, name: "loadItems", signpostID: signpostID, "reset=%d", reset ? 1 : 0)
+        os_signpost(.begin, log: performanceLog, name: "loadItems", signpostID: signpostID)
 
         Task.detached {
             do {
-                let result = try rustStore.fetchItems(beforeTimestampUnix: cursorTimestamp, limit: pageSizeCopy)
+                // Browse mode: search with empty query
+                let result = try rustStore.search(query: "")
 
                 await MainActor.run { [weak self] in
                     os_signpost(.end, log: performanceLog, name: "loadItems", signpostID: signpostID)
-                    // Update cursor to oldest item's timestamp for next page
-                    if let oldestItem = result.items.last {
-                        self?.oldestLoadedTimestampUnix = oldestItem.timestampUnix
-                    }
-                    if reset {
-                        self?.state = .loaded(items: result.items, hasMore: result.hasMore)
-                    } else {
-                        self?.state = .loaded(items: existingItems + result.items, hasMore: result.hasMore)
-                    }
+                    self?.state = .browse(result.matches)
                 }
             } catch {
                 await MainActor.run { [weak self] in
@@ -319,9 +283,9 @@ final class ClipboardStore {
             }.value
 
             guard !Task.isCancelled else { return }
-            guard case .searching(let currentQuery, _) = state, currentQuery == query else { return }
+            guard case .search(let currentQuery, _, _) = state, currentQuery == query else { return }
 
-            state = .searching(query: query, state: .results(searchResult.matches, hasMore: false))
+            state = .search(query: query, items: searchResult.matches, isSearching: false)
             os_signpost(.end, log: performanceLog, name: "search", signpostID: signpostID, "total_hits=%d", searchResult.totalCount)
         } catch {
             guard !Task.isCancelled else { return }
@@ -466,10 +430,10 @@ final class ClipboardStore {
                     await self?.fetchAndUpdateLinkMetadata(for: newItemId, url: text)
                 }
 
-                // Reload on main actor if browsing
+                // Reload on main actor if in browse mode
                 guard let self else { return }
                 await MainActor.run { [weak self] in
-                    if case .loaded = self?.state {
+                    if case .browse = self?.state {
                         self?.loadItems(reset: true)
                     }
                 }
@@ -501,9 +465,9 @@ final class ClipboardStore {
             }
         }.value
 
-        // Reload items to reflect the updated metadata
+        // Reload items to reflect the updated metadata (only if in browse mode)
         await MainActor.run { [weak self] in
-            if case .loaded = self?.state {
+            if case .browse = self?.state {
                 self?.loadItems(reset: true)
             }
         }
@@ -524,7 +488,7 @@ final class ClipboardStore {
         }.value
 
         await MainActor.run { [weak self] in
-            if case .loaded = self?.state {
+            if case .browse = self?.state {
                 self?.loadItems(reset: true)
             }
         }
@@ -554,7 +518,7 @@ final class ClipboardStore {
 
                 guard let self else { return }
                 await MainActor.run { [weak self] in
-                    if case .loaded = self?.state {
+                    if case .browse = self?.state {
                         self?.loadItems(reset: true)
                     }
                 }
@@ -710,7 +674,8 @@ final class ClipboardStore {
             }
         }.value
 
-        if case .loaded = state {
+        // Reload if in browse mode
+        if case .browse = state {
             loadItems(reset: true)
         }
     }
@@ -718,17 +683,14 @@ final class ClipboardStore {
     func delete(itemId: Int64) {
         // Update UI immediately
         switch state {
-        case .loaded(let items, let hasMore):
-            state = .loaded(items: items.filter { $0.itemId != itemId }, hasMore: hasMore)
-        case .searching(let query, let searchState):
-            let newState: SearchResultState
-            switch searchState {
-            case .loading(let previous):
-                newState = .loading(previousResults: previous.filter { $0.itemMetadata.itemId != itemId })
-            case .results(let results, let hasMore):
-                newState = .results(results.filter { $0.itemMetadata.itemId != itemId }, hasMore: hasMore)
-            }
-            state = .searching(query: query, state: newState)
+        case .browse(let items):
+            state = .browse(items.filter { $0.itemMetadata.itemId != itemId })
+        case .search(let query, let items, let isSearching):
+            state = .search(
+                query: query,
+                items: items.filter { $0.itemMetadata.itemId != itemId },
+                isSearching: isSearching
+            )
         default:
             break
         }
@@ -750,7 +712,7 @@ final class ClipboardStore {
 
     func clear() {
         // Update UI immediately
-        state = .loaded(items: [], hasMore: false)
+        state = .browse([])
 
         // Perform expensive DB operations in background
         guard let rustStore else { return }
