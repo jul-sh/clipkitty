@@ -7,8 +7,7 @@ use std::collections::hash_map::DefaultHasher;
 use std::hash::{Hash, Hasher};
 
 use crate::interface::{
-    ClipboardContent, ClipKittyError, HighlightRange, IconType, ItemIcon, ItemMatch, ItemMetadata,
-    LinkMetadataState, MatchData, SearchResult, ClipboardItem, ClipboardStoreApi,
+    ClipboardContent, HighlightRange, IconType, ItemIcon, ItemMetadata, ClipboardItem,
 };
 
 // ─────────────────────────────────────────────────────────────────────────────
