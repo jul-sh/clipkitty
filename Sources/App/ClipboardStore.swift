@@ -263,6 +263,18 @@ final class ClipboardStore {
             return
         }
 
+        // NOTE: Rust Search Concurrency & Cancellation
+        // While we run this in a detached task that can be cancelled on the Swift side,
+        // the underlying Rust `search` call is synchronous and will run to completion
+        // on a background thread even if the Swift task is cancelled.
+        //
+        // This means rapid typing can spawn multiple "zombie" search threads in Rust
+        // that compete for CPU and Database locks (Database uses a Mutex, serializing reads).
+        //
+        // Future optimization:
+        // 1. Move to connection pooling (r2d2) in Rust to allow concurrent DB reads.
+        // 2. Implement cancellation points in the Rust search (Check signals/atomic bools).
+
         let signpostID = OSSignpostID(log: performanceLog)
         os_signpost(.begin, log: performanceLog, name: "search", signpostID: signpostID, "query=%{public}s", query)
 
