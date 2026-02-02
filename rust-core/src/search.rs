@@ -234,53 +234,104 @@ impl SearchEngine {
     }
 
     /// Generate a text snippet around the first match with context
+    /// - Adds leading ellipsis "…" if snippet doesn't start at beginning
+    /// - Adds trailing ellipsis "…" if snippet doesn't reach the end
+    /// - Normalizes whitespace (newlines/tabs -> spaces, collapse consecutive)
+    /// - Adjusts highlight ranges to account for ellipsis offset
     pub fn generate_snippet(content: &str, highlights: &[HighlightRange], max_len: usize) -> (String, Vec<HighlightRange>, u64) {
+        let content_len = content.len();
+
         if highlights.is_empty() {
-            // No highlights, return first max_len chars
-            let preview: String = content.chars().take(max_len).collect();
-            return (preview, Vec::new(), 0);
+            // No highlights, return first max_len chars (normalized)
+            let content_chars: usize = content.chars().count();
+            let needs_trailing = content_chars > max_len;
+            let effective_len = if needs_trailing { max_len - 1 } else { max_len };
+            let preview = normalize_snippet(content, 0, content_len, effective_len);
+            let result = if needs_trailing {
+                format!("{}…", preview)
+            } else {
+                preview
+            };
+            return (result, Vec::new(), 0);
         }
 
         let first_highlight = &highlights[0];
         let match_start = first_highlight.start as usize;
+        let match_end = first_highlight.end as usize;
 
-        // Find line number
-        let line_number = content[..match_start.min(content.len())]
+        // Find line number (count newlines before match)
+        let line_number = content[..match_start.min(content_len)]
             .chars()
             .filter(|&c| c == '\n')
             .count() as u64;
 
-        // Calculate snippet bounds
-        let snippet_start = match_start.saturating_sub(SNIPPET_CONTEXT_CHARS);
-        let snippet_end = (match_start + SNIPPET_CONTEXT_CHARS + (first_highlight.end - first_highlight.start) as usize)
-            .min(content.len())
-            .min(snippet_start + max_len);
+        // Determine if we'll need ellipses
+        let will_need_leading = match_start > SNIPPET_CONTEXT_CHARS;
+        let will_need_trailing = match_end + SNIPPET_CONTEXT_CHARS < content_len;
 
-        // Adjust to not cut words (find word boundaries)
-        let snippet_start = if snippet_start > 0 {
-            content[..snippet_start]
-                .rfind(char::is_whitespace)
-                .map(|i| i + 1)
-                .unwrap_or(snippet_start)
-        } else {
-            0
-        };
+        // Reserve space for ellipses
+        let leading_reserve = if will_need_leading { 1 } else { 0 };
+        let trailing_reserve = if will_need_trailing { 1 } else { 0 };
+        let effective_max = max_len.saturating_sub(leading_reserve + trailing_reserve);
 
-        let snippet: String = content.chars()
+        // Start with the match, then expand with context
+        // The match must always be fully included
+        let match_char_len = match_end - match_start;
+        let remaining_space = effective_max.saturating_sub(match_char_len);
+
+        // Split remaining space: prefer context before (up to SNIPPET_CONTEXT_CHARS)
+        let context_before = (remaining_space / 2).min(SNIPPET_CONTEXT_CHARS).min(match_start);
+        let context_after = (remaining_space - context_before).min(content_len - match_end);
+
+        let mut snippet_start = match_start - context_before;
+        let snippet_end = (match_end + context_after).min(content_len);
+
+        // Try to adjust start to word boundary (but don't go past what we need for the match)
+        if snippet_start > 0 {
+            // Look for whitespace in a small window before snippet_start
+            let search_start = snippet_start.saturating_sub(10);
+            if let Some(space_pos) = content[search_start..snippet_start].rfind(char::is_whitespace) {
+                // Only adjust if it doesn't push us past our space budget
+                let new_start = search_start + space_pos + 1;
+                if new_start <= match_start.saturating_sub(context_before) {
+                    snippet_start = new_start;
+                }
+            }
+        }
+
+        // Extract the raw snippet (no normalization - would break highlight alignment)
+        let raw_snippet: String = content.chars()
             .skip(snippet_start)
             .take(snippet_end - snippet_start)
             .collect();
 
+        // Determine actual ellipsis needs based on final bounds
+        let needs_leading = snippet_start > 0;
+        let needs_trailing = snippet_end < content_len;
+
+        // Build final snippet with ellipses
+        let mut final_snippet = String::with_capacity(raw_snippet.len() + 2);
+        if needs_leading {
+            final_snippet.push('…');
+        }
+        final_snippet.push_str(&raw_snippet);
+        if needs_trailing {
+            final_snippet.push('…');
+        }
+
         // Adjust highlight ranges relative to snippet
+        // Account for: original offset + leading ellipsis
+        let ellipsis_offset = if needs_leading { 1 } else { 0 };
+
         let adjusted_highlights: Vec<HighlightRange> = highlights
             .iter()
             .filter_map(|h| {
                 let start = (h.start as usize).checked_sub(snippet_start)?;
                 let end = (h.end as usize).saturating_sub(snippet_start);
-                if start < snippet.len() {
+                if start < raw_snippet.len() {
                     Some(HighlightRange {
-                        start: start as u64,
-                        end: end.min(snippet.len()) as u64,
+                        start: (start + ellipsis_offset) as u64,
+                        end: (end.min(raw_snippet.len()) + ellipsis_offset) as u64,
                     })
                 } else {
                     None
@@ -288,7 +339,7 @@ impl SearchEngine {
             })
             .collect();
 
-        (snippet, adjusted_highlights, line_number)
+        (final_snippet, adjusted_highlights, line_number)
     }
 
     /// Create MatchData from a FuzzyMatch
@@ -344,6 +395,43 @@ fn blended_score(fuzzy_score: u32, timestamp: i64, now: i64, is_prefix_match: bo
 
     // Multiplicative boost: score * prefix_boost * (1 + recency_boost * recency)
     base_score * prefix_boost * (1.0 + RECENCY_BOOST_MAX * recency_factor)
+}
+
+/// Normalize a snippet: convert newlines/tabs to spaces, collapse consecutive spaces
+fn normalize_snippet(content: &str, start: usize, end: usize, max_chars: usize) -> String {
+    let mut result = String::with_capacity(max_chars);
+    let mut last_was_space = false;
+    let mut count = 0;
+
+    for ch in content.chars().skip(start).take(end - start) {
+        if count >= max_chars {
+            break;
+        }
+
+        let ch = match ch {
+            '\n' | '\t' | '\r' => ' ',
+            c => c,
+        };
+
+        if ch == ' ' {
+            if last_was_space {
+                continue;
+            }
+            last_was_space = true;
+        } else {
+            last_was_space = false;
+        }
+
+        result.push(ch);
+        count += 1;
+    }
+
+    // Trim trailing space
+    if result.ends_with(' ') {
+        result.pop();
+    }
+
+    result
 }
 
 /// Use regex for performant highlighting
@@ -437,13 +525,123 @@ mod tests {
     }
 
     #[test]
-    fn test_generate_snippet() {
+    fn test_generate_snippet_basic() {
         let content = "This is a long text with some interesting content that we want to highlight";
         let highlights = vec![HighlightRange { start: 28, end: 39 }]; // "interesting"
         let (snippet, adj_highlights, _line) = SearchEngine::generate_snippet(content, &highlights, 50);
 
         assert!(snippet.contains("interesting"));
         assert!(!adj_highlights.is_empty());
+    }
+
+    #[test]
+    fn test_snippet_leading_ellipsis_when_not_at_start() {
+        // Match is in the middle of content - should have leading ellipsis
+        let content = "The quick brown fox jumps over the lazy dog and runs away fast";
+        let highlights = vec![HighlightRange { start: 35, end: 39 }]; // "lazy"
+        let (snippet, adj_highlights, _) = SearchEngine::generate_snippet(content, &highlights, 30);
+
+        assert!(snippet.starts_with('…'), "Snippet should start with ellipsis when not at beginning, got: {}", snippet);
+        assert!(snippet.contains("lazy"), "Snippet should contain the match");
+        // Highlight should be offset by 1 for the leading ellipsis
+        assert!(!adj_highlights.is_empty());
+        let first_highlight = &adj_highlights[0];
+        let highlighted_text: String = snippet.chars()
+            .skip(first_highlight.start as usize)
+            .take((first_highlight.end - first_highlight.start) as usize)
+            .collect();
+        assert_eq!(highlighted_text, "lazy", "Highlight should mark 'lazy', got: {}", highlighted_text);
+    }
+
+    #[test]
+    fn test_snippet_no_leading_ellipsis_at_start() {
+        // Match is at the start - no leading ellipsis
+        let content = "Hello world";
+        let highlights = vec![HighlightRange { start: 0, end: 5 }]; // "Hello"
+        let (snippet, adj_highlights, _) = SearchEngine::generate_snippet(content, &highlights, 50);
+
+        assert!(!snippet.starts_with('…'), "Snippet should not start with ellipsis at beginning");
+        assert_eq!(adj_highlights[0].start, 0, "Highlight should start at 0");
+    }
+
+    #[test]
+    fn test_snippet_trailing_ellipsis_when_truncated() {
+        // Long content that gets truncated - should have trailing ellipsis
+        let content = "Start of text with match here and then lots more content that goes on and on";
+        let highlights = vec![HighlightRange { start: 20, end: 25 }]; // "match"
+        let (snippet, _, _) = SearchEngine::generate_snippet(content, &highlights, 40);
+
+        assert!(snippet.ends_with('…'), "Snippet should end with ellipsis when truncated, got: {}", snippet);
+    }
+
+    #[test]
+    fn test_snippet_no_trailing_ellipsis_at_end() {
+        // Short content that fits entirely - no trailing ellipsis
+        let content = "Short text";
+        let highlights = vec![HighlightRange { start: 0, end: 5 }]; // "Short"
+        let (snippet, _, _) = SearchEngine::generate_snippet(content, &highlights, 50);
+
+        assert!(!snippet.ends_with('…'), "Snippet should not end with ellipsis when not truncated");
+        assert_eq!(snippet, "Short text");
+    }
+
+    #[test]
+    fn test_snippet_preserves_whitespace() {
+        // Snippets preserve original whitespace (normalization would break highlight alignment)
+        let content = "Line one\n\nLine two";
+        let highlights = vec![HighlightRange { start: 0, end: 4 }]; // "Line"
+        let (snippet, adj_highlights, _) = SearchEngine::generate_snippet(content, &highlights, 50);
+
+        // Whitespace is preserved
+        assert!(snippet.contains('\n'), "Snippet should preserve newlines");
+        // But highlights still work correctly
+        let h = &adj_highlights[0];
+        let highlighted: String = snippet.chars()
+            .skip(h.start as usize)
+            .take((h.end - h.start) as usize)
+            .collect();
+        assert_eq!(highlighted, "Line");
+    }
+
+    #[test]
+    fn test_snippet_highlight_adjustment_with_ellipsis() {
+        // When ellipsis is added at start, highlight positions must shift by 1
+        let content = "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaTARGET text here";
+        let highlights = vec![HighlightRange { start: 46, end: 52 }]; // "TARGET"
+        let (snippet, adj_highlights, _) = SearchEngine::generate_snippet(content, &highlights, 30);
+
+        assert!(snippet.starts_with('…'));
+        assert!(snippet.contains("TARGET"));
+
+        // Verify the adjusted highlight correctly marks TARGET in the snippet
+        let h = &adj_highlights[0];
+        let highlighted: String = snippet.chars()
+            .skip(h.start as usize)
+            .take((h.end - h.start) as usize)
+            .collect();
+        assert_eq!(highlighted, "TARGET", "Adjusted highlight should mark TARGET, got: '{}'", highlighted);
+    }
+
+    #[test]
+    fn test_snippet_both_ellipses() {
+        // Match in middle of very long content - both ellipses needed
+        let long_prefix = "a".repeat(100);
+        let long_suffix = "z".repeat(100);
+        let content = format!("{}MATCH{}", long_prefix, long_suffix);
+        let highlights = vec![HighlightRange { start: 100, end: 105 }]; // "MATCH"
+        let (snippet, adj_highlights, _) = SearchEngine::generate_snippet(&content, &highlights, 30);
+
+        assert!(snippet.starts_with('…'), "Should have leading ellipsis");
+        assert!(snippet.ends_with('…'), "Should have trailing ellipsis");
+        assert!(snippet.contains("MATCH"));
+
+        // Verify highlight is correct
+        let h = &adj_highlights[0];
+        let highlighted: String = snippet.chars()
+            .skip(h.start as usize)
+            .take((h.end - h.start) as usize)
+            .collect();
+        assert_eq!(highlighted, "MATCH");
     }
 
     #[test]
