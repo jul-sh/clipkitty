@@ -5,7 +5,8 @@
 //!                      Rejects scattered noise, and natively handles typos.
 
 use crate::indexer::{Indexer, IndexerResult};
-use crate::models::{HighlightRange, MatchData, ItemMatch, StoredItem};
+use crate::interface::{HighlightRange, MatchData, ItemMatch};
+use crate::models::StoredItem;
 use chrono::Utc;
 use nucleo_matcher::pattern::{CaseMatching, Normalization, Pattern};
 use nucleo_matcher::{Config, Matcher, Utf32Str};

@@ -2,7 +2,7 @@
 //!
 //! Detects structured content types like URLs, emails, phone numbers, colors, etc.
 
-use crate::models::{ClipboardContent, LinkMetadataState};
+use crate::interface::{ClipboardContent, LinkMetadataState};
 use once_cell::sync::Lazy;
 use regex::Regex;
 
@@ -27,7 +27,7 @@ static PHONE_DIGITS_REGEX: Lazy<Regex> = Lazy::new(|| {
 });
 
 /// Check if a string looks like a URL
-fn is_url(text: &str) -> bool {
+pub fn is_valid_url(text: &str) -> bool {
     let trimmed = text.trim();
 
     // Basic length and content checks
@@ -116,7 +116,7 @@ pub fn detect_content(text: &str) -> ClipboardContent {
     }
 
     // Check for URLs
-    if is_url(trimmed) {
+    if is_valid_url(trimmed) {
         return ClipboardContent::Link {
             url: trimmed.to_string(),
             metadata_state: LinkMetadataState::Pending,
@@ -143,11 +143,11 @@ mod tests {
 
     #[test]
     fn test_url_detection() {
-        assert!(is_url("https://example.com"));
-        assert!(is_url("http://example.com/path?query=1"));
-        assert!(is_url("www.example.com"));
-        assert!(!is_url("not a url"));
-        assert!(!is_url("example.com")); // No scheme or www
+        assert!(is_valid_url("https://example.com"));
+        assert!(is_valid_url("http://example.com/path?query=1"));
+        assert!(is_valid_url("www.example.com"));
+        assert!(!is_valid_url("not a url"));
+        assert!(!is_valid_url("example.com")); // No scheme or www
     }
 
     #[test]

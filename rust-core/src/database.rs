@@ -2,7 +2,8 @@
 //!
 //! Implements the database schema and operations for clipboard storage.
 
-use crate::models::{ClipboardContent, StoredItem, ItemMetadata, ItemIcon, IconType, normalize_preview};
+use crate::interface::{ClipboardContent, ItemMetadata, ItemIcon, IconType};
+use crate::models::{StoredItem, normalize_preview};
 use chrono::{DateTime, TimeZone, Utc};
 use parking_lot::Mutex;
 use rusqlite::{params, Connection};

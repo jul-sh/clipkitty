@@ -454,9 +454,6 @@ struct ContentView: View {
                             case .link(let url, let metadataState):
                                 // Link preview - fetch metadata on-demand if needed
                                 linkPreview(url: url, metadataState: metadataState)
-                                    .task(id: item.stableId) {
-                                        store.fetchLinkMetadataIfNeeded(for: item)
-                                    }
 
                             case .text, .color, .email, .phone, .address, .date, .transit:
                                 EmptyView()
