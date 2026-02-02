@@ -31,12 +31,12 @@ struct ContentView: View {
         switch store.state {
         case .browse(let items):
             return items.map { $0.itemId }
-        case .search(_, let results, let browseItems):
+        case .search(_, let results, let fallbackItems):
             // Show results if available, otherwise fall back to browse items
             if !results.isEmpty {
                 return results.map { $0.itemMetadata.itemId }
             }
-            return browseItems.map { $0.itemId }
+            return fallbackItems.map { $0.itemId }
         default:
             return []
         }
@@ -313,7 +313,7 @@ struct ContentView: View {
                         .listRowSeparator(.hidden)
                         .listRowBackground(Color.clear)
                     }
-                case .search(_, let results, let browseItems):
+                case .search(_, let results, let fallbackItems):
                     if !results.isEmpty {
                         // Show search results with highlights
                         ForEach(Array(results.enumerated()), id: \.element.itemMetadata.itemId) { index, match in
@@ -333,8 +333,8 @@ struct ContentView: View {
                             .listRowBackground(Color.clear)
                         }
                     } else {
-                        // Fall back to browse items while searching
-                        ForEach(Array(browseItems.enumerated()), id: \.element.itemId) { index, metadata in
+                        // Show previous items while results are loading
+                        ForEach(Array(fallbackItems.enumerated()), id: \.element.itemId) { index, metadata in
                             ItemRow(
                                 metadata: metadata,
                                 matchData: nil,
