@@ -8,7 +8,7 @@ use crate::models::{StoredItem, normalize_preview};
 use chrono::{DateTime, TimeZone, Utc};
 use r2d2::{Pool, PooledConnection};
 use r2d2_sqlite::SqliteConnectionManager;
-use rusqlite::{params, InterruptHandle};
+use rusqlite::params;
 use std::path::Path;
 use thiserror::Error;
 
@@ -92,12 +92,6 @@ impl Database {
     /// Get a connection from the pool
     fn get_conn(&self) -> DatabaseResult<PooledConnection<SqliteConnectionManager>> {
         Ok(self.pool.get()?)
-    }
-
-    /// Get an interrupt handle for a connection (for cancellation)
-    pub fn get_interrupt_handle(&self) -> DatabaseResult<InterruptHandle> {
-        let conn = self.get_conn()?;
-        Ok(conn.get_interrupt_handle())
     }
 
     /// Set up the database schema
@@ -299,6 +293,68 @@ impl Database {
         let items: Vec<StoredItem> = stmt
             .query_map(rusqlite::params_from_iter(params), Self::row_to_stored_item)?
             .collect::<Result<Vec<_>, _>>()?;
+
+        // Re-sort to match input ID order
+        let id_to_item: std::collections::HashMap<i64, StoredItem> = items
+            .into_iter()
+            .filter_map(|item| item.id.map(|id| (id, item)))
+            .collect();
+
+        Ok(ids.iter().filter_map(|id| id_to_item.get(id).cloned()).collect())
+    }
+
+    /// Fetch items by IDs with SQLite C-level interrupt support.
+    ///
+    /// When the cancellation token is triggered, this interrupts the SQLite query
+    /// at the C level, allowing immediate abort of long-running disk reads.
+    ///
+    /// CRITICAL: The watcher task is wrapped in AbortOnDropHandle to prevent pool
+    /// poisoning - if the watcher outlived this scope, it could interrupt a different
+    /// query on a reused connection from the r2d2 pool.
+    pub fn fetch_items_by_ids_interruptible(
+        &self,
+        ids: &[i64],
+        token: &tokio_util::sync::CancellationToken,
+        runtime: &tokio::runtime::Handle,
+    ) -> DatabaseResult<Vec<StoredItem>> {
+        use tokio_util::task::AbortOnDropHandle;
+
+        if ids.is_empty() {
+            return Ok(Vec::new());
+        }
+
+        let conn = self.get_conn()?;
+
+        // Extract the SQLite interrupt handle - this is safe to call from another thread
+        let interrupt_handle = conn.get_interrupt_handle();
+
+        // Spawn a watcher task that interrupts SQLite when cancellation is requested.
+        // CRITICAL: Wrap in AbortOnDropHandle for pool poisoning prevention.
+        // When this scope exits (success or error via ?), the handle drops and aborts the watcher,
+        // preventing it from interrupting a reused connection.
+        let token_clone = token.clone();
+        let watcher = runtime.spawn(async move {
+            token_clone.cancelled().await;
+            interrupt_handle.interrupt();
+        });
+        let _abort_guard = AbortOnDropHandle::new(watcher);
+
+        // Now run the query - if cancelled, SQLite returns SQLITE_INTERRUPT
+        let placeholders = ids.iter().map(|_| "?").collect::<Vec<_>>().join(",");
+        let sql = format!("SELECT * FROM items WHERE id IN ({})", placeholders);
+
+        let mut stmt = conn.prepare(&sql)?;
+        let params: Vec<rusqlite::types::Value> = ids.iter().map(|&id| id.into()).collect();
+
+        // Map SQLITE_INTERRUPT to our error - this happens if token was cancelled
+        let items: Vec<StoredItem> = match stmt.query_map(rusqlite::params_from_iter(params), Self::row_to_stored_item) {
+            Ok(rows) => rows.collect::<Result<Vec<_>, _>>()?,
+            Err(rusqlite::Error::SqliteFailure(err, _)) if err.code == rusqlite::ffi::ErrorCode::OperationInterrupted => {
+                // Query was interrupted via token - return empty, caller checks token
+                return Ok(Vec::new());
+            }
+            Err(e) => return Err(e.into()),
+        };
 
         // Re-sort to match input ID order
         let id_to_item: std::collections::HashMap<i64, StoredItem> = items

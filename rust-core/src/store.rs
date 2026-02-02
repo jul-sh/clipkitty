@@ -93,6 +93,7 @@ impl ClipboardStore {
         search_engine: &SearchEngine,
         query: &str,
         token: &CancellationToken,
+        runtime: &tokio::runtime::Handle,
     ) -> Result<Vec<ItemMatch>, ClipKittyError> {
         // Checkpoint: Check cancellation before DB query
         if token.is_cancelled() {
@@ -129,8 +130,14 @@ impl ClipboardStore {
             return Err(ClipKittyError::Cancelled);
         }
 
+        // Use interruptible fetch with SQLite C-level interrupt support
         let ids: Vec<i64> = fuzzy_matches.iter().map(|m| m.id).collect();
-        let stored_items = db.fetch_items_by_ids(&ids)?;
+        let stored_items = db.fetch_items_by_ids_interruptible(&ids, token, runtime)?;
+
+        // Check if we were interrupted (empty result with non-empty IDs)
+        if stored_items.is_empty() && !ids.is_empty() && token.is_cancelled() {
+            return Err(ClipKittyError::Cancelled);
+        }
 
         let item_map: std::collections::HashMap<i64, StoredItem> = stored_items
             .into_iter()
@@ -165,6 +172,7 @@ impl ClipboardStore {
         search_engine: &SearchEngine,
         query: &str,
         token: &CancellationToken,
+        runtime: &tokio::runtime::Handle,
     ) -> Result<Vec<ItemMatch>, ClipKittyError> {
         // Checkpoint: Check cancellation before Tantivy search
         // Note: We don't inject checks into Tantivy's internal SIMD loops
@@ -183,8 +191,14 @@ impl ClipboardStore {
             return Err(ClipKittyError::Cancelled);
         }
 
+        // Use interruptible fetch with SQLite C-level interrupt support
         let ids: Vec<i64> = fuzzy_matches.iter().map(|m| m.id).collect();
-        let stored_items = db.fetch_items_by_ids(&ids)?;
+        let stored_items = db.fetch_items_by_ids_interruptible(&ids, token, runtime)?;
+
+        // Check if we were interrupted (empty result with non-empty IDs)
+        if stored_items.is_empty() && !ids.is_empty() && token.is_cancelled() {
+            return Err(ClipKittyError::Cancelled);
+        }
 
         let item_map: std::collections::HashMap<i64, StoredItem> = stored_items
             .into_iter()
@@ -444,6 +458,9 @@ impl ClipboardStoreApi for ClipboardStore {
         let token = CancellationToken::new();
         let _guard = DropGuard::new(token.clone());
 
+        // Get runtime handle for SQLite interrupt watcher spawning inside spawn_blocking
+        let runtime = tokio::runtime::Handle::current();
+
         // Clone Arcs for the blocking closure
         let db = Arc::clone(&self.db);
         let indexer = Arc::clone(&self.indexer);
@@ -455,9 +472,9 @@ impl ClipboardStoreApi for ClipboardStore {
         // Spawn the blocking search work
         let handle = tokio::task::spawn_blocking(move || {
             if trimmed_owned.len() < MIN_TRIGRAM_QUERY_LEN {
-                Self::search_short_query_sync(&db, &search_engine, &trimmed_owned, &token_clone)
+                Self::search_short_query_sync(&db, &search_engine, &trimmed_owned, &token_clone, &runtime)
             } else {
-                Self::search_trigram_query_sync(&db, &indexer, &search_engine, &query_owned, &token_clone)
+                Self::search_trigram_query_sync(&db, &indexer, &search_engine, &query_owned, &token_clone, &runtime)
             }
         });
 
@@ -616,7 +633,6 @@ mod tests {
 
     #[test]
     fn test_color_detection() {
-        let rt = runtime();
         let store = ClipboardStore::new_in_memory().unwrap();
 
         let id = store.save_text("#FF5733".to_string(), None, None).unwrap();
