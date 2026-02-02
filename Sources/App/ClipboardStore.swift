@@ -499,7 +499,7 @@ final class ClipboardStore {
                 try rustStore.updateLinkMetadata(
                     itemId: itemId,
                     title: title,
-                    imageData: imageData.map { Array($0) }
+                    imageData: imageData
                 )
             } catch {
                 logError("Failed to update link metadata: \(error)")
@@ -552,7 +552,7 @@ final class ClipboardStore {
 
             do {
                 let itemId = try rustStore.saveImage(
-                    imageData: Array(compressedData),
+                    imageData: compressedData,
                     sourceApp: sourceApp,
                     sourceAppBundleId: sourceAppBundleID
                 )
