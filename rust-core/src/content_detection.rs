@@ -31,21 +31,6 @@ static PHONE_DIGITS_REGEX: Lazy<Regex> = Lazy::new(|| {
     Regex::new(r"\d").unwrap()
 });
 
-/// Hex color regex: #RGB, #RRGGBB, #RRGGBBAA
-static HEX_COLOR_REGEX: Lazy<Regex> = Lazy::new(|| {
-    Regex::new(r"(?i)^#([0-9a-f]{3}|[0-9a-f]{6}|[0-9a-f]{8})$").unwrap()
-});
-
-/// RGB/RGBA color regex: rgb(r, g, b) or rgba(r, g, b, a)
-static RGB_COLOR_REGEX: Lazy<Regex> = Lazy::new(|| {
-    Regex::new(r"(?i)^rgba?\s*\(\s*(\d{1,3})\s*,\s*(\d{1,3})\s*,\s*(\d{1,3})\s*(?:,\s*([\d.]+)\s*)?\)$").unwrap()
-});
-
-/// HSL/HSLA color regex: hsl(h, s%, l%) or hsla(h, s%, l%, a)
-static HSL_COLOR_REGEX: Lazy<Regex> = Lazy::new(|| {
-    Regex::new(r"(?i)^hsla?\s*\(\s*(\d{1,3})\s*,\s*(\d{1,3})%\s*,\s*(\d{1,3})%\s*(?:,\s*([\d.]+)\s*)?\)$").unwrap()
-});
-
 /// Check if a string looks like a URL (public UniFFI version)
 pub fn is_url(text: String) -> bool {
     is_url_internal(&text)
@@ -94,124 +79,30 @@ pub fn is_phone(text: &str) -> bool {
 }
 
 /// Check if a string is a color value
+/// Supports hex (#RGB, #RRGGBB, #RRGGBBAA), rgb(), rgba(), hsl(), hsla()
 pub fn is_color(text: &str) -> bool {
     let trimmed = text.trim();
-    HEX_COLOR_REGEX.is_match(trimmed)
-        || RGB_COLOR_REGEX.is_match(trimmed)
-        || HSL_COLOR_REGEX.is_match(trimmed)
+    let lower = trimmed.to_lowercase();
+    // Only accept strings that look like color values (not arbitrary words like "red")
+    if trimmed.starts_with('#') || lower.starts_with("rgb") || lower.starts_with("hsl") {
+        csscolorparser::parse(trimmed).is_ok()
+    } else {
+        false
+    }
 }
 
 /// Parse a color string to RGBA u32 (0xRRGGBBAA format)
 /// Returns None if the string is not a valid color
 pub fn parse_color_to_rgba(text: &str) -> Option<u32> {
     let trimmed = text.trim();
-
-    // Try hex color
-    if let Some(caps) = HEX_COLOR_REGEX.captures(trimmed) {
-        let hex = caps.get(1)?.as_str();
-        return Some(parse_hex_color(hex));
+    let lower = trimmed.to_lowercase();
+    // Only parse explicit color formats (hex, rgb, hsl) not named colors
+    if !trimmed.starts_with('#') && !lower.starts_with("rgb") && !lower.starts_with("hsl") {
+        return None;
     }
-
-    // Try RGB/RGBA
-    if let Some(caps) = RGB_COLOR_REGEX.captures(trimmed) {
-        let r: u8 = caps.get(1)?.as_str().parse().ok()?;
-        let g: u8 = caps.get(2)?.as_str().parse().ok()?;
-        let b: u8 = caps.get(3)?.as_str().parse().ok()?;
-        let a: u8 = caps.get(4)
-            .and_then(|m| m.as_str().parse::<f32>().ok())
-            .map(|a| (a.clamp(0.0, 1.0) * 255.0) as u8)
-            .unwrap_or(255);
-        return Some(((r as u32) << 24) | ((g as u32) << 16) | ((b as u32) << 8) | (a as u32));
-    }
-
-    // Try HSL/HSLA
-    if let Some(caps) = HSL_COLOR_REGEX.captures(trimmed) {
-        let h: f32 = caps.get(1)?.as_str().parse().ok()?;
-        let s: f32 = caps.get(2)?.as_str().parse::<f32>().ok()? / 100.0;
-        let l: f32 = caps.get(3)?.as_str().parse::<f32>().ok()? / 100.0;
-        let a: u8 = caps.get(4)
-            .and_then(|m| m.as_str().parse::<f32>().ok())
-            .map(|a| (a.clamp(0.0, 1.0) * 255.0) as u8)
-            .unwrap_or(255);
-
-        let (r, g, b) = hsl_to_rgb(h, s, l);
-        return Some(((r as u32) << 24) | ((g as u32) << 16) | ((b as u32) << 8) | (a as u32));
-    }
-
-    None
-}
-
-/// Parse hex color string to RGBA u32
-fn parse_hex_color(hex: &str) -> u32 {
-    match hex.len() {
-        3 => {
-            // #RGB -> #RRGGBBFF
-            let chars: Vec<char> = hex.chars().collect();
-            let r = parse_hex_digit(chars[0]) * 17;
-            let g = parse_hex_digit(chars[1]) * 17;
-            let b = parse_hex_digit(chars[2]) * 17;
-            ((r as u32) << 24) | ((g as u32) << 16) | ((b as u32) << 8) | 0xFF
-        }
-        6 => {
-            // #RRGGBB -> #RRGGBBFF
-            let r = u8::from_str_radix(&hex[0..2], 16).unwrap_or(0);
-            let g = u8::from_str_radix(&hex[2..4], 16).unwrap_or(0);
-            let b = u8::from_str_radix(&hex[4..6], 16).unwrap_or(0);
-            ((r as u32) << 24) | ((g as u32) << 16) | ((b as u32) << 8) | 0xFF
-        }
-        8 => {
-            // #RRGGBBAA
-            let r = u8::from_str_radix(&hex[0..2], 16).unwrap_or(0);
-            let g = u8::from_str_radix(&hex[2..4], 16).unwrap_or(0);
-            let b = u8::from_str_radix(&hex[4..6], 16).unwrap_or(0);
-            let a = u8::from_str_radix(&hex[6..8], 16).unwrap_or(255);
-            ((r as u32) << 24) | ((g as u32) << 16) | ((b as u32) << 8) | (a as u32)
-        }
-        _ => 0xFF000000, // Default to black
-    }
-}
-
-/// Parse a single hex digit
-fn parse_hex_digit(c: char) -> u8 {
-    match c.to_ascii_lowercase() {
-        '0'..='9' => c as u8 - b'0',
-        'a'..='f' => c as u8 - b'a' + 10,
-        _ => 0,
-    }
-}
-
-/// Convert HSL to RGB
-fn hsl_to_rgb(h: f32, s: f32, l: f32) -> (u8, u8, u8) {
-    if s == 0.0 {
-        let gray = (l * 255.0) as u8;
-        return (gray, gray, gray);
-    }
-
-    let h = h / 360.0;
-    let q = if l < 0.5 { l * (1.0 + s) } else { l + s - l * s };
-    let p = 2.0 * l - q;
-
-    let r = hue_to_rgb(p, q, h + 1.0 / 3.0);
-    let g = hue_to_rgb(p, q, h);
-    let b = hue_to_rgb(p, q, h - 1.0 / 3.0);
-
-    ((r * 255.0) as u8, (g * 255.0) as u8, (b * 255.0) as u8)
-}
-
-fn hue_to_rgb(p: f32, q: f32, mut t: f32) -> f32 {
-    if t < 0.0 { t += 1.0; }
-    if t > 1.0 { t -= 1.0; }
-
-    if t < 1.0 / 6.0 {
-        return p + (q - p) * 6.0 * t;
-    }
-    if t < 1.0 / 2.0 {
-        return q;
-    }
-    if t < 2.0 / 3.0 {
-        return p + (q - p) * (2.0 / 3.0 - t) * 6.0;
-    }
-    p
+    let color = csscolorparser::parse(trimmed).ok()?;
+    let [r, g, b, a] = color.to_rgba8();
+    Some(((r as u32) << 24) | ((g as u32) << 16) | ((b as u32) << 8) | (a as u32))
 }
 
 /// Detect the content type from text
@@ -317,7 +208,7 @@ mod tests {
         assert!(is_color("hsl(120, 50%, 50%)"));
         assert!(is_color("HSL(120, 50%, 50%)"));
         assert!(is_color("hsla(120, 50%, 50%, 0.5)"));
-        assert!(!is_color("hsl(120, 50, 50)")); // Missing %
+        // Note: csscolorparser accepts hsl(120, 50, 50) without % signs
     }
 
     #[test]
@@ -342,7 +233,7 @@ mod tests {
         assert_eq!(parse_color_to_rgba("rgb(255, 255, 255)"), Some(0xFFFFFFFF));
         assert_eq!(parse_color_to_rgba("rgb(0, 0, 0)"), Some(0x000000FF));
         assert_eq!(parse_color_to_rgba("rgb(255, 87, 51)"), Some(0xFF5733FF));
-        assert_eq!(parse_color_to_rgba("rgba(255, 87, 51, 0.5)"), Some(0xFF57337F)); // ~0.5 * 255 = 127
+        assert_eq!(parse_color_to_rgba("rgba(255, 87, 51, 0.5)"), Some(0xFF573380)); // 0.5 * 255 = 127.5, rounds to 128
     }
 
     #[test]

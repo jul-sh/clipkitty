@@ -385,7 +385,7 @@ impl StoredItem {
         let hash_input = format!("{}{}", description, image_data.len());
         let content_hash = Self::hash_string(&hash_input);
         // Generate thumbnail (max 64x64, JPEG quality 60)
-        let thumbnail = generate_thumbnail(&image_data, 64, 60);
+        let thumbnail = generate_thumbnail(&image_data, 64);
         Self {
             id: None,
             content: ClipboardContent::Image {
@@ -440,48 +440,7 @@ impl StoredItem {
 
     /// Display text (truncated, normalized whitespace) for preview
     pub fn display_text(&self, max_chars: usize) -> String {
-        let text = self.text_content();
-        let mut result = String::with_capacity(max_chars + 1);
-        let mut chars = text.chars().peekable();
-
-        // Skip leading whitespace
-        while chars.peek().map(|c| c.is_whitespace()).unwrap_or(false) {
-            chars.next();
-        }
-
-        let mut last_was_space = false;
-        let mut count = 0;
-
-        for ch in chars {
-            if count >= max_chars {
-                result.push('…');
-                return result;
-            }
-
-            let ch = match ch {
-                '\n' | '\t' | '\r' => ' ',
-                c => c,
-            };
-
-            if ch == ' ' {
-                if last_was_space {
-                    continue;
-                }
-                last_was_space = true;
-            } else {
-                last_was_space = false;
-            }
-
-            result.push(ch);
-            count += 1;
-        }
-
-        // Trim trailing spaces
-        while result.ends_with(' ') {
-            result.pop();
-        }
-
-        result
+        normalize_preview(&self.text_content(), max_chars)
     }
 
     /// Convert to ItemMetadata for list display
@@ -514,12 +473,66 @@ impl StoredItem {
 }
 
 // ─────────────────────────────────────────────────────────────────────────────
+// TEXT NORMALIZATION
+// ─────────────────────────────────────────────────────────────────────────────
+
+/// Normalize text for preview display (truncate, normalize whitespace)
+/// - Skips leading whitespace
+/// - Collapses consecutive whitespace to single space
+/// - Converts newlines/tabs to spaces
+/// - Truncates at max_chars with ellipsis
+/// - Trims trailing spaces
+pub fn normalize_preview(text: &str, max_chars: usize) -> String {
+    let mut result = String::with_capacity(max_chars + 1);
+    let mut chars = text.chars().peekable();
+
+    // Skip leading whitespace
+    while chars.peek().map(|c| c.is_whitespace()).unwrap_or(false) {
+        chars.next();
+    }
+
+    let mut last_was_space = false;
+    let mut count = 0;
+
+    for ch in chars {
+        if count >= max_chars {
+            result.push('…');
+            return result;
+        }
+
+        let ch = match ch {
+            '\n' | '\t' | '\r' => ' ',
+            c => c,
+        };
+
+        if ch == ' ' {
+            if last_was_space {
+                continue;
+            }
+            last_was_space = true;
+        } else {
+            last_was_space = false;
+        }
+
+        result.push(ch);
+        count += 1;
+    }
+
+    // Trim trailing spaces
+    while result.ends_with(' ') {
+        result.pop();
+    }
+
+    result
+}
+
+// ─────────────────────────────────────────────────────────────────────────────
 // THUMBNAIL GENERATION
 // ─────────────────────────────────────────────────────────────────────────────
 
-/// Generate a thumbnail from image data
+/// Generate a PNG thumbnail from image data
 /// Returns None if the image cannot be decoded
-fn generate_thumbnail(image_data: &[u8], max_size: u32, _quality: u8) -> Option<Vec<u8>> {
+fn generate_thumbnail(image_data: &[u8], max_size: u32) -> Option<Vec<u8>> {
     use image::GenericImageView;
 
     let img = image::load_from_memory(image_data).ok()?;
@@ -527,10 +540,10 @@ fn generate_thumbnail(image_data: &[u8], max_size: u32, _quality: u8) -> Option<
 
     // Only create thumbnail if image is larger than max_size
     if width <= max_size && height <= max_size {
-        // Image is small enough, just re-encode it
+        // Image is small enough, just re-encode it as PNG
         let mut buf = Vec::new();
         let mut cursor = std::io::Cursor::new(&mut buf);
-        img.write_to(&mut cursor, image::ImageFormat::Jpeg).ok()?;
+        img.write_to(&mut cursor, image::ImageFormat::Png).ok()?;
         return Some(buf);
     }
 
@@ -543,7 +556,7 @@ fn generate_thumbnail(image_data: &[u8], max_size: u32, _quality: u8) -> Option<
 
     let mut buf = Vec::new();
     let mut cursor = std::io::Cursor::new(&mut buf);
-    thumbnail.write_to(&mut cursor, image::ImageFormat::Jpeg).ok()?;
+    thumbnail.write_to(&mut cursor, image::ImageFormat::Png).ok()?;
 
     Some(buf)
 }
