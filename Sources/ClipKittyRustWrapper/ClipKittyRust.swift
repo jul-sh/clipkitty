@@ -114,19 +114,6 @@ extension ClipboardItem {
     public var contentPreview: String {
         textContent
     }
-
-    public var searchPreview: String {
-        let text = textContent
-        let maxChars = 10000
-        if let endIndex = text.index(text.startIndex, offsetBy: maxChars, limitedBy: text.endIndex) {
-            let preview = String(text[..<endIndex])
-            if endIndex < text.endIndex {
-                return preview + "\n\n[Content truncated]"
-            }
-            return preview
-        }
-        return text
-    }
 }
 
 // MARK: - ItemMetadata Extensions
