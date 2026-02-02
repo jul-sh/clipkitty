@@ -40,11 +40,10 @@ enum DisplayState: Equatable {
     case loading
     /// Browse mode - showing recent items (no search query)
     case browse([ItemMetadata])
-    /// Search mode - actively searching with a query
-    /// - query: The search term
-    /// - results: Current search results (may be empty while searching)
-    /// - fallbackItems: Previous items shown while results are empty
-    case search(query: String, results: [ItemMatch], fallbackItems: [ItemMetadata])
+    /// Search in progress - showing fallback items while waiting for results
+    case searchLoading(query: String, fallbackItems: [ItemMetadata])
+    /// Search complete - showing results
+    case searchResults(query: String, results: [ItemMatch])
     /// Error state
     case error(String)
 }
@@ -159,19 +158,21 @@ final class ClipboardStore {
 
         currentSearchQuery = query
 
-        // Capture browse items as fallback, or preserve existing fallback
-        let (previousResults, fallback): ([ItemMatch], [ItemMetadata]) = {
+        // Capture fallback items from current state
+        let fallback: [ItemMetadata] = {
             switch state {
             case .browse(let items):
-                return ([], items)
-            case .search(_, let results, let fallbackItems):
-                return (results, fallbackItems)
+                return items
+            case .searchLoading(_, let fallbackItems):
+                return fallbackItems
+            case .searchResults(_, let results):
+                return results.map { $0.itemMetadata }
             default:
-                return ([], [])
+                return []
             }
         }()
 
-        state = .search(query: query, results: previousResults, fallbackItems: fallback)
+        state = .searchLoading(query: query, fallbackItems: fallback)
 
         searchTask = Task {
             try? await Task.sleep(for: .milliseconds(50))
@@ -283,9 +284,9 @@ final class ClipboardStore {
             }.value
 
             guard !Task.isCancelled else { return }
-            guard case .search(let currentQuery, _, let fallback) = state, currentQuery == query else { return }
+            guard case .searchLoading(let currentQuery, _) = state, currentQuery == query else { return }
 
-            state = .search(query: query, results: searchResult.matches, fallbackItems: fallback)
+            state = .searchResults(query: query, results: searchResult.matches)
             os_signpost(.end, log: performanceLog, name: "search", signpostID: signpostID, "total_hits=%d", searchResult.totalCount)
         } catch {
             guard !Task.isCancelled else { return }
@@ -681,11 +682,15 @@ final class ClipboardStore {
         switch state {
         case .browse(let items):
             state = .browse(items.filter { $0.itemId != itemId })
-        case .search(let query, let results, let fallback):
-            state = .search(
+        case .searchLoading(let query, let fallback):
+            state = .searchLoading(
                 query: query,
-                results: results.filter { $0.itemMetadata.itemId != itemId },
                 fallbackItems: fallback.filter { $0.itemId != itemId }
+            )
+        case .searchResults(let query, let results):
+            state = .searchResults(
+                query: query,
+                results: results.filter { $0.itemMetadata.itemId != itemId }
             )
         default:
             break
