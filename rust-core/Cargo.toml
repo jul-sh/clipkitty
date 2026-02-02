@@ -40,7 +40,7 @@ tantivy = "*"
 nucleo-matcher = "*"
 image = { version = "*", default-features = false, features = ["jpeg", "png", "gif", "webp"] }
 tokio = { version = "*", features = ["full"] }
-tokio-util = "*"
+tokio-util = { version = "*", features = ["rt"] }
 async-trait = "*"
 reqwest = { version = "*", default-features = false, features = ["json", "rustls-tls"] }
 rand = "*"
