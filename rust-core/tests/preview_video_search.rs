@@ -169,20 +169,20 @@ fn scene1_empty_query_shows_sql_first() {
     let (store, _temp) = create_preview_video_store();
 
     // With empty query, fetch items by timestamp (newest first)
-    let result = store.fetch_items(None, 6).unwrap();
-    let items = &result.items;
+    let result = store.search("".to_string()).unwrap();
+    let items = &result.matches;
 
     assert!(items.len() >= 6, "Should have at least 6 items");
 
     // First item should be the SQL query (check preview)
     assert!(
-        items[0].preview.contains("SELECT users.name"),
+        matches[0].item_metadata.preview.contains("SELECT users.name"),
         "Top item should be SQL query, got: {}",
-        items[0].preview
+        matches[0].item_metadata.preview
     );
 
     // Check other visible items in default state
-    let previews: Vec<&str> = items.iter().map(|i| i.preview.as_str()).collect();
+    let previews: Vec<&str> = items.iter().map(|i| i.item_metadata.preview.as_str()).collect();
     assert!(
         previews.iter().any(|c| c.contains("sk-proj")),
         "API key should be visible"
@@ -482,8 +482,8 @@ fn verify_all_expected_items_exist() {
     let (store, _temp) = create_preview_video_store();
 
     // Fetch all items
-    let result = store.fetch_items(None, 100).unwrap();
-    let previews: Vec<&str> = result.items.iter().map(|i| i.preview.as_str()).collect();
+    let result = store.search("".to_string()).unwrap();
+    let previews: Vec<&str> = result.matches.iter().map(|i| i.item_metadata.preview.as_str()).collect();
 
     // Verify key items from each scene exist
 
@@ -544,13 +544,13 @@ fn verify_all_expected_items_exist() {
 fn verify_item_count() {
     let (store, _temp) = create_preview_video_store();
 
-    let result = store.fetch_items(None, 100).unwrap();
+    let result = store.search("".to_string()).unwrap();
 
     // We should have approximately 39 items based on the data
     assert!(
-        result.items.len() >= 35,
+        result.matches.len() >= 35,
         "Should have at least 35 items, got {}",
-        result.items.len()
+        result.matches.len()
     );
 }
 

@@ -246,15 +246,8 @@ pub struct ItemMatch {
 // RESULT TYPES
 // ─────────────────────────────────────────────────────────────────────────────
 
-/// Initial fetch result (no search query) - just metadata for display
-#[derive(Debug, Clone, uniffi::Record)]
-pub struct FetchResults {
-    pub items: Vec<ItemMetadata>,
-    pub total_count: u64,
-    pub has_more: bool,
-}
-
 /// Search result with matches (metadata + match highlights)
+/// Used for both browse mode (empty query) and search mode
 #[derive(Debug, Clone, uniffi::Record)]
 pub struct SearchResult {
     pub matches: Vec<ItemMatch>,
