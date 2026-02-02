@@ -423,12 +423,8 @@ final class ClipboardStore {
         guard let rustStore else { return }
         Task.detached { [weak self] in
             do {
-                let newItemId = try rustStore.saveText(text: text, sourceApp: sourceApp, sourceAppBundleId: sourceAppBundleID)
-
-                // If it's a URL, fetch metadata asynchronously
-                if isUrl(text: text) {
-                    await self?.fetchAndUpdateLinkMetadata(for: newItemId, url: text)
-                }
+                // Rust handles URL detection and metadata fetching automatically
+                _ = try rustStore.saveText(text: text, sourceApp: sourceApp, sourceAppBundleId: sourceAppBundleID)
 
                 // Reload on main actor if in browse mode
                 guard let self else { return }

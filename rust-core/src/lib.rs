@@ -8,17 +8,12 @@
 mod content_detection;
 mod database;
 mod indexer;
+mod link_metadata;
 mod models;
 mod search;
 mod store;
 
 pub use models::*;
 pub use store::*;
-
-// FFI-exported free function
-#[uniffi::export]
-pub fn is_url(text: String) -> bool {
-    content_detection::is_url(text)
-}
 
 uniffi::setup_scaffolding!();

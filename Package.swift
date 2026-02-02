@@ -44,6 +44,7 @@ let package = Package(
             ],
             linkerSettings: [
                 .linkedLibrary("clipkitty_core"),  // → libclipkitty_core.a
+                .linkedFramework("SystemConfiguration"),  // For reqwest proxy detection
                 .unsafeFlags(["-L", "Sources/ClipKittyRust"])
             ]
         ),
