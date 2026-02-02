@@ -26,13 +26,8 @@ static PHONE_DIGITS_REGEX: Lazy<Regex> = Lazy::new(|| {
     Regex::new(r"\d").unwrap()
 });
 
-/// Check if a string looks like a URL (public UniFFI version)
-pub fn is_url(text: String) -> bool {
-    is_url_internal(&text)
-}
-
-/// Check if a string looks like a URL (internal version)
-fn is_url_internal(text: &str) -> bool {
+/// Check if a string looks like a URL
+fn is_url(text: &str) -> bool {
     let trimmed = text.trim();
 
     // Basic length and content checks
@@ -121,7 +116,7 @@ pub fn detect_content(text: &str) -> ClipboardContent {
     }
 
     // Check for URLs
-    if is_url_internal(trimmed) {
+    if is_url(trimmed) {
         return ClipboardContent::Link {
             url: trimmed.to_string(),
             metadata_state: LinkMetadataState::Pending,
@@ -148,11 +143,11 @@ mod tests {
 
     #[test]
     fn test_url_detection() {
-        assert!(is_url_internal("https://example.com"));
-        assert!(is_url_internal("http://example.com/path?query=1"));
-        assert!(is_url_internal("www.example.com"));
-        assert!(!is_url_internal("not a url"));
-        assert!(!is_url_internal("example.com")); // No scheme or www
+        assert!(is_url("https://example.com"));
+        assert!(is_url("http://example.com/path?query=1"));
+        assert!(is_url("www.example.com"));
+        assert!(!is_url("not a url"));
+        assert!(!is_url("example.com")); // No scheme or www
     }
 
     #[test]

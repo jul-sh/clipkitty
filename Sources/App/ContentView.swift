@@ -25,6 +25,8 @@ struct ContentView: View {
     @State private var searchText: String = ""
     @State private var didApplyInitialSearch = false
     @State private var lastItemsSignature: [Int64] = []  // Track when items change to suppress animation
+    @State private var showSearchSpinner = false
+    @State private var searchSpinnerTask: Task<Void, Never>?
     @FocusState private var isSearchFocused: Bool
 
     private var itemIds: [Int64] {
@@ -125,11 +127,26 @@ struct ContentView: View {
             }
             focusSearchField()
         }
-        .onChange(of: store.state) { _, _ in
+        .onChange(of: store.state) { _, newState in
             // Validate selection - ensure selected item still exists in results
             if let selectedItemId, !itemIds.contains(selectedItemId) {
                 self.selectedItemId = firstItemId
                 self.selectedItem = nil
+            }
+
+            // Show spinner after 150ms if still searching with no results
+            searchSpinnerTask?.cancel()
+            if case .search(_, let results, _) = newState, results.isEmpty {
+                searchSpinnerTask = Task {
+                    try? await Task.sleep(for: .milliseconds(150))
+                    guard !Task.isCancelled else { return }
+                    // Only show if still searching with empty results
+                    if case .search(_, let currentResults, _) = store.state, currentResults.isEmpty {
+                        showSearchSpinner = true
+                    }
+                }
+            } else {
+                showSearchSpinner = false
             }
         }
         .onChange(of: searchText) { _, newValue in
@@ -218,6 +235,12 @@ struct ContentView: View {
                 .onKeyPress(characters: .decimalDigits, phases: .down) { keyPress in
                     handleNumberKey(keyPress)
                 }
+
+            if showSearchSpinner {
+                ProgressView()
+                    .scaleEffect(0.5)
+                    .frame(width: 16, height: 16)
+            }
         }
         .padding(.horizontal, 17)
         .padding(.vertical, 13)

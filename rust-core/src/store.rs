@@ -212,13 +212,15 @@ impl ClipboardStore {
 
     /// Save a text item to the database and index
     /// Returns the new item ID, or 0 if duplicate (timestamp updated)
+    /// If the text is a URL, automatically fetches link metadata in background
     pub fn save_text(
         &self,
         text: String,
         source_app: Option<String>,
         source_app_bundle_id: Option<String>,
     ) -> Result<i64, ClipKittyError> {
-        let item = StoredItem::new_text(text, source_app, source_app_bundle_id);
+        let item = StoredItem::new_text(text.clone(), source_app, source_app_bundle_id);
+        let is_link = matches!(item.content, crate::models::ClipboardContent::Link { .. });
 
         // Check for duplicate
         if let Some(existing) = self.db.find_by_hash(&item.content_hash)? {
@@ -242,6 +244,21 @@ impl ClipboardStore {
         self.indexer
             .add_document(id, item.text_content(), item.timestamp_unix)?;
         self.indexer.commit()?;
+
+        // If it's a link, fetch metadata in background (async)
+        if is_link {
+            let db = Arc::clone(&self.db);
+            let url = text;
+            tokio::spawn(async move {
+                if let Some(metadata) = crate::link_metadata::fetch_metadata(&url).await {
+                    let title = metadata.title.as_deref().unwrap_or("");
+                    let _ = db.update_link_metadata(id, Some(title), metadata.image_data.as_deref());
+                } else {
+                    // Mark as failed (empty title, no image)
+                    let _ = db.update_link_metadata(id, Some(""), None);
+                }
+            });
+        }
 
         Ok(id)
     }
