@@ -12,8 +12,6 @@ mod models;
 mod search;
 mod store;
 
-// Internal use only - not exposed via FFI
-pub(crate) use content_detection::detect_content;
 pub use models::*;
 pub use store::*;
 
