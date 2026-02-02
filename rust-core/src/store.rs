@@ -10,7 +10,7 @@ use crate::interface::{
 };
 use crate::models::{StoredItem};
 use crate::search::{SearchEngine, MIN_TRIGRAM_QUERY_LEN, MAX_RESULTS_SHORT, compute_preview_highlights};
-use chrono::Utc;
+use chrono::{TimeZone, Utc};
 use std::path::PathBuf;
 use std::sync::Arc;
 
