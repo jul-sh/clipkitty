@@ -126,8 +126,13 @@ struct ContentView: View {
                 searchText = ""
             }
             // Select first item if nothing selected
-            if selectedItemId == nil {
-                selectedItemId = listItems.first?.itemId
+            if selectedItemId == nil, let firstId = listItems.first?.itemId {
+                selectedItemId = firstId
+                // Fetch the item - onChange won't fire for initial value
+                Task {
+                    let query = searchText.isEmpty ? nil : searchText
+                    selectedItem = await store.fetchItem(id: firstId, searchQuery: query)
+                }
             }
             // Initialize items signature for animation tracking
             lastItemsSignature = listItems.map { $0.itemId }
@@ -142,8 +147,15 @@ struct ContentView: View {
                 searchText = ""
             }
             // Select first item whenever display resets (re-open)
-            selectedItemId = listItems.first?.itemId
+            let firstId = listItems.first?.itemId
+            selectedItemId = firstId
             selectedItem = nil
+            // Fetch the first item
+            if let firstId {
+                Task {
+                    selectedItem = await store.fetchItem(id: firstId, searchQuery: nil)
+                }
+            }
             focusSearchField()
         }
         .onChange(of: store.state) { _, newState in
@@ -498,6 +510,10 @@ struct ContentView: View {
                 .background(.black.opacity(0.05))
             } else if listItems.isEmpty {
                 emptyStateView
+            } else if selectedItemId != nil {
+                // Item is selected but still loading
+                ProgressView()
+                    .frame(maxWidth: .infinity, maxHeight: .infinity)
             } else {
                 Text("No item selected")
                     .font(.custom(FontManager.sansSerif, size: 16))
