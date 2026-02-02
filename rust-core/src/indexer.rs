@@ -186,8 +186,10 @@ impl Indexer {
             tantivy_query.set_minimum_number_should_match(min_match);
         }
 
-        // Get top 5000 candidates (will be re-ranked by fuzzy matcher)
-        let top_docs = searcher.search(&tantivy_query, &TopDocs::with_limit(5000))?;
+        // Get top 30000 candidates for Nucleo to re-rank
+        // We fetch more than the final limit (5000) because Nucleo filters out
+        // low-quality matches. This ensures we have enough high-quality results.
+        let top_docs = searcher.search(&tantivy_query, &TopDocs::with_limit(30000))?;
 
         let mut candidates = Vec::with_capacity(top_docs.len());
         for (score, doc_address) in top_docs {

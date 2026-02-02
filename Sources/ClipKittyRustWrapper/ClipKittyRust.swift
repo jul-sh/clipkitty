@@ -24,42 +24,41 @@
 
 import Foundation
 import UniformTypeIdentifiers
+import AppKit
 
 // MARK: - ClipboardItem Extensions
-// Extends: ClipboardItem from clipkitty_core.udl lines 30-37
+// Extends: ClipboardItem from clipkitty_core.udl
 
 extension ClipboardItem {
     /// Convert Unix timestamp to Date
     public var timestamp: Date {
-        Date(timeIntervalSince1970: TimeInterval(timestampUnix))
+        Date(timeIntervalSince1970: TimeInterval(itemMetadata.timestampUnix))
+    }
+
+
+    /// Convenience accessor for source app
+    public var sourceApp: String? {
+        itemMetadata.sourceApp
     }
 
     /// Convenience accessor for source app bundle ID (Swift naming convention)
     public var sourceAppBundleID: String? {
-        sourceAppBundleId
+        itemMetadata.sourceAppBundleId
     }
 
-    /// The raw text content for searching and display (wraps Rust method)
+    /// The raw text content for searching and display
     public var textContent: String {
         content.textContent
     }
 
-    /// Icon for the content type (wraps Rust method)
-    public var icon: String {
-        content.icon
-    }
-
-    /// Stable identifier for SwiftUI (wraps Rust method)
+    /// Stable identifier for SwiftUI
     public var stableId: String {
-        if let id = id {
-            return String(id)
-        }
-        return contentHash
+        String(itemMetadata.itemId)
     }
 
-    /// Display text with whitespace normalization and truncation (wraps Rust method)
+    /// Display text with whitespace normalization and truncation
     public var displayText: String {
-        let text = textContent
+        let text = itemMetadata.preview
         let maxChars = 200
         var result = String()
         result.reserveCapacity(maxChars + 1)
@@ -130,8 +129,121 @@ extension ClipboardItem {
     }
 }
 
+// MARK: - ItemMetadata Extensions
+// Extends: ItemMetadata from clipkitty_core.udl
+
+extension ItemMetadata {
+    /// Convert Unix timestamp to Date
+    public var timestamp: Date {
+        Date(timeIntervalSince1970: TimeInterval(timestampUnix))
+    }
+
+    /// Convenience accessor for source app bundle ID (Swift naming convention)
+    public var sourceAppBundleID: String? {
+        sourceAppBundleId
+    }
+
+    /// Stable identifier for SwiftUI
+    public var stableId: String {
+        String(itemId)
+    }
+
+    @MainActor
+    private static let timeAgoFormatter: RelativeDateTimeFormatter = {
+        let formatter = RelativeDateTimeFormatter()
+        formatter.unitsStyle = .abbreviated
+        return formatter
+    }()
+
+    @MainActor
+    public var timeAgo: String {
+        Self.timeAgoFormatter.localizedString(for: timestamp, relativeTo: Date())
+    }
+}
+
+// MARK: - ItemIcon Extensions
+// Extends: ItemIcon from clipkitty_core.udl
+
+extension ItemIcon {
+    /// Get the SF Symbol name for this icon
+    public var sfSymbolName: String? {
+        switch self {
+        case .symbol(let iconType):
+            return iconType.sfSymbolName
+        case .colorSwatch, .thumbnail:
+            return nil
+        }
+    }
+
+    /// Get color from RGBA value for color swatches
+    public var swatchColor: NSColor? {
+        guard case .colorSwatch(let rgba) = self else { return nil }
+        let r = CGFloat((rgba >> 24) & 0xFF) / 255.0
+        let g = CGFloat((rgba >> 16) & 0xFF) / 255.0
+        let b = CGFloat((rgba >> 8) & 0xFF) / 255.0
+        let a = CGFloat(rgba & 0xFF) / 255.0
+        return NSColor(red: r, green: g, blue: b, alpha: a)
+    }
+
+    /// Get thumbnail image from bytes
+    public var thumbnailImage: NSImage? {
+        guard case .thumbnail(let bytes) = self else { return nil }
+        return NSImage(data: Data(bytes))
+    }
+}
+
+// MARK: - IconType Extensions
+// Extends: IconType from clipkitty_core.udl
+
+extension IconType {
+    /// SF Symbol name for each icon type
+    public var sfSymbolName: String {
+        switch self {
+        case .text: return "doc.text"
+        case .link: return "link"
+        case .email: return "envelope"
+        case .phone: return "phone"
+        case .address: return "map"
+        case .dateType: return "calendar"
+        case .transit: return "tram"
+        case .image: return "photo"
+        case .color: return "paintpalette"
+        }
+    }
+
+    /// UTType for the content (used for system icons)
+    public var utType: UTType {
+        switch self {
+        case .text: return .text
+        case .link: return .url
+        case .email: return .emailMessage
+        case .phone: return .vCard
+        case .address: return .vCard
+        case .dateType: return .calendarEvent
+        case .transit: return .text
+        case .image: return .image
+        case .color: return .text
+        }
+    }
+}
+
+// MARK: - ItemMatch Extensions
+// Extends: ItemMatch from clipkitty_core.udl
+
+extension ItemMatch {
+    /// Convenience accessor for item ID
+    public var itemId: Int64 {
+        itemMetadata.itemId
+    }
+
+    /// Stable identifier for SwiftUI
+    public var stableId: String {
+        itemMetadata.stableId
+    }
+}
+
 // MARK: - ClipboardContent Extensions
-// Extends: ClipboardContent from clipkitty_core.udl lines 17-27
+// Extends: ClipboardContent from clipkitty_core.udl
 // SYNC: Case names must match .udl enum variants exactly
 
 extension ClipboardContent {
@@ -147,6 +259,8 @@ extension ClipboardContent {
     public var textContent: String {
         switch self {
         case .text(let value):
+            return value
+        case .color(let value):
             return value
         case .link(let url, _):
             return url
@@ -168,6 +282,7 @@ extension ClipboardContent {
     public var icon: String {
         switch self {
         case .text: return "doc.text"
+        case .color: return "paintpalette"
         case .link: return "link"
         case .email: return "envelope"
         case .phone: return "phone"
@@ -182,6 +297,7 @@ extension ClipboardContent {
     public var utType: UTType {
         switch self {
         case .text: return .text
+        case .color: return .text
         case .link: return .url
         case .email: return .emailMessage
         case .phone: return .vCard
@@ -194,7 +310,7 @@ extension ClipboardContent {
 }
 
 // MARK: - LinkMetadataState Extensions
-// Extends: LinkMetadataState from clipkitty_core.udl lines 9-14
+// Extends: LinkMetadataState from clipkitty_core.udl
 // SYNC: Case names must match .udl enum variants exactly
 
 extension LinkMetadataState {
@@ -239,20 +355,34 @@ extension LinkMetadataState {
     }
 }
 
+// MARK: - HighlightRange Extensions
+// Extends: HighlightRange from clipkitty_core.udl
+
+extension HighlightRange {
+    /// Convert to NSRange for use with NSAttributedString
+    public var nsRange: NSRange {
+        NSRange(location: Int(start), length: Int(end - start))
+    }
+}
+
 // MARK: - Protocol Conformances
 // SYNC: Add Sendable conformance for any new type added to clipkitty_core.udl
-// Types from .udl: ClipboardItem, ClipboardContent, LinkMetadataState,
-//                  FetchResult, SearchResult, SearchMatch, HighlightRange, ClipboardStore
+// Note: UniFFI already generates Sendable conformances for most types in Swift 6+,
+// but we add @unchecked Sendable for older Swift versions and consistency
 
-extension ClipboardItem: Identifiable {}
+// Note: Identifiable conformance with `id` property
+// ClipboardItem, ItemMetadata, and ItemMatch all use itemId as identifier
 
-// Sendable conformances - Rust ClipboardStore uses internal locking (RwLock)
-// See: rust-core/src/store.rs lines 313-314 for Send+Sync impl
-extension ClipboardItem: @unchecked Sendable {}
-extension ClipboardContent: @unchecked Sendable {}
-extension LinkMetadataState: @unchecked Sendable {}
-extension FetchResult: @unchecked Sendable {}       // .udl lines 58-61
-extension SearchResult: @unchecked Sendable {}      // .udl lines 52-55
-extension SearchMatch: @unchecked Sendable {}       // .udl lines 46-49
-extension HighlightRange: @unchecked Sendable {}    // .udl lines 40-43
-extension ClipboardStore: @unchecked Sendable {}    // .udl lines 73-121
+extension ClipboardItem: Identifiable {
+    public var id: Int64 { itemMetadata.itemId }
+}
+
+extension ItemMetadata: Identifiable {
+    public var id: Int64 { itemId }
+}
+
+extension ItemMatch: Identifiable {
+    public var id: Int64 { itemMetadata.itemId }
+}
+
+// Note: ClipboardStore already declares Sendable conformance in the generated file
