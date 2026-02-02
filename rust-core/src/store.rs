@@ -17,6 +17,11 @@ use std::sync::Arc;
 
 
 /// Thread-safe clipboard store with SQLite + Tantivy
+///
+/// Note on Concurrency:
+/// The Database is wrapped in a `Mutex`, which serializes all database access (writes AND reads).
+/// This ensures safety but means concurrent searches (e.g. from rapid typing) will block each other
+/// during the final item fetch phase.
 #[derive(uniffi::Object)]
 pub struct ClipboardStore {
     db: Arc<Database>,
