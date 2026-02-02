@@ -33,12 +33,10 @@ struct ContentView: View {
         switch store.state {
         case .browse(let items):
             return items.map { $0.itemId }
-        case .search(_, let results, let fallbackItems):
-            // Show results if available, otherwise fall back to browse items
-            if !results.isEmpty {
-                return results.map { $0.itemMetadata.itemId }
-            }
+        case .searchLoading(_, let fallbackItems):
             return fallbackItems.map { $0.itemId }
+        case .searchResults(_, let results):
+            return results.map { $0.itemMetadata.itemId }
         default:
             return []
         }
@@ -134,14 +132,14 @@ struct ContentView: View {
                 self.selectedItem = nil
             }
 
-            // Show spinner after 150ms if still searching with no results
+            // Show spinner after 150ms if still in searchLoading state
             searchSpinnerTask?.cancel()
-            if case .search(_, let results, _) = newState, results.isEmpty {
+            if case .searchLoading = newState {
                 searchSpinnerTask = Task {
                     try? await Task.sleep(for: .milliseconds(150))
                     guard !Task.isCancelled else { return }
-                    // Only show if still searching with empty results
-                    if case .search(_, let currentResults, _) = store.state, currentResults.isEmpty {
+                    // Only show if still in searchLoading state
+                    if case .searchLoading = store.state {
                         showSearchSpinner = true
                     }
                 }
@@ -275,7 +273,7 @@ struct ContentView: View {
             loadingView
         case .error(let message):
             errorView(message)
-        case .browse, .search:
+        case .browse, .searchLoading, .searchResults:
             splitView
         }
     }
@@ -336,43 +334,41 @@ struct ContentView: View {
                         .listRowSeparator(.hidden)
                         .listRowBackground(Color.clear)
                     }
-                case .search(_, let results, let fallbackItems):
-                    if !results.isEmpty {
-                        // Show search results with highlights
-                        ForEach(Array(results.enumerated()), id: \.element.itemMetadata.itemId) { index, match in
-                            ItemRow(
-                                metadata: match.itemMetadata,
-                                matchData: match.matchData,
-                                isSelected: match.itemMetadata.itemId == selectedItemId,
-                                onTap: {
-                                    selectedItemId = match.itemMetadata.itemId
-                                    focusSearchField()
-                                }
-                            )
-                            .equatable()
-                            .accessibilityIdentifier("ItemRow_\(index)")
-                            .listRowInsets(EdgeInsets(top: 2, leading: 0, bottom: 2, trailing: 0))
-                            .listRowSeparator(.hidden)
-                            .listRowBackground(Color.clear)
-                        }
-                    } else {
-                        // Show previous items while results are loading
-                        ForEach(Array(fallbackItems.enumerated()), id: \.element.itemId) { index, metadata in
-                            ItemRow(
-                                metadata: metadata,
-                                matchData: nil,
-                                isSelected: metadata.itemId == selectedItemId,
-                                onTap: {
-                                    selectedItemId = metadata.itemId
-                                    focusSearchField()
-                                }
-                            )
-                            .equatable()
-                            .accessibilityIdentifier("ItemRow_\(index)")
-                            .listRowInsets(EdgeInsets(top: 2, leading: 0, bottom: 2, trailing: 0))
-                            .listRowSeparator(.hidden)
-                            .listRowBackground(Color.clear)
-                        }
+                case .searchLoading(_, let fallbackItems):
+                    // Show fallback items while search is in progress
+                    ForEach(Array(fallbackItems.enumerated()), id: \.element.itemId) { index, metadata in
+                        ItemRow(
+                            metadata: metadata,
+                            matchData: nil,
+                            isSelected: metadata.itemId == selectedItemId,
+                            onTap: {
+                                selectedItemId = metadata.itemId
+                                focusSearchField()
+                            }
+                        )
+                        .equatable()
+                        .accessibilityIdentifier("ItemRow_\(index)")
+                        .listRowInsets(EdgeInsets(top: 2, leading: 0, bottom: 2, trailing: 0))
+                        .listRowSeparator(.hidden)
+                        .listRowBackground(Color.clear)
+                    }
+                case .searchResults(_, let results):
+                    // Show search results with highlights
+                    ForEach(Array(results.enumerated()), id: \.element.itemMetadata.itemId) { index, match in
+                        ItemRow(
+                            metadata: match.itemMetadata,
+                            matchData: match.matchData,
+                            isSelected: match.itemMetadata.itemId == selectedItemId,
+                            onTap: {
+                                selectedItemId = match.itemMetadata.itemId
+                                focusSearchField()
+                            }
+                        )
+                        .equatable()
+                        .accessibilityIdentifier("ItemRow_\(index)")
+                        .listRowInsets(EdgeInsets(top: 2, leading: 0, bottom: 2, trailing: 0))
+                        .listRowSeparator(.hidden)
+                        .listRowBackground(Color.clear)
                     }
                 default:
                     EmptyView()
@@ -527,7 +523,7 @@ struct ContentView: View {
                 .foregroundStyle(.tertiary)
             let emptyStateMessage: String = {
                 switch store.state {
-                case .search:
+                case .searchLoading, .searchResults:
                     return "No results"
                 default:
                     return "No clipboard history"
