@@ -42,10 +42,7 @@ enum DisplayState: Equatable {
     /// Browse mode - showing recent items (no search query)
     case browse([ItemMatch])
     /// Search mode - actively searching with a query
-    /// - query: The search term (non-empty)
-    /// - items: Current results to display
-    /// - isSearching: True while new results are loading (shows previous results)
-    case search(query: String, items: [ItemMatch], isSearching: Bool)
+    case search(query: String, items: [ItemMatch])
     /// Error state
     case error(String)
 }
@@ -165,14 +162,14 @@ final class ClipboardStore {
             switch state {
             case .browse(let items):
                 return items
-            case .search(_, let items, _):
+            case .search(_, let items):
                 return items
             default:
                 return []
             }
         }()
 
-        state = .search(query: query, items: previousItems, isSearching: true)
+        state = .search(query: query, items: previousItems)
 
         searchTask = Task {
             try? await Task.sleep(for: .milliseconds(50))
@@ -283,9 +280,9 @@ final class ClipboardStore {
             }.value
 
             guard !Task.isCancelled else { return }
-            guard case .search(let currentQuery, _, _) = state, currentQuery == query else { return }
+            guard case .search(let currentQuery, _) = state, currentQuery == query else { return }
 
-            state = .search(query: query, items: searchResult.matches, isSearching: false)
+            state = .search(query: query, items: searchResult.matches)
             os_signpost(.end, log: performanceLog, name: "search", signpostID: signpostID, "total_hits=%d", searchResult.totalCount)
         } catch {
             guard !Task.isCancelled else { return }
@@ -685,11 +682,10 @@ final class ClipboardStore {
         switch state {
         case .browse(let items):
             state = .browse(items.filter { $0.itemMetadata.itemId != itemId })
-        case .search(let query, let items, let isSearching):
+        case .search(let query, let items):
             state = .search(
                 query: query,
-                items: items.filter { $0.itemMetadata.itemId != itemId },
-                isSearching: isSearching
+                items: items.filter { $0.itemMetadata.itemId != itemId }
             )
         default:
             break
