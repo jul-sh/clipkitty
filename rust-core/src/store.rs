@@ -9,7 +9,7 @@ use crate::models::{
     ClipboardItem, StoredItem, ItemMatch, MatchData, SearchResult,
 };
 use crate::search::{SearchEngine, MIN_TRIGRAM_QUERY_LEN, MAX_RESULTS_SHORT, compute_preview_highlights};
-use chrono::{TimeZone, Utc};
+use chrono::Utc;
 use std::path::PathBuf;
 use std::sync::Arc;
 use thiserror::Error;
