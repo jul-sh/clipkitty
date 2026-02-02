@@ -32,6 +32,7 @@ serde = { version = "1", features = ["derive"] }
 serde_json = "1"
 parking_lot = "*"
 url = "*"
+csscolorparser = "0.6"
 uniffi = { version = "*", features = ["cli"] }
 tantivy = "*"
 nucleo-matcher = "*"

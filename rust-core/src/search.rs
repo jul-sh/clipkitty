@@ -157,38 +157,6 @@ impl SearchEngine {
         results
     }
 
-    pub fn filter_batch(
-        &self,
-        candidates: impl Iterator<Item = (i64, String, i64)>,
-        query: &str,
-        results: &mut Vec<FuzzyMatch>,
-        max_results: usize,
-    ) -> usize {
-        let trimmed = query.trim_start();
-        if trimmed.trim().is_empty() { return 0; }
-
-        let has_trailing_space = query.ends_with(' ');
-        let query_words: Vec<&str> = trimmed.trim_end().split_whitespace().collect();
-        let mut matcher = Matcher::new(self.config.clone());
-        let patterns: Vec<Pattern> = query_words
-            .iter()
-            .map(|w| Pattern::parse(w, CaseMatching::Ignore, Normalization::Smart))
-            .collect();
-
-        let mut found = 0;
-
-        for (id, content, timestamp) in candidates.take(max_results * 10) {
-            if results.len() >= max_results { break; }
-            if let Some(fuzzy_match) = self.score_candidate(
-                id, &content, timestamp, &query_words, &patterns, has_trailing_space, &mut matcher, false,
-            ) {
-                results.push(fuzzy_match);
-                found += 1;
-            }
-        }
-        found
-    }
-
     /// Core Scoring Logic: Analyzes a document against split query words
     fn score_candidate(
         &self,

@@ -2,7 +2,7 @@
 //!
 //! Implements the database schema and operations for clipboard storage.
 
-use crate::models::{ClipboardContent, StoredItem, ItemMetadata, ItemIcon, IconType};
+use crate::models::{ClipboardContent, StoredItem, ItemMetadata, ItemIcon, IconType, normalize_preview};
 use chrono::{DateTime, TimeZone, Utc};
 use parking_lot::Mutex;
 use rusqlite::{params, Connection};
@@ -204,34 +204,6 @@ impl Database {
         let conn = self.conn.lock();
         conn.execute("DELETE FROM items", [])?;
         Ok(())
-    }
-
-    /// Fetch items with keyset pagination (ordered by timestamp DESC)
-    /// Returns StoredItem for full data access
-    pub fn fetch_items(
-        &self,
-        before_timestamp: Option<DateTime<Utc>>,
-        limit: usize,
-    ) -> DatabaseResult<Vec<StoredItem>> {
-        let conn = self.conn.lock();
-
-        let sql = if before_timestamp.is_some() {
-            "SELECT * FROM items WHERE timestamp < ?1 ORDER BY timestamp DESC LIMIT ?2"
-        } else {
-            "SELECT * FROM items ORDER BY timestamp DESC LIMIT ?1"
-        };
-
-        let mut stmt = conn.prepare(sql)?;
-        let items = if let Some(ts) = before_timestamp {
-            let ts_str = ts.format("%Y-%m-%d %H:%M:%S%.f").to_string();
-            stmt.query_map(params![ts_str, limit as i64], Self::row_to_stored_item)?
-                .collect::<Result<Vec<_>, _>>()?
-        } else {
-            stmt.query_map(params![limit as i64], Self::row_to_stored_item)?
-                .collect::<Result<Vec<_>, _>>()?
-        };
-
-        Ok(items)
     }
 
     /// Fetch lightweight item metadata for list display
@@ -544,51 +516,6 @@ impl Database {
             timestamp_unix: timestamp.timestamp(),
         })
     }
-}
-
-/// Normalize text for preview display (truncate, normalize whitespace)
-fn normalize_preview(text: &str, max_chars: usize) -> String {
-    let mut result = String::with_capacity(max_chars + 1);
-    let mut chars = text.chars().peekable();
-
-    // Skip leading whitespace
-    while chars.peek().map(|c| c.is_whitespace()).unwrap_or(false) {
-        chars.next();
-    }
-
-    let mut last_was_space = false;
-    let mut count = 0;
-
-    for ch in chars {
-        if count >= max_chars {
-            result.push('…');
-            return result;
-        }
-
-        let ch = match ch {
-            '\n' | '\t' | '\r' => ' ',
-            c => c,
-        };
-
-        if ch == ' ' {
-            if last_was_space {
-                continue;
-            }
-            last_was_space = true;
-        } else {
-            last_was_space = false;
-        }
-
-        result.push(ch);
-        count += 1;
-    }
-
-    // Trim trailing spaces
-    while result.ends_with(' ') {
-        result.pop();
-    }
-
-    result
 }
 
 // Ensure Database is thread-safe
