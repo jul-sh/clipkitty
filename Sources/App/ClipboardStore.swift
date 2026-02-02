@@ -35,12 +35,11 @@ private func measureTimeAsync<T>(_ label: String, _ block: () async throws -> T)
 }
 
 /// Display state - explicit variants for browse and search modes
-/// Both use ItemMatch from the Rust search() API (browse is search with empty query)
 enum DisplayState: Equatable {
     /// Initial loading state before any data
     case loading
     /// Browse mode - showing recent items (no search query)
-    case browse([ItemMatch])
+    case browse([ItemMetadata])
     /// Search mode - actively searching with a query
     case search(query: String, items: [ItemMatch])
     /// Error state
@@ -157,16 +156,12 @@ final class ClipboardStore {
 
         currentSearchQuery = query
 
-        // Preserve previous results while searching to avoid UI flash
+        // Preserve previous search results while searching to avoid UI flash
         let previousItems: [ItemMatch] = {
-            switch state {
-            case .browse(let items):
+            if case .search(_, let items) = state {
                 return items
-            case .search(_, let items):
-                return items
-            default:
-                return []
             }
+            return []
         }()
 
         state = .search(query: query, items: previousItems)
@@ -216,7 +211,7 @@ final class ClipboardStore {
     /// Load items for browse mode (search with empty query)
     private func loadItems(reset: Bool) {
         // Extract current items to preserve during refresh (avoid flash)
-        let currentItems: [ItemMatch] = {
+        let currentItems: [ItemMetadata] = {
             if case .browse(let items) = state {
                 return items
             }
@@ -234,12 +229,13 @@ final class ClipboardStore {
 
         Task.detached {
             do {
-                // Browse mode: search with empty query
+                // Browse mode: search with empty query, extract just metadata
                 let result = try rustStore.search(query: "")
+                let metadata = result.matches.map { $0.itemMetadata }
 
                 await MainActor.run { [weak self] in
                     os_signpost(.end, log: performanceLog, name: "loadItems", signpostID: signpostID)
-                    self?.state = .browse(result.matches)
+                    self?.state = .browse(metadata)
                 }
             } catch {
                 await MainActor.run { [weak self] in
@@ -681,7 +677,7 @@ final class ClipboardStore {
         // Update UI immediately
         switch state {
         case .browse(let items):
-            state = .browse(items.filter { $0.itemMetadata.itemId != itemId })
+            state = .browse(items.filter { $0.itemId != itemId })
         case .search(let query, let items):
             state = .search(
                 query: query,

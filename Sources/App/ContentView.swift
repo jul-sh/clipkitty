@@ -27,23 +27,33 @@ struct ContentView: View {
     @State private var lastItemsSignature: [Int64] = []  // Track when items change to suppress animation
     @FocusState private var isSearchFocused: Bool
 
-    private var listItems: [ItemMatch] {
+    private var itemIds: [Int64] {
         switch store.state {
-        case .browse(let items), .search(_, let items):
-            return items
+        case .browse(let items):
+            return items.map { $0.itemId }
+        case .search(_, let items):
+            return items.map { $0.itemMetadata.itemId }
         default:
             return []
         }
     }
 
-    private var selectedIndex: Int? {
-        guard let selectedItemId else { return nil }
-        return listItems.firstIndex { $0.itemMetadata.itemId == selectedItemId }
+    private var firstItemId: Int64? {
+        itemIds.first
     }
 
-    /// The order signature of displayed items - changes when items are reordered
-    private var itemsOrderSignature: [Int64] {
-        listItems.map { $0.itemMetadata.itemId }
+    private var itemCount: Int {
+        itemIds.count
+    }
+
+    private var selectedIndex: Int? {
+        guard let selectedItemId else { return nil }
+        return itemIds.firstIndex(of: selectedItemId)
+    }
+
+    private func itemId(at index: Int) -> Int64? {
+        guard index >= 0 && index < itemIds.count else { return nil }
+        return itemIds[index]
     }
 
     var body: some View {
@@ -79,7 +89,7 @@ struct ContentView: View {
                 searchText = ""
             }
             // Select first item if nothing selected
-            if selectedItemId == nil, let firstId = listItems.first?.itemMetadata.itemId {
+            if selectedItemId == nil, let firstId = firstItemId {
                 selectedItemId = firstId
                 // Fetch the item - onChange won't fire for initial value
                 Task {
@@ -88,7 +98,7 @@ struct ContentView: View {
                 }
             }
             // Initialize items signature for animation tracking
-            lastItemsSignature = listItems.map { $0.itemId }
+            lastItemsSignature = itemIds
             focusSearchField()
         }
         .onChange(of: store.displayVersion) { _, _ in
@@ -100,7 +110,7 @@ struct ContentView: View {
                 searchText = ""
             }
             // Select first item whenever display resets (re-open)
-            let firstId = listItems.first?.itemMetadata.itemId
+            let firstId = firstItemId
             selectedItemId = firstId
             selectedItem = nil
             // Fetch the first item
@@ -113,8 +123,8 @@ struct ContentView: View {
         }
         .onChange(of: store.state) { _, _ in
             // Validate selection - ensure selected item still exists in results
-            if let selectedItemId, !listItems.contains(where: { $0.itemMetadata.itemId == selectedItemId }) {
-                self.selectedItemId = listItems.first?.itemMetadata.itemId
+            if let selectedItemId, !itemIds.contains(selectedItemId) {
+                self.selectedItemId = firstItemId
                 self.selectedItem = nil
             }
         }
@@ -132,17 +142,17 @@ struct ContentView: View {
                 selectedItem = await store.fetchItem(id: newId, searchQuery: query)
             }
         }
-        .onChange(of: itemsOrderSignature) { oldOrder, newOrder in
+        .onChange(of: itemIds) { oldOrder, newOrder in
             // Select first item by default if nothing is selected
             guard let selectedItemId else {
-                self.selectedItemId = listItems.first?.itemMetadata.itemId
+                self.selectedItemId = firstItemId
                 return
             }
             // Reset selection to first if the selected item's position changed
             let oldIndex = oldOrder.firstIndex(of: selectedItemId)
             let newIndex = newOrder.firstIndex(of: selectedItemId)
             if oldIndex != newIndex {
-                self.selectedItemId = listItems.first?.itemMetadata.itemId
+                self.selectedItemId = firstItemId
             }
         }
     }
@@ -159,11 +169,11 @@ struct ContentView: View {
     private func moveSelection(by offset: Int) {
         measure("moveSelection") {
             guard let currentIndex = selectedIndex else {
-                selectedItemId = listItems.first?.itemMetadata.itemId
+                selectedItemId = firstItemId
                 return
             }
-            let newIndex = max(0, min(listItems.count - 1, currentIndex + offset))
-            selectedItemId = listItems[newIndex].itemId
+            let newIndex = max(0, min(itemCount - 1, currentIndex + offset))
+            selectedItemId = itemId(at: newIndex)
         }
     }
 
@@ -217,16 +227,16 @@ struct ContentView: View {
         }
 
         let index = number - 1
-        guard index < listItems.count else { return .ignored }
+        guard index < itemCount else { return .ignored }
 
-        selectedItemId = listItems[index].itemId
+        selectedItemId = itemId(at: index)
         confirmSelection()
         return .handled
     }
 
     private func indexForItem(_ itemId: Int64?) -> Int? {
         guard let itemId else { return nil }
-        return listItems.firstIndex { $0.itemMetadata.itemId == itemId }
+        return itemIds.firstIndex(of: itemId)
     }
 
     // MARK: - Content
@@ -281,37 +291,59 @@ struct ContentView: View {
     private var itemList: some View {
         ScrollViewReader { proxy in
             List {
-                ForEach(Array(listItems.enumerated()), id: \.element.itemMetadata.itemId) { index, match in
-                    ItemRow(
-                        match: match,
-                        isSelected: match.itemMetadata.itemId == selectedItemId,
-                        searchQuery: searchText,
-                        onTap: {
-                            selectedItemId = match.itemMetadata.itemId
-                            focusSearchField()
-                        }
-                    )
-                    .equatable()
-                    .accessibilityIdentifier("ItemRow_\(index)")
-                    .listRowInsets(EdgeInsets(top: 2, leading: 0, bottom: 2, trailing: 0))
-                    .listRowSeparator(.hidden)
-                    .listRowBackground(Color.clear)
+                switch store.state {
+                case .browse(let items):
+                    ForEach(Array(items.enumerated()), id: \.element.itemId) { index, metadata in
+                        ItemRow(
+                            metadata: metadata,
+                            matchData: nil,
+                            isSelected: metadata.itemId == selectedItemId,
+                            onTap: {
+                                selectedItemId = metadata.itemId
+                                focusSearchField()
+                            }
+                        )
+                        .equatable()
+                        .accessibilityIdentifier("ItemRow_\(index)")
+                        .listRowInsets(EdgeInsets(top: 2, leading: 0, bottom: 2, trailing: 0))
+                        .listRowSeparator(.hidden)
+                        .listRowBackground(Color.clear)
+                    }
+                case .search(_, let items):
+                    ForEach(Array(items.enumerated()), id: \.element.itemMetadata.itemId) { index, match in
+                        ItemRow(
+                            metadata: match.itemMetadata,
+                            matchData: match.matchData,
+                            isSelected: match.itemMetadata.itemId == selectedItemId,
+                            onTap: {
+                                selectedItemId = match.itemMetadata.itemId
+                                focusSearchField()
+                            }
+                        )
+                        .equatable()
+                        .accessibilityIdentifier("ItemRow_\(index)")
+                        .listRowInsets(EdgeInsets(top: 2, leading: 0, bottom: 2, trailing: 0))
+                        .listRowSeparator(.hidden)
+                        .listRowBackground(Color.clear)
+                    }
+                default:
+                    EmptyView()
                 }
             }
             .listStyle(.plain)
             .scrollContentBackground(.hidden)
-            .animation(nil, value: listItems.map { $0.itemMetadata.itemId })
+            .animation(nil, value: itemIds)
             .modifier(HideScrollIndicatorsWhenOverlay(displayVersion: store.displayVersion))
             .onChange(of: searchText) { _, _ in
                 // Scroll to top when search query changes (no animation)
-                if let firstItemId = listItems.first?.itemMetadata.itemId {
+                if let firstItemId = itemIds.first {
                     proxy.scrollTo(firstItemId, anchor: .top)
                 }
             }
             .onChange(of: selectedItemId) { oldItemId, newItemId in
                 guard let newItemId else { return }
 
-                let currentSignature = listItems.map { $0.itemMetadata.itemId }
+                let currentSignature = itemIds
                 let itemsChanged = currentSignature != lastItemsSignature
 
                 // Update signature for next comparison
@@ -420,7 +452,7 @@ struct ContentView: View {
                 .padding(.horizontal, 17)
                 .padding(.vertical, 11)
                 .background(.black.opacity(0.05))
-            } else if listItems.isEmpty {
+            } else if itemIds.isEmpty {
                 emptyStateView
             } else if selectedItemId != nil {
                 // Item is selected but still loading
@@ -620,9 +652,9 @@ struct TextPreviewView: NSViewRepresentable {
 // MARK: - Item Row
 
 struct ItemRow: View, Equatable {
-    let match: ItemMatch
+    let metadata: ItemMetadata
+    let matchData: MatchData?  // Only present in search mode
     let isSelected: Bool
-    let searchQuery: String
     let onTap: () -> Void
 
     // Fixed height for exactly 1 line of text at font size 15
@@ -630,22 +662,18 @@ struct ItemRow: View, Equatable {
 
     /// Display text - uses Rust-computed match text with line number if available
     private var displayText: String {
-        let matchData = match.matchData
-        // In search mode (non-empty text), use match text with line number prefix
-        if !matchData.text.isEmpty {
-            if matchData.lineNumber > 1 {
-                return "L\(matchData.lineNumber): \(matchData.text)"
-            }
-            return matchData.text
+        guard let matchData, !matchData.text.isEmpty else {
+            return metadata.preview
         }
-        // In browse mode (empty match text), use the preview
-        return match.itemMetadata.preview
+        if matchData.lineNumber > 1 {
+            return "L\(matchData.lineNumber): \(matchData.text)"
+        }
+        return matchData.text
     }
 
     /// Highlights for display - from Rust-computed match data
     private var displayHighlights: [HighlightRange] {
-        let matchData = match.matchData
-        if matchData.highlights.isEmpty { return [] }
+        guard let matchData, !matchData.highlights.isEmpty else { return [] }
         // Adjust for line number prefix if present
         if matchData.lineNumber > 1 {
             let prefix = "L\(matchData.lineNumber): "
@@ -661,8 +689,8 @@ struct ItemRow: View, Equatable {
     // Note: onTap closure is intentionally excluded from equality comparison
     nonisolated static func == (lhs: ItemRow, rhs: ItemRow) -> Bool {
         return lhs.isSelected == rhs.isSelected &&
-               lhs.match == rhs.match &&
-               lhs.searchQuery == rhs.searchQuery
+               lhs.metadata == rhs.metadata &&
+               lhs.matchData == rhs.matchData
     }
 
     var body: some View {
@@ -673,7 +701,7 @@ struct ItemRow: View, Equatable {
             ZStack(alignment: .bottomTrailing) {
                 // Main icon: image thumbnail, browser icon for links, color swatch, or SF symbol
                 Group {
-                    switch match.itemMetadata.icon {
+                    switch metadata.icon {
                     case .thumbnail(let bytes):
                         if let nsImage = NSImage(data: Data(bytes)) {
                             Image(nsImage: nsImage)
@@ -706,8 +734,8 @@ struct ItemRow: View, Equatable {
                 .clipShape(RoundedRectangle(cornerRadius: 4))
 
                 // Badge: Source app icon (skip for links since browser icon is already shown)
-                if case .symbol(let iconType) = match.itemMetadata.icon, iconType != .link,
-                   let bundleID = match.itemMetadata.sourceAppBundleId,
+                if case .symbol(let iconType) = metadata.icon, iconType != .link,
+                   let bundleID = metadata.sourceAppBundleId,
                    let appURL = NSWorkspace.shared.urlForApplication(withBundleIdentifier: bundleID) {
                     Image(nsImage: NSWorkspace.shared.icon(forFile: appURL.path))
                         .resizable()
