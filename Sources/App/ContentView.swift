@@ -14,7 +14,7 @@ private func measure<T>(_ label: String, _ block: () -> T) -> T {
     return result
 }
 
-/// Unified list item that can represent either browse mode (ItemMetadata) or search mode (ItemMatch)
+/// List item wrapping ItemMatch for display
 struct ListItem: Equatable, Identifiable {
     let itemId: Int64
     let icon: ItemIcon
@@ -22,20 +22,9 @@ struct ListItem: Equatable, Identifiable {
     let sourceApp: String?
     let sourceAppBundleId: String?
     let timestampUnix: Int64
-    let matchData: MatchData?  // Only present in search mode
+    let matchData: MatchData  // Always present (empty in browse mode)
 
     var id: Int64 { itemId }
-    var stableId: String { String(itemId) }
-
-    init(metadata: ItemMetadata) {
-        self.itemId = metadata.itemId
-        self.icon = metadata.icon
-        self.preview = metadata.preview
-        self.sourceApp = metadata.sourceApp
-        self.sourceAppBundleId = metadata.sourceAppBundleId
-        self.timestampUnix = metadata.timestampUnix
-        self.matchData = nil
-    }
 
     init(match: ItemMatch) {
         self.itemId = match.itemMetadata.itemId
@@ -64,15 +53,10 @@ struct ContentView: View {
 
     private var listItems: [ListItem] {
         switch store.state {
-        case .loaded(let items, _):
-            return items.map { ListItem(metadata: $0) }
-        case .searching(_, let searchState):
-            switch searchState {
-            case .loading(let previous):
-                return previous.map { ListItem(match: $0) }
-            case .results(let results, _):
-                return results.map { ListItem(match: $0) }
-            }
+        case .browse(let items):
+            return items.map { ListItem(match: $0) }
+        case .search(_, let items, _):
+            return items.map { ListItem(match: $0) }
         default:
             return []
         }
@@ -166,29 +150,19 @@ struct ContentView: View {
             }
 
             // Show spinner only after 200ms delay to avoid flicker on fast searches
-            let isLoading: Bool = {
-                if case .searching(_, let searchState) = newState {
-                    switch searchState {
-                    case .loading:
-                        return true
-                    case .results:
-                        return false
-                    }
+            let isSearching: Bool = {
+                if case .search(_, _, let isSearching) = newState {
+                    return isSearching
                 }
                 return false
             }()
 
-            if isLoading {
+            if isSearching {
                 Task {
                     try? await Task.sleep(for: .milliseconds(200))
-                    // Only show if still loading
-                    if case .searching(_, let searchState) = store.state {
-                        switch searchState {
-                        case .loading:
-                            showSearchSpinner = true
-                        case .results:
-                            break
-                        }
+                    // Only show if still searching
+                    if case .search(_, _, let stillSearching) = store.state, stillSearching {
+                        showSearchSpinner = true
                     }
                 }
             } else {
@@ -321,7 +295,7 @@ struct ContentView: View {
             loadingView
         case .error(let message):
             errorView(message)
-        case .loaded, .searching:
+        case .browse, .search:
             splitView
         }
     }
@@ -530,7 +504,7 @@ struct ContentView: View {
                 .foregroundStyle(.tertiary)
             let emptyStateMessage: String = {
                 switch store.state {
-                case .searching(let query, _) where !query.isEmpty:
+                case .search:
                     return "No results"
                 default:
                     return "No clipboard history"
@@ -713,20 +687,22 @@ struct ItemRow: View, Equatable {
 
     /// Display text - uses Rust-computed match text with line number if available
     private var displayText: String {
-        // In search mode, use the match text with line number prefix
-        if let matchData = listItem.matchData {
+        let matchData = listItem.matchData
+        // In search mode (non-empty text), use match text with line number prefix
+        if !matchData.text.isEmpty {
             if matchData.lineNumber > 1 {
                 return "L\(matchData.lineNumber): \(matchData.text)"
             }
             return matchData.text
         }
-        // In browse mode, just use the preview
+        // In browse mode (empty match text), use the preview
         return listItem.preview
     }
 
     /// Highlights for display - from Rust-computed match data
     private var displayHighlights: [HighlightRange] {
-        guard let matchData = listItem.matchData else { return [] }
+        let matchData = listItem.matchData
+        if matchData.highlights.isEmpty { return [] }
         // Adjust for line number prefix if present
         if matchData.lineNumber > 1 {
             let prefix = "L\(matchData.lineNumber): "
