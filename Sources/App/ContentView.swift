@@ -14,29 +14,6 @@ private func measure<T>(_ label: String, _ block: () -> T) -> T {
     return result
 }
 
-/// List item wrapping ItemMatch for display
-struct ListItem: Equatable, Identifiable {
-    let itemId: Int64
-    let icon: ItemIcon
-    let preview: String
-    let sourceApp: String?
-    let sourceAppBundleId: String?
-    let timestampUnix: Int64
-    let matchData: MatchData  // Always present (empty in browse mode)
-
-    var id: Int64 { itemId }
-
-    init(match: ItemMatch) {
-        self.itemId = match.itemMetadata.itemId
-        self.icon = match.itemMetadata.icon
-        self.preview = match.itemMetadata.preview
-        self.sourceApp = match.itemMetadata.sourceApp
-        self.sourceAppBundleId = match.itemMetadata.sourceAppBundleId
-        self.timestampUnix = match.itemMetadata.timestampUnix
-        self.matchData = match.matchData
-    }
-}
-
 struct ContentView: View {
     var store: ClipboardStore
     let onSelect: (Int64, ClipboardContent) -> Void
@@ -51,30 +28,23 @@ struct ContentView: View {
     @State private var lastItemsSignature: [Int64] = []  // Track when items change to suppress animation
     @FocusState private var isSearchFocused: Bool
 
-    private var listItems: [ListItem] {
+    private var listItems: [ItemMatch] {
         switch store.state {
-        case .browse(let items):
-            return items.map { ListItem(match: $0) }
-        case .search(_, let items, _):
-            return items.map { ListItem(match: $0) }
+        case .browse(let items), .search(_, let items, _):
+            return items
         default:
             return []
         }
     }
 
-    private var selectedListItem: ListItem? {
-        guard let selectedItemId else { return nil }
-        return listItems.first { $0.itemId == selectedItemId }
-    }
-
     private var selectedIndex: Int? {
         guard let selectedItemId else { return nil }
-        return listItems.firstIndex { $0.itemId == selectedItemId }
+        return listItems.firstIndex { $0.itemMetadata.itemId == selectedItemId }
     }
 
     /// The order signature of displayed items - changes when items are reordered
     private var itemsOrderSignature: [Int64] {
-        listItems.map { $0.itemId }
+        listItems.map { $0.itemMetadata.itemId }
     }
 
     var body: some View {
@@ -110,7 +80,7 @@ struct ContentView: View {
                 searchText = ""
             }
             // Select first item if nothing selected
-            if selectedItemId == nil, let firstId = listItems.first?.itemId {
+            if selectedItemId == nil, let firstId = listItems.first?.itemMetadata.itemId {
                 selectedItemId = firstId
                 // Fetch the item - onChange won't fire for initial value
                 Task {
@@ -131,7 +101,7 @@ struct ContentView: View {
                 searchText = ""
             }
             // Select first item whenever display resets (re-open)
-            let firstId = listItems.first?.itemId
+            let firstId = listItems.first?.itemMetadata.itemId
             selectedItemId = firstId
             selectedItem = nil
             // Fetch the first item
@@ -144,8 +114,8 @@ struct ContentView: View {
         }
         .onChange(of: store.state) { _, newState in
             // Validate selection - ensure selected item still exists in results
-            if let selectedItemId, !listItems.contains(where: { $0.itemId == selectedItemId }) {
-                self.selectedItemId = listItems.first?.itemId
+            if let selectedItemId, !listItems.contains(where: { $0.itemMetadata.itemId == selectedItemId }) {
+                self.selectedItemId = listItems.first?.itemMetadata.itemId
                 self.selectedItem = nil
             }
 
@@ -186,14 +156,14 @@ struct ContentView: View {
         .onChange(of: itemsOrderSignature) { oldOrder, newOrder in
             // Select first item by default if nothing is selected
             guard let selectedItemId else {
-                self.selectedItemId = listItems.first?.itemId
+                self.selectedItemId = listItems.first?.itemMetadata.itemId
                 return
             }
             // Reset selection to first if the selected item's position changed
             let oldIndex = oldOrder.firstIndex(of: selectedItemId)
             let newIndex = newOrder.firstIndex(of: selectedItemId)
             if oldIndex != newIndex {
-                self.selectedItemId = listItems.first?.itemId
+                self.selectedItemId = listItems.first?.itemMetadata.itemId
             }
         }
     }
@@ -210,7 +180,7 @@ struct ContentView: View {
     private func moveSelection(by offset: Int) {
         measure("moveSelection") {
             guard let currentIndex = selectedIndex else {
-                selectedItemId = listItems.first?.itemId
+                selectedItemId = listItems.first?.itemMetadata.itemId
                 return
             }
             let newIndex = max(0, min(listItems.count - 1, currentIndex + offset))
@@ -283,7 +253,7 @@ struct ContentView: View {
 
     private func indexForItem(_ itemId: Int64?) -> Int? {
         guard let itemId else { return nil }
-        return listItems.firstIndex { $0.itemId == itemId }
+        return listItems.firstIndex { $0.itemMetadata.itemId == itemId }
     }
 
     // MARK: - Content
@@ -338,13 +308,13 @@ struct ContentView: View {
     private var itemList: some View {
         ScrollViewReader { proxy in
             List {
-                ForEach(Array(listItems.enumerated()), id: \.element.itemId) { index, listItem in
+                ForEach(Array(listItems.enumerated()), id: \.element.itemMetadata.itemId) { index, match in
                     ItemRow(
-                        listItem: listItem,
-                        isSelected: listItem.itemId == selectedItemId,
+                        match: match,
+                        isSelected: match.itemMetadata.itemId == selectedItemId,
                         searchQuery: searchText,
                         onTap: {
-                            selectedItemId = listItem.itemId
+                            selectedItemId = match.itemMetadata.itemId
                             focusSearchField()
                         }
                     )
@@ -357,18 +327,18 @@ struct ContentView: View {
             }
             .listStyle(.plain)
             .scrollContentBackground(.hidden)
-            .animation(nil, value: listItems.map { $0.itemId })
+            .animation(nil, value: listItems.map { $0.itemMetadata.itemId })
             .modifier(HideScrollIndicatorsWhenOverlay(displayVersion: store.displayVersion))
             .onChange(of: searchText) { _, _ in
                 // Scroll to top when search query changes (no animation)
-                if let firstItemId = listItems.first?.itemId {
+                if let firstItemId = listItems.first?.itemMetadata.itemId {
                     proxy.scrollTo(firstItemId, anchor: .top)
                 }
             }
             .onChange(of: selectedItemId) { oldItemId, newItemId in
                 guard let newItemId else { return }
 
-                let currentSignature = listItems.map { $0.itemId }
+                let currentSignature = listItems.map { $0.itemMetadata.itemId }
                 let itemsChanged = currentSignature != lastItemsSignature
 
                 // Update signature for next comparison
@@ -677,7 +647,7 @@ struct TextPreviewView: NSViewRepresentable {
 // MARK: - Item Row
 
 struct ItemRow: View, Equatable {
-    let listItem: ListItem
+    let match: ItemMatch
     let isSelected: Bool
     let searchQuery: String
     let onTap: () -> Void
@@ -687,7 +657,7 @@ struct ItemRow: View, Equatable {
 
     /// Display text - uses Rust-computed match text with line number if available
     private var displayText: String {
-        let matchData = listItem.matchData
+        let matchData = match.matchData
         // In search mode (non-empty text), use match text with line number prefix
         if !matchData.text.isEmpty {
             if matchData.lineNumber > 1 {
@@ -696,12 +666,12 @@ struct ItemRow: View, Equatable {
             return matchData.text
         }
         // In browse mode (empty match text), use the preview
-        return listItem.preview
+        return match.itemMetadata.preview
     }
 
     /// Highlights for display - from Rust-computed match data
     private var displayHighlights: [HighlightRange] {
-        let matchData = listItem.matchData
+        let matchData = match.matchData
         if matchData.highlights.isEmpty { return [] }
         // Adjust for line number prefix if present
         if matchData.lineNumber > 1 {
@@ -718,7 +688,7 @@ struct ItemRow: View, Equatable {
     // Note: onTap closure is intentionally excluded from equality comparison
     nonisolated static func == (lhs: ItemRow, rhs: ItemRow) -> Bool {
         return lhs.isSelected == rhs.isSelected &&
-               lhs.listItem == rhs.listItem &&
+               lhs.match == rhs.match &&
                lhs.searchQuery == rhs.searchQuery
     }
 
@@ -730,7 +700,7 @@ struct ItemRow: View, Equatable {
             ZStack(alignment: .bottomTrailing) {
                 // Main icon: image thumbnail, browser icon for links, color swatch, or SF symbol
                 Group {
-                    switch listItem.icon {
+                    switch match.itemMetadata.icon {
                     case .thumbnail(let bytes):
                         if let nsImage = NSImage(data: Data(bytes)) {
                             Image(nsImage: nsImage)
@@ -763,8 +733,8 @@ struct ItemRow: View, Equatable {
                 .clipShape(RoundedRectangle(cornerRadius: 4))
 
                 // Badge: Source app icon (skip for links since browser icon is already shown)
-                if case .symbol(let iconType) = listItem.icon, iconType != .link,
-                   let bundleID = listItem.sourceAppBundleId,
+                if case .symbol(let iconType) = match.itemMetadata.icon, iconType != .link,
+                   let bundleID = match.itemMetadata.sourceAppBundleId,
                    let appURL = NSWorkspace.shared.urlForApplication(withBundleIdentifier: bundleID) {
                     Image(nsImage: NSWorkspace.shared.icon(forFile: appURL.path))
                         .resizable()
