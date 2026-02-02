@@ -530,7 +530,7 @@ pub fn normalize_preview(text: &str, max_chars: usize) -> String {
 // THUMBNAIL GENERATION
 // ─────────────────────────────────────────────────────────────────────────────
 
-/// Generate a PNG thumbnail from image data
+/// Generate a WebP thumbnail from image data
 /// Returns None if the image cannot be decoded
 fn generate_thumbnail(image_data: &[u8], max_size: u32) -> Option<Vec<u8>> {
     use image::GenericImageView;
@@ -540,10 +540,10 @@ fn generate_thumbnail(image_data: &[u8], max_size: u32) -> Option<Vec<u8>> {
 
     // Only create thumbnail if image is larger than max_size
     if width <= max_size && height <= max_size {
-        // Image is small enough, just re-encode it as PNG
+        // Image is small enough, just re-encode it as WebP
         let mut buf = Vec::new();
         let mut cursor = std::io::Cursor::new(&mut buf);
-        img.write_to(&mut cursor, image::ImageFormat::Png).ok()?;
+        img.write_to(&mut cursor, image::ImageFormat::WebP).ok()?;
         return Some(buf);
     }
 
@@ -556,7 +556,7 @@ fn generate_thumbnail(image_data: &[u8], max_size: u32) -> Option<Vec<u8>> {
 
     let mut buf = Vec::new();
     let mut cursor = std::io::Cursor::new(&mut buf);
-    thumbnail.write_to(&mut cursor, image::ImageFormat::Png).ok()?;
+    thumbnail.write_to(&mut cursor, image::ImageFormat::WebP).ok()?;
 
     Some(buf)
 }
