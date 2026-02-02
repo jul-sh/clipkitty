@@ -6,11 +6,6 @@ use crate::models::{ClipboardContent, LinkMetadataState};
 use once_cell::sync::Lazy;
 use regex::Regex;
 
-/// Detect content type from text, returns the type name as a string
-pub fn detect_content_type(text: String) -> String {
-    detect_content(&text).database_type().to_string()
-}
-
 /// URL detection regex patterns
 static URL_REGEX: Lazy<Regex> = Lazy::new(|| {
     Regex::new(r"^(https?://[^\s]+|www\.[^\s]+)$").unwrap()
