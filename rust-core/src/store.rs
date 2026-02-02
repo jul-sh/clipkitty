@@ -6,7 +6,7 @@
 use crate::database::Database;
 use crate::indexer::Indexer;
 use crate::models::{
-    ClipboardItem, StoredItem, FetchResults, ItemMatch, SearchResult,
+    ClipboardItem, StoredItem, ItemMatch, MatchData, SearchResult,
 };
 use crate::search::{SearchEngine, MIN_TRIGRAM_QUERY_LEN, MAX_RESULTS_SHORT, compute_preview_highlights};
 use chrono::{TimeZone, Utc};
@@ -345,35 +345,29 @@ impl ClipboardStore {
         Ok(deleted as u64)
     }
 
-    /// Fetch items for initial display (no search query)
-    /// Returns lightweight metadata for list display
-    pub fn fetch_items(
-        &self,
-        before_timestamp_unix: Option<i64>,
-        limit: u64,
-    ) -> Result<FetchResults, ClipKittyError> {
-        let before_timestamp = before_timestamp_unix
-            .filter(|&ts| ts > 0)
-            .and_then(|ts| Utc.timestamp_opt(ts, 0).single());
-
-        let (items, total_count) = self.db.fetch_item_metadata(before_timestamp, limit as usize)?;
-        let has_more = items.len() == limit as usize;
-
-        Ok(FetchResults { items, total_count, has_more })
-    }
-
-    /// Search for items using two-layer search (Tantivy + Nucleo)
-    /// Returns ItemMatch objects with metadata and match highlights
+    /// Search for items - unified API for both browse and search modes
+    /// Empty query returns recent items (browse mode), non-empty returns search results
+    /// Both return ItemMatch objects for consistent UI handling
     pub fn search(&self, query: String) -> Result<SearchResult, ClipKittyError> {
         let trimmed = query.trim();
+
+        // Empty query = browse mode (return recent items as ItemMatch with empty MatchData)
         if trimmed.is_empty() {
-            return Ok(SearchResult {
-                matches: Vec::new(),
-                total_count: 0,
-            });
+            let (items, total_count) = self.db.fetch_item_metadata(None, 1000)?;
+
+            // Convert ItemMetadata to ItemMatch with empty MatchData
+            let matches: Vec<ItemMatch> = items
+                .into_iter()
+                .map(|metadata| ItemMatch {
+                    item_metadata: metadata,
+                    match_data: MatchData::default(),
+                })
+                .collect();
+
+            return Ok(SearchResult { matches, total_count });
         }
 
-        // Choose search strategy based on query length
+        // Non-empty query = search mode
         let matches = if trimmed.len() < MIN_TRIGRAM_QUERY_LEN {
             self.search_short_query(trimmed)?
         } else {
@@ -433,9 +427,9 @@ mod tests {
             .unwrap();
         assert!(id > 0);
 
-        let result = store.fetch_items(None, 10).unwrap();
-        assert_eq!(result.items.len(), 1);
-        assert!(result.items[0].preview.contains("Hello World"));
+        let result = store.search("".to_string()).unwrap();
+        assert_eq!(result.matches.len(), 1);
+        assert!(result.matches[0].item_metadata.preview.contains("Hello World"));
     }
 
     #[test]
@@ -452,8 +446,8 @@ mod tests {
             .unwrap();
         assert_eq!(id2, 0); // Duplicate returns 0
 
-        let result = store.fetch_items(None, 10).unwrap();
-        assert_eq!(result.items.len(), 1); // Only one item
+        let result = store.search("".to_string()).unwrap();
+        assert_eq!(result.matches.len(), 1); // Only one item
     }
 
     #[test]
@@ -463,10 +457,10 @@ mod tests {
         let id = store
             .save_text("To delete".to_string(), None, None)
             .unwrap();
-        assert_eq!(store.fetch_items(None, 10).unwrap().items.len(), 1);
+        assert_eq!(store.search("".to_string()).unwrap().matches.len(), 1);
 
         store.delete_item(id).unwrap();
-        assert_eq!(store.fetch_items(None, 10).unwrap().items.len(), 0);
+        assert_eq!(store.search("".to_string()).unwrap().matches.len(), 0);
     }
 
     #[test]
