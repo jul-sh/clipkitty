@@ -23,23 +23,6 @@ pub enum IconType {
     Color,
 }
 
-impl IconType {
-    /// Get the SF Symbol name for this icon type
-    pub fn sf_symbol(&self) -> &'static str {
-        match self {
-            IconType::Text => "doc.text",
-            IconType::Link => "link",
-            IconType::Email => "envelope",
-            IconType::Phone => "phone",
-            IconType::Address => "map",
-            IconType::DateType => "calendar",
-            IconType::Transit => "tram",
-            IconType::Image => "photo",
-            IconType::Color => "paintpalette",
-        }
-    }
-}
-
 /// Icon representation - can be an SF Symbol, a color swatch, or a thumbnail
 #[derive(Debug, Clone, PartialEq)]
 pub enum ItemIcon {
@@ -239,21 +222,11 @@ pub struct HighlightRange {
 }
 
 /// Match context data - the text snippet, highlights, and line info
-#[derive(Debug, Clone, PartialEq)]
+#[derive(Debug, Clone, PartialEq, Default)]
 pub struct MatchData {
     pub text: String,
     pub highlights: Vec<HighlightRange>,
     pub line_number: u64,
-}
-
-impl Default for MatchData {
-    fn default() -> Self {
-        MatchData {
-            text: String::new(),
-            highlights: Vec::new(),
-            line_number: 0,
-        }
-    }
 }
 
 /// Lightweight item metadata for list display
@@ -346,26 +319,6 @@ impl StoredItem {
         }
     }
 
-    /// Create an explicit link item
-    pub fn new_link(
-        url: String,
-        metadata_state: LinkMetadataState,
-        source_app: Option<String>,
-        source_app_bundle_id: Option<String>,
-    ) -> Self {
-        let content_hash = Self::hash_string(&url);
-        Self {
-            id: None,
-            content: ClipboardContent::Link { url, metadata_state },
-            content_hash,
-            timestamp_unix: chrono::Utc::now().timestamp(),
-            source_app,
-            source_app_bundle_id,
-            thumbnail: None,
-            color_rgba: None,
-        }
-    }
-
     /// Create an image item
     pub fn new_image(
         image_data: Vec<u8>,
@@ -429,13 +382,6 @@ impl StoredItem {
             }
             _ => ItemIcon::Symbol { icon_type: self.icon_type() },
         }
-    }
-
-    /// Stable identifier for UI
-    pub fn stable_id(&self) -> String {
-        self.id
-            .map(|id| id.to_string())
-            .unwrap_or_else(|| self.content_hash.clone())
     }
 
     /// Display text (truncated, normalized whitespace) for preview

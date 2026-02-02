@@ -59,13 +59,13 @@ fn is_url_internal(text: &str) -> bool {
 }
 
 /// Check if a string is an email address
-pub fn is_email(text: &str) -> bool {
+fn is_email(text: &str) -> bool {
     let trimmed = text.trim();
     EMAIL_REGEX.is_match(trimmed)
 }
 
 /// Check if a string looks like a phone number
-pub fn is_phone(text: &str) -> bool {
+fn is_phone(text: &str) -> bool {
     let trimmed = text.trim();
 
     // Must match basic phone pattern
@@ -80,7 +80,7 @@ pub fn is_phone(text: &str) -> bool {
 
 /// Check if a string is a color value
 /// Supports hex (#RGB, #RRGGBB, #RRGGBBAA), rgb(), rgba(), hsl(), hsla()
-pub fn is_color(text: &str) -> bool {
+fn is_color(text: &str) -> bool {
     let trimmed = text.trim();
     let lower = trimmed.to_lowercase();
     // Only accept strings that look like color values (not arbitrary words like "red")

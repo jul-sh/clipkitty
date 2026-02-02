@@ -22,6 +22,14 @@ pub enum DatabaseError {
 
 pub type DatabaseResult<T> = Result<T, DatabaseError>;
 
+/// Parse timestamp string from database to DateTime<Utc>
+fn parse_db_timestamp(timestamp_str: &str) -> DateTime<Utc> {
+    chrono::NaiveDateTime::parse_from_str(timestamp_str, "%Y-%m-%d %H:%M:%S%.f")
+        .or_else(|_| chrono::NaiveDateTime::parse_from_str(timestamp_str, "%Y-%m-%d %H:%M:%S"))
+        .map(|dt| Utc.from_utc_datetime(&dt))
+        .unwrap_or_else(|_| Utc::now())
+}
+
 /// Thread-safe database wrapper
 pub struct Database {
     pub(crate) conn: Arc<Mutex<Connection>>,
@@ -424,11 +432,7 @@ impl Database {
         let thumbnail: Option<Vec<u8>> = row.get("thumbnail").ok().flatten();
         let color_rgba: Option<u32> = row.get("colorRgba").ok().flatten();
 
-        // Parse timestamp
-        let timestamp = chrono::NaiveDateTime::parse_from_str(&timestamp_str, "%Y-%m-%d %H:%M:%S%.f")
-            .or_else(|_| chrono::NaiveDateTime::parse_from_str(&timestamp_str, "%Y-%m-%d %H:%M:%S"))
-            .map(|dt| Utc.from_utc_datetime(&dt))
-            .unwrap_or_else(|_| Utc::now());
+        let timestamp = parse_db_timestamp(&timestamp_str);
 
         let db_type = content_type.as_deref().unwrap_or("text");
         let clipboard_content = ClipboardContent::from_database(
@@ -464,11 +468,7 @@ impl Database {
         let color_rgba: Option<u32> = row.get(7).ok().flatten();
         let link_image_data: Option<Vec<u8>> = row.get(8).ok().flatten();
 
-        // Parse timestamp
-        let timestamp = chrono::NaiveDateTime::parse_from_str(&timestamp_str, "%Y-%m-%d %H:%M:%S%.f")
-            .or_else(|_| chrono::NaiveDateTime::parse_from_str(&timestamp_str, "%Y-%m-%d %H:%M:%S"))
-            .map(|dt| Utc.from_utc_datetime(&dt))
-            .unwrap_or_else(|_| Utc::now());
+        let timestamp = parse_db_timestamp(&timestamp_str);
 
         let db_type = content_type.as_deref().unwrap_or("text");
 
