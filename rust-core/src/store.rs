@@ -2,31 +2,54 @@
 //! and Tantivy search functionality, designed for UniFFI export.
 //!
 //! Architecture: Two-layer search using Tantivy (trigram retrieval) + Nucleo (precision)
+//!
+//! Async Cancellation Architecture:
+//! When Swift cancels an async Task, UniFFI drops the Rust Future. We intercept this
+//! via a DropGuard that triggers a CancellationToken. The blocking search thread
+//! checks this token at key checkpoints and can abort mid-flight.
 
 use crate::database::Database;
 use crate::indexer::Indexer;
 use crate::interface::{
     ClipboardItem, ItemMatch, MatchData, SearchResult, ClipKittyError, ClipboardStoreApi,
 };
-use crate::models::{StoredItem};
+use crate::models::StoredItem;
 use crate::search::{SearchEngine, MIN_TRIGRAM_QUERY_LEN, MAX_RESULTS_SHORT, compute_preview_highlights};
-use chrono::{TimeZone, Utc};
+use chrono::Utc;
 use std::path::PathBuf;
 use std::sync::Arc;
+use tokio_util::sync::CancellationToken;
 
+/// RAII guard that cancels a token when dropped.
+/// When Swift cancels an async Task, UniFFI drops the Future, which drops this guard,
+/// which triggers the cancellation token.
+struct DropGuard {
+    token: CancellationToken,
+}
 
+impl DropGuard {
+    fn new(token: CancellationToken) -> Self {
+        Self { token }
+    }
+}
+
+impl Drop for DropGuard {
+    fn drop(&mut self) {
+        self.token.cancel();
+    }
+}
 
 /// Thread-safe clipboard store with SQLite + Tantivy
 ///
-/// Note on Concurrency:
-/// The Database is wrapped in a `Mutex`, which serializes all database access (writes AND reads).
-/// This ensures safety but means concurrent searches (e.g. from rapid typing) will block each other
-/// during the final item fetch phase.
+/// Concurrency Model:
+/// - Database uses r2d2 connection pool (concurrent reads, no mutex blocking)
+/// - Search is async with cancellation support via CancellationToken
+/// - Blocking work runs on tokio::spawn_blocking threads
 #[derive(uniffi::Object)]
 pub struct ClipboardStore {
     db: Arc<Database>,
     indexer: Arc<Indexer>,
-    search_engine: SearchEngine,
+    search_engine: Arc<SearchEngine>,
 }
 
 // Internal implementation (not exported via FFI)
@@ -39,7 +62,7 @@ impl ClipboardStore {
         Ok(Self {
             db: Arc::new(db),
             indexer: Arc::new(indexer),
-            search_engine: SearchEngine::new(),
+            search_engine: Arc::new(SearchEngine::new()),
         })
     }
 
@@ -65,11 +88,26 @@ impl ClipboardStore {
     }
 
     /// Short query search using prefix matching + LIKE on recent items
-    fn search_short_query(&self, query: &str) -> Result<Vec<ItemMatch>, ClipKittyError> {
-        let candidates = self.db.search_short_query(query, MAX_RESULTS_SHORT * 5)?;
+    fn search_short_query_sync(
+        db: &Database,
+        search_engine: &SearchEngine,
+        query: &str,
+        token: &CancellationToken,
+    ) -> Result<Vec<ItemMatch>, ClipKittyError> {
+        // Checkpoint: Check cancellation before DB query
+        if token.is_cancelled() {
+            return Err(ClipKittyError::Cancelled);
+        }
+
+        let candidates = db.search_short_query(query, MAX_RESULTS_SHORT * 5)?;
 
         if candidates.is_empty() {
             return Ok(Vec::new());
+        }
+
+        // Checkpoint: Check cancellation before scoring
+        if token.is_cancelled() {
+            return Err(ClipKittyError::Cancelled);
         }
 
         let query_lower = query.to_lowercase();
@@ -81,53 +119,95 @@ impl ClipboardStore {
             })
             .collect();
 
-        let fuzzy_matches = self.search_engine.score_short_query_batch(
+        let fuzzy_matches = search_engine.score_short_query_batch(
             candidates_with_prefix.into_iter(),
             query,
         );
 
+        // Checkpoint: Check cancellation before fetching items
+        if token.is_cancelled() {
+            return Err(ClipKittyError::Cancelled);
+        }
+
         let ids: Vec<i64> = fuzzy_matches.iter().map(|m| m.id).collect();
-        let stored_items = self.db.fetch_items_by_ids(&ids)?;
+        let stored_items = db.fetch_items_by_ids(&ids)?;
 
         let item_map: std::collections::HashMap<i64, StoredItem> = stored_items
             .into_iter()
             .filter_map(|item| item.id.map(|id| (id, item)))
             .collect();
 
-        let matches: Vec<ItemMatch> = fuzzy_matches
-            .iter()
-            .filter_map(|fm| {
-                let item = item_map.get(&fm.id)?;
-                Some(SearchEngine::create_item_match(item, fm))
-            })
-            .collect();
+        // Checkpoint: Check cancellation before highlight generation
+        if token.is_cancelled() {
+            return Err(ClipKittyError::Cancelled);
+        }
+
+        // Generate matches with chunked cancellation checks
+        let mut matches: Vec<ItemMatch> = Vec::with_capacity(fuzzy_matches.len());
+        for (index, fm) in fuzzy_matches.iter().enumerate() {
+            // Check every 100 iterations for cancellation (preserve CPU cache performance)
+            if index % 100 == 0 && token.is_cancelled() {
+                return Err(ClipKittyError::Cancelled);
+            }
+
+            if let Some(item) = item_map.get(&fm.id) {
+                matches.push(SearchEngine::create_item_match(item, fm));
+            }
+        }
 
         Ok(matches)
     }
 
     /// Trigram query search using Tantivy + Nucleo
-    fn search_trigram_query(&self, query: &str) -> Result<Vec<ItemMatch>, ClipKittyError> {
-        let fuzzy_matches = self.search_engine.search(&self.indexer, query)?;
+    fn search_trigram_query_sync(
+        db: &Database,
+        indexer: &Indexer,
+        search_engine: &SearchEngine,
+        query: &str,
+        token: &CancellationToken,
+    ) -> Result<Vec<ItemMatch>, ClipKittyError> {
+        // Checkpoint: Check cancellation before Tantivy search
+        // Note: We don't inject checks into Tantivy's internal SIMD loops
+        if token.is_cancelled() {
+            return Err(ClipKittyError::Cancelled);
+        }
+
+        let fuzzy_matches = search_engine.search(indexer, query)?;
 
         if fuzzy_matches.is_empty() {
             return Ok(Vec::new());
         }
 
+        // Checkpoint: Check cancellation before SQLite fetch
+        if token.is_cancelled() {
+            return Err(ClipKittyError::Cancelled);
+        }
+
         let ids: Vec<i64> = fuzzy_matches.iter().map(|m| m.id).collect();
-        let stored_items = self.db.fetch_items_by_ids(&ids)?;
+        let stored_items = db.fetch_items_by_ids(&ids)?;
 
         let item_map: std::collections::HashMap<i64, StoredItem> = stored_items
             .into_iter()
             .filter_map(|item| item.id.map(|id| (id, item)))
             .collect();
 
-        let matches: Vec<ItemMatch> = fuzzy_matches
-            .iter()
-            .filter_map(|fm| {
-                let item = item_map.get(&fm.id)?;
-                Some(SearchEngine::create_item_match(item, fm))
-            })
-            .collect();
+        // Checkpoint: Check cancellation before highlight generation
+        if token.is_cancelled() {
+            return Err(ClipKittyError::Cancelled);
+        }
+
+        // Generate matches with chunked cancellation checks
+        let mut matches: Vec<ItemMatch> = Vec::with_capacity(fuzzy_matches.len());
+        for (index, fm) in fuzzy_matches.iter().enumerate() {
+            // Check every 100 iterations for cancellation (preserve CPU cache performance)
+            if index % 100 == 0 && token.is_cancelled() {
+                return Err(ClipKittyError::Cancelled);
+            }
+
+            if let Some(item) = item_map.get(&fm.id) {
+                matches.push(SearchEngine::create_item_match(item, fm));
+            }
+        }
 
         Ok(matches)
     }
@@ -174,7 +254,7 @@ impl ClipboardStore {
         let store = Self {
             db: Arc::new(db),
             indexer: Arc::new(indexer),
-            search_engine: SearchEngine::new(),
+            search_engine: Arc::new(SearchEngine::new()),
         };
 
         store.rebuild_index_if_needed()?;
@@ -278,6 +358,7 @@ impl ClipboardStore {
 }
 
 #[uniffi::export]
+#[async_trait::async_trait]
 impl ClipboardStoreApi for ClipboardStore {
     /// Save a text item to the database and index
     /// Returns the new item ID, or 0 if duplicate (timestamp updated)
@@ -335,7 +416,10 @@ impl ClipboardStoreApi for ClipboardStore {
     /// Search for items - unified API for both browse and search modes
     /// Empty query returns recent items (browse mode), non-empty returns search results
     /// Both return ItemMatch objects for consistent UI handling
-    fn search(&self, query: String) -> Result<SearchResult, ClipKittyError> {
+    ///
+    /// This is an async function that supports cancellation. When Swift drops the Task,
+    /// the DropGuard triggers the CancellationToken, allowing mid-flight abortion.
+    async fn search(&self, query: String) -> Result<SearchResult, ClipKittyError> {
         let trimmed = query.trim();
 
         // Empty query = browse mode (return recent items as ItemMatch with empty MatchData)
@@ -350,20 +434,44 @@ impl ClipboardStoreApi for ClipboardStore {
                 })
                 .collect();
 
-            Ok(SearchResult {
+            return Ok(SearchResult {
                 matches,
                 total_count,
-            })
-        } else {
-        // Non-empty query = search mode
-        let matches = if trimmed.len() < MIN_TRIGRAM_QUERY_LEN {
-            self.search_short_query(trimmed)?
-        } else {
-            self.search_trigram_query(&query)?
-        };
+            });
+        }
 
-        let total_count = matches.len() as u64;
-        Ok(SearchResult { matches, total_count })
+        // Create cancellation token and guard
+        let token = CancellationToken::new();
+        let _guard = DropGuard::new(token.clone());
+
+        // Clone Arcs for the blocking closure
+        let db = Arc::clone(&self.db);
+        let indexer = Arc::clone(&self.indexer);
+        let search_engine = Arc::clone(&self.search_engine);
+        let query_owned = query.to_string();
+        let trimmed_owned = trimmed.to_string();
+        let token_clone = token.clone();
+
+        // Spawn the blocking search work
+        let handle = tokio::task::spawn_blocking(move || {
+            if trimmed_owned.len() < MIN_TRIGRAM_QUERY_LEN {
+                Self::search_short_query_sync(&db, &search_engine, &trimmed_owned, &token_clone)
+            } else {
+                Self::search_trigram_query_sync(&db, &indexer, &search_engine, &query_owned, &token_clone)
+            }
+        });
+
+        // Await the result
+        match handle.await {
+            Ok(Ok(matches)) => {
+                let total_count = matches.len() as u64;
+                Ok(SearchResult { matches, total_count })
+            }
+            Ok(Err(e)) => Err(e),
+            Err(_join_error) => {
+                // JoinError means the task panicked or was aborted
+                Err(ClipKittyError::Cancelled)
+            }
         }
     }
 
@@ -413,6 +521,13 @@ mod tests {
     use super::*;
     use crate::interface::ClipboardStoreApi;
 
+    fn runtime() -> tokio::runtime::Runtime {
+        tokio::runtime::Builder::new_current_thread()
+            .enable_all()
+            .build()
+            .unwrap()
+    }
+
     #[test]
     fn test_store_creation() {
         let store = ClipboardStore::new_in_memory().unwrap();
@@ -421,6 +536,7 @@ mod tests {
 
     #[test]
     fn test_save_and_fetch() {
+        let rt = runtime();
         let store = ClipboardStore::new_in_memory().unwrap();
 
         let id = store
@@ -428,13 +544,14 @@ mod tests {
             .unwrap();
         assert!(id > 0);
 
-        let result = store.search("".to_string()).unwrap();
+        let result = rt.block_on(store.search("".to_string())).unwrap();
         assert_eq!(result.matches.len(), 1);
         assert!(result.matches[0].item_metadata.preview.contains("Hello World"));
     }
 
     #[test]
     fn test_duplicate_handling() {
+        let rt = runtime();
         let store = ClipboardStore::new_in_memory().unwrap();
 
         let id1 = store
@@ -447,31 +564,33 @@ mod tests {
             .unwrap();
         assert_eq!(id2, 0); // Duplicate returns 0
 
-        let result = store.search("".to_string()).unwrap();
+        let result = rt.block_on(store.search("".to_string())).unwrap();
         assert_eq!(result.matches.len(), 1); // Only one item
     }
 
     #[test]
     fn test_delete_item() {
+        let rt = runtime();
         let store = ClipboardStore::new_in_memory().unwrap();
 
         let id = store
             .save_text("To delete".to_string(), None, None)
             .unwrap();
-        assert_eq!(store.search("".to_string()).unwrap().matches.len(), 1);
+        assert_eq!(rt.block_on(store.search("".to_string())).unwrap().matches.len(), 1);
 
         store.delete_item(id).unwrap();
-        assert_eq!(store.search("".to_string()).unwrap().matches.len(), 0);
+        assert_eq!(rt.block_on(store.search("".to_string())).unwrap().matches.len(), 0);
     }
 
     #[test]
     fn test_search_returns_item_matches() {
+        let rt = runtime();
         let store = ClipboardStore::new_in_memory().unwrap();
 
         store.save_text("Hello World from ClipKitty".to_string(), None, None).unwrap();
         store.save_text("Another test item".to_string(), None, None).unwrap();
 
-        let result = store.search("Hello".to_string()).unwrap();
+        let result = rt.block_on(store.search("Hello".to_string())).unwrap();
 
         assert_eq!(result.matches.len(), 1);
         assert!(result.matches[0].item_metadata.preview.contains("Hello"));
@@ -497,6 +616,7 @@ mod tests {
 
     #[test]
     fn test_color_detection() {
+        let rt = runtime();
         let store = ClipboardStore::new_in_memory().unwrap();
 
         let id = store.save_text("#FF5733".to_string(), None, None).unwrap();
@@ -518,5 +638,18 @@ mod tests {
         } else {
             panic!("Expected ColorSwatch icon");
         }
+    }
+
+    #[test]
+    fn test_cancellation_token() {
+        // Test that cancellation token works correctly
+        let token = CancellationToken::new();
+        assert!(!token.is_cancelled());
+
+        let guard = DropGuard::new(token.clone());
+        assert!(!token.is_cancelled());
+
+        drop(guard);
+        assert!(token.is_cancelled());
     }
 }
