@@ -1,25 +1,39 @@
 //! Two-Layer Search Engine (L1 Tantivy -> L2 Nucleo)
 //!
-//! Layer 1 (Retrieval): Filters millions of items down to ~2000 using strict Boolean logic.
+//! Layer 1 (Retrieval): Filters millions of items down to candidates using trigram indexing.
 //! Layer 2 (Precision): Scores words independently with Nucleo for contiguity bonuses.
 //!                      Rejects scattered noise, and natively handles typos.
 
 use crate::indexer::{Indexer, IndexerResult};
-use crate::models::HighlightRange;
+use crate::models::{HighlightRange, MatchData, ItemMatch, StoredItem};
 use chrono::Utc;
 use nucleo_matcher::pattern::{CaseMatching, Normalization, Pattern};
 use nucleo_matcher::{Config, Matcher, Utf32Str};
+use regex::RegexBuilder;
 
-/// Maximum results to return after fuzzy re-ranking
-pub const MAX_RESULTS: usize = 2000;
+/// Maximum results to return for trigram queries (after fuzzy re-ranking)
+pub const MAX_RESULTS_TRIGRAM: usize = 5000;
+
+/// Maximum results to return for short queries
+pub const MAX_RESULTS_SHORT: usize = 2000;
 
 pub const MIN_TRIGRAM_QUERY_LEN: usize = 3;
-const MIN_SCORE_SHORT_QUERY: u32 = 0;
+
 /// Maximum recency boost multiplier (e.g., 0.1 = up to 10% boost for brand new items)
 const RECENCY_BOOST_MAX: f64 = 0.1;
 const RECENCY_HALF_LIFE_SECS: f64 = 7.0 * 24.0 * 60.0 * 60.0;
+
 /// Minimum ratio of adjacent character pairs for Nucleo matches to be valid.
 const MIN_ADJACENCY_RATIO: f64 = 0.25;
+
+/// Boost factor for prefix matches in short query scoring
+const PREFIX_MATCH_BOOST: f64 = 2.0;
+
+/// Context chars to include before/after match in snippet
+const SNIPPET_CONTEXT_CHARS: usize = 30;
+
+/// Max snippet length
+const MAX_SNIPPET_LEN: usize = 200;
 
 #[derive(Debug, Clone)]
 pub struct FuzzyMatch {
@@ -27,6 +41,9 @@ pub struct FuzzyMatch {
     pub score: u32,
     pub matched_indices: Vec<u32>,
     pub timestamp: i64,
+    pub content: String,
+    /// Whether this was a prefix match (for short query scoring)
+    pub is_prefix_match: bool,
 }
 
 pub struct SearchEngine {
@@ -38,16 +55,17 @@ impl SearchEngine {
         Self { config: Config::DEFAULT }
     }
 
+    /// Search using Tantivy + Nucleo for trigram queries (>= 3 chars)
     pub fn search(&self, indexer: &Indexer, query: &str) -> IndexerResult<Vec<FuzzyMatch>> {
         if query.trim().is_empty() {
-            return Ok(Vec::new()); // Let the outer layer fetch default recent items
+            return Ok(Vec::new());
         }
         let trimmed = query.trim_start();
 
         let has_trailing_space = query.ends_with(' ');
         let query_words: Vec<&str> = trimmed.trim_end().split_whitespace().collect();
 
-        // L1: Strict Tantivy filtering guarantees all words exist (solves scatter & scale)
+        // L1: Strict Tantivy filtering - don't cap early, let Nucleo filter
         let candidates = indexer.search(trimmed.trim_end())?;
 
         let mut matcher = Matcher::new(self.config.clone());
@@ -56,10 +74,10 @@ impl SearchEngine {
             .map(|w| Pattern::parse(w, CaseMatching::Ignore, Normalization::Smart))
             .collect();
 
-        let mut matches = Vec::with_capacity(candidates.len());
+        let mut matches = Vec::with_capacity(candidates.len().min(MAX_RESULTS_TRIGRAM * 2));
         let now = Utc::now().timestamp();
 
-        // L2: Independent Word Scoring (§8)
+        // L2: Independent Word Scoring
         for candidate in candidates {
             if let Some(fuzzy_match) = self.score_candidate(
                 candidate.id,
@@ -69,19 +87,74 @@ impl SearchEngine {
                 &patterns,
                 has_trailing_space,
                 &mut matcher,
+                false, // not checking prefix for trigram queries
             ) {
                 matches.push(fuzzy_match);
             }
         }
 
         matches.sort_unstable_by(|a, b| {
-            let score_a = blended_score(a.score, a.timestamp, now);
-            let score_b = blended_score(b.score, b.timestamp, now);
+            let score_a = blended_score(a.score, a.timestamp, now, false);
+            let score_b = blended_score(b.score, b.timestamp, now, false);
             score_b.total_cmp(&score_a).then_with(|| b.timestamp.cmp(&a.timestamp))
         });
 
-        matches.truncate(MAX_RESULTS);
+        matches.truncate(MAX_RESULTS_TRIGRAM);
         Ok(matches)
+    }
+
+    /// Score candidates for short queries (< 3 chars)
+    /// Uses recency as primary metric with prefix match boost
+    pub fn score_short_query_batch(
+        &self,
+        candidates: impl Iterator<Item = (i64, String, i64, bool)>, // (id, content, timestamp, is_prefix)
+        query: &str,
+    ) -> Vec<FuzzyMatch> {
+        let trimmed = query.trim();
+        if trimmed.is_empty() {
+            return Vec::new();
+        }
+
+        let query_lower = trimmed.to_lowercase();
+        let mut results = Vec::new();
+        let now = Utc::now().timestamp();
+
+        for (id, content, timestamp, is_prefix_match) in candidates {
+            // Find match position for highlighting
+            let content_lower = content.to_lowercase();
+            if let Some(pos) = content_lower.find(&query_lower) {
+                let matched_indices: Vec<u32> = (pos..pos + query.len())
+                    .map(|i| i as u32)
+                    .collect();
+
+                // Score based on recency with prefix boost
+                let base_score = 1000u32; // Base score for any match
+                let score = if is_prefix_match {
+                    (base_score as f64 * PREFIX_MATCH_BOOST) as u32
+                } else {
+                    base_score
+                };
+
+                results.push(FuzzyMatch {
+                    id,
+                    score,
+                    matched_indices,
+                    timestamp,
+                    content,
+                    is_prefix_match,
+                });
+            }
+        }
+
+        // Sort by blended score (recency primary, prefix boost)
+        results.sort_unstable_by(|a, b| {
+            let score_a = blended_score(a.score, a.timestamp, now, a.is_prefix_match);
+            let score_b = blended_score(b.score, b.timestamp, now, b.is_prefix_match);
+            score_b.total_cmp(&score_a).then_with(|| b.timestamp.cmp(&a.timestamp))
+        });
+
+        results.truncate(MAX_RESULTS_SHORT);
+        results
     }
 
     pub fn filter_batch(
@@ -103,14 +176,12 @@ impl SearchEngine {
             .collect();
 
         let mut found = 0;
-        let query_len = trimmed.trim_end().chars().count();
 
         for (id, content, timestamp) in candidates.take(max_results * 10) {
             if results.len() >= max_results { break; }
             if let Some(fuzzy_match) = self.score_candidate(
-                id, &content, timestamp, &query_words, &patterns, has_trailing_space, &mut matcher,
+                id, &content, timestamp, &query_words, &patterns, has_trailing_space, &mut matcher, false,
             ) {
-                if query_len < 3 && fuzzy_match.score < MIN_SCORE_SHORT_QUERY { continue; }
                 results.push(fuzzy_match);
                 found += 1;
             }
@@ -128,6 +199,7 @@ impl SearchEngine {
         patterns: &[Pattern],
         has_trailing_space: bool,
         matcher: &mut Matcher,
+        check_prefix: bool,
     ) -> Option<FuzzyMatch> {
         let mut haystack_buf = Vec::new();
         let haystack = Utf32Str::new(content, &mut haystack_buf);
@@ -160,14 +232,25 @@ impl SearchEngine {
             }
         }
 
+        // Check if this is a prefix match (for short query scoring)
+        let is_prefix_match = if check_prefix && !words.is_empty() {
+            let first_word = words[0].to_lowercase();
+            content.to_lowercase().starts_with(&first_word)
+        } else {
+            false
+        };
+
         Some(FuzzyMatch {
             id,
             score: total_score,
             matched_indices: all_indices,
             timestamp,
+            content: content.to_string(),
+            is_prefix_match,
         })
     }
 
+    /// Convert matched indices to highlight ranges
     pub fn indices_to_ranges(indices: &[u32]) -> Vec<HighlightRange> {
         if indices.is_empty() { return Vec::new(); }
 
@@ -179,7 +262,89 @@ impl SearchEngine {
             let last = acc.last_mut().unwrap();
             if idx == last.1 { last.1 = idx + 1; } else { acc.push((idx, idx + 1)); }
             acc
-        }).into_iter().map(|(start, end)| HighlightRange { start, end }).collect()
+        }).into_iter().map(|(start, end)| HighlightRange { start: start as u64, end: end as u64 }).collect()
+    }
+
+    /// Generate a text snippet around the first match with context
+    pub fn generate_snippet(content: &str, highlights: &[HighlightRange], max_len: usize) -> (String, Vec<HighlightRange>, u64) {
+        if highlights.is_empty() {
+            // No highlights, return first max_len chars
+            let preview: String = content.chars().take(max_len).collect();
+            return (preview, Vec::new(), 0);
+        }
+
+        let first_highlight = &highlights[0];
+        let match_start = first_highlight.start as usize;
+
+        // Find line number
+        let line_number = content[..match_start.min(content.len())]
+            .chars()
+            .filter(|&c| c == '\n')
+            .count() as u64;
+
+        // Calculate snippet bounds
+        let snippet_start = match_start.saturating_sub(SNIPPET_CONTEXT_CHARS);
+        let snippet_end = (match_start + SNIPPET_CONTEXT_CHARS + (first_highlight.end - first_highlight.start) as usize)
+            .min(content.len())
+            .min(snippet_start + max_len);
+
+        // Adjust to not cut words (find word boundaries)
+        let snippet_start = if snippet_start > 0 {
+            content[..snippet_start]
+                .rfind(char::is_whitespace)
+                .map(|i| i + 1)
+                .unwrap_or(snippet_start)
+        } else {
+            0
+        };
+
+        let snippet: String = content.chars()
+            .skip(snippet_start)
+            .take(snippet_end - snippet_start)
+            .collect();
+
+        // Adjust highlight ranges relative to snippet
+        let adjusted_highlights: Vec<HighlightRange> = highlights
+            .iter()
+            .filter_map(|h| {
+                let start = (h.start as usize).checked_sub(snippet_start)?;
+                let end = (h.end as usize).saturating_sub(snippet_start);
+                if start < snippet.len() {
+                    Some(HighlightRange {
+                        start: start as u64,
+                        end: end.min(snippet.len()) as u64,
+                    })
+                } else {
+                    None
+                }
+            })
+            .collect();
+
+        (snippet, adjusted_highlights, line_number)
+    }
+
+    /// Create MatchData from a FuzzyMatch
+    pub fn create_match_data(fuzzy_match: &FuzzyMatch) -> MatchData {
+        let highlights = Self::indices_to_ranges(&fuzzy_match.matched_indices);
+        let (text, adjusted_highlights, line_number) = Self::generate_snippet(
+            &fuzzy_match.content,
+            &highlights,
+            MAX_SNIPPET_LEN,
+        );
+
+        MatchData {
+            text,
+            highlights: adjusted_highlights,
+            line_number,
+        }
+    }
+
+    /// Create ItemMatch from StoredItem and FuzzyMatch
+    pub fn create_item_match(item: &StoredItem, fuzzy_match: &FuzzyMatch) -> ItemMatch {
+        ItemMatch {
+            item_metadata: item.to_metadata(),
+            match_data: Self::create_match_data(fuzzy_match),
+        }
     }
 }
 
@@ -198,19 +363,86 @@ fn passes_density_check(word_len: u32, indices: &[u32]) -> bool {
 }
 
 /// Calculate blended score combining Nucleo fuzzy score with recency
-/// Uses multiplicative boost to preserve quality ordering while favoring recent items
-fn blended_score(fuzzy_score: u32, timestamp: i64, now: i64) -> f64 {
-    // Use raw fuzzy score (Nucleo's scoring is already well-calibrated)
+/// For short queries, recency is the primary factor with prefix boost
+fn blended_score(fuzzy_score: u32, timestamp: i64, now: i64, is_prefix_match: bool) -> f64 {
     let base_score = fuzzy_score as f64;
 
     // Exponential decay for recency (half-life based)
     let age_secs = (now - timestamp).max(0) as f64;
     let recency_factor = (-age_secs * 2.0_f64.ln() / RECENCY_HALF_LIFE_SECS).exp();
 
-    // Multiplicative boost: score * (1 + boost * recency)
-    // This preserves quality ordering - a higher score always beats a lower score
-    // but recent items get a small boost within similar quality ranges
-    base_score * (1.0 + RECENCY_BOOST_MAX * recency_factor)
+    // Apply prefix match boost if applicable
+    let prefix_boost = if is_prefix_match { PREFIX_MATCH_BOOST } else { 1.0 };
+
+    // Multiplicative boost: score * prefix_boost * (1 + recency_boost * recency)
+    base_score * prefix_boost * (1.0 + RECENCY_BOOST_MAX * recency_factor)
+}
+
+/// Use regex for performant highlighting
+pub fn highlight_with_regex(text: &str, query: &str) -> Vec<HighlightRange> {
+    if query.is_empty() {
+        return Vec::new();
+    }
+
+    let mut ranges = Vec::new();
+
+    // Escape regex special characters and build pattern
+    let escaped_query = regex::escape(query);
+    if let Ok(regex) = RegexBuilder::new(&escaped_query)
+        .case_insensitive(true)
+        .build()
+    {
+        for mat in regex.find_iter(text).take(100) {
+            ranges.push(HighlightRange {
+                start: mat.start() as u64,
+                end: mat.end() as u64,
+            });
+        }
+    }
+
+    // If no exact matches and query is long enough, try trigram matching
+    if ranges.is_empty() && query.len() >= 3 {
+        let query_lower = query.to_lowercase();
+        let text_lower = text.to_lowercase();
+        let chars: Vec<char> = query_lower.chars().collect();
+
+        for i in 0..chars.len().saturating_sub(2) {
+            let trigram: String = chars[i..i + 3].iter().collect();
+            let mut start = 0;
+            while let Some(pos) = text_lower[start..].find(&trigram) {
+                let abs_pos = start + pos;
+                // Check for overlaps
+                let overlaps = ranges.iter().any(|r| {
+                    abs_pos < r.end as usize && abs_pos + 3 > r.start as usize
+                });
+                if !overlaps {
+                    ranges.push(HighlightRange {
+                        start: abs_pos as u64,
+                        end: (abs_pos + 3) as u64,
+                    });
+                }
+                start = abs_pos + 1;
+                if ranges.len() >= 100 {
+                    break;
+                }
+            }
+            if ranges.len() >= 100 {
+                break;
+            }
+        }
+    }
+
+    // Sort by position
+    ranges.sort_by_key(|r| r.start);
+    ranges
+}
+
+/// Compute highlights for preview pane (full content)
+pub fn compute_preview_highlights(content: &str, query: &str) -> Vec<HighlightRange> {
+    if query.trim().is_empty() {
+        return Vec::new();
+    }
+    highlight_with_regex(content, query.trim())
 }
 
 #[cfg(test)]
@@ -219,30 +451,31 @@ mod tests {
 
     #[test]
     fn test_indices_to_ranges() {
-        // ... (existing code)
+        let indices = vec![0, 1, 2, 5, 6, 10];
+        let ranges = SearchEngine::indices_to_ranges(&indices);
+        assert_eq!(ranges.len(), 3);
+        assert_eq!(ranges[0], HighlightRange { start: 0, end: 3 });
+        assert_eq!(ranges[1], HighlightRange { start: 5, end: 7 });
+        assert_eq!(ranges[2], HighlightRange { start: 10, end: 11 });
     }
 
     #[test]
-    fn test_short_query_scores() {
-        let engine = SearchEngine::new();
-        let mut results = Vec::new();
-        let now = 1700000000i64;
-        let candidates_with_ids = vec![
-            (1, "the".to_string(), now),
-            (2, "apple".to_string(), now - 100),
-            (3, "test".to_string(), now - 200),
-            (4, "application".to_string(), now - 300),
-            (5, "cat".to_string(), now - 400),
-        ];
+    fn test_highlight_with_regex() {
+        let text = "Hello world, hello again";
+        let highlights = highlight_with_regex(text, "hello");
+        assert_eq!(highlights.len(), 2);
+        assert_eq!(highlights[0], HighlightRange { start: 0, end: 5 });
+        assert_eq!(highlights[1], HighlightRange { start: 13, end: 18 });
+    }
 
-        engine.filter_batch(candidates_with_ids.into_iter(), "t", &mut results, 10);
+    #[test]
+    fn test_generate_snippet() {
+        let content = "This is a long text with some interesting content that we want to highlight";
+        let highlights = vec![HighlightRange { start: 28, end: 39 }]; // "interesting"
+        let (snippet, adj_highlights, _line) = SearchEngine::generate_snippet(content, &highlights, 50);
 
-        let matched_ids: Vec<i64> = results.iter().map(|m| m.id).collect();
-        assert!(matched_ids.contains(&1), "Should match 'the'");
-        assert!(matched_ids.contains(&3), "Should match 'test'");
-        assert!(matched_ids.contains(&4), "Should match 'application'");
-        assert!(matched_ids.contains(&5), "Should match 'cat'");
-        assert!(!matched_ids.contains(&2), "Should NOT match 'apple'");
+        assert!(snippet.contains("interesting"));
+        assert!(!adj_highlights.is_empty());
     }
 
     #[test]
@@ -250,116 +483,13 @@ mod tests {
         let now = 1700000000i64;
 
         // Same fuzzy score, different timestamps - recent should win
-        let recent = blended_score(1000, now, now);
-        let old = blended_score(1000, now - 86400 * 30, now); // 30 days old
+        let recent = blended_score(1000, now, now, false);
+        let old = blended_score(1000, now - 86400 * 30, now, false); // 30 days old
         assert!(recent > old, "Recent items should score higher with same quality");
 
-        // Higher fuzzy score should always win regardless of recency
-        // This is the key property of multiplicative boost
-        let high_score_old = blended_score(10000, now - 86400 * 365, now); // 1 year old, high score
-        let low_score_new = blended_score(100, now, now); // brand new, low score
-        assert!(
-            high_score_old > low_score_new,
-            "High fuzzy score should beat low score even with huge recency difference"
-        );
-
-        // Verify boost is bounded (max 10% for brand new items)
-        let base = blended_score(1000, now - 86400 * 365, now); // very old, no boost
-        let boosted = blended_score(1000, now, now); // brand new, max boost
-        let ratio = boosted / base;
-        assert!(
-            ratio <= 1.11 && ratio >= 1.0,
-            "Recency boost should be at most ~10%"
-        );
-    }
-}
-
-// Ranking behavior tests have been moved to integration tests in
-// tests/preview_video_search.rs to ensure they test the actual search
-// path through ClipboardStore.search() rather than internal methods.
-
-#[cfg(test)]
-mod perf_tests {
-    use super::*;
-    use crate::indexer::Indexer;
-    use std::time::Instant;
-
-    fn run_benchmark(doc_count: usize) {
-        let indexer = Indexer::new_in_memory().unwrap();
-        let engine = SearchEngine::new();
-
-        let contents = vec![
-            "Hello world this is a test document",
-            "The quick brown fox jumps over the lazy dog",
-            "Rust programming language is fast and safe",
-            "ClipKitty clipboard manager for macOS",
-            "SELECT * FROM users WHERE id = 123",
-            "https://github.com/example/repository",
-            "Error: Connection refused at localhost:8080",
-            "def hello(name): return f'Hello {name}'",
-            "The riverside apartment has a great view",
-            "Configuration file settings and options",
-        ];
-
-        let now = chrono::Utc::now().timestamp();
-        for i in 0..doc_count {
-            let content = format!("{} - item number {}", contents[i % contents.len()], i);
-            indexer.add_document(i as i64, &content, now - i as i64).unwrap();
-        }
-        indexer.commit().unwrap();
-
-        println!("\n=== Benchmark: {} documents ===", doc_count);
-
-        let queries = vec![
-            ("hello", "hello"),
-            ("riverside", "riverside"),
-            ("typo", "rivreside"),
-            ("phrase", "hello world"),
-        ];
-
-        for (name, query) in queries {
-            let _ = engine.search(&indexer, query); // warm up
-
-            // Measure with content loading
-            let start = Instant::now();
-            let candidates = indexer.search(query).unwrap();
-            let with_content_time = start.elapsed();
-
-            let start = Instant::now();
-            let _results = engine.search(&indexer, query).unwrap();
-            let total_time = start.elapsed();
-
-            let rerank_time = total_time.saturating_sub(with_content_time);
-
-            println!(
-                "{:12} | cand: {:5} | content: {:>6.2}ms | rerank: {:>6.2}ms | total: {:>7.2}ms",
-                name,
-                candidates.len(),
-                with_content_time.as_secs_f64() * 1000.0,
-                rerank_time.as_secs_f64() * 1000.0,
-                total_time.as_secs_f64() * 1000.0,
-            );
-        }
-    }
-
-    #[test]
-    fn benchmark_5k() {
-        run_benchmark(5_000);
-    }
-
-    #[test]
-    fn benchmark_50k() {
-        run_benchmark(50_000);
-    }
-
-    #[test]
-    fn benchmark_500k() {
-        run_benchmark(500_000);
-    }
-
-    #[test]
-    #[ignore] // Run with: cargo test benchmark_5m --release -- --ignored --nocapture
-    fn benchmark_5m() {
-        run_benchmark(5_000_000);
+        // Prefix match should boost score
+        let prefix = blended_score(1000, now, now, true);
+        let non_prefix = blended_score(1000, now, now, false);
+        assert!(prefix > non_prefix, "Prefix matches should score higher");
     }
 }

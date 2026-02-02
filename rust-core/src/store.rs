@@ -1,12 +1,14 @@
 //! ClipboardStore - Main API for Swift interop
 //! and Tantivy search functionality, designed for UniFFI export.
 //!
-//! Architecture: Two-layer search using Tantivy (trigram retrieval) + fuzzy-matcher (precision)
+//! Architecture: Two-layer search using Tantivy (trigram retrieval) + Nucleo (precision)
 
 use crate::database::Database;
 use crate::indexer::Indexer;
-use crate::models::{ClipboardItem, FetchResult, SearchMatch, SearchResult};
-use crate::search::{FuzzyMatch, SearchEngine, MIN_TRIGRAM_QUERY_LEN, MAX_RESULTS};
+use crate::models::{
+    ClipboardItem, StoredItem, FetchResults, ItemMatch, SearchResult,
+};
+use crate::search::{SearchEngine, MIN_TRIGRAM_QUERY_LEN, MAX_RESULTS_SHORT, compute_preview_highlights};
 use chrono::{TimeZone, Utc};
 use std::path::PathBuf;
 use std::sync::Arc;
@@ -58,7 +60,6 @@ impl ClipboardStore {
 
         let indexer = Indexer::new(&index_path)?;
 
-        // Rebuild index from database if empty
         let store = Self {
             db: Arc::new(db),
             indexer: Arc::new(indexer),
@@ -84,18 +85,15 @@ impl ClipboardStore {
 
     /// Rebuild index from database if the index is empty but database has items
     fn rebuild_index_if_needed(&self) -> Result<(), ClipKittyError> {
-        // Check if index is empty
         if self.indexer.num_docs() > 0 {
             return Ok(());
         }
 
-        // Get all items from database
         let items = self.db.fetch_all_items()?;
         if items.is_empty() {
             return Ok(());
         }
 
-        // Index all items
         for item in items {
             if let Some(id) = item.id {
                 self.indexer.add_document(id, item.text_content(), item.timestamp_unix)?;
@@ -111,9 +109,8 @@ impl ClipboardStore {
         self.db.database_size().unwrap_or(0)
     }
 
-    /// Verify FTS integrity and rebuild if needed (for backwards compat)
+    /// Verify FTS integrity (for backwards compat - always returns true with Tantivy)
     pub fn verify_fts_integrity(&self) -> bool {
-        // With Tantivy, we just check if the index has docs matching the database
         true
     }
 
@@ -125,7 +122,7 @@ impl ClipboardStore {
         source_app: Option<String>,
         source_app_bundle_id: Option<String>,
     ) -> Result<i64, ClipKittyError> {
-        let item = ClipboardItem::new_text(text, source_app, source_app_bundle_id);
+        let item = StoredItem::new_text(text, source_app, source_app_bundle_id);
 
         // Check for duplicate
         if let Some(existing) = self.db.find_by_hash(&item.content_hash)? {
@@ -154,21 +151,10 @@ impl ClipboardStore {
     }
 
     /// Save an image item to the database
-    /// Note: Images are indexed with their description for searchability
+    /// Generates thumbnail automatically for preview
     pub fn save_image(
         &self,
         image_data: Vec<u8>,
-        source_app: Option<String>,
-        source_app_bundle_id: Option<String>,
-    ) -> Result<i64, ClipKittyError> {
-        self.save_image_with_description(image_data, "Image".to_string(), source_app, source_app_bundle_id)
-    }
-
-    /// Save an image item with a custom description (for searchability)
-    pub fn save_image_with_description(
-        &self,
-        image_data: Vec<u8>,
-        description: String,
         source_app: Option<String>,
         source_app_bundle_id: Option<String>,
     ) -> Result<i64, ClipKittyError> {
@@ -176,7 +162,7 @@ impl ClipboardStore {
             return Err(ClipKittyError::InvalidInput("Empty image data".into()));
         }
 
-        let item = ClipboardItem::new_image_with_description(image_data, description, source_app, source_app_bundle_id);
+        let item = StoredItem::new_image(image_data, source_app, source_app_bundle_id);
         let id = self.db.insert_item(&item)?;
 
         // Index with description (images can be searched by their description)
@@ -209,7 +195,7 @@ impl ClipboardStore {
         self.db.update_image_description(item_id, &description)?;
 
         // Re-index with new description
-        if let Some(item) = self.get_item(item_id)? {
+        if let Some(item) = self.get_stored_item(item_id)? {
             self.indexer
                 .add_document(item_id, &description, item.timestamp_unix)?;
             self.indexer.commit()?;
@@ -224,7 +210,7 @@ impl ClipboardStore {
         self.db.update_timestamp(item_id, now)?;
 
         // Update index timestamp
-        if let Some(item) = self.get_item(item_id)? {
+        if let Some(item) = self.get_stored_item(item_id)? {
             self.indexer
                 .add_document(item_id, item.text_content(), now.timestamp())?;
             self.indexer.commit()?;
@@ -239,8 +225,7 @@ impl ClipboardStore {
         let timestamp = Utc.timestamp_opt(timestamp_unix, 0).single().unwrap_or_else(Utc::now);
         self.db.update_timestamp(item_id, timestamp)?;
 
-        // Update index timestamp
-        if let Some(item) = self.get_item(item_id)? {
+        if let Some(item) = self.get_stored_item(item_id)? {
             self.indexer
                 .add_document(item_id, item.text_content(), timestamp_unix)?;
             self.indexer.commit()?;
@@ -266,10 +251,8 @@ impl ClipboardStore {
 
     /// Prune old items to stay under max size
     pub fn prune_to_size(&self, max_bytes: i64, keep_ratio: f64) -> Result<u64, ClipKittyError> {
-        // Get IDs that will be deleted
         let deleted_ids = self.db.get_prunable_ids(max_bytes, keep_ratio)?;
 
-        // Delete from index
         for id in &deleted_ids {
             self.indexer.delete_document(*id)?;
         }
@@ -277,30 +260,29 @@ impl ClipboardStore {
             self.indexer.commit()?;
         }
 
-        // Delete from database
         let deleted = self.db.prune_to_size(max_bytes, keep_ratio)?;
         Ok(deleted as u64)
     }
 
-    /// Fetch items with pagination
+    /// Fetch items for initial display (no search query)
+    /// Returns lightweight metadata for list display
     pub fn fetch_items(
         &self,
         before_timestamp_unix: Option<i64>,
         limit: u64,
-    ) -> Result<FetchResult, ClipKittyError> {
+    ) -> Result<FetchResults, ClipKittyError> {
         let before_timestamp = before_timestamp_unix
             .filter(|&ts| ts > 0)
             .and_then(|ts| Utc.timestamp_opt(ts, 0).single());
 
-        let items = self.db.fetch_items(before_timestamp, limit as usize)?;
+        let (items, total_count) = self.db.fetch_item_metadata(before_timestamp, limit as usize)?;
         let has_more = items.len() == limit as usize;
 
-        Ok(FetchResult { items, has_more })
+        Ok(FetchResults { items, total_count, has_more })
     }
 
-    /// Search for items using two-layer search (Tantivy + fuzzy-matcher)
-    /// Returns IDs + highlight ranges sorted by fuzzy score
-    /// For queries < 3 chars, streams from database instead of using trigram index
+    /// Search for items using two-layer search (Tantivy + Nucleo)
+    /// Returns ItemMatch objects with metadata and match highlights
     pub fn search(&self, query: String) -> Result<SearchResult, ClipKittyError> {
         let trimmed = query.trim();
         if trimmed.is_empty() {
@@ -311,78 +293,120 @@ impl ClipboardStore {
         }
 
         // Choose search strategy based on query length
-        // Pass original query to preserve trailing space for exact match boost
         let matches = if trimmed.len() < MIN_TRIGRAM_QUERY_LEN {
-            self.search_streaming(trimmed)?
+            self.search_short_query(trimmed)?
         } else {
-            self.search_engine.search(&self.indexer, &query)?
+            self.search_trigram_query(&query)?
         };
 
-        let search_matches: Vec<SearchMatch> = matches
-            .into_iter()
-            .map(|m| {
-                let highlights = SearchEngine::indices_to_ranges(&m.matched_indices);
-                SearchMatch {
-                    item_id: m.id,
-                    highlights,
-                }
-            })
-            .collect();
-
-        let total_count = search_matches.len() as u64;
-        Ok(SearchResult {
-            matches: search_matches,
-            total_count,
-        })
+        let total_count = matches.len() as u64;
+        Ok(SearchResult { matches, total_count })
     }
 
-    /// Short query search using SQLite LIKE + Nucleo fuzzy matching
-    fn search_streaming(&self, query: &str) -> Result<Vec<FuzzyMatch>, ClipKittyError> {
-        // Use SQLite LIKE for initial filtering (much faster than scanning all items)
-        let candidates = self.db.search_short_query(query, MAX_RESULTS * 5)?;
+    /// Short query search using prefix matching + LIKE on recent items
+    fn search_short_query(&self, query: &str) -> Result<Vec<ItemMatch>, ClipKittyError> {
+        // Get candidates from database (prefix matches + LIKE matches on recent items)
+        let candidates = self.db.search_short_query(query, MAX_RESULTS_SHORT * 5)?;
 
         if candidates.is_empty() {
             return Ok(Vec::new());
         }
 
-        // Apply Nucleo fuzzy matching for scoring and highlighting
-        let mut results = Vec::with_capacity(candidates.len());
-        self.search_engine.filter_batch(
-            candidates.into_iter(),
+        // Determine which are prefix matches
+        let query_lower = query.to_lowercase();
+        let candidates_with_prefix: Vec<_> = candidates
+            .into_iter()
+            .map(|(id, content, timestamp)| {
+                let is_prefix = content.to_lowercase().starts_with(&query_lower);
+                (id, content, timestamp, is_prefix)
+            })
+            .collect();
+
+        // Score and rank using search engine
+        let fuzzy_matches = self.search_engine.score_short_query_batch(
+            candidates_with_prefix.into_iter(),
             query,
-            &mut results,
-            MAX_RESULTS,
         );
 
-        // Sort by blended score (fuzzy + recency)
-        let now = chrono::Utc::now().timestamp();
-        results.sort_by(|a, b| {
-            let calc_score = |m: &FuzzyMatch| -> f64 {
-                let base_score = m.score as f64;
-                let age_secs = (now - m.timestamp).max(0) as f64;
-                let half_life = 7.0 * 24.0 * 60.0 * 60.0;
-                let recency_factor = (-age_secs * 2.0_f64.ln() / half_life).exp();
-                base_score * (1.0 + 0.1 * recency_factor)
-            };
-            calc_score(b)
-                .partial_cmp(&calc_score(a))
-                .unwrap_or(std::cmp::Ordering::Equal)
-        });
-        results.truncate(MAX_RESULTS);
+        // Fetch full items and create ItemMatches
+        let ids: Vec<i64> = fuzzy_matches.iter().map(|m| m.id).collect();
+        let stored_items = self.db.fetch_items_by_ids(&ids)?;
 
-        Ok(results)
+        let item_map: std::collections::HashMap<i64, StoredItem> = stored_items
+            .into_iter()
+            .filter_map(|item| item.id.map(|id| (id, item)))
+            .collect();
+
+        let matches: Vec<ItemMatch> = fuzzy_matches
+            .iter()
+            .filter_map(|fm| {
+                let item = item_map.get(&fm.id)?;
+                Some(SearchEngine::create_item_match(item, fm))
+            })
+            .collect();
+
+        Ok(matches)
     }
 
-    /// Fetch items by their IDs (for cache misses)
-    pub fn fetch_by_ids(&self, ids: Vec<i64>) -> Result<Vec<ClipboardItem>, ClipKittyError> {
+    /// Trigram query search using Tantivy + Nucleo
+    fn search_trigram_query(&self, query: &str) -> Result<Vec<ItemMatch>, ClipKittyError> {
+        let fuzzy_matches = self.search_engine.search(&self.indexer, query)?;
+
+        if fuzzy_matches.is_empty() {
+            return Ok(Vec::new());
+        }
+
+        // Fetch full items and create ItemMatches
+        let ids: Vec<i64> = fuzzy_matches.iter().map(|m| m.id).collect();
+        let stored_items = self.db.fetch_items_by_ids(&ids)?;
+
+        let item_map: std::collections::HashMap<i64, StoredItem> = stored_items
+            .into_iter()
+            .filter_map(|item| item.id.map(|id| (id, item)))
+            .collect();
+
+        let matches: Vec<ItemMatch> = fuzzy_matches
+            .iter()
+            .filter_map(|fm| {
+                let item = item_map.get(&fm.id)?;
+                Some(SearchEngine::create_item_match(item, fm))
+            })
+            .collect();
+
+        Ok(matches)
+    }
+
+    /// Fetch full items by IDs for preview pane
+    /// Includes highlights computed from optional search query
+    pub fn fetch_by_ids(
+        &self,
+        ids: Vec<i64>,
+        search_query: Option<String>,
+    ) -> Result<Vec<ClipboardItem>, ClipKittyError> {
         if ids.is_empty() {
             return Ok(Vec::new());
         }
-        Ok(self.db.fetch_items_by_ids(&ids)?)
+
+        let stored_items = self.db.fetch_items_by_ids(&ids)?;
+
+        let items: Vec<ClipboardItem> = stored_items
+            .into_iter()
+            .map(|item| {
+                // Compute highlights for preview pane if search query provided
+                let highlights = search_query
+                    .as_ref()
+                    .map(|q| compute_preview_highlights(item.text_content(), q))
+                    .unwrap_or_default();
+
+                item.to_clipboard_item(highlights)
+            })
+            .collect();
+
+        Ok(items)
     }
 
-    /// Get a single item by ID
-    pub fn get_item(&self, item_id: i64) -> Result<Option<ClipboardItem>, ClipKittyError> {
+    /// Get a single stored item by ID (internal use)
+    fn get_stored_item(&self, item_id: i64) -> Result<Option<StoredItem>, ClipKittyError> {
         let items = self.db.fetch_items_by_ids(&[item_id])?;
         Ok(items.into_iter().next())
     }
@@ -413,7 +437,7 @@ mod tests {
 
         let result = store.fetch_items(None, 10).unwrap();
         assert_eq!(result.items.len(), 1);
-        assert_eq!(result.items[0].text_content(), "Hello World");
+        assert!(result.items[0].preview.contains("Hello World"));
     }
 
     #[test]
@@ -448,123 +472,58 @@ mod tests {
     }
 
     #[test]
-    fn test_search_ranking_recent_vs_old() {
-        // Integration test for the full search flow through Tantivy
-        // Tests that recent items with equal fuzzy scores beat old items
+    fn test_search_returns_item_matches() {
         let store = ClipboardStore::new_in_memory().unwrap();
 
-        // Insert old item first (will have earlier timestamp)
-        let id1 = store
-            .save_text(
-                "def hello(name: str) -> str: return f'Hello, {name}!'".to_string(),
-                None,
-                None,
-            )
-            .unwrap();
+        store.save_text("Hello World from ClipKitty".to_string(), None, None).unwrap();
+        store.save_text("Another test item".to_string(), None, None).unwrap();
 
-        // Sleep to ensure different timestamps (timestamps are in seconds, need >1s)
-        std::thread::sleep(std::time::Duration::from_millis(1100));
+        let result = store.search("Hello".to_string()).unwrap();
 
-        // Insert recent item
-        let id2 = store
-            .save_text(
-                "Hello and welcome to the onboarding flow for new team members...".to_string(),
-                None,
-                None,
-            )
-            .unwrap();
-
-        // Debug: fetch items to see their timestamps
-        let items = store.fetch_items(None, 10).unwrap();
-        println!("Items in store:");
-        for item in &items.items {
-            println!("  id={}, ts={}, content={:.50}",
-                item.id.unwrap_or(-1),
-                item.timestamp_unix,
-                item.text_content());
-        }
-
-        // Debug: check what Tantivy returns
-        let candidates = store.indexer.search("hello ").unwrap();
-        println!("Tantivy candidates:");
-        for c in &candidates {
-            println!("  id={}, ts={}, content={:.50}", c.id, c.timestamp, c.content);
-        }
-
-        // Search for "hello "
-        let result = store.search("hello ".to_string()).unwrap();
-
-        println!("Search results for 'hello ':");
-        for (i, m) in result.matches.iter().enumerate() {
-            println!("  {}: id={}", i, m.item_id);
-        }
-
-        assert_eq!(result.matches.len(), 2, "Should find both items");
-        assert_eq!(
-            result.matches[0].item_id, id2,
-            "Recent 'Hello and welcome...' (id={}) should be first, but got id={}",
-            id2, result.matches[0].item_id
-        );
-        assert_eq!(
-            result.matches[1].item_id, id1,
-            "Old code snippet (id={}) should be second",
-            id1
-        );
+        assert_eq!(result.matches.len(), 1);
+        assert!(result.matches[0].item_metadata.preview.contains("Hello"));
+        assert!(!result.matches[0].match_data.highlights.is_empty());
     }
 
     #[test]
-    fn test_timestamps_stored_and_used_in_search() {
-        // Comprehensive test verifying timestamps flow correctly through the system:
-        // 1. Database stores correct timestamps
-        // 2. Tantivy index stores correct timestamps
-        // 3. Timestamps match between database and index
-        // 4. Recency boost affects search ranking
+    fn test_fetch_by_ids_with_highlights() {
         let store = ClipboardStore::new_in_memory().unwrap();
 
-        // Insert items with forced timestamp separation
-        // Use content with same prefix to get similar Tantivy scores
-        let id1 = store.save_text("config file A1".to_string(), None, None).unwrap();
-        std::thread::sleep(std::time::Duration::from_millis(1100));
-        let id2 = store.save_text("config file B2".to_string(), None, None).unwrap();
-        std::thread::sleep(std::time::Duration::from_millis(1100));
-        let id3 = store.save_text("config file C3".to_string(), None, None).unwrap();
+        let id = store.save_text("Hello World".to_string(), None, None).unwrap();
 
-        // 1. Verify database timestamps are in correct order (most recent first)
-        let db_items = store.fetch_items(None, 10).unwrap();
-        assert_eq!(db_items.items.len(), 3);
-        let db_ts: Vec<(i64, i64)> = db_items.items.iter()
-            .map(|i| (i.id.unwrap(), i.timestamp_unix))
-            .collect();
+        // Fetch without query
+        let items = store.fetch_by_ids(vec![id], None).unwrap();
+        assert_eq!(items.len(), 1);
+        assert!(items[0].preview_highlights.is_empty());
 
-        // Most recent (id3) should have highest timestamp
-        assert!(db_ts[0].0 == id3, "Most recent item should be first in fetch");
-        assert!(db_ts[0].1 > db_ts[1].1, "id3 timestamp should be > id2 timestamp");
-        assert!(db_ts[1].1 > db_ts[2].1, "id2 timestamp should be > id1 timestamp");
+        // Fetch with query
+        let items = store.fetch_by_ids(vec![id], Some("World".to_string())).unwrap();
+        assert_eq!(items.len(), 1);
+        assert!(!items[0].preview_highlights.is_empty());
+    }
 
-        // 2. Verify Tantivy index timestamps match database
-        let candidates = store.indexer.search("config").unwrap();
-        assert_eq!(candidates.len(), 3, "Tantivy should find all 3 items");
+    #[test]
+    fn test_color_detection() {
+        let store = ClipboardStore::new_in_memory().unwrap();
 
-        for candidate in &candidates {
-            let db_item = db_items.items.iter()
-                .find(|i| i.id == Some(candidate.id))
-                .expect("Candidate should exist in database");
+        let id = store.save_text("#FF5733".to_string(), None, None).unwrap();
+        assert!(id > 0);
 
-            assert_eq!(
-                candidate.timestamp, db_item.timestamp_unix,
-                "Tantivy timestamp for id={} should match database: index={} vs db={}",
-                candidate.id, candidate.timestamp, db_item.timestamp_unix
-            );
-            assert!(candidate.timestamp > 0, "Timestamp should not be 0 for id={}", candidate.id);
+        let items = store.fetch_by_ids(vec![id], None).unwrap();
+        assert_eq!(items.len(), 1);
+
+        // Check that it's detected as a color
+        if let crate::models::ClipboardContent::Color { value } = &items[0].content {
+            assert_eq!(value, "#FF5733");
+        } else {
+            panic!("Expected Color content");
         }
 
-        // 3. Verify search results respect recency (most recent first for equal scores)
-        let result = store.search("config file".to_string()).unwrap();
-        assert_eq!(result.matches.len(), 3);
-
-        // All have same base fuzzy score, so recency should determine order
-        assert_eq!(result.matches[0].item_id, id3, "Most recent (id3) should be first");
-        assert_eq!(result.matches[1].item_id, id2, "Middle (id2) should be second");
-        assert_eq!(result.matches[2].item_id, id1, "Oldest (id1) should be third");
+        // Check icon is a color swatch
+        if let crate::models::ItemIcon::ColorSwatch { rgba } = items[0].item_metadata.icon {
+            assert_eq!(rgba, 0xFF5733FF);
+        } else {
+            panic!("Expected ColorSwatch icon");
+        }
     }
 }

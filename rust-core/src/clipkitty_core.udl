@@ -19,8 +19,37 @@ namespace clipkitty_core {
     // Content detection
     boolean is_url(string text);
     string detect_content_type(string text);
-    sequence<sequence<u64>> highlight_ranges(string text, string query);
 };
+
+// ─────────────────────────────────────────────────────────────────────────────
+// ICON TYPES
+// ─────────────────────────────────────────────────────────────────────────────
+
+// SF Symbol icon type for content categories
+[Enum]
+interface IconType {
+    Text();
+    Link();
+    Email();
+    Phone();
+    Address();
+    DateType();
+    Transit();
+    Image();
+    Color();
+};
+
+// Icon representation - can be an SF Symbol, a color swatch, or a thumbnail
+[Enum]
+interface ItemIcon {
+    Symbol(IconType icon_type);
+    ColorSwatch(u32 rgba);
+    Thumbnail(sequence<u8> bytes);
+};
+
+// ─────────────────────────────────────────────────────────────────────────────
+// CONTENT TYPES
+// ─────────────────────────────────────────────────────────────────────────────
 
 // Link metadata fetch state
 [Enum]
@@ -34,6 +63,7 @@ interface LinkMetadataState {
 [Enum]
 interface ClipboardContent {
     Text(string value);
+    Color(string value);
     Link(string url, LinkMetadataState metadata_state);
     Email(string address);
     Phone(string number);
@@ -43,41 +73,67 @@ interface ClipboardContent {
     Image(sequence<u8> data, string description);
 };
 
-// Clipboard item
-dictionary ClipboardItem {
-    i64? id;
-    ClipboardContent content;
-    string content_hash;
-    i64 timestamp_unix;
-    string? source_app;
-    string? source_app_bundle_id;
-};
+// ─────────────────────────────────────────────────────────────────────────────
+// ITEM METADATA & MATCHES
+// ─────────────────────────────────────────────────────────────────────────────
 
 // Highlight range in text (start, end positions)
 dictionary HighlightRange {
-    u32 start;
-    u32 end;
+    u64 start;
+    u64 end;
 };
 
-// A search match with item ID and highlight ranges
-dictionary SearchMatch {
-    i64 item_id;
+// Match context data - the text snippet, highlights, and line info
+dictionary MatchData {
+    string text;
     sequence<HighlightRange> highlights;
+    u64 line_number;
 };
 
-// Search result with matches (IDs + highlights)
-dictionary SearchResult {
-    sequence<SearchMatch> matches;
+// Lightweight item metadata for list display
+dictionary ItemMetadata {
+    i64 item_id;
+    ItemIcon icon;
+    string preview;
+    string? source_app;
+    string? source_app_bundle_id;
+    i64 timestamp_unix;
+};
+
+// Search match: metadata + match context
+dictionary ItemMatch {
+    ItemMetadata item_metadata;
+    MatchData match_data;
+};
+
+// ─────────────────────────────────────────────────────────────────────────────
+// RESULT TYPES
+// ─────────────────────────────────────────────────────────────────────────────
+
+// Initial fetch result (no search query) - just metadata for display
+dictionary FetchResults {
+    sequence<ItemMetadata> items;
     u64 total_count;
-};
-
-// Fetch result with pagination info
-dictionary FetchResult {
-    sequence<ClipboardItem> items;
     boolean has_more;
 };
 
-// Error types
+// Search result with matches (metadata + match highlights)
+dictionary SearchResult {
+    sequence<ItemMatch> matches;
+    u64 total_count;
+};
+
+// Full clipboard item for preview pane
+dictionary ClipboardItem {
+    ItemMetadata item_metadata;
+    ClipboardContent content;
+    sequence<HighlightRange> preview_highlights;
+};
+
+// ─────────────────────────────────────────────────────────────────────────────
+// ERROR TYPE
+// ─────────────────────────────────────────────────────────────────────────────
+
 [Error]
 enum ClipKittyError {
     "DatabaseError",
@@ -85,6 +141,10 @@ enum ClipKittyError {
     "NotInitialized",
     "InvalidInput",
 };
+
+// ─────────────────────────────────────────────────────────────────────────────
+// MAIN STORE INTERFACE
+// ─────────────────────────────────────────────────────────────────────────────
 
 // Main store interface - thread-safe singleton
 interface ClipboardStore {
@@ -120,15 +180,15 @@ interface ClipboardStore {
     [Throws=ClipKittyError]
     u64 prune_to_size(i64 max_bytes, f64 keep_ratio);
 
-    // Fetch with pagination
+    // Fetch items for initial display (no query) - returns lightweight metadata
     [Throws=ClipKittyError]
-    FetchResult fetch_items(i64? before_timestamp_unix, u64 limit);
+    FetchResults fetch_items(i64? before_timestamp_unix, u64 limit);
 
-    // Search - returns IDs + highlight ranges (Swift caches items)
+    // Search - returns matches with metadata and highlights
     [Throws=ClipKittyError]
     SearchResult search(string query);
 
-    // Fetch items by IDs (for cache misses)
+    // Fetch full items by IDs for preview pane (with optional search query for highlights)
     [Throws=ClipKittyError]
-    sequence<ClipboardItem> fetch_by_ids(sequence<i64> ids);
+    sequence<ClipboardItem> fetch_by_ids(sequence<i64> ids, string? search_query);
 };

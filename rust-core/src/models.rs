@@ -5,10 +5,64 @@
 use std::collections::hash_map::DefaultHasher;
 use std::hash::{Hash, Hasher};
 
+// ─────────────────────────────────────────────────────────────────────────────
+// ICON TYPES
+// ─────────────────────────────────────────────────────────────────────────────
+
+/// SF Symbol icon type for content categories
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum IconType {
+    Text,
+    Link,
+    Email,
+    Phone,
+    Address,
+    DateType,
+    Transit,
+    Image,
+    Color,
+}
+
+impl IconType {
+    /// Get the SF Symbol name for this icon type
+    pub fn sf_symbol(&self) -> &'static str {
+        match self {
+            IconType::Text => "doc.text",
+            IconType::Link => "link",
+            IconType::Email => "envelope",
+            IconType::Phone => "phone",
+            IconType::Address => "map",
+            IconType::DateType => "calendar",
+            IconType::Transit => "tram",
+            IconType::Image => "photo",
+            IconType::Color => "paintpalette",
+        }
+    }
+}
+
+/// Icon representation - can be an SF Symbol, a color swatch, or a thumbnail
+#[derive(Debug, Clone, PartialEq)]
+pub enum ItemIcon {
+    /// SF Symbol icon
+    Symbol { icon_type: IconType },
+    /// Color swatch (RGBA as u32: 0xRRGGBBAA)
+    ColorSwatch { rgba: u32 },
+    /// Thumbnail image bytes (small preview for images)
+    Thumbnail { bytes: Vec<u8> },
+}
+
+impl Default for ItemIcon {
+    fn default() -> Self {
+        ItemIcon::Symbol { icon_type: IconType::Text }
+    }
+}
+
+// ─────────────────────────────────────────────────────────────────────────────
+// CONTENT TYPES
+// ─────────────────────────────────────────────────────────────────────────────
+
 /// Link metadata fetch state
 #[derive(Debug, Clone, PartialEq, Eq)]
-#[cfg_attr(feature = "serde", derive(serde::Serialize, serde::Deserialize))]
-#[cfg_attr(feature = "serde", serde(tag = "type", rename_all = "snake_case"))]
 pub enum LinkMetadataState {
     /// Metadata not yet fetched
     Pending,
@@ -53,20 +107,15 @@ impl LinkMetadataState {
 
 /// Type-safe content representation
 #[derive(Debug, Clone, PartialEq)]
-#[cfg_attr(feature = "serde", derive(serde::Serialize, serde::Deserialize))]
-#[cfg_attr(feature = "serde", serde(tag = "type", rename_all = "snake_case"))]
 pub enum ClipboardContent {
     Text { value: String },
+    Color { value: String },
     Link {
         url: String,
         metadata_state: LinkMetadataState,
     },
-    Email {
-        address: String,
-    },
-    Phone {
-        number: String,
-    },
+    Email { address: String },
+    Phone { number: String },
     Address { value: String },
     Date { value: String },
     Transit { value: String },
@@ -81,6 +130,7 @@ impl ClipboardContent {
     pub fn text_content(&self) -> &str {
         match self {
             ClipboardContent::Text { value } => value,
+            ClipboardContent::Color { value } => value,
             ClipboardContent::Link { url, .. } => url,
             ClipboardContent::Email { address } => address,
             ClipboardContent::Phone { number } => number,
@@ -91,17 +141,18 @@ impl ClipboardContent {
         }
     }
 
-    /// SF Symbol icon name for the content type
-    pub fn icon(&self) -> &str {
+    /// Get the IconType for this content
+    pub fn icon_type(&self) -> IconType {
         match self {
-            ClipboardContent::Text { .. } => "doc.text",
-            ClipboardContent::Link { .. } => "link",
-            ClipboardContent::Email { .. } => "envelope",
-            ClipboardContent::Phone { .. } => "phone",
-            ClipboardContent::Address { .. } => "map",
-            ClipboardContent::Date { .. } => "calendar",
-            ClipboardContent::Transit { .. } => "tram",
-            ClipboardContent::Image { .. } => "photo",
+            ClipboardContent::Text { .. } => IconType::Text,
+            ClipboardContent::Color { .. } => IconType::Color,
+            ClipboardContent::Link { .. } => IconType::Link,
+            ClipboardContent::Email { .. } => IconType::Email,
+            ClipboardContent::Phone { .. } => IconType::Phone,
+            ClipboardContent::Address { .. } => IconType::Address,
+            ClipboardContent::Date { .. } => IconType::DateType,
+            ClipboardContent::Transit { .. } => IconType::Transit,
+            ClipboardContent::Image { .. } => IconType::Image,
         }
     }
 
@@ -109,6 +160,7 @@ impl ClipboardContent {
     pub fn database_type(&self) -> &str {
         match self {
             ClipboardContent::Text { .. } => "text",
+            ClipboardContent::Color { .. } => "color",
             ClipboardContent::Link { .. } => "link",
             ClipboardContent::Email { .. } => "email",
             ClipboardContent::Phone { .. } => "phone",
@@ -119,21 +171,25 @@ impl ClipboardContent {
         }
     }
 
-    /// Extract database fields: (content, image_data, link_title, link_image_data)
-    pub fn to_database_fields(&self) -> (String, Option<Vec<u8>>, Option<String>, Option<Vec<u8>>) {
+    /// Extract database fields: (content, image_data, link_title, link_image_data, color_rgba)
+    pub fn to_database_fields(&self) -> (String, Option<Vec<u8>>, Option<String>, Option<Vec<u8>>, Option<u32>) {
         match self {
-            ClipboardContent::Text { value } => (value.clone(), None, None, None),
+            ClipboardContent::Text { value } => (value.clone(), None, None, None, None),
+            ClipboardContent::Color { value } => {
+                let rgba = crate::content_detection::parse_color_to_rgba(value);
+                (value.clone(), None, None, None, rgba)
+            }
             ClipboardContent::Link { url, metadata_state } => {
                 let (title, image_data) = metadata_state.to_database_fields();
-                (url.clone(), None, title, image_data)
+                (url.clone(), None, title, image_data, None)
             }
-            ClipboardContent::Email { address } => (address.clone(), None, None, None),
-            ClipboardContent::Phone { number } => (number.clone(), None, None, None),
-            ClipboardContent::Address { value } => (value.clone(), None, None, None),
-            ClipboardContent::Date { value } => (value.clone(), None, None, None),
-            ClipboardContent::Transit { value } => (value.clone(), None, None, None),
+            ClipboardContent::Email { address } => (address.clone(), None, None, None, None),
+            ClipboardContent::Phone { number } => (number.clone(), None, None, None, None),
+            ClipboardContent::Address { value } => (value.clone(), None, None, None, None),
+            ClipboardContent::Date { value } => (value.clone(), None, None, None, None),
+            ClipboardContent::Transit { value } => (value.clone(), None, None, None, None),
             ClipboardContent::Image { data, description } => {
-                (description.clone(), Some(data.clone()), None, None)
+                (description.clone(), Some(data.clone()), None, None, None)
             }
         }
     }
@@ -145,8 +201,10 @@ impl ClipboardContent {
         image_data: Option<Vec<u8>>,
         link_title: Option<&str>,
         link_image_data: Option<Vec<u8>>,
+        _color_rgba: Option<u32>,
     ) -> Self {
         match db_type {
+            "color" => ClipboardContent::Color { value: content.to_string() },
             "link" => ClipboardContent::Link {
                 url: content.to_string(),
                 metadata_state: LinkMetadataState::from_database(link_title, link_image_data),
@@ -169,19 +227,100 @@ impl ClipboardContent {
     }
 }
 
-/// A clipboard item with metadata (UniFFI-compatible)
+// ─────────────────────────────────────────────────────────────────────────────
+// ITEM METADATA & MATCHES
+// ─────────────────────────────────────────────────────────────────────────────
+
+/// A highlight range (start, end) in the text
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct HighlightRange {
+    pub start: u64,
+    pub end: u64,
+}
+
+/// Match context data - the text snippet, highlights, and line info
 #[derive(Debug, Clone, PartialEq)]
-#[cfg_attr(feature = "serde", derive(serde::Serialize, serde::Deserialize))]
+pub struct MatchData {
+    pub text: String,
+    pub highlights: Vec<HighlightRange>,
+    pub line_number: u64,
+}
+
+impl Default for MatchData {
+    fn default() -> Self {
+        MatchData {
+            text: String::new(),
+            highlights: Vec::new(),
+            line_number: 0,
+        }
+    }
+}
+
+/// Lightweight item metadata for list display
+#[derive(Debug, Clone, PartialEq)]
+pub struct ItemMetadata {
+    pub item_id: i64,
+    pub icon: ItemIcon,
+    pub preview: String,
+    pub source_app: Option<String>,
+    pub source_app_bundle_id: Option<String>,
+    pub timestamp_unix: i64,
+}
+
+/// Search match: metadata + match context
+#[derive(Debug, Clone)]
+pub struct ItemMatch {
+    pub item_metadata: ItemMetadata,
+    pub match_data: MatchData,
+}
+
+// ─────────────────────────────────────────────────────────────────────────────
+// RESULT TYPES
+// ─────────────────────────────────────────────────────────────────────────────
+
+/// Initial fetch result (no search query) - just metadata for display
+#[derive(Debug, Clone)]
+pub struct FetchResults {
+    pub items: Vec<ItemMetadata>,
+    pub total_count: u64,
+    pub has_more: bool,
+}
+
+/// Search result with matches (metadata + match highlights)
+#[derive(Debug, Clone)]
+pub struct SearchResult {
+    pub matches: Vec<ItemMatch>,
+    pub total_count: u64,
+}
+
+/// Full clipboard item for preview pane
+#[derive(Debug, Clone, PartialEq)]
 pub struct ClipboardItem {
+    pub item_metadata: ItemMetadata,
+    pub content: ClipboardContent,
+    pub preview_highlights: Vec<HighlightRange>,
+}
+
+// ─────────────────────────────────────────────────────────────────────────────
+// INTERNAL ITEM (not exposed via FFI, used for storage)
+// ─────────────────────────────────────────────────────────────────────────────
+
+/// Internal clipboard item representation for database storage
+#[derive(Debug, Clone, PartialEq)]
+pub struct StoredItem {
     pub id: Option<i64>,
     pub content: ClipboardContent,
     pub content_hash: String,
     pub timestamp_unix: i64,
     pub source_app: Option<String>,
     pub source_app_bundle_id: Option<String>,
+    /// Thumbnail for images (small preview, stored separately from full image)
+    pub thumbnail: Option<Vec<u8>>,
+    /// Parsed color RGBA for color content (stored for quick display)
+    pub color_rgba: Option<u32>,
 }
 
-impl ClipboardItem {
+impl StoredItem {
     /// Create a new text item (auto-detects structured content)
     pub fn new_text(
         text: String,
@@ -190,6 +329,11 @@ impl ClipboardItem {
     ) -> Self {
         let content_hash = Self::hash_string(&text);
         let content = crate::content_detection::detect_content(&text);
+        let color_rgba = if let ClipboardContent::Color { ref value } = content {
+            crate::content_detection::parse_color_to_rgba(value)
+        } else {
+            None
+        };
         Self {
             id: None,
             content,
@@ -197,6 +341,8 @@ impl ClipboardItem {
             timestamp_unix: chrono::Utc::now().timestamp(),
             source_app,
             source_app_bundle_id,
+            thumbnail: None,
+            color_rgba,
         }
     }
 
@@ -215,6 +361,8 @@ impl ClipboardItem {
             timestamp_unix: chrono::Utc::now().timestamp(),
             source_app,
             source_app_bundle_id,
+            thumbnail: None,
+            color_rgba: None,
         }
     }
 
@@ -236,6 +384,8 @@ impl ClipboardItem {
     ) -> Self {
         let hash_input = format!("{}{}", description, image_data.len());
         let content_hash = Self::hash_string(&hash_input);
+        // Generate thumbnail (max 64x64, JPEG quality 60)
+        let thumbnail = generate_thumbnail(&image_data, 64, 60);
         Self {
             id: None,
             content: ClipboardContent::Image {
@@ -246,6 +396,8 @@ impl ClipboardItem {
             timestamp_unix: chrono::Utc::now().timestamp(),
             source_app,
             source_app_bundle_id,
+            thumbnail,
+            color_rgba: None,
         }
     }
 
@@ -254,9 +406,29 @@ impl ClipboardItem {
         self.content.text_content()
     }
 
-    /// Get the icon for the content type
-    pub fn icon(&self) -> &str {
-        self.content.icon()
+    /// Get the icon type for the content
+    pub fn icon_type(&self) -> IconType {
+        self.content.icon_type()
+    }
+
+    /// Get the ItemIcon for display
+    pub fn item_icon(&self) -> ItemIcon {
+        match &self.content {
+            ClipboardContent::Color { value } => {
+                let rgba = self.color_rgba
+                    .or_else(|| crate::content_detection::parse_color_to_rgba(value))
+                    .unwrap_or(0xFF000000);
+                ItemIcon::ColorSwatch { rgba }
+            }
+            ClipboardContent::Image { .. } => {
+                if let Some(ref thumb) = self.thumbnail {
+                    ItemIcon::Thumbnail { bytes: thumb.clone() }
+                } else {
+                    ItemIcon::Symbol { icon_type: IconType::Image }
+                }
+            }
+            _ => ItemIcon::Symbol { icon_type: self.icon_type() },
+        }
     }
 
     /// Stable identifier for UI
@@ -266,12 +438,10 @@ impl ClipboardItem {
             .unwrap_or_else(|| self.content_hash.clone())
     }
 
-    /// Display text (truncated, normalized whitespace)
-    pub fn display_text(&self) -> String {
+    /// Display text (truncated, normalized whitespace) for preview
+    pub fn display_text(&self, max_chars: usize) -> String {
         let text = self.text_content();
-        const MAX_CHARS: usize = 200;
-
-        let mut result = String::with_capacity(MAX_CHARS + 1);
+        let mut result = String::with_capacity(max_chars + 1);
         let mut chars = text.chars().peekable();
 
         // Skip leading whitespace
@@ -283,7 +453,7 @@ impl ClipboardItem {
         let mut count = 0;
 
         for ch in chars {
-            if count >= MAX_CHARS {
+            if count >= max_chars {
                 result.push('…');
                 return result;
             }
@@ -314,6 +484,27 @@ impl ClipboardItem {
         result
     }
 
+    /// Convert to ItemMetadata for list display
+    pub fn to_metadata(&self) -> ItemMetadata {
+        ItemMetadata {
+            item_id: self.id.unwrap_or(0),
+            icon: self.item_icon(),
+            preview: self.display_text(200),
+            source_app: self.source_app.clone(),
+            source_app_bundle_id: self.source_app_bundle_id.clone(),
+            timestamp_unix: self.timestamp_unix,
+        }
+    }
+
+    /// Convert to full ClipboardItem for preview pane
+    pub fn to_clipboard_item(&self, highlights: Vec<HighlightRange>) -> ClipboardItem {
+        ClipboardItem {
+            item_metadata: self.to_metadata(),
+            content: self.content.clone(),
+            preview_highlights: highlights,
+        }
+    }
+
     /// Hash a string using Rust's default hasher
     fn hash_string(s: &str) -> String {
         let mut hasher = DefaultHasher::new();
@@ -322,32 +513,39 @@ impl ClipboardItem {
     }
 }
 
-/// A highlight range (start, end) in the text
-#[derive(Debug, Clone, PartialEq)]
-pub struct HighlightRange {
-    pub start: u32,
-    pub end: u32,
-}
+// ─────────────────────────────────────────────────────────────────────────────
+// THUMBNAIL GENERATION
+// ─────────────────────────────────────────────────────────────────────────────
 
-/// A search match with item ID and highlight ranges
-#[derive(Debug, Clone)]
-pub struct SearchMatch {
-    pub item_id: i64,
-    pub highlights: Vec<HighlightRange>,
-}
+/// Generate a thumbnail from image data
+/// Returns None if the image cannot be decoded
+fn generate_thumbnail(image_data: &[u8], max_size: u32, _quality: u8) -> Option<Vec<u8>> {
+    use image::GenericImageView;
 
-/// Search result with matches (IDs + highlights)
-#[derive(Debug, Clone)]
-pub struct SearchResult {
-    pub matches: Vec<SearchMatch>,
-    pub total_count: u64,
-}
+    let img = image::load_from_memory(image_data).ok()?;
+    let (width, height) = img.dimensions();
 
-/// Fetch result with pagination info for UniFFI
-#[derive(Debug, Clone)]
-pub struct FetchResult {
-    pub items: Vec<ClipboardItem>,
-    pub has_more: bool,
+    // Only create thumbnail if image is larger than max_size
+    if width <= max_size && height <= max_size {
+        // Image is small enough, just re-encode it
+        let mut buf = Vec::new();
+        let mut cursor = std::io::Cursor::new(&mut buf);
+        img.write_to(&mut cursor, image::ImageFormat::Jpeg).ok()?;
+        return Some(buf);
+    }
+
+    // Calculate new dimensions maintaining aspect ratio
+    let scale = max_size as f32 / width.max(height) as f32;
+    let new_width = (width as f32 * scale) as u32;
+    let new_height = (height as f32 * scale) as u32;
+
+    let thumbnail = img.thumbnail(new_width, new_height);
+
+    let mut buf = Vec::new();
+    let mut cursor = std::io::Cursor::new(&mut buf);
+    thumbnail.write_to(&mut cursor, image::ImageFormat::Jpeg).ok()?;
+
+    Some(buf)
 }
 
 #[cfg(test)]
@@ -355,29 +553,29 @@ mod tests {
     use super::*;
 
     #[test]
-    fn test_clipboard_item_text() {
-        let item = ClipboardItem::new_text(
+    fn test_stored_item_text() {
+        let item = StoredItem::new_text(
             "Hello World".to_string(),
             Some("Test App".to_string()),
             None,
         );
         assert_eq!(item.text_content(), "Hello World");
-        assert_eq!(item.icon(), "doc.text");
+        assert_eq!(item.icon_type(), IconType::Text);
     }
 
     #[test]
     fn test_display_text_truncation() {
         let long_text = "a".repeat(300);
-        let item = ClipboardItem::new_text(long_text, None, None);
-        let display = item.display_text();
+        let item = StoredItem::new_text(long_text, None, None);
+        let display = item.display_text(200);
         assert!(display.chars().count() == 201); // 200 chars + ellipsis (1 char)
         assert!(display.ends_with('…'));
     }
 
     #[test]
     fn test_display_text_whitespace_normalization() {
-        let item = ClipboardItem::new_text("  hello\n\nworld  ".to_string(), None, None);
-        assert_eq!(item.display_text(), "hello world");
+        let item = StoredItem::new_text("  hello\n\nworld  ".to_string(), None, None);
+        assert_eq!(item.display_text(200), "hello world");
     }
 
     #[test]
@@ -408,5 +606,23 @@ mod tests {
             LinkMetadataState::from_database(title.as_deref(), img),
             loaded
         );
+    }
+
+    #[test]
+    fn test_color_content() {
+        let item = StoredItem::new_text("#FF5733".to_string(), None, None);
+        assert!(matches!(item.content, ClipboardContent::Color { .. }));
+        assert_eq!(item.icon_type(), IconType::Color);
+    }
+
+    #[test]
+    fn test_item_icon_for_color() {
+        let item = StoredItem::new_text("#FF5733".to_string(), None, None);
+        if let ItemIcon::ColorSwatch { rgba } = item.item_icon() {
+            // #FF5733 with full alpha
+            assert_eq!(rgba, 0xFF5733FF);
+        } else {
+            panic!("Expected ColorSwatch icon");
+        }
     }
 }

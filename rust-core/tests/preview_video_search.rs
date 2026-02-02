@@ -145,6 +145,21 @@ fn create_preview_video_store() -> (ClipboardStore, TempDir) {
     (store, temp_dir)
 }
 
+/// Helper to get content text from ClipboardItem
+fn get_content_text(item: &clipkitty_core::ClipboardItem) -> String {
+    match &item.content {
+        clipkitty_core::ClipboardContent::Text { value } => value.clone(),
+        clipkitty_core::ClipboardContent::Color { value } => value.clone(),
+        clipkitty_core::ClipboardContent::Link { url, .. } => url.clone(),
+        clipkitty_core::ClipboardContent::Email { address } => address.clone(),
+        clipkitty_core::ClipboardContent::Phone { number } => number.clone(),
+        clipkitty_core::ClipboardContent::Address { value } => value.clone(),
+        clipkitty_core::ClipboardContent::Date { value } => value.clone(),
+        clipkitty_core::ClipboardContent::Transit { value } => value.clone(),
+        clipkitty_core::ClipboardContent::Image { description, .. } => description.clone(),
+    }
+}
+
 // ============================================================
 // SCENE 1: Meta Pitch Tests (0:00 - 0:08)
 // ============================================================
@@ -155,29 +170,29 @@ fn scene1_empty_query_shows_sql_first() {
 
     // With empty query, fetch items by timestamp (newest first)
     let result = store.fetch_items(None, 6).unwrap();
-    let items = result.items;
+    let items = &result.items;
 
     assert!(items.len() >= 6, "Should have at least 6 items");
 
-    // First item should be the SQL query
+    // First item should be the SQL query (check preview)
     assert!(
-        items[0].text_content().contains("SELECT users.name"),
+        items[0].preview.contains("SELECT users.name"),
         "Top item should be SQL query, got: {}",
-        items[0].text_content()
+        items[0].preview
     );
 
     // Check other visible items in default state
-    let contents: Vec<String> = items.iter().map(|i| i.text_content().to_string()).collect();
+    let previews: Vec<&str> = items.iter().map(|i| i.preview.as_str()).collect();
     assert!(
-        contents.iter().any(|c| c.contains("sk-proj")),
+        previews.iter().any(|c| c.contains("sk-proj")),
         "API key should be visible"
     );
     assert!(
-        contents.iter().any(|c| c.contains("Deploying to prod")),
+        previews.iter().any(|c| c.contains("Deploying to prod")),
         "Deploy script should be visible"
     );
     assert!(
-        contents.iter().any(|c| c.contains("quick brown fox")),
+        previews.iter().any(|c| c.contains("quick brown fox")),
         "Pangram should be visible"
     );
 }
@@ -189,9 +204,9 @@ fn scene1_search_h_shows_hello_content() {
     let result = store.search("h".to_string()).unwrap();
 
     // "h" should match Hello-containing items
-    let ids: Vec<i64> = result.matches.iter().map(|m| m.item_id).collect();
-    let items = store.fetch_by_ids(ids.clone()).unwrap();
-    let contents: Vec<String> = items.iter().map(|i| i.text_content().to_string()).collect();
+    let ids: Vec<i64> = result.matches.iter().map(|m| m.item_metadata.item_id).collect();
+    let items = store.fetch_by_ids(ids.clone(), None).unwrap();
+    let contents: Vec<String> = items.iter().map(|i| get_content_text(i)).collect();
 
     // Should find Hello onboarding doc
     assert!(
@@ -207,9 +222,9 @@ fn scene1_search_hello_shows_onboarding_first() {
     let result = store.search("hello".to_string()).unwrap();
     assert!(!result.matches.is_empty(), "Should find matches for 'hello'");
 
-    let ids: Vec<i64> = result.matches.iter().map(|m| m.item_id).collect();
-    let items = store.fetch_by_ids(ids).unwrap();
-    let contents: Vec<String> = items.iter().map(|i| i.text_content().to_string()).collect();
+    let ids: Vec<i64> = result.matches.iter().map(|m| m.item_metadata.item_id).collect();
+    let items = store.fetch_by_ids(ids, None).unwrap();
+    let contents: Vec<String> = items.iter().map(|i| get_content_text(i)).collect();
 
     // Should include Hello onboarding doc and hello_world.py
     assert!(
@@ -240,9 +255,9 @@ fn scene1_search_hello_clip_shows_marketing_blurb() {
         "Should find matches for 'hello clip'"
     );
 
-    let ids: Vec<i64> = result.matches.iter().map(|m| m.item_id).collect();
-    let items = store.fetch_by_ids(ids).unwrap();
-    let contents: Vec<String> = items.iter().map(|i| i.text_content().to_string()).collect();
+    let ids: Vec<i64> = result.matches.iter().map(|m| m.item_metadata.item_id).collect();
+    let items = store.fetch_by_ids(ids, None).unwrap();
+    let contents: Vec<String> = items.iter().map(|i| get_content_text(i)).collect();
 
     // The marketing blurb "Hello ClipKitty!" should be a top result
     assert!(
@@ -259,15 +274,15 @@ fn scene1_search_hello_cl_ranks_clipkitty_before_hello_world_py() {
     let result = store.search("hello cl".to_string()).unwrap();
     println!("Search results for 'hello cl':");
     for (i, m) in result.matches.iter().enumerate() {
-        println!("  {}: id={}", i, m.item_id);
+        println!("  {}: id={}", i, m.item_metadata.item_id);
     }
 
-    let ids: Vec<i64> = result.matches.iter().map(|m| m.item_id).collect();
-    let items = store.fetch_by_ids(ids.clone()).unwrap();
+    let ids: Vec<i64> = result.matches.iter().map(|m| m.item_metadata.item_id).collect();
+    let items = store.fetch_by_ids(ids.clone(), None).unwrap();
 
     println!("\nContents in order:");
     for (i, item) in items.iter().enumerate() {
-        let content = item.text_content();
+        let content = get_content_text(item);
         let preview: String = content.chars().take(60).collect();
         let preview = if content.chars().count() > 60 {
             format!("{}...", preview)
@@ -280,10 +295,10 @@ fn scene1_search_hello_cl_ranks_clipkitty_before_hello_world_py() {
     // Find positions of key items
     let clipkitty_pos = items
         .iter()
-        .position(|i| i.text_content().contains("Hello ClipKitty"));
+        .position(|i| get_content_text(i).contains("Hello ClipKitty"));
     let hello_world_pos = items
         .iter()
-        .position(|i| i.text_content().contains("hello_world.py"));
+        .position(|i| get_content_text(i).contains("hello_world.py"));
 
     println!("\nPositions: ClipKitty={:?}, hello_world.py={:?}", clipkitty_pos, hello_world_pos);
 
@@ -316,9 +331,9 @@ fn scene2_search_hash_shows_hex_colors() {
 
     let result = store.search("#".to_string()).unwrap();
 
-    let ids: Vec<i64> = result.matches.iter().map(|m| m.item_id).collect();
-    let items = store.fetch_by_ids(ids).unwrap();
-    let contents: Vec<String> = items.iter().map(|i| i.text_content().to_string()).collect();
+    let ids: Vec<i64> = result.matches.iter().map(|m| m.item_metadata.item_id).collect();
+    let items = store.fetch_by_ids(ids, None).unwrap();
+    let contents: Vec<String> = items.iter().map(|i| get_content_text(i)).collect();
 
     // Should find hex color codes
     assert!(
@@ -342,9 +357,9 @@ fn scene2_search_hash_f_shows_orange_color() {
 
     let result = store.search("#f".to_string()).unwrap();
 
-    let ids: Vec<i64> = result.matches.iter().map(|m| m.item_id).collect();
-    let items = store.fetch_by_ids(ids).unwrap();
-    let contents: Vec<String> = items.iter().map(|i| i.text_content().to_string()).collect();
+    let ids: Vec<i64> = result.matches.iter().map(|m| m.item_metadata.item_id).collect();
+    let items = store.fetch_by_ids(ids, None).unwrap();
+    let contents: Vec<String> = items.iter().map(|i| get_content_text(i)).collect();
 
     // Should find colors starting with #F
     assert!(
@@ -365,9 +380,9 @@ fn scene2_search_cat_shows_cat_image() {
     let result = store.search("cat".to_string()).unwrap();
     assert!(!result.matches.is_empty(), "Should find matches for 'cat'");
 
-    let ids: Vec<i64> = result.matches.iter().map(|m| m.item_id).collect();
-    let items = store.fetch_by_ids(ids).unwrap();
-    let contents: Vec<String> = items.iter().map(|i| i.text_content().to_string()).collect();
+    let ids: Vec<i64> = result.matches.iter().map(|m| m.item_metadata.item_id).collect();
+    let items = store.fetch_by_ids(ids, None).unwrap();
+    let contents: Vec<String> = items.iter().map(|i| get_content_text(i)).collect();
 
     // Should find the cat image description
     assert!(
@@ -395,9 +410,9 @@ fn scene3_search_r_shows_return_and_riverside() {
 
     let result = store.search("r".to_string()).unwrap();
 
-    let ids: Vec<i64> = result.matches.iter().map(|m| m.item_id).collect();
-    let items = store.fetch_by_ids(ids).unwrap();
-    let contents: Vec<String> = items.iter().map(|i| i.text_content().to_string()).collect();
+    let ids: Vec<i64> = result.matches.iter().map(|m| m.item_metadata.item_id).collect();
+    let items = store.fetch_by_ids(ids, None).unwrap();
+    let contents: Vec<String> = items.iter().map(|i| get_content_text(i)).collect();
 
     // Should find items with 'r'
     assert!(
@@ -417,9 +432,9 @@ fn scene3_search_riv_shows_riverside() {
     let result = store.search("riv".to_string()).unwrap();
     assert!(!result.matches.is_empty(), "Should find matches for 'riv'");
 
-    let ids: Vec<i64> = result.matches.iter().map(|m| m.item_id).collect();
-    let items = store.fetch_by_ids(ids).unwrap();
-    let contents: Vec<String> = items.iter().map(|i| i.text_content().to_string()).collect();
+    let ids: Vec<i64> = result.matches.iter().map(|m| m.item_metadata.item_id).collect();
+    let items = store.fetch_by_ids(ids, None).unwrap();
+    let contents: Vec<String> = items.iter().map(|i| get_content_text(i)).collect();
 
     // Should find Riverside apartment notes
     assert!(
@@ -445,9 +460,9 @@ fn scene3_search_rivresid_typo_finds_riverside() {
     // Nucleo's fuzzy matching should still find it (unlike transposed letters)
     let result = store.search("riversde".to_string()).unwrap();
 
-    let ids: Vec<i64> = result.matches.iter().map(|m| m.item_id).collect();
-    let items = store.fetch_by_ids(ids).unwrap();
-    let contents: Vec<String> = items.iter().map(|i| i.text_content().to_string()).collect();
+    let ids: Vec<i64> = result.matches.iter().map(|m| m.item_metadata.item_id).collect();
+    let items = store.fetch_by_ids(ids, None).unwrap();
+    let contents: Vec<String> = items.iter().map(|i| get_content_text(i)).collect();
 
     // Fuzzy search should find the Riverside apartment notes
     // This demonstrates typo forgiveness for missing characters
@@ -468,59 +483,59 @@ fn verify_all_expected_items_exist() {
 
     // Fetch all items
     let result = store.fetch_items(None, 100).unwrap();
-    let contents: Vec<String> = result.items.iter().map(|i| i.text_content().to_string()).collect();
+    let previews: Vec<&str> = result.items.iter().map(|i| i.preview.as_str()).collect();
 
     // Verify key items from each scene exist
 
     // Scene 1: Meta Pitch
     assert!(
-        contents.iter().any(|c| c.contains("Hello ClipKitty")),
+        previews.iter().any(|c| c.contains("Hello ClipKitty")),
         "Marketing blurb missing"
     );
     assert!(
-        contents.iter().any(|c| c.contains("Hello and welcome")),
+        previews.iter().any(|c| c.contains("Hello and welcome")),
         "Onboarding doc missing"
     );
     assert!(
-        contents.iter().any(|c| c.contains("hello_world.py")),
+        previews.iter().any(|c| c.contains("hello_world.py")),
         "hello_world.py missing"
     );
 
-    // Scene 2: Colors and Images
+    // Scene 2: Colors (these are detected as colors, preview will show the color value)
     assert!(
-        contents.iter().any(|c| c == "#7C3AED"),
+        previews.iter().any(|c| *c == "#7C3AED"),
         "Purple hex color missing"
     );
     assert!(
-        contents.iter().any(|c| c == "#FF5733"),
+        previews.iter().any(|c| *c == "#FF5733"),
         "Orange hex color missing"
     );
     assert!(
-        contents.iter().any(|c| c.contains("tabby cat")),
+        previews.iter().any(|c| c.contains("tabby cat")),
         "Cat image description missing"
     );
 
     // Scene 3: Typo Forgiveness
     assert!(
-        contents.iter().any(|c| c.contains("Riverside Dr")),
+        previews.iter().any(|c| c.contains("Riverside Dr")),
         "Apartment notes missing"
     );
     assert!(
-        contents.iter().any(|c| c.contains("driver_config")),
+        previews.iter().any(|c| c.contains("driver_config")),
         "driver_config.yaml missing"
     );
 
     // Default state items
     assert!(
-        contents.iter().any(|c| c.contains("SELECT users.name")),
+        previews.iter().any(|c| c.contains("SELECT users.name")),
         "SQL query missing"
     );
     assert!(
-        contents.iter().any(|c| c.contains("sk-proj")),
+        previews.iter().any(|c| c.contains("sk-proj")),
         "API key missing"
     );
     assert!(
-        contents.iter().any(|c| c.contains("quick brown fox")),
+        previews.iter().any(|c| c.contains("quick brown fox")),
         "Pangram missing"
     );
 }
@@ -564,9 +579,9 @@ fn create_ranking_test_store(items: Vec<&str>) -> (ClipboardStore, TempDir) {
 /// Get search result contents in order
 fn search_contents(store: &ClipboardStore, query: &str) -> Vec<String> {
     let result = store.search(query.to_string()).unwrap();
-    let ids: Vec<i64> = result.matches.iter().map(|m| m.item_id).collect();
-    let items = store.fetch_by_ids(ids).unwrap();
-    items.iter().map(|i| i.text_content().to_string()).collect()
+    let ids: Vec<i64> = result.matches.iter().map(|m| m.item_metadata.item_id).collect();
+    let items = store.fetch_by_ids(ids, None).unwrap();
+    items.iter().map(|i| get_content_text(i)).collect()
 }
 
 #[test]
@@ -621,9 +636,9 @@ fn ranking_recency_breaks_ties_for_equal_matches() {
 
     // Search for "hello " - all 3 have identical Nucleo scores (140)
     let result = store.search("hello ".to_string()).unwrap();
-    let ids: Vec<i64> = result.matches.iter().map(|m| m.item_id).collect();
-    let items = store.fetch_by_ids(ids.clone()).unwrap();
-    let contents: Vec<String> = items.iter().map(|i| i.text_content().to_string()).collect();
+    let ids: Vec<i64> = result.matches.iter().map(|m| m.item_metadata.item_id).collect();
+    let items = store.fetch_by_ids(ids.clone(), None).unwrap();
+    let contents: Vec<String> = items.iter().map(|i| get_content_text(i)).collect();
 
     // All 3 items should be found
     assert_eq!(contents.len(), 3, "Should find all 3 items, got: {:?}", contents);
@@ -631,7 +646,7 @@ fn ranking_recency_breaks_ties_for_equal_matches() {
     // Verify deterministic ordering - with distinct timestamps, results should be stable
     for _ in 0..3 {
         let result2 = store.search("hello ".to_string()).unwrap();
-        let ids2: Vec<i64> = result2.matches.iter().map(|m| m.item_id).collect();
+        let ids2: Vec<i64> = result2.matches.iter().map(|m| m.item_metadata.item_id).collect();
         assert_eq!(ids, ids2, "Search ordering should be deterministic");
     }
 
@@ -931,4 +946,3 @@ goodbye friend - this is the end of the document."#;
         "Should find the document with both clusters"
     );
 }
-

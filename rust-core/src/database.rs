@@ -1,9 +1,8 @@
-//! SQLite database layer with FTS5 trigram search
+//! SQLite database layer for clipboard storage
 //!
-//! Implements the database schema and operations for clipboard storage,
-//! including the FTS5 virtual table for fast trigram-based search.
+//! Implements the database schema and operations for clipboard storage.
 
-use crate::models::{ClipboardContent, ClipboardItem};
+use crate::models::{ClipboardContent, StoredItem, ItemMetadata, ItemIcon, IconType};
 use chrono::{DateTime, TimeZone, Utc};
 use parking_lot::Mutex;
 use rusqlite::{params, Connection};
@@ -74,7 +73,9 @@ impl Database {
                 imageData BLOB,
                 linkTitle TEXT,
                 linkImageData BLOB,
-                sourceAppBundleID TEXT
+                sourceAppBundleID TEXT,
+                thumbnail BLOB,
+                colorRgba INTEGER
             )
             "#,
             [],
@@ -89,6 +90,14 @@ impl Database {
             "CREATE INDEX IF NOT EXISTS idx_items_timestamp ON items(timestamp)",
             [],
         )?;
+        conn.execute(
+            "CREATE INDEX IF NOT EXISTS idx_items_content_prefix ON items(content COLLATE NOCASE)",
+            [],
+        )?;
+
+        // Add new columns if they don't exist (migration for existing DBs)
+        let _ = conn.execute("ALTER TABLE items ADD COLUMN thumbnail BLOB", []);
+        let _ = conn.execute("ALTER TABLE items ADD COLUMN colorRgba INTEGER", []);
 
         Ok(())
     }
@@ -102,16 +111,16 @@ impl Database {
     }
 
     /// Insert a new clipboard item, returns the row ID
-    pub fn insert_item(&self, item: &ClipboardItem) -> DatabaseResult<i64> {
+    pub fn insert_item(&self, item: &StoredItem) -> DatabaseResult<i64> {
         let conn = self.conn.lock();
-        let (content, image_data, link_title, link_image_data) = item.content.to_database_fields();
+        let (content, image_data, link_title, link_image_data, color_rgba) = item.content.to_database_fields();
         let timestamp = Utc.timestamp_opt(item.timestamp_unix, 0).single().unwrap_or_else(Utc::now);
         let timestamp_str = timestamp.format("%Y-%m-%d %H:%M:%S%.f").to_string();
 
         conn.execute(
             r#"
-            INSERT INTO items (content, contentHash, timestamp, sourceApp, contentType, imageData, linkTitle, linkImageData, sourceAppBundleID)
-            VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9)
+            INSERT INTO items (content, contentHash, timestamp, sourceApp, contentType, imageData, linkTitle, linkImageData, sourceAppBundleID, thumbnail, colorRgba)
+            VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11)
             "#,
             params![
                 content,
@@ -123,6 +132,8 @@ impl Database {
                 link_title,
                 link_image_data,
                 item.source_app_bundle_id,
+                item.thumbnail,
+                color_rgba,
             ],
         )?;
 
@@ -130,13 +141,13 @@ impl Database {
     }
 
     /// Find an existing item by content hash
-    pub fn find_by_hash(&self, hash: &str) -> DatabaseResult<Option<ClipboardItem>> {
+    pub fn find_by_hash(&self, hash: &str) -> DatabaseResult<Option<StoredItem>> {
         let conn = self.conn.lock();
         let mut stmt = conn.prepare(
             "SELECT * FROM items WHERE contentHash = ?1 LIMIT 1"
         )?;
 
-        let result = stmt.query_row([hash], |row| Self::row_to_item(row));
+        let result = stmt.query_row([hash], |row| Self::row_to_stored_item(row));
 
         match result {
             Ok(item) => Ok(Some(item)),
@@ -196,11 +207,12 @@ impl Database {
     }
 
     /// Fetch items with keyset pagination (ordered by timestamp DESC)
+    /// Returns StoredItem for full data access
     pub fn fetch_items(
         &self,
         before_timestamp: Option<DateTime<Utc>>,
         limit: usize,
-    ) -> DatabaseResult<Vec<ClipboardItem>> {
+    ) -> DatabaseResult<Vec<StoredItem>> {
         let conn = self.conn.lock();
 
         let sql = if before_timestamp.is_some() {
@@ -212,18 +224,55 @@ impl Database {
         let mut stmt = conn.prepare(sql)?;
         let items = if let Some(ts) = before_timestamp {
             let ts_str = ts.format("%Y-%m-%d %H:%M:%S%.f").to_string();
-            stmt.query_map(params![ts_str, limit as i64], Self::row_to_item)?
+            stmt.query_map(params![ts_str, limit as i64], Self::row_to_stored_item)?
                 .collect::<Result<Vec<_>, _>>()?
         } else {
-            stmt.query_map(params![limit as i64], Self::row_to_item)?
+            stmt.query_map(params![limit as i64], Self::row_to_stored_item)?
                 .collect::<Result<Vec<_>, _>>()?
         };
 
         Ok(items)
     }
 
+    /// Fetch lightweight item metadata for list display
+    pub fn fetch_item_metadata(
+        &self,
+        before_timestamp: Option<DateTime<Utc>>,
+        limit: usize,
+    ) -> DatabaseResult<(Vec<ItemMetadata>, u64)> {
+        let conn = self.conn.lock();
+
+        // Get total count
+        let total_count: i64 = conn.query_row(
+            "SELECT COUNT(*) FROM items",
+            [],
+            |row| row.get(0),
+        )?;
+        let total_count = total_count as u64;
+
+        let sql = if before_timestamp.is_some() {
+            r#"SELECT id, content, contentType, timestamp, sourceApp, sourceAppBundleID, thumbnail, colorRgba, linkImageData
+               FROM items WHERE timestamp < ?1 ORDER BY timestamp DESC LIMIT ?2"#
+        } else {
+            r#"SELECT id, content, contentType, timestamp, sourceApp, sourceAppBundleID, thumbnail, colorRgba, linkImageData
+               FROM items ORDER BY timestamp DESC LIMIT ?1"#
+        };
+
+        let mut stmt = conn.prepare(sql)?;
+        let items = if let Some(ts) = before_timestamp {
+            let ts_str = ts.format("%Y-%m-%d %H:%M:%S%.f").to_string();
+            stmt.query_map(params![ts_str, limit as i64], Self::row_to_metadata)?
+                .collect::<Result<Vec<_>, _>>()?
+        } else {
+            stmt.query_map(params![limit as i64], Self::row_to_metadata)?
+                .collect::<Result<Vec<_>, _>>()?
+        };
+
+        Ok((items, total_count))
+    }
+
     /// Fetch items by IDs, preserving the order of the input IDs
-    pub fn fetch_items_by_ids(&self, ids: &[i64]) -> DatabaseResult<Vec<ClipboardItem>> {
+    pub fn fetch_items_by_ids(&self, ids: &[i64]) -> DatabaseResult<Vec<StoredItem>> {
         if ids.is_empty() {
             return Ok(Vec::new());
         }
@@ -234,12 +283,12 @@ impl Database {
 
         let mut stmt = conn.prepare(&sql)?;
         let params: Vec<rusqlite::types::Value> = ids.iter().map(|&id| id.into()).collect();
-        let items: Vec<ClipboardItem> = stmt
-            .query_map(rusqlite::params_from_iter(params), Self::row_to_item)?
+        let items: Vec<StoredItem> = stmt
+            .query_map(rusqlite::params_from_iter(params), Self::row_to_stored_item)?
             .collect::<Result<Vec<_>, _>>()?;
 
         // Re-sort to match input ID order
-        let id_to_item: std::collections::HashMap<i64, ClipboardItem> = items
+        let id_to_item: std::collections::HashMap<i64, StoredItem> = items
             .into_iter()
             .filter_map(|item| item.id.map(|id| (id, item)))
             .collect();
@@ -248,11 +297,11 @@ impl Database {
     }
 
     /// Fetch all items (for index rebuilding)
-    pub fn fetch_all_items(&self) -> DatabaseResult<Vec<ClipboardItem>> {
+    pub fn fetch_all_items(&self) -> DatabaseResult<Vec<StoredItem>> {
         let conn = self.conn.lock();
         let mut stmt = conn.prepare("SELECT * FROM items ORDER BY timestamp DESC")?;
         let items = stmt
-            .query_map([], Self::row_to_item)?
+            .query_map([], Self::row_to_stored_item)?
             .collect::<Result<Vec<_>, _>>()?;
         Ok(items)
     }
@@ -283,24 +332,30 @@ impl Database {
         Ok(ids)
     }
 
-    /// Search for short queries (<3 chars) using LIKE
-    /// Returns (id, content, timestamp_unix) tuples ordered by timestamp DESC
+    /// Search for short queries (<3 chars) using prefix matching + LIKE on recent items
+    /// Returns (id, content, timestamp_unix) tuples
+    /// Two-part search:
+    /// 1. Prefix match (fast, recency-ordered)
+    /// 2. LIKE match on last N items (catches non-prefix matches in recent items)
     pub fn search_short_query(
         &self,
         query: &str,
         limit: usize,
     ) -> DatabaseResult<Vec<(i64, String, i64)>> {
         let conn = self.conn.lock();
-        let pattern = format!("%{}%", query.replace('%', "\\%").replace('_', "\\_"));
-        let mut stmt = conn.prepare(
-            "SELECT id, content, CAST(strftime('%s', timestamp) AS INTEGER)
-             FROM items
-             WHERE content LIKE ?1 ESCAPE '\\'
-             ORDER BY timestamp DESC
-             LIMIT ?2"
+        let query_lower = query.to_lowercase();
+
+        // Part 1: Prefix match - content starts with query (case insensitive)
+        let prefix_pattern = format!("{}%", query_lower.replace('%', "\\%").replace('_', "\\_"));
+        let mut stmt_prefix = conn.prepare(
+            r#"SELECT id, content, CAST(strftime('%s', timestamp) AS INTEGER)
+               FROM items
+               WHERE LOWER(content) LIKE ?1 ESCAPE '\'
+               ORDER BY timestamp DESC
+               LIMIT ?2"#
         )?;
-        let results = stmt
-            .query_map(params![pattern, limit as i64], |row| {
+        let prefix_results: Vec<(i64, String, i64)> = stmt_prefix
+            .query_map(params![prefix_pattern, limit as i64], |row| {
                 Ok((
                     row.get::<_, i64>(0)?,
                     row.get::<_, String>(1)?,
@@ -308,6 +363,47 @@ impl Database {
                 ))
             })?
             .collect::<Result<Vec<_>, _>>()?;
+
+        // Part 2: LIKE match on last 20k items (catches substring matches in recent items)
+        let like_pattern = format!("%{}%", query_lower.replace('%', "\\%").replace('_', "\\_"));
+        let mut stmt_like = conn.prepare(
+            r#"SELECT id, content, CAST(strftime('%s', timestamp) AS INTEGER)
+               FROM (SELECT * FROM items ORDER BY timestamp DESC LIMIT 20000)
+               WHERE LOWER(content) LIKE ?1 ESCAPE '\'
+               ORDER BY timestamp DESC
+               LIMIT ?2"#
+        )?;
+        let like_results: Vec<(i64, String, i64)> = stmt_like
+            .query_map(params![like_pattern, limit as i64], |row| {
+                Ok((
+                    row.get::<_, i64>(0)?,
+                    row.get::<_, String>(1)?,
+                    row.get::<_, i64>(2)?,
+                ))
+            })?
+            .collect::<Result<Vec<_>, _>>()?;
+
+        // Merge results, preferring prefix matches, deduplicating by ID
+        let mut seen_ids = std::collections::HashSet::new();
+        let mut results = Vec::with_capacity(limit);
+
+        // Add prefix results first (they get priority)
+        for item in prefix_results {
+            if seen_ids.insert(item.0) {
+                results.push(item);
+            }
+        }
+
+        // Add LIKE results (non-prefix substring matches)
+        for item in like_results {
+            if results.len() >= limit {
+                break;
+            }
+            if seen_ids.insert(item.0) {
+                results.push(item);
+            }
+        }
+
         Ok(results)
     }
 
@@ -341,8 +437,8 @@ impl Database {
         Ok(items_to_delete)
     }
 
-    /// Convert a database row to a ClipboardItem
-    fn row_to_item(row: &rusqlite::Row) -> rusqlite::Result<ClipboardItem> {
+    /// Convert a database row to a StoredItem
+    fn row_to_stored_item(row: &rusqlite::Row) -> rusqlite::Result<StoredItem> {
         let id: i64 = row.get("id")?;
         let content: String = row.get("content")?;
         let content_hash: String = row.get("contentHash")?;
@@ -353,6 +449,8 @@ impl Database {
         let link_title: Option<String> = row.get("linkTitle")?;
         let link_image_data: Option<Vec<u8>> = row.get("linkImageData")?;
         let source_app_bundle_id: Option<String> = row.get("sourceAppBundleID")?;
+        let thumbnail: Option<Vec<u8>> = row.get("thumbnail").ok().flatten();
+        let color_rgba: Option<u32> = row.get("colorRgba").ok().flatten();
 
         // Parse timestamp
         let timestamp = chrono::NaiveDateTime::parse_from_str(&timestamp_str, "%Y-%m-%d %H:%M:%S%.f")
@@ -367,17 +465,130 @@ impl Database {
             image_data,
             link_title.as_deref(),
             link_image_data,
+            color_rgba,
         );
 
-        Ok(ClipboardItem {
+        Ok(StoredItem {
             id: Some(id),
             content: clipboard_content,
             content_hash,
             timestamp_unix: timestamp.timestamp(),
             source_app,
             source_app_bundle_id,
+            thumbnail,
+            color_rgba,
         })
     }
+
+    /// Convert a database row to lightweight ItemMetadata
+    fn row_to_metadata(row: &rusqlite::Row) -> rusqlite::Result<ItemMetadata> {
+        let id: i64 = row.get(0)?;
+        let content: String = row.get(1)?;
+        let content_type: Option<String> = row.get(2)?;
+        let timestamp_str: String = row.get(3)?;
+        let source_app: Option<String> = row.get(4)?;
+        let source_app_bundle_id: Option<String> = row.get(5)?;
+        let thumbnail: Option<Vec<u8>> = row.get(6).ok().flatten();
+        let color_rgba: Option<u32> = row.get(7).ok().flatten();
+        let link_image_data: Option<Vec<u8>> = row.get(8).ok().flatten();
+
+        // Parse timestamp
+        let timestamp = chrono::NaiveDateTime::parse_from_str(&timestamp_str, "%Y-%m-%d %H:%M:%S%.f")
+            .or_else(|_| chrono::NaiveDateTime::parse_from_str(&timestamp_str, "%Y-%m-%d %H:%M:%S"))
+            .map(|dt| Utc.from_utc_datetime(&dt))
+            .unwrap_or_else(|_| Utc::now());
+
+        let db_type = content_type.as_deref().unwrap_or("text");
+
+        // Determine icon based on content type
+        let icon = match db_type {
+            "color" => {
+                if let Some(rgba) = color_rgba {
+                    ItemIcon::ColorSwatch { rgba }
+                } else {
+                    ItemIcon::Symbol { icon_type: IconType::Color }
+                }
+            }
+            "image" => {
+                if let Some(thumb) = thumbnail {
+                    ItemIcon::Thumbnail { bytes: thumb }
+                } else {
+                    ItemIcon::Symbol { icon_type: IconType::Image }
+                }
+            }
+            "link" => {
+                // Use link preview image as thumbnail if available
+                if let Some(img) = link_image_data {
+                    ItemIcon::Thumbnail { bytes: img }
+                } else {
+                    ItemIcon::Symbol { icon_type: IconType::Link }
+                }
+            }
+            "email" => ItemIcon::Symbol { icon_type: IconType::Email },
+            "phone" => ItemIcon::Symbol { icon_type: IconType::Phone },
+            "address" => ItemIcon::Symbol { icon_type: IconType::Address },
+            "date" => ItemIcon::Symbol { icon_type: IconType::DateType },
+            "transit" => ItemIcon::Symbol { icon_type: IconType::Transit },
+            _ => ItemIcon::Symbol { icon_type: IconType::Text },
+        };
+
+        // Generate preview text (first 200 chars, normalized whitespace)
+        let preview = normalize_preview(&content, 200);
+
+        Ok(ItemMetadata {
+            item_id: id,
+            icon,
+            preview,
+            source_app,
+            source_app_bundle_id,
+            timestamp_unix: timestamp.timestamp(),
+        })
+    }
+}
+
+/// Normalize text for preview display (truncate, normalize whitespace)
+fn normalize_preview(text: &str, max_chars: usize) -> String {
+    let mut result = String::with_capacity(max_chars + 1);
+    let mut chars = text.chars().peekable();
+
+    // Skip leading whitespace
+    while chars.peek().map(|c| c.is_whitespace()).unwrap_or(false) {
+        chars.next();
+    }
+
+    let mut last_was_space = false;
+    let mut count = 0;
+
+    for ch in chars {
+        if count >= max_chars {
+            result.push('…');
+            return result;
+        }
+
+        let ch = match ch {
+            '\n' | '\t' | '\r' => ' ',
+            c => c,
+        };
+
+        if ch == ' ' {
+            if last_was_space {
+                continue;
+            }
+            last_was_space = true;
+        } else {
+            last_was_space = false;
+        }
+
+        result.push(ch);
+        count += 1;
+    }
+
+    // Trim trailing spaces
+    while result.ends_with(' ') {
+        result.pop();
+    }
+
+    result
 }
 
 // Ensure Database is thread-safe
