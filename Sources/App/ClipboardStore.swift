@@ -198,7 +198,7 @@ final class ClipboardStore {
     func fetchItem(id: Int64, searchQuery: String? = nil) async -> ClipboardItem? {
         guard let rustStore else { return nil }
         return try? await Task.detached {
-            let items = try rustStore.fetchByIds(ids: [id], searchQuery: searchQuery)
+            let items = try rustStore.fetchByIds(itemIds: [id], searchQuery: searchQuery)
             return items.first
         }.value
     }
@@ -691,7 +691,7 @@ final class ClipboardStore {
         guard let rustStore else { return }
         Task.detached { [rustStore] in
             do {
-                try rustStore.clearAll()
+                try rustStore.clear()
             } catch {
                 logError("Failed to clear: \(error)")
             }

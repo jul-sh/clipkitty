@@ -270,7 +270,7 @@ pub trait ClipboardStoreApi: Send + Sync {
     fn save_text(&self, text: String, source_app: Option<String>, source_app_bundle_id: Option<String>) -> Result<i64, ClipKittyError>;
     fn search(&self, query: String) -> Result<SearchResult, ClipKittyError>;
     fn fetch_by_ids(&self, item_ids: Vec<i64>, search_query: Option<String>) -> Result<Vec<ClipboardItem>, ClipKittyError>;
-    fn delete_item(&self, id: i64) -> Result<(), ClipKittyError>;
+    fn delete_item(&self, item_id: i64) -> Result<(), ClipKittyError>;
     fn clear(&self) -> Result<(), ClipKittyError>;
 }
 

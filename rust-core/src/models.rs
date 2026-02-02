@@ -246,6 +246,7 @@ fn generate_thumbnail(image_data: &[u8], max_size: u32) -> Option<Vec<u8>> {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::interface::LinkMetadataState;
 
     #[test]
     fn test_stored_item_text() {
