@@ -8,11 +8,13 @@
 mod content_detection;
 mod database;
 mod indexer;
+pub mod interface;
 mod link_metadata;
 mod models;
 mod search;
 mod store;
 
+pub use interface::*;
 pub use models::*;
 pub use store::*;
 

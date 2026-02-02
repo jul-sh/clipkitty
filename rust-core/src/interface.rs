@@ -1,17 +1,16 @@
 //! ClipKitty FFI Interface Definition
 //!
-//! This file documents the public interface exposed to Swift via UniFFI.
-//! It mirrors what a UDL file would define - types and method signatures only.
-//!
-//! NOTE: This is documentation only. The actual implementations use
-//! UniFFI proc-macros in their respective modules.
+//! This file defines the public interface exposed to Swift via UniFFI.
+//! It acts as the source of truth for shared types.
+
+use thiserror::Error;
 
 // ═══════════════════════════════════════════════════════════════════════════════
 // ENUMS
 // ═══════════════════════════════════════════════════════════════════════════════
 
 /// SF Symbol icon type for content categories
-/// [uniffi::Enum]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, uniffi::Enum)]
 pub enum IconType {
     Text,
     Link,
@@ -25,15 +24,21 @@ pub enum IconType {
 }
 
 /// Icon representation for list items
-/// [uniffi::Enum]
+#[derive(Debug, Clone, PartialEq, uniffi::Enum)]
 pub enum ItemIcon {
     Symbol { icon_type: IconType },
     ColorSwatch { rgba: u32 },
     Thumbnail { bytes: Vec<u8> },
 }
 
+impl Default for ItemIcon {
+    fn default() -> Self {
+        ItemIcon::Symbol { icon_type: IconType::Text }
+    }
+}
+
 /// Link metadata fetch state
-/// [uniffi::Enum]
+#[derive(Debug, Clone, PartialEq, Eq, uniffi::Enum)]
 pub enum LinkMetadataState {
     Pending,
     Loaded {
@@ -43,8 +48,38 @@ pub enum LinkMetadataState {
     Failed,
 }
 
+impl LinkMetadataState {
+    /// Convert to database fields (title, image_data)
+    /// NULL title = pending, empty title = failed, otherwise = loaded
+    pub fn to_database_fields(&self) -> (Option<String>, Option<Vec<u8>>) {
+        match self {
+            LinkMetadataState::Pending => (None, None),
+            LinkMetadataState::Failed => (Some(String::new()), None),
+            LinkMetadataState::Loaded { title, image_data } => {
+                (
+                    Some(title.clone().unwrap_or_default()),
+                    image_data.clone(),
+                )
+            }
+        }
+    }
+
+    /// Reconstruct from database fields
+    pub fn from_database(title: Option<&str>, image_data: Option<Vec<u8>>) -> Self {
+        match (title, &image_data) {
+            (None, None) => LinkMetadataState::Pending,
+            (Some(""), None) => LinkMetadataState::Failed,
+            (Some(t), img) => LinkMetadataState::Loaded {
+                title: if t.is_empty() { None } else { Some(t.to_string()) },
+                image_data: img.clone(),
+            },
+            (None, Some(_)) => LinkMetadataState::Pending,
+        }
+    }
+}
+
 /// Type-safe clipboard content representation
-/// [uniffi::Enum]
+#[derive(Debug, Clone, PartialEq, uniffi::Enum)]
 pub enum ClipboardContent {
     Text { value: String },
     Color { value: String },
@@ -57,19 +92,121 @@ pub enum ClipboardContent {
     Image { data: Vec<u8>, description: String },
 }
 
+impl ClipboardContent {
+    /// The searchable/displayable text content
+    pub fn text_content(&self) -> &str {
+        match self {
+            ClipboardContent::Text { value } => value,
+            ClipboardContent::Color { value } => value,
+            ClipboardContent::Link { url, .. } => url,
+            ClipboardContent::Email { address } => address,
+            ClipboardContent::Phone { number } => number,
+            ClipboardContent::Address { value } => value,
+            ClipboardContent::Date { value } => value,
+            ClipboardContent::Transit { value } => value,
+            ClipboardContent::Image { description, .. } => description,
+        }
+    }
+
+    /// Get the IconType for this content
+    pub fn icon_type(&self) -> IconType {
+        match self {
+            ClipboardContent::Text { .. } => IconType::Text,
+            ClipboardContent::Color { .. } => IconType::Color,
+            ClipboardContent::Link { .. } => IconType::Link,
+            ClipboardContent::Email { .. } => IconType::Email,
+            ClipboardContent::Phone { .. } => IconType::Phone,
+            ClipboardContent::Address { .. } => IconType::Address,
+            ClipboardContent::Date { .. } => IconType::DateType,
+            ClipboardContent::Transit { .. } => IconType::Transit,
+            ClipboardContent::Image { .. } => IconType::Image,
+        }
+    }
+
+    /// Database storage type string
+    pub fn database_type(&self) -> &str {
+        match self {
+            ClipboardContent::Text { .. } => "text",
+            ClipboardContent::Color { .. } => "color",
+            ClipboardContent::Link { .. } => "link",
+            ClipboardContent::Email { .. } => "email",
+            ClipboardContent::Phone { .. } => "phone",
+            ClipboardContent::Address { .. } => "address",
+            ClipboardContent::Date { .. } => "date",
+            ClipboardContent::Transit { .. } => "transit",
+            ClipboardContent::Image { .. } => "image",
+        }
+    }
+
+    /// Extract database fields: (content, image_data, link_title, link_image_data, color_rgba)
+    pub fn to_database_fields(&self) -> (String, Option<Vec<u8>>, Option<String>, Option<Vec<u8>>, Option<u32>) {
+        match self {
+            ClipboardContent::Text { value } => (value.clone(), None, None, None, None),
+            ClipboardContent::Color { value } => {
+                let rgba = crate::content_detection::parse_color_to_rgba(value);
+                (value.clone(), None, None, None, rgba)
+            }
+            ClipboardContent::Link { url, metadata_state } => {
+                let (title, image_data) = metadata_state.to_database_fields();
+                (url.clone(), None, title, image_data, None)
+            }
+            ClipboardContent::Email { address } => (address.clone(), None, None, None, None),
+            ClipboardContent::Phone { number } => (number.clone(), None, None, None, None),
+            ClipboardContent::Address { value } => (value.clone(), None, None, None, None),
+            ClipboardContent::Date { value } => (value.clone(), None, None, None, None),
+            ClipboardContent::Transit { value } => (value.clone(), None, None, None, None),
+            ClipboardContent::Image { data, description } => {
+                (description.clone(), Some(data.clone()), None, None, None)
+            }
+        }
+    }
+
+    /// Reconstruct from database row
+    pub fn from_database(
+        db_type: &str,
+        content: &str,
+        image_data: Option<Vec<u8>>,
+        link_title: Option<&str>,
+        link_image_data: Option<Vec<u8>>,
+        _color_rgba: Option<u32>,
+    ) -> Self {
+        match db_type {
+            "color" => ClipboardContent::Color { value: content.to_string() },
+            "link" => ClipboardContent::Link {
+                url: content.to_string(),
+                metadata_state: LinkMetadataState::from_database(link_title, link_image_data),
+            },
+            "image" => ClipboardContent::Image {
+                data: image_data.unwrap_or_default(),
+                description: content.to_string(),
+            },
+            "email" => ClipboardContent::Email {
+                address: content.to_string(),
+            },
+            "phone" => ClipboardContent::Phone {
+                number: content.to_string(),
+            },
+            "address" => ClipboardContent::Address { value: content.to_string() },
+            "date" => ClipboardContent::Date { value: content.to_string() },
+            "transit" => ClipboardContent::Transit { value: content.to_string() },
+            _ => ClipboardContent::Text { value: content.to_string() },
+        }
+    }
+}
+
 // ═══════════════════════════════════════════════════════════════════════════════
 // RECORDS (Structs)
 // ═══════════════════════════════════════════════════════════════════════════════
 
 /// A highlight range (start, end) for search matches
-/// [uniffi::Record]
+#[derive(Debug, Clone, PartialEq, Eq, uniffi::Record)]
 pub struct HighlightRange {
     pub start: u64,
     pub end: u64,
 }
 
 /// Match context data for search results
-/// [uniffi::Record]
+#[derive(Debug, Clone, PartialEq, Default, uniffi::Record)]
 pub struct MatchData {
     pub text: String,
     pub highlights: Vec<HighlightRange>,
@@ -77,7 +214,7 @@ pub struct MatchData {
 }
 
 /// Lightweight item metadata for list display
-/// [uniffi::Record]
+#[derive(Debug, Clone, PartialEq, uniffi::Record)]
 pub struct ItemMetadata {
     pub item_id: i64,
     pub icon: ItemIcon,
@@ -88,122 +225,65 @@ pub struct ItemMetadata {
 }
 
 /// Search match: metadata + match context
-/// [uniffi::Record]
+#[derive(Debug, Clone, uniffi::Record)]
 pub struct ItemMatch {
     pub item_metadata: ItemMetadata,
     pub match_data: MatchData,
 }
 
 /// Search result container
-/// [uniffi::Record]
+#[derive(Debug, Clone, uniffi::Record)]
 pub struct SearchResult {
     pub matches: Vec<ItemMatch>,
     pub total_count: u64,
 }
 
 /// Full clipboard item for preview pane
-/// [uniffi::Record]
+#[derive(Debug, Clone, PartialEq, uniffi::Record)]
 pub struct ClipboardItem {
     pub item_metadata: ItemMetadata,
     pub content: ClipboardContent,
     pub preview_highlights: Vec<HighlightRange>,
 }
 
-// ═══════════════════════════════════════════════════════════════════════════════
-// ERROR TYPE
-// ═══════════════════════════════════════════════════════════════════════════════
-
 /// Error type for ClipKitty operations
-/// [uniffi::Error]
+#[derive(Debug, Error, uniffi::Error)]
 pub enum ClipKittyError {
+    #[error("Database error: {0}")]
     DatabaseError(String),
+    #[error("Index error: {0}")]
     IndexError(String),
+    #[error("Store not initialized")]
     NotInitialized,
+    #[error("Invalid input: {0}")]
     InvalidInput(String),
 }
 
 // ═══════════════════════════════════════════════════════════════════════════════
-// OBJECT (ClipboardStore)
+// SERVICE INTERFACE
 // ═══════════════════════════════════════════════════════════════════════════════
 
-/// Thread-safe clipboard store with SQLite + Tantivy search
-/// [uniffi::Object]
-pub trait ClipboardStore {
-    /// Create a new store with a database at the given path
-    /// [uniffi::constructor]
-    fn new(db_path: String) -> Result<Self, ClipKittyError>
-    where
-        Self: Sized;
-
-    /// Get the database size in bytes
-    fn database_size(&self) -> i64;
-
-    /// Verify FTS integrity (always returns true with Tantivy)
-    fn verify_fts_integrity(&self) -> bool;
-
-    /// Save a text item to the database and index
-    /// Returns the new item ID, or 0 if duplicate (timestamp updated)
-    fn save_text(
-        &self,
-        text: String,
-        source_app: Option<String>,
-        source_app_bundle_id: Option<String>,
-    ) -> Result<i64, ClipKittyError>;
-
-    /// Save an image item to the database
-    /// Generates thumbnail automatically for preview
-    fn save_image(
-        &self,
-        image_data: Vec<u8>,
-        source_app: Option<String>,
-        source_app_bundle_id: Option<String>,
-    ) -> Result<i64, ClipKittyError>;
-
-    /// Update link metadata for an item
-    fn update_link_metadata(
-        &self,
-        item_id: i64,
-        title: Option<String>,
-        image_data: Option<Vec<u8>>,
-    ) -> Result<(), ClipKittyError>;
-
-    /// Update image description and re-index
-    fn update_image_description(
-        &self,
-        item_id: i64,
-        description: String,
-    ) -> Result<(), ClipKittyError>;
-
-    /// Update item timestamp to now
-    fn update_timestamp(&self, item_id: i64) -> Result<(), ClipKittyError>;
-
-    /// Delete an item by ID from both database and index
-    fn delete_item(&self, item_id: i64) -> Result<(), ClipKittyError>;
-
-    /// Clear all items from database and index
-    fn clear_all(&self) -> Result<(), ClipKittyError>;
-
-    /// Prune old items to stay under max size
-    fn prune_to_size(&self, max_bytes: i64, keep_ratio: f64) -> Result<u64, ClipKittyError>;
-
-    /// Search for items - unified API for both browse and search modes
-    /// Empty query returns recent items (browse mode)
-    /// Non-empty query returns search results with highlights
+/// The primary interface for accessing the Clipboard ClipboardStore.
+/// This matches the functionality exposed by the `ClipboardStore` object.
+#[uniffi::export]
+pub trait ClipboardStoreApi: Send + Sync {
+    fn save_text(&self, text: String, source_app: Option<String>, source_app_bundle_id: Option<String>) -> Result<i64, ClipKittyError>;
     fn search(&self, query: String) -> Result<SearchResult, ClipKittyError>;
-
-    /// Fetch full items by IDs for preview pane
-    /// Includes highlights computed from optional search query
-    fn fetch_by_ids(
-        &self,
-        ids: Vec<i64>,
-        search_query: Option<String>,
-    ) -> Result<Vec<ClipboardItem>, ClipKittyError>;
+    fn fetch_by_ids(&self, item_ids: Vec<i64>, search_query: Option<String>) -> Result<Vec<ClipboardItem>, ClipKittyError>;
+    fn delete_item(&self, id: i64) -> Result<(), ClipKittyError>;
+    fn clear(&self) -> Result<(), ClipKittyError>;
 }
 
-// ═══════════════════════════════════════════════════════════════════════════════
-// FREE FUNCTIONS
-// ═══════════════════════════════════════════════════════════════════════════════
+impl From<crate::database::DatabaseError> for ClipKittyError {
+    fn from(e: crate::database::DatabaseError) -> Self {
+        ClipKittyError::DatabaseError(e.to_string())
+    }
+}
 
-/// Check if text is a valid URL
-/// [uniffi::export]
-pub fn is_url(text: String) -> bool;
+impl From<crate::indexer::IndexerError> for ClipKittyError {
+    fn from(e: crate::indexer::IndexerError) -> Self {
+        ClipKittyError::IndexError(e.to_string())
+    }
+}
+
+

@@ -7,6 +7,7 @@
 //! - Scene 3 (0:14-0:20): Typo forgiveness "rivresid" finds "Riverside"
 
 use clipkitty_core::ClipboardStore;
+use clipkitty_core::ClipboardStoreApi;
 use tempfile::TempDir;
 
 /// Create a test store with all preview video items
@@ -176,9 +177,9 @@ fn scene1_empty_query_shows_sql_first() {
 
     // First item should be the SQL query (check preview)
     assert!(
-        matches[0].item_metadata.preview.contains("SELECT users.name"),
+        items[0].item_metadata.preview.contains("SELECT users.name"),
         "Top item should be SQL query, got: {}",
-        matches[0].item_metadata.preview
+        items[0].item_metadata.preview
     );
 
     // Check other visible items in default state

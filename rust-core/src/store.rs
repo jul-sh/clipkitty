@@ -5,39 +5,16 @@
 
 use crate::database::Database;
 use crate::indexer::Indexer;
-use crate::models::{
-    ClipboardItem, StoredItem, ItemMatch, MatchData, SearchResult,
+use crate::interface::{
+    ClipboardItem, ItemMatch, MatchData, SearchResult, ClipKittyError, ClipboardStoreApi,
 };
+use crate::models::{StoredItem};
 use crate::search::{SearchEngine, MIN_TRIGRAM_QUERY_LEN, MAX_RESULTS_SHORT, compute_preview_highlights};
-use chrono::{TimeZone, Utc};
+use chrono::Utc;
 use std::path::PathBuf;
 use std::sync::Arc;
-use thiserror::Error;
 
-/// Error type for ClipKitty operations
-#[derive(Error, Debug, uniffi::Error)]
-pub enum ClipKittyError {
-    #[error("Database error: {0}")]
-    DatabaseError(String),
-    #[error("Index error: {0}")]
-    IndexError(String),
-    #[error("Store not initialized")]
-    NotInitialized,
-    #[error("Invalid input: {0}")]
-    InvalidInput(String),
-}
 
-impl From<crate::database::DatabaseError> for ClipKittyError {
-    fn from(e: crate::database::DatabaseError) -> Self {
-        ClipKittyError::DatabaseError(e.to_string())
-    }
-}
-
-impl From<crate::indexer::IndexerError> for ClipKittyError {
-    fn from(e: crate::indexer::IndexerError) -> Self {
-        ClipKittyError::IndexError(e.to_string())
-    }
-}
 
 /// Thread-safe clipboard store with SQLite + Tantivy
 #[derive(uniffi::Object)]
@@ -210,59 +187,6 @@ impl ClipboardStore {
         true
     }
 
-    /// Save a text item to the database and index
-    /// Returns the new item ID, or 0 if duplicate (timestamp updated)
-    /// If the text is a URL, automatically fetches link metadata in background
-    pub fn save_text(
-        &self,
-        text: String,
-        source_app: Option<String>,
-        source_app_bundle_id: Option<String>,
-    ) -> Result<i64, ClipKittyError> {
-        let item = StoredItem::new_text(text.clone(), source_app, source_app_bundle_id);
-        let is_link = matches!(item.content, crate::models::ClipboardContent::Link { .. });
-
-        // Check for duplicate
-        if let Some(existing) = self.db.find_by_hash(&item.content_hash)? {
-            if let Some(id) = existing.id {
-                let now = Utc::now();
-                self.db.update_timestamp(id, now)?;
-
-                // Update index timestamp
-                self.indexer
-                    .add_document(id, existing.text_content(), now.timestamp())?;
-                self.indexer.commit()?;
-
-                return Ok(0); // Indicates duplicate
-            }
-        }
-
-        // Insert new item into database
-        let id = self.db.insert_item(&item)?;
-
-        // Index the new item
-        self.indexer
-            .add_document(id, item.text_content(), item.timestamp_unix)?;
-        self.indexer.commit()?;
-
-        // If it's a link, fetch metadata in background (async)
-        if is_link {
-            let db = Arc::clone(&self.db);
-            let url = text;
-            tokio::spawn(async move {
-                if let Some(metadata) = crate::link_metadata::fetch_metadata(&url).await {
-                    let title = metadata.title.as_deref().unwrap_or("");
-                    let _ = db.update_link_metadata(id, Some(title), metadata.image_data.as_deref());
-                } else {
-                    // Mark as failed (empty title, no image)
-                    let _ = db.update_link_metadata(id, Some(""), None);
-                }
-            });
-        }
-
-        Ok(id)
-    }
-
     /// Save an image item to the database
     /// Generates thumbnail automatically for preview
     pub fn save_image(
@@ -332,21 +256,6 @@ impl ClipboardStore {
         Ok(())
     }
 
-    /// Delete an item by ID from both database and index
-    pub fn delete_item(&self, item_id: i64) -> Result<(), ClipKittyError> {
-        self.db.delete_item(item_id)?;
-        self.indexer.delete_document(item_id)?;
-        self.indexer.commit()?;
-        Ok(())
-    }
-
-    /// Clear all items from database and index
-    pub fn clear_all(&self) -> Result<(), ClipKittyError> {
-        self.db.clear_all()?;
-        self.indexer.clear()?;
-        Ok(())
-    }
-
     /// Prune old items to stay under max size
     pub fn prune_to_size(&self, max_bytes: i64, keep_ratio: f64) -> Result<u64, ClipKittyError> {
         let deleted_ids = self.db.get_prunable_ids(max_bytes, keep_ratio)?;
@@ -361,18 +270,73 @@ impl ClipboardStore {
         let deleted = self.db.prune_to_size(max_bytes, keep_ratio)?;
         Ok(deleted as u64)
     }
+}
+
+#[uniffi::export]
+impl ClipboardStoreApi for ClipboardStore {
+    /// Save a text item to the database and index
+    /// Returns the new item ID, or 0 if duplicate (timestamp updated)
+    /// If the text is a URL, automatically fetches link metadata in background
+    fn save_text(
+        &self,
+        text: String,
+        source_app: Option<String>,
+        source_app_bundle_id: Option<String>,
+    ) -> Result<i64, ClipKittyError> {
+        let item = StoredItem::new_text(text.clone(), source_app, source_app_bundle_id);
+        let is_link = matches!(item.content, crate::interface::ClipboardContent::Link { .. });
+
+        // Check for duplicate
+        if let Some(existing) = self.db.find_by_hash(&item.content_hash)? {
+            if let Some(id) = existing.id {
+                let now = Utc::now();
+                self.db.update_timestamp(id, now)?;
+
+                // Update index timestamp
+                self.indexer
+                    .add_document(id, existing.text_content(), now.timestamp())?;
+                self.indexer.commit()?;
+
+                return Ok(0); // Indicates duplicate
+            }
+        }
+
+        // Insert new item into database
+        let id = self.db.insert_item(&item)?;
+
+        // Index the new item
+        self.indexer
+            .add_document(id, item.text_content(), item.timestamp_unix)?;
+        self.indexer.commit()?;
+
+        // If it's a link, fetch metadata in background (async)
+        if is_link {
+            let db = Arc::clone(&self.db);
+            let url = text;
+            tokio::spawn(async move {
+                if let Some(metadata) = crate::link_metadata::fetch_metadata(&url).await {
+                    let title = metadata.title.as_deref().unwrap_or("");
+                    let _ = db.update_link_metadata(id, Some(title), metadata.image_data.as_deref());
+                } else {
+                    // Mark as failed (empty title, no image)
+                    let _ = db.update_link_metadata(id, Some(""), None);
+                }
+            });
+        }
+
+        Ok(id)
+    }
 
     /// Search for items - unified API for both browse and search modes
     /// Empty query returns recent items (browse mode), non-empty returns search results
     /// Both return ItemMatch objects for consistent UI handling
-    pub fn search(&self, query: String) -> Result<SearchResult, ClipKittyError> {
+    fn search(&self, query: String) -> Result<SearchResult, ClipKittyError> {
         let trimmed = query.trim();
 
         // Empty query = browse mode (return recent items as ItemMatch with empty MatchData)
         if trimmed.is_empty() {
             let (items, total_count) = self.db.fetch_item_metadata(None, 1000)?;
 
-            // Convert ItemMetadata to ItemMatch with empty MatchData
             let matches: Vec<ItemMatch> = items
                 .into_iter()
                 .map(|metadata| ItemMatch {
@@ -381,9 +345,11 @@ impl ClipboardStore {
                 })
                 .collect();
 
-            return Ok(SearchResult { matches, total_count });
-        }
-
+            Ok(SearchResult {
+                matches,
+                total_count,
+            })
+        } else {
         // Non-empty query = search mode
         let matches = if trimmed.len() < MIN_TRIGRAM_QUERY_LEN {
             self.search_short_query(trimmed)?
@@ -393,20 +359,17 @@ impl ClipboardStore {
 
         let total_count = matches.len() as u64;
         Ok(SearchResult { matches, total_count })
+        }
     }
 
     /// Fetch full items by IDs for preview pane
     /// Includes highlights computed from optional search query
-    pub fn fetch_by_ids(
+    fn fetch_by_ids(
         &self,
-        ids: Vec<i64>,
+        item_ids: Vec<i64>,
         search_query: Option<String>,
     ) -> Result<Vec<ClipboardItem>, ClipKittyError> {
-        if ids.is_empty() {
-            return Ok(Vec::new());
-        }
-
-        let stored_items = self.db.fetch_items_by_ids(&ids)?;
+         let stored_items = self.db.fetch_items_by_ids(&item_ids)?;
 
         let items: Vec<ClipboardItem> = stored_items
             .into_iter()
@@ -423,11 +386,27 @@ impl ClipboardStore {
 
         Ok(items)
     }
+
+    /// Delete an item by ID from both database and index
+    fn delete_item(&self, item_id: i64) -> Result<(), ClipKittyError> {
+        self.db.delete_item(item_id)?;
+        self.indexer.delete_document(item_id)?;
+        self.indexer.commit()?;
+        Ok(())
+    }
+
+    /// Clear all items from database and index
+    fn clear(&self) -> Result<(), ClipKittyError> {
+        self.db.clear_all()?;
+        self.indexer.clear()?;
+        Ok(())
+    }
 }
 
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::interface::ClipboardStoreApi;
 
     #[test]
     fn test_store_creation() {
@@ -522,14 +501,14 @@ mod tests {
         assert_eq!(items.len(), 1);
 
         // Check that it's detected as a color
-        if let crate::models::ClipboardContent::Color { value } = &items[0].content {
+        if let crate::interface::ClipboardContent::Color { value } = &items[0].content {
             assert_eq!(value, "#FF5733");
         } else {
             panic!("Expected Color content");
         }
 
         // Check icon is a color swatch
-        if let crate::models::ItemIcon::ColorSwatch { rgba } = items[0].item_metadata.icon {
+        if let crate::interface::ItemIcon::ColorSwatch { rgba } = items[0].item_metadata.icon {
             assert_eq!(rgba, 0xFF5733FF);
         } else {
             panic!("Expected ColorSwatch icon");

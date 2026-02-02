@@ -193,17 +193,6 @@ final class ClipboardStore {
         displayVersion += 1
     }
 
-    /// Fetch link metadata on-demand if not already loaded
-    func fetchLinkMetadataIfNeeded(for item: ClipboardItem) {
-        // Only fetch for links with pending metadata
-        guard case .link(let url, let metadataState) = item.content,
-              case .pending = metadataState else { return }
-
-        let id = item.itemMetadata.itemId
-        Task {
-            await fetchAndUpdateLinkMetadata(for: id, url: url)
-        }
-    }
 
     /// Fetch full ClipboardItem by ID with optional search highlighting
     func fetchItem(id: Int64, searchQuery: String? = nil) async -> ClipboardItem? {
@@ -440,35 +429,6 @@ final class ClipboardStore {
         }
     }
 
-    private func fetchAndUpdateLinkMetadata(for itemId: Int64, url: String) async {
-        guard let rustStore else { return }
-
-        let metadata = await LinkMetadataFetcher.shared.fetch(url: url)
-
-        // Store in local vars for nonisolated access
-        // If metadata is nil, we still need to update DB to mark as "failed" (empty title/image)
-        let (title, imageData) = metadata?.databaseFields ?? ("", nil)
-
-        // Database write needs to escape MainActor
-        await Task.detached { [rustStore] in
-            do {
-                try rustStore.updateLinkMetadata(
-                    itemId: itemId,
-                    title: title,
-                    imageData: imageData
-                )
-            } catch {
-                logError("Failed to update link metadata: \(error)")
-            }
-        }.value
-
-        // Reload items to reflect the updated metadata (only if in browse mode)
-        await MainActor.run { [weak self] in
-            if case .browse = self?.state {
-                self?.loadItems(reset: true)
-            }
-        }
-    }
 
     private func generateAndUpdateImageDescription(itemId: Int64, imageData: Data) async {
         guard let description = await ImageDescriptionGenerator.generateDescription(from: imageData) else { return }
