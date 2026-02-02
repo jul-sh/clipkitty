@@ -15,7 +15,7 @@ use std::sync::Arc;
 use thiserror::Error;
 
 /// Error type for ClipKitty operations
-#[derive(Error, Debug)]
+#[derive(Error, Debug, uniffi::Error)]
 pub enum ClipKittyError {
     #[error("Database error: {0}")]
     DatabaseError(String),
@@ -40,37 +40,15 @@ impl From<crate::indexer::IndexerError> for ClipKittyError {
 }
 
 /// Thread-safe clipboard store with SQLite + Tantivy
+#[derive(uniffi::Object)]
 pub struct ClipboardStore {
     db: Arc<Database>,
     indexer: Arc<Indexer>,
     search_engine: SearchEngine,
 }
 
+// Internal implementation (not exported via FFI)
 impl ClipboardStore {
-    /// Create a new store with a database at the given path
-    pub fn new(db_path: String) -> Result<Self, ClipKittyError> {
-        let db = Database::open(&db_path)?;
-
-        // Create index directory next to database
-        let db_path_buf = PathBuf::from(&db_path);
-        let index_path = db_path_buf
-            .parent()
-            .map(|p| p.join("tantivy_index"))
-            .unwrap_or_else(|| PathBuf::from("tantivy_index"));
-
-        let indexer = Indexer::new(&index_path)?;
-
-        let store = Self {
-            db: Arc::new(db),
-            indexer: Arc::new(indexer),
-            search_engine: SearchEngine::new(),
-        };
-
-        store.rebuild_index_if_needed()?;
-
-        Ok(store)
-    }
-
     /// Create a store with an in-memory database (for testing)
     pub fn new_in_memory() -> Result<Self, ClipKittyError> {
         let db = Database::open_in_memory()?;
@@ -102,6 +80,124 @@ impl ClipboardStore {
         self.indexer.commit()?;
 
         Ok(())
+    }
+
+    /// Short query search using prefix matching + LIKE on recent items
+    fn search_short_query(&self, query: &str) -> Result<Vec<ItemMatch>, ClipKittyError> {
+        let candidates = self.db.search_short_query(query, MAX_RESULTS_SHORT * 5)?;
+
+        if candidates.is_empty() {
+            return Ok(Vec::new());
+        }
+
+        let query_lower = query.to_lowercase();
+        let candidates_with_prefix: Vec<_> = candidates
+            .into_iter()
+            .map(|(id, content, timestamp)| {
+                let is_prefix = content.to_lowercase().starts_with(&query_lower);
+                (id, content, timestamp, is_prefix)
+            })
+            .collect();
+
+        let fuzzy_matches = self.search_engine.score_short_query_batch(
+            candidates_with_prefix.into_iter(),
+            query,
+        );
+
+        let ids: Vec<i64> = fuzzy_matches.iter().map(|m| m.id).collect();
+        let stored_items = self.db.fetch_items_by_ids(&ids)?;
+
+        let item_map: std::collections::HashMap<i64, StoredItem> = stored_items
+            .into_iter()
+            .filter_map(|item| item.id.map(|id| (id, item)))
+            .collect();
+
+        let matches: Vec<ItemMatch> = fuzzy_matches
+            .iter()
+            .filter_map(|fm| {
+                let item = item_map.get(&fm.id)?;
+                Some(SearchEngine::create_item_match(item, fm))
+            })
+            .collect();
+
+        Ok(matches)
+    }
+
+    /// Trigram query search using Tantivy + Nucleo
+    fn search_trigram_query(&self, query: &str) -> Result<Vec<ItemMatch>, ClipKittyError> {
+        let fuzzy_matches = self.search_engine.search(&self.indexer, query)?;
+
+        if fuzzy_matches.is_empty() {
+            return Ok(Vec::new());
+        }
+
+        let ids: Vec<i64> = fuzzy_matches.iter().map(|m| m.id).collect();
+        let stored_items = self.db.fetch_items_by_ids(&ids)?;
+
+        let item_map: std::collections::HashMap<i64, StoredItem> = stored_items
+            .into_iter()
+            .filter_map(|item| item.id.map(|id| (id, item)))
+            .collect();
+
+        let matches: Vec<ItemMatch> = fuzzy_matches
+            .iter()
+            .filter_map(|fm| {
+                let item = item_map.get(&fm.id)?;
+                Some(SearchEngine::create_item_match(item, fm))
+            })
+            .collect();
+
+        Ok(matches)
+    }
+
+    /// Get a single stored item by ID (internal use)
+    fn get_stored_item(&self, item_id: i64) -> Result<Option<StoredItem>, ClipKittyError> {
+        let items = self.db.fetch_items_by_ids(&[item_id])?;
+        Ok(items.into_iter().next())
+    }
+
+    /// Set item timestamp to a specific value (for synthetic data generation)
+    #[cfg(feature = "data-gen")]
+    pub fn set_timestamp(&self, item_id: i64, timestamp_unix: i64) -> Result<(), ClipKittyError> {
+        let timestamp = Utc.timestamp_opt(timestamp_unix, 0).single().unwrap_or_else(Utc::now);
+        self.db.update_timestamp(item_id, timestamp)?;
+
+        if let Some(item) = self.get_stored_item(item_id)? {
+            self.indexer
+                .add_document(item_id, item.text_content(), timestamp_unix)?;
+            self.indexer.commit()?;
+        }
+
+        Ok(())
+    }
+}
+
+// FFI-exported methods
+#[uniffi::export]
+impl ClipboardStore {
+    /// Create a new store with a database at the given path
+    #[uniffi::constructor]
+    pub fn new(db_path: String) -> Result<Self, ClipKittyError> {
+        let db = Database::open(&db_path)?;
+
+        // Create index directory next to database
+        let db_path_buf = PathBuf::from(&db_path);
+        let index_path = db_path_buf
+            .parent()
+            .map(|p| p.join("tantivy_index"))
+            .unwrap_or_else(|| PathBuf::from("tantivy_index"));
+
+        let indexer = Indexer::new(&index_path)?;
+
+        let store = Self {
+            db: Arc::new(db),
+            indexer: Arc::new(indexer),
+            search_engine: SearchEngine::new(),
+        };
+
+        store.rebuild_index_if_needed()?;
+
+        Ok(store)
     }
 
     /// Get the database size in bytes
@@ -219,21 +315,6 @@ impl ClipboardStore {
         Ok(())
     }
 
-    /// Set item timestamp to a specific value (for synthetic data generation)
-    #[cfg(feature = "data-gen")]
-    pub fn set_timestamp(&self, item_id: i64, timestamp_unix: i64) -> Result<(), ClipKittyError> {
-        let timestamp = Utc.timestamp_opt(timestamp_unix, 0).single().unwrap_or_else(Utc::now);
-        self.db.update_timestamp(item_id, timestamp)?;
-
-        if let Some(item) = self.get_stored_item(item_id)? {
-            self.indexer
-                .add_document(item_id, item.text_content(), timestamp_unix)?;
-            self.indexer.commit()?;
-        }
-
-        Ok(())
-    }
-
     /// Delete an item by ID from both database and index
     pub fn delete_item(&self, item_id: i64) -> Result<(), ClipKittyError> {
         self.db.delete_item(item_id)?;
@@ -303,79 +384,6 @@ impl ClipboardStore {
         Ok(SearchResult { matches, total_count })
     }
 
-    /// Short query search using prefix matching + LIKE on recent items
-    fn search_short_query(&self, query: &str) -> Result<Vec<ItemMatch>, ClipKittyError> {
-        // Get candidates from database (prefix matches + LIKE matches on recent items)
-        let candidates = self.db.search_short_query(query, MAX_RESULTS_SHORT * 5)?;
-
-        if candidates.is_empty() {
-            return Ok(Vec::new());
-        }
-
-        // Determine which are prefix matches
-        let query_lower = query.to_lowercase();
-        let candidates_with_prefix: Vec<_> = candidates
-            .into_iter()
-            .map(|(id, content, timestamp)| {
-                let is_prefix = content.to_lowercase().starts_with(&query_lower);
-                (id, content, timestamp, is_prefix)
-            })
-            .collect();
-
-        // Score and rank using search engine
-        let fuzzy_matches = self.search_engine.score_short_query_batch(
-            candidates_with_prefix.into_iter(),
-            query,
-        );
-
-        // Fetch full items and create ItemMatches
-        let ids: Vec<i64> = fuzzy_matches.iter().map(|m| m.id).collect();
-        let stored_items = self.db.fetch_items_by_ids(&ids)?;
-
-        let item_map: std::collections::HashMap<i64, StoredItem> = stored_items
-            .into_iter()
-            .filter_map(|item| item.id.map(|id| (id, item)))
-            .collect();
-
-        let matches: Vec<ItemMatch> = fuzzy_matches
-            .iter()
-            .filter_map(|fm| {
-                let item = item_map.get(&fm.id)?;
-                Some(SearchEngine::create_item_match(item, fm))
-            })
-            .collect();
-
-        Ok(matches)
-    }
-
-    /// Trigram query search using Tantivy + Nucleo
-    fn search_trigram_query(&self, query: &str) -> Result<Vec<ItemMatch>, ClipKittyError> {
-        let fuzzy_matches = self.search_engine.search(&self.indexer, query)?;
-
-        if fuzzy_matches.is_empty() {
-            return Ok(Vec::new());
-        }
-
-        // Fetch full items and create ItemMatches
-        let ids: Vec<i64> = fuzzy_matches.iter().map(|m| m.id).collect();
-        let stored_items = self.db.fetch_items_by_ids(&ids)?;
-
-        let item_map: std::collections::HashMap<i64, StoredItem> = stored_items
-            .into_iter()
-            .filter_map(|item| item.id.map(|id| (id, item)))
-            .collect();
-
-        let matches: Vec<ItemMatch> = fuzzy_matches
-            .iter()
-            .filter_map(|fm| {
-                let item = item_map.get(&fm.id)?;
-                Some(SearchEngine::create_item_match(item, fm))
-            })
-            .collect();
-
-        Ok(matches)
-    }
-
     /// Fetch full items by IDs for preview pane
     /// Includes highlights computed from optional search query
     pub fn fetch_by_ids(
@@ -404,17 +412,7 @@ impl ClipboardStore {
 
         Ok(items)
     }
-
-    /// Get a single stored item by ID (internal use)
-    fn get_stored_item(&self, item_id: i64) -> Result<Option<StoredItem>, ClipKittyError> {
-        let items = self.db.fetch_items_by_ids(&[item_id])?;
-        Ok(items.into_iter().next())
-    }
 }
-
-// Implement Send + Sync for UniFFI
-unsafe impl Send for ClipboardStore {}
-unsafe impl Sync for ClipboardStore {}
 
 #[cfg(test)]
 mod tests {

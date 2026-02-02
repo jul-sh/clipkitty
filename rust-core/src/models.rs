@@ -1,6 +1,7 @@
 //! Core data models for ClipKitty
 //!
-//! These models are designed for UniFFI export to Swift.
+//! Types with uniffi derives are automatically exported to Swift.
+//! No need to duplicate definitions in the UDL file.
 
 use std::collections::hash_map::DefaultHasher;
 use std::hash::{Hash, Hasher};
@@ -10,7 +11,7 @@ use std::hash::{Hash, Hasher};
 // ─────────────────────────────────────────────────────────────────────────────
 
 /// SF Symbol icon type for content categories
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, uniffi::Enum)]
 pub enum IconType {
     Text,
     Link,
@@ -24,13 +25,10 @@ pub enum IconType {
 }
 
 /// Icon representation - can be an SF Symbol, a color swatch, or a thumbnail
-#[derive(Debug, Clone, PartialEq)]
+#[derive(Debug, Clone, PartialEq, uniffi::Enum)]
 pub enum ItemIcon {
-    /// SF Symbol icon
     Symbol { icon_type: IconType },
-    /// Color swatch (RGBA as u32: 0xRRGGBBAA)
     ColorSwatch { rgba: u32 },
-    /// Thumbnail image bytes (small preview for images)
     Thumbnail { bytes: Vec<u8> },
 }
 
@@ -45,16 +43,13 @@ impl Default for ItemIcon {
 // ─────────────────────────────────────────────────────────────────────────────
 
 /// Link metadata fetch state
-#[derive(Debug, Clone, PartialEq, Eq)]
+#[derive(Debug, Clone, PartialEq, Eq, uniffi::Enum)]
 pub enum LinkMetadataState {
-    /// Metadata not yet fetched
     Pending,
-    /// Metadata successfully fetched
     Loaded {
         title: Option<String>,
         image_data: Option<Vec<u8>>,
     },
-    /// Metadata fetch failed
     Failed,
 }
 
@@ -89,7 +84,7 @@ impl LinkMetadataState {
 }
 
 /// Type-safe content representation
-#[derive(Debug, Clone, PartialEq)]
+#[derive(Debug, Clone, PartialEq, uniffi::Enum)]
 pub enum ClipboardContent {
     Text { value: String },
     Color { value: String },
@@ -215,14 +210,14 @@ impl ClipboardContent {
 // ─────────────────────────────────────────────────────────────────────────────
 
 /// A highlight range (start, end) in the text
-#[derive(Debug, Clone, PartialEq, Eq)]
+#[derive(Debug, Clone, PartialEq, Eq, uniffi::Record)]
 pub struct HighlightRange {
     pub start: u64,
     pub end: u64,
 }
 
 /// Match context data - the text snippet, highlights, and line info
-#[derive(Debug, Clone, PartialEq, Default)]
+#[derive(Debug, Clone, PartialEq, Default, uniffi::Record)]
 pub struct MatchData {
     pub text: String,
     pub highlights: Vec<HighlightRange>,
@@ -230,7 +225,7 @@ pub struct MatchData {
 }
 
 /// Lightweight item metadata for list display
-#[derive(Debug, Clone, PartialEq)]
+#[derive(Debug, Clone, PartialEq, uniffi::Record)]
 pub struct ItemMetadata {
     pub item_id: i64,
     pub icon: ItemIcon,
@@ -241,7 +236,7 @@ pub struct ItemMetadata {
 }
 
 /// Search match: metadata + match context
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone, uniffi::Record)]
 pub struct ItemMatch {
     pub item_metadata: ItemMetadata,
     pub match_data: MatchData,
@@ -252,7 +247,7 @@ pub struct ItemMatch {
 // ─────────────────────────────────────────────────────────────────────────────
 
 /// Initial fetch result (no search query) - just metadata for display
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone, uniffi::Record)]
 pub struct FetchResults {
     pub items: Vec<ItemMetadata>,
     pub total_count: u64,
@@ -260,14 +255,14 @@ pub struct FetchResults {
 }
 
 /// Search result with matches (metadata + match highlights)
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone, uniffi::Record)]
 pub struct SearchResult {
     pub matches: Vec<ItemMatch>,
     pub total_count: u64,
 }
 
 /// Full clipboard item for preview pane
-#[derive(Debug, Clone, PartialEq)]
+#[derive(Debug, Clone, PartialEq, uniffi::Record)]
 pub struct ClipboardItem {
     pub item_metadata: ItemMetadata,
     pub content: ClipboardContent,
