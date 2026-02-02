@@ -24,13 +24,12 @@ struct ContentView: View {
     @State private var selectedItem: ClipboardItem?
     @State private var searchText: String = ""
     @State private var didApplyInitialSearch = false
-    @State private var showSearchSpinner: Bool = false
     @State private var lastItemsSignature: [Int64] = []  // Track when items change to suppress animation
     @FocusState private var isSearchFocused: Bool
 
     private var listItems: [ItemMatch] {
         switch store.state {
-        case .browse(let items), .search(_, let items, _):
+        case .browse(let items), .search(_, let items):
             return items
         default:
             return []
@@ -112,31 +111,11 @@ struct ContentView: View {
             }
             focusSearchField()
         }
-        .onChange(of: store.state) { _, newState in
+        .onChange(of: store.state) { _, _ in
             // Validate selection - ensure selected item still exists in results
             if let selectedItemId, !listItems.contains(where: { $0.itemMetadata.itemId == selectedItemId }) {
                 self.selectedItemId = listItems.first?.itemMetadata.itemId
                 self.selectedItem = nil
-            }
-
-            // Show spinner only after 200ms delay to avoid flicker on fast searches
-            let isSearching: Bool = {
-                if case .search(_, _, let isSearching) = newState {
-                    return isSearching
-                }
-                return false
-            }()
-
-            if isSearching {
-                Task {
-                    try? await Task.sleep(for: .milliseconds(200))
-                    // Only show if still searching
-                    if case .search(_, _, let stillSearching) = store.state, stillSearching {
-                        showSearchSpinner = true
-                    }
-                }
-            } else {
-                showSearchSpinner = false
             }
         }
         .onChange(of: searchText) { _, newValue in
@@ -225,12 +204,6 @@ struct ContentView: View {
                 .onKeyPress(characters: .decimalDigits, phases: .down) { keyPress in
                     handleNumberKey(keyPress)
                 }
-
-            if showSearchSpinner {
-                ProgressView()
-                    .scaleEffect(0.5)
-                    .frame(width: 16, height: 16)
-            }
         }
         .padding(.horizontal, 17)
         .padding(.vertical, 13)
