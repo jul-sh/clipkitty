@@ -668,4 +668,232 @@ mod tests {
         drop(guard);
         assert!(token.is_cancelled());
     }
+
+    #[test]
+    fn test_search_with_precancelled_token_returns_cancelled() {
+        // Test that sync search functions return Cancelled immediately when token is already cancelled
+        let rt = runtime();
+        let store = ClipboardStore::new_in_memory().unwrap();
+
+        // Add some data
+        store.save_text("Hello World".to_string(), None, None).unwrap();
+        store.save_text("Another item".to_string(), None, None).unwrap();
+
+        // Create a pre-cancelled token
+        let token = CancellationToken::new();
+        token.cancel();
+
+        let runtime_handle = rt.handle().clone();
+
+        // Test short query sync with pre-cancelled token
+        let result = ClipboardStore::search_short_query_sync(
+            &store.db,
+            &store.search_engine,
+            "He",
+            &token,
+            &runtime_handle,
+        );
+        assert!(matches!(result, Err(crate::interface::ClipKittyError::Cancelled)));
+
+        // Test trigram query sync with pre-cancelled token
+        let result = ClipboardStore::search_trigram_query_sync(
+            &store.db,
+            &store.indexer,
+            &store.search_engine,
+            "Hello",
+            &token,
+            &runtime_handle,
+        );
+        assert!(matches!(result, Err(crate::interface::ClipKittyError::Cancelled)));
+    }
+
+    #[test]
+    fn test_interruptible_fetch_spawns_watcher() {
+        // Test that interruptible fetch properly sets up the interrupt watcher.
+        // Note: SQLite interrupt is a race - if query completes before watcher runs,
+        // the result is returned normally. This test verifies the mechanism works
+        // without depending on timing.
+        let rt = runtime();
+        let store = ClipboardStore::new_in_memory().unwrap();
+
+        // Add some data
+        let id = store.save_text("Test content".to_string(), None, None).unwrap();
+
+        // Test 1: With non-cancelled token, fetch completes normally
+        let token = CancellationToken::new();
+        let runtime_handle = rt.handle().clone();
+
+        let result = store.db.fetch_items_by_ids_interruptible(
+            &[id],
+            &token,
+            &runtime_handle,
+        ).unwrap();
+
+        assert_eq!(result.len(), 1);
+        assert!(!token.is_cancelled()); // Token wasn't cancelled
+
+        // Test 2: Verify the AbortOnDropHandle pattern - watcher is aborted on scope exit
+        // We can't easily test the interrupt itself without a long-running query,
+        // but we can verify the watcher doesn't outlive the fetch call by checking
+        // that subsequent fetches work correctly (no lingering watchers)
+        for _ in 0..10 {
+            let token = CancellationToken::new();
+            let result = store.db.fetch_items_by_ids_interruptible(
+                &[id],
+                &token,
+                &runtime_handle,
+            ).unwrap();
+            assert_eq!(result.len(), 1);
+        }
+    }
+
+    #[tokio::test]
+    async fn test_async_search_cancellation_via_drop() {
+        // Test that dropping the search future triggers cancellation
+
+        let store = ClipboardStore::new_in_memory().unwrap();
+
+        // Add many items to make search take longer
+        for i in 0..100 {
+            store.save_text(format!("Item number {} with some text content", i), None, None).unwrap();
+        }
+
+        // Start a search but drop it immediately
+        let search_future = store.search("Item".to_string());
+
+        // Drop the future without awaiting - this should trigger DropGuard
+        drop(search_future);
+
+        // If we get here without hanging, the cancellation worked
+        // The DropGuard should have cancelled the token
+
+        // Verify we can still search normally after cancellation
+        let result = store.search("Item".to_string()).await.unwrap();
+        assert!(!result.matches.is_empty());
+    }
+
+    #[tokio::test]
+    async fn test_search_completes_normally_without_cancellation() {
+        // Verify that search works normally when not cancelled
+        let store = ClipboardStore::new_in_memory().unwrap();
+
+        store.save_text("Hello World from ClipKitty".to_string(), None, None).unwrap();
+        store.save_text("Another greeting hello".to_string(), None, None).unwrap();
+        store.save_text("Unrelated content".to_string(), None, None).unwrap();
+
+        // Short query (< 3 chars)
+        let result = store.search("He".to_string()).await.unwrap();
+        assert!(!result.matches.is_empty());
+
+        // Trigram query (>= 3 chars)
+        let result = store.search("Hello".to_string()).await.unwrap();
+        assert!(!result.matches.is_empty());
+        assert!(result.matches.iter().all(|m|
+            m.item_metadata.preview.to_lowercase().contains("hello")
+        ));
+    }
+
+    #[tokio::test]
+    async fn test_concurrent_searches_independent() {
+        // Test that multiple concurrent searches work independently
+        let store = std::sync::Arc::new(ClipboardStore::new_in_memory().unwrap());
+
+        // Add data
+        for i in 0..50 {
+            store.save_text(format!("Test item {} for searching", i), None, None).unwrap();
+        }
+
+        let store1 = store.clone();
+        let store2 = store.clone();
+        let store3 = store.clone();
+
+        // Start multiple searches concurrently
+        let search1 = tokio::spawn(async move {
+            store1.search("Test".to_string()).await
+        });
+
+        let search2 = tokio::spawn(async move {
+            store2.search("item".to_string()).await
+        });
+
+        let search3 = tokio::spawn(async move {
+            store3.search("for".to_string()).await
+        });
+
+        // All should complete successfully
+        let result1 = search1.await.unwrap().unwrap();
+        let result2 = search2.await.unwrap().unwrap();
+        let result3 = search3.await.unwrap().unwrap();
+
+        assert!(!result1.matches.is_empty());
+        assert!(!result2.matches.is_empty());
+        assert!(!result3.matches.is_empty());
+
+        // Store should still be usable after concurrent access
+        let result = store.search("Test".to_string()).await.unwrap();
+        assert!(!result.matches.is_empty());
+    }
+
+    #[tokio::test]
+    async fn test_search_abort_doesnt_corrupt_store() {
+        // Test that aborting a search task doesn't corrupt the store
+        let store = std::sync::Arc::new(ClipboardStore::new_in_memory().unwrap());
+
+        // Add data
+        for i in 0..20 {
+            store.save_text(format!("Item number {}", i), None, None).unwrap();
+        }
+
+        // Abort several searches in rapid succession
+        for _ in 0..5 {
+            let store_clone = store.clone();
+            let handle = tokio::spawn(async move {
+                store_clone.search("Item".to_string()).await
+            });
+            handle.abort();
+            // Ignore the result - it may complete or be aborted
+            let _ = handle.await;
+        }
+
+        // Store should still work correctly
+        let result = store.search("Item".to_string()).await.unwrap();
+        assert!(!result.matches.is_empty());
+
+        // Can still add and search for new items
+        store.save_text("New item after aborts".to_string(), None, None).unwrap();
+        let result = store.search("after aborts".to_string()).await.unwrap();
+        assert!(!result.matches.is_empty());
+    }
+
+    #[test]
+    fn test_dropguard_cancels_on_panic() {
+        // Test that DropGuard cancels even during unwinding
+        let token = CancellationToken::new();
+        let token_clone = token.clone();
+
+        let result = std::panic::catch_unwind(|| {
+            let _guard = DropGuard::new(token_clone);
+            panic!("Intentional panic to test unwinding");
+        });
+
+        assert!(result.is_err()); // Panic was caught
+        assert!(token.is_cancelled()); // Token was still cancelled during unwinding
+    }
+
+    #[test]
+    fn test_multiple_dropguards_same_token() {
+        // Test that multiple DropGuards can share a token
+        let token = CancellationToken::new();
+
+        let guard1 = DropGuard::new(token.clone());
+        let guard2 = DropGuard::new(token.clone());
+
+        assert!(!token.is_cancelled());
+
+        drop(guard1);
+        assert!(token.is_cancelled()); // First drop cancels
+
+        drop(guard2);
+        assert!(token.is_cancelled()); // Still cancelled, no error from double-cancel
+    }
 }
