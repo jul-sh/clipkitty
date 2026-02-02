@@ -165,8 +165,8 @@ fn get_content_text(item: &clipkitty_core::ClipboardItem) -> String {
 // SCENE 1: Meta Pitch Tests (0:00 - 0:08)
 // ============================================================
 
-#[test]
-fn scene1_empty_query_shows_sql_first() {
+#[tokio::test]
+async fn scene1_empty_query_shows_sql_first() {
     let (store, _temp) = create_preview_video_store();
 
     // With empty query, fetch items by timestamp (newest first)
@@ -198,8 +198,8 @@ fn scene1_empty_query_shows_sql_first() {
     );
 }
 
-#[test]
-fn scene1_search_h_shows_hello_content() {
+#[tokio::test]
+async fn scene1_search_h_shows_hello_content() {
     let (store, _temp) = create_preview_video_store();
 
     let result = store.search("h".to_string()).unwrap();
@@ -216,8 +216,8 @@ fn scene1_search_h_shows_hello_content() {
     );
 }
 
-#[test]
-fn scene1_search_hello_shows_onboarding_first() {
+#[tokio::test]
+async fn scene1_search_hello_shows_onboarding_first() {
     let (store, _temp) = create_preview_video_store();
 
     let result = store.search("hello".to_string()).unwrap();
@@ -246,8 +246,8 @@ fn scene1_search_hello_shows_onboarding_first() {
     );
 }
 
-#[test]
-fn scene1_search_hello_clip_shows_marketing_blurb() {
+#[tokio::test]
+async fn scene1_search_hello_clip_shows_marketing_blurb() {
     let (store, _temp) = create_preview_video_store();
 
     let result = store.search("hello clip".to_string()).unwrap();
@@ -268,8 +268,8 @@ fn scene1_search_hello_clip_shows_marketing_blurb() {
     );
 }
 
-#[test]
-fn scene1_search_hello_cl_ranks_clipkitty_before_hello_world_py() {
+#[tokio::test]
+async fn scene1_search_hello_cl_ranks_clipkitty_before_hello_world_py() {
     let (store, _temp) = create_preview_video_store();
 
     let result = store.search("hello cl".to_string()).unwrap();
@@ -326,8 +326,8 @@ fn scene1_search_hello_cl_ranks_clipkitty_before_hello_world_py() {
 // SCENE 2: Color and Image Tests (0:08 - 0:14)
 // ============================================================
 
-#[test]
-fn scene2_search_hash_shows_hex_colors() {
+#[tokio::test]
+async fn scene2_search_hash_shows_hex_colors() {
     let (store, _temp) = create_preview_video_store();
 
     let result = store.search("#".to_string()).unwrap();
@@ -352,8 +352,8 @@ fn scene2_search_hash_shows_hex_colors() {
     );
 }
 
-#[test]
-fn scene2_search_hash_f_shows_orange_color() {
+#[tokio::test]
+async fn scene2_search_hash_f_shows_orange_color() {
     let (store, _temp) = create_preview_video_store();
 
     let result = store.search("#f".to_string()).unwrap();
@@ -374,8 +374,8 @@ fn scene2_search_hash_f_shows_orange_color() {
     );
 }
 
-#[test]
-fn scene2_search_cat_shows_cat_image() {
+#[tokio::test]
+async fn scene2_search_cat_shows_cat_image() {
     let (store, _temp) = create_preview_video_store();
 
     let result = store.search("cat".to_string()).unwrap();
@@ -405,8 +405,8 @@ fn scene2_search_cat_shows_cat_image() {
 // SCENE 3: Typo Forgiveness Tests (0:14 - 0:20)
 // ============================================================
 
-#[test]
-fn scene3_search_r_shows_return_and_riverside() {
+#[tokio::test]
+async fn scene3_search_r_shows_return_and_riverside() {
     let (store, _temp) = create_preview_video_store();
 
     let result = store.search("r".to_string()).unwrap();
@@ -426,8 +426,8 @@ fn scene3_search_r_shows_return_and_riverside() {
     );
 }
 
-#[test]
-fn scene3_search_riv_shows_riverside() {
+#[tokio::test]
+async fn scene3_search_riv_shows_riverside() {
     let (store, _temp) = create_preview_video_store();
 
     let result = store.search("riv".to_string()).unwrap();
@@ -453,8 +453,8 @@ fn scene3_search_riv_shows_riverside() {
     );
 }
 
-#[test]
-fn scene3_search_rivresid_typo_finds_riverside() {
+#[tokio::test]
+async fn scene3_search_rivresid_typo_finds_riverside() {
     let (store, _temp) = create_preview_video_store();
 
     // "riversde" is a typo - missing 'i' from "Riverside"
@@ -478,8 +478,8 @@ fn scene3_search_rivresid_typo_finds_riverside() {
 // Content Verification Tests
 // ============================================================
 
-#[test]
-fn verify_all_expected_items_exist() {
+#[tokio::test]
+async fn verify_all_expected_items_exist() {
     let (store, _temp) = create_preview_video_store();
 
     // Fetch all items
@@ -541,8 +541,8 @@ fn verify_all_expected_items_exist() {
     );
 }
 
-#[test]
-fn verify_item_count() {
+#[tokio::test]
+async fn verify_item_count() {
     let (store, _temp) = create_preview_video_store();
 
     let result = store.search("".to_string()).unwrap();
@@ -585,8 +585,8 @@ fn search_contents(store: &ClipboardStore, query: &str) -> Vec<String> {
     items.iter().map(|i| get_content_text(i)).collect()
 }
 
-#[test]
-fn ranking_contiguous_beats_scattered() {
+#[tokio::test]
+async fn ranking_contiguous_beats_scattered() {
     // Items added oldest to newest
     // Using "help low" which scatters "hello" as hel-lo vs contiguous "hello"
     let (store, _temp) = create_ranking_test_store(vec![
@@ -605,8 +605,8 @@ fn ranking_contiguous_beats_scattered() {
     );
 }
 
-#[test]
-fn ranking_recency_breaks_ties_for_equal_matches() {
+#[tokio::test]
+async fn ranking_recency_breaks_ties_for_equal_matches() {
     // This test verifies that timestamp is used as a tiebreaker for identical Nucleo scores.
     // We use content that produces identical Nucleo scores: "hello world one/two/three"
     // all score 140 for query "hello ".
@@ -670,8 +670,8 @@ fn ranking_recency_breaks_ties_for_equal_matches() {
     );
 }
 
-#[test]
-fn ranking_word_start_beats_mid_word() {
+#[tokio::test]
+async fn ranking_word_start_beats_mid_word() {
     let (store, _temp) = create_ranking_test_store(vec![
         "the curl command line tool",  // url is mid-word in 'curl', older
         "urlParser.parse(input)",       // url is at word start, newer
@@ -688,8 +688,8 @@ fn ranking_word_start_beats_mid_word() {
     );
 }
 
-#[test]
-fn ranking_partial_match_excluded_when_atoms_missing() {
+#[tokio::test]
+async fn ranking_partial_match_excluded_when_atoms_missing() {
     // "hello cl" requires both "hello" and "cl" to match
     let (store, _temp) = create_ranking_test_store(vec![
         "hello_world.py",     // has "hello" but NO 'c' at all
@@ -717,8 +717,8 @@ fn ranking_partial_match_excluded_when_atoms_missing() {
     }
 }
 
-#[test]
-fn ranking_trailing_space_boosts_word_boundary() {
+#[tokio::test]
+async fn ranking_trailing_space_boosts_word_boundary() {
     // "hello " (with trailing space) should prefer content with "hello " (hello followed by space)
     let (store, _temp) = create_ranking_test_store(vec![
         "def hello(name: str)",        // "hello(" - no space after, older
@@ -740,8 +740,8 @@ fn ranking_trailing_space_boosts_word_boundary() {
 // Proximity/Scatter Rejection Tests
 // ============================================================
 
-#[test]
-fn scattered_match_should_not_appear() {
+#[tokio::test]
+async fn scattered_match_should_not_appear() {
     // This test demonstrates the problem: searching for "hello how are you doing today y"
     // matches a long technical document where all characters exist but are completely
     // scattered with no proximity to each other.
@@ -902,8 +902,8 @@ If you are using a standard tokenizer (split on whitespace), the `build_trigram_
     );
 }
 
-#[test]
-fn dense_clusters_with_gap_should_match() {
+#[tokio::test]
+async fn dense_clusters_with_gap_should_match() {
     // This test verifies that documents with dense match clusters separated by gaps
     // SHOULD still match. This is a valid use case we must preserve.
     //
