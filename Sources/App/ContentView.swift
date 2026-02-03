@@ -33,14 +33,26 @@ struct ContentView: View {
 
     private var itemIds: [Int64] {
         switch store.state {
-        case .browse(let items):
+        case .browse(let items, _):
             return items.map { $0.itemId }
         case .searchLoading(_, let fallbackResults):
             return fallbackResults.map { $0.itemMetadata.itemId }
-        case .searchResults(_, let results):
+        case .searchResults(_, let results, _):
             return results.map { $0.itemMetadata.itemId }
         default:
             return []
+        }
+    }
+
+    /// The first item from search results (avoids separate fetch)
+    private var stateFirstItem: ClipboardItem? {
+        switch store.state {
+        case .browse(_, let firstItem):
+            return firstItem
+        case .searchResults(_, _, let firstItem):
+            return firstItem
+        default:
+            return nil
         }
     }
 
@@ -97,10 +109,15 @@ struct ContentView: View {
             // Select first item if nothing selected
             if selectedItemId == nil, let firstId = firstItemId {
                 selectedItemId = firstId
-                // Fetch the item - onChange won't fire for initial value
-                Task {
-                    let query = searchText.isEmpty ? nil : searchText
-                    selectedItem = await store.fetchItem(id: firstId, searchQuery: query)
+                // Use first item from state if available (avoids extra fetch)
+                if let firstItem = stateFirstItem, firstItem.itemMetadata.itemId == firstId {
+                    selectedItem = firstItem
+                } else {
+                    // Fallback: fetch the item - onChange won't fire for initial value
+                    Task {
+                        let query = searchText.isEmpty ? nil : searchText
+                        selectedItem = await store.fetchItem(id: firstId, searchQuery: query)
+                    }
                 }
             }
             // Initialize items signature for animation tracking
@@ -118,11 +135,16 @@ struct ContentView: View {
             // Select first item whenever display resets (re-open)
             let firstId = firstItemId
             selectedItemId = firstId
-            selectedItem = nil
-            // Fetch the first item
-            if let firstId {
-                Task {
-                    selectedItem = await store.fetchItem(id: firstId, searchQuery: nil)
+            // Use first item from state if available (avoids extra fetch)
+            if let firstId, let firstItem = stateFirstItem, firstItem.itemMetadata.itemId == firstId {
+                selectedItem = firstItem
+            } else {
+                selectedItem = nil
+                // Fallback: fetch the first item
+                if let firstId {
+                    Task {
+                        selectedItem = await store.fetchItem(id: firstId, searchQuery: nil)
+                    }
                 }
             }
             focusSearchField()
@@ -132,6 +154,14 @@ struct ContentView: View {
             if let selectedItemId, !itemIds.contains(selectedItemId) {
                 self.selectedItemId = firstItemId
                 self.selectedItem = nil
+            }
+
+            // If first item is available from state and matches selection, use it
+            if let firstItem = stateFirstItem,
+               let selectedId = selectedItemId,
+               firstItem.itemMetadata.itemId == selectedId,
+               self.selectedItem == nil {
+                self.selectedItem = firstItem
             }
 
             // Show spinner after 150ms if still in searchLoading state
@@ -185,10 +215,13 @@ struct ContentView: View {
                 self.selectedItemId = firstItemId
                 return
             }
-            // Only reset selection if the item is no longer in the list
-            // Don't reset just because position changed (avoids flash during search)
-            if !newOrder.contains(selectedItemId) {
+            // Reset selection to first if the selected item's position changed
+            // This ensures search results always start from the first match
+            let oldIndex = oldOrder.firstIndex(of: selectedItemId)
+            let newIndex = newOrder.firstIndex(of: selectedItemId)
+            if oldIndex != newIndex {
                 self.selectedItemId = firstItemId
+                self.selectedItem = nil
             }
         }
     }
@@ -333,12 +366,12 @@ struct ContentView: View {
     /// Unified row data for consistent ForEach identity across state transitions
     private var displayRows: [(metadata: ItemMetadata, matchData: MatchData?)] {
         switch store.state {
-        case .browse(let items):
+        case .browse(let items, _):
             return items.map { ($0, nil) }
         case .searchLoading(_, let fallbackResults):
             // Preserve matchData from previous search to prevent text flash
             return fallbackResults.map { ($0.itemMetadata, $0.matchData) }
-        case .searchResults(_, let results):
+        case .searchResults(_, let results, _):
             return results.map { ($0.itemMetadata, $0.matchData) }
         default:
             return []
@@ -872,16 +905,14 @@ struct HighlightedTextView: NSViewRepresentable {
         let font = NSFont(name: FontManager.sansSerif, size: 15) ?? NSFont.systemFont(ofSize: 15)
         let textColor: NSColor = isSelected ? .white : .labelColor
 
-        if highlights.isEmpty {
-            field.stringValue = text
-            field.font = font
-            field.textColor = textColor
-        } else {
-            // Apply Rust-computed highlights
-            let mutable = NSMutableAttributedString(string: text, attributes: [
-                .font: font,
-                .foregroundColor: textColor
-            ])
+        // Always use attributed string for consistent rendering between browse and search modes
+        let mutable = NSMutableAttributedString(string: text, attributes: [
+            .font: font,
+            .foregroundColor: textColor
+        ])
+
+        // Apply highlights if present
+        if !highlights.isEmpty {
             let highlightColor = NSColor.yellow.withAlphaComponent(0.4)
             for range in highlights {
                 let nsRange = range.nsRange
@@ -889,8 +920,9 @@ struct HighlightedTextView: NSViewRepresentable {
                     mutable.addAttribute(.backgroundColor, value: highlightColor, range: nsRange)
                 }
             }
-            field.attributedStringValue = mutable
         }
+
+        field.attributedStringValue = mutable
     }
 
     func makeCoordinator() -> Coordinator {

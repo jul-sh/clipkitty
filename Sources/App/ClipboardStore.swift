@@ -39,12 +39,14 @@ enum DisplayState: Equatable {
     /// Initial loading state before any data
     case loading
     /// Browse mode - showing recent items (no search query)
-    case browse([ItemMetadata])
+    /// Includes optional first item for immediate preview display
+    case browse([ItemMetadata], firstItem: ClipboardItem?)
     /// Search in progress - showing fallback results while waiting for new results
     /// Uses [ItemMatch] to preserve match text and highlights from previous search (prevents text flash)
     case searchLoading(query: String, fallbackResults: [ItemMatch])
     /// Search complete - showing results
-    case searchResults(query: String, results: [ItemMatch])
+    /// Includes optional first item for immediate preview display
+    case searchResults(query: String, results: [ItemMatch], firstItem: ClipboardItem?)
     /// Error state
     case error(String)
 }
@@ -162,12 +164,12 @@ final class ClipboardStore {
         // Capture fallback results from current state (preserves match text to prevent flash)
         let fallback: [ItemMatch] = {
             switch state {
-            case .browse(let items):
+            case .browse(let items, _):
                 // Convert metadata to ItemMatch with empty matchData
                 return items.map { ItemMatch(itemMetadata: $0, matchData: MatchData(text: "", highlights: [], lineNumber: 0)) }
             case .searchLoading(_, let fallbackResults):
                 return fallbackResults
-            case .searchResults(_, let results):
+            case .searchResults(_, let results, _):
                 return results
             default:
                 return []
@@ -211,7 +213,7 @@ final class ClipboardStore {
     private func loadItems(reset: Bool) {
         // Extract current items to preserve during refresh (avoid flash)
         let currentItems: [ItemMetadata] = {
-            if case .browse(let items) = state {
+            if case .browse(let items, _) = state {
                 return items
             }
             return []
@@ -229,12 +231,12 @@ final class ClipboardStore {
         Task {
             do {
                 // Browse mode: search with empty query, extract just metadata
-                // Rust search is now async
+                // Rust search is now async - first_item included in result
                 let result = try await rustStore.search(query: "")
                 let metadata = result.matches.map { $0.itemMetadata }
 
                 os_signpost(.end, log: performanceLog, name: "loadItems", signpostID: signpostID)
-                state = .browse(metadata)
+                state = .browse(metadata, firstItem: result.firstItem)
             } catch ClipKittyError.Cancelled {
                 // Silently ignore cancellation
                 os_signpost(.end, log: performanceLog, name: "loadItems", signpostID: signpostID, "cancelled")
@@ -281,7 +283,7 @@ final class ClipboardStore {
             guard !Task.isCancelled else { return }
             guard case .searchLoading(let currentQuery, _) = state, currentQuery == query else { return }
 
-            state = .searchResults(query: query, results: searchResult.matches)
+            state = .searchResults(query: query, results: searchResult.matches, firstItem: searchResult.firstItem)
             os_signpost(.end, log: performanceLog, name: "search", signpostID: signpostID, "total_hits=%d", searchResult.totalCount)
         } catch ClipKittyError.Cancelled {
             // Silently ignore cancellation - this is expected during rapid typing
@@ -649,17 +651,24 @@ final class ClipboardStore {
     func delete(itemId: Int64) {
         // Update UI immediately
         switch state {
-        case .browse(let items):
-            state = .browse(items.filter { $0.itemId != itemId })
+        case .browse(let items, let firstItem):
+            let filteredItems = items.filter { $0.itemId != itemId }
+            // Clear first item if it was the deleted one
+            let newFirstItem = firstItem?.itemMetadata.itemId == itemId ? nil : firstItem
+            state = .browse(filteredItems, firstItem: newFirstItem)
         case .searchLoading(let query, let fallback):
             state = .searchLoading(
                 query: query,
                 fallbackResults: fallback.filter { $0.itemMetadata.itemId != itemId }
             )
-        case .searchResults(let query, let results):
+        case .searchResults(let query, let results, let firstItem):
+            let filteredResults = results.filter { $0.itemMetadata.itemId != itemId }
+            // Clear first item if it was the deleted one
+            let newFirstItem = firstItem?.itemMetadata.itemId == itemId ? nil : firstItem
             state = .searchResults(
                 query: query,
-                results: results.filter { $0.itemMetadata.itemId != itemId }
+                results: filteredResults,
+                firstItem: newFirstItem
             )
         default:
             break
@@ -682,7 +691,7 @@ final class ClipboardStore {
 
     func clear() {
         // Update UI immediately
-        state = .browse([])
+        state = .browse([], firstItem: nil)
 
         // Perform expensive DB operations in background
         guard let rustStore else { return }
