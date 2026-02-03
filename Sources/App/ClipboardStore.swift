@@ -34,21 +34,17 @@ private func measureTimeAsync<T>(_ label: String, _ block: () async throws -> T)
     return result
 }
 
-/// Display state - explicit variants for browse and search modes
+/// Display state for the clipboard list
+/// Search with empty query returns all items (what was previously called "browse mode")
 enum DisplayState: Equatable {
     /// Initial loading state before any data
     case loading
-    /// Browse mode - showing recent items (no search query)
+    /// Results ready - query can be empty (all items) or non-empty (filtered)
     /// Includes optional first item for immediate preview display
-    case browse([ItemMetadata], firstItem: ClipboardItem?)
-    /// Browse loading - refreshing browse items, showing fallback while waiting
-    case browseLoading(fallbackItems: [ItemMetadata])
-    /// Search in progress - showing fallback results while waiting for new results
-    /// Uses [ItemMatch] to preserve match text and highlights from previous search (prevents text flash)
-    case searchLoading(query: String, fallbackResults: [ItemMatch])
-    /// Search complete - showing results
-    /// Includes optional first item for immediate preview display
-    case searchResults(query: String, results: [ItemMatch], firstItem: ClipboardItem?)
+    case results(query: String, items: [ItemMatch], firstItem: ClipboardItem?)
+    /// Loading in progress - showing fallback results while waiting for new results
+    /// Preserves match highlights from previous search to prevent text flash
+    case resultsLoading(query: String, fallback: [ItemMatch])
     /// Error state
     case error(String)
 }
@@ -60,13 +56,23 @@ final class ClipboardStore {
 
     private(set) var state: DisplayState = .loading
 
-    /// Whether currently in browse mode (including loading state)
-    var isInBrowseMode: Bool {
+    /// Whether currently showing results (not in initial loading or error state)
+    var hasResults: Bool {
         switch state {
-        case .browse, .browseLoading:
+        case .results, .resultsLoading:
             return true
-        default:
+        case .loading, .error:
             return false
+        }
+    }
+
+    /// Current query (empty string if showing all items)
+    var currentQuery: String {
+        switch state {
+        case .results(let query, _, _), .resultsLoading(let query, _):
+            return query
+        case .loading, .error:
+            return ""
         }
     }
 
@@ -98,7 +104,7 @@ final class ClipboardStore {
         self.isScreenshotMode = screenshotMode
         lastChangeCount = NSPasteboard.general.changeCount
         setupDatabase()
-        loadItems()
+        refresh()
         pruneIfNeeded()
         verifyFTSIntegrityAsync()
     }
@@ -161,38 +167,29 @@ final class ClipboardStore {
     // MARK: - Public API
 
     func setSearchQuery(_ newQuery: String) {
-        let query = newQuery
+        let query = newQuery.trimmingCharacters(in: .whitespacesAndNewlines)
 
         searchTask?.cancel()
-
-        if query.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty {
-            currentSearchQuery = ""
-            loadItems()
-            return
-        }
-
         currentSearchQuery = query
 
         // Capture fallback results from current state (preserves match text to prevent flash)
         let fallback: [ItemMatch] = {
             switch state {
-            case .browse(let items, _), .browseLoading(let items):
-                // Convert metadata to ItemMatch with empty matchData
-                return items.map { ItemMatch(itemMetadata: $0, matchData: MatchData(text: "", highlights: [], lineNumber: 0, fullContentHighlights: [])) }
-            case .searchLoading(_, let fallbackResults):
-                return fallbackResults
-            case .searchResults(_, let results, _):
-                return results
+            case .results(_, let items, _), .resultsLoading(_, let items):
+                return items
             case .loading, .error:
                 return []
             }
         }()
 
-        state = .searchLoading(query: query, fallbackResults: fallback)
+        state = .resultsLoading(query: query, fallback: fallback)
 
         searchTask = Task {
-            try? await Task.sleep(for: .milliseconds(50))
-            guard !Task.isCancelled else { return }
+            // Small debounce for typed queries
+            if !query.isEmpty {
+                try? await Task.sleep(for: .milliseconds(50))
+                guard !Task.isCancelled else { return }
+            }
             await performSearch(query: query)
         }
     }
@@ -200,7 +197,7 @@ final class ClipboardStore {
     func resetForDisplay() {
         searchTask?.cancel()
         displayVersion += 1
-        loadItems()
+        refresh()
     }
 
     /// Reset selection state for a new display session (called on show)
@@ -219,65 +216,12 @@ final class ClipboardStore {
         }.value
     }
 
-    // MARK: - Loading
+    // MARK: - Refresh
 
-    /// Load items for browse mode (search with empty query)
-    private func loadItems() {
-        // Extract fallback items from current state
-        let fallbackItems: [ItemMetadata] = {
-            switch state {
-            case .browse(let items, _):
-                return items
-            case .browseLoading(let items):
-                return items
-            case .searchLoading, .searchResults:
-                // Don't show search results as fallback for browse - they're unrelated
-                return []
-            case .loading, .error:
-                return []
-            }
-        }()
-
-        // Transition to browseLoading with fallback items
-        // If no fallback, this shows empty list briefly (spinner shows after delay)
-        state = .browseLoading(fallbackItems: fallbackItems)
-
-        guard let rustStore else { return }
-        let signpostID = OSSignpostID(log: performanceLog)
-        os_signpost(.begin, log: performanceLog, name: "loadItems", signpostID: signpostID)
-
-        Task {
-            do {
-                // Browse mode: search with empty query, extract just metadata
-                // Rust search is now async - first_item included in result
-                let result = try await rustStore.search(query: "")
-                let metadata = result.matches.map { $0.itemMetadata }
-
-                os_signpost(.end, log: performanceLog, name: "loadItems", signpostID: signpostID)
-                state = .browse(metadata, firstItem: result.firstItem)
-            } catch ClipKittyError.Cancelled {
-                // Silently ignore cancellation
-                os_signpost(.end, log: performanceLog, name: "loadItems", signpostID: signpostID, "cancelled")
-            } catch {
-                os_signpost(.end, log: performanceLog, name: "loadItems", signpostID: signpostID, "error")
-                state = .error("Failed to load items: \(error.localizedDescription)")
-            }
-        }
+    /// Refresh items with current query (convenience for reload scenarios)
+    private func refresh() {
+        setSearchQuery(currentSearchQuery)
     }
-
-    // MARK: - Search
-    //
-    // ════════════════════════════════════════════════════════════════════════════════
-    // SEARCH ARCHITECTURE: Single-pass search with Rust-computed highlights
-    // ════════════════════════════════════════════════════════════════════════════════
-    //
-    // search(query) - Returns SearchResult with ItemMatch objects containing:
-    //   - itemMetadata: Item ID, icon, preview, source app, timestamp
-    //   - matchData: Match text with highlights, line number
-    //
-    // All highlight computation happens in Rust, never in Swift.
-    //
-    // ════════════════════════════════════════════════════════════════════════════════
 
     private func performSearch(query: String) async {
         guard let rustStore else {
@@ -285,26 +229,18 @@ final class ClipboardStore {
             return
         }
 
-        // Async Cancellation Architecture:
-        // The Rust search() is now async with native cancellation support.
-        // When this Swift Task is cancelled, the Rust Future is dropped,
-        // triggering a CancellationToken that aborts the search mid-flight.
-        // This allows rapid typing to cancel stale searches without zombie threads.
-
         let signpostID = OSSignpostID(log: performanceLog)
         os_signpost(.begin, log: performanceLog, name: "search", signpostID: signpostID, "query=%{public}s", query)
 
         do {
-            // Rust search is now async - Swift Task cancellation propagates to Rust
             let searchResult = try await rustStore.search(query: query)
 
             guard !Task.isCancelled else { return }
-            guard case .searchLoading(let currentQuery, _) = state, currentQuery == query else { return }
+            guard case .resultsLoading(let currentQuery, _) = state, currentQuery == query else { return }
 
-            state = .searchResults(query: query, results: searchResult.matches, firstItem: searchResult.firstItem)
+            state = .results(query: query, items: searchResult.matches, firstItem: searchResult.firstItem)
             os_signpost(.end, log: performanceLog, name: "search", signpostID: signpostID, "total_hits=%d", searchResult.totalCount)
         } catch ClipKittyError.Cancelled {
-            // Silently ignore cancellation - this is expected during rapid typing
             os_signpost(.end, log: performanceLog, name: "search", signpostID: signpostID, "cancelled")
         } catch {
             guard !Task.isCancelled else { return }
@@ -448,8 +384,8 @@ final class ClipboardStore {
                 // Reload on main actor if in browse mode
                 guard let self else { return }
                 await MainActor.run { [weak self] in
-                    if self?.isInBrowseMode == true {
-                        self?.loadItems()
+                    if self?.hasResults == true {
+                        self?.refresh()
                     }
                 }
             } catch {
@@ -474,8 +410,8 @@ final class ClipboardStore {
         }.value
 
         await MainActor.run { [weak self] in
-            if self?.isInBrowseMode == true {
-                self?.loadItems()
+            if self?.hasResults == true {
+                self?.refresh()
             }
         }
     }
@@ -504,8 +440,8 @@ final class ClipboardStore {
 
                 guard let self else { return }
                 await MainActor.run { [weak self] in
-                    if self?.isInBrowseMode == true {
-                        self?.loadItems()
+                    if self?.hasResults == true {
+                        self?.refresh()
                     }
                 }
 
@@ -661,34 +597,22 @@ final class ClipboardStore {
         }.value
 
         // Reload if in browse mode
-        if isInBrowseMode {
-            loadItems()
+        if hasResults {
+            refresh()
         }
     }
 
     func delete(itemId: Int64) {
         // Update UI immediately
         switch state {
-        case .browse(let items, let firstItem):
-            let filteredItems = items.filter { $0.itemId != itemId }
-            // Clear first item if it was the deleted one
+        case .results(let query, let items, let firstItem):
+            let filteredItems = items.filter { $0.itemMetadata.itemId != itemId }
             let newFirstItem = firstItem?.itemMetadata.itemId == itemId ? nil : firstItem
-            state = .browse(filteredItems, firstItem: newFirstItem)
-        case .browseLoading(let items):
-            state = .browseLoading(fallbackItems: items.filter { $0.itemId != itemId })
-        case .searchLoading(let query, let fallback):
-            state = .searchLoading(
+            state = .results(query: query, items: filteredItems, firstItem: newFirstItem)
+        case .resultsLoading(let query, let fallback):
+            state = .resultsLoading(
                 query: query,
-                fallbackResults: fallback.filter { $0.itemMetadata.itemId != itemId }
-            )
-        case .searchResults(let query, let results, let firstItem):
-            let filteredResults = results.filter { $0.itemMetadata.itemId != itemId }
-            // Clear first item if it was the deleted one
-            let newFirstItem = firstItem?.itemMetadata.itemId == itemId ? nil : firstItem
-            state = .searchResults(
-                query: query,
-                results: filteredResults,
-                firstItem: newFirstItem
+                fallback: fallback.filter { $0.itemMetadata.itemId != itemId }
             )
         case .loading, .error:
             break
@@ -711,7 +635,7 @@ final class ClipboardStore {
 
     func clear() {
         // Update UI immediately
-        state = .browse([], firstItem: nil)
+        state = .results(query: "", items: [], firstItem: nil)
 
         // Perform expensive DB operations in background
         guard let rustStore else { return }
