@@ -209,7 +209,7 @@ pub struct MatchData {
 pub struct ItemMetadata {
     pub item_id: i64,
     pub icon: ItemIcon,
-    pub preview: String,
+    pub snippet: String,
     pub source_app: Option<String>,
     pub source_app_bundle_id: Option<String>,
     pub timestamp_unix: i64,

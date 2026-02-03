@@ -58,15 +58,15 @@ extension ClipboardItem {
 
     /// Display text - Rust sends normalized text (whitespace collapsed, truncated)
     /// Swift just adds trailing ellipsis if the content was truncated
-    public var displayText: String {
-        let preview = itemMetadata.preview
+    public var displaySnippet: String {
+        let snippet = itemMetadata.snippet
         // Rust sends max 400 chars (SNIPPET_CONTEXT_CHARS * 2)
         // Add ellipsis if it looks like content was truncated
-        let maxRustPreview = 400
-        if preview.count >= maxRustPreview {
-            return preview + "…"
+        let maxRustSnippet = 400
+        if snippet.count >= maxRustSnippet {
+            return snippet + "…"
         }
-        return preview
+        return snippet
     }
 
     @MainActor
