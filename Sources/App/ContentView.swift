@@ -332,7 +332,7 @@ struct ContentView: View {
             .listStyle(.plain)
             .scrollContentBackground(.hidden)
             .animation(nil, value: items.map { $0.stableId })
-            .modifier(HideScrollIndicatorsWhenOverlay())
+            .modifier(HideScrollIndicatorsWhenOverlay(displayVersion: store.displayVersion))
             .onChange(of: searchText) { _, _ in
                 // Scroll to top when search query changes (no animation)
                 if let firstItemId = items.first?.stableId {
@@ -948,6 +948,7 @@ struct HighlightedTextView: NSViewRepresentable {
 /// Detects scrolling via ScrollView geometry and shows indicators only while actively scrolling.
 /// This prevents the brief scrollbar flash when the panel appears.
 private struct HideScrollIndicatorsWhenOverlay: ViewModifier {
+    let displayVersion: Int
     @State private var hasScrolled = false
 
     func body(content: Content) -> some View {
@@ -960,6 +961,9 @@ private struct HideScrollIndicatorsWhenOverlay: ViewModifier {
                     if !hasScrolled {
                         hasScrolled = true
                     }
+                }
+                .onChange(of: displayVersion) { _, _ in
+                    hasScrolled = false
                 }
         } else {
             content
