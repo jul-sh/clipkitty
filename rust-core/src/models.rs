@@ -55,16 +55,10 @@ impl StoredItem {
         }
     }
 
-    /// Create an image item
-    pub fn new_image(
-        image_data: Vec<u8>,
-        source_app: Option<String>,
-        source_app_bundle_id: Option<String>,
-    ) -> Self {
-        Self::new_image_with_description(image_data, "Image".to_string(), source_app, source_app_bundle_id)
-    }
-
-    /// Create an image item with a custom description (for searchability)
+    /// Create an image item with a custom description (for data-gen only)
+    /// Uses Rust thumbnail generation - works for PNG/JPEG but not HEIC
+    /// For the main app, use new_image_with_thumbnail() with Swift-generated thumbnails
+    #[cfg(feature = "data-gen")]
     pub fn new_image_with_description(
         image_data: Vec<u8>,
         description: String,
@@ -233,11 +227,12 @@ pub fn normalize_preview(text: &str, max_chars: usize) -> String {
 }
 
 // ─────────────────────────────────────────────────────────────────────────────
-// THUMBNAIL GENERATION
+// THUMBNAIL GENERATION (data-gen only)
 // ─────────────────────────────────────────────────────────────────────────────
 
-/// Generate a WebP thumbnail from image data
-/// Returns None if the image cannot be decoded
+/// Generate a WebP thumbnail from image data (for data-gen only)
+/// The main app generates thumbnails in Swift since HEIC isn't supported here
+#[cfg(feature = "data-gen")]
 fn generate_thumbnail(image_data: &[u8], max_size: u32) -> Option<Vec<u8>> {
     use image::GenericImageView;
 

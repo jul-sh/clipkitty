@@ -98,7 +98,7 @@ impl Database {
     fn setup_schema(&self) -> DatabaseResult<()> {
         let conn = self.get_conn()?;
 
-        // Create items table
+        // Create items table (base schema from main branch)
         conn.execute(
             r#"
             CREATE TABLE IF NOT EXISTS items (
@@ -110,15 +110,18 @@ impl Database {
                 contentType TEXT DEFAULT 'text',
                 imageData BLOB,
                 linkTitle TEXT,
-                linkDescription TEXT,
                 linkImageData BLOB,
-                sourceAppBundleID TEXT,
-                thumbnail BLOB,
-                colorRgba INTEGER
+                sourceAppBundleID TEXT
             )
             "#,
             [],
         )?;
+
+        // Migrate: add columns that may not exist in older databases
+        // These are safe no-ops if columns already exist
+        Self::add_column_if_missing(&conn, "linkDescription", "TEXT")?;
+        Self::add_column_if_missing(&conn, "thumbnail", "BLOB")?;
+        Self::add_column_if_missing(&conn, "colorRgba", "INTEGER")?;
 
         // Create indexes
         conn.execute(
@@ -134,8 +137,22 @@ impl Database {
             [],
         )?;
 
-
         Ok(())
+    }
+
+    /// Add a column to the items table if it doesn't exist
+    /// SQLite doesn't have IF NOT EXISTS for ALTER TABLE, so we catch the error
+    fn add_column_if_missing(conn: &rusqlite::Connection, column: &str, col_type: &str) -> DatabaseResult<()> {
+        let sql = format!("ALTER TABLE items ADD COLUMN {} {}", column, col_type);
+        match conn.execute(&sql, []) {
+            Ok(_) => Ok(()),
+            Err(rusqlite::Error::SqliteFailure(err, _))
+                if err.code == rusqlite::ErrorCode::Unknown && err.extended_code == 1 => {
+                // Error code 1 = "duplicate column name" - column already exists, ignore
+                Ok(())
+            }
+            Err(e) => Err(e.into()),
+        }
     }
 
     /// Get the database size in bytes
