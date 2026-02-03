@@ -25,6 +25,7 @@ struct ContentView: View {
     @State private var searchText: String = ""
     @State private var didApplyInitialSearch = false
     @State private var lastItemsSignature: [Int64] = []  // Track when items change to suppress animation
+    @State private var programmaticScrollTrigger = false  // Toggle to show scrollbar on arrow key navigation
     @State private var showSearchSpinner = false
     @State private var searchSpinnerTask: Task<Void, Never>?
     @State private var showPreviewSpinner = false
@@ -401,7 +402,10 @@ struct ContentView: View {
             .listStyle(.plain)
             .scrollContentBackground(.hidden)
             .animation(nil, value: itemIds)
-            .modifier(HideScrollIndicatorsWhenOverlay(displayVersion: store.displayVersion))
+            .modifier(HideScrollIndicatorsWhenOverlay(
+                displayVersion: store.displayVersion,
+                programmaticScrollTrigger: programmaticScrollTrigger
+            ))
             .onChange(of: searchText) { _, _ in
                 // Scroll to top when search query changes (no animation)
                 if let firstItemId = itemIds.first {
@@ -434,6 +438,9 @@ struct ContentView: View {
                 } else {
                     proxy.scrollTo(newItemId, anchor: .center)
                 }
+
+                // Toggle trigger to show scrollbar on programmatic scroll
+                programmaticScrollTrigger.toggle()
             }
         }
     }
@@ -1004,6 +1011,7 @@ struct HighlightedTextView: NSViewRepresentable {
 /// This prevents the brief scrollbar flash when the panel appears.
 private struct HideScrollIndicatorsWhenOverlay: ViewModifier {
     let displayVersion: Int
+    let programmaticScrollTrigger: Bool  // Toggled when arrow key navigation causes scroll
     @State private var hasScrolled = false
 
     func body(content: Content) -> some View {
@@ -1020,8 +1028,44 @@ private struct HideScrollIndicatorsWhenOverlay: ViewModifier {
                 .onChange(of: displayVersion) { _, _ in
                     hasScrolled = false
                 }
+                .onChange(of: programmaticScrollTrigger) { _, _ in
+                    // Show scrollbar when programmatic scrolling happens (arrow keys)
+                    if !hasScrolled {
+                        hasScrolled = true
+                    }
+                }
+                .background(ScrollViewFlasher(trigger: programmaticScrollTrigger))
         } else {
             content
         }
+    }
+}
+
+/// Finds parent NSScrollView and calls flashScrollers() when trigger changes
+private struct ScrollViewFlasher: NSViewRepresentable {
+    let trigger: Bool
+
+    func makeNSView(context: Context) -> NSView {
+        let view = NSView()
+        view.translatesAutoresizingMaskIntoConstraints = false
+        return view
+    }
+
+    func updateNSView(_ nsView: NSView, context: Context) {
+        // Find the enclosing scroll view and flash its scrollers
+        if context.coordinator.lastTrigger != trigger {
+            context.coordinator.lastTrigger = trigger
+            if let scrollView = nsView.enclosingScrollView {
+                scrollView.flashScrollers()
+            }
+        }
+    }
+
+    func makeCoordinator() -> Coordinator {
+        Coordinator()
+    }
+
+    class Coordinator {
+        var lastTrigger: Bool = false
     }
 }
