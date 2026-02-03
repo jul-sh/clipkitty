@@ -53,7 +53,11 @@ let package = Package(
         .target(
             name: "ClipKittyRust",
             dependencies: ["ClipKittyRustFFI"],
-            path: "Sources/ClipKittyRustWrapper"
+            path: "Sources/ClipKittyRustWrapper",
+            swiftSettings: [
+                // UniFFI-generated code not yet compatible with Swift 6 strict concurrency
+                .swiftLanguageVersion(.v5)
+            ]
         ),
         .executableTarget(
             name: "ClipKitty",

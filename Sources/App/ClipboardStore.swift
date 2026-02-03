@@ -233,7 +233,7 @@ final class ClipboardStore {
 
                 os_signpost(.end, log: performanceLog, name: "loadItems", signpostID: signpostID)
                 state = .browse(metadata)
-            } catch let error as ClipKittyError where error == .cancelled {
+            } catch ClipKittyError.Cancelled {
                 // Silently ignore cancellation
                 os_signpost(.end, log: performanceLog, name: "loadItems", signpostID: signpostID, "cancelled")
             } catch {
@@ -281,7 +281,7 @@ final class ClipboardStore {
 
             state = .searchResults(query: query, results: searchResult.matches)
             os_signpost(.end, log: performanceLog, name: "search", signpostID: signpostID, "total_hits=%d", searchResult.totalCount)
-        } catch let error as ClipKittyError where error == .cancelled {
+        } catch ClipKittyError.Cancelled {
             // Silently ignore cancellation - this is expected during rapid typing
             os_signpost(.end, log: performanceLog, name: "search", signpostID: signpostID, "cancelled")
         } catch {
