@@ -33,41 +33,32 @@ struct ContentView: View {
 
     private var itemIds: [Int64] {
         switch store.state {
-        case .browse(let items, _), .browseLoading(let items):
-            return items.map { $0.itemId }
-        case .searchLoading(_, let fallbackResults):
-            return fallbackResults.map { $0.itemMetadata.itemId }
-        case .searchResults(_, let results, _):
-            return results.map { $0.itemMetadata.itemId }
+        case .results(_, let items, _), .resultsLoading(_, let items):
+            return items.map { $0.itemMetadata.itemId }
         case .loading, .error:
             return []
         }
     }
 
-    /// The first item from search results (avoids separate fetch)
+    /// The first item from results (avoids separate fetch)
     private var stateFirstItem: ClipboardItem? {
         switch store.state {
-        case .browse(_, let firstItem):
+        case .results(_, _, let firstItem):
             return firstItem
-        case .searchResults(_, _, let firstItem):
-            return firstItem
-        case .browseLoading, .searchLoading, .loading, .error:
+        case .resultsLoading, .loading, .error:
             return nil
         }
     }
 
-    /// Get highlights for the selected item from search results
-    /// Returns empty array when browsing (no search) or if item not found in results
+    /// Get highlights for the selected item from results
+    /// Returns empty array for empty query or if item not found
     private var selectedItemHighlights: [HighlightRange] {
         guard let selectedItemId else { return [] }
         switch store.state {
-        case .searchLoading(_, let fallbackResults):
-            return fallbackResults.first { $0.itemMetadata.itemId == selectedItemId }?
+        case .results(_, let items, _), .resultsLoading(_, let items):
+            return items.first { $0.itemMetadata.itemId == selectedItemId }?
                 .matchData.fullContentHighlights ?? []
-        case .searchResults(_, let results, _):
-            return results.first { $0.itemMetadata.itemId == selectedItemId }?
-                .matchData.fullContentHighlights ?? []
-        case .browse, .browseLoading, .loading, .error:
+        case .loading, .error:
             return []
         }
     }
@@ -179,22 +170,17 @@ struct ContentView: View {
                 self.selectedItem = firstItem
             }
 
-            // Show spinner after 100ms if still in loading state
+            // Show spinner after 100ms if still loading
             searchSpinnerTask?.cancel()
-            switch newState {
-            case .searchLoading, .browseLoading:
+            if case .resultsLoading = newState {
                 searchSpinnerTask = Task {
                     try? await Task.sleep(for: .milliseconds(100))
                     guard !Task.isCancelled else { return }
-                    // Only show if still in a loading state
-                    switch store.state {
-                    case .searchLoading, .browseLoading:
+                    if case .resultsLoading = store.state {
                         showSearchSpinner = true
-                    default:
-                        break
                     }
                 }
-            default:
+            } else {
                 showSearchSpinner = false
             }
         }
@@ -341,7 +327,7 @@ struct ContentView: View {
             loadingView
         case .error(let message):
             errorView(message)
-        case .browse, .browseLoading, .searchLoading, .searchResults:
+        case .results, .resultsLoading:
             splitView
         }
     }
@@ -381,16 +367,11 @@ struct ContentView: View {
 
     // MARK: - Item List
 
-    /// Unified row data for consistent ForEach identity across state transitions
+    /// Row data for display - preserves matchData during loading to prevent text flash
     private var displayRows: [(metadata: ItemMetadata, matchData: MatchData?)] {
         switch store.state {
-        case .browse(let items, _), .browseLoading(let items):
-            return items.map { ($0, nil) }
-        case .searchLoading(_, let fallbackResults):
-            // Preserve matchData from previous search to prevent text flash
-            return fallbackResults.map { ($0.itemMetadata, $0.matchData) }
-        case .searchResults(_, let results, _):
-            return results.map { ($0.itemMetadata, $0.matchData) }
+        case .results(_, let items, _), .resultsLoading(_, let items):
+            return items.map { ($0.itemMetadata, $0.matchData) }
         case .loading, .error:
             return []
         }
@@ -565,16 +546,7 @@ struct ContentView: View {
             Image(systemName: "clipboard")
                 .font(.largeTitle)
                 .foregroundStyle(.tertiary)
-            let emptyStateMessage: String = {
-                switch store.state {
-                case .searchLoading, .searchResults:
-                    return "No results"
-                default:
-                    return "No clipboard history"
-                }
-            }()
-
-            Text(emptyStateMessage)
+            Text(store.currentQuery.isEmpty ? "No clipboard history" : "No results")
                 .font(.custom(FontManager.sansSerif, size: 15))
                 .foregroundStyle(.secondary)
         }
