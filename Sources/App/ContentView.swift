@@ -711,7 +711,9 @@ struct LinkPreviewView: NSViewRepresentable {
                 metadata.title = title
             }
             if let imageData, let nsImage = NSImage(data: imageData) {
-                metadata.imageProvider = NSItemProvider(object: nsImage)
+                // Prevent LPLinkView from becoming overly tall by capping image aspect ratio (3:2 max)
+                let croppedImage = nsImage.croppedIfTooTall(maxRatio: 1.5)
+                metadata.imageProvider = NSItemProvider(object: croppedImage)
             }
         case .pending, .failed:
             // Just show URL for pending/failed states
@@ -1023,5 +1025,25 @@ private struct HideScrollIndicatorsWhenOverlay: ViewModifier {
         } else {
             content
         }
+    }
+}
+
+
+// MARK: - Extensions
+
+extension NSImage {
+    /// Crops image from top if height/width > maxRatio.
+    func croppedIfTooTall(maxRatio: CGFloat) -> NSImage {
+        let size = self.size
+        guard size.width > 0, size.height > 0, size.height / size.width > maxRatio else { return self }
+
+        let newHeight = size.width * maxRatio
+        let cropRect = NSRect(x: 0, y: size.height - newHeight, width: size.width, height: newHeight)
+
+        let result = NSImage(size: cropRect.size)
+        result.lockFocus()
+        self.draw(in: NSRect(origin: .zero, size: cropRect.size), from: cropRect, operation: .copy, fraction: 1.0)
+        result.unlockFocus()
+        return result
     }
 }
