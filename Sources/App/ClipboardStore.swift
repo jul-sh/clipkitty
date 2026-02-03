@@ -96,6 +96,9 @@ final class ClipboardStore {
     /// Increments each time the display is reset - views observe this to reset local state
     private(set) var displayVersion: Int = 0
 
+    /// Link metadata fetcher using LinkPresentation framework
+    private let linkMetadataFetcher = LinkMetadataFetcher()
+
     // MARK: - Initialization
 
     private let isScreenshotMode: Bool
@@ -214,6 +217,40 @@ final class ClipboardStore {
             let items = try rustStore.fetchByIds(itemIds: [id])
             return items.first
         }.value
+    }
+
+    /// Fetch link metadata using LinkPresentation and persist to database
+    /// Returns the updated item if successful
+    func fetchLinkMetadata(url: String, itemId: Int64) async -> ClipboardItem? {
+        guard let rustStore else { return nil }
+
+        // Fetch metadata using LinkPresentation framework
+        guard let metadata = await linkMetadataFetcher.fetchMetadata(for: url, itemId: itemId) else {
+            // Mark as failed
+            await Task.detached { [rustStore] in
+                try? rustStore.updateLinkMetadata(
+                    itemId: itemId,
+                    title: "",
+                    description: nil,
+                    imageData: nil
+                )
+            }.value
+            return await fetchItem(id: itemId)
+        }
+
+        // Persist to database
+        let imageData = metadata.imageData
+        Task.detached { [rustStore] in
+            try? rustStore.updateLinkMetadata(
+                itemId: itemId,
+                title: metadata.title,
+                description: metadata.description,
+                imageData: imageData
+            )
+        }
+
+        // Return updated item
+        return await fetchItem(id: itemId)
     }
 
     // MARK: - Refresh

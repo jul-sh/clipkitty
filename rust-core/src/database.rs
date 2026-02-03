@@ -110,6 +110,7 @@ impl Database {
                 contentType TEXT DEFAULT 'text',
                 imageData BLOB,
                 linkTitle TEXT,
+                linkDescription TEXT,
                 linkImageData BLOB,
                 sourceAppBundleID TEXT,
                 thumbnail BLOB,
@@ -148,14 +149,14 @@ impl Database {
     /// Insert a new clipboard item, returns the row ID
     pub fn insert_item(&self, item: &StoredItem) -> DatabaseResult<i64> {
         let conn = self.get_conn()?;
-        let (content, image_data, link_title, link_image_data, color_rgba) = item.content.to_database_fields();
+        let (content, image_data, link_title, link_description, link_image_data, color_rgba) = item.content.to_database_fields();
         let timestamp = Utc.timestamp_opt(item.timestamp_unix, 0).single().unwrap_or_else(Utc::now);
         let timestamp_str = timestamp.format("%Y-%m-%d %H:%M:%S%.f").to_string();
 
         conn.execute(
             r#"
-            INSERT INTO items (content, contentHash, timestamp, sourceApp, contentType, imageData, linkTitle, linkImageData, sourceAppBundleID, thumbnail, colorRgba)
-            VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11)
+            INSERT INTO items (content, contentHash, timestamp, sourceApp, contentType, imageData, linkTitle, linkDescription, linkImageData, sourceAppBundleID, thumbnail, colorRgba)
+            VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11, ?12)
             "#,
             params![
                 content,
@@ -165,6 +166,7 @@ impl Database {
                 item.content.database_type(),
                 image_data,
                 link_title,
+                link_description,
                 link_image_data,
                 item.source_app_bundle_id,
                 item.thumbnail,
@@ -207,12 +209,13 @@ impl Database {
         &self,
         id: i64,
         title: Option<&str>,
+        description: Option<&str>,
         image_data: Option<&[u8]>,
     ) -> DatabaseResult<()> {
         let conn = self.get_conn()?;
         conn.execute(
-            "UPDATE items SET linkTitle = ?1, linkImageData = ?2 WHERE id = ?3",
-            params![title.unwrap_or(""), image_data, id],
+            "UPDATE items SET linkTitle = ?1, linkDescription = ?2, linkImageData = ?3 WHERE id = ?4",
+            params![title.unwrap_or(""), description, image_data, id],
         )?;
         Ok(())
     }
@@ -516,6 +519,7 @@ impl Database {
         let content_type: Option<String> = row.get("contentType")?;
         let image_data: Option<Vec<u8>> = row.get("imageData")?;
         let link_title: Option<String> = row.get("linkTitle")?;
+        let link_description: Option<String> = row.get("linkDescription").ok().flatten();
         let link_image_data: Option<Vec<u8>> = row.get("linkImageData")?;
         let source_app_bundle_id: Option<String> = row.get("sourceAppBundleID")?;
         let thumbnail: Option<Vec<u8>> = row.get("thumbnail").ok().flatten();
@@ -529,6 +533,7 @@ impl Database {
             &content,
             image_data,
             link_title.as_deref(),
+            link_description.as_deref(),
             link_image_data,
             color_rgba,
         );
