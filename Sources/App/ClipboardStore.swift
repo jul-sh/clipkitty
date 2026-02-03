@@ -166,7 +166,7 @@ final class ClipboardStore {
             switch state {
             case .browse(let items, _):
                 // Convert metadata to ItemMatch with empty matchData
-                return items.map { ItemMatch(itemMetadata: $0, matchData: MatchData(text: "", highlights: [], lineNumber: 0)) }
+                return items.map { ItemMatch(itemMetadata: $0, matchData: MatchData(text: "", highlights: [], lineNumber: 0, fullContentHighlights: [])) }
             case .searchLoading(_, let fallbackResults):
                 return fallbackResults
             case .searchResults(_, let results, _):
@@ -198,11 +198,11 @@ final class ClipboardStore {
     }
 
 
-    /// Fetch full ClipboardItem by ID with optional search highlighting
-    func fetchItem(id: Int64, searchQuery: String? = nil) async -> ClipboardItem? {
+    /// Fetch full ClipboardItem by ID
+    func fetchItem(id: Int64) async -> ClipboardItem? {
         guard let rustStore else { return nil }
         return try? await Task.detached {
-            let items = try rustStore.fetchByIds(itemIds: [id], searchQuery: searchQuery)
+            let items = try rustStore.fetchByIds(itemIds: [id])
             return items.first
         }.value
     }

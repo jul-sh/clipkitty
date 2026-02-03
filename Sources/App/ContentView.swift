@@ -56,6 +56,22 @@ struct ContentView: View {
         }
     }
 
+    /// Get highlights for the selected item from search results
+    /// Returns empty array when browsing (no search) or if item not found in results
+    private var selectedItemHighlights: [HighlightRange] {
+        guard let selectedItemId else { return [] }
+        switch store.state {
+        case .searchLoading(_, let fallbackResults):
+            return fallbackResults.first { $0.itemMetadata.itemId == selectedItemId }?
+                .matchData.fullContentHighlights ?? []
+        case .searchResults(_, let results, _):
+            return results.first { $0.itemMetadata.itemId == selectedItemId }?
+                .matchData.fullContentHighlights ?? []
+        default:
+            return []
+        }
+    }
+
     private var firstItemId: Int64? {
         itemIds.first
     }
@@ -115,8 +131,7 @@ struct ContentView: View {
                 } else {
                     // Fallback: fetch the item - onChange won't fire for initial value
                     Task {
-                        let query = searchText.isEmpty ? nil : searchText
-                        selectedItem = await store.fetchItem(id: firstId, searchQuery: query)
+                        selectedItem = await store.fetchItem(id: firstId)
                     }
                 }
             }
@@ -143,7 +158,7 @@ struct ContentView: View {
                 // Fallback: fetch the first item
                 if let firstId {
                     Task {
-                        selectedItem = await store.fetchItem(id: firstId, searchQuery: nil)
+                        selectedItem = await store.fetchItem(id: firstId)
                     }
                 }
             }
@@ -189,8 +204,7 @@ struct ContentView: View {
                 return
             }
             Task {
-                let query = searchText.isEmpty ? nil : searchText
-                selectedItem = await store.fetchItem(id: newId, searchQuery: query)
+                selectedItem = await store.fetchItem(id: newId)
             }
         }
         .onChange(of: selectedItem) { _, newItem in
@@ -453,7 +467,7 @@ struct ContentView: View {
                             text: item.contentPreview,
                             fontName: FontManager.mono,
                             fontSize: 15,
-                            highlights: item.previewHighlights
+                            highlights: selectedItemHighlights
                         )
                         .frame(maxWidth: .infinity, maxHeight: .infinity)
                     default:

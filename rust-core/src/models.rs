@@ -7,7 +7,7 @@ use std::collections::hash_map::DefaultHasher;
 use std::hash::{Hash, Hasher};
 
 use crate::interface::{
-    ClipboardContent, HighlightRange, IconType, ItemIcon, ItemMetadata, ClipboardItem,
+    ClipboardContent, IconType, ItemIcon, ItemMetadata, ClipboardItem,
 };
 
 // ─────────────────────────────────────────────────────────────────────────────
@@ -138,11 +138,10 @@ impl StoredItem {
     }
 
     /// Convert to full ClipboardItem for preview pane
-    pub fn to_clipboard_item(&self, highlights: Vec<HighlightRange>) -> ClipboardItem {
+    pub fn to_clipboard_item(&self) -> ClipboardItem {
         ClipboardItem {
             item_metadata: self.to_metadata(),
             content: self.content.clone(),
-            preview_highlights: highlights,
         }
     }
 
