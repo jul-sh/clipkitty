@@ -8,11 +8,13 @@
 use anyhow::{Context, Result};
 use chrono::Utc;
 use clap::Parser;
-use clipkitty_core::ClipboardStore;
+use clipkitty_core::{ClipboardStore, ClipboardStoreApi};
+use clipkitty_core::content_detection::parse_color_to_rgba;
 use futures::StreamExt;
 use indicatif::{ProgressBar, ProgressStyle};
 use rand::{Rng, SeedableRng};
 use rand::rngs::StdRng;
+use rusqlite::params;
 use schemars::JsonSchema;
 use serde::{Deserialize, Serialize};
 use serde_json::json;
@@ -48,6 +50,10 @@ struct Args {
     /// Only insert demo items (skip AI generation, requires existing db)
     #[arg(long)]
     demo_only: bool,
+
+    /// Reclassify text items as colors if they match color patterns
+    #[arg(long)]
+    reclassify_colors: bool,
 }
 
 #[derive(Debug, Deserialize, Serialize, Clone)]
@@ -235,18 +241,57 @@ fn insert_demo_items(store: &ClipboardStore) -> Result<()> {
     Ok(())
 }
 
+/// Reclassify text items as colors if they match color patterns.
+/// Iterates over all items with contentType='text' and updates them
+/// to contentType='color' with the parsed colorRgba if they're valid colors.
+fn reclassify_colors(db_path: &str) -> Result<usize> {
+    let conn = rusqlite::Connection::open(db_path)?;
+
+    // Fetch all text items
+    let mut stmt = conn.prepare(
+        "SELECT id, content FROM items WHERE contentType = 'text' OR contentType IS NULL"
+    )?;
+
+    let text_items: Vec<(i64, String)> = stmt
+        .query_map([], |row| Ok((row.get(0)?, row.get(1)?)))?
+        .collect::<Result<Vec<_>, _>>()?;
+
+    let mut updated_count = 0;
+
+    for (id, content) in text_items {
+        // Check if this text is actually a color
+        if let Some(rgba) = parse_color_to_rgba(&content) {
+            conn.execute(
+                "UPDATE items SET contentType = 'color', colorRgba = ?1 WHERE id = ?2",
+                params![rgba, id],
+            )?;
+            updated_count += 1;
+        }
+    }
+
+    Ok(updated_count)
+}
+
 #[tokio::main]
 async fn main() -> Result<()> {
     let args = Args::parse();
 
     let abs_db_path = std::env::current_dir()?.join(&args.db_path).to_str().unwrap().to_string();
-    let store = Arc::new(ClipboardStore::new(abs_db_path).context("Failed to open database")?);
+    let store = Arc::new(ClipboardStore::new(abs_db_path.clone()).context("Failed to open database")?);
 
     // Demo-only mode: skip AI generation, just insert demo items
     if args.demo_only {
         println!("Inserting demo items only...");
         insert_demo_items(&store)?;
         println!("Demo items inserted.");
+        return Ok(());
+    }
+
+    // Reclassify mode: iterate over text items and convert colors
+    if args.reclassify_colors {
+        println!("Reclassifying text items as colors...");
+        let count = reclassify_colors(&abs_db_path)?;
+        println!("Reclassified {} items as colors.", count);
         return Ok(());
     }
 
