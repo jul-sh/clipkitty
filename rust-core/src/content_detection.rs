@@ -27,7 +27,7 @@ static PHONE_DIGITS_REGEX: Lazy<Regex> = Lazy::new(|| {
 });
 
 /// Check if a string looks like a URL
-pub fn is_valid_url(text: &str) -> bool {
+fn is_valid_url(text: &str) -> bool {
     let trimmed = text.trim();
 
     // Basic length and content checks

@@ -55,35 +55,6 @@ impl StoredItem {
         }
     }
 
-    /// Create an image item with a custom description (for data-gen only)
-    /// Uses Rust thumbnail generation - works for PNG/JPEG but not HEIC
-    /// For the main app, use new_image_with_thumbnail() with Swift-generated thumbnails
-    #[cfg(feature = "data-gen")]
-    pub fn new_image_with_description(
-        image_data: Vec<u8>,
-        description: String,
-        source_app: Option<String>,
-        source_app_bundle_id: Option<String>,
-    ) -> Self {
-        let hash_input = format!("{}{}", description, image_data.len());
-        let content_hash = Self::hash_string(&hash_input);
-        // Generate thumbnail (max 64x64) - may fail for unsupported formats like HEIC
-        let thumbnail = generate_thumbnail(&image_data, 64);
-        Self {
-            id: None,
-            content: ClipboardContent::Image {
-                data: image_data,
-                description,
-            },
-            content_hash,
-            timestamp_unix: chrono::Utc::now().timestamp(),
-            source_app,
-            source_app_bundle_id,
-            thumbnail,
-            color_rgba: None,
-        }
-    }
-
     /// Create an image item with a pre-generated thumbnail
     /// Used when Swift generates the thumbnail (HEIC not supported by Rust image crate)
     pub fn new_image_with_thumbnail(
@@ -224,42 +195,6 @@ pub fn normalize_preview(text: &str, max_chars: usize) -> String {
     }
 
     result
-}
-
-// ─────────────────────────────────────────────────────────────────────────────
-// THUMBNAIL GENERATION (data-gen only)
-// ─────────────────────────────────────────────────────────────────────────────
-
-/// Generate a WebP thumbnail from image data (for data-gen only)
-/// The main app generates thumbnails in Swift since HEIC isn't supported here
-#[cfg(feature = "data-gen")]
-fn generate_thumbnail(image_data: &[u8], max_size: u32) -> Option<Vec<u8>> {
-    use image::GenericImageView;
-
-    let img = image::load_from_memory(image_data).ok()?;
-    let (width, height) = img.dimensions();
-
-    // Only create thumbnail if image is larger than max_size
-    if width <= max_size && height <= max_size {
-        // Image is small enough, just re-encode it as WebP
-        let mut buf = Vec::new();
-        let mut cursor = std::io::Cursor::new(&mut buf);
-        img.write_to(&mut cursor, image::ImageFormat::WebP).ok()?;
-        return Some(buf);
-    }
-
-    // Calculate new dimensions maintaining aspect ratio
-    let scale = max_size as f32 / width.max(height) as f32;
-    let new_width = (width as f32 * scale) as u32;
-    let new_height = (height as f32 * scale) as u32;
-
-    let thumbnail = img.thumbnail(new_width, new_height);
-
-    let mut buf = Vec::new();
-    let mut cursor = std::io::Cursor::new(&mut buf);
-    thumbnail.write_to(&mut cursor, image::ImageFormat::WebP).ok()?;
-
-    Some(buf)
 }
 
 #[cfg(test)]

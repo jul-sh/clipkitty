@@ -3,7 +3,8 @@
 //! Rebuild of generate.mjs in Rust, utilizing the real ClipboardStore.
 //! Generates data directly into a SQLite database.
 //!
-//! Requires the `data-gen` feature to be enabled.
+//! Build with: cargo build --features data-gen
+//! Run with: cargo run --features data-gen --bin generate-synthetic-data
 
 use anyhow::{Context, Result};
 use chrono::Utc;
@@ -11,6 +12,7 @@ use clap::Parser;
 use clipkitty_core::{ClipboardStore, ClipboardStoreApi};
 use clipkitty_core::content_detection::parse_color_to_rgba;
 use futures::StreamExt;
+use image::GenericImageView;
 use indicatif::{ProgressBar, ProgressStyle};
 use rand::{Rng, SeedableRng};
 use rand::rngs::StdRng;
@@ -18,7 +20,9 @@ use rusqlite::params;
 use schemars::JsonSchema;
 use serde::{Deserialize, Serialize};
 use serde_json::json;
+use std::collections::hash_map::DefaultHasher;
 use std::fs;
+use std::hash::{Hash, Hasher};
 use std::path::PathBuf;
 use std::sync::Arc;
 use std::sync::atomic::{AtomicUsize, Ordering};
@@ -54,6 +58,94 @@ struct Args {
     /// Reclassify text items as colors if they match color patterns
     #[arg(long)]
     reclassify_colors: bool,
+}
+
+// ─────────────────────────────────────────────────────────────────────────────
+// DATA GENERATION HELPERS (self-contained, no feature flags needed in core)
+// ─────────────────────────────────────────────────────────────────────────────
+
+/// Hash a string using Rust's default hasher
+fn hash_string(s: &str) -> String {
+    let mut hasher = DefaultHasher::new();
+    s.hash(&mut hasher);
+    hasher.finish().to_string()
+}
+
+/// Generate a WebP thumbnail from image data
+fn generate_thumbnail(image_data: &[u8], max_size: u32) -> Option<Vec<u8>> {
+    let img = image::load_from_memory(image_data).ok()?;
+    let (width, height) = img.dimensions();
+
+    // Only create thumbnail if image is larger than max_size
+    if width <= max_size && height <= max_size {
+        // Image is small enough, just re-encode it as WebP
+        let mut buf = Vec::new();
+        let mut cursor = std::io::Cursor::new(&mut buf);
+        img.write_to(&mut cursor, image::ImageFormat::WebP).ok()?;
+        return Some(buf);
+    }
+
+    // Calculate new dimensions maintaining aspect ratio
+    let scale = max_size as f32 / width.max(height) as f32;
+    let new_width = (width as f32 * scale) as u32;
+    let new_height = (height as f32 * scale) as u32;
+
+    let thumbnail = img.thumbnail(new_width, new_height);
+
+    let mut buf = Vec::new();
+    let mut cursor = std::io::Cursor::new(&mut buf);
+    thumbnail.write_to(&mut cursor, image::ImageFormat::WebP).ok()?;
+
+    Some(buf)
+}
+
+/// Set item timestamp directly via SQL (for synthetic data generation)
+fn set_timestamp_direct(db_path: &str, item_id: i64, timestamp_unix: i64) -> Result<()> {
+    let conn = rusqlite::Connection::open(db_path)?;
+    let timestamp = chrono::DateTime::from_timestamp(timestamp_unix, 0)
+        .unwrap_or_else(|| chrono::Utc::now());
+    let timestamp_str = timestamp.format("%Y-%m-%d %H:%M:%S%.f").to_string();
+    conn.execute(
+        "UPDATE items SET timestamp = ?1 WHERE id = ?2",
+        params![timestamp_str, item_id],
+    )?;
+    Ok(())
+}
+
+/// Save an image item directly via SQL (for synthetic data generation)
+fn save_image_direct(
+    db_path: &str,
+    image_data: Vec<u8>,
+    description: String,
+    source_app: Option<String>,
+    source_app_bundle_id: Option<String>,
+) -> Result<i64> {
+    let conn = rusqlite::Connection::open(db_path)?;
+    let now = chrono::Utc::now();
+    let timestamp_str = now.format("%Y-%m-%d %H:%M:%S%.f").to_string();
+
+    let hash_input = format!("{}{}", description, image_data.len());
+    let content_hash = hash_string(&hash_input);
+    let thumbnail = generate_thumbnail(&image_data, 64);
+
+    conn.execute(
+        r#"
+        INSERT INTO items (content, contentHash, timestamp, sourceApp, contentType, imageData, thumbnail, sourceAppBundleID)
+        VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8)
+        "#,
+        params![
+            description,
+            content_hash,
+            timestamp_str,
+            source_app,
+            "image",
+            image_data,
+            thumbnail,
+            source_app_bundle_id,
+        ],
+    )?;
+
+    Ok(conn.last_insert_rowid())
 }
 
 #[derive(Debug, Deserialize, Serialize, Clone)]
@@ -193,7 +285,7 @@ fn generate_timestamp(item_index: usize, now: i64) -> i64 {
     now - age_seconds
 }
 
-fn insert_demo_items(store: &ClipboardStore) -> Result<()> {
+fn insert_demo_items(store: &ClipboardStore, db_path: &str) -> Result<()> {
     let now = Utc::now().timestamp();
     let demo_items = vec![
         ("Apartment walkthrough notes: 437 Riverside Dr #12, hardwood floors throughout, south-facing windows with park views, original crown molding, in-unit washer/dryer, $2850/mo, super lives on-site, contact Marcus Realty about lease terms and move-in date flexibility...", "Notes", "com.apple.Notes", now - (180 * 24 * 60 * 60)),
@@ -217,7 +309,7 @@ fn insert_demo_items(store: &ClipboardStore) -> Result<()> {
     for (content, app, bundle, ts) in demo_items {
         if let Ok(id) = store.save_text(content.to_string(), Some(app.to_string()), Some(bundle.to_string())) {
             if id > 0 {
-                let _ = store.set_timestamp(id, ts);
+                let _ = set_timestamp_direct(db_path, id, ts);
             }
         }
     }
@@ -226,14 +318,15 @@ fn insert_demo_items(store: &ClipboardStore) -> Result<()> {
     let base_path = PathBuf::from(env!("CARGO_MANIFEST_DIR"));
     let kitty_path = base_path.join("../marketing/assets/kitty.jpg");
     if let Ok(image_data) = fs::read(&kitty_path) {
-        if let Ok(id) = store.save_image_with_description(
+        if let Ok(id) = save_image_direct(
+            db_path,
             image_data,
             "kitty".to_string(),
             Some("Photos".to_string()),
             Some("com.apple.Photos".to_string()),
         ) {
             if id > 0 {
-                let _ = store.set_timestamp(id, now - 5); // Most recent demo item
+                let _ = set_timestamp_direct(db_path, id, now - 5); // Most recent demo item
             }
         }
     }
@@ -282,7 +375,7 @@ async fn main() -> Result<()> {
     // Demo-only mode: skip AI generation, just insert demo items
     if args.demo_only {
         println!("Inserting demo items only...");
-        insert_demo_items(&store)?;
+        insert_demo_items(&store, &abs_db_path)?;
         println!("Demo items inserted.");
         return Ok(());
     }
@@ -319,15 +412,17 @@ async fn main() -> Result<()> {
         futures::future::ready(Some(((tier, batch_size), state + batch_size)))
     });
 
+    let db_path_for_tasks = Arc::new(abs_db_path.clone());
     stream
         .map(|(tier, batch_size)| {
-            let (sem, key, tax, st, bar, counter) = (
+            let (sem, key, tax, st, bar, counter, db) = (
                 semaphore.clone(),
                 api_key.clone(),
                 taxonomy.clone(),
                 store.clone(),
                 pb.clone(),
                 item_counter.clone(),
+                db_path_for_tasks.clone(),
             );
             let now = now;
             tokio::spawn(async move {
@@ -344,7 +439,7 @@ async fn main() -> Result<()> {
                                 if id > 0 {
                                     let item_index = counter.fetch_add(1, Ordering::Relaxed);
                                     let timestamp = generate_timestamp(item_index, now);
-                                    let _ = st.set_timestamp(id, timestamp);
+                                    let _ = set_timestamp_direct(&db, id, timestamp);
                                     bar.inc(1);
                                     bar.set_message(format!("{} ({})", category.category_type, tier));
                                 }
@@ -364,7 +459,7 @@ async fn main() -> Result<()> {
     pb.finish_with_message("Generation complete");
 
     if args.demo {
-        insert_demo_items(&store)?;
+        insert_demo_items(&store, &abs_db_path)?;
         pb.println("Demo items inserted.");
     }
 

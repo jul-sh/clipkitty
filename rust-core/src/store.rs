@@ -16,8 +16,6 @@ use crate::interface::{
 use crate::models::StoredItem;
 use crate::search::{SearchEngine, MIN_TRIGRAM_QUERY_LEN, MAX_RESULTS_SHORT};
 use chrono::Utc;
-#[cfg(feature = "data-gen")]
-use chrono::TimeZone;
 use once_cell::sync::Lazy;
 use std::path::PathBuf;
 use std::sync::Arc;
@@ -251,49 +249,6 @@ impl ClipboardStore {
     fn get_stored_item(&self, item_id: i64) -> Result<Option<StoredItem>, ClipKittyError> {
         let items = self.db.fetch_items_by_ids(&[item_id])?;
         Ok(items.into_iter().next())
-    }
-
-    /// Set item timestamp to a specific value (for synthetic data generation)
-    #[cfg(feature = "data-gen")]
-    pub fn set_timestamp(&self, item_id: i64, timestamp_unix: i64) -> Result<(), ClipKittyError> {
-        let timestamp = Utc.timestamp_opt(timestamp_unix, 0).single().unwrap_or_else(Utc::now);
-        self.db.update_timestamp(item_id, timestamp)?;
-
-        if let Some(item) = self.get_stored_item(item_id)? {
-            self.indexer
-                .add_document(item_id, item.text_content(), timestamp_unix)?;
-            self.indexer.commit()?;
-        }
-
-        Ok(())
-    }
-
-    /// Save an image item with a custom description (for synthetic data generation)
-    #[cfg(feature = "data-gen")]
-    pub fn save_image_with_description(
-        &self,
-        image_data: Vec<u8>,
-        description: String,
-        source_app: Option<String>,
-        source_app_bundle_id: Option<String>,
-    ) -> Result<i64, ClipKittyError> {
-        if image_data.is_empty() {
-            return Err(ClipKittyError::InvalidInput("Empty image data".into()));
-        }
-
-        let item = StoredItem::new_image_with_description(
-            image_data,
-            description,
-            source_app,
-            source_app_bundle_id,
-        );
-        let id = self.db.insert_item(&item)?;
-
-        self.indexer
-            .add_document(id, item.text_content(), item.timestamp_unix)?;
-        self.indexer.commit()?;
-
-        Ok(id)
     }
 }
 
