@@ -459,10 +459,11 @@ impl ClipboardStoreApi for ClipboardStore {
         self.indexer.commit()?;
 
         // If it's a link, fetch metadata in background (async)
+        // Use runtime_handle() to ensure we have a tokio runtime, even when called from UniFFI
         if is_link {
             let db = Arc::clone(&self.db);
             let url = text;
-            tokio::spawn(async move {
+            self.runtime_handle().spawn(async move {
                 if let Some(metadata) = crate::link_metadata::fetch_metadata(&url).await {
                     let title = metadata.title.as_deref().unwrap_or("");
                     let _ = db.update_link_metadata(id, Some(title), metadata.image_data.as_deref());
@@ -489,6 +490,17 @@ impl ClipboardStoreApi for ClipboardStore {
         if trimmed.is_empty() {
             let (items, total_count) = self.db.fetch_item_metadata(None, 1000)?;
 
+            // Fetch first item's full content for preview pane
+            let first_item = if let Some(first_metadata) = items.first() {
+                self.db
+                    .fetch_items_by_ids(&[first_metadata.item_id])?
+                    .into_iter()
+                    .next()
+                    .map(|item| item.to_clipboard_item(Vec::new()))
+            } else {
+                None
+            };
+
             let matches: Vec<ItemMatch> = items
                 .into_iter()
                 .map(|metadata| ItemMatch {
@@ -500,6 +512,7 @@ impl ClipboardStoreApi for ClipboardStore {
             return Ok(SearchResult {
                 matches,
                 total_count,
+                first_item,
             });
         }
 
@@ -535,7 +548,25 @@ impl ClipboardStoreApi for ClipboardStore {
         match handle.await {
             Ok(Ok(matches)) => {
                 let total_count = matches.len() as u64;
-                Ok(SearchResult { matches, total_count })
+
+                // Fetch first item's full content for preview pane
+                // Use Nucleo's full_content_highlights for consistency with list highlighting
+                let first_item = if let Some(first_match) = matches.first() {
+                    let id = first_match.item_metadata.item_id;
+                    self.db
+                        .fetch_items_by_ids(&[id])?
+                        .into_iter()
+                        .next()
+                        .map(|item| {
+                            // Use the pre-computed Nucleo highlights from search
+                            // This ensures preview highlights match list highlights
+                            item.to_clipboard_item(first_match.match_data.full_content_highlights.clone())
+                        })
+                } else {
+                    None
+                };
+
+                Ok(SearchResult { matches, total_count, first_item })
             }
             Ok(Err(e)) => Err(e),
             Err(_join_error) => {
@@ -706,6 +737,52 @@ mod tests {
             assert_eq!(rgba, 0xFF5733FF);
         } else {
             panic!("Expected ColorSwatch icon");
+        }
+    }
+
+    #[test]
+    fn test_link_detection_and_fetch() {
+        let rt = runtime();
+        let store = ClipboardStore::new_in_memory().unwrap();
+
+        // Save a URL - should be detected as a link
+        let url = "https://github.com/anthropics/claude-code".to_string();
+        let id = store.save_text(url.clone(), None, None).unwrap();
+        assert!(id > 0);
+
+        // Fetch the item - this verifies the database roundtrip works
+        let items = store.fetch_by_ids(vec![id], None).unwrap();
+        assert_eq!(items.len(), 1);
+
+        // Check that it's detected as a link
+        if let crate::interface::ClipboardContent::Link { url: stored_url, metadata_state } = &items[0].content {
+            assert_eq!(stored_url, &url);
+            // Metadata should be pending initially (fetched in background)
+            assert!(matches!(metadata_state, crate::interface::LinkMetadataState::Pending));
+        } else {
+            panic!("Expected Link content, got: {:?}", items[0].content);
+        }
+
+        // Check icon is a symbol (Link type)
+        if let crate::interface::ItemIcon::Symbol { icon_type } = items[0].item_metadata.icon {
+            assert_eq!(icon_type, crate::interface::IconType::Link);
+        } else {
+            panic!("Expected Symbol icon with Link type");
+        }
+
+        // Search should also return the link
+        let result = rt.block_on(store.search("github".to_string())).unwrap();
+        assert!(!result.matches.is_empty(), "Should find the link by searching 'github'");
+        assert!(result.matches[0].item_metadata.preview.contains("github"));
+
+        // first_item should also be populated when searching
+        assert!(result.first_item.is_some(), "first_item should be populated");
+        if let Some(first) = &result.first_item {
+            if let crate::interface::ClipboardContent::Link { url: first_url, .. } = &first.content {
+                assert!(first_url.contains("github"));
+            } else {
+                panic!("first_item should be a Link");
+            }
         }
     }
 

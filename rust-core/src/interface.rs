@@ -211,6 +211,9 @@ pub struct MatchData {
     pub text: String,
     pub highlights: Vec<HighlightRange>,
     pub line_number: u64,
+    /// Full-content highlights from Nucleo (not snippet-adjusted)
+    /// Used for preview pane to ensure consistent highlighting
+    pub full_content_highlights: Vec<HighlightRange>,
 }
 
 /// Lightweight item metadata for list display
@@ -236,6 +239,8 @@ pub struct ItemMatch {
 pub struct SearchResult {
     pub matches: Vec<ItemMatch>,
     pub total_count: u64,
+    /// The first item's full content (avoids separate fetch for preview pane)
+    pub first_item: Option<ClipboardItem>,
 }
 
 /// Full clipboard item for preview pane

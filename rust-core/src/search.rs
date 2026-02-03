@@ -307,10 +307,10 @@ impl SearchEngine {
 
     /// Create MatchData from a FuzzyMatch
     pub fn create_match_data(fuzzy_match: &FuzzyMatch) -> MatchData {
-        let highlights = Self::indices_to_ranges(&fuzzy_match.matched_indices);
+        let full_content_highlights = Self::indices_to_ranges(&fuzzy_match.matched_indices);
         let (text, adjusted_highlights, line_number) = Self::generate_snippet(
             &fuzzy_match.content,
-            &highlights,
+            &full_content_highlights,
             MAX_SNIPPET_LEN,
         );
 
@@ -318,6 +318,7 @@ impl SearchEngine {
             text,
             highlights: adjusted_highlights,
             line_number,
+            full_content_highlights,
         }
     }
 
