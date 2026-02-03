@@ -56,7 +56,7 @@ let package = Package(
             path: "Sources/ClipKittyRustWrapper",
             swiftSettings: [
                 // UniFFI-generated code not yet compatible with Swift 6 strict concurrency
-                .swiftLanguageVersion(.v5)
+                .swiftLanguageMode(.v5)
             ]
         ),
         .executableTarget(
