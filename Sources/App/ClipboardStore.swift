@@ -109,20 +109,8 @@ final class ClipboardStore {
         setupDatabase()
         refresh()
         pruneIfNeeded()
-        verifyFTSIntegrityAsync()
     }
 
-    /// Check FTS index integrity in background and rebuild if needed
-    private func verifyFTSIntegrityAsync() {
-        guard let rustStore else { return }
-        Task.detached {
-            let needsRebuild = !rustStore.verifyFtsIntegrity()
-            if needsRebuild {
-                // FTS rebuild happens automatically via verifyFtsIntegrity
-                logError("FTS index was rebuilt")
-            }
-        }
-    }
 
     /// Current database size in bytes (cached, updated async)
     private(set) var databaseSizeBytes: Int64 = 0
