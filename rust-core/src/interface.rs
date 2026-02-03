@@ -16,9 +16,6 @@ pub enum IconType {
     Link,
     Email,
     Phone,
-    Address,
-    DateType,
-    Transit,
     Image,
     Color,
 }
@@ -94,9 +91,6 @@ pub enum ClipboardContent {
     Link { url: String, metadata_state: LinkMetadataState },
     Email { address: String },
     Phone { number: String },
-    Address { value: String },
-    Date { value: String },
-    Transit { value: String },
     Image { data: Vec<u8>, description: String },
 }
 
@@ -109,9 +103,6 @@ impl ClipboardContent {
             ClipboardContent::Link { url, .. } => url,
             ClipboardContent::Email { address } => address,
             ClipboardContent::Phone { number } => number,
-            ClipboardContent::Address { value } => value,
-            ClipboardContent::Date { value } => value,
-            ClipboardContent::Transit { value } => value,
             ClipboardContent::Image { description, .. } => description,
         }
     }
@@ -124,9 +115,6 @@ impl ClipboardContent {
             ClipboardContent::Link { .. } => IconType::Link,
             ClipboardContent::Email { .. } => IconType::Email,
             ClipboardContent::Phone { .. } => IconType::Phone,
-            ClipboardContent::Address { .. } => IconType::Address,
-            ClipboardContent::Date { .. } => IconType::DateType,
-            ClipboardContent::Transit { .. } => IconType::Transit,
             ClipboardContent::Image { .. } => IconType::Image,
         }
     }
@@ -139,9 +127,6 @@ impl ClipboardContent {
             ClipboardContent::Link { .. } => "link",
             ClipboardContent::Email { .. } => "email",
             ClipboardContent::Phone { .. } => "phone",
-            ClipboardContent::Address { .. } => "address",
-            ClipboardContent::Date { .. } => "date",
-            ClipboardContent::Transit { .. } => "transit",
             ClipboardContent::Image { .. } => "image",
         }
     }
@@ -160,9 +145,6 @@ impl ClipboardContent {
             }
             ClipboardContent::Email { address } => (address.clone(), None, None, None, None, None),
             ClipboardContent::Phone { number } => (number.clone(), None, None, None, None, None),
-            ClipboardContent::Address { value } => (value.clone(), None, None, None, None, None),
-            ClipboardContent::Date { value } => (value.clone(), None, None, None, None, None),
-            ClipboardContent::Transit { value } => (value.clone(), None, None, None, None, None),
             ClipboardContent::Image { data, description } => {
                 (description.clone(), Some(data.clone()), None, None, None, None)
             }
@@ -195,9 +177,6 @@ impl ClipboardContent {
             "phone" => ClipboardContent::Phone {
                 number: content.to_string(),
             },
-            "address" => ClipboardContent::Address { value: content.to_string() },
-            "date" => ClipboardContent::Date { value: content.to_string() },
-            "transit" => ClipboardContent::Transit { value: content.to_string() },
             _ => ClipboardContent::Text { value: content.to_string() },
         }
     }

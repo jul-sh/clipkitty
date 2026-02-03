@@ -609,9 +609,6 @@ impl Database {
             }
             "email" => ItemIcon::Symbol { icon_type: IconType::Email },
             "phone" => ItemIcon::Symbol { icon_type: IconType::Phone },
-            "address" => ItemIcon::Symbol { icon_type: IconType::Address },
-            "date" => ItemIcon::Symbol { icon_type: IconType::DateType },
-            "transit" => ItemIcon::Symbol { icon_type: IconType::Transit },
             _ => ItemIcon::Symbol { icon_type: IconType::Text },
         };
 

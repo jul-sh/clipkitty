@@ -154,9 +154,6 @@ fn get_content_text(item: &clipkitty_core::ClipboardItem) -> String {
         clipkitty_core::ClipboardContent::Link { url, .. } => url.clone(),
         clipkitty_core::ClipboardContent::Email { address } => address.clone(),
         clipkitty_core::ClipboardContent::Phone { number } => number.clone(),
-        clipkitty_core::ClipboardContent::Address { value } => value.clone(),
-        clipkitty_core::ClipboardContent::Date { value } => value.clone(),
-        clipkitty_core::ClipboardContent::Transit { value } => value.clone(),
         clipkitty_core::ClipboardContent::Image { description, .. } => description.clone(),
     }
 }
