@@ -16,9 +16,23 @@ use crate::interface::{
 use crate::models::StoredItem;
 use crate::search::{SearchEngine, MIN_TRIGRAM_QUERY_LEN, MAX_RESULTS_SHORT, compute_preview_highlights};
 use chrono::Utc;
+#[cfg(feature = "data-gen")]
+use chrono::TimeZone;
+use once_cell::sync::Lazy;
 use std::path::PathBuf;
 use std::sync::Arc;
 use tokio_util::sync::CancellationToken;
+
+/// Global fallback Tokio runtime for when async functions are called outside any runtime context.
+/// This is shared across all ClipboardStore instances and never dropped.
+/// Used by UniFFI which doesn't provide a tokio runtime.
+static FALLBACK_RUNTIME: Lazy<tokio::runtime::Runtime> = Lazy::new(|| {
+    tokio::runtime::Builder::new_multi_thread()
+        .worker_threads(2)
+        .enable_all()
+        .build()
+        .expect("Failed to create fallback tokio runtime")
+});
 
 /// RAII guard that cancels a token when dropped.
 /// When Swift cancels an async Task, UniFFI drops the Future, which drops this guard,
@@ -45,6 +59,7 @@ impl Drop for DropGuard {
 /// - Database uses r2d2 connection pool (concurrent reads, no mutex blocking)
 /// - Search is async with cancellation support via CancellationToken
 /// - Blocking work runs on tokio::spawn_blocking threads
+/// - Uses global FALLBACK_RUNTIME when called outside any runtime (e.g., from UniFFI)
 #[derive(uniffi::Object)]
 pub struct ClipboardStore {
     db: Arc<Database>,
@@ -64,6 +79,12 @@ impl ClipboardStore {
             indexer: Arc::new(indexer),
             search_engine: Arc::new(SearchEngine::new()),
         })
+    }
+
+    /// Get a tokio runtime handle - uses current runtime if available, otherwise global fallback
+    fn runtime_handle(&self) -> tokio::runtime::Handle {
+        tokio::runtime::Handle::try_current()
+            .unwrap_or_else(|_| FALLBACK_RUNTIME.handle().clone())
     }
 
     /// Rebuild index from database if the index is empty but database has items
@@ -245,6 +266,34 @@ impl ClipboardStore {
         }
 
         Ok(())
+    }
+
+    /// Save an image item with a custom description (for synthetic data generation)
+    #[cfg(feature = "data-gen")]
+    pub fn save_image_with_description(
+        &self,
+        image_data: Vec<u8>,
+        description: String,
+        source_app: Option<String>,
+        source_app_bundle_id: Option<String>,
+    ) -> Result<i64, ClipKittyError> {
+        if image_data.is_empty() {
+            return Err(ClipKittyError::InvalidInput("Empty image data".into()));
+        }
+
+        let item = StoredItem::new_image_with_description(
+            image_data,
+            description,
+            source_app,
+            source_app_bundle_id,
+        );
+        let id = self.db.insert_item(&item)?;
+
+        self.indexer
+            .add_document(id, item.text_content(), item.timestamp_unix)?;
+        self.indexer.commit()?;
+
+        Ok(id)
     }
 }
 
@@ -458,8 +507,10 @@ impl ClipboardStoreApi for ClipboardStore {
         let token = CancellationToken::new();
         let _guard = DropGuard::new(token.clone());
 
-        // Get runtime handle for SQLite interrupt watcher spawning inside spawn_blocking
-        let runtime = tokio::runtime::Handle::current();
+        // Get runtime handle - uses current runtime if available, otherwise our fallback
+        // This ensures we work both in tokio tests and when called from UniFFI
+        let runtime = self.runtime_handle();
+        let runtime_for_closure = runtime.clone();
 
         // Clone Arcs for the blocking closure
         let db = Arc::clone(&self.db);
@@ -469,12 +520,14 @@ impl ClipboardStoreApi for ClipboardStore {
         let trimmed_owned = trimmed.to_string();
         let token_clone = token.clone();
 
-        // Spawn the blocking search work
-        let handle = tokio::task::spawn_blocking(move || {
+        // Spawn the blocking search work on our runtime
+        // We use runtime.spawn_blocking() instead of tokio::task::spawn_blocking()
+        // because UniFFI doesn't provide a tokio runtime context
+        let handle = runtime.spawn_blocking(move || {
             if trimmed_owned.len() < MIN_TRIGRAM_QUERY_LEN {
-                Self::search_short_query_sync(&db, &search_engine, &trimmed_owned, &token_clone, &runtime)
+                Self::search_short_query_sync(&db, &search_engine, &trimmed_owned, &token_clone, &runtime_for_closure)
             } else {
-                Self::search_trigram_query_sync(&db, &indexer, &search_engine, &query_owned, &token_clone, &runtime)
+                Self::search_trigram_query_sync(&db, &indexer, &search_engine, &query_owned, &token_clone, &runtime_for_closure)
             }
         });
 
@@ -895,5 +948,27 @@ mod tests {
 
         drop(guard2);
         assert!(token.is_cancelled()); // Still cancelled, no error from double-cancel
+    }
+
+    /// Test that async search works without an external tokio runtime.
+    /// This simulates what happens when UniFFI calls our async function -
+    /// UniFFI doesn't provide a tokio runtime, so we must manage our own.
+    #[test]
+    fn test_search_works_without_external_tokio_runtime() {
+        // This test does NOT use #[tokio::test] - it has no tokio runtime context
+        // This is how UniFFI calls our async functions
+
+        let store = ClipboardStore::new_in_memory().unwrap();
+        store.save_text("Hello World".to_string(), None, None).unwrap();
+        store.save_text("Test content".to_string(), None, None).unwrap();
+
+        // Block on the future without a surrounding tokio runtime
+        // We use futures::executor to simulate UniFFI's async handling
+        let result = futures::executor::block_on(store.search("Hello".to_string()));
+
+        // Should complete successfully, not panic
+        assert!(result.is_ok());
+        let search_result = result.unwrap();
+        assert!(!search_result.matches.is_empty());
     }
 }
