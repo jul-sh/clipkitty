@@ -10,7 +10,6 @@ use crate::models::StoredItem;
 use chrono::Utc;
 use nucleo_matcher::pattern::{CaseMatching, Normalization, Pattern};
 use nucleo_matcher::{Config, Matcher, Utf32Str};
-use regex::RegexBuilder;
 
 /// Maximum results to return for trigram queries (after fuzzy re-ranking)
 pub const MAX_RESULTS_TRIGRAM: usize = 5000;
@@ -416,73 +415,6 @@ fn normalize_snippet(content: &str, start: usize, end: usize, max_chars: usize) 
     normalize_snippet_with_mapping(content, start, end, max_chars).0
 }
 
-/// Use regex for performant highlighting
-pub fn highlight_with_regex(text: &str, query: &str) -> Vec<HighlightRange> {
-    if query.is_empty() {
-        return Vec::new();
-    }
-
-    let mut ranges = Vec::new();
-
-    // Escape regex special characters and build pattern
-    let escaped_query = regex::escape(query);
-    if let Ok(regex) = RegexBuilder::new(&escaped_query)
-        .case_insensitive(true)
-        .build()
-    {
-        for mat in regex.find_iter(text).take(100) {
-            ranges.push(HighlightRange {
-                start: mat.start() as u64,
-                end: mat.end() as u64,
-            });
-        }
-    }
-
-    // If no exact matches and query is long enough, try trigram matching
-    if ranges.is_empty() && query.len() >= 3 {
-        let query_lower = query.to_lowercase();
-        let text_lower = text.to_lowercase();
-        let chars: Vec<char> = query_lower.chars().collect();
-
-        for i in 0..chars.len().saturating_sub(2) {
-            let trigram: String = chars[i..i + 3].iter().collect();
-            let mut start = 0;
-            while let Some(pos) = text_lower[start..].find(&trigram) {
-                let abs_pos = start + pos;
-                // Check for overlaps
-                let overlaps = ranges.iter().any(|r| {
-                    abs_pos < r.end as usize && abs_pos + 3 > r.start as usize
-                });
-                if !overlaps {
-                    ranges.push(HighlightRange {
-                        start: abs_pos as u64,
-                        end: (abs_pos + 3) as u64,
-                    });
-                }
-                start = abs_pos + 1;
-                if ranges.len() >= 100 {
-                    break;
-                }
-            }
-            if ranges.len() >= 100 {
-                break;
-            }
-        }
-    }
-
-    // Sort by position
-    ranges.sort_by_key(|r| r.start);
-    ranges
-}
-
-/// Compute highlights for preview pane (full content)
-pub fn compute_preview_highlights(content: &str, query: &str) -> Vec<HighlightRange> {
-    if query.trim().is_empty() {
-        return Vec::new();
-    }
-    highlight_with_regex(content, query.trim())
-}
-
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -495,15 +427,6 @@ mod tests {
         assert_eq!(ranges[0], HighlightRange { start: 0, end: 3 });
         assert_eq!(ranges[1], HighlightRange { start: 5, end: 7 });
         assert_eq!(ranges[2], HighlightRange { start: 10, end: 11 });
-    }
-
-    #[test]
-    fn test_highlight_with_regex() {
-        let text = "Hello world, hello again";
-        let highlights = highlight_with_regex(text, "hello");
-        assert_eq!(highlights.len(), 2);
-        assert_eq!(highlights[0], HighlightRange { start: 0, end: 5 });
-        assert_eq!(highlights[1], HighlightRange { start: 13, end: 18 });
     }
 
     #[test]

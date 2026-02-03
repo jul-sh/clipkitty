@@ -14,7 +14,7 @@ use crate::interface::{
     ClipboardItem, ItemMatch, MatchData, SearchResult, ClipKittyError, ClipboardStoreApi,
 };
 use crate::models::StoredItem;
-use crate::search::{SearchEngine, MIN_TRIGRAM_QUERY_LEN, MAX_RESULTS_SHORT, compute_preview_highlights};
+use crate::search::{SearchEngine, MIN_TRIGRAM_QUERY_LEN, MAX_RESULTS_SHORT};
 use chrono::Utc;
 #[cfg(feature = "data-gen")]
 use chrono::TimeZone;
@@ -496,7 +496,7 @@ impl ClipboardStoreApi for ClipboardStore {
                     .fetch_items_by_ids(&[first_metadata.item_id])?
                     .into_iter()
                     .next()
-                    .map(|item| item.to_clipboard_item(Vec::new()))
+                    .map(|item| item.to_clipboard_item())
             } else {
                 None
             };
@@ -550,18 +550,13 @@ impl ClipboardStoreApi for ClipboardStore {
                 let total_count = matches.len() as u64;
 
                 // Fetch first item's full content for preview pane
-                // Use Nucleo's full_content_highlights for consistency with list highlighting
                 let first_item = if let Some(first_match) = matches.first() {
                     let id = first_match.item_metadata.item_id;
                     self.db
                         .fetch_items_by_ids(&[id])?
                         .into_iter()
                         .next()
-                        .map(|item| {
-                            // Use the pre-computed Nucleo highlights from search
-                            // This ensures preview highlights match list highlights
-                            item.to_clipboard_item(first_match.match_data.full_content_highlights.clone())
-                        })
+                        .map(|item| item.to_clipboard_item())
                 } else {
                     None
                 };
@@ -577,27 +572,12 @@ impl ClipboardStoreApi for ClipboardStore {
     }
 
     /// Fetch full items by IDs for preview pane
-    /// Includes highlights computed from optional search query
-    fn fetch_by_ids(
-        &self,
-        item_ids: Vec<i64>,
-        search_query: Option<String>,
-    ) -> Result<Vec<ClipboardItem>, ClipKittyError> {
-         let stored_items = self.db.fetch_items_by_ids(&item_ids)?;
-
+    fn fetch_by_ids(&self, item_ids: Vec<i64>) -> Result<Vec<ClipboardItem>, ClipKittyError> {
+        let stored_items = self.db.fetch_items_by_ids(&item_ids)?;
         let items: Vec<ClipboardItem> = stored_items
             .into_iter()
-            .map(|item| {
-                // Compute highlights for preview pane if search query provided
-                let highlights = search_query
-                    .as_ref()
-                    .map(|q| compute_preview_highlights(item.text_content(), q))
-                    .unwrap_or_default();
-
-                item.to_clipboard_item(highlights)
-            })
+            .map(|item| item.to_clipboard_item())
             .collect();
-
         Ok(items)
     }
 
@@ -699,20 +679,14 @@ mod tests {
     }
 
     #[test]
-    fn test_fetch_by_ids_with_highlights() {
+    fn test_fetch_by_ids() {
         let store = ClipboardStore::new_in_memory().unwrap();
 
         let id = store.save_text("Hello World".to_string(), None, None).unwrap();
 
-        // Fetch without query
-        let items = store.fetch_by_ids(vec![id], None).unwrap();
+        let items = store.fetch_by_ids(vec![id]).unwrap();
         assert_eq!(items.len(), 1);
-        assert!(items[0].preview_highlights.is_empty());
-
-        // Fetch with query
-        let items = store.fetch_by_ids(vec![id], Some("World".to_string())).unwrap();
-        assert_eq!(items.len(), 1);
-        assert!(!items[0].preview_highlights.is_empty());
+        assert_eq!(items[0].content.text_content(), "Hello World");
     }
 
     #[test]
@@ -722,7 +696,7 @@ mod tests {
         let id = store.save_text("#FF5733".to_string(), None, None).unwrap();
         assert!(id > 0);
 
-        let items = store.fetch_by_ids(vec![id], None).unwrap();
+        let items = store.fetch_by_ids(vec![id]).unwrap();
         assert_eq!(items.len(), 1);
 
         // Check that it's detected as a color
@@ -751,7 +725,7 @@ mod tests {
         assert!(id > 0);
 
         // Fetch the item - this verifies the database roundtrip works
-        let items = store.fetch_by_ids(vec![id], None).unwrap();
+        let items = store.fetch_by_ids(vec![id]).unwrap();
         assert_eq!(items.len(), 1);
 
         // Check that it's detected as a link
