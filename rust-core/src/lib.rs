@@ -11,7 +11,7 @@ mod indexer;
 pub mod interface;
 mod link_metadata;
 mod models;
-mod search;
+pub mod search;
 mod store;
 
 pub use interface::*;
