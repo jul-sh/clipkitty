@@ -41,6 +41,8 @@ enum DisplayState: Equatable {
     /// Browse mode - showing recent items (no search query)
     /// Includes optional first item for immediate preview display
     case browse([ItemMetadata], firstItem: ClipboardItem?)
+    /// Browse loading - refreshing browse items, showing fallback while waiting
+    case browseLoading(fallbackItems: [ItemMetadata])
     /// Search in progress - showing fallback results while waiting for new results
     /// Uses [ItemMatch] to preserve match text and highlights from previous search (prevents text flash)
     case searchLoading(query: String, fallbackResults: [ItemMatch])
@@ -57,6 +59,16 @@ final class ClipboardStore {
     // MARK: - State (Single Source of Truth)
 
     private(set) var state: DisplayState = .loading
+
+    /// Whether currently in browse mode (including loading state)
+    var isInBrowseMode: Bool {
+        switch state {
+        case .browse, .browseLoading:
+            return true
+        default:
+            return false
+        }
+    }
 
     // MARK: - Private State
 
@@ -86,7 +98,7 @@ final class ClipboardStore {
         self.isScreenshotMode = screenshotMode
         lastChangeCount = NSPasteboard.general.changeCount
         setupDatabase()
-        loadItems(reset: true)
+        loadItems()
         pruneIfNeeded()
         verifyFTSIntegrityAsync()
     }
@@ -155,7 +167,7 @@ final class ClipboardStore {
 
         if query.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty {
             currentSearchQuery = ""
-            loadItems(reset: true)
+            loadItems()
             return
         }
 
@@ -164,14 +176,14 @@ final class ClipboardStore {
         // Capture fallback results from current state (preserves match text to prevent flash)
         let fallback: [ItemMatch] = {
             switch state {
-            case .browse(let items, _):
+            case .browse(let items, _), .browseLoading(let items):
                 // Convert metadata to ItemMatch with empty matchData
                 return items.map { ItemMatch(itemMetadata: $0, matchData: MatchData(text: "", highlights: [], lineNumber: 0, fullContentHighlights: [])) }
             case .searchLoading(_, let fallbackResults):
                 return fallbackResults
             case .searchResults(_, let results, _):
                 return results
-            default:
+            case .loading, .error:
                 return []
             }
         }()
@@ -188,7 +200,7 @@ final class ClipboardStore {
     func resetForDisplay() {
         searchTask?.cancel()
         displayVersion += 1
-        loadItems(reset: true)
+        loadItems()
     }
 
     /// Reset selection state for a new display session (called on show)
@@ -210,19 +222,25 @@ final class ClipboardStore {
     // MARK: - Loading
 
     /// Load items for browse mode (search with empty query)
-    private func loadItems(reset: Bool) {
-        // Extract current items to preserve during refresh (avoid flash)
-        let currentItems: [ItemMetadata] = {
-            if case .browse(let items, _) = state {
+    private func loadItems() {
+        // Extract fallback items from current state
+        let fallbackItems: [ItemMetadata] = {
+            switch state {
+            case .browse(let items, _):
                 return items
+            case .browseLoading(let items):
+                return items
+            case .searchLoading, .searchResults:
+                // Don't show search results as fallback for browse - they're unrelated
+                return []
+            case .loading, .error:
+                return []
             }
-            return []
         }()
 
-        // Only show loading spinner if we have no cached items
-        if reset && currentItems.isEmpty {
-            state = .loading
-        }
+        // Transition to browseLoading with fallback items
+        // If no fallback, this shows empty list briefly (spinner shows after delay)
+        state = .browseLoading(fallbackItems: fallbackItems)
 
         guard let rustStore else { return }
         let signpostID = OSSignpostID(log: performanceLog)
@@ -430,8 +448,8 @@ final class ClipboardStore {
                 // Reload on main actor if in browse mode
                 guard let self else { return }
                 await MainActor.run { [weak self] in
-                    if case .browse = self?.state {
-                        self?.loadItems(reset: true)
+                    if self?.isInBrowseMode == true {
+                        self?.loadItems()
                     }
                 }
             } catch {
@@ -456,8 +474,8 @@ final class ClipboardStore {
         }.value
 
         await MainActor.run { [weak self] in
-            if case .browse = self?.state {
-                self?.loadItems(reset: true)
+            if self?.isInBrowseMode == true {
+                self?.loadItems()
             }
         }
     }
@@ -486,8 +504,8 @@ final class ClipboardStore {
 
                 guard let self else { return }
                 await MainActor.run { [weak self] in
-                    if case .browse = self?.state {
-                        self?.loadItems(reset: true)
+                    if self?.isInBrowseMode == true {
+                        self?.loadItems()
                     }
                 }
 
@@ -643,8 +661,8 @@ final class ClipboardStore {
         }.value
 
         // Reload if in browse mode
-        if case .browse = state {
-            loadItems(reset: true)
+        if isInBrowseMode {
+            loadItems()
         }
     }
 
@@ -656,6 +674,8 @@ final class ClipboardStore {
             // Clear first item if it was the deleted one
             let newFirstItem = firstItem?.itemMetadata.itemId == itemId ? nil : firstItem
             state = .browse(filteredItems, firstItem: newFirstItem)
+        case .browseLoading(let items):
+            state = .browseLoading(fallbackItems: items.filter { $0.itemId != itemId })
         case .searchLoading(let query, let fallback):
             state = .searchLoading(
                 query: query,
@@ -670,7 +690,7 @@ final class ClipboardStore {
                 results: filteredResults,
                 firstItem: newFirstItem
             )
-        default:
+        case .loading, .error:
             break
         }
 

@@ -33,13 +33,13 @@ struct ContentView: View {
 
     private var itemIds: [Int64] {
         switch store.state {
-        case .browse(let items, _):
+        case .browse(let items, _), .browseLoading(let items):
             return items.map { $0.itemId }
         case .searchLoading(_, let fallbackResults):
             return fallbackResults.map { $0.itemMetadata.itemId }
         case .searchResults(_, let results, _):
             return results.map { $0.itemMetadata.itemId }
-        default:
+        case .loading, .error:
             return []
         }
     }
@@ -51,7 +51,7 @@ struct ContentView: View {
             return firstItem
         case .searchResults(_, _, let firstItem):
             return firstItem
-        default:
+        case .browseLoading, .searchLoading, .loading, .error:
             return nil
         }
     }
@@ -67,7 +67,7 @@ struct ContentView: View {
         case .searchResults(_, let results, _):
             return results.first { $0.itemMetadata.itemId == selectedItemId }?
                 .matchData.fullContentHighlights ?? []
-        default:
+        case .browse, .browseLoading, .loading, .error:
             return []
         }
     }
@@ -179,18 +179,22 @@ struct ContentView: View {
                 self.selectedItem = firstItem
             }
 
-            // Show spinner after 150ms if still in searchLoading state
+            // Show spinner after 100ms if still in loading state
             searchSpinnerTask?.cancel()
-            if case .searchLoading = newState {
+            switch newState {
+            case .searchLoading, .browseLoading:
                 searchSpinnerTask = Task {
-                    try? await Task.sleep(for: .milliseconds(150))
+                    try? await Task.sleep(for: .milliseconds(100))
                     guard !Task.isCancelled else { return }
-                    // Only show if still in searchLoading state
-                    if case .searchLoading = store.state {
+                    // Only show if still in a loading state
+                    switch store.state {
+                    case .searchLoading, .browseLoading:
                         showSearchSpinner = true
+                    default:
+                        break
                     }
                 }
-            } else {
+            default:
                 showSearchSpinner = false
             }
         }
@@ -337,7 +341,7 @@ struct ContentView: View {
             loadingView
         case .error(let message):
             errorView(message)
-        case .browse, .searchLoading, .searchResults:
+        case .browse, .browseLoading, .searchLoading, .searchResults:
             splitView
         }
     }
@@ -380,14 +384,14 @@ struct ContentView: View {
     /// Unified row data for consistent ForEach identity across state transitions
     private var displayRows: [(metadata: ItemMetadata, matchData: MatchData?)] {
         switch store.state {
-        case .browse(let items, _):
+        case .browse(let items, _), .browseLoading(let items):
             return items.map { ($0, nil) }
         case .searchLoading(_, let fallbackResults):
             // Preserve matchData from previous search to prevent text flash
             return fallbackResults.map { ($0.itemMetadata, $0.matchData) }
         case .searchResults(_, let results, _):
             return results.map { ($0.itemMetadata, $0.matchData) }
-        default:
+        case .loading, .error:
             return []
         }
     }
