@@ -555,22 +555,25 @@ struct ContentView: View {
 
     @ViewBuilder
     private func linkPreview(url: String, metadataState: LinkMetadataState, itemId: Int64) -> some View {
-        VStack(alignment: .leading, spacing: 16) {
+        VStack(alignment: .leading, spacing: 0) {
+            // Full URL rendered as normal clipboard text - enables highlights & selection
+            TextPreviewView(
+                text: url,
+                fontName: FontManager.mono,
+                fontSize: 15,
+                highlights: selectedItemHighlights
+            )
+            .frame(maxWidth: .infinity)
+            .frame(height: 72) // Sufficient height for 2-3 wrapped lines with insets
+
             // Native link preview using LPLinkView
             LinkPreviewView(url: url, metadataState: metadataState)
                 .frame(maxWidth: .infinity)
-                .frame(minHeight: 100, maxHeight: 300)
-
-            // Full URL with line wrapping
-            Text(url)
-                .font(.custom(FontManager.mono, size: 12))
-                .foregroundStyle(.secondary)
-                .textSelection(.enabled)
-                .frame(maxWidth: .infinity, alignment: .leading)
+                .frame(minHeight: 100)
+                .padding([.horizontal, .bottom], 16) // Spacing from edges and bottom URL inset
 
             Spacer()
         }
-        .padding(16)
         .task(id: itemId) {
             // Fetch metadata on-demand if pending
             guard case .pending = metadataState else { return }
@@ -999,8 +1002,6 @@ struct HighlightedTextView: NSViewRepresentable {
 
 // MARK: - Hide Scroll Indicators When System Uses Overlay Style
 
-/// Hides scroll indicators when the system preference is "Show scroll bars: When scrolling" (overlay style).
-/// Detects scrolling via ScrollView geometry and shows indicators only while actively scrolling.
 /// This prevents the brief scrollbar flash when the panel appears.
 private struct HideScrollIndicatorsWhenOverlay: ViewModifier {
     let displayVersion: Int
@@ -1025,3 +1026,4 @@ private struct HideScrollIndicatorsWhenOverlay: ViewModifier {
         }
     }
 }
+
