@@ -1,6 +1,11 @@
 //! Tests for preview line behavior
 //!
-//! Rust provides normalized snippets; Swift handles final truncation and ellipsis.
+//! Two functions for generating preview text:
+//! - `normalize_preview()` - For item list preview (empty query results)
+//! - `generate_snippet()` - For search result snippets (non-empty query)
+//!
+//! Rust provides normalized text; Swift handles final truncation and ellipsis.
+//!
 //! Rust behavior:
 //! - Returns generous snippets (up to ~400 chars) without ellipsis
 //! - Normalizes whitespace (collapse spaces, convert newlines/tabs)
@@ -18,11 +23,11 @@ use clipkitty_core::search::SearchEngine;
 use clipkitty_core::HighlightRange;
 
 // ─────────────────────────────────────────────────────────────────────────────
-// BROWSE MODE PREVIEW TESTS (normalize_preview)
+// normalize_preview TESTS (used for item list display with empty query)
 // ─────────────────────────────────────────────────────────────────────────────
 
 #[test]
-fn browse_preview_short_text_no_ellipsis() {
+fn preview_short_text_no_ellipsis() {
     let text = "Hello World";
     let result = normalize_preview(text, 200);
     assert_eq!(result, "Hello World");
@@ -30,7 +35,7 @@ fn browse_preview_short_text_no_ellipsis() {
 }
 
 #[test]
-fn browse_preview_exactly_200_chars_no_ellipsis() {
+fn preview_exactly_200_chars_no_ellipsis() {
     let text = "a".repeat(200);
     let result = normalize_preview(&text, 200);
     assert_eq!(result.chars().count(), 200);
@@ -38,7 +43,7 @@ fn browse_preview_exactly_200_chars_no_ellipsis() {
 }
 
 #[test]
-fn browse_preview_201_chars_has_ellipsis() {
+fn preview_201_chars_has_ellipsis() {
     let text = "a".repeat(201);
     let result = normalize_preview(&text, 200);
     assert_eq!(result.chars().count(), 201, "Should be 200 chars + ellipsis");
@@ -46,7 +51,7 @@ fn browse_preview_201_chars_has_ellipsis() {
 }
 
 #[test]
-fn browse_preview_long_text_has_trailing_ellipsis() {
+fn preview_long_text_has_trailing_ellipsis() {
     let text = "a".repeat(500);
     let result = normalize_preview(&text, 200);
     assert!(result.ends_with('…'), "Long text should end with ellipsis");
@@ -54,7 +59,7 @@ fn browse_preview_long_text_has_trailing_ellipsis() {
 }
 
 #[test]
-fn browse_preview_skips_leading_whitespace() {
+fn preview_skips_leading_whitespace() {
     let text = "   Hello World";
     let result = normalize_preview(text, 200);
     assert_eq!(result, "Hello World");
@@ -62,40 +67,40 @@ fn browse_preview_skips_leading_whitespace() {
 }
 
 #[test]
-fn browse_preview_collapses_consecutive_whitespace() {
+fn preview_collapses_consecutive_whitespace() {
     let text = "Hello    World";
     let result = normalize_preview(text, 200);
     assert_eq!(result, "Hello World");
 }
 
 #[test]
-fn browse_preview_converts_newlines_to_spaces() {
+fn preview_converts_newlines_to_spaces() {
     let text = "Hello\n\nWorld";
     let result = normalize_preview(text, 200);
     assert_eq!(result, "Hello World");
 }
 
 #[test]
-fn browse_preview_converts_tabs_to_spaces() {
+fn preview_converts_tabs_to_spaces() {
     let text = "Hello\t\tWorld";
     let result = normalize_preview(text, 200);
     assert_eq!(result, "Hello World");
 }
 
 #[test]
-fn browse_preview_trims_trailing_spaces() {
+fn preview_trims_trailing_spaces() {
     let text = "Hello World   ";
     let result = normalize_preview(text, 200);
     assert_eq!(result, "Hello World");
 }
 
 // ─────────────────────────────────────────────────────────────────────────────
-// SEARCH MODE SNIPPET TESTS (generate_snippet)
+// generate_snippet TESTS (used for search result display with non-empty query)
 // Rust returns generous snippets; Swift handles ellipsis
 // ─────────────────────────────────────────────────────────────────────────────
 
 #[test]
-fn search_snippet_short_text_returns_full_content() {
+fn snippet_short_text_returns_full_content() {
     let content = "Hello World";
     let highlights = vec![HighlightRange { start: 0, end: 5 }];
     let (snippet, _, line_number) = SearchEngine::generate_snippet(content, &highlights, 400);
@@ -106,7 +111,7 @@ fn search_snippet_short_text_returns_full_content() {
 }
 
 #[test]
-fn search_snippet_no_ellipsis_from_rust() {
+fn snippet_no_ellipsis_from_rust() {
     // Even for matches in the middle, Rust should not add ellipsis
     let prefix = "x".repeat(100);
     let suffix = "y".repeat(100);
@@ -121,7 +126,7 @@ fn search_snippet_no_ellipsis_from_rust() {
 }
 
 #[test]
-fn search_snippet_contains_match_with_context() {
+fn snippet_contains_match_with_context() {
     let content = "The quick brown fox jumps over the lazy dog";
     let highlights = vec![HighlightRange { start: 16, end: 19 }]; // "fox"
     let (snippet, adjusted_highlights, _) = SearchEngine::generate_snippet(content, &highlights, 400);
@@ -139,7 +144,7 @@ fn search_snippet_contains_match_with_context() {
 }
 
 #[test]
-fn search_snippet_normalizes_whitespace() {
+fn snippet_normalizes_whitespace() {
     let content = "Hello\n\n\nWorld";
     let highlights = vec![HighlightRange { start: 0, end: 5 }];
     let (snippet, _, _) = SearchEngine::generate_snippet(content, &highlights, 400);
@@ -150,7 +155,7 @@ fn search_snippet_normalizes_whitespace() {
 }
 
 #[test]
-fn search_snippet_line_number_calculated_correctly() {
+fn snippet_line_number_calculated_correctly() {
     let content = "Line 1\nLine 2\nLine 3 with MATCH";
     let highlights = vec![HighlightRange { start: 21, end: 26 }]; // "MATCH"
     let (_, _, line_number) = SearchEngine::generate_snippet(content, &highlights, 400);
@@ -159,7 +164,7 @@ fn search_snippet_line_number_calculated_correctly() {
 }
 
 #[test]
-fn search_snippet_line_number_first_line() {
+fn snippet_line_number_first_line() {
     let content = "MATCH on first line\nSecond line";
     let highlights = vec![HighlightRange { start: 0, end: 5 }];
     let (_, _, line_number) = SearchEngine::generate_snippet(content, &highlights, 400);
@@ -168,7 +173,7 @@ fn search_snippet_line_number_first_line() {
 }
 
 #[test]
-fn search_snippet_respects_max_length() {
+fn snippet_respects_max_length() {
     let content = "a".repeat(600);
     let highlights = vec![HighlightRange { start: 0, end: 5 }];
     let (snippet, _, _) = SearchEngine::generate_snippet(&content, &highlights, 400);
@@ -179,7 +184,7 @@ fn search_snippet_respects_max_length() {
 }
 
 #[test]
-fn search_snippet_highlight_positions_correct_without_ellipsis() {
+fn snippet_highlight_positions_correct_without_ellipsis() {
     // Highlights should point to correct positions in the snippet
     let prefix = "x".repeat(100);
     let content = format!("{}MATCH", prefix);
@@ -198,7 +203,7 @@ fn search_snippet_highlight_positions_correct_without_ellipsis() {
 }
 
 #[test]
-fn search_snippet_no_highlights_returns_normalized_content() {
+fn snippet_no_highlights_returns_normalized_content() {
     let content = "Hello   World\n\ntest";
     let highlights: Vec<HighlightRange> = vec![];
     let (snippet, adjusted_highlights, line_number) = SearchEngine::generate_snippet(content, &highlights, 400);
@@ -209,32 +214,30 @@ fn search_snippet_no_highlights_returns_normalized_content() {
 }
 
 // ─────────────────────────────────────────────────────────────────────────────
-// BROWSE MODE vs SEARCH MODE COMPARISON
+// normalize_preview vs generate_snippet COMPARISON
 // ─────────────────────────────────────────────────────────────────────────────
 
 #[test]
-fn browse_adds_ellipsis_search_does_not() {
-    // Browse mode (normalize_preview) adds ellipsis for truncated content
+fn normalize_preview_adds_ellipsis_generate_snippet_does_not() {
+    // normalize_preview adds ellipsis for truncated content
     let long_text = "a".repeat(500);
-    let browse_preview = normalize_preview(&long_text, 200);
-    assert!(browse_preview.ends_with('…'), "Browse mode adds trailing ellipsis");
+    let preview = normalize_preview(&long_text, 200);
+    assert!(preview.ends_with('…'), "normalize_preview adds trailing ellipsis");
 
-    // Search mode (generate_snippet) does not add ellipsis - Swift handles that
+    // generate_snippet does not add ellipsis - Swift handles that
     let highlights = vec![HighlightRange { start: 0, end: 5 }];
-    let (search_snippet, _, _) = SearchEngine::generate_snippet(&long_text, &highlights, 400);
-    assert!(!search_snippet.ends_with('…'), "Search mode should NOT add ellipsis");
+    let (snippet, _, _) = SearchEngine::generate_snippet(&long_text, &highlights, 400);
+    assert!(!snippet.ends_with('…'), "generate_snippet should NOT add ellipsis");
 }
 
 #[test]
-fn both_modes_normalize_whitespace_consistently() {
+fn both_functions_normalize_whitespace_consistently() {
     let text_with_whitespace = "Hello\n\n\t  World   ";
 
-    // Browse mode
-    let browse_preview = normalize_preview(text_with_whitespace, 200);
-    assert_eq!(browse_preview, "Hello World");
+    let preview = normalize_preview(text_with_whitespace, 200);
+    assert_eq!(preview, "Hello World");
 
-    // Search mode
     let highlights = vec![HighlightRange { start: 0, end: 5 }];
-    let (search_snippet, _, _) = SearchEngine::generate_snippet(text_with_whitespace, &highlights, 400);
-    assert_eq!(search_snippet, "Hello World");
+    let (snippet, _, _) = SearchEngine::generate_snippet(text_with_whitespace, &highlights, 400);
+    assert_eq!(snippet, "Hello World");
 }

@@ -477,16 +477,16 @@ impl ClipboardStoreApi for ClipboardStore {
         Ok(id)
     }
 
-    /// Search for items - unified API for both browse and search modes
-    /// Empty query returns recent items (browse mode), non-empty returns search results
-    /// Both return ItemMatch objects for consistent UI handling
+    /// Search for items
+    /// Empty query returns all recent items, non-empty query filters by search terms
+    /// Returns ItemMatch objects with optional highlights for consistent UI handling
     ///
     /// This is an async function that supports cancellation. When Swift drops the Task,
     /// the DropGuard triggers the CancellationToken, allowing mid-flight abortion.
     async fn search(&self, query: String) -> Result<SearchResult, ClipKittyError> {
         let trimmed = query.trim();
 
-        // Empty query = browse mode (return recent items as ItemMatch with empty MatchData)
+        // Empty query: return recent items with empty MatchData (no highlights)
         if trimmed.is_empty() {
             let (items, total_count) = self.db.fetch_item_metadata(None, 1000)?;
 
