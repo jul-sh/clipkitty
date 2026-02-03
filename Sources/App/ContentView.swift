@@ -744,29 +744,62 @@ struct ItemRow: View, Equatable {
     // Fixed height for exactly 1 line of text at font size 15
     private let rowHeight: CGFloat = 32
 
-    /// Display text - uses Rust-computed match text with line number if available
+    // MARK: - Display Text Truncation (Swift handles final truncation)
+
+    private let maxDisplayChars = 200
+
+    /// Computed prefix and whether snippet was truncated at start
+    private var snippetPrefix: (prefix: String, offset: Int) {
+        guard let matchData, !matchData.text.isEmpty else {
+            return ("", 0)
+        }
+
+        // Get match position from full content highlights
+        let matchStart = matchData.fullContentHighlights.first?.start ?? 0
+        let line = matchData.lineNumber
+
+        // If match is early (< 20 chars) and on line 1, no prefix needed
+        if matchStart < 20 && line == 1 {
+            return ("", 0)
+        }
+
+        // Build prefix: show line number if not on first line, otherwise just ellipsis
+        let prefix = line > 1 ? "L\(line): …" : "…"
+        return (prefix, prefix.count)
+    }
+
+    /// Display text - applies Swift-side truncation and ellipsis
     private var displayText: String {
         guard let matchData, !matchData.text.isEmpty else {
             return metadata.preview
         }
-        if matchData.lineNumber > 1 {
-            return "L\(matchData.lineNumber): \(matchData.text)"
+
+        let (prefix, _) = snippetPrefix
+        let snippetText = matchData.text
+
+        // Calculate available space for content after prefix
+        let availableChars = maxDisplayChars - prefix.count
+
+        // Truncate snippet if needed
+        if snippetText.count > availableChars {
+            let truncated = String(snippetText.prefix(availableChars))
+            return prefix + truncated + "…"
         }
-        return matchData.text
+
+        return prefix + snippetText
     }
 
-    /// Highlights for display - from Rust-computed match data
+    /// Highlights for display - adjusted for prefix offset
     private var displayHighlights: [HighlightRange] {
         guard let matchData, !matchData.highlights.isEmpty else { return [] }
-        // Adjust for line number prefix if present
-        if matchData.lineNumber > 1 {
-            let prefix = "L\(matchData.lineNumber): "
-            let offset = UInt64(prefix.count)
-            return matchData.highlights.map {
-                HighlightRange(start: $0.start + offset, end: $0.end + offset)
-            }
+
+        let (_, prefixOffset) = snippetPrefix
+        let offset = UInt64(prefixOffset)
+
+        // Adjust highlights for prefix
+        return matchData.highlights.map {
+            HighlightRange(start: $0.start + offset, end: $0.end + offset)
         }
-        return matchData.highlights
     }
 
     // Define exactly what constitutes a "change" for SwiftUI diffing

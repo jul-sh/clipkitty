@@ -30,10 +30,11 @@ const MIN_ADJACENCY_RATIO: f64 = 0.25;
 const PREFIX_MATCH_BOOST: f64 = 2.0;
 
 /// Context chars to include before/after match in snippet
-const SNIPPET_CONTEXT_CHARS: usize = 30;
+const SNIPPET_CONTEXT_CHARS: usize = 50;
 
-/// Max snippet length
-const MAX_SNIPPET_LEN: usize = 200;
+/// Max snippet length - generous size for Swift to truncate as needed
+/// Swift handles final truncation to ~200 chars with ellipsis
+const MAX_SNIPPET_LEN: usize = 400;
 
 #[derive(Debug, Clone)]
 pub struct FuzzyMatch {
@@ -233,9 +234,9 @@ impl SearchEngine {
         }).into_iter().map(|(start, end)| HighlightRange { start: start as u64, end: end as u64 }).collect()
     }
 
-    /// Generate a text snippet around the first match with context
+    /// Generate a generous text snippet around the first match with context
     /// Returns normalized snippet (whitespace collapsed) with adjusted highlights
-    /// Ellipsis handling is done by Swift for UI flexibility
+    /// Swift handles final truncation and ellipsis positioning
     pub fn generate_snippet(content: &str, highlights: &[HighlightRange], max_len: usize) -> (String, Vec<HighlightRange>, u64) {
         let content_len = content.len();
 
@@ -249,11 +250,13 @@ impl SearchEngine {
         let match_start = first_highlight.start as usize;
         let match_end = first_highlight.end as usize;
 
-        // Find line number (count newlines before match)
+        // Find line number (count newlines before match) - 1-indexed
         let line_number = content[..match_start.min(content_len)]
             .chars()
             .filter(|&c| c == '\n')
-            .count() as u64;
+            .count() as u64
+            + 1;
+
 
         // Start with the match, then expand with context
         let match_char_len = match_end - match_start;
