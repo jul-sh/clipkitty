@@ -122,7 +122,7 @@ impl StoredItem {
         ItemMetadata {
             item_id: self.id.unwrap_or(0),
             icon: self.item_icon(),
-            preview: self.display_text(SNIPPET_CONTEXT_CHARS * 2),
+            snippet: self.display_text(SNIPPET_CONTEXT_CHARS * 2),
             source_app: self.source_app.clone(),
             source_app_bundle_id: self.source_app_bundle_id.clone(),
             timestamp_unix: self.timestamp_unix,

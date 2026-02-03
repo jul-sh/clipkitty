@@ -613,13 +613,13 @@ impl Database {
             _ => ItemIcon::Symbol { icon_type: IconType::Text },
         };
 
-        // Generate preview text (generous snippet for Swift to truncate)
-        let preview = generate_preview(&content, SNIPPET_CONTEXT_CHARS * 2);
+        // Generate snippet text (generous snippet for Swift to truncate)
+        let snippet = generate_preview(&content, SNIPPET_CONTEXT_CHARS * 2);
 
         Ok(ItemMetadata {
             item_id: id,
             icon,
-            preview,
+            snippet,
             source_app,
             source_app_bundle_id,
             timestamp_unix: timestamp.timestamp(),

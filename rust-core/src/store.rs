@@ -580,7 +580,7 @@ mod tests {
 
         let result = rt.block_on(store.search("".to_string())).unwrap();
         assert_eq!(result.matches.len(), 1);
-        assert!(result.matches[0].item_metadata.preview.contains("Hello World"));
+        assert!(result.matches[0].item_metadata.snippet.contains("Hello World"));
     }
 
     #[test]
@@ -627,7 +627,7 @@ mod tests {
         let result = rt.block_on(store.search("Hello".to_string())).unwrap();
 
         assert_eq!(result.matches.len(), 1);
-        assert!(result.matches[0].item_metadata.preview.contains("Hello"));
+        assert!(result.matches[0].item_metadata.snippet.contains("Hello"));
         assert!(!result.matches[0].match_data.highlights.is_empty());
     }
 
@@ -700,7 +700,7 @@ mod tests {
         // Search should also return the link
         let result = rt.block_on(store.search("github".to_string())).unwrap();
         assert!(!result.matches.is_empty(), "Should find the link by searching 'github'");
-        assert!(result.matches[0].item_metadata.preview.contains("github"));
+        assert!(result.matches[0].item_metadata.snippet.contains("github"));
 
         // first_item should also be populated when searching
         assert!(result.first_item.is_some(), "first_item should be populated");
@@ -846,7 +846,7 @@ mod tests {
         let result = store.search("Hello".to_string()).await.unwrap();
         assert!(!result.matches.is_empty());
         assert!(result.matches.iter().all(|m|
-            m.item_metadata.preview.to_lowercase().contains("hello")
+            m.item_metadata.snippet.to_lowercase().contains("hello")
         ));
     }
 

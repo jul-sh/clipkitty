@@ -555,80 +555,18 @@ struct ContentView: View {
 
     @ViewBuilder
     private func linkPreview(url: String, metadataState: LinkMetadataState, itemId: Int64) -> some View {
-        let domain = URL(string: url)?.host ?? url
+        VStack(alignment: .leading, spacing: 16) {
+            // Native link preview using LPLinkView
+            LinkPreviewView(url: url, metadataState: metadataState)
+                .frame(maxWidth: .infinity)
+                .frame(minHeight: 100, maxHeight: 300)
 
-        VStack(spacing: 16) {
-            // OG Image if available
-            if let imageData = metadataState.imageData,
-               let nsImage = NSImage(data: imageData) {
-                Image(nsImage: nsImage)
-                    .resizable()
-                    .aspectRatio(contentMode: .fit)
-                    .frame(maxWidth: .infinity)
-                    .clipShape(RoundedRectangle(cornerRadius: 8))
-            } else {
-                // Placeholder based on metadata state
-                RoundedRectangle(cornerRadius: 8)
-                    .fill(Color.secondary.opacity(0.1))
-                    .frame(height: 120)
-                    .overlay {
-                        VStack(spacing: 8) {
-                            Image(systemName: "link")
-                                .font(.system(size: 32))
-                                .foregroundStyle(.secondary)
-                            switch metadataState {
-                            case .pending:
-                                ProgressView()
-                                    .controlSize(.small)
-                                Text("Loading preview…")
-                                    .font(.caption)
-                                    .foregroundStyle(.tertiary)
-                            case .failed:
-                                Text("Preview unavailable")
-                                    .font(.caption)
-                                    .foregroundStyle(.tertiary)
-                            case .loaded:
-                                EmptyView()
-                            }
-                        }
-                    }
-            }
-
-            // Domain, Title, Description, URL
-            VStack(alignment: .leading, spacing: 8) {
-                // Domain
-                Text(domain)
-                    .font(.caption)
-                    .fontWeight(.medium)
-                    .foregroundStyle(.secondary)
-                    .textCase(.uppercase)
-
-                // Title
-                if let title = metadataState.title, !title.isEmpty {
-                    Text(title)
-                        .font(.system(size: 18, weight: .semibold))
-                        .foregroundStyle(.primary)
-                        .lineLimit(2)
-                        .textSelection(.enabled)
-                }
-
-                // Description
-                if let description = metadataState.description, !description.isEmpty {
-                    Text(description)
-                        .font(.custom(FontManager.sansSerif, size: 14))
-                        .foregroundStyle(.secondary)
-                        .lineLimit(4)
-                        .textSelection(.enabled)
-                }
-
-                // Full URL
-                Text(url)
-                    .font(.custom(FontManager.mono, size: 12))
-                    .foregroundStyle(.tertiary)
-                    .lineLimit(1)
-                    .textSelection(.enabled)
-            }
-            .frame(maxWidth: .infinity, alignment: .leading)
+            // Full URL with line wrapping
+            Text(url)
+                .font(.custom(FontManager.mono, size: 12))
+                .foregroundStyle(.secondary)
+                .textSelection(.enabled)
+                .frame(maxWidth: .infinity, alignment: .leading)
 
             Spacer()
         }
@@ -738,6 +676,67 @@ struct TextPreviewView: NSViewRepresentable {
     }
 }
 
+// MARK: - Link Preview (LPLinkView)
+
+import LinkPresentation
+
+/// Native link preview using LPLinkView
+struct LinkPreviewView: NSViewRepresentable {
+    let url: String
+    let metadataState: LinkMetadataState
+
+    func makeNSView(context: Context) -> LPLinkView {
+        let linkView = LPLinkView()
+        // Start with a minimal placeholder metadata
+        if let urlObj = URL(string: url) {
+            let metadata = LPLinkMetadata()
+            metadata.originalURL = urlObj
+            metadata.url = urlObj
+            linkView.metadata = metadata
+        }
+        return linkView
+    }
+
+    func updateNSView(_ linkView: LPLinkView, context: Context) {
+        guard let urlObj = URL(string: url) else { return }
+
+        // Build metadata from our state
+        let metadata = LPLinkMetadata()
+        metadata.originalURL = urlObj
+        metadata.url = urlObj
+
+        switch metadataState {
+        case .loaded(let title, _, let imageData):
+            if let title {
+                metadata.title = title
+            }
+            if let imageData, let nsImage = NSImage(data: imageData) {
+                metadata.imageProvider = NSItemProvider(object: nsImage)
+            }
+        case .pending, .failed:
+            // Just show URL for pending/failed states
+            break
+        }
+
+        // Only update if metadata actually changed
+        if context.coordinator.lastURL != url ||
+           context.coordinator.lastMetadataState != metadataState {
+            context.coordinator.lastURL = url
+            context.coordinator.lastMetadataState = metadataState
+            linkView.metadata = metadata
+        }
+    }
+
+    func makeCoordinator() -> Coordinator {
+        Coordinator()
+    }
+
+    class Coordinator {
+        var lastURL: String?
+        var lastMetadataState: LinkMetadataState?
+    }
+}
+
 // MARK: - Item Row
 
 struct ItemRow: View, Equatable {
@@ -774,9 +773,9 @@ struct ItemRow: View, Equatable {
     }
 
     /// Display text with prefix/suffix ellipsis as needed
-    private var displayText: String {
-        // Use matchData.text if present, otherwise metadata.preview
-        let sourceText = matchData?.text.isEmpty == false ? matchData!.text : metadata.preview
+    private var displaySnippet: String {
+        // Use matchData.text if present, otherwise metadata.snippet
+        let sourceText = matchData?.text.isEmpty == false ? matchData!.text : metadata.snippet
         let (prefix, _) = snippetPrefix
 
         // Available space for content
@@ -882,7 +881,7 @@ struct ItemRow: View, Equatable {
 
             // Text content - use AppKit for fast highlighting
             HighlightedTextView(
-                text: displayText,
+                text: displaySnippet,
                 highlights: displayHighlights,
                 isSelected: isSelected
             )
@@ -911,7 +910,7 @@ struct ItemRow: View, Equatable {
         // 2. Apply the plain style so it behaves like a standard row instead of a system button
         .buttonStyle(.plain)
         .accessibilityElement(children: .combine)
-        .accessibilityLabel(displayText)
+        .accessibilityLabel(displaySnippet)
         #if SANDBOXED
         .accessibilityHint("Double tap to copy")
         #else
