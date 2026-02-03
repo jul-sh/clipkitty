@@ -27,14 +27,16 @@ struct ContentView: View {
     @State private var lastItemsSignature: [Int64] = []  // Track when items change to suppress animation
     @State private var showSearchSpinner = false
     @State private var searchSpinnerTask: Task<Void, Never>?
+    @State private var showPreviewSpinner = false
+    @State private var previewSpinnerTask: Task<Void, Never>?
     @FocusState private var isSearchFocused: Bool
 
     private var itemIds: [Int64] {
         switch store.state {
         case .browse(let items):
             return items.map { $0.itemId }
-        case .searchLoading(_, let fallbackItems):
-            return fallbackItems.map { $0.itemId }
+        case .searchLoading(_, let fallbackResults):
+            return fallbackResults.map { $0.itemMetadata.itemId }
         case .searchResults(_, let results):
             return results.map { $0.itemMetadata.itemId }
         default:
@@ -161,16 +163,31 @@ struct ContentView: View {
                 selectedItem = await store.fetchItem(id: newId, searchQuery: query)
             }
         }
+        .onChange(of: selectedItem) { _, newItem in
+            // Show preview spinner after 100ms if item is still loading
+            previewSpinnerTask?.cancel()
+            if newItem == nil && selectedItemId != nil {
+                previewSpinnerTask = Task {
+                    try? await Task.sleep(for: .milliseconds(100))
+                    guard !Task.isCancelled else { return }
+                    // Only show if item is still loading
+                    if selectedItem == nil && selectedItemId != nil {
+                        showPreviewSpinner = true
+                    }
+                }
+            } else {
+                showPreviewSpinner = false
+            }
+        }
         .onChange(of: itemIds) { oldOrder, newOrder in
             // Select first item by default if nothing is selected
             guard let selectedItemId else {
                 self.selectedItemId = firstItemId
                 return
             }
-            // Reset selection to first if the selected item's position changed
-            let oldIndex = oldOrder.firstIndex(of: selectedItemId)
-            let newIndex = newOrder.firstIndex(of: selectedItemId)
-            if oldIndex != newIndex {
+            // Only reset selection if the item is no longer in the list
+            // Don't reset just because position changed (avoids flash during search)
+            if !newOrder.contains(selectedItemId) {
                 self.selectedItemId = firstItemId
             }
         }
@@ -313,65 +330,40 @@ struct ContentView: View {
 
     // MARK: - Item List
 
+    /// Unified row data for consistent ForEach identity across state transitions
+    private var displayRows: [(metadata: ItemMetadata, matchData: MatchData?)] {
+        switch store.state {
+        case .browse(let items):
+            return items.map { ($0, nil) }
+        case .searchLoading(_, let fallbackResults):
+            // Preserve matchData from previous search to prevent text flash
+            return fallbackResults.map { ($0.itemMetadata, $0.matchData) }
+        case .searchResults(_, let results):
+            return results.map { ($0.itemMetadata, $0.matchData) }
+        default:
+            return []
+        }
+    }
+
     private var itemList: some View {
         ScrollViewReader { proxy in
             List {
-                switch store.state {
-                case .browse(let items):
-                    ForEach(Array(items.enumerated()), id: \.element.itemId) { index, metadata in
-                        ItemRow(
-                            metadata: metadata,
-                            matchData: nil,
-                            isSelected: metadata.itemId == selectedItemId,
-                            onTap: {
-                                selectedItemId = metadata.itemId
-                                focusSearchField()
-                            }
-                        )
-                        .equatable()
-                        .accessibilityIdentifier("ItemRow_\(index)")
-                        .listRowInsets(EdgeInsets(top: 2, leading: 0, bottom: 2, trailing: 0))
-                        .listRowSeparator(.hidden)
-                        .listRowBackground(Color.clear)
-                    }
-                case .searchLoading(_, let fallbackItems):
-                    // Show fallback items while search is in progress
-                    ForEach(Array(fallbackItems.enumerated()), id: \.element.itemId) { index, metadata in
-                        ItemRow(
-                            metadata: metadata,
-                            matchData: nil,
-                            isSelected: metadata.itemId == selectedItemId,
-                            onTap: {
-                                selectedItemId = metadata.itemId
-                                focusSearchField()
-                            }
-                        )
-                        .equatable()
-                        .accessibilityIdentifier("ItemRow_\(index)")
-                        .listRowInsets(EdgeInsets(top: 2, leading: 0, bottom: 2, trailing: 0))
-                        .listRowSeparator(.hidden)
-                        .listRowBackground(Color.clear)
-                    }
-                case .searchResults(_, let results):
-                    // Show search results with highlights
-                    ForEach(Array(results.enumerated()), id: \.element.itemMetadata.itemId) { index, match in
-                        ItemRow(
-                            metadata: match.itemMetadata,
-                            matchData: match.matchData,
-                            isSelected: match.itemMetadata.itemId == selectedItemId,
-                            onTap: {
-                                selectedItemId = match.itemMetadata.itemId
-                                focusSearchField()
-                            }
-                        )
-                        .equatable()
-                        .accessibilityIdentifier("ItemRow_\(index)")
-                        .listRowInsets(EdgeInsets(top: 2, leading: 0, bottom: 2, trailing: 0))
-                        .listRowSeparator(.hidden)
-                        .listRowBackground(Color.clear)
-                    }
-                default:
-                    EmptyView()
+                // Single ForEach maintains view identity across state transitions
+                ForEach(Array(displayRows.enumerated()), id: \.element.metadata.itemId) { index, row in
+                    ItemRow(
+                        metadata: row.metadata,
+                        matchData: row.matchData,
+                        isSelected: row.metadata.itemId == selectedItemId,
+                        onTap: {
+                            selectedItemId = row.metadata.itemId
+                            focusSearchField()
+                        }
+                    )
+                    .equatable()
+                    .accessibilityIdentifier("ItemRow_\(index)")
+                    .listRowInsets(EdgeInsets(top: 2, leading: 0, bottom: 2, trailing: 0))
+                    .listRowSeparator(.hidden)
+                    .listRowBackground(Color.clear)
                 }
             }
             .listStyle(.plain)
@@ -495,9 +487,13 @@ struct ContentView: View {
                 .background(.black.opacity(0.05))
             } else if itemIds.isEmpty {
                 emptyStateView
-            } else if selectedItemId != nil {
-                // Item is selected but still loading
+            } else if showPreviewSpinner {
+                // Item is selected but still loading (after 100ms debounce)
                 ProgressView()
+                    .frame(maxWidth: .infinity, maxHeight: .infinity)
+            } else if selectedItemId != nil {
+                // Item is selected but loading hasn't taken long enough to show spinner
+                Color.clear
                     .frame(maxWidth: .infinity, maxHeight: .infinity)
             } else {
                 Text("No item selected")
@@ -864,6 +860,15 @@ struct HighlightedTextView: NSViewRepresentable {
     }
 
     func updateNSView(_ field: NSTextField, context: Context) {
+        // Skip update if nothing changed (prevents flash on re-render)
+        let coord = context.coordinator
+        guard text != coord.lastText || highlights != coord.lastHighlights || isSelected != coord.lastIsSelected else {
+            return
+        }
+        coord.lastText = text
+        coord.lastHighlights = highlights
+        coord.lastIsSelected = isSelected
+
         let font = NSFont(name: FontManager.sansSerif, size: 15) ?? NSFont.systemFont(ofSize: 15)
         let textColor: NSColor = isSelected ? .white : .labelColor
 
@@ -886,6 +891,16 @@ struct HighlightedTextView: NSViewRepresentable {
             }
             field.attributedStringValue = mutable
         }
+    }
+
+    func makeCoordinator() -> Coordinator {
+        Coordinator()
+    }
+
+    class Coordinator {
+        var lastText: String = ""
+        var lastHighlights: [HighlightRange] = []
+        var lastIsSelected: Bool = false
     }
 }
 
