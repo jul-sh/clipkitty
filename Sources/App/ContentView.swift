@@ -446,7 +446,7 @@ struct ContentView: View {
                 // Content - wrapped in NonDraggableView to allow text selection
                 Group {
                     switch item.content {
-                    case .text, .color, .email, .phone, .address, .date, .transit:
+                    case .text, .color, .email, .phone:
                         // Use AppKit text view - SwiftUI Text with AttributedString is slow
                         TextPreviewView(
                             text: item.contentPreview,
@@ -479,7 +479,7 @@ struct ContentView: View {
                                 // Link preview - fetch metadata on-demand if pending
                                 linkPreview(url: url, metadataState: metadataState, itemId: item.itemMetadata.itemId)
 
-                            case .text, .color, .email, .phone, .address, .date, .transit:
+                            case .text, .color, .email, .phone:
                                 EmptyView()
                             }
                         }
@@ -749,49 +749,47 @@ struct ItemRow: View, Equatable {
     // Fixed height for exactly 1 line of text at font size 15
     private let rowHeight: CGFloat = 32
 
-    // MARK: - Display Text Truncation (Swift handles final truncation)
+    // MARK: - Display Text (Unified Logic)
 
     private let maxDisplayChars = 200
+    private let maxRustSnippet = 400  // Rust's SNIPPET_CONTEXT_CHARS * 2
 
-    /// Computed prefix and whether snippet was truncated at start
+    /// Computed prefix - shows line number and/or ellipsis if snippet doesn't start at beginning
     private var snippetPrefix: (prefix: String, offset: Int) {
-        guard let matchData, !matchData.text.isEmpty else {
-            return ("", 0)
-        }
+        guard let matchData else { return ("", 0) }
 
-        // Get match position from full content highlights
-        let matchStart = matchData.fullContentHighlights.first?.start ?? 0
         let line = matchData.lineNumber
+        // lineNumber == 0 means no highlights (browsing), lineNumber >= 1 means search match
+        guard line >= 1 else { return ("", 0) }
 
-        // If match is early (< 20 chars) and on line 1, no prefix needed
+        // Check if snippet starts at content beginning (first highlight near start)
+        let matchStart = matchData.fullContentHighlights.first?.start ?? 0
         if matchStart < 20 && line == 1 {
-            return ("", 0)
+            return ("", 0)  // Near start of first line - no prefix needed
         }
 
-        // Build prefix: show line number if not on first line, otherwise just ellipsis
+        // Build prefix: line number if not on first line, otherwise just ellipsis
         let prefix = line > 1 ? "L\(line): …" : "…"
         return (prefix, prefix.count)
     }
 
-    /// Display text - applies Swift-side truncation and ellipsis
+    /// Display text with prefix/suffix ellipsis as needed
     private var displayText: String {
-        guard let matchData, !matchData.text.isEmpty else {
-            return metadata.preview
-        }
-
+        // Use matchData.text if present, otherwise metadata.preview
+        let sourceText = matchData?.text.isEmpty == false ? matchData!.text : metadata.preview
         let (prefix, _) = snippetPrefix
-        let snippetText = matchData.text
 
-        // Calculate available space for content after prefix
+        // Available space for content
         let availableChars = maxDisplayChars - prefix.count
 
-        // Truncate snippet if needed
-        if snippetText.count > availableChars {
-            let truncated = String(snippetText.prefix(availableChars))
-            return prefix + truncated + "…"
+        // Truncate if needed, add trailing ellipsis
+        if sourceText.count > availableChars {
+            return prefix + String(sourceText.prefix(availableChars)) + "…"
         }
 
-        return prefix + snippetText
+        // Add trailing ellipsis if source was already truncated by Rust
+        let needsTrailingEllipsis = sourceText.count >= maxRustSnippet
+        return prefix + sourceText + (needsTrailingEllipsis ? "…" : "")
     }
 
     /// Highlights for display - adjusted for prefix offset
