@@ -1,8 +1,8 @@
 //! Tests for preview line behavior
 //!
-//! Two functions for generating preview text:
-//! - `normalize_preview()` - For item list preview (empty query results)
-//! - `generate_snippet()` - For search result snippets (non-empty query)
+//! Unified preview generation via `generate_preview()` and `generate_snippet()`:
+//! - `generate_preview()` - For item list preview (no highlights, starts from beginning)
+//! - `generate_snippet()` - For search result snippets with highlights
 //!
 //! Rust provides normalized text; Swift handles final truncation and ellipsis.
 //!
@@ -18,50 +18,40 @@
 //! - Adds "L{n}: " prefix for matches not on line 1
 //! - Adds trailing ellipsis when content is truncated
 
-use clipkitty_core::normalize_preview;
-use clipkitty_core::search::SearchEngine;
+use clipkitty_core::search::{generate_preview, SearchEngine};
 use clipkitty_core::HighlightRange;
 
 // ─────────────────────────────────────────────────────────────────────────────
-// normalize_preview TESTS (used for item list display with empty query)
+// generate_preview TESTS (used for item list display with empty query)
+// Rust provides normalized text; Swift handles ellipsis
 // ─────────────────────────────────────────────────────────────────────────────
 
 #[test]
-fn preview_short_text_no_ellipsis() {
+fn preview_short_text() {
     let text = "Hello World";
-    let result = normalize_preview(text, 200);
+    let result = generate_preview(text, 200);
     assert_eq!(result, "Hello World");
-    assert!(!result.ends_with('…'), "Short text should not have ellipsis");
 }
 
 #[test]
-fn preview_exactly_200_chars_no_ellipsis() {
+fn preview_exactly_200_chars() {
     let text = "a".repeat(200);
-    let result = normalize_preview(&text, 200);
+    let result = generate_preview(&text, 200);
     assert_eq!(result.chars().count(), 200);
-    assert!(!result.ends_with('…'), "Exactly 200 chars should not have ellipsis");
 }
 
 #[test]
-fn preview_201_chars_has_ellipsis() {
-    let text = "a".repeat(201);
-    let result = normalize_preview(&text, 200);
-    assert_eq!(result.chars().count(), 201, "Should be 200 chars + ellipsis");
-    assert!(result.ends_with('…'), "201 chars should be truncated with ellipsis");
-}
-
-#[test]
-fn preview_long_text_has_trailing_ellipsis() {
+fn preview_long_text_truncated() {
     let text = "a".repeat(500);
-    let result = normalize_preview(&text, 200);
-    assert!(result.ends_with('…'), "Long text should end with ellipsis");
-    assert_eq!(result.chars().count(), 201, "Should be 200 chars + ellipsis");
+    let result = generate_preview(&text, 200);
+    // Rust truncates; Swift adds ellipsis
+    assert!(result.chars().count() <= 200, "Should be at most 200 chars");
 }
 
 #[test]
 fn preview_skips_leading_whitespace() {
     let text = "   Hello World";
-    let result = normalize_preview(text, 200);
+    let result = generate_preview(text, 200);
     assert_eq!(result, "Hello World");
     assert!(!result.starts_with(' '));
 }
@@ -69,28 +59,28 @@ fn preview_skips_leading_whitespace() {
 #[test]
 fn preview_collapses_consecutive_whitespace() {
     let text = "Hello    World";
-    let result = normalize_preview(text, 200);
+    let result = generate_preview(text, 200);
     assert_eq!(result, "Hello World");
 }
 
 #[test]
 fn preview_converts_newlines_to_spaces() {
     let text = "Hello\n\nWorld";
-    let result = normalize_preview(text, 200);
+    let result = generate_preview(text, 200);
     assert_eq!(result, "Hello World");
 }
 
 #[test]
 fn preview_converts_tabs_to_spaces() {
     let text = "Hello\t\tWorld";
-    let result = normalize_preview(text, 200);
+    let result = generate_preview(text, 200);
     assert_eq!(result, "Hello World");
 }
 
 #[test]
 fn preview_trims_trailing_spaces() {
     let text = "Hello World   ";
-    let result = normalize_preview(text, 200);
+    let result = generate_preview(text, 200);
     assert_eq!(result, "Hello World");
 }
 
@@ -214,27 +204,14 @@ fn snippet_no_highlights_returns_normalized_content() {
 }
 
 // ─────────────────────────────────────────────────────────────────────────────
-// normalize_preview vs generate_snippet COMPARISON
+// generate_preview vs generate_snippet COMPARISON
 // ─────────────────────────────────────────────────────────────────────────────
-
-#[test]
-fn normalize_preview_adds_ellipsis_generate_snippet_does_not() {
-    // normalize_preview adds ellipsis for truncated content
-    let long_text = "a".repeat(500);
-    let preview = normalize_preview(&long_text, 200);
-    assert!(preview.ends_with('…'), "normalize_preview adds trailing ellipsis");
-
-    // generate_snippet does not add ellipsis - Swift handles that
-    let highlights = vec![HighlightRange { start: 0, end: 5 }];
-    let (snippet, _, _) = SearchEngine::generate_snippet(&long_text, &highlights, 400);
-    assert!(!snippet.ends_with('…'), "generate_snippet should NOT add ellipsis");
-}
 
 #[test]
 fn both_functions_normalize_whitespace_consistently() {
     let text_with_whitespace = "Hello\n\n\t  World   ";
 
-    let preview = normalize_preview(text_with_whitespace, 200);
+    let preview = generate_preview(text_with_whitespace, 200);
     assert_eq!(preview, "Hello World");
 
     let highlights = vec![HighlightRange { start: 0, end: 5 }];

@@ -112,7 +112,7 @@ impl StoredItem {
 
     /// Display text (truncated, normalized whitespace) for preview
     pub fn display_text(&self, max_chars: usize) -> String {
-        normalize_preview(&self.text_content(), max_chars)
+        crate::search::generate_preview(&self.text_content(), max_chars)
     }
 
     /// Convert to ItemMetadata for list display
@@ -145,59 +145,6 @@ impl StoredItem {
     }
 }
 
-// ─────────────────────────────────────────────────────────────────────────────
-// TEXT NORMALIZATION
-// ─────────────────────────────────────────────────────────────────────────────
-
-/// Normalize text for preview display (truncate, normalize whitespace)
-/// - Skips leading whitespace
-/// - Collapses consecutive whitespace to single space
-/// - Converts newlines/tabs to spaces
-/// - Truncates at max_chars with ellipsis
-/// - Trims trailing spaces
-pub fn normalize_preview(text: &str, max_chars: usize) -> String {
-    let mut result = String::with_capacity(max_chars + 1);
-    let mut chars = text.chars().peekable();
-
-    // Skip leading whitespace
-    while chars.peek().map(|c| c.is_whitespace()).unwrap_or(false) {
-        chars.next();
-    }
-
-    let mut last_was_space = false;
-    let mut count = 0;
-
-    for ch in chars {
-        if count >= max_chars {
-            result.push('…');
-            return result;
-        }
-
-        let ch = match ch {
-            '\n' | '\t' | '\r' => ' ',
-            c => c,
-        };
-
-        if ch == ' ' {
-            if last_was_space {
-                continue;
-            }
-            last_was_space = true;
-        } else {
-            last_was_space = false;
-        }
-
-        result.push(ch);
-        count += 1;
-    }
-
-    // Trim trailing spaces
-    while result.ends_with(' ') {
-        result.pop();
-    }
-
-    result
-}
 
 #[cfg(test)]
 mod tests {
@@ -220,8 +167,8 @@ mod tests {
         let long_text = "a".repeat(300);
         let item = StoredItem::new_text(long_text, None, None);
         let display = item.display_text(200);
-        assert!(display.chars().count() == 201); // 200 chars + ellipsis (1 char)
-        assert!(display.ends_with('…'));
+        // Rust truncates; Swift adds ellipsis
+        assert!(display.chars().count() <= 200, "Should be at most 200 chars");
     }
 
     #[test]

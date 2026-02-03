@@ -417,6 +417,15 @@ fn normalize_snippet(content: &str, start: usize, end: usize, max_chars: usize) 
     normalize_snippet_with_mapping(content, start, end, max_chars).0
 }
 
+/// Generate a preview from content (no highlights, starts from beginning)
+/// Skips leading whitespace, normalizes, truncates at max_chars
+pub fn generate_preview(content: &str, max_chars: usize) -> String {
+    // Skip leading whitespace
+    let trimmed = content.trim_start();
+    let (preview, _, _) = SearchEngine::generate_snippet(trimmed, &[], max_chars);
+    preview
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
