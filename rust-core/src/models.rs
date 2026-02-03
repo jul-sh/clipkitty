@@ -116,14 +116,13 @@ impl StoredItem {
     }
 
     /// Convert to ItemMetadata for list display
-    /// Preview is intentionally generous (400 chars) - Swift handles final truncation
+    /// Preview is generous (SNIPPET_CONTEXT_CHARS * 2) - Swift handles final truncation
     pub fn to_metadata(&self) -> ItemMetadata {
-        // Generous preview for Swift to truncate as needed for display
-        const PREVIEW_SNIPPET_LEN: usize = 400;
+        use crate::search::SNIPPET_CONTEXT_CHARS;
         ItemMetadata {
             item_id: self.id.unwrap_or(0),
             icon: self.item_icon(),
-            preview: self.display_text(PREVIEW_SNIPPET_LEN),
+            preview: self.display_text(SNIPPET_CONTEXT_CHARS * 2),
             source_app: self.source_app.clone(),
             source_app_bundle_id: self.source_app_bundle_id.clone(),
             timestamp_unix: self.timestamp_unix,

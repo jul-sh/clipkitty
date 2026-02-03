@@ -30,11 +30,8 @@ const MIN_ADJACENCY_RATIO: f64 = 0.25;
 const PREFIX_MATCH_BOOST: f64 = 2.0;
 
 /// Context chars to include before/after match in snippet
-const SNIPPET_CONTEXT_CHARS: usize = 50;
-
-/// Max snippet length - generous size for Swift to truncate as needed
-/// Swift handles final truncation to ~200 chars with ellipsis
-const MAX_SNIPPET_LEN: usize = 400;
+/// Swift handles final truncation and ellipsis positioning
+pub const SNIPPET_CONTEXT_CHARS: usize = 200;
 
 #[derive(Debug, Clone)]
 pub struct FuzzyMatch {
@@ -310,10 +307,12 @@ impl SearchEngine {
     /// Create MatchData from a FuzzyMatch
     pub fn create_match_data(fuzzy_match: &FuzzyMatch) -> MatchData {
         let full_content_highlights = Self::indices_to_ranges(&fuzzy_match.matched_indices);
+        // Max length = context before + match + context after (generous for Swift to truncate)
+        let max_len = SNIPPET_CONTEXT_CHARS * 2;
         let (text, adjusted_highlights, line_number) = Self::generate_snippet(
             &fuzzy_match.content,
             &full_content_highlights,
-            MAX_SNIPPET_LEN,
+            max_len,
         );
 
         MatchData {
