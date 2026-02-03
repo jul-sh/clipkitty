@@ -560,7 +560,7 @@ struct ContentView: View {
             TextPreviewView(
                 text: url,
                 fontName: FontManager.mono,
-                fontSize: 15,
+                fontSize: 13,
                 highlights: selectedItemHighlights
             )
             .frame(maxWidth: .infinity)
@@ -569,7 +569,7 @@ struct ContentView: View {
             // Native link preview using LPLinkView
             LinkPreviewView(url: url, metadataState: metadataState)
                 .frame(maxWidth: .infinity)
-                .frame(minHeight: 100)
+                .frame(minHeight: .infinity)
                 .padding([.horizontal, .bottom], 16) // Spacing from edges and bottom URL inset
 
             Spacer()
@@ -1037,10 +1037,10 @@ extension NSImage {
     func croppedIfTooTall(maxRatio: CGFloat) -> NSImage {
         let size = self.size
         guard size.width > 0, size.height > 0, size.height / size.width > maxRatio else { return self }
-        
+
         let newHeight = size.width * maxRatio
         let cropRect = NSRect(x: 0, y: size.height - newHeight, width: size.width, height: newHeight)
-        
+
         let result = NSImage(size: cropRect.size)
         result.lockFocus()
         self.draw(in: NSRect(origin: .zero, size: cropRect.size), from: cropRect, operation: .copy, fraction: 1.0)
