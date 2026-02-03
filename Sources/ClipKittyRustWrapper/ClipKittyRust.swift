@@ -56,47 +56,17 @@ extension ClipboardItem {
         String(itemMetadata.itemId)
     }
 
-    /// Display text with whitespace normalization and truncation
+    /// Display text - Rust sends normalized text (whitespace collapsed, truncated)
+    /// Swift just adds trailing ellipsis if the content was truncated
     public var displayText: String {
-        let text = itemMetadata.preview
-        let maxChars = 200
-        var result = String()
-        result.reserveCapacity(maxChars + 1)
-
-        var index = text.startIndex
-        while index < text.endIndex, text[index].isWhitespace {
-            index = text.index(after: index)
+        let preview = itemMetadata.preview
+        // Rust sends max 400 chars (SNIPPET_CONTEXT_CHARS * 2)
+        // Add ellipsis if it looks like content was truncated
+        let maxRustPreview = 400
+        if preview.count >= maxRustPreview {
+            return preview + "…"
         }
-
-        var count = 0
-        var lastWasSpace = false
-        var hasMore = false
-
-        while index < text.endIndex, count < maxChars {
-            var character = text[index]
-            if character == "\n" || character == "\t" || character == "\r" {
-                character = " "
-            }
-            if character == " " {
-                if lastWasSpace {
-                    index = text.index(after: index)
-                    continue
-                }
-                lastWasSpace = true
-            } else {
-                lastWasSpace = false
-            }
-
-            result.append(character)
-            count += 1
-            index = text.index(after: index)
-        }
-
-        if index < text.endIndex {
-            hasMore = true
-        }
-
-        return hasMore ? result + "…" : result
+        return preview
     }
 
     @MainActor
