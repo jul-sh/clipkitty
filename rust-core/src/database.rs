@@ -4,7 +4,8 @@
 //! Uses r2d2 connection pooling to allow concurrent reads without mutex blocking.
 
 use crate::interface::{ClipboardContent, ItemMetadata, ItemIcon, IconType};
-use crate::models::{StoredItem, normalize_preview};
+use crate::models::StoredItem;
+use crate::search::{generate_preview, SNIPPET_CONTEXT_CHARS};
 use chrono::{DateTime, TimeZone, Utc};
 use r2d2::{Pool, PooledConnection};
 use r2d2_sqlite::SqliteConnectionManager;
@@ -612,8 +613,8 @@ impl Database {
             _ => ItemIcon::Symbol { icon_type: IconType::Text },
         };
 
-        // Generate preview text (first 200 chars, normalized whitespace)
-        let preview = normalize_preview(&content, 200);
+        // Generate preview text (generous snippet for Swift to truncate)
+        let preview = generate_preview(&content, SNIPPET_CONTEXT_CHARS * 2);
 
         Ok(ItemMetadata {
             item_id: id,
