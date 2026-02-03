@@ -73,13 +73,38 @@ impl StoredItem {
     ) -> Self {
         let hash_input = format!("{}{}", description, image_data.len());
         let content_hash = Self::hash_string(&hash_input);
-        // Generate thumbnail (max 64x64, JPEG quality 60)
+        // Generate thumbnail (max 64x64) - may fail for unsupported formats like HEIC
         let thumbnail = generate_thumbnail(&image_data, 64);
         Self {
             id: None,
             content: ClipboardContent::Image {
                 data: image_data,
                 description,
+            },
+            content_hash,
+            timestamp_unix: chrono::Utc::now().timestamp(),
+            source_app,
+            source_app_bundle_id,
+            thumbnail,
+            color_rgba: None,
+        }
+    }
+
+    /// Create an image item with a pre-generated thumbnail
+    /// Used when Swift generates the thumbnail (HEIC not supported by Rust image crate)
+    pub fn new_image_with_thumbnail(
+        image_data: Vec<u8>,
+        thumbnail: Option<Vec<u8>>,
+        source_app: Option<String>,
+        source_app_bundle_id: Option<String>,
+    ) -> Self {
+        let hash_input = format!("Image{}", image_data.len());
+        let content_hash = Self::hash_string(&hash_input);
+        Self {
+            id: None,
+            content: ClipboardContent::Image {
+                data: image_data,
+                description: "Image".to_string(),
             },
             content_hash,
             timestamp_unix: chrono::Utc::now().timestamp(),
