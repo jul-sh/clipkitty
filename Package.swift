@@ -28,7 +28,9 @@ let package = Package(
         // GRDB used only for FTS integration tests
         .package(url: "https://github.com/groue/GRDB.swift.git", from: "7.0.0"),
         // CSS color code parsing (hex, rgb, hsl, keywords)
-        .package(url: "https://github.com/1024jp/WFColorCode.git", from: "2.0.0")
+        .package(url: "https://github.com/1024jp/WFColorCode.git", from: "2.0.0"),
+        // Swift Testing framework (for SPM test runner without Xcode)
+        .package(url: "https://github.com/apple/swift-testing.git", branch: "main")
     ],
     targets: [
         // Rust Core library FFI bridge
@@ -44,6 +46,7 @@ let package = Package(
             ],
             linkerSettings: [
                 .linkedLibrary("clipkitty_core"),  // → libclipkitty_core.a
+                .linkedFramework("SystemConfiguration"),  // For reqwest proxy detection
                 .unsafeFlags(["-L", "Sources/ClipKittyRust"])
             ]
         ),
@@ -52,7 +55,11 @@ let package = Package(
         .target(
             name: "ClipKittyRust",
             dependencies: ["ClipKittyRustFFI"],
-            path: "Sources/ClipKittyRustWrapper"
+            path: "Sources/ClipKittyRustWrapper",
+            swiftSettings: [
+                // UniFFI-generated code not yet compatible with Swift 6 strict concurrency
+                .swiftLanguageMode(.v5)
+            ]
         ),
         .executableTarget(
             name: "ClipKitty",
@@ -75,7 +82,8 @@ let package = Package(
             name: "ClipKittyTests",
             dependencies: [
                 "ClipKittyRust",
-                .product(name: "GRDB", package: "GRDB.swift")
+                .product(name: "GRDB", package: "GRDB.swift"),
+                .product(name: "Testing", package: "swift-testing")
             ],
             path: "Tests",
             exclude: ["UITests"]

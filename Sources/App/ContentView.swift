@@ -1,7 +1,6 @@
 import SwiftUI
 import AppKit
 import ClipKittyRust
-import ColorCode
 import os.log
 import UniformTypeIdentifiers
 
@@ -17,48 +16,69 @@ private func measure<T>(_ label: String, _ block: () -> T) -> T {
 
 struct ContentView: View {
     var store: ClipboardStore
-    let onSelect: (ClipboardItem) -> Void
+    let onSelect: (Int64, ClipboardContent) -> Void
     let onDismiss: () -> Void
     var initialSearchQuery: String = ""
 
-    @State private var selectedItemId: String?
+    @State private var selectedItemId: Int64?
+    @State private var selectedItem: ClipboardItem?
     @State private var searchText: String = ""
     @State private var didApplyInitialSearch = false
-    @State private var showSearchSpinner: Bool = false
-    @State private var lastItemsSignature: [String] = []  // Track when items change to suppress animation
+    @State private var lastItemsSignature: [Int64] = []  // Track when items change to suppress animation
+    @State private var showSearchSpinner = false
+    @State private var searchSpinnerTask: Task<Void, Never>?
+    @State private var showPreviewSpinner = false
+    @State private var previewSpinnerTask: Task<Void, Never>?
     @FocusState private var isSearchFocused: Bool
-    private var items: [ClipboardItem] {
-        // Note: Don't wrap in measure() - it can break @Observable tracking
+
+    private var itemIds: [Int64] {
         switch store.state {
-        case .loaded(let items, _):
-            return items
-        case .searching(_, let searchState):
-            switch searchState {
-            case .loading(let previous):
-                return previous.map { $0.item }
-            case .results(let results, _):
-                return results.map { $0.item }
-            }
-        default:
+        case .results(_, let items, _), .resultsLoading(_, let items):
+            return items.map { $0.itemMetadata.itemId }
+        case .loading, .error:
             return []
         }
     }
 
-    private var selectedItem: ClipboardItem? {
-        measure("selectedItem.get") {
-            guard let selectedItemId else { return nil }
-            return items.first { $0.stableId == selectedItemId }
+    /// The first item from results (avoids separate fetch)
+    private var stateFirstItem: ClipboardItem? {
+        switch store.state {
+        case .results(_, _, let firstItem):
+            return firstItem
+        case .resultsLoading, .loading, .error:
+            return nil
         }
+    }
+
+    /// Get highlights for the selected item from results
+    /// Returns empty array for empty query or if item not found
+    private var selectedItemHighlights: [HighlightRange] {
+        guard let selectedItemId else { return [] }
+        switch store.state {
+        case .results(_, let items, _), .resultsLoading(_, let items):
+            return items.first { $0.itemMetadata.itemId == selectedItemId }?
+                .matchData.fullContentHighlights ?? []
+        case .loading, .error:
+            return []
+        }
+    }
+
+    private var firstItemId: Int64? {
+        itemIds.first
+    }
+
+    private var itemCount: Int {
+        itemIds.count
     }
 
     private var selectedIndex: Int? {
         guard let selectedItemId else { return nil }
-        return items.firstIndex { $0.stableId == selectedItemId }
+        return itemIds.firstIndex(of: selectedItemId)
     }
 
-    /// The order signature of displayed items - changes when items are reordered
-    private var itemsOrderSignature: [String] {
-        items.map { $0.stableId }
+    private func itemId(at index: Int) -> Int64? {
+        guard index >= 0 && index < itemIds.count else { return nil }
+        return itemIds[index]
     }
 
     var body: some View {
@@ -94,11 +114,20 @@ struct ContentView: View {
                 searchText = ""
             }
             // Select first item if nothing selected
-            if selectedItemId == nil {
-                selectedItemId = items.first?.stableId
+            if selectedItemId == nil, let firstId = firstItemId {
+                selectedItemId = firstId
+                // Use first item from state if available (avoids extra fetch)
+                if let firstItem = stateFirstItem, firstItem.itemMetadata.itemId == firstId {
+                    selectedItem = firstItem
+                } else {
+                    // Fallback: fetch the item - onChange won't fire for initial value
+                    Task {
+                        selectedItem = await store.fetchItem(id: firstId)
+                    }
+                }
             }
             // Initialize items signature for animation tracking
-            lastItemsSignature = items.map { $0.stableId }
+            lastItemsSignature = itemIds
             focusSearchField()
         }
         .onChange(of: store.displayVersion) { _, _ in
@@ -110,39 +139,45 @@ struct ContentView: View {
                 searchText = ""
             }
             // Select first item whenever display resets (re-open)
-            selectedItemId = items.first?.stableId
+            let firstId = firstItemId
+            selectedItemId = firstId
+            // Use first item from state if available (avoids extra fetch)
+            if let firstId, let firstItem = stateFirstItem, firstItem.itemMetadata.itemId == firstId {
+                selectedItem = firstItem
+            } else {
+                selectedItem = nil
+                // Fallback: fetch the first item
+                if let firstId {
+                    Task {
+                        selectedItem = await store.fetchItem(id: firstId)
+                    }
+                }
+            }
             focusSearchField()
         }
         .onChange(of: store.state) { _, newState in
             // Validate selection - ensure selected item still exists in results
-            if let selectedItemId, !items.contains(where: { $0.stableId == selectedItemId }) {
-                self.selectedItemId = items.first?.stableId
+            if let selectedItemId, !itemIds.contains(selectedItemId) {
+                self.selectedItemId = firstItemId
+                self.selectedItem = nil
             }
 
-            // Show spinner only after 200ms delay to avoid flicker on fast searches
-            let isLoading: Bool = {
-                if case .searching(_, let searchState) = newState {
-                    switch searchState {
-                    case .loading:
-                        return true
-                    case .results:
-                        return false
-                    }
-                }
-                return false
-            }()
+            // If first item is available from state and matches selection, use it
+            if let firstItem = stateFirstItem,
+               let selectedId = selectedItemId,
+               firstItem.itemMetadata.itemId == selectedId,
+               self.selectedItem == nil {
+                self.selectedItem = firstItem
+            }
 
-            if isLoading {
-                Task {
-                    try? await Task.sleep(for: .milliseconds(200))
-                    // Only show if still loading
-                    if case .searching(_, let searchState) = store.state {
-                        switch searchState {
-                        case .loading:
-                            showSearchSpinner = true
-                        case .results:
-                            break
-                        }
+            // Show spinner after 100ms if still loading
+            searchSpinnerTask?.cancel()
+            if case .resultsLoading = newState {
+                searchSpinnerTask = Task {
+                    try? await Task.sleep(for: .milliseconds(100))
+                    guard !Task.isCancelled else { return }
+                    if case .resultsLoading = store.state {
+                        showSearchSpinner = true
                     }
                 }
             } else {
@@ -152,17 +187,45 @@ struct ContentView: View {
         .onChange(of: searchText) { _, newValue in
             store.setSearchQuery(newValue)
         }
-        .onChange(of: itemsOrderSignature) { oldOrder, newOrder in
+        .onChange(of: selectedItemId) { _, newId in
+            // Fetch full item when selection changes
+            guard let newId else {
+                selectedItem = nil
+                return
+            }
+            Task {
+                selectedItem = await store.fetchItem(id: newId)
+            }
+        }
+        .onChange(of: selectedItem) { _, newItem in
+            // Show preview spinner after 100ms if item is still loading
+            previewSpinnerTask?.cancel()
+            if newItem == nil && selectedItemId != nil {
+                previewSpinnerTask = Task {
+                    try? await Task.sleep(for: .milliseconds(100))
+                    guard !Task.isCancelled else { return }
+                    // Only show if item is still loading
+                    if selectedItem == nil && selectedItemId != nil {
+                        showPreviewSpinner = true
+                    }
+                }
+            } else {
+                showPreviewSpinner = false
+            }
+        }
+        .onChange(of: itemIds) { oldOrder, newOrder in
             // Select first item by default if nothing is selected
             guard let selectedItemId else {
-                self.selectedItemId = items.first?.stableId
+                self.selectedItemId = firstItemId
                 return
             }
             // Reset selection to first if the selected item's position changed
+            // This ensures search results always start from the first match
             let oldIndex = oldOrder.firstIndex(of: selectedItemId)
             let newIndex = newOrder.firstIndex(of: selectedItemId)
             if oldIndex != newIndex {
-                self.selectedItemId = items.first?.stableId
+                self.selectedItemId = firstItemId
+                self.selectedItem = nil
             }
         }
     }
@@ -179,17 +242,17 @@ struct ContentView: View {
     private func moveSelection(by offset: Int) {
         measure("moveSelection") {
             guard let currentIndex = selectedIndex else {
-                selectedItemId = items.first?.stableId
+                selectedItemId = firstItemId
                 return
             }
-            let newIndex = max(0, min(items.count - 1, currentIndex + offset))
-            selectedItemId = items[newIndex].stableId
+            let newIndex = max(0, min(itemCount - 1, currentIndex + offset))
+            selectedItemId = itemId(at: newIndex)
         }
     }
 
     private func confirmSelection() {
         guard let item = selectedItem else { return }
-        onSelect(item)
+        onSelect(item.itemMetadata.itemId, item.content)
     }
 
     // MARK: - Search Bar
@@ -243,16 +306,16 @@ struct ContentView: View {
         }
 
         let index = number - 1
-        guard index < items.count else { return .ignored }
+        guard index < itemCount else { return .ignored }
 
-        selectedItemId = items[index].stableId
+        selectedItemId = itemId(at: index)
         confirmSelection()
         return .handled
     }
 
-    private func indexForItem(_ itemId: String?) -> Int? {
+    private func indexForItem(_ itemId: Int64?) -> Int? {
         guard let itemId else { return nil }
-        return items.firstIndex { $0.stableId == itemId }
+        return itemIds.firstIndex(of: itemId)
     }
 
     // MARK: - Content
@@ -264,7 +327,7 @@ struct ContentView: View {
             loadingView
         case .error(let message):
             errorView(message)
-        case .loaded, .searching:
+        case .results, .resultsLoading:
             splitView
         }
     }
@@ -304,16 +367,27 @@ struct ContentView: View {
 
     // MARK: - Item List
 
+    /// Row data for display - preserves matchData during loading to prevent text flash
+    private var displayRows: [(metadata: ItemMetadata, matchData: MatchData?)] {
+        switch store.state {
+        case .results(_, let items, _), .resultsLoading(_, let items):
+            return items.map { ($0.itemMetadata, $0.matchData) }
+        case .loading, .error:
+            return []
+        }
+    }
+
     private var itemList: some View {
         ScrollViewReader { proxy in
             List {
-                ForEach(Array(items.enumerated()), id: \.element.stableId) { index, item in
+                // Single ForEach maintains view identity across state transitions
+                ForEach(Array(displayRows.enumerated()), id: \.element.metadata.itemId) { index, row in
                     ItemRow(
-                        item: item,
-                        isSelected: item.stableId == selectedItemId,
-                        searchQuery: searchText,
+                        metadata: row.metadata,
+                        matchData: row.matchData,
+                        isSelected: row.metadata.itemId == selectedItemId,
                         onTap: {
-                            selectedItemId = item.stableId
+                            selectedItemId = row.metadata.itemId
                             focusSearchField()
                         }
                     )
@@ -322,27 +396,22 @@ struct ContentView: View {
                     .listRowInsets(EdgeInsets(top: 2, leading: 0, bottom: 2, trailing: 0))
                     .listRowSeparator(.hidden)
                     .listRowBackground(Color.clear)
-                    .onAppear {
-                        if index == items.count - 10 {
-                            store.loadMoreItems()
-                        }
-                    }
                 }
             }
             .listStyle(.plain)
             .scrollContentBackground(.hidden)
-            .animation(nil, value: items.map { $0.stableId })
+            .animation(nil, value: itemIds)
             .modifier(HideScrollIndicatorsWhenOverlay(displayVersion: store.displayVersion))
             .onChange(of: searchText) { _, _ in
                 // Scroll to top when search query changes (no animation)
-                if let firstItemId = items.first?.stableId {
+                if let firstItemId = itemIds.first {
                     proxy.scrollTo(firstItemId, anchor: .top)
                 }
             }
             .onChange(of: selectedItemId) { oldItemId, newItemId in
                 guard let newItemId else { return }
 
-                let currentSignature = items.map { $0.stableId }
+                let currentSignature = itemIds
                 let itemsChanged = currentSignature != lastItemsSignature
 
                 // Update signature for next comparison
@@ -377,13 +446,13 @@ struct ContentView: View {
                 // Content - wrapped in NonDraggableView to allow text selection
                 Group {
                     switch item.content {
-                    case .text, .email, .phone, .address, .date, .transit:
+                    case .text, .color, .email, .phone:
                         // Use AppKit text view - SwiftUI Text with AttributedString is slow
                         TextPreviewView(
                             text: item.contentPreview,
                             fontName: FontManager.mono,
                             fontSize: 15,
-                            searchQuery: searchText
+                            highlights: selectedItemHighlights
                         )
                         .frame(maxWidth: .infinity, maxHeight: .infinity)
                     default:
@@ -396,22 +465,21 @@ struct ContentView: View {
                                             .resizable()
                                             .aspectRatio(contentMode: .fit)
                                             .frame(maxWidth: .infinity)
-                                        Text(imageDescriptionAttributed(description))
-                                            .font(.callout)
-                                            .foregroundStyle(.secondary)
-                                            .frame(maxWidth: .infinity, alignment: .leading)
+                                        if !description.isEmpty {
+                                            Text(description)
+                                                .font(.callout)
+                                                .foregroundStyle(.secondary)
+                                                .frame(maxWidth: .infinity, alignment: .leading)
+                                        }
                                     }
                                     .padding(16)
                                 }
 
                             case .link(let url, let metadataState):
-                                // Link preview - fetch metadata on-demand if needed
-                                linkPreview(url: url, metadataState: metadataState)
-                                    .task(id: item.stableId) {
-                                        store.fetchLinkMetadataIfNeeded(for: item)
-                                    }
+                                // Link preview - fetch metadata on-demand if pending
+                                linkPreview(url: url, metadataState: metadataState, itemId: item.itemMetadata.itemId)
 
-                            case .text, .email, .phone, .address, .date, .transit:
+                            case .text, .color, .email, .phone:
                                 EmptyView()
                             }
                         }
@@ -449,8 +517,16 @@ struct ContentView: View {
                 .padding(.horizontal, 17)
                 .padding(.vertical, 11)
                 .background(.black.opacity(0.05))
-            } else if items.isEmpty {
+            } else if itemIds.isEmpty {
                 emptyStateView
+            } else if showPreviewSpinner {
+                // Item is selected but still loading (after 100ms debounce)
+                ProgressView()
+                    .frame(maxWidth: .infinity, maxHeight: .infinity)
+            } else if selectedItemId != nil {
+                // Item is selected but loading hasn't taken long enough to show spinner
+                Color.clear
+                    .frame(maxWidth: .infinity, maxHeight: .infinity)
             } else {
                 Text("No item selected")
                     .font(.custom(FontManager.sansSerif, size: 16))
@@ -465,43 +541,12 @@ struct ContentView: View {
         AppSettings.shared.shouldShowPasteLabel ? "⏎ paste" : "⏎ copy"
     }
 
-    private func formatSize(_ chars: Int) -> String {
-        if chars >= 1_000_000 {
-            return String(format: "%.1fM", Double(chars) / 1_000_000)
-        } else if chars >= 1000 {
-            return String(format: "%.1fK", Double(chars) / 1000)
-        }
-        return "\(chars)"
-    }
-
-    private func imageDescriptionAttributed(_ text: String) -> AttributedString {
-        guard !searchText.isEmpty else {
-            return AttributedString(text)
-        }
-        let font = NSFont.preferredFont(forTextStyle: .callout)
-        let attributed = text.highlightedNSAttributedString(
-            query: searchText,
-            font: font,
-            textColor: NSColor.secondaryLabelColor
-        )
-        return AttributedString(attributed)
-    }
-
     private var emptyStateView: some View {
         VStack(spacing: 8) {
             Image(systemName: "clipboard")
                 .font(.largeTitle)
                 .foregroundStyle(.tertiary)
-            let emptyStateMessage: String = {
-                switch store.state {
-                case .searching(let query, _) where !query.isEmpty:
-                    return "No results"
-                default:
-                    return "No clipboard history"
-                }
-            }()
-
-            Text(emptyStateMessage)
+            Text(store.currentQuery.isEmpty ? "No clipboard history" : "No results")
                 .font(.custom(FontManager.sansSerif, size: 15))
                 .foregroundStyle(.secondary)
         }
@@ -509,63 +554,30 @@ struct ContentView: View {
     }
 
     @ViewBuilder
-    private func linkPreview(url: String, metadataState: LinkMetadataState) -> some View {
-        VStack(spacing: 16) {
-            // OG Image if available
-            if let imageData = metadataState.imageData,
-               let nsImage = NSImage(data: imageData) {
-                Image(nsImage: nsImage)
-                    .resizable()
-                    .aspectRatio(contentMode: .fit)
-                    .frame(maxWidth: .infinity)
-                    .clipShape(RoundedRectangle(cornerRadius: 8))
-            } else {
-                // Placeholder based on metadata state
-                RoundedRectangle(cornerRadius: 8)
-                    .fill(Color.secondary.opacity(0.1))
-                    .frame(height: 120)
-                    .overlay {
-                        VStack(spacing: 8) {
-                            Image(systemName: "link")
-                                .font(.system(size: 32))
-                                .foregroundStyle(.secondary)
-                            switch metadataState {
-                            case .pending:
-                                Text("Loading preview…")
-                                    .font(.caption)
-                                    .foregroundStyle(.tertiary)
-                            case .failed:
-                                Text("Preview unavailable")
-                                    .font(.caption)
-                                    .foregroundStyle(.tertiary)
-                            case .loaded:
-                                EmptyView()
-                            }
-                        }
-                    }
-            }
+    private func linkPreview(url: String, metadataState: LinkMetadataState, itemId: Int64) -> some View {
+        VStack(alignment: .leading, spacing: 16) {
+            // Native link preview using LPLinkView
+            LinkPreviewView(url: url, metadataState: metadataState)
+                .frame(maxWidth: .infinity)
+                .frame(minHeight: 100, maxHeight: 300)
 
-            // Title and URL
-            VStack(alignment: .leading, spacing: 8) {
-                if let title = metadataState.title, !title.isEmpty {
-                    Text(title)
-                        .font(.system(size: 18, weight: .semibold))
-                        .foregroundStyle(.primary)
-                        .lineLimit(2)
-                        .textSelection(.enabled)
-                }
-
-                Text(url)
-                    .font(.custom(FontManager.mono, size: 13))
-                    .foregroundStyle(.secondary)
-                    .lineLimit(1)
-                    .textSelection(.enabled)
-            }
-            .frame(maxWidth: .infinity, alignment: .leading)
+            // Full URL with line wrapping
+            Text(url)
+                .font(.custom(FontManager.mono, size: 12))
+                .foregroundStyle(.secondary)
+                .textSelection(.enabled)
+                .frame(maxWidth: .infinity, alignment: .leading)
 
             Spacer()
         }
         .padding(16)
+        .task(id: itemId) {
+            // Fetch metadata on-demand if pending
+            guard case .pending = metadataState else { return }
+            if let updatedItem = await store.fetchLinkMetadata(url: url, itemId: itemId) {
+                selectedItem = updatedItem
+            }
+        }
     }
 }
 
@@ -586,7 +598,7 @@ struct TextPreviewView: NSViewRepresentable {
     let text: String
     let fontName: String
     let fontSize: CGFloat
-    var searchQuery: String = ""
+    var highlights: [HighlightRange] = []
 
     func makeNSView(context: Context) -> NSScrollView {
         let scrollView = NSScrollView()
@@ -617,12 +629,12 @@ struct TextPreviewView: NSViewRepresentable {
 
         let font = NSFont(name: fontName, size: fontSize) ?? NSFont.monospacedSystemFont(ofSize: fontSize, weight: .regular)
 
-        // Only update if text or query changed
+        // Only update if text or highlights changed
         let currentText = textView.string
-        if currentText != text || context.coordinator.lastQuery != searchQuery {
-            context.coordinator.lastQuery = searchQuery
+        if currentText != text || context.coordinator.lastHighlights != highlights {
+            context.coordinator.lastHighlights = highlights
 
-            if searchQuery.isEmpty {
+            if highlights.isEmpty {
                 // Clear any previous highlighting by setting plain string
                 textView.string = text
                 textView.font = font
@@ -632,11 +644,18 @@ struct TextPreviewView: NSViewRepresentable {
                     textStorage.removeAttribute(.backgroundColor, range: NSRange(location: 0, length: textStorage.length))
                 }
             } else {
-                let attributed = text.highlightedNSAttributedString(
-                    query: searchQuery,
-                    font: font,
-                    textColor: .labelColor
-                )
+                // Apply Rust-computed highlights
+                let attributed = NSMutableAttributedString(string: text, attributes: [
+                    .font: font,
+                    .foregroundColor: NSColor.labelColor
+                ])
+                let highlightColor = NSColor.yellow.withAlphaComponent(0.4)
+                for range in highlights {
+                    let nsRange = range.nsRange
+                    if nsRange.location + nsRange.length <= attributed.length {
+                        attributed.addAttribute(.backgroundColor, value: highlightColor, range: nsRange)
+                    }
+                }
                 textView.textStorage?.setAttributedString(attributed)
             }
         }
@@ -653,118 +672,144 @@ struct TextPreviewView: NSViewRepresentable {
     }
 
     class Coordinator {
-        var lastQuery: String = ""
+        var lastHighlights: [HighlightRange] = []
+    }
+}
+
+// MARK: - Link Preview (LPLinkView)
+
+import LinkPresentation
+
+/// Native link preview using LPLinkView
+struct LinkPreviewView: NSViewRepresentable {
+    let url: String
+    let metadataState: LinkMetadataState
+
+    func makeNSView(context: Context) -> LPLinkView {
+        let linkView = LPLinkView()
+        // Start with a minimal placeholder metadata
+        if let urlObj = URL(string: url) {
+            let metadata = LPLinkMetadata()
+            metadata.originalURL = urlObj
+            metadata.url = urlObj
+            linkView.metadata = metadata
+        }
+        return linkView
+    }
+
+    func updateNSView(_ linkView: LPLinkView, context: Context) {
+        guard let urlObj = URL(string: url) else { return }
+
+        // Build metadata from our state
+        let metadata = LPLinkMetadata()
+        metadata.originalURL = urlObj
+        metadata.url = urlObj
+
+        switch metadataState {
+        case .loaded(let title, _, let imageData):
+            if let title {
+                metadata.title = title
+            }
+            if let imageData, let nsImage = NSImage(data: imageData) {
+                metadata.imageProvider = NSItemProvider(object: nsImage)
+            }
+        case .pending, .failed:
+            // Just show URL for pending/failed states
+            break
+        }
+
+        // Only update if metadata actually changed
+        if context.coordinator.lastURL != url ||
+           context.coordinator.lastMetadataState != metadataState {
+            context.coordinator.lastURL = url
+            context.coordinator.lastMetadataState = metadataState
+            linkView.metadata = metadata
+        }
+    }
+
+    func makeCoordinator() -> Coordinator {
+        Coordinator()
+    }
+
+    class Coordinator {
+        var lastURL: String?
+        var lastMetadataState: LinkMetadataState?
     }
 }
 
 // MARK: - Item Row
 
 struct ItemRow: View, Equatable {
-    let item: ClipboardItem
+    let metadata: ItemMetadata
+    let matchData: MatchData?  // Only present in search mode
     let isSelected: Bool
-    let searchQuery: String
     let onTap: () -> Void
 
     // Fixed height for exactly 1 line of text at font size 15
     private let rowHeight: CGFloat = 32
 
-    private var previewText: String {
-        let displayText = item.displayText
-        guard !searchQuery.isEmpty else { return displayText }
+    // MARK: - Display Text (Unified Logic)
 
-        // Search in full content (flattened) to find match position,
-        // since displayText is truncated to 200 chars and may not contain the match
-        let fullText = item.textContent
+    private let maxDisplayChars = 200
+    private let maxRustSnippet = 400  // Rust's SNIPPET_CONTEXT_CHARS * 2
 
-        // Helper to flatten text (replace newlines/tabs with spaces, collapse consecutive spaces)
-        func flatten(_ text: String, maxChars: Int) -> String {
-            var result = String()
-            result.reserveCapacity(min(maxChars + 1, text.count))
-            var lastWasSpace = false
-            var count = 0
-            for char in text {
-                guard count < maxChars else { break }
-                var c = char
-                if c == "\n" || c == "\t" || c == "\r" { c = " " }
-                if c == " " {
-                    if lastWasSpace { continue }
-                    lastWasSpace = true
-                } else {
-                    lastWasSpace = false
-                }
-                result.append(c)
-                count += 1
-            }
-            return result
+    /// Computed prefix - shows line number and/or ellipsis if snippet doesn't start at beginning
+    private var snippetPrefix: (prefix: String, offset: Int) {
+        guard let matchData else { return ("", 0) }
+
+        let line = matchData.lineNumber
+        // lineNumber == 0 means no highlights (browsing), lineNumber >= 1 means search match
+        guard line >= 1 else { return ("", 0) }
+
+        // Check if snippet starts at content beginning (first highlight near start)
+        let matchStart = matchData.fullContentHighlights.first?.start ?? 0
+        if matchStart < 20 && line == 1 {
+            return ("", 0)  // Near start of first line - no prefix needed
         }
 
-        // Helper to count line number (1-indexed) at a given character offset
-        func lineNumber(at offset: Int, in text: String) -> Int {
-            var line = 1
-            var idx = text.startIndex
-            let targetIdx = text.index(text.startIndex, offsetBy: min(offset, text.count))
-            while idx < targetIdx {
-                if text[idx] == "\n" { line += 1 }
-                idx = text.index(after: idx)
-            }
-            return line
+        // Build prefix: line number if not on first line, otherwise just ellipsis
+        let prefix = line > 1 ? "L\(line): …" : "…"
+        return (prefix, prefix.count)
+    }
+
+    /// Display text with prefix/suffix ellipsis as needed
+    private var displaySnippet: String {
+        // Use matchData.text if present, otherwise metadata.snippet
+        let sourceText = matchData?.text.isEmpty == false ? matchData!.text : metadata.snippet
+        let (prefix, _) = snippetPrefix
+
+        // Available space for content
+        let availableChars = maxDisplayChars - prefix.count
+
+        // Truncate if needed, add trailing ellipsis
+        if sourceText.count > availableChars {
+            return prefix + String(sourceText.prefix(availableChars)) + "…"
         }
 
-        // Try exact match first
-        if let range = fullText.range(of: searchQuery, options: .caseInsensitive) {
-            let matchStart = fullText.distance(from: fullText.startIndex, to: range.lowerBound)
-            let line = lineNumber(at: matchStart, in: fullText)
+        // Add trailing ellipsis if source was already truncated by Rust
+        let needsTrailingEllipsis = sourceText.count >= maxRustSnippet
+        return prefix + sourceText + (needsTrailingEllipsis ? "…" : "")
+    }
 
-            // If match is early in the text and on line 1, just return displayText
-            if matchStart < 20 && line == 1 {
-                return displayText
-            }
+    /// Highlights for display - adjusted for prefix offset
+    private var displayHighlights: [HighlightRange] {
+        guard let matchData, !matchData.highlights.isEmpty else { return [] }
 
-            // Build prefix: show line number if not on first line
-            let prefix = line > 1 ? "L\(line): …" : "…"
+        let (_, prefixOffset) = snippetPrefix
+        let offset = UInt64(prefixOffset)
 
-            // Extract context around the match and flatten it
-            let contextStart = max(0, matchStart - 10)
-            let contextEnd = min(fullText.count, matchStart + 200)
-            let startIndex = fullText.index(fullText.startIndex, offsetBy: contextStart)
-            let endIndex = fullText.index(fullText.startIndex, offsetBy: contextEnd)
-            let context = String(fullText[startIndex..<endIndex])
-            return prefix + flatten(context, maxChars: 200)
+        // Adjust highlights for prefix
+        return matchData.highlights.map {
+            HighlightRange(start: $0.start + offset, end: $0.end + offset)
         }
-
-        // Fall back to first trigram match
-        if searchQuery.count >= 3 {
-            let chars = Array(searchQuery.lowercased())
-            for i in 0..<(chars.count - 2) {
-                let trigram = String(chars[i..<i+3])
-                if let range = fullText.range(of: trigram, options: .caseInsensitive) {
-                    let matchStart = fullText.distance(from: fullText.startIndex, to: range.lowerBound)
-                    let line = lineNumber(at: matchStart, in: fullText)
-
-                    if matchStart < 20 && line == 1 {
-                        return displayText
-                    }
-
-                    let prefix = line > 1 ? "L\(line): …" : "…"
-                    let contextStart = max(0, matchStart - 10)
-                    let contextEnd = min(fullText.count, matchStart + 200)
-                    let startIndex = fullText.index(fullText.startIndex, offsetBy: contextStart)
-                    let endIndex = fullText.index(fullText.startIndex, offsetBy: contextEnd)
-                    let context = String(fullText[startIndex..<endIndex])
-                    return prefix + flatten(context, maxChars: 200)
-                }
-            }
-        }
-
-        return displayText
     }
 
     // Define exactly what constitutes a "change" for SwiftUI diffing
     // Note: onTap closure is intentionally excluded from equality comparison
     nonisolated static func == (lhs: ItemRow, rhs: ItemRow) -> Bool {
         return lhs.isSelected == rhs.isSelected &&
-               lhs.item.stableId == rhs.item.stableId &&
-               lhs.searchQuery == rhs.searchQuery
+               lhs.metadata == rhs.metadata &&
+               lhs.matchData == rhs.matchData
     }
 
     var body: some View {
@@ -773,44 +818,62 @@ struct ItemRow: View, Equatable {
             HStack(spacing: 6) {
             // Content type icon with source app badge overlay
             ZStack(alignment: .bottomTrailing) {
-                // Main icon: image thumbnail, browser icon for links, color swatch, or UTType system icon
+                // Main icon: image thumbnail, browser icon for links, color swatch, or SF symbol
                 Group {
-                    if case .image(let data, _) = item.content,
-                       let nsImage = NSImage(data: Data(data)) {
-                        Image(nsImage: nsImage)
-                            .resizable()
-                            .aspectRatio(contentMode: .fill)
-                    } else if case .link = item.content,
-                              let browserURL = NSWorkspace.shared.urlForApplication(toOpen: URL(string: "https://")!) {
-                        Image(nsImage: NSWorkspace.shared.icon(forFile: browserURL.path))
-                            .resizable()
-                    } else if case .text(let textValue) = item.content,
-                              textValue.count < 500,
-                              let color = NSColor(colorCode: textValue.trimmingCharacters(in: .whitespacesAndNewlines)) {
-                        // Color swatch for text items that are valid CSS colors
+                    switch metadata.icon {
+                    case .thumbnail(let bytes):
+                        if let nsImage = NSImage(data: Data(bytes)) {
+                            Image(nsImage: nsImage)
+                                .resizable()
+                                .aspectRatio(contentMode: .fill)
+                        } else {
+                            Image(systemName: "photo")
+                                .resizable()
+                        }
+                    case .colorSwatch(let rgba):
+                        let color = colorFromRGBA(rgba)
                         RoundedRectangle(cornerRadius: 6)
                             .fill(Color(nsColor: color))
                             .overlay(
                                 RoundedRectangle(cornerRadius: 6)
                                     .strokeBorder(Color.primary.opacity(0.15), lineWidth: 1)
                             )
-                    } else {
-                        Image(nsImage: NSWorkspace.shared.icon(for: item.content.utType))
-                            .resizable()
+                    case .symbol(let iconType):
+                        if case .link = iconType,
+                           let browserURL = NSWorkspace.shared.urlForApplication(toOpen: URL(string: "https://")!) {
+                            Image(nsImage: NSWorkspace.shared.icon(forFile: browserURL.path))
+                                .resizable()
+                        } else {
+                            Image(nsImage: NSWorkspace.shared.icon(for: iconType.utType))
+                                .resizable()
+                        }
                     }
                 }
                 .frame(width: 32, height: 32)
                 .clipShape(RoundedRectangle(cornerRadius: 4))
 
-                // Badge: Source app icon (skip for links since browser icon is already shown)
-                if case .link = item.content {} else if let bundleID = item.sourceAppBundleID,
+                // Badge: Source app icon
+                // Show for symbols (except pure link icons) and thumbnails (images, links with images)
+                if let bundleID = metadata.sourceAppBundleId,
                    let appURL = NSWorkspace.shared.urlForApplication(withBundleIdentifier: bundleID) {
-                    Image(nsImage: NSWorkspace.shared.icon(forFile: appURL.path))
-                        .resizable()
-                        .frame(width: 22, height: 22)
-                        .clipShape(RoundedRectangle(cornerRadius: 3))
-                        .shadow(color: .black.opacity(0.3), radius: 1, x: 0, y: 1)
-                        .offset(x: 4, y: 4)
+                    // Skip badge for symbol links (browser icon is already shown)
+                    let showBadge: Bool = {
+                        switch metadata.icon {
+                        case .symbol(let iconType):
+                            return iconType != .link
+                        case .thumbnail, .colorSwatch:
+                            return true
+                        }
+                    }()
+
+                    if showBadge {
+                        Image(nsImage: NSWorkspace.shared.icon(forFile: appURL.path))
+                            .resizable()
+                            .frame(width: 22, height: 22)
+                            .clipShape(RoundedRectangle(cornerRadius: 3))
+                            .shadow(color: .black.opacity(0.3), radius: 1, x: 0, y: 1)
+                            .offset(x: 4, y: 4)
+                    }
                 }
             }
             .frame(width: 38, height: 38)
@@ -818,8 +881,8 @@ struct ItemRow: View, Equatable {
 
             // Text content - use AppKit for fast highlighting
             HighlightedTextView(
-                text: previewText,
-                query: searchQuery,
+                text: displaySnippet,
+                highlights: displayHighlights,
                 isSelected: isSelected
             )
             .frame(maxWidth: .infinity, alignment: .leading)
@@ -847,7 +910,7 @@ struct ItemRow: View, Equatable {
         // 2. Apply the plain style so it behaves like a standard row instead of a system button
         .buttonStyle(.plain)
         .accessibilityElement(children: .combine)
-        .accessibilityLabel(previewText)
+        .accessibilityLabel(displaySnippet)
         #if SANDBOXED
         .accessibilityHint("Double tap to copy")
         #else
@@ -855,6 +918,14 @@ struct ItemRow: View, Equatable {
         #endif
         .accessibilityAddTraits(.isButton)
         .accessibilityAddTraits(isSelected ? .isSelected : [])
+    }
+
+    private func colorFromRGBA(_ rgba: UInt32) -> NSColor {
+        let r = CGFloat((rgba >> 24) & 0xFF) / 255.0
+        let g = CGFloat((rgba >> 16) & 0xFF) / 255.0
+        let b = CGFloat((rgba >> 8) & 0xFF) / 255.0
+        let a = CGFloat(rgba & 0xFF) / 255.0
+        return NSColor(red: r, green: g, blue: b, alpha: a)
     }
 }
 
@@ -864,7 +935,7 @@ struct ItemRow: View, Equatable {
 /// NSTextField is much faster than SwiftUI Text with AttributedString
 struct HighlightedTextView: NSViewRepresentable {
     let text: String
-    let query: String
+    let highlights: [HighlightRange]
     let isSelected: Bool
 
     func makeNSView(context: Context) -> NSTextField {
@@ -883,62 +954,46 @@ struct HighlightedTextView: NSViewRepresentable {
     }
 
     func updateNSView(_ field: NSTextField, context: Context) {
+        // Skip update if nothing changed (prevents flash on re-render)
+        let coord = context.coordinator
+        guard text != coord.lastText || highlights != coord.lastHighlights || isSelected != coord.lastIsSelected else {
+            return
+        }
+        coord.lastText = text
+        coord.lastHighlights = highlights
+        coord.lastIsSelected = isSelected
+
         let font = NSFont(name: FontManager.sansSerif, size: 15) ?? NSFont.systemFont(ofSize: 15)
         let textColor: NSColor = isSelected ? .white : .labelColor
 
-        if query.isEmpty {
-            field.stringValue = text
-            field.font = font
-            field.textColor = textColor
-        } else {
-            // Build attributed string that matches NSTextField's default rendering
-            field.stringValue = text
-            field.font = font
-            field.textColor = textColor
+        // Always use attributed string for consistent rendering between browse and search modes
+        let mutable = NSMutableAttributedString(string: text, attributes: [
+            .font: font,
+            .foregroundColor: textColor
+        ])
 
-            // Now get the field's attributed string and add highlights to it
-            let mutable = field.attributedStringValue.mutableCopy() as! NSMutableAttributedString
-            let nsString = text as NSString
+        // Apply highlights if present
+        if !highlights.isEmpty {
             let highlightColor = NSColor.yellow.withAlphaComponent(0.4)
-            var highlightedRanges = Set<NSRange>()
-            var matchCount = 0
-
-            // Try exact match first
-            var searchRange = NSRange(location: 0, length: nsString.length)
-            while matchCount < 50, searchRange.location < nsString.length {
-                let foundRange = nsString.range(of: query, options: .caseInsensitive, range: searchRange)
-                guard foundRange.location != NSNotFound else { break }
-                mutable.addAttribute(.backgroundColor, value: highlightColor, range: foundRange)
-                highlightedRanges.insert(foundRange)
-                searchRange.location = foundRange.location + foundRange.length
-                searchRange.length = nsString.length - searchRange.location
-                matchCount += 1
-            }
-
-            // If no exact matches, use trigram highlighting
-            if highlightedRanges.isEmpty && query.count >= 3 {
-                let queryLower = query.lowercased()
-                let chars = Array(queryLower)
-                for i in 0..<(chars.count - 2) {
-                    let trigram = String(chars[i..<i+3])
-                    searchRange = NSRange(location: 0, length: nsString.length)
-                    while matchCount < 50, searchRange.location < nsString.length {
-                        let foundRange = nsString.range(of: trigram, options: .caseInsensitive, range: searchRange)
-                        guard foundRange.location != NSNotFound else { break }
-                        let alreadyHighlighted = highlightedRanges.contains { NSIntersectionRange($0, foundRange).length > 0 }
-                        if !alreadyHighlighted {
-                            mutable.addAttribute(.backgroundColor, value: highlightColor, range: foundRange)
-                            highlightedRanges.insert(foundRange)
-                            matchCount += 1
-                        }
-                        searchRange.location = foundRange.location + foundRange.length
-                        searchRange.length = nsString.length - searchRange.location
-                    }
+            for range in highlights {
+                let nsRange = range.nsRange
+                if nsRange.location + nsRange.length <= mutable.length {
+                    mutable.addAttribute(.backgroundColor, value: highlightColor, range: nsRange)
                 }
             }
-
-            field.attributedStringValue = mutable
         }
+
+        field.attributedStringValue = mutable
+    }
+
+    func makeCoordinator() -> Coordinator {
+        Coordinator()
+    }
+
+    class Coordinator {
+        var lastText: String = ""
+        var lastHighlights: [HighlightRange] = []
+        var lastIsSelected: Bool = false
     }
 }
 

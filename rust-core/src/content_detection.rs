@@ -1,15 +1,10 @@
 //! Content type detection for clipboard items
 //!
-//! Detects structured content types like URLs, emails, phone numbers, etc.
+//! Detects structured content types like URLs, emails, phone numbers, colors, etc.
 
-use crate::models::{ClipboardContent, LinkMetadataState};
+use crate::interface::{ClipboardContent, LinkMetadataState};
 use once_cell::sync::Lazy;
 use regex::Regex;
-
-/// Detect content type from text, returns the type name as a string
-pub fn detect_content_type(text: String) -> String {
-    detect_content(&text).database_type().to_string()
-}
 
 /// URL detection regex patterns
 static URL_REGEX: Lazy<Regex> = Lazy::new(|| {
@@ -31,13 +26,8 @@ static PHONE_DIGITS_REGEX: Lazy<Regex> = Lazy::new(|| {
     Regex::new(r"\d").unwrap()
 });
 
-/// Check if a string looks like a URL (public UniFFI version)
-pub fn is_url(text: String) -> bool {
-    is_url_internal(&text)
-}
-
-/// Check if a string looks like a URL (internal version)
-fn is_url_internal(text: &str) -> bool {
+/// Check if a string looks like a URL
+fn is_valid_url(text: &str) -> bool {
     let trimmed = text.trim();
 
     // Basic length and content checks
@@ -59,13 +49,13 @@ fn is_url_internal(text: &str) -> bool {
 }
 
 /// Check if a string is an email address
-pub fn is_email(text: &str) -> bool {
+fn is_email(text: &str) -> bool {
     let trimmed = text.trim();
     EMAIL_REGEX.is_match(trimmed)
 }
 
 /// Check if a string looks like a phone number
-pub fn is_phone(text: &str) -> bool {
+fn is_phone(text: &str) -> bool {
     let trimmed = text.trim();
 
     // Must match basic phone pattern
@@ -76,6 +66,33 @@ pub fn is_phone(text: &str) -> bool {
     // Must have at least 7 digits
     let digit_count = PHONE_DIGITS_REGEX.find_iter(trimmed).count();
     digit_count >= 7 && digit_count <= 15
+}
+
+/// Check if a string is a color value
+/// Supports hex (#RGB, #RRGGBB, #RRGGBBAA), rgb(), rgba(), hsl(), hsla()
+fn is_color(text: &str) -> bool {
+    let trimmed = text.trim();
+    let lower = trimmed.to_lowercase();
+    // Only accept strings that look like color values (not arbitrary words like "red")
+    if trimmed.starts_with('#') || lower.starts_with("rgb") || lower.starts_with("hsl") {
+        csscolorparser::parse(trimmed).is_ok()
+    } else {
+        false
+    }
+}
+
+/// Parse a color string to RGBA u32 (0xRRGGBBAA format)
+/// Returns None if the string is not a valid color
+pub fn parse_color_to_rgba(text: &str) -> Option<u32> {
+    let trimmed = text.trim();
+    let lower = trimmed.to_lowercase();
+    // Only parse explicit color formats (hex, rgb, hsl) not named colors
+    if !trimmed.starts_with('#') && !lower.starts_with("rgb") && !lower.starts_with("hsl") {
+        return None;
+    }
+    let color = csscolorparser::parse(trimmed).ok()?;
+    let [r, g, b, a] = color.to_rgba8();
+    Some(((r as u32) << 24) | ((g as u32) << 16) | ((b as u32) << 8) | (a as u32))
 }
 
 /// Detect the content type from text
@@ -93,8 +110,13 @@ pub fn detect_content(text: &str) -> ClipboardContent {
         return ClipboardContent::Email { address: address.to_string() };
     }
 
+    // Check for color values (before URLs since some color formats might look URL-ish)
+    if is_color(trimmed) {
+        return ClipboardContent::Color { value: trimmed.to_string() };
+    }
+
     // Check for URLs
-    if is_url_internal(trimmed) {
+    if is_valid_url(trimmed) {
         return ClipboardContent::Link {
             url: trimmed.to_string(),
             metadata_state: LinkMetadataState::Pending,
@@ -121,11 +143,11 @@ mod tests {
 
     #[test]
     fn test_url_detection() {
-        assert!(is_url_internal("https://example.com"));
-        assert!(is_url_internal("http://example.com/path?query=1"));
-        assert!(is_url_internal("www.example.com"));
-        assert!(!is_url_internal("not a url"));
-        assert!(!is_url_internal("example.com")); // No scheme or www
+        assert!(is_valid_url("https://example.com"));
+        assert!(is_valid_url("http://example.com/path?query=1"));
+        assert!(is_valid_url("www.example.com"));
+        assert!(!is_valid_url("not a url"));
+        assert!(!is_valid_url("example.com")); // No scheme or www
     }
 
     #[test]
@@ -143,6 +165,24 @@ mod tests {
         assert!(is_phone("5551234567"));
         assert!(!is_phone("123")); // Too short
         assert!(!is_phone("not a phone"));
+    }
+
+
+    #[test]
+    fn test_content_detection_color() {
+        // Hex color
+        if let ClipboardContent::Color { value } = detect_content("#FF5733") {
+            assert_eq!(value, "#FF5733");
+        } else {
+            panic!("Expected Color content");
+        }
+
+        // RGB color
+        if let ClipboardContent::Color { value } = detect_content("rgb(255, 87, 51)") {
+            assert_eq!(value, "rgb(255, 87, 51)");
+        } else {
+            panic!("Expected Color content");
+        }
     }
 
     #[test]

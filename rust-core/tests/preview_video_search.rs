@@ -7,6 +7,7 @@
 //! - Scene 3 (0:14-0:20): Typo forgiveness "rivresid" finds "Riverside"
 
 use clipkitty_core::ClipboardStore;
+use clipkitty_core::ClipboardStoreApi;
 use tempfile::TempDir;
 
 /// Create a test store with all preview video items
@@ -145,53 +146,65 @@ fn create_preview_video_store() -> (ClipboardStore, TempDir) {
     (store, temp_dir)
 }
 
+/// Helper to get content text from ClipboardItem
+fn get_content_text(item: &clipkitty_core::ClipboardItem) -> String {
+    match &item.content {
+        clipkitty_core::ClipboardContent::Text { value } => value.clone(),
+        clipkitty_core::ClipboardContent::Color { value } => value.clone(),
+        clipkitty_core::ClipboardContent::Link { url, .. } => url.clone(),
+        clipkitty_core::ClipboardContent::Email { address } => address.clone(),
+        clipkitty_core::ClipboardContent::Phone { number } => number.clone(),
+        clipkitty_core::ClipboardContent::Image { description, .. } => description.clone(),
+    }
+}
+
 // ============================================================
 // SCENE 1: Meta Pitch Tests (0:00 - 0:08)
 // ============================================================
 
-#[test]
-fn scene1_empty_query_shows_sql_first() {
+#[tokio::test]
+async fn scene1_empty_query_shows_sql_first() {
     let (store, _temp) = create_preview_video_store();
 
     // With empty query, fetch items by timestamp (newest first)
-    let result = store.fetch_items(None, 6).unwrap();
-    let items = result.items;
+    let result = store.search("".to_string()).await.unwrap();
+    let items = &result.matches;
 
     assert!(items.len() >= 6, "Should have at least 6 items");
 
-    // First item should be the SQL query
+    // First item should be the SQL query (check preview)
     assert!(
-        items[0].text_content().contains("SELECT users.name"),
+        items[0].item_metadata.preview.contains("SELECT users.name"),
         "Top item should be SQL query, got: {}",
-        items[0].text_content()
+        items[0].item_metadata.preview
     );
 
     // Check other visible items in default state
-    let contents: Vec<String> = items.iter().map(|i| i.text_content().to_string()).collect();
+    let previews: Vec<&str> = items.iter().map(|i| i.item_metadata.preview.as_str()).collect();
     assert!(
-        contents.iter().any(|c| c.contains("sk-proj")),
+        previews.iter().any(|c| c.contains("sk-proj")),
         "API key should be visible"
     );
     assert!(
-        contents.iter().any(|c| c.contains("Deploying to prod")),
+        previews.iter().any(|c| c.contains("Deploying to prod")),
         "Deploy script should be visible"
     );
     assert!(
-        contents.iter().any(|c| c.contains("quick brown fox")),
+        previews.iter().any(|c| c.contains("quick brown fox")),
         "Pangram should be visible"
     );
 }
 
-#[test]
-fn scene1_search_h_shows_hello_content() {
+#[tokio::test]
+async fn scene1_search_h_shows_hello_content() {
     let (store, _temp) = create_preview_video_store();
 
-    let result = store.search("h".to_string()).unwrap();
+    let result = store.search("h".to_string()).await.unwrap();
 
     // "h" should match Hello-containing items
-    let ids: Vec<i64> = result.matches.iter().map(|m| m.item_id).collect();
+    let ids: Vec<i64> = result.matches.iter().map(|m| m.item_metadata.item_id).collect();
     let items = store.fetch_by_ids(ids.clone()).unwrap();
-    let contents: Vec<String> = items.iter().map(|i| i.text_content().to_string()).collect();
+    let contents: Vec<String> = items.iter().map(|i| get_content_text(i)).collect();
 
     // Should find Hello onboarding doc
     assert!(
@@ -200,16 +213,16 @@ fn scene1_search_h_shows_hello_content() {
     );
 }
 
-#[test]
-fn scene1_search_hello_shows_onboarding_first() {
+#[tokio::test]
+async fn scene1_search_hello_shows_onboarding_first() {
     let (store, _temp) = create_preview_video_store();
 
-    let result = store.search("hello".to_string()).unwrap();
+    let result = store.search("hello".to_string()).await.unwrap();
     assert!(!result.matches.is_empty(), "Should find matches for 'hello'");
 
-    let ids: Vec<i64> = result.matches.iter().map(|m| m.item_id).collect();
+    let ids: Vec<i64> = result.matches.iter().map(|m| m.item_metadata.item_id).collect();
     let items = store.fetch_by_ids(ids).unwrap();
-    let contents: Vec<String> = items.iter().map(|i| i.text_content().to_string()).collect();
+    let contents: Vec<String> = items.iter().map(|i| get_content_text(i)).collect();
 
     // Should include Hello onboarding doc and hello_world.py
     assert!(
@@ -230,19 +243,19 @@ fn scene1_search_hello_shows_onboarding_first() {
     );
 }
 
-#[test]
-fn scene1_search_hello_clip_shows_marketing_blurb() {
+#[tokio::test]
+async fn scene1_search_hello_clip_shows_marketing_blurb() {
     let (store, _temp) = create_preview_video_store();
 
-    let result = store.search("hello clip".to_string()).unwrap();
+    let result = store.search("hello clip".to_string()).await.unwrap();
     assert!(
         !result.matches.is_empty(),
         "Should find matches for 'hello clip'"
     );
 
-    let ids: Vec<i64> = result.matches.iter().map(|m| m.item_id).collect();
+    let ids: Vec<i64> = result.matches.iter().map(|m| m.item_metadata.item_id).collect();
     let items = store.fetch_by_ids(ids).unwrap();
-    let contents: Vec<String> = items.iter().map(|i| i.text_content().to_string()).collect();
+    let contents: Vec<String> = items.iter().map(|i| get_content_text(i)).collect();
 
     // The marketing blurb "Hello ClipKitty!" should be a top result
     assert!(
@@ -252,22 +265,22 @@ fn scene1_search_hello_clip_shows_marketing_blurb() {
     );
 }
 
-#[test]
-fn scene1_search_hello_cl_ranks_clipkitty_before_hello_world_py() {
+#[tokio::test]
+async fn scene1_search_hello_cl_ranks_clipkitty_before_hello_world_py() {
     let (store, _temp) = create_preview_video_store();
 
-    let result = store.search("hello cl".to_string()).unwrap();
+    let result = store.search("hello cl".to_string()).await.unwrap();
     println!("Search results for 'hello cl':");
     for (i, m) in result.matches.iter().enumerate() {
-        println!("  {}: id={}", i, m.item_id);
+        println!("  {}: id={}", i, m.item_metadata.item_id);
     }
 
-    let ids: Vec<i64> = result.matches.iter().map(|m| m.item_id).collect();
+    let ids: Vec<i64> = result.matches.iter().map(|m| m.item_metadata.item_id).collect();
     let items = store.fetch_by_ids(ids.clone()).unwrap();
 
     println!("\nContents in order:");
     for (i, item) in items.iter().enumerate() {
-        let content = item.text_content();
+        let content = get_content_text(item);
         let preview: String = content.chars().take(60).collect();
         let preview = if content.chars().count() > 60 {
             format!("{}...", preview)
@@ -280,10 +293,10 @@ fn scene1_search_hello_cl_ranks_clipkitty_before_hello_world_py() {
     // Find positions of key items
     let clipkitty_pos = items
         .iter()
-        .position(|i| i.text_content().contains("Hello ClipKitty"));
+        .position(|i| get_content_text(i).contains("Hello ClipKitty"));
     let hello_world_pos = items
         .iter()
-        .position(|i| i.text_content().contains("hello_world.py"));
+        .position(|i| get_content_text(i).contains("hello_world.py"));
 
     println!("\nPositions: ClipKitty={:?}, hello_world.py={:?}", clipkitty_pos, hello_world_pos);
 
@@ -310,15 +323,15 @@ fn scene1_search_hello_cl_ranks_clipkitty_before_hello_world_py() {
 // SCENE 2: Color and Image Tests (0:08 - 0:14)
 // ============================================================
 
-#[test]
-fn scene2_search_hash_shows_hex_colors() {
+#[tokio::test]
+async fn scene2_search_hash_shows_hex_colors() {
     let (store, _temp) = create_preview_video_store();
 
-    let result = store.search("#".to_string()).unwrap();
+    let result = store.search("#".to_string()).await.unwrap();
 
-    let ids: Vec<i64> = result.matches.iter().map(|m| m.item_id).collect();
+    let ids: Vec<i64> = result.matches.iter().map(|m| m.item_metadata.item_id).collect();
     let items = store.fetch_by_ids(ids).unwrap();
-    let contents: Vec<String> = items.iter().map(|i| i.text_content().to_string()).collect();
+    let contents: Vec<String> = items.iter().map(|i| get_content_text(i)).collect();
 
     // Should find hex color codes
     assert!(
@@ -336,15 +349,15 @@ fn scene2_search_hash_shows_hex_colors() {
     );
 }
 
-#[test]
-fn scene2_search_hash_f_shows_orange_color() {
+#[tokio::test]
+async fn scene2_search_hash_f_shows_orange_color() {
     let (store, _temp) = create_preview_video_store();
 
-    let result = store.search("#f".to_string()).unwrap();
+    let result = store.search("#f".to_string()).await.unwrap();
 
-    let ids: Vec<i64> = result.matches.iter().map(|m| m.item_id).collect();
+    let ids: Vec<i64> = result.matches.iter().map(|m| m.item_metadata.item_id).collect();
     let items = store.fetch_by_ids(ids).unwrap();
-    let contents: Vec<String> = items.iter().map(|i| i.text_content().to_string()).collect();
+    let contents: Vec<String> = items.iter().map(|i| get_content_text(i)).collect();
 
     // Should find colors starting with #F
     assert!(
@@ -358,16 +371,16 @@ fn scene2_search_hash_f_shows_orange_color() {
     );
 }
 
-#[test]
-fn scene2_search_cat_shows_cat_image() {
+#[tokio::test]
+async fn scene2_search_cat_shows_cat_image() {
     let (store, _temp) = create_preview_video_store();
 
-    let result = store.search("cat".to_string()).unwrap();
+    let result = store.search("cat".to_string()).await.unwrap();
     assert!(!result.matches.is_empty(), "Should find matches for 'cat'");
 
-    let ids: Vec<i64> = result.matches.iter().map(|m| m.item_id).collect();
+    let ids: Vec<i64> = result.matches.iter().map(|m| m.item_metadata.item_id).collect();
     let items = store.fetch_by_ids(ids).unwrap();
-    let contents: Vec<String> = items.iter().map(|i| i.text_content().to_string()).collect();
+    let contents: Vec<String> = items.iter().map(|i| get_content_text(i)).collect();
 
     // Should find the cat image description
     assert!(
@@ -389,15 +402,15 @@ fn scene2_search_cat_shows_cat_image() {
 // SCENE 3: Typo Forgiveness Tests (0:14 - 0:20)
 // ============================================================
 
-#[test]
-fn scene3_search_r_shows_return_and_riverside() {
+#[tokio::test]
+async fn scene3_search_r_shows_return_and_riverside() {
     let (store, _temp) = create_preview_video_store();
 
-    let result = store.search("r".to_string()).unwrap();
+    let result = store.search("r".to_string()).await.unwrap();
 
-    let ids: Vec<i64> = result.matches.iter().map(|m| m.item_id).collect();
+    let ids: Vec<i64> = result.matches.iter().map(|m| m.item_metadata.item_id).collect();
     let items = store.fetch_by_ids(ids).unwrap();
-    let contents: Vec<String> = items.iter().map(|i| i.text_content().to_string()).collect();
+    let contents: Vec<String> = items.iter().map(|i| get_content_text(i)).collect();
 
     // Should find items with 'r'
     assert!(
@@ -410,16 +423,16 @@ fn scene3_search_r_shows_return_and_riverside() {
     );
 }
 
-#[test]
-fn scene3_search_riv_shows_riverside() {
+#[tokio::test]
+async fn scene3_search_riv_shows_riverside() {
     let (store, _temp) = create_preview_video_store();
 
-    let result = store.search("riv".to_string()).unwrap();
+    let result = store.search("riv".to_string()).await.unwrap();
     assert!(!result.matches.is_empty(), "Should find matches for 'riv'");
 
-    let ids: Vec<i64> = result.matches.iter().map(|m| m.item_id).collect();
+    let ids: Vec<i64> = result.matches.iter().map(|m| m.item_metadata.item_id).collect();
     let items = store.fetch_by_ids(ids).unwrap();
-    let contents: Vec<String> = items.iter().map(|i| i.text_content().to_string()).collect();
+    let contents: Vec<String> = items.iter().map(|i| get_content_text(i)).collect();
 
     // Should find Riverside apartment notes
     assert!(
@@ -437,17 +450,17 @@ fn scene3_search_riv_shows_riverside() {
     );
 }
 
-#[test]
-fn scene3_search_rivresid_typo_finds_riverside() {
+#[tokio::test]
+async fn scene3_search_rivresid_typo_finds_riverside() {
     let (store, _temp) = create_preview_video_store();
 
     // "riversde" is a typo - missing 'i' from "Riverside"
     // Nucleo's fuzzy matching should still find it (unlike transposed letters)
-    let result = store.search("riversde".to_string()).unwrap();
+    let result = store.search("riversde".to_string()).await.unwrap();
 
-    let ids: Vec<i64> = result.matches.iter().map(|m| m.item_id).collect();
+    let ids: Vec<i64> = result.matches.iter().map(|m| m.item_metadata.item_id).collect();
     let items = store.fetch_by_ids(ids).unwrap();
-    let contents: Vec<String> = items.iter().map(|i| i.text_content().to_string()).collect();
+    let contents: Vec<String> = items.iter().map(|i| get_content_text(i)).collect();
 
     // Fuzzy search should find the Riverside apartment notes
     // This demonstrates typo forgiveness for missing characters
@@ -462,80 +475,80 @@ fn scene3_search_rivresid_typo_finds_riverside() {
 // Content Verification Tests
 // ============================================================
 
-#[test]
-fn verify_all_expected_items_exist() {
+#[tokio::test]
+async fn verify_all_expected_items_exist() {
     let (store, _temp) = create_preview_video_store();
 
     // Fetch all items
-    let result = store.fetch_items(None, 100).unwrap();
-    let contents: Vec<String> = result.items.iter().map(|i| i.text_content().to_string()).collect();
+    let result = store.search("".to_string()).await.unwrap();
+    let previews: Vec<&str> = result.matches.iter().map(|i| i.item_metadata.preview.as_str()).collect();
 
     // Verify key items from each scene exist
 
     // Scene 1: Meta Pitch
     assert!(
-        contents.iter().any(|c| c.contains("Hello ClipKitty")),
+        previews.iter().any(|c| c.contains("Hello ClipKitty")),
         "Marketing blurb missing"
     );
     assert!(
-        contents.iter().any(|c| c.contains("Hello and welcome")),
+        previews.iter().any(|c| c.contains("Hello and welcome")),
         "Onboarding doc missing"
     );
     assert!(
-        contents.iter().any(|c| c.contains("hello_world.py")),
+        previews.iter().any(|c| c.contains("hello_world.py")),
         "hello_world.py missing"
     );
 
-    // Scene 2: Colors and Images
+    // Scene 2: Colors (these are detected as colors, preview will show the color value)
     assert!(
-        contents.iter().any(|c| c == "#7C3AED"),
+        previews.iter().any(|c| *c == "#7C3AED"),
         "Purple hex color missing"
     );
     assert!(
-        contents.iter().any(|c| c == "#FF5733"),
+        previews.iter().any(|c| *c == "#FF5733"),
         "Orange hex color missing"
     );
     assert!(
-        contents.iter().any(|c| c.contains("tabby cat")),
+        previews.iter().any(|c| c.contains("tabby cat")),
         "Cat image description missing"
     );
 
     // Scene 3: Typo Forgiveness
     assert!(
-        contents.iter().any(|c| c.contains("Riverside Dr")),
+        previews.iter().any(|c| c.contains("Riverside Dr")),
         "Apartment notes missing"
     );
     assert!(
-        contents.iter().any(|c| c.contains("driver_config")),
+        previews.iter().any(|c| c.contains("driver_config")),
         "driver_config.yaml missing"
     );
 
     // Default state items
     assert!(
-        contents.iter().any(|c| c.contains("SELECT users.name")),
+        previews.iter().any(|c| c.contains("SELECT users.name")),
         "SQL query missing"
     );
     assert!(
-        contents.iter().any(|c| c.contains("sk-proj")),
+        previews.iter().any(|c| c.contains("sk-proj")),
         "API key missing"
     );
     assert!(
-        contents.iter().any(|c| c.contains("quick brown fox")),
+        previews.iter().any(|c| c.contains("quick brown fox")),
         "Pangram missing"
     );
 }
 
-#[test]
-fn verify_item_count() {
+#[tokio::test]
+async fn verify_item_count() {
     let (store, _temp) = create_preview_video_store();
 
-    let result = store.fetch_items(None, 100).unwrap();
+    let result = store.search("".to_string()).await.unwrap();
 
     // We should have approximately 39 items based on the data
     assert!(
-        result.items.len() >= 35,
+        result.matches.len() >= 35,
         "Should have at least 35 items, got {}",
-        result.items.len()
+        result.matches.len()
     );
 }
 
@@ -562,15 +575,15 @@ fn create_ranking_test_store(items: Vec<&str>) -> (ClipboardStore, TempDir) {
 }
 
 /// Get search result contents in order
-fn search_contents(store: &ClipboardStore, query: &str) -> Vec<String> {
-    let result = store.search(query.to_string()).unwrap();
-    let ids: Vec<i64> = result.matches.iter().map(|m| m.item_id).collect();
+async fn search_contents(store: &ClipboardStore, query: &str) -> Vec<String> {
+    let result = store.search(query.to_string()).await.unwrap();
+    let ids: Vec<i64> = result.matches.iter().map(|m| m.item_metadata.item_id).collect();
     let items = store.fetch_by_ids(ids).unwrap();
-    items.iter().map(|i| i.text_content().to_string()).collect()
+    items.iter().map(|i| get_content_text(i)).collect()
 }
 
-#[test]
-fn ranking_contiguous_beats_scattered() {
+#[tokio::test]
+async fn ranking_contiguous_beats_scattered() {
     // Items added oldest to newest
     // Using "help low" which scatters "hello" as hel-lo vs contiguous "hello"
     let (store, _temp) = create_ranking_test_store(vec![
@@ -578,7 +591,7 @@ fn ranking_contiguous_beats_scattered() {
         "hello world greeting",  // contiguous "hello", newer
     ]);
 
-    let contents = search_contents(&store, "hello");
+    let contents = search_contents(&store, "hello").await;
 
     // Contiguous match should rank first (better match quality)
     assert!(!contents.is_empty(), "Should find at least one item");
@@ -589,8 +602,8 @@ fn ranking_contiguous_beats_scattered() {
     );
 }
 
-#[test]
-fn ranking_recency_breaks_ties_for_equal_matches() {
+#[tokio::test]
+async fn ranking_recency_breaks_ties_for_equal_matches() {
     // This test verifies that timestamp is used as a tiebreaker for identical Nucleo scores.
     // We use content that produces identical Nucleo scores: "hello world one/two/three"
     // all score 140 for query "hello ".
@@ -620,18 +633,18 @@ fn ranking_recency_breaks_ties_for_equal_matches() {
     assert!(id1 > 0 && id2 > 0 && id3 > 0, "All items should be inserted");
 
     // Search for "hello " - all 3 have identical Nucleo scores (140)
-    let result = store.search("hello ".to_string()).unwrap();
-    let ids: Vec<i64> = result.matches.iter().map(|m| m.item_id).collect();
+    let result = store.search("hello ".to_string()).await.unwrap();
+    let ids: Vec<i64> = result.matches.iter().map(|m| m.item_metadata.item_id).collect();
     let items = store.fetch_by_ids(ids.clone()).unwrap();
-    let contents: Vec<String> = items.iter().map(|i| i.text_content().to_string()).collect();
+    let contents: Vec<String> = items.iter().map(|i| get_content_text(i)).collect();
 
     // All 3 items should be found
     assert_eq!(contents.len(), 3, "Should find all 3 items, got: {:?}", contents);
 
     // Verify deterministic ordering - with distinct timestamps, results should be stable
     for _ in 0..3 {
-        let result2 = store.search("hello ".to_string()).unwrap();
-        let ids2: Vec<i64> = result2.matches.iter().map(|m| m.item_id).collect();
+        let result2 = store.search("hello ".to_string()).await.unwrap();
+        let ids2: Vec<i64> = result2.matches.iter().map(|m| m.item_metadata.item_id).collect();
         assert_eq!(ids, ids2, "Search ordering should be deterministic");
     }
 
@@ -654,14 +667,14 @@ fn ranking_recency_breaks_ties_for_equal_matches() {
     );
 }
 
-#[test]
-fn ranking_word_start_beats_mid_word() {
+#[tokio::test]
+async fn ranking_word_start_beats_mid_word() {
     let (store, _temp) = create_ranking_test_store(vec![
         "the curl command line tool",  // url is mid-word in 'curl', older
         "urlParser.parse(input)",       // url is at word start, newer
     ]);
 
-    let contents = search_contents(&store, "url");
+    let contents = search_contents(&store, "url").await;
 
     // Word-start match should rank higher (Nucleo prefers word boundaries)
     assert!(contents.len() >= 2, "Should find both items");
@@ -672,15 +685,15 @@ fn ranking_word_start_beats_mid_word() {
     );
 }
 
-#[test]
-fn ranking_partial_match_excluded_when_atoms_missing() {
+#[tokio::test]
+async fn ranking_partial_match_excluded_when_atoms_missing() {
     // "hello cl" requires both "hello" and "cl" to match
     let (store, _temp) = create_ranking_test_store(vec![
         "hello_world.py",     // has "hello" but NO 'c' at all
         "Hello ClipKitty!",   // has both "hello" and "cl"
     ]);
 
-    let contents = search_contents(&store, "hello cl");
+    let contents = search_contents(&store, "hello cl").await;
 
     // hello_world.py should not match "hello cl" because it has no 'c'
     assert!(
@@ -701,15 +714,15 @@ fn ranking_partial_match_excluded_when_atoms_missing() {
     }
 }
 
-#[test]
-fn ranking_trailing_space_boosts_word_boundary() {
+#[tokio::test]
+async fn ranking_trailing_space_boosts_word_boundary() {
     // "hello " (with trailing space) should prefer content with "hello " (hello followed by space)
     let (store, _temp) = create_ranking_test_store(vec![
         "def hello(name: str)",        // "hello(" - no space after, older
         "Hello and welcome to...",     // "Hello " - has space after, newer
     ]);
 
-    let contents = search_contents(&store, "hello ");
+    let contents = search_contents(&store, "hello ").await;
 
     // Content with "Hello " should rank higher due to trailing space boost
     assert!(contents.len() >= 2, "Should find both items");
@@ -724,8 +737,8 @@ fn ranking_trailing_space_boosts_word_boundary() {
 // Proximity/Scatter Rejection Tests
 // ============================================================
 
-#[test]
-fn scattered_match_should_not_appear() {
+#[tokio::test]
+async fn scattered_match_should_not_appear() {
     // This test demonstrates the problem: searching for "hello how are you doing today y"
     // matches a long technical document where all characters exist but are completely
     // scattered with no proximity to each other.
@@ -857,7 +870,7 @@ If you are using a standard tokenizer (split on whitespace), the `build_trigram_
 
     // This query has characters that all exist somewhere in the text,
     // but none of the words appear as contiguous substrings
-    let contents = search_contents(&store, "hello how are you doing today y");
+    let contents = search_contents(&store, "hello how are you doing today y").await;
 
     // CURRENT BEHAVIOR (what we want to fix):
     // The text currently matches because Nucleo finds a subsequence.
@@ -886,8 +899,8 @@ If you are using a standard tokenizer (split on whitespace), the `build_trigram_
     );
 }
 
-#[test]
-fn dense_clusters_with_gap_should_match() {
+#[tokio::test]
+async fn dense_clusters_with_gap_should_match() {
     // This test verifies that documents with dense match clusters separated by gaps
     // SHOULD still match. This is a valid use case we must preserve.
     //
@@ -912,7 +925,7 @@ goodbye friend - this is the end of the document."#;
     let (store, _temp) = create_ranking_test_store(vec![doc_with_gap]);
 
     // This query matches content at start ("hello world") and end ("goodbye friend")
-    let contents = search_contents(&store, "hello world goodbye friend");
+    let contents = search_contents(&store, "hello world goodbye friend").await;
 
     // Print for debugging
     println!("Search 'hello world goodbye friend' returned {} results", contents.len());
@@ -931,4 +944,3 @@ goodbye friend - this is the end of the document."#;
         "Should find the document with both clusters"
     );
 }
-

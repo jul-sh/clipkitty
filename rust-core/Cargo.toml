@@ -24,25 +24,31 @@ required-features = ["data-gen"]
 
 [dependencies]
 rusqlite = { version = "*", features = ["bundled", "modern_sqlite"] }
+r2d2 = "*"
+r2d2_sqlite = "*"
 regex = "*"
 once_cell = "*"
 thiserror = "*"
 chrono = { version = "*", features = ["serde"] }
-serde = { version = "1", features = ["derive"] }
-serde_json = "1"
+serde = { version = "*", features = ["derive"] }
+serde_json = "*"
 parking_lot = "*"
 url = "*"
+csscolorparser = "*"
 uniffi = { version = "*", features = ["cli"] }
 tantivy = "*"
 nucleo-matcher = "*"
-tokio = { version = "1", features = ["full"] }
-reqwest = { version = "0.11", features = ["json"] }
-rand = "0.8"
-schemars = "0.8"
-indicatif = "0.17"
-anyhow = "1"
-clap = { version = "4", features = ["derive"] }
-futures = "0.3"
+image = { version = "*", default-features = false, features = ["jpeg", "png", "gif", "webp"] }
+tokio = { version = "*", features = ["full"] }
+tokio-util = { version = "*", features = ["rt"] }
+async-trait = "*"
+reqwest = { version = "*", default-features = false, features = ["json", "rustls-tls"] }
+rand = "*"
+schemars = "*"
+indicatif = "*"
+anyhow = "*"
+clap = { version = "*", features = ["derive"] }
+futures = "*"
 
 [features]
 default = ["serde"]
@@ -69,4 +75,4 @@ codegen-units = 1
 opt-level = 1
 
 [dev-dependencies]
-tempfile = "3.24.0"
+tempfile = "*"
