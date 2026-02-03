@@ -190,9 +190,6 @@ extension IconType {
         case .link: return "link"
         case .email: return "envelope"
         case .phone: return "phone"
-        case .address: return "map"
-        case .dateType: return "calendar"
-        case .transit: return "tram"
         case .image: return "photo"
         case .color: return "paintpalette"
         }
@@ -205,9 +202,6 @@ extension IconType {
         case .link: return .url
         case .email: return .emailMessage
         case .phone: return .vCard
-        case .address: return .vCard
-        case .dateType: return .calendarEvent
-        case .transit: return .text
         case .image: return .image
         case .color: return .text
         }
@@ -255,12 +249,6 @@ extension ClipboardContent {
             return address
         case .phone(let number):
             return number
-        case .address(let value):
-            return value
-        case .date(let value):
-            return value
-        case .transit(let value):
-            return value
         case .image(_, let description):
             return description
         }
@@ -273,9 +261,6 @@ extension ClipboardContent {
         case .link: return "link"
         case .email: return "envelope"
         case .phone: return "phone"
-        case .address: return "map"
-        case .date: return "calendar"
-        case .transit: return "tram"
         case .image: return "photo"
         }
     }
@@ -288,9 +273,6 @@ extension ClipboardContent {
         case .link: return .url
         case .email: return .emailMessage
         case .phone: return .vCard
-        case .address: return .vCard
-        case .date: return .calendarEvent
-        case .transit: return .text
         case .image: return .image
         }
     }
