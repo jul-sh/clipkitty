@@ -40,8 +40,9 @@ enum DisplayState: Equatable {
     case loading
     /// Browse mode - showing recent items (no search query)
     case browse([ItemMetadata])
-    /// Search in progress - showing fallback items while waiting for results
-    case searchLoading(query: String, fallbackItems: [ItemMetadata])
+    /// Search in progress - showing fallback results while waiting for new results
+    /// Uses [ItemMatch] to preserve match text and highlights from previous search (prevents text flash)
+    case searchLoading(query: String, fallbackResults: [ItemMatch])
     /// Search complete - showing results
     case searchResults(query: String, results: [ItemMatch])
     /// Error state
@@ -158,21 +159,22 @@ final class ClipboardStore {
 
         currentSearchQuery = query
 
-        // Capture fallback items from current state
-        let fallback: [ItemMetadata] = {
+        // Capture fallback results from current state (preserves match text to prevent flash)
+        let fallback: [ItemMatch] = {
             switch state {
             case .browse(let items):
-                return items
-            case .searchLoading(_, let fallbackItems):
-                return fallbackItems
+                // Convert metadata to ItemMatch with empty matchData
+                return items.map { ItemMatch(itemMetadata: $0, matchData: MatchData(text: "", highlights: [], lineNumber: 0)) }
+            case .searchLoading(_, let fallbackResults):
+                return fallbackResults
             case .searchResults(_, let results):
-                return results.map { $0.itemMetadata }
+                return results
             default:
                 return []
             }
         }()
 
-        state = .searchLoading(query: query, fallbackItems: fallback)
+        state = .searchLoading(query: query, fallbackResults: fallback)
 
         searchTask = Task {
             try? await Task.sleep(for: .milliseconds(50))
@@ -652,7 +654,7 @@ final class ClipboardStore {
         case .searchLoading(let query, let fallback):
             state = .searchLoading(
                 query: query,
-                fallbackItems: fallback.filter { $0.itemId != itemId }
+                fallbackResults: fallback.filter { $0.itemMetadata.itemId != itemId }
             )
         case .searchResults(let query, let results):
             state = .searchResults(
