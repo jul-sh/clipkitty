@@ -462,6 +462,10 @@ final class ClipboardStore {
         // Move compression and DB write to background
         guard let rustStore else { return }
         Task.detached { [weak self] in
+            // Generate thumbnail from original image (before HEIC compression)
+            // HEIC is not supported by Rust's image crate, so we generate in Swift
+            let thumbnail = Self.generateThumbnail(rawImageData)
+
             // Compress image with HEIC (HEVC)
             guard let compressedData = Self.compressToHEIC(rawImageData, quality: quality, maxPixels: maxPixels) else {
                 logError("Image compression failed, skipping")
@@ -471,6 +475,7 @@ final class ClipboardStore {
             do {
                 let itemId = try rustStore.saveImage(
                     imageData: compressedData,
+                    thumbnail: thumbnail,
                     sourceApp: sourceApp,
                     sourceAppBundleId: sourceAppBundleID
                 )
@@ -545,6 +550,64 @@ final class ClipboardStore {
         ]
 
         CGImageDestinationAddImage(destination, cgImage, options as CFDictionary)
+
+        guard CGImageDestinationFinalize(destination) else {
+            return nil
+        }
+
+        return data as Data
+    }
+
+    /// Generate a small JPEG thumbnail (max 64x64) for list display
+    private nonisolated static func generateThumbnail(_ imageData: Data, maxSize: Int = 64) -> Data? {
+        guard let imageSource = CGImageSourceCreateWithData(imageData as CFData, nil),
+              let cgImage = CGImageSourceCreateImageAtIndex(imageSource, 0, nil) else {
+            return nil
+        }
+
+        let width = cgImage.width
+        let height = cgImage.height
+
+        // Calculate thumbnail size maintaining aspect ratio
+        let scale = Double(maxSize) / Double(max(width, height))
+        let newWidth = max(1, Int(Double(width) * scale))
+        let newHeight = max(1, Int(Double(height) * scale))
+
+        guard let context = CGContext(
+            data: nil,
+            width: newWidth,
+            height: newHeight,
+            bitsPerComponent: 8,
+            bytesPerRow: 0,
+            space: CGColorSpaceCreateDeviceRGB(),
+            bitmapInfo: CGImageAlphaInfo.premultipliedLast.rawValue
+        ) else {
+            return nil
+        }
+
+        context.interpolationQuality = .medium
+        context.draw(cgImage, in: CGRect(x: 0, y: 0, width: newWidth, height: newHeight))
+
+        guard let thumbnail = context.makeImage() else {
+            return nil
+        }
+
+        // Encode as JPEG with moderate quality
+        let data = NSMutableData()
+        guard let destination = CGImageDestinationCreateWithData(
+            data as CFMutableData,
+            "public.jpeg" as CFString,
+            1,
+            nil
+        ) else {
+            return nil
+        }
+
+        let options: [CFString: Any] = [
+            kCGImageDestinationLossyCompressionQuality: 0.6
+        ]
+
+        CGImageDestinationAddImage(destination, thumbnail, options as CFDictionary)
 
         guard CGImageDestinationFinalize(destination) else {
             return nil
