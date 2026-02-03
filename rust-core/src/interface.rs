@@ -43,21 +43,23 @@ pub enum LinkMetadataState {
     Pending,
     Loaded {
         title: Option<String>,
+        description: Option<String>,
         image_data: Option<Vec<u8>>,
     },
     Failed,
 }
 
 impl LinkMetadataState {
-    /// Convert to database fields (title, image_data)
+    /// Convert to database fields (title, description, image_data)
     /// NULL title = pending, empty title = failed, otherwise = loaded
-    pub fn to_database_fields(&self) -> (Option<String>, Option<Vec<u8>>) {
+    pub fn to_database_fields(&self) -> (Option<String>, Option<String>, Option<Vec<u8>>) {
         match self {
-            LinkMetadataState::Pending => (None, None),
-            LinkMetadataState::Failed => (Some(String::new()), None),
-            LinkMetadataState::Loaded { title, image_data } => {
+            LinkMetadataState::Pending => (None, None, None),
+            LinkMetadataState::Failed => (Some(String::new()), None, None),
+            LinkMetadataState::Loaded { title, description, image_data } => {
                 (
                     Some(title.clone().unwrap_or_default()),
+                    description.clone(),
                     image_data.clone(),
                 )
             }
@@ -65,15 +67,21 @@ impl LinkMetadataState {
     }
 
     /// Reconstruct from database fields
-    pub fn from_database(title: Option<&str>, image_data: Option<Vec<u8>>) -> Self {
+    pub fn from_database(title: Option<&str>, description: Option<&str>, image_data: Option<Vec<u8>>) -> Self {
         match (title, &image_data) {
             (None, None) => LinkMetadataState::Pending,
             (Some(""), None) => LinkMetadataState::Failed,
             (Some(t), img) => LinkMetadataState::Loaded {
                 title: if t.is_empty() { None } else { Some(t.to_string()) },
+                description: description.filter(|d| !d.is_empty()).map(String::from),
                 image_data: img.clone(),
             },
-            (None, Some(_)) => LinkMetadataState::Pending,
+            // Has image but no title - still loaded (some sites only have images)
+            (None, Some(img)) => LinkMetadataState::Loaded {
+                title: None,
+                description: description.filter(|d| !d.is_empty()).map(String::from),
+                image_data: Some(img.clone()),
+            },
         }
     }
 }
@@ -138,25 +146,25 @@ impl ClipboardContent {
         }
     }
 
-    /// Extract database fields: (content, image_data, link_title, link_image_data, color_rgba)
-    pub fn to_database_fields(&self) -> (String, Option<Vec<u8>>, Option<String>, Option<Vec<u8>>, Option<u32>) {
+    /// Extract database fields: (content, image_data, link_title, link_description, link_image_data, color_rgba)
+    pub fn to_database_fields(&self) -> (String, Option<Vec<u8>>, Option<String>, Option<String>, Option<Vec<u8>>, Option<u32>) {
         match self {
-            ClipboardContent::Text { value } => (value.clone(), None, None, None, None),
+            ClipboardContent::Text { value } => (value.clone(), None, None, None, None, None),
             ClipboardContent::Color { value } => {
                 let rgba = crate::content_detection::parse_color_to_rgba(value);
-                (value.clone(), None, None, None, rgba)
+                (value.clone(), None, None, None, None, rgba)
             }
             ClipboardContent::Link { url, metadata_state } => {
-                let (title, image_data) = metadata_state.to_database_fields();
-                (url.clone(), None, title, image_data, None)
+                let (title, description, image_data) = metadata_state.to_database_fields();
+                (url.clone(), None, title, description, image_data, None)
             }
-            ClipboardContent::Email { address } => (address.clone(), None, None, None, None),
-            ClipboardContent::Phone { number } => (number.clone(), None, None, None, None),
-            ClipboardContent::Address { value } => (value.clone(), None, None, None, None),
-            ClipboardContent::Date { value } => (value.clone(), None, None, None, None),
-            ClipboardContent::Transit { value } => (value.clone(), None, None, None, None),
+            ClipboardContent::Email { address } => (address.clone(), None, None, None, None, None),
+            ClipboardContent::Phone { number } => (number.clone(), None, None, None, None, None),
+            ClipboardContent::Address { value } => (value.clone(), None, None, None, None, None),
+            ClipboardContent::Date { value } => (value.clone(), None, None, None, None, None),
+            ClipboardContent::Transit { value } => (value.clone(), None, None, None, None, None),
             ClipboardContent::Image { data, description } => {
-                (description.clone(), Some(data.clone()), None, None, None)
+                (description.clone(), Some(data.clone()), None, None, None, None)
             }
         }
     }
@@ -167,6 +175,7 @@ impl ClipboardContent {
         content: &str,
         image_data: Option<Vec<u8>>,
         link_title: Option<&str>,
+        link_description: Option<&str>,
         link_image_data: Option<Vec<u8>>,
         _color_rgba: Option<u32>,
     ) -> Self {
@@ -174,7 +183,7 @@ impl ClipboardContent {
             "color" => ClipboardContent::Color { value: content.to_string() },
             "link" => ClipboardContent::Link {
                 url: content.to_string(),
-                metadata_state: LinkMetadataState::from_database(link_title, link_image_data),
+                metadata_state: LinkMetadataState::from_database(link_title, link_description, link_image_data),
             },
             "image" => ClipboardContent::Image {
                 data: image_data.unwrap_or_default(),

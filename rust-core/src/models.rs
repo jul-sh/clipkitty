@@ -277,28 +277,29 @@ mod tests {
     fn test_link_metadata_state_database_roundtrip() {
         // Pending
         let pending = LinkMetadataState::Pending;
-        let (title, img) = pending.to_database_fields();
+        let (title, desc, img) = pending.to_database_fields();
         assert_eq!(
-            LinkMetadataState::from_database(title.as_deref(), img),
+            LinkMetadataState::from_database(title.as_deref(), desc.as_deref(), img),
             pending
         );
 
         // Failed
         let failed = LinkMetadataState::Failed;
-        let (title, img) = failed.to_database_fields();
+        let (title, desc, img) = failed.to_database_fields();
         assert_eq!(
-            LinkMetadataState::from_database(title.as_deref(), img),
+            LinkMetadataState::from_database(title.as_deref(), desc.as_deref(), img),
             failed
         );
 
         // Loaded
         let loaded = LinkMetadataState::Loaded {
             title: Some("Test Title".to_string()),
+            description: Some("Test Description".to_string()),
             image_data: Some(vec![1, 2, 3]),
         };
-        let (title, img) = loaded.to_database_fields();
+        let (title, desc, img) = loaded.to_database_fields();
         assert_eq!(
-            LinkMetadataState::from_database(title.as_deref(), img),
+            LinkMetadataState::from_database(title.as_deref(), desc.as_deref(), img),
             loaded
         );
     }

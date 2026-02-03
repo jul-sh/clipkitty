@@ -358,16 +358,19 @@ impl ClipboardStore {
         Ok(id)
     }
 
-    /// Update link metadata for an item
+    /// Update link metadata for an item (called from Swift after LPMetadataProvider fetch)
     pub fn update_link_metadata(
         &self,
         item_id: i64,
         title: Option<String>,
+        description: Option<String>,
         image_data: Option<Vec<u8>>,
     ) -> Result<(), ClipKittyError> {
+        // Empty title with no description/image = failed state
+        // Non-empty title or has description/image = loaded state
         let title_for_db = title.as_deref().unwrap_or("");
         self.db
-            .update_link_metadata(item_id, Some(title_for_db), image_data.as_deref())?;
+            .update_link_metadata(item_id, Some(title_for_db), description.as_deref(), image_data.as_deref())?;
         Ok(())
     }
 
@@ -425,7 +428,8 @@ impl ClipboardStore {
 impl ClipboardStoreApi for ClipboardStore {
     /// Save a text item to the database and index
     /// Returns the new item ID, or 0 if duplicate (timestamp updated)
-    /// If the text is a URL, automatically fetches link metadata in background
+    /// URLs are detected and stored as links with Pending metadata state
+    /// Swift fetches link metadata using LinkPresentation framework
     fn save_text(
         &self,
         text: String,
@@ -433,7 +437,6 @@ impl ClipboardStoreApi for ClipboardStore {
         source_app_bundle_id: Option<String>,
     ) -> Result<i64, ClipKittyError> {
         let item = StoredItem::new_text(text.clone(), source_app, source_app_bundle_id);
-        let is_link = matches!(item.content, crate::interface::ClipboardContent::Link { .. });
 
         // Check for duplicate
         if let Some(existing) = self.db.find_by_hash(&item.content_hash)? {
@@ -458,21 +461,8 @@ impl ClipboardStoreApi for ClipboardStore {
             .add_document(id, item.text_content(), item.timestamp_unix)?;
         self.indexer.commit()?;
 
-        // If it's a link, fetch metadata in background (async)
-        // Use runtime_handle() to ensure we have a tokio runtime, even when called from UniFFI
-        if is_link {
-            let db = Arc::clone(&self.db);
-            let url = text;
-            self.runtime_handle().spawn(async move {
-                if let Some(metadata) = crate::link_metadata::fetch_metadata(&url).await {
-                    let title = metadata.title.as_deref().unwrap_or("");
-                    let _ = db.update_link_metadata(id, Some(title), metadata.image_data.as_deref());
-                } else {
-                    // Mark as failed (empty title, no image)
-                    let _ = db.update_link_metadata(id, Some(""), None);
-                }
-            });
-        }
+        // Link metadata fetching is handled by Swift using LinkPresentation framework
+        // for better reliability (handles JavaScript, caching, etc.)
 
         Ok(id)
     }

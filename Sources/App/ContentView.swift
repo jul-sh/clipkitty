@@ -476,8 +476,8 @@ struct ContentView: View {
                                 }
 
                             case .link(let url, let metadataState):
-                                // Link preview - fetch metadata on-demand if needed
-                                linkPreview(url: url, metadataState: metadataState)
+                                // Link preview - fetch metadata on-demand if pending
+                                linkPreview(url: url, metadataState: metadataState, itemId: item.itemMetadata.itemId)
 
                             case .text, .color, .email, .phone, .address, .date, .transit:
                                 EmptyView()
@@ -554,7 +554,9 @@ struct ContentView: View {
     }
 
     @ViewBuilder
-    private func linkPreview(url: String, metadataState: LinkMetadataState) -> some View {
+    private func linkPreview(url: String, metadataState: LinkMetadataState, itemId: Int64) -> some View {
+        let domain = URL(string: url)?.host ?? url
+
         VStack(spacing: 16) {
             // OG Image if available
             if let imageData = metadataState.imageData,
@@ -576,6 +578,8 @@ struct ContentView: View {
                                 .foregroundStyle(.secondary)
                             switch metadataState {
                             case .pending:
+                                ProgressView()
+                                    .controlSize(.small)
                                 Text("Loading preview…")
                                     .font(.caption)
                                     .foregroundStyle(.tertiary)
@@ -590,8 +594,16 @@ struct ContentView: View {
                     }
             }
 
-            // Title and URL
+            // Domain, Title, Description, URL
             VStack(alignment: .leading, spacing: 8) {
+                // Domain
+                Text(domain)
+                    .font(.caption)
+                    .fontWeight(.medium)
+                    .foregroundStyle(.secondary)
+                    .textCase(.uppercase)
+
+                // Title
                 if let title = metadataState.title, !title.isEmpty {
                     Text(title)
                         .font(.system(size: 18, weight: .semibold))
@@ -600,9 +612,19 @@ struct ContentView: View {
                         .textSelection(.enabled)
                 }
 
+                // Description
+                if let description = metadataState.description, !description.isEmpty {
+                    Text(description)
+                        .font(.custom(FontManager.sansSerif, size: 14))
+                        .foregroundStyle(.secondary)
+                        .lineLimit(4)
+                        .textSelection(.enabled)
+                }
+
+                // Full URL
                 Text(url)
-                    .font(.custom(FontManager.mono, size: 13))
-                    .foregroundStyle(.secondary)
+                    .font(.custom(FontManager.mono, size: 12))
+                    .foregroundStyle(.tertiary)
                     .lineLimit(1)
                     .textSelection(.enabled)
             }
@@ -611,6 +633,13 @@ struct ContentView: View {
             Spacer()
         }
         .padding(16)
+        .task(id: itemId) {
+            // Fetch metadata on-demand if pending
+            guard case .pending = metadataState else { return }
+            if let updatedItem = await store.fetchLinkMetadata(url: url, itemId: itemId) {
+                selectedItem = updatedItem
+            }
+        }
     }
 }
 
@@ -826,16 +855,28 @@ struct ItemRow: View, Equatable {
                 .frame(width: 32, height: 32)
                 .clipShape(RoundedRectangle(cornerRadius: 4))
 
-                // Badge: Source app icon (skip for links since browser icon is already shown)
-                if case .symbol(let iconType) = metadata.icon, iconType != .link,
-                   let bundleID = metadata.sourceAppBundleId,
+                // Badge: Source app icon
+                // Show for symbols (except pure link icons) and thumbnails (images, links with images)
+                if let bundleID = metadata.sourceAppBundleId,
                    let appURL = NSWorkspace.shared.urlForApplication(withBundleIdentifier: bundleID) {
-                    Image(nsImage: NSWorkspace.shared.icon(forFile: appURL.path))
-                        .resizable()
-                        .frame(width: 22, height: 22)
-                        .clipShape(RoundedRectangle(cornerRadius: 3))
-                        .shadow(color: .black.opacity(0.3), radius: 1, x: 0, y: 1)
-                        .offset(x: 4, y: 4)
+                    // Skip badge for symbol links (browser icon is already shown)
+                    let showBadge: Bool = {
+                        switch metadata.icon {
+                        case .symbol(let iconType):
+                            return iconType != .link
+                        case .thumbnail, .colorSwatch:
+                            return true
+                        }
+                    }()
+
+                    if showBadge {
+                        Image(nsImage: NSWorkspace.shared.icon(forFile: appURL.path))
+                            .resizable()
+                            .frame(width: 22, height: 22)
+                            .clipShape(RoundedRectangle(cornerRadius: 3))
+                            .shadow(color: .black.opacity(0.3), radius: 1, x: 0, y: 1)
+                            .offset(x: 4, y: 4)
+                    }
                 }
             }
             .frame(width: 38, height: 38)

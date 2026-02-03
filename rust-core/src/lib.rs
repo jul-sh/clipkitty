@@ -9,7 +9,6 @@ pub mod content_detection;
 mod database;
 mod indexer;
 pub mod interface;
-mod link_metadata;
 mod models;
 pub mod search;
 mod store;

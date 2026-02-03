@@ -304,8 +304,18 @@ extension LinkMetadataState {
     /// Convenience accessor for loaded metadata title
     public var title: String? {
         switch self {
-        case .loaded(let title, _):
+        case .loaded(let title, _, _):
             return title
+        case .pending, .failed:
+            return nil
+        }
+    }
+
+    /// Convenience accessor for loaded metadata description
+    public var description: String? {
+        switch self {
+        case .loaded(_, let description, _):
+            return description
         case .pending, .failed:
             return nil
         }
@@ -314,29 +324,29 @@ extension LinkMetadataState {
     /// Convenience accessor for loaded metadata image data as Swift Data
     public var imageData: Data? {
         switch self {
-        case .loaded(_, let imageData):
+        case .loaded(_, _, let imageData):
             return imageData.map { Data($0) }
         case .pending, .failed:
             return nil
         }
     }
 
-    /// Convert to database storage format (title, imageData)
-    public var databaseFields: (String?, Data?) {
+    /// Convert to database storage format (title, description, imageData)
+    public var databaseFields: (String?, String?, Data?) {
         switch self {
         case .pending:
-            return (nil, nil)
+            return (nil, nil, nil)
         case .failed:
-            return ("", nil)
-        case .loaded(let title, let imageData):
-            return (title, imageData.map { Data($0) })
+            return ("", nil, nil)
+        case .loaded(let title, let description, let imageData):
+            return (title, description, imageData.map { Data($0) })
         }
     }
 
     /// Check if metadata has any content
     public var hasContent: Bool {
-        if case .loaded(let title, let imageData) = self {
-            return title != nil || imageData != nil
+        if case .loaded(let title, let description, let imageData) = self {
+            return title != nil || description != nil || imageData != nil
         }
         return false
     }
