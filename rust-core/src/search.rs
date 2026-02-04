@@ -11,11 +11,9 @@ use chrono::Utc;
 use nucleo_matcher::pattern::{CaseMatching, Normalization, Pattern};
 use nucleo_matcher::{Config, Matcher, Utf32Str};
 
-/// Maximum results to return for trigram queries (after fuzzy re-ranking)
-pub const MAX_RESULTS_TRIGRAM: usize = 5000;
-
-/// Maximum results to return for short queries
-pub const MAX_RESULTS_SHORT: usize = 2000;
+/// Maximum results to return from search.
+/// Returning more than this is not useful to the user.
+pub const MAX_RESULTS: usize = 5000;
 
 pub const MIN_TRIGRAM_QUERY_LEN: usize = 3;
 
@@ -72,7 +70,7 @@ impl SearchEngine {
             .map(|w| Pattern::parse(w, CaseMatching::Ignore, Normalization::Smart))
             .collect();
 
-        let mut matches = Vec::with_capacity(candidates.len().min(MAX_RESULTS_TRIGRAM * 2));
+        let mut matches = Vec::with_capacity(candidates.len().min(MAX_RESULTS * 2));
         let now = Utc::now().timestamp();
 
         // L2: Independent Word Scoring
@@ -97,7 +95,7 @@ impl SearchEngine {
             score_b.total_cmp(&score_a).then_with(|| b.timestamp.cmp(&a.timestamp))
         });
 
-        matches.truncate(MAX_RESULTS_TRIGRAM);
+        matches.truncate(MAX_RESULTS);
         Ok(matches)
     }
 
@@ -151,7 +149,7 @@ impl SearchEngine {
             score_b.total_cmp(&score_a).then_with(|| b.timestamp.cmp(&a.timestamp))
         });
 
-        results.truncate(MAX_RESULTS_SHORT);
+        results.truncate(MAX_RESULTS);
         results
     }
 

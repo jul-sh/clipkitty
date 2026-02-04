@@ -14,7 +14,7 @@ use crate::interface::{
     ClipboardItem, ItemMatch, MatchData, SearchResult, ClipKittyError, ClipboardStoreApi,
 };
 use crate::models::StoredItem;
-use crate::search::{SearchEngine, MIN_TRIGRAM_QUERY_LEN, MAX_RESULTS_SHORT};
+use crate::search::{SearchEngine, MIN_TRIGRAM_QUERY_LEN, MAX_RESULTS};
 use chrono::Utc;
 use once_cell::sync::Lazy;
 use std::path::PathBuf;
@@ -119,7 +119,7 @@ impl ClipboardStore {
             return Err(ClipKittyError::Cancelled);
         }
 
-        let candidates = db.search_short_query(query, MAX_RESULTS_SHORT * 5)?;
+        let candidates = db.search_short_query(query, MAX_RESULTS * 5)?;
 
         if candidates.is_empty() {
             return Ok(Vec::new());
