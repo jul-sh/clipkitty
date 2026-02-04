@@ -54,7 +54,7 @@ struct SnippetTruncationTests {
 
     /// Display text for browse mode (no search query)
     /// Truncates to 200 chars with trailing ellipsis if needed
-    private func displayText(_ text: String) -> String {
+    private func displaySnippet(_ text: String) -> String {
         let maxChars = 200
         var result = String()
         result.reserveCapacity(maxChars + 1)
@@ -101,20 +101,20 @@ struct SnippetTruncationTests {
     ///   - query: The search query
     /// - Returns: The formatted preview snippet with appropriate prefix/truncation
     private func previewText(fullText: String, query: String) -> String {
-        let displayTextValue = displayText(fullText)
-        guard !query.isEmpty else { return displayTextValue }
+        let displaySnippetValue = displaySnippet(fullText)
+        guard !query.isEmpty else { return displaySnippetValue }
 
         // Try exact match first
         guard let range = fullText.range(of: query, options: .caseInsensitive) else {
-            return displayTextValue
+            return displaySnippetValue
         }
 
         let matchStart = fullText.distance(from: fullText.startIndex, to: range.lowerBound)
         let line = lineNumber(at: matchStart, in: fullText)
 
-        // If match is early in the text and on line 1, just return displayText
+        // If match is early in the text and on line 1, just return displaySnippet
         if matchStart < 20 && line == 1 {
-            return displayTextValue
+            return displaySnippetValue
         }
 
         // Build prefix: show line number if not on first line
@@ -134,7 +134,7 @@ struct SnippetTruncationTests {
     @Test("Short text has no ellipsis")
     func browseShortText() {
         let text = "Hello World"
-        let result = displayText(text)
+        let result = displaySnippet(text)
         #expect(result == "Hello World")
         #expect(!result.hasSuffix("…"))
     }
@@ -142,7 +142,7 @@ struct SnippetTruncationTests {
     @Test("Exactly 200 chars has no ellipsis")
     func browseExactly200Chars() {
         let text = String(repeating: "a", count: 200)
-        let result = displayText(text)
+        let result = displaySnippet(text)
         #expect(result.count == 200)
         #expect(!result.hasSuffix("…"))
     }
@@ -150,7 +150,7 @@ struct SnippetTruncationTests {
     @Test("201 chars gets truncated with ellipsis")
     func browse201Chars() {
         let text = String(repeating: "a", count: 201)
-        let result = displayText(text)
+        let result = displaySnippet(text)
         #expect(result.count == 201) // 200 chars + ellipsis
         #expect(result.hasSuffix("…"))
     }
@@ -158,7 +158,7 @@ struct SnippetTruncationTests {
     @Test("Long text gets truncated with trailing ellipsis")
     func browseLongText() {
         let text = String(repeating: "a", count: 500)
-        let result = displayText(text)
+        let result = displaySnippet(text)
         #expect(result.hasSuffix("…"))
         #expect(result.count == 201)
     }
@@ -166,7 +166,7 @@ struct SnippetTruncationTests {
     @Test("Leading whitespace is skipped")
     func browseLeadingWhitespace() {
         let text = "   Hello World"
-        let result = displayText(text)
+        let result = displaySnippet(text)
         #expect(result == "Hello World")
         #expect(!result.hasPrefix(" "))
     }
@@ -174,36 +174,36 @@ struct SnippetTruncationTests {
     @Test("Consecutive whitespace is collapsed")
     func browseConsecutiveWhitespace() {
         let text = "Hello    World"
-        let result = displayText(text)
+        let result = displaySnippet(text)
         #expect(result == "Hello World")
     }
 
     @Test("Newlines are converted to spaces")
     func browseNewlines() {
         let text = "Hello\n\nWorld"
-        let result = displayText(text)
+        let result = displaySnippet(text)
         #expect(result == "Hello World")
     }
 
     @Test("Tabs are converted to spaces")
     func browseTabs() {
         let text = "Hello\t\tWorld"
-        let result = displayText(text)
+        let result = displaySnippet(text)
         #expect(result == "Hello World")
     }
 
     // MARK: - Search Mode Tests - Match at Start
 
-    @Test("Match at very start returns displayText")
+    @Test("Match at very start returns displaySnippet")
     func searchMatchAtStart() {
         let text = "Hello World this is some text"
         let result = previewText(fullText: text, query: "Hello")
-        // Match is at position 0, line 1, so returns displayText
+        // Match is at position 0, line 1, so returns displaySnippet
         #expect(result == "Hello World this is some text")
         #expect(!result.hasPrefix("…"))
     }
 
-    @Test("Match early (< 20 chars) on line 1 returns displayText")
+    @Test("Match early (< 20 chars) on line 1 returns displaySnippet")
     func searchMatchEarly() {
         let text = "abc Hello World xyz"
         let result = previewText(fullText: text, query: "Hello")
@@ -280,14 +280,14 @@ struct SnippetTruncationTests {
 
     // MARK: - Search Mode Tests - Edge Cases
 
-    @Test("Empty query returns displayText")
+    @Test("Empty query returns displaySnippet")
     func searchEmptyQuery() {
         let text = "Hello World"
         let result = previewText(fullText: text, query: "")
         #expect(result == "Hello World")
     }
 
-    @Test("Non-matching query returns displayText")
+    @Test("Non-matching query returns displaySnippet")
     func searchNoMatch() {
         let text = "Hello World"
         let result = previewText(fullText: text, query: "xyz")
