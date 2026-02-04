@@ -687,20 +687,9 @@ struct LinkPreviewView: NSViewRepresentable {
 
     func makeNSView(context: Context) -> LPLinkView {
         let linkView = LPLinkView()
-        // Start with a minimal placeholder metadata
-        if let urlObj = URL(string: url) {
-            let metadata = LPLinkMetadata()
-            metadata.originalURL = urlObj
-            metadata.url = urlObj
-            linkView.metadata = metadata
-        }
-        return linkView
-    }
+        guard let urlObj = URL(string: url) else { return linkView }
 
-    func updateNSView(_ linkView: LPLinkView, context: Context) {
-        guard let urlObj = URL(string: url) else { return }
-
-        // Build metadata from our state
+        // Initialize with full metadata if available to avoid flicker
         let metadata = LPLinkMetadata()
         metadata.originalURL = urlObj
         metadata.url = urlObj
@@ -711,22 +700,47 @@ struct LinkPreviewView: NSViewRepresentable {
                 metadata.title = title
             }
             if let imageData, let nsImage = NSImage(data: imageData) {
-                // Prevent LPLinkView from becoming overly tall by capping image aspect ratio (3:2 max)
                 let croppedImage = nsImage.croppedIfTooTall(maxRatio: 1.5)
                 metadata.imageProvider = NSItemProvider(object: croppedImage)
             }
         case .pending, .failed:
-            // Just show URL for pending/failed states
             break
         }
 
+        linkView.metadata = metadata
+        return linkView
+    }
+
+    func updateNSView(_ linkView: LPLinkView, context: Context) {
         // Only update if metadata actually changed
-        if context.coordinator.lastURL != url ||
-           context.coordinator.lastMetadataState != metadataState {
-            context.coordinator.lastURL = url
-            context.coordinator.lastMetadataState = metadataState
-            linkView.metadata = metadata
+        guard context.coordinator.lastURL != url ||
+              context.coordinator.lastMetadataState != metadataState else {
+            return
         }
+
+        context.coordinator.lastURL = url
+        context.coordinator.lastMetadataState = metadataState
+
+        guard let urlObj = URL(string: url) else { return }
+
+        let metadata = LPLinkMetadata()
+        metadata.originalURL = urlObj
+        metadata.url = urlObj
+
+        switch metadataState {
+        case .loaded(let title, _, let imageData):
+            if let title {
+                metadata.title = title
+            }
+            if let imageData, let nsImage = NSImage(data: imageData) {
+                let croppedImage = nsImage.croppedIfTooTall(maxRatio: 1.5)
+                metadata.imageProvider = NSItemProvider(object: croppedImage)
+            }
+        case .pending, .failed:
+            break
+        }
+
+        linkView.metadata = metadata
     }
 
     func makeCoordinator() -> Coordinator {
