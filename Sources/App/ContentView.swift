@@ -755,54 +755,95 @@ struct ItemRow: View, Equatable {
     private let maxDisplayChars = 200
     private let maxRustSnippet = 400  // Rust's SNIPPET_CONTEXT_CHARS * 2
 
-    /// Computed prefix - shows line number and/or ellipsis if snippet doesn't start at beginning
-    private var snippetPrefix: (prefix: String, offset: Int) {
-        guard let matchData else { return ("", 0) }
+    /// Computed window into the source text to ensure the match is visible
+    private var snippetWindow: (start: Int, end: Int, prefix: String) {
+        // Use matchData.text if present, otherwise metadata.snippet
+        let sourceText = matchData?.text.isEmpty == false ? matchData!.text : metadata.snippet
 
-        let line = matchData.lineNumber
-        // lineNumber == 0 means no highlights (browsing), lineNumber >= 1 means search match
-        guard line >= 1 else { return ("", 0) }
+        // Base prefix based on line number
+        let line = matchData?.lineNumber ?? 0
+        let basePrefix = line > 1 ? "L\(line): …" : ""
 
-        // Check if snippet starts at content beginning (first highlight near start)
-        let matchStart = matchData.fullContentHighlights.first?.start ?? 0
-        if matchStart < 20 && line == 1 {
-            return ("", 0)  // Near start of first line - no prefix needed
+        // Calculate available space using estimated prefix (basePrefix + potential "…")
+        // Conservative estimate: if line==1, we might need 1 char for ellipsis.
+        let estimatedPrefixLen = basePrefix.count + (line == 1 ? 1 : 0)
+        let availableChars = maxDisplayChars - estimatedPrefixLen
+
+        // If no match data or short text, just take from start
+        guard let matchData, !matchData.highlights.isEmpty, sourceText.count > availableChars else {
+            let limit = min(sourceText.count, maxDisplayChars - basePrefix.count)
+            return (0, limit, basePrefix)
         }
 
-        // Build prefix: line number if not on first line, otherwise just ellipsis
-        let prefix = line > 1 ? "L\(line): …" : "…"
-        return (prefix, prefix.count)
+        // Search mode: Center around first match with 30/70 split
+        // Note: highlights are relative to sourceText
+        let firstMatch = matchData.highlights[0]
+        let matchStartPos = Int(firstMatch.start)
+        
+        // 30/70 split for context
+        let contextBefore = Int(Double(availableChars) * 0.3)
+        var start = matchStartPos - contextBefore
+        var end = start + availableChars
+
+        // Clamp to bounds
+        if start < 0 {
+            start = 0
+            end = min(sourceText.count, availableChars)
+        } else if end > sourceText.count {
+            end = sourceText.count
+            start = max(0, end - availableChars)
+        }
+
+        // Determine final prefix
+        var finalPrefix = basePrefix
+        if line == 1 && start > 0 {
+            finalPrefix = "…"
+        }
+
+        // Recalculate end with exact prefix length
+        // (Just clamping end to keep total length <= maxDisplayChars)
+        let totalAllowed = maxDisplayChars - finalPrefix.count
+        let currentLen = end - start
+        if currentLen > totalAllowed {
+            end = start + totalAllowed
+        }
+
+        return (start, end, finalPrefix)
     }
 
     /// Display text with prefix/suffix ellipsis as needed
     private var displaySnippet: String {
-        // Use matchData.text if present, otherwise metadata.snippet
         let sourceText = matchData?.text.isEmpty == false ? matchData!.text : metadata.snippet
-        let (prefix, _) = snippetPrefix
+        let (start, end, prefix) = snippetWindow
 
-        // Available space for content
-        let availableChars = maxDisplayChars - prefix.count
+        guard start < sourceText.count else { return prefix }
 
-        // Truncate if needed, add trailing ellipsis
-        if sourceText.count > availableChars {
-            return prefix + String(sourceText.prefix(availableChars)) + "…"
-        }
+        let idx1 = sourceText.index(sourceText.startIndex, offsetBy: start)
+        let idx2 = sourceText.index(sourceText.startIndex, offsetBy: min(end, sourceText.count))
+        let content = String(sourceText[idx1..<idx2])
 
-        // Add trailing ellipsis if source was already truncated by Rust
-        let needsTrailingEllipsis = sourceText.count >= maxRustSnippet
-        return prefix + sourceText + (needsTrailingEllipsis ? "…" : "")
+        // Add trailing ellipsis if we stopped before end of sourceText OR sourceText was already truncated
+        let needsTrailingEllipsis = end < sourceText.count || sourceText.count >= maxRustSnippet
+
+        return prefix + content + (needsTrailingEllipsis ? "…" : "")
     }
 
-    /// Highlights for display - adjusted for prefix offset
+    /// Highlights for display - adjusted for prefix offset and window
     private var displayHighlights: [HighlightRange] {
         guard let matchData, !matchData.highlights.isEmpty else { return [] }
 
-        let (_, prefixOffset) = snippetPrefix
-        let offset = UInt64(prefixOffset)
+        let (windowStart, _, prefix) = snippetWindow
+        let offset = Int64(prefix.count) - Int64(windowStart)
 
-        // Adjust highlights for prefix
-        return matchData.highlights.map {
-            HighlightRange(start: $0.start + offset, end: $0.end + offset)
+        return matchData.highlights.compactMap { h in
+            let newStart = Int64(h.start) + offset
+            let newEnd = Int64(h.end) + offset
+
+            // Filter highlights that are completely out of view?
+            // HighlightedTextView handles bounds checking, but we should try to keep valid ranges.
+            if newEnd <= 0 { return nil }
+
+            return HighlightRange(start: UInt64(max(0, newStart)), end: UInt64(max(0, newEnd)))
         }
     }
 
