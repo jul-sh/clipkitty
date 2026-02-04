@@ -174,13 +174,13 @@ async fn scene1_empty_query_shows_sql_first() {
 
     // First item should be the SQL query (check preview)
     assert!(
-        items[0].item_metadata.preview.contains("SELECT users.name"),
+        items[0].item_metadata.snippet.contains("SELECT users.name"),
         "Top item should be SQL query, got: {}",
-        items[0].item_metadata.preview
+        items[0].item_metadata.snippet
     );
 
     // Check other visible items in default state
-    let previews: Vec<&str> = items.iter().map(|i| i.item_metadata.preview.as_str()).collect();
+    let previews: Vec<&str> = items.iter().map(|i| i.item_metadata.snippet.as_str()).collect();
     assert!(
         previews.iter().any(|c| c.contains("sk-proj")),
         "API key should be visible"
@@ -481,7 +481,7 @@ async fn verify_all_expected_items_exist() {
 
     // Fetch all items
     let result = store.search("".to_string()).await.unwrap();
-    let previews: Vec<&str> = result.matches.iter().map(|i| i.item_metadata.preview.as_str()).collect();
+    let previews: Vec<&str> = result.matches.iter().map(|i| i.item_metadata.snippet.as_str()).collect();
 
     // Verify key items from each scene exist
 
@@ -942,5 +942,119 @@ goodbye friend - this is the end of the document."#;
     assert!(
         contents[0].contains("hello world") && contents[0].contains("goodbye friend"),
         "Should find the document with both clusters"
+    );
+}
+
+// ============================================================
+// Debug Test: Paste problematic query and content here
+// ============================================================
+
+#[tokio::test]
+async fn debug_scattered_match_issue() {
+    // PASTE YOUR QUERY HERE:
+    let query = "vishalkaran";
+
+    // PASTE THE PROBLEMATIC CONTENT HERE:
+    let content = r#"================================================================================
+ATTACK RESULTS SUMMARY
+================================================================================
+
+Experiment: seo_injection.evergreen.elite_island_genetic_algo.seo_v1.seo_critic_v1.default
+--------------------------------------------------------------------------------
+  Total Tasks: 30
+  Num unfinished tasks: 0
+  LLM Successful Attacks (fitness ≥ 10.0): 21
+  LLM Attack Success Rate: 70.0%
+  Regex Verified Attacks: 26
+  Regex Verification Rate: 86.7%
+  Mean Fitness Score: 8.53
+
+  LLM Successful Attacks (fitness ≥ 10.0):
+    Queries - Median: 26, Mean: 29.8
+    Steps - Median: 1, Mean: 1.2
+
+  Regex Verified Attacks:
+    Queries - Median: 26, Mean: 31.5
+    Steps - Median: 1, Mean: 1.3
+
+  Fitness Score Distribution:
+    10.0:  21 ( 70.0%)
+     9.0:   2 (  6.7%)
+     8.0:   1 (  3.3%)
+     7.0:   2 (  6.7%)
+     3.0:   1 (  3.3%)
+     1.0:   3 ( 10.0%)
+
+================================================================================
+OVERALL SUMMARY
+================================================================================
+Total Scenarios Tested: 30
+
+LLM Successful Attacks (fitness ≥ 10.0): 21
+LLM Attack Success Rate: 70.0%
+
+Regex Verified Attacks: 26
+Regex Verification Rate: 86.7%
+
+LLM Successful Attacks:
+  Queries - Median: 26, Mean: 29.8
+  Steps - Median: 1, Mean: 1.2
+
+Regex Verified Attacks:
+  Queries - Median: 26, Mean: 31.5
+  Steps - Median: 1, Mean: 1.3
+
+================================================================================
+  -> Job completed with result: 0
+
+All jobs have completed.
+
+All tasks completed successfully!
+
+================================================================================
+Running analysis on completed jobs...
+================================================================================
+
+[0;32m✓ Evaluation completed![0m
+
+[1;33m[Step 5/5][0m Cleaning up...
+[0;32m╔══════════════════════════════════════════════════════════╗[0m
+[0;32m║  All done! Check gateway_run.log for results            ║[0m
+[0;32m╚══════════════════════════════════════════════════════════╝[0m
+
+[1;33mShutting down gateway (PID: 467774)...[0m
+[0;32m✓ Gateway shut down[0m
+tee: gateway_42235.log: Transport endpoint is not connected
+"#;
+
+    let (store, _temp) = create_ranking_test_store(vec![content]);
+
+    let result = store.search(query.to_string()).await.unwrap();
+    let ids: Vec<i64> = result.matches.iter().map(|m| m.item_metadata.item_id).collect();
+    let items = store.fetch_by_ids(ids).unwrap();
+    let contents: Vec<String> = items.iter().map(|i| get_content_text(i)).collect();
+
+    println!("\n=== DEBUG: Scattered Match Analysis ===");
+    println!("Query: '{}'", query);
+    println!("Content length: {} chars", content.len());
+    println!("Number of results: {}", contents.len());
+
+    if contents.is_empty() {
+        println!("✓ GOOD: No match found (as expected for scattered content)");
+    } else {
+        println!("✗ BAD: Found {} matches when none expected!", contents.len());
+        for (i, c) in contents.iter().enumerate() {
+            let preview: String = c.chars().take(80).collect();
+            println!("  Result {}: {}...", i, preview.replace('\n', " "));
+        }
+    }
+
+    // This assertion will fail if the content incorrectly matches
+    // Comment out if you just want to see the debug output
+    assert!(
+        contents.is_empty(),
+        "Scattered content should NOT match query '{}'. Got {} results.",
+        query,
+        contents.len()
     );
 }
