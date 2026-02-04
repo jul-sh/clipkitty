@@ -279,11 +279,13 @@ impl SearchEngine {
                 .take(snippet_start_char - search_start_char)
                 .collect();
             if let Some(space_pos) = search_range.rfind(char::is_whitespace) {
-                // space_pos is a byte offset within search_range, convert to char offset
-                let char_offset = search_range[..space_pos].chars().count();
-                let new_start = search_start_char + char_offset + 1;
-                if new_start <= match_start_char.saturating_sub(context_before) {
-                    snippet_start_char = new_start;
+                // space_pos is a byte offset - verify it's a valid boundary before slicing
+                if search_range.is_char_boundary(space_pos) {
+                    let char_offset = search_range[..space_pos].chars().count();
+                    let new_start = search_start_char + char_offset + 1;
+                    if new_start <= match_start_char.saturating_sub(context_before) {
+                        snippet_start_char = new_start;
+                    }
                 }
             }
         }
@@ -388,6 +390,11 @@ fn blended_score(fuzzy_score: u32, timestamp: i64, now: i64, is_prefix_match: bo
 /// Normalize a snippet and return position mapping (original_idx -> normalized_idx)
 /// Converts newlines/tabs to spaces, collapses consecutive spaces
 fn normalize_snippet_with_mapping(content: &str, start: usize, end: usize, max_chars: usize) -> (String, Vec<usize>) {
+    // Defensive check: if end < start, return empty result
+    if end <= start {
+        return (String::new(), vec![0]);
+    }
+
     let mut result = String::with_capacity(max_chars);
     let mut pos_map = Vec::with_capacity(end - start + 1);
     let mut last_was_space = false;
