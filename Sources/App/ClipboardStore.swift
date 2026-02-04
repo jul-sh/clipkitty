@@ -191,13 +191,6 @@ final class ClipboardStore {
         refresh()
     }
 
-    /// Reset selection state for a new display session (called on show)
-    func prepareForDisplay() {
-        searchTask?.cancel()
-        displayVersion += 1
-    }
-
-
     /// Fetch full ClipboardItem by ID
     func fetchItem(id: Int64) async -> ClipboardItem? {
         guard let rustStore else { return nil }
