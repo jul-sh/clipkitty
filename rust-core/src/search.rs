@@ -348,11 +348,23 @@ impl Default for SearchEngine {
 }
 
 /// Density check: reject scattered character matches ("soup" detection).
+/// Two checks:
+/// 1. Span check: matched indices must not span more than 3x the word length
+/// 2. Adjacency check: at least 25% of character pairs must be adjacent
 fn passes_density_check(word_len: u32, indices: &[u32]) -> bool {
     if word_len <= 3 { return true; }
-    let total_pairs = indices.len().saturating_sub(1);
-    if total_pairs == 0 { return true; }
+    if indices.len() < 2 { return true; }
 
+    // Span check: the total span of matched chars shouldn't be too large
+    // E.g., "foobarbaz" (9 chars) spanning 263 positions is obviously scattered
+    let span = indices.last().unwrap() - indices.first().unwrap();
+    let max_span = word_len * 3; // Allow 3x word length for typos/insertions
+    if span > max_span {
+        return false;
+    }
+
+    // Adjacency check: require minimum ratio of adjacent pairs
+    let total_pairs = indices.len() - 1;
     let adjacent = indices.windows(2).filter(|w| w[1] == w[0] + 1).count();
     (adjacent as f64 / total_pairs as f64) > MIN_ADJACENCY_RATIO
 }
