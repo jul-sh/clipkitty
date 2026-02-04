@@ -83,7 +83,6 @@ final class FloatingPanelController: NSObject, NSWindowDelegate {
         if initialSearchQuery != nil {
             updatePanelContent()
         }
-        store.prepareForDisplay()
         centerPanel()
         panel.makeKeyAndOrderFront(nil)
         NSApp.activate(ignoringOtherApps: true)
