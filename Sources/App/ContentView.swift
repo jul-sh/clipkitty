@@ -775,13 +775,10 @@ struct ItemRow: View, Equatable {
             return (0, limit, basePrefix)
         }
 
-        // Search mode: Center around first match with 30/70 split
-        // Note: highlights are relative to sourceText
         let firstMatch = matchData.highlights[0]
         let matchStartPos = Int(firstMatch.start)
-        
-        // 30/70 split for context
-        let contextBefore = Int(Double(availableChars) * 0.3)
+
+        let contextBefore = Int(Double(availableChars) * 0.15)
         var start = matchStartPos - contextBefore
         var end = start + availableChars
 
