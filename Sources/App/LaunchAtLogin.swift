@@ -11,8 +11,13 @@ import ServiceManagement
 final class LaunchAtLogin: ObservableObject {
     static let shared = LaunchAtLogin()
 
-    /// Whether the app is currently registered to launch at login
-    @Published private(set) var isEnabled: Bool = false
+    /// Whether the app is currently registered to launch at login (reads directly from system)
+    var isEnabled: Bool {
+        service.status == .enabled
+    }
+
+    /// Error message to display to user, if any
+    @Published var errorMessage: String?
 
     /// Whether the app is in a valid location to enable launch at login
     var isInApplicationsDirectory: Bool {
@@ -37,9 +42,6 @@ final class LaunchAtLogin: ObservableObject {
         // SMAppService uses the app's bundle identifier automatically
         // This ensures only one registration per bundle ID (no duplicates)
         service = SMAppService.mainApp
-
-        // Read initial state
-        isEnabled = service.status == .enabled
     }
 
     /// Enable launch at login
@@ -53,11 +55,14 @@ final class LaunchAtLogin: ObservableObject {
 
         do {
             try service.register()
-            isEnabled = true
+            objectWillChange.send()
+            errorMessage = nil
             logInfo("Launch at login enabled")
             return true
         } catch {
             logError("Failed to enable launch at login: \(error.localizedDescription)")
+            objectWillChange.send()
+            errorMessage = "Could not enable launch at login. Please add ClipKitty manually in System Settings."
             return false
         }
     }
@@ -68,11 +73,14 @@ final class LaunchAtLogin: ObservableObject {
     func disable() -> Bool {
         do {
             try service.unregister()
-            isEnabled = false
+            objectWillChange.send()
+            errorMessage = nil
             logInfo("Launch at login disabled")
             return true
         } catch {
             logError("Failed to disable launch at login: \(error.localizedDescription)")
+            objectWillChange.send()
+            errorMessage = "Could not disable launch at login. Please remove ClipKitty manually in System Settings."
             return false
         }
     }
@@ -88,9 +96,5 @@ final class LaunchAtLogin: ObservableObject {
             return disable()
         }
     }
-
-    /// Refresh the enabled state from the system
-    func refresh() {
-        isEnabled = service.status == .enabled
-    }
 }
+

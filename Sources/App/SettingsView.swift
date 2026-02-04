@@ -70,6 +70,17 @@ struct SettingsView: View {
                         .font(.caption)
                         .foregroundStyle(.secondary)
                 }
+
+                if let errorMessage = launchAtLogin.errorMessage {
+                    Text(errorMessage)
+                        .font(.caption)
+                        .foregroundStyle(.red)
+                    Button("Open Login Items Settings") {
+                        NSWorkspace.shared.open(URL(string: "x-apple.systempreferences:com.apple.LoginItems-Settings.extension")!)
+                        launchAtLogin.errorMessage = nil
+                    }
+                    .font(.caption)
+                }
             }
 
             Section("Storage") {

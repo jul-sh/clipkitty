@@ -130,8 +130,7 @@ final class AppSettings: ObservableObject {
             maxDatabaseSizeGB = 10.0
         }
 
-        // Default to false - user must explicitly enable launch at login
-        launchAtLoginEnabled = defaults.object(forKey: launchAtLoginKey) as? Bool ?? false
+        launchAtLoginEnabled = defaults.object(forKey: launchAtLoginKey) as? Bool ?? true
 
         maxImageMegapixels = 2.0
         imageCompressionQuality = 0.3
