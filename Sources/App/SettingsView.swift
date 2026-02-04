@@ -21,7 +21,7 @@ struct SettingsView: View {
         Form {
             Section("Hotkey") {
                 HStack {
-                    Text("Toggle Clipboard")
+                    Text("Open Clipboard History")
                     Spacer()
                     Button(action: { hotKeyState = .recording }) {
                         let (labelText, backgroundColor): (String, Color) = {
@@ -372,6 +372,7 @@ struct LogsView: View {
             }
         }
         .frame(width: 600, height: 400)
+        .ignoresSafeArea()
     }
 
     private func colorForLevel(_ level: LogEntry.LogLevel) -> Color {

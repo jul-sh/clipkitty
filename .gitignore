@@ -22,6 +22,8 @@ Sources/ClipKittyRust/clipkitty_coreFFI.h
 Sources/ClipKittyRust/module.modulemap
 Sources/ClipKittyRust/*.a
 Sources/ClipKittyRustWrapper/clipkitty_core.swift
+Sources/ClipKittyRustWrapper/clipkitty_coreFFI.h
+Sources/ClipKittyRustWrapper/clipkitty_coreFFI.modulemap
 
 # Screenshots
 screenshot.png

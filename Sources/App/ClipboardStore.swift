@@ -34,23 +34,18 @@ private func measureTimeAsync<T>(_ label: String, _ block: () async throws -> T)
     return result
 }
 
-/// Search result item with highlights
-struct SearchResultItem: Equatable {
-    let item: ClipboardItem
-    let highlights: [HighlightRange]
-}
-
-/// Search result state - makes loading/results states explicit
-enum SearchResultState: Equatable {
-    case loading(previousResults: [SearchResultItem])
-    case results([SearchResultItem], hasMore: Bool)
-}
-
-/// Combined state for data display
+/// Display state for the clipboard list
+/// Search with empty query returns all items (what was previously called "browse mode")
 enum DisplayState: Equatable {
+    /// Initial loading state before any data
     case loading
-    case loaded(items: [ClipboardItem], hasMore: Bool)
-    case searching(query: String, state: SearchResultState)
+    /// Results ready - query can be empty (all items) or non-empty (filtered)
+    /// Includes optional first item for immediate preview display
+    case results(query: String, items: [ItemMatch], firstItem: ClipboardItem?)
+    /// Loading in progress - showing fallback results while waiting for new results
+    /// Preserves match highlights from previous search to prevent text flash
+    case resultsLoading(query: String, fallback: [ItemMatch])
+    /// Error state
     case error(String)
 }
 
@@ -60,6 +55,26 @@ final class ClipboardStore {
     // MARK: - State (Single Source of Truth)
 
     private(set) var state: DisplayState = .loading
+
+    /// Whether currently showing results (not in initial loading or error state)
+    var hasResults: Bool {
+        switch state {
+        case .results, .resultsLoading:
+            return true
+        case .loading, .error:
+            return false
+        }
+    }
+
+    /// Current query (empty string if showing all items)
+    var currentQuery: String {
+        switch state {
+        case .results(let query, _, _), .resultsLoading(let query, _):
+            return query
+        case .loading, .error:
+            return ""
+        }
+    }
 
     // MARK: - Private State
 
@@ -75,14 +90,14 @@ final class ClipboardStore {
     private var sleepObserver: NSObjectProtocol?
     private var wakeObserver: NSObjectProtocol?
     private var searchTask: Task<Void, Never>?
-    /// Cursor for keyset pagination - timestamp of the oldest loaded item (unix)
-    private var oldestLoadedTimestampUnix: Int64?
-    /// Current search query (for pagination continuity)
+    /// Current search query
     private var currentSearchQuery: String = ""
-    private let pageSize: UInt64 = 50
 
     /// Increments each time the display is reset - views observe this to reset local state
     private(set) var displayVersion: Int = 0
+
+    /// Link metadata fetcher using LinkPresentation framework
+    private let linkMetadataFetcher = LinkMetadataFetcher()
 
     // MARK: - Initialization
 
@@ -92,22 +107,10 @@ final class ClipboardStore {
         self.isScreenshotMode = screenshotMode
         lastChangeCount = NSPasteboard.general.changeCount
         setupDatabase()
-        loadItems(reset: true)
+        refresh()
         pruneIfNeeded()
-        verifyFTSIntegrityAsync()
     }
 
-    /// Check FTS index integrity in background and rebuild if needed
-    private func verifyFTSIntegrityAsync() {
-        guard let rustStore else { return }
-        Task.detached {
-            let needsRebuild = !rustStore.verifyFtsIntegrity()
-            if needsRebuild {
-                // FTS rebuild happens automatically via verifyFtsIntegrity
-                logError("FTS index was rebuilt")
-            }
-        }
-    }
 
     /// Current database size in bytes (cached, updated async)
     private(set) var databaseSizeBytes: Int64 = 0
@@ -155,155 +158,88 @@ final class ClipboardStore {
     // MARK: - Public API
 
     func setSearchQuery(_ newQuery: String) {
-        let query = newQuery
+        let query = newQuery.trimmingCharacters(in: .whitespacesAndNewlines)
 
         searchTask?.cancel()
-
-        if query.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty {
-            currentSearchQuery = ""
-            loadItems(reset: true)
-            return
-        }
-
         currentSearchQuery = query
 
-        // Preserve previous results while loading new ones to avoid UI flash.
-        // When new results arrive, they fully replace previous results (no mixing).
-        let previousResults: [SearchResultItem] = {
+        // Capture fallback results from current state (preserves match text to prevent flash)
+        let fallback: [ItemMatch] = {
             switch state {
-            case .searching(_, let searchState):
-                switch searchState {
-                case .loading(let previous):
-                    return previous
-                case .results(let results, _):
-                    return results
-                }
-            case .loaded(let items, _):
-                // Convert loaded items to search results (no highlights yet)
-                return items.map { SearchResultItem(item: $0, highlights: []) }
-            default:
+            case .results(_, let items, _), .resultsLoading(_, let items):
+                return items
+            case .loading, .error:
                 return []
             }
         }()
 
-        state = .searching(query: query, state: .loading(previousResults: previousResults))
+        state = .resultsLoading(query: query, fallback: fallback)
 
         searchTask = Task {
-            try? await Task.sleep(for: .milliseconds(50))
-            guard !Task.isCancelled else { return }
+            // Small debounce for typed queries
+            if !query.isEmpty {
+                try? await Task.sleep(for: .milliseconds(50))
+                guard !Task.isCancelled else { return }
+            }
             await performSearch(query: query)
         }
-    }
-
-    func loadMoreItems() {
-        guard case .loaded(_, true) = state else { return }
-        loadItems(reset: false)
     }
 
     func resetForDisplay() {
         searchTask?.cancel()
         displayVersion += 1
-        loadItems(reset: true)
+        refresh()
     }
 
-    /// Reset selection state for a new display session (called on show)
-    func prepareForDisplay() {
-        searchTask?.cancel()
-        displayVersion += 1
+    /// Fetch full ClipboardItem by ID
+    func fetchItem(id: Int64) async -> ClipboardItem? {
+        guard let rustStore else { return nil }
+        return try? await Task.detached {
+            let items = try rustStore.fetchByIds(itemIds: [id])
+            return items.first
+        }.value
     }
 
-    /// Fetch link metadata on-demand if not already loaded
-    func fetchLinkMetadataIfNeeded(for item: ClipboardItem) {
-        // Only fetch for links with pending metadata
-        guard case .link(let url, let metadataState) = item.content,
-              case .pending = metadataState,
-              let id = item.id else { return }
+    /// Fetch link metadata using LinkPresentation and persist to database
+    /// Returns the updated item if successful
+    func fetchLinkMetadata(url: String, itemId: Int64) async -> ClipboardItem? {
+        guard let rustStore else { return nil }
 
-        Task {
-            await fetchAndUpdateLinkMetadata(for: id, url: url)
-        }
-    }
-
-    // MARK: - Loading
-
-    private func loadItems(reset: Bool) {
-        let cursorTimestamp: Int64?
-        let existingItems: [ClipboardItem]
-
-        // Extract current items from any state to preserve during refresh
-        let currentItems: [ClipboardItem] = {
-            switch state {
-            case .loaded(let items, _):
-                return items
-            case .searching(_, let searchState):
-                switch searchState {
-                case .loading(let previous):
-                    return previous.map { $0.item }
-                case .results(let results, _):
-                    return results.map { $0.item }
-                }
-            default:
-                return []
-            }
-        }()
-
-        if reset {
-            oldestLoadedTimestampUnix = nil
-            cursorTimestamp = nil
-            existingItems = []
-            // Only show loading spinner if we have no cached items to display
-            if currentItems.isEmpty {
-                state = .loading
-            }
-        } else {
-            cursorTimestamp = oldestLoadedTimestampUnix
-            if case .loaded(let items, _) = state {
-                existingItems = items
-            } else {
-                existingItems = []
-            }
+        // Fetch metadata using LinkPresentation framework
+        guard let metadata = await linkMetadataFetcher.fetchMetadata(for: url, itemId: itemId) else {
+            // Mark as failed
+            await Task.detached { [rustStore] in
+                try? rustStore.updateLinkMetadata(
+                    itemId: itemId,
+                    title: "",
+                    description: nil,
+                    imageData: nil
+                )
+            }.value
+            return await fetchItem(id: itemId)
         }
 
-        guard let rustStore else { return }
-        let pageSizeCopy = pageSize
-        let signpostID = OSSignpostID(log: performanceLog)
-        os_signpost(.begin, log: performanceLog, name: "loadItems", signpostID: signpostID, "reset=%d", reset ? 1 : 0)
-
-        Task.detached {
-            do {
-                let result = try rustStore.fetchItems(beforeTimestampUnix: cursorTimestamp, limit: pageSizeCopy)
-
-                await MainActor.run { [weak self] in
-                    os_signpost(.end, log: performanceLog, name: "loadItems", signpostID: signpostID)
-                    // Update cursor to oldest item's timestamp for next page
-                    if let oldestItem = result.items.last {
-                        self?.oldestLoadedTimestampUnix = oldestItem.timestampUnix
-                    }
-                    if reset {
-                        self?.state = .loaded(items: result.items, hasMore: result.hasMore)
-                    } else {
-                        self?.state = .loaded(items: existingItems + result.items, hasMore: result.hasMore)
-                    }
-                }
-            } catch {
-                await MainActor.run { [weak self] in
-                    os_signpost(.end, log: performanceLog, name: "loadItems", signpostID: signpostID, "error")
-                    self?.state = .error("Failed to load items: \(error.localizedDescription)")
-                }
-            }
+        // Persist to database
+        let imageData = metadata.imageData
+        Task.detached { [rustStore] in
+            try? rustStore.updateLinkMetadata(
+                itemId: itemId,
+                title: metadata.title,
+                description: metadata.description,
+                imageData: imageData
+            )
         }
+
+        // Return updated item
+        return await fetchItem(id: itemId)
     }
 
-    // MARK: - Search
-    //
-    // ════════════════════════════════════════════════════════════════════════════════
-    // SEARCH ARCHITECTURE: Two-Layer Search (Tantivy + Nucleo)
-    // ════════════════════════════════════════════════════════════════════════════════
-    //
-    // 1. search(query) - Returns SearchResult with IDs + highlight ranges
-    // 2. fetchByIds(ids) - Hydrates items from database
-    //
-    // ════════════════════════════════════════════════════════════════════════════════
+    // MARK: - Refresh
+
+    /// Refresh items with current query (convenience for reload scenarios)
+    private func refresh() {
+        setSearchQuery(currentSearchQuery)
+    }
 
     private func performSearch(query: String) async {
         guard let rustStore else {
@@ -315,55 +251,15 @@ final class ClipboardStore {
         os_signpost(.begin, log: performanceLog, name: "search", signpostID: signpostID, "query=%{public}s", query)
 
         do {
-            // Get search results (IDs + highlights) from Rust
-            let searchResult = try await Task.detached {
-                try rustStore.search(query: query)
-            }.value
+            let searchResult = try await rustStore.search(query: query)
 
             guard !Task.isCancelled else { return }
-            guard case .searching(let currentQuery, _) = state, currentQuery == query else { return }
+            guard case .resultsLoading(let currentQuery, _) = state, currentQuery == query else { return }
 
-            if searchResult.matches.isEmpty {
-                state = .searching(query: query, state: .results([], hasMore: false))
-                os_signpost(.end, log: performanceLog, name: "search", signpostID: signpostID, "count=0")
-                return
-            }
-
-            // Extract IDs and fetch full items
-            let ids = searchResult.matches.map { $0.itemId }
-            let items = try await Task.detached {
-                try rustStore.fetchByIds(ids: ids)
-            }.value
-
-            guard !Task.isCancelled else { return }
-            guard case .searching(let currentQuery2, _) = state, currentQuery2 == query else { return }
-
-            // Build ID -> highlights map
-            var highlightsMap: [Int64: [HighlightRange]] = [:]
-            for match in searchResult.matches {
-                highlightsMap[match.itemId] = match.highlights
-            }
-
-            // Combine items with highlights, preserving search order
-            var resultItems: [SearchResultItem] = []
-            var itemsById: [Int64: ClipboardItem] = [:]
-            for item in items {
-                if let id = item.id {
-                    itemsById[id] = item
-                }
-            }
-
-            for match in searchResult.matches {
-                if let item = itemsById[match.itemId] {
-                    resultItems.append(SearchResultItem(
-                        item: item,
-                        highlights: highlightsMap[match.itemId] ?? []
-                    ))
-                }
-            }
-
-            state = .searching(query: query, state: .results(resultItems, hasMore: false))
+            state = .results(query: query, items: searchResult.matches, firstItem: searchResult.firstItem)
             os_signpost(.end, log: performanceLog, name: "search", signpostID: signpostID, "total_hits=%d", searchResult.totalCount)
+        } catch ClipKittyError.Cancelled {
+            os_signpost(.end, log: performanceLog, name: "search", signpostID: signpostID, "cancelled")
         } catch {
             guard !Task.isCancelled else { return }
             state = .error("Search failed: \(error.localizedDescription)")
@@ -500,18 +396,14 @@ final class ClipboardStore {
         guard let rustStore else { return }
         Task.detached { [weak self] in
             do {
-                let newItemId = try rustStore.saveText(text: text, sourceApp: sourceApp, sourceAppBundleId: sourceAppBundleID)
+                // Rust handles URL detection and metadata fetching automatically
+                _ = try rustStore.saveText(text: text, sourceApp: sourceApp, sourceAppBundleId: sourceAppBundleID)
 
-                // If it's a URL, fetch metadata asynchronously
-                if isUrl(text: text) {
-                    await self?.fetchAndUpdateLinkMetadata(for: newItemId, url: text)
-                }
-
-                // Reload on main actor if browsing
+                // Reload on main actor if in browse mode
                 guard let self else { return }
                 await MainActor.run { [weak self] in
-                    if case .loaded = self?.state {
-                        self?.loadItems(reset: true)
+                    if self?.hasResults == true {
+                        self?.refresh()
                     }
                 }
             } catch {
@@ -520,93 +412,6 @@ final class ClipboardStore {
         }
     }
 
-    private func fetchAndUpdateLinkMetadata(for itemId: Int64, url: String) async {
-        guard let rustStore else { return }
-
-        let metadata = await LinkMetadataFetcher.shared.fetch(url: url)
-
-        // Store in local vars for nonisolated access
-        // If metadata is nil, we still need to update DB to mark as "failed" (empty title/image)
-        let (title, imageData) = metadata?.databaseFields ?? ("", nil)
-
-        // Database write needs to escape MainActor
-        await Task.detached { [rustStore] in
-            do {
-                try rustStore.updateLinkMetadata(
-                    itemId: itemId,
-                    title: title,
-                    imageData: imageData.map { Array($0) }
-                )
-            } catch {
-                logError("Failed to update link metadata: \(error)")
-            }
-        }.value
-
-        // Update the specific item in-place instead of reloading the entire list
-        let newMetadataState = metadataStateFromDatabase(title: title, imageData: imageData)
-        updateItemMetadata(itemId: itemId, url: url, metadataState: newMetadataState)
-    }
-
-    /// Reconstruct LinkMetadataState from database values
-    private func metadataStateFromDatabase(title: String?, imageData: Data?) -> LinkMetadataState {
-        switch (title, imageData) {
-        case (nil, nil):
-            return .pending
-        case ("", nil):
-            return .failed
-        case (let title, let imageData):
-            return .loaded(
-                title: title?.isEmpty == true ? nil : title,
-                imageData: imageData.map { Array($0) }
-            )
-        }
-    }
-
-    /// Updates a single item's metadata in-place without reloading the entire list
-    private func updateItemMetadata(itemId: Int64, url: String, metadataState: LinkMetadataState) {
-        switch state {
-        case .loaded(let items, let hasMore):
-            let updatedItems = items.map { item -> ClipboardItem in
-                guard item.id == itemId else { return item }
-                return ClipboardItem(
-                    id: item.id,
-                    content: .link(url: url, metadataState: metadataState),
-                    contentHash: item.contentHash,
-                    timestampUnix: item.timestampUnix,
-                    sourceApp: item.sourceApp,
-                    sourceAppBundleId: item.sourceAppBundleId
-                )
-            }
-            state = .loaded(items: updatedItems, hasMore: hasMore)
-
-        case .searching(let query, let searchState):
-            let updateItems: ([SearchResultItem]) -> [SearchResultItem] = { items in
-                items.map { resultItem -> SearchResultItem in
-                    guard resultItem.item.id == itemId else { return resultItem }
-                    let updatedItem = ClipboardItem(
-                        id: resultItem.item.id,
-                        content: .link(url: url, metadataState: metadataState),
-                        contentHash: resultItem.item.contentHash,
-                        timestampUnix: resultItem.item.timestampUnix,
-                        sourceApp: resultItem.item.sourceApp,
-                        sourceAppBundleId: resultItem.item.sourceAppBundleId
-                    )
-                    return SearchResultItem(item: updatedItem, highlights: resultItem.highlights)
-                }
-            }
-            let newSearchState: SearchResultState
-            switch searchState {
-            case .loading(let previous):
-                newSearchState = .loading(previousResults: updateItems(previous))
-            case .results(let results, let hasMore):
-                newSearchState = .results(updateItems(results), hasMore: hasMore)
-            }
-            state = .searching(query: query, state: newSearchState)
-
-        default:
-            break
-        }
-    }
 
     private func generateAndUpdateImageDescription(itemId: Int64, imageData: Data) async {
         guard let description = await ImageDescriptionGenerator.generateDescription(from: imageData) else { return }
@@ -623,46 +428,9 @@ final class ClipboardStore {
         }.value
 
         await MainActor.run { [weak self] in
-            self?.updateItemImageDescription(itemId: itemId, description: trimmed)
-        }
-    }
-
-    private func updateItemImageDescription(itemId: Int64, description: String) {
-        let updateItem: (ClipboardItem) -> ClipboardItem = { item in
-            guard item.id == itemId else { return item }
-            guard case .image(let data, let existingDescription) = item.content else { return item }
-            guard existingDescription != description else { return item }
-            return ClipboardItem(
-                id: item.id,
-                content: .image(data: data, description: description),
-                contentHash: item.contentHash,
-                timestampUnix: item.timestampUnix,
-                sourceApp: item.sourceApp,
-                sourceAppBundleId: item.sourceAppBundleId
-            )
-        }
-
-        switch state {
-        case .loaded(let items, let hasMore):
-            state = .loaded(items: items.map(updateItem), hasMore: hasMore)
-
-        case .searching(let query, let searchState):
-            let updatedResults: ([SearchResultItem]) -> [SearchResultItem] = { items in
-                items.map { resultItem in
-                    SearchResultItem(item: updateItem(resultItem.item), highlights: resultItem.highlights)
-                }
+            if self?.hasResults == true {
+                self?.refresh()
             }
-            let newSearchState: SearchResultState
-            switch searchState {
-            case .loading(let previous):
-                newSearchState = .loading(previousResults: updatedResults(previous))
-            case .results(let results, let hasMore):
-                newSearchState = .results(updatedResults(results), hasMore: hasMore)
-            }
-            state = .searching(query: query, state: newSearchState)
-
-        default:
-            break
         }
     }
 
@@ -675,6 +443,10 @@ final class ClipboardStore {
         // Move compression and DB write to background
         guard let rustStore else { return }
         Task.detached { [weak self] in
+            // Generate thumbnail from original image (before HEIC compression)
+            // HEIC is not supported by Rust's image crate, so we generate in Swift
+            let thumbnail = Self.generateThumbnail(rawImageData)
+
             // Compress image with HEIC (HEVC)
             guard let compressedData = Self.compressToHEIC(rawImageData, quality: quality, maxPixels: maxPixels) else {
                 logError("Image compression failed, skipping")
@@ -683,15 +455,16 @@ final class ClipboardStore {
 
             do {
                 let itemId = try rustStore.saveImage(
-                    imageData: Array(compressedData),
+                    imageData: compressedData,
+                    thumbnail: thumbnail,
                     sourceApp: sourceApp,
                     sourceAppBundleId: sourceAppBundleID
                 )
 
                 guard let self else { return }
                 await MainActor.run { [weak self] in
-                    if case .loaded = self?.state {
-                        self?.loadItems(reset: true)
+                    if self?.hasResults == true {
+                        self?.refresh()
                     }
                 }
 
@@ -766,12 +539,70 @@ final class ClipboardStore {
         return data as Data
     }
 
+    /// Generate a small JPEG thumbnail (max 64x64) for list display
+    private nonisolated static func generateThumbnail(_ imageData: Data, maxSize: Int = 64) -> Data? {
+        guard let imageSource = CGImageSourceCreateWithData(imageData as CFData, nil),
+              let cgImage = CGImageSourceCreateImageAtIndex(imageSource, 0, nil) else {
+            return nil
+        }
+
+        let width = cgImage.width
+        let height = cgImage.height
+
+        // Calculate thumbnail size maintaining aspect ratio
+        let scale = Double(maxSize) / Double(max(width, height))
+        let newWidth = max(1, Int(Double(width) * scale))
+        let newHeight = max(1, Int(Double(height) * scale))
+
+        guard let context = CGContext(
+            data: nil,
+            width: newWidth,
+            height: newHeight,
+            bitsPerComponent: 8,
+            bytesPerRow: 0,
+            space: CGColorSpaceCreateDeviceRGB(),
+            bitmapInfo: CGImageAlphaInfo.premultipliedLast.rawValue
+        ) else {
+            return nil
+        }
+
+        context.interpolationQuality = .medium
+        context.draw(cgImage, in: CGRect(x: 0, y: 0, width: newWidth, height: newHeight))
+
+        guard let thumbnail = context.makeImage() else {
+            return nil
+        }
+
+        // Encode as JPEG with moderate quality
+        let data = NSMutableData()
+        guard let destination = CGImageDestinationCreateWithData(
+            data as CFMutableData,
+            "public.jpeg" as CFString,
+            1,
+            nil
+        ) else {
+            return nil
+        }
+
+        let options: [CFString: Any] = [
+            kCGImageDestinationLossyCompressionQuality: 0.6
+        ]
+
+        CGImageDestinationAddImage(destination, thumbnail, options as CFDictionary)
+
+        guard CGImageDestinationFinalize(destination) else {
+            return nil
+        }
+
+        return data as Data
+    }
+
     // MARK: - Actions
 
     func paste(item: ClipboardItem) {
         // Handle images differently - convert off main thread
         if case .image(let data, _) = item.content {
-            pasteImage(data: Data(data), itemId: item.id)
+            pasteImage(data: Data(data), itemId: item.itemMetadata.itemId)
             return
         }
 
@@ -780,10 +611,26 @@ final class ClipboardStore {
         pasteboard.setString(item.textContent, forType: .string)
         lastChangeCount = pasteboard.changeCount
 
-        if let id = item.id {
-            Task {
-                await updateItemTimestamp(id: id)
-            }
+        let id = item.itemMetadata.itemId
+        Task {
+            await updateItemTimestamp(id: id)
+        }
+    }
+
+    func paste(itemId: Int64, content: ClipboardContent) {
+        // Handle images differently - convert off main thread
+        if case .image(let data, _) = content {
+            pasteImage(data: Data(data), itemId: itemId)
+            return
+        }
+
+        let pasteboard = NSPasteboard.general
+        pasteboard.clearContents()
+        pasteboard.setString(content.textContent, forType: .string)
+        lastChangeCount = pasteboard.changeCount
+
+        Task {
+            await updateItemTimestamp(id: itemId)
         }
     }
 
@@ -830,28 +677,25 @@ final class ClipboardStore {
             }
         }.value
 
-        if case .loaded = state {
-            loadItems(reset: true)
+        // Reload if in browse mode
+        if hasResults {
+            refresh()
         }
     }
 
-    func delete(item: ClipboardItem) {
-        guard let id = item.id else { return }
-
+    func delete(itemId: Int64) {
         // Update UI immediately
         switch state {
-        case .loaded(let items, let hasMore):
-            state = .loaded(items: items.filter { $0.id != id }, hasMore: hasMore)
-        case .searching(let query, let searchState):
-            let newState: SearchResultState
-            switch searchState {
-            case .loading(let previous):
-                newState = .loading(previousResults: previous.filter { $0.item.id != id })
-            case .results(let results, let hasMore):
-                newState = .results(results.filter { $0.item.id != id }, hasMore: hasMore)
-            }
-            state = .searching(query: query, state: newState)
-        default:
+        case .results(let query, let items, let firstItem):
+            let filteredItems = items.filter { $0.itemMetadata.itemId != itemId }
+            let newFirstItem = firstItem?.itemMetadata.itemId == itemId ? nil : firstItem
+            state = .results(query: query, items: filteredItems, firstItem: newFirstItem)
+        case .resultsLoading(let query, let fallback):
+            state = .resultsLoading(
+                query: query,
+                fallback: fallback.filter { $0.itemMetadata.itemId != itemId }
+            )
+        case .loading, .error:
             break
         }
 
@@ -859,22 +703,26 @@ final class ClipboardStore {
         guard let rustStore else { return }
         Task.detached { [rustStore] in
             do {
-                try rustStore.deleteItem(itemId: id)
+                try rustStore.deleteItem(itemId: itemId)
             } catch {
                 logError("Failed to delete: \(error)")
             }
         }
     }
 
+    func delete(item: ClipboardItem) {
+        delete(itemId: item.itemMetadata.itemId)
+    }
+
     func clear() {
         // Update UI immediately
-        state = .loaded(items: [], hasMore: false)
+        state = .results(query: "", items: [], firstItem: nil)
 
         // Perform expensive DB operations in background
         guard let rustStore else { return }
         Task.detached { [rustStore] in
             do {
-                try rustStore.clearAll()
+                try rustStore.clear()
             } catch {
                 logError("Failed to clear: \(error)")
             }

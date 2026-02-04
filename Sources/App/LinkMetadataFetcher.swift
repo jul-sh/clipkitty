@@ -1,99 +1,80 @@
 import Foundation
-import AppKit
-import ClipKittyRust
+@preconcurrency import LinkPresentation
 
-/// Fetches Open Graph metadata from URLs
-actor LinkMetadataFetcher {
-    static let shared = LinkMetadataFetcher()
+/// Fetches link metadata using Apple's LinkPresentation framework
+@MainActor
+final class LinkMetadataFetcher {
+    /// In-flight fetch tasks keyed by item ID (prevents duplicate fetches)
+    private var activeFetches: [Int64: Task<FetchedLinkMetadata?, Never>] = [:]
 
-    private init() {}
-
-    func fetch(url urlString: String) async -> LinkMetadataState? {
-        guard let url = URL(string: urlString.trimmingCharacters(in: .whitespacesAndNewlines)) else {
-            return nil
+    /// Fetch metadata for a URL, caching by item ID to prevent duplicate requests
+    func fetchMetadata(for url: String, itemId: Int64) async -> FetchedLinkMetadata? {
+        // Return if already fetching
+        if let existingTask = activeFetches[itemId] {
+            return await existingTask.value
         }
 
-        do {
-            let (data, response) = try await URLSession.shared.data(from: url)
+        guard let urlObj = URL(string: url) else { return nil }
 
-            guard let httpResponse = response as? HTTPURLResponse,
-                  httpResponse.statusCode == 200,
-                  let html = String(data: data, encoding: .utf8) else {
+        let task = Task<FetchedLinkMetadata?, Never> { @MainActor in
+            let provider = LPMetadataProvider()
+            provider.shouldFetchSubresources = true
+
+            do {
+                let metadata = try await provider.startFetchingMetadata(for: urlObj)
+                return Self.convert(metadata)
+            } catch {
                 return nil
             }
-
-            let title = extractOGTag(from: html, property: "og:title") ?? extractTitle(from: html)
-            let imageURL = extractOGTag(from: html, property: "og:image")
-
-            var imageData: Data? = nil
-            if let imageURLString = imageURL, let imgURL = URL(string: imageURLString) {
-                if let (imgData, _) = try? await URLSession.shared.data(from: imgURL) {
-                    imageData = compressImage(imgData)
-                }
-            }
-
-            let trimmedTitle = title?.trimmingCharacters(in: .whitespacesAndNewlines)
-            let normalizedTitle = trimmedTitle?.isEmpty == true ? nil : trimmedTitle
-            if normalizedTitle == nil && imageData == nil {
-                return nil
-            }
-            return .loaded(title: normalizedTitle, imageData: imageData.map { Array($0) })
-        } catch {
-            return nil
         }
+
+        activeFetches[itemId] = task
+        let result = await task.value
+        activeFetches.removeValue(forKey: itemId)
+
+        return result
     }
 
-    private func extractOGTag(from html: String, property: String) -> String? {
-        // Pattern: <meta property="og:title" content="...">
-        let patterns = [
-            "<meta[^>]*property=[\"']\(property)[\"'][^>]*content=[\"']([^\"']+)[\"']",
-            "<meta[^>]*content=[\"']([^\"']+)[\"'][^>]*property=[\"']\(property)[\"']"
-        ]
+    /// Cancel any in-flight fetch for an item
+    func cancelFetch(for itemId: Int64) {
+        activeFetches[itemId]?.cancel()
+        activeFetches.removeValue(forKey: itemId)
+    }
 
-        for pattern in patterns {
-            if let regex = try? NSRegularExpression(pattern: pattern, options: .caseInsensitive),
-               let match = regex.firstMatch(in: html, range: NSRange(html.startIndex..., in: html)),
-               let range = Range(match.range(at: 1), in: html) {
-                return String(html[range]).trimmingCharacters(in: .whitespacesAndNewlines)
+    private static func convert(_ metadata: LPLinkMetadata) -> FetchedLinkMetadata? {
+        let title = metadata.title
+
+        // LPMetadataProvider doesn't directly expose og:description
+        let description: String? = nil
+
+        // Fetch image data synchronously (we're already on main thread)
+        var imageData: Data?
+        if let imageProvider = metadata.imageProvider {
+            let semaphore = DispatchSemaphore(value: 0)
+            var fetchedData: Data?
+            imageProvider.loadDataRepresentation(forTypeIdentifier: "public.image") { data, _ in
+                fetchedData = data
+                semaphore.signal()
             }
-        }
-        return nil
-    }
-
-    private func extractTitle(from html: String) -> String? {
-        let pattern = "<title[^>]*>([^<]+)</title>"
-        if let regex = try? NSRegularExpression(pattern: pattern, options: .caseInsensitive),
-           let match = regex.firstMatch(in: html, range: NSRange(html.startIndex..., in: html)),
-           let range = Range(match.range(at: 1), in: html) {
-            return String(html[range]).trimmingCharacters(in: .whitespacesAndNewlines)
-        }
-        return nil
-    }
-
-    private func compressImage(_ data: Data) -> Data? {
-        guard let image = NSImage(data: data) else { return nil }
-
-        // Resize to max 400px for preview
-        let maxSize: CGFloat = 400
-        let size = image.size
-        var newSize = size
-
-        if size.width > maxSize || size.height > maxSize {
-            let ratio = min(maxSize / size.width, maxSize / size.height)
-            newSize = NSSize(width: size.width * ratio, height: size.height * ratio)
+            _ = semaphore.wait(timeout: .now() + 5)
+            imageData = fetchedData
         }
 
-        let resizedImage = NSImage(size: newSize)
-        resizedImage.lockFocus()
-        image.draw(in: NSRect(origin: .zero, size: newSize))
-        resizedImage.unlockFocus()
-
-        guard let tiffData = resizedImage.tiffRepresentation,
-              let bitmap = NSBitmapImageRep(data: tiffData),
-              let jpegData = bitmap.representation(using: .jpeg, properties: [.compressionFactor: 0.7]) else {
+        // Return nil if we got nothing useful
+        if title == nil && imageData == nil {
             return nil
         }
 
-        return jpegData
+        return FetchedLinkMetadata(
+            title: title,
+            description: description,
+            imageData: imageData
+        )
     }
+}
+
+struct FetchedLinkMetadata: Sendable {
+    let title: String?
+    let description: String?
+    let imageData: Data?
 }

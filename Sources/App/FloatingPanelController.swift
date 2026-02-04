@@ -48,8 +48,8 @@ final class FloatingPanelController: NSObject, NSWindowDelegate {
     private func updatePanelContent() {
         let contentView = ContentView(
             store: store,
-            onSelect: { [weak self] item in
-                self?.selectItem(item)
+            onSelect: { [weak self] itemId, content in
+                self?.selectItem(itemId: itemId, content: content)
             },
             onDismiss: { [weak self] in
                 self?.hide()
@@ -83,7 +83,6 @@ final class FloatingPanelController: NSObject, NSWindowDelegate {
         if initialSearchQuery != nil {
             updatePanelContent()
         }
-        store.prepareForDisplay()
         centerPanel()
         panel.makeKeyAndOrderFront(nil)
         NSApp.activate(ignoringOtherApps: true)
@@ -107,8 +106,8 @@ final class FloatingPanelController: NSObject, NSWindowDelegate {
         panel.setFrameOrigin(NSPoint(x: x, y: y))
     }
 
-    private func selectItem(_ item: ClipboardItem) {
-        store.paste(item: item)
+    private func selectItem(itemId: Int64, content: ClipboardContent) {
+        store.paste(itemId: itemId, content: content)
         let targetApp = previousApp
         hide()
         #if !SANDBOXED
