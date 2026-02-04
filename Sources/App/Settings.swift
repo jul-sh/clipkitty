@@ -127,7 +127,7 @@ final class AppSettings: ObservableObject {
         } else if let legacyStored = defaults.object(forKey: legacyMaxDbSizeKey) as? NSNumber {
             maxDatabaseSizeGB = legacyStored.doubleValue / 1024.0
         } else {
-            maxDatabaseSizeGB = 2.0
+            maxDatabaseSizeGB = 10.0
         }
 
         // Default to false - user must explicitly enable launch at login
