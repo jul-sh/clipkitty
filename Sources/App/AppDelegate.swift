@@ -143,12 +143,10 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate {
     /// This handles cases where:
     /// - The app was moved to/from Applications directory
     /// - The system state differs from user preference
+    /// - First launch: auto-enable if in Applications
     private func syncLaunchAtLogin() {
         let launchAtLogin = LaunchAtLogin.shared
         let settings = AppSettings.shared
-
-        // Refresh the actual system state
-        launchAtLogin.refresh()
 
         // If user wants launch at login enabled and we're in Applications
         if settings.launchAtLoginEnabled && launchAtLogin.isInApplicationsDirectory {
@@ -159,12 +157,10 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate {
         } else if settings.launchAtLoginEnabled && !launchAtLogin.isInApplicationsDirectory {
             // User wants it enabled but app is not in Applications - disable the preference
             settings.launchAtLoginEnabled = false
+            launchAtLogin.errorMessage = "Launch at login was disabled because ClipKitty is not in the Applications folder."
             if launchAtLogin.isEnabled {
                 launchAtLogin.disable()
             }
-        } else if !settings.launchAtLoginEnabled && launchAtLogin.isEnabled {
-            // User doesn't want it but it's enabled - disable it
-            launchAtLogin.disable()
         }
     }
 
