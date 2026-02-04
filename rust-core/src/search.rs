@@ -235,57 +235,68 @@ impl SearchEngine {
     /// Returns normalized snippet (whitespace collapsed) with adjusted highlights
     /// Swift handles final truncation and ellipsis positioning
     pub fn generate_snippet(content: &str, highlights: &[HighlightRange], max_len: usize) -> (String, Vec<HighlightRange>, u64) {
-        let content_len = content.len();
+        let content_char_len = content.chars().count();
 
         if highlights.is_empty() {
             // No highlights, return first max_len chars (normalized)
-            let preview = normalize_snippet(content, 0, content_len, max_len);
+            let preview = normalize_snippet(content, 0, content_char_len, max_len);
             return (preview, Vec::new(), 0);
         }
 
         let first_highlight = &highlights[0];
-        let match_start = first_highlight.start as usize;
-        let match_end = first_highlight.end as usize;
+        // These are CHARACTER indices from Nucleo, not byte offsets
+        let match_start_char = first_highlight.start as usize;
+        let match_end_char = first_highlight.end as usize;
 
         // Find line number (count newlines before match) - 1-indexed
-        let line_number = content[..match_start.min(content_len)]
+        // Use chars().take() to safely handle multi-byte UTF-8
+        let line_number = content
             .chars()
+            .take(match_start_char.min(content_char_len))
             .filter(|&c| c == '\n')
             .count() as u64
             + 1;
 
 
         // Start with the match, then expand with context
-        let match_char_len = match_end - match_start;
+        let match_char_len = match_end_char.saturating_sub(match_start_char);
         let remaining_space = max_len.saturating_sub(match_char_len);
 
-        // Split remaining space for context before/after
-        let context_before = (remaining_space / 2).min(SNIPPET_CONTEXT_CHARS).min(match_start);
-        let context_after = (remaining_space - context_before).min(content_len - match_end);
+        // Split remaining space for context before/after (all in CHARACTER units)
+        let context_before = (remaining_space / 2).min(SNIPPET_CONTEXT_CHARS).min(match_start_char);
+        let context_after = (remaining_space - context_before).min(content_char_len.saturating_sub(match_end_char));
 
-        let mut snippet_start = match_start - context_before;
-        let snippet_end = (match_end + context_after).min(content_len);
+        let mut snippet_start_char = match_start_char - context_before;
+        let snippet_end_char = (match_end_char + context_after).min(content_char_len);
 
-        // Try to adjust start to word boundary
-        if snippet_start > 0 {
-            let search_start = snippet_start.saturating_sub(10);
-            if let Some(space_pos) = content[search_start..snippet_start].rfind(char::is_whitespace) {
-                let new_start = search_start + space_pos + 1;
-                if new_start <= match_start.saturating_sub(context_before) {
-                    snippet_start = new_start;
+        // Try to adjust start to word boundary (work in character space)
+        if snippet_start_char > 0 {
+            let search_start_char = snippet_start_char.saturating_sub(10);
+            // Get the substring in character space to search for whitespace
+            let search_range: String = content
+                .chars()
+                .skip(search_start_char)
+                .take(snippet_start_char - search_start_char)
+                .collect();
+            if let Some(space_pos) = search_range.rfind(char::is_whitespace) {
+                // space_pos is a byte offset within search_range, convert to char offset
+                let char_offset = search_range[..space_pos].chars().count();
+                let new_start = search_start_char + char_offset + 1;
+                if new_start <= match_start_char.saturating_sub(context_before) {
+                    snippet_start_char = new_start;
                 }
             }
         }
 
         // Normalize snippet and track position mappings for highlight adjustment
-        let (normalized_snippet, pos_map) = normalize_snippet_with_mapping(content, snippet_start, snippet_end, max_len);
+        let (normalized_snippet, pos_map) = normalize_snippet_with_mapping(content, snippet_start_char, snippet_end_char, max_len);
 
         // Adjust highlight ranges using position mapping
         let adjusted_highlights: Vec<HighlightRange> = highlights
             .iter()
             .filter_map(|h| {
-                let orig_start = (h.start as usize).checked_sub(snippet_start)?;
-                let orig_end = (h.end as usize).saturating_sub(snippet_start);
+                let orig_start = (h.start as usize).checked_sub(snippet_start_char)?;
+                let orig_end = (h.end as usize).saturating_sub(snippet_start_char);
 
                 let norm_start = map_position(orig_start, &pos_map)?;
                 let norm_end = map_position(orig_end, &pos_map).unwrap_or(normalized_snippet.len());
@@ -541,5 +552,28 @@ mod tests {
         let prefix = blended_score(1000, now, now, true);
         let non_prefix = blended_score(1000, now, now, false);
         assert!(prefix > non_prefix, "Prefix matches should score higher");
+    }
+
+    #[test]
+    fn test_snippet_utf8_multibyte_chars() {
+        // This test ensures we handle multi-byte UTF-8 characters correctly
+        // The bug was treating character indices as byte offsets
+        let content = "Hello 你好 world 🌍 test"; // Contains Chinese and emoji
+        // "Hello " = 6 chars, "你" = char index 6, "好" = char index 7
+        // Match "你好" at character indices 6-8
+        let highlights = vec![HighlightRange { start: 6, end: 8 }];
+
+        // This should NOT panic (previously would panic with slice_error_fail)
+        let (snippet, adj_highlights, _) = SearchEngine::generate_snippet(content, &highlights, 50);
+
+        assert!(snippet.contains("你好"), "Snippet should contain the match");
+        assert!(!adj_highlights.is_empty(), "Should have adjusted highlights");
+
+        let h = &adj_highlights[0];
+        let highlighted: String = snippet.chars()
+            .skip(h.start as usize)
+            .take((h.end - h.start) as usize)
+            .collect();
+        assert_eq!(highlighted, "你好", "Highlighted text should match");
     }
 }
