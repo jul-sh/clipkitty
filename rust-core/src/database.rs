@@ -411,6 +411,9 @@ impl Database {
         }
 
         let avg_item_size = current_size / count;
+        if avg_item_size == 0 {
+            return Ok(Vec::new()); // Edge case: prevent division by zero
+        }
         let target_size = (max_bytes as f64 * keep_ratio) as i64;
         let items_to_delete = std::cmp::max(100, ((current_size - target_size) / avg_item_size) as usize);
 
@@ -512,6 +515,9 @@ impl Database {
         }
 
         let avg_item_size = current_size / count;
+        if avg_item_size == 0 {
+            return Ok(0); // Edge case: prevent division by zero
+        }
         let target_size = (max_bytes as f64 * keep_ratio) as i64;
         let items_to_delete = std::cmp::max(100, ((current_size - target_size) / avg_item_size) as usize);
 
