@@ -2,7 +2,7 @@ name: Build and Release
 
 on:
   push:
-    branches: [main, release]
+    branches: [main]
   pull_request:
     branches: [main]
   release:
@@ -121,116 +121,13 @@ jobs:
         env:
           GH_TOKEN: ${{ github.token }}
 
-      # Create automatic pre-release on push to main (for development builds)
-      - name: Create Development Release
-        if: github.event_name == 'push' && github.ref == 'refs/heads/main'
-        run: |
-          NOTE="### Note on Sandboxed Version\n\nThe sandboxed version (ClipKitty-Sandboxed.dmg) does not support automatic pasting (Cmd+V) into other apps due to system restrictions. Use the standard version if that feature is important to you"
-          gh release create "commit-${GITHUB_SHA}" \
-            --title "ClipKitty ${GITHUB_SHA}" \
-            --notes "$NOTE" \
-            --prerelease \
-            ClipKitty.dmg \
-            ClipKitty-Sandboxed.dmg \
-            screenshot.png \
-            icon.png \
-            marketing/screenshot_*.png \
-            marketing/app_preview.mov
-        env:
-          GH_TOKEN: ${{ github.token }}
-
-  release:
-    if: github.event_name == 'push' && github.ref == 'refs/heads/release'
-    runs-on: macos-26
-
-    steps:
-      - name: Checkout
-        uses: actions/checkout@v4
-        with:
-          fetch-depth: 0
-
-      - name: Setup Swift
-        uses: swift-actions/setup-swift@v2
-        with:
-          swift-version: "6.2"
-
-      - name: Install Nix
-        uses: DeterminateSystems/nix-installer-action@main
-
-      - name: Install Build Dependencies
-        run: ./Scripts/install-deps.sh
-
-      - name: Build Non-Sandboxed Variant
-        run: |
-          make all SANDBOX=false
-
-      - name: Build DMGs
-        run: |
-          chmod +x Scripts/build-dmg.sh
-          make dmg SANDBOX=false
-          make dmg SANDBOX=true
-
-      - name: Determine Version
-        id: version
-        run: |
-          # Get latest version tag
-          LATEST=$(git tag -l 'v*' --sort=-v:refname | head -n1 | sed 's/^v//')
-          if [ -z "$LATEST" ]; then
-            LATEST="0.0.0"
-          fi
-
-          # Parse major.minor.patch
-          IFS='.' read -r MAJOR MINOR PATCH <<< "$LATEST"
-
-          # Get merge commit message (contains PR title)
-          MSG=$(git log -1 --pretty=%B)
-
-          # Determine bump type from PR title (defaults to patch)
-          if echo "$MSG" | grep -qi '\[major\]'; then
-            MAJOR=$((MAJOR + 1))
-            MINOR=0
-            PATCH=0
-          elif echo "$MSG" | grep -qi '\[minor\]'; then
-            MINOR=$((MINOR + 1))
-            PATCH=0
-          else
-            # Default to patch bump
-            PATCH=$((PATCH + 1))
-          fi
-
-          # Increment patch until we find an unused version
-          while git tag -l "v$MAJOR.$MINOR.$PATCH" | grep -q .; do
-            echo "Version $MAJOR.$MINOR.$PATCH already exists, incrementing..."
-            PATCH=$((PATCH + 1))
-          done
-
-          VERSION="$MAJOR.$MINOR.$PATCH"
-          echo "version=$VERSION" >> $GITHUB_OUTPUT
-          echo "Releasing version: $VERSION"
-
-      - name: Create Release
-        run: |
-          VERSION="${{ steps.version.outputs.version }}"
-          TAG="v$VERSION"
-
-
-          # Create new release
-          NOTE="### Note on Sandboxed Version
-
-          The standard version of ClippKitty supports automatic pasting (Cmd+V) into other apps. The sandboxed version (ClipKitty-Sandboxed.dmg) cannot do this due to system restrictions. If that's a feature you rely on, download the standard version."
-
-          gh release create "$TAG" \
-            --target "$GITHUB_SHA" \
-            --title "ClipKitty $VERSION" \
-            --notes "$NOTE" \
-            ClipKitty.dmg ClipKitty-Sandboxed.dmg
-        env:
-          GH_TOKEN: ${{ github.token }}
-
+      # Update Homebrew tap when a release is published
       - name: Update Homebrew Tap
+        if: github.event_name == 'release'
         run: |
+          VERSION=${{ github.event.release.tag_name }}
+          VERSION=${VERSION#v}  # Remove 'v' prefix if present
           SHA256=$(shasum -a 256 ClipKitty.dmg | cut -d' ' -f1)
-          VERSION="${{ steps.version.outputs.version }}"
 
           # Clone the homebrew-clipkitty tap repository
           git clone https://x-access-token:${{ github.token }}@github.com/jul-sh/homebrew-clipkitty.git /tmp/homebrew-tap
@@ -257,3 +154,24 @@ jobs:
           git push origin main
 
           cd -
+        env:
+          GH_TOKEN: ${{ github.token }}
+
+      # Create automatic pre-release on push to main (for development builds)
+      - name: Create Development Release
+        if: github.event_name == 'push' && github.ref == 'refs/heads/main'
+        run: |
+          NOTE="### Note on Sandboxed Version\n\nThe sandboxed version (ClipKitty-Sandboxed.dmg) does not support automatic pasting (Cmd+V) into other apps due to system restrictions. Use the standard version if that feature is important to you"
+          gh release create "commit-${GITHUB_SHA}" \
+            --title "ClipKitty ${GITHUB_SHA}" \
+            --notes "$NOTE" \
+            --prerelease \
+            ClipKitty.dmg \
+            ClipKitty-Sandboxed.dmg \
+            screenshot.png \
+            icon.png \
+            marketing/screenshot_*.png \
+            marketing/app_preview.mov
+        env:
+          GH_TOKEN: ${{ github.token }}
+
