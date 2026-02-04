@@ -39,7 +39,7 @@ xcrun actool "$(ICON_SOURCE)" --compile $(1) --platform macosx --target-device m
 	--output-partial-info-plist /dev/null
 endef
 
-.PHONY: all clean sign screenshot perf build-binary dmg appstore validate upload rust rust-force
+.PHONY: all clean sign screenshot fullscreen-screenshot perf build-binary dmg appstore validate upload rust rust-force
 
 # App Store signing identity (find yours with: security find-identity -v -p codesigning)
 # Set via environment or override: make appstore SIGNING_IDENTITY="Developer ID Application: ..."
@@ -135,6 +135,22 @@ screenshot:
 	@rm -rf DerivedData
 	@./Scripts/prepare-screenshot-environment.sh 'xcodebuild test -project ClipKitty.xcodeproj -scheme ClipKittyUITests -destination "platform=macOS" -derivedDataPath DerivedData 2>&1 | tee xcodebuild.log'
 	@swift Scripts/PrintPerfResults.swift
+	@echo "Copying and upscaling screenshot..."
+	@cp /tmp/clipkitty_screenshot.png screenshot.png || true
+	@if [ -f screenshot.png ]; then \
+		WIDTH=$$(sips -g pixelWidth screenshot.png | tail -1 | awk '{print $$2}'); \
+		HEIGHT=$$(sips -g pixelHeight screenshot.png | tail -1 | awk '{print $$2}'); \
+		sips --resampleHeightWidth $$((HEIGHT * 2)) $$((WIDTH * 2)) screenshot.png --out screenshot.png; \
+	fi
+	@echo "Screenshot saved to screenshot.png (2x upscaled)"
+
+# Full-screen screenshot only (uses non-sandboxed, runs only testTakeScreenshot)
+fullscreen-screenshot:
+	@$(MAKE) sign SANDBOX=false
+	@$(MAKE) ClipKitty.xcodeproj
+	@echo "Capturing full-screen screenshot..."
+	@rm -rf DerivedData
+	@./Scripts/prepare-screenshot-environment.sh 'xcodebuild test -project ClipKitty.xcodeproj -scheme ClipKittyUITests -destination "platform=macOS" -derivedDataPath DerivedData -only-testing:ClipKittyUITests/ClipKittyUITests/testTakeScreenshot 2>&1 | tee xcodebuild.log'
 	@echo "Copying and upscaling screenshot..."
 	@cp /tmp/clipkitty_screenshot.png screenshot.png || true
 	@if [ -f screenshot.png ]; then \

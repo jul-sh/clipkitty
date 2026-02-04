@@ -34,9 +34,12 @@ jobs:
         run: |
           make all SANDBOX=false
 
-      - name: Run UI Tests
+      - name: Take Full-Screen Screenshot
+        run: make fullscreen-screenshot
+
+      - name: Run Performance Tests
         run: |
-          make screenshot
+          make perf
           echo "### UI Performance Results" >> $GITHUB_STEP_SUMMARY
           echo '```' >> $GITHUB_STEP_SUMMARY
           swift Scripts/PrintPerfResults.swift >> $GITHUB_STEP_SUMMARY
