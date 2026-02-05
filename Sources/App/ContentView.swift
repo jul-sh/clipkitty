@@ -764,91 +764,19 @@ struct ItemRow: View, Equatable {
     // Fixed height for exactly 1 line of text at font size 15
     private let rowHeight: CGFloat = 32
 
-    // MARK: - Display Text (Unified Logic)
+    // MARK: - Display Text (Simplified - SwiftUI handles truncation)
 
-    // Approximate visible characters in a single row (row width ~280px, font size 15)
-    private let maxDisplayChars = 50
-    private let maxRustSnippet = 400  // Rust's SNIPPET_CONTEXT_CHARS * 2
-
-    /// Computed window into the source text to ensure the match is visible
-    /// Rust already prefixes "…" if it truncated content, so Swift just does windowing
-    private var snippetWindow: (start: Int, end: Int) {
-        // Use matchData.text if present, otherwise metadata.snippet
-        let sourceText = matchData?.text.isEmpty == false ? matchData!.text : metadata.snippet
-
-        // If no match data or highlights, just take from start
-        guard let matchData, !matchData.highlights.isEmpty else {
-            let limit = min(sourceText.count, maxDisplayChars)
-            return (0, limit)
-        }
-
-        // We have a match - center the window on it
-        let firstMatch = matchData.highlights[0]
-        let matchStartPos = Int(firstMatch.start)
-        let matchEndPos = Int(firstMatch.end)
-
-        let availableChars = maxDisplayChars
-
-        // Position window with 15% context before match, 85% after
-        let contextBefore = Int(Double(availableChars) * 0.15)
-        var start = matchStartPos - contextBefore
-        var end = start + availableChars
-
-        // Clamp to bounds
-        if start < 0 {
-            start = 0
-            end = min(sourceText.count, availableChars)
-        } else if end > sourceText.count {
-            end = sourceText.count
-            start = max(0, end - availableChars)
-        }
-
-        // Ensure match end is visible
-        if matchEndPos > end {
-            end = min(sourceText.count, matchEndPos + 10)
-            start = max(0, end - availableChars)
-        }
-
-        return (start, end)
+    /// Text to display - uses matchData.text if in search mode, otherwise metadata.snippet
+    /// SwiftUI's Three-Part HStack handles truncation with proper ellipsis via layout priorities
+    private var displayText: String {
+        matchData?.text.isEmpty == false ? matchData!.text : metadata.snippet
     }
 
-    /// Display text windowed around the match
-    /// Rust adds ellipsis for its truncation, Swift adds ellipsis for its windowing
-    private var displaySnippet: String {
-        let sourceText = matchData?.text.isEmpty == false ? matchData!.text : metadata.snippet
-        let (start, end) = snippetWindow
-
-        guard start < sourceText.count else { return "" }
-
-        let idx1 = sourceText.index(sourceText.startIndex, offsetBy: start)
-        let idx2 = sourceText.index(sourceText.startIndex, offsetBy: min(end, sourceText.count))
-        let content = String(sourceText[idx1..<idx2])
-
-        // Swift adds ellipsis for its own windowing truncation
-        let prefix = start > 0 ? "…" : ""
-        let suffix = end < sourceText.count ? "…" : ""
-        return prefix + content + suffix
-    }
-
-    /// Highlights for display - adjusted for window offset and Swift's prefix ellipsis
+    /// Highlights for display - passed directly from Rust (already adjusted for normalization)
     private var displayHighlights: [HighlightRange] {
-        guard let matchData, !matchData.highlights.isEmpty else { return [] }
-
-        let (windowStart, _) = snippetWindow
-        // Shift left by window start, then right by 1 if Swift added a prefix ellipsis
-        let prefixOffset: Int64 = windowStart > 0 ? 1 : 0
-        let offset = -Int64(windowStart) + prefixOffset
-
-        return matchData.highlights.compactMap { h in
-            let newStart = Int64(h.start) + offset
-            let newEnd = Int64(h.end) + offset
-
-            // Filter highlights that are completely out of view
-            if newEnd <= 0 { return nil }
-
-            return HighlightRange(start: UInt64(max(0, newStart)), end: UInt64(max(0, newEnd)))
-        }
+        matchData?.highlights ?? []
     }
+
 
     // Define exactly what constitutes a "change" for SwiftUI diffing
     // Note: onTap closure is intentionally excluded from equality comparison
@@ -925,9 +853,19 @@ struct ItemRow: View, Equatable {
             .frame(width: 38, height: 38)
             .allowsHitTesting(false)
 
-            // Text content - use AppKit for fast highlighting
+            // Line number (shown in search mode when line > 1)
+            if let matchData, matchData.lineNumber > 1 {
+                Text("L\(matchData.lineNumber):")
+                    .font(.custom(FontManager.mono, size: 13))
+                    .foregroundColor(isSelected ? .white.opacity(0.7) : .secondary)
+                    .lineLimit(1)
+                    .fixedSize()
+                    .allowsHitTesting(false)
+            }
+
+            // Text content - SwiftUI Three-Part HStack with layout priorities
             HighlightedTextView(
-                text: displaySnippet,
+                text: displayText,
                 highlights: displayHighlights,
                 isSelected: isSelected
             )
@@ -956,7 +894,7 @@ struct ItemRow: View, Equatable {
         // 2. Apply the plain style so it behaves like a standard row instead of a system button
         .buttonStyle(.plain)
         .accessibilityElement(children: .combine)
-        .accessibilityLabel(displaySnippet)
+        .accessibilityLabel(displayText)
         #if SANDBOXED
         .accessibilityHint("Double tap to copy")
         #else
@@ -975,71 +913,128 @@ struct ItemRow: View, Equatable {
     }
 }
 
-// MARK: - AppKit Highlighted Text (Fast)
+// MARK: - Three-Part HStack Highlighted Text
 
-/// AppKit-based text view for fast search highlighting
-/// NSTextField is much faster than SwiftUI Text with AttributedString
-struct HighlightedTextView: NSViewRepresentable {
+/// SwiftUI-native text view using Three-Part HStack strategy for search highlighting.
+/// Uses layout priorities to guarantee the first highlight is always visible while maximizing context.
+/// - Prefix: Truncates from head (`.head`) showing "...text"
+/// - Highlight: Has `.layoutPriority(1)` to claim space first, never pushed off-screen
+/// - Suffix: Truncates from tail (`.tail`) showing "text..."
+struct HighlightedTextView: View, Equatable {
     let text: String
     let highlights: [HighlightRange]
     let isSelected: Bool
 
-    func makeNSView(context: Context) -> NSTextField {
-        let field = NSTextField(labelWithString: "")
-        field.isEditable = false
-        field.isSelectable = false
-        field.isBordered = false
-        field.drawsBackground = false
-        field.lineBreakMode = .byTruncatingTail
-        field.maximumNumberOfLines = 1
-        field.cell?.truncatesLastVisibleLine = true
-        // Allow field to expand to fill available width
-        field.setContentHuggingPriority(.defaultLow, for: .horizontal)
-        field.setContentCompressionResistancePriority(.defaultLow, for: .horizontal)
-        return field
+    // Define equality for SwiftUI diffing
+    nonisolated static func == (lhs: HighlightedTextView, rhs: HighlightedTextView) -> Bool {
+        lhs.text == rhs.text && lhs.highlights == rhs.highlights && lhs.isSelected == rhs.isSelected
     }
 
-    func updateNSView(_ field: NSTextField, context: Context) {
-        // Skip update if nothing changed (prevents flash on re-render)
-        let coord = context.coordinator
-        guard text != coord.lastText || highlights != coord.lastHighlights || isSelected != coord.lastIsSelected else {
-            return
-        }
-        coord.lastText = text
-        coord.lastHighlights = highlights
-        coord.lastIsSelected = isSelected
+    private var textColor: Color {
+        isSelected ? .white : .primary
+    }
 
-        let font = NSFont(name: FontManager.sansSerif, size: 15) ?? NSFont.systemFont(ofSize: 15)
-        let textColor: NSColor = isSelected ? .white : .labelColor
+    private var font: Font {
+        .custom(FontManager.sansSerif, size: 15)
+    }
 
-        // Always use attributed string for consistent rendering between browse and search modes
-        let mutable = NSMutableAttributedString(string: text, attributes: [
-            .font: font,
-            .foregroundColor: textColor
-        ])
+    var body: some View {
+        // Use firstTextBaseline so text aligns perfectly even with different weights
+        HStack(alignment: .firstTextBaseline, spacing: 0) {
+            if let firstHighlight = highlights.first {
+                let startIndex = Int(firstHighlight.start)
+                let endIndex = Int(firstHighlight.end)
 
-        // Apply highlights if present
-        if !highlights.isEmpty {
-            let highlightColor = NSColor.yellow.withAlphaComponent(0.4)
-            for range in highlights {
-                let nsRange = range.nsRange
-                if nsRange.location + nsRange.length <= mutable.length {
-                    mutable.addAttribute(.backgroundColor, value: highlightColor, range: nsRange)
+                // Clamp indices to valid range
+                let safeStart = min(max(0, startIndex), text.count)
+                let safeEnd = min(max(safeStart, endIndex), text.count)
+
+                let prefixEnd = text.index(text.startIndex, offsetBy: safeStart)
+                let matchStart = prefixEnd
+                let matchEnd = text.index(text.startIndex, offsetBy: safeEnd)
+
+                let prefix = String(text[..<prefixEnd])
+                let match = String(text[matchStart..<matchEnd])
+                let suffix = String(text[matchEnd...])
+
+                // 1. PREFIX: Truncates on the left ("...text")
+                if !prefix.isEmpty {
+                    Text(prefix)
+                        .font(font)
+                        .foregroundColor(textColor)
+                        .lineLimit(1)
+                        .truncationMode(.head)
                 }
+
+                // 2. HIGHLIGHT: High priority ensures it claims space first
+                Text(match)
+                    .font(font)
+                    .foregroundColor(textColor)
+                    .lineLimit(1)
+                    .truncationMode(.tail) // Fallback if highlight itself is wider than container
+                    .layoutPriority(1)     // CRITICAL: Guarantees visibility
+                    .background(Color.yellow.opacity(0.4))
+
+                // 3. SUFFIX: Truncates on the right ("text...")
+                // Apply any additional highlights that fall within suffix
+                if !suffix.isEmpty {
+                    suffixView(suffix: suffix, suffixStartIndex: safeEnd)
+                        .font(font)
+                        .foregroundColor(textColor)
+                        .lineLimit(1)
+                        .truncationMode(.tail)
+                }
+
+            } else {
+                // No highlights - simple text with tail truncation
+                Text(text)
+                    .font(font)
+                    .foregroundColor(textColor)
+                    .lineLimit(1)
+                    .truncationMode(.tail)
             }
         }
-
-        field.attributedStringValue = mutable
+        // Ensure text aligns to the left if shorter than container
+        .frame(maxWidth: .infinity, alignment: .leading)
     }
 
-    func makeCoordinator() -> Coordinator {
-        Coordinator()
+    /// Build suffix view with any additional highlights
+    @ViewBuilder
+    private func suffixView(suffix: String, suffixStartIndex: Int) -> some View {
+        // Check for additional highlights in the suffix (beyond the first one)
+        let additionalHighlights = highlights.dropFirst().filter { h in
+            Int(h.start) >= suffixStartIndex && Int(h.start) < suffixStartIndex + suffix.count
+        }
+
+        if additionalHighlights.isEmpty {
+            Text(suffix)
+        } else {
+            // Build attributed string for suffix with additional highlights
+            Text(attributedSuffix(suffix: suffix, suffixStartIndex: suffixStartIndex, highlights: Array(additionalHighlights)))
+        }
     }
 
-    class Coordinator {
-        var lastText: String = ""
-        var lastHighlights: [HighlightRange] = []
-        var lastIsSelected: Bool = false
+    /// Create AttributedString for suffix with multiple highlights
+    private func attributedSuffix(suffix: String, suffixStartIndex: Int, highlights: [HighlightRange]) -> AttributedString {
+        var attributed = AttributedString(suffix)
+
+        for highlight in highlights {
+            let relativeStart = Int(highlight.start) - suffixStartIndex
+            let relativeEnd = Int(highlight.end) - suffixStartIndex
+
+            // Clamp to suffix bounds
+            let safeStart = max(0, relativeStart)
+            let safeEnd = min(suffix.count, relativeEnd)
+
+            guard safeStart < safeEnd else { continue }
+
+            let startIdx = attributed.index(attributed.startIndex, offsetByCharacters: safeStart)
+            let endIdx = attributed.index(attributed.startIndex, offsetByCharacters: safeEnd)
+
+            attributed[startIdx..<endIdx].backgroundColor = Color.yellow.opacity(0.4)
+        }
+
+        return attributed
     }
 }
 
