@@ -125,8 +125,8 @@ jobs:
       - name: Update Homebrew Tap
         if: github.event_name == 'release'
         run: |
-          VERSION=${{ github.event.release.tag_name }}
-          VERSION=${VERSION#v}  # Remove 'v' prefix if present
+          TAG=${{ github.event.release.tag_name }}
+          VERSION=${TAG#v}  # Remove 'v' prefix if present for cask version field
           SHA256=$(shasum -a 256 ClipKitty.dmg | cut -d' ' -f1)
 
           # Clone the homebrew-clipkitty tap repository
@@ -134,12 +134,13 @@ jobs:
           cd /tmp/homebrew-tap
 
           mkdir -p Casks
+          # Use the actual tag name in URL (not reconstructed with v prefix)
           printf '%s\n' \
             'cask "clipkitty" do' \
             "  version \"$VERSION\"" \
             "  sha256 \"$SHA256\"" \
             '' \
-            '  url "https://github.com/jul-sh/clipkitty/releases/download/v#{version}/ClipKitty.dmg"' \
+            "  url \"https://github.com/jul-sh/clipkitty/releases/download/$TAG/ClipKitty.dmg\"" \
             '  name "ClipKitty"' \
             '  desc "Clipboard history manager with instant fuzzy search"' \
             '  homepage "https://github.com/jul-sh/clipkitty"' \
