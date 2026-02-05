@@ -84,12 +84,33 @@ final class ClipKittyUITests: XCTestCase {
         // Ensure directory exists
         try? FileManager.default.createDirectory(at: appSupportDir, withIntermediateDirectories: true)
 
+        // Kill any existing ClipKitty instances to avoid WAL conflicts
+        // This fixes rare race condition where old process holds database open
+        let killTask = Process()
+        killTask.executableURL = URL(fileURLWithPath: "/usr/bin/pkill")
+        killTask.arguments = ["-9", "ClipKitty"]
+        try? killTask.run()
+        killTask.waitUntilExit()
+        Thread.sleep(forTimeInterval: 0.2)  // Brief delay for file handles to release
+
         // Remove existing database and search index to ensure a clean re-index for the video
         try? FileManager.default.removeItem(at: targetURL)
         try? FileManager.default.removeItem(at: indexDirURL)
+        // Also remove WAL/SHM files that might persist
+        try? FileManager.default.removeItem(at: targetURL.appendingPathExtension("wal"))
+        try? FileManager.default.removeItem(at: targetURL.appendingPathExtension("shm"))
 
-        // Copy fresh synthetic data
-        try? FileManager.default.copyItem(at: sqliteSourceURL, to: targetURL)
+        // Copy fresh synthetic data - MUST succeed for tests to be valid
+        guard FileManager.default.fileExists(atPath: sqliteSourceURL.path) else {
+            XCTFail("SyntheticData.sqlite not found at: \(sqliteSourceURL.path)")
+            return
+        }
+        do {
+            try FileManager.default.copyItem(at: sqliteSourceURL, to: targetURL)
+        } catch {
+            XCTFail("Failed to copy synthetic database: \(error)")
+            return
+        }
 
         app.launchArguments = ["--use-simulated-db"]
         app.launch()
@@ -285,8 +306,13 @@ final class ClipKittyUITests: XCTestCase {
     }
 
     func testTakeScreenshot() throws {
-        // Wait for animations or loading
-        sleep(2)
+        // Wait for items to appear (Tantivy indexing can take time in CI)
+        let outline = app.outlines.firstMatch
+        let hasItems = outline.buttons.firstMatch.waitForExistence(timeout: 30)
+        XCTAssertTrue(hasItems, "Clipboard items should appear before taking screenshot")
+
+        // Extra settle time for animations
+        Thread.sleep(forTimeInterval: 1.0)
 
         // Capture the entire screen
         let screenshot = XCUIScreen.main.screenshot()
