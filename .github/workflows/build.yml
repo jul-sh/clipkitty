@@ -130,7 +130,7 @@ jobs:
           SHA256=$(shasum -a 256 ClipKitty.dmg | cut -d' ' -f1)
 
           # Clone the homebrew-clipkitty tap repository
-          git clone https://x-access-token:${{ github.token }}@github.com/jul-sh/homebrew-clipkitty.git /tmp/homebrew-tap
+          git clone https://x-access-token:${{ secrets.HOMEBREW_TAP_TOKEN }}@github.com/jul-sh/homebrew-clipkitty.git /tmp/homebrew-tap
           cd /tmp/homebrew-tap
 
           mkdir -p Casks
