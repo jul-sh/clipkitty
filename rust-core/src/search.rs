@@ -289,9 +289,29 @@ impl SearchEngine {
         }
 
         // Normalize snippet and track position mappings for highlight adjustment
-        let (normalized_snippet, pos_map) = normalize_snippet_with_mapping(content, snippet_start_char, snippet_end_char, max_len);
+        // Reserve space for potential ellipsis characters (1 for leading, 1 for trailing)
+        let ellipsis_reserve = (if snippet_start_char > 0 { 1 } else { 0 })
+            + (if snippet_end_char < content_char_len { 1 } else { 0 });
+        let effective_max_len = max_len.saturating_sub(ellipsis_reserve);
+        let (normalized_snippet, pos_map) = normalize_snippet_with_mapping(content, snippet_start_char, snippet_end_char, effective_max_len);
 
-        // Adjust highlight ranges using position mapping
+        // Check truncation from start and end
+        let truncated_from_start = snippet_start_char > 0;
+        let truncated_from_end = snippet_end_char < content_char_len;
+
+        // Build final snippet with ellipsis as needed
+        let prefix_offset = if truncated_from_start { 1 } else { 0 };
+        let mut final_snippet = if truncated_from_start {
+            format!("…{}", normalized_snippet)
+        } else {
+            normalized_snippet.clone()
+        };
+        if truncated_from_end {
+            final_snippet.push('…');
+        }
+
+        // Adjust highlight ranges using position mapping, accounting for ellipsis prefix
+        // (trailing ellipsis doesn't affect highlight positions)
         let adjusted_highlights: Vec<HighlightRange> = highlights
             .iter()
             .filter_map(|h| {
@@ -303,8 +323,8 @@ impl SearchEngine {
 
                 if norm_start < normalized_snippet.len() {
                     Some(HighlightRange {
-                        start: norm_start as u64,
-                        end: norm_end.min(normalized_snippet.len()) as u64,
+                        start: (norm_start + prefix_offset) as u64,
+                        end: (norm_end.min(normalized_snippet.len()) + prefix_offset) as u64,
                     })
                 } else {
                     None
@@ -312,7 +332,7 @@ impl SearchEngine {
             })
             .collect();
 
-        (normalized_snippet, adjusted_highlights, line_number)
+        (final_snippet, adjusted_highlights, line_number)
     }
 
     /// Create MatchData from a FuzzyMatch

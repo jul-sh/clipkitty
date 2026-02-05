@@ -194,10 +194,36 @@ pub struct HighlightRange {
 }
 
 /// Match context data for search results
+///
+/// # Display Contract: Two-layer truncation with ellipsis
+///
+/// Both Rust and Swift may truncate, each adding their own ellipsis.
+///
+/// ## What Rust does (first pass - up to 400 chars):
+/// - **Whitespace normalization**: Newlines, tabs, carriage returns → single spaces; consecutive spaces collapsed
+/// - **Truncation ellipsis**: Prefixes "…" if truncated from start, suffixes "…" if truncated from end
+/// - **Highlight adjustment**: Indices account for normalization AND leading ellipsis prefix (+1 if present)
+///
+/// ## What Swift does (second pass - ~50 visible chars):
+/// - Windows `text` to ~50 characters, centered on `highlights[0]`
+/// - Adds "…" prefix if window start > 0, adds "…" suffix if window end < text length
+/// - Adjusts highlight indices: subtracts window start, adds 1 if Swift added prefix ellipsis
+///
+/// ## Example flow:
+/// ```text
+/// Original (500 chars):  "prefix...\n\n  code with    spaces and MATCH suffix..."
+/// Rust output (70 chars): "…code with spaces and MATCH suffix…"  (normalized, truncated both ends)
+/// Rust highlights: [25, 30] (adjusted for normalization +1 for leading ellipsis)
+/// Swift windows (50 chars): "…paces and MATCH suffix…"  (further truncated, ellipsis on both ends)
+/// Swift highlights: adjusted for window, +1 for Swift's prefix ellipsis
+/// ```
 #[derive(Debug, Clone, PartialEq, Default, uniffi::Record)]
 pub struct MatchData {
+    /// Snippet text with whitespace normalized, "…" prefix if Rust truncated from start, "…" suffix if Rust truncated from end
     pub text: String,
+    /// Highlight ranges into `text`, adjusted for normalization and Rust's leading ellipsis prefix
     pub highlights: Vec<HighlightRange>,
+    /// 1-indexed line number where the match occurs in the original content
     pub line_number: u64,
     /// Full-content highlights from Nucleo (not snippet-adjusted)
     /// Used for preview pane to ensure consistent highlighting

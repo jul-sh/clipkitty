@@ -766,32 +766,30 @@ struct ItemRow: View, Equatable {
 
     // MARK: - Display Text (Unified Logic)
 
-    private let maxDisplayChars = 200
+    // Approximate visible characters in a single row (row width ~280px, font size 15)
+    private let maxDisplayChars = 50
     private let maxRustSnippet = 400  // Rust's SNIPPET_CONTEXT_CHARS * 2
 
     /// Computed window into the source text to ensure the match is visible
-    private var snippetWindow: (start: Int, end: Int, prefix: String) {
+    /// Rust already prefixes "…" if it truncated content, so Swift just does windowing
+    private var snippetWindow: (start: Int, end: Int) {
         // Use matchData.text if present, otherwise metadata.snippet
         let sourceText = matchData?.text.isEmpty == false ? matchData!.text : metadata.snippet
 
-        // Base prefix based on line number
-        let line = matchData?.lineNumber ?? 0
-        let basePrefix = line > 1 ? "L\(line): …" : ""
-
-        // Calculate available space using estimated prefix (basePrefix + potential "…")
-        // Conservative estimate: if line==1, we might need 1 char for ellipsis.
-        let estimatedPrefixLen = basePrefix.count + (line == 1 ? 1 : 0)
-        let availableChars = maxDisplayChars - estimatedPrefixLen
-
-        // If no match data or short text, just take from start
-        guard let matchData, !matchData.highlights.isEmpty, sourceText.count > availableChars else {
-            let limit = min(sourceText.count, maxDisplayChars - basePrefix.count)
-            return (0, limit, basePrefix)
+        // If no match data or highlights, just take from start
+        guard let matchData, !matchData.highlights.isEmpty else {
+            let limit = min(sourceText.count, maxDisplayChars)
+            return (0, limit)
         }
 
+        // We have a match - center the window on it
         let firstMatch = matchData.highlights[0]
         let matchStartPos = Int(firstMatch.start)
+        let matchEndPos = Int(firstMatch.end)
 
+        let availableChars = maxDisplayChars
+
+        // Position window with 15% context before match, 85% after
         let contextBefore = Int(Double(availableChars) * 0.15)
         var start = matchStartPos - contextBefore
         var end = start + availableChars
@@ -805,53 +803,47 @@ struct ItemRow: View, Equatable {
             start = max(0, end - availableChars)
         }
 
-        // Determine final prefix
-        var finalPrefix = basePrefix
-        if line == 1 && start > 0 {
-            finalPrefix = "…"
+        // Ensure match end is visible
+        if matchEndPos > end {
+            end = min(sourceText.count, matchEndPos + 10)
+            start = max(0, end - availableChars)
         }
 
-        // Recalculate end with exact prefix length
-        // (Just clamping end to keep total length <= maxDisplayChars)
-        let totalAllowed = maxDisplayChars - finalPrefix.count
-        let currentLen = end - start
-        if currentLen > totalAllowed {
-            end = start + totalAllowed
-        }
-
-        return (start, end, finalPrefix)
+        return (start, end)
     }
 
-    /// Display text with prefix/suffix ellipsis as needed
+    /// Display text windowed around the match
+    /// Rust adds ellipsis for its truncation, Swift adds ellipsis for its windowing
     private var displaySnippet: String {
         let sourceText = matchData?.text.isEmpty == false ? matchData!.text : metadata.snippet
-        let (start, end, prefix) = snippetWindow
+        let (start, end) = snippetWindow
 
-        guard start < sourceText.count else { return prefix }
+        guard start < sourceText.count else { return "" }
 
         let idx1 = sourceText.index(sourceText.startIndex, offsetBy: start)
         let idx2 = sourceText.index(sourceText.startIndex, offsetBy: min(end, sourceText.count))
         let content = String(sourceText[idx1..<idx2])
 
-        // Add trailing ellipsis if we stopped before end of sourceText OR sourceText was already truncated
-        let needsTrailingEllipsis = end < sourceText.count || sourceText.count >= maxRustSnippet
-
-        return prefix + content + (needsTrailingEllipsis ? "…" : "")
+        // Swift adds ellipsis for its own windowing truncation
+        let prefix = start > 0 ? "…" : ""
+        let suffix = end < sourceText.count ? "…" : ""
+        return prefix + content + suffix
     }
 
-    /// Highlights for display - adjusted for prefix offset and window
+    /// Highlights for display - adjusted for window offset and Swift's prefix ellipsis
     private var displayHighlights: [HighlightRange] {
         guard let matchData, !matchData.highlights.isEmpty else { return [] }
 
-        let (windowStart, _, prefix) = snippetWindow
-        let offset = Int64(prefix.count) - Int64(windowStart)
+        let (windowStart, _) = snippetWindow
+        // Shift left by window start, then right by 1 if Swift added a prefix ellipsis
+        let prefixOffset: Int64 = windowStart > 0 ? 1 : 0
+        let offset = -Int64(windowStart) + prefixOffset
 
         return matchData.highlights.compactMap { h in
             let newStart = Int64(h.start) + offset
             let newEnd = Int64(h.end) + offset
 
-            // Filter highlights that are completely out of view?
-            // HighlightedTextView handles bounds checking, but we should try to keep valid ranges.
+            // Filter highlights that are completely out of view
             if newEnd <= 0 { return nil }
 
             return HighlightRange(start: UInt64(max(0, newStart)), end: UInt64(max(0, newEnd)))
