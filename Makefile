@@ -169,11 +169,7 @@ endif
 
 # Export app icon as PNG (for README, gh-pages, etc.)
 icon-png:
-	@rm -rf .icon-build && mkdir -p .icon-build
-	@$(call compile-icons,.icon-build)
-	@sips -s format png .icon-build/AppIcon.icns --out icon.png
-	@rm -rf .icon-build
-	@echo "Icon saved to icon.png"
+	@sips -s format png "$(ICON_SOURCE)" --out icon.png
 
 # ============================================================================
 # App Store Submission
