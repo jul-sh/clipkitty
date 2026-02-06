@@ -8,7 +8,7 @@ NIX_SHELL := ./Scripts/run-in-nix.sh -c
 APP_NAME := ClipKitty
 BUNDLE_ID := com.clipkitty.app
 SCRIPT_DIR := $(abspath $(dir $(lastword $(MAKEFILE_LIST))))
-ICON_SOURCE := $(SCRIPT_DIR)/AppIcon.icns
+ICON_SOURCE := $(SCRIPT_DIR)/AppIcon.icon
 
 # Detect Xcode availability (required for UI tests, marketing assets, universal binaries)
 HAVE_XCODE := $(shell xcodebuild -version >/dev/null 2>&1 && echo true || echo false)
@@ -41,10 +41,18 @@ RUST_LIB := Sources/ClipKittyRust/libclipkitty_core.a
 SWIFT_SANDBOX_FLAG := $(if $(filter true,$(SANDBOX)),-Xswiftc -DSANDBOXED,)
 SWIFT_BUILD := GIT_CONFIG_COUNT=1 GIT_CONFIG_KEY_0=safe.bareRepository GIT_CONFIG_VALUE_0=all swift build -c release --build-system native $(SWIFT_ARCH_FLAGS) $(SWIFT_SANDBOX_FLAG)
 
-# Icon copy helper - uses pre-compiled .icns (no Xcode required)
-define copy-icon
-cp "$(ICON_SOURCE)" $(1)/AppIcon.icns
+# Icon handling - compile with actool if Xcode available, otherwise use pre-compiled .icns
+ifeq ($(HAVE_XCODE),true)
+define setup-icons
+xcrun actool "$(ICON_SOURCE)" --compile $(1) --platform macosx --target-device mac \
+	--minimum-deployment-target 15.0 --app-icon AppIcon --include-all-app-icons \
+	--output-partial-info-plist /dev/null
 endef
+else
+define setup-icons
+cp "$(SCRIPT_DIR)/AppIcon.icns" $(1)/AppIcon.icns
+endef
+endif
 
 .PHONY: all clean sign screenshot perf build-binary dmg appstore validate upload rust rust-force
 
@@ -95,11 +103,11 @@ $(APP_PLIST):
 	@swift Scripts/GenInfoPlist.swift "$(APP_PLIST)"
 	@touch "$(APP_BUNDLE)"
 
-# Copy pre-compiled icons
+# Setup icons (compile or copy depending on Xcode availability)
 $(APP_ICONS): $(ICON_SOURCE)
-	@echo "Copying icons..."
+	@echo "Setting up icons..."
 	@mkdir -p "$(APP_BUNDLE)/Contents/Resources"
-	@$(call copy-icon,"$(APP_BUNDLE)/Contents/Resources")
+	@$(call setup-icons,"$(APP_BUNDLE)/Contents/Resources")
 
 # Minimal app bundle for tests
 $(APP_BUNDLE): $(APP_BINARY) $(APP_PLIST) $(APP_ICONS)
@@ -161,7 +169,10 @@ endif
 
 # Export app icon as PNG (for README, gh-pages, etc.)
 icon-png:
-	@sips -s format png "$(ICON_SOURCE)" --out icon.png
+	@rm -rf .icon-build && mkdir -p .icon-build
+	@$(call compile-icons,.icon-build)
+	@sips -s format png .icon-build/AppIcon.icns --out icon.png
+	@rm -rf .icon-build
 	@echo "Icon saved to icon.png"
 
 # ============================================================================
