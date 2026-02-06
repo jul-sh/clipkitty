@@ -397,13 +397,20 @@ final class ClipboardStore {
         Task.detached { [weak self] in
             do {
                 // Rust handles URL detection and metadata fetching automatically
-                _ = try rustStore.saveText(text: text, sourceApp: sourceApp, sourceAppBundleId: sourceAppBundleID)
+                let itemId = try rustStore.saveText(text: text, sourceApp: sourceApp, sourceAppBundleId: sourceAppBundleID)
 
                 // Reload on main actor if in browse mode
                 guard let self else { return }
                 await MainActor.run { [weak self] in
                     if self?.hasResults == true {
                         self?.refresh()
+                    }
+                }
+
+                // If this is a new item (not duplicate) and looks like a URL, prefetch link metadata
+                if itemId > 0, URL(string: text) != nil, text.hasPrefix("http") {
+                    Task.detached { [weak self] in
+                        _ = await self?.fetchLinkMetadata(url: text, itemId: itemId)
                     }
                 }
             } catch {
