@@ -68,15 +68,16 @@ final class ClipKittyUITests: XCTestCase {
         let sqliteSourceURL = projectRoot.appendingPathComponent("Sources/App/SyntheticData.sqlite")
 
         // Determine the correct Application Support directory based on sandbox status
-        let userHome = URL(fileURLWithPath: "/Users/\(NSUserName())")
         let appSupportDir: URL
         if isAppSandboxed(at: appURL) {
-            // Sandboxed: use container path
+            // Sandboxed: use container path (must construct manually since test isn't sandboxed)
+            let userHome = URL(fileURLWithPath: "/Users/\(NSUserName())")
             let bundleID = "com.clipkitty.app"
             appSupportDir = userHome.appendingPathComponent("Library/Containers/\(bundleID)/Data/Library/Application Support/ClipKitty")
         } else {
-            // Non-sandboxed: use regular Application Support
-            appSupportDir = userHome.appendingPathComponent("Library/Application Support/ClipKitty")
+            // Non-sandboxed: use FileManager to get the same path the app uses
+            let systemAppSupport = FileManager.default.urls(for: .applicationSupportDirectory, in: .userDomainMask).first!
+            appSupportDir = systemAppSupport.appendingPathComponent("ClipKitty")
         }
         let targetURL = appSupportDir.appendingPathComponent("clipboard-screenshot.sqlite")
         let indexDirURL = appSupportDir.appendingPathComponent("tantivy_index")
