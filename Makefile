@@ -8,8 +8,17 @@ NIX_SHELL := ./Scripts/run-in-nix.sh -c
 APP_NAME := ClipKitty
 BUNDLE_ID := com.clipkitty.app
 SCRIPT_DIR := $(abspath $(dir $(lastword $(MAKEFILE_LIST))))
-ICON_SOURCE := $(SCRIPT_DIR)/AppIcon.icon
+ICON_SOURCE := $(SCRIPT_DIR)/AppIcon.icns
+
+# Detect Xcode availability (required for UI tests, marketing assets, universal binaries)
+HAVE_XCODE := $(shell xcodebuild -version >/dev/null 2>&1 && echo true || echo false)
+
+# Universal binaries require Xcode; without it, build for native arch only
+ifeq ($(HAVE_XCODE),true)
 ARCHS ?= arm64 x86_64
+else
+ARCHS ?= $(shell uname -m)
+endif
 SWIFT_ARCH_FLAGS := $(foreach arch,$(ARCHS),--arch $(arch))
 
 # Sandboxing control (default true)
@@ -30,13 +39,11 @@ RUST_LIB := Sources/ClipKittyRust/libclipkitty_core.a
 
 # Common Swift build command
 SWIFT_SANDBOX_FLAG := $(if $(filter true,$(SANDBOX)),-Xswiftc -DSANDBOXED,)
-SWIFT_BUILD := GIT_CONFIG_COUNT=1 GIT_CONFIG_KEY_0=safe.bareRepository GIT_CONFIG_VALUE_0=all swift build -c release $(SWIFT_ARCH_FLAGS) $(SWIFT_SANDBOX_FLAG)
+SWIFT_BUILD := GIT_CONFIG_COUNT=1 GIT_CONFIG_KEY_0=safe.bareRepository GIT_CONFIG_VALUE_0=all swift build -c release --build-system native $(SWIFT_ARCH_FLAGS) $(SWIFT_SANDBOX_FLAG)
 
-# Icon compilation helper (usage: $(call compile-icons,destination-dir))
-define compile-icons
-xcrun actool "$(ICON_SOURCE)" --compile $(1) --platform macosx --target-device mac \
-	--minimum-deployment-target 15.0 --app-icon AppIcon --include-all-app-icons \
-	--output-partial-info-plist /dev/null
+# Icon copy helper - uses pre-compiled .icns (no Xcode required)
+define copy-icon
+cp "$(ICON_SOURCE)" $(1)/AppIcon.icns
 endef
 
 .PHONY: all clean sign screenshot perf build-binary dmg appstore validate upload rust rust-force
@@ -88,11 +95,11 @@ $(APP_PLIST):
 	@swift Scripts/GenInfoPlist.swift "$(APP_PLIST)"
 	@touch "$(APP_BUNDLE)"
 
-# Compile icons
+# Copy pre-compiled icons
 $(APP_ICONS): $(ICON_SOURCE)
-	@echo "Compiling icons..."
+	@echo "Copying icons..."
 	@mkdir -p "$(APP_BUNDLE)/Contents/Resources"
-	@$(call compile-icons,"$(APP_BUNDLE)/Contents/Resources")
+	@$(call copy-icon,"$(APP_BUNDLE)/Contents/Resources")
 
 # Minimal app bundle for tests
 $(APP_BUNDLE): $(APP_BINARY) $(APP_PLIST) $(APP_ICONS)
@@ -114,7 +121,11 @@ sign: $(APP_BUNDLE)
 	@codesign --force --deep --sign - --entitlements "$(ENTITLEMENTS)" "$(APP_BUNDLE)"
 
 # Perf runs without icons and only runs perf tests (uses non-sandboxed for UI testing)
+# Requires full Xcode installation
 perf:
+ifeq ($(HAVE_XCODE),false)
+	$(error Xcode is required for UI tests. Install Xcode from the App Store or use 'swift test' for unit tests.)
+endif
 	@$(MAKE) sign SANDBOX=false
 	@$(MAKE) ClipKitty.xcodeproj
 	@echo "Running UI Performance Tests..."
@@ -128,7 +139,11 @@ dmg: all sign
 	@./Scripts/build-dmg.sh "$(APP_BUNDLE)" "$(DMG_NAME)"
 
 # Screenshot runs everything (uses non-sandboxed for UI testing)
+# Requires full Xcode installation
 screenshot:
+ifeq ($(HAVE_XCODE),false)
+	$(error Xcode is required for screenshots. Install Xcode from the App Store.)
+endif
 	@$(MAKE) sign SANDBOX=false
 	@$(MAKE) ClipKitty.xcodeproj
 	@echo "Running UI Tests..."
@@ -146,10 +161,7 @@ screenshot:
 
 # Export app icon as PNG (for README, gh-pages, etc.)
 icon-png:
-	@rm -rf .icon-build && mkdir -p .icon-build
-	@$(call compile-icons,.icon-build)
-	@sips -s format png .icon-build/AppIcon.icns --out icon.png
-	@rm -rf .icon-build
+	@sips -s format png "$(ICON_SOURCE)" --out icon.png
 	@echo "Icon saved to icon.png"
 
 # ============================================================================
@@ -257,7 +269,11 @@ print-background-image:
 	@echo $(BACKGROUND_IMAGE)
 
 # Capture raw marketing screenshots via UI test (with clean environment, uses sandboxed)
+# Requires full Xcode installation
 marketing-screenshots-capture:
+ifeq ($(HAVE_XCODE),false)
+	$(error Xcode is required for marketing screenshots. Install Xcode from the App Store.)
+endif
 	@./Scripts/patch-demo-items.sh
 	@$(MAKE) sign SANDBOX=true
 	@$(MAKE) ClipKitty.xcodeproj
@@ -276,7 +292,11 @@ marketing-screenshots: marketing-screenshots-capture marketing-screenshots-proce
 	@echo "Marketing screenshots complete! See marketing/ directory"
 
 # Record App Store preview video (uses sandboxed)
+# Requires full Xcode installation
 preview-video:
+ifeq ($(HAVE_XCODE),false)
+	$(error Xcode is required for preview video. Install Xcode from the App Store.)
+endif
 	@./Scripts/patch-demo-items.sh
 	@$(MAKE) sign SANDBOX=true
 	@$(MAKE) ClipKitty.xcodeproj
