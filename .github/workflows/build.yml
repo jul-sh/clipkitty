@@ -36,16 +36,12 @@ jobs:
 
       - name: Run UI Tests
         run: |
-          make screenshot
+          SANDBOX=false make screenshot
           # Validate screenshot was actually captured
           if [ ! -f screenshot.png ]; then
             echo "ERROR: screenshot.png was not created. Check UI test logs."
             exit 1
           fi
-          echo "### UI Performance Results" >> $GITHUB_STEP_SUMMARY
-          echo '```' >> $GITHUB_STEP_SUMMARY
-          swift Scripts/PrintPerfResults.swift >> $GITHUB_STEP_SUMMARY
-          echo '```' >> $GITHUB_STEP_SUMMARY
 
       - name: Generate Marketing Assets
         run: |
