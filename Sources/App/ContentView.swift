@@ -631,7 +631,8 @@ struct TextPreviewView: NSViewRepresentable {
 
         // Only update if text or highlights changed
         let currentText = textView.string
-        if currentText != text || context.coordinator.lastHighlights != highlights {
+        let shouldScroll = currentText != text || context.coordinator.lastHighlights != highlights
+        if shouldScroll {
             context.coordinator.lastHighlights = highlights
 
             // Create paragraph style to ensure consistent word wrapping
@@ -646,6 +647,8 @@ struct TextPreviewView: NSViewRepresentable {
                     .paragraphStyle: paragraphStyle
                 ])
                 textView.textStorage?.setAttributedString(attributed)
+                // Scroll to top when no highlights
+                textView.scrollToBeginningOfDocument(nil)
             } else {
                 // Apply Rust-computed highlights
                 let attributed = NSMutableAttributedString(string: text, attributes: [
@@ -661,6 +664,41 @@ struct TextPreviewView: NSViewRepresentable {
                     }
                 }
                 textView.textStorage?.setAttributedString(attributed)
+
+                // Auto-scroll to the densest highlight region
+                // Defer to next run loop to ensure layout is complete
+                let targetRange = findDensestHighlightRegion(highlights)
+                DispatchQueue.main.async { [weak textView] in
+                    guard let textView, let targetRange else { return }
+                    guard let scrollView = textView.enclosingScrollView else { return }
+                    textView.layoutManager?.ensureLayout(for: textView.textContainer!)
+
+                    let glyphRange = textView.layoutManager?.glyphRange(forCharacterRange: targetRange, actualCharacterRange: nil) ?? targetRange
+                    guard let rect = textView.layoutManager?.boundingRect(forGlyphRange: glyphRange, in: textView.textContainer!) else { return }
+
+                    // Convert rect to scroll view coordinates and check if already visible
+                    let highlightRect = rect.offsetBy(dx: textView.textContainerInset.width, dy: textView.textContainerInset.height)
+                    let visibleRect = scrollView.documentVisibleRect
+                    if visibleRect.contains(highlightRect) {
+                        return  // Already visible, no scroll needed
+                    }
+
+                    // Check if highlight is near the end of the document
+                    let documentHeight = textView.layoutManager?.usedRect(for: textView.textContainer!).height ?? 0
+                    let highlightY = rect.origin.y + rect.height
+                    let isNearEnd = documentHeight - highlightY < 100
+
+                    // Perform scroll with animations explicitly disabled
+                    CATransaction.begin()
+                    CATransaction.setDisableActions(true)
+                    if isNearEnd {
+                        textView.scrollToEndOfDocument(nil)
+                    } else {
+                        let scrollRect = highlightRect.insetBy(dx: 0, dy: -50)
+                        textView.scrollToVisible(scrollRect)
+                    }
+                    CATransaction.commit()
+                }
             }
         }
 
@@ -669,6 +707,36 @@ struct TextPreviewView: NSViewRepresentable {
             height: .greatestFiniteMagnitude
         )
         textView.frame = NSRect(x: 0, y: 0, width: nsView.contentSize.width, height: textView.frame.height)
+    }
+
+    /// Find the region with the highest density of highlights using a sliding window
+    private func findDensestHighlightRegion(_ highlights: [HighlightRange]) -> NSRange? {
+        guard !highlights.isEmpty else { return nil }
+        guard highlights.count > 1 else {
+            // Single highlight - just return it
+            return highlights[0].nsRange
+        }
+
+        // Sort highlights by start position
+        let sorted = highlights.sorted { $0.start < $1.start }
+
+        // Use a window of ~500 characters to find the densest region
+        let windowSize: UInt64 = 500
+        var bestStart = sorted[0].start
+        var bestCount = 0
+
+        for highlight in sorted {
+            let windowEnd = highlight.start + windowSize
+            let count = sorted.filter { $0.start >= highlight.start && $0.start < windowEnd }.count
+            if count > bestCount {
+                bestCount = count
+                bestStart = highlight.start
+            }
+        }
+
+        // Return the first highlight in the densest region
+        let centerHighlight = sorted.first { $0.start >= bestStart } ?? sorted[0]
+        return centerHighlight.nsRange
     }
 
     func makeCoordinator() -> Coordinator {
