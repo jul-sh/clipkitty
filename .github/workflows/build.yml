@@ -36,11 +36,12 @@ jobs:
 
       - name: Run UI Tests
         run: |
-          set -o pipefail
-          xcodebuild test \
-            -scheme ClipKitty \
-            -destination 'platform=macOS' \
-            -only-testing:ClipKittyTests/SnippetWindowTests 2>&1 | xcpretty
+          make screenshot
+          # Validate screenshot was actually captured
+          if [ ! -f screenshot.png ]; then
+            echo "ERROR: screenshot.png was not created. Check UI test logs."
+            exit 1
+          fi
           echo "### UI Performance Results" >> $GITHUB_STEP_SUMMARY
           echo '```' >> $GITHUB_STEP_SUMMARY
           swift Scripts/PrintPerfResults.swift >> $GITHUB_STEP_SUMMARY
@@ -74,6 +75,7 @@ jobs:
         with:
           name: assets
           path: |
+            screenshot.png
             icon.png
             marketing/screenshot_*.png
             marketing/app_preview.mov
@@ -97,8 +99,7 @@ jobs:
             git reset --hard
           fi
 
-          # Copy marketing screenshot as main screenshot
-          cp "$GITHUB_WORKSPACE/marketing/screenshot_2.png" screenshot.png
+          cp "$GITHUB_WORKSPACE/screenshot.png" .
           cp "$GITHUB_WORKSPACE/icon.png" .
           git add screenshot.png icon.png
           git commit -m "Update screenshot and icon [skip ci]" || echo "No changes to commit"
@@ -173,9 +174,9 @@ jobs:
             --prerelease \
             ClipKitty.dmg \
             ClipKitty-Sandboxed.dmg \
+            screenshot.png \
             icon.png \
             marketing/screenshot_*.png \
             marketing/app_preview.mov
         env:
           GH_TOKEN: ${{ github.token }}
-
