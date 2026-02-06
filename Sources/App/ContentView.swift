@@ -634,20 +634,24 @@ struct TextPreviewView: NSViewRepresentable {
         if currentText != text || context.coordinator.lastHighlights != highlights {
             context.coordinator.lastHighlights = highlights
 
+            // Create paragraph style to ensure consistent word wrapping
+            let paragraphStyle = NSMutableParagraphStyle()
+            paragraphStyle.lineBreakMode = .byWordWrapping
+
             if highlights.isEmpty {
-                // Clear any previous highlighting by setting plain string
-                textView.string = text
-                textView.font = font
-                textView.textColor = .labelColor
-                // Remove any lingering background colors from previous search
-                if let textStorage = textView.textStorage, textStorage.length > 0 {
-                    textStorage.removeAttribute(.backgroundColor, range: NSRange(location: 0, length: textStorage.length))
-                }
+                // Clear any previous highlighting by setting plain string with consistent style
+                let attributed = NSMutableAttributedString(string: text, attributes: [
+                    .font: font,
+                    .foregroundColor: NSColor.labelColor,
+                    .paragraphStyle: paragraphStyle
+                ])
+                textView.textStorage?.setAttributedString(attributed)
             } else {
                 // Apply Rust-computed highlights
                 let attributed = NSMutableAttributedString(string: text, attributes: [
                     .font: font,
-                    .foregroundColor: NSColor.labelColor
+                    .foregroundColor: NSColor.labelColor,
+                    .paragraphStyle: paragraphStyle
                 ])
                 let highlightColor = NSColor.yellow.withAlphaComponent(0.4)
                 for range in highlights {
