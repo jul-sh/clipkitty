@@ -22,7 +22,7 @@ final class LinkMetadataFetcher {
 
             do {
                 let metadata = try await provider.startFetchingMetadata(for: urlObj)
-                return Self.convert(metadata)
+                return await Self.convert(metadata)
             } catch {
                 return nil
             }
@@ -41,23 +41,20 @@ final class LinkMetadataFetcher {
         activeFetches.removeValue(forKey: itemId)
     }
 
-    private static func convert(_ metadata: LPLinkMetadata) -> FetchedLinkMetadata? {
+    private static func convert(_ metadata: LPLinkMetadata) async -> FetchedLinkMetadata? {
         let title = metadata.title
 
         // LPMetadataProvider doesn't directly expose og:description
         let description: String? = nil
 
-        // Fetch image data synchronously (we're already on main thread)
+        // Fetch image data using async continuation
         var imageData: Data?
         if let imageProvider = metadata.imageProvider {
-            let semaphore = DispatchSemaphore(value: 0)
-            var fetchedData: Data?
-            imageProvider.loadDataRepresentation(forTypeIdentifier: "public.image") { data, _ in
-                fetchedData = data
-                semaphore.signal()
+            imageData = await withCheckedContinuation { continuation in
+                imageProvider.loadDataRepresentation(forTypeIdentifier: "public.image") { data, _ in
+                    continuation.resume(returning: data)
+                }
             }
-            _ = semaphore.wait(timeout: .now() + 5)
-            imageData = fetchedData
         }
 
         // Return nil if we got nothing useful
