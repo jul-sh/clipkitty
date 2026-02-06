@@ -149,8 +149,13 @@ dmg: all sign
 # Screenshot launches the app with synthetic data and takes a fullscreen capture
 screenshot: run-synthetic
 	@echo "Preparing environment and taking screenshot..."
-	@./Scripts/prepare-screenshot-environment.sh 'sleep 5 && screencapture screenshot.png'
-	@echo "Screenshot saved to screenshot.png"
+	@./Scripts/prepare-screenshot-environment.sh 'sleep 5 && osascript -e "tell application \"ClipKitty\" to activate" -e "tell application \"System Events\" to key code 49 using {option down}" && sleep 1 && screencapture screenshot.png'
+	@if [ -f screenshot.png ]; then \
+		WIDTH=$$(sips -g pixelWidth screenshot.png | tail -1 | awk '{print $$2}'); \
+		HEIGHT=$$(sips -g pixelHeight screenshot.png | tail -1 | awk '{print $$2}'); \
+		sips --resampleHeightWidth $$((HEIGHT * 2)) $$((WIDTH * 2)) screenshot.png --out screenshot.png; \
+	fi
+	@echo "Screenshot saved to screenshot.png (2x upscaled)"
 
 # Export app icon as PNG (for README, gh-pages, etc.)
 icon-png:
