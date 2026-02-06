@@ -159,7 +159,7 @@ screenshot: run-synthetic
 
 # Export app icon as PNG (for README, gh-pages, etc.)
 icon-png:
-	@sips -s format png "$(ICON_SOURCE)" --out icon.png
+	@sips -s format png "$(SCRIPT_DIR)/AppIcon.icns" --out icon.png
 
 # ============================================================================
 # App Store Submission
