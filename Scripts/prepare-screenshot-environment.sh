@@ -18,6 +18,7 @@ if [ -n "$CI" ]; then
     osascript -e "tell application \"Finder\" to set desktop picture to POSIX file \"$BACKGROUND_IMAGE\""
 
     echo "CI detected - cleaning dock..."
+    PREV_APPS_FILE="$(mktemp /tmp/dock_apps.XXXXXX)"
     defaults read com.apple.dock persistent-apps | head -1 > "$PREV_APPS_FILE" 2>/dev/null || true
     defaults write com.apple.dock persistent-apps -array
     killall Dock 2>/dev/null || true
