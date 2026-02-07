@@ -285,30 +285,19 @@ fn generate_timestamp(item_index: usize, now: i64) -> i64 {
     now - age_seconds
 }
 
+use clipkitty_core::demo_data::DEMO_ITEMS;
+
 fn insert_demo_items(store: &ClipboardStore, db_path: &str) -> Result<()> {
     let now = Utc::now().timestamp();
-    let demo_items = vec![
-        ("Apartment walkthrough notes: 437 Riverside Dr #12, hardwood floors throughout, south-facing windows with park views, original crown molding, in-unit washer/dryer, $2850/mo, super lives on-site, contact Marcus Realty about lease terms and move-in date flexibility...", "Notes", "com.apple.Notes", now - (180 * 24 * 60 * 60)),
-        ("riverside_park_picnic_directions.txt", "Notes", "com.apple.Notes", now - 3600),
-        ("river_animation_keyframes.css", "TextEdit", "com.apple.TextEdit", now - 3500),
-        ("#7C3AED", "Freeform", "com.apple.freeform", now - 1800),
-        ("#FF5733", "Freeform", "com.apple.freeform", now - 1700),
-        ("#2DD4BF", "Preview", "com.apple.Preview", now - 1600),
-        ("#F472B6", "Preview", "com.apple.Preview", now - 1500),
-        ("Orange tabby cat sleeping on mechanical keyboard", "Photos", "com.apple.Photos", now - 1400),
-        ("Hello ClipKitty!\n\n• Unlimited History\n• Instant Search\n• Private\n\nYour clipboard, supercharged.", "Notes", "com.apple.Notes", now - 600),
-        ("Hello and welcome to the onboarding flow for new team members...", "Reminders", "com.apple.reminders", now - 500),
-        ("hello_world.py", "Finder", "com.apple.finder", now - 400),
-        ("sayHello(user: User) -> String { ... }", "Automator", "com.apple.Automator", now - 300),
-        ("The quick brown fox jumps over the lazy dog", "Notes", "com.apple.Notes", now - 120),
-        ("https://developer.apple.com/documentation/swiftui", "Safari", "com.apple.Safari", now - 60),
-        ("SELECT users.name, orders.total FROM orders JOIN users ON users.id = orders.user_id WHERE orders.status = 'completed';", "Numbers", "com.apple.Numbers", now - 10),
-    ];
 
-    for (content, app, bundle, ts) in demo_items {
-        if let Ok(id) = store.save_text(content.to_string(), Some(app.to_string()), Some(bundle.to_string())) {
+    for item in DEMO_ITEMS {
+        if let Ok(id) = store.save_text(
+            item.content.to_string(),
+            Some(item.source_app.to_string()),
+            Some(item.bundle_id.to_string()),
+        ) {
             if id > 0 {
-                let _ = set_timestamp_direct(db_path, id, ts);
+                let _ = set_timestamp_direct(db_path, id, now + item.offset);
             }
         }
     }
