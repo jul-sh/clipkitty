@@ -149,7 +149,7 @@ dmg: all sign
 # Screenshot launches the app with synthetic data and takes a fullscreen capture
 screenshot: run-synthetic
 	@echo "Preparing environment and taking screenshot..."
-	@./Scripts/prepare-screenshot-environment.sh && 'pkill ClipKitty || true && open ClipKitty.app --args --use-simulated-db &&sleep 3 && screencapture screenshot.png && pkill ClipKitty || true'
+	@./Scripts/prepare-screenshot-environment.sh 'pkill ClipKitty || true && open ClipKitty.app --args --use-simulated-db && sleep 3 && screencapture screenshot.png && pkill ClipKitty || true'
 	@if [ -f screenshot.png ]; then \
 		WIDTH=$$(sips -g pixelWidth screenshot.png | tail -1 | awk '{print $$2}'); \
 		HEIGHT=$$(sips -g pixelHeight screenshot.png | tail -1 | awk '{print $$2}'); \
