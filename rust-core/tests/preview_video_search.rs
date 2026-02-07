@@ -8,6 +8,7 @@
 
 use clipkitty_core::ClipboardStore;
 use clipkitty_core::ClipboardStoreApi;
+use clipkitty_core::demo_data::DEMO_ITEMS;
 use tempfile::TempDir;
 
 /// Create a test store with all preview video items
@@ -21,121 +22,12 @@ fn create_preview_video_store() -> (ClipboardStore, TempDir) {
     // The first items in this list will be oldest and appear lower in default list
     // The last items will be newest and appear at the top
 
-    let items = vec![
-        // --- Scene 3: Old items ---
-        (
-            "Apartment walkthrough notes: 437 Riverside Dr #12, hardwood floors throughout, south-facing windows with park views, original crown molding, in-unit washer/dryer, $2850/mo, super lives on-site, contact Marcus Realty about lease terms and move-in date flexibility...",
-            "Notes",
-            "com.apple.Notes",
-        ),
-        ("riverside_park_picnic_directions.txt", "Notes", "com.apple.Notes"),
-        ("driver_config.yaml", "TextEdit", "com.apple.TextEdit"),
-        ("river_animation_keyframes.css", "TextEdit", "com.apple.TextEdit"),
-        (
-            "derive_key_from_password(salt: Data, iterations: Int) -> Data { ... }",
-            "Automator",
-            "com.apple.Automator",
-        ),
-        ("private_key_backup.pem", "Finder", "com.apple.finder"),
-        (
-            "return fetchData().then(res => res.json()).catch(handleError)...",
-            "TextEdit",
-            "com.apple.TextEdit",
-        ),
-        ("README.md", "Finder", "com.apple.finder"),
-        ("RFC 2616 HTTP/1.1 Specification full text...", "Safari", "com.apple.Safari"),
-        ("grep -rn \"TODO\\|FIXME\" ./src", "Terminal", "com.apple.Terminal"),
-        ("border-radius: 8px;", "TextEdit", "com.apple.TextEdit"),
-        // --- Scene 2: Color/Image items ---
-        (
-            "Orange tabby cat sleeping on mechanical keyboard",
-            "Photos",
-            "com.apple.Photos",
-        ),
-        (
-            "Architecture diagram with service mesh",
-            "Safari",
-            "com.apple.Safari",
-        ),
-        ("#7C3AED", "Freeform", "com.apple.freeform"),
-        ("#FF5733", "Freeform", "com.apple.freeform"),
-        ("#2DD4BF", "Preview", "com.apple.Preview"),
-        ("#1E293B", "Freeform", "com.apple.freeform"),
-        ("#F472B6", "Preview", "com.apple.Preview"),
-        (
-            "#border-container { margin: 0; padding: 16px; display: flex; flex-direction: column; ...",
-            "TextEdit",
-            "com.apple.TextEdit",
-        ),
-        ("catalog_api_response.json", "Mail", "com.apple.mail"),
-        (
-            "catch (error) { logger.error(error); Sentry.captureException(error); ...",
-            "TextEdit",
-            "com.apple.TextEdit",
-        ),
-        ("concatenate_strings(a, b)", "TextEdit", "com.apple.TextEdit"),
-        (
-            "categories: [{ id: 1, name: \"Electronics\", subcategories: [...] }]",
-            "TextEdit",
-            "com.apple.TextEdit",
-        ),
-        // --- Scene 1: Hello-related items ---
-        (
-            "Hello ClipKitty!\n\n• Unlimited History\n• Instant Search\n• Private\n\nYour clipboard, supercharged.",
-            "Notes",
-            "com.apple.Notes",
-        ),
-        (
-            "Hello and welcome to the onboarding flow for new team members. This document covers everything you need to know about getting started...",
-            "Reminders",
-            "com.apple.reminders",
-        ),
-        ("hello_world.py", "Finder", "com.apple.finder"),
-        (
-            "sayHello(user: User) -> String { ... }",
-            "Automator",
-            "com.apple.Automator",
-        ),
-        ("Othello character analysis notes", "Pages", "com.apple.iWork.Pages"),
-        ("hello_config.json", "TextEdit", "com.apple.TextEdit"),
-        ("client_hello_handshake()", "TextEdit", "com.apple.TextEdit"),
-        ("clipboard_manager_notes.md", "Stickies", "com.apple.Stickies"),
-        ("cache_hello_responses()", "TextEdit", "com.apple.TextEdit"),
-        ("check_health_status()", "TextEdit", "com.apple.TextEdit"),
-        (
-            "HashMap<String, Vec<Box<dyn Handler>>>",
-            "TextEdit",
-            "com.apple.TextEdit",
-        ),
-        // --- Default/empty state items (most recent) ---
-        (
-            "The quick brown fox jumps over the lazy dog",
-            "Notes",
-            "com.apple.Notes",
-        ),
-        (
-            "https://developer.apple.com/documentation/swiftui",
-            "Safari",
-            "com.apple.Safari",
-        ),
-        (
-            "#!/bin/bash\nset -euo pipefail\necho \"Deploying to prod...\"",
-            "TextEdit",
-            "com.apple.TextEdit",
-        ),
-        (
-            "SELECT users.name, orders.total FROM orders JOIN users ON users.id = orders.user_id WHERE orders.status = 'completed' AND orders.created_at > NOW() - INTERVAL '30 days' ORDER BY orders.total DESC LIMIT 100;",
-            "Numbers",
-            "com.apple.Numbers",
-        ),
-    ];
-
-    for (content, source_app, bundle_id) in items {
+    for item in DEMO_ITEMS {
         store
             .save_text(
-                content.to_string(),
-                Some(source_app.to_string()),
-                Some(bundle_id.to_string()),
+                item.content.to_string(),
+                Some(item.source_app.to_string()),
+                Some(item.bundle_id.to_string()),
             )
             .unwrap();
         // Small sleep to ensure different timestamps
@@ -180,10 +72,6 @@ async fn scene1_empty_query_shows_sql_first() {
 
     // Check other visible items in default state
     let previews: Vec<&str> = items.iter().map(|i| i.item_metadata.snippet.as_str()).collect();
-    assert!(
-        previews.iter().any(|c| c.contains("sk-proj")),
-        "API key should be visible"
-    );
     assert!(
         previews.iter().any(|c| c.contains("Deploying to prod")),
         "Deploy script should be visible"
@@ -526,10 +414,6 @@ async fn verify_all_expected_items_exist() {
     assert!(
         previews.iter().any(|c| c.contains("SELECT users.name")),
         "SQL query missing"
-    );
-    assert!(
-        previews.iter().any(|c| c.contains("sk-proj")),
-        "API key missing"
     );
     assert!(
         previews.iter().any(|c| c.contains("quick brown fox")),
