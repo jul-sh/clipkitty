@@ -20,6 +20,8 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate {
 
         // Use simulated database with test data (for UI tests and screenshots)
         let useSimulatedDb = CommandLine.arguments.contains("--use-simulated-db")
+        let shouldShow = useSimulatedDb
+
         if useSimulatedDb {
             populateTestDatabase()
         }
@@ -40,8 +42,8 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate {
 
         setupMenuBar()
 
-        // When using simulated DB, show the panel immediately
-        if useSimulatedDb {
+        // When using simulated DB or --show, show the panel immediately
+        if shouldShow {
             // Check for --search argument
             if let searchIndex = CommandLine.arguments.firstIndex(of: "--search"),
                searchIndex + 1 < CommandLine.arguments.count {
