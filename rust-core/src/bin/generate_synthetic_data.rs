@@ -302,7 +302,6 @@ fn insert_demo_items(store: &ClipboardStore, db_path: &str) -> Result<()> {
         ("sayHello(user: User) -> String { ... }", "Automator", "com.apple.Automator", now - 300),
         ("The quick brown fox jumps over the lazy dog", "Notes", "com.apple.Notes", now - 120),
         ("https://developer.apple.com/documentation/swiftui", "Safari", "com.apple.Safari", now - 60),
-        ("sk-proj-Tj7X9...", "Passwords", "com.apple.Passwords", now - 30),
         ("SELECT users.name, orders.total FROM orders JOIN users ON users.id = orders.user_id WHERE orders.status = 'completed';", "Numbers", "com.apple.Numbers", now - 10),
     ];
 

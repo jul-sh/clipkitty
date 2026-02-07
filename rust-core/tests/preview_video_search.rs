@@ -118,7 +118,6 @@ fn create_preview_video_store() -> (ClipboardStore, TempDir) {
             "Safari",
             "com.apple.Safari",
         ),
-        ("sk-proj-Tj7X9...", "Passwords", "com.apple.Passwords"),
         (
             "#!/bin/bash\nset -euo pipefail\necho \"Deploying to prod...\"",
             "TextEdit",
