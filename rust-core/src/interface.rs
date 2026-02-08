@@ -225,7 +225,7 @@ pub struct MatchData {
     pub highlights: Vec<HighlightRange>,
     /// 1-indexed line number where the match occurs in the original content
     pub line_number: u64,
-    /// Full-content highlights from Nucleo (not snippet-adjusted)
+    /// Full-content highlights (not snippet-adjusted)
     /// Used for preview pane to ensure consistent highlighting
     pub full_content_highlights: Vec<HighlightRange>,
 }

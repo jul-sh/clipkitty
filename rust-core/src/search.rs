@@ -1,15 +1,13 @@
-//! Two-Layer Search Engine (L1 Tantivy -> L2 Nucleo)
+//! Search Engine (Tantivy with phrase-boost scoring + substring highlighting)
 //!
-//! Layer 1 (Retrieval): Filters millions of items down to candidates using trigram indexing.
-//! Layer 2 (Precision): Scores words independently with Nucleo for contiguity bonuses.
-//!                      Rejects scattered noise, and natively handles typos.
+//! Tantivy handles retrieval and scoring via trigram indexing with per-word PhraseQuery
+//! boosts for contiguity-aware ranking. Highlighting uses simple case-insensitive
+//! substring search. Short queries (< 3 chars) use a streaming fallback.
 
 use crate::indexer::{Indexer, IndexerResult};
 use crate::interface::{HighlightRange, MatchData, ItemMatch};
 use crate::models::StoredItem;
 use chrono::Utc;
-use nucleo_matcher::pattern::{CaseMatching, Normalization, Pattern};
-use nucleo_matcher::{Config, Matcher, Utf32Str};
 
 /// Maximum results to return from search.
 /// Returning more than this is not useful to the user.
@@ -20,9 +18,6 @@ pub const MIN_TRIGRAM_QUERY_LEN: usize = 3;
 /// Maximum recency boost multiplier (e.g., 0.1 = up to 10% boost for brand new items)
 const RECENCY_BOOST_MAX: f64 = 0.1;
 const RECENCY_HALF_LIFE_SECS: f64 = 7.0 * 24.0 * 60.0 * 60.0;
-
-/// Minimum ratio of adjacent character pairs for Nucleo matches to be valid.
-const MIN_ADJACENCY_RATIO: f64 = 0.25;
 
 /// Boost factor for prefix matches in short query scoring
 const PREFIX_MATCH_BOOST: f64 = 2.0;
@@ -42,16 +37,14 @@ pub struct FuzzyMatch {
     pub is_prefix_match: bool,
 }
 
-pub struct SearchEngine {
-    config: Config,
-}
+pub struct SearchEngine;
 
 impl SearchEngine {
     pub fn new() -> Self {
-        Self { config: Config::DEFAULT }
+        Self
     }
 
-    /// Search using Tantivy + Nucleo for trigram queries (>= 3 chars)
+    /// Search using Tantivy with phrase-boost scoring for trigram queries (>= 3 chars)
     pub fn search(&self, indexer: &Indexer, query: &str) -> IndexerResult<Vec<FuzzyMatch>> {
         if query.trim().is_empty() {
             return Ok(Vec::new());
@@ -61,32 +54,22 @@ impl SearchEngine {
         let has_trailing_space = query.ends_with(' ');
         let query_words: Vec<&str> = trimmed.trim_end().split_whitespace().collect();
 
-        // L1: Strict Tantivy filtering - don't cap early, let Nucleo filter
+        // Tantivy retrieval with phrase-boost scoring
         let candidates = indexer.search(trimmed.trim_end())?;
-
-        let mut matcher = Matcher::new(self.config.clone());
-        let patterns: Vec<Pattern> = query_words
-            .iter()
-            .map(|w| Pattern::parse(w, CaseMatching::Ignore, Normalization::Smart))
-            .collect();
 
         let mut matches = Vec::with_capacity(candidates.len().min(MAX_RESULTS * 2));
         let now = Utc::now().timestamp();
 
-        // L2: Independent Word Scoring
         for candidate in candidates {
-            if let Some(fuzzy_match) = self.score_candidate(
+            let fm = Self::highlight_candidate(
                 candidate.id,
                 &candidate.content,
                 candidate.timestamp,
+                candidate.tantivy_score,
                 &query_words,
-                &patterns,
                 has_trailing_space,
-                &mut matcher,
-                false, // not checking prefix for trigram queries
-            ) {
-                matches.push(fuzzy_match);
-            }
+            );
+            matches.push(fm);
         }
 
         matches.sort_unstable_by(|a, b| {
@@ -153,37 +136,40 @@ impl SearchEngine {
         results
     }
 
-    /// Core Scoring Logic: Analyzes a document against split query words
-    fn score_candidate(
-        &self,
+    /// Highlight a Tantivy-confirmed candidate using case-insensitive substring search.
+    /// Tantivy has already confirmed relevance — this finds highlight positions
+    /// and converts the tantivy_score to a u32 for blended_score compatibility.
+    fn highlight_candidate(
         id: i64,
         content: &str,
         timestamp: i64,
+        tantivy_score: f32,
         words: &[&str],
-        patterns: &[Pattern],
         has_trailing_space: bool,
-        matcher: &mut Matcher,
-        check_prefix: bool,
-    ) -> Option<FuzzyMatch> {
-        let mut haystack_buf = Vec::new();
-        let haystack = Utf32Str::new(content, &mut haystack_buf);
-
-        let mut total_score = 0;
+    ) -> FuzzyMatch {
+        let content_lower = content.to_lowercase();
         let mut all_indices = Vec::new();
 
-        for (i, &word) in words.iter().enumerate() {
-            let mut word_indices = Vec::new();
-            let word_len = word.chars().count() as u32;
-
-            let score = patterns[i].indices(haystack, matcher, &mut word_indices)
-                .filter(|_| passes_density_check(word_len, &word_indices))?;
-
-            total_score += score;
-            all_indices.extend_from_slice(&word_indices);
+        for &word in words {
+            let word_lower = word.to_lowercase();
+            if let Some(byte_pos) = content_lower.find(&word_lower) {
+                // Convert byte offset to char offset (downstream expects char indices)
+                let char_start = content[..byte_pos].chars().count();
+                let char_len = word_lower.chars().count();
+                for i in 0..char_len {
+                    all_indices.push((char_start + i) as u32);
+                }
+            }
         }
 
         all_indices.sort_unstable();
         all_indices.dedup();
+
+        // Scale tantivy_score to u32 for blended_score compatibility.
+        // Quantize coarsely so that small BM25 differences (e.g. from
+        // minor document length variation) are treated as ties, letting
+        // the recency tiebreaker determine ordering.
+        let mut score = ((tantivy_score as u32).max(1)) * 1000;
 
         // Trailing Space Boost: boost matches where the word ends at a word boundary
         if has_trailing_space {
@@ -191,27 +177,19 @@ impl SearchEngine {
                 let ends_at_boundary = content.chars().nth((last_idx + 1) as usize)
                     .map_or(true, |c| c.is_whitespace());
                 if ends_at_boundary {
-                    total_score = (total_score as f32 * 1.2) as u32;
+                    score = (score as f32 * 1.2) as u32;
                 }
             }
         }
 
-        // Check if this is a prefix match (for short query scoring)
-        let is_prefix_match = if check_prefix && !words.is_empty() {
-            let first_word = words[0].to_lowercase();
-            content.to_lowercase().starts_with(&first_word)
-        } else {
-            false
-        };
-
-        Some(FuzzyMatch {
+        FuzzyMatch {
             id,
-            score: total_score,
+            score,
             matched_indices: all_indices,
             timestamp,
             content: content.to_string(),
-            is_prefix_match,
-        })
+            is_prefix_match: false,
+        }
     }
 
     /// Convert matched indices to highlight ranges
@@ -242,7 +220,7 @@ impl SearchEngine {
         }
 
         let first_highlight = &highlights[0];
-        // These are CHARACTER indices from Nucleo, not byte offsets
+        // These are CHARACTER indices, not byte offsets
         let match_start_char = first_highlight.start as usize;
         let match_end_char = first_highlight.end as usize;
 
@@ -364,32 +342,10 @@ impl SearchEngine {
 }
 
 impl Default for SearchEngine {
-    fn default() -> Self { Self::new() }
+    fn default() -> Self { Self }
 }
 
-/// Density check: reject scattered character matches ("soup" detection).
-/// Two checks:
-/// 1. Span check: matched indices must not span more than 3x the word length
-/// 2. Adjacency check: at least 25% of character pairs must be adjacent
-fn passes_density_check(word_len: u32, indices: &[u32]) -> bool {
-    if word_len <= 3 { return true; }
-    if indices.len() < 2 { return true; }
-
-    // Span check: the total span of matched chars shouldn't be too large
-    // E.g., "foobarbaz" (9 chars) spanning 263 positions is obviously scattered
-    let span = indices.last().unwrap() - indices.first().unwrap();
-    let max_span = word_len * 3; // Allow 3x word length for typos/insertions
-    if span > max_span {
-        return false;
-    }
-
-    // Adjacency check: require minimum ratio of adjacent pairs
-    let total_pairs = indices.len() - 1;
-    let adjacent = indices.windows(2).filter(|w| w[1] == w[0] + 1).count();
-    (adjacent as f64 / total_pairs as f64) > MIN_ADJACENCY_RATIO
-}
-
-/// Calculate blended score combining Nucleo fuzzy score with recency
+/// Calculate blended score combining Tantivy score with recency
 /// For short queries, recency is the primary factor with prefix boost
 fn blended_score(fuzzy_score: u32, timestamp: i64, now: i64, is_prefix_match: bool) -> f64 {
     let base_score = fuzzy_score as f64;

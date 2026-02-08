@@ -342,7 +342,7 @@ async fn scene3_search_rivresid_typo_finds_riverside() {
     let (store, _temp) = create_preview_video_store();
 
     // "riversde" is a typo - missing 'i' from "Riverside"
-    // Nucleo's fuzzy matching should still find it (unlike transposed letters)
+    // Tantivy's trigram matching should still find it via shared trigrams
     let result = store.search("riversde".to_string()).await.unwrap();
 
     let ids: Vec<i64> = result.matches.iter().map(|m| m.item_metadata.item_id).collect();
@@ -487,9 +487,8 @@ async fn ranking_contiguous_beats_scattered() {
 
 #[tokio::test]
 async fn ranking_recency_breaks_ties_for_equal_matches() {
-    // This test verifies that timestamp is used as a tiebreaker for identical Nucleo scores.
-    // We use content that produces identical Nucleo scores: "hello world one/two/three"
-    // all score 140 for query "hello ".
+    // This test verifies that timestamp is used as a tiebreaker for equal scores.
+    // We use content that produces equal quantized Tantivy scores: "hello world one/two/three".
     //
     // IMPORTANT: Unix timestamps have 1-second resolution, so we need 1+ second gaps
     // between insertions for the timestamps to differ.
@@ -515,7 +514,7 @@ async fn ranking_recency_breaks_ties_for_equal_matches() {
     // Verify all 3 were inserted (not deduplicated)
     assert!(id1 > 0 && id2 > 0 && id3 > 0, "All items should be inserted");
 
-    // Search for "hello " - all 3 have identical Nucleo scores (140)
+    // Search for "hello " - all 3 have equal quantized Tantivy scores
     let result = store.search("hello ".to_string()).await.unwrap();
     let ids: Vec<i64> = result.matches.iter().map(|m| m.item_metadata.item_id).collect();
     let items = store.fetch_by_ids(ids.clone()).unwrap();
@@ -531,7 +530,7 @@ async fn ranking_recency_breaks_ties_for_equal_matches() {
         assert_eq!(ids, ids2, "Search ordering should be deterministic");
     }
 
-    // With identical Nucleo scores and the timestamp tiebreaker,
+    // With equal quantized scores and the timestamp tiebreaker,
     // newest (item 3) should be first, oldest (item 1) should be last
     assert!(
         contents[0].contains("three"),
@@ -559,7 +558,7 @@ async fn ranking_word_start_beats_mid_word() {
 
     let contents = search_contents(&store, "url").await;
 
-    // Word-start match should rank higher (Nucleo prefers word boundaries)
+    // Word-start match should rank higher (shorter doc gets higher BM25)
     assert!(contents.len() >= 2, "Should find both items");
     assert!(
         contents[0].contains("urlParser"),
@@ -756,8 +755,8 @@ If you are using a standard tokenizer (split on whitespace), the `build_trigram_
     let contents = search_contents(&store, "hello how are you doing today y").await;
 
     // CURRENT BEHAVIOR (what we want to fix):
-    // The text currently matches because Nucleo finds a subsequence.
-    // This is counterintuitive - the query "hello how are you doing today y"
+    // Without strict min-match thresholds, common English trigrams can
+    // cause false matches. The query "hello how are you doing today y"
     // has NO words that appear contiguously in the technical text.
 
     // Print what we got for debugging
@@ -772,9 +771,8 @@ If you are using a standard tokenizer (split on whitespace), the `build_trigram_
     // All the query words are scattered across thousands of characters.
     //
     // VERIFIED: The current implementation correctly rejects this match!
-    // The trigram-based filtering in Tantivy requires 2/3 of trigrams to match
-    // in the candidate set, and Nucleo's subsequence matching doesn't find
-    // a viable match either.
+    // Tantivy's min-match threshold (4/5 for 20+ trigrams) filters out
+    // documents that only match via scattered common-word trigram overlaps.
     assert!(
         contents.is_empty(),
         "Scattered matches with no proximity should NOT appear in results. Got: {} results",
