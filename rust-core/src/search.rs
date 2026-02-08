@@ -152,12 +152,20 @@ impl SearchEngine {
 
         for &word in words {
             let word_lower = word.to_lowercase();
-            if let Some(byte_pos) = content_lower.find(&word_lower) {
-                // Convert byte offset to char offset (downstream expects char indices)
-                let char_start = content[..byte_pos].chars().count();
-                let char_len = word_lower.chars().count();
-                for i in 0..char_len {
-                    all_indices.push((char_start + i) as u32);
+            let word_byte_len = word_lower.len();
+            let char_len = word_lower.chars().count();
+            let mut search_start = 0;
+            while search_start + word_byte_len <= content_lower.len() {
+                if let Some(rel_pos) = content_lower[search_start..].find(&word_lower) {
+                    let byte_pos = search_start + rel_pos;
+                    // Convert byte offset to char offset (downstream expects char indices)
+                    let char_start = content[..byte_pos].chars().count();
+                    for i in 0..char_len {
+                        all_indices.push((char_start + i) as u32);
+                    }
+                    search_start = byte_pos + word_byte_len;
+                } else {
+                    break;
                 }
             }
         }
