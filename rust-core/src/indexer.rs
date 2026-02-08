@@ -214,6 +214,48 @@ impl Indexer {
             }
         }
 
+        // Word-pair proximity boosts: for consecutive query word pairs,
+        // tokenize "word1 word2" together. Cross-boundary trigrams form a
+        // PhraseQuery that fires only when the words are adjacent.
+        if words.len() >= 2 {
+            for pair in words.windows(2) {
+                if pair[0].len() < 2 || pair[1].len() < 2 {
+                    continue;
+                }
+                let pair_str = format!("{} {}", pair[0], pair[1]);
+                let mut pair_tokenizer = self.index.tokenizers().get("trigram").unwrap();
+                let mut pair_stream = pair_tokenizer.token_stream(&pair_str);
+                let mut pair_terms = Vec::new();
+                while let Some(token) = pair_stream.next() {
+                    pair_terms.push(Term::from_field_text(self.content_field, &token.text));
+                }
+                if pair_terms.len() >= 2 {
+                    let phrase = PhraseQuery::new(pair_terms);
+                    let boosted: Box<dyn tantivy::query::Query> =
+                        Box::new(BoostQuery::new(Box::new(phrase), 3.0));
+                    phrase_boosts.push((Occur::Should, boosted));
+                }
+            }
+        }
+
+        // Full-query exactness boost: tokenize the entire multi-word query
+        // into trigrams. PhraseQuery rewards documents containing the full
+        // query as a contiguous phrase.
+        if words.len() >= 2 {
+            let mut full_tokenizer = self.index.tokenizers().get("trigram").unwrap();
+            let mut full_stream = full_tokenizer.token_stream(query);
+            let mut full_terms = Vec::new();
+            while let Some(token) = full_stream.next() {
+                full_terms.push(Term::from_field_text(self.content_field, &token.text));
+            }
+            if full_terms.len() >= 2 {
+                let phrase = PhraseQuery::new(full_terms);
+                let boosted: Box<dyn tantivy::query::Query> =
+                    Box::new(BoostQuery::new(Box::new(phrase), 5.0));
+                phrase_boosts.push((Occur::Should, boosted));
+            }
+        }
+
         // Combine recall query (MUST) with phrase boosts (SHOULD)
         let final_query: Box<dyn tantivy::query::Query> = if phrase_boosts.is_empty() {
             Box::new(tantivy_query)
