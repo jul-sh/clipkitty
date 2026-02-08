@@ -136,9 +136,9 @@ impl SearchEngine {
         results
     }
 
-    /// Highlight a Tantivy-confirmed candidate using case-insensitive substring search.
-    /// Tantivy has already confirmed relevance — this finds highlight positions
-    /// and converts the tantivy_score to a u32 for blended_score compatibility.
+    /// Highlight a Tantivy-confirmed candidate using trigram matching.
+    /// Mirrors Tantivy's trigram tokenization so highlights are faithful to
+    /// what was actually matched — including typo/partial matches.
     fn highlight_candidate(
         id: i64,
         content: &str,
@@ -148,24 +148,41 @@ impl SearchEngine {
         has_trailing_space: bool,
     ) -> FuzzyMatch {
         let content_lower = content.to_lowercase();
+        // Build char-index lookup: content_chars[i] = (byte_offset, char)
+        let content_chars: Vec<(usize, char)> = content_lower.char_indices().collect();
         let mut all_indices = Vec::new();
 
         for &word in words {
             let word_lower = word.to_lowercase();
-            let word_byte_len = word_lower.len();
-            let char_len = word_lower.chars().count();
-            let mut search_start = 0;
-            while search_start + word_byte_len <= content_lower.len() {
-                if let Some(rel_pos) = content_lower[search_start..].find(&word_lower) {
-                    let byte_pos = search_start + rel_pos;
-                    // Convert byte offset to char offset (downstream expects char indices)
-                    let char_start = content[..byte_pos].chars().count();
-                    for i in 0..char_len {
-                        all_indices.push((char_start + i) as u32);
+            let word_chars: Vec<char> = word_lower.chars().collect();
+            if word_chars.len() < 3 {
+                // For short words (< 3 chars), fall back to substring match
+                for (ci, _) in content_chars.windows(word_chars.len())
+                    .enumerate()
+                    .filter(|(_, w)| w.iter().map(|(_, c)| c).eq(word_chars.iter()))
+                {
+                    for i in 0..word_chars.len() {
+                        all_indices.push((ci + i) as u32);
                     }
-                    search_start = byte_pos + word_byte_len;
-                } else {
-                    break;
+                }
+                continue;
+            }
+            // Generate trigrams from query word and find them in content
+            for tri_start in 0..word_chars.len() - 2 {
+                let trigram: [char; 3] = [
+                    word_chars[tri_start],
+                    word_chars[tri_start + 1],
+                    word_chars[tri_start + 2],
+                ];
+                for ci in 0..content_chars.len().saturating_sub(2) {
+                    if content_chars[ci].1 == trigram[0]
+                        && content_chars[ci + 1].1 == trigram[1]
+                        && content_chars[ci + 2].1 == trigram[2]
+                    {
+                        all_indices.push(ci as u32);
+                        all_indices.push((ci + 1) as u32);
+                        all_indices.push((ci + 2) as u32);
+                    }
                 }
             }
         }
