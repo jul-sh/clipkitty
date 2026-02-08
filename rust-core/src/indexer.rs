@@ -3,6 +3,8 @@
 //! Provides full-text search with trigram (ngram) tokenization for efficient fuzzy matching.
 //! For queries under 3 characters, returns empty (handled by search.rs streaming fallback).
 
+use crate::search::{RECENCY_BOOST_MAX, RECENCY_HALF_LIFE_SECS};
+use chrono::Utc;
 use parking_lot::RwLock;
 use std::path::Path;
 use tantivy::collector::TopDocs;
@@ -10,7 +12,7 @@ use tantivy::directory::MmapDirectory;
 use tantivy::query::{BooleanQuery, BoostQuery, Occur, PhraseQuery, TermQuery};
 use tantivy::schema::*;
 use tantivy::tokenizer::{NgramTokenizer, TextAnalyzer};
-use tantivy::{Index, IndexReader, IndexWriter, ReloadPolicy, Term};
+use tantivy::{DocId, Index, IndexReader, IndexWriter, ReloadPolicy, Score, Term};
 use thiserror::Error;
 
 /// Error type for indexer operations
@@ -32,7 +34,7 @@ pub struct SearchCandidate {
     pub id: i64,
     pub content: String,
     pub timestamp: i64,
-    /// Tantivy's BM25-style relevance score (used for final ranking)
+    /// Blended score (BM25 + recency) from Tantivy's tweak_score
     pub tantivy_score: f32,
 }
 
@@ -141,7 +143,7 @@ impl Indexer {
         Ok(())
     }
 
-    pub fn search(&self, query: &str) -> IndexerResult<Vec<SearchCandidate>> {
+    pub fn search(&self, query: &str, limit: usize) -> IndexerResult<Vec<SearchCandidate>> {
         let reader = self.reader.read();
         let searcher = reader.searcher();
 
@@ -222,12 +224,33 @@ impl Indexer {
             Box::new(BooleanQuery::new(outer_parts))
         };
 
-        // Get top 10000 candidates — Tantivy scoring with phrase boosts is
-        // precise enough that fewer candidates are needed.
-        let top_docs = searcher.search(final_query.as_ref(), &TopDocs::with_limit(10000))?;
+        // Use tweak_score to blend BM25 with recency at collection time.
+        // Tantivy's top-K heap works on the final blended score, so we get
+        // the true top results without a separate sort step.
+        let timestamp_field = self.schema.get_field("timestamp").unwrap();
+        let now = Utc::now().timestamp();
+
+        let collector = TopDocs::with_limit(limit)
+            .tweak_score(move |segment_reader: &tantivy::SegmentReader| {
+                let ts_reader = segment_reader
+                    .fast_fields()
+                    .i64("timestamp")
+                    .expect("timestamp fast field");
+                move |doc: DocId, score: Score| {
+                    let timestamp = ts_reader.first(doc).unwrap_or(0);
+                    // Quantize BM25 coarsely so minor doc-length differences
+                    // are treated as ties, letting recency break them.
+                    let base = ((score as u32).max(1) * 1000) as f64;
+                    let age_secs = (now - timestamp).max(0) as f64;
+                    let recency = (-age_secs * 2.0_f64.ln() / RECENCY_HALF_LIFE_SECS).exp();
+                    base * (1.0 + RECENCY_BOOST_MAX * recency)
+                }
+            });
+
+        let top_docs = searcher.search(final_query.as_ref(), &collector)?;
 
         let mut candidates = Vec::with_capacity(top_docs.len());
-        for (score, doc_address) in top_docs {
+        for (blended_score, doc_address) in top_docs {
             let doc: tantivy::TantivyDocument = searcher.doc(doc_address)?;
             let id = doc
                 .get_first(self.id_field)
@@ -241,7 +264,7 @@ impl Indexer {
                 .to_string();
 
             let timestamp = doc
-                .get_first(self.schema.get_field("timestamp").unwrap())
+                .get_first(timestamp_field)
                 .and_then(|v| v.as_i64())
                 .unwrap_or(0);
 
@@ -249,7 +272,7 @@ impl Indexer {
                 id,
                 content,
                 timestamp,
-                tantivy_score: score,
+                tantivy_score: blended_score as f32,
             });
         }
 

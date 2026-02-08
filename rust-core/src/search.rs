@@ -16,8 +16,8 @@ pub const MAX_RESULTS: usize = 5000;
 pub const MIN_TRIGRAM_QUERY_LEN: usize = 3;
 
 /// Maximum recency boost multiplier (e.g., 0.1 = up to 10% boost for brand new items)
-const RECENCY_BOOST_MAX: f64 = 0.1;
-const RECENCY_HALF_LIFE_SECS: f64 = 7.0 * 24.0 * 60.0 * 60.0;
+pub(crate) const RECENCY_BOOST_MAX: f64 = 0.1;
+pub(crate) const RECENCY_HALF_LIFE_SECS: f64 = 7.0 * 24.0 * 60.0 * 60.0;
 
 /// Boost factor for prefix matches in short query scoring
 const PREFIX_MATCH_BOOST: f64 = 2.0;
@@ -44,41 +44,23 @@ impl SearchEngine {
         Self
     }
 
-    /// Search using Tantivy with phrase-boost scoring for trigram queries (>= 3 chars)
+    /// Search using Tantivy with phrase-boost scoring for trigram queries (>= 3 chars).
+    /// Results are already ranked by Tantivy (BM25 + recency blend via tweak_score).
     pub fn search(&self, indexer: &Indexer, query: &str) -> IndexerResult<Vec<FuzzyMatch>> {
         if query.trim().is_empty() {
             return Ok(Vec::new());
         }
         let trimmed = query.trim_start();
-
-        let has_trailing_space = query.ends_with(' ');
         let query_words: Vec<&str> = trimmed.trim_end().split_whitespace().collect();
 
-        // Tantivy retrieval with phrase-boost scoring
-        let candidates = indexer.search(trimmed.trim_end())?;
+        // Tantivy returns candidates already sorted by blended score (BM25 + recency)
+        let candidates = indexer.search(trimmed.trim_end(), MAX_RESULTS)?;
 
-        let mut matches = Vec::with_capacity(candidates.len().min(MAX_RESULTS * 2));
-        let now = Utc::now().timestamp();
+        let matches: Vec<FuzzyMatch> = candidates
+            .into_iter()
+            .map(|c| Self::highlight_candidate(c.id, &c.content, c.timestamp, c.tantivy_score, &query_words))
+            .collect();
 
-        for candidate in candidates {
-            let fm = Self::highlight_candidate(
-                candidate.id,
-                &candidate.content,
-                candidate.timestamp,
-                candidate.tantivy_score,
-                &query_words,
-                has_trailing_space,
-            );
-            matches.push(fm);
-        }
-
-        matches.sort_unstable_by(|a, b| {
-            let score_a = blended_score(a.score, a.timestamp, now, false);
-            let score_b = blended_score(b.score, b.timestamp, now, false);
-            score_b.total_cmp(&score_a).then_with(|| b.timestamp.cmp(&a.timestamp))
-        });
-
-        matches.truncate(MAX_RESULTS);
         Ok(matches)
     }
 
@@ -127,8 +109,8 @@ impl SearchEngine {
 
         // Sort by blended score (recency primary, prefix boost)
         results.sort_unstable_by(|a, b| {
-            let score_a = blended_score(a.score, a.timestamp, now, a.is_prefix_match);
-            let score_b = blended_score(b.score, b.timestamp, now, b.is_prefix_match);
+            let score_a = recency_weighted_score(a.score, a.timestamp, now, a.is_prefix_match);
+            let score_b = recency_weighted_score(b.score, b.timestamp, now, b.is_prefix_match);
             score_b.total_cmp(&score_a).then_with(|| b.timestamp.cmp(&a.timestamp))
         });
 
@@ -145,7 +127,6 @@ impl SearchEngine {
         timestamp: i64,
         tantivy_score: f32,
         words: &[&str],
-        has_trailing_space: bool,
     ) -> FuzzyMatch {
         let content_lower = content.to_lowercase();
         // Build char-index lookup: content_chars[i] = (byte_offset, char)
@@ -190,22 +171,8 @@ impl SearchEngine {
         all_indices.sort_unstable();
         all_indices.dedup();
 
-        // Scale tantivy_score to u32 for blended_score compatibility.
-        // Quantize coarsely so that small BM25 differences (e.g. from
-        // minor document length variation) are treated as ties, letting
-        // the recency tiebreaker determine ordering.
-        let mut score = ((tantivy_score as u32).max(1)) * 1000;
-
-        // Trailing Space Boost: boost matches where the word ends at a word boundary
-        if has_trailing_space {
-            if let Some(&last_idx) = all_indices.last().filter(|&&i| i < 10_000) {
-                let ends_at_boundary = content.chars().nth((last_idx + 1) as usize)
-                    .map_or(true, |c| c.is_whitespace());
-                if ends_at_boundary {
-                    score = (score as f32 * 1.2) as u32;
-                }
-            }
-        }
+        // Score is already blended (BM25 + recency) by Tantivy's tweak_score
+        let score = tantivy_score as u32;
 
         FuzzyMatch {
             id,
@@ -370,9 +337,9 @@ impl Default for SearchEngine {
     fn default() -> Self { Self }
 }
 
-/// Calculate blended score combining Tantivy score with recency
-/// For short queries, recency is the primary factor with prefix boost
-fn blended_score(fuzzy_score: u32, timestamp: i64, now: i64, is_prefix_match: bool) -> f64 {
+/// Combine a base relevance score with exponential recency decay and prefix boost.
+/// Used by the short query path (< 3 chars) where Tantivy isn't involved.
+fn recency_weighted_score(fuzzy_score: u32, timestamp: i64, now: i64, is_prefix_match: bool) -> f64 {
     let base_score = fuzzy_score as f64;
 
     // Exponential decay for recency (half-life based)
@@ -558,17 +525,17 @@ mod tests {
     }
 
     #[test]
-    fn test_blended_score() {
+    fn test_recency_weighted_score() {
         let now = 1700000000i64;
 
         // Same fuzzy score, different timestamps - recent should win
-        let recent = blended_score(1000, now, now, false);
-        let old = blended_score(1000, now - 86400 * 30, now, false); // 30 days old
+        let recent = recency_weighted_score(1000, now, now, false);
+        let old = recency_weighted_score(1000, now - 86400 * 30, now, false); // 30 days old
         assert!(recent > old, "Recent items should score higher with same quality");
 
         // Prefix match should boost score
-        let prefix = blended_score(1000, now, now, true);
-        let non_prefix = blended_score(1000, now, now, false);
+        let prefix = recency_weighted_score(1000, now, now, true);
+        let non_prefix = recency_weighted_score(1000, now, now, false);
         assert!(prefix > non_prefix, "Prefix matches should score higher");
     }
 
