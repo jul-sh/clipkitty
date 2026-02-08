@@ -51,6 +51,17 @@ impl Drop for DropGuard {
     }
 }
 
+/// Per-stage timing breakdown for benchmarking
+pub struct SearchTimings {
+    pub tantivy_ms: f64,
+    pub highlight_ms: f64,
+    pub db_fetch_ms: f64,
+    pub match_gen_ms: f64,
+    pub total_ms: f64,
+    pub num_candidates: usize,
+    pub num_results: usize,
+}
+
 /// Thread-safe clipboard store with SQLite + Tantivy
 ///
 /// Concurrency Model:
@@ -185,6 +196,7 @@ impl ClipboardStore {
     }
 
     /// Trigram query search using Tantivy with phrase-boost scoring
+    /// Returns (matches, total_count) where total_count is the true number of matching documents.
     fn search_trigram_query_sync(
         db: &Database,
         indexer: &Indexer,
@@ -192,17 +204,17 @@ impl ClipboardStore {
         query: &str,
         token: &CancellationToken,
         runtime: &tokio::runtime::Handle,
-    ) -> Result<Vec<ItemMatch>, ClipKittyError> {
+    ) -> Result<(Vec<ItemMatch>, usize), ClipKittyError> {
         // Checkpoint: Check cancellation before Tantivy search
         // Note: We don't inject checks into Tantivy's internal SIMD loops
         if token.is_cancelled() {
             return Err(ClipKittyError::Cancelled);
         }
 
-        let fuzzy_matches = search_engine.search(indexer, query)?;
+        let (fuzzy_matches, total_count) = search_engine.search(indexer, query)?;
 
         if fuzzy_matches.is_empty() {
-            return Ok(Vec::new());
+            return Ok((Vec::new(), total_count));
         }
 
         // Checkpoint: Check cancellation before SQLite fetch
@@ -242,13 +254,96 @@ impl ClipboardStore {
             }
         }
 
-        Ok(matches)
+        Ok((matches, total_count))
+    }
+
+    /// Instrumented trigram query search — returns per-stage timings.
+    /// Only used by benchmarks; not exported via FFI.
+    fn search_trigram_instrumented(
+        db: &Database,
+        indexer: &Indexer,
+        _search_engine: &SearchEngine,
+        query: &str,
+    ) -> Result<SearchTimings, ClipKittyError> {
+        use std::time::Instant;
+        let t_total = Instant::now();
+
+        // Stage 1: Tantivy search (includes highlighting inside search_engine.search)
+        let t0 = Instant::now();
+        let query_words: Vec<&str> = query.split_whitespace().collect();
+        let (candidates, _total_count) = indexer.search(query.trim(), crate::search::MAX_RESULTS)?;
+        let tantivy_ms = t0.elapsed().as_secs_f64() * 1000.0;
+        let num_candidates = candidates.len();
+
+        // Stage 2: Highlighting
+        let t1 = Instant::now();
+        let fuzzy_matches: Vec<_> = candidates
+            .into_iter()
+            .map(|c| crate::search::SearchEngine::highlight_candidate_pub(
+                c.id, &c.content, c.timestamp, c.tantivy_score, &query_words,
+            ))
+            .collect();
+        let highlight_ms = t1.elapsed().as_secs_f64() * 1000.0;
+
+        // Stage 3: DB fetch
+        let t2 = Instant::now();
+        let ids: Vec<i64> = fuzzy_matches.iter().map(|m| m.id).collect();
+        let stored_items = db.fetch_items_by_ids(&ids)?;
+        let db_fetch_ms = t2.elapsed().as_secs_f64() * 1000.0;
+
+        let item_map: std::collections::HashMap<i64, StoredItem> = stored_items
+            .into_iter()
+            .filter_map(|item| item.id.map(|id| (id, item)))
+            .collect();
+
+        // Stage 4: Match generation (snippet + highlight ranges)
+        let t3 = Instant::now();
+        let mut matches: Vec<ItemMatch> = Vec::with_capacity(fuzzy_matches.len());
+        for fm in &fuzzy_matches {
+            if let Some(item) = item_map.get(&fm.id) {
+                matches.push(SearchEngine::create_item_match(item, fm));
+            }
+        }
+        let match_gen_ms = t3.elapsed().as_secs_f64() * 1000.0;
+
+        let total_ms = t_total.elapsed().as_secs_f64() * 1000.0;
+
+        Ok(SearchTimings {
+            tantivy_ms,
+            highlight_ms,
+            db_fetch_ms,
+            match_gen_ms,
+            total_ms,
+            num_candidates,
+            num_results: matches.len(),
+        })
     }
 
     /// Get a single stored item by ID (internal use)
     fn get_stored_item(&self, item_id: i64) -> Result<Option<StoredItem>, ClipKittyError> {
         let items = self.db.fetch_items_by_ids(&[item_id])?;
         Ok(items.into_iter().next())
+    }
+}
+
+// Benchmark-only methods (not exported via FFI)
+impl ClipboardStore {
+    /// Run an instrumented search for benchmarking. Returns per-stage timings.
+    pub async fn search_instrumented(&self, query: String) -> Result<SearchTimings, ClipKittyError> {
+        let runtime = self.runtime_handle();
+        let db = Arc::clone(&self.db);
+        let indexer = Arc::clone(&self.indexer);
+        let search_engine = Arc::clone(&self.search_engine);
+
+        let handle = runtime.spawn_blocking(move || {
+            Self::search_trigram_instrumented(&db, &indexer, &search_engine, &query)
+        });
+
+        match handle.await {
+            Ok(Ok(timings)) => Ok(timings),
+            Ok(Err(e)) => Err(e),
+            Err(_) => Err(ClipKittyError::Cancelled),
+        }
     }
 }
 
@@ -399,16 +494,18 @@ impl ClipboardStoreApi for ClipboardStore {
         // because UniFFI doesn't provide a tokio runtime context
         let handle = runtime.spawn_blocking(move || {
             if trimmed_owned.len() < MIN_TRIGRAM_QUERY_LEN {
-                Self::search_short_query_sync(&db, &search_engine, &trimmed_owned, &token_clone, &runtime_for_closure)
+                let matches = Self::search_short_query_sync(&db, &search_engine, &trimmed_owned, &token_clone, &runtime_for_closure)?;
+                let total_count = matches.len() as u64;
+                Ok((matches, total_count))
             } else {
-                Self::search_trigram_query_sync(&db, &indexer, &search_engine, &query_owned, &token_clone, &runtime_for_closure)
+                let (matches, total_count) = Self::search_trigram_query_sync(&db, &indexer, &search_engine, &query_owned, &token_clone, &runtime_for_closure)?;
+                Ok((matches, total_count as u64))
             }
         });
 
         // Await the result
         match handle.await {
-            Ok(Ok(matches)) => {
-                let total_count = matches.len() as u64;
+            Ok(Ok((matches, total_count))) => {
 
                 // Fetch first item's full content for preview pane
                 let first_item = if let Some(first_match) = matches.first() {

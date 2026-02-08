@@ -13,7 +13,7 @@ use chrono::Utc;
 
 /// Maximum results to return from search.
 /// Returning more than this is not useful to the user.
-pub const MAX_RESULTS: usize = 5000;
+pub const MAX_RESULTS: usize = 200;
 
 pub const MIN_TRIGRAM_QUERY_LEN: usize = 3;
 
@@ -53,9 +53,10 @@ impl SearchEngine {
 
     /// Search using Tantivy with phrase-boost scoring for trigram queries (>= 3 chars).
     /// Results are already ranked by Tantivy (BM25 + recency blend via tweak_score).
-    pub fn search(&self, indexer: &Indexer, query: &str) -> IndexerResult<Vec<FuzzyMatch>> {
+    /// Returns (matches, total_count) where total_count is the true number of matching documents.
+    pub fn search(&self, indexer: &Indexer, query: &str) -> IndexerResult<(Vec<FuzzyMatch>, usize)> {
         if query.trim().is_empty() {
-            return Ok(Vec::new());
+            return Ok((Vec::new(), 0));
         }
         let trimmed = query.trim_start();
         // Split query words on the same non-alphanumeric boundaries as document
@@ -70,15 +71,15 @@ impl SearchEngine {
         let query_word_refs: Vec<&str> = query_words.iter().map(|s| s.as_str()).collect();
 
         // Tantivy returns candidates already sorted by blended score (BM25 + recency)
-        let candidates = indexer.search(trimmed.trim_end(), MAX_RESULTS)?;
+        let (candidates, total_count) = indexer.search(trimmed.trim_end(), MAX_RESULTS)?;
 
         let matches: Vec<FuzzyMatch> = candidates
             .into_iter()
-            .map(|c| Self::highlight_candidate(c.id, &c.content, c.timestamp, c.tantivy_score, &query_word_refs))
+            .map(|c| Self::highlight_candidate_pub(c.id, &c.content, c.timestamp, c.tantivy_score, &query_word_refs))
             .filter(|m| !m.matched_indices.is_empty())
             .collect();
 
-        Ok(matches)
+        Ok((matches, total_count))
     }
 
     /// Score candidates for short queries (< 3 chars)
@@ -139,7 +140,7 @@ impl SearchEngine {
     /// For each document word, checks if any query word has sufficient trigram
     /// overlap (>= HIGHLIGHT_MIN_OVERLAP). Matched words are highlighted in full,
     /// producing clean whole-word highlights that work for typo matches too.
-    fn highlight_candidate(
+    pub fn highlight_candidate_pub(
         id: i64,
         content: &str,
         timestamp: i64,
@@ -687,7 +688,7 @@ mod tests {
 
     /// Helper: run highlight_candidate and return the highlighted substrings
     fn highlighted_words(content: &str, query_words: &[&str]) -> Vec<String> {
-        let fm = SearchEngine::highlight_candidate(
+        let fm = SearchEngine::highlight_candidate_pub(
             1, content, 1000, 1.0, query_words,
         );
         let ranges = SearchEngine::indices_to_ranges(&fm.matched_indices);
