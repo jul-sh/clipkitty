@@ -23,7 +23,7 @@ ClipKitty stores everything. Advanced fuzzy search means zero lag, whether you'r
 ## Features
 
 * **Unlimited History**: Clipboard history that doesn’t forget, doesn’t truncate. ClipKitty stores it all while staying lightweight.
-* **Fuzzy search that scales**: Type “improt” and find “import”. Stays fast whether you have 100 items or 1,000,000. ClipKitty uses nucleo and tantivy; the same infrastructure as production search engines. Results in under 50ms whether your history holds 100 items or 1,000,000.
+* **Fuzzy search that scales**: Type “improt” and find “import”. ClipKitty uses tantivy; the same infrastructure as production search engines. Results stay fast whether your history holds 100 items or 1,000,000.
 * **Live Preview**: See full content instantly as you navigate. No truncation, no waiting for tooltips.
 * **Keyboard-First**: `⌥Space` to open, arrow keys to navigate, `Return` to paste.
 * **Privacy-First**: Runs on-device and fully offline. No telemetry.
@@ -59,18 +59,12 @@ brew install jul-sh/clipkitty/clipkitty
 | **⌘1–9** | Jump to item 1–9 |
 | **Escape** | Close |
 
-All shortcuts are customizable in Settings.
-
-## Privacy
-
-Your clipboard data never leaves your machine. ClipKitty runs entirely offline.
-
 ## Building from source
 
 ```bash
 git clone https://github.com/jul-sh/clipkitty
 cd clipkitty
-make build bundle icon plist
+make
 ```
 
 Requires macOS 15+ and Swift 6.2+.
