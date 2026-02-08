@@ -1,7 +1,7 @@
 //! ClipboardStore - Main API for Swift interop
 //! and Tantivy search functionality, designed for UniFFI export.
 //!
-//! Architecture: Two-layer search using Tantivy (trigram retrieval) + Nucleo (precision)
+//! Architecture: Tantivy search with trigram retrieval and phrase-boost scoring
 //!
 //! Async Cancellation Architecture:
 //! When Swift cancels an async Task, UniFFI drops the Rust Future. We intercept this
@@ -184,7 +184,7 @@ impl ClipboardStore {
         Ok(matches)
     }
 
-    /// Trigram query search using Tantivy + Nucleo
+    /// Trigram query search using Tantivy with phrase-boost scoring
     fn search_trigram_query_sync(
         db: &Database,
         indexer: &Indexer,

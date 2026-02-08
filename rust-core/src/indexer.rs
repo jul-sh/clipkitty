@@ -7,7 +7,7 @@ use parking_lot::RwLock;
 use std::path::Path;
 use tantivy::collector::TopDocs;
 use tantivy::directory::MmapDirectory;
-use tantivy::query::{BooleanQuery, Occur, TermQuery};
+use tantivy::query::{BooleanQuery, BoostQuery, Occur, PhraseQuery, TermQuery};
 use tantivy::schema::*;
 use tantivy::tokenizer::{NgramTokenizer, TextAnalyzer};
 use tantivy::{Index, IndexReader, IndexWriter, ReloadPolicy, Term};
@@ -32,8 +32,7 @@ pub struct SearchCandidate {
     pub id: i64,
     pub content: String,
     pub timestamp: i64,
-    /// Tantivy's BM25-style relevance score (kept for diagnostics)
-    #[allow(dead_code)]
+    /// Tantivy's BM25-style relevance score (used for final ranking)
     pub tantivy_score: f32,
 }
 
@@ -155,7 +154,7 @@ impl Indexer {
         }
 
         // Query too short for trigrams - return empty (minimum 3 chars required)
-        // search.rs handles <3 char queries via streaming Nucleo fallback
+        // search.rs handles <3 char queries via streaming fallback
         if terms.is_empty() {
             return Ok(Vec::new());
         }
@@ -173,23 +172,59 @@ impl Indexer {
             .collect();
         let mut tantivy_query = BooleanQuery::new(subqueries);
 
-        // For long queries (10+ trigrams, ~12+ chars), require at least 2/3 to match.
+        // For queries with 7+ trigrams (~9+ chars), require most trigrams to match.
         // This filters "soup" matches at the index level - documents that only
-        // contain scattered trigrams (like long paths with random char overlaps)
-        // are never fetched. E.g., "hello how are you" won't match a path that
-        // only happens to contain a few of the ~15 trigrams by coincidence.
+        // contain scattered trigrams (like long texts with common English word
+        // overlaps) are never fetched.
         //
-        // We use 2/3 for stricter filtering. Short queries (< 10 trigrams) skip
-        // this filter entirely to preserve typo tolerance for shorter searches.
-        if num_terms >= 10 {
-            let min_match = (num_terms * 2 / 3).max(5);
+        // Short queries (< 7 trigrams) skip this filter entirely to preserve
+        // typo tolerance for shorter searches.
+        if num_terms >= 7 {
+            // Use 4/5 for long queries (20+ trigrams) where common-word overlap
+            // in long documents can produce false matches, 2/3 for medium queries.
+            let ratio = if num_terms >= 20 { 4 * num_terms / 5 } else { num_terms * 2 / 3 };
+            let min_match = ratio.max(5);
             tantivy_query.set_minimum_number_should_match(min_match);
         }
 
-        // Get top 30000 candidates for Nucleo to re-rank
-        // We fetch more than the final limit (5000) because Nucleo filters out
-        // low-quality matches. This ensures we have enough high-quality results.
-        let top_docs = searcher.search(&tantivy_query, &TopDocs::with_limit(30000))?;
+        // Build phrase-boost queries for contiguity-aware scoring.
+        // For each query word >= 4 chars, create a PhraseQuery from its trigrams
+        // and wrap it in a BoostQuery. Documents with contiguous word matches
+        // get naturally higher BM25 + phrase scores.
+        let words: Vec<&str> = query.split_whitespace().collect();
+        let mut phrase_boosts: Vec<(Occur, Box<dyn tantivy::query::Query>)> = Vec::new();
+
+        for word in &words {
+            if word.len() < 3 {
+                continue;
+            }
+            let mut word_tokenizer = self.index.tokenizers().get("trigram").unwrap();
+            let mut word_stream = word_tokenizer.token_stream(word);
+            let mut word_terms = Vec::new();
+            while let Some(token) = word_stream.next() {
+                word_terms.push(Term::from_field_text(self.content_field, &token.text));
+            }
+            if word_terms.len() >= 2 {
+                let phrase = PhraseQuery::new(word_terms);
+                let boosted: Box<dyn tantivy::query::Query> =
+                    Box::new(BoostQuery::new(Box::new(phrase), 2.0));
+                phrase_boosts.push((Occur::Should, boosted));
+            }
+        }
+
+        // Combine recall query (MUST) with phrase boosts (SHOULD)
+        let final_query: Box<dyn tantivy::query::Query> = if phrase_boosts.is_empty() {
+            Box::new(tantivy_query)
+        } else {
+            let mut outer_parts: Vec<(Occur, Box<dyn tantivy::query::Query>)> = Vec::new();
+            outer_parts.push((Occur::Must, Box::new(tantivy_query)));
+            outer_parts.extend(phrase_boosts);
+            Box::new(BooleanQuery::new(outer_parts))
+        };
+
+        // Get top 10000 candidates — Tantivy scoring with phrase boosts is
+        // precise enough that fewer candidates are needed.
+        let top_docs = searcher.search(final_query.as_ref(), &TopDocs::with_limit(10000))?;
 
         let mut candidates = Vec::with_capacity(top_docs.len());
         for (score, doc_address) in top_docs {
