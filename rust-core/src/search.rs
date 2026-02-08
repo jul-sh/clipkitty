@@ -1,8 +1,10 @@
-//! Search Engine (Tantivy with phrase-boost scoring + substring highlighting)
+//! Search Engine (Tantivy with phrase-boost scoring + word-level trigram highlighting)
 //!
 //! Tantivy handles retrieval and scoring via trigram indexing with per-word PhraseQuery
-//! boosts for contiguity-aware ranking. Highlighting uses simple case-insensitive
-//! substring search. Short queries (< 3 chars) use a streaming fallback.
+//! boosts for contiguity-aware ranking. Highlighting uses word-level trigram overlap
+//! to identify which document words match each query word, producing clean whole-word
+//! highlights that work for both exact and fuzzy/typo matches.
+//! Short queries (< 3 chars) use a streaming fallback.
 
 use crate::indexer::{Indexer, IndexerResult};
 use crate::interface::{HighlightRange, MatchData, ItemMatch};
@@ -18,6 +20,11 @@ pub const MIN_TRIGRAM_QUERY_LEN: usize = 3;
 /// Maximum recency boost multiplier (e.g., 0.1 = up to 10% boost for brand new items)
 pub(crate) const RECENCY_BOOST_MAX: f64 = 0.1;
 pub(crate) const RECENCY_HALF_LIFE_SECS: f64 = 7.0 * 24.0 * 60.0 * 60.0;
+
+/// Minimum fraction of query word trigrams that must appear in a document word
+/// for it to be highlighted. Uses query recall: intersection / |query_trigrams|.
+/// 0.5 means at least half the query word's trigrams must be found in the doc word.
+const HIGHLIGHT_MIN_OVERLAP: f64 = 0.5;
 
 /// Boost factor for prefix matches in short query scoring
 const PREFIX_MATCH_BOOST: f64 = 2.0;
@@ -118,9 +125,10 @@ impl SearchEngine {
         results
     }
 
-    /// Highlight a Tantivy-confirmed candidate using trigram matching.
-    /// Mirrors Tantivy's trigram tokenization so highlights are faithful to
-    /// what was actually matched — including typo/partial matches.
+    /// Highlight a Tantivy-confirmed candidate using word-level trigram overlap.
+    /// For each document word, checks if any query word has sufficient trigram
+    /// overlap (>= HIGHLIGHT_MIN_OVERLAP). Matched words are highlighted in full,
+    /// producing clean whole-word highlights that work for typo matches too.
     fn highlight_candidate(
         id: i64,
         content: &str,
@@ -129,41 +137,36 @@ impl SearchEngine {
         words: &[&str],
     ) -> FuzzyMatch {
         let content_lower = content.to_lowercase();
-        // Build char-index lookup: content_chars[i] = (byte_offset, char)
-        let content_chars: Vec<(usize, char)> = content_lower.char_indices().collect();
         let mut all_indices = Vec::new();
 
-        for &word in words {
-            let word_lower = word.to_lowercase();
-            let word_chars: Vec<char> = word_lower.chars().collect();
-            if word_chars.len() < 3 {
-                // For short words (< 3 chars), fall back to substring match
-                for (ci, _) in content_chars.windows(word_chars.len())
-                    .enumerate()
-                    .filter(|(_, w)| w.iter().map(|(_, c)| c).eq(word_chars.iter()))
-                {
-                    for i in 0..word_chars.len() {
-                        all_indices.push((ci + i) as u32);
+        // Pre-compute query word trigram sets
+        let query_info: Vec<(String, Vec<[char; 3]>)> = words.iter()
+            .map(|w| {
+                let lower = w.to_lowercase();
+                let tris = word_trigrams(&lower);
+                (lower, tris)
+            })
+            .collect();
+
+        // Tokenize document into words with char offsets
+        let doc_words = tokenize_words(&content_lower);
+
+        for (char_start, char_end, doc_word) in &doc_words {
+            let doc_tris = word_trigrams(doc_word);
+
+            for (query_lower, query_tris) in &query_info {
+                let matched = if query_tris.is_empty() || doc_tris.is_empty() {
+                    // Short word (< 3 chars) on either side: exact word match
+                    doc_word == query_lower
+                } else {
+                    trigram_overlap_ratio(query_tris, &doc_tris) >= HIGHLIGHT_MIN_OVERLAP
+                };
+
+                if matched {
+                    for i in *char_start..*char_end {
+                        all_indices.push(i as u32);
                     }
-                }
-                continue;
-            }
-            // Generate trigrams from query word and find them in content
-            for tri_start in 0..word_chars.len() - 2 {
-                let trigram: [char; 3] = [
-                    word_chars[tri_start],
-                    word_chars[tri_start + 1],
-                    word_chars[tri_start + 2],
-                ];
-                for ci in 0..content_chars.len().saturating_sub(2) {
-                    if content_chars[ci].1 == trigram[0]
-                        && content_chars[ci + 1].1 == trigram[1]
-                        && content_chars[ci + 2].1 == trigram[2]
-                    {
-                        all_indices.push(ci as u32);
-                        all_indices.push((ci + 1) as u32);
-                        all_indices.push((ci + 2) as u32);
-                    }
+                    break; // Don't double-highlight from multiple query words
                 }
             }
         }
@@ -335,6 +338,46 @@ impl SearchEngine {
 
 impl Default for SearchEngine {
     fn default() -> Self { Self }
+}
+
+/// Generate trigrams from a word. Returns empty vec for words < 3 chars.
+fn word_trigrams(word: &str) -> Vec<[char; 3]> {
+    let chars: Vec<char> = word.chars().collect();
+    if chars.len() < 3 {
+        return Vec::new();
+    }
+    chars.windows(3).map(|w| [w[0], w[1], w[2]]).collect()
+}
+
+/// Compute query recall: fraction of query trigrams found in the document word.
+/// Returns intersection / |query_trigrams|, so 1.0 means all query trigrams are present.
+fn trigram_overlap_ratio(query_tris: &[[char; 3]], doc_tris: &[[char; 3]]) -> f64 {
+    if query_tris.is_empty() {
+        return 0.0;
+    }
+    let intersection = query_tris.iter().filter(|t| doc_tris.contains(t)).count();
+    intersection as f64 / query_tris.len() as f64
+}
+
+/// Tokenize text into words with char offsets. Splits on non-alphanumeric characters.
+/// Returns (char_start, char_end, word_str) for each word.
+fn tokenize_words(content: &str) -> Vec<(usize, usize, String)> {
+    let chars: Vec<char> = content.chars().collect();
+    let mut words = Vec::new();
+    let mut i = 0;
+    while i < chars.len() {
+        if !chars[i].is_alphanumeric() {
+            i += 1;
+            continue;
+        }
+        let start = i;
+        while i < chars.len() && chars[i].is_alphanumeric() {
+            i += 1;
+        }
+        let word: String = chars[start..i].iter().collect();
+        words.push((start, i, word));
+    }
+    words
 }
 
 /// Combine a base relevance score with exponential recency decay and prefix boost.
@@ -560,5 +603,149 @@ mod tests {
             .take((h.end - h.start) as usize)
             .collect();
         assert_eq!(highlighted, "你好", "Highlighted text should match");
+    }
+
+    // ── Word-level trigram highlighting tests ─────────────────────────
+
+    #[test]
+    fn test_word_trigrams() {
+        assert_eq!(word_trigrams("hi"), Vec::<[char; 3]>::new()); // too short
+        assert_eq!(word_trigrams("hello"), vec![['h','e','l'], ['e','l','l'], ['l','l','o']]);
+        assert_eq!(word_trigrams("abc"), vec![['a','b','c']]); // exactly 3 chars = 1 trigram
+    }
+
+    #[test]
+    fn test_trigram_overlap_ratio() {
+        let hello = word_trigrams("hello"); // hel, ell, llo
+        let shell = word_trigrams("shell"); // she, hel, ell
+        // "hello" query vs "shell" doc: intersection={hel,ell}=2, query has 3 → 2/3=0.67
+        assert!((trigram_overlap_ratio(&hello, &shell) - 0.667).abs() < 0.01);
+
+        // Exact match: 1.0
+        assert_eq!(trigram_overlap_ratio(&hello, &hello), 1.0);
+
+        // No overlap: 0.0
+        let xyz = word_trigrams("xyz");
+        assert_eq!(trigram_overlap_ratio(&hello, &xyz), 0.0);
+
+        // Typo: "riversde" vs "riverside"
+        let riversde = word_trigrams("riversde"); // riv,ive,ver,ers,rsd,sde
+        let riverside = word_trigrams("riverside"); // riv,ive,ver,ers,rsi,sid,ide
+        let ratio = trigram_overlap_ratio(&riversde, &riverside);
+        // intersection={riv,ive,ver,ers}=4, query has 6 → 4/6=0.67
+        assert!((ratio - 0.667).abs() < 0.01);
+        assert!(ratio >= HIGHLIGHT_MIN_OVERLAP);
+
+        // "theme" query vs "the" doc word — should NOT pass threshold
+        let theme = word_trigrams("theme"); // the, hem, eme
+        let the = word_trigrams("the"); // the
+        // intersection={the}=1, query("theme") has 3 → 1/3=0.33
+        assert!(trigram_overlap_ratio(&theme, &the) < HIGHLIGHT_MIN_OVERLAP);
+
+        // "the" query vs "theme" doc word — SHOULD pass (contains "the")
+        // intersection={the}=1, query("the") has 1 → 1/1=1.0
+        assert!(trigram_overlap_ratio(&the, &theme) >= HIGHLIGHT_MIN_OVERLAP);
+
+        // "test" query vs "testing" doc — prefix match
+        let test_q = word_trigrams("test"); // tes, est
+        let testing = word_trigrams("testing"); // tes, est, sti, tin, ing
+        // intersection={tes,est}=2, query has 2 → 2/2=1.0
+        assert_eq!(trigram_overlap_ratio(&test_q, &testing), 1.0);
+    }
+
+    #[test]
+    fn test_tokenize_words() {
+        let words = tokenize_words("hello world");
+        assert_eq!(words, vec![(0, 5, "hello".into()), (6, 11, "world".into())]);
+
+        // tokenize_words operates on already-lowercased content
+        let words = tokenize_words("urlparser.parse(input)");
+        assert_eq!(words, vec![
+            (0, 9, "urlparser".into()),
+            (10, 15, "parse".into()),
+            (16, 21, "input".into()),
+        ]);
+
+        // Punctuation and multiple separators
+        let words = tokenize_words("one--two...three");
+        assert_eq!(words, vec![
+            (0, 3, "one".into()),
+            (5, 8, "two".into()),
+            (11, 16, "three".into()),
+        ]);
+    }
+
+    /// Helper: run highlight_candidate and return the highlighted substrings
+    fn highlighted_words(content: &str, query_words: &[&str]) -> Vec<String> {
+        let fm = SearchEngine::highlight_candidate(
+            1, content, 1000, 1.0, query_words,
+        );
+        let ranges = SearchEngine::indices_to_ranges(&fm.matched_indices);
+        let chars: Vec<char> = content.chars().collect();
+        ranges.iter().map(|r| {
+            chars[r.start as usize..r.end as usize].iter().collect()
+        }).collect()
+    }
+
+    #[test]
+    fn test_highlight_exact_match() {
+        let words = highlighted_words("hello world", &["hello"]);
+        assert_eq!(words, vec!["hello"]);
+    }
+
+    #[test]
+    fn test_highlight_typo_match() {
+        // "riversde" (typo) should highlight "Riverside" via trigram overlap
+        let words = highlighted_words("Visit Riverside Park today", &["riversde"]);
+        assert_eq!(words, vec!["Riverside"]); // indices point into original content
+    }
+
+    #[test]
+    fn test_highlight_prefix_match() {
+        // "test" should highlight "testing" (all query trigrams present)
+        let words = highlighted_words("Run testing suite now", &["test"]);
+        assert_eq!(words, vec!["testing"]);
+    }
+
+    #[test]
+    fn test_highlight_no_theme_the_noise() {
+        // "theme" query should NOT highlight standalone "the"
+        let words = highlighted_words("the main theme is clear", &["theme"]);
+        assert_eq!(words, vec!["theme"]);
+        assert!(!words.contains(&"the".to_string()));
+    }
+
+    #[test]
+    fn test_highlight_multi_word() {
+        let words = highlighted_words("hello beautiful world", &["hello", "world"]);
+        assert_eq!(words, vec!["hello", "world"]);
+    }
+
+    #[test]
+    fn test_highlight_short_query_word() {
+        // "hi" is < 3 chars — uses exact word match
+        let words = highlighted_words("hi there highway", &["hi"]);
+        assert_eq!(words, vec!["hi"]); // "highway" should NOT match
+    }
+
+    #[test]
+    fn test_highlight_multiple_occurrences() {
+        // Both "hello" instances should be highlighted
+        let words = highlighted_words("hello world hello again", &["hello"]);
+        assert_eq!(words, vec!["hello", "hello"]);
+    }
+
+    #[test]
+    fn test_highlight_no_match() {
+        // Completely unrelated query
+        let words = highlighted_words("hello world", &["xyz"]);
+        assert!(words.is_empty());
+    }
+
+    #[test]
+    fn test_highlight_url_in_camelcase() {
+        // "url" query (1 trigram) vs "urlParser" doc word — all query trigrams present
+        let words = highlighted_words("the urlParser module", &["url"]);
+        assert_eq!(words, vec!["urlParser"]); // indices point into original content
     }
 }
