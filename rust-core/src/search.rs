@@ -66,6 +66,7 @@ impl SearchEngine {
         let matches: Vec<FuzzyMatch> = candidates
             .into_iter()
             .map(|c| Self::highlight_candidate(c.id, &c.content, c.timestamp, c.tantivy_score, &query_words))
+            .filter(|m| !m.matched_indices.is_empty())
             .collect();
 
         Ok(matches)
