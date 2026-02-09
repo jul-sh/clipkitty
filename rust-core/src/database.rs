@@ -164,6 +164,13 @@ impl Database {
         Ok(page_count * page_size)
     }
 
+    /// Get total number of items in the database
+    pub fn count_items(&self) -> DatabaseResult<u64> {
+        let conn = self.get_conn()?;
+        let count: i64 = conn.query_row("SELECT COUNT(*) FROM items", [], |row| row.get(0))?;
+        Ok(count as u64)
+    }
+
     /// Insert a new clipboard item, returns the row ID
     pub fn insert_item(&self, item: &StoredItem) -> DatabaseResult<i64> {
         let conn = self.get_conn()?;

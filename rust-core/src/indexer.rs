@@ -113,7 +113,7 @@ impl Indexer {
 
     /// Add or update a document in the index
     pub fn add_document(&self, id: i64, content: &str, timestamp: i64) -> IndexerResult<()> {
-        let writer = self.writer.write();
+        let writer = self.writer.read();
 
         // Delete existing document with same ID (upsert semantics)
         let id_term = tantivy::Term::from_field_i64(self.id_field, id);
@@ -137,7 +137,7 @@ impl Indexer {
     }
 
     pub fn delete_document(&self, id: i64) -> IndexerResult<()> {
-        let writer = self.writer.write();
+        let writer = self.writer.read();
         let id_term = tantivy::Term::from_field_i64(self.id_field, id);
         writer.delete_term(id_term);
         Ok(())

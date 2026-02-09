@@ -18,7 +18,7 @@ use crate::search::{SearchEngine, MIN_TRIGRAM_QUERY_LEN, MAX_RESULTS};
 use chrono::Utc;
 use once_cell::sync::Lazy;
 use std::path::PathBuf;
-use std::sync::Arc;
+use std::sync::{Arc, Once};
 use tokio_util::sync::CancellationToken;
 
 /// Global fallback Tokio runtime for when async functions are called outside any runtime context.
@@ -26,11 +26,34 @@ use tokio_util::sync::CancellationToken;
 /// Used by UniFFI which doesn't provide a tokio runtime.
 static FALLBACK_RUNTIME: Lazy<tokio::runtime::Runtime> = Lazy::new(|| {
     tokio::runtime::Builder::new_multi_thread()
-        .worker_threads(2)
         .enable_all()
         .build()
         .expect("Failed to create fallback tokio runtime")
 });
+
+static RAYON_INIT: Once = Once::new();
+
+/// Initialize global Rayon thread pool with core reservation and lower priority
+fn init_rayon() {
+    RAYON_INIT.call_once(|| {
+        let num_threads = std::thread::available_parallelism()
+            .map(|n| n.get())
+            .unwrap_or(4);
+
+        // Reserve 2 cores for Tokio to ensure responsiveness, but use at least 1 thread.
+        let rayon_threads = num_threads.saturating_sub(2).max(1);
+
+        let _ = rayon::ThreadPoolBuilder::new()
+            .num_threads(rayon_threads)
+            .thread_name(|i| format!("clipkitty-rayon-{}", i))
+            .start_handler(|_| {
+                // Lower Rayon thread priority to allow Tokio worker threads to preempt them easily.
+                use thread_priority::*;
+                let _ = set_current_thread_priority(ThreadPriority::Min);
+            })
+            .build_global();
+    });
+}
 
 /// RAII guard that cancels a token when dropped.
 /// When Swift cancels an async Task, UniFFI drops the Future, which drops this guard,
@@ -69,11 +92,12 @@ pub struct ClipboardStore {
 impl ClipboardStore {
     /// Create a store with an in-memory database (for testing)
     pub fn new_in_memory() -> Result<Self, ClipKittyError> {
-        let db = Database::open_in_memory()?;
+        init_rayon();
+        let database = Database::open_in_memory().map_err(ClipKittyError::from)?;
         let indexer = Indexer::new_in_memory()?;
 
         Ok(Self {
-            db: Arc::new(db),
+            db: Arc::new(database),
             indexer: Arc::new(indexer),
             search_engine: Arc::new(SearchEngine::new()),
         })
@@ -87,7 +111,10 @@ impl ClipboardStore {
 
     /// Rebuild index from database if the index is empty but database has items
     fn rebuild_index_if_needed(&self) -> Result<(), ClipKittyError> {
-        if self.indexer.num_docs() > 0 {
+        let db_count = self.db.count_items()?;
+        let index_count = self.indexer.num_docs();
+
+        if db_count == index_count {
             return Ok(());
         }
 
@@ -96,11 +123,13 @@ impl ClipboardStore {
             return Ok(());
         }
 
-        for item in items {
+        use rayon::prelude::*;
+        items.into_par_iter().try_for_each(|item| {
             if let Some(id) = item.id {
                 self.indexer.add_document(id, item.text_content(), item.timestamp_unix)?;
             }
-        }
+            Ok::<(), ClipKittyError>(())
+        })?;
         self.indexer.commit()?;
 
         Ok(())
@@ -142,6 +171,7 @@ impl ClipboardStore {
         let fuzzy_matches = search_engine.score_short_query_batch(
             candidates_with_prefix.into_iter(),
             query,
+            token,
         );
 
         // Checkpoint: Check cancellation before fetching items
@@ -168,20 +198,24 @@ impl ClipboardStore {
             return Err(ClipKittyError::Cancelled);
         }
 
-        // Generate matches with chunked cancellation checks
-        let mut matches: Vec<ItemMatch> = Vec::with_capacity(fuzzy_matches.len());
-        for (index, fm) in fuzzy_matches.iter().enumerate() {
-            // Check every 100 iterations for cancellation (preserve CPU cache performance)
-            if index % 100 == 0 && token.is_cancelled() {
-                return Err(ClipKittyError::Cancelled);
-            }
+        // Generate matches in parallel with cancellation check
+        use rayon::prelude::*;
+        let matches: Result<Vec<ItemMatch>, ClipKittyError> = fuzzy_matches
+            .into_par_iter()
+            .map(|fm| {
+                if token.is_cancelled() {
+                    return Err(ClipKittyError::Cancelled);
+                }
+                if let Some(item) = item_map.get(&fm.id) {
+                    Ok(Some(SearchEngine::create_item_match(item, &fm)))
+                } else {
+                    Ok(None)
+                }
+            })
+            .collect::<Result<Vec<Option<ItemMatch>>, ClipKittyError>>()
+            .map(|v| v.into_iter().flatten().collect());
 
-            if let Some(item) = item_map.get(&fm.id) {
-                matches.push(SearchEngine::create_item_match(item, fm));
-            }
-        }
-
-        Ok(matches)
+        matches
     }
 
     /// Trigram query search using Tantivy with phrase-boost scoring
@@ -200,7 +234,7 @@ impl ClipboardStore {
             return Err(ClipKittyError::Cancelled);
         }
 
-        let (fuzzy_matches, total_count) = search_engine.search(indexer, query)?;
+        let (fuzzy_matches, total_count) = search_engine.search(indexer, query, token)?;
 
         if fuzzy_matches.is_empty() {
             return Ok((Vec::new(), total_count));
@@ -230,20 +264,24 @@ impl ClipboardStore {
             return Err(ClipKittyError::Cancelled);
         }
 
-        // Generate matches with chunked cancellation checks
-        let mut matches: Vec<ItemMatch> = Vec::with_capacity(fuzzy_matches.len());
-        for (index, fm) in fuzzy_matches.iter().enumerate() {
-            // Check every 100 iterations for cancellation (preserve CPU cache performance)
-            if index % 100 == 0 && token.is_cancelled() {
-                return Err(ClipKittyError::Cancelled);
-            }
+        // Generate matches in parallel with cancellation check
+        use rayon::prelude::*;
+        let matches: Result<Vec<ItemMatch>, ClipKittyError> = fuzzy_matches
+            .into_par_iter()
+            .map(|fm| {
+                if token.is_cancelled() {
+                    return Err(ClipKittyError::Cancelled);
+                }
+                if let Some(item) = item_map.get(&fm.id) {
+                    Ok(Some(SearchEngine::create_item_match(item, &fm)))
+                } else {
+                    Ok(None)
+                }
+            })
+            .collect::<Result<Vec<Option<ItemMatch>>, ClipKittyError>>()
+            .map(|v| v.into_iter().flatten().collect());
 
-            if let Some(item) = item_map.get(&fm.id) {
-                matches.push(SearchEngine::create_item_match(item, fm));
-            }
-        }
-
-        Ok((matches, total_count))
+        matches.map(|m| (m, total_count))
     }
 
     /// Get a single stored item by ID (internal use)
@@ -259,10 +297,12 @@ impl ClipboardStore {
     /// Create a new store with a database at the given path
     #[uniffi::constructor]
     pub fn new(db_path: String) -> Result<Self, ClipKittyError> {
-        let db = Database::open(&db_path)?;
+        init_rayon();
+        let path = PathBuf::from(db_path);
+        let db = Database::open(&path).map_err(ClipKittyError::from)?;
 
         // Create index directory next to database
-        let db_path_buf = PathBuf::from(&db_path);
+        let db_path_buf = PathBuf::from(&path);
         let index_path = db_path_buf
             .parent()
             .map(|p| p.join("tantivy_index"))

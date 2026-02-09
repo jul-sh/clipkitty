@@ -10,10 +10,11 @@ use crate::indexer::{Indexer, IndexerResult};
 use crate::interface::{HighlightRange, MatchData, ItemMatch};
 use crate::models::StoredItem;
 use chrono::Utc;
+use tokio_util::sync::CancellationToken;
 
 /// Maximum results to return from search.
 /// Returning more than this is not useful to the user.
-pub const MAX_RESULTS: usize = 5000;
+pub const MAX_RESULTS: usize = 2000;
 
 pub const MIN_TRIGRAM_QUERY_LEN: usize = 3;
 
@@ -54,7 +55,7 @@ impl SearchEngine {
     /// Search using Tantivy with phrase-boost scoring for trigram queries (>= 3 chars).
     /// Results are already ranked by Tantivy (BM25 + recency blend via tweak_score).
     /// Returns (matches, total_count) where total_count is the true number of matching documents.
-    pub fn search(&self, indexer: &Indexer, query: &str) -> IndexerResult<(Vec<FuzzyMatch>, usize)> {
+    pub fn search(&self, indexer: &Indexer, query: &str, token: &CancellationToken) -> IndexerResult<(Vec<FuzzyMatch>, usize)> {
         if query.trim().is_empty() {
             return Ok((Vec::new(), 0));
         }
@@ -68,14 +69,23 @@ impl SearchEngine {
             .into_iter()
             .map(|(_, _, w)| w)
             .collect();
-        let query_word_refs: Vec<&str> = query_words.iter().map(|s| s.as_str()).collect();
+        // Pre-compute query word trigram sets once
+        let query_info: Vec<(String, Vec<[char; 3]>)> = query_words.iter()
+            .map(|w| {
+                let lower = w.to_lowercase();
+                let tris = word_trigrams(&lower);
+                (lower, tris)
+            })
+            .collect();
 
         // Tantivy returns candidates already sorted by blended score (BM25 + recency)
         let (candidates, total_count) = indexer.search(trimmed.trim_end(), MAX_RESULTS)?;
 
+        use rayon::prelude::*;
         let matches: Vec<FuzzyMatch> = candidates
-            .into_iter()
-            .map(|c| Self::highlight_candidate_pub(c.id, &c.content, c.timestamp, c.tantivy_score, &query_word_refs))
+            .into_par_iter()
+            .take_any_while(|_| !token.is_cancelled())
+            .map(|c| Self::highlight_candidate_pub(c.id, &c.content, c.timestamp, c.tantivy_score, &query_info))
             .filter(|m| !m.matched_indices.is_empty())
             .collect();
 
@@ -86,8 +96,9 @@ impl SearchEngine {
     /// Uses recency as primary metric with prefix match boost
     pub fn score_short_query_batch(
         &self,
-        candidates: impl Iterator<Item = (i64, String, i64, bool)>, // (id, content, timestamp, is_prefix)
+        candidates: impl Iterator<Item = (i64, String, i64, bool)> + Send, // (id, content, timestamp, is_prefix)
         query: &str,
+        token: &CancellationToken,
     ) -> Vec<FuzzyMatch> {
         let trimmed = query.trim();
         if trimmed.is_empty() {
@@ -95,35 +106,39 @@ impl SearchEngine {
         }
 
         let query_lower = trimmed.to_lowercase();
-        let mut results = Vec::new();
         let now = Utc::now().timestamp();
 
-        for (id, content, timestamp, is_prefix_match) in candidates {
-            // Find match position for highlighting
-            let content_lower = content.to_lowercase();
-            if let Some(pos) = content_lower.find(&query_lower) {
-                let matched_indices: Vec<u32> = (pos..pos + query.len())
-                    .map(|i| i as u32)
-                    .collect();
+        use rayon::prelude::*;
+        let mut results: Vec<FuzzyMatch> = candidates
+            .par_bridge()
+            .take_any_while(|_| !token.is_cancelled())
+            .filter_map(|(id, content, timestamp, is_prefix_match)| {
+                // Find match position for highlighting
+                let content_lower = content.to_lowercase();
+                content_lower.find(&query_lower).map(|pos| {
+                    let matched_indices: Vec<u32> = (pos..pos + query.len())
+                        .map(|i| i as u32)
+                        .collect();
 
-                // Score based on recency with prefix boost
-                let base_score = 1000u32; // Base score for any match
-                let score = if is_prefix_match {
-                    (base_score as f64 * PREFIX_MATCH_BOOST) as u32
-                } else {
-                    base_score
-                };
+                    // Score based on recency with prefix boost
+                    let base_score = 1000u32; // Base score for any match
+                    let score = if is_prefix_match {
+                        (base_score as f64 * PREFIX_MATCH_BOOST) as u32
+                    } else {
+                        base_score
+                    };
 
-                results.push(FuzzyMatch {
-                    id,
-                    score,
-                    matched_indices,
-                    timestamp,
-                    content,
-                    is_prefix_match,
-                });
-            }
-        }
+                    FuzzyMatch {
+                        id,
+                        score,
+                        matched_indices,
+                        timestamp,
+                        content,
+                        is_prefix_match,
+                    }
+                })
+            })
+            .collect();
 
         // Sort by blended score (recency primary, prefix boost)
         results.sort_unstable_by(|a, b| {
@@ -145,19 +160,10 @@ impl SearchEngine {
         content: &str,
         timestamp: i64,
         tantivy_score: f32,
-        words: &[&str],
+        query_info: &[(String, Vec<[char; 3]>)],
     ) -> FuzzyMatch {
         let content_lower = content.to_lowercase();
         let mut all_indices = Vec::new();
-
-        // Pre-compute query word trigram sets
-        let query_info: Vec<(String, Vec<[char; 3]>)> = words.iter()
-            .map(|w| {
-                let lower = w.to_lowercase();
-                let tris = word_trigrams(&lower);
-                (lower, tris)
-            })
-            .collect();
 
         // Tokenize document into words with char offsets
         let doc_words = tokenize_words(&content_lower);
@@ -165,7 +171,7 @@ impl SearchEngine {
         for (char_start, char_end, doc_word) in &doc_words {
             let doc_tris = word_trigrams(doc_word);
 
-            for (query_lower, query_tris) in &query_info {
+            for (query_lower, query_tris) in query_info {
                 let matched = if query_tris.is_empty() || doc_tris.is_empty() {
                     // Short word (< 3 chars) on either side: exact word match
                     doc_word == query_lower
@@ -352,7 +358,7 @@ impl Default for SearchEngine {
 }
 
 /// Generate trigrams from a word. Returns empty vec for words < 3 chars.
-fn word_trigrams(word: &str) -> Vec<[char; 3]> {
+pub(crate) fn word_trigrams(word: &str) -> Vec<[char; 3]> {
     let chars: Vec<char> = word.chars().collect();
     if chars.len() < 3 {
         return Vec::new();
@@ -688,8 +694,15 @@ mod tests {
 
     /// Helper: run highlight_candidate and return the highlighted substrings
     fn highlighted_words(content: &str, query_words: &[&str]) -> Vec<String> {
+        let query_info: Vec<(String, Vec<[char; 3]>)> = query_words.iter()
+            .map(|w| {
+                let lower = w.to_lowercase();
+                let tris = word_trigrams(&lower);
+                (lower, tris)
+            })
+            .collect();
         let fm = SearchEngine::highlight_candidate_pub(
-            1, content, 1000, 1.0, query_words,
+            1, content, 1000, 1.0, &query_info,
         );
         let ranges = SearchEngine::indices_to_ranges(&fm.matched_indices);
         let chars: Vec<char> = content.chars().collect();

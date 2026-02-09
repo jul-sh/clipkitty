@@ -451,7 +451,7 @@ fn create_ranking_test_store(items: Vec<&str>) -> (ClipboardStore, TempDir) {
         store
             .save_text(content.to_string(), Some("Test".to_string()), Some("com.test".to_string()))
             .unwrap();
-        std::thread::sleep(std::time::Duration::from_millis(50));
+        std::thread::sleep(std::time::Duration::from_millis(1100));
     }
 
     (store, temp_dir)
