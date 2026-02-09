@@ -42,6 +42,8 @@ tokio = { version = "*", features = ["full"] }
 tokio-util = { version = "*", features = ["rt"] }
 async-trait = "*"
 reqwest = { version = "*", default-features = false, features = ["json", "rustls-tls"] }
+rayon = "*"
+thread-priority = "*"
 rand = "*"
 schemars = "*"
 indicatif = "*"
@@ -81,10 +83,6 @@ opt-level = 1
 [dev-dependencies]
 tempfile = "*"
 criterion = { version = "*", features = ["html_reports"] }
-
-[[bench]]
-name = "search_bench"
-harness = false
 
 [[bench]]
 name = "trace_perf"
