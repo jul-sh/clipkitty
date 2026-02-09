@@ -185,6 +185,7 @@ impl ClipboardStore {
     }
 
     /// Trigram query search using Tantivy with phrase-boost scoring
+    /// Returns (matches, total_count) where total_count is the true number of matching documents.
     fn search_trigram_query_sync(
         db: &Database,
         indexer: &Indexer,
@@ -192,17 +193,17 @@ impl ClipboardStore {
         query: &str,
         token: &CancellationToken,
         runtime: &tokio::runtime::Handle,
-    ) -> Result<Vec<ItemMatch>, ClipKittyError> {
+    ) -> Result<(Vec<ItemMatch>, usize), ClipKittyError> {
         // Checkpoint: Check cancellation before Tantivy search
         // Note: We don't inject checks into Tantivy's internal SIMD loops
         if token.is_cancelled() {
             return Err(ClipKittyError::Cancelled);
         }
 
-        let fuzzy_matches = search_engine.search(indexer, query)?;
+        let (fuzzy_matches, total_count) = search_engine.search(indexer, query)?;
 
         if fuzzy_matches.is_empty() {
-            return Ok(Vec::new());
+            return Ok((Vec::new(), total_count));
         }
 
         // Checkpoint: Check cancellation before SQLite fetch
@@ -242,7 +243,7 @@ impl ClipboardStore {
             }
         }
 
-        Ok(matches)
+        Ok((matches, total_count))
     }
 
     /// Get a single stored item by ID (internal use)
@@ -399,16 +400,18 @@ impl ClipboardStoreApi for ClipboardStore {
         // because UniFFI doesn't provide a tokio runtime context
         let handle = runtime.spawn_blocking(move || {
             if trimmed_owned.len() < MIN_TRIGRAM_QUERY_LEN {
-                Self::search_short_query_sync(&db, &search_engine, &trimmed_owned, &token_clone, &runtime_for_closure)
+                let matches = Self::search_short_query_sync(&db, &search_engine, &trimmed_owned, &token_clone, &runtime_for_closure)?;
+                let total_count = matches.len() as u64;
+                Ok((matches, total_count))
             } else {
-                Self::search_trigram_query_sync(&db, &indexer, &search_engine, &query_owned, &token_clone, &runtime_for_closure)
+                let (matches, total_count) = Self::search_trigram_query_sync(&db, &indexer, &search_engine, &query_owned, &token_clone, &runtime_for_closure)?;
+                Ok((matches, total_count as u64))
             }
         });
 
         // Await the result
         match handle.await {
-            Ok(Ok(matches)) => {
-                let total_count = matches.len() as u64;
+            Ok(Ok((matches, total_count))) => {
 
                 // Fetch first item's full content for preview pane
                 let first_item = if let Some(first_match) = matches.first() {

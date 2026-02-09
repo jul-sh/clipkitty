@@ -7,7 +7,7 @@ use crate::search::{RECENCY_BOOST_MAX, RECENCY_HALF_LIFE_SECS};
 use chrono::Utc;
 use parking_lot::RwLock;
 use std::path::Path;
-use tantivy::collector::TopDocs;
+use tantivy::collector::{Count, TopDocs};
 use tantivy::directory::MmapDirectory;
 use tantivy::query::{BooleanQuery, BoostQuery, Occur, PhraseQuery, TermQuery};
 use tantivy::schema::*;
@@ -143,7 +143,7 @@ impl Indexer {
         Ok(())
     }
 
-    pub fn search(&self, query: &str, limit: usize) -> IndexerResult<Vec<SearchCandidate>> {
+    pub fn search(&self, query: &str, limit: usize) -> IndexerResult<(Vec<SearchCandidate>, usize)> {
         let reader = self.reader.read();
         let searcher = reader.searcher();
 
@@ -158,7 +158,7 @@ impl Indexer {
         // Query too short for trigrams - return empty (minimum 3 chars required)
         // search.rs handles <3 char queries via streaming fallback
         if terms.is_empty() {
-            return Ok(Vec::new());
+            return Ok((Vec::new(), 0));
         }
 
         let num_terms = terms.len();
@@ -276,7 +276,7 @@ impl Indexer {
         let timestamp_field = self.schema.get_field("timestamp").unwrap();
         let now = Utc::now().timestamp();
 
-        let collector = TopDocs::with_limit(limit)
+        let top_collector = TopDocs::with_limit(limit)
             .tweak_score(move |segment_reader: &tantivy::SegmentReader| {
                 let ts_reader = segment_reader
                     .fast_fields()
@@ -293,7 +293,7 @@ impl Indexer {
                 }
             });
 
-        let top_docs = searcher.search(final_query.as_ref(), &collector)?;
+        let (top_docs, total_count) = searcher.search(final_query.as_ref(), &(top_collector, Count))?;
 
         let mut candidates = Vec::with_capacity(top_docs.len());
         for (blended_score, doc_address) in top_docs {
@@ -322,7 +322,7 @@ impl Indexer {
             });
         }
 
-        Ok(candidates)
+        Ok((candidates, total_count))
     }
 
 

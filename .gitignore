@@ -51,3 +51,6 @@ rust-core/target/
 # Data Generation and Indexing
 Sources/App/tantivy_index/
 Scripts/data-gen/progress_rust.json
+
+# Benchmark data (generated with: cargo run --release --bin generate-bench-data)
+rust-core/benches/synthetic_1m.sqlite
