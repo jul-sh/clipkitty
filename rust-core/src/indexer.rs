@@ -174,18 +174,22 @@ impl Indexer {
             .collect();
         let mut tantivy_query = BooleanQuery::new(subqueries);
 
-        // For queries with 7+ trigrams (~9+ chars), require most trigrams to match.
-        // This filters "soup" matches at the index level - documents that only
-        // contain scattered trigrams (like long texts with common English word
-        // overlaps) are never fetched.
+        // Require a minimum number of trigram terms to match, scaling with query
+        // length. This filters scattered single-trigram coincidences at the index
+        // level while preserving fuzzy/typo tolerance.
         //
-        // Short queries (< 7 trigrams) skip this filter entirely to preserve
-        // typo tolerance for shorter searches.
-        if num_terms >= 7 {
-            // Use 4/5 for long queries (20+ trigrams) where common-word overlap
-            // in long documents can produce false matches, 2/3 for medium queries.
-            let ratio = if num_terms >= 20 { 4 * num_terms / 5 } else { num_terms * 2 / 3 };
-            let min_match = ratio.max(5);
+        // - 1-2 trigrams (3-4 char query): require all (still fuzzy — few terms)
+        // - 3-6 trigrams (5-8 char query): require half (kills scattered matches)
+        // - 7-19 trigrams: require 2/3
+        // - 20+ trigrams: require 4/5 (common-word overlap in long documents)
+        if num_terms >= 3 {
+            let min_match = if num_terms >= 20 {
+                4 * num_terms / 5
+            } else if num_terms >= 7 {
+                (num_terms * 2 / 3).max(5)
+            } else {
+                (num_terms + 1) / 2 // ceil(n/2)
+            };
             tantivy_query.set_minimum_number_should_match(min_match);
         }
 
