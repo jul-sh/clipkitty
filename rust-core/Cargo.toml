@@ -70,8 +70,22 @@ debug = false
 opt-level = 3
 codegen-units = 1
 
+[profile.bench]
+opt-level = 3
+lto = "thin"
+debug = false
+
 [profile.dev]
 opt-level = 1
 
 [dev-dependencies]
 tempfile = "*"
+criterion = { version = "*", features = ["html_reports"] }
+
+[[bench]]
+name = "search_bench"
+harness = false
+
+[[bench]]
+name = "trace_perf"
+harness = false

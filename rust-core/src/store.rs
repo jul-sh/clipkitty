@@ -14,9 +14,10 @@ use crate::interface::{
     ClipboardItem, ItemMatch, MatchData, SearchResult, ClipKittyError, ClipboardStoreApi,
 };
 use crate::models::StoredItem;
-use crate::search::{SearchEngine, MIN_TRIGRAM_QUERY_LEN, MAX_RESULTS};
+use crate::search::{SearchEngine, MIN_TRIGRAM_QUERY_LEN, MAX_RESULTS, HIGHLIGHT_BATCH_SIZE};
 use chrono::Utc;
 use once_cell::sync::Lazy;
+use std::collections::HashMap;
 use std::path::PathBuf;
 use std::sync::Arc;
 use tokio_util::sync::CancellationToken;
@@ -49,6 +50,20 @@ impl Drop for DropGuard {
     fn drop(&mut self) {
         self.token.cancel();
     }
+}
+
+/// Per-stage timing breakdown for benchmarking
+pub struct SearchTimings {
+    pub tantivy_ms: f64,
+    pub highlight_ms: f64,
+    pub db_fetch_head_ms: f64,
+    pub match_gen_ms: f64,
+    pub db_fetch_tail_ms: f64,
+    pub total_ms: f64,
+    pub num_candidates: usize,
+    pub num_highlighted: usize,
+    pub num_metadata_only: usize,
+    pub num_results: usize,
 }
 
 /// Thread-safe clipboard store with SQLite + Tantivy
@@ -107,13 +122,16 @@ impl ClipboardStore {
     }
 
     /// Short query search using prefix matching + LIKE on recent items
+    ///
+    /// Lazy highlighting: only the first HIGHLIGHT_BATCH_SIZE results get full highlights.
+    /// The rest are returned as IDs only (no DB fetch during search).
     fn search_short_query_sync(
         db: &Database,
         search_engine: &SearchEngine,
         query: &str,
         token: &CancellationToken,
         runtime: &tokio::runtime::Handle,
-    ) -> Result<Vec<ItemMatch>, ClipKittyError> {
+    ) -> Result<(Vec<i64>, HashMap<i64, ItemMatch>), ClipKittyError> {
         // Checkpoint: Check cancellation before DB query
         if token.is_cancelled() {
             return Err(ClipKittyError::Cancelled);
@@ -122,7 +140,7 @@ impl ClipboardStore {
         let candidates = db.search_short_query(query, MAX_RESULTS * 5)?;
 
         if candidates.is_empty() {
-            return Ok(Vec::new());
+            return Ok((Vec::new(), HashMap::new()));
         }
 
         // Checkpoint: Check cancellation before scoring
@@ -149,42 +167,48 @@ impl ClipboardStore {
             return Err(ClipKittyError::Cancelled);
         }
 
-        // Use interruptible fetch with SQLite C-level interrupt support
+        // Collect all IDs in order
         let ids: Vec<i64> = fuzzy_matches.iter().map(|m| m.id).collect();
-        let stored_items = db.fetch_items_by_ids_interruptible(&ids, token, runtime)?;
 
-        // Check if we were interrupted (empty result with non-empty IDs)
-        if stored_items.is_empty() && !ids.is_empty() && token.is_cancelled() {
+        // Split at HIGHLIGHT_BATCH_SIZE
+        let split_at = HIGHLIGHT_BATCH_SIZE.min(fuzzy_matches.len());
+        let head = &fuzzy_matches[..split_at];
+
+        // --- First batch: full highlight + DB fetch ---
+        let head_ids: Vec<i64> = head.iter().map(|m| m.id).collect();
+        let head_items = db.fetch_items_by_ids_interruptible(&head_ids, token, runtime)?;
+
+        if head_items.is_empty() && !head_ids.is_empty() && token.is_cancelled() {
             return Err(ClipKittyError::Cancelled);
         }
 
-        let item_map: std::collections::HashMap<i64, StoredItem> = stored_items
+        let head_stored: HashMap<i64, StoredItem> = head_items
             .into_iter()
             .filter_map(|item| item.id.map(|id| (id, item)))
             .collect();
 
-        // Checkpoint: Check cancellation before highlight generation
         if token.is_cancelled() {
             return Err(ClipKittyError::Cancelled);
         }
 
-        // Generate matches with chunked cancellation checks
-        let mut matches: Vec<ItemMatch> = Vec::with_capacity(fuzzy_matches.len());
-        for (index, fm) in fuzzy_matches.iter().enumerate() {
-            // Check every 100 iterations for cancellation (preserve CPU cache performance)
-            if index % 100 == 0 && token.is_cancelled() {
-                return Err(ClipKittyError::Cancelled);
-            }
-
-            if let Some(item) = item_map.get(&fm.id) {
-                matches.push(SearchEngine::create_item_match(item, fm));
+        let mut item_matches: HashMap<i64, ItemMatch> = HashMap::with_capacity(split_at);
+        for fm in head {
+            if let Some(item) = head_stored.get(&fm.id) {
+                item_matches.insert(fm.id, SearchEngine::create_item_match(item, fm));
             }
         }
 
-        Ok(matches)
+        // Remaining IDs: no DB fetch at all during search
+
+        Ok((ids, item_matches))
     }
 
     /// Trigram query search using Tantivy with phrase-boost scoring
+    /// Returns (ids, item_matches, total_count) where total_count is the true number of matching documents.
+    ///
+    /// Lazy highlighting: only the first HIGHLIGHT_BATCH_SIZE results get full highlights
+    /// and are placed in the item_matches map. The rest are just IDs (no DB fetch).
+    /// Swift calls `highlight_results` on scroll to fill in highlights for the rest.
     fn search_trigram_query_sync(
         db: &Database,
         indexer: &Indexer,
@@ -192,17 +216,16 @@ impl ClipboardStore {
         query: &str,
         token: &CancellationToken,
         runtime: &tokio::runtime::Handle,
-    ) -> Result<Vec<ItemMatch>, ClipKittyError> {
+    ) -> Result<(Vec<i64>, HashMap<i64, ItemMatch>, usize), ClipKittyError> {
         // Checkpoint: Check cancellation before Tantivy search
-        // Note: We don't inject checks into Tantivy's internal SIMD loops
         if token.is_cancelled() {
             return Err(ClipKittyError::Cancelled);
         }
 
-        let fuzzy_matches = search_engine.search(indexer, query)?;
+        let (fuzzy_matches, total_count) = search_engine.search(indexer, query)?;
 
         if fuzzy_matches.is_empty() {
-            return Ok(Vec::new());
+            return Ok((Vec::new(), HashMap::new(), total_count));
         }
 
         // Checkpoint: Check cancellation before SQLite fetch
@@ -210,45 +233,145 @@ impl ClipboardStore {
             return Err(ClipKittyError::Cancelled);
         }
 
-        // Use interruptible fetch with SQLite C-level interrupt support
+        // Collect all IDs in order
         let ids: Vec<i64> = fuzzy_matches.iter().map(|m| m.id).collect();
-        let stored_items = db.fetch_items_by_ids_interruptible(&ids, token, runtime)?;
 
-        // Check if we were interrupted (empty result with non-empty IDs)
-        if stored_items.is_empty() && !ids.is_empty() && token.is_cancelled() {
+        // Split at HIGHLIGHT_BATCH_SIZE: first batch gets full highlights
+        let split_at = HIGHLIGHT_BATCH_SIZE.min(fuzzy_matches.len());
+        let head = &fuzzy_matches[..split_at];
+
+        // --- First batch: full highlight + DB fetch + create_item_match ---
+        let head_ids: Vec<i64> = head.iter().map(|m| m.id).collect();
+        let head_items = db.fetch_items_by_ids_interruptible(&head_ids, token, runtime)?;
+
+        if head_items.is_empty() && !head_ids.is_empty() && token.is_cancelled() {
             return Err(ClipKittyError::Cancelled);
         }
 
-        let item_map: std::collections::HashMap<i64, StoredItem> = stored_items
+        let head_stored: HashMap<i64, StoredItem> = head_items
             .into_iter()
             .filter_map(|item| item.id.map(|id| (id, item)))
             .collect();
 
-        // Checkpoint: Check cancellation before highlight generation
         if token.is_cancelled() {
             return Err(ClipKittyError::Cancelled);
         }
 
-        // Generate matches with chunked cancellation checks
-        let mut matches: Vec<ItemMatch> = Vec::with_capacity(fuzzy_matches.len());
-        for (index, fm) in fuzzy_matches.iter().enumerate() {
-            // Check every 100 iterations for cancellation (preserve CPU cache performance)
-            if index % 100 == 0 && token.is_cancelled() {
-                return Err(ClipKittyError::Cancelled);
-            }
-
-            if let Some(item) = item_map.get(&fm.id) {
-                matches.push(SearchEngine::create_item_match(item, fm));
+        let mut item_matches: HashMap<i64, ItemMatch> = HashMap::with_capacity(split_at);
+        for fm in head {
+            if let Some(item) = head_stored.get(&fm.id) {
+                item_matches.insert(fm.id, SearchEngine::create_item_match(item, fm));
             }
         }
 
-        Ok(matches)
+        // Remaining IDs: no DB fetch at all during search
+
+        Ok((ids, item_matches, total_count))
+    }
+
+    /// Instrumented trigram query search — returns per-stage timings.
+    /// Only used by benchmarks; not exported via FFI.
+    ///
+    /// Mirrors the lazy-highlight split: first HIGHLIGHT_BATCH_SIZE get full
+    /// highlight + StoredItem fetch, the rest are just IDs (no DB fetch).
+    fn search_trigram_instrumented(
+        db: &Database,
+        indexer: &Indexer,
+        _search_engine: &SearchEngine,
+        query: &str,
+    ) -> Result<SearchTimings, ClipKittyError> {
+        use std::time::Instant;
+        let t_total = Instant::now();
+
+        // Stage 1: Tantivy search
+        let t0 = Instant::now();
+        let query_words: Vec<&str> = query.split_whitespace().collect();
+        let (candidates, _total_count) = indexer.search(query.trim(), crate::search::MAX_RESULTS)?;
+        let tantivy_ms = t0.elapsed().as_secs_f64() * 1000.0;
+        let num_candidates = candidates.len();
+
+        // Split at HIGHLIGHT_BATCH_SIZE
+        let split_at = HIGHLIGHT_BATCH_SIZE.min(candidates.len());
+        let head_cands = &candidates[..split_at];
+        let num_tail = candidates.len() - split_at;
+
+        // Stage 2: Highlighting (head only)
+        let t1 = Instant::now();
+        let head_matches: Vec<_> = head_cands
+            .iter()
+            .map(|c| crate::search::SearchEngine::highlight_candidate_pub(
+                c.id, &c.content, c.timestamp, c.tantivy_score, &query_words,
+            ))
+            .collect();
+        let highlight_ms = t1.elapsed().as_secs_f64() * 1000.0;
+
+        // Stage 3: DB fetch for head (full StoredItem)
+        let t2 = Instant::now();
+        let head_ids: Vec<i64> = head_matches.iter().map(|m| m.id).collect();
+        let head_items = db.fetch_items_by_ids(&head_ids)?;
+        let db_fetch_head_ms = t2.elapsed().as_secs_f64() * 1000.0;
+
+        let head_map: HashMap<i64, StoredItem> = head_items
+            .into_iter()
+            .filter_map(|item| item.id.map(|id| (id, item)))
+            .collect();
+
+        // Stage 4: Match generation (head only — snippet + highlight ranges)
+        let t3 = Instant::now();
+        let mut item_matches: HashMap<i64, ItemMatch> = HashMap::with_capacity(split_at);
+        for fm in &head_matches {
+            if let Some(item) = head_map.get(&fm.id) {
+                item_matches.insert(fm.id, SearchEngine::create_item_match(item, fm));
+            }
+        }
+        let match_gen_ms = t3.elapsed().as_secs_f64() * 1000.0;
+        let num_highlighted = item_matches.len();
+
+        // Stage 5: Tail is just IDs — no DB fetch needed (no-op)
+        let t4 = Instant::now();
+        let db_fetch_tail_ms = t4.elapsed().as_secs_f64() * 1000.0;
+
+        let total_ms = t_total.elapsed().as_secs_f64() * 1000.0;
+
+        Ok(SearchTimings {
+            tantivy_ms,
+            highlight_ms,
+            db_fetch_head_ms,
+            match_gen_ms,
+            db_fetch_tail_ms,
+            total_ms,
+            num_candidates,
+            num_highlighted,
+            num_metadata_only: num_tail,
+            num_results: num_candidates,
+        })
     }
 
     /// Get a single stored item by ID (internal use)
     fn get_stored_item(&self, item_id: i64) -> Result<Option<StoredItem>, ClipKittyError> {
         let items = self.db.fetch_items_by_ids(&[item_id])?;
         Ok(items.into_iter().next())
+    }
+}
+
+// Benchmark-only methods (not exported via FFI)
+impl ClipboardStore {
+    /// Run an instrumented search for benchmarking. Returns per-stage timings.
+    pub async fn search_instrumented(&self, query: String) -> Result<SearchTimings, ClipKittyError> {
+        let runtime = self.runtime_handle();
+        let db = Arc::clone(&self.db);
+        let indexer = Arc::clone(&self.indexer);
+        let search_engine = Arc::clone(&self.search_engine);
+
+        let handle = runtime.spawn_blocking(move || {
+            Self::search_trigram_instrumented(&db, &indexer, &search_engine, &query)
+        });
+
+        match handle.await {
+            Ok(Ok(timings)) => Ok(timings),
+            Ok(Err(e)) => Err(e),
+            Err(_) => Err(ClipKittyError::Cancelled),
+        }
     }
 }
 
@@ -340,7 +463,7 @@ impl ClipboardStoreApi for ClipboardStore {
 
     /// Search for items
     /// Empty query returns all recent items, non-empty query filters by search terms
-    /// Returns ItemMatch objects with optional highlights for consistent UI handling
+    /// Returns ordered IDs + a HashMap of highlighted ItemMatches for the first batch.
     ///
     /// This is an async function that supports cancellation. When Swift drops the Task,
     /// the DropGuard triggers the CancellationToken, allowing mid-flight abortion.
@@ -362,16 +485,21 @@ impl ClipboardStoreApi for ClipboardStore {
                 None
             };
 
-            let matches: Vec<ItemMatch> = items
+            let ids: Vec<i64> = items.iter().map(|m| m.item_id).collect();
+            let item_matches: HashMap<i64, ItemMatch> = items
                 .into_iter()
-                .map(|metadata| ItemMatch {
-                    item_metadata: metadata,
-                    match_data: MatchData::default(),
+                .map(|metadata| {
+                    let id = metadata.item_id;
+                    (id, ItemMatch {
+                        item_metadata: metadata,
+                        match_data: MatchData::default(),
+                    })
                 })
                 .collect();
 
             return Ok(SearchResult {
-                matches,
+                ids,
+                item_matches,
                 total_count,
                 first_item,
             });
@@ -399,22 +527,23 @@ impl ClipboardStoreApi for ClipboardStore {
         // because UniFFI doesn't provide a tokio runtime context
         let handle = runtime.spawn_blocking(move || {
             if trimmed_owned.len() < MIN_TRIGRAM_QUERY_LEN {
-                Self::search_short_query_sync(&db, &search_engine, &trimmed_owned, &token_clone, &runtime_for_closure)
+                let (ids, item_matches) = Self::search_short_query_sync(&db, &search_engine, &trimmed_owned, &token_clone, &runtime_for_closure)?;
+                let total_count = ids.len() as u64;
+                Ok((ids, item_matches, total_count))
             } else {
-                Self::search_trigram_query_sync(&db, &indexer, &search_engine, &query_owned, &token_clone, &runtime_for_closure)
+                let (ids, item_matches, total_count) = Self::search_trigram_query_sync(&db, &indexer, &search_engine, &query_owned, &token_clone, &runtime_for_closure)?;
+                Ok((ids, item_matches, total_count as u64))
             }
         });
 
         // Await the result
         match handle.await {
-            Ok(Ok(matches)) => {
-                let total_count = matches.len() as u64;
+            Ok(Ok((ids, item_matches, total_count))) => {
 
                 // Fetch first item's full content for preview pane
-                let first_item = if let Some(first_match) = matches.first() {
-                    let id = first_match.item_metadata.item_id;
+                let first_item = if let Some(&first_id) = ids.first() {
                     self.db
-                        .fetch_items_by_ids(&[id])?
+                        .fetch_items_by_ids(&[first_id])?
                         .into_iter()
                         .next()
                         .map(|item| item.to_clipboard_item())
@@ -422,7 +551,7 @@ impl ClipboardStoreApi for ClipboardStore {
                     None
                 };
 
-                Ok(SearchResult { matches, total_count, first_item })
+                Ok(SearchResult { ids, item_matches, total_count, first_item })
             }
             Ok(Err(e)) => Err(e),
             Err(_join_error) => {
@@ -440,6 +569,31 @@ impl ClipboardStoreApi for ClipboardStore {
             .map(|item| item.to_clipboard_item())
             .collect();
         Ok(items)
+    }
+
+    /// Compute highlights for items that were returned without highlights (lazy highlighting).
+    /// Swift calls this as the user scrolls past the initial batch.
+    fn highlight_results(&self, query: String, item_ids: Vec<i64>) -> Result<HashMap<i64, ItemMatch>, ClipKittyError> {
+        let stored_items = self.db.fetch_items_by_ids(&item_ids)?;
+        let query_words: Vec<&str> = query.split_whitespace().collect();
+
+        let matches = stored_items
+            .iter()
+            .map(|item| {
+                let id = item.id.unwrap_or(0);
+                let content = item.text_content();
+                let fm = SearchEngine::highlight_candidate_pub(
+                    id,
+                    content,
+                    item.timestamp_unix,
+                    0.0,
+                    &query_words,
+                );
+                (id, SearchEngine::create_item_match(item, &fm))
+            })
+            .collect();
+
+        Ok(matches)
     }
 
     /// Save an image item to the database
@@ -579,8 +733,9 @@ mod tests {
         assert!(id > 0);
 
         let result = rt.block_on(store.search("".to_string())).unwrap();
-        assert_eq!(result.matches.len(), 1);
-        assert!(result.matches[0].item_metadata.snippet.contains("Hello World"));
+        assert_eq!(result.ids.len(), 1);
+        let item = &result.item_matches[&result.ids[0]];
+        assert!(item.item_metadata.snippet.contains("Hello World"));
     }
 
     #[test]
@@ -599,7 +754,7 @@ mod tests {
         assert_eq!(id2, 0); // Duplicate returns 0
 
         let result = rt.block_on(store.search("".to_string())).unwrap();
-        assert_eq!(result.matches.len(), 1); // Only one item
+        assert_eq!(result.ids.len(), 1); // Only one item
     }
 
     #[test]
@@ -610,10 +765,10 @@ mod tests {
         let id = store
             .save_text("To delete".to_string(), None, None)
             .unwrap();
-        assert_eq!(rt.block_on(store.search("".to_string())).unwrap().matches.len(), 1);
+        assert_eq!(rt.block_on(store.search("".to_string())).unwrap().ids.len(), 1);
 
         store.delete_item(id).unwrap();
-        assert_eq!(rt.block_on(store.search("".to_string())).unwrap().matches.len(), 0);
+        assert_eq!(rt.block_on(store.search("".to_string())).unwrap().ids.len(), 0);
     }
 
     #[test]
@@ -626,9 +781,10 @@ mod tests {
 
         let result = rt.block_on(store.search("Hello".to_string())).unwrap();
 
-        assert_eq!(result.matches.len(), 1);
-        assert!(result.matches[0].item_metadata.snippet.contains("Hello"));
-        assert!(!result.matches[0].match_data.highlights.is_empty());
+        assert_eq!(result.ids.len(), 1);
+        let item = &result.item_matches[&result.ids[0]];
+        assert!(item.item_metadata.snippet.contains("Hello"));
+        assert!(!item.match_data.highlights.is_empty());
     }
 
     #[test]
@@ -699,8 +855,9 @@ mod tests {
 
         // Search should also return the link
         let result = rt.block_on(store.search("github".to_string())).unwrap();
-        assert!(!result.matches.is_empty(), "Should find the link by searching 'github'");
-        assert!(result.matches[0].item_metadata.snippet.contains("github"));
+        assert!(!result.ids.is_empty(), "Should find the link by searching 'github'");
+        let first_item_match = &result.item_matches[&result.ids[0]];
+        assert!(first_item_match.item_metadata.snippet.contains("github"));
 
         // first_item should also be populated when searching
         assert!(result.first_item.is_some(), "first_item should be populated");
@@ -826,7 +983,7 @@ mod tests {
 
         // Verify we can still search normally after cancellation
         let result = store.search("Item".to_string()).await.unwrap();
-        assert!(!result.matches.is_empty());
+        assert!(!result.ids.is_empty());
     }
 
     #[tokio::test]
@@ -840,12 +997,12 @@ mod tests {
 
         // Short query (< 3 chars)
         let result = store.search("He".to_string()).await.unwrap();
-        assert!(!result.matches.is_empty());
+        assert!(!result.ids.is_empty());
 
         // Trigram query (>= 3 chars)
         let result = store.search("Hello".to_string()).await.unwrap();
-        assert!(!result.matches.is_empty());
-        assert!(result.matches.iter().all(|m|
+        assert!(!result.ids.is_empty());
+        assert!(result.item_matches.values().all(|m|
             m.item_metadata.snippet.to_lowercase().contains("hello")
         ));
     }
@@ -882,13 +1039,13 @@ mod tests {
         let result2 = search2.await.unwrap().unwrap();
         let result3 = search3.await.unwrap().unwrap();
 
-        assert!(!result1.matches.is_empty());
-        assert!(!result2.matches.is_empty());
-        assert!(!result3.matches.is_empty());
+        assert!(!result1.ids.is_empty());
+        assert!(!result2.ids.is_empty());
+        assert!(!result3.ids.is_empty());
 
         // Store should still be usable after concurrent access
         let result = store.search("Test".to_string()).await.unwrap();
-        assert!(!result.matches.is_empty());
+        assert!(!result.ids.is_empty());
     }
 
     #[tokio::test]
@@ -914,12 +1071,12 @@ mod tests {
 
         // Store should still work correctly
         let result = store.search("Item".to_string()).await.unwrap();
-        assert!(!result.matches.is_empty());
+        assert!(!result.ids.is_empty());
 
         // Can still add and search for new items
         store.save_text("New item after aborts".to_string(), None, None).unwrap();
         let result = store.search("after aborts".to_string()).await.unwrap();
-        assert!(!result.matches.is_empty());
+        assert!(!result.ids.is_empty());
     }
 
     #[test]
@@ -973,6 +1130,6 @@ mod tests {
         // Should complete successfully, not panic
         assert!(result.is_ok());
         let search_result = result.unwrap();
-        assert!(!search_result.matches.is_empty());
+        assert!(!search_result.ids.is_empty());
     }
 }

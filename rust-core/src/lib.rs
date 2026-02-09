@@ -16,6 +16,6 @@ mod store;
 
 pub use interface::*;
 pub use models::*;
-pub use store::*;
+pub use store::{ClipboardStore, SearchTimings};
 
 uniffi::setup_scaffolding!();

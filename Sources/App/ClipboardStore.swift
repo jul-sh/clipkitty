@@ -41,10 +41,10 @@ enum DisplayState: Equatable {
     case loading
     /// Results ready - query can be empty (all items) or non-empty (filtered)
     /// Includes optional first item for immediate preview display
-    case results(query: String, items: [ItemMatch], firstItem: ClipboardItem?)
+    case results(query: String, ids: [Int64], itemMatches: [Int64: ItemMatch], firstItem: ClipboardItem?)
     /// Loading in progress - showing fallback results while waiting for new results
     /// Preserves match highlights from previous search to prevent text flash
-    case resultsLoading(query: String, fallback: [ItemMatch])
+    case resultsLoading(query: String, fallbackIds: [Int64], fallbackMatches: [Int64: ItemMatch])
     /// Error state
     case error(String)
 }
@@ -69,7 +69,7 @@ final class ClipboardStore {
     /// Current query (empty string if showing all items)
     var currentQuery: String {
         switch state {
-        case .results(let query, _, _), .resultsLoading(let query, _):
+        case .results(let query, _, _, _), .resultsLoading(let query, _, _):
             return query
         case .loading, .error:
             return ""
@@ -92,6 +92,10 @@ final class ClipboardStore {
     private var searchTask: Task<Void, Never>?
     /// Current search query
     private var currentSearchQuery: String = ""
+
+    // MARK: - Lazy Highlight State
+    private var highlightTask: Task<Void, Never>?
+    private var pendingHighlightIds: Set<Int64> = []
 
     /// Increments each time the display is reset - views observe this to reset local state
     private(set) var displayVersion: Int = 0
@@ -161,19 +165,26 @@ final class ClipboardStore {
         let query = newQuery.trimmingCharacters(in: .whitespacesAndNewlines)
 
         searchTask?.cancel()
+        highlightTask?.cancel()
+        pendingHighlightIds.removeAll()
         currentSearchQuery = query
 
-        // Capture fallback results from current state (preserves match text to prevent flash)
-        let fallback: [ItemMatch] = {
-            switch state {
-            case .results(_, let items, _), .resultsLoading(_, let items):
-                return items
-            case .loading, .error:
-                return []
-            }
-        }()
+        // Capture fallback from current state (preserves match text to prevent flash)
+        let fallbackIds: [Int64]
+        let fallbackMatches: [Int64: ItemMatch]
+        switch state {
+        case .results(_, let ids, let matches, _):
+            fallbackIds = ids
+            fallbackMatches = matches
+        case .resultsLoading(_, let ids, let matches):
+            fallbackIds = ids
+            fallbackMatches = matches
+        case .loading, .error:
+            fallbackIds = []
+            fallbackMatches = [:]
+        }
 
-        state = .resultsLoading(query: query, fallback: fallback)
+        state = .resultsLoading(query: query, fallbackIds: fallbackIds, fallbackMatches: fallbackMatches)
 
         searchTask = Task {
             // Small debounce for typed queries
@@ -254,9 +265,9 @@ final class ClipboardStore {
             let searchResult = try await rustStore.search(query: query)
 
             guard !Task.isCancelled else { return }
-            guard case .resultsLoading(let currentQuery, _) = state, currentQuery == query else { return }
+            guard case .resultsLoading(let currentQuery, _, _) = state, currentQuery == query else { return }
 
-            state = .results(query: query, items: searchResult.matches, firstItem: searchResult.firstItem)
+            state = .results(query: query, ids: searchResult.ids, itemMatches: searchResult.itemMatches, firstItem: searchResult.firstItem)
             os_signpost(.end, log: performanceLog, name: "search", signpostID: signpostID, "total_hits=%d", searchResult.totalCount)
         } catch ClipKittyError.Cancelled {
             os_signpost(.end, log: performanceLog, name: "search", signpostID: signpostID, "cancelled")
@@ -265,6 +276,69 @@ final class ClipboardStore {
             state = .error("Search failed: \(error.localizedDescription)")
             os_signpost(.end, log: performanceLog, name: "search", signpostID: signpostID, "error")
         }
+    }
+
+    // MARK: - Lazy Highlighting
+
+    private static let highlightBatchSize = 50
+
+    /// Request highlights for items around a visible index that are missing from itemMatches.
+    /// Collects a batch of unfetched IDs and flushes in a single FFI call.
+    func requestHighlights(around index: Int) {
+        guard !currentQuery.isEmpty else { return }
+        guard case .results(_, let ids, let itemMatches, _) = state else { return }
+
+        // Collect IDs from index..<index+BATCH_SIZE that are missing from itemMatches
+        let end = min(index + Self.highlightBatchSize, ids.count)
+        for i in index..<end {
+            let id = ids[i]
+            if itemMatches[id] == nil {
+                pendingHighlightIds.insert(id)
+            }
+        }
+
+        guard !pendingHighlightIds.isEmpty else { return }
+
+        highlightTask?.cancel()
+        highlightTask = Task {
+            // Debounce: collect IDs for one frame before flushing
+            try? await Task.sleep(for: .milliseconds(16))
+            guard !Task.isCancelled else { return }
+            await flushHighlightRequests()
+        }
+    }
+
+    private func flushHighlightRequests() async {
+        guard let rustStore else { return }
+        let ids = Array(pendingHighlightIds)
+        pendingHighlightIds.removeAll()
+        guard !ids.isEmpty else { return }
+
+        let query = currentQuery
+        guard !query.isEmpty else { return }
+
+        do {
+            let highlighted = try await Task.detached {
+                try rustStore.highlightResults(query: query, itemIds: ids)
+            }.value
+
+            guard !Task.isCancelled else { return }
+            mergeHighlights(highlighted)
+        } catch {
+            // Non-critical: items will display without highlights
+        }
+    }
+
+    private func mergeHighlights(_ highlighted: [Int64: ItemMatch]) {
+        guard case .results(let query, let ids, var itemMatches, let firstItem) = state else { return }
+
+        guard !highlighted.isEmpty else { return }
+
+        for (id, match) in highlighted {
+            itemMatches[id] = match
+        }
+
+        state = .results(query: query, ids: ids, itemMatches: itemMatches, firstItem: firstItem)
     }
 
     // MARK: - Clipboard Monitoring
@@ -693,15 +767,15 @@ final class ClipboardStore {
     func delete(itemId: Int64) {
         // Update UI immediately
         switch state {
-        case .results(let query, let items, let firstItem):
-            let filteredItems = items.filter { $0.itemMetadata.itemId != itemId }
+        case .results(let query, var ids, var itemMatches, let firstItem):
+            ids.removeAll { $0 == itemId }
+            itemMatches.removeValue(forKey: itemId)
             let newFirstItem = firstItem?.itemMetadata.itemId == itemId ? nil : firstItem
-            state = .results(query: query, items: filteredItems, firstItem: newFirstItem)
-        case .resultsLoading(let query, let fallback):
-            state = .resultsLoading(
-                query: query,
-                fallback: fallback.filter { $0.itemMetadata.itemId != itemId }
-            )
+            state = .results(query: query, ids: ids, itemMatches: itemMatches, firstItem: newFirstItem)
+        case .resultsLoading(let query, var ids, var matches):
+            ids.removeAll { $0 == itemId }
+            matches.removeValue(forKey: itemId)
+            state = .resultsLoading(query: query, fallbackIds: ids, fallbackMatches: matches)
         case .loading, .error:
             break
         }
@@ -723,7 +797,7 @@ final class ClipboardStore {
 
     func clear() {
         // Update UI immediately
-        state = .results(query: "", items: [], firstItem: nil)
+        state = .results(query: "", ids: [], itemMatches: [:], firstItem: nil)
 
         // Perform expensive DB operations in background
         guard let rustStore else { return }

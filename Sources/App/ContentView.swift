@@ -33,8 +33,8 @@ struct ContentView: View {
 
     private var itemIds: [Int64] {
         switch store.state {
-        case .results(_, let items, _), .resultsLoading(_, let items):
-            return items.map { $0.itemMetadata.itemId }
+        case .results(_, let ids, _, _), .resultsLoading(_, let ids, _):
+            return ids
         case .loading, .error:
             return []
         }
@@ -43,7 +43,7 @@ struct ContentView: View {
     /// The first item from results (avoids separate fetch)
     private var stateFirstItem: ClipboardItem? {
         switch store.state {
-        case .results(_, _, let firstItem):
+        case .results(_, _, _, let firstItem):
             return firstItem
         case .resultsLoading, .loading, .error:
             return nil
@@ -55,9 +55,8 @@ struct ContentView: View {
     private var selectedItemHighlights: [HighlightRange] {
         guard let selectedItemId else { return [] }
         switch store.state {
-        case .results(_, let items, _), .resultsLoading(_, let items):
-            return items.first { $0.itemMetadata.itemId == selectedItemId }?
-                .matchData.fullContentHighlights ?? []
+        case .results(_, _, let itemMatches, _), .resultsLoading(_, _, let itemMatches):
+            return itemMatches[selectedItemId]?.matchData.fullContentHighlights ?? []
         case .loading, .error:
             return []
         }
@@ -367,11 +366,14 @@ struct ContentView: View {
 
     // MARK: - Item List
 
-    /// Row data for display - preserves matchData during loading to prevent text flash
-    private var displayRows: [(metadata: ItemMetadata, matchData: MatchData?)] {
+    /// Row data for display - looks up ItemMatch from map (may be nil for unfetched items)
+    private var displayRows: [(id: Int64, metadata: ItemMetadata?, matchData: MatchData?)] {
         switch store.state {
-        case .results(_, let items, _), .resultsLoading(_, let items):
-            return items.map { ($0.itemMetadata, $0.matchData) }
+        case .results(_, let ids, let itemMatches, _), .resultsLoading(_, let ids, let itemMatches):
+            return ids.map { id in
+                let match = itemMatches[id]
+                return (id: id, metadata: match?.itemMetadata, matchData: match?.matchData)
+            }
         case .loading, .error:
             return []
         }
@@ -381,21 +383,42 @@ struct ContentView: View {
         ScrollViewReader { proxy in
             List {
                 // Single ForEach maintains view identity across state transitions
-                ForEach(Array(displayRows.enumerated()), id: \.element.metadata.itemId) { index, row in
-                    ItemRow(
-                        metadata: row.metadata,
-                        matchData: row.matchData,
-                        isSelected: row.metadata.itemId == selectedItemId,
-                        onTap: {
-                            selectedItemId = row.metadata.itemId
-                            focusSearchField()
+                ForEach(Array(displayRows.enumerated()), id: \.element.id) { index, row in
+                    if let metadata = row.metadata {
+                        ItemRow(
+                            metadata: metadata,
+                            matchData: row.matchData,
+                            isSelected: row.id == selectedItemId,
+                            onTap: {
+                                selectedItemId = row.id
+                                focusSearchField()
+                            }
+                        )
+                        .equatable()
+                        .accessibilityIdentifier("ItemRow_\(index)")
+                        .listRowInsets(EdgeInsets(top: 2, leading: 0, bottom: 2, trailing: 0))
+                        .listRowSeparator(.hidden)
+                        .listRowBackground(Color.clear)
+                        .onAppear {
+                            // Lazy highlighting: request highlights for items approaching visible area
+                            if row.metadata == nil && !store.currentQuery.isEmpty {
+                                store.requestHighlights(around: index)
+                            }
                         }
-                    )
-                    .equatable()
-                    .accessibilityIdentifier("ItemRow_\(index)")
-                    .listRowInsets(EdgeInsets(top: 2, leading: 0, bottom: 2, trailing: 0))
-                    .listRowSeparator(.hidden)
-                    .listRowBackground(Color.clear)
+                    } else {
+                        // Placeholder row for items not yet fetched
+                        ItemRowPlaceholder(isSelected: row.id == selectedItemId)
+                            .accessibilityIdentifier("ItemRow_\(index)")
+                            .listRowInsets(EdgeInsets(top: 2, leading: 0, bottom: 2, trailing: 0))
+                            .listRowSeparator(.hidden)
+                            .listRowBackground(Color.clear)
+                            .onAppear {
+                                // Prefetch: request highlights for items approaching visible area
+                                if !store.currentQuery.isEmpty {
+                                    store.requestHighlights(around: index)
+                                }
+                            }
+                    }
                 }
             }
             .listStyle(.plain)
@@ -822,6 +845,36 @@ struct LinkPreviewView: NSViewRepresentable {
     class Coordinator {
         var lastURL: String?
         var lastMetadataState: LinkMetadataState?
+    }
+}
+
+// MARK: - Item Row Placeholder
+
+/// Lightweight placeholder for items not yet fetched via lazy highlighting
+struct ItemRowPlaceholder: View {
+    let isSelected: Bool
+    private let rowHeight: CGFloat = 32
+
+    var body: some View {
+        HStack(spacing: 6) {
+            RoundedRectangle(cornerRadius: 4)
+                .fill(Color.secondary.opacity(0.1))
+                .frame(width: 32, height: 32)
+            RoundedRectangle(cornerRadius: 4)
+                .fill(Color.secondary.opacity(0.08))
+                .frame(maxWidth: .infinity, maxHeight: 14)
+        }
+        .frame(maxWidth: .infinity, minHeight: rowHeight, maxHeight: rowHeight, alignment: .leading)
+        .padding(.horizontal, 4)
+        .padding(.vertical, 4)
+        .background {
+            if isSelected {
+                Color.accentColor.opacity(0.9).saturation(0.9).brightness(-0.06)
+            } else {
+                Color.clear
+            }
+        }
+        .clipShape(RoundedRectangle(cornerRadius: 10, style: .continuous))
     }
 }
 
