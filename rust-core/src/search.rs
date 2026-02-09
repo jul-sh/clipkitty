@@ -58,14 +58,23 @@ impl SearchEngine {
             return Ok(Vec::new());
         }
         let trimmed = query.trim_start();
-        let query_words: Vec<&str> = trimmed.trim_end().split_whitespace().collect();
+        // Split query words on the same non-alphanumeric boundaries as document
+        // tokenization. This ensures "highlight_results" is matched as
+        // ["highlight", "results"] — same as how the document is tokenized —
+        // rather than as one 15-trigram word that no single doc word can reach
+        // 50% overlap against.
+        let query_words: Vec<String> = tokenize_words(&trimmed.trim_end().to_lowercase())
+            .into_iter()
+            .map(|(_, _, w)| w)
+            .collect();
+        let query_word_refs: Vec<&str> = query_words.iter().map(|s| s.as_str()).collect();
 
         // Tantivy returns candidates already sorted by blended score (BM25 + recency)
         let candidates = indexer.search(trimmed.trim_end(), MAX_RESULTS)?;
 
         let matches: Vec<FuzzyMatch> = candidates
             .into_iter()
-            .map(|c| Self::highlight_candidate(c.id, &c.content, c.timestamp, c.tantivy_score, &query_words))
+            .map(|c| Self::highlight_candidate(c.id, &c.content, c.timestamp, c.tantivy_score, &query_word_refs))
             .filter(|m| !m.matched_indices.is_empty())
             .collect();
 
