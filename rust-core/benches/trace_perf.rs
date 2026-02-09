@@ -80,10 +80,10 @@ fn main() {
     println!();
 
     // ── Search queries (instrumented pipeline breakdown) ────────────
-    println!("=== PIPELINE BREAKDOWN (median of 5 runs, proper PRIMARY KEY) ===");
-    println!("{:<25} {:>6} {:>7} {:>10} {:>10} {:>10} {:>10} {:>10}",
-        "query", "size", "cands", "tantivy", "highlight", "db_fetch", "match_gen", "total");
-    println!("{}", "-".repeat(96));
+    println!("=== PIPELINE BREAKDOWN (median of 5 runs, lazy highlight split) ===");
+    println!("{:<25} {:>6} {:>7} {:>10} {:>10} {:>10} {:>10} {:>10} {:>10}",
+        "query", "size", "cands", "tantivy", "hl(head)", "db(head)", "match_gen", "db(tail)", "total");
+    println!("{}", "-".repeat(106));
 
     for &query in queries {
         for &size in sizes {
@@ -104,9 +104,11 @@ fn main() {
             let m = &timings[2];
 
             println!(
-                "{:<25} {:>6} {:>7} {:>9.2}ms {:>9.2}ms {:>9.2}ms {:>9.2}ms {:>9.2}ms",
-                query, size_label(size), m.num_candidates,
-                m.tantivy_ms, m.highlight_ms, m.db_fetch_ms, m.match_gen_ms, m.total_ms,
+                "{:<25} {:>6} {:>3}+{:<3} {:>9.2}ms {:>9.2}ms {:>9.2}ms {:>9.2}ms {:>9.2}ms {:>9.2}ms",
+                query, size_label(size),
+                m.num_highlighted, m.num_metadata_only,
+                m.tantivy_ms, m.highlight_ms, m.db_fetch_head_ms, m.match_gen_ms,
+                m.db_fetch_tail_ms, m.total_ms,
             );
         }
         println!();

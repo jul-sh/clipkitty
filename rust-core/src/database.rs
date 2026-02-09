@@ -299,6 +299,35 @@ impl Database {
         Ok((items, total_count))
     }
 
+    /// Fetch lightweight item metadata by IDs, preserving the order of the input IDs
+    pub fn fetch_metadata_by_ids(&self, ids: &[i64]) -> DatabaseResult<Vec<ItemMetadata>> {
+        if ids.is_empty() {
+            return Ok(Vec::new());
+        }
+
+        let conn = self.get_conn()?;
+        let placeholders = ids.iter().map(|_| "?").collect::<Vec<_>>().join(",");
+        let sql = format!(
+            "SELECT id, content, contentType, timestamp, sourceApp, sourceAppBundleID, thumbnail, colorRgba, linkImageData \
+             FROM items WHERE id IN ({})",
+            placeholders
+        );
+
+        let mut stmt = conn.prepare(&sql)?;
+        let params: Vec<rusqlite::types::Value> = ids.iter().map(|&id| id.into()).collect();
+        let items: Vec<ItemMetadata> = stmt
+            .query_map(rusqlite::params_from_iter(params), Self::row_to_metadata)?
+            .collect::<Result<Vec<_>, _>>()?;
+
+        // Re-sort to match input ID order
+        let id_to_item: std::collections::HashMap<i64, ItemMetadata> = items
+            .into_iter()
+            .map(|item| (item.item_id, item))
+            .collect();
+
+        Ok(ids.iter().filter_map(|id| id_to_item.get(id).cloned()).collect())
+    }
+
     /// Fetch items by IDs, preserving the order of the input IDs
     pub fn fetch_items_by_ids(&self, ids: &[i64]) -> DatabaseResult<Vec<StoredItem>> {
         if ids.is_empty() {

@@ -3,6 +3,7 @@
 //! This file defines the public interface exposed to Swift via UniFFI.
 //! It acts as the source of truth for shared types.
 
+use std::collections::HashMap;
 use thiserror::Error;
 
 // ═══════════════════════════════════════════════════════════════════════════════
@@ -251,7 +252,8 @@ pub struct ItemMatch {
 /// Search result container
 #[derive(Debug, Clone, uniffi::Record)]
 pub struct SearchResult {
-    pub matches: Vec<ItemMatch>,
+    pub ids: Vec<i64>,
+    pub item_matches: HashMap<i64, ItemMatch>,
     pub total_count: u64,
     /// The first item's full content (avoids separate fetch for preview pane)
     pub first_item: Option<ClipboardItem>,
@@ -297,6 +299,10 @@ pub trait ClipboardStoreApi: Send + Sync {
 
     /// Fetch full items by IDs for preview pane
     fn fetch_by_ids(&self, item_ids: Vec<i64>) -> Result<Vec<ClipboardItem>, ClipKittyError>;
+
+    /// Compute highlights for items that were returned without highlights (lazy highlighting).
+    /// Swift calls this as the user scrolls past the initial batch.
+    fn highlight_results(&self, query: String, item_ids: Vec<i64>) -> Result<HashMap<i64, ItemMatch>, ClipKittyError>;
 
     /// Get the database size in bytes
     fn database_size(&self) -> i64;

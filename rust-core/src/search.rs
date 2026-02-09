@@ -12,8 +12,10 @@ use crate::models::StoredItem;
 use chrono::Utc;
 
 /// Maximum results to return from search.
-/// Returning more than this is not useful to the user.
-pub const MAX_RESULTS: usize = 200;
+pub const MAX_RESULTS: usize = 2000;
+
+/// Number of results to highlight up front (the rest are highlighted on scroll via FFI).
+pub const HIGHLIGHT_BATCH_SIZE: usize = 50;
 
 pub const MIN_TRIGRAM_QUERY_LEN: usize = 3;
 
