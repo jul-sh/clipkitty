@@ -3,7 +3,7 @@
 //! Implements the database schema and operations for clipboard storage.
 //! Uses r2d2 connection pooling to allow concurrent reads without mutex blocking.
 
-use crate::interface::{ClipboardContent, ItemMetadata, ItemIcon, IconType};
+use crate::interface::{ClipboardContent, ItemMetadata, ItemIcon};
 use crate::models::StoredItem;
 use crate::search::{generate_preview, SNIPPET_CONTEXT_CHARS};
 use chrono::{DateTime, TimeZone, Utc};
@@ -598,33 +598,7 @@ impl Database {
         let db_type = content_type.as_deref().unwrap_or("text");
 
         // Determine icon based on content type
-        let icon = match db_type {
-            "color" => {
-                if let Some(rgba) = color_rgba {
-                    ItemIcon::ColorSwatch { rgba }
-                } else {
-                    ItemIcon::Symbol { icon_type: IconType::Color }
-                }
-            }
-            "image" => {
-                if let Some(thumb) = thumbnail {
-                    ItemIcon::Thumbnail { bytes: thumb }
-                } else {
-                    ItemIcon::Symbol { icon_type: IconType::Image }
-                }
-            }
-            "link" => {
-                // Use link preview image as thumbnail if available
-                if let Some(img) = link_image_data {
-                    ItemIcon::Thumbnail { bytes: img }
-                } else {
-                    ItemIcon::Symbol { icon_type: IconType::Link }
-                }
-            }
-            "email" => ItemIcon::Symbol { icon_type: IconType::Email },
-            "phone" => ItemIcon::Symbol { icon_type: IconType::Phone },
-            _ => ItemIcon::Symbol { icon_type: IconType::Text },
-        };
+        let icon = ItemIcon::from_database(db_type, color_rgba, thumbnail.clone(), link_image_data);
 
         // Generate snippet text (generous snippet for Swift to truncate)
         let snippet = generate_preview(&content, SNIPPET_CONTEXT_CHARS * 2);

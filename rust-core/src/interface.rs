@@ -34,6 +34,44 @@ impl Default for ItemIcon {
     }
 }
 
+impl ItemIcon {
+    /// Determine icon from database fields
+    pub fn from_database(
+        db_type: &str,
+        color_rgba: Option<u32>,
+        thumbnail: Option<Vec<u8>>,
+        link_image_data: Option<Vec<u8>>,
+    ) -> Self {
+        match db_type {
+            "color" => {
+                if let Some(rgba) = color_rgba {
+                    ItemIcon::ColorSwatch { rgba }
+                } else {
+                    ItemIcon::Symbol { icon_type: IconType::Color }
+                }
+            }
+            "image" => {
+                if let Some(thumb) = thumbnail {
+                    ItemIcon::Thumbnail { bytes: thumb }
+                } else {
+                    ItemIcon::Symbol { icon_type: IconType::Image }
+                }
+            }
+            "link" => {
+                // Use link preview image as thumbnail if available
+                if let Some(img) = link_image_data {
+                    ItemIcon::Thumbnail { bytes: img }
+                } else {
+                    ItemIcon::Symbol { icon_type: IconType::Link }
+                }
+            }
+            "email" => ItemIcon::Symbol { icon_type: IconType::Email },
+            "phone" => ItemIcon::Symbol { icon_type: IconType::Phone },
+            _ => ItemIcon::Symbol { icon_type: IconType::Text },
+        }
+    }
+}
+
 /// Link metadata fetch state
 #[derive(Debug, Clone, PartialEq, Eq, uniffi::Enum)]
 pub enum LinkMetadataState {

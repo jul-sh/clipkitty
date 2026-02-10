@@ -92,22 +92,13 @@ impl StoredItem {
 
     /// Get the ItemIcon for display
     pub fn item_icon(&self) -> ItemIcon {
-        match &self.content {
-            ClipboardContent::Color { value } => {
-                let rgba = self.color_rgba
-                    .or_else(|| crate::content_detection::parse_color_to_rgba(value))
-                    .unwrap_or(0xFF000000);
-                ItemIcon::ColorSwatch { rgba }
-            }
-            ClipboardContent::Image { .. } => {
-                if let Some(ref thumb) = self.thumbnail {
-                    ItemIcon::Thumbnail { bytes: thumb.clone() }
-                } else {
-                    ItemIcon::Symbol { icon_type: IconType::Image }
-                }
-            }
-            _ => ItemIcon::Symbol { icon_type: self.icon_type() },
-        }
+        let (_, _, _, _, link_image_data, _) = self.content.to_database_fields();
+        ItemIcon::from_database(
+            self.content.database_type(),
+            self.color_rgba,
+            self.thumbnail.clone(),
+            link_image_data,
+        )
     }
 
     /// Display text (truncated, normalized whitespace) for preview
@@ -138,7 +129,7 @@ impl StoredItem {
     }
 
     /// Hash a string using Rust's default hasher
-    fn hash_string(s: &str) -> String {
+    pub fn hash_string(s: &str) -> String {
         let mut hasher = DefaultHasher::new();
         s.hash(&mut hasher);
         hasher.finish().to_string()

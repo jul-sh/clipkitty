@@ -64,12 +64,7 @@ struct Args {
 // DATA GENERATION HELPERS (self-contained, no feature flags needed in core)
 // ─────────────────────────────────────────────────────────────────────────────
 
-/// Hash a string using Rust's default hasher
-fn hash_string(s: &str) -> String {
-    let mut hasher = DefaultHasher::new();
-    s.hash(&mut hasher);
-    hasher.finish().to_string()
-}
+use clipkitty_core::StoredItem;
 
 /// Generate a WebP thumbnail from image data
 fn generate_thumbnail(image_data: &[u8], max_size: u32) -> Option<Vec<u8>> {
@@ -125,7 +120,7 @@ fn save_image_direct(
     let timestamp_str = now.format("%Y-%m-%d %H:%M:%S%.f").to_string();
 
     let hash_input = format!("{}{}", description, image_data.len());
-    let content_hash = hash_string(&hash_input);
+    let content_hash = StoredItem::hash_string(&hash_input);
     let thumbnail = generate_thumbnail(&image_data, 64);
 
     conn.execute(
