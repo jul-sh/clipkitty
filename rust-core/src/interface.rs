@@ -266,6 +266,9 @@ pub struct MatchData {
     /// Full-content highlights (not snippet-adjusted)
     /// Used for preview pane to ensure consistent highlighting
     pub full_content_highlights: Vec<HighlightRange>,
+    /// Character offset (in full content) of the first highlight in the densest cluster.
+    /// Used by Swift for preview pane auto-scrolling — same algorithm as snippet centering.
+    pub densest_highlight_start: u64,
 }
 
 /// Lightweight item metadata for list display
