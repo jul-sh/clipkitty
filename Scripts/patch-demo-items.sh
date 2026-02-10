@@ -11,6 +11,6 @@ PROJECT_ROOT="$(dirname "$SCRIPT_DIR")"
 
 echo "Patching synthetic data with demo items..."
 
-"$SCRIPT_DIR/run-in-nix.sh" -c "cd rust-core && cargo run --release --features data-gen --bin generate-synthetic-data -- --demo-only --db-path ../Sources/App/SyntheticData.sqlite"
+"$SCRIPT_DIR/run-in-nix.sh" -c "cd rust-data-gen && cargo run --release -- --demo-only --db-path ../Sources/App/SyntheticData.sqlite"
 
 echo "Done. Demo items added to Sources/App/SyntheticData.sqlite"

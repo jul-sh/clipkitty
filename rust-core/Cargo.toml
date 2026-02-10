@@ -17,11 +17,6 @@ path = "src/bin/uniffi-bindgen.rs"
 name = "generate-bindings"
 path = "src/bin/generate_bindings.rs"
 
-[[bin]]
-name = "generate-synthetic-data"
-path = "src/bin/generate_synthetic_data.rs"
-required-features = ["data-gen"]
-
 [dependencies]
 rusqlite = { version = "*", features = ["bundled", "modern_sqlite"] }
 r2d2 = "*"
@@ -36,18 +31,15 @@ parking_lot = "*"
 url = "*"
 csscolorparser = "*"
 uniffi = { version = "*", features = ["cli"] }
-validator = { version = "*" }
+validator = { version = "0.16", features = ["derive", "unic"] }
 tantivy = "*"
 image = { version = "*", default-features = false, features = ["jpeg", "png", "gif", "webp"] }
 tokio = { version = "*", features = ["full"] }
 tokio-util = { version = "*", features = ["rt"] }
 async-trait = "*"
-reqwest = { version = "*", default-features = false, features = ["json", "rustls-tls"] }
 rayon = "*"
 thread-priority = "*"
 rand = "*"
-schemars = "*"
-indicatif = "*"
 anyhow = "*"
 clap = { version = "*", features = ["derive"] }
 futures = "*"
@@ -55,7 +47,8 @@ futures = "*"
 [features]
 default = ["serde"]
 serde = ["chrono/serde"]
-data-gen = []
+
+
 
 [build-dependencies]
 uniffi = { version = "*", features = ["build"] }

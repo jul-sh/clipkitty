@@ -1,0 +1,20 @@
+[package]
+name = "rust-data-gen"
+version = "0.1.0"
+edition = "2021"
+
+[dependencies]
+clipkitty-core = { path = "../rust-core" }
+anyhow = "*"
+clap = { version = "*", features = ["derive"] }
+tokio = { version = "*", features = ["full"] }
+reqwest = { version = "*", default-features = false, features = ["json", "rustls-tls"] }
+serde = { version = "*", features = ["derive"] }
+serde_json = "*"
+schemars = "*"
+indicatif = "*"
+rand = "0.8"
+chrono = { version = "*", features = ["serde"] }
+rusqlite = { version = "*", features = ["bundled", "modern_sqlite"] }
+image = { version = "*", default-features = false, features = ["jpeg", "png", "gif", "webp"] }
+futures = "*"
