@@ -56,9 +56,12 @@ endif
 
 .PHONY: all clean sign screenshot perf build-binary dmg appstore validate upload rust rust-force
 
-# App Store signing identity (find yours with: security find-identity -v -p codesigning)
-# Set via environment or override: make appstore SIGNING_IDENTITY="Developer ID Application: ..."
-SIGNING_IDENTITY ?= 3rd Party Mac Developer Application
+# Signing identity: auto-detects Developer ID cert, falls back to ad-hoc (-)
+# Override: make sign SIGNING_IDENTITY="Developer ID Application: ..."
+SIGNING_IDENTITY ?= $(shell security find-identity -v -p codesigning 2>/dev/null | grep -q "Developer ID Application" && echo "Developer ID Application" || echo "-")
+
+# App Store signing identities (used only by `make appstore`)
+APPSTORE_SIGNING_IDENTITY ?= 3rd Party Mac Developer Application
 INSTALLER_IDENTITY ?= 3rd Party Mac Developer Installer
 
 all: $(APP_BUNDLE)
@@ -125,8 +128,8 @@ clean:
 	@rm -rf .make
 
 sign: $(APP_BUNDLE)
-	@echo "Signing with $(if $(filter true,$(SANDBOX)),sandboxed,standard) entitlements..."
-	@codesign --force --deep --sign - --entitlements "$(ENTITLEMENTS)" "$(APP_BUNDLE)"
+	@echo "Signing with $(if $(filter true,$(SANDBOX)),sandboxed,standard) entitlements (identity: $(SIGNING_IDENTITY))..."
+	@codesign --force --options runtime --sign "$(SIGNING_IDENTITY)" --entitlements "$(ENTITLEMENTS)" "$(APP_BUNDLE)"
 
 # Build DMG installer
 dmg: all sign
@@ -172,8 +175,8 @@ icon-png:
 appstore:
 	@$(MAKE) all SANDBOX=true
 	@echo "Re-signing for App Store distribution..."
-	@codesign --force --deep --options runtime \
-		--sign "$(SIGNING_IDENTITY)" \
+	@codesign --force --options runtime \
+		--sign "$(APPSTORE_SIGNING_IDENTITY)" \
 		--entitlements Sources/App/ClipKitty-Sandboxed.entitlements \
 		"$(APP_BUNDLE)"
 	@echo "Creating installer package..."
@@ -241,7 +244,7 @@ run-synthetic:
 	@$(MAKE) sign SANDBOX=false
 	@echo "Setting up synthetic data..."
 	@mkdir -p ~/Library/Application\ Support/ClipKitty
-	@rm -f ~/Library/Application\ Support/ClipKitty/clipboard-screenshot.sqlite
+	@rm -f ~/Library/Application\ Support/ClipKitty/clipboard-screenshot.sqlite*
 	@rm -rf ~/Library/Application\ Support/ClipKitty/tantivy_index
 	@cp Sources/App/SyntheticData.sqlite ~/Library/Application\ Support/ClipKitty/clipboard-screenshot.sqlite
 	@echo "Launching app with synthetic data..."

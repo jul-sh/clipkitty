@@ -24,15 +24,21 @@ jobs:
         with:
           swift-version: "6.2"
 
+      # 1. Install Apple Certificate for Signing
+      - name: Install Apple Certificate
+        uses: apple-actions/import-codesign-certs@v3
+        with:
+          p12-file-base64: ${{ secrets.MACOS_P12_BASE64 }}
+          p12-password: ${{ secrets.MACOS_P12_PASSWORD }}
+
       - name: Install Nix
         uses: DeterminateSystems/nix-installer-action@main
 
       - name: Install Build Dependencies
         run: ./Scripts/install-deps.sh
 
-      - name: Build Non-Sandboxed Variant
-        run: |
-          make all SANDBOX=false
+      - name: Build Non-Sandboxed App
+        run: make all SANDBOX=false
 
       - name: Run UI Tests
         run: |
@@ -52,16 +58,61 @@ jobs:
       - name: Generate Icon PNG
         run: make icon-png
 
-      - name: Build DMGs
+      - name: Build and Sign DMGs
         run: |
           chmod +x Scripts/build-dmg.sh
-          make dmg SANDBOX=false
-          make dmg SANDBOX=true
 
-      - name: Upload DMG Artifacts
+          # Non-sandboxed: sign with real cert + entitlements, then package
+          # (Signing is done here, not earlier, because screenshot/marketing steps
+          # call `make sign` internally which would ad-hoc overwrite the cert)
+          codesign --force --options runtime --sign "Developer ID Application" \
+            --entitlements Sources/App/ClipKitty.entitlements \
+            ClipKitty.app
+          ./Scripts/build-dmg.sh ClipKitty.app ClipKitty.dmg
+
+          # Sandboxed: build fresh, sign with real cert + sandboxed entitlements, then package
+          make all SANDBOX=true
+          codesign --force --options runtime --sign "Developer ID Application" \
+            --entitlements Sources/App/ClipKitty-Sandboxed.entitlements \
+            ClipKitty.app
+          ./Scripts/build-dmg.sh ClipKitty.app ClipKitty-Sandboxed.dmg
+
+          # Sign the DMG files themselves
+          codesign --force --sign "Developer ID Application" ClipKitty.dmg
+          codesign --force --sign "Developer ID Application" ClipKitty-Sandboxed.dmg
+
+      # 2. Notarize with Apple
+      - name: Notarize DMGs
+        run: |
+          echo "${{ secrets.NOTARY_KEY_BASE64 }}" | base64 --decode > auth_key.p8
+
+          # Submit Standard version
+          xcrun notarytool submit ClipKitty.dmg \
+            --key auth_key.p8 \
+            --key-id ${{ secrets.NOTARY_KEY_ID }} \
+            --issuer ${{ secrets.NOTARY_ISSUER_ID }} \
+            --wait
+
+          # Submit Sandboxed version
+          xcrun notarytool submit ClipKitty-Sandboxed.dmg \
+            --key auth_key.p8 \
+            --key-id ${{ secrets.NOTARY_KEY_ID }} \
+            --issuer ${{ secrets.NOTARY_ISSUER_ID }} \
+            --wait
+
+          # Clean up private key
+          rm -f auth_key.p8
+
+      # 3. Staple Notarization (Required for offline Gatekeeper approval)
+      - name: Staple Notarization
+        run: |
+          xcrun stapler staple ClipKitty.dmg
+          xcrun stapler staple ClipKitty-Sandboxed.dmg
+
+      - name: Upload Artifacts
         uses: actions/upload-artifact@v4
         with:
-          name: ClipKitty-DMGs
+          name: ClipKitty-Builds
           path: |
             ClipKitty.dmg
             ClipKitty-Sandboxed.dmg

@@ -7,9 +7,9 @@
     <key>com.apple.security.app-sandbox</key>
     <true/>
 
-    <!-- Omitted Entitlements; kernel denies access to these subsystems -->
-
-    <!-- Network: com.apple.security.network.* is omitted; app is offline-only. -->
+    <!-- Network: outgoing connections for LPMetadataProvider link preview fetching -->
+    <key>com.apple.security.network.client</key>
+    <true/>
 
     <!-- FileSystem: files.user-selected.* is omitted; no access to host directories. -->
 
