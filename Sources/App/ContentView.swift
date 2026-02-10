@@ -40,28 +40,14 @@ struct ContentView: View {
         }
     }
 
-    /// Get highlights for the selected item from results
-    /// Returns empty array for empty query or if item not found
-    private var selectedItemHighlights: [HighlightRange] {
-        guard let selectedItemId else { return [] }
+    /// Get match data for the selected item from results
+    private var selectedItemMatchData: MatchData? {
+        guard let selectedItemId else { return nil }
         switch store.state {
         case .results(_, let items, _), .resultsLoading(_, let items):
-            return items.first { $0.itemMetadata.itemId == selectedItemId }?
-                .matchData.fullContentHighlights ?? []
+            return items.first { $0.itemMetadata.itemId == selectedItemId }?.matchData
         case .loading, .error:
-            return []
-        }
-    }
-
-    /// Get the densest highlight start offset for the selected item (computed by Rust)
-    private var selectedItemDensestHighlightStart: UInt64 {
-        guard let selectedItemId else { return 0 }
-        switch store.state {
-        case .results(_, let items, _), .resultsLoading(_, let items):
-            return items.first { $0.itemMetadata.itemId == selectedItemId }?
-                .matchData.densestHighlightStart ?? 0
-        case .loading, .error:
-            return 0
+            return nil
         }
     }
 
@@ -449,11 +435,11 @@ struct ContentView: View {
                     case .text, .color, .email, .phone:
                         // Use AppKit text view - SwiftUI Text with AttributedString is slow
                         TextPreviewView(
-                            text: item.contentPreview,
+                            text: item.textContent,
                             fontName: FontManager.mono,
                             fontSize: 15,
-                            highlights: selectedItemHighlights,
-                            densestHighlightStart: selectedItemDensestHighlightStart
+                            highlights: selectedItemMatchData?.fullContentHighlights ?? [],
+                            densestHighlightStart: selectedItemMatchData?.densestHighlightStart ?? 0
                         )
                         .frame(maxWidth: .infinity, maxHeight: .infinity)
                     default:
@@ -851,9 +837,13 @@ struct ItemRow: View, Equatable {
                                 .resizable()
                         }
                     case .colorSwatch(let rgba):
-                        let color = colorFromRGBA(rgba)
                         RoundedRectangle(cornerRadius: 6)
-                            .fill(Color(nsColor: color))
+                            .fill(Color(nsColor: NSColor(
+                                red: CGFloat((rgba >> 24) & 0xFF) / 255.0,
+                                green: CGFloat((rgba >> 16) & 0xFF) / 255.0,
+                                blue: CGFloat((rgba >> 8) & 0xFF) / 255.0,
+                                alpha: CGFloat(rgba & 0xFF) / 255.0
+                            )))
                             .overlay(
                                 RoundedRectangle(cornerRadius: 6)
                                     .strokeBorder(Color.primary.opacity(0.15), lineWidth: 1)
@@ -950,13 +940,6 @@ struct ItemRow: View, Equatable {
         .accessibilityAddTraits(isSelected ? .isSelected : [])
     }
 
-    private func colorFromRGBA(_ rgba: UInt32) -> NSColor {
-        let r = CGFloat((rgba >> 24) & 0xFF) / 255.0
-        let g = CGFloat((rgba >> 16) & 0xFF) / 255.0
-        let b = CGFloat((rgba >> 8) & 0xFF) / 255.0
-        let a = CGFloat(rgba & 0xFF) / 255.0
-        return NSColor(red: r, green: g, blue: b, alpha: a)
-    }
 }
 
 // MARK: - Three-Part HStack Highlighted Text
