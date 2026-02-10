@@ -24,6 +24,8 @@ pub enum IndexerError {
     Directory(#[from] tantivy::directory::error::OpenDirectoryError),
     #[error("IO error: {0}")]
     Io(#[from] std::io::Error),
+    #[error("Query too short for trigram search")]
+    QueryTooShort,
 }
 
 pub type IndexerResult<T> = Result<T, IndexerError>;
@@ -155,10 +157,9 @@ impl Indexer {
             terms.push(Term::from_field_text(self.content_field, &token.text));
         }
 
-        // Query too short for trigrams - return empty (minimum 3 chars required)
-        // search.rs handles <3 char queries via streaming fallback
+        // Query too short for trigrams - explicitly error as this should be handled by fallback
         if terms.is_empty() {
-            return Ok((Vec::new(), 0));
+            return Err(IndexerError::QueryTooShort);
         }
 
         let num_terms = terms.len();

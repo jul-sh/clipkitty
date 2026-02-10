@@ -1,5 +1,0 @@
-// ClipKitty Core - UniFFI namespace
-// All types, errors, and interface methods are defined in Rust with proc-macros.
-// This file just defines the namespace.
-
-namespace clipkitty_core {};

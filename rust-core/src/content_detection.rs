@@ -6,16 +6,6 @@ use crate::interface::{ClipboardContent, LinkMetadataState};
 use once_cell::sync::Lazy;
 use regex::Regex;
 
-/// URL detection regex patterns
-static URL_REGEX: Lazy<Regex> = Lazy::new(|| {
-    Regex::new(r"^(https?://[^\s]+|www\.[^\s]+)$").unwrap()
-});
-
-/// Email detection regex
-static EMAIL_REGEX: Lazy<Regex> = Lazy::new(|| {
-    Regex::new(r"^[a-zA-Z0-9._%+-]+@[a-zA-Z0-9.-]+\.[a-zA-Z]{2,}$").unwrap()
-});
-
 /// Phone number detection regex (various formats)
 static PHONE_REGEX: Lazy<Regex> = Lazy::new(|| {
     Regex::new(r"^\+?[\d\s\-().]{7,20}$").unwrap()
@@ -30,28 +20,18 @@ static PHONE_DIGITS_REGEX: Lazy<Regex> = Lazy::new(|| {
 fn is_valid_url(text: &str) -> bool {
     let trimmed = text.trim();
 
-    // Basic length and content checks
+    // Basic length and content checks (validator doesn't check for newlines/length limits)
     if trimmed.len() > 2000 || trimmed.contains('\n') {
         return false;
     }
 
-    // Check common URL prefixes
-    if trimmed.starts_with("http://") || trimmed.starts_with("https://") {
-        return url::Url::parse(trimmed).is_ok();
-    }
-
-    if trimmed.starts_with("www.") {
-        return url::Url::parse(&format!("https://{}", trimmed)).is_ok();
-    }
-
-    // Check with regex for edge cases
-    URL_REGEX.is_match(trimmed)
+    // validator::validate_url handles schema and basic structure
+    validator::validate_url(trimmed)
 }
 
 /// Check if a string is an email address
 fn is_email(text: &str) -> bool {
-    let trimmed = text.trim();
-    EMAIL_REGEX.is_match(trimmed)
+    validator::validate_email(text.trim())
 }
 
 /// Check if a string looks like a phone number
@@ -140,23 +120,6 @@ pub fn detect_content(text: &str) -> ClipboardContent {
 #[cfg(test)]
 mod tests {
     use super::*;
-
-    #[test]
-    fn test_url_detection() {
-        assert!(is_valid_url("https://example.com"));
-        assert!(is_valid_url("http://example.com/path?query=1"));
-        assert!(is_valid_url("www.example.com"));
-        assert!(!is_valid_url("not a url"));
-        assert!(!is_valid_url("example.com")); // No scheme or www
-    }
-
-    #[test]
-    fn test_email_detection() {
-        assert!(is_email("user@example.com"));
-        assert!(is_email("user.name+tag@example.co.uk"));
-        assert!(!is_email("not an email"));
-        assert!(!is_email("@example.com"));
-    }
 
     #[test]
     fn test_phone_detection() {

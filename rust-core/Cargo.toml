@@ -11,7 +11,7 @@ name = "clipkitty_core"
 
 [[bin]]
 name = "uniffi-bindgen"
-path = "uniffi-bindgen.rs"
+path = "src/bin/uniffi-bindgen.rs"
 
 [[bin]]
 name = "generate-bindings"
@@ -36,6 +36,7 @@ parking_lot = "*"
 url = "*"
 csscolorparser = "*"
 uniffi = { version = "*", features = ["cli"] }
+validator = { version = "*" }
 tantivy = "*"
 image = { version = "*", default-features = false, features = ["jpeg", "png", "gif", "webp"] }
 tokio = { version = "*", features = ["full"] }
@@ -84,6 +85,3 @@ opt-level = 1
 tempfile = "*"
 criterion = { version = "*", features = ["html_reports"] }
 
-[[bench]]
-name = "trace_perf"
-harness = false
