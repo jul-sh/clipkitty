@@ -282,26 +282,6 @@ extension LinkMetadataState {
             return nil
         }
     }
-
-    /// Convert to database storage format (title, description, imageData)
-    public var databaseFields: (String?, String?, Data?) {
-        switch self {
-        case .pending:
-            return (nil, nil, nil)
-        case .failed:
-            return ("", nil, nil)
-        case .loaded(let title, let description, let imageData):
-            return (title, description, imageData.map { Data($0) })
-        }
-    }
-
-    /// Check if metadata has any content
-    public var hasContent: Bool {
-        if case .loaded(let title, let description, let imageData) = self {
-            return title != nil || description != nil || imageData != nil
-        }
-        return false
-    }
 }
 
 // MARK: - HighlightRange Extensions

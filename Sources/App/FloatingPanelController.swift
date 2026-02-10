@@ -4,11 +4,6 @@ import ClipKittyRust
 
 @MainActor
 final class FloatingPanelController: NSObject, NSWindowDelegate {
-    enum Visibility {
-        case visible
-        case hidden
-    }
-
     private var panel: NSPanel!
     private let store: ClipboardStore
     private var previousApp: NSRunningApplication?
@@ -71,10 +66,6 @@ final class FloatingPanelController: NSObject, NSWindowDelegate {
         } else {
             show()
         }
-    }
-
-    var visibility: Visibility {
-        panel.isVisible ? .visible : .hidden
     }
 
     func show() {
