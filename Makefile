@@ -232,18 +232,19 @@ list-identities:
 BACKGROUND_IMAGE := /System/Library/Desktop Pictures/Solid Colors/Silver.png
 #
 # Usage:
-#   make synthetic-data           # Generate synthetic data with demo items
 #   make marketing-screenshots    # Generate App Store screenshots with captions
 #   make preview-video            # Record App Store preview video
 #   make marketing                # Generate all marketing assets
 # ============================================================================
+
+
 
 # Generate synthetic data for UI tests and marketing
 # Requires GEMINI_API_KEY environment variable for AI-generated content
 # Run Scripts/patch-demo-items.sh after to add demo-specific items
 synthetic-data:
 	@echo "Generating synthetic data..."
-	@$(NIX_SHELL) "cd rust-core && cargo run --release --features data-gen --bin generate-synthetic-data -- --db-path ../Sources/App/SyntheticData.sqlite"
+	@$(NIX_SHELL) "cd rust-data-gen && cargo run --release -- --db-path ../Sources/App/SyntheticData.sqlite"
 	@echo "Synthetic data generated at Sources/App/SyntheticData.sqlite"
 	@echo "Run ./Scripts/patch-demo-items.sh to add demo items"
 
@@ -259,7 +260,7 @@ run-synthetic:
 	@echo "Launching app with synthetic data..."
 	@open ClipKitty.app --args --use-simulated-db
 
-.PHONY: marketing marketing-screenshots marketing-screenshots-capture preview-video print-background-image synthetic-data run-synthetic
+.PHONY: marketing marketing-screenshots marketing-screenshots-capture preview-video print-background-image run-synthetic
 
 # Print background image path (used by CI/scripts)
 print-background-image:

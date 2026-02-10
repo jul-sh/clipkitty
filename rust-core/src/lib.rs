@@ -13,7 +13,7 @@ mod models;
 pub mod search;
 mod store;
 
-pub mod demo_data;
+
 
 pub use interface::*;
 pub use models::*;

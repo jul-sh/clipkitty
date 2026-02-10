@@ -3,8 +3,8 @@
 //! Rebuild of generate.mjs in Rust, utilizing the real ClipboardStore.
 //! Generates data directly into a SQLite database.
 //!
-//! Build with: cargo build --features data-gen
-//! Run with: cargo run --features data-gen --bin generate-synthetic-data
+//! Build with: cargo build
+//! Run with: cargo run
 
 use anyhow::{Context, Result};
 use chrono::Utc;
@@ -14,7 +14,7 @@ use clipkitty_core::content_detection::parse_color_to_rgba;
 use futures::StreamExt;
 use image::GenericImageView;
 use indicatif::{ProgressBar, ProgressStyle};
-use rand::{Rng, SeedableRng};
+use rand::prelude::*;
 use rand::rngs::StdRng;
 use rusqlite::params;
 use schemars::JsonSchema;
@@ -64,7 +64,7 @@ struct Args {
 // DATA GENERATION HELPERS (self-contained, no feature flags needed in core)
 // ─────────────────────────────────────────────────────────────────────────────
 
-use clipkitty_core::StoredItem;
+
 
 /// Generate a WebP thumbnail from image data
 fn generate_thumbnail(image_data: &[u8], max_size: u32) -> Option<Vec<u8>> {
@@ -120,7 +120,9 @@ fn save_image_direct(
     let timestamp_str = now.format("%Y-%m-%d %H:%M:%S%.f").to_string();
 
     let hash_input = format!("{}{}", description, image_data.len());
-    let content_hash = StoredItem::hash_string(&hash_input);
+    let mut hasher = DefaultHasher::new();
+    hash_input.hash(&mut hasher);
+    let content_hash = hasher.finish().to_string();
     let thumbnail = generate_thumbnail(&image_data, 64);
 
     conn.execute(
@@ -280,7 +282,8 @@ fn generate_timestamp(item_index: usize, now: i64) -> i64 {
     now - age_seconds
 }
 
-use clipkitty_core::demo_data::DEMO_ITEMS;
+mod demo_data;
+use demo_data::DEMO_ITEMS;
 
 fn insert_demo_items(store: &ClipboardStore, db_path: &str) -> Result<()> {
     let now = Utc::now().timestamp();
@@ -298,6 +301,7 @@ fn insert_demo_items(store: &ClipboardStore, db_path: &str) -> Result<()> {
     }
 
     // Add kitty image (most recent item)
+    // Adjust path for new crate location (peer of rust-core)
     let base_path = PathBuf::from(env!("CARGO_MANIFEST_DIR"));
     let kitty_path = base_path.join("../marketing/assets/kitty.jpg");
     if let Ok(image_data) = fs::read(&kitty_path) {

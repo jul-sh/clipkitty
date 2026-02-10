@@ -11,6 +11,7 @@ DerivedData/
 node_modules
 
 # Rust
+rust-data-gen/target/
 rust-core/target/
 rust-core/generated/
 rust-core/include/
