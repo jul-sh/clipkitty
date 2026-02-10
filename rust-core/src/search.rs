@@ -219,9 +219,47 @@ impl SearchEngine {
         }).into_iter().map(|(start, end)| HighlightRange { start: start as u64, end: end as u64 }).collect()
     }
 
-    /// Generate a generous text snippet around the first match with context
-    /// Returns normalized snippet (whitespace collapsed) with adjusted highlights
-    /// Swift handles final truncation and ellipsis positioning
+    /// Find the highlight in the densest cluster of highlights using a sliding window.
+    /// Returns the index of the first highlight in the densest region.
+    /// This is used to center both the snippet and the preview pane scroll position.
+    /// O(n log n) via sort + two-pointer scan.
+    pub fn find_densest_highlight(highlights: &[HighlightRange], window_size: u64) -> Option<usize> {
+        if highlights.is_empty() {
+            return None;
+        }
+        if highlights.len() == 1 {
+            return Some(0);
+        }
+
+        // Sort indices by start position (preserve original indices)
+        let mut indexed: Vec<(usize, &HighlightRange)> = highlights.iter().enumerate().collect();
+        indexed.sort_by_key(|(_, h)| h.start);
+
+        // Two-pointer: right advances into window, left advances out
+        let mut left = 0;
+        let mut best_left = 0;
+        let mut best_count = 0usize;
+
+        for right in 0..indexed.len() {
+            // Shrink window from left while left's start is too far from right's
+            // (we anchor the window at each right pointer and slide left forward)
+            while indexed[left].1.start + window_size <= indexed[right].1.start {
+                left += 1;
+            }
+            let count = right - left + 1;
+            if count > best_count {
+                best_count = count;
+                best_left = left;
+            }
+        }
+
+        // Return the original index of the first highlight in the densest window
+        Some(indexed[best_left].0)
+    }
+
+    /// Generate a generous text snippet around the densest cluster of highlights.
+    /// Returns normalized snippet (whitespace collapsed) with adjusted highlights.
+    /// Swift handles final truncation and ellipsis positioning.
     pub fn generate_snippet(content: &str, highlights: &[HighlightRange], max_len: usize) -> (String, Vec<HighlightRange>, u64) {
         let content_char_len = content.chars().count();
 
@@ -231,10 +269,12 @@ impl SearchEngine {
             return (preview, Vec::new(), 0);
         }
 
-        let first_highlight = &highlights[0];
+        // Center on the densest cluster of highlights, not just the first one
+        let center_idx = Self::find_densest_highlight(highlights, 500).unwrap_or(0);
+        let center_highlight = &highlights[center_idx];
         // These are CHARACTER indices, not byte offsets
-        let match_start_char = first_highlight.start as usize;
-        let match_end_char = first_highlight.end as usize;
+        let match_start_char = center_highlight.start as usize;
+        let match_end_char = center_highlight.end as usize;
 
         // Find line number (count newlines before match) - 1-indexed
         // Use chars().take() to safely handle multi-byte UTF-8
@@ -336,11 +376,17 @@ impl SearchEngine {
             max_len,
         );
 
+        // Compute densest highlight start for preview pane scrolling
+        let densest_highlight_start = Self::find_densest_highlight(&full_content_highlights, 500)
+            .map(|idx| full_content_highlights[idx].start)
+            .unwrap_or(0);
+
         MatchData {
             text,
             highlights: adjusted_highlights,
             line_number,
             full_content_highlights,
+            densest_highlight_start,
         }
     }
 
@@ -771,5 +817,60 @@ mod tests {
         // "url" query (1 trigram) vs "urlParser" doc word — all query trigrams present
         let words = highlighted_words("the urlParser module", &["url"]);
         assert_eq!(words, vec!["urlParser"]); // indices point into original content
+    }
+
+    // ── Densest highlight cluster tests ──────────────────────────────
+
+    #[test]
+    fn test_find_densest_highlight_empty() {
+        assert_eq!(SearchEngine::find_densest_highlight(&[], 500), None);
+    }
+
+    #[test]
+    fn test_find_densest_highlight_single() {
+        let highlights = vec![HighlightRange { start: 50, end: 55 }];
+        assert_eq!(SearchEngine::find_densest_highlight(&highlights, 500), Some(0));
+    }
+
+    #[test]
+    fn test_find_densest_highlight_picks_denser_cluster() {
+        // Cluster A: 1 highlight at position 0
+        // Cluster B: 3 highlights clustered around position 1000
+        let highlights = vec![
+            HighlightRange { start: 0, end: 5 },      // Cluster A (1 highlight)
+            HighlightRange { start: 1000, end: 1005 }, // Cluster B
+            HighlightRange { start: 1050, end: 1055 }, // Cluster B
+            HighlightRange { start: 1100, end: 1105 }, // Cluster B
+        ];
+        let idx = SearchEngine::find_densest_highlight(&highlights, 500).unwrap();
+        // Should pick the first highlight in the denser cluster (index 1)
+        assert_eq!(highlights[idx].start, 1000);
+    }
+
+    #[test]
+    fn test_snippet_centers_on_densest_cluster() {
+        // Build content: sparse match at position 10, dense cluster at position 1000+
+        // Separated by > 500 chars so windows don't overlap
+        let mut content = "a".repeat(10);
+        content.push_str("LONE");  // positions 10-14
+        content.push_str(&"b".repeat(986)); // pad to position 1000
+        content.push_str("DENSE1"); // 1000-1006
+        content.push_str("xx");
+        content.push_str("DENSE2"); // 1008-1014
+        content.push_str("yy");
+        content.push_str("DENSE3"); // 1016-1022
+        content.push_str(&"c".repeat(100));
+
+        let highlights = vec![
+            HighlightRange { start: 10, end: 14 },    // LONE
+            HighlightRange { start: 1000, end: 1006 }, // DENSE1
+            HighlightRange { start: 1008, end: 1014 }, // DENSE2
+            HighlightRange { start: 1016, end: 1022 }, // DENSE3
+        ];
+
+        let (snippet, _, _) = SearchEngine::generate_snippet(&content, &highlights, 100);
+        // Snippet should contain the dense cluster, not the lone match
+        assert!(snippet.contains("DENSE1"), "Snippet should center on densest cluster, got: {}", snippet);
+        assert!(snippet.contains("DENSE2"), "Snippet should contain DENSE2");
     }
 }

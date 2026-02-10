@@ -53,6 +53,18 @@ struct ContentView: View {
         }
     }
 
+    /// Get the densest highlight start offset for the selected item (computed by Rust)
+    private var selectedItemDensestHighlightStart: UInt64 {
+        guard let selectedItemId else { return 0 }
+        switch store.state {
+        case .results(_, let items, _), .resultsLoading(_, let items):
+            return items.first { $0.itemMetadata.itemId == selectedItemId }?
+                .matchData.densestHighlightStart ?? 0
+        case .loading, .error:
+            return 0
+        }
+    }
+
     private var firstItemId: Int64? {
         itemIds.first
     }
@@ -440,7 +452,8 @@ struct ContentView: View {
                             text: item.contentPreview,
                             fontName: FontManager.mono,
                             fontSize: 15,
-                            highlights: selectedItemHighlights
+                            highlights: selectedItemHighlights,
+                            densestHighlightStart: selectedItemDensestHighlightStart
                         )
                         .frame(maxWidth: .infinity, maxHeight: .infinity)
                     default:
@@ -587,6 +600,7 @@ struct TextPreviewView: NSViewRepresentable {
     let fontName: String
     let fontSize: CGFloat
     var highlights: [HighlightRange] = []
+    var densestHighlightStart: UInt64 = 0
 
     func makeNSView(context: Context) -> NSScrollView {
         let scrollView = NSScrollView()
@@ -653,11 +667,12 @@ struct TextPreviewView: NSViewRepresentable {
                 }
                 textView.textStorage?.setAttributedString(attributed)
 
-                // Auto-scroll to the densest highlight region
+                // Auto-scroll to the densest highlight region (offset computed by Rust)
                 // Defer to next run loop to ensure layout is complete
-                let targetRange = findDensestHighlightRegion(highlights)
+                let targetHighlight = highlights.first { $0.start == densestHighlightStart } ?? highlights[0]
+                let targetRange = targetHighlight.nsRange
                 DispatchQueue.main.async { [weak textView] in
-                    guard let textView, let targetRange else { return }
+                    guard let textView else { return }
                     guard let scrollView = textView.enclosingScrollView else { return }
                     textView.layoutManager?.ensureLayout(for: textView.textContainer!)
 
@@ -697,35 +712,6 @@ struct TextPreviewView: NSViewRepresentable {
         textView.frame = NSRect(x: 0, y: 0, width: nsView.contentSize.width, height: textView.frame.height)
     }
 
-    /// Find the region with the highest density of highlights using a sliding window
-    private func findDensestHighlightRegion(_ highlights: [HighlightRange]) -> NSRange? {
-        guard !highlights.isEmpty else { return nil }
-        guard highlights.count > 1 else {
-            // Single highlight - just return it
-            return highlights[0].nsRange
-        }
-
-        // Sort highlights by start position
-        let sorted = highlights.sorted { $0.start < $1.start }
-
-        // Use a window of ~500 characters to find the densest region
-        let windowSize: UInt64 = 500
-        var bestStart = sorted[0].start
-        var bestCount = 0
-
-        for highlight in sorted {
-            let windowEnd = highlight.start + windowSize
-            let count = sorted.filter { $0.start >= highlight.start && $0.start < windowEnd }.count
-            if count > bestCount {
-                bestCount = count
-                bestStart = highlight.start
-            }
-        }
-
-        // Return the first highlight in the densest region
-        let centerHighlight = sorted.first { $0.start >= bestStart } ?? sorted[0]
-        return centerHighlight.nsRange
-    }
 
     func makeCoordinator() -> Coordinator {
         Coordinator()
