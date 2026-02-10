@@ -1,7 +1,6 @@
 //! Generate UniFFI Swift bindings for ClipKitty
 //!
 //! Run: cargo run --bin generate-bindings
-//! Or from project root: rust-core/scripts/generate-bindings.sh
 //!
 //! ┌─────────────────────────────────────────────────────────────────────────────┐
 //! │ DEPENDENCY MAP - Output paths must match Package.swift expectations         │

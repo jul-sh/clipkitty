@@ -11,7 +11,7 @@ struct SettingsView: View {
     @ObservedObject private var launchAtLogin = LaunchAtLogin.shared
     @State private var hotKeyState: HotKeyEditState = .idle
     @State private var showClearConfirmation = false
-    @State private var showLogs = false
+
     let store: ClipboardStore
     let onHotKeyChanged: (HotKey) -> Void
     private let minDatabaseSizeGB = 0.5
@@ -172,20 +172,7 @@ struct SettingsView: View {
                 }
             }
 
-            Section("Diagnostics") {
-                Button {
-                    showLogs = true
-                } label: {
-                    HStack {
-                        Image(systemName: "doc.text")
-                        Text("View Logs")
-                        Spacer()
-                        Text("\(AppLogger.shared.entries.count)")
-                            .foregroundStyle(.secondary)
-                    }
-                }
-                .buttonStyle(.plain)
-            }
+
         }
         .formStyle(.grouped)
         .frame(width: 420, height: 420)
@@ -194,9 +181,6 @@ struct SettingsView: View {
             if settings.maxDatabaseSizeGB <= 0 {
                 settings.maxDatabaseSizeGB = minDatabaseSizeGB
             }
-        }
-        .sheet(isPresented: $showLogs) {
-            LogsView()
         }
     }
 
@@ -315,96 +299,4 @@ class HotKeyRecorderView: NSView {
     }
 }
 
-struct LogsView: View {
-    @Environment(\.dismiss) private var dismiss
-    @State private var copied = false
-    private let logger = AppLogger.shared
-    private let dateFormatter: DateFormatter = {
-        let f = DateFormatter()
-        f.dateFormat = "HH:mm:ss.SSS"
-        return f
-    }()
 
-    var body: some View {
-        VStack(spacing: 0) {
-            HStack {
-                Text("Logs")
-                    .font(.headline)
-                Spacer()
-                Button {
-                    copyAllLogs()
-                } label: {
-                    Text(copied ? "Copied!" : "Copy All")
-                }
-                .disabled(logger.entries.isEmpty)
-                Button("Clear") {
-                    logger.clear()
-                }
-                .disabled(logger.entries.isEmpty)
-                Button("Done") {
-                    dismiss()
-                }
-                .keyboardShortcut(.escape, modifiers: [])
-            }
-            .padding()
-
-            Divider()
-
-            if logger.entries.isEmpty {
-                ContentUnavailableView {
-                    Label("No Logs", systemImage: "doc.text")
-                } description: {
-                    Text("Errors and warnings will appear here")
-                }
-            } else {
-                ScrollView {
-                    LazyVStack(alignment: .leading, spacing: 4) {
-                        ForEach(logger.entries.reversed()) { entry in
-                            HStack(alignment: .top, spacing: 8) {
-                                Text(dateFormatter.string(from: entry.timestamp))
-                                    .font(.system(.caption, design: .monospaced))
-                                    .foregroundStyle(.secondary)
-
-                                Text(entry.level.rawValue)
-                                    .font(.system(.caption, design: .monospaced))
-                                    .foregroundStyle(colorForLevel(entry.level))
-                                    .frame(width: 40, alignment: .leading)
-
-                                Text(entry.message)
-                                    .font(.system(.caption, design: .monospaced))
-                                    .textSelection(.enabled)
-                            }
-                            .padding(.horizontal)
-                            .padding(.vertical, 2)
-                        }
-                    }
-                    .padding(.vertical, 8)
-                }
-            }
-        }
-        .frame(width: 600, height: 400)
-        .ignoresSafeArea()
-    }
-
-    private func colorForLevel(_ level: LogEntry.LogLevel) -> Color {
-        switch level {
-        case .info: return .secondary
-        case .warning: return .orange
-        case .error: return .red
-        }
-    }
-
-    private func copyAllLogs() {
-        let text = logger.entries.map { entry in
-            "\(dateFormatter.string(from: entry.timestamp)) [\(entry.level.rawValue)] \(entry.message)"
-        }.joined(separator: "\n")
-
-        NSPasteboard.general.clearContents()
-        NSPasteboard.general.setString(text, forType: .string)
-
-        copied = true
-        DispatchQueue.main.asyncAfter(deadline: .now() + 1.5) {
-            copied = false
-        }
-    }
-}

@@ -37,7 +37,6 @@ enum FontManager {
             var errorRef: Unmanaged<CFError>?
             if !CTFontManagerRegisterFontsForURL(fontURL as CFURL, .process, &errorRef) {
                 if let error = errorRef?.takeRetainedValue() {
-                    logError("Failed to register font \(fontURL.lastPathComponent): \(error)")
                 }
             }
         }

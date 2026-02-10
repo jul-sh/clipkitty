@@ -2,37 +2,12 @@ import Foundation
 import AppKit
 import Observation
 import ClipKittyRust
-import os.signpost
-import os.log
+
 import ImageIO
 
 // MARK: - Performance Tracing
 
-private let performanceLog = OSLog(subsystem: "com.clipkitty.app", category: "Performance")
-private let logger = Logger(subsystem: "com.clipkitty.app", category: "Performance")
 
-private enum TraceID {
-    static let loadItems = OSSignpostID(log: performanceLog)
-    static let search = OSSignpostID(log: performanceLog)
-    static let metadata = OSSignpostID(log: performanceLog)
-}
-
-/// Simple timing helper - uses os_log for reliable capture
-private func measureTime<T>(_ label: String, _ block: () throws -> T) rethrows -> T {
-    let start = CFAbsoluteTimeGetCurrent()
-    let result = try block()
-    let elapsed = (CFAbsoluteTimeGetCurrent() - start) * 1000
-    os_log(.default, log: performanceLog, "%{public}s: %.2fms", label, elapsed)
-    return result
-}
-
-private func measureTimeAsync<T>(_ label: String, _ block: () async throws -> T) async rethrows -> T {
-    let start = CFAbsoluteTimeGetCurrent()
-    let result = try await block()
-    let elapsed = (CFAbsoluteTimeGetCurrent() - start) * 1000
-    os_log(.default, log: performanceLog, "%{public}s: %.2fms", label, elapsed)
-    return result
-}
 
 /// Display state for the clipboard list
 /// Search with empty query returns all items (what was previously called "browse mode")
@@ -247,9 +222,6 @@ final class ClipboardStore {
             return
         }
 
-        let signpostID = OSSignpostID(log: performanceLog)
-        os_signpost(.begin, log: performanceLog, name: "search", signpostID: signpostID, "query=%{public}s", query)
-
         do {
             let searchResult = try await rustStore.search(query: query)
 
@@ -257,13 +229,10 @@ final class ClipboardStore {
             guard case .resultsLoading(let currentQuery, _) = state, currentQuery == query else { return }
 
             state = .results(query: query, items: searchResult.matches, firstItem: searchResult.firstItem)
-            os_signpost(.end, log: performanceLog, name: "search", signpostID: signpostID, "total_hits=%d", searchResult.totalCount)
         } catch ClipKittyError.Cancelled {
-            os_signpost(.end, log: performanceLog, name: "search", signpostID: signpostID, "cancelled")
         } catch {
             guard !Task.isCancelled else { return }
             state = .error("Search failed: \(error.localizedDescription)")
-            os_signpost(.end, log: performanceLog, name: "search", signpostID: signpostID, "error")
         }
     }
 
@@ -414,7 +383,6 @@ final class ClipboardStore {
                     }
                 }
             } catch {
-                logError("Clipboard save failed: \(error)")
             }
         }
     }
@@ -430,7 +398,6 @@ final class ClipboardStore {
             do {
                 try rustStore.updateImageDescription(itemId: itemId, description: trimmed)
             } catch {
-                logError("Failed to update image description: \(error)")
             }
         }.value
 
@@ -456,7 +423,6 @@ final class ClipboardStore {
 
             // Compress image with HEIC (HEVC)
             guard let compressedData = Self.compressToHEIC(rawImageData, quality: quality, maxPixels: maxPixels) else {
-                logError("Image compression failed, skipping")
                 return
             }
 
@@ -479,7 +445,6 @@ final class ClipboardStore {
                     await self?.generateAndUpdateImageDescription(itemId: itemId, imageData: compressedData)
                 }
             } catch {
-                logError("Image save failed: \(error)")
             }
         }
     }
@@ -680,7 +645,6 @@ final class ClipboardStore {
             do {
                 try rustStore.updateTimestamp(itemId: id)
             } catch {
-                logError("Failed to update timestamp: \(error)")
             }
         }.value
 
@@ -712,7 +676,6 @@ final class ClipboardStore {
             do {
                 try rustStore.deleteItem(itemId: itemId)
             } catch {
-                logError("Failed to delete: \(error)")
             }
         }
     }
@@ -731,7 +694,6 @@ final class ClipboardStore {
             do {
                 try rustStore.clear()
             } catch {
-                logError("Failed to clear: \(error)")
             }
         }
     }
@@ -748,7 +710,6 @@ final class ClipboardStore {
             do {
                 _ = try rustStore.pruneToSize(maxBytes: maxBytes, keepRatio: 0.8)
             } catch {
-                logError("Pruning failed: \(error)")
             }
         }
     }

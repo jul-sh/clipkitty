@@ -120,11 +120,9 @@ final class FloatingPanelController: NSObject, NSWindowDelegate {
     /// Simulate Cmd+V keystroke to paste into the target app
     private func simulatePaste(targetApp: NSRunningApplication?) {
         guard let targetApp = targetApp else {
-            logError("No target app to paste into")
             return
         }
 
-        logInfo("simulatePaste: targeting \(targetApp.localizedName ?? "unknown")")
 
         // Wait for the target app to become active before sending keystroke
         Task {
@@ -139,32 +137,25 @@ final class FloatingPanelController: NSObject, NSWindowDelegate {
             }
 
             let frontmost = NSWorkspace.shared.frontmostApplication?.localizedName ?? "unknown"
-            logInfo("simulatePaste: after \(attempts) attempts, frontmost app is \(frontmost)")
 
             await MainActor.run {
                 guard let source = CGEventSource(stateID: .hidSystemState) else {
-                    logError("Failed to create CGEventSource - check Accessibility permissions")
                     return
                 }
-                logInfo("simulatePaste: CGEventSource created")
 
                 // Key down: Cmd+V
                 guard let keyDown = CGEvent(keyboardEventSource: source, virtualKey: 0x09, keyDown: true) else {
-                    logError("Failed to create keyDown event")
                     return
                 }
                 keyDown.flags = .maskCommand
                 keyDown.post(tap: .cgSessionEventTap)
-                logInfo("simulatePaste: keyDown posted")
 
                 // Key up: Cmd+V
                 guard let keyUp = CGEvent(keyboardEventSource: source, virtualKey: 0x09, keyDown: false) else {
-                    logError("Failed to create keyUp event")
                     return
                 }
                 keyUp.flags = .maskCommand
                 keyUp.post(tap: .cgSessionEventTap)
-                logInfo("simulatePaste: keyUp posted - paste complete")
             }
         }
     }
