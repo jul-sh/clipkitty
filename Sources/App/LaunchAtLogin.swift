@@ -49,7 +49,6 @@ final class LaunchAtLogin: ObservableObject {
     @discardableResult
     func enable() -> Bool {
         guard isInApplicationsDirectory else {
-            logWarning("Cannot enable launch at login: app is not in Applications directory")
             return false
         }
 
@@ -57,10 +56,8 @@ final class LaunchAtLogin: ObservableObject {
             try service.register()
             objectWillChange.send()
             errorMessage = nil
-            logInfo("Launch at login enabled")
             return true
         } catch {
-            logError("Failed to enable launch at login: \(error.localizedDescription)")
             objectWillChange.send()
             errorMessage = "Could not enable launch at login. Please add ClipKitty manually in System Settings."
             return false
@@ -75,10 +72,8 @@ final class LaunchAtLogin: ObservableObject {
             try service.unregister()
             objectWillChange.send()
             errorMessage = nil
-            logInfo("Launch at login disabled")
             return true
         } catch {
-            logError("Failed to disable launch at login: \(error.localizedDescription)")
             objectWillChange.send()
             errorMessage = "Could not disable launch at login. Please remove ClipKitty manually in System Settings."
             return false

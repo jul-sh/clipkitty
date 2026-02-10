@@ -61,7 +61,6 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate {
         let appDir = appSupport.appendingPathComponent("ClipKitty", isDirectory: true)
         try? FileManager.default.createDirectory(at: appDir, withIntermediateDirectories: true)
 
-        logInfo("Simulated database mode active")
     }
 
     private func setupMenuBar() {

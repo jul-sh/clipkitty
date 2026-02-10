@@ -128,19 +128,6 @@ sign: $(APP_BUNDLE)
 	@echo "Signing with $(if $(filter true,$(SANDBOX)),sandboxed,standard) entitlements..."
 	@codesign --force --deep --sign - --entitlements "$(ENTITLEMENTS)" "$(APP_BUNDLE)"
 
-# Perf runs without icons and only runs perf tests (uses non-sandboxed for UI testing)
-# Requires full Xcode installation
-perf:
-ifeq ($(HAVE_XCODE),false)
-	$(error Xcode is required for UI tests. Install Xcode from the App Store or use 'swift test' for unit tests.)
-endif
-	@$(MAKE) sign SANDBOX=false
-	@$(MAKE) ClipKitty.xcodeproj
-	@echo "Running UI Performance Tests..."
-	@rm -rf DerivedData
-	@xcodebuild test -project ClipKitty.xcodeproj -scheme ClipKittyUITests -destination 'platform=macOS' -derivedDataPath DerivedData -only-testing:ClipKittyUITests/ClipKittyPerformanceTests | tee xcodebuild.log
-	@swift Scripts/PrintPerfResults.swift
-
 # Build DMG installer
 dmg: all sign
 	@echo "Building$(if $(filter true,$(SANDBOX)), sandboxed,) DMG installer..."

@@ -35,92 +35,86 @@ final class ClipKittyUITests: XCTestCase {
 
     override func setUpWithError() throws {
         continueAfterFailure = false
-        // Use the app from a known location - either from env var or project directory
-        let appPath: String
-        if let envPath = ProcessInfo.processInfo.environment["CLIPKITTY_APP_PATH"] {
-            appPath = envPath
-        } else {
-            // Try to find app relative to this source file
-            let sourceFileURL = URL(fileURLWithPath: #filePath)
-            // path is .../Tests/UITests/ClipKittyUITests.swift
-            // Go up 3 levels to project root
-            let projectRoot = sourceFileURL.deletingLastPathComponent().deletingLastPathComponent().deletingLastPathComponent()
-            let appURL = projectRoot.appendingPathComponent("ClipKitty.app")
 
-            if FileManager.default.fileExists(atPath: appURL.path) {
-                appPath = appURL.path
-            } else {
-                 // Fallback to traversing up from bundle (original logic, good for CI/bundled tests)
-                let testBundle = Bundle(for: type(of: self))
-                var url = testBundle.bundleURL
-                while !FileManager.default.fileExists(atPath: url.appendingPathComponent("ClipKitty.app").path) && url.path != "/" {
-                    url = url.deletingLastPathComponent()
-                }
-                appPath = url.appendingPathComponent("ClipKitty.app").path
-            }
-        }
-        let appURL = URL(fileURLWithPath: appPath)
+        let appURL = try locateAppBundle()
         app = XCUIApplication(url: appURL)
 
-        // Find the project's synthetic database
-        let sourceFileURL = URL(fileURLWithPath: #filePath)
-        let projectRoot = sourceFileURL.deletingLastPathComponent().deletingLastPathComponent().deletingLastPathComponent()
-        let sqliteSourceURL = projectRoot.appendingPathComponent("Sources/App/SyntheticData.sqlite")
-
-        // Determine the correct Application Support directory based on sandbox status
-        let appSupportDir: URL
-        if isAppSandboxed(at: appURL) {
-            // Sandboxed: use container path (must construct manually since test isn't sandboxed)
-            let userHome = URL(fileURLWithPath: "/Users/\(NSUserName())")
-            let bundleID = "com.clipkitty.app"
-            appSupportDir = userHome.appendingPathComponent("Library/Containers/\(bundleID)/Data/Library/Application Support/ClipKitty")
-        } else {
-            // Non-sandboxed: use FileManager to get the same path the app uses
-            let systemAppSupport = FileManager.default.urls(for: .applicationSupportDirectory, in: .userDomainMask).first!
-            appSupportDir = systemAppSupport.appendingPathComponent("ClipKitty")
-        }
-        let targetURL = appSupportDir.appendingPathComponent("clipboard-screenshot.sqlite")
-        let indexDirURL = appSupportDir.appendingPathComponent("tantivy_index")
-
-        // Ensure directory exists
-        try? FileManager.default.createDirectory(at: appSupportDir, withIntermediateDirectories: true)
-
-        // Kill any existing ClipKitty instances to avoid WAL conflicts
-        // This fixes rare race condition where old process holds database open
-        let killTask = Process()
-        killTask.executableURL = URL(fileURLWithPath: "/usr/bin/pkill")
-        killTask.arguments = ["-9", "ClipKitty"]
-        try? killTask.run()
-        killTask.waitUntilExit()
-        Thread.sleep(forTimeInterval: 0.2)  // Brief delay for file handles to release
-
-        // Remove existing database and search index to ensure a clean re-index for the video
-        try? FileManager.default.removeItem(at: targetURL)
-        try? FileManager.default.removeItem(at: indexDirURL)
-        // Also remove WAL/SHM files that might persist
-        try? FileManager.default.removeItem(at: targetURL.appendingPathExtension("wal"))
-        try? FileManager.default.removeItem(at: targetURL.appendingPathExtension("shm"))
-
-        // Copy fresh synthetic data - MUST succeed for tests to be valid
-        guard FileManager.default.fileExists(atPath: sqliteSourceURL.path) else {
-            XCTFail("SyntheticData.sqlite not found at: \(sqliteSourceURL.path)")
-            return
-        }
-        do {
-            try FileManager.default.copyItem(at: sqliteSourceURL, to: targetURL)
-        } catch {
-            XCTFail("Failed to copy synthetic database: \(error)")
-            return
-        }
+        let appSupportDir = getAppSupportDirectory(for: appURL)
+        try setupTestDatabase(in: appSupportDir)
 
         app.launchArguments = ["--use-simulated-db"]
         app.launch()
 
         let window = app.dialogs.firstMatch
         XCTAssertTrue(window.waitForExistence(timeout: 10), "Window did not appear")
-
-        // Wait for initial load
         Thread.sleep(forTimeInterval: 0.5)
+    }
+
+    // MARK: - Setup Helpers
+
+    private func locateAppBundle() throws -> URL {
+        if let envPath = ProcessInfo.processInfo.environment["CLIPKITTY_APP_PATH"] {
+            return URL(fileURLWithPath: envPath)
+        }
+
+        let projectRoot = URL(fileURLWithPath: #filePath)
+            .deletingLastPathComponent()
+            .deletingLastPathComponent()
+            .deletingLastPathComponent()
+        let appURL = projectRoot.appendingPathComponent("ClipKitty.app")
+
+        if FileManager.default.fileExists(atPath: appURL.path) {
+            return appURL
+        }
+
+        // Fallback: traverse up from bundle
+        let testBundle = Bundle(for: type(of: self))
+        var url = testBundle.bundleURL
+        while !FileManager.default.fileExists(atPath: url.appendingPathComponent("ClipKitty.app").path) && url.path != "/" {
+            url = url.deletingLastPathComponent()
+        }
+        return url.appendingPathComponent("ClipKitty.app")
+    }
+
+    private func getAppSupportDirectory(for appURL: URL) -> URL {
+        if isAppSandboxed(at: appURL) {
+            let userHome = URL(fileURLWithPath: "/Users/\(NSUserName())")
+            return userHome.appendingPathComponent("Library/Containers/com.clipkitty.app/Data/Library/Application Support/ClipKitty")
+        } else {
+            let systemAppSupport = FileManager.default.urls(for: .applicationSupportDirectory, in: .userDomainMask).first!
+            return systemAppSupport.appendingPathComponent("ClipKitty")
+        }
+    }
+
+    private func setupTestDatabase(in appSupportDir: URL) throws {
+        let projectRoot = URL(fileURLWithPath: #filePath)
+            .deletingLastPathComponent()
+            .deletingLastPathComponent()
+            .deletingLastPathComponent()
+        let sqliteSourceURL = projectRoot.appendingPathComponent("Sources/App/SyntheticData.sqlite")
+        let targetURL = appSupportDir.appendingPathComponent("clipboard-screenshot.sqlite")
+        let indexDirURL = appSupportDir.appendingPathComponent("tantivy_index")
+
+        try? FileManager.default.createDirectory(at: appSupportDir, withIntermediateDirectories: true)
+
+        // Kill existing instances and clean up old data
+        let killTask = Process()
+        killTask.executableURL = URL(fileURLWithPath: "/usr/bin/pkill")
+        killTask.arguments = ["-9", "ClipKitty"]
+        try? killTask.run()
+        killTask.waitUntilExit()
+        Thread.sleep(forTimeInterval: 0.2)
+
+        try? FileManager.default.removeItem(at: targetURL)
+        try? FileManager.default.removeItem(at: indexDirURL)
+        try? FileManager.default.removeItem(at: targetURL.appendingPathExtension("wal"))
+        try? FileManager.default.removeItem(at: targetURL.appendingPathExtension("shm"))
+
+        guard FileManager.default.fileExists(atPath: sqliteSourceURL.path) else {
+            XCTFail("SyntheticData.sqlite not found at: \(sqliteSourceURL.path)")
+            return
+        }
+        try FileManager.default.copyItem(at: sqliteSourceURL, to: targetURL)
     }
 
     /// Helper to get the currently selected index by finding the button with isSelected trait
@@ -187,45 +181,7 @@ final class ClipKittyUITests: XCTestCase {
         XCTAssertTrue(waitForSelectedIndex(0, timeout: 2), "Selection should reset when item positions change")
     }
 
-    /// Tests that selection resets to the first item when the app is re-opened (hidden and shown again).
-    func testSelectionResetsOnReopen() throws {
-        throw XCTSkip("Skipping because XCUITest cannot reliably show the window of an accessory (LSUIElement) app after it has been hidden/deactivated. The fix is verified by code analysis in ContentView.swift.")
 
-        let window = app.dialogs.firstMatch
-        XCTAssertTrue(window.waitForExistence(timeout: 5), "Window should be visible initially")
-
-        // Initial state: first item should be selected
-        XCTAssertTrue(waitForSelectedIndex(0), "Initial selection should be index 0")
-
-        // Move selection down to item 3 (index 2)
-        let searchField = app.textFields.firstMatch
-        searchField.click()
-        for _ in 0..<2 {
-            searchField.typeText(XCUIKeyboardKey.downArrow.rawValue)
-        }
-        Thread.sleep(forTimeInterval: 0.1)
-        XCTAssertEqual(getSelectedIndex(), 2, "Selection should have moved to index 2")
-
-        // Hide the app by activating Finder
-        let finder = XCUIApplication(bundleIdentifier: "com.apple.finder")
-        finder.activate()
-
-        // Wait for window to disappear
-        XCTAssertTrue(window.waitForNonExistence(timeout: 3), "Window should hide")
-
-        Thread.sleep(forTimeInterval: 1.0)
-
-        // Re-activate the app
-        app.activate()
-        XCTAssertTrue(app.wait(for: .runningForeground, timeout: 5), "App failed to become foreground")
-
-        // Wait for window to reappear - check both dialogs and windows
-        let windowExists = window.waitForExistence(timeout: 10) || app.windows.firstMatch.waitForExistence(timeout: 10)
-        XCTAssertTrue(windowExists, "Window should reappear")
-
-        // Selection should have reset to index 0
-        XCTAssertTrue(waitForSelectedIndex(0, timeout: 2), "Selection should reset to first item on reopen, but was \(getSelectedIndex() ?? -1)")
-    }
 
     /// Tests that the panel hides when focus moves to another application.
     /// This is Spotlight-like behavior - the panel should auto-dismiss on focus loss.
@@ -323,7 +279,6 @@ final class ClipKittyUITests: XCTestCase {
            let png = bitmap.representation(using: .png, properties: [:]) {
             let url = URL(fileURLWithPath: "/tmp/clipkitty_screenshot.png")
             try? png.write(to: url)
-            print("Saved screenshot to: \(url.path)")
         }
     }
 
@@ -334,7 +289,6 @@ final class ClipKittyUITests: XCTestCase {
         // Get the app's window and capture only that
         let window = app.dialogs.firstMatch
         if !window.exists {
-            print("Warning: Window not found for \(name)")
             return
         }
 
@@ -350,7 +304,6 @@ final class ClipKittyUITests: XCTestCase {
            let png = bitmap.representation(using: .png, properties: [:]) {
             let url = URL(fileURLWithPath: "/tmp/clipkitty_\(name).png")
             try? png.write(to: url)
-            print("Saved screenshot to: \(url.path)")
         }
     }
 
@@ -403,9 +356,6 @@ final class ClipKittyUITests: XCTestCase {
                                        pixelHeight + padding * 2)
             try? boundsString.write(toFile: "/tmp/clipkitty_window_bounds.txt",
                                     atomically: true, encoding: .utf8)
-            print("Window frame (points): \(frame)")
-            print("Screen pixels: \(screenPixelWidth)x\(screenPixelHeight)")
-            print("Saved window bounds (pixels): \(boundsString)")
         }
 
         // Signal that the demo is ready to start (shell script will start recording)

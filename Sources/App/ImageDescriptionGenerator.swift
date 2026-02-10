@@ -72,7 +72,6 @@ struct ImageDescriptionGenerator {
                 return (Array(labels), text)
 
             } catch {
-                print("Vision processing failed: \(error)")
                 return nil
             }
         }.value

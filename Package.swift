@@ -13,7 +13,7 @@
 // │   sources: clipkitty_core.swift (auto-generated)                            │
 // │            ClipKittyRust.swift (manual extensions)                          │
 // │                                                                             │
-// │ To regenerate bindings: rust-core/scripts/generate-bindings.sh              │
+// │ To regenerate bindings: cargo run --bin generate-bindings                   │
 // │ Source of truth: rust-core/src/clipkitty_core.udl                           │
 // └─────────────────────────────────────────────────────────────────────────────┘
 

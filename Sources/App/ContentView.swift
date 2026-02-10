@@ -4,16 +4,6 @@ import ClipKittyRust
 import os.log
 import UniformTypeIdentifiers
 
-private let perfLog = OSLog(subsystem: "com.clipkitty.app", category: "UI")
-
-private func measure<T>(_ label: String, _ block: () -> T) -> T {
-    let start = CFAbsoluteTimeGetCurrent()
-    let result = block()
-    let elapsed = (CFAbsoluteTimeGetCurrent() - start) * 1000
-    os_log(.default, log: perfLog, "%{public}s: %.2fms", label, elapsed)
-    return result
-}
-
 struct ContentView: View {
     var store: ClipboardStore
     let onSelect: (Int64, ClipboardContent) -> Void
@@ -240,14 +230,12 @@ struct ContentView: View {
     }
 
     private func moveSelection(by offset: Int) {
-        measure("moveSelection") {
-            guard let currentIndex = selectedIndex else {
-                selectedItemId = firstItemId
-                return
-            }
-            let newIndex = max(0, min(itemCount - 1, currentIndex + offset))
-            selectedItemId = itemId(at: newIndex)
+        guard let currentIndex = selectedIndex else {
+            selectedItemId = firstItemId
+            return
         }
+        let newIndex = max(0, min(itemCount - 1, currentIndex + offset))
+        selectedItemId = itemId(at: newIndex)
     }
 
     private func confirmSelection() {
