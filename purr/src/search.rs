@@ -214,7 +214,14 @@ pub(crate) fn indices_to_ranges(indices: &[u32]) -> Vec<HighlightRange> {
 /// Find the highlight in the densest cluster of highlights using a sliding window.
 /// Returns the index of the first highlight in the densest region.
 /// This is used to center both the snippet and the preview pane scroll position.
-/// O(n log n) via sort + two-pointer scan.
+///
+/// Density is measured by **total highlighted characters** (sum of `end - start`)
+/// in each window, not by range count. This prevents many repetitions of a single
+/// short word (e.g., "Error" x5 = 5 ranges but only 25 chars) from beating a
+/// tight cluster of diverse matches (e.g., 6 different query words = 6 ranges,
+/// 50+ chars).
+///
+/// O(n log n) via sort + two-pointer scan with running coverage sum.
 pub(crate) fn find_densest_highlight(highlights: &[HighlightRange], window_size: u64) -> Option<usize> {
     if highlights.is_empty() {
         return None;
@@ -227,20 +234,22 @@ pub(crate) fn find_densest_highlight(highlights: &[HighlightRange], window_size:
     let mut indexed: Vec<(usize, &HighlightRange)> = highlights.iter().enumerate().collect();
     indexed.sort_by_key(|(_, h)| h.start);
 
-    // Two-pointer: right advances into window, left advances out
+    // Two-pointer with running coverage sum
     let mut left = 0;
     let mut best_left = 0;
-    let mut best_count = 0usize;
+    let mut best_coverage = 0u64;
+    let mut current_coverage = 0u64;
 
     for right in 0..indexed.len() {
         // Shrink window from left while left's start is too far from right's
-        // (we anchor the window at each right pointer and slide left forward)
         while indexed[left].1.start + window_size <= indexed[right].1.start {
+            current_coverage -= indexed[left].1.end - indexed[left].1.start;
             left += 1;
         }
-        let count = right - left + 1;
-        if count > best_count {
-            best_count = count;
+        current_coverage += indexed[right].1.end - indexed[right].1.start;
+
+        if current_coverage > best_coverage {
+            best_coverage = current_coverage;
             best_left = left;
         }
     }
@@ -261,8 +270,11 @@ pub fn generate_snippet(content: &str, highlights: &[HighlightRange], max_len: u
         return (preview, Vec::new(), 0);
     }
 
-    // Center on the densest cluster of highlights, not just the first one
-    let center_idx = find_densest_highlight(highlights, 500).unwrap_or(0);
+    // Center on the densest cluster of highlights, not just the first one.
+    // Window sized to snippet context — prevents a wide window from merging
+    // distant clusters (e.g., scattered "Error" repeats + the actual match).
+    let density_window = SNIPPET_CONTEXT_CHARS as u64;
+    let center_idx = find_densest_highlight(highlights, density_window).unwrap_or(0);
     let center_highlight = &highlights[center_idx];
     // These are CHARACTER indices, not byte offsets
     let match_start_char = center_highlight.start as usize;
@@ -369,7 +381,7 @@ pub(crate) fn create_match_data(fuzzy_match: &FuzzyMatch) -> MatchData {
     );
 
     // Compute densest highlight start for preview pane scrolling
-    let densest_highlight_start = find_densest_highlight(&full_content_highlights, 500)
+    let densest_highlight_start = find_densest_highlight(&full_content_highlights, SNIPPET_CONTEXT_CHARS as u64)
         .map(|idx| full_content_highlights[idx].start)
         .unwrap_or(0);
 
@@ -859,5 +871,105 @@ mod tests {
         // Snippet should contain the dense cluster, not the lone match
         assert!(snippet.contains("DENSE1"), "Snippet should center on densest cluster, got: {}", snippet);
         assert!(snippet.contains("DENSE2"), "Snippet should contain DENSE2");
+    }
+
+    // ── Real-world density regression tests ───────────────────────────
+
+    /// Real nix build error log where the query nearly exactly matches the
+    /// last line, but many scattered "Error" matches in the make output
+    /// could mislead the densest-highlight picker.
+    const NIX_BUILD_ERROR: &str = "\
+    'path:./hosts/default'
+  \u{2192} 'path:/Users/julsh/git/dotfiles/nix/hosts/local?lastModified=1770783424&narHash=sha256-I8uZtr2R0rm1z9UzZNkj/ofk%2B2mSNp7ElUS67Bhj7js%3D' (2026-02-11)
+error: Cannot build '/nix/store/dsq2qkgpgq6nysisychilwx9gwpcg1i1-inetutils-2.7.drv'.
+       Reason: builder failed with exit code 2.
+       Output paths:
+         /nix/store/n9yl2hqsljax4gabc7c1qbxbkb0j6l55-inetutils-2.7
+         /nix/store/pk6z47v44zjv29y37rxdy8b6nszh8x8f-inetutils-2.7-apparmor
+       Last 25 log lines:
+       > openat-die.c:31:18: note: expanded from macro '_'
+       >    31 | #define _(msgid) dgettext (GNULIB_TEXT_DOMAIN, msgid)
+       >       |                  ^
+       > ./gettext.h:127:39: note: expanded from macro 'dgettext'
+       >   127 | #  define dgettext(Domainname, Msgid) ((void) (Domainname), gettext (Msgid))
+       >       |                                       ^
+       > ./error.h:506:39: note: expanded from macro 'error'
+       >   506 |       __gl_error_call (error, status, __VA_ARGS__)
+       >       |                                       ^
+       > ./error.h:446:51: note: expanded from macro '__gl_error_call'
+       >   446 |          __gl_error_call1 (function, __errstatus, __VA_ARGS__); \\
+       >       |                                                   ^
+       > ./error.h:431:26: note: expanded from macro '__gl_error_call1'
+       >   431 |     ((function) (status, __VA_ARGS__), \\
+       >       |                          ^
+       > 4 errors generated.
+       > make[4]: *** [Makefile:6332: libgnu_a-openat-die.o] Error 1
+       > make[4]: Leaving directory '/nix/var/nix/builds/nix-55927-395412078/inetutils-2.7/lib'
+       > make[3]: *** [Makefile:8385: all-recursive] Error 1
+       > make[3]: Leaving directory '/nix/var/nix/builds/nix-55927-395412078/inetutils-2.7/lib'
+       > make[2]: *** [Makefile:3747: all] Error 2
+       > make[2]: Leaving directory '/nix/var/nix/builds/nix-55927-395412078/inetutils-2.7/lib'
+       > make[1]: *** [Makefile:2630: all-recursive] Error 1
+       > make[1]: Leaving directory '/nix/var/nix/builds/nix-55927-395412078/inetutils-2.7'
+       > make: *** [Makefile:2567: all] Error 2
+       For full logs, run:
+         nix-store -l /nix/store/dsq2qkgpgq6nysisychilwx9gwpcg1i1-inetutils-2.7.drv
+error: Cannot build '/nix/store/djv08y006z7jk69j2q9fq5f1ch195i4s-home-manager.drv'.
+       Reason: 1 dependency failed.
+       Output paths:
+         /nix/store/67pn4ck72akj3bz7d131wdcz6w4gb5qb-home-manager
+error: Build failed due to failed dependency";
+
+    /// Helper: build query info from a query string
+    fn build_query_info(query: &str) -> Vec<(String, Vec<[char; 3]>)> {
+        tokenize_words(&query.to_lowercase())
+            .into_iter()
+            .map(|(_, _, w)| {
+                let tris = word_trigrams(&w);
+                (w, tris)
+            })
+            .collect()
+    }
+
+    #[test]
+    fn test_densest_highlight_prefers_exact_query_match_over_scattered_repeats() {
+        let query_info = build_query_info("error: build failed due to dependency");
+        let fm = highlight_candidate(1, NIX_BUILD_ERROR, 1000, 1.0, &query_info);
+        let ranges = indices_to_ranges(&fm.matched_indices);
+
+        // Use the same window size as generate_snippet (SNIPPET_CONTEXT_CHARS)
+        let densest_idx = find_densest_highlight(&ranges, SNIPPET_CONTEXT_CHARS as u64).unwrap();
+        let densest_start = ranges[densest_idx].start as usize;
+
+        // The last error block (lines 36-40) contains the near-exact query match.
+        // The densest highlight must point into this block, not at the scattered
+        // "Error" matches in the make output section above.
+        let final_block = "error: Cannot build '/nix/store/djv08y006z7jk69j2q9fq5f1ch195i4s-home-manager.drv'.";
+        let final_block_byte_pos = NIX_BUILD_ERROR.rfind(final_block).unwrap();
+        let final_block_char_pos = NIX_BUILD_ERROR[..final_block_byte_pos].chars().count();
+
+        assert!(
+            densest_start >= final_block_char_pos,
+            "Densest highlight at char {} should be in final error block (char {}+). \
+             Points to: {:?}",
+            densest_start,
+            final_block_char_pos,
+            NIX_BUILD_ERROR.chars().skip(densest_start).take(60).collect::<String>()
+        );
+    }
+
+    #[test]
+    fn test_snippet_centers_on_exact_query_match_not_scattered_repeats() {
+        let query_info = build_query_info("error: build failed due to dependency");
+        let fm = highlight_candidate(1, NIX_BUILD_ERROR, 1000, 1.0, &query_info);
+        let ranges = indices_to_ranges(&fm.matched_indices);
+
+        let (snippet, _, _) = generate_snippet(NIX_BUILD_ERROR, &ranges, SNIPPET_CONTEXT_CHARS * 2);
+
+        assert!(
+            snippet.contains("Build failed due to failed dependency"),
+            "Snippet should center on the near-exact match line, got: {}",
+            snippet
+        );
     }
 }
