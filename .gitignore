@@ -11,7 +11,7 @@ DerivedData/
 node_modules
 
 # Rust
-rust-data-gen/target/
+distribution/rust-data-gen/target/
 rust-core/target/
 rust-core/generated/
 rust-core/include/
@@ -51,7 +51,7 @@ rust-core/target/
 
 # Data Generation and Indexing
 Sources/App/tantivy_index/
-Scripts/data-gen/progress_rust.json
+distribution/data-gen/progress_rust.json
 
 # Benchmark data (generated with: cargo run --release --bin generate-bench-data)
 rust-core/benches/synthetic_1m.sqlite

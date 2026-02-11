@@ -2,7 +2,7 @@
 # Patches the synthetic database with demo-specific items for marketing
 # Run this before generating marketing assets
 #
-# Usage: ./Scripts/patch-demo-items.sh
+# Usage: ./distribution/patch-demo-items.sh
 
 set -e
 
@@ -11,6 +11,6 @@ PROJECT_ROOT="$(dirname "$SCRIPT_DIR")"
 
 echo "Patching synthetic data with demo items..."
 
-"$SCRIPT_DIR/run-in-nix.sh" -c "cd rust-data-gen && cargo run --release -- --demo-only --db-path ../Sources/App/SyntheticData.sqlite"
+"$PROJECT_ROOT/Scripts/run-in-nix.sh" -c "cd distribution/rust-data-gen && cargo run --release -- --demo-only --db-path ../SyntheticData.sqlite"
 
-echo "Done. Demo items added to Sources/App/SyntheticData.sqlite"
+echo "Done. Demo items added to distribution/SyntheticData.sqlite"

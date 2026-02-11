@@ -91,7 +91,7 @@ final class ClipKittyUITests: XCTestCase {
             .deletingLastPathComponent()
             .deletingLastPathComponent()
             .deletingLastPathComponent()
-        let sqliteSourceURL = projectRoot.appendingPathComponent("Sources/App/SyntheticData.sqlite")
+        let sqliteSourceURL = projectRoot.appendingPathComponent("distribution/SyntheticData.sqlite")
         let targetURL = appSupportDir.appendingPathComponent("clipboard-screenshot.sqlite")
         let indexDirURL = appSupportDir.appendingPathComponent("tantivy_index")
 
