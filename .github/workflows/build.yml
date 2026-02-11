@@ -62,9 +62,9 @@ jobs:
         run: |
           chmod +x Scripts/build-dmg.sh
 
-          # Non-sandboxed: sign with real cert + entitlements, then package
-          # (Signing is done here, not earlier, because screenshot/marketing steps
-          # call `make sign` internally which would ad-hoc overwrite the cert)
+          # Non-sandboxed: rebuild (marketing steps overwrote with sandboxed build),
+          # sign with real cert + entitlements, then package
+          make all SANDBOX=false
           codesign --force --options runtime --sign "Developer ID Application" \
             --entitlements Sources/App/ClipKitty.entitlements \
             ClipKitty.app
