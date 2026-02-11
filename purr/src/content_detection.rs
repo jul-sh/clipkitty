@@ -16,7 +16,12 @@ static PHONE_DIGITS_REGEX: Lazy<Regex> = Lazy::new(|| {
     Regex::new(r"\d").unwrap()
 });
 
-/// Check if a string looks like a URL
+/// Common protocols accepted as links. Exotic schemes like javascript:,
+/// data:, or custom-app:// are rejected to avoid misclassifying non-web
+/// content as clickable links.
+const LINK_PROTOCOLS: &[&str] = &["http://", "https://", "ftp://", "ftps://"];
+
+/// Check if a string looks like a URL with a common protocol
 fn is_valid_url(text: &str) -> bool {
     let trimmed = text.trim();
 
@@ -25,7 +30,13 @@ fn is_valid_url(text: &str) -> bool {
         return false;
     }
 
-    // validator::validate_url handles schema and basic structure
+    // Only accept common protocols
+    let lower = trimmed.to_lowercase();
+    if !LINK_PROTOCOLS.iter().any(|p| lower.starts_with(p)) {
+        return false;
+    }
+
+    // validator::validate_url handles structure validation
     validator::validate_url(trimmed)
 }
 
@@ -184,5 +195,23 @@ mod tests {
         } else {
             panic!("Expected Text content");
         }
+    }
+
+    #[test]
+    fn test_url_common_protocols_accepted() {
+        assert!(is_valid_url("http://example.com"));
+        assert!(is_valid_url("https://example.com"));
+        assert!(is_valid_url("ftp://files.example.com/doc.pdf"));
+        assert!(is_valid_url("ftps://files.example.com/doc.pdf"));
+        assert!(is_valid_url("HTTPS://EXAMPLE.COM")); // case-insensitive
+    }
+
+    #[test]
+    fn test_url_exotic_protocols_rejected() {
+        assert!(!is_valid_url("javascript:alert(1)"));
+        assert!(!is_valid_url("data:text/html,<h1>hi</h1>"));
+        assert!(!is_valid_url("custom-app://open/path"));
+        assert!(!is_valid_url("file:///etc/passwd"));
+        assert!(!is_valid_url("blob:https://example.com/uuid"));
     }
 }
