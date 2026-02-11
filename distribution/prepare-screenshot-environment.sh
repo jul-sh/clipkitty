@@ -1,14 +1,14 @@
 #!/bin/bash
 # Prepares macOS environment for taking clean screenshots
 # Hides all windows except the app, sets background, and restores state afterward
-# Usage: ./Scripts/prepare-screenshot-environment.sh <command>
-# Example: ./Scripts/prepare-screenshot-environment.sh "xcodebuild test ..."
+# Usage: ./distribution/prepare-screenshot-environment.sh <command>
+# Example: ./distribution/prepare-screenshot-environment.sh "xcodebuild test ..."
 
 set -e
 
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 PROJECT_ROOT="$(dirname "$SCRIPT_DIR")"
-BACKGROUND_IMAGE="$(make -s -C "$PROJECT_ROOT" print-background-image)"
+BACKGROUND_IMAGE="$(make -s -C "$PROJECT_ROOT/dist" print-background-image)"
 
 if [ -n "$CI" ]; then
     echo "Setting up screenshot environment..."

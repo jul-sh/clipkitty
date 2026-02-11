@@ -301,9 +301,8 @@ fn insert_demo_items(store: &ClipboardStore, db_path: &str) -> Result<()> {
     }
 
     // Add kitty image (most recent item)
-    // Adjust path for new crate location (peer of rust-core)
     let base_path = PathBuf::from(env!("CARGO_MANIFEST_DIR"));
-    let kitty_path = base_path.join("../marketing/assets/kitty.jpg");
+    let kitty_path = base_path.join("../../marketing/assets/kitty.jpg");
     if let Ok(image_data) = fs::read(&kitty_path) {
         if let Ok(id) = save_image_direct(
             db_path,
@@ -376,7 +375,7 @@ async fn main() -> Result<()> {
     }
 
     let base_path = PathBuf::from(env!("CARGO_MANIFEST_DIR"));
-    let tax_path = base_path.join("../Scripts/data-gen/taxonomy.json");
+    let tax_path = base_path.join("../data-gen/taxonomy.json");
     let tax_str = fs::read_to_string(&tax_path).context("Failed to read taxonomy.json")?;
     let taxonomy: Taxonomy = serde_json::from_str(&tax_str)?;
     let target_total = args.count.unwrap_or(taxonomy.total_items);

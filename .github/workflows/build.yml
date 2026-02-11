@@ -34,15 +34,15 @@ jobs:
       - name: Install Nix
         uses: DeterminateSystems/nix-installer-action@main
 
-      - name: Install Build Dependencies
-        run: ./Scripts/install-deps.sh
+      - name: Install Distribution Dependencies
+        run: ./distribution/install-deps.sh
 
       - name: Build Non-Sandboxed App
         run: make all SANDBOX=false
 
       - name: Run UI Tests
         run: |
-          SANDBOX=false make screenshot
+          SANDBOX=false make -C distribution screenshot
           # Validate screenshot was actually captured
           if [ ! -f screenshot.png ]; then
             echo "ERROR: screenshot.png was not created. Check UI test logs."
@@ -52,15 +52,15 @@ jobs:
       - name: Generate Marketing Assets
         run: |
           # Generate App Store screenshots and preview video
-          make marketing-screenshots
-          make preview-video
+          make -C distribution marketing-screenshots
+          make -C distribution preview-video
 
       - name: Generate Icon PNG
-        run: make icon-png
+        run: make -C distribution icon-png
 
       - name: Build and Sign DMGs
         run: |
-          chmod +x Scripts/build-dmg.sh
+          chmod +x distribution/build-dmg.sh
 
           # Non-sandboxed: rebuild (marketing steps overwrote with sandboxed build),
           # sign with real cert + entitlements, then package
@@ -68,14 +68,14 @@ jobs:
           codesign --force --options runtime --sign "Developer ID Application" \
             --entitlements Sources/App/ClipKitty.entitlements \
             ClipKitty.app
-          ./Scripts/build-dmg.sh ClipKitty.app ClipKitty.dmg
+          ./distribution/build-dmg.sh ClipKitty.app ClipKitty.dmg
 
           # Sandboxed: build fresh, sign with real cert + sandboxed entitlements, then package
           make all SANDBOX=true
           codesign --force --options runtime --sign "Developer ID Application" \
             --entitlements Sources/App/ClipKitty-Sandboxed.entitlements \
             ClipKitty.app
-          ./Scripts/build-dmg.sh ClipKitty.app ClipKitty-Sandboxed.dmg
+          ./distribution/build-dmg.sh ClipKitty.app ClipKitty-Sandboxed.dmg
 
           # Sign the DMG files themselves
           codesign --force --sign "Developer ID Application" ClipKitty.dmg
