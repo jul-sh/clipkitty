@@ -66,6 +66,7 @@ impl Indexer {
     }
 
     /// Create an in-memory indexer (for testing)
+    #[cfg(test)]
     pub fn new_in_memory() -> IndexerResult<Self> {
         let schema = Self::build_schema();
         let index = Index::create_in_ram(schema.clone());

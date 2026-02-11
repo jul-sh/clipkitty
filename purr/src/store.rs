@@ -90,6 +90,7 @@ pub struct ClipboardStore {
 // Internal implementation (not exported via FFI)
 impl ClipboardStore {
     /// Create a store with an in-memory database (for testing)
+    #[cfg(test)]
     pub(crate) fn new_in_memory() -> Result<Self, ClipKittyError> {
         init_rayon();
         let database = Database::open_in_memory().map_err(ClipKittyError::from)?;
