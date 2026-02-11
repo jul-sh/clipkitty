@@ -7,8 +7,10 @@ use std::collections::hash_map::DefaultHasher;
 use std::hash::{Hash, Hasher};
 
 use crate::interface::{
-    ClipboardContent, IconType, ItemIcon, ItemMetadata, ClipboardItem,
+    ClipboardContent, ItemIcon, ItemMetadata, ClipboardItem,
 };
+#[cfg(test)]
+use crate::interface::IconType;
 
 // ─────────────────────────────────────────────────────────────────────────────
 // INTERNAL ITEM (not exposed via FFI, used for storage)
@@ -86,6 +88,7 @@ impl StoredItem {
     }
 
     /// Get the icon type for the content
+    #[cfg(test)]
     pub fn icon_type(&self) -> IconType {
         self.content.icon_type()
     }

@@ -68,6 +68,7 @@ impl Database {
     }
 
     /// Open an in-memory database (for testing)
+    #[cfg(test)]
     pub fn open_in_memory() -> DatabaseResult<Self> {
         // For in-memory databases, we need shared cache to allow pool connections
         // to see the same database
