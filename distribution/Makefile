@@ -122,7 +122,7 @@ appstore-all: appstore validate upload
 # Run distribution/patch-demo-items.sh after to add demo-specific items
 synthetic-data:
 	@echo "Generating synthetic data..."
-	@$(NIX_SHELL) "cd distribution/rust-data-gen && cargo run --release -- --db-path ../SyntheticData.sqlite"
+	@$(NIX_SHELL) "cd $(DIST_DIR)/rust-data-gen && cargo run --release -- --db-path ../SyntheticData.sqlite"
 	@echo "Synthetic data generated at distribution/SyntheticData.sqlite"
 	@echo "Run ./distribution/patch-demo-items.sh to add demo items"
 
