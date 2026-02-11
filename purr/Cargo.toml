@@ -1,13 +1,13 @@
 [package]
-name = "clipkitty-core"
+name = "purr"
 version = "0.1.0"
 edition = "2021"
 
 [lib]
 crate-type = ["lib", "staticlib", "cdylib"]
-# SYNC: Library name must match Package.swift linkedLibrary("clipkitty_core")
-# Output: libclipkitty_core.a (static), libclipkitty_core.dylib (dynamic)
-name = "clipkitty_core"
+# SYNC: Library name must match Package.swift linkedLibrary("purr")
+# Output: libpurr.a (static), libpurr.dylib (dynamic)
+name = "purr"
 
 [[bin]]
 name = "uniffi-bindgen"

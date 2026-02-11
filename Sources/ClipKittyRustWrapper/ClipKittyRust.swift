@@ -1,5 +1,5 @@
 // ClipKittyRust Swift Extensions
-// Manual extensions for UniFFI-generated types from clipkitty_core.udl
+// Manual extensions for UniFFI-generated types from purr
 // Provides: Date conversions, UTType mappings, Identifiable/Sendable conformances
 
 import Foundation

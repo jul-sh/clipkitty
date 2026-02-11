@@ -33,7 +33,7 @@ ENTITLEMENTS := $(if $(filter true,$(SANDBOX)),Sources/App/ClipKitty-Sandboxed.e
 
 # Rust build marker and outputs
 RUST_MARKER := .make/rust.marker
-RUST_LIB := Sources/ClipKittyRust/libclipkitty_core.a
+RUST_LIB := Sources/ClipKittyRust/libpurr.a
 
 # Common Swift build command
 SWIFT_SANDBOX_FLAG := $(if $(filter true,$(SANDBOX)),-Xswiftc -DSANDBOXED,)
