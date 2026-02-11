@@ -12,10 +12,10 @@ node_modules
 
 # Rust
 distribution/rust-data-gen/target/
-rust-core/target/
-rust-core/generated/
-rust-core/include/
-rust-core/*.a
+purr/target/
+purr/generated/
+purr/include/
+purr/*.a
 
 # Generated UniFFI bindings (regenerate with: cargo run --bin generate-bindings)
 Sources/ClipKittyRust/clipkitty_core.swift
@@ -39,7 +39,7 @@ marketing/
 *.dmg
 
 # Rust build artifacts
-rust-core/target/
+purr/target/
 
 # Log files
 *.log
@@ -54,4 +54,4 @@ Sources/App/tantivy_index/
 distribution/data-gen/progress_rust.json
 
 # Benchmark data (generated with: cargo run --release --bin generate-bench-data)
-rust-core/benches/synthetic_1m.sqlite
+purr/benches/synthetic_1m.sqlite
