@@ -14,7 +14,7 @@
 // │            ClipKittyRust.swift (manual extensions)                          │
 // │                                                                             │
 // │ To regenerate bindings: cargo run --bin generate-bindings                   │
-// │ Source of truth: rust-core/src/clipkitty_core.udl                           │
+// │ Source of truth: purr/src/clipkitty_core.udl                           │
 // └─────────────────────────────────────────────────────────────────────────────┘
 
 import PackageDescription
@@ -32,8 +32,8 @@ let package = Package(
     ],
     targets: [
         // Rust Core library FFI bridge
-        // SYNC: Library name must match rust-core/Cargo.toml [lib] name = "clipkitty_core"
-        // SYNC: Header comes from rust-core/scripts/generate-bindings → clipkitty_coreFFI.h
+        // SYNC: Library name must match purr/Cargo.toml [lib] name = "clipkitty_core"
+        // SYNC: Header comes from purr/scripts/generate-bindings → clipkitty_coreFFI.h
         .target(
             name: "ClipKittyRustFFI",
             path: "Sources/ClipKittyRust",

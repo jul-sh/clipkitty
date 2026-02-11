@@ -61,10 +61,10 @@ SIGNING_IDENTITY ?= $(shell security find-identity -v -p codesigning 2>/dev/null
 all: $(APP_BUNDLE)
 
 # Marker-based Rust build - only rebuilds if sources changed
-# Uses git ls-files to get all tracked files in rust-core (respects .gitignore)
-$(RUST_MARKER): $(shell git ls-files rust-core 2>/dev/null)
+# Uses git ls-files to get all tracked files in purr (respects .gitignore)
+$(RUST_MARKER): $(shell git ls-files purr 2>/dev/null)
 	@echo "Building Rust core..."
-	@$(NIX_SHELL) "cd rust-core && cargo run --release --bin generate-bindings"
+	@$(NIX_SHELL) "cd purr && cargo run --release --bin generate-bindings"
 	@mkdir -p .make
 	@touch $(RUST_MARKER)
 

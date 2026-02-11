@@ -5,7 +5,7 @@
 // ┌─────────────────────────────────────────────────────────────────────────────┐
 // │ DEPENDENCY MAP - These files must stay in sync:                             │
 // │                                                                             │
-// │ rust-core/src/clipkitty_core.udl        ← FFI definitions                   │
+// │ purr/src/clipkitty_core.udl        ← FFI definitions                   │
 // │   ↓ generates (cargo run --bin generate-bindings)                           │
 // │ Sources/ClipKittyRust/clipkitty_coreFFI.h   ← C header (auto-generated)     │
 // │ Sources/ClipKittyRust/libclipkitty_core.a   ← Static library (auto-built)   │
