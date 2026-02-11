@@ -449,145 +449,66 @@ final class ClipboardStore {
         }
     }
 
-    /// Compress image data to HEIC format using HEVC compression
-    /// Resizes to maxPixels if larger, then compresses
-    private nonisolated static func compressToHEIC(_ imageData: Data, quality: CGFloat, maxPixels: Int) -> Data? {
-        guard let imageSource = CGImageSourceCreateWithData(imageData as CFData, nil),
-              var cgImage = CGImageSourceCreateImageAtIndex(imageSource, 0, nil) else {
-            return nil
-        }
-
-        // Resize if exceeds max pixels
+    /// Resize a CGImage to fit within maxWidth x maxHeight, preserving aspect ratio.
+    private nonisolated static func resizeCGImage(_ cgImage: CGImage, maxWidth: Int, maxHeight: Int, quality: CGInterpolationQuality = .high) -> CGImage? {
         let width = cgImage.width
         let height = cgImage.height
-        let pixels = width * height
+        guard width > maxWidth || height > maxHeight else { return cgImage }
 
+        let scale = min(Double(maxWidth) / Double(width), Double(maxHeight) / Double(height))
+        let newWidth = max(1, Int(Double(width) * scale))
+        let newHeight = max(1, Int(Double(height) * scale))
+
+        guard let context = CGContext(
+            data: nil, width: newWidth, height: newHeight,
+            bitsPerComponent: 8, bytesPerRow: 0,
+            space: CGColorSpaceCreateDeviceRGB(),
+            bitmapInfo: CGImageAlphaInfo.premultipliedLast.rawValue
+        ) else { return nil }
+
+        context.interpolationQuality = quality
+        context.draw(cgImage, in: CGRect(x: 0, y: 0, width: newWidth, height: newHeight))
+        return context.makeImage()
+    }
+
+    /// Encode a CGImage to a specific format with the given quality.
+    private nonisolated static func encodeCGImage(_ cgImage: CGImage, type: CFString, quality: CGFloat) -> Data? {
+        let data = NSMutableData()
+        guard let destination = CGImageDestinationCreateWithData(data as CFMutableData, type, 1, nil) else { return nil }
+        CGImageDestinationAddImage(destination, cgImage, [kCGImageDestinationLossyCompressionQuality: quality] as CFDictionary)
+        guard CGImageDestinationFinalize(destination) else { return nil }
+        return data as Data
+    }
+
+    /// Compress image data to HEIC format, resizing to maxPixels if larger
+    private nonisolated static func compressToHEIC(_ imageData: Data, quality: CGFloat, maxPixels: Int) -> Data? {
+        guard let imageSource = CGImageSourceCreateWithData(imageData as CFData, nil),
+              let cgImage = CGImageSourceCreateImageAtIndex(imageSource, 0, nil) else { return nil }
+
+        let pixels = cgImage.width * cgImage.height
+        let image: CGImage
         if pixels > maxPixels {
             let scale = sqrt(Double(maxPixels) / Double(pixels))
-            let newWidth = Int(Double(width) * scale)
-            let newHeight = Int(Double(height) * scale)
-
-            guard let context = CGContext(
-                data: nil,
-                width: newWidth,
-                height: newHeight,
-                bitsPerComponent: 8,
-                bytesPerRow: 0,
-                space: CGColorSpaceCreateDeviceRGB(),
-                bitmapInfo: CGImageAlphaInfo.premultipliedLast.rawValue
-            ) else {
-                return nil
-            }
-
-            context.interpolationQuality = .high
-            context.draw(cgImage, in: CGRect(x: 0, y: 0, width: newWidth, height: newHeight))
-
-            guard let resized = context.makeImage() else {
-                return nil
-            }
-            cgImage = resized
+            let targetW = max(1, Int(Double(cgImage.width) * scale))
+            let targetH = max(1, Int(Double(cgImage.height) * scale))
+            guard let resized = resizeCGImage(cgImage, maxWidth: targetW, maxHeight: targetH) else { return nil }
+            image = resized
+        } else {
+            image = cgImage
         }
-
-        let data = NSMutableData()
-        guard let destination = CGImageDestinationCreateWithData(
-            data as CFMutableData,
-            "public.heic" as CFString,
-            1,
-            nil
-        ) else {
-            return nil
-        }
-
-        let options: [CFString: Any] = [
-            kCGImageDestinationLossyCompressionQuality: quality
-        ]
-
-        CGImageDestinationAddImage(destination, cgImage, options as CFDictionary)
-
-        guard CGImageDestinationFinalize(destination) else {
-            return nil
-        }
-
-        return data as Data
+        return encodeCGImage(image, type: "public.heic" as CFString, quality: quality)
     }
 
     /// Generate a small JPEG thumbnail (max 64x64) for list display
     private nonisolated static func generateThumbnail(_ imageData: Data, maxSize: Int = 64) -> Data? {
         guard let imageSource = CGImageSourceCreateWithData(imageData as CFData, nil),
-              let cgImage = CGImageSourceCreateImageAtIndex(imageSource, 0, nil) else {
-            return nil
-        }
+              let cgImage = CGImageSourceCreateImageAtIndex(imageSource, 0, nil) else { return nil }
 
-        let width = cgImage.width
-        let height = cgImage.height
-
-        // Calculate thumbnail size maintaining aspect ratio
-        let scale = Double(maxSize) / Double(max(width, height))
-        let newWidth = max(1, Int(Double(width) * scale))
-        let newHeight = max(1, Int(Double(height) * scale))
-
-        guard let context = CGContext(
-            data: nil,
-            width: newWidth,
-            height: newHeight,
-            bitsPerComponent: 8,
-            bytesPerRow: 0,
-            space: CGColorSpaceCreateDeviceRGB(),
-            bitmapInfo: CGImageAlphaInfo.premultipliedLast.rawValue
-        ) else {
-            return nil
-        }
-
-        context.interpolationQuality = .medium
-        context.draw(cgImage, in: CGRect(x: 0, y: 0, width: newWidth, height: newHeight))
-
-        guard let thumbnail = context.makeImage() else {
-            return nil
-        }
-
-        // Encode as JPEG with moderate quality
-        let data = NSMutableData()
-        guard let destination = CGImageDestinationCreateWithData(
-            data as CFMutableData,
-            "public.jpeg" as CFString,
-            1,
-            nil
-        ) else {
-            return nil
-        }
-
-        let options: [CFString: Any] = [
-            kCGImageDestinationLossyCompressionQuality: 0.6
-        ]
-
-        CGImageDestinationAddImage(destination, thumbnail, options as CFDictionary)
-
-        guard CGImageDestinationFinalize(destination) else {
-            return nil
-        }
-
-        return data as Data
+        guard let resized = resizeCGImage(cgImage, maxWidth: maxSize, maxHeight: maxSize, quality: .medium) else { return nil }
+        return encodeCGImage(resized, type: "public.jpeg" as CFString, quality: 0.6)
     }
 
     // MARK: - Actions
-
-    func paste(item: ClipboardItem) {
-        // Handle images differently - convert off main thread
-        if case .image(let data, _) = item.content {
-            pasteImage(data: Data(data), itemId: item.itemMetadata.itemId)
-            return
-        }
-
-        let pasteboard = NSPasteboard.general
-        pasteboard.clearContents()
-        pasteboard.setString(item.textContent, forType: .string)
-        lastChangeCount = pasteboard.changeCount
-
-        let id = item.itemMetadata.itemId
-        Task {
-            await updateItemTimestamp(id: id)
-        }
-    }
 
     func paste(itemId: Int64, content: ClipboardContent) {
         // Handle images differently - convert off main thread
@@ -678,10 +599,6 @@ final class ClipboardStore {
             } catch {
             }
         }
-    }
-
-    func delete(item: ClipboardItem) {
-        delete(itemId: item.itemMetadata.itemId)
     }
 
     func clear() {

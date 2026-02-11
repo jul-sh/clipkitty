@@ -103,16 +103,7 @@ struct ContentView: View {
             }
             // Select first item if nothing selected
             if selectedItemId == nil, let firstId = firstItemId {
-                selectedItemId = firstId
-                // Use first item from state if available (avoids extra fetch)
-                if let firstItem = stateFirstItem, firstItem.itemMetadata.itemId == firstId {
-                    selectedItem = firstItem
-                } else {
-                    // Fallback: fetch the item - onChange won't fire for initial value
-                    Task {
-                        selectedItem = await store.fetchItem(id: firstId)
-                    }
-                }
+                loadItem(id: firstId)
             }
             // Initialize items signature for animation tracking
             lastItemsSignature = itemIds
@@ -127,19 +118,11 @@ struct ContentView: View {
                 searchText = ""
             }
             // Select first item whenever display resets (re-open)
-            let firstId = firstItemId
-            selectedItemId = firstId
-            // Use first item from state if available (avoids extra fetch)
-            if let firstId, let firstItem = stateFirstItem, firstItem.itemMetadata.itemId == firstId {
-                selectedItem = firstItem
+            if let firstId = firstItemId {
+                loadItem(id: firstId)
             } else {
+                selectedItemId = nil
                 selectedItem = nil
-                // Fallback: fetch the first item
-                if let firstId {
-                    Task {
-                        selectedItem = await store.fetchItem(id: firstId)
-                    }
-                }
             }
             focusSearchField()
         }
@@ -161,12 +144,8 @@ struct ContentView: View {
             // Show spinner after 100ms if still loading
             searchSpinnerTask?.cancel()
             if case .resultsLoading = newState {
-                searchSpinnerTask = Task {
-                    try? await Task.sleep(for: .milliseconds(100))
-                    guard !Task.isCancelled else { return }
-                    if case .resultsLoading = store.state {
-                        showSearchSpinner = true
-                    }
+                searchSpinnerTask = debouncedSpinnerTask {
+                    if case .resultsLoading = self.store.state { self.showSearchSpinner = true }
                 }
             } else {
                 showSearchSpinner = false
@@ -186,16 +165,10 @@ struct ContentView: View {
             }
         }
         .onChange(of: selectedItem) { _, newItem in
-            // Show preview spinner after 100ms if item is still loading
             previewSpinnerTask?.cancel()
             if newItem == nil && selectedItemId != nil {
-                previewSpinnerTask = Task {
-                    try? await Task.sleep(for: .milliseconds(100))
-                    guard !Task.isCancelled else { return }
-                    // Only show if item is still loading
-                    if selectedItem == nil && selectedItemId != nil {
-                        showPreviewSpinner = true
-                    }
+                previewSpinnerTask = debouncedSpinnerTask {
+                    if self.selectedItem == nil && self.selectedItemId != nil { self.showPreviewSpinner = true }
                 }
             } else {
                 showPreviewSpinner = false
@@ -219,6 +192,28 @@ struct ContentView: View {
     }
 
     // MARK: - Selection Management
+
+    /// Select an item and load it, preferring cached stateFirstItem to avoid extra fetch.
+    private func loadItem(id: Int64) {
+        selectedItemId = id
+        if let firstItem = stateFirstItem, firstItem.itemMetadata.itemId == id {
+            selectedItem = firstItem
+        } else {
+            selectedItem = nil
+            Task { selectedItem = await store.fetchItem(id: id) }
+        }
+    }
+
+    /// Schedule a spinner to show after 100ms debounce if a condition persists.
+    private func debouncedSpinnerTask(
+        action: @escaping @MainActor @Sendable () -> Void
+    ) -> Task<Void, Never> {
+        Task {
+            try? await Task.sleep(for: .milliseconds(100))
+            guard !Task.isCancelled else { return }
+            action()
+        }
+    }
 
     private func focusSearchField() {
         Task { @MainActor in
@@ -429,89 +424,15 @@ struct ContentView: View {
     private var previewPane: some View {
         VStack(spacing: 0) {
             if let item = selectedItem {
-                // Content - wrapped in NonDraggableView to allow text selection
-                Group {
-                    switch item.content {
-                    case .text, .color, .email, .phone:
-                        // Use AppKit text view - SwiftUI Text with AttributedString is slow
-                        TextPreviewView(
-                            text: item.textContent,
-                            fontName: FontManager.mono,
-                            fontSize: 15,
-                            highlights: selectedItemMatchData?.fullContentHighlights ?? [],
-                            densestHighlightStart: selectedItemMatchData?.densestHighlightStart ?? 0
-                        )
-                        .frame(maxWidth: .infinity, maxHeight: .infinity)
-                    default:
-                        ScrollView(.vertical, showsIndicators: true) {
-                            switch item.content {
-                            case .image(let data, let description):
-                                if let nsImage = NSImage(data: Data(data)) {
-                                    VStack(spacing: 8) {
-                                        Image(nsImage: nsImage)
-                                            .resizable()
-                                            .aspectRatio(contentMode: .fit)
-                                            .frame(maxWidth: .infinity)
-                                        if !description.isEmpty {
-                                            Text(description)
-                                                .font(.callout)
-                                                .foregroundStyle(.secondary)
-                                                .frame(maxWidth: .infinity, alignment: .leading)
-                                        }
-                                    }
-                                    .padding(16)
-                                }
-
-                            case .link(let url, let metadataState):
-                                // Link preview - fetch metadata on-demand if pending
-                                linkPreview(url: url, metadataState: metadataState, itemId: item.itemMetadata.itemId)
-
-                            case .text, .color, .email, .phone:
-                                EmptyView()
-                            }
-                        }
-                    }
-                }
-
+                previewContent(for: item)
                 Divider()
-
-                // Metadata footer
-                HStack(spacing: 12) {
-                    Label(item.timeAgo, systemImage: "clock")
-                    if let app = item.sourceApp {
-                        HStack(spacing: 4) {
-                            if let bundleID = item.sourceAppBundleID,
-                               let appURL = NSWorkspace.shared.urlForApplication(withBundleIdentifier: bundleID) {
-                                Image(nsImage: NSWorkspace.shared.icon(forFile: appURL.path))
-                                    .resizable()
-                                    .frame(width: 14, height: 14)
-                            } else {
-                                Image(systemName: "app")
-                            }
-                            Text(app)
-                        }
-                    }
-                    Spacer()
-                    Button(buttonLabel) {
-                        confirmSelection()
-                    }
-                    .buttonStyle(.plain)
-                    .padding(.horizontal, 6)
-                    .padding(.vertical, 2)
-                }
-                .font(.system(size: 13))
-                .foregroundStyle(.secondary)
-                .padding(.horizontal, 17)
-                .padding(.vertical, 11)
-                .background(.black.opacity(0.05))
+                metadataFooter(for: item)
             } else if itemIds.isEmpty {
                 emptyStateView
             } else if showPreviewSpinner {
-                // Item is selected but still loading (after 100ms debounce)
                 ProgressView()
                     .frame(maxWidth: .infinity, maxHeight: .infinity)
             } else if selectedItemId != nil {
-                // Item is selected but loading hasn't taken long enough to show spinner
                 Color.clear
                     .frame(maxWidth: .infinity, maxHeight: .infinity)
             } else {
@@ -521,6 +442,77 @@ struct ContentView: View {
                     .frame(maxWidth: .infinity, maxHeight: .infinity)
             }
         }
+        .background(.black.opacity(0.05))
+    }
+
+    @ViewBuilder
+    private func previewContent(for item: ClipboardItem) -> some View {
+        switch item.content {
+        case .text, .color, .email, .phone:
+            TextPreviewView(
+                text: item.textContent,
+                fontName: FontManager.mono,
+                fontSize: 15,
+                highlights: selectedItemMatchData?.fullContentHighlights ?? [],
+                densestHighlightStart: selectedItemMatchData?.densestHighlightStart ?? 0
+            )
+            .frame(maxWidth: .infinity, maxHeight: .infinity)
+        case .image(let data, let description):
+            ScrollView(.vertical, showsIndicators: true) {
+                imagePreview(data: data, description: description)
+            }
+        case .link(let url, let metadataState):
+            ScrollView(.vertical, showsIndicators: true) {
+                linkPreview(url: url, metadataState: metadataState, itemId: item.itemMetadata.itemId)
+            }
+        }
+    }
+
+    @ViewBuilder
+    private func imagePreview(data: Data, description: String) -> some View {
+        if let nsImage = NSImage(data: data) {
+            VStack(spacing: 8) {
+                Image(nsImage: nsImage)
+                    .resizable()
+                    .aspectRatio(contentMode: .fit)
+                    .frame(maxWidth: .infinity)
+                if !description.isEmpty {
+                    Text(description)
+                        .font(.callout)
+                        .foregroundStyle(.secondary)
+                        .frame(maxWidth: .infinity, alignment: .leading)
+                }
+            }
+            .padding(16)
+        }
+    }
+
+    private func metadataFooter(for item: ClipboardItem) -> some View {
+        HStack(spacing: 12) {
+            Label(item.timeAgo, systemImage: "clock")
+            if let app = item.sourceApp {
+                HStack(spacing: 4) {
+                    if let bundleID = item.sourceAppBundleID,
+                       let appURL = NSWorkspace.shared.urlForApplication(withBundleIdentifier: bundleID) {
+                        Image(nsImage: NSWorkspace.shared.icon(forFile: appURL.path))
+                            .resizable()
+                            .frame(width: 14, height: 14)
+                    } else {
+                        Image(systemName: "app")
+                    }
+                    Text(app)
+                }
+            }
+            Spacer()
+            Button(buttonLabel) { confirmSelection() }
+                .buttonStyle(.plain)
+                .padding(.horizontal, 6)
+                .padding(.vertical, 2)
+        }
+        .font(.system(size: 13))
+        .foregroundStyle(.secondary)
+        .padding(.horizontal, 17)
+        .padding(.vertical, 11)
         .background(.black.opacity(0.05))
     }
 
@@ -719,60 +711,38 @@ struct LinkPreviewView: NSViewRepresentable {
 
     func makeNSView(context: Context) -> LPLinkView {
         let linkView = LPLinkView()
-        guard let urlObj = URL(string: url) else { return linkView }
-
-        // Initialize with full metadata if available to avoid flicker
-        let metadata = LPLinkMetadata()
-        metadata.originalURL = urlObj
-        metadata.url = urlObj
-
-        switch metadataState {
-        case .loaded(let title, _, let imageData):
-            if let title {
-                metadata.title = title
-            }
-            if let imageData, let nsImage = NSImage(data: imageData) {
-                let croppedImage = nsImage.croppedIfTooTall(maxRatio: 1.5)
-                metadata.imageProvider = NSItemProvider(object: croppedImage)
-            }
-        case .pending, .failed:
-            break
+        if let metadata = buildMetadata() {
+            linkView.metadata = metadata
         }
-
-        linkView.metadata = metadata
         return linkView
     }
 
     func updateNSView(_ linkView: LPLinkView, context: Context) {
-        // Only update if metadata actually changed
         guard context.coordinator.lastURL != url ||
               context.coordinator.lastMetadataState != metadataState else {
             return
         }
-
         context.coordinator.lastURL = url
         context.coordinator.lastMetadataState = metadataState
 
-        guard let urlObj = URL(string: url) else { return }
+        if let metadata = buildMetadata() {
+            linkView.metadata = metadata
+        }
+    }
 
+    private func buildMetadata() -> LPLinkMetadata? {
+        guard let urlObj = URL(string: url) else { return nil }
         let metadata = LPLinkMetadata()
         metadata.originalURL = urlObj
         metadata.url = urlObj
 
-        switch metadataState {
-        case .loaded(let title, _, let imageData):
-            if let title {
-                metadata.title = title
-            }
+        if case .loaded(let title, _, let imageData) = metadataState {
+            metadata.title = title
             if let imageData, let nsImage = NSImage(data: imageData) {
-                let croppedImage = nsImage.croppedIfTooTall(maxRatio: 1.5)
-                metadata.imageProvider = NSItemProvider(object: croppedImage)
+                metadata.imageProvider = NSItemProvider(object: nsImage.croppedIfTooTall(maxRatio: 1.5))
             }
-        case .pending, .failed:
-            break
         }
-
-        linkView.metadata = metadata
+        return metadata
     }
 
     func makeCoordinator() -> Coordinator {

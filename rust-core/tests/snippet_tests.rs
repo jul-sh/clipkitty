@@ -18,7 +18,7 @@
 //! - Adds "L{n}: " prefix for matches not on line 1
 //! - Adds trailing ellipsis when content is truncated
 
-use clipkitty_core::search::{generate_preview, SearchEngine};
+use clipkitty_core::search::{generate_preview, generate_snippet};
 use clipkitty_core::HighlightRange;
 
 // ─────────────────────────────────────────────────────────────────────────────
@@ -93,7 +93,7 @@ fn preview_trims_trailing_spaces() {
 fn snippet_short_text_returns_full_content() {
     let content = "Hello World";
     let highlights = vec![HighlightRange { start: 0, end: 5 }];
-    let (snippet, _, line_number) = SearchEngine::generate_snippet(content, &highlights, 400);
+    let (snippet, _, line_number) = generate_snippet(content, &highlights, 400);
     assert_eq!(snippet, "Hello World");
     assert!(!snippet.starts_with('…'), "Rust should not add leading ellipsis");
     assert!(!snippet.ends_with('…'), "Rust should not add trailing ellipsis");
@@ -107,7 +107,7 @@ fn snippet_no_ellipsis_from_rust() {
     let suffix = "y".repeat(100);
     let content = format!("{}MATCH{}", prefix, suffix);
     let highlights = vec![HighlightRange { start: 100, end: 105 }];
-    let (snippet, _, _) = SearchEngine::generate_snippet(&content, &highlights, 400);
+    let (snippet, _, _) = generate_snippet(&content, &highlights, 400);
 
     assert!(!snippet.starts_with('…'),
         "Rust should not add leading ellipsis. Got: '{}'", snippet);
@@ -119,7 +119,7 @@ fn snippet_no_ellipsis_from_rust() {
 fn snippet_contains_match_with_context() {
     let content = "The quick brown fox jumps over the lazy dog";
     let highlights = vec![HighlightRange { start: 16, end: 19 }]; // "fox"
-    let (snippet, adjusted_highlights, _) = SearchEngine::generate_snippet(content, &highlights, 400);
+    let (snippet, adjusted_highlights, _) = generate_snippet(content, &highlights, 400);
 
     assert!(snippet.contains("fox"), "Snippet should contain the match");
     assert!(!adjusted_highlights.is_empty());
@@ -137,7 +137,7 @@ fn snippet_contains_match_with_context() {
 fn snippet_normalizes_whitespace() {
     let content = "Hello\n\n\nWorld";
     let highlights = vec![HighlightRange { start: 0, end: 5 }];
-    let (snippet, _, _) = SearchEngine::generate_snippet(content, &highlights, 400);
+    let (snippet, _, _) = generate_snippet(content, &highlights, 400);
 
     assert!(!snippet.contains('\n'), "Snippet should not contain newlines");
     assert_eq!(snippet, "Hello World");
@@ -147,7 +147,7 @@ fn snippet_normalizes_whitespace() {
 fn snippet_line_number_calculated_correctly() {
     let content = "Line 1\nLine 2\nLine 3 with MATCH";
     let highlights = vec![HighlightRange { start: 21, end: 26 }]; // "MATCH"
-    let (_, _, line_number) = SearchEngine::generate_snippet(content, &highlights, 400);
+    let (_, _, line_number) = generate_snippet(content, &highlights, 400);
 
     assert_eq!(line_number, 3, "Match on third line should have line_number=3");
 }
@@ -156,7 +156,7 @@ fn snippet_line_number_calculated_correctly() {
 fn snippet_line_number_first_line() {
     let content = "MATCH on first line\nSecond line";
     let highlights = vec![HighlightRange { start: 0, end: 5 }];
-    let (_, _, line_number) = SearchEngine::generate_snippet(content, &highlights, 400);
+    let (_, _, line_number) = generate_snippet(content, &highlights, 400);
 
     assert_eq!(line_number, 1, "Match on first line should have line_number=1");
 }
@@ -165,7 +165,7 @@ fn snippet_line_number_first_line() {
 fn snippet_respects_max_length() {
     let content = "a".repeat(600);
     let highlights = vec![HighlightRange { start: 0, end: 5 }];
-    let (snippet, _, _) = SearchEngine::generate_snippet(&content, &highlights, 400);
+    let (snippet, _, _) = generate_snippet(&content, &highlights, 400);
 
     let char_count = snippet.chars().count();
     assert!(char_count <= 400,
@@ -178,7 +178,7 @@ fn snippet_highlight_positions_correct_without_ellipsis() {
     let prefix = "x".repeat(100);
     let content = format!("{}MATCH", prefix);
     let highlights = vec![HighlightRange { start: 100, end: 105 }];
-    let (snippet, adjusted_highlights, _) = SearchEngine::generate_snippet(&content, &highlights, 400);
+    let (snippet, adjusted_highlights, _) = generate_snippet(&content, &highlights, 400);
 
     // The highlight should point to "MATCH" in the snippet
     assert!(!adjusted_highlights.is_empty(), "Should have adjusted highlights");
@@ -195,7 +195,7 @@ fn snippet_highlight_positions_correct_without_ellipsis() {
 fn snippet_no_highlights_returns_normalized_content() {
     let content = "Hello   World\n\ntest";
     let highlights: Vec<HighlightRange> = vec![];
-    let (snippet, adjusted_highlights, line_number) = SearchEngine::generate_snippet(content, &highlights, 400);
+    let (snippet, adjusted_highlights, line_number) = generate_snippet(content, &highlights, 400);
 
     // Newlines and consecutive spaces are normalized
     assert_eq!(snippet, "Hello World test");
@@ -216,7 +216,7 @@ fn both_functions_normalize_whitespace_consistently() {
     assert_eq!(preview, "Hello World");
 
     let highlights = vec![HighlightRange { start: 0, end: 5 }];
-    let (snippet, _, _) = SearchEngine::generate_snippet(text_with_whitespace, &highlights, 400);
+    let (snippet, _, _) = generate_snippet(text_with_whitespace, &highlights, 400);
     assert_eq!(snippet, "Hello World");
 }
 
@@ -237,7 +237,7 @@ fn snippet_code_with_newline_hello_query() {
         HighlightRange { start: 63, end: 68 },  // "Hello" in original
     ];
 
-    let (snippet, adjusted_highlights, line_number) = SearchEngine::generate_snippet(content, &highlights, 400);
+    let (snippet, adjusted_highlights, line_number) = generate_snippet(content, &highlights, 400);
 
     // Document exactly what Rust returns:
     // 1. Newlines are converted to spaces

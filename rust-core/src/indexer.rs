@@ -145,17 +145,22 @@ impl Indexer {
         Ok(())
     }
 
+    /// Tokenize text using the trigram tokenizer and return terms for the content field.
+    fn trigram_terms(&self, text: &str) -> Vec<Term> {
+        let mut tokenizer = self.index.tokenizers().get("trigram").unwrap();
+        let mut stream = tokenizer.token_stream(text);
+        let mut terms = Vec::new();
+        while let Some(token) = stream.next() {
+            terms.push(Term::from_field_text(self.content_field, &token.text));
+        }
+        terms
+    }
+
     pub fn search(&self, query: &str, limit: usize) -> IndexerResult<(Vec<SearchCandidate>, usize)> {
         let reader = self.reader.read();
         let searcher = reader.searcher();
 
-        // Tokenize query using the same trigram tokenizer
-        let mut tokenizer = self.index.tokenizers().get("trigram").unwrap();
-        let mut token_stream = tokenizer.token_stream(query);
-        let mut terms = Vec::new();
-        while let Some(token) = token_stream.next() {
-            terms.push(Term::from_field_text(self.content_field, &token.text));
-        }
+        let terms = self.trigram_terms(query);
 
         // Query too short for trigrams - explicitly error as this should be handled by fallback
         if terms.is_empty() {
@@ -205,12 +210,7 @@ impl Indexer {
             if word.len() < 3 {
                 continue;
             }
-            let mut word_tokenizer = self.index.tokenizers().get("trigram").unwrap();
-            let mut word_stream = word_tokenizer.token_stream(word);
-            let mut word_terms = Vec::new();
-            while let Some(token) = word_stream.next() {
-                word_terms.push(Term::from_field_text(self.content_field, &token.text));
-            }
+            let word_terms = self.trigram_terms(word);
             if word_terms.len() >= 2 {
                 let phrase = PhraseQuery::new(word_terms);
                 let boosted: Box<dyn tantivy::query::Query> =
@@ -228,12 +228,7 @@ impl Indexer {
                     continue;
                 }
                 let pair_str = format!("{} {}", pair[0], pair[1]);
-                let mut pair_tokenizer = self.index.tokenizers().get("trigram").unwrap();
-                let mut pair_stream = pair_tokenizer.token_stream(&pair_str);
-                let mut pair_terms = Vec::new();
-                while let Some(token) = pair_stream.next() {
-                    pair_terms.push(Term::from_field_text(self.content_field, &token.text));
-                }
+                let pair_terms = self.trigram_terms(&pair_str);
                 if pair_terms.len() >= 2 {
                     let phrase = PhraseQuery::new(pair_terms);
                     let boosted: Box<dyn tantivy::query::Query> =
@@ -247,12 +242,7 @@ impl Indexer {
         // into trigrams. PhraseQuery rewards documents containing the full
         // query as a contiguous phrase.
         if words.len() >= 2 {
-            let mut full_tokenizer = self.index.tokenizers().get("trigram").unwrap();
-            let mut full_stream = full_tokenizer.token_stream(query);
-            let mut full_terms = Vec::new();
-            while let Some(token) = full_stream.next() {
-                full_terms.push(Term::from_field_text(self.content_field, &token.text));
-            }
+            let full_terms = self.trigram_terms(query);
             if full_terms.len() >= 2 {
                 let phrase = PhraseQuery::new(full_terms);
                 let boosted: Box<dyn tantivy::query::Query> =

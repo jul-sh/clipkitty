@@ -14,9 +14,9 @@ use tokio_util::sync::CancellationToken;
 
 /// Maximum results to return from search.
 /// Returning more than this is not useful to the user.
-pub const MAX_RESULTS: usize = 2000;
+pub(crate) const MAX_RESULTS: usize = 2000;
 
-pub const MIN_TRIGRAM_QUERY_LEN: usize = 3;
+pub(crate) const MIN_TRIGRAM_QUERY_LEN: usize = 3;
 
 /// Maximum recency boost multiplier (e.g., 0.1 = up to 10% boost for brand new items)
 pub(crate) const RECENCY_BOOST_MAX: f64 = 0.1;
@@ -32,30 +32,23 @@ const PREFIX_MATCH_BOOST: f64 = 2.0;
 
 /// Context chars to include before/after match in snippet
 /// Swift handles final truncation and ellipsis positioning
-pub const SNIPPET_CONTEXT_CHARS: usize = 200;
+pub(crate) const SNIPPET_CONTEXT_CHARS: usize = 200;
 
 #[derive(Debug, Clone)]
-pub struct FuzzyMatch {
-    pub id: i64,
-    pub score: u32,
-    pub matched_indices: Vec<u32>,
-    pub timestamp: i64,
-    pub content: String,
+pub(crate) struct FuzzyMatch {
+    pub(crate) id: i64,
+    pub(crate) score: u32,
+    pub(crate) matched_indices: Vec<u32>,
+    pub(crate) timestamp: i64,
+    pub(crate) content: String,
     /// Whether this was a prefix match (for short query scoring)
-    pub is_prefix_match: bool,
+    pub(crate) is_prefix_match: bool,
 }
 
-pub struct SearchEngine;
-
-impl SearchEngine {
-    pub fn new() -> Self {
-        Self
-    }
-
-    /// Search using Tantivy with phrase-boost scoring for trigram queries (>= 3 chars).
-    /// Results are already ranked by Tantivy (BM25 + recency blend via tweak_score).
-    /// Returns (matches, total_count) where total_count is the true number of matching documents.
-    pub fn search(&self, indexer: &Indexer, query: &str, token: &CancellationToken) -> IndexerResult<(Vec<FuzzyMatch>, usize)> {
+/// Search using Tantivy with phrase-boost scoring for trigram queries (>= 3 chars).
+/// Results are already ranked by Tantivy (BM25 + recency blend via tweak_score).
+/// Returns (matches, total_count) where total_count is the true number of matching documents.
+pub(crate) fn search_trigram(indexer: &Indexer, query: &str, token: &CancellationToken) -> IndexerResult<(Vec<FuzzyMatch>, usize)> {
         if query.trim().is_empty() {
             return Ok((Vec::new(), 0));
         }
@@ -85,21 +78,20 @@ impl SearchEngine {
         let matches: Vec<FuzzyMatch> = candidates
             .into_par_iter()
             .take_any_while(|_| !token.is_cancelled())
-            .map(|c| Self::highlight_candidate_pub(c.id, &c.content, c.timestamp, c.tantivy_score, &query_info))
+            .map(|c| highlight_candidate(c.id, &c.content, c.timestamp, c.tantivy_score, &query_info))
             .filter(|m| !m.matched_indices.is_empty())
             .collect();
 
-        Ok((matches, total_count))
-    }
+    Ok((matches, total_count))
+}
 
-    /// Score candidates for short queries (< 3 chars)
-    /// Uses recency as primary metric with prefix match boost
-    pub fn score_short_query_batch(
-        &self,
-        candidates: impl Iterator<Item = (i64, String, i64, bool)> + Send, // (id, content, timestamp, is_prefix)
-        query: &str,
-        token: &CancellationToken,
-    ) -> Vec<FuzzyMatch> {
+/// Score candidates for short queries (< 3 chars)
+/// Uses recency as primary metric with prefix match boost
+pub(crate) fn score_short_query_batch(
+    candidates: impl Iterator<Item = (i64, String, i64, bool)> + Send, // (id, content, timestamp, is_prefix)
+    query: &str,
+    token: &CancellationToken,
+) -> Vec<FuzzyMatch> {
         let trimmed = query.trim();
         if trimmed.is_empty() {
             return Vec::new();
@@ -147,15 +139,15 @@ impl SearchEngine {
             score_b.total_cmp(&score_a).then_with(|| b.timestamp.cmp(&a.timestamp))
         });
 
-        results.truncate(MAX_RESULTS);
-        results
-    }
+    results.truncate(MAX_RESULTS);
+    results
+}
 
-    /// Highlight a Tantivy-confirmed candidate using word-level trigram overlap.
-    /// For each document word, checks if any query word has sufficient trigram
-    /// overlap (>= HIGHLIGHT_MIN_OVERLAP). Matched words are highlighted in full,
-    /// producing clean whole-word highlights that work for typo matches too.
-    pub fn highlight_candidate_pub(
+/// Highlight a Tantivy-confirmed candidate using word-level trigram overlap.
+/// For each document word, checks if any query word has sufficient trigram
+/// overlap (>= HIGHLIGHT_MIN_OVERLAP). Matched words are highlighted in full,
+/// producing clean whole-word highlights that work for typo matches too.
+pub(crate) fn highlight_candidate(
         id: i64,
         content: &str,
         timestamp: i64,
@@ -194,213 +186,208 @@ impl SearchEngine {
         // Score is already blended (BM25 + recency) by Tantivy's tweak_score
         let score = tantivy_score as u32;
 
-        FuzzyMatch {
-            id,
-            score,
-            matched_indices: all_indices,
-            timestamp,
-            content: content.to_string(),
-            is_prefix_match: false,
-        }
-    }
-
-    /// Convert matched indices to highlight ranges
-    pub fn indices_to_ranges(indices: &[u32]) -> Vec<HighlightRange> {
-        if indices.is_empty() { return Vec::new(); }
-
-        let mut sorted = indices.to_vec();
-        sorted.sort_unstable();
-        sorted.dedup();
-
-        sorted[1..].iter().fold(vec![(sorted[0], sorted[0] + 1)], |mut acc, &idx| {
-            let last = acc.last_mut().unwrap();
-            if idx == last.1 { last.1 = idx + 1; } else { acc.push((idx, idx + 1)); }
-            acc
-        }).into_iter().map(|(start, end)| HighlightRange { start: start as u64, end: end as u64 }).collect()
-    }
-
-    /// Find the highlight in the densest cluster of highlights using a sliding window.
-    /// Returns the index of the first highlight in the densest region.
-    /// This is used to center both the snippet and the preview pane scroll position.
-    /// O(n log n) via sort + two-pointer scan.
-    pub fn find_densest_highlight(highlights: &[HighlightRange], window_size: u64) -> Option<usize> {
-        if highlights.is_empty() {
-            return None;
-        }
-        if highlights.len() == 1 {
-            return Some(0);
-        }
-
-        // Sort indices by start position (preserve original indices)
-        let mut indexed: Vec<(usize, &HighlightRange)> = highlights.iter().enumerate().collect();
-        indexed.sort_by_key(|(_, h)| h.start);
-
-        // Two-pointer: right advances into window, left advances out
-        let mut left = 0;
-        let mut best_left = 0;
-        let mut best_count = 0usize;
-
-        for right in 0..indexed.len() {
-            // Shrink window from left while left's start is too far from right's
-            // (we anchor the window at each right pointer and slide left forward)
-            while indexed[left].1.start + window_size <= indexed[right].1.start {
-                left += 1;
-            }
-            let count = right - left + 1;
-            if count > best_count {
-                best_count = count;
-                best_left = left;
-            }
-        }
-
-        // Return the original index of the first highlight in the densest window
-        Some(indexed[best_left].0)
-    }
-
-    /// Generate a generous text snippet around the densest cluster of highlights.
-    /// Returns normalized snippet (whitespace collapsed) with adjusted highlights.
-    /// Swift handles final truncation and ellipsis positioning.
-    pub fn generate_snippet(content: &str, highlights: &[HighlightRange], max_len: usize) -> (String, Vec<HighlightRange>, u64) {
-        let content_char_len = content.chars().count();
-
-        if highlights.is_empty() {
-            // No highlights, return first max_len chars (normalized)
-            let preview = normalize_snippet(content, 0, content_char_len, max_len);
-            return (preview, Vec::new(), 0);
-        }
-
-        // Center on the densest cluster of highlights, not just the first one
-        let center_idx = Self::find_densest_highlight(highlights, 500).unwrap_or(0);
-        let center_highlight = &highlights[center_idx];
-        // These are CHARACTER indices, not byte offsets
-        let match_start_char = center_highlight.start as usize;
-        let match_end_char = center_highlight.end as usize;
-
-        // Find line number (count newlines before match) - 1-indexed
-        // Use chars().take() to safely handle multi-byte UTF-8
-        let line_number = content
-            .chars()
-            .take(match_start_char.min(content_char_len))
-            .filter(|&c| c == '\n')
-            .count() as u64
-            + 1;
-
-
-        // Start with the match, then expand with context
-        let match_char_len = match_end_char.saturating_sub(match_start_char);
-        let remaining_space = max_len.saturating_sub(match_char_len);
-
-        // Split remaining space for context before/after (all in CHARACTER units)
-        let context_before = (remaining_space / 2).min(SNIPPET_CONTEXT_CHARS).min(match_start_char);
-        let context_after = (remaining_space - context_before).min(content_char_len.saturating_sub(match_end_char));
-
-        let mut snippet_start_char = match_start_char - context_before;
-        let snippet_end_char = (match_end_char + context_after).min(content_char_len);
-
-        // Try to adjust start to word boundary (work in character space)
-        if snippet_start_char > 0 {
-            let search_start_char = snippet_start_char.saturating_sub(10);
-            // Get the substring in character space to search for whitespace
-            let search_range: String = content
-                .chars()
-                .skip(search_start_char)
-                .take(snippet_start_char - search_start_char)
-                .collect();
-            if let Some(space_pos) = search_range.rfind(char::is_whitespace) {
-                // space_pos is a byte offset - verify it's a valid boundary before slicing
-                if search_range.is_char_boundary(space_pos) {
-                    let char_offset = search_range[..space_pos].chars().count();
-                    let new_start = search_start_char + char_offset + 1;
-                    if new_start <= match_start_char.saturating_sub(context_before) {
-                        snippet_start_char = new_start;
-                    }
-                }
-            }
-        }
-
-        // Normalize snippet and track position mappings for highlight adjustment
-        // Reserve space for potential ellipsis characters (1 for leading, 1 for trailing)
-        let ellipsis_reserve = (if snippet_start_char > 0 { 1 } else { 0 })
-            + (if snippet_end_char < content_char_len { 1 } else { 0 });
-        let effective_max_len = max_len.saturating_sub(ellipsis_reserve);
-        let (normalized_snippet, pos_map) = normalize_snippet_with_mapping(content, snippet_start_char, snippet_end_char, effective_max_len);
-
-        // Check truncation from start and end
-        let truncated_from_start = snippet_start_char > 0;
-        let truncated_from_end = snippet_end_char < content_char_len;
-
-        // Build final snippet with ellipsis as needed
-        let prefix_offset = if truncated_from_start { 1 } else { 0 };
-        let mut final_snippet = if truncated_from_start {
-            format!("…{}", normalized_snippet)
-        } else {
-            normalized_snippet.clone()
-        };
-        if truncated_from_end {
-            final_snippet.push('…');
-        }
-
-        // Adjust highlight ranges using position mapping, accounting for ellipsis prefix
-        // (trailing ellipsis doesn't affect highlight positions)
-        let adjusted_highlights: Vec<HighlightRange> = highlights
-            .iter()
-            .filter_map(|h| {
-                let orig_start = (h.start as usize).checked_sub(snippet_start_char)?;
-                let orig_end = (h.end as usize).saturating_sub(snippet_start_char);
-
-                let norm_start = map_position(orig_start, &pos_map)?;
-                let norm_end = map_position(orig_end, &pos_map).unwrap_or(normalized_snippet.len());
-
-                if norm_start < normalized_snippet.len() {
-                    Some(HighlightRange {
-                        start: (norm_start + prefix_offset) as u64,
-                        end: (norm_end.min(normalized_snippet.len()) + prefix_offset) as u64,
-                    })
-                } else {
-                    None
-                }
-            })
-            .collect();
-
-        (final_snippet, adjusted_highlights, line_number)
-    }
-
-    /// Create MatchData from a FuzzyMatch
-    pub fn create_match_data(fuzzy_match: &FuzzyMatch) -> MatchData {
-        let full_content_highlights = Self::indices_to_ranges(&fuzzy_match.matched_indices);
-        // Max length = context before + match + context after (generous for Swift to truncate)
-        let max_len = SNIPPET_CONTEXT_CHARS * 2;
-        let (text, adjusted_highlights, line_number) = Self::generate_snippet(
-            &fuzzy_match.content,
-            &full_content_highlights,
-            max_len,
-        );
-
-        // Compute densest highlight start for preview pane scrolling
-        let densest_highlight_start = Self::find_densest_highlight(&full_content_highlights, 500)
-            .map(|idx| full_content_highlights[idx].start)
-            .unwrap_or(0);
-
-        MatchData {
-            text,
-            highlights: adjusted_highlights,
-            line_number,
-            full_content_highlights,
-            densest_highlight_start,
-        }
-    }
-
-    /// Create ItemMatch from StoredItem and FuzzyMatch
-    pub fn create_item_match(item: &StoredItem, fuzzy_match: &FuzzyMatch) -> ItemMatch {
-        ItemMatch {
-            item_metadata: item.to_metadata(),
-            match_data: Self::create_match_data(fuzzy_match),
-        }
+    FuzzyMatch {
+        id,
+        score,
+        matched_indices: all_indices,
+        timestamp,
+        content: content.to_string(),
+        is_prefix_match: false,
     }
 }
 
-impl Default for SearchEngine {
-    fn default() -> Self { Self }
+/// Convert matched indices to highlight ranges
+pub(crate) fn indices_to_ranges(indices: &[u32]) -> Vec<HighlightRange> {
+    if indices.is_empty() { return Vec::new(); }
+
+    let mut sorted = indices.to_vec();
+    sorted.sort_unstable();
+    sorted.dedup();
+
+    sorted[1..].iter().fold(vec![(sorted[0], sorted[0] + 1)], |mut acc, &idx| {
+        let last = acc.last_mut().unwrap();
+        if idx == last.1 { last.1 = idx + 1; } else { acc.push((idx, idx + 1)); }
+        acc
+    }).into_iter().map(|(start, end)| HighlightRange { start: start as u64, end: end as u64 }).collect()
+}
+
+/// Find the highlight in the densest cluster of highlights using a sliding window.
+/// Returns the index of the first highlight in the densest region.
+/// This is used to center both the snippet and the preview pane scroll position.
+/// O(n log n) via sort + two-pointer scan.
+pub(crate) fn find_densest_highlight(highlights: &[HighlightRange], window_size: u64) -> Option<usize> {
+    if highlights.is_empty() {
+        return None;
+    }
+    if highlights.len() == 1 {
+        return Some(0);
+    }
+
+    // Sort indices by start position (preserve original indices)
+    let mut indexed: Vec<(usize, &HighlightRange)> = highlights.iter().enumerate().collect();
+    indexed.sort_by_key(|(_, h)| h.start);
+
+    // Two-pointer: right advances into window, left advances out
+    let mut left = 0;
+    let mut best_left = 0;
+    let mut best_count = 0usize;
+
+    for right in 0..indexed.len() {
+        // Shrink window from left while left's start is too far from right's
+        // (we anchor the window at each right pointer and slide left forward)
+        while indexed[left].1.start + window_size <= indexed[right].1.start {
+            left += 1;
+        }
+        let count = right - left + 1;
+        if count > best_count {
+            best_count = count;
+            best_left = left;
+        }
+    }
+
+    // Return the original index of the first highlight in the densest window
+    Some(indexed[best_left].0)
+}
+
+/// Generate a generous text snippet around the densest cluster of highlights.
+/// Returns normalized snippet (whitespace collapsed) with adjusted highlights.
+/// Swift handles final truncation and ellipsis positioning.
+pub fn generate_snippet(content: &str, highlights: &[HighlightRange], max_len: usize) -> (String, Vec<HighlightRange>, u64) {
+    let content_char_len = content.chars().count();
+
+    if highlights.is_empty() {
+        // No highlights, return first max_len chars (normalized)
+        let preview = normalize_snippet(content, 0, content_char_len, max_len);
+        return (preview, Vec::new(), 0);
+    }
+
+    // Center on the densest cluster of highlights, not just the first one
+    let center_idx = find_densest_highlight(highlights, 500).unwrap_or(0);
+    let center_highlight = &highlights[center_idx];
+    // These are CHARACTER indices, not byte offsets
+    let match_start_char = center_highlight.start as usize;
+    let match_end_char = center_highlight.end as usize;
+
+    // Find line number (count newlines before match) - 1-indexed
+    // Use chars().take() to safely handle multi-byte UTF-8
+    let line_number = content
+        .chars()
+        .take(match_start_char.min(content_char_len))
+        .filter(|&c| c == '\n')
+        .count() as u64
+        + 1;
+
+
+    // Start with the match, then expand with context
+    let match_char_len = match_end_char.saturating_sub(match_start_char);
+    let remaining_space = max_len.saturating_sub(match_char_len);
+
+    // Split remaining space for context before/after (all in CHARACTER units)
+    let context_before = (remaining_space / 2).min(SNIPPET_CONTEXT_CHARS).min(match_start_char);
+    let context_after = (remaining_space - context_before).min(content_char_len.saturating_sub(match_end_char));
+
+    let mut snippet_start_char = match_start_char - context_before;
+    let snippet_end_char = (match_end_char + context_after).min(content_char_len);
+
+    // Try to adjust start to word boundary (work in character space)
+    if snippet_start_char > 0 {
+        let search_start_char = snippet_start_char.saturating_sub(10);
+        // Get the substring in character space to search for whitespace
+        let search_range: String = content
+            .chars()
+            .skip(search_start_char)
+            .take(snippet_start_char - search_start_char)
+            .collect();
+        if let Some(space_pos) = search_range.rfind(char::is_whitespace) {
+            // space_pos is a byte offset - verify it's a valid boundary before slicing
+            if search_range.is_char_boundary(space_pos) {
+                let char_offset = search_range[..space_pos].chars().count();
+                let new_start = search_start_char + char_offset + 1;
+                if new_start <= match_start_char.saturating_sub(context_before) {
+                    snippet_start_char = new_start;
+                }
+            }
+        }
+    }
+
+    // Normalize snippet and track position mappings for highlight adjustment
+    // Reserve space for potential ellipsis characters (1 for leading, 1 for trailing)
+    let ellipsis_reserve = (if snippet_start_char > 0 { 1 } else { 0 })
+        + (if snippet_end_char < content_char_len { 1 } else { 0 });
+    let effective_max_len = max_len.saturating_sub(ellipsis_reserve);
+    let (normalized_snippet, pos_map) = normalize_snippet_with_mapping(content, snippet_start_char, snippet_end_char, effective_max_len);
+
+    // Check truncation from start and end
+    let truncated_from_start = snippet_start_char > 0;
+    let truncated_from_end = snippet_end_char < content_char_len;
+
+    // Build final snippet with ellipsis as needed
+    let prefix_offset = if truncated_from_start { 1 } else { 0 };
+    let mut final_snippet = if truncated_from_start {
+        format!("…{}", normalized_snippet)
+    } else {
+        normalized_snippet.clone()
+    };
+    if truncated_from_end {
+        final_snippet.push('…');
+    }
+
+    // Adjust highlight ranges using position mapping, accounting for ellipsis prefix
+    // (trailing ellipsis doesn't affect highlight positions)
+    let adjusted_highlights: Vec<HighlightRange> = highlights
+        .iter()
+        .filter_map(|h| {
+            let orig_start = (h.start as usize).checked_sub(snippet_start_char)?;
+            let orig_end = (h.end as usize).saturating_sub(snippet_start_char);
+
+            let norm_start = map_position(orig_start, &pos_map)?;
+            let norm_end = map_position(orig_end, &pos_map).unwrap_or(normalized_snippet.len());
+
+            if norm_start < normalized_snippet.len() {
+                Some(HighlightRange {
+                    start: (norm_start + prefix_offset) as u64,
+                    end: (norm_end.min(normalized_snippet.len()) + prefix_offset) as u64,
+                })
+            } else {
+                None
+            }
+        })
+        .collect();
+
+    (final_snippet, adjusted_highlights, line_number)
+}
+
+/// Create MatchData from a FuzzyMatch
+pub(crate) fn create_match_data(fuzzy_match: &FuzzyMatch) -> MatchData {
+    let full_content_highlights = indices_to_ranges(&fuzzy_match.matched_indices);
+    // Max length = context before + match + context after (generous for Swift to truncate)
+    let max_len = SNIPPET_CONTEXT_CHARS * 2;
+    let (text, adjusted_highlights, line_number) = generate_snippet(
+        &fuzzy_match.content,
+        &full_content_highlights,
+        max_len,
+    );
+
+    // Compute densest highlight start for preview pane scrolling
+    let densest_highlight_start = find_densest_highlight(&full_content_highlights, 500)
+        .map(|idx| full_content_highlights[idx].start)
+        .unwrap_or(0);
+
+    MatchData {
+        text,
+        highlights: adjusted_highlights,
+        line_number,
+        full_content_highlights,
+        densest_highlight_start,
+    }
+}
+
+/// Create ItemMatch from StoredItem and FuzzyMatch
+pub(crate) fn create_item_match(item: &StoredItem, fuzzy_match: &FuzzyMatch) -> ItemMatch {
+    ItemMatch {
+        item_metadata: item.to_metadata(),
+        match_data: create_match_data(fuzzy_match),
+    }
 }
 
 /// Generate trigrams from a word. Returns empty vec for words < 3 chars.
@@ -524,7 +511,7 @@ fn normalize_snippet(content: &str, start: usize, end: usize, max_chars: usize) 
 pub fn generate_preview(content: &str, max_chars: usize) -> String {
     // Skip leading whitespace
     let trimmed = content.trim_start();
-    let (preview, _, _) = SearchEngine::generate_snippet(trimmed, &[], max_chars);
+    let (preview, _, _) = generate_snippet(trimmed, &[], max_chars);
     preview
 }
 
@@ -535,7 +522,7 @@ mod tests {
     #[test]
     fn test_indices_to_ranges() {
         let indices = vec![0, 1, 2, 5, 6, 10];
-        let ranges = SearchEngine::indices_to_ranges(&indices);
+        let ranges = super::indices_to_ranges(&indices);
         assert_eq!(ranges.len(), 3);
         assert_eq!(ranges[0], HighlightRange { start: 0, end: 3 });
         assert_eq!(ranges[1], HighlightRange { start: 5, end: 7 });
@@ -546,7 +533,7 @@ mod tests {
     fn test_generate_snippet_basic() {
         let content = "This is a long text with some interesting content that we want to highlight";
         let highlights = vec![HighlightRange { start: 28, end: 39 }]; // "interesting"
-        let (snippet, adj_highlights, _line) = SearchEngine::generate_snippet(content, &highlights, 50);
+        let (snippet, adj_highlights, _line) = super::generate_snippet(content, &highlights, 50);
 
         assert!(snippet.contains("interesting"));
         assert!(!adj_highlights.is_empty());
@@ -557,7 +544,7 @@ mod tests {
         // Match is in the middle of content
         let content = "The quick brown fox jumps over the lazy dog and runs away fast";
         let highlights = vec![HighlightRange { start: 35, end: 39 }]; // "lazy"
-        let (snippet, adj_highlights, _) = SearchEngine::generate_snippet(content, &highlights, 30);
+        let (snippet, adj_highlights, _) = super::generate_snippet(content, &highlights, 30);
 
         assert!(snippet.contains("lazy"), "Snippet should contain the match");
         assert!(!adj_highlights.is_empty());
@@ -573,7 +560,7 @@ mod tests {
     fn test_snippet_match_at_start() {
         let content = "Hello world";
         let highlights = vec![HighlightRange { start: 0, end: 5 }]; // "Hello"
-        let (snippet, adj_highlights, _) = SearchEngine::generate_snippet(content, &highlights, 50);
+        let (snippet, adj_highlights, _) = super::generate_snippet(content, &highlights, 50);
 
         assert_eq!(adj_highlights[0].start, 0, "Highlight should start at 0");
         assert_eq!(snippet, "Hello world");
@@ -584,7 +571,7 @@ mod tests {
         // Snippets normalize whitespace (newlines/tabs to spaces, collapse consecutive)
         let content = "Line one\n\nLine two";
         let highlights = vec![HighlightRange { start: 0, end: 4 }]; // "Line"
-        let (snippet, adj_highlights, _) = SearchEngine::generate_snippet(content, &highlights, 50);
+        let (snippet, adj_highlights, _) = super::generate_snippet(content, &highlights, 50);
 
         assert!(!snippet.contains('\n'), "Snippet should not contain newlines");
         assert!(!snippet.contains("  "), "Snippet should not contain consecutive spaces");
@@ -600,7 +587,7 @@ mod tests {
     fn test_snippet_highlight_adjustment_long_content() {
         let content = "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaTARGET text here";
         let highlights = vec![HighlightRange { start: 46, end: 52 }]; // "TARGET"
-        let (snippet, adj_highlights, _) = SearchEngine::generate_snippet(content, &highlights, 30);
+        let (snippet, adj_highlights, _) = super::generate_snippet(content, &highlights, 30);
 
         assert!(snippet.contains("TARGET"));
         let h = &adj_highlights[0];
@@ -617,7 +604,7 @@ mod tests {
         let long_suffix = "z".repeat(100);
         let content = format!("{}MATCH{}", long_prefix, long_suffix);
         let highlights = vec![HighlightRange { start: 100, end: 105 }]; // "MATCH"
-        let (snippet, adj_highlights, _) = SearchEngine::generate_snippet(&content, &highlights, 30);
+        let (snippet, adj_highlights, _) = super::generate_snippet(&content, &highlights, 30);
 
         assert!(snippet.contains("MATCH"));
 
@@ -655,7 +642,7 @@ mod tests {
         let highlights = vec![HighlightRange { start: 6, end: 8 }];
 
         // This should NOT panic (previously would panic with slice_error_fail)
-        let (snippet, adj_highlights, _) = SearchEngine::generate_snippet(content, &highlights, 50);
+        let (snippet, adj_highlights, _) = super::generate_snippet(content, &highlights, 50);
 
         assert!(snippet.contains("你好"), "Snippet should contain the match");
         assert!(!adj_highlights.is_empty(), "Should have adjusted highlights");
@@ -747,10 +734,10 @@ mod tests {
                 (lower, tris)
             })
             .collect();
-        let fm = SearchEngine::highlight_candidate_pub(
+        let fm = super::highlight_candidate(
             1, content, 1000, 1.0, &query_info,
         );
-        let ranges = SearchEngine::indices_to_ranges(&fm.matched_indices);
+        let ranges = super::indices_to_ranges(&fm.matched_indices);
         let chars: Vec<char> = content.chars().collect();
         ranges.iter().map(|r| {
             chars[r.start as usize..r.end as usize].iter().collect()
@@ -823,13 +810,13 @@ mod tests {
 
     #[test]
     fn test_find_densest_highlight_empty() {
-        assert_eq!(SearchEngine::find_densest_highlight(&[], 500), None);
+        assert_eq!(super::find_densest_highlight(&[], 500), None);
     }
 
     #[test]
     fn test_find_densest_highlight_single() {
         let highlights = vec![HighlightRange { start: 50, end: 55 }];
-        assert_eq!(SearchEngine::find_densest_highlight(&highlights, 500), Some(0));
+        assert_eq!(super::find_densest_highlight(&highlights, 500), Some(0));
     }
 
     #[test]
@@ -842,7 +829,7 @@ mod tests {
             HighlightRange { start: 1050, end: 1055 }, // Cluster B
             HighlightRange { start: 1100, end: 1105 }, // Cluster B
         ];
-        let idx = SearchEngine::find_densest_highlight(&highlights, 500).unwrap();
+        let idx = super::find_densest_highlight(&highlights, 500).unwrap();
         // Should pick the first highlight in the denser cluster (index 1)
         assert_eq!(highlights[idx].start, 1000);
     }
@@ -868,7 +855,7 @@ mod tests {
             HighlightRange { start: 1016, end: 1022 }, // DENSE3
         ];
 
-        let (snippet, _, _) = SearchEngine::generate_snippet(&content, &highlights, 100);
+        let (snippet, _, _) = super::generate_snippet(&content, &highlights, 100);
         // Snippet should contain the dense cluster, not the lone match
         assert!(snippet.contains("DENSE1"), "Snippet should center on densest cluster, got: {}", snippet);
         assert!(snippet.contains("DENSE2"), "Snippet should contain DENSE2");
