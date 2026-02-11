@@ -14,7 +14,7 @@ use crate::interface::{
     ClipboardItem, ItemMatch, MatchData, SearchResult, ClipKittyError, ClipboardStoreApi,
 };
 use crate::models::StoredItem;
-use crate::search::{SearchEngine, MIN_TRIGRAM_QUERY_LEN, MAX_RESULTS};
+use crate::search::{self, MIN_TRIGRAM_QUERY_LEN, MAX_RESULTS};
 use chrono::Utc;
 use once_cell::sync::Lazy;
 use std::path::PathBuf;
@@ -85,13 +85,12 @@ impl Drop for DropGuard {
 pub struct ClipboardStore {
     db: Arc<Database>,
     indexer: Arc<Indexer>,
-    search_engine: Arc<SearchEngine>,
 }
 
 // Internal implementation (not exported via FFI)
 impl ClipboardStore {
     /// Create a store with an in-memory database (for testing)
-    pub fn new_in_memory() -> Result<Self, ClipKittyError> {
+    pub(crate) fn new_in_memory() -> Result<Self, ClipKittyError> {
         init_rayon();
         let database = Database::open_in_memory().map_err(ClipKittyError::from)?;
         let indexer = Indexer::new_in_memory()?;
@@ -99,7 +98,6 @@ impl ClipboardStore {
         Ok(Self {
             db: Arc::new(database),
             indexer: Arc::new(indexer),
-            search_engine: Arc::new(SearchEngine::new()),
         })
     }
 
@@ -135,26 +133,63 @@ impl ClipboardStore {
         Ok(())
     }
 
+    /// Fetch stored items for fuzzy matches and generate ItemMatches in parallel.
+    /// Shared by both short-query and trigram search paths.
+    fn fuzzy_matches_to_item_matches(
+        db: &Database,
+        fuzzy_matches: Vec<search::FuzzyMatch>,
+        token: &CancellationToken,
+        runtime: &tokio::runtime::Handle,
+    ) -> Result<Vec<ItemMatch>, ClipKittyError> {
+        if token.is_cancelled() {
+            return Err(ClipKittyError::Cancelled);
+        }
+
+        let ids: Vec<i64> = fuzzy_matches.iter().map(|m| m.id).collect();
+        let stored_items = db.fetch_items_by_ids_interruptible(&ids, token, runtime)?;
+
+        if stored_items.is_empty() && !ids.is_empty() && token.is_cancelled() {
+            return Err(ClipKittyError::Cancelled);
+        }
+
+        let item_map: std::collections::HashMap<i64, StoredItem> = stored_items
+            .into_iter()
+            .filter_map(|item| item.id.map(|id| (id, item)))
+            .collect();
+
+        if token.is_cancelled() {
+            return Err(ClipKittyError::Cancelled);
+        }
+
+        use rayon::prelude::*;
+        fuzzy_matches
+            .into_par_iter()
+            .map(|fm| {
+                if token.is_cancelled() {
+                    return Err(ClipKittyError::Cancelled);
+                }
+                Ok(item_map.get(&fm.id).map(|item| search::create_item_match(item, &fm)))
+            })
+            .collect::<Result<Vec<Option<ItemMatch>>, ClipKittyError>>()
+            .map(|v| v.into_iter().flatten().collect())
+    }
+
     /// Short query search using prefix matching + LIKE on recent items
     fn search_short_query_sync(
         db: &Database,
-        search_engine: &SearchEngine,
         query: &str,
         token: &CancellationToken,
         runtime: &tokio::runtime::Handle,
     ) -> Result<Vec<ItemMatch>, ClipKittyError> {
-        // Checkpoint: Check cancellation before DB query
         if token.is_cancelled() {
             return Err(ClipKittyError::Cancelled);
         }
 
         let candidates = db.search_short_query(query, MAX_RESULTS * 5)?;
-
         if candidates.is_empty() {
             return Ok(Vec::new());
         }
 
-        // Checkpoint: Check cancellation before scoring
         if token.is_cancelled() {
             return Err(ClipKittyError::Cancelled);
         }
@@ -168,54 +203,13 @@ impl ClipboardStore {
             })
             .collect();
 
-        let fuzzy_matches = search_engine.score_short_query_batch(
+        let fuzzy_matches = search::score_short_query_batch(
             candidates_with_prefix.into_iter(),
             query,
             token,
         );
 
-        // Checkpoint: Check cancellation before fetching items
-        if token.is_cancelled() {
-            return Err(ClipKittyError::Cancelled);
-        }
-
-        // Use interruptible fetch with SQLite C-level interrupt support
-        let ids: Vec<i64> = fuzzy_matches.iter().map(|m| m.id).collect();
-        let stored_items = db.fetch_items_by_ids_interruptible(&ids, token, runtime)?;
-
-        // Check if we were interrupted (empty result with non-empty IDs)
-        if stored_items.is_empty() && !ids.is_empty() && token.is_cancelled() {
-            return Err(ClipKittyError::Cancelled);
-        }
-
-        let item_map: std::collections::HashMap<i64, StoredItem> = stored_items
-            .into_iter()
-            .filter_map(|item| item.id.map(|id| (id, item)))
-            .collect();
-
-        // Checkpoint: Check cancellation before highlight generation
-        if token.is_cancelled() {
-            return Err(ClipKittyError::Cancelled);
-        }
-
-        // Generate matches in parallel with cancellation check
-        use rayon::prelude::*;
-        let matches: Result<Vec<ItemMatch>, ClipKittyError> = fuzzy_matches
-            .into_par_iter()
-            .map(|fm| {
-                if token.is_cancelled() {
-                    return Err(ClipKittyError::Cancelled);
-                }
-                if let Some(item) = item_map.get(&fm.id) {
-                    Ok(Some(SearchEngine::create_item_match(item, &fm)))
-                } else {
-                    Ok(None)
-                }
-            })
-            .collect::<Result<Vec<Option<ItemMatch>>, ClipKittyError>>()
-            .map(|v| v.into_iter().flatten().collect());
-
-        matches
+        Self::fuzzy_matches_to_item_matches(db, fuzzy_matches, token, runtime)
     }
 
     /// Trigram query search using Tantivy with phrase-boost scoring
@@ -223,65 +217,21 @@ impl ClipboardStore {
     fn search_trigram_query_sync(
         db: &Database,
         indexer: &Indexer,
-        search_engine: &SearchEngine,
         query: &str,
         token: &CancellationToken,
         runtime: &tokio::runtime::Handle,
     ) -> Result<(Vec<ItemMatch>, usize), ClipKittyError> {
-        // Checkpoint: Check cancellation before Tantivy search
-        // Note: We don't inject checks into Tantivy's internal SIMD loops
         if token.is_cancelled() {
             return Err(ClipKittyError::Cancelled);
         }
 
-        let (fuzzy_matches, total_count) = search_engine.search(indexer, query, token)?;
-
+        let (fuzzy_matches, total_count) = search::search_trigram(indexer, query, token)?;
         if fuzzy_matches.is_empty() {
             return Ok((Vec::new(), total_count));
         }
 
-        // Checkpoint: Check cancellation before SQLite fetch
-        if token.is_cancelled() {
-            return Err(ClipKittyError::Cancelled);
-        }
-
-        // Use interruptible fetch with SQLite C-level interrupt support
-        let ids: Vec<i64> = fuzzy_matches.iter().map(|m| m.id).collect();
-        let stored_items = db.fetch_items_by_ids_interruptible(&ids, token, runtime)?;
-
-        // Check if we were interrupted (empty result with non-empty IDs)
-        if stored_items.is_empty() && !ids.is_empty() && token.is_cancelled() {
-            return Err(ClipKittyError::Cancelled);
-        }
-
-        let item_map: std::collections::HashMap<i64, StoredItem> = stored_items
-            .into_iter()
-            .filter_map(|item| item.id.map(|id| (id, item)))
-            .collect();
-
-        // Checkpoint: Check cancellation before highlight generation
-        if token.is_cancelled() {
-            return Err(ClipKittyError::Cancelled);
-        }
-
-        // Generate matches in parallel with cancellation check
-        use rayon::prelude::*;
-        let matches: Result<Vec<ItemMatch>, ClipKittyError> = fuzzy_matches
-            .into_par_iter()
-            .map(|fm| {
-                if token.is_cancelled() {
-                    return Err(ClipKittyError::Cancelled);
-                }
-                if let Some(item) = item_map.get(&fm.id) {
-                    Ok(Some(SearchEngine::create_item_match(item, &fm)))
-                } else {
-                    Ok(None)
-                }
-            })
-            .collect::<Result<Vec<Option<ItemMatch>>, ClipKittyError>>()
-            .map(|v| v.into_iter().flatten().collect());
-
-        matches.map(|m| (m, total_count))
+        let matches = Self::fuzzy_matches_to_item_matches(db, fuzzy_matches, token, runtime)?;
+        Ok((matches, total_count))
     }
 
     /// Get a single stored item by ID (internal use)
@@ -313,7 +263,6 @@ impl ClipboardStore {
         let store = Self {
             db: Arc::new(db),
             indexer: Arc::new(indexer),
-            search_engine: Arc::new(SearchEngine::new()),
         };
 
         store.rebuild_index_if_needed()?;
@@ -430,7 +379,6 @@ impl ClipboardStoreApi for ClipboardStore {
         // Clone Arcs for the blocking closure
         let db = Arc::clone(&self.db);
         let indexer = Arc::clone(&self.indexer);
-        let search_engine = Arc::clone(&self.search_engine);
         let query_owned = query.to_string();
         let trimmed_owned = trimmed.to_string();
         let token_clone = token.clone();
@@ -440,11 +388,11 @@ impl ClipboardStoreApi for ClipboardStore {
         // because UniFFI doesn't provide a tokio runtime context
         let handle = runtime.spawn_blocking(move || {
             if trimmed_owned.len() < MIN_TRIGRAM_QUERY_LEN {
-                let matches = Self::search_short_query_sync(&db, &search_engine, &trimmed_owned, &token_clone, &runtime_for_closure)?;
+                let matches = Self::search_short_query_sync(&db, &trimmed_owned, &token_clone, &runtime_for_closure)?;
                 let total_count = matches.len() as u64;
                 Ok((matches, total_count))
             } else {
-                let (matches, total_count) = Self::search_trigram_query_sync(&db, &indexer, &search_engine, &query_owned, &token_clone, &runtime_for_closure)?;
+                let (matches, total_count) = Self::search_trigram_query_sync(&db, &indexer, &query_owned, &token_clone, &runtime_for_closure)?;
                 Ok((matches, total_count as u64))
             }
         });
@@ -788,7 +736,6 @@ mod tests {
         // Test short query sync with pre-cancelled token
         let result = ClipboardStore::search_short_query_sync(
             &store.db,
-            &store.search_engine,
             "He",
             &token,
             &runtime_handle,
@@ -799,7 +746,6 @@ mod tests {
         let result = ClipboardStore::search_trigram_query_sync(
             &store.db,
             &store.indexer,
-            &store.search_engine,
             "Hello",
             &token,
             &runtime_handle,

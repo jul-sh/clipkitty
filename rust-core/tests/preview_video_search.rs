@@ -6,10 +6,12 @@
 //! - Scene 2 (0:08-0:14): Color swatches "#" -> "#f", then image "cat"
 //! - Scene 3 (0:14-0:20): Typo forgiveness "rivresid" finds "Riverside"
 
-use clipkitty_core::ClipboardStore;
-use clipkitty_core::ClipboardStoreApi;
+use clipkitty_core::{ClipboardStore, ClipboardStoreApi, ClipboardItem};
 use tempfile::TempDir;
 
+fn get_content_text(item: &ClipboardItem) -> String {
+    item.content.text_content().to_string()
+}
 
 // ============================================================
 // Ranking Behavior Tests

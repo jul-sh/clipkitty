@@ -5,18 +5,15 @@
 //!
 //! Types are exported via UniFFI proc-macros (#[derive(uniffi::Record/Enum)]).
 
-pub mod content_detection;
+pub(crate) mod content_detection;
 mod database;
 mod indexer;
 pub mod interface;
-mod models;
+pub(crate) mod models;
 pub mod search;
 mod store;
 
-
-
 pub use interface::*;
-pub use models::*;
 pub use store::ClipboardStore;
 
 uniffi::setup_scaffolding!("clipkitty_core");
