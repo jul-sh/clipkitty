@@ -8,7 +8,7 @@ set -e
 
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 PROJECT_ROOT="$(dirname "$SCRIPT_DIR")"
-BACKGROUND_IMAGE="$(make -s -C "$PROJECT_ROOT/dist" print-background-image)"
+BACKGROUND_IMAGE="$(make -s -C "$SCRIPT_DIR" print-background-image)"
 
 if [ -n "$CI" ]; then
     echo "Setting up screenshot environment..."
