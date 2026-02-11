@@ -81,27 +81,28 @@ jobs:
           codesign --force --sign "Developer ID Application" ClipKitty.dmg
           codesign --force --sign "Developer ID Application" ClipKitty-Sandboxed.dmg
 
-      # 2. Notarize with Apple
-      - name: Notarize DMGs
+      # 2. Notarize with Apple (Split into steps to prevent Bus Error 10)
+      - name: Notarize Standard DMG
         run: |
           echo "${{ secrets.NOTARY_KEY_BASE64 }}" | base64 --decode > auth_key.p8
-
-          # Submit Standard version
           xcrun notarytool submit ClipKitty.dmg \
             --key auth_key.p8 \
             --key-id ${{ secrets.NOTARY_KEY_ID }} \
             --issuer ${{ secrets.NOTARY_ISSUER_ID }} \
             --wait
 
-          # Submit Sandboxed version
+      - name: Notarize Sandboxed DMG
+        run: |
+          echo "${{ secrets.NOTARY_KEY_BASE64 }}" | base64 --decode > auth_key.p8
           xcrun notarytool submit ClipKitty-Sandboxed.dmg \
             --key auth_key.p8 \
             --key-id ${{ secrets.NOTARY_KEY_ID }} \
             --issuer ${{ secrets.NOTARY_ISSUER_ID }} \
             --wait
 
-          # Clean up private key
-          rm -f auth_key.p8
+      - name: Clean up Notary Key
+        if: always()
+        run: rm -f auth_key.p8
 
       # 3. Staple Notarization (Required for offline Gatekeeper approval)
       - name: Staple Notarization
