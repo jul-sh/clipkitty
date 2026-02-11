@@ -9,8 +9,8 @@
 use anyhow::{Context, Result};
 use chrono::Utc;
 use clap::Parser;
-use clipkitty_core::{ClipboardStore, ClipboardStoreApi};
-use clipkitty_core::content_detection::parse_color_to_rgba;
+use purr::{ClipboardStore, ClipboardStoreApi};
+use purr::content_detection::parse_color_to_rgba;
 use futures::StreamExt;
 use image::GenericImageView;
 use indicatif::{ProgressBar, ProgressStyle};

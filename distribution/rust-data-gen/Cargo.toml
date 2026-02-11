@@ -4,7 +4,7 @@ version = "0.1.0"
 edition = "2021"
 
 [dependencies]
-clipkitty-core = { path = "../../purr" }
+purr = { path = "../../purr" }
 anyhow = "*"
 clap = { version = "*", features = ["derive"] }
 tokio = { version = "*", features = ["full"] }

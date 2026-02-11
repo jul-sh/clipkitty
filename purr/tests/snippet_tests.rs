@@ -18,8 +18,8 @@
 //! - Adds "L{n}: " prefix for matches not on line 1
 //! - Adds trailing ellipsis when content is truncated
 
-use clipkitty_core::search::{generate_preview, generate_snippet};
-use clipkitty_core::HighlightRange;
+use purr::search::{generate_preview, generate_snippet};
+use purr::HighlightRange;
 
 // ─────────────────────────────────────────────────────────────────────────────
 // generate_preview TESTS (used for item list display with empty query)
