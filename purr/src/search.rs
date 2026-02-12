@@ -43,11 +43,6 @@ const POSITION_BOOST_MAX: f64 = 1.5;
 const POSITION_BOOST_MIN: f64 = 1.1;
 const POSITION_BOOST_WINDOW: usize = 50;
 
-/// When two scores are within this relative tolerance, treat them as tied
-/// and use recency as the tiebreaker. Clipboard entries of similar length
-/// often have BM25 differences that are noise, not meaningful relevance gaps.
-const SCORE_TIE_TOLERANCE: f64 = 0.08;
-
 /// Context chars to include before/after match in snippet
 /// Swift handles final truncation and ellipsis positioning
 pub(crate) const SNIPPET_CONTEXT_CHARS: usize = 200;
@@ -101,15 +96,21 @@ pub(crate) fn search_trigram(indexer: &Indexer, query: &str, token: &Cancellatio
             .collect();
 
         // par_iter + take_any_while + filter doesn't preserve order — restore ranking.
-        // When scores are within SCORE_TIE_TOLERANCE, treat as tied and use
-        // recency as tiebreaker (newer first).
+        // Quantize scores into log-scale buckets so near-ties (from minor BM25
+        // differences due to content length) are broken by recency.
+        // IMPORTANT: the comparator must be transitive — tolerance-band approaches
+        // ("treat scores within X% as tied") violate transitivity and cause
+        // sort_unstable_by to panic in newer Rust versions. Bucketing is transitive
+        // because bucket(x) is a deterministic function of a single element.
+        let score_bucket = |s: f64| -> i64 {
+            if s <= 0.0 { return i64::MIN; }
+            // Each bucket spans a factor of e^0.3 ≈ 1.35 (35%).
+            // Scores within ~35% of each other share a bucket.
+            (s.ln() / 0.3).floor() as i64
+        };
         matches.sort_unstable_by(|a, b| {
-            let max_score = a.score.max(b.score);
-            if max_score > 0.0 && (a.score - b.score).abs() / max_score < SCORE_TIE_TOLERANCE {
-                b.timestamp.cmp(&a.timestamp)
-            } else {
-                b.score.total_cmp(&a.score)
-            }
+            score_bucket(b.score).cmp(&score_bucket(a.score))
+                .then_with(|| b.timestamp.cmp(&a.timestamp))
         });
 
     Ok((matches, total_count))
