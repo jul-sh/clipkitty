@@ -193,6 +193,37 @@ async fn ranking_trailing_space_boosts_word_boundary() {
     );
 }
 
+#[tokio::test]
+async fn ranking_repeated_word_should_not_boost() {
+    // When a query word appears only once in the query, repeated
+    // occurrences in a document should NOT inflate its score.
+    //
+    // Reproduces the exact user scenario:
+    //   "hello world"            — 1 week old
+    //   "hello world says hello" — 2 weeks old (older, but "hello" appears twice)
+    //
+    // Without the fix, the older item can outrank the newer one because
+    // the repeated "hello" inflates BM25 term-frequency and coverage boost.
+    let (store, _temp) = create_ranking_test_store(vec![
+        "hello world says hello",  // older, "hello" appears twice
+        "hello world",             // newer, "hello" appears once
+    ]);
+
+    let contents = search_contents(&store, "hello").await;
+
+    assert!(contents.len() >= 2, "Should find both items, got: {:?}", contents);
+
+    // The newer item ("hello world") should rank first because
+    // recency should break the tie — repeated "hello" in the older
+    // item must NOT give it a ranking advantage.
+    assert!(
+        contents[0].contains("hello world") && !contents[0].contains("says"),
+        "Newer 'hello world' should rank first (recency tiebreak), \
+         but got: {:?}",
+        contents
+    );
+}
+
 // ============================================================
 // Proximity/Scatter Rejection Tests
 // ============================================================
