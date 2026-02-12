@@ -175,7 +175,7 @@ impl Indexer {
             .into_iter()
             .map(|term| {
                 let q: Box<dyn tantivy::query::Query> =
-                    Box::new(TermQuery::new(term, IndexRecordOption::WithFreqs));
+                    Box::new(TermQuery::new(term, IndexRecordOption::Basic));
                 (Occur::Should, q)
             })
             .collect();

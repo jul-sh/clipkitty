@@ -222,6 +222,8 @@ pub(crate) fn highlight_candidate(
     ) -> FuzzyMatch {
         let content_lower = content.to_lowercase();
         let mut all_indices = Vec::new();
+        // Track which query words were matched (for coverage scoring)
+        let mut matched_query_words = vec![false; query_info.len()];
 
         // Tokenize document into words with char offsets
         let doc_words = tokenize_words(&content_lower);
@@ -229,7 +231,7 @@ pub(crate) fn highlight_candidate(
         for (char_start, char_end, doc_word) in &doc_words {
             let doc_tris = word_trigrams(doc_word);
 
-            for (query_lower, query_tris) in query_info {
+            for (qi, (query_lower, query_tris)) in query_info.iter().enumerate() {
                 let matched = if query_tris.is_empty() || doc_tris.is_empty() {
                     // Short word (< 3 chars) on either side: exact word match
                     doc_word == query_lower
@@ -238,6 +240,7 @@ pub(crate) fn highlight_candidate(
                 };
 
                 if matched {
+                    matched_query_words[qi] = true;
                     for i in *char_start..*char_end {
                         all_indices.push(i as u32);
                     }
@@ -255,10 +258,16 @@ pub(crate) fn highlight_candidate(
         if !all_indices.is_empty() {
             let content_char_len = content.chars().count().max(1);
 
-            // Coverage boost: short entries that match well are almost always
-            // what the user wants. Only activates above threshold to avoid
-            // noise from small coverage differences swamping BM25/recency.
-            let coverage = all_indices.len() as f64 / content_char_len as f64;
+            // Coverage boost based on unique query words matched, not total
+            // highlighted characters. This prevents repeated occurrences of
+            // the same term from inflating coverage (e.g., "hello" appearing
+            // 3 times should score the same as appearing once for query "hello").
+            let unique_matched = matched_query_words.iter().filter(|&&m| m).count();
+            let query_coverage = unique_matched as f64 / query_info.len().max(1) as f64;
+            // Also factor in how much of the content is "about" the query
+            let content_coverage = all_indices.len() as f64 / content_char_len as f64;
+            // Use the minimum — both signals must agree for a strong boost
+            let coverage = query_coverage.min(content_coverage);
             if coverage > COVERAGE_BOOST_THRESHOLD {
                 let t = (coverage - COVERAGE_BOOST_THRESHOLD) / (1.0 - COVERAGE_BOOST_THRESHOLD);
                 score *= 1.0 + (COVERAGE_BOOST_MAX - 1.0) * t;
