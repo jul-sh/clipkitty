@@ -162,17 +162,24 @@ impl ClipboardStore {
             return Err(ClipKittyError::Cancelled);
         }
 
+        // Use indexed par_iter to preserve the ranking order from search.
+        // into_par_iter() on Vec<T> is an IndexedParallelIterator, so
+        // enumerate + collect preserves input order.
         use rayon::prelude::*;
-        fuzzy_matches
+        let indexed: Vec<(usize, Option<ItemMatch>)> = fuzzy_matches
             .into_par_iter()
-            .map(|fm| {
+            .enumerate()
+            .map(|(i, fm)| {
                 if token.is_cancelled() {
                     return Err(ClipKittyError::Cancelled);
                 }
-                Ok(item_map.get(&fm.id).map(|item| search::create_item_match(item, &fm)))
+                Ok((i, item_map.get(&fm.id).map(|item| search::create_item_match(item, &fm))))
             })
-            .collect::<Result<Vec<Option<ItemMatch>>, ClipKittyError>>()
-            .map(|v| v.into_iter().flatten().collect())
+            .collect::<Result<Vec<_>, ClipKittyError>>()?;
+
+        let mut sorted = indexed;
+        sorted.sort_unstable_by_key(|(i, _)| *i);
+        Ok(sorted.into_iter().filter_map(|(_, item)| item).collect())
     }
 
     /// Short query search using prefix matching + LIKE on recent items

@@ -30,6 +30,24 @@ const HIGHLIGHT_MIN_OVERLAP: f64 = 0.5;
 /// Boost factor for prefix matches in short query scoring
 const PREFIX_MATCH_BOOST: f64 = 2.0;
 
+/// Boost for entries where highlighted chars cover most of the document.
+/// Short clipboard entries that match well are almost always what the user wants.
+/// Only activates above COVERAGE_BOOST_THRESHOLD to avoid noise from small
+/// coverage differences (e.g., 25% vs 22%) swamping BM25/recency signals.
+const COVERAGE_BOOST_MAX: f64 = 3.0;
+const COVERAGE_BOOST_THRESHOLD: f64 = 0.4;
+
+/// Boost for matches starting in the first N characters of content.
+/// Content starting with the query match gets the full boost; decays linearly.
+const POSITION_BOOST_MAX: f64 = 1.5;
+const POSITION_BOOST_MIN: f64 = 1.1;
+const POSITION_BOOST_WINDOW: usize = 50;
+
+/// When two scores are within this relative tolerance, treat them as tied
+/// and use recency as the tiebreaker. Clipboard entries of similar length
+/// often have BM25 differences that are noise, not meaningful relevance gaps.
+const SCORE_TIE_TOLERANCE: f64 = 0.08;
+
 /// Context chars to include before/after match in snippet
 /// Swift handles final truncation and ellipsis positioning
 pub(crate) const SNIPPET_CONTEXT_CHARS: usize = 200;
@@ -37,7 +55,7 @@ pub(crate) const SNIPPET_CONTEXT_CHARS: usize = 200;
 #[derive(Debug, Clone)]
 pub(crate) struct FuzzyMatch {
     pub(crate) id: i64,
-    pub(crate) score: u32,
+    pub(crate) score: f64,
     pub(crate) matched_indices: Vec<u32>,
     pub(crate) timestamp: i64,
     pub(crate) content: String,
@@ -75,12 +93,24 @@ pub(crate) fn search_trigram(indexer: &Indexer, query: &str, token: &Cancellatio
         let (candidates, total_count) = indexer.search(trimmed.trim_end(), MAX_RESULTS)?;
 
         use rayon::prelude::*;
-        let matches: Vec<FuzzyMatch> = candidates
+        let mut matches: Vec<FuzzyMatch> = candidates
             .into_par_iter()
             .take_any_while(|_| !token.is_cancelled())
             .map(|c| highlight_candidate(c.id, &c.content, c.timestamp, c.tantivy_score, &query_info))
             .filter(|m| !m.matched_indices.is_empty())
             .collect();
+
+        // par_iter + take_any_while + filter doesn't preserve order — restore ranking.
+        // When scores are within SCORE_TIE_TOLERANCE, treat as tied and use
+        // recency as tiebreaker (newer first).
+        matches.sort_unstable_by(|a, b| {
+            let max_score = a.score.max(b.score);
+            if max_score > 0.0 && (a.score - b.score).abs() / max_score < SCORE_TIE_TOLERANCE {
+                b.timestamp.cmp(&a.timestamp)
+            } else {
+                b.score.total_cmp(&a.score)
+            }
+        });
 
     Ok((matches, total_count))
 }
@@ -101,33 +131,68 @@ pub(crate) fn score_short_query_batch(
         let now = Utc::now().timestamp();
 
         use rayon::prelude::*;
+        let query_len = query_lower.len();
         let mut results: Vec<FuzzyMatch> = candidates
             .par_bridge()
             .take_any_while(|_| !token.is_cancelled())
             .filter_map(|(id, content, timestamp, is_prefix_match)| {
-                // Find match position for highlighting
                 let content_lower = content.to_lowercase();
-                content_lower.find(&query_lower).map(|pos| {
-                    let matched_indices: Vec<u32> = (pos..pos + query.len())
-                        .map(|i| i as u32)
-                        .collect();
 
-                    // Score based on recency with prefix boost
-                    let base_score = 1000u32; // Base score for any match
-                    let score = if is_prefix_match {
-                        (base_score as f64 * PREFIX_MATCH_BOOST) as u32
-                    } else {
-                        base_score
-                    };
+                // Find ALL match positions for highlighting (not just the first)
+                let positions: Vec<usize> = content_lower
+                    .match_indices(&query_lower)
+                    .map(|(pos, _)| pos)
+                    .collect();
+                if positions.is_empty() {
+                    return None;
+                }
 
-                    FuzzyMatch {
-                        id,
-                        score,
-                        matched_indices,
-                        timestamp,
-                        content,
-                        is_prefix_match,
-                    }
+                let matched_indices: Vec<u32> = positions.iter()
+                    .flat_map(|&pos| (pos..pos + query_len).map(|i| i as u32))
+                    .collect();
+
+                // Score based on recency with prefix boost
+                let base_score = 1000.0_f64;
+                let mut score = if is_prefix_match {
+                    base_score * PREFIX_MATCH_BOOST
+                } else {
+                    base_score
+                };
+
+                // Word-boundary boost: prefer "hi there" over "within" for query "hi"
+                let chars: Vec<char> = content_lower.chars().collect();
+                let has_word_boundary_match = positions.iter().any(|&pos| {
+                    let at_start = pos == 0 || !chars.get(pos - 1).map_or(false, |c| c.is_alphanumeric());
+                    let at_end = pos + query_len >= chars.len()
+                        || !chars.get(pos + query_len).map_or(false, |c| c.is_alphanumeric());
+                    at_start && at_end
+                });
+                if has_word_boundary_match {
+                    score *= PREFIX_MATCH_BOOST; // whole-word match boost
+                }
+
+                // Coverage boost (same threshold logic as trigram path)
+                let content_char_len = chars.len().max(1);
+                let coverage = matched_indices.len() as f64 / content_char_len as f64;
+                if coverage > COVERAGE_BOOST_THRESHOLD {
+                    let t = (coverage - COVERAGE_BOOST_THRESHOLD) / (1.0 - COVERAGE_BOOST_THRESHOLD);
+                    score *= 1.0 + (COVERAGE_BOOST_MAX - 1.0) * t;
+                }
+
+                // Position boost for matches near the start (gradual)
+                if positions[0] < POSITION_BOOST_WINDOW {
+                    let t = 1.0 - (positions[0] as f64 / POSITION_BOOST_WINDOW as f64);
+                    let boost = POSITION_BOOST_MIN + (POSITION_BOOST_MAX - POSITION_BOOST_MIN) * t;
+                    score *= boost;
+                }
+
+                Some(FuzzyMatch {
+                    id,
+                    score,
+                    matched_indices,
+                    timestamp,
+                    content,
+                    is_prefix_match,
                 })
             })
             .collect();
@@ -183,8 +248,31 @@ pub(crate) fn highlight_candidate(
         all_indices.sort_unstable();
         all_indices.dedup();
 
-        // Score is already blended (BM25 + recency) by Tantivy's tweak_score
-        let score = tantivy_score as u32;
+        // Start with blended score (BM25 + recency) from Tantivy's tweak_score
+        let mut score = tantivy_score as f64;
+
+        if !all_indices.is_empty() {
+            let content_char_len = content.chars().count().max(1);
+
+            // Coverage boost: short entries that match well are almost always
+            // what the user wants. Only activates above threshold to avoid
+            // noise from small coverage differences swamping BM25/recency.
+            let coverage = all_indices.len() as f64 / content_char_len as f64;
+            if coverage > COVERAGE_BOOST_THRESHOLD {
+                let t = (coverage - COVERAGE_BOOST_THRESHOLD) / (1.0 - COVERAGE_BOOST_THRESHOLD);
+                score *= 1.0 + (COVERAGE_BOOST_MAX - 1.0) * t;
+            }
+
+            // Position boost: matches at the start of content suggest the
+            // entry is "about" the query. Full boost at position 0, decays
+            // linearly to POSITION_BOOST_MIN at the window edge.
+            let first_match_pos = all_indices[0] as usize;
+            if first_match_pos < POSITION_BOOST_WINDOW {
+                let t = 1.0 - (first_match_pos as f64 / POSITION_BOOST_WINDOW as f64);
+                let boost = POSITION_BOOST_MIN + (POSITION_BOOST_MAX - POSITION_BOOST_MIN) * t;
+                score *= boost;
+            }
+        }
 
     FuzzyMatch {
         id,
@@ -444,8 +532,8 @@ fn tokenize_words(content: &str) -> Vec<(usize, usize, String)> {
 
 /// Combine a base relevance score with exponential recency decay and prefix boost.
 /// Used by the short query path (< 3 chars) where Tantivy isn't involved.
-fn recency_weighted_score(fuzzy_score: u32, timestamp: i64, now: i64, is_prefix_match: bool) -> f64 {
-    let base_score = fuzzy_score as f64;
+fn recency_weighted_score(fuzzy_score: f64, timestamp: i64, now: i64, is_prefix_match: bool) -> f64 {
+    let base_score = fuzzy_score;
 
     // Exponential decay for recency (half-life based)
     let age_secs = (now - timestamp).max(0) as f64;
@@ -634,13 +722,13 @@ mod tests {
         let now = 1700000000i64;
 
         // Same fuzzy score, different timestamps - recent should win
-        let recent = recency_weighted_score(1000, now, now, false);
-        let old = recency_weighted_score(1000, now - 86400 * 30, now, false); // 30 days old
+        let recent = recency_weighted_score(1000.0, now, now, false);
+        let old = recency_weighted_score(1000.0, now - 86400 * 30, now, false); // 30 days old
         assert!(recent > old, "Recent items should score higher with same quality");
 
         // Prefix match should boost score
-        let prefix = recency_weighted_score(1000, now, now, true);
-        let non_prefix = recency_weighted_score(1000, now, now, false);
+        let prefix = recency_weighted_score(1000.0, now, now, true);
+        let non_prefix = recency_weighted_score(1000.0, now, now, false);
         assert!(prefix > non_prefix, "Prefix matches should score higher");
     }
 
