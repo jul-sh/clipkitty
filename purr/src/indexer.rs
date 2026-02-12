@@ -276,9 +276,7 @@ impl Indexer {
                     .expect("timestamp fast field");
                 move |doc: DocId, score: Score| {
                     let timestamp = ts_reader.first(doc).unwrap_or(0);
-                    // Quantize BM25 coarsely so minor doc-length differences
-                    // are treated as ties, letting recency break them.
-                    let base = ((score as u32).max(1) * 1000) as f64;
+                    let base = (score as f64).max(0.001);
                     let age_secs = (now - timestamp).max(0) as f64;
                     let recency = (-age_secs * 2.0_f64.ln() / RECENCY_HALF_LIFE_SECS).exp();
                     base * (1.0 + RECENCY_BOOST_MAX * recency)
