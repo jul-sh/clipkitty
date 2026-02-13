@@ -58,8 +58,9 @@ pub(crate) fn search_trigram(indexer: &Indexer, query: &str, token: &Cancellatio
             return Ok(Vec::new());
         }
         let trimmed = query.trim_start();
-        let query_words: Vec<&str> = trimmed.trim_end().split_whitespace().collect();
-        let last_word_is_prefix = !trimmed.ends_with(char::is_whitespace);
+        let query_words_owned = tokenize_words(trimmed.trim_end());
+        let query_words: Vec<&str> = query_words_owned.iter().map(|(_, _, w)| w.as_str()).collect();
+        let last_word_is_prefix = trimmed.trim_end().ends_with(|c: char| c.is_alphanumeric());
 
         // Bucket-ranked candidates from two-phase search
         #[cfg(feature = "perf-log")]
@@ -230,6 +231,27 @@ pub(crate) fn highlight_candidate(
             }
         }
 
+        all_indices.sort_unstable();
+        all_indices.dedup();
+
+        // Bridge gaps between highlighted ranges where intervening chars are all
+        // non-whitespace punctuation (e.g. "://" in URLs, "." in domains, "/" in paths).
+        let content_chars: Vec<char> = content.chars().collect();
+        let bridge_ranges = indices_to_ranges(&all_indices);
+        for window in bridge_ranges.windows(2) {
+            let gap_start = window[0].end as usize;
+            let gap_end = window[1].start as usize;
+            if gap_start < gap_end
+                && gap_end <= content_chars.len()
+                && content_chars[gap_start..gap_end]
+                    .iter()
+                    .all(|c| !c.is_alphanumeric() && !c.is_whitespace())
+            {
+                for i in gap_start..gap_end {
+                    all_indices.push(i as u32);
+                }
+            }
+        }
         all_indices.sort_unstable();
         all_indices.dedup();
 
@@ -437,24 +459,40 @@ pub(crate) fn create_item_match(item: &StoredItem, fuzzy_match: &FuzzyMatch) -> 
     }
 }
 
-/// Tokenize text into words with char offsets. Splits on non-alphanumeric characters.
+/// Tokenize text into tokens with char offsets.
+/// Produces both alphanumeric word tokens and non-whitespace punctuation tokens.
+/// Whitespace is skipped (acts as a separator).
+/// Punctuation tokens allow matching symbols like "://", ".", "/" in URLs/paths.
 pub(crate) fn tokenize_words(content: &str) -> Vec<(usize, usize, String)> {
     let chars: Vec<char> = content.chars().collect();
-    let mut words = Vec::new();
+    let mut tokens = Vec::new();
     let mut i = 0;
     while i < chars.len() {
-        if !chars[i].is_alphanumeric() {
+        if chars[i].is_whitespace() {
             i += 1;
             continue;
         }
         let start = i;
-        while i < chars.len() && chars[i].is_alphanumeric() {
-            i += 1;
+        if chars[i].is_alphanumeric() {
+            while i < chars.len() && chars[i].is_alphanumeric() {
+                i += 1;
+            }
+        } else {
+            while i < chars.len() && !chars[i].is_alphanumeric() && !chars[i].is_whitespace() {
+                i += 1;
+            }
         }
-        let word: String = chars[start..i].iter().collect();
-        words.push((start, i, word));
+        let token: String = chars[start..i].iter().collect();
+        tokens.push((start, i, token));
     }
-    words
+    tokens
+}
+
+/// Whether a token from `tokenize_words` is an alphanumeric word (vs punctuation).
+/// Tokens are homogeneous runs — either all alphanumeric or all punctuation —
+/// so checking the first character is sufficient.
+pub(crate) fn is_word_token(token: &str) -> bool {
+    token.starts_with(|c: char| c.is_alphanumeric())
 }
 
 /// Combine a base relevance score with exponential recency decay and prefix boost.
@@ -650,20 +688,41 @@ mod tests {
 
     #[test]
     fn test_tokenize_words() {
+        // Whitespace-separated words
         let words = tokenize_words("hello world");
         assert_eq!(words, vec![(0, 5, "hello".into()), (6, 11, "world".into())]);
+
+        // Punctuation produces separate tokens
         let words = tokenize_words("urlparser.parse(input)");
         assert_eq!(words, vec![
             (0, 9, "urlparser".into()),
+            (9, 10, ".".into()),
             (10, 15, "parse".into()),
+            (15, 16, "(".into()),
             (16, 21, "input".into()),
+            (21, 22, ")".into()),
         ]);
+
+        // Consecutive punctuation forms one token
         let words = tokenize_words("one--two...three");
         assert_eq!(words, vec![
             (0, 3, "one".into()),
+            (3, 5, "--".into()),
             (5, 8, "two".into()),
+            (8, 11, "...".into()),
             (11, 16, "three".into()),
         ]);
+
+        // URL tokenization preserves :// as a token
+        let words = tokenize_words("https://github.com");
+        assert_eq!(words, vec![
+            (0, 5, "https".into()),
+            (5, 8, "://".into()),
+            (8, 14, "github".into()),
+            (14, 15, ".".into()),
+            (15, 18, "com".into()),
+        ]);
+
     }
 
     fn highlighted_words(content: &str, query_words: &[&str]) -> Vec<String> {
@@ -734,6 +793,48 @@ mod tests {
     fn test_highlight_no_match() {
         let words = highlighted_words("hello world", &["xyz"]);
         assert!(words.is_empty());
+    }
+
+    // ── URL / special-character query tests ─────────────────────
+
+    #[test]
+    fn test_highlight_url_query_bridges_punctuation() {
+        // "http" and "github" match adjacent words; the "://" gap should be bridged
+        let words = highlighted_words("https://github.com/user/repo", &["http", "github"]);
+        assert_eq!(words, vec!["https://github"]);
+    }
+
+    #[test]
+    fn test_highlight_url_query_tokenized_from_raw() {
+        // Simulate what search_trigram does: tokenize "http://github" into query words
+        let query = "http://github";
+        let query_words_owned = tokenize_words(query);
+        let query_words: Vec<&str> = query_words_owned.iter().map(|(_, _, w)| w.as_str()).collect();
+        // Punctuation tokens are now real tokens in the query
+        assert_eq!(query_words, vec!["http", "://", "github"]);
+
+        let fm = highlight_candidate(1, "https://github.com/user/repo", 1000, 1.0, &query_words, false);
+        let ranges = indices_to_ranges(&fm.matched_indices);
+        let chars: Vec<char> = "https://github.com/user/repo".chars().collect();
+        let words: Vec<String> = ranges.iter().map(|r| {
+            chars[r.start as usize..r.end as usize].iter().collect()
+        }).collect();
+        // "://" matched as a real token, producing contiguous highlight
+        assert_eq!(words, vec!["https://github"]);
+    }
+
+    #[test]
+    fn test_highlight_does_not_bridge_whitespace_gaps() {
+        // Words separated by whitespace should NOT be bridged
+        let words = highlighted_words("hello beautiful world", &["hello", "world"]);
+        assert_eq!(words, vec!["hello", "world"]);
+    }
+
+    #[test]
+    fn test_highlight_bridges_dots_in_domain() {
+        // "github.com" → all three words bridged via dots
+        let words = highlighted_words("https://github.com", &["github", "com"]);
+        assert_eq!(words, vec!["github.com"]);
     }
 
     // ── Densest highlight cluster tests ──────────────────────────
