@@ -4,7 +4,7 @@
 import Foundation
 
 let appName = "ClipKitty"
-let bundleId = "com.clipkitty.app"
+let bundleId = "com.eviljuliette.clipkitty"
 
 let plist: [String: Any] = [
     "CFBundleExecutable": appName,

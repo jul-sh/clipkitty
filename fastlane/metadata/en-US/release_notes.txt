@@ -1,0 +1,7 @@
+First release of ClipKitty on the Mac App Store.
+
+- Unlimited clipboard history with no item cap or expiration
+- Instant fuzzy search across your entire history
+- Live multi-line preview pane
+- Keyboard-driven workflow: Option+Space to open, Return to paste
+- Fully offline and private — no data ever leaves your Mac
