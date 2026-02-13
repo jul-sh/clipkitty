@@ -70,7 +70,7 @@ icon-png:
 
 # Build and sign for App Store (always uses sandboxed)
 appstore:
-	@$(MAKE) -C $(PROJECT_ROOT) all SANDBOX=true
+	@$(MAKE) -C $(PROJECT_ROOT) all SANDBOX=true $(if $(VERSION),VERSION=$(VERSION),) $(if $(BUILD_NUMBER),BUILD_NUMBER=$(BUILD_NUMBER),)
 	@if [ -n "$(PROVISIONING_PROFILE)" ]; then \
 		echo "Embedding provisioning profile..."; \
 		cp "$(PROVISIONING_PROFILE)" "$(PROJECT_ROOT)/$(APP_BUNDLE)/Contents/embedded.provisionprofile"; \
