@@ -1,5 +1,5 @@
 // ClipKittyRustFFI C wrapper
-// This file exists to satisfy Swift Package Manager's C target requirement.
+// This file exists to satisfy the C target requirement for the FFI bridge.
 // The actual FFI symbols come from the Rust static library (libpurr.a).
 //
 // ┌─────────────────────────────────────────────────────────────────────────────┐
@@ -11,7 +11,7 @@
 // │ Sources/ClipKittyRust/libpurr.a            ← Static library (auto-built)    │
 // │ Sources/ClipKittyRust/module.modulemap     ← Module map (auto-generated)    │
 // │                                                                             │
-// │ Package.swift links:                                                        │
+// │ Project.swift links:                                                        │
 // │   - ClipKittyRustFFI target → this file + purrFFI.h                         │
 // │   - linkerSettings → libpurr                                                │
 // └─────────────────────────────────────────────────────────────────────────────┘
