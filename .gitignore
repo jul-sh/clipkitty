@@ -55,3 +55,4 @@ distribution/data-gen/progress_rust.json
 
 # Benchmark data (generated with: cargo run --release --bin generate-bench-data)
 purr/benches/synthetic_1m.sqlite
+purr/benches/tantivy_index/

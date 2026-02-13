@@ -136,11 +136,17 @@ async fn ranking_word_start_beats_mid_word() {
 
     let contents = search_contents(&store, "url").await;
 
-    // Word-start match should rank higher (shorter doc gets higher BM25)
-    assert!(contents.len() >= 2, "Should find both items");
+    // With does_word_match, "url" matches "urlParser" (exact/prefix) but NOT "curl" (mid-word).
+    // So only urlParser should appear in results.
+    assert!(!contents.is_empty(), "Should find urlParser");
     assert!(
         contents[0].contains("urlParser"),
         "Word-start 'urlParser' should rank first, got: {:?}",
+        contents
+    );
+    assert!(
+        !contents.iter().any(|c| c.contains("curl")),
+        "Mid-word 'curl' should NOT match query 'url', got: {:?}",
         contents
     );
 }

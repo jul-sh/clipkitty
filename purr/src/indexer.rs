@@ -1,13 +1,14 @@
 //! Tantivy Indexer for ClipKitty
 //!
-//! Provides full-text search with trigram (ngram) tokenization for efficient fuzzy matching.
+//! Two-phase search: trigram recall (Phase 1) + Milli-style bucket re-ranking (Phase 2).
 //! For queries under 3 characters, returns empty (handled by search.rs streaming fallback).
 
+use crate::ranking::compute_bucket_score;
 use crate::search::{RECENCY_BOOST_MAX, RECENCY_HALF_LIFE_SECS};
 use chrono::Utc;
 use parking_lot::RwLock;
 use std::path::Path;
-use tantivy::collector::{Count, TopDocs};
+use tantivy::collector::TopDocs;
 use tantivy::directory::MmapDirectory;
 use tantivy::query::{BooleanQuery, BoostQuery, Occur, PhraseQuery, TermQuery};
 use tantivy::schema::*;
@@ -24,13 +25,11 @@ pub enum IndexerError {
     Directory(#[from] tantivy::directory::error::OpenDirectoryError),
     #[error("IO error: {0}")]
     Io(#[from] std::io::Error),
-    #[error("Query too short for trigram search")]
-    QueryTooShort,
 }
 
 pub type IndexerResult<T> = Result<T, IndexerError>;
 
-/// A search candidate from Tantivy (before fuzzy re-ranking)
+/// A search candidate from Tantivy (before bucket re-ranking)
 #[derive(Debug, Clone)]
 pub struct SearchCandidate {
     pub id: i64,
@@ -157,15 +156,57 @@ impl Indexer {
         terms
     }
 
-    pub fn search(&self, query: &str, limit: usize) -> IndexerResult<(Vec<SearchCandidate>, usize)> {
+    /// Two-phase search: trigram recall (Phase 1) + bucket re-ranking (Phase 2).
+    pub fn search(&self, query: &str, limit: usize) -> IndexerResult<Vec<SearchCandidate>> {
+        let candidates = self.trigram_recall(query, limit)?;
+
+        if candidates.is_empty() || query.split_whitespace().count() == 0 {
+            return Ok(candidates);
+        }
+
+        // Phase 2: Bucket re-ranking
+        let query_words: Vec<&str> = query.split_whitespace().collect();
+        let has_trailing_space = query.ends_with(' ');
+        let now = Utc::now().timestamp();
+
+        let mut scored: Vec<(crate::ranking::BucketScore, usize)> = candidates
+            .iter()
+            .enumerate()
+            .map(|(i, c)| {
+                let bucket = compute_bucket_score(
+                    &c.content,
+                    &query_words,
+                    !has_trailing_space,
+                    c.timestamp,
+                    c.tantivy_score,
+                    now,
+                );
+                (bucket, i)
+            })
+            .collect();
+
+        scored.sort_unstable_by(|a, b| b.0.cmp(&a.0));
+        scored.truncate(limit);
+
+        let mut candidate_slots: Vec<Option<SearchCandidate>> =
+            candidates.into_iter().map(Some).collect();
+
+        Ok(scored
+            .into_iter()
+            .filter_map(|(_score, i)| candidate_slots[i].take())
+            .collect())
+    }
+
+    /// Phase 1: Trigram recall using Tantivy BM25 with phrase boosts.
+    fn trigram_recall(&self, query: &str, limit: usize) -> IndexerResult<Vec<SearchCandidate>> {
         let reader = self.reader.read();
         let searcher = reader.searcher();
 
         let terms = self.trigram_terms(query);
 
-        // Query too short for trigrams - explicitly error as this should be handled by fallback
+        // Query too short for trigrams — return empty vec (caller handles fallback)
         if terms.is_empty() {
-            return Err(IndexerError::QueryTooShort);
+            return Ok(Vec::new());
         }
 
         let num_terms = terms.len();
@@ -184,26 +225,18 @@ impl Indexer {
         // Require a minimum number of trigram terms to match, scaling with query
         // length. This filters scattered single-trigram coincidences at the index
         // level while preserving fuzzy/typo tolerance.
-        //
-        // - 1-2 trigrams (3-4 char query): require all (still fuzzy — few terms)
-        // - 3-6 trigrams (5-8 char query): require half (kills scattered matches)
-        // - 7-19 trigrams: require 2/3
-        // - 20+ trigrams: require 4/5 (common-word overlap in long documents)
         if num_terms >= 3 {
             let min_match = if num_terms >= 20 {
                 4 * num_terms / 5
             } else if num_terms >= 7 {
                 (num_terms * 2 / 3).max(5)
             } else {
-                (num_terms + 1) / 2 // ceil(n/2)
+                (num_terms + 1) / 2
             };
             tantivy_query.set_minimum_number_should_match(min_match);
         }
 
         // Build phrase-boost queries for contiguity-aware scoring.
-        // For each query word >= 4 chars, create a PhraseQuery from its trigrams
-        // and wrap it in a BoostQuery. Documents with contiguous word matches
-        // get naturally higher BM25 + phrase scores.
         let words: Vec<&str> = query.split_whitespace().collect();
         let mut phrase_boosts: Vec<(Occur, Box<dyn tantivy::query::Query>)> = Vec::new();
 
@@ -220,9 +253,7 @@ impl Indexer {
             }
         }
 
-        // Word-pair proximity boosts: for consecutive query word pairs,
-        // tokenize "word1 word2" together. Cross-boundary trigrams form a
-        // PhraseQuery that fires only when the words are adjacent.
+        // Word-pair proximity boosts
         if words.len() >= 2 {
             for pair in words.windows(2) {
                 if pair[0].len() < 2 || pair[1].len() < 2 {
@@ -239,9 +270,7 @@ impl Indexer {
             }
         }
 
-        // Full-query exactness boost: tokenize the entire multi-word query
-        // into trigrams. PhraseQuery rewards documents containing the full
-        // query as a contiguous phrase.
+        // Full-query exactness boost
         if words.len() >= 2 {
             let full_terms = self.trigram_terms(query);
             if full_terms.len() >= 2 {
@@ -263,8 +292,6 @@ impl Indexer {
         };
 
         // Use tweak_score to blend BM25 with recency at collection time.
-        // Tantivy's top-K heap works on the final blended score, so we get
-        // the true top results without a separate sort step.
         let timestamp_field = self.schema.get_field("timestamp").unwrap();
         let now = Utc::now().timestamp();
 
@@ -283,7 +310,7 @@ impl Indexer {
                 }
             });
 
-        let (top_docs, total_count) = searcher.search(final_query.as_ref(), &(top_collector, Count))?;
+        let top_docs = searcher.search(final_query.as_ref(), &top_collector)?;
 
         let mut candidates = Vec::with_capacity(top_docs.len());
         for (blended_score, doc_address) in top_docs {
@@ -312,7 +339,7 @@ impl Indexer {
             });
         }
 
-        Ok((candidates, total_count))
+        Ok(candidates)
     }
 
 
