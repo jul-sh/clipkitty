@@ -56,3 +56,14 @@ distribution/data-gen/progress_rust.json
 # Benchmark data (generated with: cargo run --release --bin generate-bench-data)
 purr/benches/synthetic_1m.sqlite
 purr/benches/tantivy_index*/
+
+# Distribution artifacts
+*.pkg
+*.p8
+*.provisionprofile
+
+# Fastlane
+fastlane/report.xml
+fastlane/Preview.html
+fastlane/test_output
+fastlane/README.md

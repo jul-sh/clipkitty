@@ -1,0 +1,4 @@
+app_identifier "com.eviljuliette.clipkitty"
+apple_id "6759137247"        # Numeric Apple ID from App Store Connect
+team_id "ANBBV7LQ2P"         # Developer Portal Team ID
+itc_team_id "ANBBV7LQ2P"     # App Store Connect Team ID

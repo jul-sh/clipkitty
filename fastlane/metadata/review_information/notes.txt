@@ -1,0 +1,1 @@
+ClipKitty is a clipboard history manager. After launching, it runs in the menu bar. Press Option+Space to open the clipboard history panel. Copy some text in any app first to populate the history.

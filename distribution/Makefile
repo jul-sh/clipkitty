@@ -23,10 +23,14 @@ SIGNING_IDENTITY ?= $(shell security find-identity -v -p codesigning 2>/dev/null
 APPSTORE_SIGNING_IDENTITY ?= 3rd Party Mac Developer Application
 INSTALLER_IDENTITY ?= 3rd Party Mac Developer Installer
 
+# App Store Connect configuration
+BUNDLE_ID := com.eviljuliette.clipkitty
+PROVISIONING_PROFILE ?=
+
 # Marketing configuration
 BACKGROUND_IMAGE := /System/Library/Desktop Pictures/Solid Colors/Silver.png
 
-.PHONY: dmg appstore validate upload appstore-all screenshot icon-png \
+.PHONY: dmg appstore screenshot icon-png \
         synthetic-data run-synthetic marketing marketing-screenshots \
         marketing-screenshots-capture marketing-screenshots-process \
         preview-video print-background-image
@@ -53,28 +57,24 @@ icon-png:
 	@sips -s format png "$(PROJECT_ROOT)/AppIcon.icns" --out $(PROJECT_ROOT)/icon.png
 
 # ============================================================================
-# App Store Submission
+# App Store Submission (build only — validate & upload happen in CI)
 # ============================================================================
-# Prerequisites:
-#   1. Apple Developer account with Mac App Store distribution
-#   2. App-specific password for notarytool (store in keychain):
-#      xcrun notarytool store-credentials "ClipKitty-AppStore" \
-#        --apple-id "your@email.com" --team-id "TEAMID" --password "app-specific-password"
-#   3. Provisioning profile installed (~/Library/MobileDevice/Provisioning Profiles/)
-#   4. Certificates installed in Keychain:
-#      - "3rd Party Mac Developer Application: Your Name (TEAMID)"
-#      - "3rd Party Mac Developer Installer: Your Name (TEAMID)"
-#
 # Usage:
-#   make -C distribution appstore            # Build, sign, package for App Store
-#   make -C distribution validate            # Validate the package with App Store Connect
-#   make -C distribution upload              # Upload to App Store Connect
-#   make -C distribution appstore-all        # Build, validate, and upload in one step
+#   make -C distribution appstore                              # Build, sign, package
+#   make -C distribution appstore PROVISIONING_PROFILE=path    # With provisioning profile
+#
+# Certificates required in Keychain:
+#   - "3rd Party Mac Developer Application: Your Name (TEAMID)"
+#   - "3rd Party Mac Developer Installer: Your Name (TEAMID)"
 # ============================================================================
 
 # Build and sign for App Store (always uses sandboxed)
 appstore:
 	@$(MAKE) -C $(PROJECT_ROOT) all SANDBOX=true
+	@if [ -n "$(PROVISIONING_PROFILE)" ]; then \
+		echo "Embedding provisioning profile..."; \
+		cp "$(PROVISIONING_PROFILE)" "$(PROJECT_ROOT)/$(APP_BUNDLE)/Contents/embedded.provisionprofile"; \
+	fi
 	@echo "Re-signing for App Store distribution..."
 	@codesign --force --options runtime \
 		--sign "$(APPSTORE_SIGNING_IDENTITY)" \
@@ -86,22 +86,6 @@ appstore:
 		--sign "$(INSTALLER_IDENTITY)" \
 		"$(PROJECT_ROOT)/$(APP_NAME).pkg"
 	@echo "App Store package created: $(APP_NAME).pkg"
-
-# Validate the package with App Store Connect
-validate: $(PROJECT_ROOT)/$(APP_NAME).pkg
-	@echo "Validating with App Store Connect..."
-	@xcrun altool --validate-app -f "$(PROJECT_ROOT)/$(APP_NAME).pkg" -t macos \
-		--apiKey "$(APPSTORE_API_KEY)" --apiIssuer "$(APPSTORE_API_ISSUER)"
-
-# Upload to App Store Connect
-upload: $(PROJECT_ROOT)/$(APP_NAME).pkg
-	@echo "Uploading to App Store Connect..."
-	@xcrun altool --upload-app -f "$(PROJECT_ROOT)/$(APP_NAME).pkg" -t macos \
-		--apiKey "$(APPSTORE_API_KEY)" --apiIssuer "$(APPSTORE_API_ISSUER)"
-	@echo "Upload complete! Check App Store Connect for processing status."
-
-# All-in-one: build, validate, upload
-appstore-all: appstore validate upload
 
 # ============================================================================
 # Marketing Assets (Screenshots & Preview Video)
