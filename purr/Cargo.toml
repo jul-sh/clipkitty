@@ -5,7 +5,7 @@ edition = "2021"
 
 [lib]
 crate-type = ["lib", "staticlib", "cdylib"]
-# SYNC: Library name must match Package.swift linkedLibrary("purr")
+# SYNC: Library name must match Project.swift linkedLibrary("purr")
 # Output: libpurr.a (static), libpurr.dylib (dynamic)
 name = "purr"
 
