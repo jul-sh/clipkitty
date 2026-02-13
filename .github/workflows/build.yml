@@ -37,12 +37,23 @@ jobs:
       - name: Install Distribution Dependencies
         run: ./distribution/install-deps.sh
 
+      - name: Install Tuist
+        run: |
+          curl -Ls https://install.tuist.io | bash
+          tuist version
+
+      - name: Build Rust Core
+        run: make rust
+
+      - name: Generate Xcode Project
+        run: make generate
+
       - name: Build Non-Sandboxed App
-        run: make all SANDBOX=false
+        run: make build CONFIGURATION=Release
 
       - name: Run UI Tests
         run: |
-          SANDBOX=false make -C distribution screenshot
+          CONFIGURATION=Release make -C distribution screenshot
           # Validate screenshot was actually captured
           if [ ! -f screenshot.png ]; then
             echo "ERROR: screenshot.png was not created. Check UI test logs."
@@ -62,20 +73,19 @@ jobs:
         run: |
           chmod +x distribution/build-dmg.sh
 
-          # Non-sandboxed: rebuild (marketing steps overwrote with sandboxed build),
-          # sign with real cert + entitlements, then package
-          make all SANDBOX=false
+          # Non-sandboxed: build Release, sign with real cert + entitlements, then package
+          make build CONFIGURATION=Release
           codesign --force --options runtime --sign "Developer ID Application" \
             --entitlements Sources/App/ClipKitty.entitlements \
-            ClipKitty.app
-          ./distribution/build-dmg.sh ClipKitty.app ClipKitty.dmg
+            DerivedData/Build/Products/Release/ClipKitty.app
+          ./distribution/build-dmg.sh DerivedData/Build/Products/Release/ClipKitty.app ClipKitty.dmg
 
-          # Sandboxed: build fresh, sign with real cert + sandboxed entitlements, then package
-          make all SANDBOX=true
+          # Sandboxed: build AppStore, sign with real cert + sandboxed entitlements, then package
+          make build CONFIGURATION=AppStore
           codesign --force --options runtime --sign "Developer ID Application" \
             --entitlements Sources/App/ClipKitty-Sandboxed.entitlements \
-            ClipKitty.app
-          ./distribution/build-dmg.sh ClipKitty.app ClipKitty-Sandboxed.dmg
+            DerivedData/Build/Products/AppStore/ClipKitty.app
+          ./distribution/build-dmg.sh DerivedData/Build/Products/AppStore/ClipKitty.app ClipKitty-Sandboxed.dmg
 
           # Sign the DMG files themselves
           codesign --force --sign "Developer ID Application" ClipKitty.dmg
@@ -252,6 +262,11 @@ jobs:
 
       - name: Install Nix
         uses: DeterminateSystems/nix-installer-action@main
+
+      - name: Install Tuist
+        run: |
+          curl -Ls https://install.tuist.io | bash
+          tuist version
 
       - name: Decode Provisioning Profile
         run: |
