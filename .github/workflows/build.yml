@@ -228,3 +228,51 @@ jobs:
             marketing/app_preview.mov
         env:
           GH_TOKEN: ${{ github.token }}
+
+  # Upload to App Store Connect via Fastlane
+  appstore:
+    runs-on: macos-26
+    needs: build
+    if: github.event_name == 'release'
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Setup Swift
+        uses: swift-actions/setup-swift@v2
+        with:
+          swift-version: "6.2"
+
+      - name: Install App Store Certificates
+        uses: apple-actions/import-codesign-certs@v3
+        with:
+          p12-file-base64: ${{ secrets.APPSTORE_CERT_BASE64 }}
+          p12-password: ${{ secrets.P12_PASSWORD }}
+
+      - name: Install Nix
+        uses: DeterminateSystems/nix-installer-action@main
+
+      - name: Decode Provisioning Profile
+        run: |
+          echo "${{ secrets.PROVISION_PROFILE_BASE64 }}" | base64 --decode \
+            > "$GITHUB_WORKSPACE/ClipKitty.provisionprofile"
+
+      - name: Build App Store Package
+        run: |
+          make -C distribution appstore \
+            PROVISIONING_PROFILE="$GITHUB_WORKSPACE/ClipKitty.provisionprofile"
+
+      - name: Install Fastlane
+        run: bundle install
+
+      - name: Upload Build, Metadata & Screenshots
+        run: bundle exec fastlane release
+        env:
+          APPSTORE_KEY_ID: ${{ secrets.APPSTORE_KEY_ID }}
+          APPSTORE_ISSUER_ID: ${{ secrets.NOTARY_ISSUER_ID }}
+          APPSTORE_KEY_CONTENT: ${{ secrets.NOTARY_KEY_BASE64 }}
+
+      - name: Cleanup
+        if: always()
+        run: rm -f "$GITHUB_WORKSPACE/ClipKitty.provisionprofile"

@@ -1,0 +1,7 @@
+Introducing ClipKitty.
+
+- Unlimited clipboard history — nothing expires, nothing gets truncated
+- Instant fuzzy search across your entire archive
+- Full multi-line preview pane for code, text, and links
+- Keyboard-driven: Option+Space to open, Return to paste
+- Completely private — your data never leaves your Mac
