@@ -1,1 +1,1 @@
-clipboard,history,manager,copy,paste,search,fuzzy,snippets,productivity,text
+clipboard,history,manager,copy,paste,search,snippets,preview,productivity,archive
