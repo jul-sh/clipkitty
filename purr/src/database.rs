@@ -4,8 +4,7 @@
 //! Uses r2d2 connection pooling to allow concurrent reads without mutex blocking.
 
 use crate::interface::{ClipboardContent, ItemMetadata, ItemIcon};
-use crate::models::StoredItem;
-use crate::search::{generate_preview, SNIPPET_CONTEXT_CHARS};
+use crate::search::{StoredItem, generate_preview, SNIPPET_CONTEXT_CHARS};
 use chrono::{DateTime, TimeZone, Utc};
 use r2d2::{Pool, PooledConnection};
 use r2d2_sqlite::SqliteConnectionManager;

@@ -391,8 +391,8 @@ impl From<crate::database::DatabaseError> for ClipKittyError {
     }
 }
 
-impl From<crate::indexer::IndexerError> for ClipKittyError {
-    fn from(e: crate::indexer::IndexerError) -> Self {
+impl From<crate::search::IndexerError> for ClipKittyError {
+    fn from(e: crate::search::IndexerError) -> Self {
         ClipKittyError::IndexError(e.to_string())
     }
 }

@@ -9,12 +9,10 @@
 //! checks this token at key checkpoints and can abort mid-flight.
 
 use crate::database::Database;
-use crate::indexer::Indexer;
 use crate::interface::{
     ClipboardItem, ItemMatch, MatchData, SearchResult, ClipKittyError, ClipboardStoreApi,
 };
-use crate::models::StoredItem;
-use crate::search::{self, MIN_TRIGRAM_QUERY_LEN, MAX_RESULTS};
+use crate::search::{self, Indexer, StoredItem, MIN_TRIGRAM_QUERY_LEN, MAX_RESULTS};
 use chrono::Utc;
 use once_cell::sync::Lazy;
 use std::path::PathBuf;
