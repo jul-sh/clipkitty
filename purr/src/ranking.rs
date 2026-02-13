@@ -5,7 +5,7 @@
 //! Recency tiers sit above proximity/exactness/bm25 to strongly prefer recent items
 //! when word-match quality is equal.
 
-use crate::search::tokenize_words;
+use crate::search::{tokenize_words, is_word_token};
 
 /// Bucket score tuple — derived Ord gives lexicographic comparison.
 /// All components: higher = better.
@@ -35,6 +35,10 @@ struct WordMatch {
     edit_dist: u8,
     doc_word_pos: usize,
     is_exact: bool,
+    /// Whether this token counts toward the `words_matched` bucket score.
+    /// Punctuation tokens (like "://", ".") don't — they participate in
+    /// proximity and highlighting only.
+    counts_as_match: bool,
 }
 
 /// Compute the bucket score for a candidate document.
@@ -64,7 +68,9 @@ pub fn compute_bucket_score(
 
     let word_matches = match_query_words(query_words, &doc_word_strs, last_word_is_prefix);
 
-    let words_matched = word_matches.iter().filter(|m| m.matched).count() as u8;
+    let words_matched = word_matches.iter()
+        .filter(|m| m.matched && m.counts_as_match)
+        .count() as u8;
     let total_edit_dist: u8 = word_matches
         .iter()
         .filter(|m| m.matched)
@@ -123,6 +129,7 @@ fn match_query_words(
             let qw_lower = qw.to_lowercase();
             let is_last = qi == query_words.len() - 1;
             let allow_prefix = is_last && last_word_is_prefix;
+            let counts_as_match = is_word_token(qw);
 
             let mut best: Option<WordMatch> = None;
 
@@ -134,6 +141,7 @@ fn match_query_words(
                             edit_dist: 0,
                             doc_word_pos: dpos,
                             is_exact: true,
+                            counts_as_match,
                         };
                     }
                     WordMatchKind::Prefix => {
@@ -143,6 +151,7 @@ fn match_query_words(
                                 edit_dist: 0,
                                 doc_word_pos: dpos,
                                 is_exact: false,
+                                counts_as_match,
                             });
                         }
                     }
@@ -154,6 +163,7 @@ fn match_query_words(
                                 edit_dist: dist,
                                 doc_word_pos: dpos,
                                 is_exact: false,
+                                counts_as_match,
                             });
                         }
                     }
@@ -166,6 +176,7 @@ fn match_query_words(
                                 edit_dist: dist,
                                 doc_word_pos: dpos,
                                 is_exact: false,
+                                counts_as_match,
                             });
                         }
                     }
@@ -178,6 +189,7 @@ fn match_query_words(
                 edit_dist: 0,
                 doc_word_pos: 0,
                 is_exact: false,
+                counts_as_match,
             })
         })
         .collect()
@@ -598,8 +610,8 @@ mod tests {
     #[test]
     fn test_proximity_adjacent() {
         let matches = vec![
-            WordMatch { matched: true, edit_dist: 0, doc_word_pos: 0, is_exact: true },
-            WordMatch { matched: true, edit_dist: 0, doc_word_pos: 1, is_exact: true },
+            WordMatch { matched: true, edit_dist: 0, doc_word_pos: 0, is_exact: true, counts_as_match: true },
+            WordMatch { matched: true, edit_dist: 0, doc_word_pos: 1, is_exact: true, counts_as_match: true },
         ];
         assert_eq!(compute_proximity(&matches), u16::MAX - 1);
     }
@@ -607,8 +619,8 @@ mod tests {
     #[test]
     fn test_proximity_gap() {
         let matches = vec![
-            WordMatch { matched: true, edit_dist: 0, doc_word_pos: 0, is_exact: true },
-            WordMatch { matched: true, edit_dist: 0, doc_word_pos: 5, is_exact: true },
+            WordMatch { matched: true, edit_dist: 0, doc_word_pos: 0, is_exact: true, counts_as_match: true },
+            WordMatch { matched: true, edit_dist: 0, doc_word_pos: 5, is_exact: true, counts_as_match: true },
         ];
         assert_eq!(compute_proximity(&matches), u16::MAX - 5);
     }
@@ -616,7 +628,7 @@ mod tests {
     #[test]
     fn test_proximity_single_word() {
         let matches = vec![
-            WordMatch { matched: true, edit_dist: 0, doc_word_pos: 3, is_exact: true },
+            WordMatch { matched: true, edit_dist: 0, doc_word_pos: 3, is_exact: true, counts_as_match: true },
         ];
         assert_eq!(compute_proximity(&matches), u16::MAX);
     }
@@ -624,9 +636,9 @@ mod tests {
     #[test]
     fn test_proximity_unmatched_words_skipped() {
         let matches = vec![
-            WordMatch { matched: true, edit_dist: 0, doc_word_pos: 0, is_exact: true },
-            WordMatch { matched: false, edit_dist: 0, doc_word_pos: 0, is_exact: false },
-            WordMatch { matched: true, edit_dist: 0, doc_word_pos: 3, is_exact: true },
+            WordMatch { matched: true, edit_dist: 0, doc_word_pos: 0, is_exact: true, counts_as_match: true },
+            WordMatch { matched: false, edit_dist: 0, doc_word_pos: 0, is_exact: false, counts_as_match: true },
+            WordMatch { matched: true, edit_dist: 0, doc_word_pos: 3, is_exact: true, counts_as_match: true },
         ];
         assert_eq!(compute_proximity(&matches), u16::MAX - 3);
     }
@@ -636,8 +648,8 @@ mod tests {
     #[test]
     fn test_exactness_full_substring() {
         let matches = vec![
-            WordMatch { matched: true, edit_dist: 0, doc_word_pos: 0, is_exact: true },
-            WordMatch { matched: true, edit_dist: 0, doc_word_pos: 1, is_exact: true },
+            WordMatch { matched: true, edit_dist: 0, doc_word_pos: 0, is_exact: true, counts_as_match: true },
+            WordMatch { matched: true, edit_dist: 0, doc_word_pos: 1, is_exact: true, counts_as_match: true },
         ];
         assert_eq!(compute_exactness("hello world", &["hello", "world"], &matches), 3);
     }
@@ -645,8 +657,8 @@ mod tests {
     #[test]
     fn test_exactness_all_exact_but_not_substring() {
         let matches = vec![
-            WordMatch { matched: true, edit_dist: 0, doc_word_pos: 0, is_exact: true },
-            WordMatch { matched: true, edit_dist: 0, doc_word_pos: 2, is_exact: true },
+            WordMatch { matched: true, edit_dist: 0, doc_word_pos: 0, is_exact: true, counts_as_match: true },
+            WordMatch { matched: true, edit_dist: 0, doc_word_pos: 2, is_exact: true, counts_as_match: true },
         ];
         assert_eq!(compute_exactness("hello beautiful world", &["hello", "world"], &matches), 2);
     }
@@ -654,8 +666,8 @@ mod tests {
     #[test]
     fn test_exactness_mix_exact_fuzzy() {
         let matches = vec![
-            WordMatch { matched: true, edit_dist: 0, doc_word_pos: 0, is_exact: true },
-            WordMatch { matched: true, edit_dist: 1, doc_word_pos: 1, is_exact: false },
+            WordMatch { matched: true, edit_dist: 0, doc_word_pos: 0, is_exact: true, counts_as_match: true },
+            WordMatch { matched: true, edit_dist: 1, doc_word_pos: 1, is_exact: false, counts_as_match: true },
         ];
         assert_eq!(compute_exactness("hello wrld", &["hello", "world"], &matches), 1);
     }
@@ -663,7 +675,7 @@ mod tests {
     #[test]
     fn test_exactness_all_fuzzy() {
         let matches = vec![
-            WordMatch { matched: true, edit_dist: 1, doc_word_pos: 0, is_exact: false },
+            WordMatch { matched: true, edit_dist: 1, doc_word_pos: 0, is_exact: false, counts_as_match: true },
         ];
         assert_eq!(compute_exactness("hallo", &["hello"], &matches), 0);
     }

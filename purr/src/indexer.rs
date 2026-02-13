@@ -227,8 +227,9 @@ impl Indexer {
         }
 
         // Phase 2: Bucket re-ranking
-        let query_words: Vec<&str> = query.split_whitespace().collect();
-        let has_trailing_space = query.ends_with(' ');
+        let query_words_owned = crate::search::tokenize_words(query);
+        let query_words: Vec<&str> = query_words_owned.iter().map(|(_, _, w)| w.as_str()).collect();
+        let last_word_is_prefix = query.ends_with(|c: char| c.is_alphanumeric());
         let now = Utc::now().timestamp();
 
         let mut scored: Vec<(crate::ranking::BucketScore, usize)> = candidates
@@ -238,7 +239,7 @@ impl Indexer {
                 let bucket = compute_bucket_score(
                     &c.content,
                     &query_words,
-                    !has_trailing_space,
+                    last_word_is_prefix,
                     c.timestamp,
                     c.tantivy_score,
                     now,
