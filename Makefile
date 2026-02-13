@@ -6,7 +6,7 @@
 NIX_SHELL := ./Scripts/run-in-nix.sh -c
 
 APP_NAME := ClipKitty
-BUNDLE_ID := com.clipkitty.app
+BUNDLE_ID := com.eviljuliette.clipkitty
 SCRIPT_DIR := $(abspath $(dir $(lastword $(MAKEFILE_LIST))))
 ICON_SOURCE := $(SCRIPT_DIR)/AppIcon.icon
 
