@@ -433,11 +433,11 @@ impl Database {
         Ok(ids)
     }
 
-    /// Search for short queries (<3 chars) using prefix matching + LIKE on recent items
-    /// Returns (id, content, timestamp_unix) tuples
+    /// Search for short queries (<3 chars) using prefix matching + substring LIKE on recent items.
+    /// Returns (id, content, timestamp_unix) tuples.
     /// Two-part search:
-    /// 1. Prefix match (fast, recency-ordered)
-    /// 2. LIKE match on last N items (catches non-prefix matches in recent items)
+    /// 1. Prefix match on full table (fast — only matches content starting with query)
+    /// 2. Substring LIKE on last 2k items (catches mid-content matches in recent items)
     pub fn search_short_query(
         &self,
         query: &str,
@@ -445,13 +445,14 @@ impl Database {
     ) -> DatabaseResult<Vec<(i64, String, i64)>> {
         let conn = self.get_conn()?;
         let query_lower = query.to_lowercase();
+        let escaped = query_lower.replace('%', "\\%").replace('_', "\\_");
 
-        // Part 1: Prefix match - content starts with query (case insensitive)
-        let prefix_pattern = format!("{}%", query_lower.replace('%', "\\%").replace('_', "\\_"));
+        // Part 1: Prefix match — uses idx_items_content_prefix (COLLATE NOCASE index)
+        let prefix_pattern = format!("{}%", escaped);
         let mut stmt_prefix = conn.prepare(
             r#"SELECT id, content, CAST(strftime('%s', timestamp) AS INTEGER)
                FROM items
-               WHERE LOWER(content) LIKE ?1 ESCAPE '\'
+               WHERE content LIKE ?1 ESCAPE '\' COLLATE NOCASE
                ORDER BY timestamp DESC
                LIMIT ?2"#
         )?;
@@ -465,12 +466,12 @@ impl Database {
             })?
             .collect::<Result<Vec<_>, _>>()?;
 
-        // Part 2: LIKE match on last 20k items (catches substring matches in recent items)
-        let like_pattern = format!("%{}%", query_lower.replace('%', "\\%").replace('_', "\\_"));
+        // Part 2: Substring LIKE on last 2k items only (keeps latency bounded)
+        let like_pattern = format!("%{}%", escaped);
         let mut stmt_like = conn.prepare(
             r#"SELECT id, content, CAST(strftime('%s', timestamp) AS INTEGER)
-               FROM (SELECT * FROM items ORDER BY timestamp DESC LIMIT 20000)
-               WHERE LOWER(content) LIKE ?1 ESCAPE '\'
+               FROM (SELECT * FROM items ORDER BY timestamp DESC LIMIT 2000)
+               WHERE content LIKE ?1 ESCAPE '\' COLLATE NOCASE
                ORDER BY timestamp DESC
                LIMIT ?2"#
         )?;
@@ -488,14 +489,12 @@ impl Database {
         let mut seen_ids = std::collections::HashSet::new();
         let mut results = Vec::with_capacity(limit);
 
-        // Add prefix results first (they get priority)
         for item in prefix_results {
             if seen_ids.insert(item.0) {
                 results.push(item);
             }
         }
 
-        // Add LIKE results (non-prefix substring matches)
         for item in like_results {
             if results.len() >= limit {
                 break;

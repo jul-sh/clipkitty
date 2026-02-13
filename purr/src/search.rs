@@ -62,11 +62,17 @@ pub(crate) fn search_trigram(indexer: &Indexer, query: &str, token: &Cancellatio
         let last_word_is_prefix = !trimmed.ends_with(char::is_whitespace);
 
         // Bucket-ranked candidates from two-phase search
+        #[cfg(feature = "perf-log")]
+        let t0 = std::time::Instant::now();
         let candidates = indexer.search(trimmed.trim_end(), MAX_RESULTS)?;
+        #[cfg(feature = "perf-log")]
+        let num_candidates = candidates.len();
 
         // Assign rank before parallelizing so we can restore bucket order after
         let ranked: Vec<(usize, SearchCandidate)> = candidates.into_iter().enumerate().collect();
 
+        #[cfg(feature = "perf-log")]
+        let t1 = std::time::Instant::now();
         use rayon::prelude::*;
         let mut sorted: Vec<FuzzyMatch> = ranked
             .into_par_iter()
@@ -82,6 +88,18 @@ pub(crate) fn search_trigram(indexer: &Indexer, query: &str, token: &Cancellatio
 
         // par_iter + take_any_while doesn't preserve order — restore bucket ranking
         sorted.sort_unstable_by(|a, b| b.score.total_cmp(&a.score));
+
+        #[cfg(feature = "perf-log")]
+        {
+            let t2 = std::time::Instant::now();
+            eprintln!(
+                "[perf] indexer_total={:.1}ms highlight={:.1}ms candidates={} highlighted={}",
+                (t1 - t0).as_secs_f64() * 1000.0,
+                (t2 - t1).as_secs_f64() * 1000.0,
+                num_candidates,
+                sorted.len(),
+            );
+        }
 
     Ok(sorted)
 }

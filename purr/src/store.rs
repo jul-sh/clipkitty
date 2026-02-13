@@ -193,7 +193,7 @@ impl ClipboardStore {
             return Err(ClipKittyError::Cancelled);
         }
 
-        let candidates = db.search_short_query(query, MAX_RESULTS * 5)?;
+        let candidates = db.search_short_query(query, MAX_RESULTS)?;
         if candidates.is_empty() {
             return Ok(Vec::new());
         }
