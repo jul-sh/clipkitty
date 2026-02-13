@@ -39,7 +39,7 @@ jobs:
 
       - name: Install Tuist
         run: |
-          curl -Ls https://install.tuist.io | bash
+          brew install --formula tuist
           tuist version
 
       - name: Build Rust Core
@@ -265,7 +265,7 @@ jobs:
 
       - name: Install Tuist
         run: |
-          curl -Ls https://install.tuist.io | bash
+          brew install --formula tuist
           tuist version
 
       - name: Decode Provisioning Profile
