@@ -47,6 +47,7 @@ futures = "*"
 [features]
 default = ["serde"]
 serde = ["chrono/serde"]
+perf-log = []
 
 
 
