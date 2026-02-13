@@ -287,8 +287,9 @@ fn subsequence_match(query: &str, target: &str) -> Option<u8> {
 }
 
 /// Maximum allowed edit distance based on word length (Milli's graduation).
+/// 3-4 char words allow 1 edit to catch common transpositions (teh→the, form→from).
 pub(crate) fn max_edit_distance(word_len: usize) -> u8 {
-    if word_len < 5 {
+    if word_len < 3 {
         0
     } else if word_len <= 8 {
         1
@@ -513,7 +514,9 @@ mod tests {
     #[test]
     fn test_max_edit_distance_graduation() {
         assert_eq!(max_edit_distance(1), 0);
-        assert_eq!(max_edit_distance(4), 0);
+        assert_eq!(max_edit_distance(2), 0);
+        assert_eq!(max_edit_distance(3), 1);
+        assert_eq!(max_edit_distance(4), 1);
         assert_eq!(max_edit_distance(5), 1);
         assert_eq!(max_edit_distance(8), 1);
         assert_eq!(max_edit_distance(9), 2);
@@ -542,15 +545,23 @@ mod tests {
         assert_eq!(does_word_match("riversde", "riverside", false), WordMatchKind::Fuzzy(1));
         // "improt" (6 chars) -> max_dist 1, transposition counts as 1
         assert_eq!(does_word_match("improt", "import", false), WordMatchKind::Fuzzy(1));
+        // Short word transpositions (3-4 chars)
+        assert_eq!(does_word_match("teh", "the", false), WordMatchKind::Fuzzy(1));
+        assert_eq!(does_word_match("form", "from", false), WordMatchKind::Fuzzy(1));
+        assert_eq!(does_word_match("adn", "and", false), WordMatchKind::Fuzzy(1));
+        // Short word substitution — also matches (same edit distance)
+        assert_eq!(does_word_match("tha", "the", false), WordMatchKind::Fuzzy(1));
+        // 2-char words still get no fuzzy
+        assert_eq!(does_word_match("te", "the", false), WordMatchKind::None);
     }
 
     #[test]
     fn test_does_word_match_subsequence() {
-        // "helo" (4 chars) -> fuzzy disabled (max_dist 0), subsequence with 1 gap
-        assert_eq!(does_word_match("helo", "hello", false), WordMatchKind::Subsequence(1));
-        // "impt" (4 chars) -> abbreviation of "import", 1 gap (imp|t)
+        // "helo" (4 chars) -> fuzzy wins: edit_distance("helo","hello")=1
+        assert_eq!(does_word_match("helo", "hello", false), WordMatchKind::Fuzzy(1));
+        // "impt" (4 chars) -> len diff 2 exceeds max_dist 1, falls to subsequence
         assert_eq!(does_word_match("impt", "import", false), WordMatchKind::Subsequence(1));
-        // "cls" (3 chars) -> abbreviation of "class"
+        // "cls" (3 chars) -> len diff 2 exceeds max_dist 1, falls to subsequence
         assert_eq!(does_word_match("cls", "class", false), WordMatchKind::Subsequence(1));
         // Too short for subsequence (< 3 chars)
         assert_eq!(does_word_match("ab", "abc", false), WordMatchKind::None);
@@ -598,12 +609,22 @@ mod tests {
     }
 
     #[test]
-    fn test_match_subsequence_short_word() {
-        // "helo" (4 chars) matches "hello" via subsequence (1 gap), not fuzzy
+    fn test_match_fuzzy_short_word() {
+        // "helo" (4 chars) matches "hello" via fuzzy (edit distance 1)
         let doc_words = vec!["hello"];
         let matches = match_query_words(&["helo"], &doc_words, false);
         assert!(matches[0].matched);
-        assert_eq!(matches[0].edit_dist, 2); // gaps(1) + 1
+        assert_eq!(matches[0].edit_dist, 1);
+    }
+
+    #[test]
+    fn test_match_transposition_short_word() {
+        // "teh" (3 chars) matches "the" via fuzzy (transposition = 1 edit)
+        let doc_words = vec!["the", "quick"];
+        let matches = match_query_words(&["teh"], &doc_words, false);
+        assert!(matches[0].matched);
+        assert_eq!(matches[0].edit_dist, 1);
+        assert!(!matches[0].is_exact);
     }
 
     #[test]
