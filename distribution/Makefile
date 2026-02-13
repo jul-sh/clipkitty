@@ -9,14 +9,13 @@ DIST_DIR := $(abspath $(dir $(lastword $(MAKEFILE_LIST))))
 NIX_SHELL := $(PROJECT_ROOT)/Scripts/run-in-nix.sh -c
 
 APP_NAME := ClipKitty
-APP_BUNDLE := $(APP_NAME).app
-DMG_NAME = $(APP_NAME)$(if $(filter true,$(SANDBOX)),-Sandboxed,).dmg
+DERIVED_DATA := $(PROJECT_ROOT)/DerivedData
 
-# Detect Xcode availability (required for UI tests, marketing assets)
-HAVE_XCODE := $(shell xcodebuild -version >/dev/null 2>&1 && echo true || echo false)
+# Build configuration: Release (non-sandboxed) or AppStore (sandboxed)
+CONFIGURATION ?= Release
 
-# Sandboxing control (default true)
-SANDBOX ?= true
+# Path to the built app bundle (inside DerivedData)
+APP_PATH = $(DERIVED_DATA)/Build/Products/$(CONFIGURATION)/$(APP_NAME).app
 
 # Signing identities
 SIGNING_IDENTITY ?= $(shell security find-identity -v -p codesigning 2>/dev/null | grep -q "Developer ID Application" && echo "Developer ID Application" || echo "-")
@@ -37,14 +36,19 @@ BACKGROUND_IMAGE := /System/Library/Desktop Pictures/Solid Colors/Silver.png
 
 # Build DMG installer
 dmg:
-	@$(MAKE) -C $(PROJECT_ROOT) all sign SANDBOX=$(SANDBOX)
-	@echo "Building$(if $(filter true,$(SANDBOX)), sandboxed,) DMG installer..."
-	@$(DIST_DIR)/build-dmg.sh "$(PROJECT_ROOT)/$(APP_BUNDLE)" "$(PROJECT_ROOT)/$(DMG_NAME)"
+	@$(MAKE) -C $(PROJECT_ROOT) all CONFIGURATION=$(CONFIGURATION)
+	@echo "Signing for distribution..."
+	@codesign --force --options runtime \
+		--sign "$(SIGNING_IDENTITY)" \
+		--entitlements $(PROJECT_ROOT)/Sources/App/$(if $(filter AppStore,$(CONFIGURATION)),ClipKitty-Sandboxed,ClipKitty).entitlements \
+		"$(APP_PATH)"
+	@echo "Building$(if $(filter AppStore,$(CONFIGURATION)), sandboxed,) DMG installer..."
+	@$(DIST_DIR)/build-dmg.sh "$(APP_PATH)" "$(PROJECT_ROOT)/$(APP_NAME)$(if $(filter AppStore,$(CONFIGURATION)),-Sandboxed,).dmg"
 
 # Screenshot launches the app with synthetic data and takes a fullscreen capture
 screenshot: run-synthetic
 	@echo "Preparing environment and taking screenshot..."
-	@$(DIST_DIR)/prepare-screenshot-environment.sh 'cd $(PROJECT_ROOT) && pkill ClipKitty || true && open ClipKitty.app --args --use-simulated-db && sleep 3 && screencapture screenshot.png && pkill ClipKitty || true'
+	@$(DIST_DIR)/prepare-screenshot-environment.sh 'pkill ClipKitty || true && open "$(APP_PATH)" --args --use-simulated-db && sleep 3 && screencapture $(PROJECT_ROOT)/screenshot.png && pkill ClipKitty || true'
 	@if [ -f $(PROJECT_ROOT)/screenshot.png ]; then \
 		WIDTH=$$(sips -g pixelWidth $(PROJECT_ROOT)/screenshot.png | tail -1 | awk '{print $$2}'); \
 		HEIGHT=$$(sips -g pixelHeight $(PROJECT_ROOT)/screenshot.png | tail -1 | awk '{print $$2}'); \
@@ -68,21 +72,23 @@ icon-png:
 #   - "3rd Party Mac Developer Installer: Your Name (TEAMID)"
 # ============================================================================
 
-# Build and sign for App Store (always uses sandboxed)
+# Build and sign for App Store (always uses AppStore configuration = sandboxed)
 appstore:
-	@$(MAKE) -C $(PROJECT_ROOT) all SANDBOX=true $(if $(VERSION),VERSION=$(VERSION),) $(if $(BUILD_NUMBER),BUILD_NUMBER=$(BUILD_NUMBER),)
+	@$(MAKE) -C $(PROJECT_ROOT) all CONFIGURATION=AppStore \
+		$(if $(VERSION),VERSION=$(VERSION),) \
+		$(if $(BUILD_NUMBER),BUILD_NUMBER=$(BUILD_NUMBER),)
 	@if [ -n "$(PROVISIONING_PROFILE)" ]; then \
 		echo "Embedding provisioning profile..."; \
-		cp "$(PROVISIONING_PROFILE)" "$(PROJECT_ROOT)/$(APP_BUNDLE)/Contents/embedded.provisionprofile"; \
+		cp "$(PROVISIONING_PROFILE)" "$(DERIVED_DATA)/Build/Products/AppStore/$(APP_NAME).app/Contents/embedded.provisionprofile"; \
 	fi
 	@echo "Re-signing for App Store distribution..."
 	@codesign --force --options runtime \
 		--sign "$(APPSTORE_SIGNING_IDENTITY)" \
 		--entitlements $(PROJECT_ROOT)/Sources/App/ClipKitty-Sandboxed.entitlements \
-		"$(PROJECT_ROOT)/$(APP_BUNDLE)"
+		"$(DERIVED_DATA)/Build/Products/AppStore/$(APP_NAME).app"
 	@echo "Creating installer package..."
 	@rm -f "$(PROJECT_ROOT)/$(APP_NAME).pkg"
-	@productbuild --component "$(PROJECT_ROOT)/$(APP_BUNDLE)" /Applications \
+	@productbuild --component "$(DERIVED_DATA)/Build/Products/AppStore/$(APP_NAME).app" /Applications \
 		--sign "$(INSTALLER_IDENTITY)" \
 		"$(PROJECT_ROOT)/$(APP_NAME).pkg"
 	@echo "App Store package created: $(APP_NAME).pkg"
@@ -111,33 +117,31 @@ synthetic-data:
 	@echo "Run ./distribution/patch-demo-items.sh to add demo items"
 
 # Open app with synthetic data for manual testing
-# Uses non-sandboxed build for simpler file access
+# Uses Debug (non-sandboxed) build for simpler file access
 run-synthetic:
-	@$(MAKE) -C $(PROJECT_ROOT) sign SANDBOX=false
+	@$(MAKE) -C $(PROJECT_ROOT) all CONFIGURATION=Debug
 	@echo "Setting up synthetic data..."
 	@mkdir -p ~/Library/Application\ Support/ClipKitty
 	@rm -f ~/Library/Application\ Support/ClipKitty/clipboard-screenshot.sqlite*
 	@rm -rf ~/Library/Application\ Support/ClipKitty/tantivy_index*
 	@cp $(DIST_DIR)/SyntheticData.sqlite ~/Library/Application\ Support/ClipKitty/clipboard-screenshot.sqlite
 	@echo "Launching app with synthetic data..."
-	@cd $(PROJECT_ROOT) && open ClipKitty.app --args --use-simulated-db
+	@open "$(DERIVED_DATA)/Build/Products/Debug/$(APP_NAME).app" --args --use-simulated-db
 
 # Print background image path (used by CI/scripts)
 print-background-image:
 	@echo $(BACKGROUND_IMAGE)
 
-# Capture raw marketing screenshots via UI test (with clean environment, uses sandboxed)
-# Requires full Xcode installation
+# Capture raw marketing screenshots via UI test (with clean environment, uses AppStore config)
 marketing-screenshots-capture:
-ifeq ($(HAVE_XCODE),false)
-	$(error Xcode is required for marketing screenshots. Install Xcode from the App Store.)
-endif
 	@$(DIST_DIR)/patch-demo-items.sh
-	@$(MAKE) -C $(PROJECT_ROOT) sign SANDBOX=true
-	@$(MAKE) -C $(PROJECT_ROOT) ClipKitty.xcodeproj
+	@$(MAKE) -C $(PROJECT_ROOT) all CONFIGURATION=AppStore
+	@codesign --force --options runtime \
+		--sign "$(SIGNING_IDENTITY)" \
+		--entitlements $(PROJECT_ROOT)/Sources/App/ClipKitty-Sandboxed.entitlements \
+		"$(DERIVED_DATA)/Build/Products/AppStore/$(APP_NAME).app"
 	@echo "Capturing marketing screenshots..."
-	@rm -rf $(PROJECT_ROOT)/DerivedData
-	@$(DIST_DIR)/prepare-screenshot-environment.sh 'cd $(PROJECT_ROOT) && xcodebuild test -project ClipKitty.xcodeproj -scheme ClipKittyUITests -destination "platform=macOS" -derivedDataPath DerivedData -only-testing:ClipKittyUITests/ClipKittyUITests/testTakeMarketingScreenshots 2>&1 | grep -E "(Test Case|passed|failed)" || true'
+	@$(DIST_DIR)/prepare-screenshot-environment.sh 'cd $(PROJECT_ROOT) && xcodebuild test -scheme ClipKittyUITests -destination "platform=macOS" -derivedDataPath DerivedData -only-testing:ClipKittyUITests/ClipKittyUITests/testTakeMarketingScreenshots 2>&1 | grep -E "(Test Case|passed|failed)" || true'
 	@echo "Raw screenshots saved to /tmp/clipkitty_marketing_*.png"
 
 # Process raw screenshots into marketing-ready images
@@ -149,15 +153,14 @@ marketing-screenshots-process:
 marketing-screenshots: marketing-screenshots-capture marketing-screenshots-process
 	@echo "Marketing screenshots complete! See marketing/ directory"
 
-# Record App Store preview video (uses sandboxed)
-# Requires full Xcode installation
+# Record App Store preview video (uses AppStore config)
 preview-video:
-ifeq ($(HAVE_XCODE),false)
-	$(error Xcode is required for preview video. Install Xcode from the App Store.)
-endif
 	@$(DIST_DIR)/patch-demo-items.sh
-	@$(MAKE) -C $(PROJECT_ROOT) sign SANDBOX=true
-	@$(MAKE) -C $(PROJECT_ROOT) ClipKitty.xcodeproj
+	@$(MAKE) -C $(PROJECT_ROOT) all CONFIGURATION=AppStore
+	@codesign --force --options runtime \
+		--sign "$(SIGNING_IDENTITY)" \
+		--entitlements $(PROJECT_ROOT)/Sources/App/ClipKitty-Sandboxed.entitlements \
+		"$(DERIVED_DATA)/Build/Products/AppStore/$(APP_NAME).app"
 	@echo "Recording preview video..."
 	@$(DIST_DIR)/record-preview-video.sh
 
