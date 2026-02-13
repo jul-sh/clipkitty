@@ -193,7 +193,7 @@ impl ClipboardStore {
             return Err(ClipKittyError::Cancelled);
         }
 
-        let candidates = db.search_short_query(query, MAX_RESULTS * 5)?;
+        let candidates = db.search_short_query(query, MAX_RESULTS)?;
         if candidates.is_empty() {
             return Ok(Vec::new());
         }
@@ -221,25 +221,23 @@ impl ClipboardStore {
     }
 
     /// Trigram query search using Tantivy with phrase-boost scoring
-    /// Returns (matches, total_count) where total_count is the true number of matching documents.
     fn search_trigram_query_sync(
         db: &Database,
         indexer: &Indexer,
         query: &str,
         token: &CancellationToken,
         runtime: &tokio::runtime::Handle,
-    ) -> Result<(Vec<ItemMatch>, usize), ClipKittyError> {
+    ) -> Result<Vec<ItemMatch>, ClipKittyError> {
         if token.is_cancelled() {
             return Err(ClipKittyError::Cancelled);
         }
 
-        let (fuzzy_matches, total_count) = search::search_trigram(indexer, query, token)?;
+        let fuzzy_matches = search::search_trigram(indexer, query, token)?;
         if fuzzy_matches.is_empty() {
-            return Ok((Vec::new(), total_count));
+            return Ok(Vec::new());
         }
 
-        let matches = Self::fuzzy_matches_to_item_matches(db, fuzzy_matches, token, runtime)?;
-        Ok((matches, total_count))
+        Self::fuzzy_matches_to_item_matches(db, fuzzy_matches, token, runtime)
     }
 
     /// Get a single stored item by ID (internal use)
@@ -263,8 +261,8 @@ impl ClipboardStore {
         let db_path_buf = PathBuf::from(&path);
         let index_path = db_path_buf
             .parent()
-            .map(|p| p.join("tantivy_index"))
-            .unwrap_or_else(|| PathBuf::from("tantivy_index"));
+            .map(|p| p.join("tantivy_index_v2"))
+            .unwrap_or_else(|| PathBuf::from("tantivy_index_v2"));
 
         let indexer = Indexer::new(&index_path)?;
 
@@ -400,8 +398,9 @@ impl ClipboardStoreApi for ClipboardStore {
                 let total_count = matches.len() as u64;
                 Ok((matches, total_count))
             } else {
-                let (matches, total_count) = Self::search_trigram_query_sync(&db, &indexer, &query_owned, &token_clone, &runtime_for_closure)?;
-                Ok((matches, total_count as u64))
+                let matches = Self::search_trigram_query_sync(&db, &indexer, &query_owned, &token_clone, &runtime_for_closure)?;
+                let total_count = matches.len() as u64;
+                Ok((matches, total_count))
             }
         });
 

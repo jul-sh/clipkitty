@@ -47,6 +47,7 @@ futures = "*"
 [features]
 default = ["serde"]
 serde = ["chrono/serde"]
+perf-log = []
 
 
 
@@ -73,6 +74,10 @@ debug = false
 
 [profile.dev]
 opt-level = 1
+
+[[bench]]
+name = "search_benchmark"
+harness = false
 
 [dev-dependencies]
 tempfile = "*"

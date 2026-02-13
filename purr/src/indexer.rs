@@ -1,19 +1,73 @@
 //! Tantivy Indexer for ClipKitty
 //!
-//! Provides full-text search with trigram (ngram) tokenization for efficient fuzzy matching.
+//! Two-phase search: trigram recall (Phase 1) + Milli-style bucket re-ranking (Phase 2).
 //! For queries under 3 characters, returns empty (handled by search.rs streaming fallback).
 
+use crate::ranking::compute_bucket_score;
 use crate::search::{RECENCY_BOOST_MAX, RECENCY_HALF_LIFE_SECS};
 use chrono::Utc;
 use parking_lot::RwLock;
 use std::path::Path;
-use tantivy::collector::{Count, TopDocs};
+use tantivy::collector::TopDocs;
 use tantivy::directory::MmapDirectory;
 use tantivy::query::{BooleanQuery, BoostQuery, Occur, PhraseQuery, TermQuery};
 use tantivy::schema::*;
-use tantivy::tokenizer::{NgramTokenizer, TextAnalyzer};
+use tantivy::tokenizer::{NgramTokenizer, TextAnalyzer, TokenFilter, TokenStream, Tokenizer};
 use tantivy::{DocId, Index, IndexReader, IndexWriter, ReloadPolicy, Score, Term};
 use thiserror::Error;
+
+/// Token filter that assigns incrementing positions to tokens.
+/// NgramTokenizer sets all positions to 0, which breaks PhraseQuery.
+/// This filter fixes that so PhraseQuery can match contiguous ngrams.
+#[derive(Clone)]
+struct IncrementPositionFilter;
+
+impl TokenFilter for IncrementPositionFilter {
+    type Tokenizer<T: Tokenizer> = IncrementPositionFilterWrapper<T>;
+
+    fn transform<T: Tokenizer>(self, tokenizer: T) -> Self::Tokenizer<T> {
+        IncrementPositionFilterWrapper(tokenizer)
+    }
+}
+
+#[derive(Clone)]
+struct IncrementPositionFilterWrapper<T>(T);
+
+impl<T: Tokenizer> Tokenizer for IncrementPositionFilterWrapper<T> {
+    type TokenStream<'a> = IncrementPositionTokenStream<T::TokenStream<'a>>;
+
+    fn token_stream<'a>(&'a mut self, text: &'a str) -> Self::TokenStream<'a> {
+        IncrementPositionTokenStream {
+            inner: self.0.token_stream(text),
+            position: 0,
+        }
+    }
+}
+
+struct IncrementPositionTokenStream<T> {
+    inner: T,
+    position: usize,
+}
+
+impl<T: TokenStream> TokenStream for IncrementPositionTokenStream<T> {
+    fn advance(&mut self) -> bool {
+        if self.inner.advance() {
+            self.inner.token_mut().position = self.position;
+            self.position += 1;
+            true
+        } else {
+            false
+        }
+    }
+
+    fn token(&self) -> &tantivy::tokenizer::Token {
+        self.inner.token()
+    }
+
+    fn token_mut(&mut self) -> &mut tantivy::tokenizer::Token {
+        self.inner.token_mut()
+    }
+}
 
 /// Error type for indexer operations
 #[derive(Error, Debug)]
@@ -24,13 +78,11 @@ pub enum IndexerError {
     Directory(#[from] tantivy::directory::error::OpenDirectoryError),
     #[error("IO error: {0}")]
     Io(#[from] std::io::Error),
-    #[error("Query too short for trigram search")]
-    QueryTooShort,
 }
 
 pub type IndexerResult<T> = Result<T, IndexerError>;
 
-/// A search candidate from Tantivy (before fuzzy re-ranking)
+/// A search candidate from Tantivy (before bucket re-ranking)
 #[derive(Debug, Clone)]
 pub struct SearchCandidate {
     pub id: i64,
@@ -106,10 +158,13 @@ impl Indexer {
         builder.build()
     }
 
-    /// Register the trigram tokenizer with the index
+    /// Register the trigram tokenizer with the index.
+    /// NgramTokenizer assigns position=0 to all tokens, breaking PhraseQuery.
+    /// IncrementPositionFilter fixes this by assigning incrementing positions.
     fn register_tokenizer(index: &Index) {
         let tokenizer = TextAnalyzer::builder(NgramTokenizer::new(3, 3, false).unwrap())
             .filter(tantivy::tokenizer::LowerCaser)
+            .filter(IncrementPositionFilter)
             .build();
         index.tokenizers().register("trigram", tokenizer);
     }
@@ -157,114 +212,83 @@ impl Indexer {
         terms
     }
 
-    pub fn search(&self, query: &str, limit: usize) -> IndexerResult<(Vec<SearchCandidate>, usize)> {
+    /// Two-phase search: trigram recall (Phase 1) + bucket re-ranking (Phase 2).
+    pub fn search(&self, query: &str, limit: usize) -> IndexerResult<Vec<SearchCandidate>> {
+        #[cfg(feature = "perf-log")]
+        let t0 = std::time::Instant::now();
+        let candidates = self.trigram_recall(query, limit)?;
+        #[cfg(feature = "perf-log")]
+        let t1 = std::time::Instant::now();
+
+        if candidates.is_empty() || query.split_whitespace().count() == 0 {
+            #[cfg(feature = "perf-log")]
+            eprintln!("[perf] phase1={:.1}ms candidates=0", (t1 - t0).as_secs_f64() * 1000.0);
+            return Ok(candidates);
+        }
+
+        // Phase 2: Bucket re-ranking
+        let query_words: Vec<&str> = query.split_whitespace().collect();
+        let has_trailing_space = query.ends_with(' ');
+        let now = Utc::now().timestamp();
+
+        let mut scored: Vec<(crate::ranking::BucketScore, usize)> = candidates
+            .iter()
+            .enumerate()
+            .map(|(i, c)| {
+                let bucket = compute_bucket_score(
+                    &c.content,
+                    &query_words,
+                    !has_trailing_space,
+                    c.timestamp,
+                    c.tantivy_score,
+                    now,
+                );
+                (bucket, i)
+            })
+            .collect();
+
+        scored.sort_unstable_by(|a, b| b.0.cmp(&a.0));
+        scored.truncate(limit);
+
+        #[cfg(feature = "perf-log")]
+        {
+            let t2 = std::time::Instant::now();
+            eprintln!(
+                "[perf] phase1={:.1}ms phase2={:.1}ms candidates={}",
+                (t1 - t0).as_secs_f64() * 1000.0,
+                (t2 - t1).as_secs_f64() * 1000.0,
+                scored.len(),
+            );
+        }
+
+        let mut candidate_slots: Vec<Option<SearchCandidate>> =
+            candidates.into_iter().map(Some).collect();
+
+        Ok(scored
+            .into_iter()
+            .filter_map(|(_score, i)| candidate_slots[i].take())
+            .collect())
+    }
+
+    /// Phase 1: Trigram recall using Tantivy BM25.
+    ///
+    /// Builds an OR query from trigram terms with a min_match threshold.
+    /// For long queries (4+ words), only per-word trigrams are used (skipping
+    /// cross-word boundary trigrams) to reduce posting list evaluations.
+    fn trigram_recall(&self, query: &str, limit: usize) -> IndexerResult<Vec<SearchCandidate>> {
         let reader = self.reader.read();
         let searcher = reader.searcher();
 
-        let terms = self.trigram_terms(query);
-
-        // Query too short for trigrams - explicitly error as this should be handled by fallback
-        if terms.is_empty() {
-            return Err(IndexerError::QueryTooShort);
+        // Query too short for trigrams — return empty vec (caller handles fallback)
+        let has_trigrams = query.split_whitespace().any(|w| w.len() >= 3)
+            || query.trim().len() >= 3;
+        if !has_trigrams {
+            return Ok(Vec::new());
         }
 
-        let num_terms = terms.len();
-
-        // Build OR query from all trigram terms
-        let subqueries: Vec<_> = terms
-            .into_iter()
-            .map(|term| {
-                let q: Box<dyn tantivy::query::Query> =
-                    Box::new(TermQuery::new(term, IndexRecordOption::Basic));
-                (Occur::Should, q)
-            })
-            .collect();
-        let mut tantivy_query = BooleanQuery::new(subqueries);
-
-        // Require a minimum number of trigram terms to match, scaling with query
-        // length. This filters scattered single-trigram coincidences at the index
-        // level while preserving fuzzy/typo tolerance.
-        //
-        // - 1-2 trigrams (3-4 char query): require all (still fuzzy — few terms)
-        // - 3-6 trigrams (5-8 char query): require half (kills scattered matches)
-        // - 7-19 trigrams: require 2/3
-        // - 20+ trigrams: require 4/5 (common-word overlap in long documents)
-        if num_terms >= 3 {
-            let min_match = if num_terms >= 20 {
-                4 * num_terms / 5
-            } else if num_terms >= 7 {
-                (num_terms * 2 / 3).max(5)
-            } else {
-                (num_terms + 1) / 2 // ceil(n/2)
-            };
-            tantivy_query.set_minimum_number_should_match(min_match);
-        }
-
-        // Build phrase-boost queries for contiguity-aware scoring.
-        // For each query word >= 4 chars, create a PhraseQuery from its trigrams
-        // and wrap it in a BoostQuery. Documents with contiguous word matches
-        // get naturally higher BM25 + phrase scores.
-        let words: Vec<&str> = query.split_whitespace().collect();
-        let mut phrase_boosts: Vec<(Occur, Box<dyn tantivy::query::Query>)> = Vec::new();
-
-        for word in &words {
-            if word.len() < 3 {
-                continue;
-            }
-            let word_terms = self.trigram_terms(word);
-            if word_terms.len() >= 2 {
-                let phrase = PhraseQuery::new(word_terms);
-                let boosted: Box<dyn tantivy::query::Query> =
-                    Box::new(BoostQuery::new(Box::new(phrase), 2.0));
-                phrase_boosts.push((Occur::Should, boosted));
-            }
-        }
-
-        // Word-pair proximity boosts: for consecutive query word pairs,
-        // tokenize "word1 word2" together. Cross-boundary trigrams form a
-        // PhraseQuery that fires only when the words are adjacent.
-        if words.len() >= 2 {
-            for pair in words.windows(2) {
-                if pair[0].len() < 2 || pair[1].len() < 2 {
-                    continue;
-                }
-                let pair_str = format!("{} {}", pair[0], pair[1]);
-                let pair_terms = self.trigram_terms(&pair_str);
-                if pair_terms.len() >= 2 {
-                    let phrase = PhraseQuery::new(pair_terms);
-                    let boosted: Box<dyn tantivy::query::Query> =
-                        Box::new(BoostQuery::new(Box::new(phrase), 3.0));
-                    phrase_boosts.push((Occur::Should, boosted));
-                }
-            }
-        }
-
-        // Full-query exactness boost: tokenize the entire multi-word query
-        // into trigrams. PhraseQuery rewards documents containing the full
-        // query as a contiguous phrase.
-        if words.len() >= 2 {
-            let full_terms = self.trigram_terms(query);
-            if full_terms.len() >= 2 {
-                let phrase = PhraseQuery::new(full_terms);
-                let boosted: Box<dyn tantivy::query::Query> =
-                    Box::new(BoostQuery::new(Box::new(phrase), 5.0));
-                phrase_boosts.push((Occur::Should, boosted));
-            }
-        }
-
-        // Combine recall query (MUST) with phrase boosts (SHOULD)
-        let final_query: Box<dyn tantivy::query::Query> = if phrase_boosts.is_empty() {
-            Box::new(tantivy_query)
-        } else {
-            let mut outer_parts: Vec<(Occur, Box<dyn tantivy::query::Query>)> = Vec::new();
-            outer_parts.push((Occur::Must, Box::new(tantivy_query)));
-            outer_parts.extend(phrase_boosts);
-            Box::new(BooleanQuery::new(outer_parts))
-        };
+        let final_query = self.build_trigram_query(query);
 
         // Use tweak_score to blend BM25 with recency at collection time.
-        // Tantivy's top-K heap works on the final blended score, so we get
-        // the true top results without a separate sort step.
         let timestamp_field = self.schema.get_field("timestamp").unwrap();
         let now = Utc::now().timestamp();
 
@@ -283,7 +307,7 @@ impl Indexer {
                 }
             });
 
-        let (top_docs, total_count) = searcher.search(final_query.as_ref(), &(top_collector, Count))?;
+        let top_docs = searcher.search(final_query.as_ref(), &top_collector)?;
 
         let mut candidates = Vec::with_capacity(top_docs.len());
         for (blended_score, doc_address) in top_docs {
@@ -312,9 +336,128 @@ impl Indexer {
             });
         }
 
-        Ok((candidates, total_count))
+        Ok(candidates)
     }
 
+    /// Build a trigram query with phrase boosts for contiguity scoring.
+    ///
+    /// Base query: OR of trigram terms with min_match threshold.
+    /// Phrase boosts: PhraseQuery per word (2x), per word-pair (3x), full query (5x).
+    /// These boost documents where query words appear as contiguous substrings,
+    /// improving candidate quality in the top-2000 results fed to Phase 2.
+    ///
+    /// For long queries (4+ words), only per-word trigrams are used in the base
+    /// query (skipping cross-word boundary trigrams like "lo " from "hello world")
+    /// to reduce posting list evaluations.
+    fn build_trigram_query(&self, query: &str) -> Box<dyn tantivy::query::Query> {
+        let words: Vec<&str> = query.split_whitespace().collect();
+        let is_long_query = words.len() >= 4;
+
+        let terms = if is_long_query {
+            // Long query: per-word trigrams only (skip cross-word boundary trigrams)
+            let mut all_terms = Vec::new();
+            let mut seen = std::collections::HashSet::new();
+            for word in &words {
+                for term in self.trigram_terms(word) {
+                    if seen.insert(term.clone()) {
+                        all_terms.push(term);
+                    }
+                }
+            }
+            all_terms
+        } else {
+            // Short query: full-string trigrams (includes cross-word boundaries)
+            self.trigram_terms(query)
+        };
+
+        if terms.is_empty() {
+            return Box::new(BooleanQuery::new(Vec::new()));
+        }
+
+        let num_terms = terms.len();
+
+        let subqueries: Vec<_> = terms
+            .into_iter()
+            .map(|term| {
+                let q: Box<dyn tantivy::query::Query> =
+                    Box::new(TermQuery::new(term, IndexRecordOption::Basic));
+                (Occur::Should, q)
+            })
+            .collect();
+        let mut recall_query = BooleanQuery::new(subqueries);
+
+        if num_terms >= 3 {
+            let min_match = if is_long_query {
+                // Per-word trigrams are individually meaningful (no cross-word
+                // boundary noise like "lo " or " wo"), so common English words
+                // match easily. Use a strict 4/5 threshold to reject scattered
+                // coincidences.
+                (4 * num_terms / 5).max(3)
+            } else if num_terms >= 20 {
+                4 * num_terms / 5
+            } else if num_terms >= 7 {
+                (num_terms * 2 / 3).max(5)
+            } else {
+                (num_terms + 1) / 2
+            };
+            recall_query.set_minimum_number_should_match(min_match);
+        }
+
+        // Phrase boosts: score documents higher when query words appear as
+        // contiguous substrings. This improves candidate quality in the top-2000.
+        let mut phrase_boosts: Vec<(Occur, Box<dyn tantivy::query::Query>)> = Vec::new();
+
+        // Per-word phrase boost (2x): each word's trigrams must be contiguous
+        for word in &words {
+            if word.len() < 3 {
+                continue;
+            }
+            let word_terms = self.trigram_terms(word);
+            if word_terms.len() >= 2 {
+                let phrase = PhraseQuery::new(word_terms);
+                let boosted: Box<dyn tantivy::query::Query> =
+                    Box::new(BoostQuery::new(Box::new(phrase), 2.0));
+                phrase_boosts.push((Occur::Should, boosted));
+            }
+        }
+
+        // Word-pair proximity boost (3x) — skip for long queries to limit cost
+        if words.len() >= 2 && !is_long_query {
+            for pair in words.windows(2) {
+                if pair[0].len() < 2 || pair[1].len() < 2 {
+                    continue;
+                }
+                let pair_str = format!("{} {}", pair[0], pair[1]);
+                let pair_terms = self.trigram_terms(&pair_str);
+                if pair_terms.len() >= 2 {
+                    let phrase = PhraseQuery::new(pair_terms);
+                    let boosted: Box<dyn tantivy::query::Query> =
+                        Box::new(BoostQuery::new(Box::new(phrase), 3.0));
+                    phrase_boosts.push((Occur::Should, boosted));
+                }
+            }
+        }
+
+        // Full-query exactness boost (5x) — skip for long queries
+        if words.len() >= 2 && !is_long_query {
+            let full_terms = self.trigram_terms(query);
+            if full_terms.len() >= 2 {
+                let phrase = PhraseQuery::new(full_terms);
+                let boosted: Box<dyn tantivy::query::Query> =
+                    Box::new(BoostQuery::new(Box::new(phrase), 5.0));
+                phrase_boosts.push((Occur::Should, boosted));
+            }
+        }
+
+        if phrase_boosts.is_empty() {
+            Box::new(recall_query)
+        } else {
+            let mut outer: Vec<(Occur, Box<dyn tantivy::query::Query>)> = Vec::new();
+            outer.push((Occur::Must, Box::new(recall_query)));
+            outer.extend(phrase_boosts);
+            Box::new(BooleanQuery::new(outer))
+        }
+    }
 
     pub fn clear(&self) -> IndexerResult<()> {
         let mut writer = self.writer.write();
@@ -336,6 +479,24 @@ impl Indexer {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn test_phrase_query_works_with_position_fix() {
+        let indexer = Indexer::new_in_memory().unwrap();
+        indexer.add_document(1, "hello world", 1000).unwrap();
+        indexer.add_document(2, "shell output log", 1000).unwrap();
+        indexer.commit().unwrap();
+
+        let reader = indexer.reader.read();
+        let searcher = reader.searcher();
+
+        // PhraseQuery for "hello" should match doc 1 (contiguous "hello")
+        // but NOT doc 2 (has "hel" from "shell" but not contiguous "hello")
+        let phrase_terms = indexer.trigram_terms("hello");
+        let phrase_q = tantivy::query::PhraseQuery::new(phrase_terms);
+        let results = searcher.search(&phrase_q, &TopDocs::with_limit(10)).unwrap();
+        assert_eq!(results.len(), 1, "PhraseQuery should find exactly 1 doc");
+    }
 
     #[test]
     fn test_indexer_creation() {
