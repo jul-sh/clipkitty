@@ -699,8 +699,16 @@ mod tests {
     }
 
     #[test]
-    fn test_highlight_no_false_fuzzy_short_word() {
+    fn test_highlight_subsequence_short_word() {
+        // "helo" matches "hello" via subsequence (all chars in order)
         let words = highlighted_words("hello world", &["helo"]);
+        assert_eq!(words, vec!["hello"]);
+    }
+
+    #[test]
+    fn test_highlight_no_match_short_word() {
+        // "hx" is too short for subsequence (< 3 chars) and no fuzzy for short words
+        let words = highlighted_words("hello world", &["hx"]);
         assert!(words.is_empty());
     }
 

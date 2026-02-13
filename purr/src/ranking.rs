@@ -157,6 +157,18 @@ fn match_query_words(
                             });
                         }
                     }
+                    WordMatchKind::Subsequence(gaps) => {
+                        let dist = gaps.saturating_add(1);
+                        let is_better = best.as_ref().map_or(true, |b| dist < b.edit_dist);
+                        if is_better {
+                            best = Some(WordMatch {
+                                matched: true,
+                                edit_dist: dist,
+                                doc_word_pos: dpos,
+                                is_exact: false,
+                            });
+                        }
+                    }
                     WordMatchKind::None => {}
                 }
             }
@@ -178,11 +190,12 @@ pub(crate) enum WordMatchKind {
     Exact,
     Prefix,
     Fuzzy(u8),
+    Subsequence(u8),
 }
 
 /// Check if a query word matches a document word using the same criteria
-/// as ranking: exact -> prefix (if allowed, >= 2 chars) -> fuzzy (edit distance).
-/// Both inputs must already be lowercased.
+/// as ranking: exact -> prefix (if allowed, >= 2 chars) -> fuzzy (edit distance)
+/// -> subsequence (abbreviation). Both inputs must already be lowercased.
 pub(crate) fn does_word_match(qw_lower: &str, dw_lower: &str, allow_prefix: bool) -> WordMatchKind {
     if dw_lower == qw_lower {
         return WordMatchKind::Exact;
@@ -198,7 +211,56 @@ pub(crate) fn does_word_match(qw_lower: &str, dw_lower: &str, allow_prefix: bool
             }
         }
     }
+    if let Some(gaps) = subsequence_match(qw_lower, dw_lower) {
+        return WordMatchKind::Subsequence(gaps);
+    }
     WordMatchKind::None
+}
+
+/// Check if all characters in `query` appear in order in `target`.
+/// Returns the number of gaps (non-contiguous segments - 1) if matched, None otherwise.
+fn subsequence_match(query: &str, target: &str) -> Option<u8> {
+    let q_chars: Vec<char> = query.chars().collect();
+    let t_chars: Vec<char> = target.chars().collect();
+
+    // Min 3 chars to avoid spurious matches
+    if q_chars.len() < 3 {
+        return None;
+    }
+    // Must be shorter than target (equal/longer is exact territory)
+    if q_chars.len() >= t_chars.len() {
+        return None;
+    }
+    // Query must cover at least 50% of target length
+    if q_chars.len() * 2 < t_chars.len() {
+        return None;
+    }
+    // First character must match (abbreviations preserve the initial letter)
+    if q_chars[0] != t_chars[0] {
+        return None;
+    }
+
+    let mut qi = 0;
+    let mut gaps = 0u8;
+    let mut prev_matched = false;
+
+    for &tc in &t_chars {
+        if qi < q_chars.len() && tc == q_chars[qi] {
+            if !prev_matched && qi > 0 {
+                gaps = gaps.saturating_add(1);
+            }
+            qi += 1;
+            prev_matched = true;
+        } else {
+            prev_matched = false;
+        }
+    }
+
+    if qi == q_chars.len() {
+        Some(gaps)
+    } else {
+        None
+    }
 }
 
 /// Maximum allowed edit distance based on word length (Milli's graduation).
@@ -267,7 +329,8 @@ fn compute_exactness(content: &str, query_words: &[&str], word_matches: &[WordMa
     0
 }
 
-/// Wagner-Fischer edit distance with threshold pruning.
+/// Damerau-Levenshtein edit distance (optimal string alignment) with threshold pruning.
+/// Counts insertions, deletions, substitutions, and adjacent transpositions each as 1 edit.
 /// Returns `Some(distance)` if distance <= max_dist, `None` otherwise.
 pub fn edit_distance_bounded(a: &str, b: &str, max_dist: u8) -> Option<u8> {
     let a_chars: Vec<char> = a.chars().collect();
@@ -280,6 +343,7 @@ pub fn edit_distance_bounded(a: &str, b: &str, max_dist: u8) -> Option<u8> {
         return None;
     }
 
+    let mut prev2 = vec![0usize; n + 1];
     let mut prev: Vec<usize> = (0..=n).collect();
     let mut curr = vec![0usize; n + 1];
 
@@ -292,6 +356,15 @@ pub fn edit_distance_bounded(a: &str, b: &str, max_dist: u8) -> Option<u8> {
             curr[j] = (prev[j] + 1)
                 .min(curr[j - 1] + 1)
                 .min(prev[j - 1] + cost);
+
+            if i >= 2
+                && j >= 2
+                && a_chars[i - 1] == b_chars[j - 2]
+                && a_chars[i - 2] == b_chars[j - 1]
+            {
+                curr[j] = curr[j].min(prev2[j - 2] + 1);
+            }
+
             row_min = row_min.min(curr[j]);
         }
 
@@ -299,6 +372,7 @@ pub fn edit_distance_bounded(a: &str, b: &str, max_dist: u8) -> Option<u8> {
             return None;
         }
 
+        std::mem::swap(&mut prev2, &mut prev);
         std::mem::swap(&mut prev, &mut curr);
     }
 
@@ -353,6 +427,64 @@ mod tests {
         assert_eq!(edit_distance_bounded("rivrsid", "riverside", 2), Some(2));
     }
 
+    #[test]
+    fn test_edit_distance_transposition() {
+        // Adjacent swap counts as 1 edit with Damerau-Levenshtein
+        assert_eq!(edit_distance_bounded("improt", "import", 1), Some(1));
+        assert_eq!(edit_distance_bounded("teh", "the", 1), Some(1));
+        assert_eq!(edit_distance_bounded("recieve", "receive", 1), Some(1));
+    }
+
+    // ── subsequence_match tests ───────────────────────────────────
+
+    #[test]
+    fn test_subsequence_one_skip() {
+        // "helo" in "hello": h-e-l match, then extra 'l' breaks contiguity, then o
+        assert_eq!(subsequence_match("helo", "hello"), Some(1));
+    }
+
+    #[test]
+    fn test_subsequence_contiguous() {
+        // "hell" in "hello": h-e-l-l all contiguous
+        assert_eq!(subsequence_match("hell", "hello"), Some(0));
+    }
+
+    #[test]
+    fn test_subsequence_with_gaps() {
+        // "impt" in "import": i-m-p contiguous, then gap (o,r), then t
+        assert_eq!(subsequence_match("impt", "import"), Some(1));
+    }
+
+    #[test]
+    fn test_subsequence_too_short() {
+        assert_eq!(subsequence_match("ab", "abc"), None);
+    }
+
+    #[test]
+    fn test_subsequence_low_coverage() {
+        // 3 chars vs 7 = 43% < 50%
+        assert_eq!(subsequence_match("abc", "abcdefg"), None);
+    }
+
+    #[test]
+    fn test_subsequence_not_found() {
+        assert_eq!(subsequence_match("xyz", "hello"), None);
+    }
+
+    #[test]
+    fn test_subsequence_equal_length() {
+        // Same length → should be exact match territory, not subsequence
+        assert_eq!(subsequence_match("abc", "abc"), None);
+    }
+
+    #[test]
+    fn test_subsequence_first_char_must_match() {
+        // "url" in "curl" — first chars differ, rejected
+        assert_eq!(subsequence_match("url", "curl"), None);
+        // "port" in "import" — first chars differ, rejected
+        assert_eq!(subsequence_match("port", "import"), None);
+    }
+
     // ── max_edit_distance tests ──────────────────────────────────
 
     #[test]
@@ -385,8 +517,25 @@ mod tests {
     fn test_does_word_match_fuzzy() {
         // "riversde" (8 chars) -> max_dist 1
         assert_eq!(does_word_match("riversde", "riverside", false), WordMatchKind::Fuzzy(1));
-        // "helo" (4 chars) -> max_dist 0, no fuzzy
-        assert_eq!(does_word_match("helo", "hello", false), WordMatchKind::None);
+        // "improt" (6 chars) -> max_dist 1, transposition counts as 1
+        assert_eq!(does_word_match("improt", "import", false), WordMatchKind::Fuzzy(1));
+    }
+
+    #[test]
+    fn test_does_word_match_subsequence() {
+        // "helo" (4 chars) -> fuzzy disabled (max_dist 0), subsequence with 1 gap
+        assert_eq!(does_word_match("helo", "hello", false), WordMatchKind::Subsequence(1));
+        // "impt" (4 chars) -> abbreviation of "import", 1 gap (imp|t)
+        assert_eq!(does_word_match("impt", "import", false), WordMatchKind::Subsequence(1));
+        // "cls" (3 chars) -> abbreviation of "class"
+        assert_eq!(does_word_match("cls", "class", false), WordMatchKind::Subsequence(1));
+        // Too short for subsequence (< 3 chars)
+        assert_eq!(does_word_match("ab", "abc", false), WordMatchKind::None);
+        // Coverage too low: 3 chars vs 7 char target (43% < 50%)
+        assert_eq!(does_word_match("abc", "abcdefg", false), WordMatchKind::None);
+        // Fuzzy takes priority over subsequence when both could match
+        // "imprt" (5 chars) has edit_distance 1 to "import", so fuzzy wins
+        assert_eq!(does_word_match("imprt", "import", false), WordMatchKind::Fuzzy(1));
     }
 
     // ── match_query_words tests ──────────────────────────────────
@@ -426,10 +575,12 @@ mod tests {
     }
 
     #[test]
-    fn test_match_no_fuzzy_short_word() {
+    fn test_match_subsequence_short_word() {
+        // "helo" (4 chars) matches "hello" via subsequence (1 gap), not fuzzy
         let doc_words = vec!["hello"];
         let matches = match_query_words(&["helo"], &doc_words, false);
-        assert!(!matches[0].matched);
+        assert!(matches[0].matched);
+        assert_eq!(matches[0].edit_dist, 2); // gaps(1) + 1
     }
 
     #[test]
