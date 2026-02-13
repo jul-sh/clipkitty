@@ -6,63 +6,28 @@
 NIX_SHELL := ./Scripts/run-in-nix.sh -c
 
 APP_NAME := ClipKitty
-BUNDLE_ID := com.eviljuliette.clipkitty
 SCRIPT_DIR := $(abspath $(dir $(lastword $(MAKEFILE_LIST))))
 
 # Version: override via `make all VERSION=1.2.3 BUILD_NUMBER=42`
 VERSION ?= 1.0.0
 BUILD_NUMBER ?= $(shell git rev-list --count HEAD 2>/dev/null || echo 1)
-ICON_SOURCE := $(SCRIPT_DIR)/AppIcon.icon
 
-# Detect Xcode availability (required for UI tests, marketing assets, universal binaries)
-HAVE_XCODE := $(shell xcodebuild -version >/dev/null 2>&1 && echo true || echo false)
+# Build configuration: Debug, Release (DMG), or AppStore (sandboxed)
+CONFIGURATION ?= Release
 
-# Universal binaries require Xcode; without it, build for native arch only
-ifeq ($(HAVE_XCODE),true)
-ARCHS ?= arm64 x86_64
-else
-ARCHS ?= $(shell uname -m)
-endif
-SWIFT_ARCH_FLAGS := $(foreach arch,$(ARCHS),--arch $(arch))
+# DerivedData location for deterministic output paths
+DERIVED_DATA := $(SCRIPT_DIR)/DerivedData
 
-# Sandboxing control (default true)
-SANDBOX ?= true
-
-# The core app bundle components (bundle name is always the same)
-APP_BUNDLE := $(APP_NAME).app
-APP_BINARY := $(APP_BUNDLE)/Contents/MacOS/$(APP_NAME)
-APP_PLIST := $(APP_BUNDLE)/Contents/Info.plist
-APP_ICONS := $(APP_BUNDLE)/Contents/Resources/Assets.car
-ENTITLEMENTS := $(if $(filter true,$(SANDBOX)),Sources/App/ClipKitty-Sandboxed.entitlements,Sources/App/ClipKitty.entitlements)
+# Signing identity: auto-detects Developer ID cert, falls back to ad-hoc (-)
+SIGNING_IDENTITY ?= $(shell security find-identity -v -p codesigning 2>/dev/null | grep -q "Developer ID Application" && echo "Developer ID Application" || echo "-")
 
 # Rust build marker and outputs
 RUST_MARKER := .make/rust.marker
 RUST_LIB := Sources/ClipKittyRust/libpurr.a
 
-# Common Swift build command
-SWIFT_SANDBOX_FLAG := $(if $(filter true,$(SANDBOX)),-Xswiftc -DSANDBOXED,)
-SWIFT_BUILD := GIT_CONFIG_COUNT=1 GIT_CONFIG_KEY_0=safe.bareRepository GIT_CONFIG_VALUE_0=all swift build -c release --build-system native $(SWIFT_ARCH_FLAGS) $(SWIFT_SANDBOX_FLAG)
+.PHONY: all clean rust rust-force generate build sign list-identities
 
-# Icon handling - compile with actool if Xcode available, otherwise use pre-compiled .icns
-ifeq ($(HAVE_XCODE),true)
-define setup-icons
-xcrun actool "$(ICON_SOURCE)" --compile $(1) --platform macosx --target-device mac \
-	--minimum-deployment-target 15.0 --app-icon AppIcon --include-all-app-icons \
-	--output-partial-info-plist /dev/null
-endef
-else
-define setup-icons
-cp "$(SCRIPT_DIR)/AppIcon.icns" $(1)/AppIcon.icns
-endef
-endif
-
-.PHONY: all clean sign build-binary rust rust-force list-identities
-
-# Signing identity: auto-detects Developer ID cert, falls back to ad-hoc (-)
-# Override: make sign SIGNING_IDENTITY="Developer ID Application: ..."
-SIGNING_IDENTITY ?= $(shell security find-identity -v -p codesigning 2>/dev/null | grep -q "Developer ID Application" && echo "Developer ID Application" || echo "-")
-
-all: $(APP_BUNDLE)
+all: rust generate build
 
 # Marker-based Rust build - only rebuilds if sources changed
 # Uses git ls-files to get all tracked files in purr (respects .gitignore)
@@ -81,53 +46,33 @@ rust-force:
 	@rm -f $(RUST_MARKER)
 	@$(MAKE) rust
 
-# Build just the binary using SwiftPM
-build-binary: rust
-	@echo "Building binary (SANDBOX=$(SANDBOX))..."
-	@$(SWIFT_BUILD)
-
-# Create the bundle structure and copy the binary
-$(APP_BINARY): build-binary
-	@echo "Creating app bundle structure..."
-	@mkdir -p "$(APP_BUNDLE)/Contents/MacOS" "$(APP_BUNDLE)/Contents/Resources"
-	@BIN=$$($(SWIFT_BUILD) --show-bin-path); \
-		cp "$$BIN/$(APP_NAME)" "$(APP_BINARY)"; \
-		test -d "$$BIN/$(APP_NAME)_$(APP_NAME).bundle" && \
-		cp -R "$$BIN/$(APP_NAME)_$(APP_NAME).bundle" "$(APP_BUNDLE)/Contents/Resources/" || true
-	@cp "Sources/App/PrivacyInfo.xcprivacy" "$(APP_BUNDLE)/Contents/Resources/"
-
-
-# Generate Info.plist
-$(APP_PLIST):
-	@echo "Generating Info.plist..."
-	@mkdir -p "$(APP_BUNDLE)/Contents"
-	@swift Scripts/GenInfoPlist.swift "$(APP_PLIST)" --version "$(VERSION)" --build "$(BUILD_NUMBER)"
-	@touch "$(APP_BUNDLE)"
-
-# Setup icons (compile or copy depending on Xcode availability)
-$(APP_ICONS): $(ICON_SOURCE)
-	@echo "Setting up icons..."
-	@mkdir -p "$(APP_BUNDLE)/Contents/Resources"
-	@$(call setup-icons,"$(APP_BUNDLE)/Contents/Resources")
-
-# Minimal app bundle for tests
-$(APP_BUNDLE): $(APP_BINARY) $(APP_PLIST) $(APP_ICONS)
-	@touch "$(APP_BUNDLE)"
-
-# Xcode project generation
-ClipKitty.xcodeproj: Scripts/GenXcodeproj.swift $(wildcard Tests/UITests/*.swift)
+# Resolve dependencies and generate Xcode project from Tuist manifest
+generate:
+	@echo "Resolving dependencies..."
+	@tuist install
 	@echo "Generating Xcode project..."
-	@swift Scripts/GenXcodeproj.swift
+	@tuist generate --no-open
+
+# Build using xcodebuild
+build:
+	@echo "Building $(APP_NAME) ($(CONFIGURATION))..."
+	@xcodebuild -scheme $(APP_NAME) \
+		-configuration $(CONFIGURATION) \
+		-derivedDataPath $(DERIVED_DATA) \
+		MARKETING_VERSION=$(VERSION) \
+		CURRENT_PROJECT_VERSION=$(BUILD_NUMBER) \
+		build
+
+# Sign the built app (for distribution)
+sign:
+	@echo "Signing $(APP_NAME) (identity: $(SIGNING_IDENTITY), config: $(CONFIGURATION))..."
+	@codesign --force --options runtime \
+		--sign "$(SIGNING_IDENTITY)" \
+		"$(DERIVED_DATA)/Build/Products/$(CONFIGURATION)/$(APP_NAME).app"
 
 clean:
-	@git stash push --quiet
-	@git clean -fdx
-	@git stash pop --quiet || true
-	@rm -rf .make
-
-sign: $(APP_BUNDLE)
-	@echo "Signing with $(if $(filter true,$(SANDBOX)),sandboxed,standard) entitlements (identity: $(SIGNING_IDENTITY))..."
-	@codesign --force --options runtime --sign "$(SIGNING_IDENTITY)" --entitlements "$(ENTITLEMENTS)" "$(APP_BUNDLE)"
+	@rm -rf .make DerivedData
+	@tuist clean 2>/dev/null || true
 
 # Show available signing identities (helpful for setup)
 list-identities:
