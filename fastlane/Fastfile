@@ -1,5 +1,7 @@
 default_platform(:mac)
 
+METADATA_DIR = File.join(Dir.pwd, "metadata")
+
 platform :mac do
   def api_key
     app_store_connect_api_key(
@@ -10,49 +12,53 @@ platform :mac do
     )
   end
 
+  # Common deliver options shared across lanes
+  def deliver_defaults
+    {
+      api_key: api_key,
+      force: true,
+      run_precheck_before_submit: false,
+      precheck_include_in_app_purchases: false,
+      price_tier: 7,
+      app_rating_config_path: File.join(METADATA_DIR, "rating_config.json"),
+      app_privacy_details_path: File.join(METADATA_DIR, "app_privacy_details.json")
+    }
+  end
+
   desc "Upload build, metadata, and screenshots to App Store Connect"
   lane :release do
     deliver(
-      api_key: api_key,
-      pkg: File.join(Dir.pwd, "..", "ClipKitty.pkg"),
-      force: true,
-      run_precheck_before_submit: false,
-      precheck_include_in_app_purchases: false
+      **deliver_defaults,
+      pkg: File.join(Dir.pwd, "..", "ClipKitty.pkg")
     )
   end
 
   desc "Upload build only (no metadata update)"
   lane :upload do
     deliver(
-      api_key: api_key,
+      **deliver_defaults,
       pkg: File.join(Dir.pwd, "..", "ClipKitty.pkg"),
       skip_metadata: true,
-      skip_screenshots: true,
-      force: true,
-      run_precheck_before_submit: false
+      skip_screenshots: true
     )
   end
 
   desc "Update metadata and screenshots only (no build upload)"
   lane :metadata do
     deliver(
-      api_key: api_key,
-      skip_binary_upload: true,
-      force: true,
-      run_precheck_before_submit: false
+      **deliver_defaults,
+      skip_binary_upload: true
     )
   end
 
   desc "Submit the latest build for App Review"
   lane :submit do
     deliver(
-      api_key: api_key,
+      **deliver_defaults,
       skip_binary_upload: true,
       skip_metadata: true,
       skip_screenshots: true,
       submit_for_review: true,
-      force: true,
-      run_precheck_before_submit: false,
       submission_information: {
         add_id_info_uses_idfa: false
       }

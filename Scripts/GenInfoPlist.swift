@@ -1,10 +1,30 @@
 #!/usr/bin/env swift
 // Generates Info.plist for ClipKitty app bundle
+//
+// Usage: swift GenInfoPlist.swift [output-path] [--version X.Y.Z] [--build N]
 
 import Foundation
 
 let appName = "ClipKitty"
 let bundleId = "com.eviljuliette.clipkitty"
+
+// Parse arguments
+var outputPath = "ClipKitty.app/Contents/Info.plist"
+var version = "1.0.0"
+var build = "1"
+
+var args = Array(CommandLine.arguments.dropFirst())
+while !args.isEmpty {
+    let arg = args.removeFirst()
+    switch arg {
+    case "--version":
+        if !args.isEmpty { version = args.removeFirst() }
+    case "--build":
+        if !args.isEmpty { build = args.removeFirst() }
+    default:
+        if !arg.hasPrefix("-") { outputPath = arg }
+    }
+}
 
 let plist: [String: Any] = [
     "CFBundleExecutable": appName,
@@ -14,20 +34,12 @@ let plist: [String: Any] = [
     "CFBundleIconName": "AppIcon",
     "CFBundleIconFile": "AppIcon",
     "CFBundlePackageType": "APPL",
-    "CFBundleVersion": "1.0",
-    "CFBundleShortVersionString": "1.0",
+    "CFBundleVersion": build,
+    "CFBundleShortVersionString": version,
     "LSMinimumSystemVersion": "15.0",
     "LSUIElement": true,
-    "NSHumanReadableCopyright": "Copyright © 2024 ClipKitty. All rights reserved."
+    "NSHumanReadableCopyright": "Copyright © 2025 ClipKitty. All rights reserved."
 ]
-
-// Get output path from args or use default
-let outputPath: String
-if CommandLine.arguments.count > 1 {
-    outputPath = CommandLine.arguments[1]
-} else {
-    outputPath = "ClipKitty.app/Contents/Info.plist"
-}
 
 // Create directory if needed
 let outputURL = URL(fileURLWithPath: outputPath)
@@ -44,4 +56,4 @@ let data = try PropertyListSerialization.data(
 )
 try data.write(to: outputURL)
 
-print("Generated \(outputPath)")
+print("Generated \(outputPath) (version: \(version), build: \(build))")
