@@ -1,23 +1,21 @@
-Your clipboard history from day one. Searchable in milliseconds.
+Stop guessing. Start finding.
 
-You copied that command last week. That document yesterday. That address three months ago. Your clipboard manager either forgot it, slowed to a crawl searching for it, or truncated half of it.
+Most clipboard managers delete your history after a few days or limit you to a handful of clips. ClipKitty is built for the power user who needs an infinite, searchable archive of everything they've ever copied.
 
-ClipKitty stores everything. Advanced fuzzy search means zero lag, whether you're filtering through ten items or ten million. Built for people who copy lots of things and need to find them again.
+WHY CLIPKITTY?
 
-UNLIMITED HISTORY
-Your clipboard history never expires, never truncates, and never hits a cap. ClipKitty stores every item you copy while staying lightweight. Whether it's a code snippet from last week or an address from three months ago, it's there when you need it.
+Unlimited History — No caps, no limits. If you copied it a year ago, it's still there. Text, code, links, colors — nothing expires, nothing gets truncated.
 
-FUZZY SEARCH THAT SCALES
-Type "improt" and find "import". ClipKitty uses tantivy, the same search engine infrastructure used in production systems. Results stay instant whether your history holds 100 items or 1,000,000.
+Multi-Line Previews — Stop flying blind with single-line snippets. See full code blocks, emails, and multi-paragraph text in a dedicated preview pane before you paste.
 
-LIVE MULTI-LINE PREVIEW
-See full content instantly in a dedicated preview pane as you navigate. No truncation, no character limits, no hovering for tooltips. Code blocks, long URLs, multi-paragraph text — see it all at a glance.
+Instant Search — Find any snippet in milliseconds, even across a library of millions. Fuzzy matching means typos don't slow you down. Type "improt" and find "import".
 
-KEYBOARD-FIRST
-Option+Space to open, arrow keys to navigate, Return to paste. Jump to any of the first 9 items with Command+1 through Command+9. Fast, focused, no friction.
+Privacy First — Your data never leaves your Mac. No cloud sync, no analytics, no telemetry. Everything stays on-device, always.
 
-PRIVACY-FIRST
-Runs entirely on-device and offline. No telemetry, no analytics, no cloud sync. Your clipboard data never leaves your Mac. Period.
+Native & Fast — Built with Swift and Rust, optimized for Apple Silicon. Runs silently in your menu bar with minimal memory and zero CPU when idle.
 
-LIGHTWEIGHT & NATIVE
-Built with Swift and Rust for maximum performance. Runs quietly in the menu bar using minimal memory and zero CPU when idle. Requires macOS 15 or later.
+KEYBOARD-DRIVEN WORKFLOW
+
+Option+Space to summon your history. Arrow keys to browse. Return to paste. Command+1 through 9 to jump. No mouse required.
+
+ClipKitty is the clipboard manager that works as hard as you do.

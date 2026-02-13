@@ -1,1 +1,1 @@
-ClipKitty
+ClipKitty: Clipboard Manager
