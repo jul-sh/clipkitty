@@ -12,8 +12,8 @@ use crate::search::{tokenize_words, is_word_token};
 ///
 /// Tuple order (most to least important):
 /// 1. words_matched — count of query words found
-/// 2. typo_score — 255 - total_edit_distance (fewer typos = higher)
-/// 3. recency_tier — 3=<1h, 2=<24h, 1=<7d, 0=older (strong recency bias)
+/// 2. recency_score — smooth exponential decay (255=now, 0=old), no cliff edges
+/// 3. typo_score — 255 - total_edit_distance (fewer typos = higher)
 /// 4. proximity_score — u16::MAX - sum_of_pair_distances
 /// 5. exactness_score — 0-3 level
 /// 6. bm25_quantized — BM25 scaled to integer
@@ -21,8 +21,8 @@ use crate::search::{tokenize_words, is_word_token};
 #[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord)]
 pub struct BucketScore {
     pub words_matched: u8,
+    pub recency_score: u8,
     pub typo_score: u8,
-    pub recency_tier: u8,
     pub proximity_score: u16,
     pub exactness_score: u8,
     pub bm25_quantized: u16,
@@ -53,8 +53,8 @@ pub fn compute_bucket_score(
     if query_words.is_empty() {
         return BucketScore {
             words_matched: 0,
+            recency_score: compute_recency_score(timestamp, now),
             typo_score: 255,
-            recency_tier: compute_recency_tier(timestamp, now),
             proximity_score: u16::MAX,
             exactness_score: 0,
             bm25_quantized: quantize_bm25(bm25_score),
@@ -81,12 +81,12 @@ pub fn compute_bucket_score(
     let proximity_score = compute_proximity(&word_matches);
     let exactness_score = compute_exactness(content, query_words, &word_matches);
     let bm25_quantized = quantize_bm25(bm25_score);
-    let recency_tier = compute_recency_tier(timestamp, now);
+    let recency_score = compute_recency_score(timestamp, now);
 
     BucketScore {
         words_matched,
+        recency_score,
         typo_score,
-        recency_tier,
         proximity_score,
         exactness_score,
         bm25_quantized,
@@ -94,19 +94,30 @@ pub fn compute_bucket_score(
     }
 }
 
-/// Compute recency tier from timestamp.
-/// 3 = last 1 hour, 2 = last 24 hours, 1 = last 7 days, 0 = older
-fn compute_recency_tier(timestamp: i64, now: i64) -> u8 {
-    let age_secs = (now - timestamp).max(0);
-    if age_secs < 3600 {
-        3
-    } else if age_secs < 86400 {
-        2
-    } else if age_secs < 604800 {
-        1
-    } else {
-        0
-    }
+/// Smooth recency score using logarithmic decay, quantized to u8 (0-255).
+/// Logarithmic scale distributes resolution across human-meaningful time ranges
+/// (minutes, hours, days, weeks) — unlike exponential decay which concentrates
+/// resolution around a single half-life.
+///
+/// Approximate values at notable ages:
+///   now       → 255
+///   5 min     → 227
+///   30 min    → 187
+///   1 hour    → 169
+///   6 hours   → 119
+///   24 hours  →  80
+///   7 days    →  25
+///   17 days   →   0
+fn compute_recency_score(timestamp: i64, now: i64) -> u8 {
+    let age_secs = (now - timestamp).max(0) as f64;
+    let age_hours = age_secs / 3600.0;
+    // k: time scaling — higher values increase sensitivity to small age differences.
+    // max_hours: age at which score reaches 0.
+    let k: f64 = 20.0;
+    let max_hours: f64 = 400.0;
+    let denom = (1.0 + k * max_hours).ln();
+    let score = 255.0 * (1.0 - (1.0 + k * age_hours).ln() / denom);
+    score.round().clamp(0.0, 255.0) as u8
 }
 
 /// Quantize BM25 score to u16 for the tiebreaker bucket.
@@ -680,30 +691,57 @@ mod tests {
         assert_eq!(compute_exactness("hallo", &["hello"], &matches), 0);
     }
 
-    // ── recency_tier tests ───────────────────────────────────────
+    // ── recency_score tests ───────────────────────────────────────
 
     #[test]
-    fn test_recency_tier_last_hour() {
+    fn test_recency_score_now() {
         let now = 1700000000i64;
-        assert_eq!(compute_recency_tier(now - 1800, now), 3); // 30 min ago
+        assert_eq!(compute_recency_score(now, now), 255);
     }
 
     #[test]
-    fn test_recency_tier_last_day() {
+    fn test_recency_score_at_old_tier_boundaries() {
         let now = 1700000000i64;
-        assert_eq!(compute_recency_tier(now - 7200, now), 2); // 2 hours ago
+        let at_1h = compute_recency_score(now - 3600, now);
+        let at_24h = compute_recency_score(now - 86400, now);
+        let at_7d = compute_recency_score(now - 604800, now);
+
+        assert!((160..=180).contains(&(at_1h as u16)), "1h: expected ~169, got {}", at_1h);
+        assert!((70..=90).contains(&(at_24h as u16)), "24h: expected ~80, got {}", at_24h);
+        assert!((15..=35).contains(&(at_7d as u16)), "7d: expected ~25, got {}", at_7d);
+        // 24h-7d gap should be clearly larger than 7d score itself
+        assert!(at_24h - at_7d > at_7d, "24h-7d gap ({}) should exceed 7d score ({})", at_24h - at_7d, at_7d);
     }
 
     #[test]
-    fn test_recency_tier_last_week() {
+    fn test_recency_score_very_old() {
         let now = 1700000000i64;
-        assert_eq!(compute_recency_tier(now - 259200, now), 1); // 3 days ago
+        let seventeen_days = 17 * 86400;
+        assert_eq!(compute_recency_score(now - seventeen_days, now), 0);
     }
 
     #[test]
-    fn test_recency_tier_older() {
+    fn test_recency_score_monotonically_decreasing() {
         let now = 1700000000i64;
-        assert_eq!(compute_recency_tier(now - 864000, now), 0); // 10 days ago
+        let mut prev = 255u8;
+        for minutes in 1..=50000 {
+            let score = compute_recency_score(now - minutes * 60, now);
+            assert!(score <= prev, "score should decrease: {} > {} at {}min", score, prev, minutes);
+            prev = score;
+        }
+    }
+
+    #[test]
+    fn test_recency_score_differentiates_within_first_hour() {
+        let now = 1700000000i64;
+        // Items 5 min, 15 min, 30 min, 55 min apart should all have distinct scores
+        let at_5m = compute_recency_score(now - 300, now);
+        let at_15m = compute_recency_score(now - 900, now);
+        let at_30m = compute_recency_score(now - 1800, now);
+        let at_55m = compute_recency_score(now - 3300, now);
+        assert!(at_5m > at_15m, "5min ({}) should beat 15min ({})", at_5m, at_15m);
+        assert!(at_15m > at_30m, "15min ({}) should beat 30min ({})", at_15m, at_30m);
+        assert!(at_30m > at_55m, "30min ({}) should beat 55min ({})", at_30m, at_55m);
     }
 
     // ── bucket score ordering tests ──────────────────────────────
@@ -721,30 +759,42 @@ mod tests {
     }
 
     #[test]
-    fn test_typo_dominates_recency_tier() {
+    fn test_recency_dominates_typo() {
         let now = 1700000000i64;
-        // Exact match from 10 days ago vs typo match from now
-        let exact_old = compute_bucket_score(
-            "riverside park", &["riverside"], false, now - 864000, 1.0, now,
-        );
+        // Typo match from now vs exact match from 10 days ago
         let typo_new = compute_bucket_score(
             "riversde park", &["riverside"], false, now, 1.0, now,
         );
-        assert!(exact_old > typo_new, "Exact match should beat fuzzy even when older");
+        let exact_old = compute_bucket_score(
+            "riverside park", &["riverside"], false, now - 864000, 1.0, now,
+        );
+        assert!(typo_new > exact_old, "Recent fuzzy match should beat old exact match");
     }
 
     #[test]
-    fn test_recency_tier_dominates_proximity() {
+    fn test_typo_dominates_within_same_recency() {
         let now = 1700000000i64;
-        // Same words, same typo, but different recency tiers
+        // Both items from the same time — typo should break the tie
+        let exact = compute_bucket_score(
+            "riverside park", &["riverside"], false, now - 3600, 1.0, now,
+        );
+        let typo = compute_bucket_score(
+            "riversde park", &["riverside"], false, now - 3600, 1.0, now,
+        );
+        assert!(exact > typo, "Exact match should beat fuzzy at equal recency");
+    }
+
+    #[test]
+    fn test_recency_dominates_proximity() {
+        let now = 1700000000i64;
+        // Same words, same typo, but different recency
         let recent = compute_bucket_score(
             "hello world and other things between", &["hello", "world"], false, now - 1800, 1.0, now,
         );
         let old = compute_bucket_score(
             "hello world", &["hello", "world"], false, now - 864000, 1.0, now,
         );
-        // recent is tier 3 (30min ago), old is tier 0 (10 days)
-        assert!(recent > old, "Recent tier should dominate proximity when words/typo equal");
+        assert!(recent > old, "Recent item should dominate proximity when words/typo equal");
     }
 
     #[test]
@@ -754,8 +804,8 @@ mod tests {
             "hello world", &["hello", "world"], false, now, 5.0, now,
         );
         assert_eq!(score.words_matched, 2);
+        assert_eq!(score.recency_score, 255); // just now
         assert_eq!(score.typo_score, 255);
-        assert_eq!(score.recency_tier, 3);
         assert_eq!(score.proximity_score, u16::MAX - 1);
         assert_eq!(score.exactness_score, 3); // "hello world" contains "hello world"
         assert_eq!(score.bm25_quantized, 5);
