@@ -133,7 +133,7 @@ run-synthetic:
 	@echo "Setting up synthetic data..."
 	@mkdir -p ~/Library/Application\ Support/ClipKitty
 	@rm -f ~/Library/Application\ Support/ClipKitty/clipboard-screenshot.sqlite*
-	@rm -rf ~/Library/Application\ Support/ClipKitty/tantivy_index
+	@rm -rf ~/Library/Application\ Support/ClipKitty/tantivy_index*
 	@cp $(DIST_DIR)/SyntheticData.sqlite ~/Library/Application\ Support/ClipKitty/clipboard-screenshot.sqlite
 	@echo "Launching app with synthetic data..."
 	@cd $(PROJECT_ROOT) && open ClipKitty.app --args --use-simulated-db
