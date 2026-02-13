@@ -260,8 +260,13 @@ jobs:
 
       - name: Build App Store Package
         run: |
+          TAG="${{ github.event.release.tag_name }}"
+          VERSION="${TAG#v}"
+          BUILD_NUMBER="$(git rev-list --count HEAD)"
           make -C distribution appstore \
-            PROVISIONING_PROFILE="$GITHUB_WORKSPACE/ClipKitty.provisionprofile"
+            PROVISIONING_PROFILE="$GITHUB_WORKSPACE/ClipKitty.provisionprofile" \
+            VERSION="$VERSION" \
+            BUILD_NUMBER="$BUILD_NUMBER"
 
       - name: Install Fastlane
         run: bundle install
