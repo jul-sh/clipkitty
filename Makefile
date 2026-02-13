@@ -8,6 +8,10 @@ NIX_SHELL := ./Scripts/run-in-nix.sh -c
 APP_NAME := ClipKitty
 BUNDLE_ID := com.eviljuliette.clipkitty
 SCRIPT_DIR := $(abspath $(dir $(lastword $(MAKEFILE_LIST))))
+
+# Version: override via `make all VERSION=1.2.3 BUILD_NUMBER=42`
+VERSION ?= 1.0.0
+BUILD_NUMBER ?= $(shell git rev-list --count HEAD 2>/dev/null || echo 1)
 ICON_SOURCE := $(SCRIPT_DIR)/AppIcon.icon
 
 # Detect Xcode availability (required for UI tests, marketing assets, universal binaries)
@@ -97,7 +101,7 @@ $(APP_BINARY): build-binary
 $(APP_PLIST):
 	@echo "Generating Info.plist..."
 	@mkdir -p "$(APP_BUNDLE)/Contents"
-	@swift Scripts/GenInfoPlist.swift "$(APP_PLIST)"
+	@swift Scripts/GenInfoPlist.swift "$(APP_PLIST)" --version "$(VERSION)" --build "$(BUILD_NUMBER)"
 	@touch "$(APP_BUNDLE)"
 
 # Setup icons (compile or copy depending on Xcode availability)

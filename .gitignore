@@ -62,7 +62,9 @@ purr/benches/tantivy_index*/
 *.p8
 *.provisionprofile
 
-# Fastlane
+# Ruby / Fastlane
+vendor/bundle
+.bundle
 fastlane/report.xml
 fastlane/Preview.html
 fastlane/test_output
