@@ -636,11 +636,14 @@ struct TextPreviewView: NSViewRepresentable {
                     .foregroundColor: NSColor.labelColor,
                     .paragraphStyle: paragraphStyle
                 ])
-                let highlightColor = NSColor.yellow.withAlphaComponent(0.4)
                 for range in highlights {
                     let nsRange = range.nsRange
                     if nsRange.location + nsRange.length <= attributed.length {
-                        attributed.addAttribute(.backgroundColor, value: highlightColor, range: nsRange)
+                        let (bg, underline) = highlightStyle(for: range.kind)
+                        attributed.addAttribute(.backgroundColor, value: bg, range: nsRange)
+                        if underline {
+                            attributed.addAttribute(.underlineStyle, value: NSUnderlineStyle.single.rawValue, range: nsRange)
+                        }
                     }
                 }
                 textView.textStorage?.setAttributedString(attributed)
@@ -972,7 +975,7 @@ struct HighlightedTextView: View, Equatable {
                     .lineLimit(1)
                     .truncationMode(.tail) // Fallback if highlight itself is wider than container
                     .layoutPriority(1)     // CRITICAL: Guarantees visibility
-                    .background(Color.yellow.opacity(0.4))
+                    .background(highlightBackground(for: firstHighlight.kind))
 
                 // 3. SUFFIX: Truncates on the right ("text...")
                 // Apply any additional highlights that fall within suffix
@@ -1030,10 +1033,40 @@ struct HighlightedTextView: View, Equatable {
             let startIdx = attributed.index(attributed.startIndex, offsetByCharacters: safeStart)
             let endIdx = attributed.index(attributed.startIndex, offsetByCharacters: safeEnd)
 
-            attributed[startIdx..<endIdx].backgroundColor = Color.yellow.opacity(0.4)
+            attributed[startIdx..<endIdx].backgroundColor = highlightBackground(for: highlight.kind)
+            if highlight.kind == .subsequence {
+                attributed[startIdx..<endIdx].underlineStyle = .single
+            }
         }
 
         return attributed
+    }
+}
+
+// MARK: - Highlight Kind Color Mapping
+
+/// NSColor styling for TextPreviewView (NSAttributedString path)
+/// Returns (backgroundColor, shouldUnderline) based on match kind
+private func highlightStyle(for kind: HighlightKind) -> (NSColor, Bool) {
+    switch kind {
+    case .exact, .prefix:
+        return (NSColor.yellow.withAlphaComponent(0.4), false)
+    case .fuzzy:
+        return (NSColor.orange.withAlphaComponent(0.3), false)
+    case .subsequence:
+        return (NSColor.orange.withAlphaComponent(0.2), true)
+    }
+}
+
+/// SwiftUI Color for HighlightedTextView (SwiftUI Text path)
+private func highlightBackground(for kind: HighlightKind) -> Color {
+    switch kind {
+    case .exact, .prefix:
+        return Color.yellow.opacity(0.4)
+    case .fuzzy:
+        return Color.orange.opacity(0.3)
+    case .subsequence:
+        return Color.orange.opacity(0.2)
     }
 }
 

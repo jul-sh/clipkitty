@@ -19,7 +19,12 @@
 //! - Adds trailing ellipsis when content is truncated
 
 use purr::search::{generate_preview, generate_snippet};
-use purr::HighlightRange;
+use purr::{HighlightKind, HighlightRange};
+
+/// Helper: create a HighlightRange with Exact kind
+fn hr(start: u64, end: u64) -> HighlightRange {
+    HighlightRange { start, end, kind: HighlightKind::Exact }
+}
 
 // ─────────────────────────────────────────────────────────────────────────────
 // generate_preview TESTS (used for item list display with empty query)
@@ -92,7 +97,7 @@ fn preview_trims_trailing_spaces() {
 #[test]
 fn snippet_short_text_returns_full_content() {
     let content = "Hello World";
-    let highlights = vec![HighlightRange { start: 0, end: 5 }];
+    let highlights = vec![hr(0, 5)];
     let (snippet, _, line_number) = generate_snippet(content, &highlights, 400);
     assert_eq!(snippet, "Hello World");
     assert!(!snippet.starts_with('…'), "Rust should not add leading ellipsis");
@@ -106,7 +111,7 @@ fn snippet_no_ellipsis_from_rust() {
     let prefix = "x".repeat(100);
     let suffix = "y".repeat(100);
     let content = format!("{}MATCH{}", prefix, suffix);
-    let highlights = vec![HighlightRange { start: 100, end: 105 }];
+    let highlights = vec![hr(100, 105)];
     let (snippet, _, _) = generate_snippet(&content, &highlights, 400);
 
     assert!(!snippet.starts_with('…'),
@@ -118,7 +123,7 @@ fn snippet_no_ellipsis_from_rust() {
 #[test]
 fn snippet_contains_match_with_context() {
     let content = "The quick brown fox jumps over the lazy dog";
-    let highlights = vec![HighlightRange { start: 16, end: 19 }]; // "fox"
+    let highlights = vec![hr(16, 19)]; // "fox"
     let (snippet, adjusted_highlights, _) = generate_snippet(content, &highlights, 400);
 
     assert!(snippet.contains("fox"), "Snippet should contain the match");
@@ -136,7 +141,7 @@ fn snippet_contains_match_with_context() {
 #[test]
 fn snippet_normalizes_whitespace() {
     let content = "Hello\n\n\nWorld";
-    let highlights = vec![HighlightRange { start: 0, end: 5 }];
+    let highlights = vec![hr(0, 5)];
     let (snippet, _, _) = generate_snippet(content, &highlights, 400);
 
     assert!(!snippet.contains('\n'), "Snippet should not contain newlines");
@@ -146,7 +151,7 @@ fn snippet_normalizes_whitespace() {
 #[test]
 fn snippet_line_number_calculated_correctly() {
     let content = "Line 1\nLine 2\nLine 3 with MATCH";
-    let highlights = vec![HighlightRange { start: 21, end: 26 }]; // "MATCH"
+    let highlights = vec![hr(21, 26)]; // "MATCH"
     let (_, _, line_number) = generate_snippet(content, &highlights, 400);
 
     assert_eq!(line_number, 3, "Match on third line should have line_number=3");
@@ -155,7 +160,7 @@ fn snippet_line_number_calculated_correctly() {
 #[test]
 fn snippet_line_number_first_line() {
     let content = "MATCH on first line\nSecond line";
-    let highlights = vec![HighlightRange { start: 0, end: 5 }];
+    let highlights = vec![hr(0, 5)];
     let (_, _, line_number) = generate_snippet(content, &highlights, 400);
 
     assert_eq!(line_number, 1, "Match on first line should have line_number=1");
@@ -164,7 +169,7 @@ fn snippet_line_number_first_line() {
 #[test]
 fn snippet_respects_max_length() {
     let content = "a".repeat(600);
-    let highlights = vec![HighlightRange { start: 0, end: 5 }];
+    let highlights = vec![hr(0, 5)];
     let (snippet, _, _) = generate_snippet(&content, &highlights, 400);
 
     let char_count = snippet.chars().count();
@@ -177,7 +182,7 @@ fn snippet_highlight_positions_correct_without_ellipsis() {
     // Highlights should point to correct positions in the snippet
     let prefix = "x".repeat(100);
     let content = format!("{}MATCH", prefix);
-    let highlights = vec![HighlightRange { start: 100, end: 105 }];
+    let highlights = vec![hr(100, 105)];
     let (snippet, adjusted_highlights, _) = generate_snippet(&content, &highlights, 400);
 
     // The highlight should point to "MATCH" in the snippet
@@ -215,7 +220,7 @@ fn both_functions_normalize_whitespace_consistently() {
     let preview = generate_preview(text_with_whitespace, 200);
     assert_eq!(preview, "Hello World");
 
-    let highlights = vec![HighlightRange { start: 0, end: 5 }];
+    let highlights = vec![hr(0, 5)];
     let (snippet, _, _) = generate_snippet(text_with_whitespace, &highlights, 400);
     assert_eq!(snippet, "Hello World");
 }
@@ -234,7 +239,7 @@ fn snippet_code_with_newline_hello_query() {
     // "Hello" appears inside the string literal at the end
     // Full string is 70 chars, "Hello" is at chars 63-68 in ORIGINAL
     let highlights = vec![
-        HighlightRange { start: 63, end: 68 },  // "Hello" in original
+        hr(63, 68),  // "Hello" in original
     ];
 
     let (snippet, adjusted_highlights, line_number) = generate_snippet(content, &highlights, 400);
