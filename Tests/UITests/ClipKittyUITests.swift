@@ -93,7 +93,7 @@ final class ClipKittyUITests: XCTestCase {
             .deletingLastPathComponent()
         let sqliteSourceURL = projectRoot.appendingPathComponent("distribution/SyntheticData.sqlite")
         let targetURL = appSupportDir.appendingPathComponent("clipboard-screenshot.sqlite")
-        let indexDirURL = appSupportDir.appendingPathComponent("tantivy_index")
+        let indexDirURL = appSupportDir.appendingPathComponent("tantivy_index_v2")
 
         try? FileManager.default.createDirectory(at: appSupportDir, withIntermediateDirectories: true)
 

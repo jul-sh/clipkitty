@@ -10,6 +10,7 @@ mod database;
 mod indexer;
 pub mod interface;
 pub(crate) mod models;
+pub mod ranking;
 pub mod search;
 mod store;
 
