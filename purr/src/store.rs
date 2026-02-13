@@ -8,11 +8,11 @@
 //! via a DropGuard that triggers a CancellationToken. The blocking search thread
 //! checks this token at key checkpoints and can abort mid-flight.
 
-use crate::database::Database;
+use crate::database::{Database, StoredItem};
 use crate::interface::{
     ClipboardItem, ItemMatch, MatchData, SearchResult, ClipKittyError, ClipboardStoreApi,
 };
-use crate::search::{self, Indexer, StoredItem, MIN_TRIGRAM_QUERY_LEN, MAX_RESULTS};
+use crate::search::{self, Indexer, MIN_TRIGRAM_QUERY_LEN, MAX_RESULTS};
 use chrono::Utc;
 use once_cell::sync::Lazy;
 use std::path::PathBuf;
@@ -351,7 +351,7 @@ impl ClipboardStoreApi for ClipboardStore {
                     .fetch_items_by_ids(&[first_metadata.item_id])?
                     .into_iter()
                     .next()
-                    .map(|item| item.to_clipboard_item())
+                    .map(|item| ClipboardItem::from(&item))
             } else {
                 None
             };
@@ -413,7 +413,7 @@ impl ClipboardStoreApi for ClipboardStore {
                         .fetch_items_by_ids(&[id])?
                         .into_iter()
                         .next()
-                        .map(|item| item.to_clipboard_item())
+                        .map(|item| ClipboardItem::from(&item))
                 } else {
                     None
                 };
@@ -433,7 +433,7 @@ impl ClipboardStoreApi for ClipboardStore {
         let stored_items = self.db.fetch_items_by_ids(&item_ids)?;
         let items: Vec<ClipboardItem> = stored_items
             .into_iter()
-            .map(|item| item.to_clipboard_item())
+            .map(|item| ClipboardItem::from(&item))
             .collect();
         Ok(items)
     }

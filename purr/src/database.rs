@@ -3,8 +3,10 @@
 //! Implements the database schema and operations for clipboard storage.
 //! Uses r2d2 connection pooling to allow concurrent reads without mutex blocking.
 
-use crate::interface::{ClipboardContent, ItemMetadata, ItemIcon};
-use crate::search::{StoredItem, generate_preview, SNIPPET_CONTEXT_CHARS};
+use crate::interface::{ClipboardContent, ClipboardItem, ItemMetadata, ItemIcon};
+use crate::search::{generate_preview, SNIPPET_CONTEXT_CHARS};
+#[cfg(test)]
+use crate::interface::IconType;
 use chrono::{DateTime, TimeZone, Utc};
 use r2d2::{Pool, PooledConnection};
 use r2d2_sqlite::SqliteConnectionManager;
@@ -25,6 +27,138 @@ pub enum DatabaseError {
 }
 
 pub type DatabaseResult<T> = Result<T, DatabaseError>;
+
+// ─────────────────────────────────────────────────────────────────────────────
+// StoredItem — Internal clipboard item for database storage
+// ─────────────────────────────────────────────────────────────────────────────
+
+/// Internal clipboard item representation for database storage
+#[derive(Debug, Clone, PartialEq)]
+pub(crate) struct StoredItem {
+    pub id: Option<i64>,
+    pub content: ClipboardContent,
+    pub content_hash: String,
+    pub timestamp_unix: i64,
+    pub source_app: Option<String>,
+    pub source_app_bundle_id: Option<String>,
+    /// Thumbnail for images (small preview, stored separately from full image)
+    pub thumbnail: Option<Vec<u8>>,
+    /// Parsed color RGBA for color content (stored for quick display)
+    pub color_rgba: Option<u32>,
+}
+
+impl StoredItem {
+    /// Create a new text item (auto-detects structured content)
+    pub fn new_text(
+        text: String,
+        source_app: Option<String>,
+        source_app_bundle_id: Option<String>,
+    ) -> Self {
+        let content_hash = Self::hash_string(&text);
+        let content = crate::content_detection::detect_content(&text);
+        let color_rgba = if let ClipboardContent::Color { ref value } = content {
+            crate::content_detection::parse_color_to_rgba(value)
+        } else {
+            None
+        };
+        Self {
+            id: None,
+            content,
+            content_hash,
+            timestamp_unix: chrono::Utc::now().timestamp(),
+            source_app,
+            source_app_bundle_id,
+            thumbnail: None,
+            color_rgba,
+        }
+    }
+
+    /// Create an image item with a pre-generated thumbnail
+    /// Used when Swift generates the thumbnail (HEIC not supported by Rust image crate)
+    pub fn new_image_with_thumbnail(
+        image_data: Vec<u8>,
+        thumbnail: Option<Vec<u8>>,
+        source_app: Option<String>,
+        source_app_bundle_id: Option<String>,
+    ) -> Self {
+        let hash_input = format!("Image{}", image_data.len());
+        let content_hash = Self::hash_string(&hash_input);
+        Self {
+            id: None,
+            content: ClipboardContent::Image {
+                data: image_data,
+                description: "Image".to_string(),
+            },
+            content_hash,
+            timestamp_unix: chrono::Utc::now().timestamp(),
+            source_app,
+            source_app_bundle_id,
+            thumbnail,
+            color_rgba: None,
+        }
+    }
+
+    /// Get the raw text content for searching and display
+    pub fn text_content(&self) -> &str {
+        self.content.text_content()
+    }
+
+    /// Get the icon type for the content
+    #[cfg(test)]
+    pub fn icon_type(&self) -> IconType {
+        self.content.icon_type()
+    }
+
+    /// Get the ItemIcon for display
+    pub fn item_icon(&self) -> ItemIcon {
+        let (_, _, _, _, link_image_data, _) = self.content.to_database_fields();
+        ItemIcon::from_database(
+            self.content.database_type(),
+            self.color_rgba,
+            self.thumbnail.clone(),
+            link_image_data,
+        )
+    }
+
+    /// Display text (truncated, normalized whitespace) for preview
+    pub fn display_text(&self, max_chars: usize) -> String {
+        generate_preview(self.text_content(), max_chars)
+    }
+
+    /// Hash a string using Rust's default hasher
+    pub fn hash_string(s: &str) -> String {
+        use std::collections::hash_map::DefaultHasher;
+        use std::hash::{Hash, Hasher};
+        let mut hasher = DefaultHasher::new();
+        s.hash(&mut hasher);
+        hasher.finish().to_string()
+    }
+}
+
+impl From<&StoredItem> for ItemMetadata {
+    /// Convert to ItemMetadata for list display
+    /// Preview is generous (SNIPPET_CONTEXT_CHARS * 2) - Swift handles final truncation
+    fn from(item: &StoredItem) -> Self {
+        ItemMetadata {
+            item_id: item.id.unwrap_or(0),
+            icon: item.item_icon(),
+            snippet: item.display_text(SNIPPET_CONTEXT_CHARS * 2),
+            source_app: item.source_app.clone(),
+            source_app_bundle_id: item.source_app_bundle_id.clone(),
+            timestamp_unix: item.timestamp_unix,
+        }
+    }
+}
+
+impl From<&StoredItem> for ClipboardItem {
+    /// Convert to full ClipboardItem for preview pane
+    fn from(item: &StoredItem) -> Self {
+        ClipboardItem {
+            item_metadata: item.into(),
+            content: item.content.clone(),
+        }
+    }
+}
 
 /// Parse timestamp string from database to DateTime<Utc>
 fn parse_db_timestamp(timestamp_str: &str) -> DateTime<Utc> {
@@ -616,3 +750,101 @@ impl Database {
 // Database is now inherently thread-safe via r2d2 pool
 unsafe impl Send for Database {}
 unsafe impl Sync for Database {}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::interface::LinkMetadataState;
+
+    #[test]
+    fn test_stored_item_text() {
+        let item = StoredItem::new_text(
+            "Hello World".to_string(),
+            Some("Test App".to_string()),
+            None,
+        );
+        assert_eq!(item.text_content(), "Hello World");
+        assert_eq!(item.icon_type(), IconType::Text);
+    }
+
+    #[test]
+    fn test_display_text_truncation() {
+        let long_text = "a".repeat(300);
+        let item = StoredItem::new_text(long_text, None, None);
+        let display = item.display_text(200);
+        // Rust truncates; Swift adds ellipsis
+        assert!(display.chars().count() <= 200, "Should be at most 200 chars");
+    }
+
+    #[test]
+    fn test_display_text_whitespace_normalization() {
+        let item = StoredItem::new_text("  hello\n\nworld  ".to_string(), None, None);
+        assert_eq!(item.display_text(200), "hello world");
+    }
+
+    #[test]
+    fn test_link_metadata_state_database_roundtrip() {
+        // Pending
+        let pending = LinkMetadataState::Pending;
+        let (title, desc, img) = pending.to_database_fields();
+        assert_eq!(
+            LinkMetadataState::from_database(title.as_deref(), desc.as_deref(), img),
+            pending
+        );
+
+        // Failed
+        let failed = LinkMetadataState::Failed;
+        let (title, desc, img) = failed.to_database_fields();
+        assert_eq!(
+            LinkMetadataState::from_database(title.as_deref(), desc.as_deref(), img),
+            failed
+        );
+
+        // Loaded
+        let loaded = LinkMetadataState::Loaded {
+            title: Some("Test Title".to_string()),
+            description: Some("Test Description".to_string()),
+            image_data: Some(vec![1, 2, 3]),
+        };
+        let (title, desc, img) = loaded.to_database_fields();
+        assert_eq!(
+            LinkMetadataState::from_database(title.as_deref(), desc.as_deref(), img),
+            loaded
+        );
+    }
+
+    #[test]
+    fn test_color_content() {
+        let item = StoredItem::new_text("#FF5733".to_string(), None, None);
+        assert!(matches!(item.content, ClipboardContent::Color { .. }));
+        assert_eq!(item.icon_type(), IconType::Color);
+    }
+
+    #[test]
+    fn test_item_icon_for_color() {
+        let item = StoredItem::new_text("#FF5733".to_string(), None, None);
+        if let ItemIcon::ColorSwatch { rgba } = item.item_icon() {
+            // #FF5733 with full alpha
+            assert_eq!(rgba, 0xFF5733FF);
+        } else {
+            panic!("Expected ColorSwatch icon");
+        }
+    }
+
+    #[test]
+    fn test_from_stored_item_for_metadata() {
+        let item = StoredItem::new_text("Hello World".to_string(), Some("TestApp".to_string()), None);
+        let metadata = ItemMetadata::from(&item);
+        assert_eq!(metadata.item_id, 0); // id is None → 0
+        assert!(metadata.snippet.contains("Hello World"));
+        assert_eq!(metadata.source_app.as_deref(), Some("TestApp"));
+    }
+
+    #[test]
+    fn test_from_stored_item_for_clipboard_item() {
+        let item = StoredItem::new_text("Hello World".to_string(), None, None);
+        let clip_item = ClipboardItem::from(&item);
+        assert_eq!(clip_item.content.text_content(), "Hello World");
+        assert!(clip_item.item_metadata.snippet.contains("Hello World"));
+    }
+}
