@@ -34,44 +34,6 @@ impl Default for ItemIcon {
     }
 }
 
-impl ItemIcon {
-    /// Determine icon from database fields
-    pub fn from_database(
-        db_type: &str,
-        color_rgba: Option<u32>,
-        thumbnail: Option<Vec<u8>>,
-        link_image_data: Option<Vec<u8>>,
-    ) -> Self {
-        match db_type {
-            "color" => {
-                if let Some(rgba) = color_rgba {
-                    ItemIcon::ColorSwatch { rgba }
-                } else {
-                    ItemIcon::Symbol { icon_type: IconType::Color }
-                }
-            }
-            "image" => {
-                if let Some(thumb) = thumbnail {
-                    ItemIcon::Thumbnail { bytes: thumb }
-                } else {
-                    ItemIcon::Symbol { icon_type: IconType::Image }
-                }
-            }
-            "link" => {
-                // Use link preview image as thumbnail if available
-                if let Some(img) = link_image_data {
-                    ItemIcon::Thumbnail { bytes: img }
-                } else {
-                    ItemIcon::Symbol { icon_type: IconType::Link }
-                }
-            }
-            "email" => ItemIcon::Symbol { icon_type: IconType::Email },
-            "phone" => ItemIcon::Symbol { icon_type: IconType::Phone },
-            _ => ItemIcon::Symbol { icon_type: IconType::Text },
-        }
-    }
-}
-
 /// Link metadata fetch state
 #[derive(Debug, Clone, PartialEq, Eq, uniffi::Enum)]
 pub enum LinkMetadataState {
@@ -82,43 +44,6 @@ pub enum LinkMetadataState {
         image_data: Option<Vec<u8>>,
     },
     Failed,
-}
-
-impl LinkMetadataState {
-    /// Convert to database fields (title, description, image_data)
-    /// NULL title = pending, empty title = failed, otherwise = loaded
-    pub fn to_database_fields(&self) -> (Option<String>, Option<String>, Option<Vec<u8>>) {
-        match self {
-            LinkMetadataState::Pending => (None, None, None),
-            LinkMetadataState::Failed => (Some(String::new()), None, None),
-            LinkMetadataState::Loaded { title, description, image_data } => {
-                (
-                    Some(title.clone().unwrap_or_default()),
-                    description.clone(),
-                    image_data.clone(),
-                )
-            }
-        }
-    }
-
-    /// Reconstruct from database fields
-    pub fn from_database(title: Option<&str>, description: Option<&str>, image_data: Option<Vec<u8>>) -> Self {
-        match (title, &image_data) {
-            (None, None) => LinkMetadataState::Pending,
-            (Some(""), None) => LinkMetadataState::Failed,
-            (Some(t), img) => LinkMetadataState::Loaded {
-                title: if t.is_empty() { None } else { Some(t.to_string()) },
-                description: description.filter(|d| !d.is_empty()).map(String::from),
-                image_data: img.clone(),
-            },
-            // Has image but no title - still loaded (some sites only have images)
-            (None, Some(img)) => LinkMetadataState::Loaded {
-                title: None,
-                description: description.filter(|d| !d.is_empty()).map(String::from),
-                image_data: Some(img.clone()),
-            },
-        }
-    }
 }
 
 /// Type-safe clipboard content representation
@@ -154,68 +79,6 @@ impl ClipboardContent {
             ClipboardContent::Email { .. } => IconType::Email,
             ClipboardContent::Phone { .. } => IconType::Phone,
             ClipboardContent::Image { .. } => IconType::Image,
-        }
-    }
-
-    /// Database storage type string
-    pub fn database_type(&self) -> &str {
-        match self {
-            ClipboardContent::Text { .. } => "text",
-            ClipboardContent::Color { .. } => "color",
-            ClipboardContent::Link { .. } => "link",
-            ClipboardContent::Email { .. } => "email",
-            ClipboardContent::Phone { .. } => "phone",
-            ClipboardContent::Image { .. } => "image",
-        }
-    }
-
-    /// Extract database fields: (content, image_data, link_title, link_description, link_image_data, color_rgba)
-    pub fn to_database_fields(&self) -> (String, Option<Vec<u8>>, Option<String>, Option<String>, Option<Vec<u8>>, Option<u32>) {
-        match self {
-            ClipboardContent::Text { value } => (value.clone(), None, None, None, None, None),
-            ClipboardContent::Color { value } => {
-                let rgba = crate::content_detection::parse_color_to_rgba(value);
-                (value.clone(), None, None, None, None, rgba)
-            }
-            ClipboardContent::Link { url, metadata_state } => {
-                let (title, description, image_data) = metadata_state.to_database_fields();
-                (url.clone(), None, title, description, image_data, None)
-            }
-            ClipboardContent::Email { address } => (address.clone(), None, None, None, None, None),
-            ClipboardContent::Phone { number } => (number.clone(), None, None, None, None, None),
-            ClipboardContent::Image { data, description } => {
-                (description.clone(), Some(data.clone()), None, None, None, None)
-            }
-        }
-    }
-
-    /// Reconstruct from database row
-    pub fn from_database(
-        db_type: &str,
-        content: &str,
-        image_data: Option<Vec<u8>>,
-        link_title: Option<&str>,
-        link_description: Option<&str>,
-        link_image_data: Option<Vec<u8>>,
-        _color_rgba: Option<u32>,
-    ) -> Self {
-        match db_type {
-            "color" => ClipboardContent::Color { value: content.to_string() },
-            "link" => ClipboardContent::Link {
-                url: content.to_string(),
-                metadata_state: LinkMetadataState::from_database(link_title, link_description, link_image_data),
-            },
-            "image" => ClipboardContent::Image {
-                data: image_data.unwrap_or_default(),
-                description: content.to_string(),
-            },
-            "email" => ClipboardContent::Email {
-                address: content.to_string(),
-            },
-            "phone" => ClipboardContent::Phone {
-                number: content.to_string(),
-            },
-            _ => ClipboardContent::Text { value: content.to_string() },
         }
     }
 }

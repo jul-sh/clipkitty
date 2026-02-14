@@ -3,10 +3,10 @@
 //! Implements the database schema and operations for clipboard storage.
 //! Uses r2d2 connection pooling to allow concurrent reads without mutex blocking.
 
-use crate::interface::{ClipboardContent, ClipboardItem, ItemMetadata, ItemIcon};
+use crate::interface::{
+    ClipboardContent, ClipboardItem, IconType, ItemMetadata, ItemIcon, LinkMetadataState,
+};
 use crate::search::{generate_preview, SNIPPET_CONTEXT_CHARS};
-#[cfg(test)]
-use crate::interface::IconType;
 use chrono::{DateTime, TimeZone, Utc};
 use r2d2::{Pool, PooledConnection};
 use r2d2_sqlite::SqliteConnectionManager;
@@ -111,13 +111,25 @@ impl StoredItem {
 
     /// Get the ItemIcon for display
     pub fn item_icon(&self) -> ItemIcon {
-        let (_, _, _, _, link_image_data, _) = self.content.to_database_fields();
-        ItemIcon::from_database(
-            self.content.database_type(),
-            self.color_rgba,
-            self.thumbnail.clone(),
-            link_image_data,
-        )
+        match &self.content {
+            ClipboardContent::Color { .. } => match self.color_rgba {
+                Some(rgba) => ItemIcon::ColorSwatch { rgba },
+                None => ItemIcon::Symbol { icon_type: IconType::Color },
+            },
+            ClipboardContent::Image { .. } => match &self.thumbnail {
+                Some(thumb) => ItemIcon::Thumbnail { bytes: thumb.clone() },
+                None => ItemIcon::Symbol { icon_type: IconType::Image },
+            },
+            ClipboardContent::Link { metadata_state, .. } => match metadata_state {
+                LinkMetadataState::Loaded { image_data: Some(img), .. } => {
+                    ItemIcon::Thumbnail { bytes: img.clone() }
+                }
+                _ => ItemIcon::Symbol { icon_type: IconType::Link },
+            },
+            ClipboardContent::Email { .. } => ItemIcon::Symbol { icon_type: IconType::Email },
+            ClipboardContent::Phone { .. } => ItemIcon::Symbol { icon_type: IconType::Phone },
+            ClipboardContent::Text { .. } => ItemIcon::Symbol { icon_type: IconType::Text },
+        }
     }
 
     /// Display text (truncated, normalized whitespace) for preview
@@ -157,6 +169,170 @@ impl From<&StoredItem> for ClipboardItem {
             item_metadata: item.into(),
             content: item.content.clone(),
         }
+    }
+}
+
+// ─────────────────────────────────────────────────────────────────────────────
+// Database serialization — mapping between interface types and DB columns
+// ─────────────────────────────────────────────────────────────────────────────
+
+/// Database column values extracted from a ClipboardContent
+struct ContentDbFields {
+    content: String,
+    content_type: &'static str,
+    image_data: Option<Vec<u8>>,
+    link_title: Option<String>,
+    link_description: Option<String>,
+    link_image_data: Option<Vec<u8>>,
+    color_rgba: Option<u32>,
+}
+
+/// Map ClipboardContent to database column values
+fn content_to_db(content: &ClipboardContent) -> ContentDbFields {
+    match content {
+        ClipboardContent::Text { value } => ContentDbFields {
+            content: value.clone(),
+            content_type: "text",
+            image_data: None,
+            link_title: None,
+            link_description: None,
+            link_image_data: None,
+            color_rgba: None,
+        },
+        ClipboardContent::Color { value } => ContentDbFields {
+            content: value.clone(),
+            content_type: "color",
+            image_data: None,
+            link_title: None,
+            link_description: None,
+            link_image_data: None,
+            color_rgba: crate::content_detection::parse_color_to_rgba(value),
+        },
+        ClipboardContent::Link { url, metadata_state } => {
+            let (title, description, image_data) = link_metadata_to_db(metadata_state);
+            ContentDbFields {
+                content: url.clone(),
+                content_type: "link",
+                image_data: None,
+                link_title: title,
+                link_description: description,
+                link_image_data: image_data,
+                color_rgba: None,
+            }
+        }
+        ClipboardContent::Email { address } => ContentDbFields {
+            content: address.clone(),
+            content_type: "email",
+            image_data: None,
+            link_title: None,
+            link_description: None,
+            link_image_data: None,
+            color_rgba: None,
+        },
+        ClipboardContent::Phone { number } => ContentDbFields {
+            content: number.clone(),
+            content_type: "phone",
+            image_data: None,
+            link_title: None,
+            link_description: None,
+            link_image_data: None,
+            color_rgba: None,
+        },
+        ClipboardContent::Image { data, description } => ContentDbFields {
+            content: description.clone(),
+            content_type: "image",
+            image_data: Some(data.clone()),
+            link_title: None,
+            link_description: None,
+            link_image_data: None,
+            color_rgba: None,
+        },
+    }
+}
+
+/// Reconstruct ClipboardContent from database row values
+fn content_from_db(
+    db_type: &str,
+    content: &str,
+    image_data: Option<Vec<u8>>,
+    link_title: Option<&str>,
+    link_description: Option<&str>,
+    link_image_data: Option<Vec<u8>>,
+) -> ClipboardContent {
+    match db_type {
+        "color" => ClipboardContent::Color { value: content.to_string() },
+        "link" => ClipboardContent::Link {
+            url: content.to_string(),
+            metadata_state: link_metadata_from_db(link_title, link_description, link_image_data),
+        },
+        "image" => ClipboardContent::Image {
+            data: image_data.unwrap_or_default(),
+            description: content.to_string(),
+        },
+        "email" => ClipboardContent::Email { address: content.to_string() },
+        "phone" => ClipboardContent::Phone { number: content.to_string() },
+        _ => ClipboardContent::Text { value: content.to_string() },
+    }
+}
+
+/// Construct ItemIcon from database column values
+fn icon_from_db(
+    db_type: &str,
+    color_rgba: Option<u32>,
+    thumbnail: Option<Vec<u8>>,
+    link_image_data: Option<Vec<u8>>,
+) -> ItemIcon {
+    match db_type {
+        "color" => match color_rgba {
+            Some(rgba) => ItemIcon::ColorSwatch { rgba },
+            None => ItemIcon::Symbol { icon_type: IconType::Color },
+        },
+        "image" => match thumbnail {
+            Some(thumb) => ItemIcon::Thumbnail { bytes: thumb },
+            None => ItemIcon::Symbol { icon_type: IconType::Image },
+        },
+        "link" => match link_image_data {
+            Some(img) => ItemIcon::Thumbnail { bytes: img },
+            None => ItemIcon::Symbol { icon_type: IconType::Link },
+        },
+        "email" => ItemIcon::Symbol { icon_type: IconType::Email },
+        "phone" => ItemIcon::Symbol { icon_type: IconType::Phone },
+        _ => ItemIcon::Symbol { icon_type: IconType::Text },
+    }
+}
+
+/// Convert LinkMetadataState to database fields (title, description, image_data)
+/// NULL title = pending, empty title = failed, otherwise = loaded
+fn link_metadata_to_db(state: &LinkMetadataState) -> (Option<String>, Option<String>, Option<Vec<u8>>) {
+    match state {
+        LinkMetadataState::Pending => (None, None, None),
+        LinkMetadataState::Failed => (Some(String::new()), None, None),
+        LinkMetadataState::Loaded { title, description, image_data } => {
+            (
+                Some(title.clone().unwrap_or_default()),
+                description.clone(),
+                image_data.clone(),
+            )
+        }
+    }
+}
+
+/// Reconstruct LinkMetadataState from database fields
+fn link_metadata_from_db(title: Option<&str>, description: Option<&str>, image_data: Option<Vec<u8>>) -> LinkMetadataState {
+    match (title, &image_data) {
+        (None, None) => LinkMetadataState::Pending,
+        (Some(""), None) => LinkMetadataState::Failed,
+        (Some(t), img) => LinkMetadataState::Loaded {
+            title: if t.is_empty() { None } else { Some(t.to_string()) },
+            description: description.filter(|d| !d.is_empty()).map(String::from),
+            image_data: img.clone(),
+        },
+        // Has image but no title - still loaded (some sites only have images)
+        (None, Some(img)) => LinkMetadataState::Loaded {
+            title: None,
+            description: description.filter(|d| !d.is_empty()).map(String::from),
+            image_data: Some(img.clone()),
+        },
     }
 }
 
@@ -308,7 +484,7 @@ impl Database {
     /// Insert a new clipboard item, returns the row ID
     pub fn insert_item(&self, item: &StoredItem) -> DatabaseResult<i64> {
         let conn = self.get_conn()?;
-        let (content, image_data, link_title, link_description, link_image_data, color_rgba) = item.content.to_database_fields();
+        let fields = content_to_db(&item.content);
         let timestamp = Utc.timestamp_opt(item.timestamp_unix, 0).single().unwrap_or_else(Utc::now);
         let timestamp_str = timestamp.format("%Y-%m-%d %H:%M:%S%.f").to_string();
 
@@ -318,18 +494,18 @@ impl Database {
             VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11, ?12)
             "#,
             params![
-                content,
+                fields.content,
                 item.content_hash,
                 timestamp_str,
                 item.source_app,
-                item.content.database_type(),
-                image_data,
-                link_title,
-                link_description,
-                link_image_data,
+                fields.content_type,
+                fields.image_data,
+                fields.link_title,
+                fields.link_description,
+                fields.link_image_data,
                 item.source_app_bundle_id,
                 item.thumbnail,
-                color_rgba,
+                fields.color_rgba,
             ],
         )?;
 
@@ -692,14 +868,13 @@ impl Database {
         let timestamp = parse_db_timestamp(&timestamp_str);
 
         let db_type = content_type.as_deref().unwrap_or("text");
-        let clipboard_content = ClipboardContent::from_database(
+        let clipboard_content = content_from_db(
             db_type,
             &content,
             image_data,
             link_title.as_deref(),
             link_description.as_deref(),
             link_image_data,
-            color_rgba,
         );
 
         Ok(StoredItem {
@@ -731,7 +906,7 @@ impl Database {
         let db_type = content_type.as_deref().unwrap_or("text");
 
         // Determine icon based on content type
-        let icon = ItemIcon::from_database(db_type, color_rgba, thumbnail.clone(), link_image_data);
+        let icon = icon_from_db(db_type, color_rgba, thumbnail.clone(), link_image_data);
 
         // Generate snippet text (generous snippet for Swift to truncate)
         let snippet = generate_preview(&content, SNIPPET_CONTEXT_CHARS * 2);
@@ -754,7 +929,6 @@ unsafe impl Sync for Database {}
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::interface::LinkMetadataState;
 
     #[test]
     fn test_stored_item_text() {
@@ -786,17 +960,17 @@ mod tests {
     fn test_link_metadata_state_database_roundtrip() {
         // Pending
         let pending = LinkMetadataState::Pending;
-        let (title, desc, img) = pending.to_database_fields();
+        let (title, desc, img) = link_metadata_to_db(&pending);
         assert_eq!(
-            LinkMetadataState::from_database(title.as_deref(), desc.as_deref(), img),
+            link_metadata_from_db(title.as_deref(), desc.as_deref(), img),
             pending
         );
 
         // Failed
         let failed = LinkMetadataState::Failed;
-        let (title, desc, img) = failed.to_database_fields();
+        let (title, desc, img) = link_metadata_to_db(&failed);
         assert_eq!(
-            LinkMetadataState::from_database(title.as_deref(), desc.as_deref(), img),
+            link_metadata_from_db(title.as_deref(), desc.as_deref(), img),
             failed
         );
 
@@ -806,9 +980,9 @@ mod tests {
             description: Some("Test Description".to_string()),
             image_data: Some(vec![1, 2, 3]),
         };
-        let (title, desc, img) = loaded.to_database_fields();
+        let (title, desc, img) = link_metadata_to_db(&loaded);
         assert_eq!(
-            LinkMetadataState::from_database(title.as_deref(), desc.as_deref(), img),
+            link_metadata_from_db(title.as_deref(), desc.as_deref(), img),
             loaded
         );
     }

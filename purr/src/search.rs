@@ -20,7 +20,7 @@ use tokio_util::sync::CancellationToken;
 
 use crate::database::StoredItem;
 use crate::interface::{
-    HighlightRange, ItemMatch, MatchData,
+    HighlightKind, HighlightRange, ItemMatch, MatchData,
 };
 
 // ─────────────────────────────────────────────────────────────────────────────
@@ -1167,7 +1167,7 @@ fn highlight_candidate(
                     && (gap_start == gap_end
                         || content_chars[gap_start..gap_end]
                             .iter()
-                            .all(|c| !c.is_alphanumeric() && !c.is_whitespace()))
+                            .all(|c: &char| !c.is_alphanumeric() && !c.is_whitespace()))
                 {
                     // Merge into previous range, inheriting its kind
                     last.1 = wh.1;
@@ -2380,8 +2380,8 @@ error: Build failed due to failed dependency";
 
     #[test]
     fn test_highlight_match_kind_subsequence() {
-        // "helo" matches "hello" via subsequence (all chars in order, skipping one)
-        let fm = highlight_candidate(1, "hello world", 1000, 1.0, &["helo"], false);
+        // "impt" matches "import" via subsequence (length diff 2 exceeds max_edit_distance)
+        let fm = highlight_candidate(1, "import React from react", 1000, 1.0, &["impt"], false);
         assert_eq!(fm.highlight_ranges.len(), 1);
         assert_eq!(fm.highlight_ranges[0].kind, HighlightKind::Subsequence);
     }
