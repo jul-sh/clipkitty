@@ -82,4 +82,5 @@ harness = false
 [dev-dependencies]
 tempfile = "*"
 criterion = { version = "*", features = ["html_reports"] }
+rusqlite = { version = "*", features = ["bundled"] }
 
