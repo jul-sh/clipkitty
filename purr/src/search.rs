@@ -65,7 +65,7 @@ pub(crate) fn search_trigram(indexer: &Indexer, query: &str, token: &Cancellatio
         // Bucket-ranked candidates from two-phase search
         #[cfg(feature = "perf-log")]
         let t0 = std::time::Instant::now();
-        let candidates = indexer.search(trimmed.trim_end(), MAX_RESULTS)?;
+        let (candidates, fuzzy_expansions) = indexer.search(trimmed.trim_end(), MAX_RESULTS)?;
         #[cfg(feature = "perf-log")]
         let num_candidates = candidates.len();
 
@@ -79,7 +79,7 @@ pub(crate) fn search_trigram(indexer: &Indexer, query: &str, token: &Cancellatio
             .into_par_iter()
             .take_any_while(|_| !token.is_cancelled())
             .map(|(rank, c)| {
-                let mut m = highlight_candidate(c.id, &c.content, c.timestamp, c.tantivy_score, &query_words, last_word_is_prefix);
+                let mut m = highlight_candidate(c.id, &c.content, c.timestamp, c.tantivy_score, &query_words, last_word_is_prefix, &fuzzy_expansions);
                 // Preserve bucket ranking order: score = inverse rank so sort is stable
                 m.score = (MAX_RESULTS - rank) as f64;
                 m
@@ -224,6 +224,7 @@ pub(crate) fn highlight_candidate(
         tantivy_score: f32,
         query_words: &[&str],
         last_word_is_prefix: bool,
+        fuzzy_expansions: &[std::collections::HashMap<String, u8>],
     ) -> FuzzyMatch {
         let content_lower = content.to_lowercase();
         let mut word_highlights: Vec<(usize, usize, HighlightKind)> = Vec::new();
@@ -237,7 +238,7 @@ pub(crate) fn highlight_candidate(
         for (char_start, char_end, doc_word) in &doc_words {
             for (qi, qw) in query_lower.iter().enumerate() {
                 let allow_prefix = qi == last_qi && last_word_is_prefix;
-                let wmk = does_word_match(qw, doc_word, allow_prefix);
+                let wmk = does_word_match(qw, doc_word, allow_prefix, &fuzzy_expansions[qi]);
                 if wmk != WordMatchKind::None {
                     matched_query_words[qi] = true;
                     word_highlights.push((*char_start, *char_end, word_match_to_highlight_kind(wmk)));

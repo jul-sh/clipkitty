@@ -33,6 +33,7 @@ csscolorparser = "*"
 uniffi = { version = "*", features = ["cli"] }
 validator = { version = "0.16", features = ["derive", "unic"] }
 tantivy = "*"
+symspell = "0.4"
 image = { version = "*", default-features = false, features = ["jpeg", "png", "gif", "webp"] }
 tokio = { version = "*", features = ["full"] }
 tokio-util = { version = "*", features = ["rt"] }

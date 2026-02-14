@@ -6,6 +6,7 @@
 //! when word-match quality is equal.
 
 use crate::search::{tokenize_words, is_word_token};
+use std::collections::HashMap;
 
 /// Bucket score tuple — derived Ord gives lexicographic comparison.
 /// All components: higher = better.
@@ -49,6 +50,7 @@ pub fn compute_bucket_score(
     timestamp: i64,
     bm25_score: f32,
     now: i64,
+    fuzzy_expansions: &[HashMap<String, u8>],
 ) -> BucketScore {
     if query_words.is_empty() {
         return BucketScore {
@@ -66,7 +68,7 @@ pub fn compute_bucket_score(
     let doc_words = tokenize_words(&content_lower);
     let doc_word_strs: Vec<&str> = doc_words.iter().map(|(_, _, w)| w.as_str()).collect();
 
-    let word_matches = match_query_words(query_words, &doc_word_strs, last_word_is_prefix);
+    let word_matches = match_query_words(query_words, &doc_word_strs, last_word_is_prefix, fuzzy_expansions);
 
     let words_matched_weight: u16 = word_matches.iter()
         .filter(|m| m.matched)
@@ -132,6 +134,7 @@ fn match_query_words(
     query_words: &[&str],
     doc_words: &[&str],
     last_word_is_prefix: bool,
+    fuzzy_expansions: &[HashMap<String, u8>],
 ) -> Vec<WordMatch> {
     query_words
         .iter()
@@ -149,7 +152,7 @@ fn match_query_words(
             let mut best: Option<WordMatch> = None;
 
             for (dpos, dw) in doc_words.iter().enumerate() {
-                match does_word_match(&qw_lower, dw, allow_prefix) {
+                match does_word_match(&qw_lower, dw, allow_prefix, &fuzzy_expansions[qi]) {
                     WordMatchKind::Exact => {
                         return WordMatch {
                             matched: true,
@@ -221,22 +224,18 @@ pub(crate) enum WordMatchKind {
 }
 
 /// Check if a query word matches a document word using the same criteria
-/// as ranking: exact -> prefix (if allowed, >= 2 chars) -> fuzzy (edit distance)
+/// as ranking: exact -> prefix (if allowed, >= 2 chars) -> fuzzy (SymSpell pre-computed)
 /// -> subsequence (abbreviation). Both inputs must already be lowercased.
-pub(crate) fn does_word_match(qw_lower: &str, dw_lower: &str, allow_prefix: bool) -> WordMatchKind {
+pub(crate) fn does_word_match(qw_lower: &str, dw_lower: &str, allow_prefix: bool, fuzzy_expansion: &HashMap<String, u8>) -> WordMatchKind {
     if dw_lower == qw_lower {
         return WordMatchKind::Exact;
     }
     if allow_prefix && qw_lower.len() >= 2 && dw_lower.starts_with(qw_lower) {
         return WordMatchKind::Prefix;
     }
-    let max_typo = max_edit_distance(qw_lower.chars().count());
-    if max_typo > 0 {
-        if let Some(dist) = edit_distance_bounded(qw_lower, dw_lower, max_typo) {
-            if dist > 0 {
-                return WordMatchKind::Fuzzy(dist);
-            }
-        }
+    // Check fuzzy expansion map for pre-computed SymSpell matches
+    if let Some(&dist) = fuzzy_expansion.get(dw_lower) {
+        return WordMatchKind::Fuzzy(dist);
     }
     if let Some(gaps) = subsequence_match(qw_lower, dw_lower) {
         return WordMatchKind::Subsequence(gaps);

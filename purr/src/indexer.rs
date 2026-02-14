@@ -7,7 +7,10 @@ use crate::ranking::compute_bucket_score;
 use crate::search::{RECENCY_BOOST_MAX, RECENCY_HALF_LIFE_SECS};
 use chrono::Utc;
 use parking_lot::RwLock;
+use std::collections::HashMap;
 use std::path::Path;
+use std::sync::atomic::{AtomicBool, Ordering};
+use symspell::{SymSpell, UnicodeStringStrategy, Verbosity};
 use tantivy::collector::TopDocs;
 use tantivy::directory::MmapDirectory;
 use tantivy::query::{BooleanQuery, BoostQuery, Occur, PhraseQuery, TermQuery};
@@ -100,6 +103,8 @@ pub struct Indexer {
     schema: Schema,
     id_field: Field,
     content_field: Field,
+    spellchecker: RwLock<SymSpell<UnicodeStringStrategy>>,
+    spellchecker_dirty: AtomicBool,
 }
 
 impl Indexer {
@@ -138,6 +143,8 @@ impl Indexer {
             index,
             writer: RwLock::new(writer),
             reader: RwLock::new(reader),
+            spellchecker: RwLock::new(SymSpell::default()),
+            spellchecker_dirty: AtomicBool::new(true),
         }
     }
 
@@ -238,7 +245,7 @@ impl Indexer {
     }
 
     /// Two-phase search: trigram recall (Phase 1) + bucket re-ranking (Phase 2).
-    pub fn search(&self, query: &str, limit: usize) -> IndexerResult<Vec<SearchCandidate>> {
+    pub fn search(&self, query: &str, limit: usize) -> IndexerResult<(Vec<SearchCandidate>, Vec<HashMap<String, u8>>)> {
         #[cfg(feature = "perf-log")]
         let t0 = std::time::Instant::now();
         let candidates = self.trigram_recall(query, limit)?;
@@ -248,7 +255,7 @@ impl Indexer {
         if candidates.is_empty() || query.split_whitespace().count() == 0 {
             #[cfg(feature = "perf-log")]
             eprintln!("[perf] phase1={:.1}ms candidates=0", (t1 - t0).as_secs_f64() * 1000.0);
-            return Ok(candidates);
+            return Ok((candidates, Vec::new()));
         }
 
         // Phase 2: Bucket re-ranking
@@ -256,6 +263,9 @@ impl Indexer {
         let query_words: Vec<&str> = query_words_owned.iter().map(|(_, _, w)| w.as_str()).collect();
         let last_word_is_prefix = query.ends_with(|c: char| c.is_alphanumeric());
         let now = Utc::now().timestamp();
+
+        // Build fuzzy expansions from SymSpell
+        let fuzzy_expansions = self.build_fuzzy_expansions(&query_words);
 
         let mut scored: Vec<(crate::ranking::BucketScore, usize)> = candidates
             .iter()
@@ -268,6 +278,7 @@ impl Indexer {
                     c.timestamp,
                     c.tantivy_score,
                     now,
+                    &fuzzy_expansions,
                 );
                 (bucket, i)
             })
@@ -290,10 +301,44 @@ impl Indexer {
         let mut candidate_slots: Vec<Option<SearchCandidate>> =
             candidates.into_iter().map(Some).collect();
 
-        Ok(scored
+        let result: Vec<SearchCandidate> = scored
             .into_iter()
             .filter_map(|(_score, i)| candidate_slots[i].take())
-            .collect())
+            .collect();
+
+        Ok((result, fuzzy_expansions))
+    }
+
+    /// Build SymSpell fuzzy expansion maps for query words.
+    /// Returns one HashMap per query word mapping fuzzy matches to their edit distances.
+    fn build_fuzzy_expansions(&self, query_words: &[&str]) -> Vec<HashMap<String, u8>> {
+        query_words
+            .iter()
+            .map(|qw| {
+                let qw_lower = qw.to_lowercase();
+                // Calculate maximum edit distance based on word length
+                let qw_len = qw_lower.chars().count();
+                let max_dist = if qw_len < 3 {
+                    0
+                } else if qw_len <= 8 {
+                    1
+                } else {
+                    2
+                };
+
+                if max_dist == 0 {
+                    return HashMap::new();
+                }
+
+                // Get fuzzy matches from SymSpell
+                let spell = self.spellchecker.read();
+                spell.lookup(&qw_lower, Verbosity::All, max_dist as i64)
+                    .into_iter()
+                    .filter(|s| s.distance > 0)  // Exclude exact matches (distance == 0)
+                    .map(|s| (s.term, s.distance as u8))
+                    .collect()
+            })
+            .collect()
     }
 
     /// Phase 1: Trigram recall using Tantivy BM25.
