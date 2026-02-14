@@ -287,6 +287,11 @@ jobs:
         with:
           swift-version: "6.2"
 
+      - name: Install Apple WWDR Intermediate Certificate
+        run: |
+          curl -sLo "$RUNNER_TEMP/AppleWWDRCAG3.cer" https://www.apple.com/certificateauthority/AppleWWDRCAG3.cer
+          sudo security add-trusted-cert -d -r unspecified -k /Library/Keychains/System.keychain "$RUNNER_TEMP/AppleWWDRCAG3.cer"
+
       - name: Install App Store Certificates
         uses: apple-actions/import-codesign-certs@v3
         with:
