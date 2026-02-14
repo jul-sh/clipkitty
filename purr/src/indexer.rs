@@ -430,9 +430,15 @@ impl Indexer {
             } else if num_terms >= 20 {
                 4 * num_terms / 5
             } else if num_terms >= 7 {
-                (num_terms * 2 / 3).max(5)
+                // A single typo destroys up to 4 trigrams. Allow enough slack
+                // so candidates survive into Phase 2 where the first-character
+                // penalty and bucket ranking filter noise.
+                num_terms.saturating_sub(4).max(2)
             } else {
-                (num_terms + 1) / 2
+                // Short words (3-6 trigrams): a single typo can destroy almost
+                // all overlap. Drop threshold aggressively — Phase 2's
+                // first-character penalty prevents false positives.
+                num_terms.saturating_sub(3).max(1)
             };
             recall_query.set_minimum_number_should_match(min_match);
         }
