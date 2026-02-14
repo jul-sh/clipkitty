@@ -297,7 +297,7 @@ fn subsequence_match(query: &str, target: &str) -> Option<u8> {
 
 /// Maximum allowed edit distance based on word length (Milli's graduation).
 /// 3-4 char words allow 1 edit to catch common transpositions (teh→the, form→from).
-pub(crate) fn max_edit_distance(word_len: usize) -> u8 {
+fn max_edit_distance(word_len: usize) -> u8 {
     if word_len < 3 {
         0
     } else if word_len <= 8 {
