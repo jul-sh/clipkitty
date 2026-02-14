@@ -51,6 +51,9 @@ final class ClipboardStore {
         }
     }
 
+    /// Current content type filter (observable by views)
+    private(set) var contentTypeFilter: ContentTypeFilter = .all
+
     // MARK: - Private State
 
     /// Rust-backed clipboard store
@@ -162,7 +165,13 @@ final class ClipboardStore {
 
     func resetForDisplay() {
         searchTask?.cancel()
+        contentTypeFilter = .all
         displayVersion += 1
+        refresh()
+    }
+
+    func setContentTypeFilter(_ filter: ContentTypeFilter) {
+        contentTypeFilter = filter
         refresh()
     }
 
@@ -223,7 +232,12 @@ final class ClipboardStore {
         }
 
         do {
-            let searchResult = try await rustStore.search(query: query)
+            let searchResult: SearchResult
+            if contentTypeFilter != .all {
+                searchResult = try await rustStore.searchFiltered(query: query, filter: contentTypeFilter)
+            } else {
+                searchResult = try await rustStore.search(query: query)
+            }
 
             guard !Task.isCancelled else { return }
             guard case .resultsLoading(let currentQuery, _) = state, currentQuery == query else { return }
