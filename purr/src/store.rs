@@ -11,7 +11,7 @@
 use crate::database::Database;
 use crate::indexer::Indexer;
 use crate::interface::{
-    ClipboardItem, ItemMatch, MatchData, SearchResult, ClipKittyError, ClipboardStoreApi,
+    ClipboardItem, ContentTypeFilter, ItemMatch, MatchData, SearchResult, ClipKittyError, ClipboardStoreApi,
 };
 use crate::models::StoredItem;
 use crate::search::{self, MIN_TRIGRAM_QUERY_LEN, MAX_RESULTS};
@@ -141,6 +141,7 @@ impl ClipboardStore {
         fuzzy_matches: Vec<search::FuzzyMatch>,
         token: &CancellationToken,
         runtime: &tokio::runtime::Handle,
+        filter: Option<&ContentTypeFilter>,
     ) -> Result<Vec<ItemMatch>, ClipKittyError> {
         if token.is_cancelled() {
             return Err(ClipKittyError::Cancelled);
@@ -156,6 +157,13 @@ impl ClipboardStore {
         let item_map: std::collections::HashMap<i64, StoredItem> = stored_items
             .into_iter()
             .filter_map(|item| item.id.map(|id| (id, item)))
+            // Apply content type filter post-retrieval (Tantivy doesn't index content type)
+            .filter(|(_, item)| {
+                match filter {
+                    Some(f) => f.matches_db_type(item.content.database_type()),
+                    None => true,
+                }
+            })
             .collect();
 
         if token.is_cancelled() {
@@ -188,12 +196,13 @@ impl ClipboardStore {
         query: &str,
         token: &CancellationToken,
         runtime: &tokio::runtime::Handle,
+        filter: Option<&ContentTypeFilter>,
     ) -> Result<Vec<ItemMatch>, ClipKittyError> {
         if token.is_cancelled() {
             return Err(ClipKittyError::Cancelled);
         }
 
-        let candidates = db.search_short_query(query, MAX_RESULTS)?;
+        let candidates = db.search_short_query(query, MAX_RESULTS, filter)?;
         if candidates.is_empty() {
             return Ok(Vec::new());
         }
@@ -217,7 +226,7 @@ impl ClipboardStore {
             token,
         );
 
-        Self::fuzzy_matches_to_item_matches(db, fuzzy_matches, token, runtime)
+        Self::fuzzy_matches_to_item_matches(db, fuzzy_matches, token, runtime, filter)
     }
 
     /// Trigram query search using Tantivy with phrase-boost scoring
@@ -227,6 +236,7 @@ impl ClipboardStore {
         query: &str,
         token: &CancellationToken,
         runtime: &tokio::runtime::Handle,
+        filter: Option<&ContentTypeFilter>,
     ) -> Result<Vec<ItemMatch>, ClipKittyError> {
         if token.is_cancelled() {
             return Err(ClipKittyError::Cancelled);
@@ -237,7 +247,7 @@ impl ClipboardStore {
             return Ok(Vec::new());
         }
 
-        Self::fuzzy_matches_to_item_matches(db, fuzzy_matches, token, runtime)
+        Self::fuzzy_matches_to_item_matches(db, fuzzy_matches, token, runtime, filter)
     }
 
     /// Get a single stored item by ID (internal use)
@@ -274,6 +284,97 @@ impl ClipboardStore {
         store.rebuild_index_if_needed()?;
 
         Ok(store)
+    }
+}
+
+// Filtered search (not on trait, to avoid breaking foreign interface)
+#[uniffi::export]
+impl ClipboardStore {
+    /// Search with a content type filter.
+    /// When filter is All, delegates to the trait's search() method.
+    pub async fn search_filtered(
+        &self,
+        query: String,
+        filter: ContentTypeFilter,
+    ) -> Result<SearchResult, ClipKittyError> {
+        if filter == ContentTypeFilter::All {
+            return self.search(query).await;
+        }
+
+        let trimmed = query.trim();
+
+        // Empty query with filter: return recent items of that type
+        if trimmed.is_empty() {
+            let (items, total_count) = self.db.fetch_item_metadata(None, 1000, Some(&filter))?;
+
+            let first_item = if let Some(first_metadata) = items.first() {
+                self.db
+                    .fetch_items_by_ids(&[first_metadata.item_id])?
+                    .into_iter()
+                    .next()
+                    .map(|item| item.to_clipboard_item())
+            } else {
+                None
+            };
+
+            let matches: Vec<ItemMatch> = items
+                .into_iter()
+                .map(|metadata| ItemMatch {
+                    item_metadata: metadata,
+                    match_data: MatchData::default(),
+                })
+                .collect();
+
+            return Ok(SearchResult {
+                matches,
+                total_count,
+                first_item,
+            });
+        }
+
+        // Create cancellation token and guard
+        let token = CancellationToken::new();
+        let _guard = DropGuard::new(token.clone());
+
+        let runtime = self.runtime_handle();
+        let runtime_for_closure = runtime.clone();
+
+        let db = Arc::clone(&self.db);
+        let indexer = Arc::clone(&self.indexer);
+        let query_owned = query.to_string();
+        let trimmed_owned = trimmed.to_string();
+        let token_clone = token.clone();
+
+        let handle = runtime.spawn_blocking(move || {
+            if trimmed_owned.len() < MIN_TRIGRAM_QUERY_LEN {
+                let matches = Self::search_short_query_sync(&db, &trimmed_owned, &token_clone, &runtime_for_closure, Some(&filter))?;
+                let total_count = matches.len() as u64;
+                Ok((matches, total_count))
+            } else {
+                let matches = Self::search_trigram_query_sync(&db, &indexer, &query_owned, &token_clone, &runtime_for_closure, Some(&filter))?;
+                let total_count = matches.len() as u64;
+                Ok((matches, total_count))
+            }
+        });
+
+        match handle.await {
+            Ok(Ok((matches, total_count))) => {
+                let first_item = if let Some(first_match) = matches.first() {
+                    let id = first_match.item_metadata.item_id;
+                    self.db
+                        .fetch_items_by_ids(&[id])?
+                        .into_iter()
+                        .next()
+                        .map(|item| item.to_clipboard_item())
+                } else {
+                    None
+                };
+
+                Ok(SearchResult { matches, total_count, first_item })
+            }
+            Ok(Err(e)) => Err(e),
+            Err(_join_error) => Err(ClipKittyError::Cancelled),
+        }
     }
 }
 
@@ -345,7 +446,7 @@ impl ClipboardStoreApi for ClipboardStore {
 
         // Empty query: return recent items with empty MatchData (no highlights)
         if trimmed.is_empty() {
-            let (items, total_count) = self.db.fetch_item_metadata(None, 1000)?;
+            let (items, total_count) = self.db.fetch_item_metadata(None, 1000, None)?;
 
             // Fetch first item's full content for preview pane
             let first_item = if let Some(first_metadata) = items.first() {
@@ -394,11 +495,11 @@ impl ClipboardStoreApi for ClipboardStore {
         // because UniFFI doesn't provide a tokio runtime context
         let handle = runtime.spawn_blocking(move || {
             if trimmed_owned.len() < MIN_TRIGRAM_QUERY_LEN {
-                let matches = Self::search_short_query_sync(&db, &trimmed_owned, &token_clone, &runtime_for_closure)?;
+                let matches = Self::search_short_query_sync(&db, &trimmed_owned, &token_clone, &runtime_for_closure, None)?;
                 let total_count = matches.len() as u64;
                 Ok((matches, total_count))
             } else {
-                let matches = Self::search_trigram_query_sync(&db, &indexer, &query_owned, &token_clone, &runtime_for_closure)?;
+                let matches = Self::search_trigram_query_sync(&db, &indexer, &query_owned, &token_clone, &runtime_for_closure, None)?;
                 let total_count = matches.len() as u64;
                 Ok((matches, total_count))
             }
@@ -746,6 +847,7 @@ mod tests {
             "He",
             &token,
             &runtime_handle,
+            None,
         );
         assert!(matches!(result, Err(crate::interface::ClipKittyError::Cancelled)));
 
@@ -756,6 +858,7 @@ mod tests {
             "Hello",
             &token,
             &runtime_handle,
+            None,
         );
         assert!(matches!(result, Err(crate::interface::ClipKittyError::Cancelled)));
     }
