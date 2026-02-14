@@ -261,8 +261,8 @@ impl ClipboardStore {
         let db_path_buf = PathBuf::from(&path);
         let index_path = db_path_buf
             .parent()
-            .map(|p| p.join("tantivy_index_v2"))
-            .unwrap_or_else(|| PathBuf::from("tantivy_index_v2"));
+            .map(|p| p.join("tantivy_index_v3"))
+            .unwrap_or_else(|| PathBuf::from("tantivy_index_v3"));
 
         let indexer = Indexer::new(&index_path)?;
 
