@@ -263,9 +263,11 @@ impl Indexer {
             .par_iter()
             .enumerate()
             .map(|(i, c)| {
-                let doc_word_strs: Vec<&str> = c.doc_words().iter().map(|(_, _, w)| w.as_str()).collect();
+                let content_lower = c.content().to_lowercase();
+                let doc_words = crate::search::tokenize_words(&content_lower);
+                let doc_word_strs: Vec<&str> = doc_words.iter().map(|(_, _, w)| w.as_str()).collect();
                 let bucket = compute_bucket_score(
-                    c.content_lower(),
+                    &content_lower,
                     &doc_word_strs,
                     &query_words,
                     last_word_is_prefix,
