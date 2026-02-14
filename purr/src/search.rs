@@ -1275,7 +1275,7 @@ fn find_densest_highlight(highlights: &[HighlightRange], window_size: u64) -> Op
 }
 
 /// Generate a generous text snippet around the densest cluster of highlights.
-pub(crate) fn generate_snippet(content: &str, highlights: &[HighlightRange], max_len: usize) -> (String, Vec<HighlightRange>, u64) {
+pub fn generate_snippet(content: &str, highlights: &[HighlightRange], max_len: usize) -> (String, Vec<HighlightRange>, u64) {
     let content_char_len = content.chars().count();
 
     if highlights.is_empty() {
@@ -1498,7 +1498,7 @@ fn normalize_snippet(content: &str, start: usize, end: usize, max_chars: usize) 
 }
 
 /// Generate a preview from content (no highlights, starts from beginning)
-pub(crate) fn generate_preview(content: &str, max_chars: usize) -> String {
+pub fn generate_preview(content: &str, max_chars: usize) -> String {
     let trimmed = content.trim_start();
     let (preview, _, _) = generate_snippet(trimmed, &[], max_chars);
     preview

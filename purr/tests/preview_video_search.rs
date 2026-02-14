@@ -136,17 +136,12 @@ async fn ranking_word_start_beats_mid_word() {
 
     let contents = search_contents(&store, "url").await;
 
-    // With does_word_match, "url" matches "urlParser" (exact/prefix) but NOT "curl" (mid-word).
-    // So only urlParser should appear in results.
+    // "url" exact/prefix-matches "urlParser", and fuzzy-matches "curl" (edit distance 1).
+    // urlParser should rank first (exact > fuzzy).
     assert!(!contents.is_empty(), "Should find urlParser");
     assert!(
         contents[0].contains("urlParser"),
         "Word-start 'urlParser' should rank first, got: {:?}",
-        contents
-    );
-    assert!(
-        !contents.iter().any(|c| c.contains("curl")),
-        "Mid-word 'curl' should NOT match query 'url', got: {:?}",
         contents
     );
 }
