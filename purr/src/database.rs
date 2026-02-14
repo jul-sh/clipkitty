@@ -187,9 +187,9 @@ struct ContentDbFields {
     color_rgba: Option<u32>,
 }
 
-/// Map ClipboardContent to database column values
-fn content_to_db(content: &ClipboardContent) -> ContentDbFields {
-    match content {
+impl From<&ClipboardContent> for ContentDbFields {
+    fn from(content: &ClipboardContent) -> Self {
+        match content {
         ClipboardContent::Text { value } => ContentDbFields {
             content: value.clone(),
             content_type: "text",
@@ -247,6 +247,7 @@ fn content_to_db(content: &ClipboardContent) -> ContentDbFields {
             link_image_data: None,
             color_rgba: None,
         },
+        }
     }
 }
 
@@ -484,7 +485,7 @@ impl Database {
     /// Insert a new clipboard item, returns the row ID
     pub fn insert_item(&self, item: &StoredItem) -> DatabaseResult<i64> {
         let conn = self.get_conn()?;
-        let fields = content_to_db(&item.content);
+        let fields = ContentDbFields::from(&item.content);
         let timestamp = Utc.timestamp_opt(item.timestamp_unix, 0).single().unwrap_or_else(Utc::now);
         let timestamp_str = timestamp.format("%Y-%m-%d %H:%M:%S%.f").to_string();
 
