@@ -3,6 +3,7 @@
 //! Two-phase search: trigram recall (Phase 1) + Milli-style bucket re-ranking (Phase 2).
 //! For queries under 3 characters, returns empty (handled by search.rs streaming fallback).
 
+use crate::candidate::SearchCandidate;
 use crate::ranking::compute_bucket_score;
 use crate::search::{RECENCY_BOOST_MAX, RECENCY_HALF_LIFE_SECS};
 use chrono::Utc;
@@ -10,7 +11,7 @@ use parking_lot::RwLock;
 use std::path::Path;
 use tantivy::collector::TopDocs;
 use tantivy::directory::MmapDirectory;
-use tantivy::query::{BooleanQuery, BoostQuery, Occur, PhraseQuery, TermQuery};
+use tantivy::query::{BooleanQuery, BoostQuery, FuzzyTermQuery, Occur, PhraseQuery, TermQuery};
 use tantivy::schema::*;
 use tantivy::tokenizer::{NgramTokenizer, TextAnalyzer, TokenFilter, TokenStream, Tokenizer};
 use tantivy::{DocId, Index, IndexReader, IndexWriter, ReloadPolicy, Score, Term};
@@ -82,16 +83,6 @@ pub enum IndexerError {
 
 pub type IndexerResult<T> = Result<T, IndexerError>;
 
-/// A search candidate from Tantivy (before bucket re-ranking)
-#[derive(Debug, Clone)]
-pub struct SearchCandidate {
-    pub id: i64,
-    pub content: String,
-    pub timestamp: i64,
-    /// Blended score (BM25 + recency) from Tantivy's tweak_score
-    pub tantivy_score: f32,
-}
-
 /// Tantivy-based indexer with trigram tokenization
 pub struct Indexer {
     index: Index,
@@ -100,6 +91,7 @@ pub struct Indexer {
     schema: Schema,
     id_field: Field,
     content_field: Field,
+    content_words_field: Field,
 }
 
 impl Indexer {
@@ -134,6 +126,7 @@ impl Indexer {
         Self {
             id_field: schema.get_field("id").unwrap(),
             content_field: schema.get_field("content").unwrap(),
+            content_words_field: schema.get_field("content_words").unwrap(),
             schema,
             index,
             writer: RwLock::new(writer),
@@ -153,6 +146,13 @@ impl Indexer {
             .set_indexing_options(text_field_indexing)
             .set_stored();
         builder.add_text_field("content", text_options);
+
+        // Word-tokenized field for FuzzyTermQuery recall (not stored — content lives on trigram field)
+        let word_field_indexing = TextFieldIndexing::default()
+            .set_tokenizer("default")
+            .set_index_option(IndexRecordOption::Basic);
+        let word_options = TextOptions::default().set_indexing_options(word_field_indexing);
+        builder.add_text_field("content_words", word_options);
 
         builder.add_i64_field("timestamp", STORED | FAST);
         builder.build()
@@ -181,6 +181,7 @@ impl Indexer {
         let mut doc = tantivy::TantivyDocument::default();
         doc.add_i64(self.id_field, id);
         doc.add_text(self.content_field, content);
+        doc.add_text(self.content_words_field, content);
         doc.add_i64(self.schema.get_field("timestamp").unwrap(), timestamp);
 
         writer.add_document(doc)?;
@@ -251,18 +252,23 @@ impl Indexer {
             return Ok(candidates);
         }
 
-        // Phase 2: Bucket re-ranking
+        // Phase 2: Bucket re-ranking (parallelized — compute_bucket_score is a pure function)
         let query_words_owned = crate::search::tokenize_words(query);
         let query_words: Vec<&str> = query_words_owned.iter().map(|(_, _, w)| w.as_str()).collect();
         let last_word_is_prefix = query.ends_with(|c: char| c.is_alphanumeric());
         let now = Utc::now().timestamp();
 
+        use rayon::prelude::*;
         let mut scored: Vec<(crate::ranking::BucketScore, usize)> = candidates
-            .iter()
+            .par_iter()
             .enumerate()
             .map(|(i, c)| {
+                let content_lower = c.content().to_lowercase();
+                let doc_words = crate::search::tokenize_words(&content_lower);
+                let doc_word_strs: Vec<&str> = doc_words.iter().map(|(_, _, w)| w.as_str()).collect();
                 let bucket = compute_bucket_score(
-                    &c.content,
+                    &content_lower,
+                    &doc_word_strs,
                     &query_words,
                     last_word_is_prefix,
                     c.timestamp,
@@ -292,7 +298,7 @@ impl Indexer {
 
         Ok(scored
             .into_iter()
-            .filter_map(|(_score, i)| candidate_slots[i].take())
+            .filter_map(|(_, i)| candidate_slots[i].take())
             .collect())
     }
 
@@ -354,15 +360,46 @@ impl Indexer {
                 .and_then(|v| v.as_i64())
                 .unwrap_or(0);
 
-            candidates.push(SearchCandidate {
-                id,
-                content,
-                timestamp,
-                tantivy_score: blended_score as f32,
-            });
+            candidates.push(SearchCandidate::new(id, content, timestamp, blended_score as f32));
         }
 
         Ok(candidates)
+    }
+
+    /// Build FuzzyTermQuery clauses on the word-tokenized field.
+    /// For each query word with 3+ chars, creates a Levenshtein DFA query
+    /// that catches substitutions, insertions, and deletions that trigrams miss.
+    ///
+    /// Only active for queries with 1-3 words. For 4+ word queries, the
+    /// correctly-typed words provide enough trigrams for the trigram pathway;
+    /// adding fuzzy clauses would recall scattered common-word matches.
+    fn build_fuzzy_word_clauses(&self, query: &str) -> Vec<Box<dyn tantivy::query::Query>> {
+        let words: Vec<&str> = query.split_whitespace().collect();
+        if words.len() >= 4 {
+            return Vec::new();
+        }
+        let last_word_is_prefix = query.ends_with(|c: char| c.is_alphanumeric());
+
+        let mut clauses = Vec::new();
+        for (i, word) in words.iter().enumerate() {
+            let len = word.chars().count();
+            if len < 3 {
+                continue;
+            }
+            let distance = crate::ranking::max_edit_distance(len);
+            if distance == 0 {
+                continue;
+            }
+            let term = Term::from_field_text(self.content_words_field, &word.to_lowercase());
+            let is_last = i == words.len() - 1;
+            let q: Box<dyn tantivy::query::Query> = if is_last && last_word_is_prefix {
+                Box::new(FuzzyTermQuery::new_prefix(term, distance, true))
+            } else {
+                Box::new(FuzzyTermQuery::new(term, distance, true))
+            };
+            clauses.push(q);
+        }
+        clauses
     }
 
     /// Build a trigram query with phrase boosts for contiguity scoring.
@@ -483,11 +520,35 @@ impl Indexer {
             }
         }
 
-        if phrase_boosts.is_empty() {
+        // Build the recall part: trigram OR fuzzy-word pathways
+        let fuzzy_clauses = self.build_fuzzy_word_clauses(query);
+        let recall: Box<dyn tantivy::query::Query> = if fuzzy_clauses.is_empty() {
             Box::new(recall_query)
         } else {
+            // Require at least half the fuzzy clauses to match. Since this
+            // pathway is limited to 1-3 word queries, the threshold stays
+            // tight enough to avoid scattered common-word matches.
+            let n = fuzzy_clauses.len();
+            let fuzzy_min = (n + 1) / 2;
+            let fuzzy_subqueries: Vec<(Occur, Box<dyn tantivy::query::Query>)> =
+                fuzzy_clauses.into_iter().map(|q| (Occur::Should, q)).collect();
+            let mut fuzzy_bool = BooleanQuery::new(fuzzy_subqueries);
+            fuzzy_bool.set_minimum_number_should_match(fuzzy_min);
+
+            // OR: document passes if it matches EITHER trigrams OR fuzzy words
+            let mut combined = BooleanQuery::new(vec![
+                (Occur::Should, Box::new(recall_query) as Box<dyn tantivy::query::Query>),
+                (Occur::Should, Box::new(fuzzy_bool) as Box<dyn tantivy::query::Query>),
+            ]);
+            combined.set_minimum_number_should_match(1);
+            Box::new(combined)
+        };
+
+        if phrase_boosts.is_empty() {
+            recall
+        } else {
             let mut outer: Vec<(Occur, Box<dyn tantivy::query::Query>)> = Vec::new();
-            outer.push((Occur::Must, Box::new(recall_query)));
+            outer.push((Occur::Must, recall));
             outer.extend(phrase_boosts);
             Box::new(BooleanQuery::new(outer))
         }
@@ -618,5 +679,77 @@ mod tests {
         let results = indexer.search("adn", 10).unwrap();
         let ids: Vec<i64> = results.iter().map(|c| c.id).collect();
         assert!(ids.contains(&1), "'adn' should recall doc with 'and', got {:?}", ids);
+    }
+
+    // ── Fuzzy word recall tests ─────────────────────────────────
+
+    #[test]
+    fn test_substitution_typo_recall() {
+        // "tast" (substitution typo of "test") has zero trigram overlap:
+        // tast → [tas, ast], test → [tes, est]. FuzzyTermQuery catches it.
+        let indexer = Indexer::new_in_memory().unwrap();
+        indexer.add_document(1, "run the test suite", 1000).unwrap();
+        indexer.add_document(2, "a slow red dog", 1000).unwrap();
+        indexer.commit().unwrap();
+
+        let results = indexer.search("tast", 10).unwrap();
+        let ids: Vec<i64> = results.iter().map(|c| c.id).collect();
+        assert!(ids.contains(&1), "substitution 'tast' should recall doc with 'test', got {:?}", ids);
+        assert!(!ids.contains(&2));
+    }
+
+    #[test]
+    fn test_insertion_typo_recall() {
+        // "tesst" (insertion typo of "test")
+        let indexer = Indexer::new_in_memory().unwrap();
+        indexer.add_document(1, "run the test suite", 1000).unwrap();
+        indexer.add_document(2, "a slow red dog", 1000).unwrap();
+        indexer.commit().unwrap();
+
+        let results = indexer.search("tesst", 10).unwrap();
+        let ids: Vec<i64> = results.iter().map(|c| c.id).collect();
+        assert!(ids.contains(&1), "insertion 'tesst' should recall doc with 'test', got {:?}", ids);
+        assert!(!ids.contains(&2));
+    }
+
+    #[test]
+    fn test_deletion_typo_recall() {
+        // "tst" (deletion typo of "test")
+        let indexer = Indexer::new_in_memory().unwrap();
+        indexer.add_document(1, "run the test suite", 1000).unwrap();
+        indexer.add_document(2, "a slow red dog", 1000).unwrap();
+        indexer.commit().unwrap();
+
+        let results = indexer.search("tst", 10).unwrap();
+        let ids: Vec<i64> = results.iter().map(|c| c.id).collect();
+        assert!(ids.contains(&1), "deletion 'tst' should recall doc with 'test', got {:?}", ids);
+    }
+
+    #[test]
+    fn test_fuzzy_word_multi_word_query() {
+        // "quikc brown" — substitution typo in "quick"
+        let indexer = Indexer::new_in_memory().unwrap();
+        indexer.add_document(1, "the quick brown fox jumps", 1000).unwrap();
+        indexer.add_document(2, "a slow red dog sleeps", 1000).unwrap();
+        indexer.commit().unwrap();
+
+        let results = indexer.search("quikc brown", 10).unwrap();
+        let ids: Vec<i64> = results.iter().map(|c| c.id).collect();
+        assert!(ids.contains(&1), "'quikc brown' should recall doc with 'quick brown', got {:?}", ids);
+        assert!(!ids.contains(&2));
+    }
+
+    #[test]
+    fn test_existing_trigram_recall_unchanged() {
+        // Exact match still works through the trigram pathway
+        let indexer = Indexer::new_in_memory().unwrap();
+        indexer.add_document(1, "hello world greeting", 1000).unwrap();
+        indexer.add_document(2, "goodbye universe farewell", 1000).unwrap();
+        indexer.commit().unwrap();
+
+        let results = indexer.search("hello", 10).unwrap();
+        let ids: Vec<i64> = results.iter().map(|c| c.id).collect();
+        assert!(ids.contains(&1), "exact 'hello' should recall doc 1, got {:?}", ids);
+        assert!(!ids.contains(&2));
     }
 }
