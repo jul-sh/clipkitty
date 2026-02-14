@@ -40,8 +40,8 @@ fn init_rayon() {
             .map(|n| n.get())
             .unwrap_or(4);
 
-        // Reserve 1 core for Tokio (mostly idle during search, waiting on spawn_blocking).
-        let rayon_threads = num_threads.saturating_sub(1).max(1);
+        // Reserve 2 cores for Tokio to ensure responsiveness, but use at least 1 thread.
+        let rayon_threads = num_threads.saturating_sub(2).max(1);
 
         let _ = rayon::ThreadPoolBuilder::new()
             .num_threads(rayon_threads)
