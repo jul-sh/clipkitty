@@ -5,6 +5,7 @@
 //!
 //! Types are exported via UniFFI proc-macros (#[derive(uniffi::Record/Enum)]).
 
+pub(crate) mod candidate;
 pub mod content_detection;
 mod database;
 mod indexer;

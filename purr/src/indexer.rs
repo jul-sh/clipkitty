@@ -3,6 +3,7 @@
 //! Two-phase search: trigram recall (Phase 1) + Milli-style bucket re-ranking (Phase 2).
 //! For queries under 3 characters, returns empty (handled by search.rs streaming fallback).
 
+use crate::candidate::SearchCandidate;
 use crate::ranking::compute_bucket_score;
 use crate::search::{RECENCY_BOOST_MAX, RECENCY_HALF_LIFE_SECS};
 use chrono::Utc;
@@ -81,16 +82,6 @@ pub enum IndexerError {
 }
 
 pub type IndexerResult<T> = Result<T, IndexerError>;
-
-/// A search candidate from Tantivy (before bucket re-ranking)
-#[derive(Debug, Clone)]
-pub struct SearchCandidate {
-    pub id: i64,
-    pub content: String,
-    pub timestamp: i64,
-    /// Blended score (BM25 + recency) from Tantivy's tweak_score
-    pub tantivy_score: f32,
-}
 
 /// Tantivy-based indexer with trigram tokenization
 pub struct Indexer {
@@ -261,18 +252,23 @@ impl Indexer {
             return Ok(candidates);
         }
 
-        // Phase 2: Bucket re-ranking
+        // Phase 2: Bucket re-ranking (parallelized — compute_bucket_score is a pure function)
         let query_words_owned = crate::search::tokenize_words(query);
         let query_words: Vec<&str> = query_words_owned.iter().map(|(_, _, w)| w.as_str()).collect();
         let last_word_is_prefix = query.ends_with(|c: char| c.is_alphanumeric());
         let now = Utc::now().timestamp();
 
+        use rayon::prelude::*;
         let mut scored: Vec<(crate::ranking::BucketScore, usize)> = candidates
-            .iter()
+            .par_iter()
             .enumerate()
             .map(|(i, c)| {
+                let content_lower = c.content().to_lowercase();
+                let doc_words = crate::search::tokenize_words(&content_lower);
+                let doc_word_strs: Vec<&str> = doc_words.iter().map(|(_, _, w)| w.as_str()).collect();
                 let bucket = compute_bucket_score(
-                    &c.content,
+                    &content_lower,
+                    &doc_word_strs,
                     &query_words,
                     last_word_is_prefix,
                     c.timestamp,
@@ -302,7 +298,7 @@ impl Indexer {
 
         Ok(scored
             .into_iter()
-            .filter_map(|(_score, i)| candidate_slots[i].take())
+            .filter_map(|(_, i)| candidate_slots[i].take())
             .collect())
     }
 
@@ -364,12 +360,7 @@ impl Indexer {
                 .and_then(|v| v.as_i64())
                 .unwrap_or(0);
 
-            candidates.push(SearchCandidate {
-                id,
-                content,
-                timestamp,
-                tantivy_score: blended_score as f32,
-            });
+            candidates.push(SearchCandidate::new(id, content, timestamp, blended_score as f32));
         }
 
         Ok(candidates)
