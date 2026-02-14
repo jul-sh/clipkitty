@@ -15,7 +15,7 @@ use crate::search::{tokenize_words, is_word_token};
 /// 2. recency_score — smooth exponential decay (255=now, 0=old), no cliff edges
 /// 3. typo_score — 255 - total_edit_distance (fewer typos = higher)
 /// 4. proximity_score — u16::MAX - sum_of_pair_distances
-/// 5. exactness_score — 0-3 level
+/// 5. exactness_score — 0-4 level (prefix matches rank above fuzzy)
 /// 6. bm25_quantized — BM25 scaled to integer
 /// 7. recency — raw unix timestamp (final tiebreaker)
 #[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord)]
@@ -328,11 +328,12 @@ fn compute_proximity(word_matches: &[WordMatch]) -> u16 {
     u16::MAX.saturating_sub(total_distance.min(u16::MAX as u32) as u16)
 }
 
-/// Compute exactness score.
-/// 3: Full query appears as exact substring (case-insensitive)
-/// 2: All matched words are exact (0 edit distance each)
-/// 1: Mix of exact and fuzzy matches
-/// 0: All matches are fuzzy/prefix only
+/// Compute exactness score (0-4 scale).
+/// 4: Full query appears as exact substring (case-insensitive)
+/// 3: All matched words are exact (0 edit distance, exact string match)
+/// 2: All matched words are exact or prefix (0 edit distance; "typing in progress")
+/// 1: At least one exact or prefix match mixed with fuzzy
+/// 0: All matches are fuzzy only
 fn compute_exactness(content: &str, query_words: &[&str], word_matches: &[WordMatch]) -> u8 {
     let matched: Vec<&WordMatch> = word_matches.iter().filter(|m| m.matched).collect();
     if matched.is_empty() {
@@ -343,17 +344,24 @@ fn compute_exactness(content: &str, query_words: &[&str], word_matches: &[WordMa
         let full_query = query_words.join(" ").to_lowercase();
         let content_lower = content.to_lowercase();
         if content_lower.contains(&full_query) {
-            return 3;
+            return 4;
         }
     }
 
     let all_exact = matched.iter().all(|m| m.is_exact);
     if all_exact {
+        return 3;
+    }
+
+    // Prefix matches have edit_dist == 0 but is_exact == false.
+    // They represent "typing in progress" — higher intent than a fuzzy typo.
+    let all_exact_or_prefix = matched.iter().all(|m| m.edit_dist == 0);
+    if all_exact_or_prefix {
         return 2;
     }
 
-    let any_exact = matched.iter().any(|m| m.is_exact);
-    if any_exact {
+    let any_exact_or_prefix = matched.iter().any(|m| m.edit_dist == 0);
+    if any_exact_or_prefix {
         return 1;
     }
 
@@ -363,6 +371,12 @@ fn compute_exactness(content: &str, query_words: &[&str], word_matches: &[WordMa
 /// Damerau-Levenshtein edit distance (optimal string alignment) with threshold pruning.
 /// Counts insertions, deletions, substitutions, and adjacent transpositions each as 1 edit.
 /// Returns `Some(distance)` if distance <= max_dist, `None` otherwise.
+///
+/// Applies the "first-character rule": ~98% of real typos preserve the first letter,
+/// so a first-character mismatch incurs an extra +1 penalty. This prevents false
+/// positives like "cat"→"bat" (distance 1 + penalty 1 = 2, exceeds max_dist=1).
+/// Exception: transpositions of the first two characters (e.g., "hte"→"the") are
+/// exempt since they're common fast-typing errors.
 pub fn edit_distance_bounded(a: &str, b: &str, max_dist: u8) -> Option<u8> {
     let a_chars: Vec<char> = a.chars().collect();
     let b_chars: Vec<char> = b.chars().collect();
@@ -370,7 +384,21 @@ pub fn edit_distance_bounded(a: &str, b: &str, max_dist: u8) -> Option<u8> {
     let n = b_chars.len();
     let max_d = max_dist as usize;
 
-    if m.abs_diff(n) > max_d {
+    if m == 0 || n == 0 {
+        let dist = m.max(n);
+        return if dist <= max_d { Some(dist as u8) } else { None };
+    }
+
+    // First-character penalty: mismatch on position 0 costs +1 edit.
+    // Exception: first-two-char transposition ("hte"→"the") is a common fast-typing error.
+    let is_first_char_transposed = m >= 2
+        && n >= 2
+        && a_chars[0] == b_chars[1]
+        && a_chars[1] == b_chars[0];
+    let first_char_penalty =
+        if a_chars[0] != b_chars[0] && !is_first_char_transposed { 1 } else { 0 };
+
+    if m.abs_diff(n) + first_char_penalty > max_d {
         return None;
     }
 
@@ -399,7 +427,7 @@ pub fn edit_distance_bounded(a: &str, b: &str, max_dist: u8) -> Option<u8> {
             row_min = row_min.min(curr[j]);
         }
 
-        if row_min > max_d {
+        if row_min + first_char_penalty > max_d {
             return None;
         }
 
@@ -407,7 +435,7 @@ pub fn edit_distance_bounded(a: &str, b: &str, max_dist: u8) -> Option<u8> {
         std::mem::swap(&mut prev, &mut curr);
     }
 
-    let result = prev[n];
+    let result = prev[n] + first_char_penalty;
     if result <= max_d {
         Some(result as u8)
     } else {
@@ -464,6 +492,23 @@ mod tests {
         assert_eq!(edit_distance_bounded("improt", "import", 1), Some(1));
         assert_eq!(edit_distance_bounded("teh", "the", 1), Some(1));
         assert_eq!(edit_distance_bounded("recieve", "receive", 1), Some(1));
+    }
+
+    #[test]
+    fn test_edit_distance_first_char_penalty() {
+        // First-char mismatch adds +1 penalty: "cat"→"bat" = DL 1 + penalty 1 = 2
+        assert_eq!(edit_distance_bounded("cat", "bat", 1), None);
+        assert_eq!(edit_distance_bounded("cat", "bat", 2), Some(2));
+        // Interior typo with same first char: "cat"→"cot" = DL 1, no penalty
+        assert_eq!(edit_distance_bounded("cat", "cot", 1), Some(1));
+    }
+
+    #[test]
+    fn test_edit_distance_first_char_transposition_exempt() {
+        // First-two-char transposition is exempt from penalty: "hte"→"the"
+        assert_eq!(edit_distance_bounded("hte", "the", 1), Some(1));
+        // But non-transposition first-char mismatch is penalized: "bhe"→"the"
+        assert_eq!(edit_distance_bounded("bhe", "the", 1), None);
     }
 
     // ── subsequence_match tests ───────────────────────────────────
@@ -558,6 +603,9 @@ mod tests {
         assert_eq!(does_word_match("adn", "and", false), WordMatchKind::Fuzzy(1));
         // Short word substitution — also matches (same edit distance)
         assert_eq!(does_word_match("tha", "the", false), WordMatchKind::Fuzzy(1));
+        // First-char mismatch penalty prevents false positives
+        assert_eq!(does_word_match("bat", "cat", false), WordMatchKind::None);
+        assert_eq!(does_word_match("rat", "cat", false), WordMatchKind::None);
         // 2-char words still get no fuzzy
         assert_eq!(does_word_match("te", "the", false), WordMatchKind::None);
     }
@@ -690,7 +738,7 @@ mod tests {
             WordMatch { matched: true, edit_dist: 0, doc_word_pos: 0, is_exact: true, match_weight: 25 },
             WordMatch { matched: true, edit_dist: 0, doc_word_pos: 1, is_exact: true, match_weight: 25 },
         ];
-        assert_eq!(compute_exactness("hello world", &["hello", "world"], &matches), 3);
+        assert_eq!(compute_exactness("hello world", &["hello", "world"], &matches), 4);
     }
 
     #[test]
@@ -699,7 +747,7 @@ mod tests {
             WordMatch { matched: true, edit_dist: 0, doc_word_pos: 0, is_exact: true, match_weight: 25 },
             WordMatch { matched: true, edit_dist: 0, doc_word_pos: 2, is_exact: true, match_weight: 25 },
         ];
-        assert_eq!(compute_exactness("hello beautiful world", &["hello", "world"], &matches), 2);
+        assert_eq!(compute_exactness("hello beautiful world", &["hello", "world"], &matches), 3);
     }
 
     #[test]
@@ -709,6 +757,33 @@ mod tests {
             WordMatch { matched: true, edit_dist: 1, doc_word_pos: 1, is_exact: false, match_weight: 25 },
         ];
         assert_eq!(compute_exactness("hello wrld", &["hello", "world"], &matches), 1);
+    }
+
+    #[test]
+    fn test_exactness_all_prefix() {
+        // Multi-word query where both match as prefix (edit_dist 0, is_exact false)
+        // but the full query "hel wor" is NOT a substring of the content.
+        let matches = vec![
+            WordMatch { matched: true, edit_dist: 0, doc_word_pos: 0, is_exact: false, match_weight: 25 },
+            WordMatch { matched: true, edit_dist: 0, doc_word_pos: 1, is_exact: false, match_weight: 25 },
+        ];
+        assert_eq!(compute_exactness("hello world", &["hel", "wor"], &matches), 2);
+    }
+
+    #[test]
+    fn test_exactness_prefix_beats_fuzzy() {
+        // Prefix (level 2) should rank above all-fuzzy (level 0)
+        let prefix = vec![
+            WordMatch { matched: true, edit_dist: 0, doc_word_pos: 0, is_exact: false, match_weight: 25 },
+            WordMatch { matched: true, edit_dist: 0, doc_word_pos: 1, is_exact: false, match_weight: 25 },
+        ];
+        let fuzzy = vec![
+            WordMatch { matched: true, edit_dist: 1, doc_word_pos: 0, is_exact: false, match_weight: 25 },
+        ];
+        assert!(
+            compute_exactness("hello world", &["hel", "wor"], &prefix)
+            > compute_exactness("hallo", &["hello"], &fuzzy)
+        );
     }
 
     #[test]
@@ -853,7 +928,7 @@ mod tests {
         assert_eq!(score.recency_score, 255); // just now
         assert_eq!(score.typo_score, 255);
         assert_eq!(score.proximity_score, u16::MAX - 1);
-        assert_eq!(score.exactness_score, 3); // "hello world" contains "hello world"
+        assert_eq!(score.exactness_score, 4); // "hello world" contains "hello world"
         assert_eq!(score.bm25_quantized, 500); // 5.0 * 100
     }
 }
