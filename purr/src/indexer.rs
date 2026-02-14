@@ -8,6 +8,7 @@ use crate::search::{RECENCY_BOOST_MAX, RECENCY_HALF_LIFE_SECS};
 use chrono::Utc;
 use parking_lot::RwLock;
 use std::path::Path;
+use std::sync::OnceLock;
 use tantivy::collector::TopDocs;
 use tantivy::directory::MmapDirectory;
 use tantivy::query::{BooleanQuery, BoostQuery, FuzzyTermQuery, Occur, PhraseQuery, TermQuery};
@@ -82,7 +83,9 @@ pub enum IndexerError {
 
 pub type IndexerResult<T> = Result<T, IndexerError>;
 
-/// A search candidate from Tantivy, enriched with pre-computed tokens after Phase 2.
+/// A search candidate from Tantivy with memoized derived state.
+/// `content_lower()` and `doc_words()` are computed on first access and cached,
+/// avoiding redundant work across Phase 2 (ranking) and Phase 3 (highlighting).
 #[derive(Debug, Clone)]
 pub struct SearchCandidate {
     pub id: i64,
@@ -90,10 +93,20 @@ pub struct SearchCandidate {
     pub timestamp: i64,
     /// Blended score (BM25 + recency) from Tantivy's tweak_score
     pub tantivy_score: f32,
-    /// Pre-computed lowercased content (computed in Phase 2, reused in Phase 3)
-    pub content_lower: String,
-    /// Pre-computed tokenized words from content_lower (computed in Phase 2, reused in Phase 3)
-    pub doc_words: Vec<(usize, usize, String)>,
+    content_lower: OnceLock<String>,
+    doc_words: OnceLock<Vec<(usize, usize, String)>>,
+}
+
+impl SearchCandidate {
+    pub fn content_lower(&self) -> &str {
+        self.content_lower.get_or_init(|| self.content.to_lowercase())
+    }
+
+    pub fn doc_words(&self) -> &[(usize, usize, String)] {
+        self.doc_words.get_or_init(|| {
+            crate::search::tokenize_words(self.content_lower())
+        })
+    }
 }
 
 /// Tantivy-based indexer with trigram tokenization
@@ -272,15 +285,13 @@ impl Indexer {
         let now = Utc::now().timestamp();
 
         use rayon::prelude::*;
-        let mut scored: Vec<(crate::ranking::BucketScore, usize, String, Vec<(usize, usize, String)>)> = candidates
+        let mut scored: Vec<(crate::ranking::BucketScore, usize)> = candidates
             .par_iter()
             .enumerate()
             .map(|(i, c)| {
-                let content_lower = c.content.to_lowercase();
-                let doc_words = crate::search::tokenize_words(&content_lower);
-                let doc_word_strs: Vec<&str> = doc_words.iter().map(|(_, _, w)| w.as_str()).collect();
+                let doc_word_strs: Vec<&str> = c.doc_words().iter().map(|(_, _, w)| w.as_str()).collect();
                 let bucket = compute_bucket_score(
-                    &content_lower,
+                    c.content_lower(),
                     &doc_word_strs,
                     &query_words,
                     last_word_is_prefix,
@@ -288,7 +299,7 @@ impl Indexer {
                     c.tantivy_score,
                     now,
                 );
-                (bucket, i, content_lower, doc_words)
+                (bucket, i)
             })
             .collect();
 
@@ -307,24 +318,11 @@ impl Indexer {
         }
 
         let mut candidate_slots: Vec<Option<SearchCandidate>> =
-            candidates.into_iter().map(|c| Some(SearchCandidate {
-                id: c.id,
-                content: c.content,
-                timestamp: c.timestamp,
-                tantivy_score: c.tantivy_score,
-                content_lower: String::new(),
-                doc_words: Vec::new(),
-            })).collect();
+            candidates.into_iter().map(Some).collect();
 
         Ok(scored
             .into_iter()
-            .filter_map(|(_, i, content_lower, doc_words)| {
-                candidate_slots[i].take().map(|mut c| {
-                    c.content_lower = content_lower;
-                    c.doc_words = doc_words;
-                    c
-                })
-            })
+            .filter_map(|(_, i)| candidate_slots[i].take())
             .collect())
     }
 
@@ -391,8 +389,8 @@ impl Indexer {
                 content,
                 timestamp,
                 tantivy_score: blended_score as f32,
-                content_lower: String::new(), // populated in Phase 2
-                doc_words: Vec::new(),        // populated in Phase 2
+                content_lower: OnceLock::new(),
+                doc_words: OnceLock::new(),
             });
         }
 
