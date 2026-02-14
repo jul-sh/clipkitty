@@ -6,7 +6,8 @@
 //! what's highlighted matches what's ranked (exact, prefix, fuzzy edit-distance).
 //! Short queries (< 3 chars) use a streaming fallback.
 
-use crate::indexer::{Indexer, IndexerResult, SearchCandidate};
+use crate::candidate::SearchCandidate;
+use crate::indexer::{Indexer, IndexerResult};
 use crate::interface::{HighlightKind, HighlightRange, MatchData, ItemMatch};
 use crate::models::StoredItem;
 use crate::ranking::{does_word_match, WordMatchKind};
