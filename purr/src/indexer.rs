@@ -82,7 +82,7 @@ pub enum IndexerError {
 
 pub type IndexerResult<T> = Result<T, IndexerError>;
 
-/// A search candidate from Tantivy (before bucket re-ranking)
+/// A search candidate from Tantivy, enriched with pre-computed tokens after Phase 2.
 #[derive(Debug, Clone)]
 pub struct SearchCandidate {
     pub id: i64,
@@ -90,6 +90,10 @@ pub struct SearchCandidate {
     pub timestamp: i64,
     /// Blended score (BM25 + recency) from Tantivy's tweak_score
     pub tantivy_score: f32,
+    /// Pre-computed lowercased content (computed in Phase 2, reused in Phase 3)
+    pub content_lower: String,
+    /// Pre-computed tokenized words from content_lower (computed in Phase 2, reused in Phase 3)
+    pub doc_words: Vec<(usize, usize, String)>,
 }
 
 /// Tantivy-based indexer with trigram tokenization
@@ -261,25 +265,30 @@ impl Indexer {
             return Ok(candidates);
         }
 
-        // Phase 2: Bucket re-ranking
+        // Phase 2: Bucket re-ranking (parallelized — compute_bucket_score is a pure function)
         let query_words_owned = crate::search::tokenize_words(query);
         let query_words: Vec<&str> = query_words_owned.iter().map(|(_, _, w)| w.as_str()).collect();
         let last_word_is_prefix = query.ends_with(|c: char| c.is_alphanumeric());
         let now = Utc::now().timestamp();
 
-        let mut scored: Vec<(crate::ranking::BucketScore, usize)> = candidates
-            .iter()
+        use rayon::prelude::*;
+        let mut scored: Vec<(crate::ranking::BucketScore, usize, String, Vec<(usize, usize, String)>)> = candidates
+            .par_iter()
             .enumerate()
             .map(|(i, c)| {
+                let content_lower = c.content.to_lowercase();
+                let doc_words = crate::search::tokenize_words(&content_lower);
+                let doc_word_strs: Vec<&str> = doc_words.iter().map(|(_, _, w)| w.as_str()).collect();
                 let bucket = compute_bucket_score(
-                    &c.content,
+                    &content_lower,
+                    &doc_word_strs,
                     &query_words,
                     last_word_is_prefix,
                     c.timestamp,
                     c.tantivy_score,
                     now,
                 );
-                (bucket, i)
+                (bucket, i, content_lower, doc_words)
             })
             .collect();
 
@@ -298,11 +307,24 @@ impl Indexer {
         }
 
         let mut candidate_slots: Vec<Option<SearchCandidate>> =
-            candidates.into_iter().map(Some).collect();
+            candidates.into_iter().map(|c| Some(SearchCandidate {
+                id: c.id,
+                content: c.content,
+                timestamp: c.timestamp,
+                tantivy_score: c.tantivy_score,
+                content_lower: String::new(),
+                doc_words: Vec::new(),
+            })).collect();
 
         Ok(scored
             .into_iter()
-            .filter_map(|(_score, i)| candidate_slots[i].take())
+            .filter_map(|(_, i, content_lower, doc_words)| {
+                candidate_slots[i].take().map(|mut c| {
+                    c.content_lower = content_lower;
+                    c.doc_words = doc_words;
+                    c
+                })
+            })
             .collect())
     }
 
@@ -369,6 +391,8 @@ impl Indexer {
                 content,
                 timestamp,
                 tantivy_score: blended_score as f32,
+                content_lower: String::new(), // populated in Phase 2
+                doc_words: Vec::new(),        // populated in Phase 2
             });
         }
 

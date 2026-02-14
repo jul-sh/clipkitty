@@ -5,7 +5,7 @@
 //! Recency tiers sit above proximity/exactness/bm25 to strongly prefer recent items
 //! when word-match quality is equal.
 
-use crate::search::{tokenize_words, is_word_token};
+use crate::search::is_word_token;
 
 /// Bucket score tuple — derived Ord gives lexicographic comparison.
 /// All components: higher = better.
@@ -42,8 +42,12 @@ struct WordMatch {
 }
 
 /// Compute the bucket score for a candidate document.
+///
+/// `content_lower` and `doc_word_strs` should be pre-computed from the candidate's
+/// content to avoid redundant work when the same tokens are needed for highlighting.
 pub fn compute_bucket_score(
-    content: &str,
+    content_lower: &str,
+    doc_word_strs: &[&str],
     query_words: &[&str],
     last_word_is_prefix: bool,
     timestamp: i64,
@@ -62,11 +66,7 @@ pub fn compute_bucket_score(
         };
     }
 
-    let content_lower = content.to_lowercase();
-    let doc_words = tokenize_words(&content_lower);
-    let doc_word_strs: Vec<&str> = doc_words.iter().map(|(_, _, w)| w.as_str()).collect();
-
-    let word_matches = match_query_words(query_words, &doc_word_strs, last_word_is_prefix);
+    let word_matches = match_query_words(query_words, doc_word_strs, last_word_is_prefix);
 
     let words_matched_weight: u16 = word_matches.iter()
         .filter(|m| m.matched)
@@ -80,7 +80,7 @@ pub fn compute_bucket_score(
     let typo_score = 255u8.saturating_sub(total_edit_dist);
 
     let proximity_score = compute_proximity(&word_matches);
-    let exactness_score = compute_exactness(content, query_words, &word_matches);
+    let exactness_score = compute_exactness(content_lower, query_words, &word_matches);
     let bm25_quantized = quantize_bm25(bm25_score);
     let recency_score = compute_recency_score(timestamp, now);
 
@@ -334,7 +334,7 @@ fn compute_proximity(word_matches: &[WordMatch]) -> u16 {
 /// 2: All matched words are exact or prefix (0 edit distance; "typing in progress")
 /// 1: At least one exact or prefix match mixed with fuzzy
 /// 0: All matches are fuzzy only
-fn compute_exactness(content: &str, query_words: &[&str], word_matches: &[WordMatch]) -> u8 {
+fn compute_exactness(content_lower: &str, query_words: &[&str], word_matches: &[WordMatch]) -> u8 {
     let matched: Vec<&WordMatch> = word_matches.iter().filter(|m| m.matched).collect();
     if matched.is_empty() {
         return 0;
@@ -342,7 +342,6 @@ fn compute_exactness(content: &str, query_words: &[&str], word_matches: &[WordMa
 
     if !query_words.is_empty() {
         let full_query = query_words.join(" ").to_lowercase();
-        let content_lower = content.to_lowercase();
         if content_lower.contains(&full_query) {
             return 4;
         }
@@ -446,6 +445,15 @@ pub fn edit_distance_bounded(a: &str, b: &str, max_dist: u8) -> Option<u8> {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    /// Helper: compute bucket score from raw content (handles lowercasing/tokenization).
+    fn score(content: &str, query_words: &[&str], last_word_is_prefix: bool, timestamp: i64, bm25: f32, now: i64) -> BucketScore {
+        use crate::search::tokenize_words;
+        let content_lower = content.to_lowercase();
+        let doc_words = tokenize_words(&content_lower);
+        let doc_word_strs: Vec<&str> = doc_words.iter().map(|(_, _, w): &(usize, usize, String)| w.as_str()).collect();
+        compute_bucket_score(&content_lower, &doc_word_strs, query_words, last_word_is_prefix, timestamp, bm25, now)
+    }
 
     // ── edit_distance_bounded tests ──────────────────────────────
 
@@ -852,10 +860,10 @@ mod tests {
     #[test]
     fn test_words_matched_dominates() {
         let now = 1700000000i64;
-        let score_3w = compute_bucket_score(
+        let score_3w = score(
             "hello beautiful world", &["hello", "beautiful", "world"], false, now - 86400, 1.0, now,
         );
-        let score_2w = compute_bucket_score(
+        let score_2w = score(
             "hello world xyz", &["hello", "beautiful", "world"], false, now, 10.0, now,
         );
         assert!(score_3w > score_2w, "3 words matched should beat 2 words");
@@ -865,10 +873,10 @@ mod tests {
     fn test_recency_dominates_typo() {
         let now = 1700000000i64;
         // Typo match from now vs exact match from 10 days ago
-        let typo_new = compute_bucket_score(
+        let typo_new = score(
             "riversde park", &["riverside"], false, now, 1.0, now,
         );
-        let exact_old = compute_bucket_score(
+        let exact_old = score(
             "riverside park", &["riverside"], false, now - 864000, 1.0, now,
         );
         assert!(typo_new > exact_old, "Recent fuzzy match should beat old exact match");
@@ -878,10 +886,10 @@ mod tests {
     fn test_typo_dominates_within_same_recency() {
         let now = 1700000000i64;
         // Both items from the same time — typo should break the tie
-        let exact = compute_bucket_score(
+        let exact = score(
             "riverside park", &["riverside"], false, now - 3600, 1.0, now,
         );
-        let typo = compute_bucket_score(
+        let typo = score(
             "riversde park", &["riverside"], false, now - 3600, 1.0, now,
         );
         assert!(exact > typo, "Exact match should beat fuzzy at equal recency");
@@ -891,10 +899,10 @@ mod tests {
     fn test_recency_dominates_proximity() {
         let now = 1700000000i64;
         // Same words, same typo, but different recency
-        let recent = compute_bucket_score(
+        let recent = score(
             "hello world and other things between", &["hello", "world"], false, now - 1800, 1.0, now,
         );
-        let old = compute_bucket_score(
+        let old = score(
             "hello world", &["hello", "world"], false, now - 864000, 1.0, now,
         );
         assert!(recent > old, "Recent item should dominate proximity when words/typo equal");
@@ -921,14 +929,14 @@ mod tests {
     #[test]
     fn test_full_bucket_score_integration() {
         let now = 1700000000i64;
-        let score = compute_bucket_score(
+        let s = score(
             "hello world", &["hello", "world"], false, now, 5.0, now,
         );
-        assert_eq!(score.words_matched_weight, 50); // 5² + 5² = 50
-        assert_eq!(score.recency_score, 255); // just now
-        assert_eq!(score.typo_score, 255);
-        assert_eq!(score.proximity_score, u16::MAX - 1);
-        assert_eq!(score.exactness_score, 4); // "hello world" contains "hello world"
-        assert_eq!(score.bm25_quantized, 500); // 5.0 * 100
+        assert_eq!(s.words_matched_weight, 50); // 5² + 5² = 50
+        assert_eq!(s.recency_score, 255); // just now
+        assert_eq!(s.typo_score, 255);
+        assert_eq!(s.proximity_score, u16::MAX - 1);
+        assert_eq!(s.exactness_score, 4); // "hello world" contains "hello world"
+        assert_eq!(s.bm25_quantized, 500); // 5.0 * 100
     }
 }
