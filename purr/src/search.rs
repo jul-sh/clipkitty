@@ -79,7 +79,7 @@ pub(crate) fn search_trigram(indexer: &Indexer, query: &str, token: &Cancellatio
             .into_par_iter()
             .take_any_while(|_| !token.is_cancelled())
             .map(|(rank, c)| {
-                let mut m = highlight_candidate(c.id, &c.content, c.timestamp, c.tantivy_score, &query_words, last_word_is_prefix);
+                let mut m = highlight_candidate(c.id, &c.content, &c.content_lower, &c.doc_words, c.timestamp, c.tantivy_score, &query_words, last_word_is_prefix);
                 // Preserve bucket ranking order: score = inverse rank so sort is stable
                 m.score = (MAX_RESULTS - rank) as f64;
                 m
@@ -217,24 +217,26 @@ fn word_match_to_highlight_kind(wmk: WordMatchKind) -> HighlightKind {
 /// Highlight a candidate using the same word-matching criteria as ranking
 /// (exact, prefix, fuzzy edit-distance) via `does_word_match`. This ensures
 /// what's highlighted matches what was ranked in Phase 2 bucket scoring.
+///
+/// `content_lower` and `doc_words` are pre-computed in Phase 2 to avoid
+/// redundant lowercasing and tokenization (~4000 allocations per search).
 pub(crate) fn highlight_candidate(
         id: i64,
         content: &str,
+        _content_lower: &str,
+        doc_words: &[(usize, usize, String)],
         timestamp: i64,
         tantivy_score: f32,
         query_words: &[&str],
         last_word_is_prefix: bool,
     ) -> FuzzyMatch {
-        let content_lower = content.to_lowercase();
         let mut word_highlights: Vec<(usize, usize, HighlightKind)> = Vec::new();
         let mut matched_query_words = vec![false; query_words.len()];
 
         let query_lower: Vec<String> = query_words.iter().map(|w| w.to_lowercase()).collect();
         let last_qi = query_lower.len().saturating_sub(1);
 
-        let doc_words = tokenize_words(&content_lower);
-
-        for (char_start, char_end, doc_word) in &doc_words {
+        for (char_start, char_end, doc_word) in doc_words {
             for (qi, qw) in query_lower.iter().enumerate() {
                 let allow_prefix = qi == last_qi && last_word_is_prefix;
                 let wmk = does_word_match(qw, doc_word, allow_prefix);
@@ -763,8 +765,15 @@ mod tests {
 
     }
 
+    /// Helper: call highlight_candidate with automatic lowercasing/tokenization.
+    fn hc(id: i64, content: &str, timestamp: i64, tantivy_score: f32, query_words: &[&str], last_word_is_prefix: bool) -> FuzzyMatch {
+        let content_lower = content.to_lowercase();
+        let doc_words = tokenize_words(&content_lower);
+        super::highlight_candidate(id, content, &content_lower, &doc_words, timestamp, tantivy_score, query_words, last_word_is_prefix)
+    }
+
     fn highlighted_words(content: &str, query_words: &[&str]) -> Vec<String> {
-        let fm = super::highlight_candidate(1, content, 1000, 1.0, query_words, false);
+        let fm = hc(1, content, 1000, 1.0, query_words, false);
         let chars: Vec<char> = content.chars().collect();
         fm.highlight_ranges.iter().map(|r| {
             chars[r.start as usize..r.end as usize].iter().collect()
@@ -785,7 +794,7 @@ mod tests {
 
     #[test]
     fn test_highlight_prefix_match() {
-        let fm = super::highlight_candidate(1, "Run testing suite now", 1000, 1.0, &["test"], true);
+        let fm = hc(1, "Run testing suite now", 1000, 1.0, &["test"], true);
         let chars: Vec<char> = "Run testing suite now".chars().collect();
         let words: Vec<String> = fm.highlight_ranges.iter().map(|r| {
             chars[r.start as usize..r.end as usize].iter().collect()
@@ -849,7 +858,7 @@ mod tests {
         // Punctuation tokens are now real tokens in the query
         assert_eq!(query_words, vec!["http", "://", "github"]);
 
-        let fm = highlight_candidate(1, "https://github.com/user/repo", 1000, 1.0, &query_words, false);
+        let fm = hc(1, "https://github.com/user/repo", 1000, 1.0, &query_words, false);
         let chars: Vec<char> = "https://github.com/user/repo".chars().collect();
         let words: Vec<String> = fm.highlight_ranges.iter().map(|r| {
             chars[r.start as usize..r.end as usize].iter().collect()
@@ -973,7 +982,7 @@ error: Build failed due to failed dependency";
     fn test_densest_highlight_prefers_exact_query_match_over_scattered_repeats() {
         let query_words_owned = build_query_words("error: build failed due to dependency");
         let query_words: Vec<&str> = query_words_owned.iter().map(|s| s.as_str()).collect();
-        let fm = highlight_candidate(1, NIX_BUILD_ERROR, 1000, 1.0, &query_words, false);
+        let fm = hc(1, NIX_BUILD_ERROR, 1000, 1.0, &query_words, false);
 
         let densest_idx = find_densest_highlight(&fm.highlight_ranges, SNIPPET_CONTEXT_CHARS as u64).unwrap();
         let densest_start = fm.highlight_ranges[densest_idx].start as usize;
@@ -996,7 +1005,7 @@ error: Build failed due to failed dependency";
     fn test_snippet_centers_on_exact_query_match_not_scattered_repeats() {
         let query_words_owned = build_query_words("error: build failed due to dependency");
         let query_words: Vec<&str> = query_words_owned.iter().map(|s| s.as_str()).collect();
-        let fm = highlight_candidate(1, NIX_BUILD_ERROR, 1000, 1.0, &query_words, false);
+        let fm = hc(1, NIX_BUILD_ERROR, 1000, 1.0, &query_words, false);
 
         let (snippet, _, _) = generate_snippet(NIX_BUILD_ERROR, &fm.highlight_ranges, SNIPPET_CONTEXT_CHARS * 2);
 
@@ -1011,14 +1020,14 @@ error: Build failed due to failed dependency";
 
     #[test]
     fn test_highlight_match_kind_exact() {
-        let fm = highlight_candidate(1, "hello world", 1000, 1.0, &["hello"], false);
+        let fm = hc(1, "hello world", 1000, 1.0, &["hello"], false);
         assert_eq!(fm.highlight_ranges.len(), 1);
         assert_eq!(fm.highlight_ranges[0].kind, HighlightKind::Exact);
     }
 
     #[test]
     fn test_highlight_match_kind_prefix() {
-        let fm = highlight_candidate(1, "Run testing suite now", 1000, 1.0, &["test"], true);
+        let fm = hc(1, "Run testing suite now", 1000, 1.0, &["test"], true);
         assert_eq!(fm.highlight_ranges.len(), 1);
         assert_eq!(fm.highlight_ranges[0].kind, HighlightKind::Prefix);
     }
@@ -1026,7 +1035,7 @@ error: Build failed due to failed dependency";
     #[test]
     fn test_highlight_match_kind_fuzzy() {
         // "riversde" matches "riverside" via fuzzy edit distance
-        let fm = highlight_candidate(1, "Visit Riverside Park today", 1000, 1.0, &["riversde"], false);
+        let fm = hc(1, "Visit Riverside Park today", 1000, 1.0, &["riversde"], false);
         assert_eq!(fm.highlight_ranges.len(), 1);
         assert_eq!(fm.highlight_ranges[0].kind, HighlightKind::Fuzzy);
     }
@@ -1034,7 +1043,7 @@ error: Build failed due to failed dependency";
     #[test]
     fn test_highlight_match_kind_subsequence() {
         // "impt" matches "import" via subsequence (len diff 2 exceeds max_dist 1)
-        let fm = highlight_candidate(1, "import data", 1000, 1.0, &["impt"], false);
+        let fm = hc(1, "import data", 1000, 1.0, &["impt"], false);
         assert_eq!(fm.highlight_ranges.len(), 1);
         assert_eq!(fm.highlight_ranges[0].kind, HighlightKind::Subsequence);
     }
