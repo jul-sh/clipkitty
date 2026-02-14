@@ -89,7 +89,7 @@ pub type IndexerResult<T> = Result<T, IndexerError>;
 #[derive(Debug, Clone)]
 pub struct SearchCandidate {
     pub id: i64,
-    pub content: String,
+    content: String,
     pub timestamp: i64,
     /// Blended score (BM25 + recency) from Tantivy's tweak_score
     pub tantivy_score: f32,
@@ -98,6 +98,10 @@ pub struct SearchCandidate {
 }
 
 impl SearchCandidate {
+    pub fn content(&self) -> &str {
+        &self.content
+    }
+
     pub fn content_lower(&self) -> &str {
         self.content_lower.get_or_init(|| self.content.to_lowercase())
     }
