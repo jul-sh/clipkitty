@@ -470,7 +470,7 @@ impl Database {
         let like_pattern = format!("%{}%", escaped);
         let mut stmt_like = conn.prepare(
             r#"SELECT id, content, CAST(strftime('%s', timestamp) AS INTEGER)
-               FROM (SELECT * FROM items ORDER BY timestamp DESC LIMIT 2000)
+               FROM (SELECT id, content, timestamp FROM items ORDER BY timestamp DESC LIMIT 2000)
                WHERE content LIKE ?1 ESCAPE '\' COLLATE NOCASE
                ORDER BY timestamp DESC
                LIMIT ?2"#
