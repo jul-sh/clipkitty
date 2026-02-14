@@ -7,7 +7,7 @@
 //! Short queries (< 3 chars) use a streaming fallback.
 
 use crate::indexer::{Indexer, IndexerResult, SearchCandidate};
-use crate::interface::{HighlightRange, MatchData, ItemMatch};
+use crate::interface::{HighlightKind, HighlightRange, MatchData, ItemMatch};
 use crate::models::StoredItem;
 use crate::ranking::{does_word_match, WordMatchKind};
 use chrono::Utc;
@@ -43,7 +43,7 @@ pub(crate) const SNIPPET_CONTEXT_CHARS: usize = 200;
 pub(crate) struct FuzzyMatch {
     pub(crate) id: i64,
     pub(crate) score: f64,
-    pub(crate) matched_indices: Vec<u32>,
+    pub(crate) highlight_ranges: Vec<HighlightRange>,
     pub(crate) timestamp: i64,
     pub(crate) content: String,
     /// Whether this was a prefix match (for short query scoring)
@@ -58,8 +58,9 @@ pub(crate) fn search_trigram(indexer: &Indexer, query: &str, token: &Cancellatio
             return Ok(Vec::new());
         }
         let trimmed = query.trim_start();
-        let query_words: Vec<&str> = trimmed.trim_end().split_whitespace().collect();
-        let last_word_is_prefix = !trimmed.ends_with(char::is_whitespace);
+        let query_words_owned = tokenize_words(trimmed.trim_end());
+        let query_words: Vec<&str> = query_words_owned.iter().map(|(_, _, w)| w.as_str()).collect();
+        let last_word_is_prefix = trimmed.trim_end().ends_with(|c: char| c.is_alphanumeric());
 
         // Bucket-ranked candidates from two-phase search
         #[cfg(feature = "perf-log")]
@@ -83,7 +84,7 @@ pub(crate) fn search_trigram(indexer: &Indexer, query: &str, token: &Cancellatio
                 m.score = (MAX_RESULTS - rank) as f64;
                 m
             })
-            .filter(|m| !m.matched_indices.is_empty())
+            .filter(|m| !m.highlight_ranges.is_empty())
             .collect();
 
         // par_iter + take_any_while doesn't preserve order — restore bucket ranking
@@ -136,8 +137,12 @@ pub(crate) fn score_short_query_batch(
                     return None;
                 }
 
-                let matched_indices: Vec<u32> = positions.iter()
-                    .flat_map(|&pos| (pos..pos + query_len).map(|i| i as u32))
+                let highlight_ranges: Vec<HighlightRange> = positions.iter()
+                    .map(|&pos| HighlightRange {
+                        start: pos as u64,
+                        end: (pos + query_len) as u64,
+                        kind: HighlightKind::Exact,
+                    })
                     .collect();
 
                 // Score based on recency with prefix boost
@@ -162,7 +167,8 @@ pub(crate) fn score_short_query_batch(
 
                 // Coverage boost
                 let content_char_len = chars.len().max(1);
-                let coverage = matched_indices.len() as f64 / content_char_len as f64;
+                let matched_char_count: u64 = highlight_ranges.iter().map(|r| r.end - r.start).sum();
+                let coverage = matched_char_count as f64 / content_char_len as f64;
                 if coverage > COVERAGE_BOOST_THRESHOLD {
                     let t = (coverage - COVERAGE_BOOST_THRESHOLD) / (1.0 - COVERAGE_BOOST_THRESHOLD);
                     score *= 1.0 + (COVERAGE_BOOST_MAX - 1.0) * t;
@@ -178,7 +184,7 @@ pub(crate) fn score_short_query_batch(
                 Some(FuzzyMatch {
                     id,
                     score,
-                    matched_indices,
+                    highlight_ranges,
                     timestamp,
                     content,
                     is_prefix_match,
@@ -197,6 +203,17 @@ pub(crate) fn score_short_query_batch(
     results
 }
 
+/// Map a `WordMatchKind` from ranking to a `HighlightKind` for the UI.
+fn word_match_to_highlight_kind(wmk: WordMatchKind) -> HighlightKind {
+    match wmk {
+        WordMatchKind::Exact => HighlightKind::Exact,
+        WordMatchKind::Prefix => HighlightKind::Prefix,
+        WordMatchKind::Fuzzy(_) => HighlightKind::Fuzzy,
+        WordMatchKind::Subsequence(_) => HighlightKind::Subsequence,
+        WordMatchKind::None => HighlightKind::Exact, // unreachable in practice
+    }
+}
+
 /// Highlight a candidate using the same word-matching criteria as ranking
 /// (exact, prefix, fuzzy edit-distance) via `does_word_match`. This ensures
 /// what's highlighted matches what was ranked in Phase 2 bucket scoring.
@@ -209,7 +226,7 @@ pub(crate) fn highlight_candidate(
         last_word_is_prefix: bool,
     ) -> FuzzyMatch {
         let content_lower = content.to_lowercase();
-        let mut all_indices = Vec::new();
+        let mut word_highlights: Vec<(usize, usize, HighlightKind)> = Vec::new();
         let mut matched_query_words = vec![false; query_words.len()];
 
         let query_lower: Vec<String> = query_words.iter().map(|w| w.to_lowercase()).collect();
@@ -220,29 +237,59 @@ pub(crate) fn highlight_candidate(
         for (char_start, char_end, doc_word) in &doc_words {
             for (qi, qw) in query_lower.iter().enumerate() {
                 let allow_prefix = qi == last_qi && last_word_is_prefix;
-                if does_word_match(qw, doc_word, allow_prefix) != WordMatchKind::None {
+                let wmk = does_word_match(qw, doc_word, allow_prefix);
+                if wmk != WordMatchKind::None {
                     matched_query_words[qi] = true;
-                    for i in *char_start..*char_end {
-                        all_indices.push(i as u32);
-                    }
+                    word_highlights.push((*char_start, *char_end, word_match_to_highlight_kind(wmk)));
                     break; // Don't double-highlight from multiple query words
                 }
             }
         }
 
-        all_indices.sort_unstable();
-        all_indices.dedup();
+        // Sort by start position
+        word_highlights.sort_unstable_by_key(|&(s, _, _)| s);
+
+        // Bridge gaps between adjacent highlighted ranges where intervening chars are all
+        // non-whitespace punctuation or ranges are directly adjacent (e.g. "://" in URLs,
+        // "." in domains, "/" in paths). Inherit the first range's kind.
+        let content_chars: Vec<char> = content.chars().collect();
+        let mut bridged: Vec<(usize, usize, HighlightKind)> = Vec::with_capacity(word_highlights.len());
+        for wh in &word_highlights {
+            if let Some(last) = bridged.last_mut() {
+                let gap_start = last.1;
+                let gap_end = wh.0;
+                if gap_start <= gap_end
+                    && gap_end <= content_chars.len()
+                    && (gap_start == gap_end
+                        || content_chars[gap_start..gap_end]
+                            .iter()
+                            .all(|c| !c.is_alphanumeric() && !c.is_whitespace()))
+                {
+                    // Merge into previous range, inheriting its kind
+                    last.1 = wh.1;
+                    continue;
+                }
+            }
+            bridged.push(*wh);
+        }
+
+        // Convert to HighlightRange
+        let highlight_ranges: Vec<HighlightRange> = bridged
+            .iter()
+            .map(|&(s, e, k)| HighlightRange { start: s as u64, end: e as u64, kind: k })
+            .collect();
 
         // Start with tantivy score for display scoring (coverage/position boosts)
         let mut score = tantivy_score as f64;
 
-        if !all_indices.is_empty() {
+        if !highlight_ranges.is_empty() {
             let content_char_len = content.chars().count().max(1);
+            let matched_char_count: usize = highlight_ranges.iter().map(|r| (r.end - r.start) as usize).sum();
 
             // Coverage boost based on unique query words matched
             let unique_matched = matched_query_words.iter().filter(|&&m| m).count();
             let query_coverage = unique_matched as f64 / query_words.len().max(1) as f64;
-            let content_coverage = all_indices.len() as f64 / content_char_len as f64;
+            let content_coverage = matched_char_count as f64 / content_char_len as f64;
             let coverage = query_coverage.min(content_coverage);
             if coverage > COVERAGE_BOOST_THRESHOLD {
                 let t = (coverage - COVERAGE_BOOST_THRESHOLD) / (1.0 - COVERAGE_BOOST_THRESHOLD);
@@ -250,7 +297,7 @@ pub(crate) fn highlight_candidate(
             }
 
             // Position boost
-            let first_match_pos = all_indices[0] as usize;
+            let first_match_pos = highlight_ranges[0].start as usize;
             if first_match_pos < POSITION_BOOST_WINDOW {
                 let t = 1.0 - (first_match_pos as f64 / POSITION_BOOST_WINDOW as f64);
                 let boost = POSITION_BOOST_MIN + (POSITION_BOOST_MAX - POSITION_BOOST_MIN) * t;
@@ -261,15 +308,16 @@ pub(crate) fn highlight_candidate(
     FuzzyMatch {
         id,
         score,
-        matched_indices: all_indices,
+        highlight_ranges,
         timestamp,
         content: content.to_string(),
         is_prefix_match: false,
     }
 }
 
-/// Convert matched indices to highlight ranges
-pub(crate) fn indices_to_ranges(indices: &[u32]) -> Vec<HighlightRange> {
+/// Convert matched indices to highlight ranges with a specified kind
+#[cfg(test)]
+fn indices_to_ranges_with_kind(indices: &[u32], kind: HighlightKind) -> Vec<HighlightRange> {
     if indices.is_empty() { return Vec::new(); }
 
     let mut sorted = indices.to_vec();
@@ -280,7 +328,13 @@ pub(crate) fn indices_to_ranges(indices: &[u32]) -> Vec<HighlightRange> {
         let last = acc.last_mut().unwrap();
         if idx == last.1 { last.1 = idx + 1; } else { acc.push((idx, idx + 1)); }
         acc
-    }).into_iter().map(|(start, end)| HighlightRange { start: start as u64, end: end as u64 }).collect()
+    }).into_iter().map(|(start, end)| HighlightRange { start: start as u64, end: end as u64, kind }).collect()
+}
+
+/// Convert matched indices to highlight ranges (defaults to Exact kind)
+#[cfg(test)]
+fn indices_to_ranges(indices: &[u32]) -> Vec<HighlightRange> {
+    indices_to_ranges_with_kind(indices, HighlightKind::Exact)
 }
 
 /// Find the highlight in the densest cluster of highlights using a sliding window.
@@ -396,6 +450,7 @@ pub fn generate_snippet(content: &str, highlights: &[HighlightRange], max_len: u
                 Some(HighlightRange {
                     start: (norm_start + prefix_offset) as u64,
                     end: (norm_end.min(normalized_snippet.len()) + prefix_offset) as u64,
+                    kind: h.kind,
                 })
             } else {
                 None
@@ -408,7 +463,7 @@ pub fn generate_snippet(content: &str, highlights: &[HighlightRange], max_len: u
 
 /// Create MatchData from a FuzzyMatch
 pub(crate) fn create_match_data(fuzzy_match: &FuzzyMatch) -> MatchData {
-    let full_content_highlights = indices_to_ranges(&fuzzy_match.matched_indices);
+    let full_content_highlights = fuzzy_match.highlight_ranges.clone();
     let max_len = SNIPPET_CONTEXT_CHARS * 2;
     let (text, adjusted_highlights, line_number) = generate_snippet(
         &fuzzy_match.content,
@@ -437,24 +492,40 @@ pub(crate) fn create_item_match(item: &StoredItem, fuzzy_match: &FuzzyMatch) -> 
     }
 }
 
-/// Tokenize text into words with char offsets. Splits on non-alphanumeric characters.
+/// Tokenize text into tokens with char offsets.
+/// Produces both alphanumeric word tokens and non-whitespace punctuation tokens.
+/// Whitespace is skipped (acts as a separator).
+/// Punctuation tokens allow matching symbols like "://", ".", "/" in URLs/paths.
 pub(crate) fn tokenize_words(content: &str) -> Vec<(usize, usize, String)> {
     let chars: Vec<char> = content.chars().collect();
-    let mut words = Vec::new();
+    let mut tokens = Vec::new();
     let mut i = 0;
     while i < chars.len() {
-        if !chars[i].is_alphanumeric() {
+        if chars[i].is_whitespace() {
             i += 1;
             continue;
         }
         let start = i;
-        while i < chars.len() && chars[i].is_alphanumeric() {
-            i += 1;
+        if chars[i].is_alphanumeric() {
+            while i < chars.len() && chars[i].is_alphanumeric() {
+                i += 1;
+            }
+        } else {
+            while i < chars.len() && !chars[i].is_alphanumeric() && !chars[i].is_whitespace() {
+                i += 1;
+            }
         }
-        let word: String = chars[start..i].iter().collect();
-        words.push((start, i, word));
+        let token: String = chars[start..i].iter().collect();
+        tokens.push((start, i, token));
     }
-    words
+    tokens
+}
+
+/// Whether a token from `tokenize_words` is an alphanumeric word (vs punctuation).
+/// Tokens are homogeneous runs — either all alphanumeric or all punctuation —
+/// so checking the first character is sufficient.
+pub(crate) fn is_word_token(token: &str) -> bool {
+    token.starts_with(|c: char| c.is_alphanumeric())
 }
 
 /// Combine a base relevance score with exponential recency decay and prefix boost.
@@ -537,15 +608,20 @@ mod tests {
         let indices = vec![0, 1, 2, 5, 6, 10];
         let ranges = super::indices_to_ranges(&indices);
         assert_eq!(ranges.len(), 3);
-        assert_eq!(ranges[0], HighlightRange { start: 0, end: 3 });
-        assert_eq!(ranges[1], HighlightRange { start: 5, end: 7 });
-        assert_eq!(ranges[2], HighlightRange { start: 10, end: 11 });
+        assert_eq!(ranges[0], HighlightRange { start: 0, end: 3, kind: HighlightKind::Exact });
+        assert_eq!(ranges[1], HighlightRange { start: 5, end: 7, kind: HighlightKind::Exact });
+        assert_eq!(ranges[2], HighlightRange { start: 10, end: 11, kind: HighlightKind::Exact });
+    }
+
+    /// Helper: create a HighlightRange with Exact kind (for tests that don't care about kind)
+    fn hr(start: u64, end: u64) -> HighlightRange {
+        HighlightRange { start, end, kind: HighlightKind::Exact }
     }
 
     #[test]
     fn test_generate_snippet_basic() {
         let content = "This is a long text with some interesting content that we want to highlight";
-        let highlights = vec![HighlightRange { start: 28, end: 39 }];
+        let highlights = vec![hr(28, 39)];
         let (snippet, adj_highlights, _line) = super::generate_snippet(content, &highlights, 50);
         assert!(snippet.contains("interesting"));
         assert!(!adj_highlights.is_empty());
@@ -554,7 +630,7 @@ mod tests {
     #[test]
     fn test_snippet_contains_match_mid_content() {
         let content = "The quick brown fox jumps over the lazy dog and runs away fast";
-        let highlights = vec![HighlightRange { start: 35, end: 39 }];
+        let highlights = vec![hr(35, 39)];
         let (snippet, adj_highlights, _) = super::generate_snippet(content, &highlights, 30);
         assert!(snippet.contains("lazy"), "Snippet should contain the match");
         assert!(!adj_highlights.is_empty());
@@ -569,7 +645,7 @@ mod tests {
     #[test]
     fn test_snippet_match_at_start() {
         let content = "Hello world";
-        let highlights = vec![HighlightRange { start: 0, end: 5 }];
+        let highlights = vec![hr(0, 5)];
         let (snippet, adj_highlights, _) = super::generate_snippet(content, &highlights, 50);
         assert_eq!(adj_highlights[0].start, 0, "Highlight should start at 0");
         assert_eq!(snippet, "Hello world");
@@ -578,7 +654,7 @@ mod tests {
     #[test]
     fn test_snippet_normalizes_whitespace() {
         let content = "Line one\n\nLine two";
-        let highlights = vec![HighlightRange { start: 0, end: 4 }];
+        let highlights = vec![hr(0, 4)];
         let (snippet, adj_highlights, _) = super::generate_snippet(content, &highlights, 50);
         assert!(!snippet.contains('\n'));
         assert!(!snippet.contains("  "));
@@ -593,7 +669,7 @@ mod tests {
     #[test]
     fn test_snippet_highlight_adjustment_long_content() {
         let content = "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaTARGET text here";
-        let highlights = vec![HighlightRange { start: 46, end: 52 }];
+        let highlights = vec![hr(46, 52)];
         let (snippet, adj_highlights, _) = super::generate_snippet(content, &highlights, 30);
         assert!(snippet.contains("TARGET"));
         let h = &adj_highlights[0];
@@ -609,7 +685,7 @@ mod tests {
         let long_prefix = "a".repeat(100);
         let long_suffix = "z".repeat(100);
         let content = format!("{}MATCH{}", long_prefix, long_suffix);
-        let highlights = vec![HighlightRange { start: 100, end: 105 }];
+        let highlights = vec![hr(100, 105)];
         let (snippet, adj_highlights, _) = super::generate_snippet(&content, &highlights, 30);
         assert!(snippet.contains("MATCH"));
         let h = &adj_highlights[0];
@@ -634,7 +710,7 @@ mod tests {
     #[test]
     fn test_snippet_utf8_multibyte_chars() {
         let content = "Hello \u{4f60}\u{597d} world \u{1f30d} test";
-        let highlights = vec![HighlightRange { start: 6, end: 8 }];
+        let highlights = vec![hr(6, 8)];
         let (snippet, adj_highlights, _) = super::generate_snippet(content, &highlights, 50);
         assert!(snippet.contains("\u{4f60}\u{597d}"));
         assert!(!adj_highlights.is_empty());
@@ -650,27 +726,47 @@ mod tests {
 
     #[test]
     fn test_tokenize_words() {
+        // Whitespace-separated words
         let words = tokenize_words("hello world");
         assert_eq!(words, vec![(0, 5, "hello".into()), (6, 11, "world".into())]);
+
+        // Punctuation produces separate tokens
         let words = tokenize_words("urlparser.parse(input)");
         assert_eq!(words, vec![
             (0, 9, "urlparser".into()),
+            (9, 10, ".".into()),
             (10, 15, "parse".into()),
+            (15, 16, "(".into()),
             (16, 21, "input".into()),
+            (21, 22, ")".into()),
         ]);
+
+        // Consecutive punctuation forms one token
         let words = tokenize_words("one--two...three");
         assert_eq!(words, vec![
             (0, 3, "one".into()),
+            (3, 5, "--".into()),
             (5, 8, "two".into()),
+            (8, 11, "...".into()),
             (11, 16, "three".into()),
         ]);
+
+        // URL tokenization preserves :// as a token
+        let words = tokenize_words("https://github.com");
+        assert_eq!(words, vec![
+            (0, 5, "https".into()),
+            (5, 8, "://".into()),
+            (8, 14, "github".into()),
+            (14, 15, ".".into()),
+            (15, 18, "com".into()),
+        ]);
+
     }
 
     fn highlighted_words(content: &str, query_words: &[&str]) -> Vec<String> {
         let fm = super::highlight_candidate(1, content, 1000, 1.0, query_words, false);
-        let ranges = super::indices_to_ranges(&fm.matched_indices);
         let chars: Vec<char> = content.chars().collect();
-        ranges.iter().map(|r| {
+        fm.highlight_ranges.iter().map(|r| {
             chars[r.start as usize..r.end as usize].iter().collect()
         }).collect()
     }
@@ -690,9 +786,8 @@ mod tests {
     #[test]
     fn test_highlight_prefix_match() {
         let fm = super::highlight_candidate(1, "Run testing suite now", 1000, 1.0, &["test"], true);
-        let ranges = super::indices_to_ranges(&fm.matched_indices);
         let chars: Vec<char> = "Run testing suite now".chars().collect();
-        let words: Vec<String> = ranges.iter().map(|r| {
+        let words: Vec<String> = fm.highlight_ranges.iter().map(|r| {
             chars[r.start as usize..r.end as usize].iter().collect()
         }).collect();
         assert_eq!(words, vec!["testing"]);
@@ -736,6 +831,47 @@ mod tests {
         assert!(words.is_empty());
     }
 
+    // ── URL / special-character query tests ─────────────────────
+
+    #[test]
+    fn test_highlight_url_query_bridges_punctuation() {
+        // "http" and "github" match adjacent words; the "://" gap should be bridged
+        let words = highlighted_words("https://github.com/user/repo", &["http", "github"]);
+        assert_eq!(words, vec!["https://github"]);
+    }
+
+    #[test]
+    fn test_highlight_url_query_tokenized_from_raw() {
+        // Simulate what search_trigram does: tokenize "http://github" into query words
+        let query = "http://github";
+        let query_words_owned = tokenize_words(query);
+        let query_words: Vec<&str> = query_words_owned.iter().map(|(_, _, w)| w.as_str()).collect();
+        // Punctuation tokens are now real tokens in the query
+        assert_eq!(query_words, vec!["http", "://", "github"]);
+
+        let fm = highlight_candidate(1, "https://github.com/user/repo", 1000, 1.0, &query_words, false);
+        let chars: Vec<char> = "https://github.com/user/repo".chars().collect();
+        let words: Vec<String> = fm.highlight_ranges.iter().map(|r| {
+            chars[r.start as usize..r.end as usize].iter().collect()
+        }).collect();
+        // "://" matched as a real token, producing contiguous highlight
+        assert_eq!(words, vec!["https://github"]);
+    }
+
+    #[test]
+    fn test_highlight_does_not_bridge_whitespace_gaps() {
+        // Words separated by whitespace should NOT be bridged
+        let words = highlighted_words("hello beautiful world", &["hello", "world"]);
+        assert_eq!(words, vec!["hello", "world"]);
+    }
+
+    #[test]
+    fn test_highlight_bridges_dots_in_domain() {
+        // "github.com" → all three words bridged via dots
+        let words = highlighted_words("https://github.com", &["github", "com"]);
+        assert_eq!(words, vec!["github.com"]);
+    }
+
     // ── Densest highlight cluster tests ──────────────────────────
 
     #[test]
@@ -745,17 +881,17 @@ mod tests {
 
     #[test]
     fn test_find_densest_highlight_single() {
-        let highlights = vec![HighlightRange { start: 50, end: 55 }];
+        let highlights = vec![hr(50, 55)];
         assert_eq!(super::find_densest_highlight(&highlights, 500), Some(0));
     }
 
     #[test]
     fn test_find_densest_highlight_picks_denser_cluster() {
         let highlights = vec![
-            HighlightRange { start: 0, end: 5 },
-            HighlightRange { start: 1000, end: 1005 },
-            HighlightRange { start: 1050, end: 1055 },
-            HighlightRange { start: 1100, end: 1105 },
+            hr(0, 5),
+            hr(1000, 1005),
+            hr(1050, 1055),
+            hr(1100, 1105),
         ];
         let idx = super::find_densest_highlight(&highlights, 500).unwrap();
         assert_eq!(highlights[idx].start, 1000);
@@ -774,10 +910,10 @@ mod tests {
         content.push_str(&"c".repeat(100));
 
         let highlights = vec![
-            HighlightRange { start: 10, end: 14 },
-            HighlightRange { start: 1000, end: 1006 },
-            HighlightRange { start: 1008, end: 1014 },
-            HighlightRange { start: 1016, end: 1022 },
+            hr(10, 14),
+            hr(1000, 1006),
+            hr(1008, 1014),
+            hr(1016, 1022),
         ];
 
         let (snippet, _, _) = super::generate_snippet(&content, &highlights, 100);
@@ -838,10 +974,9 @@ error: Build failed due to failed dependency";
         let query_words_owned = build_query_words("error: build failed due to dependency");
         let query_words: Vec<&str> = query_words_owned.iter().map(|s| s.as_str()).collect();
         let fm = highlight_candidate(1, NIX_BUILD_ERROR, 1000, 1.0, &query_words, false);
-        let ranges = indices_to_ranges(&fm.matched_indices);
 
-        let densest_idx = find_densest_highlight(&ranges, SNIPPET_CONTEXT_CHARS as u64).unwrap();
-        let densest_start = ranges[densest_idx].start as usize;
+        let densest_idx = find_densest_highlight(&fm.highlight_ranges, SNIPPET_CONTEXT_CHARS as u64).unwrap();
+        let densest_start = fm.highlight_ranges[densest_idx].start as usize;
 
         let final_block = "error: Cannot build '/nix/store/djv08y006z7jk69j2q9fq5f1ch195i4s-home-manager.drv'.";
         let final_block_byte_pos = NIX_BUILD_ERROR.rfind(final_block).unwrap();
@@ -862,14 +997,45 @@ error: Build failed due to failed dependency";
         let query_words_owned = build_query_words("error: build failed due to dependency");
         let query_words: Vec<&str> = query_words_owned.iter().map(|s| s.as_str()).collect();
         let fm = highlight_candidate(1, NIX_BUILD_ERROR, 1000, 1.0, &query_words, false);
-        let ranges = indices_to_ranges(&fm.matched_indices);
 
-        let (snippet, _, _) = generate_snippet(NIX_BUILD_ERROR, &ranges, SNIPPET_CONTEXT_CHARS * 2);
+        let (snippet, _, _) = generate_snippet(NIX_BUILD_ERROR, &fm.highlight_ranges, SNIPPET_CONTEXT_CHARS * 2);
 
         assert!(
             snippet.contains("Build failed due to failed dependency"),
             "Snippet should center on the near-exact match line, got: {}",
             snippet
         );
+    }
+
+    // ── HighlightKind verification tests ──────────────────────────
+
+    #[test]
+    fn test_highlight_match_kind_exact() {
+        let fm = highlight_candidate(1, "hello world", 1000, 1.0, &["hello"], false);
+        assert_eq!(fm.highlight_ranges.len(), 1);
+        assert_eq!(fm.highlight_ranges[0].kind, HighlightKind::Exact);
+    }
+
+    #[test]
+    fn test_highlight_match_kind_prefix() {
+        let fm = highlight_candidate(1, "Run testing suite now", 1000, 1.0, &["test"], true);
+        assert_eq!(fm.highlight_ranges.len(), 1);
+        assert_eq!(fm.highlight_ranges[0].kind, HighlightKind::Prefix);
+    }
+
+    #[test]
+    fn test_highlight_match_kind_fuzzy() {
+        // "riversde" matches "riverside" via fuzzy edit distance
+        let fm = highlight_candidate(1, "Visit Riverside Park today", 1000, 1.0, &["riversde"], false);
+        assert_eq!(fm.highlight_ranges.len(), 1);
+        assert_eq!(fm.highlight_ranges[0].kind, HighlightKind::Fuzzy);
+    }
+
+    #[test]
+    fn test_highlight_match_kind_subsequence() {
+        // "helo" matches "hello" via subsequence (all chars in order, skipping one)
+        let fm = highlight_candidate(1, "hello world", 1000, 1.0, &["helo"], false);
+        assert_eq!(fm.highlight_ranges.len(), 1);
+        assert_eq!(fm.highlight_ranges[0].kind, HighlightKind::Subsequence);
     }
 }

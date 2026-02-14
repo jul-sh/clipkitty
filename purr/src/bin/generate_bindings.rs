@@ -3,12 +3,12 @@
 //! Run: cargo run --bin generate-bindings
 //!
 //! ┌─────────────────────────────────────────────────────────────────────────────┐
-//! │ DEPENDENCY MAP - Output paths must match Package.swift expectations         │
+//! │ DEPENDENCY MAP - Output paths must match Project.swift expectations         │
 //! │                                                                             │
 //! │ Inputs:                                                                     │
 //! │   target/release/libpurr.dylib       ← Built library for bindgen            │
 //! │                                                                             │
-//! │ Outputs (paths match Package.swift):                                        │
+//! │ Outputs (paths match Project.swift):                                        │
 //! │   Sources/ClipKittyRust/purrFFI.h             ← C header                    │
 //! │   Sources/ClipKittyRust/module.modulemap      ← Clang module map            │
 //! │   Sources/ClipKittyRust/libpurr.a             ← Universal static lib        │
