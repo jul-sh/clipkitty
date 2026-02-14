@@ -212,6 +212,31 @@ impl Indexer {
         terms
     }
 
+    /// Generate trigram terms from transposition variants of short words (3-4 chars).
+    /// Returns only novel terms not already in `seen`.
+    fn transposition_trigrams(&self, words: &[&str], seen: &mut std::collections::HashSet<Term>) -> Vec<Term> {
+        let mut extra = Vec::new();
+        for word in words {
+            if word.len() >= 3 && word.len() <= 4 {
+                let chars: Vec<char> = word.chars().collect();
+                for i in 0..chars.len() - 1 {
+                    let mut v = chars.clone();
+                    v.swap(i, i + 1);
+                    let variant: String = v.into_iter().collect();
+                    if variant == *word {
+                        continue;
+                    }
+                    for term in self.trigram_terms(&variant) {
+                        if seen.insert(term.clone()) {
+                            extra.push(term);
+                        }
+                    }
+                }
+            }
+        }
+        extra
+    }
+
     /// Two-phase search: trigram recall (Phase 1) + bucket re-ranking (Phase 2).
     pub fn search(&self, query: &str, limit: usize) -> IndexerResult<Vec<SearchCandidate>> {
         #[cfg(feature = "perf-log")]
@@ -227,8 +252,9 @@ impl Indexer {
         }
 
         // Phase 2: Bucket re-ranking
-        let query_words: Vec<&str> = query.split_whitespace().collect();
-        let has_trailing_space = query.ends_with(' ');
+        let query_words_owned = crate::search::tokenize_words(query);
+        let query_words: Vec<&str> = query_words_owned.iter().map(|(_, _, w)| w.as_str()).collect();
+        let last_word_is_prefix = query.ends_with(|c: char| c.is_alphanumeric());
         let now = Utc::now().timestamp();
 
         let mut scored: Vec<(crate::ranking::BucketScore, usize)> = candidates
@@ -238,7 +264,7 @@ impl Indexer {
                 let bucket = compute_bucket_score(
                     &c.content,
                     &query_words,
-                    !has_trailing_space,
+                    last_word_is_prefix,
                     c.timestamp,
                     c.tantivy_score,
                     now,
@@ -353,7 +379,7 @@ impl Indexer {
         let words: Vec<&str> = query.split_whitespace().collect();
         let is_long_query = words.len() >= 4;
 
-        let terms = if is_long_query {
+        let (terms, mut seen) = if is_long_query {
             // Long query: per-word trigrams only (skip cross-word boundary trigrams)
             let mut all_terms = Vec::new();
             let mut seen = std::collections::HashSet::new();
@@ -364,20 +390,28 @@ impl Indexer {
                     }
                 }
             }
-            all_terms
+            (all_terms, seen)
         } else {
             // Short query: full-string trigrams (includes cross-word boundaries)
-            self.trigram_terms(query)
+            let terms = self.trigram_terms(query);
+            let seen = terms.iter().cloned().collect();
+            (terms, seen)
         };
 
         if terms.is_empty() {
             return Box::new(BooleanQuery::new(Vec::new()));
         }
 
+        // Compute min_match from original term count BEFORE adding variants.
+        // Transposition variants can only help recall, never raise the threshold.
         let num_terms = terms.len();
+
+        // Add trigrams from transposition variants of short words (3-4 chars)
+        let variant_terms = self.transposition_trigrams(&words, &mut seen);
 
         let subqueries: Vec<_> = terms
             .into_iter()
+            .chain(variant_terms)
             .map(|term| {
                 let q: Box<dyn tantivy::query::Query> =
                     Box::new(TermQuery::new(term, IndexRecordOption::Basic));
@@ -545,4 +579,44 @@ mod tests {
         assert_eq!(indexer.num_docs(), 0);
     }
 
+    #[test]
+    fn test_transposition_recall_single_short_word() {
+        // "teh" (transposition of "the") should recall a doc containing "the"
+        let indexer = Indexer::new_in_memory().unwrap();
+        indexer.add_document(1, "the quick brown fox", 1000).unwrap();
+        indexer.add_document(2, "a slow red dog", 1000).unwrap();
+        indexer.commit().unwrap();
+
+        let results = indexer.search("teh", 10).unwrap();
+        let ids: Vec<i64> = results.iter().map(|c| c.id).collect();
+        assert!(ids.contains(&1), "transposition 'teh' should recall doc with 'the', got {:?}", ids);
+        assert!(!ids.contains(&2));
+    }
+
+    #[test]
+    fn test_transposition_recall_multi_word() {
+        // "form react" where "form" is a transposition of "from"
+        let indexer = Indexer::new_in_memory().unwrap();
+        indexer.add_document(1, "import Button from react", 1000).unwrap();
+        indexer.add_document(2, "html form element submit", 1000).unwrap();
+        indexer.commit().unwrap();
+
+        let results = indexer.search("form react", 10).unwrap();
+        let ids: Vec<i64> = results.iter().map(|c| c.id).collect();
+        // Doc 1 should be recalled: "from" matches via transposition, "react" matches exact
+        assert!(ids.contains(&1), "'form react' should recall doc with 'from react', got {:?}", ids);
+    }
+
+    #[test]
+    fn test_transposition_trigrams_dedup() {
+        // Variant trigrams that duplicate originals shouldn't cause issues
+        let indexer = Indexer::new_in_memory().unwrap();
+        indexer.add_document(1, "and also other things", 1000).unwrap();
+        indexer.commit().unwrap();
+
+        // "adn" transpositions: "dan", "and" — "and" trigram already exists in doc
+        let results = indexer.search("adn", 10).unwrap();
+        let ids: Vec<i64> = results.iter().map(|c| c.id).collect();
+        assert!(ids.contains(&1), "'adn' should recall doc with 'and', got {:?}", ids);
+    }
 }

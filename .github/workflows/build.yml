@@ -2,11 +2,9 @@ name: Build and Release
 
 on:
   push:
-    branches: [main]
+    branches: [main, release]
   pull_request:
-    branches: [main]
-  release:
-    types: [created]
+    branches: [main, release]
 
 permissions:
   contents: write
@@ -14,10 +12,30 @@ permissions:
 jobs:
   build:
     runs-on: macos-26
+    outputs:
+      version: ${{ steps.resolve-version.outputs.version }}
 
     steps:
       - name: Checkout
         uses: actions/checkout@v4
+
+      - name: Resolve Release Version
+        id: resolve-version
+        if: github.ref == 'refs/heads/release' || (github.event_name == 'pull_request' && github.base_ref == 'release')
+        run: |
+          VERSION=$(grep 'MARKETING_VERSION' Project.swift | head -1 | sed 's/.*"\(.*\)".*/\1/')
+          echo "Base version from Project.swift: $VERSION"
+          while gh release view "v$VERSION" &>/dev/null; do
+            IFS='.' read -r major minor patch <<< "$VERSION"
+            patch=$((patch + 1))
+            VERSION="$major.$minor.$patch"
+            echo "Version exists, bumped to: $VERSION"
+          done
+          echo "VERSION=$VERSION" >> "$GITHUB_ENV"
+          echo "version=$VERSION" >> "$GITHUB_OUTPUT"
+          echo "Final release version: $VERSION"
+        env:
+          GH_TOKEN: ${{ github.token }}
 
       - name: Setup Swift
         uses: swift-actions/setup-swift@v2
@@ -37,12 +55,24 @@ jobs:
       - name: Install Distribution Dependencies
         run: ./distribution/install-deps.sh
 
+      - name: Install Tuist
+        run: |
+          brew tap tuist/tuist
+          brew install --formula tuist
+          tuist version
+
+      - name: Build Rust Core
+        run: make rust
+
+      - name: Generate Xcode Project
+        run: make generate
+
       - name: Build Non-Sandboxed App
-        run: make all SANDBOX=false
+        run: make build CONFIGURATION=Release
 
       - name: Run UI Tests
         run: |
-          SANDBOX=false make -C distribution screenshot
+          CONFIGURATION=Release make -C distribution screenshot
           # Validate screenshot was actually captured
           if [ ! -f screenshot.png ]; then
             echo "ERROR: screenshot.png was not created. Check UI test logs."
@@ -62,20 +92,19 @@ jobs:
         run: |
           chmod +x distribution/build-dmg.sh
 
-          # Non-sandboxed: rebuild (marketing steps overwrote with sandboxed build),
-          # sign with real cert + entitlements, then package
-          make all SANDBOX=false
+          # Non-sandboxed: build Release, sign with real cert + entitlements, then package
+          make build CONFIGURATION=Release
           codesign --force --options runtime --sign "Developer ID Application" \
             --entitlements Sources/App/ClipKitty.entitlements \
-            ClipKitty.app
-          ./distribution/build-dmg.sh ClipKitty.app ClipKitty.dmg
+            DerivedData/Build/Products/Release/ClipKitty.app
+          ./distribution/build-dmg.sh DerivedData/Build/Products/Release/ClipKitty.app ClipKitty.dmg
 
-          # Sandboxed: build fresh, sign with real cert + sandboxed entitlements, then package
-          make all SANDBOX=true
+          # Sandboxed: build AppStore, sign with real cert + sandboxed entitlements, then package
+          make build CONFIGURATION=AppStore
           codesign --force --options runtime --sign "Developer ID Application" \
             --entitlements Sources/App/ClipKitty-Sandboxed.entitlements \
-            ClipKitty.app
-          ./distribution/build-dmg.sh ClipKitty.app ClipKitty-Sandboxed.dmg
+            DerivedData/Build/Products/AppStore/ClipKitty.app
+          ./distribution/build-dmg.sh DerivedData/Build/Products/AppStore/ClipKitty.app ClipKitty-Sandboxed.dmg
 
           # Sign the DMG files themselves
           codesign --force --sign "Developer ID Application" ClipKitty.dmg
@@ -159,27 +188,26 @@ jobs:
           echo "Screenshot: https://raw.githubusercontent.com/$REPO/gh-pages/screenshot.png"
           echo "Icon: https://raw.githubusercontent.com/$REPO/gh-pages/icon.png"
 
-      # Upload DMGs to release when a release is created
-      - name: Upload Release Assets
-        if: github.event_name == 'release'
+      - name: Create Release
+        if: github.ref == 'refs/heads/release'
         run: |
-          gh release upload "${{ github.event.release.tag_name }}" \
+          gh release create "v$VERSION" \
+            --title "ClipKitty v$VERSION" \
+            --generate-notes \
             ClipKitty.dmg \
-            ClipKitty-Sandboxed.dmg \
-            --clobber
+            ClipKitty-Sandboxed.dmg
 
-          # Append note about sandboxed version
-          NOTE="\n\n### Note on Sandboxed Version\n\nThe sandboxed version (ClipKitty-Sandboxed.dmg) does not support automatic pasting (Cmd+V) into other apps due to system restrictions. Use the standard version if that feature is important to you."
-          gh release edit "${{ github.event.release.tag_name }}" --notes "$(gh release view "${{ github.event.release.tag_name }}" --json body -q .body)$NOTE"
+          NOTE=$'\n\n### Note on Sandboxed Version\n\nThe sandboxed version (ClipKitty-Sandboxed.dmg) does not support automatic pasting (Cmd+V) into other apps due to system restrictions. Use the standard version if that feature is important to you.'
+          BODY=$(gh release view "v$VERSION" --json body -q .body)
+          gh release edit "v$VERSION" --notes "${BODY}${NOTE}"
         env:
           GH_TOKEN: ${{ github.token }}
 
-      # Update Homebrew tap when a release is published
+      # Update Homebrew tap when releasing
       - name: Update Homebrew Tap
-        if: github.event_name == 'release'
+        if: github.ref == 'refs/heads/release'
         run: |
-          TAG=${{ github.event.release.tag_name }}
-          VERSION=${TAG#v}  # Remove 'v' prefix if present for cask version field
+          TAG="v$VERSION"
           SHA256=$(shasum -a 256 ClipKitty.dmg | cut -d' ' -f1)
 
           # Clone the homebrew-clipkitty tap repository
@@ -229,11 +257,26 @@ jobs:
         env:
           GH_TOKEN: ${{ github.token }}
 
+      - name: Sync Version to Main
+        if: github.ref == 'refs/heads/release'
+        run: |
+          CURRENT=$(grep 'MARKETING_VERSION' Project.swift | head -1 | sed 's/.*"\(.*\)".*/\1/')
+          if [ "$CURRENT" != "$VERSION" ]; then
+            git config user.name "github-actions[bot]"
+            git config user.email "github-actions[bot]@users.noreply.github.com"
+            git fetch origin main
+            git checkout main
+            sed -i '' "s/\"MARKETING_VERSION\": \"$CURRENT\"/\"MARKETING_VERSION\": \"$VERSION\"/" Project.swift
+            git add Project.swift
+            git commit -m "bump version to $VERSION"
+            git push origin main
+          fi
+
   # Upload to App Store Connect via Fastlane
   appstore:
     runs-on: macos-26
     needs: build
-    if: github.event_name == 'release'
+    if: github.ref == 'refs/heads/release'
 
     steps:
       - name: Checkout
@@ -253,6 +296,12 @@ jobs:
       - name: Install Nix
         uses: DeterminateSystems/nix-installer-action@main
 
+      - name: Install Tuist
+        run: |
+          brew tap tuist/tuist
+          brew install --formula tuist
+          tuist version
+
       - name: Decode Provisioning Profile
         run: |
           echo "${{ secrets.PROVISION_PROFILE_BASE64 }}" | base64 --decode \
@@ -260,8 +309,7 @@ jobs:
 
       - name: Build App Store Package
         run: |
-          TAG="${{ github.event.release.tag_name }}"
-          VERSION="${TAG#v}"
+          VERSION="${{ needs.build.outputs.version }}"
           BUILD_NUMBER="$(git rev-list --count HEAD)"
           make -C distribution appstore \
             PROVISIONING_PROFILE="$GITHUB_WORKSPACE/ClipKitty.provisionprofile" \

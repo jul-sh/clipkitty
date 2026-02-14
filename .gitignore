@@ -1,4 +1,4 @@
-# Swift
+# Swift / Xcode
 .build/
 .make/
 .swiftpm/
@@ -6,6 +6,10 @@
 *.xcworkspace/
 DerivedData/
 *.xcresult/
+
+# Tuist
+Derived/
+Tuist/.build/
 
 # Node
 node_modules

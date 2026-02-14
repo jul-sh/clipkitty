@@ -224,11 +224,21 @@ impl ClipboardContent {
 // RECORDS (Structs)
 // ═══════════════════════════════════════════════════════════════════════════════
 
+/// The type of match that produced a highlight
+#[derive(Debug, Clone, Copy, PartialEq, Eq, uniffi::Enum)]
+pub enum HighlightKind {
+    Exact,
+    Prefix,
+    Fuzzy,
+    Subsequence,
+}
+
 /// A highlight range (start, end) for search matches
 #[derive(Debug, Clone, PartialEq, Eq, uniffi::Record)]
 pub struct HighlightRange {
     pub start: u64,
     pub end: u64,
+    pub kind: HighlightKind,
 }
 
 /// Match context data for search results
