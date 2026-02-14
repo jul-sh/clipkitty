@@ -176,7 +176,7 @@ impl ClipboardStore {
 
         // --- First batch: full highlight + DB fetch ---
         let head_ids: Vec<i64> = head.iter().map(|m| m.id).collect();
-        let head_items = db.fetch_items_by_ids_interruptible(&head_ids, token, runtime)?;
+        let head_items = db.fetch_items_for_search(&head_ids, token, runtime)?;
 
         if head_items.is_empty() && !head_ids.is_empty() && token.is_cancelled() {
             return Err(ClipKittyError::Cancelled);
@@ -242,7 +242,7 @@ impl ClipboardStore {
 
         // --- First batch: full highlight + DB fetch + create_item_match ---
         let head_ids: Vec<i64> = head.iter().map(|m| m.id).collect();
-        let head_items = db.fetch_items_by_ids_interruptible(&head_ids, token, runtime)?;
+        let head_items = db.fetch_items_for_search(&head_ids, token, runtime)?;
 
         if head_items.is_empty() && !head_ids.is_empty() && token.is_cancelled() {
             return Err(ClipKittyError::Cancelled);

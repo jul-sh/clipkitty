@@ -53,7 +53,7 @@ impl Database {
                     PRAGMA journal_mode=WAL;
                     PRAGMA synchronous=NORMAL;
                     PRAGMA mmap_size=67108864;
-                    PRAGMA cache_size=-32000;
+                    PRAGMA cache_size=-65536;
                 ")?;
                 Ok(())
             });
@@ -386,6 +386,59 @@ impl Database {
         Ok(ids.iter().filter_map(|id| id_to_item.get(id).cloned()).collect())
     }
 
+    /// Fetch items for search results, excluding imageData BLOB for performance.
+    ///
+    /// Supports SQLite C-level interrupt via cancellation token.
+    pub fn fetch_items_for_search(
+        &self,
+        ids: &[i64],
+        token: &tokio_util::sync::CancellationToken,
+        runtime: &tokio::runtime::Handle,
+    ) -> DatabaseResult<Vec<StoredItem>> {
+        use tokio_util::task::AbortOnDropHandle;
+
+        if ids.is_empty() {
+            return Ok(Vec::new());
+        }
+
+        let conn = self.get_conn()?;
+
+        let interrupt_handle = conn.get_interrupt_handle();
+        let token_clone = token.clone();
+        let watcher = runtime.spawn(async move {
+            token_clone.cancelled().await;
+            interrupt_handle.interrupt();
+        });
+        let _abort_guard = AbortOnDropHandle::new(watcher);
+
+        let placeholders = ids.iter().map(|_| "?").collect::<Vec<_>>().join(",");
+        let sql = format!(
+            "SELECT id, content, contentHash, timestamp, sourceApp, contentType, \
+             linkTitle, linkDescription, linkImageData, sourceAppBundleID, \
+             thumbnail, colorRgba \
+             FROM items WHERE id IN ({})",
+            placeholders
+        );
+
+        let mut stmt = conn.prepare(&sql)?;
+        let params: Vec<rusqlite::types::Value> = ids.iter().map(|&id| id.into()).collect();
+
+        let items: Vec<StoredItem> = match stmt.query_map(rusqlite::params_from_iter(params), Self::row_to_stored_item_no_image) {
+            Ok(rows) => rows.collect::<Result<Vec<_>, _>>()?,
+            Err(rusqlite::Error::SqliteFailure(err, _)) if err.code == rusqlite::ffi::ErrorCode::OperationInterrupted => {
+                return Ok(Vec::new());
+            }
+            Err(e) => return Err(e.into()),
+        };
+
+        let id_to_item: std::collections::HashMap<i64, StoredItem> = items
+            .into_iter()
+            .filter_map(|item| item.id.map(|id| (id, item)))
+            .collect();
+
+        Ok(ids.iter().filter_map(|id| id_to_item.get(id).cloned()).collect())
+    }
+
     /// Fetch all items (for index rebuilding)
     pub fn fetch_all_items(&self) -> DatabaseResult<Vec<StoredItem>> {
         let conn = self.get_conn()?;
@@ -461,7 +514,7 @@ impl Database {
         let like_pattern = format!("%{}%", query_lower.replace('%', "\\%").replace('_', "\\_"));
         let mut stmt_like = conn.prepare(
             r#"SELECT id, content, CAST(strftime('%s', timestamp) AS INTEGER)
-               FROM (SELECT * FROM items ORDER BY timestamp DESC LIMIT 20000)
+               FROM (SELECT id, content, timestamp FROM items ORDER BY timestamp DESC LIMIT 20000)
                WHERE LOWER(content) LIKE ?1 ESCAPE '\'
                ORDER BY timestamp DESC
                LIMIT ?2"#
@@ -556,6 +609,47 @@ impl Database {
             db_type,
             &content,
             image_data,
+            link_title.as_deref(),
+            link_description.as_deref(),
+            link_image_data,
+            color_rgba,
+        );
+
+        Ok(StoredItem {
+            id: Some(id),
+            content: clipboard_content,
+            content_hash,
+            timestamp_unix: timestamp.timestamp(),
+            source_app,
+            source_app_bundle_id,
+            thumbnail,
+            color_rgba,
+        })
+    }
+
+    /// Convert a database row to StoredItem without imageData column.
+    /// Used by `fetch_items_for_search` to avoid reading large image BLOBs.
+    fn row_to_stored_item_no_image(row: &rusqlite::Row) -> rusqlite::Result<StoredItem> {
+        let id: i64 = row.get("id")?;
+        let content: String = row.get("content")?;
+        let content_hash: String = row.get("contentHash")?;
+        let timestamp_str: String = row.get("timestamp")?;
+        let source_app: Option<String> = row.get("sourceApp")?;
+        let content_type: Option<String> = row.get("contentType")?;
+        let link_title: Option<String> = row.get("linkTitle")?;
+        let link_description: Option<String> = row.get("linkDescription").ok().flatten();
+        let link_image_data: Option<Vec<u8>> = row.get("linkImageData")?;
+        let source_app_bundle_id: Option<String> = row.get("sourceAppBundleID")?;
+        let thumbnail: Option<Vec<u8>> = row.get("thumbnail").ok().flatten();
+        let color_rgba: Option<u32> = row.get("colorRgba").ok().flatten();
+
+        let timestamp = parse_db_timestamp(&timestamp_str);
+
+        let db_type = content_type.as_deref().unwrap_or("text");
+        let clipboard_content = ClipboardContent::from_database(
+            db_type,
+            &content,
+            None, // imageData excluded from query
             link_title.as_deref(),
             link_description.as_deref(),
             link_image_data,
