@@ -1033,8 +1033,8 @@ error: Build failed due to failed dependency";
 
     #[test]
     fn test_highlight_match_kind_subsequence() {
-        // "helo" matches "hello" via subsequence (all chars in order, skipping one)
-        let fm = highlight_candidate(1, "hello world", 1000, 1.0, &["helo"], false);
+        // "impt" matches "import" via subsequence (len diff 2 exceeds max_dist 1)
+        let fm = highlight_candidate(1, "import data", 1000, 1.0, &["impt"], false);
         assert_eq!(fm.highlight_ranges.len(), 1);
         assert_eq!(fm.highlight_ranges[0].kind, HighlightKind::Subsequence);
     }
