@@ -549,3 +549,29 @@ tee: gateway_42235.log: Transport endpoint is not connected
         contents.len()
     );
 }
+
+// ============================================================
+// Fuzzy Word Recall Tests
+// ============================================================
+
+#[tokio::test]
+async fn ranking_substitution_typo_recall() {
+    // "tast" (substitution typo of "test") has zero trigram overlap with "test".
+    // The fuzzy word pathway should recall the document anyway.
+    let (store, _temp) = create_ranking_test_store(vec![
+        "run the test suite now",
+        "a completely unrelated item",
+    ]);
+
+    let contents = search_contents(&store, "tast").await;
+
+    assert!(
+        !contents.is_empty(),
+        "Substitution typo 'tast' should recall doc with 'test', got 0 results"
+    );
+    assert!(
+        contents[0].contains("test"),
+        "First result should contain 'test', got: {:?}",
+        contents
+    );
+}
