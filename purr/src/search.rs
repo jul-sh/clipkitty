@@ -79,7 +79,7 @@ pub(crate) fn search_trigram(indexer: &Indexer, query: &str, token: &Cancellatio
             .into_par_iter()
             .take_any_while(|_| !token.is_cancelled())
             .map(|(rank, c)| {
-                let mut m = highlight_candidate(c.id, &c.content, &c.content_lower, &c.doc_words, c.timestamp, c.tantivy_score, &query_words, last_word_is_prefix);
+                let mut m = highlight_candidate(c.id, &c.content, c.content_lower(), c.doc_words(), c.timestamp, c.tantivy_score, &query_words, last_word_is_prefix);
                 // Preserve bucket ranking order: score = inverse rank so sort is stable
                 m.score = (MAX_RESULTS - rank) as f64;
                 m
