@@ -5,10 +5,13 @@
 //! - **Indexer**: Tantivy trigram indexing with phrase-boost scoring
 //! - **Search**: Trigram retrieval, short-query fallback, highlighting, and snippets
 
+use std::collections::HashMap;
 use std::path::Path;
+use std::sync::atomic::{AtomicBool, Ordering};
 
 use chrono::Utc;
 use parking_lot::RwLock;
+use symspell::{SymSpell, UnicodeStringStrategy, Verbosity};
 use tantivy::collector::TopDocs;
 use tantivy::directory::MmapDirectory;
 use tantivy::query::{BooleanQuery, BoostQuery, Occur, PhraseQuery, TermQuery};
@@ -69,6 +72,7 @@ fn compute_bucket_score(
     timestamp: i64,
     bm25_score: f32,
     now: i64,
+    fuzzy_expansions: &[HashMap<String, u8>],
 ) -> BucketScore {
     if query_words.is_empty() {
         return BucketScore {
@@ -86,7 +90,7 @@ fn compute_bucket_score(
     let doc_words = tokenize_words(&content_lower);
     let doc_word_strs: Vec<&str> = doc_words.iter().map(|(_, _, w)| w.as_str()).collect();
 
-    let word_matches = match_query_words(query_words, &doc_word_strs, last_word_is_prefix);
+    let word_matches = match_query_words(query_words, &doc_word_strs, last_word_is_prefix, fuzzy_expansions);
 
     let words_matched = word_matches.iter()
         .filter(|m| m.matched && m.counts_as_match)
@@ -141,6 +145,7 @@ fn match_query_words(
     query_words: &[&str],
     doc_words: &[&str],
     last_word_is_prefix: bool,
+    fuzzy_expansions: &[HashMap<String, u8>],
 ) -> Vec<WordMatch> {
     query_words
         .iter()
@@ -154,7 +159,7 @@ fn match_query_words(
             let mut best: Option<WordMatch> = None;
 
             for (dpos, dw) in doc_words.iter().enumerate() {
-                match does_word_match(&qw_lower, dw, allow_prefix) {
+                match does_word_match(&qw_lower, dw, allow_prefix, &fuzzy_expansions[qi]) {
                     WordMatchKind::Exact => {
                         return WordMatch {
                             matched: true,
@@ -226,22 +231,17 @@ enum WordMatchKind {
 }
 
 /// Check if a query word matches a document word using the same criteria
-/// as ranking: exact -> prefix (if allowed, >= 2 chars) -> fuzzy (edit distance)
+/// as ranking: exact -> prefix (if allowed, >= 2 chars) -> fuzzy (SymSpell lookup)
 /// -> subsequence (abbreviation). Both inputs must already be lowercased.
-fn does_word_match(qw_lower: &str, dw_lower: &str, allow_prefix: bool) -> WordMatchKind {
+fn does_word_match(qw_lower: &str, dw_lower: &str, allow_prefix: bool, fuzzy_expansion: &HashMap<String, u8>) -> WordMatchKind {
     if dw_lower == qw_lower {
         return WordMatchKind::Exact;
     }
     if allow_prefix && qw_lower.len() >= 2 && dw_lower.starts_with(qw_lower) {
         return WordMatchKind::Prefix;
     }
-    let max_typo = max_edit_distance(qw_lower.chars().count());
-    if max_typo > 0 {
-        if let Some(dist) = edit_distance_bounded(qw_lower, dw_lower, max_typo) {
-            if dist > 0 {
-                return WordMatchKind::Fuzzy(dist);
-            }
-        }
+    if let Some(&dist) = fuzzy_expansion.get(dw_lower) {
+        return WordMatchKind::Fuzzy(dist);
     }
     if let Some(gaps) = subsequence_match(qw_lower, dw_lower) {
         return WordMatchKind::Subsequence(gaps);
@@ -362,61 +362,6 @@ fn compute_exactness(content: &str, query_words: &[&str], word_matches: &[WordMa
     0
 }
 
-/// Damerau-Levenshtein edit distance (optimal string alignment) with threshold pruning.
-/// Counts insertions, deletions, substitutions, and adjacent transpositions each as 1 edit.
-/// Returns `Some(distance)` if distance <= max_dist, `None` otherwise.
-fn edit_distance_bounded(a: &str, b: &str, max_dist: u8) -> Option<u8> {
-    let a_chars: Vec<char> = a.chars().collect();
-    let b_chars: Vec<char> = b.chars().collect();
-    let m = a_chars.len();
-    let n = b_chars.len();
-    let max_d = max_dist as usize;
-
-    if m.abs_diff(n) > max_d {
-        return None;
-    }
-
-    let mut prev2 = vec![0usize; n + 1];
-    let mut prev: Vec<usize> = (0..=n).collect();
-    let mut curr = vec![0usize; n + 1];
-
-    for i in 1..=m {
-        curr[0] = i;
-        let mut row_min = curr[0];
-
-        for j in 1..=n {
-            let cost = if a_chars[i - 1] == b_chars[j - 1] { 0 } else { 1 };
-            curr[j] = (prev[j] + 1)
-                .min(curr[j - 1] + 1)
-                .min(prev[j - 1] + cost);
-
-            if i >= 2
-                && j >= 2
-                && a_chars[i - 1] == b_chars[j - 2]
-                && a_chars[i - 2] == b_chars[j - 1]
-            {
-                curr[j] = curr[j].min(prev2[j - 2] + 1);
-            }
-
-            row_min = row_min.min(curr[j]);
-        }
-
-        if row_min > max_d {
-            return None;
-        }
-
-        std::mem::swap(&mut prev2, &mut prev);
-        std::mem::swap(&mut prev, &mut curr);
-    }
-
-    let result = prev[n];
-    if result <= max_d {
-        Some(result as u8)
-    } else {
-        None
-    }
-}
-
 // ─────────────────────────────────────────────────────────────────────────────
 // INDEXER — Tantivy trigram indexing
 // ─────────────────────────────────────────────────────────────────────────────
@@ -505,6 +450,9 @@ pub(crate) struct Indexer {
     schema: Schema,
     id_field: Field,
     content_field: Field,
+    lexicon_field: Field,
+    spellchecker: RwLock<SymSpell<UnicodeStringStrategy>>,
+    spellchecker_dirty: AtomicBool,
 }
 
 impl Indexer {
@@ -539,10 +487,13 @@ impl Indexer {
         Self {
             id_field: schema.get_field("id").unwrap(),
             content_field: schema.get_field("content").unwrap(),
+            lexicon_field: schema.get_field("lexicon").unwrap(),
             schema,
             index,
             writer: RwLock::new(writer),
             reader: RwLock::new(reader),
+            spellchecker: RwLock::new(SymSpell::default()),
+            spellchecker_dirty: AtomicBool::new(false),
         }
     }
 
@@ -558,6 +509,13 @@ impl Indexer {
             .set_indexing_options(text_field_indexing)
             .set_stored();
         builder.add_text_field("content", text_options);
+
+        // Lexicon field for SymSpell vocabulary extraction.
+        // Uses default tokenizer (whitespace/punctuation split, lowercase) for per-word doc_freq.
+        let lexicon_indexing = TextFieldIndexing::default()
+            .set_tokenizer("default")
+            .set_index_option(IndexRecordOption::Basic);
+        builder.add_text_field("lexicon", TextOptions::default().set_indexing_options(lexicon_indexing));
 
         builder.add_i64_field("timestamp", STORED | FAST);
         builder.build()
@@ -586,6 +544,7 @@ impl Indexer {
         let mut doc = tantivy::TantivyDocument::default();
         doc.add_i64(self.id_field, id);
         doc.add_text(self.content_field, content);
+        doc.add_text(self.lexicon_field, content);
         doc.add_i64(self.schema.get_field("timestamp").unwrap(), timestamp);
 
         writer.add_document(doc)?;
@@ -596,7 +555,65 @@ impl Indexer {
     pub(crate) fn commit(&self) -> IndexerResult<()> {
         self.writer.write().commit()?;
         self.reader.write().reload()?;
+        self.spellchecker_dirty.store(true, Ordering::Release);
         Ok(())
+    }
+
+    /// Train the SymSpell spellchecker from Tantivy's lexicon term dictionary.
+    fn train_spellchecker(&self) {
+        let reader = self.reader.read();
+        let searcher = reader.searcher();
+        let mut spell: SymSpell<UnicodeStringStrategy> = SymSpell::default();
+
+        for segment_reader in searcher.segment_readers() {
+            let inv_index = segment_reader.inverted_index(self.lexicon_field);
+            let Ok(inv_index) = inv_index else { continue };
+            let terms = inv_index.terms();
+            let Ok(mut stream) = terms.stream() else { continue };
+
+            while let Some((term_bytes, term_info)) = stream.next() {
+                let Ok(word) = std::str::from_utf8(term_bytes) else { continue };
+                if word.len() < 2 || !word.chars().any(|c| c.is_alphabetic()) {
+                    continue;
+                }
+                let count = term_info.doc_freq as i64;
+                let line = format!("{} {}", word, count);
+                spell.load_dictionary_line(&line, 0, 1, " ");
+            }
+        }
+
+        *self.spellchecker.write() = spell;
+    }
+
+    /// Train the spellchecker if the index has changed since the last training.
+    fn ensure_spellchecker_trained(&self) {
+        if self.spellchecker_dirty.swap(false, Ordering::AcqRel) {
+            self.train_spellchecker();
+        }
+    }
+
+    /// Pre-compute fuzzy expansions for each query word via SymSpell lookup.
+    /// Returns one HashMap per query word mapping candidate terms to their edit distance.
+    /// Exact matches (distance 0) are excluded since they're handled before the fuzzy check.
+    fn build_fuzzy_expansions(&self, query_words: &[&str]) -> Vec<HashMap<String, u8>> {
+        self.ensure_spellchecker_trained();
+        let spell = self.spellchecker.read();
+        query_words
+            .iter()
+            .map(|qw| {
+                let qw_lower = qw.to_lowercase();
+                let max_dist = max_edit_distance(qw_lower.chars().count());
+                if max_dist == 0 {
+                    return HashMap::new();
+                }
+                spell
+                    .lookup(&qw_lower, Verbosity::All, max_dist as i64)
+                    .into_iter()
+                    .filter(|s| s.distance > 0)
+                    .map(|s| (s.term, s.distance as u8))
+                    .collect()
+            })
+            .collect()
     }
 
     pub(crate) fn delete_document(&self, id: i64) -> IndexerResult<()> {
@@ -604,6 +621,57 @@ impl Indexer {
         let id_term = tantivy::Term::from_field_i64(self.id_field, id);
         writer.delete_term(id_term);
         Ok(())
+    }
+
+    /// Correct query words using SymSpell, skipping the last word if it's a prefix
+    /// (user still typing) and words shorter than 3 chars.
+    fn correct_query(&self, query: &str, last_word_is_prefix: bool) -> String {
+        let tokens = tokenize_words(query);
+        if tokens.is_empty() {
+            return query.to_string();
+        }
+
+        self.ensure_spellchecker_trained();
+        let chars: Vec<char> = query.chars().collect();
+        let spell = self.spellchecker.read();
+        let mut result = String::with_capacity(query.len());
+        let mut prev_end = 0;
+
+        for (i, (start, end, word)) in tokens.iter().enumerate() {
+            // Preserve whitespace/gaps between tokens (using char indices)
+            if *start > prev_end {
+                result.extend(&chars[prev_end..*start]);
+            }
+
+            let is_last = i == tokens.len() - 1;
+            let is_word = is_word_token(word);
+
+            if !is_word || (is_last && last_word_is_prefix) || max_edit_distance(word.chars().count()) == 0 {
+                // Keep original: punctuation, prefix-in-progress, or too short
+                result.extend(&chars[*start..*end]);
+            } else {
+                let max_dist = max_edit_distance(word.chars().count()) as i64;
+                let suggestions = spell.lookup(&word.to_lowercase(), Verbosity::Top, max_dist);
+                if let Some(suggestion) = suggestions.first() {
+                    if suggestion.term != word.to_lowercase() {
+                        result.push_str(&suggestion.term);
+                    } else {
+                        result.extend(&chars[*start..*end]);
+                    }
+                } else {
+                    result.extend(&chars[*start..*end]);
+                }
+            }
+
+            prev_end = *end;
+        }
+
+        // Preserve trailing content after last token
+        if prev_end < chars.len() {
+            result.extend(&chars[prev_end..]);
+        }
+
+        result
     }
 
     /// Tokenize text using the trigram tokenizer and return terms for the content field.
@@ -617,33 +685,8 @@ impl Indexer {
         terms
     }
 
-    /// Generate trigram terms from transposition variants of short words (3-4 chars).
-    /// Returns only novel terms not already in `seen`.
-    fn transposition_trigrams(&self, words: &[&str], seen: &mut std::collections::HashSet<Term>) -> Vec<Term> {
-        let mut extra = Vec::new();
-        for word in words {
-            if word.len() >= 3 && word.len() <= 4 {
-                let chars: Vec<char> = word.chars().collect();
-                for i in 0..chars.len() - 1 {
-                    let mut v = chars.clone();
-                    v.swap(i, i + 1);
-                    let variant: String = v.into_iter().collect();
-                    if variant == *word {
-                        continue;
-                    }
-                    for term in self.trigram_terms(&variant) {
-                        if seen.insert(term.clone()) {
-                            extra.push(term);
-                        }
-                    }
-                }
-            }
-        }
-        extra
-    }
-
     /// Two-phase search: trigram recall (Phase 1) + bucket re-ranking (Phase 2).
-    fn search(&self, query: &str, limit: usize) -> IndexerResult<Vec<SearchCandidate>> {
+    fn search(&self, query: &str, limit: usize) -> IndexerResult<(Vec<SearchCandidate>, Vec<HashMap<String, u8>>)> {
         #[cfg(feature = "perf-log")]
         let t0 = std::time::Instant::now();
         let candidates = self.trigram_recall(query, limit)?;
@@ -653,7 +696,7 @@ impl Indexer {
         if candidates.is_empty() || query.split_whitespace().count() == 0 {
             #[cfg(feature = "perf-log")]
             eprintln!("[perf] phase1={:.1}ms candidates=0", (t1 - t0).as_secs_f64() * 1000.0);
-            return Ok(candidates);
+            return Ok((candidates, Vec::new()));
         }
 
         // Phase 2: Bucket re-ranking
@@ -661,6 +704,7 @@ impl Indexer {
         let query_words: Vec<&str> = query_words_owned.iter().map(|(_, _, w)| w.as_str()).collect();
         let last_word_is_prefix = query.ends_with(|c: char| c.is_alphanumeric());
         let now = Utc::now().timestamp();
+        let fuzzy_expansions = self.build_fuzzy_expansions(&query_words);
 
         let mut scored: Vec<(BucketScore, usize)> = candidates
             .iter()
@@ -673,6 +717,7 @@ impl Indexer {
                     c.timestamp,
                     c.tantivy_score,
                     now,
+                    &fuzzy_expansions,
                 );
                 (bucket, i)
             })
@@ -695,10 +740,10 @@ impl Indexer {
         let mut candidate_slots: Vec<Option<SearchCandidate>> =
             candidates.into_iter().map(Some).collect();
 
-        Ok(scored
+        Ok((scored
             .into_iter()
             .filter_map(|(_score, i)| candidate_slots[i].take())
-            .collect())
+            .collect(), fuzzy_expansions))
     }
 
     /// Phase 1: Trigram recall using Tantivy BM25.
@@ -784,7 +829,7 @@ impl Indexer {
         let words: Vec<&str> = query.split_whitespace().collect();
         let is_long_query = words.len() >= 4;
 
-        let (terms, mut seen) = if is_long_query {
+        let terms = if is_long_query {
             // Long query: per-word trigrams only (skip cross-word boundary trigrams)
             let mut all_terms = Vec::new();
             let mut seen = std::collections::HashSet::new();
@@ -795,28 +840,20 @@ impl Indexer {
                     }
                 }
             }
-            (all_terms, seen)
+            all_terms
         } else {
             // Short query: full-string trigrams (includes cross-word boundaries)
-            let terms = self.trigram_terms(query);
-            let seen = terms.iter().cloned().collect();
-            (terms, seen)
+            self.trigram_terms(query)
         };
 
         if terms.is_empty() {
             return Box::new(BooleanQuery::new(Vec::new()));
         }
 
-        // Compute min_match from original term count BEFORE adding variants.
-        // Transposition variants can only help recall, never raise the threshold.
         let num_terms = terms.len();
-
-        // Add trigrams from transposition variants of short words (3-4 chars)
-        let variant_terms = self.transposition_trigrams(&words, &mut seen);
 
         let subqueries: Vec<_> = terms
             .into_iter()
-            .chain(variant_terms)
             .map(|term| {
                 let q: Box<dyn tantivy::query::Query> =
                     Box::new(TermQuery::new(term, IndexRecordOption::Basic));
@@ -904,6 +941,8 @@ impl Indexer {
         writer.commit()?;
         drop(writer);
         self.reader.write().reload()?;
+        *self.spellchecker.write() = SymSpell::default();
+        self.spellchecker_dirty.store(false, Ordering::Release);
         Ok(())
     }
 
@@ -962,14 +1001,25 @@ pub(crate) fn search_trigram(indexer: &Indexer, query: &str, token: &Cancellatio
             return Ok(Vec::new());
         }
         let trimmed = query.trim_start();
-        let query_words_owned = tokenize_words(trimmed.trim_end());
+        let trimmed_end = trimmed.trim_end();
+        let original_last_word_is_prefix = trimmed_end.ends_with(|c: char| c.is_alphanumeric());
+
+        let corrected_query = indexer.correct_query(trimmed_end, original_last_word_is_prefix);
+        #[cfg(feature = "perf-log")]
+        if corrected_query != trimmed_end {
+            eprintln!("[spellcheck] '{}' → '{}'", trimmed_end, corrected_query);
+        }
+
+        // Recompute prefix flag on the corrected query — correction may have changed the last word
+        let last_word_is_prefix = corrected_query.ends_with(|c: char| c.is_alphanumeric());
+
+        let query_words_owned = tokenize_words(&corrected_query);
         let query_words: Vec<&str> = query_words_owned.iter().map(|(_, _, w)| w.as_str()).collect();
-        let last_word_is_prefix = trimmed.trim_end().ends_with(|c: char| c.is_alphanumeric());
 
         // Bucket-ranked candidates from two-phase search
         #[cfg(feature = "perf-log")]
         let t0 = std::time::Instant::now();
-        let candidates = indexer.search(trimmed.trim_end(), MAX_RESULTS)?;
+        let (candidates, fuzzy_expansions) = indexer.search(&corrected_query, MAX_RESULTS)?;
         #[cfg(feature = "perf-log")]
         let num_candidates = candidates.len();
 
@@ -983,7 +1033,7 @@ pub(crate) fn search_trigram(indexer: &Indexer, query: &str, token: &Cancellatio
             .into_par_iter()
             .take_any_while(|_| !token.is_cancelled())
             .map(|(rank, c)| {
-                let mut m = highlight_candidate(c.id, &c.content, c.timestamp, c.tantivy_score, &query_words, last_word_is_prefix);
+                let mut m = highlight_candidate(c.id, &c.content, c.timestamp, c.tantivy_score, &query_words, last_word_is_prefix, &fuzzy_expansions);
                 // Preserve bucket ranking order: score = inverse rank so sort is stable
                 m.score = (MAX_RESULTS - rank) as f64;
                 m
@@ -1119,7 +1169,7 @@ fn word_match_to_highlight_kind(wmk: WordMatchKind) -> HighlightKind {
 }
 
 /// Highlight a candidate using the same word-matching criteria as ranking
-/// (exact, prefix, fuzzy edit-distance) via `does_word_match`. This ensures
+/// (exact, prefix, fuzzy SymSpell lookup) via `does_word_match`. This ensures
 /// what's highlighted matches what's ranked in Phase 2 bucket scoring.
 fn highlight_candidate(
         id: i64,
@@ -1128,6 +1178,7 @@ fn highlight_candidate(
         tantivy_score: f32,
         query_words: &[&str],
         last_word_is_prefix: bool,
+        fuzzy_expansions: &[HashMap<String, u8>],
     ) -> FuzzyMatch {
         let content_lower = content.to_lowercase();
         let mut word_highlights: Vec<(usize, usize, HighlightKind)> = Vec::new();
@@ -1141,7 +1192,7 @@ fn highlight_candidate(
         for (char_start, char_end, doc_word) in &doc_words {
             for (qi, qw) in query_lower.iter().enumerate() {
                 let allow_prefix = qi == last_qi && last_word_is_prefix;
-                let wmk = does_word_match(qw, doc_word, allow_prefix);
+                let wmk = does_word_match(qw, doc_word, allow_prefix, &fuzzy_expansions[qi]);
                 if wmk != WordMatchKind::None {
                     matched_query_words[qi] = true;
                     word_highlights.push((*char_start, *char_end, word_match_to_highlight_kind(wmk)));
@@ -1511,51 +1562,6 @@ mod tests {
     // ── Ranking tests ───────────────────────────────────────────────
 
     #[test]
-    fn test_edit_distance_exact() {
-        assert_eq!(edit_distance_bounded("hello", "hello", 2), Some(0));
-    }
-
-    #[test]
-    fn test_edit_distance_one_deletion() {
-        assert_eq!(edit_distance_bounded("riversde", "riverside", 1), Some(1));
-    }
-
-    #[test]
-    fn test_edit_distance_one_substitution() {
-        assert_eq!(edit_distance_bounded("hello", "hallo", 1), Some(1));
-    }
-
-    #[test]
-    fn test_edit_distance_exceeds_threshold() {
-        assert_eq!(edit_distance_bounded("hello", "world", 2), None);
-    }
-
-    #[test]
-    fn test_edit_distance_length_prune() {
-        assert_eq!(edit_distance_bounded("hi", "hello!", 2), None);
-    }
-
-    #[test]
-    fn test_edit_distance_empty_strings() {
-        assert_eq!(edit_distance_bounded("", "", 0), Some(0));
-        assert_eq!(edit_distance_bounded("ab", "", 2), Some(2));
-        assert_eq!(edit_distance_bounded("abc", "", 2), None);
-    }
-
-    #[test]
-    fn test_edit_distance_two_edits() {
-        assert_eq!(edit_distance_bounded("rivrsid", "riverside", 2), Some(2));
-    }
-
-    #[test]
-    fn test_edit_distance_transposition() {
-        // Adjacent swap counts as 1 edit with Damerau-Levenshtein
-        assert_eq!(edit_distance_bounded("improt", "import", 1), Some(1));
-        assert_eq!(edit_distance_bounded("teh", "the", 1), Some(1));
-        assert_eq!(edit_distance_bounded("recieve", "receive", 1), Some(1));
-    }
-
-    #[test]
     fn test_subsequence_one_skip() {
         assert_eq!(subsequence_match("helo", "hello"), Some(1));
     }
@@ -1610,47 +1616,52 @@ mod tests {
 
     #[test]
     fn test_does_word_match_exact() {
-        assert_eq!(does_word_match("hello", "hello", false), WordMatchKind::Exact);
+        assert_eq!(does_word_match("hello", "hello", false, &HashMap::new()), WordMatchKind::Exact);
     }
 
     #[test]
     fn test_does_word_match_prefix() {
-        assert_eq!(does_word_match("cl", "clipkitty", true), WordMatchKind::Prefix);
-        assert_eq!(does_word_match("cl", "clipkitty", false), WordMatchKind::None);
-        assert_eq!(does_word_match("c", "clipkitty", true), WordMatchKind::None);
+        assert_eq!(does_word_match("cl", "clipkitty", true, &HashMap::new()), WordMatchKind::Prefix);
+        assert_eq!(does_word_match("cl", "clipkitty", false, &HashMap::new()), WordMatchKind::None);
+        assert_eq!(does_word_match("c", "clipkitty", true, &HashMap::new()), WordMatchKind::None);
     }
 
     #[test]
     fn test_does_word_match_fuzzy() {
-        // "riversde" (8 chars) -> max_dist 1
-        assert_eq!(does_word_match("riversde", "riverside", false), WordMatchKind::Fuzzy(1));
-        // "improt" (6 chars) -> max_dist 1, transposition counts as 1
-        assert_eq!(does_word_match("improt", "import", false), WordMatchKind::Fuzzy(1));
-        // Short word transpositions (3-4 chars)
-        assert_eq!(does_word_match("teh", "the", false), WordMatchKind::Fuzzy(1));
-        assert_eq!(does_word_match("form", "from", false), WordMatchKind::Fuzzy(1));
-        assert_eq!(does_word_match("adn", "and", false), WordMatchKind::Fuzzy(1));
-        // Short word substitution — also matches (same edit distance)
-        assert_eq!(does_word_match("tha", "the", false), WordMatchKind::Fuzzy(1));
-        // 2-char words still get no fuzzy
-        assert_eq!(does_word_match("te", "the", false), WordMatchKind::None);
+        // Fuzzy matches via pre-computed expansion maps
+        let expansion = HashMap::from([("riverside".into(), 1u8)]);
+        assert_eq!(does_word_match("riversde", "riverside", false, &expansion), WordMatchKind::Fuzzy(1));
+
+        let expansion = HashMap::from([("import".into(), 1u8)]);
+        assert_eq!(does_word_match("improt", "import", false, &expansion), WordMatchKind::Fuzzy(1));
+
+        let expansion = HashMap::from([("the".into(), 1u8)]);
+        assert_eq!(does_word_match("teh", "the", false, &expansion), WordMatchKind::Fuzzy(1));
+
+        // 2-char words get empty expansion (no fuzzy)
+        assert_eq!(does_word_match("te", "the", false, &HashMap::new()), WordMatchKind::None);
     }
 
     #[test]
     fn test_does_word_match_subsequence() {
-        // "helo" (4 chars) -> fuzzy wins: edit_distance("helo","hello")=1
-        assert_eq!(does_word_match("helo", "hello", false), WordMatchKind::Fuzzy(1));
-        assert_eq!(does_word_match("impt", "import", false), WordMatchKind::Subsequence(1));
-        assert_eq!(does_word_match("cls", "class", false), WordMatchKind::Subsequence(1));
-        assert_eq!(does_word_match("ab", "abc", false), WordMatchKind::None);
-        assert_eq!(does_word_match("abc", "abcdefg", false), WordMatchKind::None);
-        assert_eq!(does_word_match("imprt", "import", false), WordMatchKind::Fuzzy(1));
+        // Subsequence match when not in fuzzy expansion
+        assert_eq!(does_word_match("impt", "import", false, &HashMap::new()), WordMatchKind::Subsequence(1));
+        assert_eq!(does_word_match("cls", "class", false, &HashMap::new()), WordMatchKind::Subsequence(1));
+        assert_eq!(does_word_match("ab", "abc", false, &HashMap::new()), WordMatchKind::None);
+        assert_eq!(does_word_match("abc", "abcdefg", false, &HashMap::new()), WordMatchKind::None);
+
+        // Fuzzy wins over subsequence when in expansion map
+        let expansion = HashMap::from([("hello".into(), 1u8)]);
+        assert_eq!(does_word_match("helo", "hello", false, &expansion), WordMatchKind::Fuzzy(1));
+        // Without expansion, falls through to subsequence
+        assert_eq!(does_word_match("helo", "hello", false, &HashMap::new()), WordMatchKind::Subsequence(1));
     }
 
     #[test]
     fn test_match_exact() {
         let doc_words = vec!["hello", "world"];
-        let matches = match_query_words(&["hello"], &doc_words, false);
+        let expansions = vec![HashMap::new()];
+        let matches = match_query_words(&["hello"], &doc_words, false, &expansions);
         assert_eq!(matches.len(), 1);
         assert!(matches[0].matched);
         assert_eq!(matches[0].edit_dist, 0);
@@ -1660,7 +1671,8 @@ mod tests {
     #[test]
     fn test_match_prefix_last_word() {
         let doc_words = vec!["clipkitty"];
-        let matches = match_query_words(&["cl"], &doc_words, true);
+        let expansions = vec![HashMap::new()];
+        let matches = match_query_words(&["cl"], &doc_words, true, &expansions);
         assert_eq!(matches.len(), 1);
         assert!(matches[0].matched);
         assert_eq!(matches[0].edit_dist, 0);
@@ -1669,32 +1681,36 @@ mod tests {
     #[test]
     fn test_match_prefix_not_allowed_non_last() {
         let doc_words = vec!["clipkitty"];
-        let matches = match_query_words(&["cl", "hello"], &doc_words, true);
+        let expansions = vec![HashMap::new(), HashMap::new()];
+        let matches = match_query_words(&["cl", "hello"], &doc_words, true, &expansions);
         assert!(!matches[0].matched);
     }
 
     #[test]
     fn test_match_fuzzy() {
         let doc_words = vec!["riverside", "park"];
-        let matches = match_query_words(&["riversde"], &doc_words, false);
+        let expansions = vec![HashMap::from([("riverside".into(), 1u8)])];
+        let matches = match_query_words(&["riversde"], &doc_words, false, &expansions);
         assert!(matches[0].matched);
         assert_eq!(matches[0].edit_dist, 1);
     }
 
     #[test]
     fn test_match_fuzzy_short_word() {
-        // "helo" (4 chars) matches "hello" via fuzzy (edit distance 1)
+        // "helo" matches "hello" via fuzzy expansion
         let doc_words = vec!["hello"];
-        let matches = match_query_words(&["helo"], &doc_words, false);
+        let expansions = vec![HashMap::from([("hello".into(), 1u8)])];
+        let matches = match_query_words(&["helo"], &doc_words, false, &expansions);
         assert!(matches[0].matched);
         assert_eq!(matches[0].edit_dist, 1);
     }
 
     #[test]
     fn test_match_transposition_short_word() {
-        // "teh" (3 chars) matches "the" via fuzzy (transposition = 1 edit)
+        // "teh" matches "the" via fuzzy expansion
         let doc_words = vec!["the", "quick"];
-        let matches = match_query_words(&["teh"], &doc_words, false);
+        let expansions = vec![HashMap::from([("the".into(), 1u8)])];
+        let matches = match_query_words(&["teh"], &doc_words, false, &expansions);
         assert!(matches[0].matched);
         assert_eq!(matches[0].edit_dist, 1);
         assert!(!matches[0].is_exact);
@@ -1702,17 +1718,20 @@ mod tests {
 
     #[test]
     fn test_match_subsequence_short_word() {
-        // "helo" (4 chars) now matches via fuzzy (edit_distance=1) since max_edit_distance(4)=1
+        // Without fuzzy expansion, "helo" falls through to subsequence
         let doc_words = vec!["hello"];
-        let matches = match_query_words(&["helo"], &doc_words, false);
+        let expansions = vec![HashMap::new()];
+        let matches = match_query_words(&["helo"], &doc_words, false, &expansions);
         assert!(matches[0].matched);
-        assert_eq!(matches[0].edit_dist, 1);
+        // Subsequence: gaps(1) + 1 = 2
+        assert_eq!(matches[0].edit_dist, 2);
     }
 
     #[test]
     fn test_match_multi_word() {
         let doc_words = vec!["hello", "beautiful", "world"];
-        let matches = match_query_words(&["hello", "world"], &doc_words, false);
+        let expansions = vec![HashMap::new(), HashMap::new()];
+        let matches = match_query_words(&["hello", "world"], &doc_words, false, &expansions);
         assert!(matches[0].matched);
         assert!(matches[1].matched);
         assert_eq!(matches[0].doc_word_pos, 0);
@@ -1817,11 +1836,12 @@ mod tests {
     #[test]
     fn test_words_matched_dominates() {
         let now = 1700000000i64;
+        let empty = vec![HashMap::new(), HashMap::new(), HashMap::new()];
         let score_3w = compute_bucket_score(
-            "hello beautiful world", &["hello", "beautiful", "world"], false, now - 86400, 1.0, now,
+            "hello beautiful world", &["hello", "beautiful", "world"], false, now - 86400, 1.0, now, &empty,
         );
         let score_2w = compute_bucket_score(
-            "hello world xyz", &["hello", "beautiful", "world"], false, now, 10.0, now,
+            "hello world xyz", &["hello", "beautiful", "world"], false, now, 10.0, now, &empty,
         );
         assert!(score_3w > score_2w, "3 words matched should beat 2 words");
     }
@@ -1829,11 +1849,13 @@ mod tests {
     #[test]
     fn test_typo_dominates_recency_tier() {
         let now = 1700000000i64;
+        let empty = vec![HashMap::new()];
         let exact_old = compute_bucket_score(
-            "riverside park", &["riverside"], false, now - 864000, 1.0, now,
+            "riverside park", &["riverside"], false, now - 864000, 1.0, now, &empty,
         );
+        let fuzzy_exp = vec![HashMap::from([("riversde".into(), 1u8)])];
         let typo_new = compute_bucket_score(
-            "riversde park", &["riverside"], false, now, 1.0, now,
+            "riversde park", &["riverside"], false, now, 1.0, now, &fuzzy_exp,
         );
         assert!(exact_old > typo_new, "Exact match should beat fuzzy even when older");
     }
@@ -1841,11 +1863,12 @@ mod tests {
     #[test]
     fn test_recency_tier_dominates_proximity() {
         let now = 1700000000i64;
+        let empty = vec![HashMap::new(), HashMap::new()];
         let recent = compute_bucket_score(
-            "hello world and other things between", &["hello", "world"], false, now - 1800, 1.0, now,
+            "hello world and other things between", &["hello", "world"], false, now - 1800, 1.0, now, &empty,
         );
         let old = compute_bucket_score(
-            "hello world", &["hello", "world"], false, now - 864000, 1.0, now,
+            "hello world", &["hello", "world"], false, now - 864000, 1.0, now, &empty,
         );
         assert!(recent > old, "Recent tier should dominate proximity when words/typo equal");
     }
@@ -1853,8 +1876,9 @@ mod tests {
     #[test]
     fn test_full_bucket_score_integration() {
         let now = 1700000000i64;
+        let empty = vec![HashMap::new(), HashMap::new()];
         let score = compute_bucket_score(
-            "hello world", &["hello", "world"], false, now, 5.0, now,
+            "hello world", &["hello", "world"], false, now, 5.0, now, &empty,
         );
         assert_eq!(score.words_matched, 2);
         assert_eq!(score.typo_score, 255);
@@ -1929,44 +1953,56 @@ mod tests {
     }
 
     #[test]
-    fn test_transposition_recall_single_short_word() {
-        // "teh" (transposition of "the") should recall a doc containing "the"
+    fn test_spellcheck_corrects_typo() {
+        // "helllo" should be corrected to "hello"
         let indexer = Indexer::new_in_memory().unwrap();
-        indexer.add_document(1, "the quick brown fox", 1000).unwrap();
-        indexer.add_document(2, "a slow red dog", 1000).unwrap();
+        indexer.add_document(1, "hello world", 1000).unwrap();
         indexer.commit().unwrap();
 
-        let results = indexer.search("teh", 10).unwrap();
-        let ids: Vec<i64> = results.iter().map(|c| c.id).collect();
-        assert!(ids.contains(&1), "transposition 'teh' should recall doc with 'the', got {:?}", ids);
-        assert!(!ids.contains(&2));
+        let corrected = indexer.correct_query("helllo", false);
+        assert_eq!(corrected, "hello", "typo 'helllo' should be corrected to 'hello'");
     }
 
     #[test]
-    fn test_transposition_recall_multi_word() {
-        // "form react" where "form" is a transposition of "from"
+    fn test_spellcheck_preserves_prefix() {
+        // Last word should not be corrected when it's a prefix (user still typing)
         let indexer = Indexer::new_in_memory().unwrap();
-        indexer.add_document(1, "import Button from react", 1000).unwrap();
-        indexer.add_document(2, "html form element submit", 1000).unwrap();
+        indexer.add_document(1, "hello world", 1000).unwrap();
         indexer.commit().unwrap();
 
-        let results = indexer.search("form react", 10).unwrap();
-        let ids: Vec<i64> = results.iter().map(|c| c.id).collect();
-        // Doc 1 should be recalled: "from" matches via transposition, "react" matches exact
-        assert!(ids.contains(&1), "'form react' should recall doc with 'from react', got {:?}", ids);
+        let corrected = indexer.correct_query("hel", true);
+        assert_eq!(corrected, "hel", "prefix 'hel' should not be corrected");
     }
 
     #[test]
-    fn test_transposition_trigrams_dedup() {
-        // Variant trigrams that duplicate originals shouldn't cause issues
+    fn test_spellcheck_skips_short_words() {
+        // Words < 3 chars should not be corrected (max_edit_distance == 0)
         let indexer = Indexer::new_in_memory().unwrap();
-        indexer.add_document(1, "and also other things", 1000).unwrap();
+        indexer.add_document(1, "hello world", 1000).unwrap();
         indexer.commit().unwrap();
 
-        // "adn" transpositions: "dan", "and" — "and" trigram already exists in doc
-        let results = indexer.search("adn", 10).unwrap();
-        let ids: Vec<i64> = results.iter().map(|c| c.id).collect();
-        assert!(ids.contains(&1), "'adn' should recall doc with 'and', got {:?}", ids);
+        let corrected = indexer.correct_query("hx", false);
+        assert_eq!(corrected, "hx", "short word 'hx' should not be corrected");
+    }
+
+    #[test]
+    fn test_spellcheck_empty_dictionary() {
+        // Before any commits, query should pass through unchanged
+        let indexer = Indexer::new_in_memory().unwrap();
+
+        let corrected = indexer.correct_query("helllo world", false);
+        assert_eq!(corrected, "helllo world", "empty dictionary should not correct anything");
+    }
+
+    #[test]
+    fn test_spellcheck_transposition() {
+        // "teh" (transposition of "the") should be corrected
+        let indexer = Indexer::new_in_memory().unwrap();
+        indexer.add_document(1, "the form is ready", 1000).unwrap();
+        indexer.commit().unwrap();
+
+        let corrected = indexer.correct_query("teh", false);
+        assert_eq!(corrected, "the", "transposition 'teh' should be corrected to 'the'");
     }
 
     // ── Search tests ────────────────────────────────────────────────
@@ -2124,8 +2160,8 @@ mod tests {
         ]);
     }
 
-    fn highlighted_words(content: &str, query_words: &[&str]) -> Vec<String> {
-        let fm = super::highlight_candidate(1, content, 1000, 1.0, query_words, false);
+    fn highlighted_words(content: &str, query_words: &[&str], fuzzy_expansions: &[HashMap<String, u8>]) -> Vec<String> {
+        let fm = super::highlight_candidate(1, content, 1000, 1.0, query_words, false, fuzzy_expansions);
         let chars: Vec<char> = content.chars().collect();
         fm.highlight_ranges.iter().map(|r| {
             chars[r.start as usize..r.end as usize].iter().collect()
@@ -2134,19 +2170,20 @@ mod tests {
 
     #[test]
     fn test_highlight_exact_match() {
-        let words = highlighted_words("hello world", &["hello"]);
+        let words = highlighted_words("hello world", &["hello"], &[HashMap::new()]);
         assert_eq!(words, vec!["hello"]);
     }
 
     #[test]
     fn test_highlight_typo_match() {
-        let words = highlighted_words("Visit Riverside Park today", &["riversde"]);
+        let exp = [HashMap::from([("riverside".into(), 1u8)])];
+        let words = highlighted_words("Visit Riverside Park today", &["riversde"], &exp);
         assert_eq!(words, vec!["Riverside"]);
     }
 
     #[test]
     fn test_highlight_prefix_match() {
-        let fm = super::highlight_candidate(1, "Run testing suite now", 1000, 1.0, &["test"], true);
+        let fm = super::highlight_candidate(1, "Run testing suite now", 1000, 1.0, &["test"], true, &[HashMap::new()]);
         let chars: Vec<char> = "Run testing suite now".chars().collect();
         let words: Vec<String> = fm.highlight_ranges.iter().map(|r| {
             chars[r.start as usize..r.end as usize].iter().collect()
@@ -2156,43 +2193,43 @@ mod tests {
 
     #[test]
     fn test_highlight_subsequence_short_word() {
-        let words = highlighted_words("hello world", &["helo"]);
+        let words = highlighted_words("hello world", &["helo"], &[HashMap::new()]);
         assert_eq!(words, vec!["hello"]);
     }
 
     #[test]
     fn test_highlight_no_match_short_word() {
-        let words = highlighted_words("hello world", &["hx"]);
+        let words = highlighted_words("hello world", &["hx"], &[HashMap::new()]);
         assert!(words.is_empty());
     }
 
     #[test]
     fn test_highlight_multi_word() {
-        let words = highlighted_words("hello beautiful world", &["hello", "world"]);
+        let words = highlighted_words("hello beautiful world", &["hello", "world"], &[HashMap::new(), HashMap::new()]);
         assert_eq!(words, vec!["hello", "world"]);
     }
 
     #[test]
     fn test_highlight_short_exact_word() {
-        let words = highlighted_words("hi there highway", &["hi"]);
+        let words = highlighted_words("hi there highway", &["hi"], &[HashMap::new()]);
         assert_eq!(words, vec!["hi"]);
     }
 
     #[test]
     fn test_highlight_multiple_occurrences() {
-        let words = highlighted_words("hello world hello again", &["hello"]);
+        let words = highlighted_words("hello world hello again", &["hello"], &[HashMap::new()]);
         assert_eq!(words, vec!["hello", "hello"]);
     }
 
     #[test]
     fn test_highlight_no_match() {
-        let words = highlighted_words("hello world", &["xyz"]);
+        let words = highlighted_words("hello world", &["xyz"], &[HashMap::new()]);
         assert!(words.is_empty());
     }
 
     #[test]
     fn test_highlight_url_query_bridges_punctuation() {
-        let words = highlighted_words("https://github.com/user/repo", &["http", "github"]);
+        let words = highlighted_words("https://github.com/user/repo", &["http", "github"], &[HashMap::new(), HashMap::new()]);
         assert_eq!(words, vec!["https://github"]);
     }
 
@@ -2203,7 +2240,8 @@ mod tests {
         let query_words: Vec<&str> = query_words_owned.iter().map(|(_, _, w)| w.as_str()).collect();
         assert_eq!(query_words, vec!["http", "://", "github"]);
 
-        let fm = highlight_candidate(1, "https://github.com/user/repo", 1000, 1.0, &query_words, false);
+        let expansions = vec![HashMap::new(), HashMap::new(), HashMap::new()];
+        let fm = highlight_candidate(1, "https://github.com/user/repo", 1000, 1.0, &query_words, false, &expansions);
         let chars: Vec<char> = "https://github.com/user/repo".chars().collect();
         let words: Vec<String> = fm.highlight_ranges.iter().map(|r| {
             chars[r.start as usize..r.end as usize].iter().collect()
@@ -2213,13 +2251,13 @@ mod tests {
 
     #[test]
     fn test_highlight_does_not_bridge_whitespace_gaps() {
-        let words = highlighted_words("hello beautiful world", &["hello", "world"]);
+        let words = highlighted_words("hello beautiful world", &["hello", "world"], &[HashMap::new(), HashMap::new()]);
         assert_eq!(words, vec!["hello", "world"]);
     }
 
     #[test]
     fn test_highlight_bridges_dots_in_domain() {
-        let words = highlighted_words("https://github.com", &["github", "com"]);
+        let words = highlighted_words("https://github.com", &["github", "com"], &[HashMap::new(), HashMap::new()]);
         assert_eq!(words, vec!["github.com"]);
     }
 
@@ -2320,7 +2358,8 @@ error: Build failed due to failed dependency";
     fn test_densest_highlight_prefers_exact_query_match_over_scattered_repeats() {
         let query_words_owned = build_query_words("error: build failed due to dependency");
         let query_words: Vec<&str> = query_words_owned.iter().map(|s| s.as_str()).collect();
-        let fm = highlight_candidate(1, NIX_BUILD_ERROR, 1000, 1.0, &query_words, false);
+        let expansions: Vec<HashMap<String, u8>> = query_words.iter().map(|_| HashMap::new()).collect();
+        let fm = highlight_candidate(1, NIX_BUILD_ERROR, 1000, 1.0, &query_words, false, &expansions);
 
         let densest_idx = find_densest_highlight(&fm.highlight_ranges, SNIPPET_CONTEXT_CHARS as u64).unwrap();
         let densest_start = fm.highlight_ranges[densest_idx].start as usize;
@@ -2343,7 +2382,8 @@ error: Build failed due to failed dependency";
     fn test_snippet_centers_on_exact_query_match_not_scattered_repeats() {
         let query_words_owned = build_query_words("error: build failed due to dependency");
         let query_words: Vec<&str> = query_words_owned.iter().map(|s| s.as_str()).collect();
-        let fm = highlight_candidate(1, NIX_BUILD_ERROR, 1000, 1.0, &query_words, false);
+        let expansions: Vec<HashMap<String, u8>> = query_words.iter().map(|_| HashMap::new()).collect();
+        let fm = highlight_candidate(1, NIX_BUILD_ERROR, 1000, 1.0, &query_words, false, &expansions);
 
         let (snippet, _, _) = generate_snippet(NIX_BUILD_ERROR, &fm.highlight_ranges, SNIPPET_CONTEXT_CHARS * 2);
 
@@ -2358,31 +2398,81 @@ error: Build failed due to failed dependency";
 
     #[test]
     fn test_highlight_match_kind_exact() {
-        let fm = highlight_candidate(1, "hello world", 1000, 1.0, &["hello"], false);
+        let fm = highlight_candidate(1, "hello world", 1000, 1.0, &["hello"], false, &[HashMap::new()]);
         assert_eq!(fm.highlight_ranges.len(), 1);
         assert_eq!(fm.highlight_ranges[0].kind, HighlightKind::Exact);
     }
 
     #[test]
     fn test_highlight_match_kind_prefix() {
-        let fm = highlight_candidate(1, "Run testing suite now", 1000, 1.0, &["test"], true);
+        let fm = highlight_candidate(1, "Run testing suite now", 1000, 1.0, &["test"], true, &[HashMap::new()]);
         assert_eq!(fm.highlight_ranges.len(), 1);
         assert_eq!(fm.highlight_ranges[0].kind, HighlightKind::Prefix);
     }
 
     #[test]
     fn test_highlight_match_kind_fuzzy() {
-        // "riversde" matches "riverside" via fuzzy edit distance
-        let fm = highlight_candidate(1, "Visit Riverside Park today", 1000, 1.0, &["riversde"], false);
+        // "riversde" matches "riverside" via SymSpell expansion
+        let exp = [HashMap::from([("riverside".into(), 1u8)])];
+        let fm = highlight_candidate(1, "Visit Riverside Park today", 1000, 1.0, &["riversde"], false, &exp);
         assert_eq!(fm.highlight_ranges.len(), 1);
         assert_eq!(fm.highlight_ranges[0].kind, HighlightKind::Fuzzy);
     }
 
     #[test]
     fn test_highlight_match_kind_subsequence() {
-        // "impt" matches "import" via subsequence (length diff 2 exceeds max_edit_distance)
-        let fm = highlight_candidate(1, "import React from react", 1000, 1.0, &["impt"], false);
+        // "impt" matches "import" via subsequence (not in fuzzy expansion)
+        let fm = highlight_candidate(1, "import React from react", 1000, 1.0, &["impt"], false, &[HashMap::new()]);
         assert_eq!(fm.highlight_ranges.len(), 1);
         assert_eq!(fm.highlight_ranges[0].kind, HighlightKind::Subsequence);
+    }
+
+    // ── Spellcheck robustness tests ──────────────────────────────
+
+    #[test]
+    fn test_spellcheck_unicode_safety() {
+        // Multi-byte chars must not panic — tokenize_words returns char indices, not byte indices
+        let indexer = Indexer::new_in_memory().unwrap();
+        indexer.add_document(1, "café the quick brown fox", 1000).unwrap();
+        indexer.commit().unwrap();
+
+        let corrected = indexer.correct_query("café teh", false);
+        assert!(corrected.contains("café"), "should preserve multi-byte word, got: {}", corrected);
+        assert!(corrected.contains("the"), "should correct 'teh' → 'the', got: {}", corrected);
+    }
+
+    #[test]
+    fn test_spellcheck_multi_word_correction() {
+        let indexer = Indexer::new_in_memory().unwrap();
+        indexer.add_document(1, "import Button from react", 1000).unwrap();
+        indexer.commit().unwrap();
+
+        let corrected = indexer.correct_query("improt form react", false);
+        assert!(corrected.contains("import"), "should correct 'improt' → 'import', got: {}", corrected);
+        assert!(corrected.contains("from"), "should correct 'form' → 'from', got: {}", corrected);
+    }
+
+    #[test]
+    fn test_spellcheck_prefix_after_correction() {
+        // Middle words should be corrected, but trailing prefix should be preserved
+        let indexer = Indexer::new_in_memory().unwrap();
+        indexer.add_document(1, "the quick brown fox", 1000).unwrap();
+        indexer.commit().unwrap();
+
+        let corrected = indexer.correct_query("teh qui", true);
+        assert!(corrected.contains("the"), "should correct 'teh' → 'the', got: {}", corrected);
+        assert!(corrected.contains("qui"), "should preserve prefix 'qui', got: {}", corrected);
+    }
+
+    #[test]
+    fn test_search_trigram_with_typo() {
+        let indexer = Indexer::new_in_memory().unwrap();
+        indexer.add_document(1, "the quick brown fox jumps over the lazy dog", 1000).unwrap();
+        indexer.commit().unwrap();
+
+        let token = CancellationToken::new();
+        let results = search_trigram(&indexer, "quikc brown", &token).unwrap();
+        assert!(!results.is_empty(), "search with typo should still find the document");
+        assert!(!results[0].highlight_ranges.is_empty(), "result should have highlights");
     }
 }
