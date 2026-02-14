@@ -59,27 +59,23 @@ fn generate_bench_db(out_path: &std::path::Path) {
     if out_path.exists() {
         std::fs::remove_file(out_path).unwrap();
     }
+
+    // Use ClipboardStore to create the schema so it stays in sync with the app.
+    // Drop it immediately — we reopen with raw rusqlite for fast bulk inserts.
+    {
+        let store = ClipboardStore::new(out_path.to_str().unwrap().to_string())
+            .expect("Failed to create benchmark database");
+        drop(store);
+    }
+    // Clean up the tantivy index created as a side-effect; only the sqlite file is needed.
+    let tantivy_dir = out_path.parent().unwrap().join("tantivy_index_v3");
+    if tantivy_dir.exists() {
+        std::fs::remove_dir_all(&tantivy_dir).ok();
+    }
+
     let out = rusqlite::Connection::open(out_path).unwrap();
     out.execute_batch("PRAGMA journal_mode = OFF; PRAGMA synchronous = OFF;")
         .unwrap();
-    out.execute_batch(
-        "CREATE TABLE items (
-            id INTEGER PRIMARY KEY AUTOINCREMENT,
-            content TEXT NOT NULL,
-            contentHash TEXT NOT NULL,
-            timestamp DATETIME NOT NULL,
-            sourceApp TEXT,
-            contentType TEXT DEFAULT 'text',
-            imageData BLOB,
-            linkTitle TEXT,
-            linkImageData BLOB,
-            sourceAppBundleID TEXT,
-            linkDescription TEXT,
-            thumbnail BLOB,
-            colorRgba INTEGER
-        );",
-    )
-    .unwrap();
 
     let mut rng = StdRng::seed_from_u64(SEED);
     let base_ts = 1700000000i64;
@@ -113,14 +109,6 @@ fn generate_bench_db(out_path: &std::path::Path) {
         out.execute_batch("COMMIT").unwrap();
         eprintln!("  {} / {}", batch_end, TARGET_COUNT);
     }
-
-    eprintln!("  Creating indexes...");
-    out.execute_batch(
-        "CREATE INDEX idx_items_hash ON items(contentHash);
-         CREATE INDEX idx_items_timestamp ON items(timestamp);
-         CREATE INDEX idx_items_content_prefix ON items(content COLLATE NOCASE);",
-    )
-    .unwrap();
 
     let size = std::fs::metadata(out_path).unwrap().len();
     eprintln!(
