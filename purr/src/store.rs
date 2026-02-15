@@ -1869,4 +1869,550 @@ mod tests {
         assert_eq!(items[0].content.text_content(), "Hello World");
         assert!(matches!(items[0].content, crate::interface::ClipboardContent::Text { .. }));
     }
+
+    // ─────────────────────────────────────────────────────────────────────────────
+    // Comprehensive end-to-end file clipboard tests
+    // ─────────────────────────────────────────────────────────────────────────────
+
+    #[test]
+    fn test_update_file_status_moved_updates_path_in_fetched_content() {
+        // After update_file_status with new_path, fetched content must reflect the new path
+        let store = ClipboardStore::new_in_memory().unwrap();
+
+        let id = store.save_file(
+            "/Users/test/original.txt".to_string(),
+            "original.txt".to_string(),
+            100,
+            "public.plain-text".to_string(),
+            vec![1, 2, 3],
+            None,
+            None,
+            None,
+        ).unwrap();
+
+        // Move the file
+        store.update_file_status(
+            id,
+            "moved:/Users/test/Desktop/original.txt".to_string(),
+            Some("/Users/test/Desktop/original.txt".to_string()),
+        ).unwrap();
+
+        // Fetch and verify path changed
+        let items = store.fetch_by_ids(vec![id]).unwrap();
+        assert_eq!(items.len(), 1);
+        if let crate::interface::ClipboardContent::File { path, filename, file_status, .. } = &items[0].content {
+            assert_eq!(path, "/Users/test/Desktop/original.txt", "path must reflect move");
+            assert_eq!(filename, "original.txt", "filename should be unchanged");
+            assert_eq!(
+                *file_status,
+                crate::interface::FileStatus::Moved { new_path: "/Users/test/Desktop/original.txt".to_string() }
+            );
+        } else {
+            panic!("Expected File content, got: {:?}", items[0].content);
+        }
+    }
+
+    #[test]
+    fn test_file_status_full_lifecycle() {
+        // Cycle through all states: available → moved → trashed → missing → available
+        let store = ClipboardStore::new_in_memory().unwrap();
+
+        let id = store.save_file(
+            "/tmp/lifecycle.txt".to_string(),
+            "lifecycle.txt".to_string(),
+            50,
+            "public.plain-text".to_string(),
+            vec![1],
+            None,
+            None,
+            None,
+        ).unwrap();
+
+        let assert_status = |expected: crate::interface::FileStatus| {
+            let items = store.fetch_by_ids(vec![id]).unwrap();
+            if let crate::interface::ClipboardContent::File { file_status, .. } = &items[0].content {
+                assert_eq!(*file_status, expected, "Status mismatch");
+            } else {
+                panic!("Expected File content");
+            }
+        };
+
+        // Initial: available
+        assert_status(crate::interface::FileStatus::Available);
+
+        // → moved
+        store.update_file_status(id, "moved:/tmp/new.txt".to_string(), Some("/tmp/new.txt".to_string())).unwrap();
+        assert_status(crate::interface::FileStatus::Moved { new_path: "/tmp/new.txt".to_string() });
+
+        // → trashed
+        store.update_file_status(id, "trashed".to_string(), None).unwrap();
+        assert_status(crate::interface::FileStatus::Trashed);
+
+        // → missing
+        store.update_file_status(id, "missing".to_string(), None).unwrap();
+        assert_status(crate::interface::FileStatus::Missing);
+
+        // → back to available
+        store.update_file_status(id, "available".to_string(), None).unwrap();
+        assert_status(crate::interface::FileStatus::Available);
+    }
+
+    #[tokio::test]
+    async fn test_filtered_search_with_query_files_only() {
+        // search_filtered with a non-empty query + Files filter should only return files
+        let store = ClipboardStore::new_in_memory().unwrap();
+
+        store.save_text("project notes about design".to_string(), None, None).unwrap();
+        store.save_file(
+            "/Users/test/project-design.sketch".to_string(),
+            "project-design.sketch".to_string(),
+            5000,
+            "com.bohemiancoding.sketch.drawing".to_string(),
+            vec![1],
+            None,
+            None,
+            None,
+        ).unwrap();
+
+        // Both contain "project" but filter should isolate files
+        let result = store.search_filtered("project".to_string(), ContentTypeFilter::Files).await.unwrap();
+        assert_eq!(result.matches.len(), 1, "Only file should match");
+        assert!(result.matches[0].item_metadata.snippet.contains("project-design"));
+    }
+
+    #[tokio::test]
+    async fn test_filtered_search_with_query_text_excludes_files() {
+        // search_filtered with Text filter should exclude files even when query matches
+        let store = ClipboardStore::new_in_memory().unwrap();
+
+        store.save_text("budget spreadsheet summary".to_string(), None, None).unwrap();
+        store.save_file(
+            "/Users/test/budget.xlsx".to_string(),
+            "budget.xlsx".to_string(),
+            1000,
+            "org.openxmlformats.spreadsheetml.sheet".to_string(),
+            vec![1],
+            None,
+            None,
+            None,
+        ).unwrap();
+
+        let result = store.search_filtered("budget".to_string(), ContentTypeFilter::Text).await.unwrap();
+        assert_eq!(result.matches.len(), 1, "Only text should match");
+        assert!(result.matches[0].item_metadata.snippet.contains("budget spreadsheet"));
+    }
+
+    #[test]
+    fn test_delete_file_item() {
+        // Deleting a file item should remove it from both database and index
+        let rt = runtime();
+        let store = ClipboardStore::new_in_memory().unwrap();
+
+        let id = store.save_file(
+            "/tmp/delete-me.pdf".to_string(),
+            "delete-me.pdf".to_string(),
+            100,
+            "com.adobe.pdf".to_string(),
+            vec![1],
+            None,
+            None,
+            None,
+        ).unwrap();
+
+        // Verify it exists
+        let items = store.fetch_by_ids(vec![id]).unwrap();
+        assert_eq!(items.len(), 1);
+
+        // Delete it
+        store.delete_item(id).unwrap();
+
+        // Gone from fetch
+        let items = store.fetch_by_ids(vec![id]).unwrap();
+        assert_eq!(items.len(), 0);
+
+        // Gone from search
+        let result = rt.block_on(store.search("delete-me".to_string())).unwrap();
+        assert_eq!(result.matches.len(), 0, "Deleted file should not appear in search");
+    }
+
+    #[tokio::test]
+    async fn test_file_as_first_item_in_results() {
+        // When a file is the most recent item, first_item should have File content
+        let store = ClipboardStore::new_in_memory().unwrap();
+
+        store.save_text("older text".to_string(), None, None).unwrap();
+
+        // Small delay to ensure different timestamps
+        std::thread::sleep(std::time::Duration::from_millis(10));
+
+        store.save_file(
+            "/tmp/latest.pdf".to_string(),
+            "latest.pdf".to_string(),
+            100,
+            "com.adobe.pdf".to_string(),
+            vec![1],
+            None,
+            None,
+            None,
+        ).unwrap();
+
+        let result = store.search("".to_string()).await.unwrap();
+        assert!(result.first_item.is_some(), "first_item should be populated");
+        let first = result.first_item.unwrap();
+        if let crate::interface::ClipboardContent::File { filename, .. } = &first.content {
+            assert_eq!(filename, "latest.pdf");
+        } else {
+            panic!("first_item should be a File, got: {:?}", first.content);
+        }
+    }
+
+    #[tokio::test]
+    async fn test_all_content_types_coexist_with_correct_filters() {
+        // Save one of each content type, verify each filter returns only its type
+        let store = ClipboardStore::new_in_memory().unwrap();
+
+        store.save_text("plain text content".to_string(), None, None).unwrap();
+        store.save_text("https://example.com".to_string(), None, None).unwrap();
+        store.save_text("#FF0000".to_string(), None, None).unwrap();
+        store.save_text("user@example.com".to_string(), None, None).unwrap();
+        store.save_file(
+            "/tmp/doc.pdf".to_string(),
+            "doc.pdf".to_string(),
+            100,
+            "com.adobe.pdf".to_string(),
+            vec![1],
+            None,
+            None,
+            None,
+        ).unwrap();
+
+        // All items visible without filter
+        let all = store.search("".to_string()).await.unwrap();
+        assert_eq!(all.matches.len(), 5, "All 5 items should be present");
+
+        // Files filter
+        let files = store.search_filtered("".to_string(), ContentTypeFilter::Files).await.unwrap();
+        assert_eq!(files.matches.len(), 1);
+        assert!(files.matches[0].item_metadata.snippet.contains("doc.pdf"));
+
+        // Colors filter
+        let colors = store.search_filtered("".to_string(), ContentTypeFilter::Colors).await.unwrap();
+        assert_eq!(colors.matches.len(), 1);
+        assert!(colors.matches[0].item_metadata.snippet.contains("FF0000"));
+
+        // Links filter
+        let links = store.search_filtered("".to_string(), ContentTypeFilter::Links).await.unwrap();
+        assert_eq!(links.matches.len(), 1);
+        assert!(links.matches[0].item_metadata.snippet.contains("example.com"));
+
+        // Text filter (includes text + email + phone)
+        let texts = store.search_filtered("".to_string(), ContentTypeFilter::Text).await.unwrap();
+        assert!(texts.matches.len() >= 2, "Text filter should include text and email, got {}", texts.matches.len());
+    }
+
+    #[test]
+    fn test_file_dedup_updates_timestamp() {
+        // Saving the same path twice should bump the existing item's timestamp
+        let rt = runtime();
+        let store = ClipboardStore::new_in_memory().unwrap();
+
+        // Save text first (will be most recent initially)
+        store.save_text("some text".to_string(), None, None).unwrap();
+
+        // Small delay
+        std::thread::sleep(std::time::Duration::from_millis(10));
+
+        // Save file
+        let id1 = store.save_file(
+            "/tmp/bump.txt".to_string(),
+            "bump.txt".to_string(),
+            100,
+            "public.plain-text".to_string(),
+            vec![1],
+            None,
+            None,
+            None,
+        ).unwrap();
+        assert!(id1 > 0);
+
+        // Verify file is most recent
+        let result = rt.block_on(store.search("".to_string())).unwrap();
+        assert!(result.matches[0].item_metadata.snippet.contains("bump.txt"),
+            "File should be most recent, got: {}", result.matches[0].item_metadata.snippet);
+
+        // Save another text (now most recent)
+        std::thread::sleep(std::time::Duration::from_millis(10));
+        store.save_text("newer text".to_string(), None, None).unwrap();
+
+        // Text should now be most recent
+        let result = rt.block_on(store.search("".to_string())).unwrap();
+        assert!(result.matches[0].item_metadata.snippet.contains("newer text"),
+            "New text should be most recent");
+
+        // Re-save the same file (dedup) — should bump its timestamp to now
+        std::thread::sleep(std::time::Duration::from_millis(10));
+        let id2 = store.save_file(
+            "/tmp/bump.txt".to_string(),
+            "bump.txt".to_string(),
+            100,
+            "public.plain-text".to_string(),
+            vec![1],
+            None,
+            None,
+            None,
+        ).unwrap();
+        assert_eq!(id2, 0, "Should return 0 for dedup");
+
+        // File should now be most recent again (timestamp bumped)
+        let result = rt.block_on(store.search("".to_string())).unwrap();
+        assert!(result.matches[0].item_metadata.snippet.contains("bump.txt"),
+            "File should be back on top after dedup timestamp bump, got: {}", result.matches[0].item_metadata.snippet);
+    }
+
+    #[test]
+    fn test_file_empty_bookmark_data() {
+        // Empty bookmark data should roundtrip as empty vec
+        let store = ClipboardStore::new_in_memory().unwrap();
+
+        let id = store.save_file(
+            "/tmp/no-bookmark.txt".to_string(),
+            "no-bookmark.txt".to_string(),
+            10,
+            "public.plain-text".to_string(),
+            vec![], // empty bookmark
+            None,
+            None,
+            None,
+        ).unwrap();
+
+        let items = store.fetch_by_ids(vec![id]).unwrap();
+        if let crate::interface::ClipboardContent::File { bookmark_data, .. } = &items[0].content {
+            assert!(bookmark_data.is_empty(), "Empty bookmark data should roundtrip as empty");
+        } else {
+            panic!("Expected File content");
+        }
+    }
+
+    #[test]
+    fn test_update_file_status_idempotent() {
+        // Setting the same status twice shouldn't corrupt data
+        let store = ClipboardStore::new_in_memory().unwrap();
+
+        let id = store.save_file(
+            "/tmp/idempotent.txt".to_string(),
+            "idempotent.txt".to_string(),
+            100,
+            "public.plain-text".to_string(),
+            vec![1, 2, 3],
+            None,
+            None,
+            None,
+        ).unwrap();
+
+        // Set trashed twice
+        store.update_file_status(id, "trashed".to_string(), None).unwrap();
+        store.update_file_status(id, "trashed".to_string(), None).unwrap();
+
+        let items = store.fetch_by_ids(vec![id]).unwrap();
+        if let crate::interface::ClipboardContent::File { file_status, filename, bookmark_data, .. } = &items[0].content {
+            assert_eq!(*file_status, crate::interface::FileStatus::Trashed);
+            assert_eq!(filename, "idempotent.txt", "filename should survive status updates");
+            assert_eq!(bookmark_data, &vec![1, 2, 3], "bookmark should survive status updates");
+        } else {
+            panic!("Expected File content");
+        }
+    }
+
+    #[tokio::test]
+    async fn test_multiple_files_with_different_utis_searchable() {
+        // Different file types should all be searchable and distinguishable
+        let store = ClipboardStore::new_in_memory().unwrap();
+
+        store.save_file("/tmp/doc.pdf".to_string(), "doc.pdf".to_string(), 100,
+            "com.adobe.pdf".to_string(), vec![1], None, None, None).unwrap();
+        store.save_file("/tmp/photo.heic".to_string(), "photo.heic".to_string(), 200,
+            "public.heic".to_string(), vec![2], Some(vec![0xFF]), None, None).unwrap();
+        store.save_file("/tmp/app.dmg".to_string(), "app.dmg".to_string(), 300,
+            "com.apple.disk-image-udif".to_string(), vec![3], None, None, None).unwrap();
+
+        // All should appear in Files filter
+        let files = store.search_filtered("".to_string(), ContentTypeFilter::Files).await.unwrap();
+        assert_eq!(files.matches.len(), 3);
+
+        // Each searchable by name
+        let r1 = store.search("doc.pdf".to_string()).await.unwrap();
+        assert_eq!(r1.matches.len(), 1);
+        let r2 = store.search("photo".to_string()).await.unwrap();
+        assert_eq!(r2.matches.len(), 1);
+        let r3 = store.search("app.dmg".to_string()).await.unwrap();
+        assert_eq!(r3.matches.len(), 1);
+    }
+
+    #[tokio::test]
+    async fn test_file_first_item_has_full_content() {
+        // first_item in search results should have complete File content
+        let store = ClipboardStore::new_in_memory().unwrap();
+
+        let bookmark = vec![0xDE, 0xAD, 0xBE, 0xEF];
+        let thumb = vec![0xFF, 0xD8, 0xFF];
+        store.save_file(
+            "/Users/test/complete.pdf".to_string(),
+            "complete.pdf".to_string(),
+            9999,
+            "com.adobe.pdf".to_string(),
+            bookmark.clone(),
+            Some(thumb.clone()),
+            Some("Preview".to_string()),
+            Some("com.apple.Preview".to_string()),
+        ).unwrap();
+
+        let result = store.search("".to_string()).await.unwrap();
+        let first = result.first_item.expect("first_item should be populated");
+
+        if let crate::interface::ClipboardContent::File {
+            path, filename, file_size, uti, bookmark_data, file_status
+        } = &first.content {
+            assert_eq!(path, "/Users/test/complete.pdf");
+            assert_eq!(filename, "complete.pdf");
+            assert_eq!(*file_size, 9999);
+            assert_eq!(uti, "com.adobe.pdf");
+            assert_eq!(bookmark_data, &bookmark);
+            assert_eq!(*file_status, crate::interface::FileStatus::Available);
+        } else {
+            panic!("first_item should be File, got: {:?}", first.content);
+        }
+
+        // Metadata should also be complete
+        assert_eq!(first.item_metadata.source_app.as_deref(), Some("Preview"));
+        assert_eq!(first.item_metadata.source_app_bundle_id.as_deref(), Some("com.apple.Preview"));
+        if let crate::interface::ItemIcon::Thumbnail { bytes } = &first.item_metadata.icon {
+            assert_eq!(bytes, &thumb);
+        } else {
+            panic!("Expected Thumbnail icon");
+        }
+    }
+
+    #[tokio::test]
+    async fn test_file_search_filtered_short_query() {
+        // Short queries (<3 chars) should work with file filter
+        let store = ClipboardStore::new_in_memory().unwrap();
+
+        store.save_text("do something".to_string(), None, None).unwrap();
+        store.save_file(
+            "/tmp/docs.txt".to_string(),
+            "docs.txt".to_string(),
+            100,
+            "public.plain-text".to_string(),
+            vec![1],
+            None,
+            None,
+            None,
+        ).unwrap();
+
+        // Short query "do" with Files filter
+        let result = store.search_filtered("do".to_string(), ContentTypeFilter::Files).await.unwrap();
+        assert_eq!(result.matches.len(), 1, "Only file starting with 'do' should match");
+        assert!(result.matches[0].item_metadata.snippet.contains("docs.txt"));
+
+        // Short query "do" with Text filter
+        let result = store.search_filtered("do".to_string(), ContentTypeFilter::Text).await.unwrap();
+        assert_eq!(result.matches.len(), 1, "Only text starting with 'do' should match");
+        assert!(result.matches[0].item_metadata.snippet.contains("do something"));
+    }
+
+    #[test]
+    fn test_file_clear_removes_all() {
+        // clear() should remove file items too
+        let rt = runtime();
+        let store = ClipboardStore::new_in_memory().unwrap();
+
+        store.save_text("text".to_string(), None, None).unwrap();
+        store.save_file("/tmp/f.txt".to_string(), "f.txt".to_string(), 10,
+            "public.plain-text".to_string(), vec![1], None, None, None).unwrap();
+
+        let result = rt.block_on(store.search("".to_string())).unwrap();
+        assert_eq!(result.matches.len(), 2);
+
+        store.clear().unwrap();
+
+        let result = rt.block_on(store.search("".to_string())).unwrap();
+        assert_eq!(result.matches.len(), 0, "clear should remove all items including files");
+    }
+
+    #[test]
+    fn test_file_status_roundtrip_all_variants() {
+        // Verify FileStatus serialization/deserialization is symmetric for all variants
+        use crate::interface::FileStatus;
+
+        let cases = vec![
+            FileStatus::Available,
+            FileStatus::Moved { new_path: "/some/new/path.txt".to_string() },
+            FileStatus::Trashed,
+            FileStatus::Missing,
+            // Edge case: moved to root
+            FileStatus::Moved { new_path: "/".to_string() },
+            // Edge case: moved to path with spaces
+            FileStatus::Moved { new_path: "/Users/test/My Documents/file.txt".to_string() },
+            // Edge case: empty path in moved (degenerate but shouldn't crash)
+            FileStatus::Moved { new_path: "".to_string() },
+        ];
+
+        for original in cases {
+            let serialized = original.to_database_str();
+            let deserialized = FileStatus::from_database_str(&serialized);
+            assert_eq!(original, deserialized, "Roundtrip failed for {:?}, serialized as '{}'", original, serialized);
+        }
+    }
+
+    #[tokio::test]
+    async fn test_file_survives_index_rebuild() {
+        // Files should be findable after an index rebuild
+        let store = ClipboardStore::new_in_memory().unwrap();
+
+        store.save_file(
+            "/tmp/rebuild-test.pdf".to_string(),
+            "rebuild-test.pdf".to_string(),
+            100,
+            "com.adobe.pdf".to_string(),
+            vec![1],
+            None,
+            None,
+            None,
+        ).unwrap();
+
+        // Force index rebuild
+        store.rebuild_index_if_needed().unwrap();
+
+        // Should still be searchable
+        let result = store.search("rebuild-test".to_string()).await.unwrap();
+        assert!(!result.matches.is_empty(), "File should be searchable after index rebuild");
+    }
+
+    #[tokio::test]
+    async fn test_file_total_count_with_filter() {
+        // total_count should reflect the filtered count, not the total DB count
+        let store = ClipboardStore::new_in_memory().unwrap();
+
+        for i in 0..5 {
+            store.save_text(format!("text item {}", i), None, None).unwrap();
+        }
+        for i in 0..3 {
+            store.save_file(
+                format!("/tmp/file{}.txt", i),
+                format!("file{}.txt", i),
+                100, "public.plain-text".to_string(), vec![1], None, None, None,
+            ).unwrap();
+        }
+
+        let all = store.search("".to_string()).await.unwrap();
+        assert_eq!(all.total_count, 8);
+
+        let files = store.search_filtered("".to_string(), ContentTypeFilter::Files).await.unwrap();
+        assert_eq!(files.total_count, 3, "total_count should be 3 for files filter");
+        assert_eq!(files.matches.len(), 3);
+
+        let texts = store.search_filtered("".to_string(), ContentTypeFilter::Text).await.unwrap();
+        assert_eq!(texts.total_count, 5, "total_count should be 5 for text filter");
+        assert_eq!(texts.matches.len(), 5);
+    }
 }
