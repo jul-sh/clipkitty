@@ -78,7 +78,6 @@ let project = Project(
                 "CFBundleDisplayName": "ClipKitty",
                 "CFBundleIconName": "AppIcon",
                 "CFBundleIconFile": "AppIcon",
-                "LSUIElement": true,
                 "LSMinimumSystemVersion": "15.0",
                 "NSHumanReadableCopyright": "Copyright © 2025 ClipKitty. All rights reserved.",
             ]),

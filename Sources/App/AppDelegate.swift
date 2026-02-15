@@ -12,19 +12,23 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate {
     private var showHistoryMenuItem: NSMenuItem?
     private var statusMenu: NSMenu?
 
+    /// Set activation policy before the app finishes launching.
+    /// Without LSUIElement in Info.plist, we must set the policy at runtime.
+    /// This fires early enough for XCUITest to see the app as non-"Disabled".
+    func applicationWillFinishLaunching(_ notification: Notification) {
+        if CommandLine.arguments.contains("--use-simulated-db") {
+            NSApp.setActivationPolicy(.regular)
+        } else {
+            NSApp.setActivationPolicy(.accessory)
+        }
+    }
+
     func applicationDidFinishLaunching(_ notification: Notification) {
         FontManager.registerFonts()
 
         // Use simulated database with test data (for UI tests and screenshots)
         let useSimulatedDb = CommandLine.arguments.contains("--use-simulated-db")
         let shouldShow = useSimulatedDb
-
-        // Set activation policy EARLY so XCUITest sees a regular app, not an agent
-        if useSimulatedDb {
-            NSApp.setActivationPolicy(.regular)
-        }
-
-        // Sync launch at login state with user preference
         syncLaunchAtLogin()
 
         if useSimulatedDb {

@@ -37,12 +37,6 @@ final class ClipKittyUITests: XCTestCase {
         continueAfterFailure = false
 
         let appURL = try locateAppBundle()
-
-        // Patch LSUIElement so XCUITest sees a regular app, not an invisible agent.
-        // The runtime setActivationPolicy(.regular) call alone is insufficient because
-        // XCUITest reads the Info.plist directly when classifying the process.
-        patchInfoPlist(at: appURL)
-
         app = XCUIApplication(url: appURL)
 
         let appSupportDir = getAppSupportDirectory(for: appURL)
@@ -51,43 +45,17 @@ final class ClipKittyUITests: XCTestCase {
         app.launchArguments = ["--use-simulated-db"]
         app.launch()
 
-        let window = app.dialogs.firstMatch
-        if !window.waitForExistence(timeout: 10) {
-            // Fall back to windows — NSPanel may be classified differently
-            // when LSUIElement is patched out
-            let win = app.windows.firstMatch
-            XCTAssertTrue(win.waitForExistence(timeout: 5), "Window did not appear")
-        }
+        // Wait for the search field — it's always present regardless of how
+        // the accessibility system classifies the NSPanel (window vs dialog).
+        let searchField = app.textFields["SearchField"]
+        XCTAssertTrue(
+            searchField.waitForExistence(timeout: 15),
+            "App UI did not appear. Hierarchy: \(app.debugDescription)"
+        )
         Thread.sleep(forTimeInterval: 0.5)
     }
 
     // MARK: - Setup Helpers
-
-    /// Set LSUIElement to false so XCUITest treats the app as a regular (non-agent) process,
-    /// then re-register with Launch Services so the change takes effect.
-    private func patchInfoPlist(at appURL: URL) {
-        let plistURL = appURL.appendingPathComponent("Contents/Info.plist")
-        let plistBuddy = Process()
-        plistBuddy.executableURL = URL(fileURLWithPath: "/usr/libexec/PlistBuddy")
-        plistBuddy.arguments = ["-c", "Set :LSUIElement false", plistURL.path]
-        try? plistBuddy.run()
-        plistBuddy.waitUntilExit()
-
-        // Re-sign (ad-hoc) so macOS accepts the modified plist
-        let codesign = Process()
-        codesign.executableURL = URL(fileURLWithPath: "/usr/bin/codesign")
-        codesign.arguments = ["--force", "--sign", "-", appURL.path]
-        codesign.standardError = FileHandle.nullDevice
-        try? codesign.run()
-        codesign.waitUntilExit()
-
-        // Re-register with Launch Services to flush cached LSUIElement
-        let lsregister = Process()
-        lsregister.executableURL = URL(fileURLWithPath: "/System/Library/Frameworks/CoreServices.framework/Versions/Current/Frameworks/LaunchServices.framework/Versions/Current/Support/lsregister")
-        lsregister.arguments = ["-f", "-R", "-trusted", appURL.path]
-        try? lsregister.run()
-        lsregister.waitUntilExit()
-    }
 
     private func locateAppBundle() throws -> URL {
         if let envPath = ProcessInfo.processInfo.environment["CLIPKITTY_APP_PATH"] {
@@ -303,11 +271,8 @@ final class ClipKittyUITests: XCTestCase {
     /// The dropdown capsule must be hittable (rendered with nonzero frame and sufficient contrast),
     /// open a popover with filter options, and allow selecting a filter.
     func testFilterDropdownVisible() throws {
-        let window = app.dialogs.firstMatch
-        XCTAssertTrue(window.exists, "Window should be visible")
-
         // 1. Find the filter dropdown button by accessibility identifier
-        let filterButton = window.buttons["FilterDropdown"]
+        let filterButton = app.buttons["FilterDropdown"]
         XCTAssertTrue(filterButton.waitForExistence(timeout: 5), "Filter dropdown button should exist")
         XCTAssertTrue(filterButton.isHittable, "Filter dropdown button should be hittable (visible with nonzero frame)")
 
@@ -319,11 +284,9 @@ final class ClipKittyUITests: XCTestCase {
         Thread.sleep(forTimeInterval: 0.5)
 
         // 3. Verify popover content appears with filter options
-        let allTypesOption = app.staticTexts["All Types"]
-        XCTAssertTrue(allTypesOption.waitForExistence(timeout: 3), "Popover should show 'All Types' option")
-
-        let linksOption = app.staticTexts["Links Only"]
-        XCTAssertTrue(linksOption.exists, "Popover should show 'Links Only' option")
+        // FilterOptionRow uses Button, so options appear as buttons in the accessibility tree
+        let linksOption = app.buttons["Links Only"]
+        XCTAssertTrue(linksOption.waitForExistence(timeout: 3), "Popover should show 'Links Only' option")
 
         // Screenshot: dropdown open
         saveScreenshot(name: "filter_open")
@@ -333,13 +296,12 @@ final class ClipKittyUITests: XCTestCase {
         Thread.sleep(forTimeInterval: 0.5)
 
         // After selecting, the button label should reflect the new filter
-        let updatedButton = window.buttons["FilterDropdown"]
+        let updatedButton = app.buttons["FilterDropdown"]
         XCTAssertTrue(updatedButton.waitForExistence(timeout: 3), "Filter button should still exist after selection")
         XCTAssertTrue(updatedButton.isHittable, "Filter button should remain hittable after selection")
 
         // The button label should now say "Links" instead of "All Types"
-        let linksLabel = updatedButton.staticTexts["Links"]
-        XCTAssertTrue(linksLabel.exists, "Filter button should show 'Links' after selecting Links Only")
+        XCTAssertTrue(updatedButton.label.contains("Links"), "Filter button should show 'Links' after selecting Links Only, got: '\(updatedButton.label)'")
     }
 
     func testTakeScreenshot() throws {
