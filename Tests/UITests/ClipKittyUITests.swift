@@ -262,6 +262,49 @@ final class ClipKittyUITests: XCTestCase {
                        "Window Y position should not change when clicking preview text")
     }
 
+    /// Tests that the content-type filter dropdown is visible and functional.
+    /// The dropdown capsule must be hittable (rendered with nonzero frame and sufficient contrast),
+    /// open a popover with filter options, and allow selecting a filter.
+    func testFilterDropdownVisible() throws {
+        let window = app.dialogs.firstMatch
+        XCTAssertTrue(window.exists, "Window should be visible")
+
+        // 1. Find the filter dropdown button by accessibility identifier
+        let filterButton = window.buttons["FilterDropdown"]
+        XCTAssertTrue(filterButton.waitForExistence(timeout: 5), "Filter dropdown button should exist")
+        XCTAssertTrue(filterButton.isHittable, "Filter dropdown button should be hittable (visible with nonzero frame)")
+
+        // Screenshot: dropdown closed
+        saveScreenshot(name: "filter_closed")
+
+        // 2. Click to open the popover
+        filterButton.click()
+        Thread.sleep(forTimeInterval: 0.5)
+
+        // 3. Verify popover content appears with filter options
+        let allTypesOption = app.staticTexts["All Types"]
+        XCTAssertTrue(allTypesOption.waitForExistence(timeout: 3), "Popover should show 'All Types' option")
+
+        let linksOption = app.staticTexts["Links Only"]
+        XCTAssertTrue(linksOption.exists, "Popover should show 'Links Only' option")
+
+        // Screenshot: dropdown open
+        saveScreenshot(name: "filter_open")
+
+        // 4. Select "Links Only" and verify the button label changes
+        linksOption.click()
+        Thread.sleep(forTimeInterval: 0.5)
+
+        // After selecting, the button label should reflect the new filter
+        let updatedButton = window.buttons["FilterDropdown"]
+        XCTAssertTrue(updatedButton.waitForExistence(timeout: 3), "Filter button should still exist after selection")
+        XCTAssertTrue(updatedButton.isHittable, "Filter button should remain hittable after selection")
+
+        // The button label should now say "Links" instead of "All Types"
+        let linksLabel = updatedButton.staticTexts["Links"]
+        XCTAssertTrue(linksLabel.exists, "Filter button should show 'Links' after selecting Links Only")
+    }
+
     func testTakeScreenshot() throws {
         // Wait for animations and loading - use fixed delay to avoid hanging if items never appear
         Thread.sleep(forTimeInterval: 2.0)
