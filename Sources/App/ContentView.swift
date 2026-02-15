@@ -19,6 +19,8 @@ struct ContentView: View {
     @State private var searchSpinnerTask: Task<Void, Never>?
     @State private var showPreviewSpinner = false
     @State private var previewSpinnerTask: Task<Void, Never>?
+    @State private var showFilterPopover = false
+    @State private var filterSearchText = ""
     @FocusState private var isSearchFocused: Bool
 
     private var itemIds: [Int64] {
@@ -117,6 +119,7 @@ struct ContentView: View {
             } else {
                 searchText = ""
             }
+            showFilterPopover = false
             // Select first item whenever display resets (re-open)
             if let firstId = firstItemId {
                 loadItem(id: firstId)
@@ -153,6 +156,11 @@ struct ContentView: View {
         }
         .onChange(of: searchText) { _, newValue in
             store.setSearchQuery(newValue)
+        }
+        .onChange(of: store.contentTypeFilter) { _, _ in
+            // Reset selection when filter changes
+            selectedItemId = firstItemId
+            selectedItem = nil
         }
         .onChange(of: selectedItemId) { _, newId in
             // Fetch full item when selection changes
@@ -274,9 +282,86 @@ struct ContentView: View {
                     .scaleEffect(0.5)
                     .frame(width: 16, height: 16)
             }
+
+            filterDropdown
         }
         .padding(.horizontal, 17)
         .padding(.vertical, 13)
+    }
+
+    // MARK: - Filter Dropdown
+
+    private var filterLabel: String {
+        switch store.contentTypeFilter {
+        case .all: return "All Types"
+        case .text: return "Text"
+        case .images: return "Images"
+        case .links: return "Links"
+        case .colors: return "Colors"
+        }
+    }
+
+    private var filterDropdown: some View {
+        Button {
+            filterSearchText = ""
+            showFilterPopover.toggle()
+        } label: {
+            HStack(spacing: 4) {
+                Text(filterLabel)
+                    .font(.custom(FontManager.sansSerif, size: 13))
+                Image(systemName: "chevron.down")
+                    .font(.system(size: 9, weight: .semibold))
+            }
+            .foregroundStyle(store.contentTypeFilter == .all ? .secondary : .primary)
+            .padding(.horizontal, 8)
+            .padding(.vertical, 4)
+            .background(
+                Capsule()
+                    .fill(store.contentTypeFilter == .all ? Color.primary.opacity(0.06) : Color.accentColor.opacity(0.15))
+            )
+        }
+        .buttonStyle(.plain)
+        .popover(isPresented: $showFilterPopover, arrowEdge: .bottom) {
+            filterPopoverContent
+        }
+    }
+
+    private var filterPopoverContent: some View {
+        let allOptions: [(ContentTypeFilter, String)] = [
+            (.all, "All Types"),
+            (.text, "Text Only"),
+            (.images, "Images Only"),
+            (.links, "Links Only"),
+            (.colors, "Colors Only"),
+        ]
+        let filtered = filterSearchText.isEmpty
+            ? allOptions
+            : allOptions.filter { $0.1.localizedCaseInsensitiveContains(filterSearchText) }
+
+        return VStack(spacing: 0) {
+            TextField("Filter...", text: $filterSearchText)
+                .textFieldStyle(.plain)
+                .font(.custom(FontManager.sansSerif, size: 13))
+                .padding(8)
+
+            Divider()
+
+            VStack(spacing: 2) {
+                ForEach(filtered, id: \.0) { option, label in
+                    FilterOptionRow(
+                        label: label,
+                        isSelected: store.contentTypeFilter == option,
+                        action: {
+                            store.setContentTypeFilter(option)
+                            showFilterPopover = false
+                            focusSearchField()
+                        }
+                    )
+                }
+            }
+            .padding(4)
+        }
+        .frame(width: 160)
     }
 
     private func handleNumberKey(_ keyPress: KeyPress) -> KeyPress.Result {
@@ -525,11 +610,19 @@ struct ContentView: View {
             Image(systemName: "clipboard")
                 .font(.largeTitle)
                 .foregroundStyle(.tertiary)
-            Text(store.currentQuery.isEmpty ? "No clipboard history" : "No results")
+            Text(emptyStateMessage)
                 .font(.custom(FontManager.sansSerif, size: 15))
                 .foregroundStyle(.secondary)
         }
         .frame(maxWidth: .infinity, maxHeight: .infinity)
+    }
+
+    private var emptyStateMessage: String {
+        if store.currentQuery.isEmpty && store.contentTypeFilter == .all {
+            return "No clipboard history"
+        } else {
+            return "No results"
+        }
     }
 
     @ViewBuilder
@@ -1040,6 +1133,31 @@ struct HighlightedTextView: View, Equatable {
         }
 
         return attributed
+    }
+}
+
+// MARK: - Filter Option Row
+
+private struct FilterOptionRow: View {
+    let label: String
+    let isSelected: Bool
+    let action: () -> Void
+    @State private var isHovered = false
+
+    var body: some View {
+        Button(action: action) {
+            Text(label)
+                .font(.custom(FontManager.sansSerif, size: 13))
+                .frame(maxWidth: .infinity, alignment: .leading)
+                .padding(.horizontal, 8)
+                .padding(.vertical, 5)
+                .background(
+                    RoundedRectangle(cornerRadius: 5)
+                        .fill(isSelected ? Color.primary.opacity(0.1) : (isHovered ? Color.primary.opacity(0.05) : Color.clear))
+                )
+        }
+        .buttonStyle(.plain)
+        .onHover { isHovered = $0 }
     }
 }
 
