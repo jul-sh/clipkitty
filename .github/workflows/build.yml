@@ -294,7 +294,7 @@ jobs:
             git push origin main
           fi
         env:
-          ADMIN_TOKEN: ${{ secrets.ADMIN_TOKEN }}
+          ADMIN_TOKEN: ${{ steps.secrets.outputs.ADMIN_TOKEN }}
 
   # Upload to App Store Connect via ASC CLI
   appstore:
@@ -336,12 +336,6 @@ jobs:
         with:
           p12-file-base64: ${{ steps.secrets.outputs.APPSTORE_CERT_BASE64 }}
           p12-password: ${{ steps.secrets.outputs.P12_PASSWORD }}
-
-      - name: Install Apple WWDR Intermediate Certificate
-        run: |
-          curl -sLo "$RUNNER_TEMP/AppleWWDRCAG3.cer" https://www.apple.com/certificateauthority/AppleWWDRCAG3.cer
-          security import "$RUNNER_TEMP/AppleWWDRCAG3.cer" -k signing_temp.keychain
-          security find-identity -v signing_temp.keychain
 
       - name: Install Nix
         uses: DeterminateSystems/nix-installer-action@main
