@@ -20,6 +20,37 @@ pub enum IconType {
     Color,
 }
 
+/// Content type filter for narrowing search results
+#[derive(Debug, Clone, Copy, PartialEq, Eq, uniffi::Enum)]
+pub enum ContentTypeFilter {
+    All,
+    Text,   // matches "text", "email", "phone"
+    Images, // matches "image"
+    Links,  // matches "link"
+    Colors, // matches "color"
+}
+
+impl ContentTypeFilter {
+    /// Returns the database content type strings this filter matches, or None for All.
+    pub fn database_types(&self) -> Option<&[&str]> {
+        match self {
+            ContentTypeFilter::All => None,
+            ContentTypeFilter::Text => Some(&["text", "email", "phone"]),
+            ContentTypeFilter::Images => Some(&["image"]),
+            ContentTypeFilter::Links => Some(&["link"]),
+            ContentTypeFilter::Colors => Some(&["color"]),
+        }
+    }
+
+    /// Check if a database content type string matches this filter.
+    pub fn matches_db_type(&self, db_type: &str) -> bool {
+        match self.database_types() {
+            None => true,
+            Some(types) => types.contains(&db_type),
+        }
+    }
+}
+
 /// Icon representation for list items
 #[derive(Debug, Clone, PartialEq, uniffi::Enum)]
 pub enum ItemIcon {

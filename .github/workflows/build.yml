@@ -269,7 +269,7 @@ jobs:
             sed -i '' "s/\"MARKETING_VERSION\": \"$CURRENT\"/\"MARKETING_VERSION\": \"$VERSION\"/" Project.swift
             git add Project.swift
             git commit -m "bump version to $VERSION"
-            git push origin main
+            git push origin main || echo "Note: Could not push to main (protected branch). Sync manually or via merge request."
           fi
 
   # Upload to App Store Connect via Fastlane
