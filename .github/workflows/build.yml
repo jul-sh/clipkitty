@@ -302,6 +302,12 @@ jobs:
           p12-file-base64: ${{ secrets.APPSTORE_CERT_BASE64 }}
           p12-password: ${{ secrets.P12_PASSWORD }}
 
+      - name: Install Apple WWDR Intermediate Certificate
+        run: |
+          curl -sLo "$RUNNER_TEMP/AppleWWDRCAG3.cer" https://www.apple.com/certificateauthority/AppleWWDRCAG3.cer
+          security import "$RUNNER_TEMP/AppleWWDRCAG3.cer" -k signing_temp.keychain
+          security find-identity -v signing_temp.keychain
+
       - name: Install Nix
         uses: DeterminateSystems/nix-installer-action@main
 
