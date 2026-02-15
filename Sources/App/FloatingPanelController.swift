@@ -20,14 +20,20 @@ final class FloatingPanelController: NSObject, NSWindowDelegate {
     }
 
     private func setupPanel() {
+        // In test mode, omit .nonactivatingPanel so XCUITest can discover the window.
+        // NSPanel with .nonactivatingPanel is invisible to the accessibility hierarchy.
+        let styleMask: NSWindow.StyleMask = persistPanel
+            ? [.titled, .fullSizeContentView]
+            : [.nonactivatingPanel, .titled, .fullSizeContentView]
+
         panel = NSPanel(
             contentRect: NSRect(x: 0, y: 0, width: 778, height: 518),
-            styleMask: [.nonactivatingPanel, .titled, .fullSizeContentView],
+            styleMask: styleMask,
             backing: .buffered,
             defer: false
         )
 
-        panel.isFloatingPanel = true
+        panel.isFloatingPanel = !persistPanel
         panel.level = .floating
         panel.collectionBehavior = [.canJoinAllSpaces, .fullScreenAuxiliary]
         panel.isMovableByWindowBackground = false
