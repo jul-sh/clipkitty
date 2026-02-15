@@ -264,13 +264,17 @@ jobs:
           if [ "$CURRENT" != "$VERSION" ]; then
             git config user.name "github-actions[bot]"
             git config user.email "github-actions[bot]@users.noreply.github.com"
+            git config --unset-all http.https://github.com/.extraheader || true
+            git remote set-url origin "https://x-access-token:${ADMIN_TOKEN}@github.com/${{ github.repository }}.git"
             git fetch origin main
             git checkout main
             sed -i '' "s/\"MARKETING_VERSION\": \"$CURRENT\"/\"MARKETING_VERSION\": \"$VERSION\"/" Project.swift
             git add Project.swift
             git commit -m "bump version to $VERSION"
-            git push origin main || echo "Note: Could not push to main (protected branch). Sync manually or via merge request."
+            git push origin main
           fi
+        env:
+          ADMIN_TOKEN: ${{ secrets.ADMIN_TOKEN }}
 
   # Upload to App Store Connect via Fastlane
   appstore:
@@ -292,6 +296,12 @@ jobs:
         with:
           p12-file-base64: ${{ secrets.APPSTORE_CERT_BASE64 }}
           p12-password: ${{ secrets.P12_PASSWORD }}
+
+      - name: Install Apple WWDR Intermediate Certificate
+        run: |
+          curl -sLo "$RUNNER_TEMP/AppleWWDRCAG3.cer" https://www.apple.com/certificateauthority/AppleWWDRCAG3.cer
+          security import "$RUNNER_TEMP/AppleWWDRCAG3.cer" -k signing_temp.keychain
+          security find-identity -v signing_temp.keychain
 
       - name: Install Nix
         uses: DeterminateSystems/nix-installer-action@main
