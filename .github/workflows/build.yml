@@ -19,6 +19,26 @@ jobs:
       - name: Checkout
         uses: actions/checkout@v4
 
+      - name: Decrypt secrets
+        id: secrets
+        run: |
+          brew install age
+          echo "$AGE_SECRET_KEY" > /tmp/age-key.txt
+          chmod 600 /tmp/age-key.txt
+          for f in secrets/*.age; do
+            name=$(basename "$f" .age)
+            value=$(age -d -i /tmp/age-key.txt "$f")
+            echo "::add-mask::$value"
+            {
+              echo "${name}<<AGEDELIM"
+              echo "$value"
+              echo "AGEDELIM"
+            } >> "$GITHUB_OUTPUT"
+          done
+          rm -f /tmp/age-key.txt
+        env:
+          AGE_SECRET_KEY: ${{ secrets.AGE_SECRET_KEY }}
+
       - name: Resolve Release Version
         id: resolve-version
         if: github.ref == 'refs/heads/release' || (github.event_name == 'pull_request' && github.base_ref == 'release')
@@ -46,8 +66,8 @@ jobs:
       - name: Install Apple Certificate
         uses: apple-actions/import-codesign-certs@v3
         with:
-          p12-file-base64: ${{ secrets.MACOS_P12_BASE64 }}
-          p12-password: ${{ secrets.MACOS_P12_PASSWORD }}
+          p12-file-base64: ${{ steps.secrets.outputs.MACOS_P12_BASE64 }}
+          p12-password: ${{ steps.secrets.outputs.MACOS_P12_PASSWORD }}
 
       - name: Install Nix
         uses: DeterminateSystems/nix-installer-action@main
@@ -79,12 +99,6 @@ jobs:
             exit 1
           fi
 
-      - name: Generate Marketing Assets
-        run: |
-          # Generate App Store screenshots and preview video
-          make -C distribution marketing-screenshots
-          make -C distribution preview-video
-
       - name: Generate Icon PNG
         run: make -C distribution icon-png
 
@@ -113,21 +127,29 @@ jobs:
       # 2. Notarize with Apple (Split into steps to prevent Bus Error 10)
       - name: Notarize Standard DMG
         run: |
-          echo "${{ secrets.NOTARY_KEY_BASE64 }}" | base64 --decode > auth_key.p8
+          echo "$NOTARY_KEY_BASE64" | base64 --decode > auth_key.p8
           xcrun notarytool submit ClipKitty.dmg \
             --key auth_key.p8 \
-            --key-id ${{ secrets.NOTARY_KEY_ID }} \
-            --issuer ${{ secrets.NOTARY_ISSUER_ID }} \
+            --key-id "$NOTARY_KEY_ID" \
+            --issuer "$NOTARY_ISSUER_ID" \
             --wait
+        env:
+          NOTARY_KEY_BASE64: ${{ steps.secrets.outputs.NOTARY_KEY_BASE64 }}
+          NOTARY_KEY_ID: ${{ steps.secrets.outputs.NOTARY_KEY_ID }}
+          NOTARY_ISSUER_ID: ${{ steps.secrets.outputs.NOTARY_ISSUER_ID }}
 
       - name: Notarize Sandboxed DMG
         run: |
-          echo "${{ secrets.NOTARY_KEY_BASE64 }}" | base64 --decode > auth_key.p8
+          echo "$NOTARY_KEY_BASE64" | base64 --decode > auth_key.p8
           xcrun notarytool submit ClipKitty-Sandboxed.dmg \
             --key auth_key.p8 \
-            --key-id ${{ secrets.NOTARY_KEY_ID }} \
-            --issuer ${{ secrets.NOTARY_ISSUER_ID }} \
+            --key-id "$NOTARY_KEY_ID" \
+            --issuer "$NOTARY_ISSUER_ID" \
             --wait
+        env:
+          NOTARY_KEY_BASE64: ${{ steps.secrets.outputs.NOTARY_KEY_BASE64 }}
+          NOTARY_KEY_ID: ${{ steps.secrets.outputs.NOTARY_KEY_ID }}
+          NOTARY_ISSUER_ID: ${{ steps.secrets.outputs.NOTARY_ISSUER_ID }}
 
       - name: Clean up Notary Key
         if: always()
@@ -154,8 +176,6 @@ jobs:
           path: |
             screenshot.png
             icon.png
-            marketing/screenshot_*.png
-            marketing/app_preview.mov
 
       - name: Deploy to gh-pages
         if: github.event_name == 'push' && github.ref == 'refs/heads/main'
@@ -211,7 +231,7 @@ jobs:
           SHA256=$(shasum -a 256 ClipKitty.dmg | cut -d' ' -f1)
 
           # Clone the homebrew-clipkitty tap repository
-          git clone https://x-access-token:${{ secrets.HOMEBREW_TAP_TOKEN }}@github.com/jul-sh/homebrew-clipkitty.git /tmp/homebrew-tap
+          git clone https://x-access-token:${HOMEBREW_TAP_TOKEN}@github.com/jul-sh/homebrew-clipkitty.git /tmp/homebrew-tap
           cd /tmp/homebrew-tap
 
           mkdir -p Casks
@@ -238,6 +258,7 @@ jobs:
           cd -
         env:
           GH_TOKEN: ${{ github.token }}
+          HOMEBREW_TAP_TOKEN: ${{ steps.secrets.outputs.HOMEBREW_TAP_TOKEN }}
 
       # Create automatic pre-release on push to main (for development builds)
       - name: Create Development Release
@@ -252,8 +273,7 @@ jobs:
             ClipKitty-Sandboxed.dmg \
             screenshot.png \
             icon.png \
-            marketing/screenshot_*.png \
-            marketing/app_preview.mov
+            marketing/screenshot_*.png
         env:
           GH_TOKEN: ${{ github.token }}
 
@@ -276,7 +296,7 @@ jobs:
         env:
           ADMIN_TOKEN: ${{ secrets.ADMIN_TOKEN }}
 
-  # Upload to App Store Connect via Fastlane
+  # Upload to App Store Connect via ASC CLI
   appstore:
     runs-on: macos-26
     needs: build
@@ -286,6 +306,26 @@ jobs:
       - name: Checkout
         uses: actions/checkout@v4
 
+      - name: Decrypt secrets
+        id: secrets
+        run: |
+          brew install age
+          echo "$AGE_SECRET_KEY" > /tmp/age-key.txt
+          chmod 600 /tmp/age-key.txt
+          for f in secrets/*.age; do
+            name=$(basename "$f" .age)
+            value=$(age -d -i /tmp/age-key.txt "$f")
+            echo "::add-mask::$value"
+            {
+              echo "${name}<<AGEDELIM"
+              echo "$value"
+              echo "AGEDELIM"
+            } >> "$GITHUB_OUTPUT"
+          done
+          rm -f /tmp/age-key.txt
+        env:
+          AGE_SECRET_KEY: ${{ secrets.AGE_SECRET_KEY }}
+
       - name: Setup Swift
         uses: swift-actions/setup-swift@v2
         with:
@@ -294,8 +334,8 @@ jobs:
       - name: Install App Store Certificates
         uses: apple-actions/import-codesign-certs@v3
         with:
-          p12-file-base64: ${{ secrets.APPSTORE_CERT_BASE64 }}
-          p12-password: ${{ secrets.P12_PASSWORD }}
+          p12-file-base64: ${{ steps.secrets.outputs.APPSTORE_CERT_BASE64 }}
+          p12-password: ${{ steps.secrets.outputs.P12_PASSWORD }}
 
       - name: Install Apple WWDR Intermediate Certificate
         run: |
@@ -314,8 +354,10 @@ jobs:
 
       - name: Decode Provisioning Profile
         run: |
-          echo "${{ secrets.PROVISION_PROFILE_BASE64 }}" | base64 --decode \
+          echo "$PROVISION_PROFILE_BASE64" | base64 --decode \
             > "$GITHUB_WORKSPACE/ClipKitty.provisionprofile"
+        env:
+          PROVISION_PROFILE_BASE64: ${{ steps.secrets.outputs.PROVISION_PROFILE_BASE64 }}
 
       - name: Build App Store Package
         run: |
@@ -326,16 +368,57 @@ jobs:
             VERSION="$VERSION" \
             BUILD_NUMBER="$BUILD_NUMBER"
 
-      - name: Install Fastlane
-        run: bundle install
+      - name: Install ASC CLI
+        run: brew tap rudrankriyam/tap && brew install rudrankriyam/tap/asc
 
-      - name: Upload Build, Metadata & Screenshots
-        run: bundle exec fastlane release
+      - name: Authenticate with App Store Connect
+        run: |
+          echo "$ASC_PRIVATE_KEY_B64" | base64 --decode > /tmp/asc_key.p8
+          chmod 600 /tmp/asc_key.p8
         env:
-          APPSTORE_KEY_ID: ${{ secrets.APPSTORE_KEY_ID }}
-          APPSTORE_ISSUER_ID: ${{ secrets.NOTARY_ISSUER_ID }}
-          APPSTORE_KEY_CONTENT: ${{ secrets.NOTARY_KEY_BASE64 }}
+          ASC_PRIVATE_KEY_B64: ${{ steps.secrets.outputs.NOTARY_KEY_BASE64 }}
+
+      - name: Upload binary
+        run: |
+          asc builds upload \
+            --app 6759137247 \
+            --pkg ClipKitty.pkg \
+            --version "${{ needs.build.outputs.version }}" \
+            --build-number "$(git rev-list --count HEAD)" \
+            --wait
+        env:
+          ASC_KEY_ID: ${{ steps.secrets.outputs.APPSTORE_KEY_ID }}
+          ASC_ISSUER_ID: ${{ steps.secrets.outputs.NOTARY_ISSUER_ID }}
+          ASC_PRIVATE_KEY_PATH: /tmp/asc_key.p8
+
+      - name: Upload metadata and screenshots
+        run: |
+          # Find the editable App Store version
+          VERSION_ID=$(asc versions list \
+            --app 6759137247 --platform MAC_OS \
+            --state PREPARE_FOR_SUBMISSION \
+            --output json --pretty=false \
+            | python3 -c "import sys,json; print(json.load(sys.stdin)[0]['id'])")
+
+          # Assemble metadata + screenshots for import
+          IMPORT_DIR=$(mktemp -d)
+          ln -s "$GITHUB_WORKSPACE/distribution/metadata" "$IMPORT_DIR/metadata"
+          mkdir -p "$IMPORT_DIR/screenshots/en-US"
+          cp marketing/screenshot_*.png "$IMPORT_DIR/screenshots/en-US/"
+
+          asc migrate import \
+            --app 6759137247 \
+            --version-id "$VERSION_ID" \
+            --fastlane-dir "$IMPORT_DIR"
+
+          rm -rf "$IMPORT_DIR"
+        env:
+          ASC_KEY_ID: ${{ steps.secrets.outputs.APPSTORE_KEY_ID }}
+          ASC_ISSUER_ID: ${{ steps.secrets.outputs.NOTARY_ISSUER_ID }}
+          ASC_PRIVATE_KEY_PATH: /tmp/asc_key.p8
 
       - name: Cleanup
         if: always()
-        run: rm -f "$GITHUB_WORKSPACE/ClipKitty.provisionprofile"
+        run: |
+          rm -f "$GITHUB_WORKSPACE/ClipKitty.provisionprofile"
+          rm -f /tmp/asc_key.p8
