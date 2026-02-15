@@ -79,12 +79,6 @@ jobs:
             exit 1
           fi
 
-      - name: Generate Marketing Assets
-        run: |
-          # Generate App Store screenshots and preview video
-          make -C distribution marketing-screenshots
-          make -C distribution preview-video
-
       - name: Generate Icon PNG
         run: make -C distribution icon-png
 
@@ -154,8 +148,6 @@ jobs:
           path: |
             screenshot.png
             icon.png
-            marketing/screenshot_*.png
-            marketing/app_preview.mov
 
       - name: Deploy to gh-pages
         if: github.event_name == 'push' && github.ref == 'refs/heads/main'
@@ -252,8 +244,7 @@ jobs:
             ClipKitty-Sandboxed.dmg \
             screenshot.png \
             icon.png \
-            marketing/screenshot_*.png \
-            marketing/app_preview.mov
+            marketing/screenshot_*.png
         env:
           GH_TOKEN: ${{ github.token }}
 
@@ -315,12 +306,6 @@ jobs:
             PROVISIONING_PROFILE="$GITHUB_WORKSPACE/ClipKitty.provisionprofile" \
             VERSION="$VERSION" \
             BUILD_NUMBER="$BUILD_NUMBER"
-
-      - name: Download Marketing Assets
-        uses: actions/download-artifact@v4
-        with:
-          name: assets
-          path: marketing/
 
       - name: Install ASC CLI
         run: brew tap rudrankriyam/tap && brew install rudrankriyam/tap/asc
