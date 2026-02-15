@@ -18,7 +18,8 @@ SCREENSHOTS_DIR="$PROJECT_ROOT/marketing"
 PKG_PATH="$PROJECT_ROOT/ClipKitty.pkg"
 
 # --- Authentication ---
-# Decode the base64-encoded private key to a temp file for asc CLI
+# Decode the base64-encoded private key to a temp file.
+# asc CLI reads ASC_KEY_ID, ASC_ISSUER_ID env vars and the key file path.
 setup_auth() {
     if [[ -z "${ASC_PRIVATE_KEY_B64:-}" ]]; then
         echo "Error: ASC_PRIVATE_KEY_B64 env var is required" >&2
@@ -34,11 +35,37 @@ setup_auth() {
     fi
 
     ASC_KEY_FILE="$(mktemp -t asc_key.XXXXXX).p8"
+    CLEANUP_DIR=""
     echo "$ASC_PRIVATE_KEY_B64" | base64 --decode > "$ASC_KEY_FILE"
-    export ASC_KEY_FILE
-    trap 'rm -f "$ASC_KEY_FILE"' EXIT
+    chmod 600 "$ASC_KEY_FILE"
+    export ASC_PRIVATE_KEY_PATH="$ASC_KEY_FILE"
+    trap 'rm -f "$ASC_KEY_FILE"; [[ -n "${CLEANUP_DIR:-}" ]] && rm -rf "$CLEANUP_DIR"' EXIT
 
     echo "Authenticated with key ID: $ASC_KEY_ID"
+}
+
+# --- Helpers ---
+
+# Look up the editable App Store version ID (PREPARE_FOR_SUBMISSION state).
+# Falls back to the most recent version if none is editable.
+get_version_id() {
+    local version_id
+    version_id=$(asc versions list --app "$APP_APPLE_ID" --platform MAC_OS \
+        --state PREPARE_FOR_SUBMISSION --output json --pretty=false \
+        | python3 -c "import sys,json; d=json.load(sys.stdin); print(d[0]['id'])" 2>/dev/null) || true
+
+    if [[ -z "$version_id" ]]; then
+        version_id=$(asc versions list --app "$APP_APPLE_ID" --platform MAC_OS \
+            --output json --pretty=false \
+            | python3 -c "import sys,json; d=json.load(sys.stdin); print(d[0]['id'])" 2>/dev/null) || true
+    fi
+
+    if [[ -z "$version_id" ]]; then
+        echo "Error: Could not determine App Store version ID" >&2
+        exit 1
+    fi
+
+    echo "$version_id"
 }
 
 # --- Subcommands ---
@@ -50,74 +77,58 @@ upload_binary() {
         exit 1
     fi
 
-    xcrun altool --upload-package "$PKG_PATH" \
-        --type macos \
-        --apple-id "$APP_APPLE_ID" \
-        --bundle-id "$BUNDLE_ID" \
-        --bundle-version "${BUILD_NUMBER:-$(git -C "$PROJECT_ROOT" rev-list --count HEAD)}" \
-        --bundle-short-version-string "${VERSION:-1.0.0}" \
-        --apiKey "$ASC_KEY_ID" \
-        --apiIssuer "$ASC_ISSUER_ID" \
-        --apiPrivateKey "$ASC_KEY_FILE"
+    asc builds upload \
+        --app "$APP_APPLE_ID" \
+        --pkg "$PKG_PATH" \
+        --version "${VERSION:-1.0.0}" \
+        --build-number "${BUILD_NUMBER:-$(git -C "$PROJECT_ROOT" rev-list --count HEAD)}" \
+        --wait
 
     echo "Binary uploaded successfully."
 }
 
-upload_metadata() {
-    echo "=== Uploading metadata to App Store Connect ==="
+upload_metadata_and_screenshots() {
+    echo "=== Uploading metadata & screenshots to App Store Connect ==="
 
-    asc apps metadata set \
-        --app-id "$APP_APPLE_ID" \
-        --locale en-US \
-        --name "$(cat "$METADATA_DIR/en-US/name.txt")" \
-        --subtitle "$(cat "$METADATA_DIR/en-US/subtitle.txt")" \
-        --description "$(cat "$METADATA_DIR/en-US/description.txt")" \
-        --keywords "$(cat "$METADATA_DIR/en-US/keywords.txt")" \
-        --promotional-text "$(cat "$METADATA_DIR/en-US/promotional_text.txt")" \
-        --marketing-url "$(cat "$METADATA_DIR/en-US/marketing_url.txt")" \
-        --support-url "$(cat "$METADATA_DIR/en-US/support_url.txt")" \
-        --privacy-url "$(cat "$METADATA_DIR/en-US/privacy_url.txt")" \
-        --api-key "$ASC_KEY_ID" \
-        --issuer-id "$ASC_ISSUER_ID" \
-        --private-key-path "$ASC_KEY_FILE"
+    local version_id
+    version_id=$(get_version_id)
+    echo "Target version ID: $version_id"
+
+    # Assemble a fastlane-style directory for asc migrate import.
+    # It expects: <dir>/metadata/... and optionally <dir>/screenshots/en-US/...
+    local fastlane_dir
+    fastlane_dir=$(mktemp -d)
+    CLEANUP_DIR="$fastlane_dir"
+
+    ln -s "$METADATA_DIR" "$fastlane_dir/metadata"
+
+    if compgen -G "$SCREENSHOTS_DIR/screenshot_*.png" > /dev/null; then
+        mkdir -p "$fastlane_dir/screenshots/en-US"
+        cp "$SCREENSHOTS_DIR"/screenshot_*.png "$fastlane_dir/screenshots/en-US/"
+        echo "Including screenshots from $SCREENSHOTS_DIR"
+    else
+        echo "Warning: No screenshots found in $SCREENSHOTS_DIR (skipping)"
+    fi
+
+    asc migrate import \
+        --app "$APP_APPLE_ID" \
+        --version-id "$version_id" \
+        --fastlane-dir "$fastlane_dir"
+
+    rm -rf "$fastlane_dir"
+    CLEANUP_DIR=""
 
     echo "Metadata uploaded successfully."
-}
-
-upload_screenshots() {
-    echo "=== Uploading screenshots to App Store Connect ==="
-
-    local screenshots_found=0
-    for screenshot in "$SCREENSHOTS_DIR"/screenshot_*.png; do
-        if [[ -f "$screenshot" ]]; then
-            echo "Uploading: $(basename "$screenshot")"
-            asc apps screenshots upload \
-                --app-id "$APP_APPLE_ID" \
-                --locale en-US \
-                --display-type APP_DESKTOP \
-                --file "$screenshot" \
-                --api-key "$ASC_KEY_ID" \
-                --issuer-id "$ASC_ISSUER_ID" \
-                --private-key-path "$ASC_KEY_FILE"
-            screenshots_found=1
-        fi
-    done
-
-    if [[ $screenshots_found -eq 0 ]]; then
-        echo "Warning: No screenshots found in $SCREENSHOTS_DIR"
-    else
-        echo "Screenshots uploaded successfully."
-    fi
 }
 
 submit_for_review() {
     echo "=== Submitting build for App Review ==="
 
     asc submit create \
-        --app-id "$APP_APPLE_ID" \
-        --api-key "$ASC_KEY_ID" \
-        --issuer-id "$ASC_ISSUER_ID" \
-        --private-key-path "$ASC_KEY_FILE"
+        --app "$APP_APPLE_ID" \
+        --platform MAC_OS \
+        --version "${VERSION:-1.0.0}" \
+        --confirm
 
     echo "Build submitted for review."
 }
@@ -136,15 +147,13 @@ setup_auth
 case "$COMMAND" in
     release)
         upload_binary
-        upload_metadata
-        upload_screenshots
+        upload_metadata_and_screenshots
         ;;
     upload)
         upload_binary
         ;;
     metadata)
-        upload_metadata
-        upload_screenshots
+        upload_metadata_and_screenshots
         ;;
     submit)
         submit_for_review
