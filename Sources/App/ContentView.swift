@@ -312,15 +312,17 @@ struct ContentView: View {
                 Image(systemName: "chevron.down")
                     .font(.system(size: 9, weight: .semibold))
             }
-            .foregroundStyle(store.contentTypeFilter == .all ? .secondary : .primary)
+            .foregroundStyle(.primary.opacity(store.contentTypeFilter == .all ? 0.6 : 1.0))
             .padding(.horizontal, 8)
             .padding(.vertical, 4)
             .background(
                 Capsule()
-                    .fill(store.contentTypeFilter == .all ? Color.primary.opacity(0.06) : Color.accentColor.opacity(0.15))
+                    .fill(store.contentTypeFilter == .all ? Color.primary.opacity(0.12) : Color.accentColor.opacity(0.15))
             )
+            .overlay(Capsule().strokeBorder(Color.primary.opacity(0.1)))
         }
         .buttonStyle(.plain)
+        .accessibilityIdentifier("FilterDropdown")
         .popover(isPresented: $showFilterPopover, arrowEdge: .bottom) {
             filterPopoverContent
         }
