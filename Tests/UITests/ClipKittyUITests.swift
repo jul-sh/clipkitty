@@ -45,8 +45,13 @@ final class ClipKittyUITests: XCTestCase {
         app.launchArguments = ["--use-simulated-db"]
         app.launch()
 
-        let window = app.dialogs.firstMatch
-        XCTAssertTrue(window.waitForExistence(timeout: 10), "Window did not appear")
+        // Wait for the search field — it's always present regardless of how
+        // the accessibility system classifies the NSPanel (window vs dialog).
+        let searchField = app.textFields["SearchField"]
+        XCTAssertTrue(
+            searchField.waitForExistence(timeout: 15),
+            "App UI did not appear. Hierarchy: \(app.debugDescription)"
+        )
         Thread.sleep(forTimeInterval: 0.5)
     }
 
@@ -260,6 +265,43 @@ final class ClipKittyUITests: XCTestCase {
                        "Window X position should not change when clicking preview text")
         XCTAssertEqual(initialFrame.origin.y, finalFrame.origin.y, accuracy: 5,
                        "Window Y position should not change when clicking preview text")
+    }
+
+    /// Tests that the content-type filter dropdown is visible and functional.
+    /// The dropdown capsule must be hittable (rendered with nonzero frame and sufficient contrast),
+    /// open a popover with filter options, and allow selecting a filter.
+    func testFilterDropdownVisible() throws {
+        // 1. Find the filter dropdown button by accessibility identifier
+        let filterButton = app.buttons["FilterDropdown"]
+        XCTAssertTrue(filterButton.waitForExistence(timeout: 5), "Filter dropdown button should exist")
+        XCTAssertTrue(filterButton.isHittable, "Filter dropdown button should be hittable (visible with nonzero frame)")
+
+        // Screenshot: dropdown closed
+        saveScreenshot(name: "filter_closed")
+
+        // 2. Click to open the popover
+        filterButton.click()
+        Thread.sleep(forTimeInterval: 0.5)
+
+        // 3. Verify popover content appears with filter options
+        // FilterOptionRow uses Button, so options appear as buttons in the accessibility tree
+        let linksOption = app.buttons["Links Only"]
+        XCTAssertTrue(linksOption.waitForExistence(timeout: 3), "Popover should show 'Links Only' option")
+
+        // Screenshot: dropdown open
+        saveScreenshot(name: "filter_open")
+
+        // 4. Select "Links Only" and verify the button label changes
+        linksOption.click()
+        Thread.sleep(forTimeInterval: 0.5)
+
+        // After selecting, the button label should reflect the new filter
+        let updatedButton = app.buttons["FilterDropdown"]
+        XCTAssertTrue(updatedButton.waitForExistence(timeout: 3), "Filter button should still exist after selection")
+        XCTAssertTrue(updatedButton.isHittable, "Filter button should remain hittable after selection")
+
+        // The button label should now say "Links" instead of "All Types"
+        XCTAssertTrue(updatedButton.label.contains("Links"), "Filter button should show 'Links' after selecting Links Only, got: '\(updatedButton.label)'")
     }
 
     func testTakeScreenshot() throws {

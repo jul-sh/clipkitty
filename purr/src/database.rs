@@ -124,6 +124,11 @@ impl Database {
         Self::add_column_if_missing(&conn, "linkDescription", "TEXT")?;
         Self::add_column_if_missing(&conn, "thumbnail", "BLOB")?;
         Self::add_column_if_missing(&conn, "colorRgba", "INTEGER")?;
+        Self::add_column_if_missing(&conn, "filePath", "TEXT")?;
+        Self::add_column_if_missing(&conn, "fileSize", "INTEGER")?;
+        Self::add_column_if_missing(&conn, "fileUti", "TEXT")?;
+        Self::add_column_if_missing(&conn, "bookmarkData", "BLOB")?;
+        Self::add_column_if_missing(&conn, "fileStatus", "TEXT")?;
 
         // Create indexes
         conn.execute(
@@ -181,8 +186,8 @@ impl Database {
 
         conn.execute(
             r#"
-            INSERT INTO items (content, contentHash, timestamp, sourceApp, contentType, imageData, linkTitle, linkDescription, linkImageData, sourceAppBundleID, thumbnail, colorRgba)
-            VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11, ?12)
+            INSERT INTO items (content, contentHash, timestamp, sourceApp, contentType, imageData, linkTitle, linkDescription, linkImageData, sourceAppBundleID, thumbnail, colorRgba, filePath, fileSize, fileUti, bookmarkData, fileStatus)
+            VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11, ?12, ?13, ?14, ?15, ?16, ?17)
             "#,
             params![
                 content,
@@ -197,6 +202,11 @@ impl Database {
                 item.source_app_bundle_id,
                 item.thumbnail,
                 color_rgba,
+                item.file_path,
+                item.file_size.map(|s| s as i64),
+                item.file_uti,
+                item.bookmark_data,
+                item.file_status,
             ],
         )?;
 
@@ -253,6 +263,23 @@ impl Database {
             "UPDATE items SET content = ?1 WHERE id = ?2 AND contentType = 'image'",
             params![description, id],
         )?;
+        Ok(())
+    }
+
+    /// Update file status (and optionally file path when file has moved)
+    pub fn update_file_status(&self, id: i64, status: &str, new_path: Option<&str>) -> DatabaseResult<()> {
+        let conn = self.get_conn()?;
+        if let Some(path) = new_path {
+            conn.execute(
+                "UPDATE items SET fileStatus = ?1, filePath = ?2 WHERE id = ?3 AND contentType = 'file'",
+                params![status, path, id],
+            )?;
+        } else {
+            conn.execute(
+                "UPDATE items SET fileStatus = ?1 WHERE id = ?2 AND contentType = 'file'",
+                params![status, id],
+            )?;
+        }
         Ok(())
     }
 
@@ -587,6 +614,11 @@ impl Database {
         let source_app_bundle_id: Option<String> = row.get("sourceAppBundleID")?;
         let thumbnail: Option<Vec<u8>> = row.get("thumbnail").ok().flatten();
         let color_rgba: Option<u32> = row.get("colorRgba").ok().flatten();
+        let file_path: Option<String> = row.get("filePath").ok().flatten();
+        let file_size: Option<u64> = row.get::<_, Option<i64>>("fileSize").ok().flatten().map(|v| v as u64);
+        let file_uti: Option<String> = row.get("fileUti").ok().flatten();
+        let bookmark_data: Option<Vec<u8>> = row.get("bookmarkData").ok().flatten();
+        let file_status: Option<String> = row.get("fileStatus").ok().flatten();
 
         let timestamp = parse_db_timestamp(&timestamp_str);
 
@@ -599,6 +631,11 @@ impl Database {
             link_description.as_deref(),
             link_image_data,
             color_rgba,
+            file_path.as_deref(),
+            file_size,
+            file_uti.as_deref(),
+            bookmark_data.clone(),
+            file_status.as_deref(),
         );
 
         Ok(StoredItem {
@@ -610,6 +647,11 @@ impl Database {
             source_app_bundle_id,
             thumbnail,
             color_rgba,
+            file_path,
+            file_size,
+            file_uti,
+            bookmark_data,
+            file_status,
         })
     }
 

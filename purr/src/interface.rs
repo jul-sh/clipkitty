@@ -18,6 +18,41 @@ pub enum IconType {
     Phone,
     Image,
     Color,
+    File,
+}
+
+/// File tracking status for clipboard file items
+#[derive(Debug, Clone, PartialEq, Eq, uniffi::Enum)]
+pub enum FileStatus {
+    Available,
+    Moved { new_path: String },
+    Trashed,
+    Missing,
+}
+
+impl FileStatus {
+    /// Convert to database string representation
+    pub fn to_database_str(&self) -> String {
+        match self {
+            FileStatus::Available => "available".to_string(),
+            FileStatus::Moved { new_path } => format!("moved:{}", new_path),
+            FileStatus::Trashed => "trashed".to_string(),
+            FileStatus::Missing => "missing".to_string(),
+        }
+    }
+
+    /// Reconstruct from database string
+    pub fn from_database_str(s: &str) -> Self {
+        if let Some(path) = s.strip_prefix("moved:") {
+            FileStatus::Moved { new_path: path.to_string() }
+        } else {
+            match s {
+                "trashed" => FileStatus::Trashed,
+                "missing" => FileStatus::Missing,
+                _ => FileStatus::Available,
+            }
+        }
+    }
 }
 
 /// Content type filter for narrowing search results
@@ -28,6 +63,7 @@ pub enum ContentTypeFilter {
     Images, // matches "image"
     Links,  // matches "link"
     Colors, // matches "color"
+    Files,  // matches "file"
 }
 
 impl ContentTypeFilter {
@@ -39,6 +75,7 @@ impl ContentTypeFilter {
             ContentTypeFilter::Images => Some(&["image"]),
             ContentTypeFilter::Links => Some(&["link"]),
             ContentTypeFilter::Colors => Some(&["color"]),
+            ContentTypeFilter::Files => Some(&["file"]),
         }
     }
 
@@ -94,6 +131,13 @@ impl ItemIcon {
                     ItemIcon::Thumbnail { bytes: img }
                 } else {
                     ItemIcon::Symbol { icon_type: IconType::Link }
+                }
+            }
+            "file" => {
+                if let Some(thumb) = thumbnail {
+                    ItemIcon::Thumbnail { bytes: thumb }
+                } else {
+                    ItemIcon::Symbol { icon_type: IconType::File }
                 }
             }
             "email" => ItemIcon::Symbol { icon_type: IconType::Email },
@@ -161,6 +205,14 @@ pub enum ClipboardContent {
     Email { address: String },
     Phone { number: String },
     Image { data: Vec<u8>, description: String },
+    File {
+        path: String,
+        filename: String,
+        file_size: u64,
+        uti: String,
+        bookmark_data: Vec<u8>,
+        file_status: FileStatus,
+    },
 }
 
 impl ClipboardContent {
@@ -173,6 +225,7 @@ impl ClipboardContent {
             ClipboardContent::Email { address } => address,
             ClipboardContent::Phone { number } => number,
             ClipboardContent::Image { description, .. } => description,
+            ClipboardContent::File { filename, .. } => filename,
         }
     }
 
@@ -185,6 +238,7 @@ impl ClipboardContent {
             ClipboardContent::Email { .. } => IconType::Email,
             ClipboardContent::Phone { .. } => IconType::Phone,
             ClipboardContent::Image { .. } => IconType::Image,
+            ClipboardContent::File { .. } => IconType::File,
         }
     }
 
@@ -197,6 +251,7 @@ impl ClipboardContent {
             ClipboardContent::Email { .. } => "email",
             ClipboardContent::Phone { .. } => "phone",
             ClipboardContent::Image { .. } => "image",
+            ClipboardContent::File { .. } => "file",
         }
     }
 
@@ -217,6 +272,10 @@ impl ClipboardContent {
             ClipboardContent::Image { data, description } => {
                 (description.clone(), Some(data.clone()), None, None, None, None)
             }
+            ClipboardContent::File { filename, .. } => {
+                // File stores filename in content column; other fields stored in dedicated columns
+                (filename.clone(), None, None, None, None, None)
+            }
         }
     }
 
@@ -229,6 +288,11 @@ impl ClipboardContent {
         link_description: Option<&str>,
         link_image_data: Option<Vec<u8>>,
         _color_rgba: Option<u32>,
+        file_path: Option<&str>,
+        file_size: Option<u64>,
+        file_uti: Option<&str>,
+        bookmark_data: Option<Vec<u8>>,
+        file_status_str: Option<&str>,
     ) -> Self {
         match db_type {
             "color" => ClipboardContent::Color { value: content.to_string() },
@@ -245,6 +309,14 @@ impl ClipboardContent {
             },
             "phone" => ClipboardContent::Phone {
                 number: content.to_string(),
+            },
+            "file" => ClipboardContent::File {
+                path: file_path.unwrap_or("").to_string(),
+                filename: content.to_string(),
+                file_size: file_size.unwrap_or(0),
+                uti: file_uti.unwrap_or("public.item").to_string(),
+                bookmark_data: bookmark_data.unwrap_or_default(),
+                file_status: FileStatus::from_database_str(file_status_str.unwrap_or("available")),
             },
             _ => ClipboardContent::Text { value: content.to_string() },
         }
@@ -392,6 +464,22 @@ pub trait ClipboardStoreApi: Send + Sync {
 
     /// Save an image item. Thumbnail should be generated by Swift (HEIC not supported by Rust).
     fn save_image(&self, image_data: Vec<u8>, thumbnail: Option<Vec<u8>>, source_app: Option<String>, source_app_bundle_id: Option<String>) -> Result<i64, ClipKittyError>;
+
+    /// Save a file item. Returns new item ID, or 0 if duplicate.
+    fn save_file(
+        &self,
+        path: String,
+        filename: String,
+        file_size: u64,
+        uti: String,
+        bookmark_data: Vec<u8>,
+        thumbnail: Option<Vec<u8>>,
+        source_app: Option<String>,
+        source_app_bundle_id: Option<String>,
+    ) -> Result<i64, ClipKittyError>;
+
+    /// Update file status (called from Swift when file move/delete detected)
+    fn update_file_status(&self, item_id: i64, status: String, new_path: Option<String>) -> Result<(), ClipKittyError>;
 
     /// Update link metadata (called from Swift after LPMetadataProvider fetch)
     fn update_link_metadata(&self, item_id: i64, title: Option<String>, description: Option<String>, image_data: Option<Vec<u8>>) -> Result<(), ClipKittyError>;
