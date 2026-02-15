@@ -264,6 +264,7 @@ jobs:
           if [ "$CURRENT" != "$VERSION" ]; then
             git config user.name "github-actions[bot]"
             git config user.email "github-actions[bot]@users.noreply.github.com"
+            git remote set-url origin "https://x-access-token:${ADMIN_TOKEN}@github.com/${{ github.repository }}.git"
             git fetch origin main
             git checkout main
             sed -i '' "s/\"MARKETING_VERSION\": \"$CURRENT\"/\"MARKETING_VERSION\": \"$VERSION\"/" Project.swift
@@ -271,6 +272,8 @@ jobs:
             git commit -m "bump version to $VERSION"
             git push origin main
           fi
+        env:
+          ADMIN_TOKEN: ${{ secrets.ADMIN_TOKEN }}
 
   # Upload to App Store Connect via Fastlane
   appstore:
