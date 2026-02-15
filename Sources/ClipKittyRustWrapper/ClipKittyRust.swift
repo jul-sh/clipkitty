@@ -50,6 +50,7 @@ extension IconType {
         case .phone: return "phone"
         case .image: return "photo"
         case .color: return "paintpalette"
+        case .file: return "doc"
         }
     }
 
@@ -62,6 +63,7 @@ extension IconType {
         case .phone: return .vCard
         case .image: return .image
         case .color: return .text
+        case .file: return .fileURL
         }
     }
 }
@@ -93,6 +95,8 @@ extension ClipboardContent {
             return number
         case .image(_, let description):
             return description
+        case .file(_, let filename, _, _, _, _):
+            return filename
         }
     }
 }
@@ -103,6 +107,32 @@ extension HighlightRange {
     /// Convert to NSRange for use with NSAttributedString
     public var nsRange: NSRange {
         NSRange(location: Int(start), length: Int(end - start))
+    }
+}
+
+// MARK: - FileStatus Extensions
+
+extension FileStatus {
+    /// Convert to database string representation (mirrors Rust's to_database_str)
+    public func toDatabaseStr() -> String {
+        switch self {
+        case .available:
+            return "available"
+        case .moved(let newPath):
+            return "moved:\(newPath)"
+        case .trashed:
+            return "trashed"
+        case .missing:
+            return "missing"
+        }
+    }
+
+    /// Extract the new path if status is .moved, nil otherwise
+    public var movedPath: String? {
+        if case .moved(let newPath) = self {
+            return newPath
+        }
+        return nil
     }
 }
 

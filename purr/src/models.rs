@@ -25,10 +25,16 @@ pub struct StoredItem {
     pub timestamp_unix: i64,
     pub source_app: Option<String>,
     pub source_app_bundle_id: Option<String>,
-    /// Thumbnail for images (small preview, stored separately from full image)
+    /// Thumbnail for images/files (small preview, stored separately from full image)
     pub thumbnail: Option<Vec<u8>>,
     /// Parsed color RGBA for color content (stored for quick display)
     pub color_rgba: Option<u32>,
+    // File-specific fields (populated only for file items)
+    pub file_path: Option<String>,
+    pub file_size: Option<u64>,
+    pub file_uti: Option<String>,
+    pub bookmark_data: Option<Vec<u8>>,
+    pub file_status: Option<String>,
 }
 
 impl StoredItem {
@@ -54,6 +60,11 @@ impl StoredItem {
             source_app_bundle_id,
             thumbnail: None,
             color_rgba,
+            file_path: None,
+            file_size: None,
+            file_uti: None,
+            bookmark_data: None,
+            file_status: None,
         }
     }
 
@@ -79,6 +90,56 @@ impl StoredItem {
             source_app_bundle_id,
             thumbnail,
             color_rgba: None,
+            file_path: None,
+            file_size: None,
+            file_uti: None,
+            bookmark_data: None,
+            file_status: None,
+        }
+    }
+
+    /// Create a file item with optional QuickLook thumbnail
+    pub fn new_file(
+        path: String,
+        filename: String,
+        file_size: u64,
+        uti: String,
+        bookmark_data: Vec<u8>,
+        thumbnail: Option<Vec<u8>>,
+        source_app: Option<String>,
+        source_app_bundle_id: Option<String>,
+    ) -> Self {
+        let content_hash = Self::hash_string(&format!("file://{}", path));
+        Self {
+            id: None,
+            content: ClipboardContent::File {
+                path: path.clone(),
+                filename: filename.clone(),
+                file_size,
+                uti: uti.clone(),
+                bookmark_data: bookmark_data.clone(),
+                file_status: crate::interface::FileStatus::Available,
+            },
+            content_hash,
+            timestamp_unix: chrono::Utc::now().timestamp(),
+            source_app,
+            source_app_bundle_id,
+            thumbnail,
+            color_rgba: None,
+            file_path: Some(path),
+            file_size: Some(file_size),
+            file_uti: Some(uti),
+            bookmark_data: Some(bookmark_data),
+            file_status: Some("available".to_string()),
+        }
+    }
+
+    /// Get the index text for file items (both filename and path are searchable)
+    pub fn file_index_text(&self) -> Option<String> {
+        if let ClipboardContent::File { filename, path, .. } = &self.content {
+            Some(format!("{}\n{}", filename, path))
+        } else {
+            None
         }
     }
 
