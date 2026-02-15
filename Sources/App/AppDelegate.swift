@@ -15,12 +15,17 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate {
     func applicationDidFinishLaunching(_ notification: Notification) {
         FontManager.registerFonts()
 
-        // Sync launch at login state with user preference
-        syncLaunchAtLogin()
-
         // Use simulated database with test data (for UI tests and screenshots)
         let useSimulatedDb = CommandLine.arguments.contains("--use-simulated-db")
         let shouldShow = useSimulatedDb
+
+        // Set activation policy EARLY so XCUITest sees a regular app, not an agent
+        if useSimulatedDb {
+            NSApp.setActivationPolicy(.regular)
+        }
+
+        // Sync launch at login state with user preference
+        syncLaunchAtLogin()
 
         if useSimulatedDb {
             populateTestDatabase()
@@ -31,7 +36,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate {
             store.startMonitoring()
         }
 
-        panelController = FloatingPanelController(store: store)
+        panelController = FloatingPanelController(store: store, persistPanel: useSimulatedDb)
 
         hotKeyManager = HotKeyManager { [weak self] in
             Task { @MainActor in

@@ -7,12 +7,14 @@ final class FloatingPanelController: NSObject, NSWindowDelegate {
     private var panel: NSPanel!
     private let store: ClipboardStore
     private var previousApp: NSRunningApplication?
+    private let persistPanel: Bool
 
     /// Initial search query to pre-fill (for CI screenshots)
     var initialSearchQuery: String?
 
-    init(store: ClipboardStore) {
+    init(store: ClipboardStore, persistPanel: Bool = false) {
         self.store = store
+        self.persistPanel = persistPanel
         super.init()
         setupPanel()
     }
@@ -37,6 +39,13 @@ final class FloatingPanelController: NSObject, NSWindowDelegate {
         panel.delegate = self
         panel.becomesKeyOnlyIfNeeded = false
 
+        // XCUITest installs an accessibility shield at window level 2001.
+        // Set the panel ABOVE this shield so UI tests can interact with it.
+        // Must be set after all other panel configuration to avoid being reset.
+        if persistPanel {
+            panel.level = NSWindow.Level(rawValue: 2002)
+        }
+
         updatePanelContent()
     }
 
@@ -56,7 +65,9 @@ final class FloatingPanelController: NSObject, NSWindowDelegate {
 
     nonisolated func windowDidResignKey(_ notification: Notification) {
         MainActor.assumeIsolated {
-            hide()
+            if !persistPanel {
+                hide()
+            }
         }
     }
 
