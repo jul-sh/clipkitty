@@ -272,7 +272,7 @@ jobs:
             git push origin main || echo "Note: Could not push to main (protected branch). Sync manually or via merge request."
           fi
 
-  # Upload to App Store Connect via Fastlane
+  # Upload to App Store Connect via ASC CLI
   appstore:
     runs-on: macos-26
     needs: build
@@ -316,15 +316,23 @@ jobs:
             VERSION="$VERSION" \
             BUILD_NUMBER="$BUILD_NUMBER"
 
-      - name: Install Fastlane
-        run: bundle install
+      - name: Download Marketing Assets
+        uses: actions/download-artifact@v4
+        with:
+          name: assets
+          path: marketing/
 
-      - name: Upload Build, Metadata & Screenshots
-        run: bundle exec fastlane release
+      - name: Install ASC CLI
+        run: brew tap rudrankriyam/tap && brew install rudrankriyam/tap/asc
+
+      - name: Upload to App Store Connect
+        run: ./distribution/appstore-connect.sh release
         env:
-          APPSTORE_KEY_ID: ${{ secrets.APPSTORE_KEY_ID }}
-          APPSTORE_ISSUER_ID: ${{ secrets.NOTARY_ISSUER_ID }}
-          APPSTORE_KEY_CONTENT: ${{ secrets.NOTARY_KEY_BASE64 }}
+          ASC_KEY_ID: ${{ secrets.APPSTORE_KEY_ID }}
+          ASC_ISSUER_ID: ${{ secrets.NOTARY_ISSUER_ID }}
+          ASC_PRIVATE_KEY_B64: ${{ secrets.NOTARY_KEY_BASE64 }}
+          VERSION: ${{ needs.build.outputs.version }}
+          BUILD_NUMBER: ${{ github.run_number }}
 
       - name: Cleanup
         if: always()
