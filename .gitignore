@@ -66,10 +66,5 @@ purr/benches/tantivy_index*/
 *.p8
 *.provisionprofile
 
-# Ruby / Fastlane
-vendor/bundle
-.bundle
-fastlane/report.xml
-fastlane/Preview.html
-fastlane/test_output
-fastlane/README.md
+# ASC CLI
+.asc/

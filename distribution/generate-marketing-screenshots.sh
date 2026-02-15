@@ -169,13 +169,6 @@ process_screenshot "$RAW_1" "$OUTPUT_DIR/screenshot_1.png" "$CAPTION_1"
 process_screenshot "$RAW_2" "$OUTPUT_DIR/screenshot_2.png" "$CAPTION_2"
 process_screenshot "$RAW_3" "$OUTPUT_DIR/screenshot_3.png" "$CAPTION_3"
 
-# Copy to Fastlane screenshots directory for App Store delivery
-FASTLANE_SCREENSHOTS="$PROJECT_ROOT/fastlane/screenshots/en-US"
-mkdir -p "$FASTLANE_SCREENSHOTS"
-for f in "$OUTPUT_DIR"/screenshot_*.png; do
-    [ -f "$f" ] && cp "$f" "$FASTLANE_SCREENSHOTS/"
-done
-
 echo "=== Screenshot Generation Complete ==="
 echo ""
 echo "Output files:"
