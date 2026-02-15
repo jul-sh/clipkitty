@@ -12,15 +12,24 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate {
     private var showHistoryMenuItem: NSMenuItem?
     private var statusMenu: NSMenu?
 
+    /// Set activation policy before the app finishes launching.
+    /// Without LSUIElement in Info.plist, we must set the policy at runtime.
+    /// This fires early enough for XCUITest to see the app as non-"Disabled".
+    func applicationWillFinishLaunching(_ notification: Notification) {
+        if CommandLine.arguments.contains("--use-simulated-db") {
+            NSApp.setActivationPolicy(.regular)
+        } else {
+            NSApp.setActivationPolicy(.accessory)
+        }
+    }
+
     func applicationDidFinishLaunching(_ notification: Notification) {
         FontManager.registerFonts()
-
-        // Sync launch at login state with user preference
-        syncLaunchAtLogin()
 
         // Use simulated database with test data (for UI tests and screenshots)
         let useSimulatedDb = CommandLine.arguments.contains("--use-simulated-db")
         let shouldShow = useSimulatedDb
+        syncLaunchAtLogin()
 
         if useSimulatedDb {
             populateTestDatabase()
@@ -31,7 +40,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate {
             store.startMonitoring()
         }
 
-        panelController = FloatingPanelController(store: store)
+        panelController = FloatingPanelController(store: store, persistPanel: useSimulatedDb)
 
         hotKeyManager = HotKeyManager { [weak self] in
             Task { @MainActor in
