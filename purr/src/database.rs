@@ -3,7 +3,7 @@
 //! Implements the database schema and operations for clipboard storage.
 //! Uses r2d2 connection pooling to allow concurrent reads without mutex blocking.
 
-use crate::interface::{ClipboardContent, ItemMetadata, ItemIcon};
+use crate::interface::{ClipboardContent, ContentTypeFilter, ItemMetadata, ItemIcon};
 use crate::models::StoredItem;
 use crate::search::{generate_preview, SNIPPET_CONTEXT_CHARS};
 use chrono::{DateTime, TimeZone, Utc};
@@ -275,26 +275,34 @@ impl Database {
         &self,
         before_timestamp: Option<DateTime<Utc>>,
         limit: usize,
+        filter: Option<&ContentTypeFilter>,
     ) -> DatabaseResult<(Vec<ItemMetadata>, u64)> {
         let conn = self.get_conn()?;
 
-        // Get total count
-        let total_count: i64 = conn.query_row(
-            "SELECT COUNT(*) FROM items",
-            [],
-            |row| row.get(0),
-        )?;
+        // Build optional WHERE clause for content type filtering
+        let type_filter_clause = Self::content_type_where_clause(filter, "");
+        let type_filter_clause_and = Self::content_type_where_clause(filter, "AND");
+
+        // Get total count (filtered)
+        let count_sql = format!("SELECT COUNT(*) FROM items {}", type_filter_clause);
+        let total_count: i64 = conn.query_row(&count_sql, [], |row| row.get(0))?;
         let total_count = total_count as u64;
 
         let sql = if before_timestamp.is_some() {
-            r#"SELECT id, content, contentType, timestamp, sourceApp, sourceAppBundleID, thumbnail, colorRgba, linkImageData
-               FROM items WHERE timestamp < ?1 ORDER BY timestamp DESC LIMIT ?2"#
+            format!(
+                r#"SELECT id, content, contentType, timestamp, sourceApp, sourceAppBundleID, thumbnail, colorRgba, linkImageData
+                   FROM items WHERE timestamp < ?1 {} ORDER BY timestamp DESC LIMIT ?2"#,
+                type_filter_clause_and
+            )
         } else {
-            r#"SELECT id, content, contentType, timestamp, sourceApp, sourceAppBundleID, thumbnail, colorRgba, linkImageData
-               FROM items ORDER BY timestamp DESC LIMIT ?1"#
+            format!(
+                r#"SELECT id, content, contentType, timestamp, sourceApp, sourceAppBundleID, thumbnail, colorRgba, linkImageData
+                   FROM items {} ORDER BY timestamp DESC LIMIT ?1"#,
+                type_filter_clause
+            )
         };
 
-        let mut stmt = conn.prepare(sql)?;
+        let mut stmt = conn.prepare(&sql)?;
         let items = if let Some(ts) = before_timestamp {
             let ts_str = ts.format("%Y-%m-%d %H:%M:%S%.f").to_string();
             stmt.query_map(params![ts_str, limit as i64], Self::row_to_metadata)?
@@ -442,20 +450,24 @@ impl Database {
         &self,
         query: &str,
         limit: usize,
+        filter: Option<&ContentTypeFilter>,
     ) -> DatabaseResult<Vec<(i64, String, i64)>> {
         let conn = self.get_conn()?;
         let query_lower = query.to_lowercase();
         let escaped = query_lower.replace('%', "\\%").replace('_', "\\_");
+        let type_filter_and = Self::content_type_where_clause(filter, "AND");
 
         // Part 1: Prefix match — uses idx_items_content_prefix (COLLATE NOCASE index)
         let prefix_pattern = format!("{}%", escaped);
-        let mut stmt_prefix = conn.prepare(
+        let prefix_sql = format!(
             r#"SELECT id, content, CAST(strftime('%s', timestamp) AS INTEGER)
                FROM items
-               WHERE content LIKE ?1 ESCAPE '\' COLLATE NOCASE
+               WHERE content LIKE ?1 ESCAPE '\' COLLATE NOCASE {}
                ORDER BY timestamp DESC
-               LIMIT ?2"#
-        )?;
+               LIMIT ?2"#,
+            type_filter_and
+        );
+        let mut stmt_prefix = conn.prepare(&prefix_sql)?;
         let prefix_results: Vec<(i64, String, i64)> = stmt_prefix
             .query_map(params![prefix_pattern, limit as i64], |row| {
                 Ok((
@@ -468,13 +480,15 @@ impl Database {
 
         // Part 2: Substring LIKE on last 2k items only (keeps latency bounded)
         let like_pattern = format!("%{}%", escaped);
-        let mut stmt_like = conn.prepare(
+        let like_sql = format!(
             r#"SELECT id, content, CAST(strftime('%s', timestamp) AS INTEGER)
-               FROM (SELECT id, content, timestamp FROM items ORDER BY timestamp DESC LIMIT 2000)
-               WHERE content LIKE ?1 ESCAPE '\' COLLATE NOCASE
+               FROM (SELECT id, content, contentType, timestamp FROM items ORDER BY timestamp DESC LIMIT 2000)
+               WHERE content LIKE ?1 ESCAPE '\' COLLATE NOCASE {}
                ORDER BY timestamp DESC
-               LIMIT ?2"#
-        )?;
+               LIMIT ?2"#,
+            type_filter_and
+        );
+        let mut stmt_like = conn.prepare(&like_sql)?;
         let like_results: Vec<(i64, String, i64)> = stmt_like
             .query_map(params![like_pattern, limit as i64], |row| {
                 Ok((
@@ -538,6 +552,24 @@ impl Database {
         )?;
 
         Ok(items_to_delete)
+    }
+
+    /// Build a SQL clause for filtering by content type.
+    /// `prefix` controls the leading keyword: "" gives "WHERE ...", "AND" gives "AND ...".
+    /// Returns empty string for no filter (ContentTypeFilter::All or None).
+    fn content_type_where_clause(filter: Option<&ContentTypeFilter>, prefix: &str) -> String {
+        let types = match filter {
+            Some(f) => f.database_types(),
+            None => None,
+        };
+        match types {
+            None => String::new(),
+            Some(types) => {
+                let quoted: Vec<String> = types.iter().map(|t| format!("'{}'", t)).collect();
+                let keyword = if prefix.is_empty() { "WHERE" } else { prefix };
+                format!("{} contentType IN ({})", keyword, quoted.join(","))
+            }
+        }
     }
 
     /// Convert a database row to a StoredItem
