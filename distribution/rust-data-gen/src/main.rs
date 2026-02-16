@@ -327,7 +327,7 @@ fn insert_demo_items(store: &ClipboardStore, db_path: &str) -> Result<()> {
             "Safari", "com.apple.Safari", -7200,
         ),
         (
-            "At the French Windows. The Artist\u{2019}s Wife.webp",
+            "At the French Windows. The Artist's Wife.webp",
             "painting, woman, portrait, garden, balcony, dress, spring, blossoms, trees, oil painting",
             "Photos", "com.apple.Photos", -6800,
         ),
