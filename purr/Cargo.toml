@@ -27,6 +27,7 @@ thiserror = "*"
 chrono = { version = "*", features = ["serde"] }
 serde = { version = "*", features = ["derive"] }
 serde_json = "*"
+base64 = "*"
 parking_lot = "*"
 url = "*"
 csscolorparser = "*"

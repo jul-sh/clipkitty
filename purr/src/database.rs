@@ -129,6 +129,8 @@ impl Database {
         Self::add_column_if_missing(&conn, "fileUti", "TEXT")?;
         Self::add_column_if_missing(&conn, "bookmarkData", "BLOB")?;
         Self::add_column_if_missing(&conn, "fileStatus", "TEXT")?;
+        Self::add_column_if_missing(&conn, "fileCount", "INTEGER")?;
+        Self::add_column_if_missing(&conn, "additionalFiles", "TEXT")?;
 
         // Create indexes
         conn.execute(
@@ -186,8 +188,8 @@ impl Database {
 
         conn.execute(
             r#"
-            INSERT INTO items (content, contentHash, timestamp, sourceApp, contentType, imageData, linkTitle, linkDescription, linkImageData, sourceAppBundleID, thumbnail, colorRgba, filePath, fileSize, fileUti, bookmarkData, fileStatus)
-            VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11, ?12, ?13, ?14, ?15, ?16, ?17)
+            INSERT INTO items (content, contentHash, timestamp, sourceApp, contentType, imageData, linkTitle, linkDescription, linkImageData, sourceAppBundleID, thumbnail, colorRgba, filePath, fileSize, fileUti, bookmarkData, fileStatus, fileCount, additionalFiles)
+            VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11, ?12, ?13, ?14, ?15, ?16, ?17, ?18, ?19)
             "#,
             params![
                 content,
@@ -207,6 +209,8 @@ impl Database {
                 item.file_uti,
                 item.bookmark_data,
                 item.file_status,
+                item.file_count.map(|c| c as i64),
+                item.additional_files_json,
             ],
         )?;
 
@@ -619,6 +623,8 @@ impl Database {
         let file_uti: Option<String> = row.get("fileUti").ok().flatten();
         let bookmark_data: Option<Vec<u8>> = row.get("bookmarkData").ok().flatten();
         let file_status: Option<String> = row.get("fileStatus").ok().flatten();
+        let file_count: Option<u32> = row.get::<_, Option<i64>>("fileCount").ok().flatten().map(|v| v as u32);
+        let additional_files_json: Option<String> = row.get("additionalFiles").ok().flatten();
 
         let timestamp = parse_db_timestamp(&timestamp_str);
 
@@ -636,6 +642,8 @@ impl Database {
             file_uti.as_deref(),
             bookmark_data.clone(),
             file_status.as_deref(),
+            file_count,
+            additional_files_json.as_deref(),
         );
 
         Ok(StoredItem {
@@ -652,6 +660,8 @@ impl Database {
             file_uti,
             bookmark_data,
             file_status,
+            file_count,
+            additional_files_json,
         })
     }
 

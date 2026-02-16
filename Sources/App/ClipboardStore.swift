@@ -394,6 +394,7 @@ final class ClipboardStore {
         if let fileURLs = pasteboard.readObjects(forClasses: [NSURL.self], options: [
             .urlReadingFileURLsOnly: true
         ]) as? [URL], !fileURLs.isEmpty {
+            saveFileItems(urls: fileURLs)
             return
         }
         #endif
@@ -569,54 +570,69 @@ final class ClipboardStore {
 
         guard let rustStore else { return }
         Task.detached { [weak self] in
+            var paths: [String] = []
+            var filenames: [String] = []
+            var fileSizes: [UInt64] = []
+            var utis: [String] = []
+            var bookmarkDataList: [Data] = []
+
             for url in urls {
                 guard url.isFileURL else { continue }
 
                 let path = url.path
                 let filename = url.lastPathComponent
 
-                // Get file size and UTI
                 let resourceValues = try? url.resourceValues(forKeys: [.fileSizeKey, .typeIdentifierKey])
                 let fileSize = UInt64(resourceValues?.fileSize ?? 0)
                 let uti = resourceValues?.typeIdentifier ?? "public.item"
 
-                // Create bookmark for move tracking
                 guard let bookmarkData = try? url.bookmarkData(
                     options: [],
                     includingResourceValuesForKeys: [.nameKey, .pathKey],
                     relativeTo: nil
                 ) else { continue }
 
-                // Generate QuickLook thumbnail
-                let thumbnail = await Self.generateQuickLookThumbnail(for: url)
+                paths.append(path)
+                filenames.append(filename)
+                fileSizes.append(fileSize)
+                utis.append(uti)
+                bookmarkDataList.append(bookmarkData)
+            }
 
-                do {
-                    let itemId = try rustStore.saveFile(
-                        path: path,
-                        filename: filename,
-                        fileSize: fileSize,
-                        uti: uti,
-                        bookmarkData: bookmarkData,
-                        thumbnail: thumbnail,
-                        sourceApp: sourceApp,
-                        sourceAppBundleId: sourceAppBundleID
-                    )
+            guard !paths.isEmpty else { return }
 
-                    guard let self else { return }
-                    await MainActor.run { [weak self] in
-                        if self?.hasResults == true {
-                            self?.refresh()
-                        }
+            // Generate thumbnail from first file
+            let thumbnail = await Self.generateQuickLookThumbnail(for: urls[0])
+
+            do {
+                let itemId = try rustStore.saveFiles(
+                    paths: paths,
+                    filenames: filenames,
+                    fileSizes: fileSizes,
+                    utis: utis,
+                    bookmarkDataList: bookmarkDataList,
+                    thumbnail: thumbnail,
+                    sourceApp: sourceApp,
+                    sourceAppBundleId: sourceAppBundleID
+                )
+
+                guard let self else { return }
+                await MainActor.run { [weak self] in
+                    if self?.hasResults == true {
+                        self?.refresh()
                     }
-
-                    // Start watching the file for moves/deletes
-                    if itemId > 0 {
-                        await MainActor.run { [weak self] in
-                            self?.fileWatcher.watch(path: path, itemId: itemId, filename: filename, bookmarkData: bookmarkData)
-                        }
-                    }
-                } catch {
                 }
+
+                // Start watching the primary file for moves/deletes
+                if itemId > 0 {
+                    let primaryPath = paths[0]
+                    let primaryFilename = filenames[0]
+                    let primaryBookmark = bookmarkDataList[0]
+                    await MainActor.run { [weak self] in
+                        self?.fileWatcher.watch(path: primaryPath, itemId: itemId, filename: primaryFilename, bookmarkData: primaryBookmark)
+                    }
+                }
+            } catch {
             }
         }
     }
@@ -644,8 +660,8 @@ final class ClipboardStore {
         }
 
         #if !SANDBOXED
-        if case .file(let path, _, _, _, let bookmarkData, _) = content {
-            pasteFile(path: path, bookmarkData: Data(bookmarkData), itemId: itemId)
+        if case .file(let path, _, _, _, let bookmarkData, _, let fileCount, let additionalFilesJson) = content {
+            pasteFiles(primaryPath: path, primaryBookmarkData: Data(bookmarkData), fileCount: fileCount, additionalFilesJson: additionalFilesJson, itemId: itemId)
             return
         }
         #endif
@@ -693,28 +709,50 @@ final class ClipboardStore {
     }
 
     #if !SANDBOXED
-    private func pasteFile(path: String, bookmarkData: Data, itemId: Int64) {
+    private func pasteFiles(primaryPath: String, primaryBookmarkData: Data, fileCount: UInt32, additionalFilesJson: String, itemId: Int64) {
         // Pre-increment to avoid race with checkForChanges polling
         lastChangeCount = NSPasteboard.general.changeCount + 1
 
-        // Try to resolve bookmark first (handles moved files), fall back to original path
+        // Resolve primary file bookmark
         var isStale = false
-        let resolvedURL: URL
-        if let url = try? URL(resolvingBookmarkData: bookmarkData, options: [], relativeTo: nil, bookmarkDataIsStale: &isStale) {
-            resolvedURL = url
+        let primaryURL: URL
+        if let url = try? URL(resolvingBookmarkData: primaryBookmarkData, options: [], relativeTo: nil, bookmarkDataIsStale: &isStale) {
+            primaryURL = url
         } else {
-            resolvedURL = URL(fileURLWithPath: path)
+            primaryURL = URL(fileURLWithPath: primaryPath)
+        }
+
+        var resolvedURLs = [primaryURL]
+
+        // Resolve additional file bookmarks for multi-file entries
+        if fileCount > 1, !additionalFilesJson.isEmpty,
+           let data = additionalFilesJson.data(using: .utf8),
+           let files = try? JSONSerialization.jsonObject(with: data) as? [[String: Any]] {
+            for file in files {
+                let filePath = file["path"] as? String ?? ""
+                if let b64 = file["bookmarkData"] as? String,
+                   let bmData = Data(base64Encoded: b64) {
+                    var stale = false
+                    if let url = try? URL(resolvingBookmarkData: bmData, options: [], relativeTo: nil, bookmarkDataIsStale: &stale) {
+                        resolvedURLs.append(url)
+                    } else {
+                        resolvedURLs.append(URL(fileURLWithPath: filePath))
+                    }
+                } else {
+                    resolvedURLs.append(URL(fileURLWithPath: filePath))
+                }
+            }
         }
 
         // Write to pasteboard with both modern and legacy types for broad compatibility.
         // Finder requires NSFilenamesPboardType for file paste; other apps use public.file-url.
-        // Uses the type-based API (declareTypes) which increments changeCount once.
         let pasteboard = NSPasteboard.general
         let filenameType = NSPasteboard.PasteboardType("NSFilenamesPboardType")
+        let allPaths = resolvedURLs.map { $0.path }
         pasteboard.declareTypes([filenameType, .fileURL, .string], owner: nil)
-        pasteboard.setPropertyList([resolvedURL.path], forType: filenameType)
-        pasteboard.setString(resolvedURL.absoluteString, forType: .fileURL)
-        pasteboard.setString(resolvedURL.path, forType: .string)
+        pasteboard.setPropertyList(allPaths, forType: filenameType)
+        pasteboard.setString(resolvedURLs[0].absoluteString, forType: .fileURL)
+        pasteboard.setString(allPaths.joined(separator: "\n"), forType: .string)
         lastChangeCount = pasteboard.changeCount
 
         Task {

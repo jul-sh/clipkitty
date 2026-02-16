@@ -649,14 +649,15 @@ struct ContentView: View {
             ScrollView(.vertical, showsIndicators: true) {
                 linkPreview(url: url, metadataState: metadataState, itemId: item.itemMetadata.itemId)
             }
-        case .file(let path, let filename, let fileSize, let uti, let bookmarkData, let fileStatus):
+        case .file(let path, let filename, let fileSize, let uti, let bookmarkData, let fileStatus, let fileCount, let additionalFilesJson):
             #if !SANDBOXED
             ScrollView(.vertical, showsIndicators: true) {
                 FilePreviewView(
                     path: path, filename: filename, fileSize: fileSize,
                     uti: uti, bookmarkData: Data(bookmarkData),
                     fileStatus: fileStatus, icon: item.itemMetadata.icon,
-                    store: store, itemId: item.itemMetadata.itemId
+                    store: store, itemId: item.itemMetadata.itemId,
+                    fileCount: fileCount, additionalFilesJson: additionalFilesJson
                 )
             }
             #else
@@ -706,7 +707,7 @@ struct ContentView: View {
                 }
             }
             Spacer()
-            Button(buttonLabel) { confirmSelection() }
+            Button(buttonLabel(for: item)) { confirmSelection() }
                 .buttonStyle(.plain)
                 .padding(.horizontal, 6)
                 .padding(.vertical, 2)
@@ -718,8 +719,9 @@ struct ContentView: View {
         .background(.black.opacity(0.05))
     }
 
-    private var buttonLabel: String {
-        AppSettings.shared.shouldShowPasteLabel ? "⏎ paste" : "⏎ copy"
+    private func buttonLabel(for item: ClipboardItem) -> String {
+        if case .file = item.content { return "⏎ copy" }
+        return AppSettings.shared.shouldShowPasteLabel ? "⏎ paste" : "⏎ copy"
     }
 
     private var emptyStateView: some View {
@@ -981,11 +983,50 @@ struct FilePreviewView: View {
     let icon: ItemIcon
     var store: ClipboardStore
     let itemId: Int64
+    var fileCount: UInt32 = 1
+    var additionalFilesJson: String = ""
 
     @State private var resolvedStatus: FileStatus?
 
     private var displayStatus: FileStatus {
         resolvedStatus ?? fileStatus
+    }
+
+    private var isMultiFile: Bool { fileCount > 1 }
+
+    /// All filenames (primary + additional) for multi-file display
+    private var allFilenames: [String] {
+        var names = [filename]
+        if isMultiFile, !additionalFilesJson.isEmpty,
+           let data = additionalFilesJson.data(using: .utf8),
+           let files = try? JSONSerialization.jsonObject(with: data) as? [[String: Any]] {
+            // For multi-file, the primary "filename" is the display name like "a and 2 more"
+            // Use the actual primary filename from the path
+            names = [URL(fileURLWithPath: path).lastPathComponent]
+            for file in files {
+                if let name = file["filename"] as? String {
+                    names.append(name)
+                }
+            }
+        }
+        return names
+    }
+
+    /// Total size across all files
+    private var totalSize: UInt64 {
+        var total = fileSize
+        if isMultiFile, !additionalFilesJson.isEmpty,
+           let data = additionalFilesJson.data(using: .utf8),
+           let files = try? JSONSerialization.jsonObject(with: data) as? [[String: Any]] {
+            for file in files {
+                if let size = file["fileSize"] as? UInt64 {
+                    total += size
+                } else if let size = file["fileSize"] as? Int {
+                    total += UInt64(size)
+                }
+            }
+        }
+        return total
     }
 
     var body: some View {
@@ -994,27 +1035,44 @@ struct FilePreviewView: View {
             thumbnailView
                 .frame(maxWidth: .infinity, alignment: .center)
 
-            // Filename
-            Text(filename)
-                .font(.custom(FontManager.sansSerif, size: 20).bold())
-                .textSelection(.enabled)
-                .frame(maxWidth: .infinity, alignment: .leading)
+            // Title
+            if isMultiFile {
+                Text("\(fileCount) Files")
+                    .font(.system(size: 20, weight: .bold))
+                    .textSelection(.enabled)
+                    .frame(maxWidth: .infinity, alignment: .leading)
+            } else {
+                Text(filename)
+                    .font(.system(size: 20, weight: .bold))
+                    .textSelection(.enabled)
+                    .frame(maxWidth: .infinity, alignment: .leading)
+            }
 
             // Info grid
             VStack(alignment: .leading, spacing: 8) {
-                infoRow(label: "Path", value: displayPath)
-                infoRow(label: "Size", value: formattedSize)
-                infoRow(label: "Kind", value: kindDescription)
+                if isMultiFile {
+                    // List all filenames
+                    infoRow(label: "Files", value: allFilenames.joined(separator: "\n"))
+                    infoRow(label: "Size", value: formattedTotalSize)
+                } else {
+                    infoRow(label: "Path", value: displayPath)
+                    infoRow(label: "Size", value: formattedSize)
+                    infoRow(label: "Kind", value: kindDescription)
+                }
             }
 
-            // Status indicator
-            statusView
+            // Status indicator (single file only)
+            if !isMultiFile {
+                statusView
+            }
 
             Spacer()
         }
         .padding(16)
         .task(id: itemId) {
-            await resolveFileStatus()
+            if !isMultiFile {
+                await resolveFileStatus()
+            }
         }
     }
 
@@ -1045,11 +1103,11 @@ struct FilePreviewView: View {
     private func infoRow(label: String, value: String) -> some View {
         HStack(alignment: .top) {
             Text(label)
-                .font(.custom(FontManager.sansSerif, size: 13))
+                .font(.system(size: 13))
                 .foregroundStyle(.secondary)
                 .frame(width: 50, alignment: .trailing)
             Text(value)
-                .font(.custom(FontManager.mono, size: 13))
+                .font(.system(size: 13, design: .monospaced))
                 .textSelection(.enabled)
                 .frame(maxWidth: .infinity, alignment: .leading)
         }
@@ -1057,6 +1115,10 @@ struct FilePreviewView: View {
 
     private var formattedSize: String {
         ByteCountFormatter.string(fromByteCount: Int64(fileSize), countStyle: .file)
+    }
+
+    private var formattedTotalSize: String {
+        ByteCountFormatter.string(fromByteCount: Int64(totalSize), countStyle: .file)
     }
 
     private var kindDescription: String {
@@ -1073,12 +1135,12 @@ struct FilePreviewView: View {
             EmptyView()
         case .moved(let newPath):
             Label("File moved to: \(newPath)", systemImage: "arrow.right.circle")
-                .font(.custom(FontManager.sansSerif, size: 13))
+                .font(.system(size: 13))
                 .foregroundStyle(.orange)
         case .trashed:
             HStack {
                 Label("File is in Trash", systemImage: "trash")
-                    .font(.custom(FontManager.sansSerif, size: 13))
+                    .font(.system(size: 13))
                     .foregroundStyle(.red)
                 Button("Restore") {
                     restoreFromTrash()
@@ -1088,7 +1150,7 @@ struct FilePreviewView: View {
             }
         case .missing:
             Label("File no longer exists", systemImage: "exclamationmark.triangle")
-                .font(.custom(FontManager.sansSerif, size: 13))
+                .font(.system(size: 13))
                 .foregroundStyle(.red)
         }
     }
@@ -1235,6 +1297,10 @@ struct ItemRow: View, Equatable {
                            let browserURL = NSWorkspace.shared.urlForApplication(toOpen: URL(string: "https://")!) {
                             Image(nsImage: NSWorkspace.shared.icon(forFile: browserURL.path))
                                 .resizable()
+                        } else if case .file = iconType,
+                                  let finderURL = NSWorkspace.shared.urlForApplication(withBundleIdentifier: "com.apple.finder") {
+                            Image(nsImage: NSWorkspace.shared.icon(forFile: finderURL.path))
+                                .resizable()
                         } else {
                             Image(nsImage: NSWorkspace.shared.icon(for: iconType.utType))
                                 .resizable()
@@ -1248,11 +1314,11 @@ struct ItemRow: View, Equatable {
                 // Show for symbols (except pure link icons) and thumbnails (images, links with images)
                 if let bundleID = metadata.sourceAppBundleId,
                    let appURL = NSWorkspace.shared.urlForApplication(withBundleIdentifier: bundleID) {
-                    // Skip badge for symbol links (browser icon is already shown)
+                    // Skip badge for symbol links/files (app icon is already shown)
                     let showBadge: Bool = {
                         switch metadata.icon {
                         case .symbol(let iconType):
-                            return iconType != .link
+                            return iconType != .link && iconType != .file
                         case .thumbnail, .colorSwatch:
                             return true
                         }

@@ -212,6 +212,8 @@ pub enum ClipboardContent {
         uti: String,
         bookmark_data: Vec<u8>,
         file_status: FileStatus,
+        file_count: u32,
+        additional_files_json: String,
     },
 }
 
@@ -293,6 +295,8 @@ impl ClipboardContent {
         file_uti: Option<&str>,
         bookmark_data: Option<Vec<u8>>,
         file_status_str: Option<&str>,
+        file_count: Option<u32>,
+        additional_files_json: Option<&str>,
     ) -> Self {
         match db_type {
             "color" => ClipboardContent::Color { value: content.to_string() },
@@ -317,6 +321,8 @@ impl ClipboardContent {
                 uti: file_uti.unwrap_or("public.item").to_string(),
                 bookmark_data: bookmark_data.unwrap_or_default(),
                 file_status: FileStatus::from_database_str(file_status_str.unwrap_or("available")),
+                file_count: file_count.unwrap_or(1),
+                additional_files_json: additional_files_json.unwrap_or("").to_string(),
             },
             _ => ClipboardContent::Text { value: content.to_string() },
         }
@@ -473,6 +479,19 @@ pub trait ClipboardStoreApi: Send + Sync {
         file_size: u64,
         uti: String,
         bookmark_data: Vec<u8>,
+        thumbnail: Option<Vec<u8>>,
+        source_app: Option<String>,
+        source_app_bundle_id: Option<String>,
+    ) -> Result<i64, ClipKittyError>;
+
+    /// Save multiple file items as a single grouped entry. Returns new item ID, or 0 if duplicate.
+    fn save_files(
+        &self,
+        paths: Vec<String>,
+        filenames: Vec<String>,
+        file_sizes: Vec<u64>,
+        utis: Vec<String>,
+        bookmark_data_list: Vec<Vec<u8>>,
         thumbnail: Option<Vec<u8>>,
         source_app: Option<String>,
         source_app_bundle_id: Option<String>,
