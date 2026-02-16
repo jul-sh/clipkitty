@@ -21,7 +21,11 @@ struct ContentView: View {
     @State private var previewSpinnerTask: Task<Void, Never>?
     @State private var showFilterPopover = false
     @State private var highlightedFilterIndex: Int = 0
-    @FocusState private var isSearchFocused: Bool
+    enum FocusTarget: Hashable {
+        case search
+        case filterDropdown
+    }
+    @FocusState private var focusTarget: FocusTarget?
 
     private var itemIds: [Int64] {
         switch store.state {
@@ -226,7 +230,14 @@ struct ContentView: View {
     private func focusSearchField() {
         Task { @MainActor in
             try? await Task.sleep(for: .milliseconds(10))
-            isSearchFocused = true
+            focusTarget = .search
+        }
+    }
+
+    private func focusFilterDropdown() {
+        Task { @MainActor in
+            try? await Task.sleep(for: .milliseconds(50))
+            focusTarget = .filterDropdown
         }
     }
 
@@ -255,7 +266,7 @@ struct ContentView: View {
             TextField("Clipboard History Search", text: $searchText)
                 .textFieldStyle(.plain)
                 .font(.custom(FontManager.sansSerif, size: 17))
-                .focused($isSearchFocused)
+                .focused($focusTarget, equals: .search)
                 .accessibilityIdentifier("SearchField")
                 .onKeyPress(.upArrow) {
                     moveSelection(by: -1)
@@ -271,6 +282,13 @@ struct ContentView: View {
                 }
                 .onKeyPress(.escape) {
                     onDismiss()
+                    return .handled
+                }
+                .onKeyPress(.tab) {
+                    let allOptions = Self.filterOptions
+                    highlightedFilterIndex = allOptions.firstIndex(where: { $0.0 == store.contentTypeFilter }) ?? 0
+                    showFilterPopover = true
+                    focusFilterDropdown()
                     return .handled
                 }
                 .onKeyPress(characters: .decimalDigits, phases: .down) { keyPress in
@@ -307,6 +325,9 @@ struct ContentView: View {
             let allOptions = Self.filterOptions
             highlightedFilterIndex = allOptions.firstIndex(where: { $0.0 == store.contentTypeFilter }) ?? 0
             showFilterPopover.toggle()
+            if showFilterPopover {
+                focusFilterDropdown()
+            }
         } label: {
             HStack(spacing: 4) {
                 Text(filterLabel)
@@ -315,13 +336,9 @@ struct ContentView: View {
                     .font(.system(size: 9, weight: .semibold))
             }
             .foregroundStyle(.secondary)
-            .padding(.horizontal, 8)
-            .padding(.vertical, 4)
-            .background(
-                Capsule()
-                    .fill(store.contentTypeFilter == .all ? Color.primary.opacity(0.12) : Color.accentColor.opacity(0.15))
-            )
-            .overlay(Capsule().strokeBorder(Color.primary.opacity(0.1)))
+            .padding(.horizontal, 12)
+            .padding(.vertical, 6)
+            .overlay(Capsule().strokeBorder(Color.primary.opacity(0.15)))
         }
         .buttonStyle(.plain)
         .accessibilityIdentifier("FilterDropdown")
@@ -332,11 +349,11 @@ struct ContentView: View {
 
     private static let filterOptions: [(ContentTypeFilter, String)] = [
         (.all, "All Types"),
-        (.text, "Text Only"),
-        (.images, "Images Only"),
-        (.links, "Links Only"),
-        (.colors, "Colors Only"),
-        (.files, "Files Only"),
+        (.text, "Text"),
+        (.images, "Images"),
+        (.links, "Links"),
+        (.colors, "Colors"),
+        (.files, "Files"),
     ]
 
     private var filterPopoverContent: some View {
@@ -344,6 +361,9 @@ struct ContentView: View {
         return VStack(spacing: 2) {
             ForEach(Array(options.enumerated()), id: \.offset) { index, entry in
                 let (option, label) = entry
+                if index == 1 {
+                    Divider().padding(.horizontal, 4).padding(.vertical, 3)
+                }
                 FilterOptionRow(
                     label: label,
                     isSelected: store.contentTypeFilter == option,
@@ -356,8 +376,11 @@ struct ContentView: View {
                 )
             }
         }
-        .padding(4)
+        .padding(10)
         .frame(width: 160)
+        .focusable()
+        .focused($focusTarget, equals: .filterDropdown)
+        .focusEffectDisabled()
         .onKeyPress(.upArrow) {
             highlightedFilterIndex = max(highlightedFilterIndex - 1, 0)
             return .handled
@@ -377,6 +400,16 @@ struct ContentView: View {
             showFilterPopover = false
             focusSearchField()
             return .handled
+        }
+        .onKeyPress(.tab) {
+            showFilterPopover = false
+            focusSearchField()
+            return .handled
+        }
+        .onAppear {
+            let allOptions = Self.filterOptions
+            highlightedFilterIndex = allOptions.firstIndex(where: { $0.0 == store.contentTypeFilter }) ?? 0
+            focusFilterDropdown()
         }
     }
 
@@ -1374,17 +1407,28 @@ private struct FilterOptionRow: View {
     let action: () -> Void
     @State private var isHovered = false
 
+    private var rowBackground: Color {
+        if isHighlighted {
+            return Color.accentColor.opacity(0.9)
+        } else if isSelected {
+            return Color.primary.opacity(0.1)
+        } else if isHovered {
+            return Color.primary.opacity(0.05)
+        }
+        return Color.clear
+    }
+
     var body: some View {
         Button(action: action) {
             Text(label)
                 .font(.system(size: 13))
-                .foregroundStyle(.secondary)
+                .foregroundStyle(isHighlighted ? .white : .secondary)
                 .frame(maxWidth: .infinity, alignment: .leading)
                 .padding(.horizontal, 8)
                 .padding(.vertical, 5)
                 .background(
-                    RoundedRectangle(cornerRadius: 5)
-                        .fill(isSelected ? Color.primary.opacity(0.1) : ((isHighlighted || isHovered) ? Color.primary.opacity(0.05) : Color.clear))
+                    RoundedRectangle(cornerRadius: 9)
+                        .fill(rowBackground)
                 )
         }
         .buttonStyle(.plain)
