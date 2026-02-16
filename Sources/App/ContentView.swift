@@ -21,6 +21,7 @@ struct ContentView: View {
     @State private var previewSpinnerTask: Task<Void, Never>?
     @State private var hasUserNavigated = false
     @State private var showFilterPopover = false
+    @State private var showDeleteConfirmation = false
     @State private var highlightedFilterIndex: Int = 0
     enum FocusTarget: Hashable {
         case search
@@ -99,6 +100,17 @@ struct ContentView: View {
         // 2. Ignore ONLY the top safe area for the main content.
         // This fixes the white gap at the top without breaking the scrollbars!
         .ignoresSafeArea(edges: .top)
+
+        .alert("Delete Item", isPresented: $showDeleteConfirmation) {
+            Button("Delete", role: .destructive) {
+                deleteSelectedItem()
+            }
+            Button("Cancel", role: .cancel) {}
+        } message: {
+            if let item = selectedItem {
+                Text("Delete \"\(item.itemMetadata.snippet)\"?")
+            }
+        }
 
         .onAppear {
             // Apply initial search query if provided (for CI screenshots)
@@ -262,6 +274,24 @@ struct ContentView: View {
         onSelect(item.itemMetadata.itemId, item.content)
     }
 
+    private func deleteSelectedItem() {
+        guard let id = selectedItemId, let currentIndex = selectedIndex else { return }
+
+        // Compute next selection before deleting
+        let nextId: Int64?
+        if currentIndex + 1 < itemCount {
+            nextId = itemId(at: currentIndex + 1)
+        } else if currentIndex > 0 {
+            nextId = itemId(at: currentIndex - 1)
+        } else {
+            nextId = nil
+        }
+
+        store.delete(itemId: id)
+        selectedItemId = nextId
+        selectedItem = nil
+    }
+
     // MARK: - Search Bar
 
     private var searchBar: some View {
@@ -301,6 +331,16 @@ struct ContentView: View {
                 }
                 .onKeyPress(characters: .decimalDigits, phases: .down) { keyPress in
                     handleNumberKey(keyPress)
+                }
+                .onKeyPress(.delete) {
+                    guard selectedItemId != nil else { return .ignored }
+                    showDeleteConfirmation = true
+                    return .handled
+                }
+                .onKeyPress(.deleteForward) {
+                    guard selectedItemId != nil else { return .ignored }
+                    showDeleteConfirmation = true
+                    return .handled
                 }
 
             if showSearchSpinner {
