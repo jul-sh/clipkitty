@@ -219,8 +219,13 @@ jobs:
           cp "$GITHUB_WORKSPACE/marketing/screenshot_1.png" marketing_1.png
           cp "$GITHUB_WORKSPACE/marketing/screenshot_2.png" marketing_2.png
           cp "$GITHUB_WORKSPACE/marketing/screenshot_3.png" marketing_3.png
-          git add screenshot.png icon.png marketing_1.png marketing_2.png marketing_3.png
-          git commit -m "Update screenshot and icon [skip ci]" || echo "No changes to commit"
+
+          # Generate landing page from README.md
+          brew install cmark-gfm 2>/dev/null || true
+          "$GITHUB_WORKSPACE/distribution/generate-landing-page.sh" > index.html
+
+          git add screenshot.png icon.png marketing_1.png marketing_2.png marketing_3.png index.html
+          git commit -m "Update site, screenshots and icon [skip ci]" || echo "No changes to commit"
           git push origin gh-pages
 
           git tag "screenshots/${GITHUB_SHA::7}"

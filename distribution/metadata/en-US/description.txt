@@ -14,8 +14,12 @@ Privacy First — Your data never leaves your Mac. No cloud sync, no analytics, 
 
 Native & Fast — Built with Swift and Rust, optimized for Apple Silicon. Runs silently in your menu bar with minimal memory and zero CPU when idle.
 
+Open Source — ClipKitty is fully open source. Every line of code is public and auditable.
+
 KEYBOARD-DRIVEN WORKFLOW
 
 Option+Space to summon your history. Arrow keys to browse. Return to paste. Command+1 through 9 to jump. No mouse required.
+
+Note: In the Mac App Store version, after selecting a clipboard item, press Command+V to paste it into your target app. This is required by macOS sandbox security restrictions.
 
 ClipKitty is the clipboard manager that works as hard as you do.
