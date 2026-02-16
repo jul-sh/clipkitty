@@ -25,7 +25,7 @@ SIGNING_IDENTITY ?= $(shell security find-identity -v -p codesigning 2>/dev/null
 RUST_MARKER := .make/rust.marker
 RUST_LIB := Sources/ClipKittyRust/libpurr.a
 
-.PHONY: all clean rust rust-force generate build sign list-identities
+.PHONY: all clean rust rust-force generate build sign list-identities run run-appstore
 
 all: rust generate build
 
@@ -69,6 +69,18 @@ sign:
 	@codesign --force --options runtime \
 		--sign "$(SIGNING_IDENTITY)" \
 		"$(DERIVED_DATA)/Build/Products/$(CONFIGURATION)/$(APP_NAME).app"
+
+# Build, kill any running instance, and open the app
+run: all
+	@echo "Closing existing $(APP_NAME)..."
+	@pkill -x $(APP_NAME) 2>/dev/null || true
+	@sleep 0.5
+	@echo "Opening $(APP_NAME)..."
+	@open "$(DERIVED_DATA)/Build/Products/$(CONFIGURATION)/$(APP_NAME).app"
+
+# Build and run the sandboxed App Store variant
+run-appstore:
+	@$(MAKE) run CONFIGURATION=AppStore
 
 clean:
 	@rm -rf .make DerivedData
