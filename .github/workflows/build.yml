@@ -90,14 +90,31 @@ jobs:
       - name: Build Non-Sandboxed App
         run: make build CONFIGURATION=Release
 
+      - name: Create Virtual Retina Display
+        run: |
+          xcrun clang -framework CoreGraphics -framework Foundation \
+            -o /tmp/create-retina-display distribution/create-retina-display.m
+          /tmp/create-retina-display &
+          echo "$!" > /tmp/retina-display.pid
+          sleep 5
+
       - name: Run UI Tests
         run: |
           CONFIGURATION=Release make -C distribution screenshot
-          # Validate screenshot was actually captured
           if [ ! -f screenshot.png ]; then
-            echo "ERROR: screenshot.png was not created. Check UI test logs."
+            echo "ERROR: screenshot.png was not created."
             exit 1
           fi
+          sips -g pixelWidth -g pixelHeight screenshot.png
+
+      - name: Generate Marketing Screenshots
+        run: |
+          make -C distribution marketing-screenshots
+          ls -lh marketing/screenshot_*.png
+
+      - name: Teardown Virtual Display
+        if: always()
+        run: kill "$(cat /tmp/retina-display.pid 2>/dev/null)" 2>/dev/null || true
 
       - name: Generate Icon PNG
         run: make -C distribution icon-png
@@ -176,6 +193,7 @@ jobs:
           path: |
             screenshot.png
             icon.png
+            marketing/screenshot_*.png
 
       - name: Deploy to gh-pages
         if: github.event_name == 'push' && github.ref == 'refs/heads/main'
