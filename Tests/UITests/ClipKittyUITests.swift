@@ -341,11 +341,15 @@ final class ClipKittyUITests: XCTestCase {
         let screenShot = XCUIScreen.main.screenshot()
         let image = screenShot.image
 
+        // window.frame is in points, but CGImage.cropping operates in pixels.
+        // On HiDPI (Retina) displays the image is 2x the point dimensions,
+        // so we must scale the crop rect to match.
+        let scaleFactor = NSScreen.main?.backingScaleFactor ?? 1.0
         let cropRect = CGRect(
-            x: max(frame.origin.x - padding, 0),
-            y: max(frame.origin.y - padding, 0),
-            width: frame.width + padding * 2,
-            height: frame.height + padding * 2
+            x: max((frame.origin.x - padding) * scaleFactor, 0),
+            y: max((frame.origin.y - padding) * scaleFactor, 0),
+            width: (frame.width + padding * 2) * scaleFactor,
+            height: (frame.height + padding * 2) * scaleFactor
         )
 
         guard let cgImage = image.cgImage(forProposedRect: nil, context: nil, hints: nil),
@@ -353,7 +357,7 @@ final class ClipKittyUITests: XCTestCase {
             return
         }
 
-        let croppedImage = NSImage(cgImage: cropped, size: cropRect.size)
+        let croppedImage = NSImage(cgImage: cropped, size: NSSize(width: cropRect.width, height: cropRect.height))
 
         if let tiff = croppedImage.tiffRepresentation,
            let bitmap = NSBitmapImageRep(data: tiff),
