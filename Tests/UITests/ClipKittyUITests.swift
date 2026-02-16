@@ -285,8 +285,8 @@ final class ClipKittyUITests: XCTestCase {
 
         // 3. Verify popover content appears with filter options
         // FilterOptionRow uses Button, so options appear as buttons in the accessibility tree
-        let linksOption = app.buttons["Links Only"]
-        XCTAssertTrue(linksOption.waitForExistence(timeout: 3), "Popover should show 'Links Only' option")
+        let linksOption = app.buttons["Links"]
+        XCTAssertTrue(linksOption.waitForExistence(timeout: 3), "Popover should show 'Links' option")
 
         // Screenshot: dropdown open
         saveScreenshot(name: "filter_open")
@@ -505,13 +505,17 @@ final class ClipKittyUITests: XCTestCase {
         Thread.sleep(forTimeInterval: 0.5)
         saveScreenshot(name: "marketing_2_search")
 
-        // Screenshot 3: Color swatch search showing preview (matches demo items: #7C3AED, #FF5733, etc.)
+        // Screenshot 3: Filter dropdown open with Images highlighted
         searchField.typeKey("a", modifierFlags: .command)
-        searchField.typeText("#")
+        searchField.typeKey(.delete, modifierFlags: [])
+        Thread.sleep(forTimeInterval: 0.3)
+        let filterButton = app.buttons["FilterDropdown"]
+        filterButton.click()
         Thread.sleep(forTimeInterval: 0.5)
-        // Navigate to show selection
+        // Arrow down twice to highlight "Images" (All Types -> Text -> Images)
+        searchField.typeText(XCUIKeyboardKey.downArrow.rawValue)
         searchField.typeText(XCUIKeyboardKey.downArrow.rawValue)
         Thread.sleep(forTimeInterval: 0.3)
-        saveScreenshot(name: "marketing_3_preview")
+        saveScreenshot(name: "marketing_3_filter")
     }
 }

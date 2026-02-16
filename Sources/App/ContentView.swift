@@ -20,8 +20,12 @@ struct ContentView: View {
     @State private var showPreviewSpinner = false
     @State private var previewSpinnerTask: Task<Void, Never>?
     @State private var showFilterPopover = false
-    @State private var filterSearchText = ""
-    @FocusState private var isSearchFocused: Bool
+    @State private var highlightedFilterIndex: Int = 0
+    enum FocusTarget: Hashable {
+        case search
+        case filterDropdown
+    }
+    @FocusState private var focusTarget: FocusTarget?
 
     private var itemIds: [Int64] {
         switch store.state {
@@ -226,7 +230,14 @@ struct ContentView: View {
     private func focusSearchField() {
         Task { @MainActor in
             try? await Task.sleep(for: .milliseconds(10))
-            isSearchFocused = true
+            focusTarget = .search
+        }
+    }
+
+    private func focusFilterDropdown() {
+        Task { @MainActor in
+            try? await Task.sleep(for: .milliseconds(50))
+            focusTarget = .filterDropdown
         }
     }
 
@@ -255,7 +266,7 @@ struct ContentView: View {
             TextField("Clipboard History Search", text: $searchText)
                 .textFieldStyle(.plain)
                 .font(.custom(FontManager.sansSerif, size: 17))
-                .focused($isSearchFocused)
+                .focused($focusTarget, equals: .search)
                 .accessibilityIdentifier("SearchField")
                 .onKeyPress(.upArrow) {
                     moveSelection(by: -1)
@@ -271,6 +282,13 @@ struct ContentView: View {
                 }
                 .onKeyPress(.escape) {
                     onDismiss()
+                    return .handled
+                }
+                .onKeyPress(.tab) {
+                    let allOptions = Self.filterOptions
+                    highlightedFilterIndex = allOptions.firstIndex(where: { $0.0 == store.contentTypeFilter }) ?? 0
+                    showFilterPopover = true
+                    focusFilterDropdown()
                     return .handled
                 }
                 .onKeyPress(characters: .decimalDigits, phases: .down) { keyPress in
@@ -304,23 +322,23 @@ struct ContentView: View {
 
     private var filterDropdown: some View {
         Button {
-            filterSearchText = ""
+            let allOptions = Self.filterOptions
+            highlightedFilterIndex = allOptions.firstIndex(where: { $0.0 == store.contentTypeFilter }) ?? 0
             showFilterPopover.toggle()
+            if showFilterPopover {
+                focusFilterDropdown()
+            }
         } label: {
             HStack(spacing: 4) {
                 Text(filterLabel)
-                    .font(.custom(FontManager.sansSerif, size: 13))
+                    .font(.system(size: 13))
                 Image(systemName: "chevron.down")
                     .font(.system(size: 9, weight: .semibold))
             }
-            .foregroundStyle(.primary.opacity(store.contentTypeFilter == .all ? 0.6 : 1.0))
-            .padding(.horizontal, 8)
-            .padding(.vertical, 4)
-            .background(
-                Capsule()
-                    .fill(store.contentTypeFilter == .all ? Color.primary.opacity(0.12) : Color.accentColor.opacity(0.15))
-            )
-            .overlay(Capsule().strokeBorder(Color.primary.opacity(0.1)))
+            .foregroundStyle(.secondary)
+            .padding(.horizontal, 12)
+            .padding(.vertical, 6)
+            .overlay(Capsule().strokeBorder(Color.primary.opacity(0.15)))
         }
         .buttonStyle(.plain)
         .accessibilityIdentifier("FilterDropdown")
@@ -329,43 +347,70 @@ struct ContentView: View {
         }
     }
 
+    private static let filterOptions: [(ContentTypeFilter, String)] = [
+        (.all, "All Types"),
+        (.text, "Text"),
+        (.images, "Images"),
+        (.links, "Links"),
+        (.colors, "Colors"),
+        (.files, "Files"),
+    ]
+
     private var filterPopoverContent: some View {
-        let allOptions: [(ContentTypeFilter, String)] = [
-            (.all, "All Types"),
-            (.text, "Text Only"),
-            (.images, "Images Only"),
-            (.links, "Links Only"),
-            (.colors, "Colors Only"),
-            (.files, "Files Only"),
-        ]
-        let filtered = filterSearchText.isEmpty
-            ? allOptions
-            : allOptions.filter { $0.1.localizedCaseInsensitiveContains(filterSearchText) }
-
-        return VStack(spacing: 0) {
-            TextField("Filter...", text: $filterSearchText)
-                .textFieldStyle(.plain)
-                .font(.custom(FontManager.sansSerif, size: 13))
-                .padding(8)
-
-            Divider()
-
-            VStack(spacing: 2) {
-                ForEach(filtered, id: \.0) { option, label in
-                    FilterOptionRow(
-                        label: label,
-                        isSelected: store.contentTypeFilter == option,
-                        action: {
-                            store.setContentTypeFilter(option)
-                            showFilterPopover = false
-                            focusSearchField()
-                        }
-                    )
+        let options = Self.filterOptions
+        return VStack(spacing: 2) {
+            ForEach(Array(options.enumerated()), id: \.offset) { index, entry in
+                let (option, label) = entry
+                if index == 1 {
+                    Divider().padding(.horizontal, 4).padding(.vertical, 3)
                 }
+                FilterOptionRow(
+                    label: label,
+                    isSelected: store.contentTypeFilter == option,
+                    isHighlighted: highlightedFilterIndex == index,
+                    action: {
+                        store.setContentTypeFilter(option)
+                        showFilterPopover = false
+                        focusSearchField()
+                    }
+                )
             }
-            .padding(4)
         }
+        .padding(10)
         .frame(width: 160)
+        .focusable()
+        .focused($focusTarget, equals: .filterDropdown)
+        .focusEffectDisabled()
+        .onKeyPress(.upArrow) {
+            highlightedFilterIndex = max(highlightedFilterIndex - 1, 0)
+            return .handled
+        }
+        .onKeyPress(.downArrow) {
+            highlightedFilterIndex = min(highlightedFilterIndex + 1, options.count - 1)
+            return .handled
+        }
+        .onKeyPress(.return, phases: .down) { _ in
+            let selected = options[highlightedFilterIndex]
+            store.setContentTypeFilter(selected.0)
+            showFilterPopover = false
+            focusSearchField()
+            return .handled
+        }
+        .onKeyPress(.escape) {
+            showFilterPopover = false
+            focusSearchField()
+            return .handled
+        }
+        .onKeyPress(.tab) {
+            showFilterPopover = false
+            focusSearchField()
+            return .handled
+        }
+        .onAppear {
+            let allOptions = Self.filterOptions
+            highlightedFilterIndex = allOptions.firstIndex(where: { $0.0 == store.contentTypeFilter }) ?? 0
+            focusFilterDropdown()
+        }
     }
 
     private func handleNumberKey(_ keyPress: KeyPress) -> KeyPress.Result {
@@ -1358,19 +1403,32 @@ struct HighlightedTextView: View, Equatable {
 private struct FilterOptionRow: View {
     let label: String
     let isSelected: Bool
+    var isHighlighted: Bool = false
     let action: () -> Void
     @State private var isHovered = false
+
+    private var rowBackground: Color {
+        if isHighlighted {
+            return Color.accentColor.opacity(0.9)
+        } else if isSelected {
+            return Color.primary.opacity(0.1)
+        } else if isHovered {
+            return Color.primary.opacity(0.05)
+        }
+        return Color.clear
+    }
 
     var body: some View {
         Button(action: action) {
             Text(label)
-                .font(.custom(FontManager.sansSerif, size: 13))
+                .font(.system(size: 13))
+                .foregroundStyle(isHighlighted ? .white : .secondary)
                 .frame(maxWidth: .infinity, alignment: .leading)
                 .padding(.horizontal, 8)
                 .padding(.vertical, 5)
                 .background(
-                    RoundedRectangle(cornerRadius: 5)
-                        .fill(isSelected ? Color.primary.opacity(0.1) : (isHovered ? Color.primary.opacity(0.05) : Color.clear))
+                    RoundedRectangle(cornerRadius: 9)
+                        .fill(rowBackground)
                 )
         }
         .buttonStyle(.plain)
