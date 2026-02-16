@@ -27,7 +27,7 @@ ClipKitty stores everything. Advanced fuzzy search means zero lag, whether you'r
 * **Live Preview**: See full content instantly as you navigate. No truncation, no waiting for tooltips.
 * **Keyboard-First**: `⌥Space` to open, arrow keys to navigate, `Return` to paste.
 * **Privacy-First**: Runs on-device and offline. No telemetry.
-* **Free & Open Source**: Licensed under GPL-3.0. The App Store version may be a paid app as a convenience fee for automatic updates, but you can always build the app yourself or install it free via [Homebrew](https://brew.sh).
+* **Free & Open Source**: Licensed under GPL-3.0. The App Store version is paid in order to support development, but you can always build the app yourself or install it free via homebrew.
 
 ## Installation
 
