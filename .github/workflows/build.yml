@@ -216,15 +216,25 @@ jobs:
 
           cp "$GITHUB_WORKSPACE/screenshot.png" .
           cp "$GITHUB_WORKSPACE/icon.png" .
-          git add screenshot.png icon.png
+          cp "$GITHUB_WORKSPACE/marketing/screenshot_1.png" marketing_1.png
+          cp "$GITHUB_WORKSPACE/marketing/screenshot_2.png" marketing_2.png
+          cp "$GITHUB_WORKSPACE/marketing/screenshot_3.png" marketing_3.png
+          git add screenshot.png icon.png marketing_1.png marketing_2.png marketing_3.png
           git commit -m "Update screenshot and icon [skip ci]" || echo "No changes to commit"
           git push origin gh-pages
+
+          git tag "screenshots/${GITHUB_SHA::7}"
+          git push origin "screenshots/${GITHUB_SHA::7}"
+
           cd -
           git worktree remove /tmp/gh-pages --force
 
           REPO="${{ github.repository }}"
           echo "Screenshot: https://raw.githubusercontent.com/$REPO/gh-pages/screenshot.png"
           echo "Icon: https://raw.githubusercontent.com/$REPO/gh-pages/icon.png"
+          echo "Marketing 1: https://raw.githubusercontent.com/$REPO/gh-pages/marketing_1.png"
+          echo "Marketing 2: https://raw.githubusercontent.com/$REPO/gh-pages/marketing_2.png"
+          echo "Marketing 3: https://raw.githubusercontent.com/$REPO/gh-pages/marketing_3.png"
 
       - name: Create Release
         if: github.ref == 'refs/heads/release'
@@ -370,6 +380,12 @@ jobs:
             > "$GITHUB_WORKSPACE/ClipKitty.provisionprofile"
         env:
           PROVISION_PROFILE_BASE64: ${{ steps.secrets.outputs.PROVISION_PROFILE_BASE64 }}
+
+      - name: Download marketing screenshots
+        uses: actions/download-artifact@v4
+        with:
+          name: assets
+          path: .
 
       - name: Build App Store Package
         run: |
