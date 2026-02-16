@@ -518,9 +518,9 @@ final class ClipKittyUITests: XCTestCase {
         Thread.sleep(forTimeInterval: 1.0)
         saveScreenshot(name: "marketing_1_history")
 
-        // Screenshot 2: Fuzzy search in action (matches demo items: Hello ClipKitty, hello_world.py, sayHello, etc.)
+        // Screenshot 2: Fuzzy search in action (typo-tolerant: "dockr"→docker, "prodction"→production, spanning multiple lines)
         searchField.click()
-        searchField.typeText("hello")
+        searchField.typeText("dockr push prodction")
         Thread.sleep(forTimeInterval: 0.5)
         saveScreenshot(name: "marketing_2_search")
 
