@@ -1,0 +1,84 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>Privacy Policy — ClipKitty</title>
+<style>
+  :root { color-scheme: light dark; }
+  * { margin: 0; padding: 0; box-sizing: border-box; }
+  body {
+    font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, Helvetica, Arial, sans-serif;
+    line-height: 1.7;
+    max-width: 680px;
+    margin: 0 auto;
+    padding: 3rem 1.5rem;
+    color: #1d1d1f;
+    background: #fff;
+  }
+  @media (prefers-color-scheme: dark) {
+    body { color: #f5f5f7; background: #1d1d1f; }
+    a { color: #6cb4ee; }
+  }
+  h1 { font-size: 2rem; margin-bottom: 0.25rem; }
+  h2 { font-size: 1.25rem; margin-top: 2rem; margin-bottom: 0.5rem; }
+  p, ul { margin-bottom: 1rem; }
+  ul { padding-left: 1.5rem; }
+  .updated { color: #86868b; font-size: 0.875rem; margin-bottom: 2rem; }
+  a { color: #0071e3; text-decoration: none; }
+  a:hover { text-decoration: underline; }
+  footer { margin-top: 3rem; padding-top: 1.5rem; border-top: 1px solid #d2d2d7; font-size: 0.875rem; color: #86868b; }
+</style>
+</head>
+<body>
+
+<h1>Privacy Policy</h1>
+<p class="updated">Last updated: February 16, 2026</p>
+
+<p>ClipKitty is a clipboard history manager for macOS built by Juliette Pluto. This policy explains how ClipKitty handles your data.</p>
+
+<h2>The short version</h2>
+<p>ClipKitty does not collect, transmit, or share any of your data. Everything stays on your Mac.</p>
+
+<h2>Data storage</h2>
+<p>ClipKitty stores your clipboard history (text, images, links, files, and colors) in a local database on your Mac at:</p>
+<p><code>~/Library/Application Support/ClipKitty/</code></p>
+<p>This data never leaves your device. There is no cloud sync, no remote backup, and no server-side component.</p>
+
+<h2>Data collection</h2>
+<p>ClipKitty collects <strong>no data whatsoever</strong>:</p>
+<ul>
+  <li>No analytics or usage tracking</li>
+  <li>No crash reports sent externally</li>
+  <li>No telemetry</li>
+  <li>No advertising identifiers</li>
+  <li>No personal information</li>
+</ul>
+
+<h2>Network access</h2>
+<p>ClipKitty makes outbound network requests only when fetching link preview metadata (titles and icons) for URLs in your clipboard history. This uses Apple's built-in LinkPresentation framework. No clipboard content is sent to any server controlled by ClipKitty.</p>
+
+<h2>Clipboard access</h2>
+<p>ClipKitty monitors the macOS system clipboard to record items you copy. It respects concealed clipboard items (e.g. passwords from password managers) and skips them automatically.</p>
+
+<h2>Third-party services</h2>
+<p>ClipKitty does not integrate with any third-party analytics, advertising, or tracking services.</p>
+
+<h2>Data deletion</h2>
+<p>You can delete your entire clipboard history at any time by removing the ClipKitty data directory, or by uninstalling the app. Individual items can be deleted from within the app.</p>
+
+<h2>Children's privacy</h2>
+<p>ClipKitty does not knowingly collect any information from anyone, including children under 13.</p>
+
+<h2>Changes to this policy</h2>
+<p>If this policy changes, the updated version will be published at this URL with a new "Last updated" date.</p>
+
+<h2>Contact</h2>
+<p>Questions about this privacy policy can be directed to <a href="mailto:apple@jul.sh">apple@jul.sh</a>.</p>
+
+<footer>
+  <p>&copy; 2025–2026 Juliette Pluto &middot; <a href="https://github.com/jul-sh/clipkitty">GitHub</a></p>
+</footer>
+
+</body>
+</html>

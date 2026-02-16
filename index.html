@@ -1,0 +1,205 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>ClipKitty — Clipboard Manager for macOS</title>
+<meta name="description" content="Unlimited clipboard history with instant fuzzy search and multi-line previews. Private, fast, keyboard-driven. Free for macOS.">
+<style>
+  :root { color-scheme: light dark; }
+  * { margin: 0; padding: 0; box-sizing: border-box; }
+
+  body {
+    font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, Helvetica, Arial, sans-serif;
+    line-height: 1.6;
+    color: #1d1d1f;
+    background: #fbfbfd;
+  }
+  @media (prefers-color-scheme: dark) {
+    body { color: #f5f5f7; background: #000; }
+    .hero { background: #1d1d1f; }
+    .features { background: #000; }
+    .cta-section { background: #1d1d1f; }
+    .badge-link img { filter: none; }
+    a { color: #6cb4ee; }
+    .feature p { color: #a1a1a6; }
+  }
+
+  /* Hero */
+  .hero {
+    text-align: center;
+    padding: 4rem 1.5rem 2rem;
+    background: #fff;
+  }
+  .hero img.icon {
+    width: 96px;
+    height: 96px;
+    border-radius: 22%;
+    margin-bottom: 1.5rem;
+  }
+  .hero h1 {
+    font-size: 2.5rem;
+    font-weight: 700;
+    letter-spacing: -0.02em;
+    margin-bottom: 0.5rem;
+  }
+  .hero .subtitle {
+    font-size: 1.25rem;
+    color: #86868b;
+    max-width: 520px;
+    margin: 0 auto 2rem;
+  }
+  .badges {
+    display: flex;
+    gap: 1rem;
+    justify-content: center;
+    flex-wrap: wrap;
+    margin-bottom: 2rem;
+  }
+  .badge-link img { height: 40px; }
+
+  /* Screenshot */
+  .screenshot-wrap {
+    max-width: 900px;
+    margin: 0 auto;
+    padding: 0 1.5rem 3rem;
+  }
+  .screenshot-wrap img {
+    width: 100%;
+    border-radius: 8px;
+    box-shadow: 0 8px 30px rgba(0,0,0,0.12);
+  }
+
+  /* Features */
+  .features {
+    padding: 4rem 1.5rem;
+    background: #fbfbfd;
+  }
+  .features-grid {
+    display: grid;
+    grid-template-columns: repeat(auto-fit, minmax(260px, 1fr));
+    gap: 2.5rem;
+    max-width: 900px;
+    margin: 0 auto;
+  }
+  .feature h3 {
+    font-size: 1.1rem;
+    margin-bottom: 0.4rem;
+  }
+  .feature p {
+    color: #6e6e73;
+    font-size: 0.95rem;
+  }
+
+  /* CTA */
+  .cta-section {
+    text-align: center;
+    padding: 4rem 1.5rem;
+    background: #fff;
+  }
+  .cta-section h2 {
+    font-size: 1.75rem;
+    margin-bottom: 0.5rem;
+  }
+  .cta-section p {
+    color: #86868b;
+    margin-bottom: 1.5rem;
+  }
+  .cta-section code {
+    display: inline-block;
+    background: #f5f5f7;
+    color: #1d1d1f;
+    padding: 0.6rem 1.2rem;
+    border-radius: 8px;
+    font-size: 0.95rem;
+    font-family: "SF Mono", Menlo, monospace;
+  }
+  @media (prefers-color-scheme: dark) {
+    .cta-section code { background: #2d2d2d; color: #f5f5f7; }
+  }
+
+  /* Footer */
+  footer {
+    text-align: center;
+    padding: 2rem 1.5rem;
+    font-size: 0.85rem;
+    color: #86868b;
+    border-top: 1px solid #d2d2d7;
+  }
+  @media (prefers-color-scheme: dark) {
+    footer { border-top-color: #424245; }
+  }
+  footer a { color: inherit; text-decoration: none; }
+  footer a:hover { text-decoration: underline; }
+  footer .links { margin-top: 0.5rem; }
+  footer .links a { margin: 0 0.75rem; }
+
+  @media (max-width: 600px) {
+    .hero h1 { font-size: 1.75rem; }
+    .hero .subtitle { font-size: 1rem; }
+  }
+</style>
+</head>
+<body>
+
+<section class="hero">
+  <img class="icon" src="icon.png" alt="ClipKitty icon">
+  <h1>ClipKitty</h1>
+  <p class="subtitle">Your clipboard history from day one. Unlimited storage, instant fuzzy search, full multi-line previews — all private, all on your Mac.</p>
+  <div class="badges">
+    <a class="badge-link" href="https://apps.apple.com/app/clipkitty-clipboard-manager/id6759137247">
+      <img src="https://developer.apple.com/assets/elements/badges/download-on-the-mac-app-store.svg" alt="Download on the Mac App Store">
+    </a>
+  </div>
+</section>
+
+<div class="screenshot-wrap">
+  <img src="marketing_1.png" alt="ClipKitty screenshot showing clipboard history with search and preview">
+</div>
+
+<section class="features">
+  <div class="features-grid">
+    <div class="feature">
+      <h3>Unlimited History</h3>
+      <p>No caps, no expiry. Everything you copy is stored — text, code, links, images, colors. Find that snippet from last year in milliseconds.</p>
+    </div>
+    <div class="feature">
+      <h3>Instant Fuzzy Search</h3>
+      <p>Powered by Tantivy, the same engine behind production search platforms. Type "improt" and find "import". Stays fast across millions of items.</p>
+    </div>
+    <div class="feature">
+      <h3>Multi-Line Preview</h3>
+      <p>See full content — code blocks, emails, multi-paragraph text — in a dedicated preview pane before you paste. No more guessing from truncated snippets.</p>
+    </div>
+    <div class="feature">
+      <h3>Privacy First</h3>
+      <p>Runs entirely on your Mac. No cloud sync, no analytics, no telemetry. Your clipboard history never leaves your device.</p>
+    </div>
+    <div class="feature">
+      <h3>Keyboard Driven</h3>
+      <p>Option+Space to open. Arrow keys to browse. Return to paste. Cmd+1–9 to jump. No mouse required.</p>
+    </div>
+    <div class="feature">
+      <h3>Native &amp; Fast</h3>
+      <p>Built with Swift and Rust, optimized for Apple Silicon. Runs silently in your menu bar with minimal memory and zero CPU when idle.</p>
+    </div>
+  </div>
+</section>
+
+<section class="cta-section">
+  <h2>Also available via Homebrew</h2>
+  <p>Install from the command line:</p>
+  <code>brew install jul-sh/clipkitty/clipkitty</code>
+</section>
+
+<footer>
+  <p>&copy; 2025–2026 Juliette Pluto</p>
+  <div class="links">
+    <a href="https://github.com/jul-sh/clipkitty">GitHub</a>
+    <a href="privacy.html">Privacy Policy</a>
+    <a href="mailto:apple@jul.sh">Contact</a>
+  </div>
+</footer>
+
+</body>
+</html>
