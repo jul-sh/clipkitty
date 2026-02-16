@@ -76,6 +76,13 @@ pub const DEMO_ITEMS: &[DemoItem] = &[
         bundle_id: "com.apple.TextEdit",
         offset: -2800,
     },
+    // Deploy command for search demo (fuzzy match target)
+    DemoItem {
+        content: "# Deploy API server to production\ndocker build -t api-server:latest . && \\\ndocker push registry.company.com/api-server:latest && \\\nkubectl set image deployment/api \\\n  api=registry.company.com/api-server:latest \\\n  -n production",
+        source_app: "Terminal",
+        bundle_id: "com.apple.Terminal",
+        offset: -90 * 24 * 60 * 60, // ~90 days ago (middle of history)
+    },
     // --- Scene 2: Color/Image items ---
     DemoItem {
         content: "Orange tabby cat sleeping on mechanical keyboard",
@@ -150,12 +157,6 @@ pub const DEMO_ITEMS: &[DemoItem] = &[
         offset: -800,
     },
     // --- Scene 1: Hello-related items ---
-    DemoItem {
-        content: "Hello ClipKitty!\n\n• Unlimited History\n• Instant Search\n• Private\n\nYour clipboard, supercharged.",
-        source_app: "Notes",
-        bundle_id: "com.apple.Notes",
-        offset: -600,
-    },
     DemoItem {
         content: "Hello and welcome to the onboarding flow for new team members. This document covers everything you need to know about getting started...",
         source_app: "Reminders",
@@ -236,9 +237,9 @@ pub const DEMO_ITEMS: &[DemoItem] = &[
         offset: -40,
     },
     DemoItem {
-        content: "SELECT users.name, orders.total FROM orders JOIN users ON users.id = orders.user_id WHERE orders.status = 'completed' AND orders.created_at > NOW() - INTERVAL '30 days' ORDER BY orders.total DESC LIMIT 100;",
-        source_app: "Numbers",
-        bundle_id: "com.apple.Numbers",
+        content: "ClipKitty\n• Copy it once, find it forever\n• Fuzzy search forgives your typos\n• See full code blocks before you paste\n• ⌥Space to summon, keyboard-first\n• Your data never leaves your Mac",
+        source_app: "Safari",
+        bundle_id: "com.apple.Safari",
         offset: -10,
     },
 ];
