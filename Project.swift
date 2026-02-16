@@ -155,7 +155,9 @@ let project = Project(
                     .executionAction(
                         title: "Build Rust Core",
                         scriptText: """
-                        if [ -x "$PROJECT_DIR/Scripts/run-in-nix.sh" ]; then
+                        if [ -f "$PROJECT_DIR/.make/rust.marker" ]; then
+                            echo "Rust already built by Makefile, skipping."
+                        elif [ -x "$PROJECT_DIR/Scripts/run-in-nix.sh" ]; then
                             "$PROJECT_DIR/Scripts/run-in-nix.sh" -c "cd $PROJECT_DIR/purr && cargo run --release --bin generate-bindings"
                         fi
                         """,
