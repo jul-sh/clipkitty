@@ -90,14 +90,31 @@ jobs:
       - name: Build Non-Sandboxed App
         run: make build CONFIGURATION=Release
 
+      - name: Create Virtual Retina Display
+        run: |
+          xcrun clang -framework CoreGraphics -framework Foundation \
+            -o /tmp/create-retina-display distribution/create-retina-display.m
+          /tmp/create-retina-display &
+          echo "$!" > /tmp/retina-display.pid
+          sleep 5
+
       - name: Run UI Tests
         run: |
           CONFIGURATION=Release make -C distribution screenshot
-          # Validate screenshot was actually captured
           if [ ! -f screenshot.png ]; then
-            echo "ERROR: screenshot.png was not created. Check UI test logs."
+            echo "ERROR: screenshot.png was not created."
             exit 1
           fi
+          sips -g pixelWidth -g pixelHeight screenshot.png
+
+      - name: Generate Marketing Screenshots
+        run: |
+          make -C distribution marketing-screenshots
+          ls -lh marketing/screenshot_*.png
+
+      - name: Teardown Virtual Display
+        if: always()
+        run: kill "$(cat /tmp/retina-display.pid 2>/dev/null)" 2>/dev/null || true
 
       - name: Generate Icon PNG
         run: make -C distribution icon-png
@@ -176,6 +193,7 @@ jobs:
           path: |
             screenshot.png
             icon.png
+            marketing/screenshot_*.png
 
       - name: Deploy to gh-pages
         if: github.event_name == 'push' && github.ref == 'refs/heads/main'
@@ -198,15 +216,25 @@ jobs:
 
           cp "$GITHUB_WORKSPACE/screenshot.png" .
           cp "$GITHUB_WORKSPACE/icon.png" .
-          git add screenshot.png icon.png
+          cp "$GITHUB_WORKSPACE/marketing/screenshot_1.png" marketing_1.png
+          cp "$GITHUB_WORKSPACE/marketing/screenshot_2.png" marketing_2.png
+          cp "$GITHUB_WORKSPACE/marketing/screenshot_3.png" marketing_3.png
+          git add screenshot.png icon.png marketing_1.png marketing_2.png marketing_3.png
           git commit -m "Update screenshot and icon [skip ci]" || echo "No changes to commit"
           git push origin gh-pages
+
+          git tag "screenshots/${GITHUB_SHA::7}"
+          git push origin "screenshots/${GITHUB_SHA::7}"
+
           cd -
           git worktree remove /tmp/gh-pages --force
 
           REPO="${{ github.repository }}"
           echo "Screenshot: https://raw.githubusercontent.com/$REPO/gh-pages/screenshot.png"
           echo "Icon: https://raw.githubusercontent.com/$REPO/gh-pages/icon.png"
+          echo "Marketing 1: https://raw.githubusercontent.com/$REPO/gh-pages/marketing_1.png"
+          echo "Marketing 2: https://raw.githubusercontent.com/$REPO/gh-pages/marketing_2.png"
+          echo "Marketing 3: https://raw.githubusercontent.com/$REPO/gh-pages/marketing_3.png"
 
       - name: Create Release
         if: github.ref == 'refs/heads/release'
@@ -357,6 +385,12 @@ jobs:
             > "$GITHUB_WORKSPACE/ClipKitty.provisionprofile"
         env:
           PROVISION_PROFILE_BASE64: ${{ steps.secrets.outputs.PROVISION_PROFILE_BASE64 }}
+
+      - name: Download marketing screenshots
+        uses: actions/download-artifact@v4
+        with:
+          name: assets
+          path: .
 
       - name: Build App Store Package
         run: |

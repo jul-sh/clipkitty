@@ -98,7 +98,7 @@ final class ClipKittyUITests: XCTestCase {
             .deletingLastPathComponent()
         let sqliteSourceURL = projectRoot.appendingPathComponent("distribution/SyntheticData.sqlite")
         let targetURL = appSupportDir.appendingPathComponent("clipboard-screenshot.sqlite")
-        let indexDirURL = appSupportDir.appendingPathComponent("tantivy_index_v2")
+        let indexDirURL = appSupportDir.appendingPathComponent("tantivy_index_v3")
 
         try? FileManager.default.createDirectory(at: appSupportDir, withIntermediateDirectories: true)
 
@@ -285,8 +285,8 @@ final class ClipKittyUITests: XCTestCase {
 
         // 3. Verify popover content appears with filter options
         // FilterOptionRow uses Button, so options appear as buttons in the accessibility tree
-        let linksOption = app.buttons["Links Only"]
-        XCTAssertTrue(linksOption.waitForExistence(timeout: 3), "Popover should show 'Links Only' option")
+        let linksOption = app.buttons["Links"]
+        XCTAssertTrue(linksOption.waitForExistence(timeout: 3), "Popover should show 'Links' option")
 
         // Screenshot: dropdown open
         saveScreenshot(name: "filter_open")
@@ -326,26 +326,45 @@ final class ClipKittyUITests: XCTestCase {
 
     // MARK: - Marketing Assets
 
-    /// Helper to save a screenshot of just the app window to a specific path
+    /// Captures a screenshot of the app window with padding around it.
+    /// Uses a full-screen capture cropped to the window frame + padding.
+    /// Before calling, ensure the desktop is set to a neutral background
+    /// (see `setNeutralDesktop`) so padding areas look clean.
     private func saveScreenshot(name: String) {
-        // Get the app's window and capture only that
         let window = app.dialogs.firstMatch
         if !window.exists {
             return
         }
 
-        let screenshot = window.screenshot()
-        let attachment = XCTAttachment(screenshot: screenshot)
-        attachment.name = name
-        attachment.lifetime = .keepAlways
-        add(attachment)
+        let padding: CGFloat = 80
+        let frame = window.frame
+        let screenShot = XCUIScreen.main.screenshot()
+        let image = screenShot.image
 
-        let image = screenshot.image
-        if let tiff = image.tiffRepresentation,
+        let cropRect = CGRect(
+            x: max(frame.origin.x - padding, 0),
+            y: max(frame.origin.y - padding, 0),
+            width: frame.width + padding * 2,
+            height: frame.height + padding * 2
+        )
+
+        guard let cgImage = image.cgImage(forProposedRect: nil, context: nil, hints: nil),
+              let cropped = cgImage.cropping(to: cropRect) else {
+            return
+        }
+
+        let croppedImage = NSImage(cgImage: cropped, size: cropRect.size)
+
+        if let tiff = croppedImage.tiffRepresentation,
            let bitmap = NSBitmapImageRep(data: tiff),
            let png = bitmap.representation(using: .png, properties: [:]) {
             let url = URL(fileURLWithPath: "/tmp/clipkitty_\(name).png")
             try? png.write(to: url)
+
+            let attachment = XCTAttachment(data: png, uniformTypeIdentifier: "public.png")
+            attachment.name = name
+            attachment.lifetime = .keepAlways
+            add(attachment)
         }
     }
 
@@ -499,19 +518,27 @@ final class ClipKittyUITests: XCTestCase {
         Thread.sleep(forTimeInterval: 1.0)
         saveScreenshot(name: "marketing_1_history")
 
-        // Screenshot 2: Fuzzy search in action (matches demo items: Hello ClipKitty, hello_world.py, sayHello, etc.)
+        // Screenshot 2: Fuzzy search in action (typo-tolerant: "dockr"→docker, "prodction"→production, spanning multiple lines)
         searchField.click()
-        searchField.typeText("hello")
+        searchField.typeText("dockr push prodction")
         Thread.sleep(forTimeInterval: 0.5)
         saveScreenshot(name: "marketing_2_search")
 
-        // Screenshot 3: Color swatch search showing preview (matches demo items: #7C3AED, #FF5733, etc.)
+        // Screenshot 3: Images filter applied with dropdown still open
         searchField.typeKey("a", modifierFlags: .command)
-        searchField.typeText("#")
-        Thread.sleep(forTimeInterval: 0.5)
-        // Navigate to show selection
-        searchField.typeText(XCUIKeyboardKey.downArrow.rawValue)
+        searchField.typeKey(.delete, modifierFlags: [])
         Thread.sleep(forTimeInterval: 0.3)
-        saveScreenshot(name: "marketing_3_preview")
+        let filterButton = app.buttons["FilterDropdown"]
+        // First apply the Images filter
+        filterButton.click()
+        Thread.sleep(forTimeInterval: 0.5)
+        app.typeKey(.downArrow, modifierFlags: [])
+        app.typeKey(.downArrow, modifierFlags: [])
+        app.typeKey(.return, modifierFlags: [])
+        Thread.sleep(forTimeInterval: 0.5)
+        // Re-open the dropdown so it's visible in the screenshot
+        filterButton.click()
+        Thread.sleep(forTimeInterval: 0.5)
+        saveScreenshot(name: "marketing_3_filter")
     }
 }
