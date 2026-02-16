@@ -68,3 +68,9 @@ make
 ```
 
 Requires macOS 15+ and Swift 6.2+.
+
+## Screenshots
+
+<img src="https://raw.githubusercontent.com/jul-sh/clipkitty/gh-pages/marketing_1.png" width="820">
+<img src="https://raw.githubusercontent.com/jul-sh/clipkitty/gh-pages/marketing_2.png" width="820">
+<img src="https://raw.githubusercontent.com/jul-sh/clipkitty/gh-pages/marketing_3.png" width="820">
