@@ -7,7 +7,7 @@ HOW TO TEST:
 3. Press Option+Space (the default hotkey) — the clipboard history panel appears centered on screen.
 4. Your copied items appear in a scrollable list, most recent first.
 5. Use the arrow keys (Up/Down) to navigate items. The right-side preview pane shows full content.
-6. Press Return to paste the selected item into the previously focused app.
+6. Press Return to restore the selected item to the clipboard, then paste it into the previously focused app.
 7. Type in the search field at the top to fuzzy-search your entire history (e.g. type "improt" to find "import").
 8. Click the filter dropdown (top-left of the panel) to filter by content type: Text, Images, Links, Colors, Files.
 9. Press Escape to dismiss the panel.
