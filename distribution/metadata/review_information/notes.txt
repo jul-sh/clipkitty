@@ -1,1 +1,20 @@
-ClipKitty is a clipboard history manager. After launching, it runs in the menu bar. Press Option+Space to open the clipboard history panel. Copy some text in any app first to populate the history.
+ClipKitty is a menu-bar clipboard history manager. It has no main window — it lives in the macOS menu bar and is activated via a global hotkey.
+
+HOW TO TEST:
+
+1. Launch ClipKitty. A small cat icon appears in the menu bar (top-right of your screen).
+2. Copy some text in any app (e.g. select text in Safari, press Cmd+C). Do this 2–3 times with different content.
+3. Press Option+Space (the default hotkey) — the clipboard history panel appears centered on screen.
+4. Your copied items appear in a scrollable list, most recent first.
+5. Use the arrow keys (Up/Down) to navigate items. The right-side preview pane shows full content.
+6. Press Return to paste the selected item into the previously focused app.
+7. Type in the search field at the top to fuzzy-search your entire history (e.g. type "improt" to find "import").
+8. Click the filter dropdown (top-left of the panel) to filter by content type: Text, Images, Links, Colors, Files.
+9. Press Escape to dismiss the panel.
+10. Click the menu bar icon to access Settings (or press Cmd+, when the panel is open).
+
+NOTES:
+- The App Store (sandboxed) version requires you to manually press Cmd+V after selecting an item, because macOS sandbox restrictions prevent simulating keystrokes. The non-sandboxed version pastes automatically.
+- The app has no account system, no login, no cloud sync. All data is stored locally.
+- On first launch, clipboard history will be empty — you need to copy content to populate it.
+- A screen recording is attached demonstrating the full workflow.
