@@ -66,24 +66,19 @@
               AGE_KEY_DIR="$HOME/.config/clipkitty"
               AGE_KEY_FILE="$AGE_KEY_DIR/age-key.txt"
               if [ ! -f "$AGE_KEY_FILE" ]; then
-                echo "[clipkitty] Age key not found at $AGE_KEY_FILE"
-                echo "[clipkitty] Attempting to extract from macOS Keychain..."
-                if KEY=$(security find-generic-password -s "clipkitty-age-secret-key" -a "age" -w 2>/dev/null); then
-                  mkdir -p "$AGE_KEY_DIR"
-                  echo "$KEY" > "$AGE_KEY_FILE"
-                  chmod 600 "$AGE_KEY_FILE"
-                  echo "[clipkitty] Age key extracted to $AGE_KEY_FILE"
-                else
-                  echo "[clipkitty] WARNING: Could not retrieve age key from Keychain."
-                  echo "[clipkitty] Secrets will not be available. To set up:"
-                  echo "[clipkitty]   mkdir -p $AGE_KEY_DIR"
-                  echo "[clipkitty]   echo 'AGE-SECRET-KEY-...' > $AGE_KEY_FILE"
-                  echo "[clipkitty]   chmod 600 $AGE_KEY_FILE"
+                if command -v security &>/dev/null; then
+                  if KEY=$(security find-generic-password -s "clipkitty-age-secret-key" -a "age" -w 2>/dev/null); then
+                    mkdir -p "$AGE_KEY_DIR"
+                    echo "$KEY" > "$AGE_KEY_FILE"
+                    chmod 600 "$AGE_KEY_FILE"
+                  fi
                 fi
               fi
 
-              # Decrypt secrets via agenix-shell (must be sourced to export env vars)
-              source ${config.agenix-shell.installationScript}/bin/install-agenix-shell
+              # Decrypt secrets via agenix-shell if identity is available
+              if [ -f "$AGE_KEY_FILE" ]; then
+                source ${config.agenix-shell.installationScript}/bin/install-agenix-shell
+              fi
             '';
           };
         };
