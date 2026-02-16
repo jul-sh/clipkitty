@@ -307,13 +307,103 @@ fn insert_demo_items(store: &ClipboardStore, db_path: &str) -> Result<()> {
         if let Ok(id) = save_image_direct(
             db_path,
             image_data,
-            "kitty".to_string(),
+            "cat, kitten, tabby, pet, animal, fur, whiskers".to_string(),
             Some("Photos".to_string()),
             Some("com.apple.Photos".to_string()),
         ) {
             if id > 0 {
                 let _ = set_timestamp_direct(db_path, id, now - 5); // Most recent demo item
             }
+        }
+    }
+
+    // Add source images with keyword captions (mirrors Vision framework output)
+    let source_images_dir = base_path.join("../source-images");
+    let source_images: &[(&str, &str, &str, &str, i64)] = &[
+        // (filename, keywords, source_app, bundle_id, time_offset_seconds)
+        (
+            "[Advent Bay, Spitzbergen, Norway].webp",
+            "landscape, arctic, mountains, bay, tundra, cabin, norway, spitzbergen, photograph, vintage",
+            "Safari", "com.apple.Safari", -7200,
+        ),
+        (
+            "At the French Windows. The Artist\u{2019}s Wife.webp",
+            "painting, woman, portrait, garden, balcony, dress, spring, blossoms, trees, oil painting",
+            "Photos", "com.apple.Photos", -6800,
+        ),
+        (
+            "Bemberg Fondation Toulouse.jpg",
+            "painting, impressionist, pointillism, garden, blossoms, trees, gate, spring, colorful, oil painting",
+            "Safari", "com.apple.Safari", -6400,
+        ),
+        (
+            "Eide : Granvin DATE ca. 1910.webp",
+            "village, norway, fjord, harbor, boats, houses, mountains, coastal, photograph, vintage",
+            "Photos", "com.apple.Photos", -6000,
+        ),
+        (
+            "Gathering Autumn Flowers A1758.jpg",
+            "painting, field, meadow, women, parasol, flowers, autumn, sky, clouds, impressionist",
+            "Safari", "com.apple.Safari", -5600,
+        ),
+        (
+            "Henri-Edmond Cross\u{a0}.jpg",
+            "painting, pointillism, sunset, clouds, pink, sky, trees, landscape, neo-impressionist, oil painting",
+            "Photos", "com.apple.Photos", -5200,
+        ),
+        (
+            "Man with rickshaw on tall tree lined dirt road.webp",
+            "photograph, road, trees, rickshaw, path, forest, tall trees, japan, vintage, black and white",
+            "Safari", "com.apple.Safari", -4800,
+        ),
+        (
+            "Miniature from an Akbarnama (detail) of Akbar wearing a bandhan\u{12b} patk\u{101} over a gold-brocaded silk sash.jpg.webp",
+            "painting, miniature, mughal, emperor, akbar, throne, court, gold, turban, manuscript",
+            "Safari", "com.apple.Safari", -4400,
+        ),
+        (
+            "Monet - The Gare Saint-Lazare.jpg",
+            "painting, monet, train station, steam, locomotive, impressionist, paris, railway, smoke, oil painting",
+            "Photos", "com.apple.Photos", -4000,
+        ),
+        (
+            "The Drunkard\u{2019}s Children (Plate 1).webp",
+            "print, engraving, crowd, victorian, street scene, people, illustration, cruikshank, vintage, black and white",
+            "Safari", "com.apple.Safari", -3600,
+        ),
+        (
+            "The Great Wave off Kanagawa.jpg",
+            "woodblock print, wave, ocean, hokusai, japan, mount fuji, boats, ukiyo-e, blue, sea",
+            "Photos", "com.apple.Photos", -3200,
+        ),
+        (
+            "The Solfatara, and the issue of hot vapours from underground lakes.webp",
+            "illustration, volcano, landscape, geological, lake, steam, fire, figure, tree, scientific",
+            "Safari", "com.apple.Safari", -2800,
+        ),
+        (
+            "The Whale Car Wash, Oklahoma City, Oklahoma.webp",
+            "photograph, whale, building, roadside, blue, car wash, americana, kitsch, architecture, vintage",
+            "Photos", "com.apple.Photos", -2400,
+        ),
+    ];
+
+    for (filename, keywords, source_app, bundle_id, offset) in source_images {
+        let image_path = source_images_dir.join(filename);
+        if let Ok(image_data) = fs::read(&image_path) {
+            if let Ok(id) = save_image_direct(
+                db_path,
+                image_data,
+                keywords.to_string(),
+                Some(source_app.to_string()),
+                Some(bundle_id.to_string()),
+            ) {
+                if id > 0 {
+                    let _ = set_timestamp_direct(db_path, id, now + offset);
+                }
+            }
+        } else {
+            eprintln!("Warning: source image not found: {}", filename);
         }
     }
 
