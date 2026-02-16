@@ -83,59 +83,36 @@ process_screenshot() {
     local INPUT_HEIGHT=$($MAGICK identify -format "%h" "$INPUT")
     echo "  Input size: ${INPUT_WIDTH}x${INPUT_HEIGHT}"
 
-    # Scale down the screenshot to fit nicely on the background
-    # Leave room for caption at top
-    local SCALE_WIDTH=$((FINAL_WIDTH - 200))
-    local SCALE_HEIGHT=$((FINAL_HEIGHT - 200))
+    # Scale the screenshot to fill most of the canvas
+    local SCALE_WIDTH=$FINAL_WIDTH
+    local SCALE_HEIGHT=$FINAL_HEIGHT
 
-    # Step 1: Add rounded corners using a mask approach
+    # Step 1: Resize to fit (Catrom = bicubic sharp, avoids blur on upscale)
     $MAGICK "$INPUT" \
-        -alpha set \
-        \( +clone -alpha extract \
-            -draw "fill black rectangle 0,0 ${INPUT_WIDTH},${INPUT_HEIGHT}" \
-            -fill white \
-            -draw "roundrectangle 0,0 $((INPUT_WIDTH-1)),$((INPUT_HEIGHT-1)) ${CORNER_RADIUS},${CORNER_RADIUS}" \
-        \) \
-        -alpha off -compose CopyOpacity -composite \
-        "/tmp/clipkitty_rounded.png"
-
-    # Step 2: Add drop shadow
-    $MAGICK "/tmp/clipkitty_rounded.png" \
-        \( +clone -background "rgba(0,0,0,0.5)" -shadow "${SHADOW_OPACITY}x${SHADOW_BLUR}+0+${SHADOW_OFFSET}" \) \
-        +swap -background none -layers merge +repage \
-        "/tmp/clipkitty_shadowed.png"
-
-    # Step 3: Resize to fit
-    $MAGICK "/tmp/clipkitty_shadowed.png" \
-        -resize "${SCALE_WIDTH}x${SCALE_HEIGHT}" \
+        -filter Catrom -resize "${SCALE_WIDTH}x${SCALE_HEIGHT}" \
         "/tmp/clipkitty_resized.png"
 
-    # Step 4: Composite onto background with caption
-    # First, try to render caption using pango (works if pango support is built-in)
-    # Fall back to no caption if font rendering isn't available
+    # Step 2: Composite onto background (shifted up from center)
     FONT_PATH="/System/Library/Fonts/SFNS.ttf"
 
-    # Create the caption as a separate image, then composite
     if $MAGICK -background none -fill "$CAPTION_COLOR" \
         -font "$FONT_PATH" -pointsize $CAPTION_SIZE \
         -gravity center "label:$CAPTION" \
         "/tmp/clipkitty_caption.png" 2>/dev/null; then
-        # Caption created successfully, composite everything
         $MAGICK "$GRADIENT_BG" \
-            "/tmp/clipkitty_resized.png" -gravity center -geometry +0+50 -composite \
+            "/tmp/clipkitty_resized.png" -gravity center -geometry +0-40 -composite \
             "/tmp/clipkitty_caption.png" -gravity north -geometry +0+$CAPTION_Y_OFFSET -composite \
             "$OUTPUT"
         rm -f "/tmp/clipkitty_caption.png"
     else
-        # Font rendering not available, skip caption
         echo "  Warning: Font rendering unavailable, skipping caption"
         $MAGICK "$GRADIENT_BG" \
-            "/tmp/clipkitty_resized.png" -gravity center -geometry +0+50 -composite \
+            "/tmp/clipkitty_resized.png" -gravity center -geometry +0-40 -composite \
             "$OUTPUT"
     fi
 
     # Clean up temp files
-    rm -f "/tmp/clipkitty_rounded.png" "/tmp/clipkitty_shadowed.png" "/tmp/clipkitty_resized.png"
+    rm -f "/tmp/clipkitty_resized.png"
 
     echo "  Output: $OUTPUT"
     echo ""
@@ -144,7 +121,7 @@ process_screenshot() {
 # Check if raw screenshots exist
 RAW_1="/tmp/clipkitty_marketing_1_history.png"
 RAW_2="/tmp/clipkitty_marketing_2_search.png"
-RAW_3="/tmp/clipkitty_marketing_3_preview.png"
+RAW_3="/tmp/clipkitty_marketing_3_filter.png"
 
 MISSING_FILES=0
 for f in "$RAW_1" "$RAW_2" "$RAW_3"; do

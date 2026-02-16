@@ -394,7 +394,6 @@ final class ClipboardStore {
         if let fileURLs = pasteboard.readObjects(forClasses: [NSURL.self], options: [
             .urlReadingFileURLsOnly: true
         ]) as? [URL], !fileURLs.isEmpty {
-            saveFileItems(urls: fileURLs)
             return
         }
         #endif
