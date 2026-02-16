@@ -78,6 +78,9 @@
               # Decrypt secrets via agenix-shell if identity is available
               if [ -f "$AGE_KEY_FILE" ]; then
                 source ${config.agenix-shell.installationScript}/bin/install-agenix-shell
+              else
+                echo "[clipkitty] No age key found — secrets not available. Set up with:"
+                echo "  echo 'AGE-SECRET-KEY-...' > $AGE_KEY_FILE && chmod 600 $AGE_KEY_FILE"
               fi
             '';
           };
