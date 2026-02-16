@@ -48,13 +48,19 @@ dmg:
 # Screenshot launches the app with synthetic data and takes a fullscreen capture
 screenshot: run-synthetic
 	@echo "Preparing environment and taking screenshot..."
-	@$(DIST_DIR)/prepare-screenshot-environment.sh 'pkill ClipKitty || true && open "$(APP_PATH)" --args --use-simulated-db && sleep 3 && screencapture $(PROJECT_ROOT)/screenshot.png && pkill ClipKitty || true'
+	@$(DIST_DIR)/prepare-screenshot-environment.sh 'pkill ClipKitty || true && open "$(APP_PATH)" --args --use-simulated-db && sleep 3 && screencapture -m $(PROJECT_ROOT)/screenshot.png && pkill ClipKitty || true'
 	@if [ -f $(PROJECT_ROOT)/screenshot.png ]; then \
 		WIDTH=$$(sips -g pixelWidth $(PROJECT_ROOT)/screenshot.png | tail -1 | awk '{print $$2}'); \
 		HEIGHT=$$(sips -g pixelHeight $(PROJECT_ROOT)/screenshot.png | tail -1 | awk '{print $$2}'); \
-		sips --resampleHeightWidth $$((HEIGHT * 2)) $$((WIDTH * 2)) $(PROJECT_ROOT)/screenshot.png --out $(PROJECT_ROOT)/screenshot.png; \
+		echo "Raw screenshot: $${WIDTH}x$${HEIGHT}"; \
+		if [ $$WIDTH -lt 2000 ]; then \
+			echo "Low-DPI capture detected — upscaling 2×"; \
+			sips --resampleHeightWidth $$((HEIGHT * 2)) $$((WIDTH * 2)) $(PROJECT_ROOT)/screenshot.png --out $(PROJECT_ROOT)/screenshot.png; \
+		else \
+			echo "High-DPI capture detected — no upscaling needed"; \
+		fi; \
 	fi
-	@echo "Screenshot saved to screenshot.png (2x upscaled)"
+	@echo "Screenshot saved to screenshot.png"
 
 # Export app icon as PNG (for README, gh-pages, etc.)
 icon-png:
