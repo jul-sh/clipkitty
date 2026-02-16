@@ -27,6 +27,7 @@ ClipKitty stores everything. Advanced fuzzy search means zero lag, whether you'r
 * **Live Preview**: See full content instantly as you navigate. No truncation, no waiting for tooltips.
 * **Keyboard-First**: `⌥Space` to open, arrow keys to navigate, `Return` to paste.
 * **Privacy-First**: Runs on-device and offline. No telemetry.
+* **Free & Open Source**: Licensed under GPL-3.0. No subscriptions, no paywalls. Read the code, build it yourself, contribute.
 
 ## Installation
 
