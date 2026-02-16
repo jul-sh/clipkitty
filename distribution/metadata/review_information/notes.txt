@@ -14,7 +14,5 @@ HOW TO TEST:
 10. Click the menu bar icon to access Settings (or press Cmd+, when the panel is open).
 
 NOTES:
-- The App Store (sandboxed) version requires you to manually press Cmd+V after selecting an item, because macOS sandbox restrictions prevent simulating keystrokes. The non-sandboxed version pastes automatically.
 - The app has no account system, no login, no cloud sync. All data is stored locally.
 - On first launch, clipboard history will be empty — you need to copy content to populate it.
-- A screen recording is attached demonstrating the full workflow.
