@@ -87,8 +87,8 @@ jobs:
       - name: Generate Xcode Project
         run: make generate
 
-      - name: Build Non-Sandboxed App
-        run: make build CONFIGURATION=Release
+      - name: Build App
+        run: make build CONFIGURATION=AppStore
 
       - name: Create Virtual Retina Display
         run: |
@@ -110,46 +110,23 @@ jobs:
       - name: Generate Icon PNG
         run: make -C distribution icon-png
 
-      - name: Build and Sign DMGs
+      - name: Build and Sign DMG
         run: |
           chmod +x distribution/build-dmg.sh
 
-          # Non-sandboxed: build Release, sign with real cert + entitlements, then package
-          make build CONFIGURATION=Release
-          codesign --force --options runtime --sign "Developer ID Application" \
-            --entitlements Sources/App/ClipKitty.entitlements \
-            DerivedData/Build/Products/Release/ClipKitty.app
-          ./distribution/build-dmg.sh DerivedData/Build/Products/Release/ClipKitty.app ClipKitty.dmg
-
-          # Sandboxed: build AppStore, sign with real cert + sandboxed entitlements, then package
           make build CONFIGURATION=AppStore
           codesign --force --options runtime --sign "Developer ID Application" \
-            --entitlements Sources/App/ClipKitty-Sandboxed.entitlements \
+            --entitlements Sources/App/ClipKitty.entitlements \
             DerivedData/Build/Products/AppStore/ClipKitty.app
-          ./distribution/build-dmg.sh DerivedData/Build/Products/AppStore/ClipKitty.app ClipKitty-Sandboxed.dmg
+          ./distribution/build-dmg.sh DerivedData/Build/Products/AppStore/ClipKitty.app ClipKitty.dmg
 
-          # Sign the DMG files themselves
           codesign --force --sign "Developer ID Application" ClipKitty.dmg
-          codesign --force --sign "Developer ID Application" ClipKitty-Sandboxed.dmg
 
-      # 2. Notarize with Apple (Split into steps to prevent Bus Error 10)
-      - name: Notarize Standard DMG
+      # 2. Notarize with Apple
+      - name: Notarize DMG
         run: |
           echo "$NOTARY_KEY_BASE64" | base64 --decode > auth_key.p8
           xcrun notarytool submit ClipKitty.dmg \
-            --key auth_key.p8 \
-            --key-id "$NOTARY_KEY_ID" \
-            --issuer "$NOTARY_ISSUER_ID" \
-            --wait
-        env:
-          NOTARY_KEY_BASE64: ${{ steps.secrets.outputs.NOTARY_KEY_BASE64 }}
-          NOTARY_KEY_ID: ${{ steps.secrets.outputs.NOTARY_KEY_ID }}
-          NOTARY_ISSUER_ID: ${{ steps.secrets.outputs.NOTARY_ISSUER_ID }}
-
-      - name: Notarize Sandboxed DMG
-        run: |
-          echo "$NOTARY_KEY_BASE64" | base64 --decode > auth_key.p8
-          xcrun notarytool submit ClipKitty-Sandboxed.dmg \
             --key auth_key.p8 \
             --key-id "$NOTARY_KEY_ID" \
             --issuer "$NOTARY_ISSUER_ID" \
@@ -165,17 +142,13 @@ jobs:
 
       # 3. Staple Notarization (Required for offline Gatekeeper approval)
       - name: Staple Notarization
-        run: |
-          xcrun stapler staple ClipKitty.dmg
-          xcrun stapler staple ClipKitty-Sandboxed.dmg
+        run: xcrun stapler staple ClipKitty.dmg
 
       - name: Upload Artifacts
         uses: actions/upload-artifact@v4
         with:
           name: ClipKitty-Builds
-          path: |
-            ClipKitty.dmg
-            ClipKitty-Sandboxed.dmg
+          path: ClipKitty.dmg
 
       - name: Upload Screenshot Artifacts
         uses: actions/upload-artifact@v4
@@ -235,12 +208,7 @@ jobs:
           gh release create "v$VERSION" \
             --title "ClipKitty v$VERSION" \
             --generate-notes \
-            ClipKitty.dmg \
-            ClipKitty-Sandboxed.dmg
-
-          NOTE=$'\n\n### Note on Sandboxed Version\n\nThe sandboxed version (ClipKitty-Sandboxed.dmg) does not support automatic pasting (Cmd+V) into other apps due to system restrictions. Use the standard version if that feature is important to you.'
-          BODY=$(gh release view "v$VERSION" --json body -q .body)
-          gh release edit "v$VERSION" --notes "${BODY}${NOTE}"
+            ClipKitty.dmg
         env:
           GH_TOKEN: ${{ github.token }}
 
@@ -285,13 +253,10 @@ jobs:
       - name: Create Development Release
         if: github.event_name == 'push' && github.ref == 'refs/heads/main'
         run: |
-          NOTE="### Note on Sandboxed Version\n\nThe sandboxed version (ClipKitty-Sandboxed.dmg) does not support automatic pasting (Cmd+V) into other apps due to system restrictions. Use the standard version if that feature is important to you"
           gh release create "commit-${GITHUB_SHA}" \
             --title "ClipKitty ${GITHUB_SHA}" \
-            --notes "$NOTE" \
             --prerelease \
             ClipKitty.dmg \
-            ClipKitty-Sandboxed.dmg \
             icon.png \
             marketing/screenshot_*.png
         env:
@@ -307,6 +272,7 @@ jobs:
             git config --unset-all http.https://github.com/.extraheader || true
             git remote set-url origin "https://x-access-token:${ADMIN_TOKEN}@github.com/${{ github.repository }}.git"
             git fetch origin main
+            git checkout -- .
             git checkout main
             sed -i '' "s/\"MARKETING_VERSION\": \"$CURRENT\"/\"MARKETING_VERSION\": \"$VERSION\"/" Project.swift
             git add Project.swift

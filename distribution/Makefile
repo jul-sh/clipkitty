@@ -11,7 +11,7 @@ NIX_SHELL := $(PROJECT_ROOT)/Scripts/run-in-nix.sh -c
 APP_NAME := ClipKitty
 DERIVED_DATA := $(PROJECT_ROOT)/DerivedData
 
-# Build configuration: Release (non-sandboxed) or AppStore (sandboxed)
+# Build configuration: Release or AppStore (differ only in signing)
 CONFIGURATION ?= Release
 
 # Path to the built app bundle (inside DerivedData)
@@ -37,10 +37,10 @@ dmg:
 	@echo "Signing for distribution..."
 	@codesign --force --options runtime \
 		--sign "$(SIGNING_IDENTITY)" \
-		--entitlements $(PROJECT_ROOT)/Sources/App/$(if $(filter AppStore,$(CONFIGURATION)),ClipKitty-Sandboxed,ClipKitty).entitlements \
+		--entitlements $(PROJECT_ROOT)/Sources/App/ClipKitty.entitlements \
 		"$(APP_PATH)"
-	@echo "Building$(if $(filter AppStore,$(CONFIGURATION)), sandboxed,) DMG installer..."
-	@$(DIST_DIR)/build-dmg.sh "$(APP_PATH)" "$(PROJECT_ROOT)/$(APP_NAME)$(if $(filter AppStore,$(CONFIGURATION)),-Sandboxed,).dmg"
+	@echo "Building DMG installer..."
+	@$(DIST_DIR)/build-dmg.sh "$(APP_PATH)" "$(PROJECT_ROOT)/$(APP_NAME).dmg"
 
 # Export app icon as PNG (for README, gh-pages, etc.)
 icon-png:
@@ -70,7 +70,7 @@ appstore:
 	@echo "Re-signing for App Store distribution..."
 	@codesign --force --options runtime \
 		--sign "$(APPSTORE_SIGNING_IDENTITY)" \
-		--entitlements $(PROJECT_ROOT)/Sources/App/ClipKitty-Sandboxed.entitlements \
+		--entitlements $(PROJECT_ROOT)/Sources/App/ClipKitty.entitlements \
 		"$(DERIVED_DATA)/Build/Products/AppStore/$(APP_NAME).app"
 	@echo "Creating installer package..."
 	@rm -f "$(PROJECT_ROOT)/$(APP_NAME).pkg"
@@ -102,7 +102,6 @@ synthetic-data:
 	@echo "Run ./distribution/patch-demo-items.sh to add demo items"
 
 # Open app with synthetic data for manual testing
-# Uses Debug (non-sandboxed) build for simpler file access
 run-synthetic:
 	@$(MAKE) -C $(PROJECT_ROOT) all CONFIGURATION=Debug
 	@echo "Setting up synthetic data..."
@@ -120,7 +119,7 @@ marketing-screenshots-capture:
 	@$(MAKE) -C $(PROJECT_ROOT) all CONFIGURATION=AppStore
 	@codesign --force --options runtime \
 		--sign "$(SIGNING_IDENTITY)" \
-		--entitlements $(PROJECT_ROOT)/Sources/App/ClipKitty-Sandboxed.entitlements \
+		--entitlements $(PROJECT_ROOT)/Sources/App/ClipKitty.entitlements \
 		"$(DERIVED_DATA)/Build/Products/AppStore/$(APP_NAME).app"
 	@echo "Capturing marketing screenshots..."
 	@$(DIST_DIR)/prepare-screenshot-environment.sh 'cd $(PROJECT_ROOT) && xcodebuild test -scheme ClipKittyUITests -destination "platform=macOS" -derivedDataPath DerivedData -only-testing:ClipKittyUITests/ClipKittyUITests/testTakeMarketingScreenshots 2>&1 | grep -E "(Test Case|passed|failed)" || true'
@@ -140,7 +139,7 @@ preview-video:
 	@$(MAKE) -C $(PROJECT_ROOT) all CONFIGURATION=AppStore
 	@codesign --force --options runtime \
 		--sign "$(SIGNING_IDENTITY)" \
-		--entitlements $(PROJECT_ROOT)/Sources/App/ClipKitty-Sandboxed.entitlements \
+		--entitlements $(PROJECT_ROOT)/Sources/App/ClipKitty.entitlements \
 		"$(DERIVED_DATA)/Build/Products/AppStore/$(APP_NAME).app"
 	@echo "Recording preview video..."
 	@$(DIST_DIR)/record-preview-video.sh

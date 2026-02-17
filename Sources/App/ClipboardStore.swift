@@ -4,10 +4,7 @@ import Observation
 import ClipKittyRust
 
 import ImageIO
-
-#if !SANDBOXED
-import QuickLookThumbnailing
-#endif
+import UniformTypeIdentifiers
 
 // MARK: - Performance Tracing
 
@@ -81,10 +78,6 @@ final class ClipboardStore {
     /// Link metadata fetcher using LinkPresentation framework
     private let linkMetadataFetcher = LinkMetadataFetcher()
 
-    #if !SANDBOXED
-    /// File watcher for move/delete tracking
-    private let fileWatcher = FileWatcher()
-    #endif
 
     // MARK: - Initialization
 
@@ -94,26 +87,9 @@ final class ClipboardStore {
         self.isScreenshotMode = screenshotMode
         lastChangeCount = NSPasteboard.general.changeCount
         setupDatabase()
-        #if !SANDBOXED
-        setupFileWatcher()
-        #endif
         refresh()
         pruneIfNeeded()
     }
-
-    #if !SANDBOXED
-    private func setupFileWatcher() {
-        fileWatcher.onFileChanged = { [weak self] fileItemId, status in
-            guard let self else { return }
-            try? self.updateFileStatusViaRust(
-                fileItemId: fileItemId,
-                status: status.toDatabaseStr(),
-                newPath: status.movedPath
-            )
-            self.refresh()
-        }
-    }
-    #endif
 
 
     /// Current database size in bytes (cached, updated async)
@@ -303,9 +279,6 @@ final class ClipboardStore {
         pollingTask?.cancel()
         pollingTask = nil
         removeSystemObservers()
-        #if !SANDBOXED
-        fileWatcher.stopAll()
-        #endif
     }
 
     private func setupSystemObservers() {
@@ -390,14 +363,12 @@ final class ClipboardStore {
         }
 
         // Check for file URLs first (file copies also put .tiff and .string on the pasteboard)
-        #if !SANDBOXED
         if let fileURLs = pasteboard.readObjects(forClasses: [NSURL.self], options: [
             .urlReadingFileURLsOnly: true
         ]) as? [URL], !fileURLs.isEmpty {
             saveFileItems(urls: fileURLs)
             return
         }
-        #endif
 
         // Check for image data first - get raw data only, defer compression
         let imageTypes: [NSPasteboard.PasteboardType] = [.tiff, .png]
@@ -563,7 +534,6 @@ final class ClipboardStore {
 
     // MARK: - File Items
 
-    #if !SANDBOXED
     private func saveFileItems(urls: [URL]) {
         let sourceApp = NSWorkspace.shared.frontmostApplication?.localizedName
         let sourceAppBundleID = NSWorkspace.shared.frontmostApplication?.bundleIdentifier
@@ -579,39 +549,23 @@ final class ClipboardStore {
             for url in urls {
                 guard url.isFileURL else { continue }
 
-                let path = url.path
-                let filename = url.lastPathComponent
-
-                let resourceValues = try? url.resourceValues(forKeys: [.fileSizeKey, .typeIdentifierKey])
-                let fileSize = UInt64(resourceValues?.fileSize ?? 0)
-                let uti = resourceValues?.typeIdentifier ?? "public.item"
-
-                guard let bookmarkData = try? url.bookmarkData(
-                    options: [],
-                    includingResourceValuesForKeys: [.nameKey, .pathKey],
-                    relativeTo: nil
-                ) else { continue }
-
-                paths.append(path)
-                filenames.append(filename)
-                fileSizes.append(fileSize)
-                utis.append(uti)
-                bookmarkDataList.append(bookmarkData)
+                paths.append(url.path)
+                filenames.append(url.lastPathComponent)
+                fileSizes.append(0)
+                utis.append(UTType(filenameExtension: url.pathExtension)?.identifier ?? "public.item")
+                bookmarkDataList.append(Data())
             }
 
             guard !paths.isEmpty else { return }
 
-            // Generate thumbnail from first file
-            let thumbnail = await Self.generateQuickLookThumbnail(for: urls[0])
-
             do {
-                let itemId = try rustStore.saveFiles(
+                _ = try rustStore.saveFiles(
                     paths: paths,
                     filenames: filenames,
                     fileSizes: fileSizes,
                     utis: utis,
                     bookmarkDataList: bookmarkDataList,
-                    thumbnail: thumbnail,
+                    thumbnail: nil,
                     sourceApp: sourceApp,
                     sourceAppBundleId: sourceAppBundleID
                 )
@@ -622,41 +576,10 @@ final class ClipboardStore {
                         self?.refresh()
                     }
                 }
-
-                // Start watching ALL files for moves/deletes
-                if itemId > 0 {
-                    // Fetch the saved item to get file_item_ids assigned by the database
-                    let items = try? rustStore.fetchByIds(itemIds: [itemId])
-                    if let item = items?.first, case .file(_, let fileEntries) = item.content {
-                        await MainActor.run { [weak self] in
-                            for entry in fileEntries {
-                                self?.fileWatcher.watch(
-                                    path: entry.path,
-                                    fileItemId: entry.fileItemId,
-                                    filename: entry.filename,
-                                    bookmarkData: Data(entry.bookmarkData)
-                                )
-                            }
-                        }
-                    }
-                }
             } catch {
             }
         }
     }
-
-    private nonisolated static func generateQuickLookThumbnail(for url: URL) async -> Data? {
-        let request = QLThumbnailGenerator.Request(
-            fileAt: url,
-            size: CGSize(width: 128, height: 128),
-            scale: 2.0,
-            representationTypes: .thumbnail
-        )
-        guard let thumbnail = try? await QLThumbnailGenerator.shared
-            .generateBestRepresentation(for: request) else { return nil }
-        return encodeCGImage(thumbnail.cgImage, type: "public.jpeg" as CFString, quality: 0.7)
-    }
-    #endif
 
     // MARK: - Actions
 
@@ -667,12 +590,10 @@ final class ClipboardStore {
             return
         }
 
-        #if !SANDBOXED
         if case .file(_, let files) = content {
             pasteFiles(files: files, itemId: itemId)
             return
         }
-        #endif
 
         let pasteboard = NSPasteboard.general
         pasteboard.clearContents()
@@ -716,7 +637,6 @@ final class ClipboardStore {
         }
     }
 
-    #if !SANDBOXED
     private func pasteFiles(files: [FileEntry], itemId: Int64) {
         // Pre-increment to avoid race with checkForChanges polling
         lastChangeCount = NSPasteboard.general.changeCount + 1
@@ -724,12 +644,8 @@ final class ClipboardStore {
         // Resolve each file's bookmark to get current URL
         var resolvedURLs: [URL] = []
         for file in files {
-            var isStale = false
-            if let url = try? URL(resolvingBookmarkData: Data(file.bookmarkData), options: [], relativeTo: nil, bookmarkDataIsStale: &isStale) {
-                resolvedURLs.append(url)
-            } else {
-                resolvedURLs.append(URL(fileURLWithPath: file.path))
-            }
+            // Use stored path directly (no bookmark data in sandboxed mode)
+            resolvedURLs.append(URL(fileURLWithPath: file.path))
         }
 
         guard !resolvedURLs.isEmpty else { return }
@@ -749,7 +665,6 @@ final class ClipboardStore {
             await updateItemTimestamp(id: itemId)
         }
     }
-    #endif
 
     private func updateItemTimestamp(id: Int64) async {
         guard let rustStore else { return }
@@ -806,15 +721,6 @@ final class ClipboardStore {
             }
         }
     }
-
-    // MARK: - File Status Update
-
-    #if !SANDBOXED
-    func updateFileStatusViaRust(fileItemId: Int64, status: String, newPath: String?) throws {
-        guard let rustStore else { return }
-        try rustStore.updateFileStatus(fileItemId: fileItemId, status: status, newPath: newPath)
-    }
-    #endif
 
     // MARK: - Pruning
 

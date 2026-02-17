@@ -509,24 +509,6 @@ impl Database {
         Ok(())
     }
 
-    /// Update file status for a specific file entry.
-    /// `file_item_id` is the `file_items.id` — each file has its own status.
-    pub fn update_file_status(&self, file_item_id: i64, status: &str, new_path: Option<&str>) -> DatabaseResult<()> {
-        let conn = self.get_conn()?;
-        if let Some(path) = new_path {
-            conn.execute(
-                "UPDATE file_items SET fileStatus = ?1, path = ?2 WHERE id = ?3",
-                params![status, path, file_item_id],
-            )?;
-        } else {
-            conn.execute(
-                "UPDATE file_items SET fileStatus = ?1 WHERE id = ?2",
-                params![status, file_item_id],
-            )?;
-        }
-        Ok(())
-    }
-
     /// Delete an item by ID (CASCADE handles child tables)
     pub fn delete_item(&self, id: i64) -> DatabaseResult<()> {
         let conn = self.get_conn()?;
