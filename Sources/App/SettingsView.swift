@@ -123,7 +123,7 @@ struct SettingsView: View {
                         .font(.caption)
                         .foregroundStyle(.secondary)
                 } else {
-                    Text("Grant Accessibility permission to enable automatic pasting. Without it, items will only be copied to the clipboard.")
+                    Text("Grant Accessibility permission to enable automatic pasting. Without it, items will only be copied to the clipboard. Restart the app after updating accessibility permissions for the change to take effect.")
                         .font(.caption)
                         .foregroundStyle(.secondary)
                     Button("Open Accessibility Settings") {
