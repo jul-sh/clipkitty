@@ -375,6 +375,9 @@ final class ClipKittyUITests: XCTestCase {
             return
         }
 
+        // Allow items to fully load before capturing
+        Thread.sleep(forTimeInterval: 1.0)
+
         let frame = window.frame
         let screenShot = XCUIScreen.main.screenshot()
         let image = screenShot.image
