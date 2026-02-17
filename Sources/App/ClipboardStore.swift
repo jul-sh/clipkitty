@@ -4,10 +4,7 @@ import Observation
 import ClipKittyRust
 
 import ImageIO
-
-#if !SANDBOXED
-import QuickLookThumbnailing
-#endif
+import UniformTypeIdentifiers
 
 // MARK: - Performance Tracing
 
@@ -81,10 +78,6 @@ final class ClipboardStore {
     /// Link metadata fetcher using LinkPresentation framework
     private let linkMetadataFetcher = LinkMetadataFetcher()
 
-    #if !SANDBOXED
-    /// File watcher for move/delete tracking
-    private let fileWatcher = FileWatcher()
-    #endif
 
     // MARK: - Initialization
 
@@ -94,26 +87,9 @@ final class ClipboardStore {
         self.isScreenshotMode = screenshotMode
         lastChangeCount = NSPasteboard.general.changeCount
         setupDatabase()
-        #if !SANDBOXED
-        setupFileWatcher()
-        #endif
         refresh()
         pruneIfNeeded()
     }
-
-    #if !SANDBOXED
-    private func setupFileWatcher() {
-        fileWatcher.onFileChanged = { [weak self] itemId, status in
-            guard let self else { return }
-            try? self.updateFileStatusViaRust(
-                itemId: itemId,
-                status: status.toDatabaseStr(),
-                newPath: status.movedPath
-            )
-            self.refresh()
-        }
-    }
-    #endif
 
 
     /// Current database size in bytes (cached, updated async)
@@ -303,9 +279,6 @@ final class ClipboardStore {
         pollingTask?.cancel()
         pollingTask = nil
         removeSystemObservers()
-        #if !SANDBOXED
-        fileWatcher.stopAll()
-        #endif
     }
 
     private func setupSystemObservers() {
@@ -390,13 +363,12 @@ final class ClipboardStore {
         }
 
         // Check for file URLs first (file copies also put .tiff and .string on the pasteboard)
-        #if !SANDBOXED
         if let fileURLs = pasteboard.readObjects(forClasses: [NSURL.self], options: [
             .urlReadingFileURLsOnly: true
         ]) as? [URL], !fileURLs.isEmpty {
+            saveFileItems(urls: fileURLs)
             return
         }
-        #endif
 
         // Check for image data first - get raw data only, defer compression
         let imageTypes: [NSPasteboard.PasteboardType] = [.tiff, .png]
@@ -562,77 +534,52 @@ final class ClipboardStore {
 
     // MARK: - File Items
 
-    #if !SANDBOXED
     private func saveFileItems(urls: [URL]) {
         let sourceApp = NSWorkspace.shared.frontmostApplication?.localizedName
         let sourceAppBundleID = NSWorkspace.shared.frontmostApplication?.bundleIdentifier
 
         guard let rustStore else { return }
         Task.detached { [weak self] in
+            var paths: [String] = []
+            var filenames: [String] = []
+            var fileSizes: [UInt64] = []
+            var utis: [String] = []
+            var bookmarkDataList: [Data] = []
+
             for url in urls {
                 guard url.isFileURL else { continue }
 
-                let path = url.path
-                let filename = url.lastPathComponent
+                paths.append(url.path)
+                filenames.append(url.lastPathComponent)
+                fileSizes.append(0)
+                utis.append(UTType(filenameExtension: url.pathExtension)?.identifier ?? "public.item")
+                bookmarkDataList.append(Data())
+            }
 
-                // Get file size and UTI
-                let resourceValues = try? url.resourceValues(forKeys: [.fileSizeKey, .typeIdentifierKey])
-                let fileSize = UInt64(resourceValues?.fileSize ?? 0)
-                let uti = resourceValues?.typeIdentifier ?? "public.item"
+            guard !paths.isEmpty else { return }
 
-                // Create bookmark for move tracking
-                guard let bookmarkData = try? url.bookmarkData(
-                    options: [],
-                    includingResourceValuesForKeys: [.nameKey, .pathKey],
-                    relativeTo: nil
-                ) else { continue }
+            do {
+                _ = try rustStore.saveFiles(
+                    paths: paths,
+                    filenames: filenames,
+                    fileSizes: fileSizes,
+                    utis: utis,
+                    bookmarkDataList: bookmarkDataList,
+                    thumbnail: nil,
+                    sourceApp: sourceApp,
+                    sourceAppBundleId: sourceAppBundleID
+                )
 
-                // Generate QuickLook thumbnail
-                let thumbnail = await Self.generateQuickLookThumbnail(for: url)
-
-                do {
-                    let itemId = try rustStore.saveFile(
-                        path: path,
-                        filename: filename,
-                        fileSize: fileSize,
-                        uti: uti,
-                        bookmarkData: bookmarkData,
-                        thumbnail: thumbnail,
-                        sourceApp: sourceApp,
-                        sourceAppBundleId: sourceAppBundleID
-                    )
-
-                    guard let self else { return }
-                    await MainActor.run { [weak self] in
-                        if self?.hasResults == true {
-                            self?.refresh()
-                        }
+                guard let self else { return }
+                await MainActor.run { [weak self] in
+                    if self?.hasResults == true {
+                        self?.refresh()
                     }
-
-                    // Start watching the file for moves/deletes
-                    if itemId > 0 {
-                        await MainActor.run { [weak self] in
-                            self?.fileWatcher.watch(path: path, itemId: itemId, filename: filename, bookmarkData: bookmarkData)
-                        }
-                    }
-                } catch {
                 }
+            } catch {
             }
         }
     }
-
-    private nonisolated static func generateQuickLookThumbnail(for url: URL) async -> Data? {
-        let request = QLThumbnailGenerator.Request(
-            fileAt: url,
-            size: CGSize(width: 128, height: 128),
-            scale: 2.0,
-            representationTypes: .thumbnail
-        )
-        guard let thumbnail = try? await QLThumbnailGenerator.shared
-            .generateBestRepresentation(for: request) else { return nil }
-        return encodeCGImage(thumbnail.cgImage, type: "public.jpeg" as CFString, quality: 0.7)
-    }
-    #endif
 
     // MARK: - Actions
 
@@ -643,12 +590,10 @@ final class ClipboardStore {
             return
         }
 
-        #if !SANDBOXED
-        if case .file(let path, _, _, _, let bookmarkData, _) = content {
-            pasteFile(path: path, bookmarkData: Data(bookmarkData), itemId: itemId)
+        if case .file(_, let files) = content {
+            pasteFiles(files: files, itemId: itemId)
             return
         }
-        #endif
 
         let pasteboard = NSPasteboard.general
         pasteboard.clearContents()
@@ -692,36 +637,34 @@ final class ClipboardStore {
         }
     }
 
-    #if !SANDBOXED
-    private func pasteFile(path: String, bookmarkData: Data, itemId: Int64) {
+    private func pasteFiles(files: [FileEntry], itemId: Int64) {
         // Pre-increment to avoid race with checkForChanges polling
         lastChangeCount = NSPasteboard.general.changeCount + 1
 
-        // Try to resolve bookmark first (handles moved files), fall back to original path
-        var isStale = false
-        let resolvedURL: URL
-        if let url = try? URL(resolvingBookmarkData: bookmarkData, options: [], relativeTo: nil, bookmarkDataIsStale: &isStale) {
-            resolvedURL = url
-        } else {
-            resolvedURL = URL(fileURLWithPath: path)
+        // Resolve each file's bookmark to get current URL
+        var resolvedURLs: [URL] = []
+        for file in files {
+            // Use stored path directly (no bookmark data in sandboxed mode)
+            resolvedURLs.append(URL(fileURLWithPath: file.path))
         }
+
+        guard !resolvedURLs.isEmpty else { return }
 
         // Write to pasteboard with both modern and legacy types for broad compatibility.
         // Finder requires NSFilenamesPboardType for file paste; other apps use public.file-url.
-        // Uses the type-based API (declareTypes) which increments changeCount once.
         let pasteboard = NSPasteboard.general
         let filenameType = NSPasteboard.PasteboardType("NSFilenamesPboardType")
+        let allPaths = resolvedURLs.map { $0.path }
         pasteboard.declareTypes([filenameType, .fileURL, .string], owner: nil)
-        pasteboard.setPropertyList([resolvedURL.path], forType: filenameType)
-        pasteboard.setString(resolvedURL.absoluteString, forType: .fileURL)
-        pasteboard.setString(resolvedURL.path, forType: .string)
+        pasteboard.setPropertyList(allPaths, forType: filenameType)
+        pasteboard.setString(resolvedURLs[0].absoluteString, forType: .fileURL)
+        pasteboard.setString(allPaths.joined(separator: "\n"), forType: .string)
         lastChangeCount = pasteboard.changeCount
 
         Task {
             await updateItemTimestamp(id: itemId)
         }
     }
-    #endif
 
     private func updateItemTimestamp(id: Int64) async {
         guard let rustStore else { return }
@@ -778,15 +721,6 @@ final class ClipboardStore {
             }
         }
     }
-
-    // MARK: - File Status Update
-
-    #if !SANDBOXED
-    func updateFileStatusViaRust(itemId: Int64, status: String, newPath: String?) throws {
-        guard let rustStore else { return }
-        try rustStore.updateFileStatus(itemId: itemId, status: status, newPath: newPath)
-    }
-    #endif
 
     // MARK: - Pruning
 

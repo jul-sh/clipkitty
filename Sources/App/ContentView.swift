@@ -21,6 +21,7 @@ struct ContentView: View {
     @State private var previewSpinnerTask: Task<Void, Never>?
     @State private var hasUserNavigated = false
     @State private var showFilterPopover = false
+    @State private var showDeleteConfirmation = false
     @State private var highlightedFilterIndex: Int = 0
     enum FocusTarget: Hashable {
         case search
@@ -99,6 +100,17 @@ struct ContentView: View {
         // 2. Ignore ONLY the top safe area for the main content.
         // This fixes the white gap at the top without breaking the scrollbars!
         .ignoresSafeArea(edges: .top)
+
+        .alert("Delete Item", isPresented: $showDeleteConfirmation) {
+            Button("Delete", role: .destructive) {
+                deleteSelectedItem()
+            }
+            Button("Cancel", role: .cancel) {}
+        } message: {
+            if let item = selectedItem {
+                Text("Delete \"\(item.itemMetadata.snippet)\"?")
+            }
+        }
 
         .onAppear {
             // Apply initial search query if provided (for CI screenshots)
@@ -262,6 +274,24 @@ struct ContentView: View {
         onSelect(item.itemMetadata.itemId, item.content)
     }
 
+    private func deleteSelectedItem() {
+        guard let id = selectedItemId, let currentIndex = selectedIndex else { return }
+
+        // Compute next selection before deleting
+        let nextId: Int64?
+        if currentIndex + 1 < itemCount {
+            nextId = itemId(at: currentIndex + 1)
+        } else if currentIndex > 0 {
+            nextId = itemId(at: currentIndex - 1)
+        } else {
+            nextId = nil
+        }
+
+        store.delete(itemId: id)
+        selectedItemId = nextId
+        selectedItem = nil
+    }
+
     // MARK: - Search Bar
 
     private var searchBar: some View {
@@ -301,6 +331,16 @@ struct ContentView: View {
                 }
                 .onKeyPress(characters: .decimalDigits, phases: .down) { keyPress in
                     handleNumberKey(keyPress)
+                }
+                .onKeyPress(.delete) {
+                    guard selectedItemId != nil else { return .ignored }
+                    showDeleteConfirmation = true
+                    return .handled
+                }
+                .onKeyPress(.deleteForward) {
+                    guard selectedItemId != nil else { return .ignored }
+                    showDeleteConfirmation = true
+                    return .handled
                 }
 
             if showSearchSpinner {
@@ -355,14 +395,17 @@ struct ContentView: View {
         }
     }
 
-    private static let filterOptions: [(ContentTypeFilter, String)] = [
-        (.all, "All Types"),
-        (.text, "Text"),
-        (.images, "Images"),
-        (.links, "Links"),
-        (.colors, "Colors"),
-        (.files, "Files"),
-    ]
+    private static let filterOptions: [(ContentTypeFilter, String)] = {
+        var options: [(ContentTypeFilter, String)] = [
+            (.all, "All Types"),
+            (.text, "Text"),
+            (.images, "Images"),
+            (.links, "Links"),
+            (.colors, "Colors"),
+        ]
+        options.append((.files, "Files"))
+        return options
+    }()
 
     private var filterPopoverContent: some View {
         let options = Self.filterOptions
@@ -592,7 +635,7 @@ struct ContentView: View {
     @ViewBuilder
     private func previewContent(for item: ClipboardItem) -> some View {
         switch item.content {
-        case .text, .color, .email, .phone:
+        case .text, .color:
             TextPreviewView(
                 text: item.textContent,
                 fontName: FontManager.mono,
@@ -609,24 +652,13 @@ struct ContentView: View {
             ScrollView(.vertical, showsIndicators: true) {
                 linkPreview(url: url, metadataState: metadataState, itemId: item.itemMetadata.itemId)
             }
-        case .file(let path, let filename, let fileSize, let uti, let bookmarkData, let fileStatus):
-            #if !SANDBOXED
-            ScrollView(.vertical, showsIndicators: true) {
-                FilePreviewView(
-                    path: path, filename: filename, fileSize: fileSize,
-                    uti: uti, bookmarkData: Data(bookmarkData),
-                    fileStatus: fileStatus, icon: item.itemMetadata.icon,
-                    store: store, itemId: item.itemMetadata.itemId
-                )
-            }
-            #else
+        case .file(let displayName, _):
             TextPreviewView(
-                text: filename,
+                text: displayName,
                 fontName: FontManager.mono,
                 fontSize: 15
             )
             .frame(maxWidth: .infinity, maxHeight: .infinity)
-            #endif
         }
     }
 
@@ -666,7 +698,7 @@ struct ContentView: View {
                 }
             }
             Spacer()
-            Button(buttonLabel) { confirmSelection() }
+            Button(buttonLabel(for: item)) { confirmSelection() }
                 .buttonStyle(.plain)
                 .padding(.horizontal, 6)
                 .padding(.vertical, 2)
@@ -678,8 +710,9 @@ struct ContentView: View {
         .background(.black.opacity(0.05))
     }
 
-    private var buttonLabel: String {
-        AppSettings.shared.shouldShowPasteLabel ? "⏎ paste" : "⏎ copy"
+    private func buttonLabel(for item: ClipboardItem) -> String {
+        if case .file = item.content { return "⏎ copy" }
+        return AppSettings.shared.shouldShowPasteLabel ? "⏎ paste" : "⏎ copy"
     }
 
     private var emptyStateView: some View {
@@ -928,201 +961,6 @@ struct LinkPreviewView: NSViewRepresentable {
     }
 }
 
-// MARK: - File Preview
-
-#if !SANDBOXED
-struct FilePreviewView: View {
-    let path: String
-    let filename: String
-    let fileSize: UInt64
-    let uti: String
-    let bookmarkData: Data
-    let fileStatus: FileStatus
-    let icon: ItemIcon
-    var store: ClipboardStore
-    let itemId: Int64
-
-    @State private var resolvedStatus: FileStatus?
-
-    private var displayStatus: FileStatus {
-        resolvedStatus ?? fileStatus
-    }
-
-    var body: some View {
-        VStack(alignment: .leading, spacing: 16) {
-            // Thumbnail
-            thumbnailView
-                .frame(maxWidth: .infinity, alignment: .center)
-
-            // Filename
-            Text(filename)
-                .font(.custom(FontManager.sansSerif, size: 20).bold())
-                .textSelection(.enabled)
-                .frame(maxWidth: .infinity, alignment: .leading)
-
-            // Info grid
-            VStack(alignment: .leading, spacing: 8) {
-                infoRow(label: "Path", value: displayPath)
-                infoRow(label: "Size", value: formattedSize)
-                infoRow(label: "Kind", value: kindDescription)
-            }
-
-            // Status indicator
-            statusView
-
-            Spacer()
-        }
-        .padding(16)
-        .task(id: itemId) {
-            await resolveFileStatus()
-        }
-    }
-
-    private var displayPath: String {
-        if case .moved(let newPath) = displayStatus {
-            return newPath
-        }
-        return path
-    }
-
-    @ViewBuilder
-    private var thumbnailView: some View {
-        if case .thumbnail(let bytes) = icon, let nsImage = NSImage(data: Data(bytes)) {
-            Image(nsImage: nsImage)
-                .resizable()
-                .aspectRatio(contentMode: .fit)
-                .frame(maxHeight: 200)
-                .clipShape(RoundedRectangle(cornerRadius: 8))
-                .shadow(color: .black.opacity(0.1), radius: 4, x: 0, y: 2)
-        } else {
-            Image(systemName: "doc")
-                .font(.system(size: 64))
-                .foregroundStyle(.secondary)
-                .frame(height: 100)
-        }
-    }
-
-    private func infoRow(label: String, value: String) -> some View {
-        HStack(alignment: .top) {
-            Text(label)
-                .font(.custom(FontManager.sansSerif, size: 13))
-                .foregroundStyle(.secondary)
-                .frame(width: 50, alignment: .trailing)
-            Text(value)
-                .font(.custom(FontManager.mono, size: 13))
-                .textSelection(.enabled)
-                .frame(maxWidth: .infinity, alignment: .leading)
-        }
-    }
-
-    private var formattedSize: String {
-        ByteCountFormatter.string(fromByteCount: Int64(fileSize), countStyle: .file)
-    }
-
-    private var kindDescription: String {
-        if let utType = UTType(uti) {
-            return utType.localizedDescription ?? uti
-        }
-        return uti
-    }
-
-    @ViewBuilder
-    private var statusView: some View {
-        switch displayStatus {
-        case .available:
-            EmptyView()
-        case .moved(let newPath):
-            Label("File moved to: \(newPath)", systemImage: "arrow.right.circle")
-                .font(.custom(FontManager.sansSerif, size: 13))
-                .foregroundStyle(.orange)
-        case .trashed:
-            HStack {
-                Label("File is in Trash", systemImage: "trash")
-                    .font(.custom(FontManager.sansSerif, size: 13))
-                    .foregroundStyle(.red)
-                Button("Restore") {
-                    restoreFromTrash()
-                }
-                .buttonStyle(.bordered)
-                .controlSize(.small)
-            }
-        case .missing:
-            Label("File no longer exists", systemImage: "exclamationmark.triangle")
-                .font(.custom(FontManager.sansSerif, size: 13))
-                .foregroundStyle(.red)
-        }
-    }
-
-    private func resolveFileStatus() async {
-        var isStale = false
-        guard let resolvedURL = try? URL(
-            resolvingBookmarkData: bookmarkData,
-            options: [],
-            relativeTo: nil,
-            bookmarkDataIsStale: &isStale
-        ) else {
-            // Bookmark couldn't resolve — check if original path exists
-            if FileManager.default.fileExists(atPath: path) {
-                resolvedStatus = .available
-            } else {
-                resolvedStatus = .missing
-                await persistStatus("missing", newPath: nil)
-            }
-            return
-        }
-
-        let resolvedPath = resolvedURL.path
-
-        // Check if file is in Trash
-        if resolvedPath.contains("/.Trash/") {
-            resolvedStatus = .trashed
-            await persistStatus("trashed", newPath: nil)
-            return
-        }
-
-        // Check if file moved
-        if resolvedPath != path {
-            resolvedStatus = .moved(newPath: resolvedPath)
-            await persistStatus("moved:\(resolvedPath)", newPath: resolvedPath)
-            return
-        }
-
-        // Check if file still exists at original location
-        if FileManager.default.fileExists(atPath: resolvedPath) {
-            resolvedStatus = .available
-            if fileStatus != .available {
-                await persistStatus("available", newPath: nil)
-            }
-        } else {
-            resolvedStatus = .missing
-            await persistStatus("missing", newPath: nil)
-        }
-    }
-
-    private func persistStatus(_ status: String, newPath: String?) async {
-        try? store.updateFileStatusViaRust(itemId: itemId, status: status, newPath: newPath)
-    }
-
-    private func restoreFromTrash() {
-        var isStale = false
-        guard let trashURL = try? URL(
-            resolvingBookmarkData: bookmarkData,
-            options: [],
-            relativeTo: nil,
-            bookmarkDataIsStale: &isStale
-        ) else { return }
-
-        let originalURL = URL(fileURLWithPath: path)
-        do {
-            try FileManager.default.moveItem(at: trashURL, to: originalURL)
-            resolvedStatus = .available
-            try? store.updateFileStatusViaRust(itemId: itemId, status: "available", newPath: nil)
-        } catch {
-        }
-    }
-}
-#endif
-
 // MARK: - Item Row
 
 struct ItemRow: View, Equatable {
@@ -1195,6 +1033,10 @@ struct ItemRow: View, Equatable {
                            let browserURL = NSWorkspace.shared.urlForApplication(toOpen: URL(string: "https://")!) {
                             Image(nsImage: NSWorkspace.shared.icon(forFile: browserURL.path))
                                 .resizable()
+                        } else if case .file = iconType,
+                                  let finderURL = NSWorkspace.shared.urlForApplication(withBundleIdentifier: "com.apple.finder") {
+                            Image(nsImage: NSWorkspace.shared.icon(forFile: finderURL.path))
+                                .resizable()
                         } else {
                             Image(nsImage: NSWorkspace.shared.icon(for: iconType.utType))
                                 .resizable()
@@ -1208,11 +1050,11 @@ struct ItemRow: View, Equatable {
                 // Show for symbols (except pure link icons) and thumbnails (images, links with images)
                 if let bundleID = metadata.sourceAppBundleId,
                    let appURL = NSWorkspace.shared.urlForApplication(withBundleIdentifier: bundleID) {
-                    // Skip badge for symbol links (browser icon is already shown)
+                    // Skip badge for symbol links/files (app icon is already shown)
                     let showBadge: Bool = {
                         switch metadata.icon {
                         case .symbol(let iconType):
-                            return iconType != .link
+                            return iconType != .link && iconType != .file
                         case .thumbnail, .colorSwatch:
                             return true
                         }
@@ -1272,11 +1114,7 @@ struct ItemRow: View, Equatable {
         .buttonStyle(.plain)
         .accessibilityElement(children: .combine)
         .accessibilityLabel(displayText)
-        #if SANDBOXED
-        .accessibilityHint("Double tap to copy")
-        #else
-        .accessibilityHint("Double tap to paste")
-        #endif
+        .accessibilityHint(AppSettings.shared.hasAccessibilityPermission ? "Double tap to paste" : "Double tap to copy")
         .accessibilityAddTraits(.isButton)
         .accessibilityAddTraits(isSelected ? .isSelected : [])
     }

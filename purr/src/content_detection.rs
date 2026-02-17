@@ -1,20 +1,8 @@
 //! Content type detection for clipboard items
 //!
-//! Detects structured content types like URLs, emails, phone numbers, colors, etc.
+//! Detects structured content types like URLs, colors, etc.
 
 use crate::interface::{ClipboardContent, LinkMetadataState};
-use once_cell::sync::Lazy;
-use regex::Regex;
-
-/// Phone number detection regex (various formats)
-static PHONE_REGEX: Lazy<Regex> = Lazy::new(|| {
-    Regex::new(r"^\+?[\d\s\-().]{7,20}$").unwrap()
-});
-
-/// More specific phone validation
-static PHONE_DIGITS_REGEX: Lazy<Regex> = Lazy::new(|| {
-    Regex::new(r"\d").unwrap()
-});
 
 /// Common protocols accepted as links. Exotic schemes like javascript:,
 /// data:, or custom-app:// are rejected to avoid misclassifying non-web
@@ -38,25 +26,6 @@ fn is_valid_url(text: &str) -> bool {
 
     // validator::validate_url handles structure validation
     validator::validate_url(trimmed)
-}
-
-/// Check if a string is an email address
-fn is_email(text: &str) -> bool {
-    validator::validate_email(text.trim())
-}
-
-/// Check if a string looks like a phone number
-fn is_phone(text: &str) -> bool {
-    let trimmed = text.trim();
-
-    // Must match basic phone pattern
-    if !PHONE_REGEX.is_match(trimmed) {
-        return false;
-    }
-
-    // Must have at least 7 digits
-    let digit_count = PHONE_DIGITS_REGEX.find_iter(trimmed).count();
-    digit_count >= 7 && digit_count <= 15
 }
 
 /// Check if a string is a color value
@@ -90,57 +59,26 @@ pub fn parse_color_to_rgba(text: &str) -> Option<u32> {
 pub fn detect_content(text: &str) -> ClipboardContent {
     let trimmed = text.trim();
 
-    // Check for mailto: URLs first
-    if trimmed.to_lowercase().starts_with("mailto:") {
-        let address = trimmed.strip_prefix("mailto:")
-            .or_else(|| trimmed.strip_prefix("MAILTO:"))
-            .unwrap_or(trimmed)
-            .split('?')
-            .next()
-            .unwrap_or(trimmed);
-        return ClipboardContent::Email { address: address.to_string() };
-    }
-
     // Check for color values (before URLs since some color formats might look URL-ish)
     if is_color(trimmed) {
         return ClipboardContent::Color { value: trimmed.to_string() };
     }
 
-    // Check for URLs
-    if is_valid_url(trimmed) {
+    // Check for URLs (but not mailto: links — those are just text)
+    if !trimmed.to_lowercase().starts_with("mailto:") && is_valid_url(trimmed) {
         return ClipboardContent::Link {
             url: trimmed.to_string(),
             metadata_state: LinkMetadataState::Pending,
         };
     }
 
-    // Check for email addresses
-    if is_email(trimmed) {
-        return ClipboardContent::Email { address: trimmed.to_string() };
-    }
-
-    // Check for phone numbers
-    if is_phone(trimmed) {
-        return ClipboardContent::Phone { number: trimmed.to_string() };
-    }
-
-    // Default to plain text
+    // Default to plain text (emails, phone numbers, and everything else)
     ClipboardContent::Text { value: text.to_string() }
 }
 
 #[cfg(test)]
 mod tests {
     use super::*;
-
-    #[test]
-    fn test_phone_detection() {
-        assert!(is_phone("+1 (555) 123-4567"));
-        assert!(is_phone("555-123-4567"));
-        assert!(is_phone("5551234567"));
-        assert!(!is_phone("123")); // Too short
-        assert!(!is_phone("not a phone"));
-    }
-
 
     #[test]
     fn test_content_detection_color() {
@@ -168,25 +106,25 @@ mod tests {
             panic!("Expected Link content");
         }
 
-        // Email
-        if let ClipboardContent::Email { address } = detect_content("user@example.com") {
-            assert_eq!(address, "user@example.com");
+        // Email — detected as plain text
+        if let ClipboardContent::Text { value } = detect_content("user@example.com") {
+            assert_eq!(value, "user@example.com");
         } else {
-            panic!("Expected Email content");
+            panic!("Expected Text content for email");
         }
 
-        // Mailto
-        if let ClipboardContent::Email { address } = detect_content("mailto:user@example.com") {
-            assert_eq!(address, "user@example.com");
+        // Mailto — detected as plain text
+        if let ClipboardContent::Text { value } = detect_content("mailto:user@example.com") {
+            assert_eq!(value, "mailto:user@example.com");
         } else {
-            panic!("Expected Email content from mailto");
+            panic!("Expected Text content for mailto");
         }
 
-        // Phone
-        if let ClipboardContent::Phone { number } = detect_content("+1 555-123-4567") {
-            assert_eq!(number, "+1 555-123-4567");
+        // Phone — detected as plain text
+        if let ClipboardContent::Text { value } = detect_content("+1 555-123-4567") {
+            assert_eq!(value, "+1 555-123-4567");
         } else {
-            panic!("Expected Phone content");
+            panic!("Expected Text content for phone");
         }
 
         // Plain text

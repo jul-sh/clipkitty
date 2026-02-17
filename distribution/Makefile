@@ -11,7 +11,7 @@ NIX_SHELL := $(PROJECT_ROOT)/Scripts/run-in-nix.sh -c
 APP_NAME := ClipKitty
 DERIVED_DATA := $(PROJECT_ROOT)/DerivedData
 
-# Build configuration: Release (non-sandboxed) or AppStore (sandboxed)
+# Build configuration: Release or AppStore (differ only in signing)
 CONFIGURATION ?= Release
 
 # Path to the built app bundle (inside DerivedData)
@@ -26,13 +26,10 @@ INSTALLER_IDENTITY ?= 3rd Party Mac Developer Installer
 BUNDLE_ID := com.eviljuliette.clipkitty
 PROVISIONING_PROFILE ?=
 
-# Marketing configuration
-BACKGROUND_IMAGE := /System/Library/Desktop Pictures/Solid Colors/Silver.png
-
-.PHONY: dmg appstore screenshot icon-png \
+.PHONY: dmg appstore icon-png \
         synthetic-data run-synthetic marketing marketing-screenshots \
-        marketing-screenshots-capture marketing-screenshots-process \
-        preview-video print-background-image
+        marketing-screenshots-capture \
+        preview-video
 
 # Build DMG installer
 dmg:
@@ -40,27 +37,10 @@ dmg:
 	@echo "Signing for distribution..."
 	@codesign --force --options runtime \
 		--sign "$(SIGNING_IDENTITY)" \
-		--entitlements $(PROJECT_ROOT)/Sources/App/$(if $(filter AppStore,$(CONFIGURATION)),ClipKitty-Sandboxed,ClipKitty).entitlements \
+		--entitlements $(PROJECT_ROOT)/Sources/App/ClipKitty.entitlements \
 		"$(APP_PATH)"
-	@echo "Building$(if $(filter AppStore,$(CONFIGURATION)), sandboxed,) DMG installer..."
-	@$(DIST_DIR)/build-dmg.sh "$(APP_PATH)" "$(PROJECT_ROOT)/$(APP_NAME)$(if $(filter AppStore,$(CONFIGURATION)),-Sandboxed,).dmg"
-
-# Screenshot launches the app with synthetic data and takes a fullscreen capture
-screenshot: run-synthetic
-	@echo "Preparing environment and taking screenshot..."
-	@$(DIST_DIR)/prepare-screenshot-environment.sh 'pkill ClipKitty || true && open "$(APP_PATH)" --args --use-simulated-db && sleep 3 && screencapture -m $(PROJECT_ROOT)/screenshot.png && pkill ClipKitty || true'
-	@if [ -f $(PROJECT_ROOT)/screenshot.png ]; then \
-		WIDTH=$$(sips -g pixelWidth $(PROJECT_ROOT)/screenshot.png | tail -1 | awk '{print $$2}'); \
-		HEIGHT=$$(sips -g pixelHeight $(PROJECT_ROOT)/screenshot.png | tail -1 | awk '{print $$2}'); \
-		echo "Raw screenshot: $${WIDTH}x$${HEIGHT}"; \
-		if [ $$WIDTH -lt 2000 ]; then \
-			echo "Low-DPI capture detected — upscaling 2×"; \
-			sips --resampleHeightWidth $$((HEIGHT * 2)) $$((WIDTH * 2)) $(PROJECT_ROOT)/screenshot.png --out $(PROJECT_ROOT)/screenshot.png; \
-		else \
-			echo "High-DPI capture detected — no upscaling needed"; \
-		fi; \
-	fi
-	@echo "Screenshot saved to screenshot.png"
+	@echo "Building DMG installer..."
+	@$(DIST_DIR)/build-dmg.sh "$(APP_PATH)" "$(PROJECT_ROOT)/$(APP_NAME).dmg"
 
 # Export app icon as PNG (for README, gh-pages, etc.)
 icon-png:
@@ -90,7 +70,7 @@ appstore:
 	@echo "Re-signing for App Store distribution..."
 	@codesign --force --options runtime \
 		--sign "$(APPSTORE_SIGNING_IDENTITY)" \
-		--entitlements $(PROJECT_ROOT)/Sources/App/ClipKitty-Sandboxed.entitlements \
+		--entitlements $(PROJECT_ROOT)/Sources/App/ClipKitty.entitlements \
 		"$(DERIVED_DATA)/Build/Products/AppStore/$(APP_NAME).app"
 	@echo "Creating installer package..."
 	@rm -f "$(PROJECT_ROOT)/$(APP_NAME).pkg"
@@ -103,12 +83,11 @@ appstore:
 # Marketing Assets (Screenshots & Preview Video)
 # ============================================================================
 # Prerequisites:
-#   1. ImageMagick (full): brew install imagemagick-full (required for font rendering)
-#   2. ffmpeg: brew install ffmpeg
-#   3. Synthetic data with demo items: make -C distribution synthetic-data
+#   1. ffmpeg: brew install ffmpeg
+#   2. Synthetic data with demo items: make -C distribution synthetic-data
 #
 # Usage:
-#   make -C distribution marketing-screenshots    # Generate App Store screenshots with captions
+#   make -C distribution marketing-screenshots    # Generate App Store screenshots
 #   make -C distribution preview-video            # Record App Store preview video
 #   make -C distribution marketing                # Generate all marketing assets
 # ============================================================================
@@ -123,7 +102,6 @@ synthetic-data:
 	@echo "Run ./distribution/patch-demo-items.sh to add demo items"
 
 # Open app with synthetic data for manual testing
-# Uses Debug (non-sandboxed) build for simpler file access
 run-synthetic:
 	@$(MAKE) -C $(PROJECT_ROOT) all CONFIGURATION=Debug
 	@echo "Setting up synthetic data..."
@@ -134,29 +112,25 @@ run-synthetic:
 	@echo "Launching app with synthetic data..."
 	@open "$(DERIVED_DATA)/Build/Products/Debug/$(APP_NAME).app" --args --use-simulated-db
 
-# Print background image path (used by CI/scripts)
-print-background-image:
-	@echo $(BACKGROUND_IMAGE)
-
-# Capture raw marketing screenshots via UI test (with clean environment, uses AppStore config)
+# Capture marketing screenshots via UI test (with clean environment, uses AppStore config)
+# Screenshots are captured at 16:10 aspect ratio and upscaled to 2880×1800 by the test.
 marketing-screenshots-capture:
 	@$(DIST_DIR)/patch-demo-items.sh
 	@$(MAKE) -C $(PROJECT_ROOT) all CONFIGURATION=AppStore
 	@codesign --force --options runtime \
 		--sign "$(SIGNING_IDENTITY)" \
-		--entitlements $(PROJECT_ROOT)/Sources/App/ClipKitty-Sandboxed.entitlements \
+		--entitlements $(PROJECT_ROOT)/Sources/App/ClipKitty.entitlements \
 		"$(DERIVED_DATA)/Build/Products/AppStore/$(APP_NAME).app"
 	@echo "Capturing marketing screenshots..."
 	@$(DIST_DIR)/prepare-screenshot-environment.sh 'cd $(PROJECT_ROOT) && xcodebuild test -scheme ClipKittyUITests -destination "platform=macOS" -derivedDataPath DerivedData -only-testing:ClipKittyUITests/ClipKittyUITests/testTakeMarketingScreenshots 2>&1 | grep -E "(Test Case|passed|failed)" || true'
-	@echo "Raw screenshots saved to /tmp/clipkitty_marketing_*.png"
+	@mkdir -p $(PROJECT_ROOT)/marketing
+	@cp /tmp/clipkitty_marketing_1_history.png $(PROJECT_ROOT)/marketing/screenshot_1.png
+	@cp /tmp/clipkitty_marketing_2_search.png $(PROJECT_ROOT)/marketing/screenshot_2.png
+	@cp /tmp/clipkitty_marketing_3_filter.png $(PROJECT_ROOT)/marketing/screenshot_3.png
+	@echo "Screenshots saved to marketing/"
 
-# Process raw screenshots into marketing-ready images
-marketing-screenshots-process:
-	@echo "Processing screenshots..."
-	@BACKGROUND_IMAGE="$(BACKGROUND_IMAGE)" $(DIST_DIR)/generate-marketing-screenshots.sh
-
-# Full screenshot pipeline: capture + process
-marketing-screenshots: marketing-screenshots-capture marketing-screenshots-process
+# Full screenshot pipeline
+marketing-screenshots: marketing-screenshots-capture
 	@echo "Marketing screenshots complete! See marketing/ directory"
 
 # Record App Store preview video (uses AppStore config)
@@ -165,7 +139,7 @@ preview-video:
 	@$(MAKE) -C $(PROJECT_ROOT) all CONFIGURATION=AppStore
 	@codesign --force --options runtime \
 		--sign "$(SIGNING_IDENTITY)" \
-		--entitlements $(PROJECT_ROOT)/Sources/App/ClipKitty-Sandboxed.entitlements \
+		--entitlements $(PROJECT_ROOT)/Sources/App/ClipKitty.entitlements \
 		"$(DERIVED_DATA)/Build/Products/AppStore/$(APP_NAME).app"
 	@echo "Recording preview video..."
 	@$(DIST_DIR)/record-preview-video.sh

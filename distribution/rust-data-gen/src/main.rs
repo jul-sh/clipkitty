@@ -107,10 +107,41 @@ fn set_timestamp_direct(db_path: &str, item_id: i64, timestamp_unix: i64) -> Res
     Ok(())
 }
 
-/// Save an image item directly via SQL (for synthetic data generation)
+/// Compress an image file to HEIC format using macOS `sips`.
+/// Resizes so the longest side is at most `max_dimension` pixels.
+fn compress_to_heic(image_path: &std::path::Path, max_dimension: u32, quality: u32) -> Option<Vec<u8>> {
+    let temp_output = std::env::temp_dir().join("clipkitty_heic_temp.heic");
+
+    let output = std::process::Command::new("sips")
+        .args([
+            "-s", "format", "heic",
+            "-s", "formatOptions", &quality.to_string(),
+            "-Z", &max_dimension.to_string(),
+        ])
+        .arg(image_path)
+        .args(["--out"])
+        .arg(&temp_output)
+        .output()
+        .ok()?;
+
+    if !output.status.success() {
+        eprintln!("sips failed: {}", String::from_utf8_lossy(&output.stderr));
+        return None;
+    }
+
+    let data = fs::read(&temp_output).ok()?;
+    let _ = fs::remove_file(&temp_output);
+    Some(data)
+}
+
+/// Save an image item directly via SQL (for synthetic data generation).
+/// Inserts into both `items` and `image_items` (normalized schema).
+/// If `thumbnail` is None, one is generated from `image_data` (requires a format
+/// the `image` crate can decode — not HEIC).
 fn save_image_direct(
     db_path: &str,
     image_data: Vec<u8>,
+    thumbnail: Option<Vec<u8>>,
     description: String,
     source_app: Option<String>,
     source_app_bundle_id: Option<String>,
@@ -123,26 +154,31 @@ fn save_image_direct(
     let mut hasher = DefaultHasher::new();
     hash_input.hash(&mut hasher);
     let content_hash = hasher.finish().to_string();
-    let thumbnail = generate_thumbnail(&image_data, 64);
+    let thumbnail = thumbnail.or_else(|| generate_thumbnail(&image_data, 64));
 
-    conn.execute(
-        r#"
-        INSERT INTO items (content, contentHash, timestamp, sourceApp, contentType, imageData, thumbnail, sourceAppBundleID)
-        VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8)
-        "#,
+    let tx = conn.unchecked_transaction()?;
+
+    tx.execute(
+        r#"INSERT INTO items (contentType, contentHash, content, timestamp, sourceApp, sourceAppBundleId, thumbnail)
+           VALUES ('image', ?1, ?2, ?3, ?4, ?5, ?6)"#,
         params![
-            description,
             content_hash,
+            description,
             timestamp_str,
             source_app,
-            "image",
-            image_data,
-            thumbnail,
             source_app_bundle_id,
+            thumbnail,
         ],
     )?;
+    let item_id = tx.last_insert_rowid();
 
-    Ok(conn.last_insert_rowid())
+    tx.execute(
+        "INSERT INTO image_items (itemId, data, description) VALUES (?1, ?2, ?3)",
+        params![item_id, image_data, description],
+    )?;
+
+    tx.commit()?;
+    Ok(item_id)
 }
 
 #[derive(Debug, Deserialize, Serialize, Clone)]
@@ -303,11 +339,14 @@ fn insert_demo_items(store: &ClipboardStore, db_path: &str) -> Result<()> {
     // Add kitty image (most recent item)
     let base_path = PathBuf::from(env!("CARGO_MANIFEST_DIR"));
     let kitty_path = base_path.join("../../marketing/assets/kitty.jpg");
-    if let Ok(image_data) = fs::read(&kitty_path) {
+    if let Ok(raw_data) = fs::read(&kitty_path) {
+        let thumbnail = generate_thumbnail(&raw_data, 64);
+        let image_data = compress_to_heic(&kitty_path, 1500, 60).unwrap_or(raw_data);
         if let Ok(id) = save_image_direct(
             db_path,
             image_data,
-            "kitty".to_string(),
+            thumbnail,
+            "cat, kitten, tabby, pet, animal, fur, whiskers".to_string(),
             Some("Photos".to_string()),
             Some("com.apple.Photos".to_string()),
         ) {
@@ -317,18 +356,115 @@ fn insert_demo_items(store: &ClipboardStore, db_path: &str) -> Result<()> {
         }
     }
 
+    // Add source images with keyword captions (mirrors Vision framework output)
+    // Images are compressed to HEIC (like the app does) to keep the DB small.
+    let source_images_dir = base_path.join("../source-images");
+    let source_images: &[(&str, &str, &str, &str, i64)] = &[
+        // (filename, keywords, source_app, bundle_id, time_offset_seconds)
+        (
+            "[Advent Bay, Spitzbergen, Norway].webp",
+            "landscape, arctic, mountains, bay, tundra, cabin, norway, spitzbergen, photograph, vintage",
+            "Safari", "com.apple.Safari", -7200,
+        ),
+        (
+            "At the French Windows. The Artist's Wife.webp",
+            "painting, woman, portrait, garden, balcony, dress, spring, blossoms, trees, oil painting",
+            "Photos", "com.apple.Photos", -6800,
+        ),
+        (
+            "Bemberg Fondation Toulouse.jpg",
+            "painting, impressionist, pointillism, garden, blossoms, trees, gate, spring, colorful, oil painting",
+            "Safari", "com.apple.Safari", -6400,
+        ),
+        (
+            "Eide : Granvin DATE ca. 1910.webp",
+            "village, norway, fjord, harbor, boats, houses, mountains, coastal, photograph, vintage",
+            "Photos", "com.apple.Photos", -6000,
+        ),
+        (
+            "Gathering Autumn Flowers A1758.jpg",
+            "painting, field, meadow, women, parasol, flowers, autumn, sky, clouds, impressionist",
+            "Safari", "com.apple.Safari", -5600,
+        ),
+        (
+            "Henri-Edmond Cross\u{a0}.jpg",
+            "painting, pointillism, sunset, clouds, pink, sky, trees, landscape, neo-impressionist, oil painting",
+            "Photos", "com.apple.Photos", -5200,
+        ),
+        (
+            "Man with rickshaw on tall tree lined dirt road.webp",
+            "photograph, road, trees, rickshaw, path, forest, tall trees, japan, vintage, black and white",
+            "Safari", "com.apple.Safari", -4800,
+        ),
+        (
+            "Miniature from an Akbarnama (detail) of Akbar wearing a bandhan\u{12b} patk\u{101} over a gold-brocaded silk sash.jpg.webp",
+            "painting, miniature, mughal, emperor, akbar, throne, court, gold, turban, manuscript",
+            "Safari", "com.apple.Safari", -4400,
+        ),
+        (
+            "Monet - The Gare Saint-Lazare.jpg",
+            "painting, monet, train station, steam, locomotive, impressionist, paris, railway, smoke, oil painting",
+            "Photos", "com.apple.Photos", -4000,
+        ),
+        (
+            "The Drunkard\u{2019}s Children (Plate 1).webp",
+            "print, engraving, crowd, victorian, street scene, people, illustration, cruikshank, vintage, black and white",
+            "Safari", "com.apple.Safari", -3600,
+        ),
+        (
+            "The Great Wave off Kanagawa.jpg",
+            "woodblock print, wave, ocean, hokusai, japan, mount fuji, boats, ukiyo-e, blue, sea",
+            "Photos", "com.apple.Photos", -3200,
+        ),
+        (
+            "The Solfatara, and the issue of hot vapours from underground lakes.webp",
+            "illustration, volcano, landscape, geological, lake, steam, fire, figure, tree, scientific",
+            "Safari", "com.apple.Safari", -2800,
+        ),
+        (
+            "The Whale Car Wash, Oklahoma City, Oklahoma.webp",
+            "photograph, whale, building, roadside, blue, car wash, americana, kitsch, architecture, vintage",
+            "Photos", "com.apple.Photos", -2400,
+        ),
+    ];
+
+    for (filename, keywords, source_app, bundle_id, offset) in source_images {
+        let image_path = source_images_dir.join(filename);
+        if let Ok(raw_data) = fs::read(&image_path) {
+            // Generate thumbnail from original data (image crate can't decode HEIC)
+            let thumbnail = generate_thumbnail(&raw_data, 64);
+            // Compress to HEIC using macOS sips, falling back to raw data
+            let image_data = compress_to_heic(&image_path, 1500, 60).unwrap_or(raw_data);
+            if let Ok(id) = save_image_direct(
+                db_path,
+                image_data,
+                thumbnail,
+                keywords.to_string(),
+                Some(source_app.to_string()),
+                Some(bundle_id.to_string()),
+            ) {
+                if id > 0 {
+                    let _ = set_timestamp_direct(db_path, id, now + offset);
+                }
+            }
+        } else {
+            eprintln!("Warning: source image not found: {}", filename);
+        }
+    }
+
     Ok(())
 }
 
 /// Reclassify text items as colors if they match color patterns.
 /// Iterates over all items with contentType='text' and updates them
 /// to contentType='color' with the parsed colorRgba if they're valid colors.
+/// The text_items row stays as-is (colors use the same child table).
 fn reclassify_colors(db_path: &str) -> Result<usize> {
     let conn = rusqlite::Connection::open(db_path)?;
 
     // Fetch all text items
     let mut stmt = conn.prepare(
-        "SELECT id, content FROM items WHERE contentType = 'text' OR contentType IS NULL"
+        "SELECT id, content FROM items WHERE contentType = 'text'"
     )?;
 
     let text_items: Vec<(i64, String)> = stmt

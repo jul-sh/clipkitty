@@ -1,16 +1,14 @@
 import ProjectDescription
 
 // MARK: - Build Configurations
-// Debug:    non-sandboxed, for development
-// Release:  non-sandboxed, for DMG distribution
-// AppStore: sandboxed (-DSANDBOXED), for App Store
+// Debug:    for development
+// Release:  for DMG distribution
+// AppStore: for App Store (differs only in signing)
 
 let configurations: [Configuration] = [
     .debug(name: "Debug", settings: [:]),
     .release(name: "Release", settings: [:]),
-    .release(name: .configuration("AppStore"), settings: [
-        "SWIFT_ACTIVE_COMPILATION_CONDITIONS": "SANDBOXED",
-    ]),
+    .release(name: .configuration("AppStore"), settings: [:]),
 ]
 
 // MARK: - Project
@@ -19,7 +17,7 @@ let project = Project(
     name: "ClipKitty",
     settings: .settings(
         base: [
-            "MARKETING_VERSION": "1.7.1",
+            "MARKETING_VERSION": "1.7.2",
             "CURRENT_PROJECT_VERSION": "1",
         ],
         configurations: configurations,
@@ -105,7 +103,7 @@ let project = Project(
                         "CODE_SIGN_ENTITLEMENTS": "Sources/App/ClipKitty.entitlements",
                     ]),
                     .release(name: .configuration("AppStore"), settings: [
-                        "CODE_SIGN_ENTITLEMENTS": "Sources/App/ClipKitty-Sandboxed.entitlements",
+                        "CODE_SIGN_ENTITLEMENTS": "Sources/App/ClipKitty.entitlements",
                     ]),
                 ]
             )
@@ -123,8 +121,13 @@ let project = Project(
             ]),
             dependencies: [
                 .target(name: "ClipKittyRust"),
-                .external(name: "GRDB"),
-            ]
+            ],
+            settings: .settings(
+                base: [
+                    "OTHER_LDFLAGS": .array(["$(inherited)", "-lpurr"]),
+                    "LIBRARY_SEARCH_PATHS": .array(["$(inherited)", "$(PROJECT_DIR)/Sources/ClipKittyRust"]),
+                ]
+            )
         ),
 
         // MARK: ClipKittyUITests — UI tests
@@ -177,17 +180,6 @@ let project = Project(
                 executable: .target("ClipKitty")
             )
         ),
-        // Release scheme for DMG distribution
-        .scheme(
-            name: "ClipKitty-Release",
-            shared: true,
-            buildAction: .buildAction(targets: [.target("ClipKitty")]),
-            runAction: .runAction(
-                configuration: "Release",
-                executable: .target("ClipKitty")
-            ),
-            archiveAction: .archiveAction(configuration: "Release")
-        ),
         // App Store scheme
         .scheme(
             name: "ClipKitty-AppStore",
@@ -215,6 +207,5 @@ let project = Project(
     ],
     additionalFiles: [
         "Sources/App/ClipKitty.entitlements",
-        "Sources/App/ClipKitty-Sandboxed.entitlements",
     ]
 )
