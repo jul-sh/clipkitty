@@ -551,9 +551,11 @@ final class ClipboardStore {
 
                 paths.append(url.path)
                 filenames.append(url.lastPathComponent)
-                fileSizes.append(0)
 
-                let isDirectory = (try? url.resourceValues(forKeys: [.isDirectoryKey]))?.isDirectory == true
+                let resourceValues = try? url.resourceValues(forKeys: [.isDirectoryKey, .fileSizeKey])
+                fileSizes.append(UInt64(resourceValues?.fileSize ?? 0))
+
+                let isDirectory = resourceValues?.isDirectory == true
                 if isDirectory {
                     utis.append("public.folder")
                 } else {

@@ -129,18 +129,27 @@ impl StoredItem {
 
         let file_count = paths.len();
 
-        let all_folders = utis.iter().all(|u| u.starts_with("public.folder"));
-        let (singular, plural) = if all_folders {
-            ("Folder", "Folders")
-        } else {
-            ("File", "Files")
+        let folder_count = utis.iter().filter(|u| u.starts_with("public.folder")).count();
+        let file_only_count = file_count - folder_count;
+
+        let dir_count = folder_count;
+        let type_prefix = match (dir_count, file_only_count) {
+            (0, 1) => "File:".to_string(),
+            (0, n) => format!("{} Files:", n),
+            (1, 0) => "Directory:".to_string(),
+            (n, 0) => format!("{} Directories:", n),
+            (d, f) => format!("{} {} and {} {}:",
+                d, if d == 1 { "Directory" } else { "Directories" },
+                f, if f == 1 { "File" } else { "Files" }),
         };
 
-        let display_name = match file_count {
-            1 => format!("{}: {}", singular, filenames[0]),
-            2 => format!("{} {}: {}, {}", file_count, plural, filenames[0], filenames[1]),
-            n => format!("{} {}: {} and {} more", n, plural, filenames[0], n - 1),
+        let items_summary = match file_count {
+            1 => filenames[0].clone(),
+            2 => format!("{}, {}", filenames[0], filenames[1]),
+            n => format!("{} and {} more", filenames[0], n - 1),
         };
+
+        let display_name = format!("{} {}", type_prefix, items_summary);
 
         // Build FileEntry vec (file_item_id=0 since not yet inserted)
         let files: Vec<FileEntry> = (0..file_count)

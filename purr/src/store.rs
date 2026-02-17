@@ -1429,8 +1429,8 @@ mod tests {
         assert_eq!(files[0].file_size, 0);
         assert_eq!(files[0].uti, "public.folder");
 
-        // text_content should return the folder name with prefix
-        assert_eq!(items[0].content.text_content(), "Folder: Projects");
+        // text_content should return the directory name with prefix
+        assert_eq!(items[0].content.text_content(), "Directory: Projects");
     }
 
     #[test]
