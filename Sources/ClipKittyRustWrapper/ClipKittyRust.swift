@@ -46,8 +46,6 @@ extension IconType {
         switch self {
         case .text: return "doc.text"
         case .link: return "link"
-        case .email: return "envelope"
-        case .phone: return "phone"
         case .image: return "photo"
         case .color: return "paintpalette"
         case .file: return "doc"
@@ -59,8 +57,6 @@ extension IconType {
         switch self {
         case .text: return .text
         case .link: return .url
-        case .email: return .emailMessage
-        case .phone: return .vCard
         case .image: return .image
         case .color: return .text
         case .file: return .fileURL
@@ -89,14 +85,10 @@ extension ClipboardContent {
             return value
         case .link(let url, _):
             return url
-        case .email(let address):
-            return address
-        case .phone(let number):
-            return number
         case .image(_, let description):
             return description
-        case .file(_, let filename, _, _, _, _):
-            return filename
+        case .file(let displayName, _):
+            return displayName
         }
     }
 }

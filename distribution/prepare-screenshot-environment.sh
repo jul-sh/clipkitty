@@ -8,7 +8,7 @@ set -e
 
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 PROJECT_ROOT="$(dirname "$SCRIPT_DIR")"
-BACKGROUND_IMAGE="$(make -s -C "$SCRIPT_DIR" print-background-image)"
+BACKGROUND_IMAGE="/System/Library/Desktop Pictures/Solid Colors/Silver.png"
 
 # Save current state for restoration
 PREV_DESKTOP="$(osascript -e 'tell application "Finder" to get POSIX path of (desktop picture as alias)' 2>/dev/null || true)"

@@ -6,7 +6,9 @@
 
 Unlimited history • Instant fuzzy search • Multi-line preview • Private
 
-<img src="https://raw.githubusercontent.com/jul-sh/clipkitty/gh-pages/screenshot.png" alt="ClipKitty screenshot" width="820">
+<img src="https://raw.githubusercontent.com/jul-sh/clipkitty/gh-pages/marketing_1.png" alt="ClipKitty clipboard history" width="820">
+<img src="https://raw.githubusercontent.com/jul-sh/clipkitty/gh-pages/marketing_2.png" alt="ClipKitty fuzzy search" width="820">
+<img src="https://raw.githubusercontent.com/jul-sh/clipkitty/gh-pages/marketing_3.png" alt="ClipKitty content filter" width="820">
 
 ## Why it exists
 
@@ -69,9 +71,3 @@ make
 ```
 
 Requires macOS 15+ and Swift 6.2+.
-
-## Screenshots
-
-<img src="https://raw.githubusercontent.com/jul-sh/clipkitty/gh-pages/marketing_1.png" width="820">
-<img src="https://raw.githubusercontent.com/jul-sh/clipkitty/gh-pages/marketing_2.png" width="820">
-<img src="https://raw.githubusercontent.com/jul-sh/clipkitty/gh-pages/marketing_3.png" width="820">
