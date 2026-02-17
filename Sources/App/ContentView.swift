@@ -395,14 +395,19 @@ struct ContentView: View {
         }
     }
 
-    private static let filterOptions: [(ContentTypeFilter, String)] = [
-        (.all, "All Types"),
-        (.text, "Text"),
-        (.images, "Images"),
-        (.links, "Links"),
-        (.colors, "Colors"),
-        (.files, "Files"),
-    ]
+    private static let filterOptions: [(ContentTypeFilter, String)] = {
+        var options: [(ContentTypeFilter, String)] = [
+            (.all, "All Types"),
+            (.text, "Text"),
+            (.images, "Images"),
+            (.links, "Links"),
+            (.colors, "Colors"),
+        ]
+        #if !SANDBOXED
+        options.append((.files, "Files"))
+        #endif
+        return options
+    }()
 
     private var filterPopoverContent: some View {
         let options = Self.filterOptions
@@ -632,7 +637,7 @@ struct ContentView: View {
     @ViewBuilder
     private func previewContent(for item: ClipboardItem) -> some View {
         switch item.content {
-        case .text, .color, .email, .phone:
+        case .text, .color:
             TextPreviewView(
                 text: item.textContent,
                 fontName: FontManager.mono,
