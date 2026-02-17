@@ -321,18 +321,31 @@ fn generate_timestamp(item_index: usize, now: i64) -> i64 {
 mod demo_data;
 use demo_data::DEMO_ITEMS;
 
+/// Find item ID by content hash (for setting timestamps on duplicates)
+fn find_id_by_hash(db_path: &str, content_hash: &str) -> Option<i64> {
+    let conn = rusqlite::Connection::open(db_path).ok()?;
+    conn.query_row(
+        "SELECT id FROM items WHERE contentHash = ?1",
+        params![content_hash],
+        |row| row.get(0),
+    ).ok()
+}
+
 fn insert_demo_items(store: &ClipboardStore, db_path: &str) -> Result<()> {
     let now = Utc::now().timestamp();
 
     for item in DEMO_ITEMS {
-        if let Ok(id) = store.save_text(
+        let _ = store.save_text(
             item.content.to_string(),
             Some(item.source_app.to_string()),
             Some(item.bundle_id.to_string()),
-        ) {
-            if id > 0 {
-                let _ = set_timestamp_direct(db_path, id, now + item.offset);
-            }
+        );
+        // Always set the correct timestamp (handles both new and duplicate items)
+        let mut hasher = DefaultHasher::new();
+        item.content.hash(&mut hasher);
+        let content_hash = hasher.finish().to_string();
+        if let Some(id) = find_id_by_hash(db_path, &content_hash) {
+            let _ = set_timestamp_direct(db_path, id, now + item.offset);
         }
     }
 
