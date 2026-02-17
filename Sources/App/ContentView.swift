@@ -332,7 +332,7 @@ struct ContentView: View {
                     return .handled
                 }
                 .onKeyPress(.return, phases: .down) { keyPress in
-                    if keyPress.modifiers.contains(.command) {
+                    if keyPress.modifiers.contains(.option) {
                         guard selectedItem != nil else { return .handled }
                         let actions = actionItems
                         highlightedActionIndex = actions.count - 1
@@ -785,7 +785,7 @@ struct ContentView: View {
                 focusActionsDropdown()
             }
         } label: {
-            Text("⌘⏎ Actions")
+            Text("⌥⏎ Actions")
                 .font(.system(size: 13))
                 .foregroundStyle(.secondary)
                 .padding(.horizontal, 6)
