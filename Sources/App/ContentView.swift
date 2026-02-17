@@ -7,6 +7,7 @@ import UniformTypeIdentifiers
 struct ContentView: View {
     var store: ClipboardStore
     let onSelect: (Int64, ClipboardContent) -> Void
+    let onCopyOnly: (Int64, ClipboardContent) -> Void
     let onDismiss: () -> Void
     var initialSearchQuery: String = ""
 
@@ -23,9 +24,12 @@ struct ContentView: View {
     @State private var showFilterPopover = false
     @State private var showDeleteConfirmation = false
     @State private var highlightedFilterIndex: Int = 0
+    @State private var showActionsPopover = false
+    @State private var highlightedActionIndex: Int = 0
     enum FocusTarget: Hashable {
         case search
         case filterDropdown
+        case actionsDropdown
     }
     @FocusState private var focusTarget: FocusTarget?
 
@@ -138,6 +142,7 @@ struct ContentView: View {
                 searchText = ""
             }
             showFilterPopover = false
+            showActionsPopover = false
             // Select first item whenever display resets (re-open)
             if let firstId = firstItemId {
                 loadItem(id: firstId)
@@ -259,6 +264,13 @@ struct ContentView: View {
         }
     }
 
+    private func focusActionsDropdown() {
+        Task { @MainActor in
+            try? await Task.sleep(for: .milliseconds(50))
+            focusTarget = .actionsDropdown
+        }
+    }
+
     private func moveSelection(by offset: Int) {
         hasUserNavigated = true
         guard let currentIndex = selectedIndex else {
@@ -272,6 +284,11 @@ struct ContentView: View {
     private func confirmSelection() {
         guard let item = selectedItem else { return }
         onSelect(item.itemMetadata.itemId, item.content)
+    }
+
+    private func copyOnlySelection() {
+        guard let item = selectedItem else { return }
+        onCopyOnly(item.itemMetadata.itemId, item.content)
     }
 
     private func deleteSelectedItem() {
@@ -314,7 +331,15 @@ struct ContentView: View {
                     moveSelection(by: 1)
                     return .handled
                 }
-                .onKeyPress(.return, phases: .down) { _ in
+                .onKeyPress(.return, phases: .down) { keyPress in
+                    if keyPress.modifiers.contains(.command) {
+                        guard selectedItem != nil else { return .handled }
+                        let actions = actionItems
+                        highlightedActionIndex = actions.count - 1
+                        showActionsPopover = true
+                        focusActionsDropdown()
+                        return .handled
+                    }
                     confirmSelection()
                     return .handled
                 }
@@ -698,6 +723,7 @@ struct ContentView: View {
                 }
             }
             Spacer()
+            actionsButton
             Button(buttonLabel(for: item)) { confirmSelection() }
                 .buttonStyle(.plain)
                 .padding(.horizontal, 6)
@@ -712,6 +738,135 @@ struct ContentView: View {
 
     private func buttonLabel(for item: ClipboardItem) -> String {
         return AppSettings.shared.shouldShowPasteLabel ? "⏎ paste" : "⏎ copy"
+    }
+
+    // MARK: - Actions Dropdown
+
+    private enum ActionItem: Equatable {
+        case defaultAction  // copy or paste based on settings
+        case copyOnly       // only shown when default is paste
+        case delete
+    }
+
+    private var actionItems: [ActionItem] {
+        var items: [ActionItem] = [.delete]
+        if AppSettings.shared.shouldShowPasteLabel {
+            items.append(.copyOnly)
+        }
+        items.append(.defaultAction)
+        return items
+    }
+
+    private func actionLabel(for action: ActionItem) -> String {
+        switch action {
+        case .defaultAction:
+            return AppSettings.shared.shouldShowPasteLabel ? "Paste" : "Copy"
+        case .copyOnly:
+            return "Copy"
+        case .delete:
+            return "Delete"
+        }
+    }
+
+    private func actionShortcut(for action: ActionItem) -> String? {
+        switch action {
+        case .defaultAction: return "⏎"
+        case .copyOnly: return nil
+        case .delete: return "⌫"
+        }
+    }
+
+    private var actionsButton: some View {
+        Button {
+            let actions = actionItems
+            highlightedActionIndex = actions.count - 1
+            showActionsPopover.toggle()
+            if showActionsPopover {
+                focusActionsDropdown()
+            }
+        } label: {
+            Text("⌘⏎ Actions")
+                .font(.system(size: 13))
+                .foregroundStyle(.secondary)
+                .padding(.horizontal, 6)
+                .padding(.vertical, 2)
+        }
+        .buttonStyle(.plain)
+        .popover(isPresented: $showActionsPopover, arrowEdge: .top) {
+            actionsPopoverContent
+        }
+    }
+
+    private var actionsPopoverContent: some View {
+        let actions = actionItems
+        return VStack(spacing: 2) {
+            ForEach(Array(actions.enumerated()), id: \.offset) { index, action in
+                if action == .delete && index < actions.count - 1 {
+                    ActionOptionRow(
+                        label: actionLabel(for: action),
+                        shortcut: actionShortcut(for: action),
+                        isHighlighted: highlightedActionIndex == index,
+                        isDestructive: true,
+                        action: { performAction(action) }
+                    )
+                    Divider().padding(.horizontal, 4).padding(.vertical, 3)
+                } else {
+                    ActionOptionRow(
+                        label: actionLabel(for: action),
+                        shortcut: actionShortcut(for: action),
+                        isHighlighted: highlightedActionIndex == index,
+                        isDestructive: action == .delete,
+                        action: { performAction(action) }
+                    )
+                }
+            }
+        }
+        .padding(10)
+        .frame(width: 160)
+        .focusable()
+        .focused($focusTarget, equals: .actionsDropdown)
+        .focusEffectDisabled()
+        .onKeyPress(.upArrow) {
+            highlightedActionIndex = max(highlightedActionIndex - 1, 0)
+            return .handled
+        }
+        .onKeyPress(.downArrow) {
+            highlightedActionIndex = min(highlightedActionIndex + 1, actions.count - 1)
+            return .handled
+        }
+        .onKeyPress(.return, phases: .down) { _ in
+            let action = actions[highlightedActionIndex]
+            performAction(action)
+            return .handled
+        }
+        .onKeyPress(.escape) {
+            showActionsPopover = false
+            focusSearchField()
+            return .handled
+        }
+        .onKeyPress(.tab) {
+            showActionsPopover = false
+            focusSearchField()
+            return .handled
+        }
+        .onAppear {
+            let actions = actionItems
+            highlightedActionIndex = actions.count - 1
+            focusActionsDropdown()
+        }
+    }
+
+    private func performAction(_ action: ActionItem) {
+        showActionsPopover = false
+        switch action {
+        case .defaultAction:
+            confirmSelection()
+        case .copyOnly:
+            copyOnlySelection()
+        case .delete:
+            showDeleteConfirmation = true
+            focusSearchField()
+        }
     }
 
     private var emptyStateView: some View {
@@ -1294,6 +1449,58 @@ private struct FilterOptionRow: View {
         }
         .buttonStyle(.plain)
         .onHover { isHovered = $0 }
+    }
+}
+
+// MARK: - Action Option Row
+
+private struct ActionOptionRow: View {
+    let label: String
+    let shortcut: String?
+    var isHighlighted: Bool = false
+    var isDestructive: Bool = false
+    let action: () -> Void
+    @State private var isHovered = false
+
+    var body: some View {
+        Button(action: action) {
+            HStack {
+                Text(label)
+                    .font(.system(size: 13))
+                    .foregroundStyle(foregroundColor)
+                Spacer()
+                if let shortcut {
+                    Text(shortcut)
+                        .font(.system(size: 11))
+                        .foregroundStyle(isHighlighted ? Color.white.opacity(0.7) : Color.secondary.opacity(0.6))
+                }
+            }
+            .frame(maxWidth: .infinity, alignment: .leading)
+            .padding(.horizontal, 8)
+            .padding(.vertical, 5)
+            .background {
+                if isHighlighted {
+                    if isDestructive {
+                        RoundedRectangle(cornerRadius: 9)
+                            .fill(Color.red.opacity(0.8))
+                    } else {
+                        selectionBackground()
+                            .clipShape(RoundedRectangle(cornerRadius: 9))
+                    }
+                } else {
+                    RoundedRectangle(cornerRadius: 9)
+                        .fill(isHovered ? Color.primary.opacity(0.05) : Color.clear)
+                }
+            }
+        }
+        .buttonStyle(.plain)
+        .onHover { isHovered = $0 }
+    }
+
+    private var foregroundColor: Color {
+        if isHighlighted { return .white }
+        if isDestructive { return .red }
+        return .secondary
     }
 }
 
