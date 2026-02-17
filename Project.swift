@@ -123,8 +123,13 @@ let project = Project(
             ]),
             dependencies: [
                 .target(name: "ClipKittyRust"),
-                .external(name: "GRDB"),
-            ]
+            ],
+            settings: .settings(
+                base: [
+                    "OTHER_LDFLAGS": .array(["$(inherited)", "-lpurr"]),
+                    "LIBRARY_SEARCH_PATHS": .array(["$(inherited)", "$(PROJECT_DIR)/Sources/ClipKittyRust"]),
+                ]
+            )
         ),
 
         // MARK: ClipKittyUITests — UI tests

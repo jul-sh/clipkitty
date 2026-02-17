@@ -135,6 +135,7 @@ fn compress_to_heic(image_path: &std::path::Path, max_dimension: u32, quality: u
 }
 
 /// Save an image item directly via SQL (for synthetic data generation).
+/// Inserts into both `items` and `image_items` (normalized schema).
 /// If `thumbnail` is None, one is generated from `image_data` (requires a format
 /// the `image` crate can decode — not HEIC).
 fn save_image_direct(
@@ -155,24 +156,29 @@ fn save_image_direct(
     let content_hash = hasher.finish().to_string();
     let thumbnail = thumbnail.or_else(|| generate_thumbnail(&image_data, 64));
 
-    conn.execute(
-        r#"
-        INSERT INTO items (content, contentHash, timestamp, sourceApp, contentType, imageData, thumbnail, sourceAppBundleID)
-        VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8)
-        "#,
+    let tx = conn.unchecked_transaction()?;
+
+    tx.execute(
+        r#"INSERT INTO items (contentType, contentHash, content, timestamp, sourceApp, sourceAppBundleId, thumbnail)
+           VALUES ('image', ?1, ?2, ?3, ?4, ?5, ?6)"#,
         params![
-            description,
             content_hash,
+            description,
             timestamp_str,
             source_app,
-            "image",
-            image_data,
-            thumbnail,
             source_app_bundle_id,
+            thumbnail,
         ],
     )?;
+    let item_id = tx.last_insert_rowid();
 
-    Ok(conn.last_insert_rowid())
+    tx.execute(
+        "INSERT INTO image_items (itemId, data, description) VALUES (?1, ?2, ?3)",
+        params![item_id, image_data, description],
+    )?;
+
+    tx.commit()?;
+    Ok(item_id)
 }
 
 #[derive(Debug, Deserialize, Serialize, Clone)]
@@ -452,12 +458,13 @@ fn insert_demo_items(store: &ClipboardStore, db_path: &str) -> Result<()> {
 /// Reclassify text items as colors if they match color patterns.
 /// Iterates over all items with contentType='text' and updates them
 /// to contentType='color' with the parsed colorRgba if they're valid colors.
+/// The text_items row stays as-is (colors use the same child table).
 fn reclassify_colors(db_path: &str) -> Result<usize> {
     let conn = rusqlite::Connection::open(db_path)?;
 
     // Fetch all text items
     let mut stmt = conn.prepare(
-        "SELECT id, content FROM items WHERE contentType = 'text' OR contentType IS NULL"
+        "SELECT id, content FROM items WHERE contentType = 'text'"
     )?;
 
     let text_items: Vec<(i64, String)> = stmt

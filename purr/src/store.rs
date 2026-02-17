@@ -125,7 +125,8 @@ impl ClipboardStore {
         use rayon::prelude::*;
         items.into_par_iter().try_for_each(|item| {
             if let Some(id) = item.id {
-                self.indexer.add_document(id, item.text_content(), item.timestamp_unix)?;
+                let index_text = item.file_index_text().unwrap_or_else(|| item.text_content().to_string());
+                self.indexer.add_document(id, &index_text, item.timestamp_unix)?;
             }
             Ok::<(), ClipKittyError>(())
         })?;
@@ -541,6 +542,50 @@ impl ClipboardStoreApi for ClipboardStore {
         Ok(items)
     }
 
+    /// Save multiple file items as a single grouped entry
+    /// Returns the new item ID, or 0 if duplicate (timestamp updated)
+    fn save_files(
+        &self,
+        paths: Vec<String>,
+        filenames: Vec<String>,
+        file_sizes: Vec<u64>,
+        utis: Vec<String>,
+        bookmark_data_list: Vec<Vec<u8>>,
+        thumbnail: Option<Vec<u8>>,
+        source_app: Option<String>,
+        source_app_bundle_id: Option<String>,
+    ) -> Result<i64, ClipKittyError> {
+        if paths.is_empty() {
+            return Err(ClipKittyError::InvalidInput("No files provided".into()));
+        }
+
+        let item = StoredItem::new_files(
+            paths, filenames, file_sizes, utis, bookmark_data_list,
+            thumbnail, source_app, source_app_bundle_id,
+        );
+
+        // Check for duplicate
+        if let Some(existing) = self.db.find_by_hash(&item.content_hash)? {
+            if let Some(id) = existing.id {
+                let now = Utc::now();
+                self.db.update_timestamp(id, now)?;
+
+                let index_text = item.file_index_text().unwrap_or_else(|| item.text_content().to_string());
+                self.indexer.add_document(id, &index_text, now.timestamp())?;
+                self.indexer.commit()?;
+
+                return Ok(0);
+            }
+        }
+
+        let index_text = item.file_index_text().unwrap_or_else(|| item.text_content().to_string());
+        let id = self.db.insert_item(&item)?;
+        self.indexer.add_document(id, &index_text, item.timestamp_unix)?;
+        self.indexer.commit()?;
+
+        Ok(id)
+    }
+
     /// Save a file item to the database and index
     /// Returns the new item ID, or 0 if duplicate (timestamp updated)
     fn save_file(
@@ -584,8 +629,8 @@ impl ClipboardStoreApi for ClipboardStore {
     }
 
     /// Update file status (called from Swift when file move/delete detected)
-    fn update_file_status(&self, item_id: i64, status: String, new_path: Option<String>) -> Result<(), ClipKittyError> {
-        self.db.update_file_status(item_id, &status, new_path.as_deref())?;
+    fn update_file_status(&self, file_item_id: i64, status: String, new_path: Option<String>) -> Result<(), ClipKittyError> {
+        self.db.update_file_status(file_item_id, &status, new_path.as_deref())?;
         Ok(())
     }
 
@@ -1127,18 +1172,26 @@ mod tests {
     // File item tests
     // ─────────────────────────────────────────────────────────────────────────────
 
+    /// Helper to extract FileEntry vec from ClipboardContent::File
+    fn extract_files(content: &crate::interface::ClipboardContent) -> &[crate::interface::FileEntry] {
+        if let crate::interface::ClipboardContent::File { files, .. } = content {
+            files
+        } else {
+            panic!("Expected File content, got: {:?}", content);
+        }
+    }
+
     #[test]
     fn test_save_file_roundtrip() {
-        // Verify all file fields survive the save → database → fetch roundtrip
         let store = ClipboardStore::new_in_memory().unwrap();
 
         let bookmark_data = vec![0xDE, 0xAD, 0xBE, 0xEF, 0x01, 0x02, 0x03, 0x04];
-        let thumbnail = vec![0xFF, 0xD8, 0xFF, 0xE0]; // Simulated JPEG header
+        let thumbnail = vec![0xFF, 0xD8, 0xFF, 0xE0];
 
         let id = store.save_file(
             "/Users/test/Documents/report.pdf".to_string(),
             "report.pdf".to_string(),
-            1024 * 1024, // 1 MB
+            1024 * 1024,
             "com.adobe.pdf".to_string(),
             bookmark_data.clone(),
             Some(thumbnail.clone()),
@@ -1146,33 +1199,25 @@ mod tests {
             Some("com.apple.finder".to_string()),
         ).unwrap();
 
-        assert!(id > 0, "save_file should return a positive ID for new items");
+        assert!(id > 0);
 
-        // Fetch the item back
         let items = store.fetch_by_ids(vec![id]).unwrap();
         assert_eq!(items.len(), 1);
 
         let item = &items[0];
+        let files = extract_files(&item.content);
+        assert_eq!(files.len(), 1);
+        assert_eq!(files[0].path, "/Users/test/Documents/report.pdf");
+        assert_eq!(files[0].filename, "report.pdf");
+        assert_eq!(files[0].file_size, 1024 * 1024);
+        assert_eq!(files[0].uti, "com.adobe.pdf");
+        assert_eq!(files[0].bookmark_data, bookmark_data);
+        assert_eq!(files[0].file_status, crate::interface::FileStatus::Available);
+        assert!(files[0].file_item_id > 0, "file_item_id should be assigned by database");
 
-        // Verify content is File variant with all fields preserved
-        if let crate::interface::ClipboardContent::File {
-            path, filename, file_size, uti, bookmark_data: bm, file_status,
-        } = &item.content {
-            assert_eq!(path, "/Users/test/Documents/report.pdf");
-            assert_eq!(filename, "report.pdf");
-            assert_eq!(*file_size, 1024 * 1024);
-            assert_eq!(uti, "com.adobe.pdf");
-            assert_eq!(bm, &bookmark_data, "bookmark_data must survive roundtrip");
-            assert_eq!(*file_status, crate::interface::FileStatus::Available);
-        } else {
-            panic!("Expected File content, got: {:?}", item.content);
-        }
-
-        // Verify metadata
         assert_eq!(item.item_metadata.source_app.as_deref(), Some("Finder"));
         assert_eq!(item.item_metadata.source_app_bundle_id.as_deref(), Some("com.apple.finder"));
 
-        // Verify icon is thumbnail (since we provided one)
         if let crate::interface::ItemIcon::Thumbnail { bytes } = &item.item_metadata.icon {
             assert_eq!(bytes, &thumbnail);
         } else {
@@ -1329,48 +1374,37 @@ mod tests {
             None,
         ).unwrap();
 
-        // Initially available
+        // Get the file_item_id
         let items = store.fetch_by_ids(vec![id]).unwrap();
-        if let crate::interface::ClipboardContent::File { file_status, .. } = &items[0].content {
-            assert_eq!(*file_status, crate::interface::FileStatus::Available);
-        } else {
-            panic!("Expected File content");
-        }
+        let files = extract_files(&items[0].content);
+        assert_eq!(files[0].file_status, crate::interface::FileStatus::Available);
+        let file_item_id = files[0].file_item_id;
 
         // Update to moved
         store.update_file_status(
-            id,
+            file_item_id,
             "moved:/Users/test/renamed.txt".to_string(),
             Some("/Users/test/renamed.txt".to_string()),
         ).unwrap();
 
         let items = store.fetch_by_ids(vec![id]).unwrap();
-        if let crate::interface::ClipboardContent::File { file_status, path, .. } = &items[0].content {
-            assert_eq!(*file_status, crate::interface::FileStatus::Moved {
-                new_path: "/Users/test/renamed.txt".to_string()
-            });
-            assert_eq!(path, "/Users/test/renamed.txt", "path should update on move");
-        } else {
-            panic!("Expected File content");
-        }
+        let files = extract_files(&items[0].content);
+        assert_eq!(files[0].file_status, crate::interface::FileStatus::Moved {
+            new_path: "/Users/test/renamed.txt".to_string()
+        });
+        assert_eq!(files[0].path, "/Users/test/renamed.txt", "path should update on move");
 
         // Update to trashed
-        store.update_file_status(id, "trashed".to_string(), None).unwrap();
+        store.update_file_status(file_item_id, "trashed".to_string(), None).unwrap();
         let items = store.fetch_by_ids(vec![id]).unwrap();
-        if let crate::interface::ClipboardContent::File { file_status, .. } = &items[0].content {
-            assert_eq!(*file_status, crate::interface::FileStatus::Trashed);
-        } else {
-            panic!("Expected File content");
-        }
+        let files = extract_files(&items[0].content);
+        assert_eq!(files[0].file_status, crate::interface::FileStatus::Trashed);
 
         // Update to missing
-        store.update_file_status(id, "missing".to_string(), None).unwrap();
+        store.update_file_status(file_item_id, "missing".to_string(), None).unwrap();
         let items = store.fetch_by_ids(vec![id]).unwrap();
-        if let crate::interface::ClipboardContent::File { file_status, .. } = &items[0].content {
-            assert_eq!(*file_status, crate::interface::FileStatus::Missing);
-        } else {
-            panic!("Expected File content");
-        }
+        let files = extract_files(&items[0].content);
+        assert_eq!(files[0].file_status, crate::interface::FileStatus::Missing);
     }
 
     #[test]
@@ -1394,12 +1428,9 @@ mod tests {
         ).unwrap();
 
         let items = store.fetch_by_ids(vec![id]).unwrap();
-        if let crate::interface::ClipboardContent::File { bookmark_data: fetched, .. } = &items[0].content {
-            assert_eq!(fetched.len(), bookmark_data.len(), "bookmark_data length mismatch");
-            assert_eq!(fetched, &bookmark_data, "bookmark_data bytes must match exactly");
-        } else {
-            panic!("Expected File content");
-        }
+        let files = extract_files(&items[0].content);
+        assert_eq!(files[0].bookmark_data.len(), bookmark_data.len(), "bookmark_data length mismatch");
+        assert_eq!(files[0].bookmark_data, bookmark_data, "bookmark_data bytes must match exactly");
     }
 
     #[test]
@@ -1446,16 +1477,11 @@ mod tests {
         let items = store.fetch_by_ids(vec![id]).unwrap();
         assert_eq!(items.len(), 1);
 
-        if let crate::interface::ClipboardContent::File {
-            path, filename, file_size, uti, ..
-        } = &items[0].content {
-            assert_eq!(path, "/Users/test/Projects");
-            assert_eq!(filename, "Projects");
-            assert_eq!(*file_size, 0);
-            assert_eq!(uti, "public.folder");
-        } else {
-            panic!("Expected File content, got: {:?}", items[0].content);
-        }
+        let files = extract_files(&items[0].content);
+        assert_eq!(files[0].path, "/Users/test/Projects");
+        assert_eq!(files[0].filename, "Projects");
+        assert_eq!(files[0].file_size, 0);
+        assert_eq!(files[0].uti, "public.folder");
 
         // text_content should return the folder name
         assert_eq!(items[0].content.text_content(), "Projects");
@@ -1680,14 +1706,9 @@ mod tests {
         ).unwrap();
 
         let items = store.fetch_by_ids(vec![id]).unwrap();
-        if let crate::interface::ClipboardContent::File {
-            path: fetched_path, filename: fetched_name, ..
-        } = &items[0].content {
-            assert_eq!(fetched_name, filename);
-            assert_eq!(fetched_path, &path);
-        } else {
-            panic!("Expected File content");
-        }
+        let files = extract_files(&items[0].content);
+        assert_eq!(files[0].filename, filename);
+        assert_eq!(files[0].path, path);
     }
 
     #[tokio::test]
@@ -1707,11 +1728,8 @@ mod tests {
         ).unwrap();
 
         let items = store.fetch_by_ids(vec![id]).unwrap();
-        if let crate::interface::ClipboardContent::File { path, .. } = &items[0].content {
-            assert_eq!(path, "/Users/test/My Documents/Annual Report 2024.pdf");
-        } else {
-            panic!("Expected File content");
-        }
+        let files = extract_files(&items[0].content);
+        assert_eq!(files[0].path, "/Users/test/My Documents/Annual Report 2024.pdf");
 
         // Should be searchable by terms with spaces
         let result = store.search("Annual Report".to_string()).await.unwrap();
@@ -1766,11 +1784,8 @@ mod tests {
         ).unwrap();
 
         let items = store.fetch_by_ids(vec![id]).unwrap();
-        if let crate::interface::ClipboardContent::File { file_size, .. } = &items[0].content {
-            assert_eq!(*file_size, 0);
-        } else {
-            panic!("Expected File content");
-        }
+        let files = extract_files(&items[0].content);
+        assert_eq!(files[0].file_size, 0);
     }
 
     #[test]
@@ -1778,7 +1793,8 @@ mod tests {
         // Very large file sizes should roundtrip without overflow
         let store = ClipboardStore::new_in_memory().unwrap();
 
-        let large_size: u64 = u64::MAX;
+        // Note: SQLite stores as i64 so max safe roundtrip is i64::MAX
+        let large_size: u64 = i64::MAX as u64;
         let id = store.save_file(
             "/tmp/huge.bin".to_string(),
             "huge.bin".to_string(),
@@ -1791,11 +1807,8 @@ mod tests {
         ).unwrap();
 
         let items = store.fetch_by_ids(vec![id]).unwrap();
-        if let crate::interface::ClipboardContent::File { file_size, .. } = &items[0].content {
-            assert_eq!(*file_size, large_size);
-        } else {
-            panic!("Expected File content");
-        }
+        let files = extract_files(&items[0].content);
+        assert_eq!(files[0].file_size, large_size);
     }
 
     // ─────────────────────────────────────────────────────────────────────────────
@@ -1850,24 +1863,18 @@ mod tests {
     }
 
     #[test]
-    fn test_update_file_status_only_affects_files() {
-        // Calling update_file_status on a text item should be a no-op
+    fn test_update_file_status_nonexistent_id_is_noop() {
+        // Calling update_file_status with a non-existent file_item_id should be a no-op
         let store = ClipboardStore::new_in_memory().unwrap();
 
-        let text_id = store.save_text("Hello World".to_string(), None, None).unwrap();
+        store.save_text("Hello World".to_string(), None, None).unwrap();
 
-        // This should succeed without error (SQL WHERE clause filters by contentType='file')
+        // Non-existent file_item_id = 999999 should succeed without error
         store.update_file_status(
-            text_id,
+            999999,
             "trashed".to_string(),
             None,
         ).unwrap();
-
-        // Text item should be unchanged
-        let items = store.fetch_by_ids(vec![text_id]).unwrap();
-        assert_eq!(items.len(), 1);
-        assert_eq!(items[0].content.text_content(), "Hello World");
-        assert!(matches!(items[0].content, crate::interface::ClipboardContent::Text { .. }));
     }
 
     // ─────────────────────────────────────────────────────────────────────────────
@@ -1890,9 +1897,13 @@ mod tests {
             None,
         ).unwrap();
 
+        // Get file_item_id
+        let items = store.fetch_by_ids(vec![id]).unwrap();
+        let file_item_id = extract_files(&items[0].content)[0].file_item_id;
+
         // Move the file
         store.update_file_status(
-            id,
+            file_item_id,
             "moved:/Users/test/Desktop/original.txt".to_string(),
             Some("/Users/test/Desktop/original.txt".to_string()),
         ).unwrap();
@@ -1900,16 +1911,13 @@ mod tests {
         // Fetch and verify path changed
         let items = store.fetch_by_ids(vec![id]).unwrap();
         assert_eq!(items.len(), 1);
-        if let crate::interface::ClipboardContent::File { path, filename, file_status, .. } = &items[0].content {
-            assert_eq!(path, "/Users/test/Desktop/original.txt", "path must reflect move");
-            assert_eq!(filename, "original.txt", "filename should be unchanged");
-            assert_eq!(
-                *file_status,
-                crate::interface::FileStatus::Moved { new_path: "/Users/test/Desktop/original.txt".to_string() }
-            );
-        } else {
-            panic!("Expected File content, got: {:?}", items[0].content);
-        }
+        let files = extract_files(&items[0].content);
+        assert_eq!(files[0].path, "/Users/test/Desktop/original.txt", "path must reflect move");
+        assert_eq!(files[0].filename, "original.txt", "filename should be unchanged");
+        assert_eq!(
+            files[0].file_status,
+            crate::interface::FileStatus::Moved { new_path: "/Users/test/Desktop/original.txt".to_string() }
+        );
     }
 
     #[test]
@@ -1928,32 +1936,33 @@ mod tests {
             None,
         ).unwrap();
 
+        // Get the file_item_id
+        let items = store.fetch_by_ids(vec![id]).unwrap();
+        let file_item_id = extract_files(&items[0].content)[0].file_item_id;
+
         let assert_status = |expected: crate::interface::FileStatus| {
             let items = store.fetch_by_ids(vec![id]).unwrap();
-            if let crate::interface::ClipboardContent::File { file_status, .. } = &items[0].content {
-                assert_eq!(*file_status, expected, "Status mismatch");
-            } else {
-                panic!("Expected File content");
-            }
+            let files = extract_files(&items[0].content);
+            assert_eq!(files[0].file_status, expected, "Status mismatch");
         };
 
         // Initial: available
         assert_status(crate::interface::FileStatus::Available);
 
         // → moved
-        store.update_file_status(id, "moved:/tmp/new.txt".to_string(), Some("/tmp/new.txt".to_string())).unwrap();
+        store.update_file_status(file_item_id, "moved:/tmp/new.txt".to_string(), Some("/tmp/new.txt".to_string())).unwrap();
         assert_status(crate::interface::FileStatus::Moved { new_path: "/tmp/new.txt".to_string() });
 
         // → trashed
-        store.update_file_status(id, "trashed".to_string(), None).unwrap();
+        store.update_file_status(file_item_id, "trashed".to_string(), None).unwrap();
         assert_status(crate::interface::FileStatus::Trashed);
 
         // → missing
-        store.update_file_status(id, "missing".to_string(), None).unwrap();
+        store.update_file_status(file_item_id, "missing".to_string(), None).unwrap();
         assert_status(crate::interface::FileStatus::Missing);
 
         // → back to available
-        store.update_file_status(id, "available".to_string(), None).unwrap();
+        store.update_file_status(file_item_id, "available".to_string(), None).unwrap();
         assert_status(crate::interface::FileStatus::Available);
     }
 
@@ -2059,11 +2068,7 @@ mod tests {
         let result = store.search("".to_string()).await.unwrap();
         assert!(result.first_item.is_some(), "first_item should be populated");
         let first = result.first_item.unwrap();
-        if let crate::interface::ClipboardContent::File { filename, .. } = &first.content {
-            assert_eq!(filename, "latest.pdf");
-        } else {
-            panic!("first_item should be a File, got: {:?}", first.content);
-        }
+        assert_eq!(first.content.text_content(), "latest.pdf");
     }
 
     #[tokio::test]
@@ -2105,9 +2110,9 @@ mod tests {
         assert_eq!(links.matches.len(), 1);
         assert!(links.matches[0].item_metadata.snippet.contains("example.com"));
 
-        // Text filter (includes text + email + phone)
+        // Text filter
         let texts = store.search_filtered("".to_string(), ContentTypeFilter::Text).await.unwrap();
-        assert!(texts.matches.len() >= 2, "Text filter should include text and email, got {}", texts.matches.len());
+        assert!(texts.matches.len() >= 2, "Text filter should include text items, got {}", texts.matches.len());
     }
 
     #[test]
@@ -2186,11 +2191,8 @@ mod tests {
         ).unwrap();
 
         let items = store.fetch_by_ids(vec![id]).unwrap();
-        if let crate::interface::ClipboardContent::File { bookmark_data, .. } = &items[0].content {
-            assert!(bookmark_data.is_empty(), "Empty bookmark data should roundtrip as empty");
-        } else {
-            panic!("Expected File content");
-        }
+        let files = extract_files(&items[0].content);
+        assert!(files[0].bookmark_data.is_empty(), "Empty bookmark data should roundtrip as empty");
     }
 
     #[test]
@@ -2209,18 +2211,19 @@ mod tests {
             None,
         ).unwrap();
 
+        // Get file_item_id
+        let items = store.fetch_by_ids(vec![id]).unwrap();
+        let file_item_id = extract_files(&items[0].content)[0].file_item_id;
+
         // Set trashed twice
-        store.update_file_status(id, "trashed".to_string(), None).unwrap();
-        store.update_file_status(id, "trashed".to_string(), None).unwrap();
+        store.update_file_status(file_item_id, "trashed".to_string(), None).unwrap();
+        store.update_file_status(file_item_id, "trashed".to_string(), None).unwrap();
 
         let items = store.fetch_by_ids(vec![id]).unwrap();
-        if let crate::interface::ClipboardContent::File { file_status, filename, bookmark_data, .. } = &items[0].content {
-            assert_eq!(*file_status, crate::interface::FileStatus::Trashed);
-            assert_eq!(filename, "idempotent.txt", "filename should survive status updates");
-            assert_eq!(bookmark_data, &vec![1, 2, 3], "bookmark should survive status updates");
-        } else {
-            panic!("Expected File content");
-        }
+        let files = extract_files(&items[0].content);
+        assert_eq!(files[0].file_status, crate::interface::FileStatus::Trashed);
+        assert_eq!(files[0].filename, "idempotent.txt", "filename should survive status updates");
+        assert_eq!(files[0].bookmark_data, vec![1, 2, 3], "bookmark should survive status updates");
     }
 
     #[tokio::test]
@@ -2269,18 +2272,14 @@ mod tests {
         let result = store.search("".to_string()).await.unwrap();
         let first = result.first_item.expect("first_item should be populated");
 
-        if let crate::interface::ClipboardContent::File {
-            path, filename, file_size, uti, bookmark_data, file_status
-        } = &first.content {
-            assert_eq!(path, "/Users/test/complete.pdf");
-            assert_eq!(filename, "complete.pdf");
-            assert_eq!(*file_size, 9999);
-            assert_eq!(uti, "com.adobe.pdf");
-            assert_eq!(bookmark_data, &bookmark);
-            assert_eq!(*file_status, crate::interface::FileStatus::Available);
-        } else {
-            panic!("first_item should be File, got: {:?}", first.content);
-        }
+        let files = extract_files(&first.content);
+        assert_eq!(files.len(), 1);
+        assert_eq!(files[0].path, "/Users/test/complete.pdf");
+        assert_eq!(files[0].filename, "complete.pdf");
+        assert_eq!(files[0].file_size, 9999);
+        assert_eq!(files[0].uti, "com.adobe.pdf");
+        assert_eq!(files[0].bookmark_data, bookmark);
+        assert_eq!(files[0].file_status, crate::interface::FileStatus::Available);
 
         // Metadata should also be complete
         assert_eq!(first.item_metadata.source_app.as_deref(), Some("Preview"));
@@ -2414,5 +2413,125 @@ mod tests {
         let texts = store.search_filtered("".to_string(), ContentTypeFilter::Text).await.unwrap();
         assert_eq!(texts.total_count, 5, "total_count should be 5 for text filter");
         assert_eq!(texts.matches.len(), 5);
+    }
+
+    // ─────────────────────────────────────────────────────────────────────────────
+    // Multi-file tests
+    // ─────────────────────────────────────────────────────────────────────────────
+
+    #[test]
+    fn test_save_files_roundtrip() {
+        let store = ClipboardStore::new_in_memory().unwrap();
+
+        let id = store.save_files(
+            vec!["/tmp/a.pdf".into(), "/tmp/b.txt".into(), "/tmp/c.png".into()],
+            vec!["a.pdf".into(), "b.txt".into(), "c.png".into()],
+            vec![1000, 2000, 3000],
+            vec!["com.adobe.pdf".into(), "public.plain-text".into(), "public.png".into()],
+            vec![vec![1, 2], vec![3, 4], vec![5, 6]],
+            None,
+            Some("Finder".into()),
+            Some("com.apple.finder".into()),
+        ).unwrap();
+        assert!(id > 0);
+
+        let items = store.fetch_by_ids(vec![id]).unwrap();
+        assert_eq!(items.len(), 1);
+
+        let files = extract_files(&items[0].content);
+        assert_eq!(files.len(), 3);
+        assert_eq!(items[0].content.text_content(), "a.pdf and 2 more");
+        assert_eq!(files[0].path, "/tmp/a.pdf");
+        assert_eq!(files[0].filename, "a.pdf");
+        assert_eq!(files[0].file_size, 1000);
+        assert_eq!(files[1].filename, "b.txt");
+        assert_eq!(files[1].file_size, 2000);
+        assert_eq!(files[2].filename, "c.png");
+        assert_eq!(files[2].file_size, 3000);
+        // Each file should have its own file_item_id
+        assert!(files[0].file_item_id > 0);
+        assert!(files[1].file_item_id > 0);
+        assert_ne!(files[0].file_item_id, files[1].file_item_id);
+    }
+
+    #[test]
+    fn test_save_files_dedup() {
+        let store = ClipboardStore::new_in_memory().unwrap();
+
+        let id1 = store.save_files(
+            vec!["/tmp/a.txt".into(), "/tmp/b.txt".into()],
+            vec!["a.txt".into(), "b.txt".into()],
+            vec![100, 200],
+            vec!["public.plain-text".into(); 2],
+            vec![vec![1], vec![2]],
+            None, None, None,
+        ).unwrap();
+        assert!(id1 > 0);
+
+        // Same files again — should deduplicate
+        let id2 = store.save_files(
+            vec!["/tmp/a.txt".into(), "/tmp/b.txt".into()],
+            vec!["a.txt".into(), "b.txt".into()],
+            vec![100, 200],
+            vec!["public.plain-text".into(); 2],
+            vec![vec![1], vec![2]],
+            None, None, None,
+        ).unwrap();
+        assert_eq!(id2, 0, "Duplicate multi-file should return 0");
+
+        // Same files in different order — should also deduplicate (hash is order-independent)
+        let id3 = store.save_files(
+            vec!["/tmp/b.txt".into(), "/tmp/a.txt".into()],
+            vec!["b.txt".into(), "a.txt".into()],
+            vec![200, 100],
+            vec!["public.plain-text".into(); 2],
+            vec![vec![2], vec![1]],
+            None, None, None,
+        ).unwrap();
+        assert_eq!(id3, 0, "Same files in different order should deduplicate");
+    }
+
+    #[tokio::test]
+    async fn test_save_files_search_by_any_filename() {
+        let store = ClipboardStore::new_in_memory().unwrap();
+
+        store.save_files(
+            vec!["/tmp/report.pdf".into(), "/tmp/summary.docx".into()],
+            vec!["report.pdf".into(), "summary.docx".into()],
+            vec![1000, 2000],
+            vec!["com.adobe.pdf".into(), "org.openxmlformats.wordprocessingml.document".into()],
+            vec![vec![1], vec![2]],
+            None, None, None,
+        ).unwrap();
+
+        // Should find by primary filename
+        let result = store.search("report".to_string()).await.unwrap();
+        assert!(!result.matches.is_empty(), "Should find by primary filename");
+
+        // Should find by additional filename
+        let result = store.search("summary".to_string()).await.unwrap();
+        assert!(!result.matches.is_empty(), "Should find by additional filename");
+    }
+
+    #[test]
+    fn test_save_files_single_file_equivalent_to_save_file() {
+        // save_files with a single file should behave like save_file
+        let store = ClipboardStore::new_in_memory().unwrap();
+
+        let id = store.save_files(
+            vec!["/tmp/single.txt".into()],
+            vec!["single.txt".into()],
+            vec![42],
+            vec!["public.plain-text".into()],
+            vec![vec![1, 2, 3]],
+            None, None, None,
+        ).unwrap();
+        assert!(id > 0);
+
+        let items = store.fetch_by_ids(vec![id]).unwrap();
+        let files = extract_files(&items[0].content);
+        assert_eq!(files.len(), 1);
+        assert_eq!(files[0].filename, "single.txt");
+        assert_eq!(items[0].content.text_content(), "single.txt");
     }
 }

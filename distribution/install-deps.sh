@@ -6,7 +6,6 @@ set -e
 
 DEPS=(
     create-dmg    # For building DMG installers
-    imagemagick   # For marketing screenshot processing
     ffmpeg        # For video recording and processing
     cliclick      # For UI automation in preview video recording
 )

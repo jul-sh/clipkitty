@@ -9,20 +9,20 @@ import ClipKittyRust
 final class FileWatcher {
     private var sources: [String: DispatchSourceFileSystemObject] = [:] // keyed by dir path
     private var fileDescriptors: [String: Int32] = [:] // keyed by dir path, for cleanup
-    private var watchedFiles: [String: (itemId: Int64, filename: String, bookmarkData: Data)] = [:] // keyed by file path
+    private var watchedFiles: [String: (fileItemId: Int64, filename: String, bookmarkData: Data)] = [:] // keyed by file path
     private var watchOrder: [String] = [] // tracks insertion order for eviction
     private let maxWatched = 50
 
     /// Callback fired when a watched file changes status (moved, trashed, missing)
     var onFileChanged: ((Int64, FileStatus) -> Void)?
 
-    func watch(path: String, itemId: Int64, filename: String, bookmarkData: Data) {
+    func watch(path: String, fileItemId: Int64, filename: String, bookmarkData: Data) {
         // Evict oldest if at capacity
         if watchedFiles.count >= maxWatched, let oldest = watchOrder.first {
             unwatchFile(oldest)
         }
 
-        watchedFiles[path] = (itemId: itemId, filename: filename, bookmarkData: bookmarkData)
+        watchedFiles[path] = (fileItemId: fileItemId, filename: filename, bookmarkData: bookmarkData)
         watchOrder.append(path)
 
         // Watch the parent directory
@@ -85,7 +85,7 @@ final class FileWatcher {
             if !FileManager.default.fileExists(atPath: filePath) {
                 // File disappeared — resolve bookmark to determine actual status
                 let status = resolveFileStatus(bookmarkData: entry.bookmarkData)
-                onFileChanged?(entry.itemId, status)
+                onFileChanged?(entry.fileItemId, status)
                 unwatchFile(filePath)
             }
         }

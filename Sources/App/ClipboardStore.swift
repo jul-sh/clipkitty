@@ -103,10 +103,10 @@ final class ClipboardStore {
 
     #if !SANDBOXED
     private func setupFileWatcher() {
-        fileWatcher.onFileChanged = { [weak self] itemId, status in
+        fileWatcher.onFileChanged = { [weak self] fileItemId, status in
             guard let self else { return }
             try? self.updateFileStatusViaRust(
-                itemId: itemId,
+                fileItemId: fileItemId,
                 status: status.toDatabaseStr(),
                 newPath: status.movedPath
             )
@@ -394,6 +394,7 @@ final class ClipboardStore {
         if let fileURLs = pasteboard.readObjects(forClasses: [NSURL.self], options: [
             .urlReadingFileURLsOnly: true
         ]) as? [URL], !fileURLs.isEmpty {
+            saveFileItems(urls: fileURLs)
             return
         }
         #endif
@@ -569,54 +570,77 @@ final class ClipboardStore {
 
         guard let rustStore else { return }
         Task.detached { [weak self] in
+            var paths: [String] = []
+            var filenames: [String] = []
+            var fileSizes: [UInt64] = []
+            var utis: [String] = []
+            var bookmarkDataList: [Data] = []
+
             for url in urls {
                 guard url.isFileURL else { continue }
 
                 let path = url.path
                 let filename = url.lastPathComponent
 
-                // Get file size and UTI
                 let resourceValues = try? url.resourceValues(forKeys: [.fileSizeKey, .typeIdentifierKey])
                 let fileSize = UInt64(resourceValues?.fileSize ?? 0)
                 let uti = resourceValues?.typeIdentifier ?? "public.item"
 
-                // Create bookmark for move tracking
                 guard let bookmarkData = try? url.bookmarkData(
                     options: [],
                     includingResourceValuesForKeys: [.nameKey, .pathKey],
                     relativeTo: nil
                 ) else { continue }
 
-                // Generate QuickLook thumbnail
-                let thumbnail = await Self.generateQuickLookThumbnail(for: url)
+                paths.append(path)
+                filenames.append(filename)
+                fileSizes.append(fileSize)
+                utis.append(uti)
+                bookmarkDataList.append(bookmarkData)
+            }
 
-                do {
-                    let itemId = try rustStore.saveFile(
-                        path: path,
-                        filename: filename,
-                        fileSize: fileSize,
-                        uti: uti,
-                        bookmarkData: bookmarkData,
-                        thumbnail: thumbnail,
-                        sourceApp: sourceApp,
-                        sourceAppBundleId: sourceAppBundleID
-                    )
+            guard !paths.isEmpty else { return }
 
-                    guard let self else { return }
-                    await MainActor.run { [weak self] in
-                        if self?.hasResults == true {
-                            self?.refresh()
-                        }
+            // Generate thumbnail from first file
+            let thumbnail = await Self.generateQuickLookThumbnail(for: urls[0])
+
+            do {
+                let itemId = try rustStore.saveFiles(
+                    paths: paths,
+                    filenames: filenames,
+                    fileSizes: fileSizes,
+                    utis: utis,
+                    bookmarkDataList: bookmarkDataList,
+                    thumbnail: thumbnail,
+                    sourceApp: sourceApp,
+                    sourceAppBundleId: sourceAppBundleID
+                )
+
+                guard let self else { return }
+                await MainActor.run { [weak self] in
+                    if self?.hasResults == true {
+                        self?.refresh()
                     }
-
-                    // Start watching the file for moves/deletes
-                    if itemId > 0 {
-                        await MainActor.run { [weak self] in
-                            self?.fileWatcher.watch(path: path, itemId: itemId, filename: filename, bookmarkData: bookmarkData)
-                        }
-                    }
-                } catch {
                 }
+
+                // Start watching ALL files for moves/deletes
+                if itemId > 0 {
+                    // Fetch the saved item to get file_item_ids assigned by the database
+                    let items = try? rustStore.fetchByIds(itemIds: [itemId])
+                    if let item = items?.first, case .file(_, let fileEntries) = item.content {
+                        await MainActor.run { [weak self] in
+                            for entry in fileEntries {
+                                self?.fileWatcher.watch(
+                                    path: entry.path,
+                                    fileItemId: entry.fileItemId,
+                                    filename: entry.filename,
+                                    bookmarkData: Data(entry.bookmarkData)
+                                )
+                            }
+                        }
+                    }
+                }
+            } catch {
             }
         }
     }
@@ -644,8 +668,8 @@ final class ClipboardStore {
         }
 
         #if !SANDBOXED
-        if case .file(let path, _, _, _, let bookmarkData, _) = content {
-            pasteFile(path: path, bookmarkData: Data(bookmarkData), itemId: itemId)
+        if case .file(_, let files) = content {
+            pasteFiles(files: files, itemId: itemId)
             return
         }
         #endif
@@ -693,28 +717,32 @@ final class ClipboardStore {
     }
 
     #if !SANDBOXED
-    private func pasteFile(path: String, bookmarkData: Data, itemId: Int64) {
+    private func pasteFiles(files: [FileEntry], itemId: Int64) {
         // Pre-increment to avoid race with checkForChanges polling
         lastChangeCount = NSPasteboard.general.changeCount + 1
 
-        // Try to resolve bookmark first (handles moved files), fall back to original path
-        var isStale = false
-        let resolvedURL: URL
-        if let url = try? URL(resolvingBookmarkData: bookmarkData, options: [], relativeTo: nil, bookmarkDataIsStale: &isStale) {
-            resolvedURL = url
-        } else {
-            resolvedURL = URL(fileURLWithPath: path)
+        // Resolve each file's bookmark to get current URL
+        var resolvedURLs: [URL] = []
+        for file in files {
+            var isStale = false
+            if let url = try? URL(resolvingBookmarkData: Data(file.bookmarkData), options: [], relativeTo: nil, bookmarkDataIsStale: &isStale) {
+                resolvedURLs.append(url)
+            } else {
+                resolvedURLs.append(URL(fileURLWithPath: file.path))
+            }
         }
+
+        guard !resolvedURLs.isEmpty else { return }
 
         // Write to pasteboard with both modern and legacy types for broad compatibility.
         // Finder requires NSFilenamesPboardType for file paste; other apps use public.file-url.
-        // Uses the type-based API (declareTypes) which increments changeCount once.
         let pasteboard = NSPasteboard.general
         let filenameType = NSPasteboard.PasteboardType("NSFilenamesPboardType")
+        let allPaths = resolvedURLs.map { $0.path }
         pasteboard.declareTypes([filenameType, .fileURL, .string], owner: nil)
-        pasteboard.setPropertyList([resolvedURL.path], forType: filenameType)
-        pasteboard.setString(resolvedURL.absoluteString, forType: .fileURL)
-        pasteboard.setString(resolvedURL.path, forType: .string)
+        pasteboard.setPropertyList(allPaths, forType: filenameType)
+        pasteboard.setString(resolvedURLs[0].absoluteString, forType: .fileURL)
+        pasteboard.setString(allPaths.joined(separator: "\n"), forType: .string)
         lastChangeCount = pasteboard.changeCount
 
         Task {
@@ -782,9 +810,9 @@ final class ClipboardStore {
     // MARK: - File Status Update
 
     #if !SANDBOXED
-    func updateFileStatusViaRust(itemId: Int64, status: String, newPath: String?) throws {
+    func updateFileStatusViaRust(fileItemId: Int64, status: String, newPath: String?) throws {
         guard let rustStore else { return }
-        try rustStore.updateFileStatus(itemId: itemId, status: status, newPath: newPath)
+        try rustStore.updateFileStatus(fileItemId: fileItemId, status: status, newPath: newPath)
     }
     #endif
 
