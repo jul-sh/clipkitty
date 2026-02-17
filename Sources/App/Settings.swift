@@ -64,34 +64,20 @@ final class AppSettings: ObservableObject {
 
     /// Check if accessibility permissions are granted
     var hasAccessibilityPermission: Bool {
-        #if SANDBOXED
-        return false
-        #else
         return AXIsProcessTrusted()
-        #endif
     }
 
     /// Request accessibility permissions (shows system dialog if not yet prompted)
     /// Returns true if permissions are already granted
     @discardableResult
     func requestAccessibilityPermission() -> Bool {
-        #if SANDBOXED
-        return false
-        #else
         let options = [kAXTrustedCheckOptionPrompt.takeUnretainedValue() as String: true] as CFDictionary
         return AXIsProcessTrustedWithOptions(options)
-        #endif
     }
 
     /// Whether the button should show "paste" or "copy"
-    /// - Sandboxed: always "copy"
-    /// - Non-sandboxed: "paste" if has permission, "copy" otherwise
     var shouldShowPasteLabel: Bool {
-        #if SANDBOXED
-        return false
-        #else
         return hasAccessibilityPermission
-        #endif
     }
 
     let maxImageMegapixels: Double
