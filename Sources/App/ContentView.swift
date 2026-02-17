@@ -403,9 +403,7 @@ struct ContentView: View {
             (.links, "Links"),
             (.colors, "Colors"),
         ]
-        #if !SANDBOXED
         options.append((.files, "Files"))
-        #endif
         return options
     }()
 
@@ -654,24 +652,13 @@ struct ContentView: View {
             ScrollView(.vertical, showsIndicators: true) {
                 linkPreview(url: url, metadataState: metadataState, itemId: item.itemMetadata.itemId)
             }
-        case .file(let displayName, let files):
-            #if !SANDBOXED
-            ScrollView(.vertical, showsIndicators: true) {
-                FilePreviewView(
-                    files: files,
-                    icon: item.itemMetadata.icon,
-                    store: store,
-                    itemId: item.itemMetadata.itemId
-                )
-            }
-            #else
+        case .file(let displayName, _):
             TextPreviewView(
                 text: displayName,
                 fontName: FontManager.mono,
                 fontSize: 15
             )
             .frame(maxWidth: .infinity, maxHeight: .infinity)
-            #endif
         }
     }
 
@@ -974,257 +961,6 @@ struct LinkPreviewView: NSViewRepresentable {
     }
 }
 
-// MARK: - File Preview
-
-#if !SANDBOXED
-struct FilePreviewView: View {
-    let files: [FileEntry]
-    let icon: ItemIcon
-    var store: ClipboardStore
-    let itemId: Int64
-
-    @State private var resolvedStatuses: [Int64: FileStatus] = [:]
-
-    private var isMultiFile: Bool { files.count > 1 }
-
-    /// Primary file (first in list)
-    private var primaryFile: FileEntry { files[0] }
-
-    private func displayStatus(for file: FileEntry) -> FileStatus {
-        resolvedStatuses[file.fileItemId] ?? file.fileStatus
-    }
-
-    var body: some View {
-        VStack(alignment: .leading, spacing: 16) {
-            // Thumbnail
-            thumbnailView
-                .frame(maxWidth: .infinity, alignment: .center)
-
-            // Title
-            if isMultiFile {
-                Text("\(files.count) Files")
-                    .font(.system(size: 20, weight: .bold))
-                    .textSelection(.enabled)
-                    .frame(maxWidth: .infinity, alignment: .leading)
-            } else {
-                Text(primaryFile.filename)
-                    .font(.system(size: 20, weight: .bold))
-                    .textSelection(.enabled)
-                    .frame(maxWidth: .infinity, alignment: .leading)
-            }
-
-            // Info grid
-            VStack(alignment: .leading, spacing: 8) {
-                if isMultiFile {
-                    infoRow(label: "Files", value: files.map(\.filename).joined(separator: "\n"))
-                    infoRow(label: "Size", value: formattedTotalSize)
-                } else {
-                    infoRow(label: "Path", value: displayPath(for: primaryFile))
-                    infoRow(label: "Size", value: formattedSize(primaryFile.fileSize))
-                    infoRow(label: "Kind", value: kindDescription(for: primaryFile.uti))
-                }
-            }
-
-            // Status indicators
-            if isMultiFile {
-                // Show per-file status for multi-file items (only non-available)
-                ForEach(files, id: \.fileItemId) { file in
-                    let status = displayStatus(for: file)
-                    if status != .available {
-                        fileStatusView(filename: file.filename, status: status, file: file)
-                    }
-                }
-            } else {
-                statusView(for: primaryFile)
-            }
-
-            Spacer()
-        }
-        .padding(16)
-        .task(id: itemId) {
-            await resolveAllFileStatuses()
-        }
-    }
-
-    private func displayPath(for file: FileEntry) -> String {
-        if case .moved(let newPath) = displayStatus(for: file) {
-            return newPath
-        }
-        return file.path
-    }
-
-    @ViewBuilder
-    private var thumbnailView: some View {
-        if case .thumbnail(let bytes) = icon, let nsImage = NSImage(data: Data(bytes)) {
-            Image(nsImage: nsImage)
-                .resizable()
-                .aspectRatio(contentMode: .fit)
-                .frame(maxHeight: 200)
-                .clipShape(RoundedRectangle(cornerRadius: 8))
-                .shadow(color: .black.opacity(0.1), radius: 4, x: 0, y: 2)
-        } else {
-            Image(systemName: "doc")
-                .font(.system(size: 64))
-                .foregroundStyle(.secondary)
-                .frame(height: 100)
-        }
-    }
-
-    private func infoRow(label: String, value: String) -> some View {
-        HStack(alignment: .top) {
-            Text(label)
-                .font(.system(size: 13))
-                .foregroundStyle(.secondary)
-                .frame(width: 50, alignment: .trailing)
-            Text(value)
-                .font(.system(size: 13, design: .monospaced))
-                .textSelection(.enabled)
-                .frame(maxWidth: .infinity, alignment: .leading)
-        }
-    }
-
-    private func formattedSize(_ bytes: UInt64) -> String {
-        ByteCountFormatter.string(fromByteCount: Int64(bytes), countStyle: .file)
-    }
-
-    private var formattedTotalSize: String {
-        let total = files.map(\.fileSize).reduce(0, +)
-        return formattedSize(total)
-    }
-
-    private func kindDescription(for uti: String) -> String {
-        if let utType = UTType(uti) {
-            return utType.localizedDescription ?? uti
-        }
-        return uti
-    }
-
-    @ViewBuilder
-    private func statusView(for file: FileEntry) -> some View {
-        switch displayStatus(for: file) {
-        case .available:
-            EmptyView()
-        case .moved(let newPath):
-            Label("File moved to: \(newPath)", systemImage: "arrow.right.circle")
-                .font(.system(size: 13))
-                .foregroundStyle(.orange)
-        case .trashed:
-            HStack {
-                Label("File is in Trash", systemImage: "trash")
-                    .font(.system(size: 13))
-                    .foregroundStyle(.red)
-                Button("Restore") {
-                    restoreFromTrash(file: file)
-                }
-                .buttonStyle(.bordered)
-                .controlSize(.small)
-            }
-        case .missing:
-            Label("File no longer exists", systemImage: "exclamationmark.triangle")
-                .font(.system(size: 13))
-                .foregroundStyle(.red)
-        }
-    }
-
-    @ViewBuilder
-    private func fileStatusView(filename: String, status: FileStatus, file: FileEntry) -> some View {
-        switch status {
-        case .available:
-            EmptyView()
-        case .moved(let newPath):
-            Label("\(filename) moved to: \(newPath)", systemImage: "arrow.right.circle")
-                .font(.system(size: 13))
-                .foregroundStyle(.orange)
-        case .trashed:
-            HStack {
-                Label("\(filename) is in Trash", systemImage: "trash")
-                    .font(.system(size: 13))
-                    .foregroundStyle(.red)
-                Button("Restore") {
-                    restoreFromTrash(file: file)
-                }
-                .buttonStyle(.bordered)
-                .controlSize(.small)
-            }
-        case .missing:
-            Label("\(filename) no longer exists", systemImage: "exclamationmark.triangle")
-                .font(.system(size: 13))
-                .foregroundStyle(.red)
-        }
-    }
-
-    private func resolveAllFileStatuses() async {
-        for file in files {
-            await resolveFileStatus(for: file)
-        }
-    }
-
-    private func resolveFileStatus(for file: FileEntry) async {
-        var isStale = false
-        guard let resolvedURL = try? URL(
-            resolvingBookmarkData: Data(file.bookmarkData),
-            options: [],
-            relativeTo: nil,
-            bookmarkDataIsStale: &isStale
-        ) else {
-            if FileManager.default.fileExists(atPath: file.path) {
-                resolvedStatuses[file.fileItemId] = .available
-            } else {
-                resolvedStatuses[file.fileItemId] = .missing
-                await persistStatus("missing", newPath: nil, fileItemId: file.fileItemId)
-            }
-            return
-        }
-
-        let resolvedPath = resolvedURL.path
-
-        if resolvedPath.contains("/.Trash/") {
-            resolvedStatuses[file.fileItemId] = .trashed
-            await persistStatus("trashed", newPath: nil, fileItemId: file.fileItemId)
-            return
-        }
-
-        if resolvedPath != file.path {
-            resolvedStatuses[file.fileItemId] = .moved(newPath: resolvedPath)
-            await persistStatus("moved:\(resolvedPath)", newPath: resolvedPath, fileItemId: file.fileItemId)
-            return
-        }
-
-        if FileManager.default.fileExists(atPath: resolvedPath) {
-            resolvedStatuses[file.fileItemId] = .available
-            if file.fileStatus != .available {
-                await persistStatus("available", newPath: nil, fileItemId: file.fileItemId)
-            }
-        } else {
-            resolvedStatuses[file.fileItemId] = .missing
-            await persistStatus("missing", newPath: nil, fileItemId: file.fileItemId)
-        }
-    }
-
-    private func persistStatus(_ status: String, newPath: String?, fileItemId: Int64) async {
-        try? store.updateFileStatusViaRust(fileItemId: fileItemId, status: status, newPath: newPath)
-    }
-
-    private func restoreFromTrash(file: FileEntry) {
-        var isStale = false
-        guard let trashURL = try? URL(
-            resolvingBookmarkData: Data(file.bookmarkData),
-            options: [],
-            relativeTo: nil,
-            bookmarkDataIsStale: &isStale
-        ) else { return }
-
-        let originalURL = URL(fileURLWithPath: file.path)
-        do {
-            try FileManager.default.moveItem(at: trashURL, to: originalURL)
-            resolvedStatuses[file.fileItemId] = .available
-            try? store.updateFileStatusViaRust(fileItemId: file.fileItemId, status: "available", newPath: nil)
-        } catch {
-        }
-    }
-}
-#endif
-
 // MARK: - Item Row
 
 struct ItemRow: View, Equatable {
@@ -1378,11 +1114,7 @@ struct ItemRow: View, Equatable {
         .buttonStyle(.plain)
         .accessibilityElement(children: .combine)
         .accessibilityLabel(displayText)
-        #if SANDBOXED
-        .accessibilityHint("Double tap to copy")
-        #else
-        .accessibilityHint("Double tap to paste")
-        #endif
+        .accessibilityHint(AppSettings.shared.hasAccessibilityPermission ? "Double tap to paste" : "Double tap to copy")
         .accessibilityAddTraits(.isButton)
         .accessibilityAddTraits(isSelected ? .isSelected : [])
     }

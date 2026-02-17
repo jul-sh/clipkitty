@@ -411,10 +411,6 @@ pub trait ClipboardStoreApi: Send + Sync {
         source_app_bundle_id: Option<String>,
     ) -> Result<i64, ClipKittyError>;
 
-    /// Update file status (called from Swift when file move/delete detected).
-    /// `file_item_id` is the `file_items.id` — each file has its own status.
-    fn update_file_status(&self, file_item_id: i64, status: String, new_path: Option<String>) -> Result<(), ClipKittyError>;
-
     /// Update link metadata (called from Swift after LPMetadataProvider fetch)
     fn update_link_metadata(&self, item_id: i64, title: Option<String>, description: Option<String>, image_data: Option<Vec<u8>>) -> Result<(), ClipKittyError>;
 
