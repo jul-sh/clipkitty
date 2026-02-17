@@ -3,34 +3,14 @@ import XCTest
 final class ClipKittyUITests: XCTestCase {
     var app: XCUIApplication!
 
-    /// Check if an app has the sandbox entitlement enabled
-    private func isAppSandboxed(at appURL: URL) -> Bool {
-        let task = Process()
-        task.executableURL = URL(fileURLWithPath: "/usr/bin/codesign")
-        task.arguments = ["-d", "--entitlements", "-", "--xml", appURL.path]
-
-        let pipe = Pipe()
-        task.standardOutput = pipe
-        task.standardError = FileHandle.nullDevice
-
-        do {
-            try task.run()
-            task.waitUntilExit()
-
-            let data = pipe.fileHandleForReading.readDataToEndOfFile()
-            // Check if the entitlements contain app-sandbox = true
-            if let plist = try? PropertyListSerialization.propertyList(from: data, format: nil) as? [String: Any],
-               let entitlements = plist["com.apple.security.app-sandbox"] as? Bool {
-                return entitlements
-            }
-            // Also check for the string in raw output (fallback)
-            if let output = String(data: data, encoding: .utf8) {
-                return output.contains("com.apple.security.app-sandbox") && output.contains("<true/>")
-            }
-        } catch {
-            // If we can't determine, assume non-sandboxed
+    /// Read the bundle identifier from the app's Info.plist
+    private func getBundleIdentifier(for appURL: URL) -> String {
+        let plistURL = appURL.appendingPathComponent("Contents/Info.plist")
+        if let plist = NSDictionary(contentsOf: plistURL),
+           let bundleId = plist["CFBundleIdentifier"] as? String {
+            return bundleId
         }
-        return false
+        return "com.eviljuliette.clipkitty"
     }
 
     override func setUpWithError() throws {
@@ -82,13 +62,9 @@ final class ClipKittyUITests: XCTestCase {
     }
 
     private func getAppSupportDirectory(for appURL: URL) -> URL {
-        if isAppSandboxed(at: appURL) {
-            let userHome = URL(fileURLWithPath: "/Users/\(NSUserName())")
-            return userHome.appendingPathComponent("Library/Containers/com.clipkitty.app/Data/Library/Application Support/ClipKitty")
-        } else {
-            let systemAppSupport = FileManager.default.urls(for: .applicationSupportDirectory, in: .userDomainMask).first!
-            return systemAppSupport.appendingPathComponent("ClipKitty")
-        }
+        let bundleId = getBundleIdentifier(for: appURL)
+        let userHome = URL(fileURLWithPath: "/Users/\(NSUserName())")
+        return userHome.appendingPathComponent("Library/Containers/\(bundleId)/Data/Library/Application Support/ClipKitty")
     }
 
     private func setupTestDatabase(in appSupportDir: URL) throws {
@@ -148,6 +124,13 @@ final class ClipKittyUITests: XCTestCase {
     }
 
     // MARK: - Tests
+
+    /// Regression test: verify the synthetic database was correctly seeded.
+    /// If this fails, the DB is likely being placed in the wrong sandbox container path.
+    func testDatabaseNotEmpty() throws {
+        let items = app.outlines.firstMatch.buttons.allElementsBoundByIndex
+        XCTAssertGreaterThan(items.count, 0, "Database should contain items — empty DB indicates a seeding/path regression")
+    }
 
     /// Tests that first item is selected on initial open.
     /// There should always be an item selected when items exist.
