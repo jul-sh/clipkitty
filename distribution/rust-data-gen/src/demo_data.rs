@@ -168,7 +168,7 @@ pub const DEMO_ITEMS: &[DemoItem] = &[
         offset: -40,
     },
     DemoItem {
-        content: "ClipKitty\n• Copy it once, find it forever\n• Fuzzy search forgives your typos\n• See multi line previews before you paste\n• ⌥Space to summon, keyboard-first\n• Secure + Private: Your data never leaves your Mac\n,\n,-.       _,---._ __  / \\n/  ]    .-'       `./ /   \\n[  [   ,'            `/    /|\n\  `-\"             \'\   / |\n`.              ,  \ \ /  |\n/`.          ,'-`----Y   |\n[            ;        |   '\n|  ,-.    ,-'         |  /\n|  | [   |      clips | /\n]  |  \  `.___________|/\n`--'   `--'",
+        content: "ClipKitty\n• Copy it once, find it forever\n• Fuzzy search forgives your typos\n• See multi line previews before you paste\n• ⌥Space to summon, keyboard-first\n• Secure + Private: Your data never leaves your Mac\n\n\n,\n,-.       _,---._ __  / \\n/  ]    .-'       `./ /   \\n[  [   ,'            `/    /|\n\  `-\"             \'\   / |\n`.              ,  \ \ /  |\n/`.          ,'-`----Y   |\n[            ;        |   '\n|  ,-.    ,-'         |  /\n|  | [   |      clips | /\n]  |  \  `.___________|/\n`--'   `--'",
         source_app: "Safari",
         bundle_id: "com.apple.Safari",
         offset: -10,
