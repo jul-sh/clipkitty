@@ -1195,24 +1195,7 @@ struct ItemRow: View, Equatable {
     /// Text to display - uses matchData.text if in search mode, otherwise metadata.snippet
     /// SwiftUI's Three-Part HStack handles truncation with proper ellipsis via layout priorities
     private var displayText: String {
-        let text = matchData?.text.isEmpty == false ? matchData!.text : metadata.snippet
-        guard case .symbol(iconType: .file) = metadata.icon else { return text }
-        let count = Self.fileCount(from: metadata.snippet)
-        let prefix = count == 1 ? "File: " : "\(count) Files: "
-        return prefix + text
-    }
-
-    /// Parse file count from the display_name snippet pattern
-    private static func fileCount(from snippet: String) -> Int {
-        if snippet.hasSuffix(" more") {
-            let parts = snippet.components(separatedBy: " and ")
-            if parts.count >= 2, let lastPart = parts.last {
-                let numStr = lastPart.replacingOccurrences(of: " more", with: "")
-                if let n = Int(numStr) { return 1 + n }
-            }
-        }
-        if snippet.contains(", ") { return 2 }
-        return 1
+        matchData?.text.isEmpty == false ? matchData!.text : metadata.snippet
     }
 
     /// Highlights for display - passed directly from Rust (already adjusted for normalization)
