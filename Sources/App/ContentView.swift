@@ -709,6 +709,7 @@ struct ContentView: View {
     private func metadataFooter(for item: ClipboardItem) -> some View {
         HStack(spacing: 12) {
             Label(item.timeAgo, systemImage: "clock")
+                .lineLimit(1)
             if let app = item.sourceApp {
                 HStack(spacing: 4) {
                     if let bundleID = item.sourceAppBundleID,
@@ -720,14 +721,17 @@ struct ContentView: View {
                         Image(systemName: "app")
                     }
                     Text(app)
+                        .lineLimit(1)
                 }
             }
-            Spacer()
+            Spacer(minLength: 0)
             actionsButton
+                .fixedSize()
             Button(buttonLabel(for: item)) { confirmSelection() }
                 .buttonStyle(.plain)
                 .padding(.horizontal, 6)
                 .padding(.vertical, 2)
+                .fixedSize()
         }
         .font(.system(size: 13))
         .foregroundStyle(.secondary)
