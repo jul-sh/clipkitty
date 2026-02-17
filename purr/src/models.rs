@@ -129,12 +129,27 @@ impl StoredItem {
 
         let file_count = paths.len();
 
-        // Display name: 1 → filename, 2 → "a, b", 3+ → "a and N more"
-        let display_name = match file_count {
+        let folder_count = utis.iter().filter(|u| u.starts_with("public.folder")).count();
+        let file_only_count = file_count - folder_count;
+
+        let dir_count = folder_count;
+        let type_prefix = match (dir_count, file_only_count) {
+            (0, 1) => "File:".to_string(),
+            (0, n) => format!("{} Files:", n),
+            (1, 0) => "Directory:".to_string(),
+            (n, 0) => format!("{} Directories:", n),
+            (d, f) => format!("{} {} and {} {}:",
+                d, if d == 1 { "Directory" } else { "Directories" },
+                f, if f == 1 { "File" } else { "Files" }),
+        };
+
+        let items_summary = match file_count {
             1 => filenames[0].clone(),
             2 => format!("{}, {}", filenames[0], filenames[1]),
             n => format!("{} and {} more", filenames[0], n - 1),
         };
+
+        let display_name = format!("{} {}", type_prefix, items_summary);
 
         // Build FileEntry vec (file_item_id=0 since not yet inserted)
         let files: Vec<FileEntry> = (0..file_count)
@@ -327,9 +342,9 @@ mod tests {
             vec![vec![1], vec![2]],
             None, None, None,
         );
-        assert_eq!(item.text_content(), "a.txt, b.txt");
+        assert_eq!(item.text_content(), "2 Files: a.txt, b.txt");
 
-        // 3 files: "a.txt and 2 more"
+        // 3 files: "3 Files: a.txt and 2 more"
         let item = StoredItem::new_files(
             vec!["/tmp/a.txt".into(), "/tmp/b.txt".into(), "/tmp/c.txt".into()],
             vec!["a.txt".into(), "b.txt".into(), "c.txt".into()],
@@ -338,9 +353,9 @@ mod tests {
             vec![vec![1], vec![2], vec![3]],
             None, None, None,
         );
-        assert_eq!(item.text_content(), "a.txt and 2 more");
+        assert_eq!(item.text_content(), "3 Files: a.txt and 2 more");
 
-        // 1 file: just filename
+        // 1 file: "File: filename"
         let item = StoredItem::new_files(
             vec!["/tmp/solo.txt".into()],
             vec!["solo.txt".into()],
@@ -349,7 +364,7 @@ mod tests {
             vec![vec![1]],
             None, None, None,
         );
-        assert_eq!(item.text_content(), "solo.txt");
+        assert_eq!(item.text_content(), "File: solo.txt");
     }
 
     #[test]

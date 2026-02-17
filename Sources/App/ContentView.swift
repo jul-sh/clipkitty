@@ -652,13 +652,8 @@ struct ContentView: View {
             ScrollView(.vertical, showsIndicators: true) {
                 linkPreview(url: url, metadataState: metadataState, itemId: item.itemMetadata.itemId)
             }
-        case .file(let displayName, _):
-            TextPreviewView(
-                text: displayName,
-                fontName: FontManager.mono,
-                fontSize: 15
-            )
-            .frame(maxWidth: .infinity, maxHeight: .infinity)
+        case .file(_, let files):
+            FilePreviewView(files: files)
         }
     }
 
@@ -711,7 +706,6 @@ struct ContentView: View {
     }
 
     private func buttonLabel(for item: ClipboardItem) -> String {
-        if case .file = item.content { return "⏎ copy" }
         return AppSettings.shared.shouldShowPasteLabel ? "⏎ paste" : "⏎ copy"
     }
 
@@ -771,6 +765,67 @@ private extension View {
         } else {
             self.background(.regularMaterial)
         }
+    }
+}
+
+// MARK: - File Preview
+
+struct FilePreviewView: View {
+    let files: [FileEntry]
+
+    var body: some View {
+        ScrollView(.vertical, showsIndicators: true) {
+            VStack(spacing: 0) {
+                ForEach(Array(files.enumerated()), id: \.offset) { _, file in
+                    fileRow(file)
+                    if file.fileItemId != files.last?.fileItemId {
+                        Divider().padding(.leading, 52)
+                    }
+                }
+            }
+            .padding(.vertical, 12)
+        }
+        .frame(maxWidth: .infinity, maxHeight: .infinity)
+    }
+
+    private func fileRow(_ file: FileEntry) -> some View {
+        HStack(spacing: 12) {
+            Image(nsImage: NSWorkspace.shared.icon(forFile: file.path))
+                .resizable()
+                .frame(width: 40, height: 40)
+
+            VStack(alignment: .leading, spacing: 4) {
+                Text(file.filename)
+                    .font(.system(size: 14, weight: .medium))
+                    .lineLimit(1)
+
+                Text(file.path)
+                    .font(.system(size: 11))
+                    .foregroundStyle(.secondary)
+                    .lineLimit(1)
+                    .truncationMode(.middle)
+
+                if file.fileSize > 0 {
+                    Text(Self.formatFileSize(file.fileSize))
+                        .font(.system(size: 11))
+                        .foregroundStyle(.tertiary)
+                }
+            }
+            .frame(maxWidth: .infinity, alignment: .leading)
+        }
+        .padding(.horizontal, 16)
+        .padding(.vertical, 8)
+    }
+
+    private static func formatFileSize(_ bytes: UInt64) -> String {
+        let kb = Double(bytes) / 1024
+        let mb = kb / 1024
+        let gb = mb / 1024
+
+        if gb >= 1 { return String(format: "%.1f GB", gb) }
+        if mb >= 1 { return String(format: "%.1f MB", mb) }
+        if kb >= 1 { return String(format: "%.0f KB", kb) }
+        return "\(bytes) bytes"
     }
 }
 
@@ -1114,7 +1169,7 @@ struct ItemRow: View, Equatable {
         .buttonStyle(.plain)
         .accessibilityElement(children: .combine)
         .accessibilityLabel(displayText)
-        .accessibilityHint(AppSettings.shared.hasAccessibilityPermission ? "Double tap to paste" : "Double tap to copy")
+        .accessibilityHint(AppSettings.shared.shouldShowPasteLabel ? "Double tap to paste" : "Double tap to copy")
         .accessibilityAddTraits(.isButton)
         .accessibilityAddTraits(isSelected ? .isSelected : [])
     }
