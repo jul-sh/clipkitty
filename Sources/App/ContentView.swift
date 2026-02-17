@@ -403,9 +403,7 @@ struct ContentView: View {
             (.links, "Links"),
             (.colors, "Colors"),
         ]
-        #if !SANDBOXED
         options.append((.files, "Files"))
-        #endif
         return options
     }()
 

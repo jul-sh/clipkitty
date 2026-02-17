@@ -4,6 +4,7 @@ import Observation
 import ClipKittyRust
 
 import ImageIO
+import UniformTypeIdentifiers
 
 #if !SANDBOXED
 import QuickLookThumbnailing
@@ -390,14 +391,16 @@ final class ClipboardStore {
         }
 
         // Check for file URLs first (file copies also put .tiff and .string on the pasteboard)
-        #if !SANDBOXED
         if let fileURLs = pasteboard.readObjects(forClasses: [NSURL.self], options: [
             .urlReadingFileURLsOnly: true
         ]) as? [URL], !fileURLs.isEmpty {
+            #if SANDBOXED
+            saveFileItemsSandboxed(urls: fileURLs)
+            #else
             saveFileItems(urls: fileURLs)
+            #endif
             return
         }
-        #endif
 
         // Check for image data first - get raw data only, defer compression
         let imageTypes: [NSPasteboard.PasteboardType] = [.tiff, .png]
@@ -563,6 +566,55 @@ final class ClipboardStore {
 
     // MARK: - File Items
 
+    #if SANDBOXED
+    private func saveFileItemsSandboxed(urls: [URL]) {
+        let sourceApp = NSWorkspace.shared.frontmostApplication?.localizedName
+        let sourceAppBundleID = NSWorkspace.shared.frontmostApplication?.bundleIdentifier
+
+        guard let rustStore else { return }
+        Task.detached { [weak self] in
+            var paths: [String] = []
+            var filenames: [String] = []
+            var fileSizes: [UInt64] = []
+            var utis: [String] = []
+            var bookmarkDataList: [Data] = []
+
+            for url in urls {
+                guard url.isFileURL else { continue }
+
+                paths.append(url.path)
+                filenames.append(url.lastPathComponent)
+                fileSizes.append(0)
+                utis.append(UTType(filenameExtension: url.pathExtension)?.identifier ?? "public.item")
+                bookmarkDataList.append(Data())
+            }
+
+            guard !paths.isEmpty else { return }
+
+            do {
+                _ = try rustStore.saveFiles(
+                    paths: paths,
+                    filenames: filenames,
+                    fileSizes: fileSizes,
+                    utis: utis,
+                    bookmarkDataList: bookmarkDataList,
+                    thumbnail: nil,
+                    sourceApp: sourceApp,
+                    sourceAppBundleId: sourceAppBundleID
+                )
+
+                guard let self else { return }
+                await MainActor.run { [weak self] in
+                    if self?.hasResults == true {
+                        self?.refresh()
+                    }
+                }
+            } catch {
+            }
+        }
+    }
+    #endif
+
     #if !SANDBOXED
     private func saveFileItems(urls: [URL]) {
         let sourceApp = NSWorkspace.shared.frontmostApplication?.localizedName
@@ -667,12 +719,10 @@ final class ClipboardStore {
             return
         }
 
-        #if !SANDBOXED
         if case .file(_, let files) = content {
             pasteFiles(files: files, itemId: itemId)
             return
         }
-        #endif
 
         let pasteboard = NSPasteboard.general
         pasteboard.clearContents()
@@ -716,7 +766,6 @@ final class ClipboardStore {
         }
     }
 
-    #if !SANDBOXED
     private func pasteFiles(files: [FileEntry], itemId: Int64) {
         // Pre-increment to avoid race with checkForChanges polling
         lastChangeCount = NSPasteboard.general.changeCount + 1
@@ -724,12 +773,18 @@ final class ClipboardStore {
         // Resolve each file's bookmark to get current URL
         var resolvedURLs: [URL] = []
         for file in files {
+            #if !SANDBOXED
+            // Try bookmark resolution, fall back to stored path
             var isStale = false
             if let url = try? URL(resolvingBookmarkData: Data(file.bookmarkData), options: [], relativeTo: nil, bookmarkDataIsStale: &isStale) {
                 resolvedURLs.append(url)
             } else {
                 resolvedURLs.append(URL(fileURLWithPath: file.path))
             }
+            #else
+            // Sandbox: use stored path directly (no bookmark data)
+            resolvedURLs.append(URL(fileURLWithPath: file.path))
+            #endif
         }
 
         guard !resolvedURLs.isEmpty else { return }
@@ -749,7 +804,6 @@ final class ClipboardStore {
             await updateItemTimestamp(id: itemId)
         }
     }
-    #endif
 
     private func updateItemTimestamp(id: Int64) async {
         guard let rustStore else { return }
