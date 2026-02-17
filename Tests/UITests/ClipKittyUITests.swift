@@ -304,48 +304,47 @@ final class ClipKittyUITests: XCTestCase {
         XCTAssertTrue(updatedButton.label.contains("Links"), "Filter button should show 'Links' after selecting Links Only, got: '\(updatedButton.label)'")
     }
 
-    func testTakeScreenshot() throws {
-        // Wait for animations and loading - use fixed delay to avoid hanging if items never appear
-        Thread.sleep(forTimeInterval: 2.0)
-
-        // Capture the entire screen
-        let screenshot = XCUIScreen.main.screenshot()
-        let attachment = XCTAttachment(screenshot: screenshot)
-        attachment.name = "Full Screen Screenshot"
-        attachment.lifetime = .keepAlways
-        add(attachment)
-
-        let image = screenshot.image
-        if let tiff = image.tiffRepresentation,
-           let bitmap = NSBitmapImageRep(data: tiff),
-           let png = bitmap.representation(using: .png, properties: [:]) {
-            let url = URL(fileURLWithPath: "/tmp/clipkitty_screenshot.png")
-            try? png.write(to: url)
-        }
-    }
-
     // MARK: - Marketing Assets
 
-    /// Captures a screenshot of the app window with padding around it.
-    /// Uses a full-screen capture cropped to the window frame + padding.
-    /// Before calling, ensure the desktop is set to a neutral background
-    /// (see `setNeutralDesktop`) so padding areas look clean.
+    /// Captures a marketing-ready screenshot: crops a 16:10 rectangle centered
+    /// on the app window from the full-screen capture, then upscales to 2880×1800.
+    /// The neutral desktop background (set by `prepare-screenshot-environment.sh`)
+    /// fills the padding area around the window.
     private func saveScreenshot(name: String) {
         let window = app.dialogs.firstMatch
         if !window.exists {
             return
         }
 
-        let padding: CGFloat = 80
         let frame = window.frame
         let screenShot = XCUIScreen.main.screenshot()
         let image = screenShot.image
+        let scaleFactor = NSScreen.main?.backingScaleFactor ?? 1.0
 
+        // Start with window frame + minimum padding (40pt on all sides)
+        let minPadding: CGFloat = 40
+        var cropWidth = frame.width + minPadding * 2
+        var cropHeight = frame.height + minPadding * 2
+
+        // Expand the smaller dimension so the crop is exactly 16:10
+        let targetRatio: CGFloat = 16.0 / 10.0
+        let currentRatio = cropWidth / cropHeight
+        if currentRatio < targetRatio {
+            // Too tall — widen
+            cropWidth = cropHeight * targetRatio
+        } else {
+            // Too wide — heighten
+            cropHeight = cropWidth / targetRatio
+        }
+
+        // Center the crop on the window center
+        let centerX = frame.midX
+        let centerY = frame.midY
         let cropRect = CGRect(
-            x: max(frame.origin.x - padding, 0),
-            y: max(frame.origin.y - padding, 0),
-            width: frame.width + padding * 2,
-            height: frame.height + padding * 2
+            x: max((centerX - cropWidth / 2) * scaleFactor, 0),
+            y: max((centerY - cropHeight / 2) * scaleFactor, 0),
+            width: cropWidth * scaleFactor,
+            height: cropHeight * scaleFactor
         )
 
         guard let cgImage = image.cgImage(forProposedRect: nil, context: nil, hints: nil),
@@ -353,9 +352,17 @@ final class ClipKittyUITests: XCTestCase {
             return
         }
 
-        let croppedImage = NSImage(cgImage: cropped, size: cropRect.size)
+        // Upscale to exactly 2880×1800 using bicubic interpolation
+        let finalWidth = 2880
+        let finalHeight = 1800
+        let finalImage = NSImage(size: NSSize(width: finalWidth, height: finalHeight))
+        finalImage.lockFocus()
+        NSGraphicsContext.current?.imageInterpolation = .high
+        NSImage(cgImage: cropped, size: NSSize(width: cropped.width, height: cropped.height))
+            .draw(in: NSRect(x: 0, y: 0, width: finalWidth, height: finalHeight))
+        finalImage.unlockFocus()
 
-        if let tiff = croppedImage.tiffRepresentation,
+        if let tiff = finalImage.tiffRepresentation,
            let bitmap = NSBitmapImageRep(data: tiff),
            let png = bitmap.representation(using: .png, properties: [:]) {
             let url = URL(fileURLWithPath: "/tmp/clipkitty_\(name).png")

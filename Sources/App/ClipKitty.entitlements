@@ -2,10 +2,19 @@
 <!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
 <plist version="1.0">
 <dict>
-    <key>com.apple.security.automation.apple-events</key>
+    <!-- macOS App Sandbox enabled -->
+    <!-- Note: Sandboxed version cannot simulate Cmd+V paste keystroke -->
+    <key>com.apple.security.app-sandbox</key>
     <true/>
 
-    <key>com.apple.security.cs.allow-jit</key>
+    <!-- Network: outgoing connections for LPMetadataProvider link preview fetching -->
+    <key>com.apple.security.network.client</key>
     <true/>
+
+    <!-- FileSystem: files.user-selected.* is omitted; no access to host directories. -->
+
+    <!-- Hardware: camera/microphone/location are omitted; no sensor access. -->
+
+    <!-- Automation: automation.apple-events is omitted; no cross-app scripting. -->
 </dict>
 </plist>

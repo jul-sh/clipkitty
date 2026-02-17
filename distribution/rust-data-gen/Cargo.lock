@@ -1614,6 +1614,7 @@ version = "0.1.0"
 dependencies = [
  "anyhow",
  "async-trait",
+ "base64",
  "chrono",
  "clap",
  "csscolorparser",
@@ -1625,7 +1626,6 @@ dependencies = [
  "r2d2_sqlite",
  "rand 0.8.5",
  "rayon",
- "regex",
  "rusqlite",
  "serde",
  "serde_json",

@@ -118,33 +118,26 @@ final class FloatingPanelController: NSObject, NSWindowDelegate {
         store.paste(itemId: itemId, content: content)
         let targetApp = previousApp
         hide()
-        #if !SANDBOXED
-        // Always attempt to paste in non-sandboxed mode
-        simulatePaste(targetApp: targetApp)
-        #endif
+        if AppSettings.shared.hasAccessibilityPermission {
+            simulatePaste(targetApp: targetApp)
+        }
     }
 
-    #if !SANDBOXED
     /// Simulate Cmd+V keystroke to paste into the target app
     private func simulatePaste(targetApp: NSRunningApplication?) {
         guard let targetApp = targetApp else {
             return
         }
 
-
         // Wait for the target app to become active before sending keystroke
         Task {
             // Poll until the target app is active (max ~500ms)
-            var attempts = 0
             for _ in 0..<50 {
-                attempts += 1
                 if NSWorkspace.shared.frontmostApplication == targetApp {
                     break
                 }
                 try? await Task.sleep(nanoseconds: 10_000_000) // 10ms
             }
-
-            let frontmost = NSWorkspace.shared.frontmostApplication?.localizedName ?? "unknown"
 
             await MainActor.run {
                 guard let source = CGEventSource(stateID: .hidSystemState) else {
@@ -167,5 +160,4 @@ final class FloatingPanelController: NSObject, NSWindowDelegate {
             }
         }
     }
-    #endif
 }

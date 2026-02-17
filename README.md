@@ -6,7 +6,9 @@
 
 Unlimited history • Instant fuzzy search • Multi-line preview • Private
 
-<img src="https://raw.githubusercontent.com/jul-sh/clipkitty/gh-pages/screenshot.png" alt="ClipKitty screenshot" width="820">
+<img src="https://raw.githubusercontent.com/jul-sh/clipkitty/gh-pages/marketing_1.png" alt="ClipKitty clipboard history" width="820">
+<img src="https://raw.githubusercontent.com/jul-sh/clipkitty/gh-pages/marketing_2.png" alt="ClipKitty fuzzy search" width="820">
+<img src="https://raw.githubusercontent.com/jul-sh/clipkitty/gh-pages/marketing_3.png" alt="ClipKitty content filter" width="820">
 
 ## Why it exists
 
@@ -27,6 +29,7 @@ ClipKitty stores everything. Advanced fuzzy search means zero lag, whether you'r
 * **Live Preview**: See full content instantly as you navigate. No truncation, no waiting for tooltips.
 * **Keyboard-First**: `⌥Space` to open, arrow keys to navigate, `Return` to paste.
 * **Privacy-First**: Runs on-device and offline. No telemetry.
+* **Free & Open Source**: Licensed under GPL-3.0. The App Store version is paid in order to support development, but you can always build the app yourself or install it free via homebrew.
 
 ## Installation
 
@@ -68,9 +71,3 @@ make
 ```
 
 Requires macOS 15+ and Swift 6.2+.
-
-## Screenshots
-
-<img src="https://raw.githubusercontent.com/jul-sh/clipkitty/gh-pages/marketing_1.png" width="820">
-<img src="https://raw.githubusercontent.com/jul-sh/clipkitty/gh-pages/marketing_2.png" width="820">
-<img src="https://raw.githubusercontent.com/jul-sh/clipkitty/gh-pages/marketing_3.png" width="820">
