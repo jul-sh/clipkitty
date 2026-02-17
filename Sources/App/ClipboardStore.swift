@@ -552,7 +552,14 @@ final class ClipboardStore {
                 paths.append(url.path)
                 filenames.append(url.lastPathComponent)
                 fileSizes.append(0)
-                utis.append(UTType(filenameExtension: url.pathExtension)?.identifier ?? "public.item")
+
+                let isDirectory = (try? url.resourceValues(forKeys: [.isDirectoryKey]))?.isDirectory == true
+                if isDirectory {
+                    utis.append("public.folder")
+                } else {
+                    utis.append(UTType(filenameExtension: url.pathExtension)?.identifier ?? "public.item")
+                }
+
                 bookmarkDataList.append(Data())
             }
 

@@ -129,11 +129,17 @@ impl StoredItem {
 
         let file_count = paths.len();
 
-        // Display name: 1 → filename, 2 → "a, b", 3+ → "a and N more"
+        let all_folders = utis.iter().all(|u| u.starts_with("public.folder"));
+        let (singular, plural) = if all_folders {
+            ("Folder", "Folders")
+        } else {
+            ("File", "Files")
+        };
+
         let display_name = match file_count {
-            1 => filenames[0].clone(),
-            2 => format!("{}, {}", filenames[0], filenames[1]),
-            n => format!("{} and {} more", filenames[0], n - 1),
+            1 => format!("{}: {}", singular, filenames[0]),
+            2 => format!("{} {}: {}, {}", file_count, plural, filenames[0], filenames[1]),
+            n => format!("{} {}: {} and {} more", n, plural, filenames[0], n - 1),
         };
 
         // Build FileEntry vec (file_item_id=0 since not yet inserted)
@@ -327,9 +333,9 @@ mod tests {
             vec![vec![1], vec![2]],
             None, None, None,
         );
-        assert_eq!(item.text_content(), "a.txt, b.txt");
+        assert_eq!(item.text_content(), "2 Files: a.txt, b.txt");
 
-        // 3 files: "a.txt and 2 more"
+        // 3 files: "3 Files: a.txt and 2 more"
         let item = StoredItem::new_files(
             vec!["/tmp/a.txt".into(), "/tmp/b.txt".into(), "/tmp/c.txt".into()],
             vec!["a.txt".into(), "b.txt".into(), "c.txt".into()],
@@ -338,9 +344,9 @@ mod tests {
             vec![vec![1], vec![2], vec![3]],
             None, None, None,
         );
-        assert_eq!(item.text_content(), "a.txt and 2 more");
+        assert_eq!(item.text_content(), "3 Files: a.txt and 2 more");
 
-        // 1 file: just filename
+        // 1 file: "File: filename"
         let item = StoredItem::new_files(
             vec!["/tmp/solo.txt".into()],
             vec!["solo.txt".into()],
@@ -349,7 +355,7 @@ mod tests {
             vec![vec![1]],
             None, None, None,
         );
-        assert_eq!(item.text_content(), "solo.txt");
+        assert_eq!(item.text_content(), "File: solo.txt");
     }
 
     #[test]
