@@ -83,13 +83,6 @@ pub const DEMO_ITEMS: &[DemoItem] = &[
         bundle_id: "com.apple.Terminal",
         offset: -90 * 24 * 60 * 60, // ~90 days ago (middle of history)
     },
-    // --- Scene 2: Color/Image items ---
-    DemoItem {
-        content: "Orange tabby cat sleeping on mechanical keyboard",
-        source_app: "Photos",
-        bundle_id: "com.apple.Photos",
-        offset: -1400,
-    },
     DemoItem {
         content: "Architecture diagram with service mesh",
         source_app: "Safari",
@@ -101,18 +94,6 @@ pub const DEMO_ITEMS: &[DemoItem] = &[
         source_app: "Freeform",
         bundle_id: "com.apple.freeform",
         offset: -1800,
-    },
-    DemoItem {
-        content: "#FF5733",
-        source_app: "Freeform",
-        bundle_id: "com.apple.freeform",
-        offset: -1700,
-    },
-    DemoItem {
-        content: "#2DD4BF",
-        source_app: "Preview",
-        bundle_id: "com.apple.Preview",
-        offset: -1600,
     },
     DemoItem {
         content: "#1E293B",
@@ -156,68 +137,18 @@ pub const DEMO_ITEMS: &[DemoItem] = &[
         bundle_id: "com.apple.TextEdit",
         offset: -800,
     },
-    // --- Scene 1: Hello-related items ---
     DemoItem {
-        content: "Hello and welcome to the onboarding flow for new team members. This document covers everything you need to know about getting started...",
-        source_app: "Reminders",
-        bundle_id: "com.apple.reminders",
-        offset: -500,
+        content: "#FF5733",
+        source_app: "Freeform",
+        bundle_id: "com.apple.freeform",
+        offset: -1700,
     },
     DemoItem {
-        content: "hello_world.py",
-        source_app: "Finder",
-        bundle_id: "com.apple.finder",
-        offset: -400,
+        content: "#2DD4BF",
+        source_app: "Preview",
+        bundle_id: "com.apple.Preview",
+        offset: -1600,
     },
-    DemoItem {
-        content: "sayHello(user: User) -> String { ... }",
-        source_app: "Automator",
-        bundle_id: "com.apple.Automator",
-        offset: -300,
-    },
-    DemoItem {
-        content: "Othello character analysis notes",
-        source_app: "Pages",
-        bundle_id: "com.apple.iWork.Pages",
-        offset: -280,
-    },
-    DemoItem {
-        content: "hello_config.json",
-        source_app: "TextEdit",
-        bundle_id: "com.apple.TextEdit",
-        offset: -260,
-    },
-    DemoItem {
-        content: "client_hello_handshake()",
-        source_app: "TextEdit",
-        bundle_id: "com.apple.TextEdit",
-        offset: -240,
-    },
-    DemoItem {
-        content: "clipboard_manager_notes.md",
-        source_app: "Stickies",
-        bundle_id: "com.apple.Stickies",
-        offset: -220,
-    },
-    DemoItem {
-        content: "cache_hello_responses()",
-        source_app: "TextEdit",
-        bundle_id: "com.apple.TextEdit",
-        offset: -200,
-    },
-    DemoItem {
-        content: "check_health_status()",
-        source_app: "TextEdit",
-        bundle_id: "com.apple.TextEdit",
-        offset: -180,
-    },
-    DemoItem {
-        content: "HashMap<String, Vec<Box<dyn Handler>>>",
-        source_app: "TextEdit",
-        bundle_id: "com.apple.TextEdit",
-        offset: -160,
-    },
-    // --- Default/empty state items (most recent) ---
     DemoItem {
         content: "The quick brown fox jumps over the lazy dog",
         source_app: "Notes",
@@ -237,7 +168,7 @@ pub const DEMO_ITEMS: &[DemoItem] = &[
         offset: -40,
     },
     DemoItem {
-        content: "ClipKitty\n• Copy it once, find it forever\n• Fuzzy search forgives your typos\n• See full code blocks before you paste\n• ⌥Space to summon, keyboard-first\n• Your data never leaves your Mac",
+        content: "ClipKitty\n• Copy it once, find it forever\n• Fuzzy search forgives your typos\n• See multi line previews before you paste\n• ⌥Space to summon, keyboard-first\n• Secure + Private: Your data never leaves your Mac\n\n\n,\n,-.       _,---._ __  / \\n/  ]    .-'       `./ /   \\n[  [   ,'            `/    /|\n\  `-\"             \'\   / |\n`.              ,  \ \ /  |\n/`.          ,'-`----Y   |\n[            ;        |   '\n|  ,-.    ,-'         |  /\n|  | [   |      clips | /\n]  |  \  `.___________|/\n`--'   `--'",
         source_app: "Safari",
         bundle_id: "com.apple.Safari",
         offset: -10,
