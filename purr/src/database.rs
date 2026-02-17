@@ -108,14 +108,8 @@ impl Database {
             .is_ok();
 
         if has_old_schema {
-            // Drop all old tables and recreate
-            conn.execute_batch("
-                DROP TABLE IF EXISTS file_items;
-                DROP TABLE IF EXISTS link_items;
-                DROP TABLE IF EXISTS image_items;
-                DROP TABLE IF EXISTS text_items;
-                DROP TABLE IF EXISTS items;
-            ")?;
+            Self::migrate_from_old_schema(&conn)?;
+            return Ok(());
         }
 
         conn.execute_batch(r#"
@@ -170,6 +164,187 @@ impl Database {
         Ok(())
     }
 
+    /// Migrate from the old flat schema (single `items` table with imageData, linkTitle, etc.)
+    /// to the normalized schema (base `items` + child tables). Preserves all data.
+    fn migrate_from_old_schema(conn: &rusqlite::Connection) -> DatabaseResult<()> {
+        use base64::Engine;
+
+        // Disable FK enforcement and prevent SQLite from auto-updating FK references
+        // when we rename `items` → `items_old` (standard SQLite schema migration pattern)
+        conn.execute_batch("PRAGMA foreign_keys = OFF; PRAGMA legacy_alter_table = ON")?;
+
+        // Ensure optional columns exist (may be missing in very old DBs).
+        // ALTER TABLE ADD COLUMN is a no-op error if the column already exists.
+        for (col, typ) in [("linkDescription", "TEXT"), ("thumbnail", "BLOB"), ("colorRgba", "INTEGER")] {
+            let _ = conn.execute_batch(&format!("ALTER TABLE items ADD COLUMN {} {}", col, typ));
+        }
+
+        // Check which optional column sets exist
+        let has_file_columns = conn.prepare("SELECT filePath FROM items LIMIT 0").is_ok();
+        let has_additional_files = has_file_columns
+            && conn.prepare("SELECT additionalFiles FROM items LIMIT 0").is_ok();
+
+        // Pre-read file data that needs Rust-side processing (path→filename, JSON parsing)
+        let file_items: Vec<(i64, String, i64, String, Vec<u8>, String)> = if has_file_columns {
+            let mut stmt = conn.prepare(
+                "SELECT id, COALESCE(filePath,''), COALESCE(fileSize,0), COALESCE(fileUti,'public.item'), COALESCE(bookmarkData,X''), COALESCE(fileStatus,'available') FROM items WHERE contentType = 'file' AND filePath IS NOT NULL"
+            )?;
+            let rows = stmt.query_map([], |row| {
+                Ok((row.get(0)?, row.get(1)?, row.get(2)?, row.get(3)?, row.get(4)?, row.get(5)?))
+            })?.collect::<Result<Vec<_>, _>>()?;
+            rows
+        } else {
+            Vec::new()
+        };
+
+        let multi_file_items: Vec<(i64, String)> = if has_additional_files {
+            let mut stmt = conn.prepare(
+                "SELECT id, additionalFiles FROM items WHERE contentType = 'file' AND additionalFiles IS NOT NULL AND additionalFiles != ''"
+            )?;
+            let rows = stmt.query_map([], |row| Ok((row.get(0)?, row.get(1)?)))?
+                .collect::<Result<Vec<_>, _>>()?;
+            rows
+        } else {
+            Vec::new()
+        };
+
+        // Run the entire migration in a transaction
+        let tx = conn.unchecked_transaction()?;
+
+        // 1. Create child tables
+        tx.execute_batch(r#"
+            CREATE TABLE text_items (
+                itemId INTEGER PRIMARY KEY REFERENCES items(id) ON DELETE CASCADE,
+                value TEXT NOT NULL
+            );
+            CREATE TABLE image_items (
+                itemId INTEGER PRIMARY KEY REFERENCES items(id) ON DELETE CASCADE,
+                data BLOB NOT NULL,
+                description TEXT NOT NULL DEFAULT 'Image'
+            );
+            CREATE TABLE link_items (
+                itemId INTEGER PRIMARY KEY REFERENCES items(id) ON DELETE CASCADE,
+                url TEXT NOT NULL,
+                title TEXT,
+                description TEXT
+            );
+            CREATE TABLE file_items (
+                id INTEGER PRIMARY KEY AUTOINCREMENT,
+                itemId INTEGER NOT NULL REFERENCES items(id) ON DELETE CASCADE,
+                ordinal INTEGER NOT NULL DEFAULT 0,
+                path TEXT NOT NULL,
+                filename TEXT NOT NULL,
+                fileSize INTEGER NOT NULL DEFAULT 0,
+                uti TEXT NOT NULL DEFAULT 'public.item',
+                bookmarkData BLOB NOT NULL,
+                fileStatus TEXT NOT NULL DEFAULT 'available'
+            );
+        "#)?;
+
+        // 2. Bulk-migrate text/color/email/phone → text_items
+        tx.execute(
+            "INSERT INTO text_items (itemId, value) SELECT id, content FROM items WHERE contentType IN ('text','email','phone','color') OR contentType IS NULL",
+            [],
+        )?;
+
+        // 3. Bulk-migrate images → image_items
+        tx.execute(
+            "INSERT INTO image_items (itemId, data, description) SELECT id, imageData, content FROM items WHERE contentType = 'image' AND imageData IS NOT NULL",
+            [],
+        )?;
+
+        // 4. Bulk-migrate links → link_items
+        tx.execute(
+            "INSERT INTO link_items (itemId, url, title, description) SELECT id, content, linkTitle, linkDescription FROM items WHERE contentType = 'link'",
+            [],
+        )?;
+
+        // 5. Copy link preview images to the unified thumbnail column
+        tx.execute(
+            "UPDATE items SET thumbnail = linkImageData WHERE contentType = 'link' AND linkImageData IS NOT NULL AND thumbnail IS NULL",
+            [],
+        )?;
+
+        // 6. Migrate primary file entries
+        for (id, path, file_size, uti, bookmark_data, file_status) in &file_items {
+            let filename = std::path::Path::new(path)
+                .file_name()
+                .and_then(|n| n.to_str())
+                .unwrap_or(path)
+                .to_string();
+            tx.execute(
+                "INSERT INTO file_items (itemId, ordinal, path, filename, fileSize, uti, bookmarkData, fileStatus) VALUES (?1, 0, ?2, ?3, ?4, ?5, ?6, ?7)",
+                params![id, path, filename, file_size, uti, bookmark_data, file_status],
+            )?;
+        }
+
+        // 7. Migrate additional files from JSON (multi-file items)
+        for (item_id, json_str) in &multi_file_items {
+            if let Ok(files) = serde_json::from_str::<Vec<serde_json::Value>>(json_str) {
+                for (i, file) in files.iter().enumerate() {
+                    let path = file.get("path").and_then(|v| v.as_str()).unwrap_or("");
+                    let filename = file.get("filename").and_then(|v| v.as_str()).unwrap_or("");
+                    let file_size = file.get("fileSize").and_then(|v| v.as_u64()).unwrap_or(0) as i64;
+                    let uti = file.get("uti").and_then(|v| v.as_str()).unwrap_or("public.item");
+                    let bookmark_b64 = file.get("bookmarkData").and_then(|v| v.as_str()).unwrap_or("");
+                    let bookmark_data = base64::engine::general_purpose::STANDARD
+                        .decode(bookmark_b64)
+                        .unwrap_or_default();
+
+                    tx.execute(
+                        "INSERT INTO file_items (itemId, ordinal, path, filename, fileSize, uti, bookmarkData, fileStatus) VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, 'available')",
+                        params![*item_id, (i + 1) as i64, path, filename, file_size, uti, bookmark_data],
+                    )?;
+                }
+            }
+        }
+
+        // 8. Rename old table → create new schema → copy data → drop old
+        tx.execute_batch("ALTER TABLE items RENAME TO items_old")?;
+
+        tx.execute_batch(r#"
+            CREATE TABLE items (
+                id INTEGER PRIMARY KEY AUTOINCREMENT,
+                contentType TEXT NOT NULL,
+                contentHash TEXT NOT NULL,
+                content TEXT NOT NULL,
+                timestamp TEXT NOT NULL,
+                sourceApp TEXT,
+                sourceAppBundleId TEXT,
+                thumbnail BLOB,
+                colorRgba INTEGER
+            )
+        "#)?;
+
+        // Copy data, converting email/phone contentType → 'text'
+        tx.execute(
+            r#"INSERT INTO items (id, contentType, contentHash, content, timestamp, sourceApp, sourceAppBundleId, thumbnail, colorRgba)
+               SELECT id,
+                      CASE WHEN contentType IN ('email', 'phone') THEN 'text'
+                           ELSE COALESCE(contentType, 'text') END,
+                      contentHash, content, timestamp, sourceApp, sourceAppBundleID, thumbnail, colorRgba
+               FROM items_old"#,
+            [],
+        )?;
+
+        tx.execute_batch("DROP TABLE items_old")?;
+
+        // 9. Create indexes
+        tx.execute_batch(r#"
+            CREATE INDEX idx_items_hash ON items(contentHash);
+            CREATE INDEX idx_items_timestamp ON items(timestamp);
+            CREATE INDEX idx_items_content_prefix ON items(content COLLATE NOCASE);
+            CREATE INDEX idx_file_items_item ON file_items(itemId);
+        "#)?;
+
+        tx.commit()?;
+
+        // Restore normal behavior
+        conn.execute_batch("PRAGMA foreign_keys = ON; PRAGMA legacy_alter_table = OFF")?;
+
+        Ok(())
+    }
+
     /// Get the database size in bytes
     pub fn database_size(&self) -> DatabaseResult<i64> {
         let conn = self.get_conn()?;
@@ -215,9 +390,7 @@ impl Database {
 
         match &item.content {
             ClipboardContent::Text { value }
-            | ClipboardContent::Color { value }
-            | ClipboardContent::Email { address: value }
-            | ClipboardContent::Phone { number: value } => {
+            | ClipboardContent::Color { value } => {
                 tx.execute(
                     "INSERT INTO text_items (itemId, value) VALUES (?1, ?2)",
                     params![item_id, value],
@@ -693,8 +866,6 @@ impl Database {
         // Placeholder content — will be replaced by populate_child_content
         let content = match content_type.as_str() {
             "color" => ClipboardContent::Color { value: content_text },
-            "email" => ClipboardContent::Email { address: content_text },
-            "phone" => ClipboardContent::Phone { number: content_text },
             "image" => ClipboardContent::Image { data: Vec::new(), description: content_text },
             "link" => ClipboardContent::Link {
                 url: content_text,

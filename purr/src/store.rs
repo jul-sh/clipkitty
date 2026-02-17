@@ -2110,9 +2110,9 @@ mod tests {
         assert_eq!(links.matches.len(), 1);
         assert!(links.matches[0].item_metadata.snippet.contains("example.com"));
 
-        // Text filter (includes text + email + phone)
+        // Text filter
         let texts = store.search_filtered("".to_string(), ContentTypeFilter::Text).await.unwrap();
-        assert!(texts.matches.len() >= 2, "Text filter should include text and email, got {}", texts.matches.len());
+        assert!(texts.matches.len() >= 2, "Text filter should include text items, got {}", texts.matches.len());
     }
 
     #[test]

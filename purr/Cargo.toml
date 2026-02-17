@@ -21,7 +21,6 @@ path = "src/bin/generate_bindings.rs"
 rusqlite = { version = "*", features = ["bundled", "modern_sqlite"] }
 r2d2 = "*"
 r2d2_sqlite = "*"
-regex = "*"
 once_cell = "*"
 thiserror = "*"
 chrono = { version = "*", features = ["serde"] }

@@ -14,8 +14,6 @@ use thiserror::Error;
 pub enum IconType {
     Text,
     Link,
-    Email,
-    Phone,
     Image,
     Color,
     File,
@@ -59,7 +57,7 @@ impl FileStatus {
 #[derive(Debug, Clone, Copy, PartialEq, Eq, uniffi::Enum)]
 pub enum ContentTypeFilter {
     All,
-    Text,   // matches "text", "email", "phone"
+    Text,   // matches "text"
     Images, // matches "image"
     Links,  // matches "link"
     Colors, // matches "color"
@@ -71,7 +69,7 @@ impl ContentTypeFilter {
     pub fn database_types(&self) -> Option<&[&str]> {
         match self {
             ContentTypeFilter::All => None,
-            ContentTypeFilter::Text => Some(&["text", "email", "phone"]),
+            ContentTypeFilter::Text => Some(&["text"]),
             ContentTypeFilter::Images => Some(&["image"]),
             ContentTypeFilter::Links => Some(&["link"]),
             ContentTypeFilter::Colors => Some(&["color"]),
@@ -130,8 +128,6 @@ impl ItemIcon {
                     ItemIcon::Symbol { icon_type }
                 }
             }
-            "email" => ItemIcon::Symbol { icon_type: IconType::Email },
-            "phone" => ItemIcon::Symbol { icon_type: IconType::Phone },
             _ => ItemIcon::Symbol { icon_type: IconType::Text },
         }
     }
@@ -205,8 +201,6 @@ pub enum ClipboardContent {
     Text { value: String },
     Color { value: String },
     Link { url: String, metadata_state: LinkMetadataState },
-    Email { address: String },
-    Phone { number: String },
     Image { data: Vec<u8>, description: String },
     File {
         display_name: String,
@@ -221,8 +215,6 @@ impl ClipboardContent {
             ClipboardContent::Text { value } => value,
             ClipboardContent::Color { value } => value,
             ClipboardContent::Link { url, .. } => url,
-            ClipboardContent::Email { address } => address,
-            ClipboardContent::Phone { number } => number,
             ClipboardContent::Image { description, .. } => description,
             ClipboardContent::File { display_name, .. } => display_name,
         }
@@ -234,8 +226,6 @@ impl ClipboardContent {
             ClipboardContent::Text { .. } => IconType::Text,
             ClipboardContent::Color { .. } => IconType::Color,
             ClipboardContent::Link { .. } => IconType::Link,
-            ClipboardContent::Email { .. } => IconType::Email,
-            ClipboardContent::Phone { .. } => IconType::Phone,
             ClipboardContent::Image { .. } => IconType::Image,
             ClipboardContent::File { .. } => IconType::File,
         }
@@ -247,8 +237,6 @@ impl ClipboardContent {
             ClipboardContent::Text { .. } => "text",
             ClipboardContent::Color { .. } => "color",
             ClipboardContent::Link { .. } => "link",
-            ClipboardContent::Email { .. } => "email",
-            ClipboardContent::Phone { .. } => "phone",
             ClipboardContent::Image { .. } => "image",
             ClipboardContent::File { .. } => "file",
         }
