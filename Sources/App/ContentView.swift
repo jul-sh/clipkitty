@@ -1022,10 +1022,34 @@ struct TextPreviewView: NSViewRepresentable {
         return scrollView
     }
 
+    private func scaledFontSize(baseFont: NSFont, containerWidth: CGFloat) -> CGFloat {
+        let lines = text.components(separatedBy: "\n")
+        if lines.count >= 10 { return fontSize }
+
+        let inset: CGFloat = 32 // textContainerInset.width * 2
+        let availableWidth = containerWidth - inset
+        if availableWidth <= 0 { return fontSize }
+
+        let attributes: [NSAttributedString.Key: Any] = [.font: baseFont]
+        var maxLineWidth: CGFloat = 0
+        for line in lines {
+            let lineWidth = (line as NSString).size(withAttributes: attributes).width
+            if lineWidth >= availableWidth { return fontSize }
+            maxLineWidth = max(maxLineWidth, lineWidth)
+        }
+
+        if maxLineWidth <= 0 { return fontSize }
+
+        let scale = min(2.0, availableWidth / maxLineWidth)
+        return fontSize * scale
+    }
+
     func updateNSView(_ nsView: NSScrollView, context: Context) {
         guard let textView = nsView.documentView as? NSTextView else { return }
 
-        let font = NSFont(name: fontName, size: fontSize) ?? NSFont.monospacedSystemFont(ofSize: fontSize, weight: .regular)
+        let baseFont = NSFont(name: fontName, size: fontSize) ?? NSFont.monospacedSystemFont(ofSize: fontSize, weight: .regular)
+        let scaledSize = scaledFontSize(baseFont: baseFont, containerWidth: nsView.contentSize.width)
+        let font = NSFont(name: fontName, size: scaledSize) ?? NSFont.monospacedSystemFont(ofSize: scaledSize, weight: .regular)
 
         // Only update if text or highlights changed
         let currentText = textView.string
@@ -1195,24 +1219,7 @@ struct ItemRow: View, Equatable {
     /// Text to display - uses matchData.text if in search mode, otherwise metadata.snippet
     /// SwiftUI's Three-Part HStack handles truncation with proper ellipsis via layout priorities
     private var displayText: String {
-        let text = matchData?.text.isEmpty == false ? matchData!.text : metadata.snippet
-        guard case .symbol(iconType: .file) = metadata.icon else { return text }
-        let count = Self.fileCount(from: metadata.snippet)
-        let prefix = count == 1 ? "File: " : "\(count) Files: "
-        return prefix + text
-    }
-
-    /// Parse file count from the display_name snippet pattern
-    private static func fileCount(from snippet: String) -> Int {
-        if snippet.hasSuffix(" more") {
-            let parts = snippet.components(separatedBy: " and ")
-            if parts.count >= 2, let lastPart = parts.last {
-                let numStr = lastPart.replacingOccurrences(of: " more", with: "")
-                if let n = Int(numStr) { return 1 + n }
-            }
-        }
-        if snippet.contains(", ") { return 2 }
-        return 1
+        matchData?.text.isEmpty == false ? matchData!.text : metadata.snippet
     }
 
     /// Highlights for display - passed directly from Rust (already adjusted for normalization)
