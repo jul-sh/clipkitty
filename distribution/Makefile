@@ -105,10 +105,10 @@ synthetic-data:
 run-synthetic:
 	@$(MAKE) -C $(PROJECT_ROOT) all CONFIGURATION=Debug
 	@echo "Setting up synthetic data..."
-	@mkdir -p ~/Library/Application\ Support/ClipKitty
-	@rm -f ~/Library/Application\ Support/ClipKitty/clipboard-screenshot.sqlite*
-	@rm -rf ~/Library/Application\ Support/ClipKitty/tantivy_index*
-	@cp $(DIST_DIR)/SyntheticData.sqlite ~/Library/Application\ Support/ClipKitty/clipboard-screenshot.sqlite
+	@mkdir -p ~/Library/Containers/com.eviljuliette.clipkitty/Data/Library/Application\ Support/ClipKitty
+	@rm -f ~/Library/Containers/com.eviljuliette.clipkitty/Data/Library/Application\ Support/ClipKitty/clipboard-screenshot.sqlite*
+	@rm -rf ~/Library/Containers/com.eviljuliette.clipkitty/Data/Library/Application\ Support/ClipKitty/tantivy_index*
+	@cp $(DIST_DIR)/SyntheticData.sqlite ~/Library/Containers/com.eviljuliette.clipkitty/Data/Library/Application\ Support/ClipKitty/clipboard-screenshot.sqlite
 	@echo "Launching app with synthetic data..."
 	@open "$(DERIVED_DATA)/Build/Products/Debug/$(APP_NAME).app" --args --use-simulated-db
 
