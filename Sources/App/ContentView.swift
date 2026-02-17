@@ -796,6 +796,7 @@ struct ContentView: View {
                 .padding(.vertical, 2)
         }
         .buttonStyle(.plain)
+        .accessibilityIdentifier("ActionsButton")
         .popover(isPresented: $showActionsPopover, arrowEdge: .top) {
             actionsPopoverContent
         }
@@ -1499,6 +1500,7 @@ private struct ActionOptionRow: View {
         }
         .buttonStyle(.plain)
         .onHover { isHovered = $0 }
+        .accessibilityIdentifier("Action_\(label)")
     }
 
     private var foregroundColor: Color {
