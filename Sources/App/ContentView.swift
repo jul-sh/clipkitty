@@ -1376,11 +1376,7 @@ struct ItemRow: View, Equatable {
         .buttonStyle(.plain)
         .accessibilityElement(children: .combine)
         .accessibilityLabel(displayText)
-        #if SANDBOXED
-        .accessibilityHint("Double tap to copy")
-        #else
-        .accessibilityHint("Double tap to paste")
-        #endif
+        .accessibilityHint(AppSettings.shared.hasAccessibilityPermission ? "Double tap to paste" : "Double tap to copy")
         .accessibilityAddTraits(.isButton)
         .accessibilityAddTraits(isSelected ? .isSelected : [])
     }

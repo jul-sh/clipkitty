@@ -106,7 +106,6 @@ struct SettingsView: View {
 
             }
 
-            #if !SANDBOXED
             Section("Behavior") {
                 HStack {
                     Text("Automatic Paste")
@@ -133,7 +132,6 @@ struct SettingsView: View {
                     .font(.caption)
                 }
             }
-            #endif
 
             #if SANDBOXED
             Section("Security") {
