@@ -133,7 +133,6 @@ struct SettingsView: View {
                 }
             }
 
-            #if SANDBOXED
             Section("Security") {
                 HStack {
                     Image(systemName: "lock.shield")
@@ -145,7 +144,6 @@ struct SettingsView: View {
                     .font(.caption)
                     .foregroundStyle(.secondary)
             }
-            #endif
 
             Section("Data") {
                 Button(role: .destructive) {
