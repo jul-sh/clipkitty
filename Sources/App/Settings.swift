@@ -75,9 +75,13 @@ final class AppSettings: ObservableObject {
         return AXIsProcessTrustedWithOptions(options)
     }
 
+    @Published var autoPasteEnabled: Bool {
+        didSet { save() }
+    }
+
     /// Whether the button should show "paste" or "copy"
     var shouldShowPasteLabel: Bool {
-        return hasAccessibilityPermission
+        return hasAccessibilityPermission && autoPasteEnabled
     }
 
     let maxImageMegapixels: Double
@@ -92,6 +96,7 @@ final class AppSettings: ObservableObject {
     private let maxDbSizeKey = "maxDatabaseSizeGB"
     private let legacyMaxDbSizeKey = "maxDatabaseSizeMB"
     private let launchAtLoginKey = "launchAtLogin"
+    private let autoPasteKey = "autoPasteEnabled"
 
     private init() {
         // Initialize all stored properties first
@@ -111,6 +116,7 @@ final class AppSettings: ObservableObject {
         }
 
         launchAtLoginEnabled = defaults.object(forKey: launchAtLoginKey) as? Bool ?? true
+        autoPasteEnabled = defaults.object(forKey: autoPasteKey) as? Bool ?? true
 
         maxImageMegapixels = 2.0
         imageCompressionQuality = 0.3
@@ -122,5 +128,6 @@ final class AppSettings: ObservableObject {
         }
         defaults.set(maxDatabaseSizeGB, forKey: maxDbSizeKey)
         defaults.set(launchAtLoginEnabled, forKey: launchAtLoginKey)
+        defaults.set(autoPasteEnabled, forKey: autoPasteKey)
     }
 }

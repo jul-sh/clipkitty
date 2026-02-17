@@ -1396,7 +1396,7 @@ mod tests {
         ).unwrap();
 
         let items = store.fetch_by_ids(vec![id]).unwrap();
-        assert_eq!(items[0].content.text_content(), "my-spreadsheet.xlsx");
+        assert_eq!(items[0].content.text_content(), "File: my-spreadsheet.xlsx");
     }
 
     // ─────────────────────────────────────────────────────────────────────────────
@@ -1429,8 +1429,8 @@ mod tests {
         assert_eq!(files[0].file_size, 0);
         assert_eq!(files[0].uti, "public.folder");
 
-        // text_content should return the folder name
-        assert_eq!(items[0].content.text_content(), "Projects");
+        // text_content should return the directory name with prefix
+        assert_eq!(items[0].content.text_content(), "Directory: Projects");
     }
 
     #[test]
@@ -1910,7 +1910,7 @@ mod tests {
         let result = store.search("".to_string()).await.unwrap();
         assert!(result.first_item.is_some(), "first_item should be populated");
         let first = result.first_item.unwrap();
-        assert_eq!(first.content.text_content(), "latest.pdf");
+        assert_eq!(first.content.text_content(), "File: latest.pdf");
     }
 
     #[tokio::test]
@@ -2251,7 +2251,7 @@ mod tests {
 
         let files = extract_files(&items[0].content);
         assert_eq!(files.len(), 3);
-        assert_eq!(items[0].content.text_content(), "a.pdf and 2 more");
+        assert_eq!(items[0].content.text_content(), "3 Files: a.pdf and 2 more");
         assert_eq!(files[0].path, "/tmp/a.pdf");
         assert_eq!(files[0].filename, "a.pdf");
         assert_eq!(files[0].file_size, 1000);
@@ -2343,6 +2343,57 @@ mod tests {
         let files = extract_files(&items[0].content);
         assert_eq!(files.len(), 1);
         assert_eq!(files[0].filename, "single.txt");
-        assert_eq!(items[0].content.text_content(), "single.txt");
+        assert_eq!(items[0].content.text_content(), "File: single.txt");
+    }
+
+    #[test]
+    fn test_save_files_two_files_display_name() {
+        let store = ClipboardStore::new_in_memory().unwrap();
+
+        let id = store.save_files(
+            vec!["/tmp/a.txt".into(), "/tmp/b.txt".into()],
+            vec!["a.txt".into(), "b.txt".into()],
+            vec![100, 200],
+            vec!["public.plain-text".into(); 2],
+            vec![vec![1], vec![2]],
+            None, None, None,
+        ).unwrap();
+
+        let items = store.fetch_by_ids(vec![id]).unwrap();
+        assert_eq!(items[0].content.text_content(), "2 Files: a.txt, b.txt");
+    }
+
+    #[test]
+    fn test_save_files_multiple_folders_display_name() {
+        let store = ClipboardStore::new_in_memory().unwrap();
+
+        let id = store.save_files(
+            vec!["/tmp/DirA".into(), "/tmp/DirB".into()],
+            vec!["DirA".into(), "DirB".into()],
+            vec![0, 0],
+            vec!["public.folder".into(); 2],
+            vec![vec![1], vec![2]],
+            None, None, None,
+        ).unwrap();
+
+        let items = store.fetch_by_ids(vec![id]).unwrap();
+        assert_eq!(items[0].content.text_content(), "2 Directories: DirA, DirB");
+    }
+
+    #[test]
+    fn test_save_files_mixed_files_and_folders_display_name() {
+        let store = ClipboardStore::new_in_memory().unwrap();
+
+        let id = store.save_files(
+            vec!["/tmp/MyDir".into(), "/tmp/a.txt".into(), "/tmp/b.txt".into()],
+            vec!["MyDir".into(), "a.txt".into(), "b.txt".into()],
+            vec![0, 100, 200],
+            vec!["public.folder".into(), "public.plain-text".into(), "public.plain-text".into()],
+            vec![vec![1], vec![2], vec![3]],
+            None, None, None,
+        ).unwrap();
+
+        let items = store.fetch_by_ids(vec![id]).unwrap();
+        assert_eq!(items[0].content.text_content(), "1 Directory and 2 Files: MyDir and 2 more");
     }
 }
