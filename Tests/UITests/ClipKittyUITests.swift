@@ -287,6 +287,82 @@ final class ClipKittyUITests: XCTestCase {
         XCTAssertTrue(updatedButton.label.contains("Links"), "Filter button should show 'Links' after selecting Links Only, got: '\(updatedButton.label)'")
     }
 
+    // MARK: - Actions Menu
+
+    /// Tests that the actions button is visible in the metadata footer.
+    func testActionsButtonVisible() throws {
+        let actionsButton = app.buttons["ActionsButton"]
+        XCTAssertTrue(actionsButton.waitForExistence(timeout: 5), "Actions button should exist in footer")
+        XCTAssertTrue(actionsButton.isHittable, "Actions button should be hittable")
+    }
+
+    /// Tests that clicking the actions button opens a popover with action options.
+    func testActionsPopoverOpensOnClick() throws {
+        let actionsButton = app.buttons["ActionsButton"]
+        XCTAssertTrue(actionsButton.waitForExistence(timeout: 5), "Actions button should exist")
+
+        actionsButton.click()
+        Thread.sleep(forTimeInterval: 0.5)
+
+        // Should show at least Copy/Paste and Delete options
+        let deleteAction = app.buttons["Action_Delete"]
+        XCTAssertTrue(deleteAction.waitForExistence(timeout: 3), "Delete action should appear in popover")
+
+        // Default action should be Copy (no accessibility permission in test env)
+        let copyAction = app.buttons["Action_Copy"]
+        XCTAssertTrue(copyAction.waitForExistence(timeout: 3), "Copy action should appear in popover")
+    }
+
+    /// Tests that Option+Return opens the actions popover.
+    func testOptionReturnOpensActionsPopover() throws {
+        let searchField = app.textFields["SearchField"]
+        XCTAssertTrue(searchField.waitForExistence(timeout: 5), "Search field not found")
+
+        // Option+Return should open the actions menu
+        searchField.typeKey(.return, modifierFlags: .option)
+        Thread.sleep(forTimeInterval: 0.5)
+
+        let deleteAction = app.buttons["Action_Delete"]
+        XCTAssertTrue(deleteAction.waitForExistence(timeout: 3), "Actions popover should open with Option+Return")
+    }
+
+    /// Tests that Escape closes the actions popover.
+    func testEscapeClosesActionsPopover() throws {
+        let actionsButton = app.buttons["ActionsButton"]
+        XCTAssertTrue(actionsButton.waitForExistence(timeout: 5))
+
+        actionsButton.click()
+        Thread.sleep(forTimeInterval: 0.5)
+
+        let deleteAction = app.buttons["Action_Delete"]
+        XCTAssertTrue(deleteAction.waitForExistence(timeout: 3), "Popover should be open")
+
+        // Press Escape to close
+        app.typeKey(.escape, modifierFlags: [])
+        Thread.sleep(forTimeInterval: 0.5)
+
+        XCTAssertFalse(deleteAction.exists, "Popover should close after Escape")
+    }
+
+    /// Tests that the Delete action in the popover triggers the delete confirmation.
+    func testDeleteActionShowsConfirmation() throws {
+        let actionsButton = app.buttons["ActionsButton"]
+        XCTAssertTrue(actionsButton.waitForExistence(timeout: 5))
+
+        actionsButton.click()
+        Thread.sleep(forTimeInterval: 0.5)
+
+        let deleteAction = app.buttons["Action_Delete"]
+        XCTAssertTrue(deleteAction.waitForExistence(timeout: 3))
+
+        deleteAction.click()
+        Thread.sleep(forTimeInterval: 0.5)
+
+        // Delete confirmation dialog should appear
+        let deleteButton = app.buttons["Delete"]
+        XCTAssertTrue(deleteButton.waitForExistence(timeout: 3), "Delete confirmation should appear after clicking Delete action")
+    }
+
     // MARK: - Marketing Assets
 
     /// Captures a marketing-ready screenshot: crops a 16:10 rectangle centered
@@ -298,6 +374,9 @@ final class ClipKittyUITests: XCTestCase {
         if !window.exists {
             return
         }
+
+        // Allow items to fully load before capturing
+        Thread.sleep(forTimeInterval: 1.0)
 
         let frame = window.frame
         let screenShot = XCUIScreen.main.screenshot()

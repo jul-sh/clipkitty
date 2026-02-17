@@ -108,7 +108,7 @@ struct SettingsView: View {
 
             Section("Behavior") {
                 HStack {
-                    Text("Automatic Paste")
+                    Text("Accessibility Permission")
                     Spacer()
                     if settings.hasAccessibilityPermission {
                         Label("Enabled", systemImage: "checkmark.circle.fill")
@@ -119,11 +119,18 @@ struct SettingsView: View {
                     }
                 }
                 if settings.hasAccessibilityPermission {
-                    Text("ClipKitty will automatically paste items into the previous app when you press Enter.")
-                        .font(.caption)
-                        .foregroundStyle(.secondary)
+                    Toggle("Automatic Paste", isOn: $settings.autoPasteEnabled)
+                    if settings.autoPasteEnabled {
+                        Text("ClipKitty will automatically paste items into the previous app when you press Enter.")
+                            .font(.caption)
+                            .foregroundStyle(.secondary)
+                    } else {
+                        Text("Items will be copied to the clipboard without pasting.")
+                            .font(.caption)
+                            .foregroundStyle(.secondary)
+                    }
                 } else {
-                    Text("Grant Accessibility permission to enable automatic pasting. Without it, items will only be copied to the clipboard.")
+                    Text("Grant Accessibility permission to enable automatic pasting. Without it, items will only be copied to the clipboard. Restart the app after updating accessibility permissions for the change to take effect.")
                         .font(.caption)
                         .foregroundStyle(.secondary)
                     Button("Open Accessibility Settings") {

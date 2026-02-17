@@ -7,6 +7,7 @@ import UniformTypeIdentifiers
 struct ContentView: View {
     var store: ClipboardStore
     let onSelect: (Int64, ClipboardContent) -> Void
+    let onCopyOnly: (Int64, ClipboardContent) -> Void
     let onDismiss: () -> Void
     var initialSearchQuery: String = ""
 
@@ -23,9 +24,12 @@ struct ContentView: View {
     @State private var showFilterPopover = false
     @State private var showDeleteConfirmation = false
     @State private var highlightedFilterIndex: Int = 0
+    @State private var showActionsPopover = false
+    @State private var highlightedActionIndex: Int = 0
     enum FocusTarget: Hashable {
         case search
         case filterDropdown
+        case actionsDropdown
     }
     @FocusState private var focusTarget: FocusTarget?
 
@@ -138,6 +142,7 @@ struct ContentView: View {
                 searchText = ""
             }
             showFilterPopover = false
+            showActionsPopover = false
             // Select first item whenever display resets (re-open)
             if let firstId = firstItemId {
                 loadItem(id: firstId)
@@ -259,6 +264,13 @@ struct ContentView: View {
         }
     }
 
+    private func focusActionsDropdown() {
+        Task { @MainActor in
+            try? await Task.sleep(for: .milliseconds(50))
+            focusTarget = .actionsDropdown
+        }
+    }
+
     private func moveSelection(by offset: Int) {
         hasUserNavigated = true
         guard let currentIndex = selectedIndex else {
@@ -272,6 +284,11 @@ struct ContentView: View {
     private func confirmSelection() {
         guard let item = selectedItem else { return }
         onSelect(item.itemMetadata.itemId, item.content)
+    }
+
+    private func copyOnlySelection() {
+        guard let item = selectedItem else { return }
+        onCopyOnly(item.itemMetadata.itemId, item.content)
     }
 
     private func deleteSelectedItem() {
@@ -314,7 +331,15 @@ struct ContentView: View {
                     moveSelection(by: 1)
                     return .handled
                 }
-                .onKeyPress(.return, phases: .down) { _ in
+                .onKeyPress(.return, phases: .down) { keyPress in
+                    if keyPress.modifiers.contains(.option) {
+                        guard selectedItem != nil else { return .handled }
+                        let actions = actionItems
+                        highlightedActionIndex = actions.count - 1
+                        showActionsPopover = true
+                        focusActionsDropdown()
+                        return .handled
+                    }
                     confirmSelection()
                     return .handled
                 }
@@ -652,13 +677,8 @@ struct ContentView: View {
             ScrollView(.vertical, showsIndicators: true) {
                 linkPreview(url: url, metadataState: metadataState, itemId: item.itemMetadata.itemId)
             }
-        case .file(let displayName, _):
-            TextPreviewView(
-                text: displayName,
-                fontName: FontManager.mono,
-                fontSize: 15
-            )
-            .frame(maxWidth: .infinity, maxHeight: .infinity)
+        case .file(_, let files):
+            FilePreviewView(files: files)
         }
     }
 
@@ -684,6 +704,7 @@ struct ContentView: View {
     private func metadataFooter(for item: ClipboardItem) -> some View {
         HStack(spacing: 12) {
             Label(item.timeAgo, systemImage: "clock")
+                .lineLimit(1)
             if let app = item.sourceApp {
                 HStack(spacing: 4) {
                     if let bundleID = item.sourceAppBundleID,
@@ -695,13 +716,17 @@ struct ContentView: View {
                         Image(systemName: "app")
                     }
                     Text(app)
+                        .lineLimit(1)
                 }
             }
-            Spacer()
+            Spacer(minLength: 0)
+            actionsButton
+                .fixedSize()
             Button(buttonLabel(for: item)) { confirmSelection() }
                 .buttonStyle(.plain)
                 .padding(.horizontal, 6)
                 .padding(.vertical, 2)
+                .fixedSize()
         }
         .font(.system(size: 13))
         .foregroundStyle(.secondary)
@@ -711,8 +736,137 @@ struct ContentView: View {
     }
 
     private func buttonLabel(for item: ClipboardItem) -> String {
-        if case .file = item.content { return "⏎ copy" }
         return AppSettings.shared.shouldShowPasteLabel ? "⏎ paste" : "⏎ copy"
+    }
+
+    // MARK: - Actions Dropdown
+
+    private enum ActionItem: Equatable {
+        case defaultAction  // copy or paste based on settings
+        case copyOnly       // only shown when default is paste
+        case delete
+    }
+
+    private var actionItems: [ActionItem] {
+        var items: [ActionItem] = [.delete]
+        if AppSettings.shared.shouldShowPasteLabel {
+            items.append(.copyOnly)
+        }
+        items.append(.defaultAction)
+        return items
+    }
+
+    private func actionLabel(for action: ActionItem) -> String {
+        switch action {
+        case .defaultAction:
+            return AppSettings.shared.shouldShowPasteLabel ? "Paste" : "Copy"
+        case .copyOnly:
+            return "Copy"
+        case .delete:
+            return "Delete"
+        }
+    }
+
+    private func actionShortcut(for action: ActionItem) -> String? {
+        switch action {
+        case .defaultAction: return "⏎"
+        case .copyOnly: return nil
+        case .delete: return "⌫"
+        }
+    }
+
+    private var actionsButton: some View {
+        Button {
+            let actions = actionItems
+            highlightedActionIndex = actions.count - 1
+            showActionsPopover.toggle()
+            if showActionsPopover {
+                focusActionsDropdown()
+            }
+        } label: {
+            Text("⌥⏎ Actions")
+                .font(.system(size: 13))
+                .foregroundStyle(.secondary)
+                .padding(.horizontal, 6)
+                .padding(.vertical, 2)
+        }
+        .buttonStyle(.plain)
+        .accessibilityIdentifier("ActionsButton")
+        .popover(isPresented: $showActionsPopover, arrowEdge: .top) {
+            actionsPopoverContent
+        }
+    }
+
+    private var actionsPopoverContent: some View {
+        let actions = actionItems
+        return VStack(spacing: 2) {
+            ForEach(Array(actions.enumerated()), id: \.offset) { index, action in
+                if action == .delete && index < actions.count - 1 {
+                    ActionOptionRow(
+                        label: actionLabel(for: action),
+                        shortcut: actionShortcut(for: action),
+                        isHighlighted: highlightedActionIndex == index,
+                        isDestructive: true,
+                        action: { performAction(action) }
+                    )
+                    Divider().padding(.horizontal, 4).padding(.vertical, 3)
+                } else {
+                    ActionOptionRow(
+                        label: actionLabel(for: action),
+                        shortcut: actionShortcut(for: action),
+                        isHighlighted: highlightedActionIndex == index,
+                        isDestructive: action == .delete,
+                        action: { performAction(action) }
+                    )
+                }
+            }
+        }
+        .padding(10)
+        .frame(width: 160)
+        .focusable()
+        .focused($focusTarget, equals: .actionsDropdown)
+        .focusEffectDisabled()
+        .onKeyPress(.upArrow) {
+            highlightedActionIndex = max(highlightedActionIndex - 1, 0)
+            return .handled
+        }
+        .onKeyPress(.downArrow) {
+            highlightedActionIndex = min(highlightedActionIndex + 1, actions.count - 1)
+            return .handled
+        }
+        .onKeyPress(.return, phases: .down) { _ in
+            let action = actions[highlightedActionIndex]
+            performAction(action)
+            return .handled
+        }
+        .onKeyPress(.escape) {
+            showActionsPopover = false
+            focusSearchField()
+            return .handled
+        }
+        .onKeyPress(.tab) {
+            showActionsPopover = false
+            focusSearchField()
+            return .handled
+        }
+        .onAppear {
+            let actions = actionItems
+            highlightedActionIndex = actions.count - 1
+            focusActionsDropdown()
+        }
+    }
+
+    private func performAction(_ action: ActionItem) {
+        showActionsPopover = false
+        switch action {
+        case .defaultAction:
+            confirmSelection()
+        case .copyOnly:
+            copyOnlySelection()
+        case .delete:
+            showDeleteConfirmation = true
+            focusSearchField()
+        }
     }
 
     private var emptyStateView: some View {
@@ -774,6 +928,67 @@ private extension View {
     }
 }
 
+// MARK: - File Preview
+
+struct FilePreviewView: View {
+    let files: [FileEntry]
+
+    var body: some View {
+        ScrollView(.vertical, showsIndicators: true) {
+            VStack(spacing: 0) {
+                ForEach(Array(files.enumerated()), id: \.offset) { _, file in
+                    fileRow(file)
+                    if file.fileItemId != files.last?.fileItemId {
+                        Divider().padding(.leading, 52)
+                    }
+                }
+            }
+            .padding(.vertical, 12)
+        }
+        .frame(maxWidth: .infinity, maxHeight: .infinity)
+    }
+
+    private func fileRow(_ file: FileEntry) -> some View {
+        HStack(spacing: 12) {
+            Image(nsImage: NSWorkspace.shared.icon(forFile: file.path))
+                .resizable()
+                .frame(width: 40, height: 40)
+
+            VStack(alignment: .leading, spacing: 4) {
+                Text(file.filename)
+                    .font(.system(size: 14, weight: .medium))
+                    .lineLimit(1)
+
+                Text(file.path)
+                    .font(.system(size: 11))
+                    .foregroundStyle(.secondary)
+                    .lineLimit(1)
+                    .truncationMode(.middle)
+
+                if file.fileSize > 0 {
+                    Text(Self.formatFileSize(file.fileSize))
+                        .font(.system(size: 11))
+                        .foregroundStyle(.tertiary)
+                }
+            }
+            .frame(maxWidth: .infinity, alignment: .leading)
+        }
+        .padding(.horizontal, 16)
+        .padding(.vertical, 8)
+    }
+
+    private static func formatFileSize(_ bytes: UInt64) -> String {
+        let kb = Double(bytes) / 1024
+        let mb = kb / 1024
+        let gb = mb / 1024
+
+        if gb >= 1 { return String(format: "%.1f GB", gb) }
+        if mb >= 1 { return String(format: "%.1f MB", mb) }
+        if kb >= 1 { return String(format: "%.0f KB", kb) }
+        return "\(bytes) bytes"
+    }
+}
+
 // MARK: - Text Preview (AppKit)
 
 struct TextPreviewView: NSViewRepresentable {
@@ -807,10 +1022,34 @@ struct TextPreviewView: NSViewRepresentable {
         return scrollView
     }
 
+    private func scaledFontSize(baseFont: NSFont, containerWidth: CGFloat) -> CGFloat {
+        let lines = text.components(separatedBy: "\n")
+        if lines.count >= 10 { return fontSize }
+
+        let inset: CGFloat = 32 // textContainerInset.width * 2
+        let availableWidth = containerWidth - inset
+        if availableWidth <= 0 { return fontSize }
+
+        let attributes: [NSAttributedString.Key: Any] = [.font: baseFont]
+        var maxLineWidth: CGFloat = 0
+        for line in lines {
+            let lineWidth = (line as NSString).size(withAttributes: attributes).width
+            if lineWidth >= availableWidth { return fontSize }
+            maxLineWidth = max(maxLineWidth, lineWidth)
+        }
+
+        if maxLineWidth <= 0 { return fontSize }
+
+        let scale = min(2.0, availableWidth / maxLineWidth)
+        return fontSize * scale
+    }
+
     func updateNSView(_ nsView: NSScrollView, context: Context) {
         guard let textView = nsView.documentView as? NSTextView else { return }
 
-        let font = NSFont(name: fontName, size: fontSize) ?? NSFont.monospacedSystemFont(ofSize: fontSize, weight: .regular)
+        let baseFont = NSFont(name: fontName, size: fontSize) ?? NSFont.monospacedSystemFont(ofSize: fontSize, weight: .regular)
+        let scaledSize = scaledFontSize(baseFont: baseFont, containerWidth: nsView.contentSize.width)
+        let font = NSFont(name: fontName, size: scaledSize) ?? NSFont.monospacedSystemFont(ofSize: scaledSize, weight: .regular)
 
         // Only update if text or highlights changed
         let currentText = textView.string
@@ -1114,7 +1353,7 @@ struct ItemRow: View, Equatable {
         .buttonStyle(.plain)
         .accessibilityElement(children: .combine)
         .accessibilityLabel(displayText)
-        .accessibilityHint(AppSettings.shared.hasAccessibilityPermission ? "Double tap to paste" : "Double tap to copy")
+        .accessibilityHint(AppSettings.shared.shouldShowPasteLabel ? "Double tap to paste" : "Double tap to copy")
         .accessibilityAddTraits(.isButton)
         .accessibilityAddTraits(isSelected ? .isSelected : [])
     }
@@ -1278,6 +1517,59 @@ private struct FilterOptionRow: View {
         }
         .buttonStyle(.plain)
         .onHover { isHovered = $0 }
+    }
+}
+
+// MARK: - Action Option Row
+
+private struct ActionOptionRow: View {
+    let label: String
+    let shortcut: String?
+    var isHighlighted: Bool = false
+    var isDestructive: Bool = false
+    let action: () -> Void
+    @State private var isHovered = false
+
+    var body: some View {
+        Button(action: action) {
+            HStack {
+                Text(label)
+                    .font(.system(size: 13))
+                    .foregroundStyle(foregroundColor)
+                Spacer()
+                if let shortcut {
+                    Text(shortcut)
+                        .font(.system(size: 11))
+                        .foregroundStyle(isHighlighted ? Color.white.opacity(0.7) : Color.secondary.opacity(0.6))
+                }
+            }
+            .frame(maxWidth: .infinity, alignment: .leading)
+            .padding(.horizontal, 8)
+            .padding(.vertical, 5)
+            .background {
+                if isHighlighted {
+                    if isDestructive {
+                        RoundedRectangle(cornerRadius: 9)
+                            .fill(Color.red.opacity(0.8))
+                    } else {
+                        selectionBackground()
+                            .clipShape(RoundedRectangle(cornerRadius: 9))
+                    }
+                } else {
+                    RoundedRectangle(cornerRadius: 9)
+                        .fill(isHovered ? Color.primary.opacity(0.05) : Color.clear)
+                }
+            }
+        }
+        .buttonStyle(.plain)
+        .onHover { isHovered = $0 }
+        .accessibilityIdentifier("Action_\(label)")
+    }
+
+    private var foregroundColor: Color {
+        if isHighlighted { return .white }
+        if isDestructive { return .red }
+        return .secondary
     }
 }
 
