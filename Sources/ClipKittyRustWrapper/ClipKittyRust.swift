@@ -95,8 +95,8 @@ extension ClipboardContent {
             return number
         case .image(_, let description):
             return description
-        case .file(_, let filename, _, _, _, _, _, _):
-            return filename
+        case .file(let displayName, _):
+            return displayName
         }
     }
 }

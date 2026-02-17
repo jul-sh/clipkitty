@@ -649,20 +649,19 @@ struct ContentView: View {
             ScrollView(.vertical, showsIndicators: true) {
                 linkPreview(url: url, metadataState: metadataState, itemId: item.itemMetadata.itemId)
             }
-        case .file(let path, let filename, let fileSize, let uti, let bookmarkData, let fileStatus, let fileCount, let additionalFilesJson):
+        case .file(let displayName, let files):
             #if !SANDBOXED
             ScrollView(.vertical, showsIndicators: true) {
                 FilePreviewView(
-                    path: path, filename: filename, fileSize: fileSize,
-                    uti: uti, bookmarkData: Data(bookmarkData),
-                    fileStatus: fileStatus, icon: item.itemMetadata.icon,
-                    store: store, itemId: item.itemMetadata.itemId,
-                    fileCount: fileCount, additionalFilesJson: additionalFilesJson
+                    files: files,
+                    icon: item.itemMetadata.icon,
+                    store: store,
+                    itemId: item.itemMetadata.itemId
                 )
             }
             #else
             TextPreviewView(
-                text: filename,
+                text: displayName,
                 fontName: FontManager.mono,
                 fontSize: 15
             )
@@ -974,59 +973,20 @@ struct LinkPreviewView: NSViewRepresentable {
 
 #if !SANDBOXED
 struct FilePreviewView: View {
-    let path: String
-    let filename: String
-    let fileSize: UInt64
-    let uti: String
-    let bookmarkData: Data
-    let fileStatus: FileStatus
+    let files: [FileEntry]
     let icon: ItemIcon
     var store: ClipboardStore
     let itemId: Int64
-    var fileCount: UInt32 = 1
-    var additionalFilesJson: String = ""
 
-    @State private var resolvedStatus: FileStatus?
+    @State private var resolvedStatuses: [Int64: FileStatus] = [:]
 
-    private var displayStatus: FileStatus {
-        resolvedStatus ?? fileStatus
-    }
+    private var isMultiFile: Bool { files.count > 1 }
 
-    private var isMultiFile: Bool { fileCount > 1 }
+    /// Primary file (first in list)
+    private var primaryFile: FileEntry { files[0] }
 
-    /// All filenames (primary + additional) for multi-file display
-    private var allFilenames: [String] {
-        var names = [filename]
-        if isMultiFile, !additionalFilesJson.isEmpty,
-           let data = additionalFilesJson.data(using: .utf8),
-           let files = try? JSONSerialization.jsonObject(with: data) as? [[String: Any]] {
-            // For multi-file, the primary "filename" is the display name like "a and 2 more"
-            // Use the actual primary filename from the path
-            names = [URL(fileURLWithPath: path).lastPathComponent]
-            for file in files {
-                if let name = file["filename"] as? String {
-                    names.append(name)
-                }
-            }
-        }
-        return names
-    }
-
-    /// Total size across all files
-    private var totalSize: UInt64 {
-        var total = fileSize
-        if isMultiFile, !additionalFilesJson.isEmpty,
-           let data = additionalFilesJson.data(using: .utf8),
-           let files = try? JSONSerialization.jsonObject(with: data) as? [[String: Any]] {
-            for file in files {
-                if let size = file["fileSize"] as? UInt64 {
-                    total += size
-                } else if let size = file["fileSize"] as? Int {
-                    total += UInt64(size)
-                }
-            }
-        }
-        return total
+    private func displayStatus(for file: FileEntry) -> FileStatus {
+        resolvedStatuses[file.fileItemId] ?? file.fileStatus
     }
 
     var body: some View {
@@ -1037,12 +997,12 @@ struct FilePreviewView: View {
 
             // Title
             if isMultiFile {
-                Text("\(fileCount) Files")
+                Text("\(files.count) Files")
                     .font(.system(size: 20, weight: .bold))
                     .textSelection(.enabled)
                     .frame(maxWidth: .infinity, alignment: .leading)
             } else {
-                Text(filename)
+                Text(primaryFile.filename)
                     .font(.system(size: 20, weight: .bold))
                     .textSelection(.enabled)
                     .frame(maxWidth: .infinity, alignment: .leading)
@@ -1051,36 +1011,41 @@ struct FilePreviewView: View {
             // Info grid
             VStack(alignment: .leading, spacing: 8) {
                 if isMultiFile {
-                    // List all filenames
-                    infoRow(label: "Files", value: allFilenames.joined(separator: "\n"))
+                    infoRow(label: "Files", value: files.map(\.filename).joined(separator: "\n"))
                     infoRow(label: "Size", value: formattedTotalSize)
                 } else {
-                    infoRow(label: "Path", value: displayPath)
-                    infoRow(label: "Size", value: formattedSize)
-                    infoRow(label: "Kind", value: kindDescription)
+                    infoRow(label: "Path", value: displayPath(for: primaryFile))
+                    infoRow(label: "Size", value: formattedSize(primaryFile.fileSize))
+                    infoRow(label: "Kind", value: kindDescription(for: primaryFile.uti))
                 }
             }
 
-            // Status indicator (single file only)
-            if !isMultiFile {
-                statusView
+            // Status indicators
+            if isMultiFile {
+                // Show per-file status for multi-file items (only non-available)
+                ForEach(files, id: \.fileItemId) { file in
+                    let status = displayStatus(for: file)
+                    if status != .available {
+                        fileStatusView(filename: file.filename, status: status, file: file)
+                    }
+                }
+            } else {
+                statusView(for: primaryFile)
             }
 
             Spacer()
         }
         .padding(16)
         .task(id: itemId) {
-            if !isMultiFile {
-                await resolveFileStatus()
-            }
+            await resolveAllFileStatuses()
         }
     }
 
-    private var displayPath: String {
-        if case .moved(let newPath) = displayStatus {
+    private func displayPath(for file: FileEntry) -> String {
+        if case .moved(let newPath) = displayStatus(for: file) {
             return newPath
         }
-        return path
+        return file.path
     }
 
     @ViewBuilder
@@ -1113,15 +1078,16 @@ struct FilePreviewView: View {
         }
     }
 
-    private var formattedSize: String {
-        ByteCountFormatter.string(fromByteCount: Int64(fileSize), countStyle: .file)
+    private func formattedSize(_ bytes: UInt64) -> String {
+        ByteCountFormatter.string(fromByteCount: Int64(bytes), countStyle: .file)
     }
 
     private var formattedTotalSize: String {
-        ByteCountFormatter.string(fromByteCount: Int64(totalSize), countStyle: .file)
+        let total = files.map(\.fileSize).reduce(0, +)
+        return formattedSize(total)
     }
 
-    private var kindDescription: String {
+    private func kindDescription(for uti: String) -> String {
         if let utType = UTType(uti) {
             return utType.localizedDescription ?? uti
         }
@@ -1129,8 +1095,8 @@ struct FilePreviewView: View {
     }
 
     @ViewBuilder
-    private var statusView: some View {
-        switch displayStatus {
+    private func statusView(for file: FileEntry) -> some View {
+        switch displayStatus(for: file) {
         case .available:
             EmptyView()
         case .moved(let newPath):
@@ -1143,7 +1109,7 @@ struct FilePreviewView: View {
                     .font(.system(size: 13))
                     .foregroundStyle(.red)
                 Button("Restore") {
-                    restoreFromTrash()
+                    restoreFromTrash(file: file)
                 }
                 .buttonStyle(.bordered)
                 .controlSize(.small)
@@ -1155,70 +1121,99 @@ struct FilePreviewView: View {
         }
     }
 
-    private func resolveFileStatus() async {
+    @ViewBuilder
+    private func fileStatusView(filename: String, status: FileStatus, file: FileEntry) -> some View {
+        switch status {
+        case .available:
+            EmptyView()
+        case .moved(let newPath):
+            Label("\(filename) moved to: \(newPath)", systemImage: "arrow.right.circle")
+                .font(.system(size: 13))
+                .foregroundStyle(.orange)
+        case .trashed:
+            HStack {
+                Label("\(filename) is in Trash", systemImage: "trash")
+                    .font(.system(size: 13))
+                    .foregroundStyle(.red)
+                Button("Restore") {
+                    restoreFromTrash(file: file)
+                }
+                .buttonStyle(.bordered)
+                .controlSize(.small)
+            }
+        case .missing:
+            Label("\(filename) no longer exists", systemImage: "exclamationmark.triangle")
+                .font(.system(size: 13))
+                .foregroundStyle(.red)
+        }
+    }
+
+    private func resolveAllFileStatuses() async {
+        for file in files {
+            await resolveFileStatus(for: file)
+        }
+    }
+
+    private func resolveFileStatus(for file: FileEntry) async {
         var isStale = false
         guard let resolvedURL = try? URL(
-            resolvingBookmarkData: bookmarkData,
+            resolvingBookmarkData: Data(file.bookmarkData),
             options: [],
             relativeTo: nil,
             bookmarkDataIsStale: &isStale
         ) else {
-            // Bookmark couldn't resolve — check if original path exists
-            if FileManager.default.fileExists(atPath: path) {
-                resolvedStatus = .available
+            if FileManager.default.fileExists(atPath: file.path) {
+                resolvedStatuses[file.fileItemId] = .available
             } else {
-                resolvedStatus = .missing
-                await persistStatus("missing", newPath: nil)
+                resolvedStatuses[file.fileItemId] = .missing
+                await persistStatus("missing", newPath: nil, fileItemId: file.fileItemId)
             }
             return
         }
 
         let resolvedPath = resolvedURL.path
 
-        // Check if file is in Trash
         if resolvedPath.contains("/.Trash/") {
-            resolvedStatus = .trashed
-            await persistStatus("trashed", newPath: nil)
+            resolvedStatuses[file.fileItemId] = .trashed
+            await persistStatus("trashed", newPath: nil, fileItemId: file.fileItemId)
             return
         }
 
-        // Check if file moved
-        if resolvedPath != path {
-            resolvedStatus = .moved(newPath: resolvedPath)
-            await persistStatus("moved:\(resolvedPath)", newPath: resolvedPath)
+        if resolvedPath != file.path {
+            resolvedStatuses[file.fileItemId] = .moved(newPath: resolvedPath)
+            await persistStatus("moved:\(resolvedPath)", newPath: resolvedPath, fileItemId: file.fileItemId)
             return
         }
 
-        // Check if file still exists at original location
         if FileManager.default.fileExists(atPath: resolvedPath) {
-            resolvedStatus = .available
-            if fileStatus != .available {
-                await persistStatus("available", newPath: nil)
+            resolvedStatuses[file.fileItemId] = .available
+            if file.fileStatus != .available {
+                await persistStatus("available", newPath: nil, fileItemId: file.fileItemId)
             }
         } else {
-            resolvedStatus = .missing
-            await persistStatus("missing", newPath: nil)
+            resolvedStatuses[file.fileItemId] = .missing
+            await persistStatus("missing", newPath: nil, fileItemId: file.fileItemId)
         }
     }
 
-    private func persistStatus(_ status: String, newPath: String?) async {
-        try? store.updateFileStatusViaRust(itemId: itemId, status: status, newPath: newPath)
+    private func persistStatus(_ status: String, newPath: String?, fileItemId: Int64) async {
+        try? store.updateFileStatusViaRust(fileItemId: fileItemId, status: status, newPath: newPath)
     }
 
-    private func restoreFromTrash() {
+    private func restoreFromTrash(file: FileEntry) {
         var isStale = false
         guard let trashURL = try? URL(
-            resolvingBookmarkData: bookmarkData,
+            resolvingBookmarkData: Data(file.bookmarkData),
             options: [],
             relativeTo: nil,
             bookmarkDataIsStale: &isStale
         ) else { return }
 
-        let originalURL = URL(fileURLWithPath: path)
+        let originalURL = URL(fileURLWithPath: file.path)
         do {
             try FileManager.default.moveItem(at: trashURL, to: originalURL)
-            resolvedStatus = .available
-            try? store.updateFileStatusViaRust(itemId: itemId, status: "available", newPath: nil)
+            resolvedStatuses[file.fileItemId] = .available
+            try? store.updateFileStatusViaRust(fileItemId: file.fileItemId, status: "available", newPath: nil)
         } catch {
         }
     }

@@ -1,9 +1,12 @@
 //! SQLite database layer for clipboard storage
 //!
-//! Implements the database schema and operations for clipboard storage.
+//! Normalized schema: base `items` table + type-specific child tables.
 //! Uses r2d2 connection pooling to allow concurrent reads without mutex blocking.
 
-use crate::interface::{ClipboardContent, ContentTypeFilter, ItemMetadata, ItemIcon};
+use crate::interface::{
+    ClipboardContent, ContentTypeFilter, FileEntry, FileStatus, ItemMetadata, ItemIcon,
+    LinkMetadataState,
+};
 use crate::models::StoredItem;
 use crate::search::{generate_preview, SNIPPET_CONTEXT_CHARS};
 use chrono::{DateTime, TimeZone, Utc};
@@ -48,10 +51,10 @@ impl Database {
     pub fn open<P: AsRef<Path>>(path: P) -> DatabaseResult<Self> {
         let manager = SqliteConnectionManager::file(path)
             .with_init(|conn| {
-                // WAL mode + synchronous=NORMAL for concurrent reads without blocking
                 conn.execute_batch("
                     PRAGMA journal_mode=WAL;
                     PRAGMA synchronous=NORMAL;
+                    PRAGMA foreign_keys=ON;
                     PRAGMA mmap_size=67108864;
                     PRAGMA cache_size=-32000;
                 ")?;
@@ -59,7 +62,7 @@ impl Database {
             });
 
         let pool = Pool::builder()
-            .max_size(8) // Allow multiple concurrent readers
+            .max_size(8)
             .build(manager)?;
 
         let db = Self { pool };
@@ -70,13 +73,12 @@ impl Database {
     /// Open an in-memory database (for testing)
     #[cfg(test)]
     pub fn open_in_memory() -> DatabaseResult<Self> {
-        // For in-memory databases, we need shared cache to allow pool connections
-        // to see the same database
         let manager = SqliteConnectionManager::memory()
             .with_init(|conn| {
                 conn.execute_batch("
                     PRAGMA journal_mode=WAL;
                     PRAGMA synchronous=NORMAL;
+                    PRAGMA foreign_keys=ON;
                 ")?;
                 Ok(())
             });
@@ -96,72 +98,76 @@ impl Database {
         Ok(self.pool.get()?)
     }
 
-    /// Set up the database schema
+    /// Set up the database schema (normalized: items + child tables)
     fn setup_schema(&self) -> DatabaseResult<()> {
         let conn = self.get_conn()?;
 
-        // Create items table (base schema from main branch)
-        conn.execute(
-            r#"
+        // Migration: detect old schema by checking for `imageData` column in items
+        let has_old_schema = conn
+            .prepare("SELECT imageData FROM items LIMIT 0")
+            .is_ok();
+
+        if has_old_schema {
+            // Drop all old tables and recreate
+            conn.execute_batch("
+                DROP TABLE IF EXISTS file_items;
+                DROP TABLE IF EXISTS link_items;
+                DROP TABLE IF EXISTS image_items;
+                DROP TABLE IF EXISTS text_items;
+                DROP TABLE IF EXISTS items;
+            ")?;
+        }
+
+        conn.execute_batch(r#"
             CREATE TABLE IF NOT EXISTS items (
                 id INTEGER PRIMARY KEY AUTOINCREMENT,
-                content TEXT NOT NULL,
+                contentType TEXT NOT NULL,
                 contentHash TEXT NOT NULL,
-                timestamp DATETIME NOT NULL,
+                content TEXT NOT NULL,
+                timestamp TEXT NOT NULL,
                 sourceApp TEXT,
-                contentType TEXT DEFAULT 'text',
-                imageData BLOB,
-                linkTitle TEXT,
-                linkImageData BLOB,
-                sourceAppBundleID TEXT
-            )
-            "#,
-            [],
-        )?;
+                sourceAppBundleId TEXT,
+                thumbnail BLOB,
+                colorRgba INTEGER
+            );
 
-        // Migrate: add columns that may not exist in older databases
-        // These are safe no-ops if columns already exist
-        Self::add_column_if_missing(&conn, "linkDescription", "TEXT")?;
-        Self::add_column_if_missing(&conn, "thumbnail", "BLOB")?;
-        Self::add_column_if_missing(&conn, "colorRgba", "INTEGER")?;
-        Self::add_column_if_missing(&conn, "filePath", "TEXT")?;
-        Self::add_column_if_missing(&conn, "fileSize", "INTEGER")?;
-        Self::add_column_if_missing(&conn, "fileUti", "TEXT")?;
-        Self::add_column_if_missing(&conn, "bookmarkData", "BLOB")?;
-        Self::add_column_if_missing(&conn, "fileStatus", "TEXT")?;
-        Self::add_column_if_missing(&conn, "fileCount", "INTEGER")?;
-        Self::add_column_if_missing(&conn, "additionalFiles", "TEXT")?;
+            CREATE TABLE IF NOT EXISTS text_items (
+                itemId INTEGER PRIMARY KEY REFERENCES items(id) ON DELETE CASCADE,
+                value TEXT NOT NULL
+            );
 
-        // Create indexes
-        conn.execute(
-            "CREATE INDEX IF NOT EXISTS idx_items_hash ON items(contentHash)",
-            [],
-        )?;
-        conn.execute(
-            "CREATE INDEX IF NOT EXISTS idx_items_timestamp ON items(timestamp)",
-            [],
-        )?;
-        conn.execute(
-            "CREATE INDEX IF NOT EXISTS idx_items_content_prefix ON items(content COLLATE NOCASE)",
-            [],
-        )?;
+            CREATE TABLE IF NOT EXISTS image_items (
+                itemId INTEGER PRIMARY KEY REFERENCES items(id) ON DELETE CASCADE,
+                data BLOB NOT NULL,
+                description TEXT NOT NULL DEFAULT 'Image'
+            );
+
+            CREATE TABLE IF NOT EXISTS link_items (
+                itemId INTEGER PRIMARY KEY REFERENCES items(id) ON DELETE CASCADE,
+                url TEXT NOT NULL,
+                title TEXT,
+                description TEXT
+            );
+
+            CREATE TABLE IF NOT EXISTS file_items (
+                id INTEGER PRIMARY KEY AUTOINCREMENT,
+                itemId INTEGER NOT NULL REFERENCES items(id) ON DELETE CASCADE,
+                ordinal INTEGER NOT NULL DEFAULT 0,
+                path TEXT NOT NULL,
+                filename TEXT NOT NULL,
+                fileSize INTEGER NOT NULL DEFAULT 0,
+                uti TEXT NOT NULL DEFAULT 'public.item',
+                bookmarkData BLOB NOT NULL,
+                fileStatus TEXT NOT NULL DEFAULT 'available'
+            );
+
+            CREATE INDEX IF NOT EXISTS idx_items_hash ON items(contentHash);
+            CREATE INDEX IF NOT EXISTS idx_items_timestamp ON items(timestamp);
+            CREATE INDEX IF NOT EXISTS idx_items_content_prefix ON items(content COLLATE NOCASE);
+            CREATE INDEX IF NOT EXISTS idx_file_items_item ON file_items(itemId);
+        "#)?;
 
         Ok(())
-    }
-
-    /// Add a column to the items table if it doesn't exist
-    /// SQLite doesn't have IF NOT EXISTS for ALTER TABLE, so we catch the error
-    fn add_column_if_missing(conn: &rusqlite::Connection, column: &str, col_type: &str) -> DatabaseResult<()> {
-        let sql = format!("ALTER TABLE items ADD COLUMN {} {}", column, col_type);
-        match conn.execute(&sql, []) {
-            Ok(_) => Ok(()),
-            Err(rusqlite::Error::SqliteFailure(err, _))
-                if err.code == rusqlite::ErrorCode::Unknown && err.extended_code == 1 => {
-                // Error code 1 = "duplicate column name" - column already exists, ignore
-                Ok(())
-            }
-            Err(e) => Err(e.into()),
-        }
     }
 
     /// Get the database size in bytes
@@ -179,55 +185,104 @@ impl Database {
         Ok(count as u64)
     }
 
-    /// Insert a new clipboard item, returns the row ID
+    /// Insert a new clipboard item using a transaction.
+    /// Inserts into `items` + the appropriate child table(s).
+    /// Returns the item ID.
     pub fn insert_item(&self, item: &StoredItem) -> DatabaseResult<i64> {
         let conn = self.get_conn()?;
-        let (content, image_data, link_title, link_description, link_image_data, color_rgba) = item.content.to_database_fields();
+        let tx = conn.unchecked_transaction()?;
+
         let timestamp = Utc.timestamp_opt(item.timestamp_unix, 0).single().unwrap_or_else(Utc::now);
         let timestamp_str = timestamp.format("%Y-%m-%d %H:%M:%S%.f").to_string();
+        let content_type = item.content.database_type();
+        let content_text = item.content.text_content().to_string();
 
-        conn.execute(
-            r#"
-            INSERT INTO items (content, contentHash, timestamp, sourceApp, contentType, imageData, linkTitle, linkDescription, linkImageData, sourceAppBundleID, thumbnail, colorRgba, filePath, fileSize, fileUti, bookmarkData, fileStatus, fileCount, additionalFiles)
-            VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11, ?12, ?13, ?14, ?15, ?16, ?17, ?18, ?19)
-            "#,
+        tx.execute(
+            r#"INSERT INTO items (contentType, contentHash, content, timestamp, sourceApp, sourceAppBundleId, thumbnail, colorRgba)
+               VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8)"#,
             params![
-                content,
+                content_type,
                 item.content_hash,
+                content_text,
                 timestamp_str,
                 item.source_app,
-                item.content.database_type(),
-                image_data,
-                link_title,
-                link_description,
-                link_image_data,
                 item.source_app_bundle_id,
                 item.thumbnail,
-                color_rgba,
-                item.file_path,
-                item.file_size.map(|s| s as i64),
-                item.file_uti,
-                item.bookmark_data,
-                item.file_status,
-                item.file_count.map(|c| c as i64),
-                item.additional_files_json,
+                item.color_rgba,
             ],
         )?;
+        let item_id = tx.last_insert_rowid();
 
-        Ok(conn.last_insert_rowid())
+        match &item.content {
+            ClipboardContent::Text { value }
+            | ClipboardContent::Color { value }
+            | ClipboardContent::Email { address: value }
+            | ClipboardContent::Phone { number: value } => {
+                tx.execute(
+                    "INSERT INTO text_items (itemId, value) VALUES (?1, ?2)",
+                    params![item_id, value],
+                )?;
+            }
+            ClipboardContent::Image { data, description } => {
+                tx.execute(
+                    "INSERT INTO image_items (itemId, data, description) VALUES (?1, ?2, ?3)",
+                    params![item_id, data, description],
+                )?;
+            }
+            ClipboardContent::Link { url, metadata_state } => {
+                let (title, description, image_data) = metadata_state.to_database_fields();
+                // Store link preview image as items.thumbnail
+                if image_data.is_some() {
+                    tx.execute(
+                        "UPDATE items SET thumbnail = ?1 WHERE id = ?2",
+                        params![image_data, item_id],
+                    )?;
+                }
+                tx.execute(
+                    "INSERT INTO link_items (itemId, url, title, description) VALUES (?1, ?2, ?3, ?4)",
+                    params![item_id, url, title, description],
+                )?;
+            }
+            ClipboardContent::File { files, .. } => {
+                for (ordinal, file) in files.iter().enumerate() {
+                    tx.execute(
+                        r#"INSERT INTO file_items (itemId, ordinal, path, filename, fileSize, uti, bookmarkData, fileStatus)
+                           VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8)"#,
+                        params![
+                            item_id,
+                            ordinal as i64,
+                            file.path,
+                            file.filename,
+                            file.file_size as i64,
+                            file.uti,
+                            file.bookmark_data,
+                            file.file_status.to_database_str(),
+                        ],
+                    )?;
+                }
+            }
+        }
+
+        tx.commit()?;
+        Ok(item_id)
     }
 
     /// Find an existing item by content hash
     pub fn find_by_hash(&self, hash: &str) -> DatabaseResult<Option<StoredItem>> {
         let conn = self.get_conn()?;
-        let mut stmt = conn.prepare(
-            "SELECT * FROM items WHERE contentHash = ?1 LIMIT 1"
-        )?;
-
-        let result = stmt.query_row([hash], |row| Self::row_to_stored_item(row));
+        let result = conn.query_row(
+            "SELECT id, contentType, contentHash, content, timestamp, sourceApp, sourceAppBundleId, thumbnail, colorRgba FROM items WHERE contentHash = ?1 LIMIT 1",
+            [hash],
+            |row| Self::row_to_base_item(row),
+        );
 
         match result {
-            Ok(item) => Ok(Some(item)),
+            Ok(mut item) => {
+                if let Some(id) = item.id {
+                    Self::populate_child_content(&conn, &mut item, id)?;
+                }
+                Ok(Some(item))
+            }
             Err(rusqlite::Error::QueryReturnedNoRows) => Ok(None),
             Err(e) => Err(e.into()),
         }
@@ -244,7 +299,8 @@ impl Database {
         Ok(())
     }
 
-    /// Update link metadata for an item
+    /// Update link metadata for an item.
+    /// Updates `link_items` (title, description) and `items.thumbnail` (image).
     pub fn update_link_metadata(
         &self,
         id: i64,
@@ -254,8 +310,13 @@ impl Database {
     ) -> DatabaseResult<()> {
         let conn = self.get_conn()?;
         conn.execute(
-            "UPDATE items SET linkTitle = ?1, linkDescription = ?2, linkImageData = ?3 WHERE id = ?4",
-            params![title.unwrap_or(""), description, image_data, id],
+            "UPDATE link_items SET title = ?1, description = ?2 WHERE itemId = ?3",
+            params![title.unwrap_or(""), description, id],
+        )?;
+        // Store link preview image as items.thumbnail
+        conn.execute(
+            "UPDATE items SET thumbnail = ?1 WHERE id = ?2",
+            params![image_data, id],
         )?;
         Ok(())
     }
@@ -263,45 +324,52 @@ impl Database {
     /// Update image description
     pub fn update_image_description(&self, id: i64, description: &str) -> DatabaseResult<()> {
         let conn = self.get_conn()?;
+        // Update both the denormalized content in items and the child table
         conn.execute(
             "UPDATE items SET content = ?1 WHERE id = ?2 AND contentType = 'image'",
+            params![description, id],
+        )?;
+        conn.execute(
+            "UPDATE image_items SET description = ?1 WHERE itemId = ?2",
             params![description, id],
         )?;
         Ok(())
     }
 
-    /// Update file status (and optionally file path when file has moved)
-    pub fn update_file_status(&self, id: i64, status: &str, new_path: Option<&str>) -> DatabaseResult<()> {
+    /// Update file status for a specific file entry.
+    /// `file_item_id` is the `file_items.id` — each file has its own status.
+    pub fn update_file_status(&self, file_item_id: i64, status: &str, new_path: Option<&str>) -> DatabaseResult<()> {
         let conn = self.get_conn()?;
         if let Some(path) = new_path {
             conn.execute(
-                "UPDATE items SET fileStatus = ?1, filePath = ?2 WHERE id = ?3 AND contentType = 'file'",
-                params![status, path, id],
+                "UPDATE file_items SET fileStatus = ?1, path = ?2 WHERE id = ?3",
+                params![status, path, file_item_id],
             )?;
         } else {
             conn.execute(
-                "UPDATE items SET fileStatus = ?1 WHERE id = ?2 AND contentType = 'file'",
-                params![status, id],
+                "UPDATE file_items SET fileStatus = ?1 WHERE id = ?2",
+                params![status, file_item_id],
             )?;
         }
         Ok(())
     }
 
-    /// Delete an item by ID
+    /// Delete an item by ID (CASCADE handles child tables)
     pub fn delete_item(&self, id: i64) -> DatabaseResult<()> {
         let conn = self.get_conn()?;
         conn.execute("DELETE FROM items WHERE id = ?1", [id])?;
         Ok(())
     }
 
-    /// Delete all items
+    /// Delete all items (CASCADE handles children)
     pub fn clear_all(&self) -> DatabaseResult<()> {
         let conn = self.get_conn()?;
         conn.execute("DELETE FROM items", [])?;
         Ok(())
     }
 
-    /// Fetch lightweight item metadata for list display
+    /// Fetch lightweight item metadata for list display.
+    /// No JOINs needed — `thumbnail` covers link images too.
     pub fn fetch_item_metadata(
         &self,
         before_timestamp: Option<DateTime<Utc>>,
@@ -310,24 +378,22 @@ impl Database {
     ) -> DatabaseResult<(Vec<ItemMetadata>, u64)> {
         let conn = self.get_conn()?;
 
-        // Build optional WHERE clause for content type filtering
         let type_filter_clause = Self::content_type_where_clause(filter, "");
         let type_filter_clause_and = Self::content_type_where_clause(filter, "AND");
 
-        // Get total count (filtered)
         let count_sql = format!("SELECT COUNT(*) FROM items {}", type_filter_clause);
         let total_count: i64 = conn.query_row(&count_sql, [], |row| row.get(0))?;
         let total_count = total_count as u64;
 
         let sql = if before_timestamp.is_some() {
             format!(
-                r#"SELECT id, content, contentType, timestamp, sourceApp, sourceAppBundleID, thumbnail, colorRgba, linkImageData
+                r#"SELECT id, content, contentType, timestamp, sourceApp, sourceAppBundleId, thumbnail, colorRgba
                    FROM items WHERE timestamp < ?1 {} ORDER BY timestamp DESC LIMIT ?2"#,
                 type_filter_clause_and
             )
         } else {
             format!(
-                r#"SELECT id, content, contentType, timestamp, sourceApp, sourceAppBundleID, thumbnail, colorRgba, linkImageData
+                r#"SELECT id, content, contentType, timestamp, sourceApp, sourceAppBundleId, thumbnail, colorRgba
                    FROM items {} ORDER BY timestamp DESC LIMIT ?1"#,
                 type_filter_clause
             )
@@ -354,13 +420,23 @@ impl Database {
 
         let conn = self.get_conn()?;
         let placeholders = ids.iter().map(|_| "?").collect::<Vec<_>>().join(",");
-        let sql = format!("SELECT * FROM items WHERE id IN ({})", placeholders);
+        let sql = format!(
+            "SELECT id, contentType, contentHash, content, timestamp, sourceApp, sourceAppBundleId, thumbnail, colorRgba FROM items WHERE id IN ({})",
+            placeholders
+        );
 
         let mut stmt = conn.prepare(&sql)?;
         let params: Vec<rusqlite::types::Value> = ids.iter().map(|&id| id.into()).collect();
-        let items: Vec<StoredItem> = stmt
-            .query_map(rusqlite::params_from_iter(params), Self::row_to_stored_item)?
+        let mut items: Vec<StoredItem> = stmt
+            .query_map(rusqlite::params_from_iter(params), Self::row_to_base_item)?
             .collect::<Result<Vec<_>, _>>()?;
+
+        // Populate child content for each item
+        for item in &mut items {
+            if let Some(id) = item.id {
+                Self::populate_child_content(&conn, item, id)?;
+            }
+        }
 
         // Re-sort to match input ID order
         let id_to_item: std::collections::HashMap<i64, StoredItem> = items
@@ -372,13 +448,6 @@ impl Database {
     }
 
     /// Fetch items by IDs with SQLite C-level interrupt support.
-    ///
-    /// When the cancellation token is triggered, this interrupts the SQLite query
-    /// at the C level, allowing immediate abort of long-running disk reads.
-    ///
-    /// CRITICAL: The watcher task is wrapped in AbortOnDropHandle to prevent pool
-    /// poisoning - if the watcher outlived this scope, it could interrupt a different
-    /// query on a reused connection from the r2d2 pool.
     pub fn fetch_items_by_ids_interruptible(
         &self,
         ids: &[i64],
@@ -392,14 +461,8 @@ impl Database {
         }
 
         let conn = self.get_conn()?;
-
-        // Extract the SQLite interrupt handle - this is safe to call from another thread
         let interrupt_handle = conn.get_interrupt_handle();
 
-        // Spawn a watcher task that interrupts SQLite when cancellation is requested.
-        // CRITICAL: Wrap in AbortOnDropHandle for pool poisoning prevention.
-        // When this scope exits (success or error via ?), the handle drops and aborts the watcher,
-        // preventing it from interrupting a reused connection.
         let token_clone = token.clone();
         let watcher = runtime.spawn(async move {
             token_clone.cancelled().await;
@@ -407,22 +470,29 @@ impl Database {
         });
         let _abort_guard = AbortOnDropHandle::new(watcher);
 
-        // Now run the query - if cancelled, SQLite returns SQLITE_INTERRUPT
         let placeholders = ids.iter().map(|_| "?").collect::<Vec<_>>().join(",");
-        let sql = format!("SELECT * FROM items WHERE id IN ({})", placeholders);
+        let sql = format!(
+            "SELECT id, contentType, contentHash, content, timestamp, sourceApp, sourceAppBundleId, thumbnail, colorRgba FROM items WHERE id IN ({})",
+            placeholders
+        );
 
         let mut stmt = conn.prepare(&sql)?;
         let params: Vec<rusqlite::types::Value> = ids.iter().map(|&id| id.into()).collect();
 
-        // Map SQLITE_INTERRUPT to our error - this happens if token was cancelled
-        let items: Vec<StoredItem> = match stmt.query_map(rusqlite::params_from_iter(params), Self::row_to_stored_item) {
+        let mut items: Vec<StoredItem> = match stmt.query_map(rusqlite::params_from_iter(params), Self::row_to_base_item) {
             Ok(rows) => rows.collect::<Result<Vec<_>, _>>()?,
             Err(rusqlite::Error::SqliteFailure(err, _)) if err.code == rusqlite::ffi::ErrorCode::OperationInterrupted => {
-                // Query was interrupted via token - return empty, caller checks token
                 return Ok(Vec::new());
             }
             Err(e) => return Err(e.into()),
         };
+
+        // Populate child content
+        for item in &mut items {
+            if let Some(id) = item.id {
+                Self::populate_child_content(&conn, item, id)?;
+            }
+        }
 
         // Re-sort to match input ID order
         let id_to_item: std::collections::HashMap<i64, StoredItem> = items
@@ -436,10 +506,20 @@ impl Database {
     /// Fetch all items (for index rebuilding)
     pub fn fetch_all_items(&self) -> DatabaseResult<Vec<StoredItem>> {
         let conn = self.get_conn()?;
-        let mut stmt = conn.prepare("SELECT * FROM items ORDER BY timestamp DESC")?;
-        let items = stmt
-            .query_map([], Self::row_to_stored_item)?
+        let mut stmt = conn.prepare(
+            "SELECT id, contentType, contentHash, content, timestamp, sourceApp, sourceAppBundleId, thumbnail, colorRgba FROM items ORDER BY timestamp DESC"
+        )?;
+        let mut items = stmt
+            .query_map([], Self::row_to_base_item)?
             .collect::<Result<Vec<_>, _>>()?;
+
+        // Populate child content
+        for item in &mut items {
+            if let Some(id) = item.id {
+                Self::populate_child_content(&conn, item, id)?;
+            }
+        }
+
         Ok(items)
     }
 
@@ -459,7 +539,7 @@ impl Database {
 
         let avg_item_size = current_size / count;
         if avg_item_size == 0 {
-            return Ok(Vec::new()); // Edge case: prevent division by zero
+            return Ok(Vec::new());
         }
         let target_size = (max_bytes as f64 * keep_ratio) as i64;
         let items_to_delete = std::cmp::max(100, ((current_size - target_size) / avg_item_size) as usize);
@@ -473,10 +553,6 @@ impl Database {
     }
 
     /// Search for short queries (<3 chars) using prefix matching + substring LIKE on recent items.
-    /// Returns (id, content, timestamp_unix) tuples.
-    /// Two-part search:
-    /// 1. Prefix match on full table (fast — only matches content starting with query)
-    /// 2. Substring LIKE on last 2k items (catches mid-content matches in recent items)
     pub fn search_short_query(
         &self,
         query: &str,
@@ -488,7 +564,7 @@ impl Database {
         let escaped = query_lower.replace('%', "\\%").replace('_', "\\_");
         let type_filter_and = Self::content_type_where_clause(filter, "AND");
 
-        // Part 1: Prefix match — uses idx_items_content_prefix (COLLATE NOCASE index)
+        // Part 1: Prefix match
         let prefix_pattern = format!("{}%", escaped);
         let prefix_sql = format!(
             r#"SELECT id, content, CAST(strftime('%s', timestamp) AS INTEGER)
@@ -509,7 +585,7 @@ impl Database {
             })?
             .collect::<Result<Vec<_>, _>>()?;
 
-        // Part 2: Substring LIKE on last 2k items only (keeps latency bounded)
+        // Part 2: Substring LIKE on last 2k items
         let like_pattern = format!("%{}%", escaped);
         let like_sql = format!(
             r#"SELECT id, content, CAST(strftime('%s', timestamp) AS INTEGER)
@@ -530,7 +606,7 @@ impl Database {
             })?
             .collect::<Result<Vec<_>, _>>()?;
 
-        // Merge results, preferring prefix matches, deduplicating by ID
+        // Merge, deduplicate
         let mut seen_ids = std::collections::HashSet::new();
         let mut results = Vec::with_capacity(limit);
 
@@ -552,7 +628,7 @@ impl Database {
         Ok(results)
     }
 
-    /// Prune old items to stay under max size
+    /// Prune old items to stay under max size (CASCADE handles children)
     pub fn prune_to_size(&self, max_bytes: i64, keep_ratio: f64) -> DatabaseResult<usize> {
         let current_size = self.database_size()?;
         if current_size <= max_bytes {
@@ -568,17 +644,15 @@ impl Database {
 
         let avg_item_size = current_size / count;
         if avg_item_size == 0 {
-            return Ok(0); // Edge case: prevent division by zero
+            return Ok(0);
         }
         let target_size = (max_bytes as f64 * keep_ratio) as i64;
         let items_to_delete = std::cmp::max(100, ((current_size - target_size) / avg_item_size) as usize);
 
         conn.execute(
-            r#"
-            DELETE FROM items WHERE id IN (
+            r#"DELETE FROM items WHERE id IN (
                 SELECT id FROM items ORDER BY timestamp ASC LIMIT ?1
-            )
-            "#,
+            )"#,
             [items_to_delete as i64],
         )?;
 
@@ -586,8 +660,6 @@ impl Database {
     }
 
     /// Build a SQL clause for filtering by content type.
-    /// `prefix` controls the leading keyword: "" gives "WHERE ...", "AND" gives "AND ...".
-    /// Returns empty string for no filter (ContentTypeFilter::All or None).
     fn content_type_where_clause(filter: Option<&ContentTypeFilter>, prefix: &str) -> String {
         let types = match filter {
             Some(f) => f.database_types(),
@@ -603,66 +675,118 @@ impl Database {
         }
     }
 
-    /// Convert a database row to a StoredItem
-    fn row_to_stored_item(row: &rusqlite::Row) -> rusqlite::Result<StoredItem> {
-        let id: i64 = row.get("id")?;
-        let content: String = row.get("content")?;
-        let content_hash: String = row.get("contentHash")?;
-        let timestamp_str: String = row.get("timestamp")?;
-        let source_app: Option<String> = row.get("sourceApp")?;
-        let content_type: Option<String> = row.get("contentType")?;
-        let image_data: Option<Vec<u8>> = row.get("imageData")?;
-        let link_title: Option<String> = row.get("linkTitle")?;
-        let link_description: Option<String> = row.get("linkDescription").ok().flatten();
-        let link_image_data: Option<Vec<u8>> = row.get("linkImageData")?;
-        let source_app_bundle_id: Option<String> = row.get("sourceAppBundleID")?;
-        let thumbnail: Option<Vec<u8>> = row.get("thumbnail").ok().flatten();
-        let color_rgba: Option<u32> = row.get("colorRgba").ok().flatten();
-        let file_path: Option<String> = row.get("filePath").ok().flatten();
-        let file_size: Option<u64> = row.get::<_, Option<i64>>("fileSize").ok().flatten().map(|v| v as u64);
-        let file_uti: Option<String> = row.get("fileUti").ok().flatten();
-        let bookmark_data: Option<Vec<u8>> = row.get("bookmarkData").ok().flatten();
-        let file_status: Option<String> = row.get("fileStatus").ok().flatten();
-        let file_count: Option<u32> = row.get::<_, Option<i64>>("fileCount").ok().flatten().map(|v| v as u32);
-        let additional_files_json: Option<String> = row.get("additionalFiles").ok().flatten();
+    /// Read base item fields from a row (no child table data yet).
+    /// Content is populated with a placeholder — call `populate_child_content` after.
+    fn row_to_base_item(row: &rusqlite::Row) -> rusqlite::Result<StoredItem> {
+        let id: i64 = row.get(0)?;
+        let content_type: String = row.get(1)?;
+        let content_hash: String = row.get(2)?;
+        let content_text: String = row.get(3)?;
+        let timestamp_str: String = row.get(4)?;
+        let source_app: Option<String> = row.get(5)?;
+        let source_app_bundle_id: Option<String> = row.get(6)?;
+        let thumbnail: Option<Vec<u8>> = row.get(7)?;
+        let color_rgba: Option<u32> = row.get(8)?;
 
         let timestamp = parse_db_timestamp(&timestamp_str);
 
-        let db_type = content_type.as_deref().unwrap_or("text");
-        let clipboard_content = ClipboardContent::from_database(
-            db_type,
-            &content,
-            image_data,
-            link_title.as_deref(),
-            link_description.as_deref(),
-            link_image_data,
-            color_rgba,
-            file_path.as_deref(),
-            file_size,
-            file_uti.as_deref(),
-            bookmark_data.clone(),
-            file_status.as_deref(),
-            file_count,
-            additional_files_json.as_deref(),
-        );
+        // Placeholder content — will be replaced by populate_child_content
+        let content = match content_type.as_str() {
+            "color" => ClipboardContent::Color { value: content_text },
+            "email" => ClipboardContent::Email { address: content_text },
+            "phone" => ClipboardContent::Phone { number: content_text },
+            "image" => ClipboardContent::Image { data: Vec::new(), description: content_text },
+            "link" => ClipboardContent::Link {
+                url: content_text,
+                metadata_state: LinkMetadataState::Pending,
+            },
+            "file" => ClipboardContent::File {
+                display_name: content_text,
+                files: Vec::new(),
+            },
+            _ => ClipboardContent::Text { value: content_text },
+        };
 
         Ok(StoredItem {
             id: Some(id),
-            content: clipboard_content,
+            content,
             content_hash,
             timestamp_unix: timestamp.timestamp(),
             source_app,
             source_app_bundle_id,
             thumbnail,
             color_rgba,
-            file_path,
-            file_size,
-            file_uti,
-            bookmark_data,
-            file_status,
-            file_count,
-            additional_files_json,
         })
+    }
+
+    /// Populate the child table content for a StoredItem.
+    /// Must be called after `row_to_base_item` to fill in type-specific data.
+    fn populate_child_content(conn: &rusqlite::Connection, item: &mut StoredItem, item_id: i64) -> DatabaseResult<()> {
+        match &item.content {
+            ClipboardContent::Image { description, .. } => {
+                let description = description.clone();
+                let data: Vec<u8> = conn.query_row(
+                    "SELECT data FROM image_items WHERE itemId = ?1",
+                    [item_id],
+                    |row| row.get(0),
+                ).unwrap_or_default();
+                item.content = ClipboardContent::Image { data, description };
+            }
+            ClipboardContent::Link { url, .. } => {
+                let url = url.clone();
+                let result = conn.query_row(
+                    "SELECT title, description FROM link_items WHERE itemId = ?1",
+                    [item_id],
+                    |row| {
+                        let title: Option<String> = row.get(0)?;
+                        let desc: Option<String> = row.get(1)?;
+                        Ok((title, desc))
+                    },
+                );
+                let metadata_state = match result {
+                    Ok((title, desc)) => {
+                        // Reconstruct from link_items + items.thumbnail for image
+                        LinkMetadataState::from_database(
+                            title.as_deref(),
+                            desc.as_deref(),
+                            item.thumbnail.clone(),
+                        )
+                    }
+                    Err(_) => LinkMetadataState::Pending,
+                };
+                item.content = ClipboardContent::Link { url, metadata_state };
+            }
+            ClipboardContent::File { display_name, .. } => {
+                let display_name = display_name.clone();
+                let mut stmt = conn.prepare(
+                    "SELECT id, path, filename, fileSize, uti, bookmarkData, fileStatus FROM file_items WHERE itemId = ?1 ORDER BY ordinal"
+                )?;
+                let files: Vec<FileEntry> = stmt
+                    .query_map([item_id], |row| {
+                        let file_item_id: i64 = row.get(0)?;
+                        let path: String = row.get(1)?;
+                        let filename: String = row.get(2)?;
+                        let file_size: i64 = row.get(3)?;
+                        let uti: String = row.get(4)?;
+                        let bookmark_data: Vec<u8> = row.get(5)?;
+                        let file_status_str: String = row.get(6)?;
+                        Ok(FileEntry {
+                            file_item_id,
+                            path,
+                            filename,
+                            file_size: file_size as u64,
+                            uti,
+                            bookmark_data,
+                            file_status: FileStatus::from_database_str(&file_status_str),
+                        })
+                    })?
+                    .collect::<Result<Vec<_>, _>>()?;
+                item.content = ClipboardContent::File { display_name, files };
+            }
+            // Text, Color, Email, Phone — content_text from items is sufficient
+            _ => {}
+        }
+        Ok(())
     }
 
     /// Convert a database row to lightweight ItemMetadata
@@ -673,18 +797,13 @@ impl Database {
         let timestamp_str: String = row.get(3)?;
         let source_app: Option<String> = row.get(4)?;
         let source_app_bundle_id: Option<String> = row.get(5)?;
-        let thumbnail: Option<Vec<u8>> = row.get(6).ok().flatten();
-        let color_rgba: Option<u32> = row.get(7).ok().flatten();
-        let link_image_data: Option<Vec<u8>> = row.get(8).ok().flatten();
+        let thumbnail: Option<Vec<u8>> = row.get(6)?;
+        let color_rgba: Option<u32> = row.get(7)?;
 
         let timestamp = parse_db_timestamp(&timestamp_str);
-
         let db_type = content_type.as_deref().unwrap_or("text");
 
-        // Determine icon based on content type
-        let icon = ItemIcon::from_database(db_type, color_rgba, thumbnail.clone(), link_image_data);
-
-        // Generate snippet text (generous snippet for Swift to truncate)
+        let icon = ItemIcon::from_database(db_type, color_rgba, thumbnail);
         let snippet = generate_preview(&content, SNIPPET_CONTEXT_CHARS * 2);
 
         Ok(ItemMetadata {

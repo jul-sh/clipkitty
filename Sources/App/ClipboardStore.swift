@@ -103,10 +103,10 @@ final class ClipboardStore {
 
     #if !SANDBOXED
     private func setupFileWatcher() {
-        fileWatcher.onFileChanged = { [weak self] itemId, status in
+        fileWatcher.onFileChanged = { [weak self] fileItemId, status in
             guard let self else { return }
             try? self.updateFileStatusViaRust(
-                itemId: itemId,
+                fileItemId: fileItemId,
                 status: status.toDatabaseStr(),
                 newPath: status.movedPath
             )
@@ -623,13 +623,21 @@ final class ClipboardStore {
                     }
                 }
 
-                // Start watching the primary file for moves/deletes
+                // Start watching ALL files for moves/deletes
                 if itemId > 0 {
-                    let primaryPath = paths[0]
-                    let primaryFilename = filenames[0]
-                    let primaryBookmark = bookmarkDataList[0]
-                    await MainActor.run { [weak self] in
-                        self?.fileWatcher.watch(path: primaryPath, itemId: itemId, filename: primaryFilename, bookmarkData: primaryBookmark)
+                    // Fetch the saved item to get file_item_ids assigned by the database
+                    let items = try? rustStore.fetchByIds(itemIds: [itemId])
+                    if let item = items?.first, case .file(_, let fileEntries) = item.content {
+                        await MainActor.run { [weak self] in
+                            for entry in fileEntries {
+                                self?.fileWatcher.watch(
+                                    path: entry.path,
+                                    fileItemId: entry.fileItemId,
+                                    filename: entry.filename,
+                                    bookmarkData: Data(entry.bookmarkData)
+                                )
+                            }
+                        }
                     }
                 }
             } catch {
@@ -660,8 +668,8 @@ final class ClipboardStore {
         }
 
         #if !SANDBOXED
-        if case .file(let path, _, _, _, let bookmarkData, _, let fileCount, let additionalFilesJson) = content {
-            pasteFiles(primaryPath: path, primaryBookmarkData: Data(bookmarkData), fileCount: fileCount, additionalFilesJson: additionalFilesJson, itemId: itemId)
+        if case .file(_, let files) = content {
+            pasteFiles(files: files, itemId: itemId)
             return
         }
         #endif
@@ -709,40 +717,22 @@ final class ClipboardStore {
     }
 
     #if !SANDBOXED
-    private func pasteFiles(primaryPath: String, primaryBookmarkData: Data, fileCount: UInt32, additionalFilesJson: String, itemId: Int64) {
+    private func pasteFiles(files: [FileEntry], itemId: Int64) {
         // Pre-increment to avoid race with checkForChanges polling
         lastChangeCount = NSPasteboard.general.changeCount + 1
 
-        // Resolve primary file bookmark
-        var isStale = false
-        let primaryURL: URL
-        if let url = try? URL(resolvingBookmarkData: primaryBookmarkData, options: [], relativeTo: nil, bookmarkDataIsStale: &isStale) {
-            primaryURL = url
-        } else {
-            primaryURL = URL(fileURLWithPath: primaryPath)
-        }
-
-        var resolvedURLs = [primaryURL]
-
-        // Resolve additional file bookmarks for multi-file entries
-        if fileCount > 1, !additionalFilesJson.isEmpty,
-           let data = additionalFilesJson.data(using: .utf8),
-           let files = try? JSONSerialization.jsonObject(with: data) as? [[String: Any]] {
-            for file in files {
-                let filePath = file["path"] as? String ?? ""
-                if let b64 = file["bookmarkData"] as? String,
-                   let bmData = Data(base64Encoded: b64) {
-                    var stale = false
-                    if let url = try? URL(resolvingBookmarkData: bmData, options: [], relativeTo: nil, bookmarkDataIsStale: &stale) {
-                        resolvedURLs.append(url)
-                    } else {
-                        resolvedURLs.append(URL(fileURLWithPath: filePath))
-                    }
-                } else {
-                    resolvedURLs.append(URL(fileURLWithPath: filePath))
-                }
+        // Resolve each file's bookmark to get current URL
+        var resolvedURLs: [URL] = []
+        for file in files {
+            var isStale = false
+            if let url = try? URL(resolvingBookmarkData: Data(file.bookmarkData), options: [], relativeTo: nil, bookmarkDataIsStale: &isStale) {
+                resolvedURLs.append(url)
+            } else {
+                resolvedURLs.append(URL(fileURLWithPath: file.path))
             }
         }
+
+        guard !resolvedURLs.isEmpty else { return }
 
         // Write to pasteboard with both modern and legacy types for broad compatibility.
         // Finder requires NSFilenamesPboardType for file paste; other apps use public.file-url.
@@ -820,9 +810,9 @@ final class ClipboardStore {
     // MARK: - File Status Update
 
     #if !SANDBOXED
-    func updateFileStatusViaRust(itemId: Int64, status: String, newPath: String?) throws {
+    func updateFileStatusViaRust(fileItemId: Int64, status: String, newPath: String?) throws {
         guard let rustStore else { return }
-        try rustStore.updateFileStatus(itemId: itemId, status: status, newPath: newPath)
+        try rustStore.updateFileStatus(fileItemId: fileItemId, status: status, newPath: newPath)
     }
     #endif
 

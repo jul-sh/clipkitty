@@ -5,10 +5,9 @@
 
 use std::collections::hash_map::DefaultHasher;
 use std::hash::{Hash, Hasher};
-use base64::{Engine as _, engine::general_purpose};
 
 use crate::interface::{
-    ClipboardContent, ItemIcon, ItemMetadata, ClipboardItem,
+    ClipboardContent, FileEntry, FileStatus, ItemIcon, ItemMetadata, ClipboardItem,
 };
 #[cfg(test)]
 use crate::interface::IconType;
@@ -26,23 +25,10 @@ pub struct StoredItem {
     pub timestamp_unix: i64,
     pub source_app: Option<String>,
     pub source_app_bundle_id: Option<String>,
-    /// Thumbnail for images/files (small preview, stored separately from full image)
+    /// Thumbnail for images/files/links (small preview, stored in items.thumbnail)
     pub thumbnail: Option<Vec<u8>>,
     /// Parsed color RGBA for color content (stored for quick display)
     pub color_rgba: Option<u32>,
-    // File-specific fields (populated only for file items)
-    pub file_path: Option<String>,
-    pub file_size: Option<u64>,
-    pub file_uti: Option<String>,
-    pub bookmark_data: Option<Vec<u8>>,
-    pub file_status: Option<String>,
-    pub file_count: Option<u32>,
-    pub additional_files_json: Option<String>,
-}
-
-/// Base64-encode bytes for JSON storage
-fn base64_encode(data: &[u8]) -> String {
-    general_purpose::STANDARD.encode(data)
 }
 
 impl StoredItem {
@@ -68,13 +54,6 @@ impl StoredItem {
             source_app_bundle_id,
             thumbnail: None,
             color_rgba,
-            file_path: None,
-            file_size: None,
-            file_uti: None,
-            bookmark_data: None,
-            file_status: None,
-            file_count: None,
-            additional_files_json: None,
         }
     }
 
@@ -100,13 +79,6 @@ impl StoredItem {
             source_app_bundle_id,
             thumbnail,
             color_rgba: None,
-            file_path: None,
-            file_size: None,
-            file_uti: None,
-            bookmark_data: None,
-            file_status: None,
-            file_count: None,
-            additional_files_json: None,
         }
     }
 
@@ -155,51 +127,33 @@ impl StoredItem {
             .join("\n");
         let content_hash = Self::hash_string(&hash_input);
 
-        // Primary file is the first one
-        let primary_path = paths[0].clone();
-        let primary_filename = filenames[0].clone();
-        let primary_size = file_sizes[0];
-        let primary_uti = utis[0].clone();
-        let primary_bookmark = bookmark_data_list[0].clone();
+        let file_count = paths.len();
 
-        let file_count = paths.len() as u32;
-
-        // Display filename: 1 → filename, 2 → "a, b", 3+ → "a and N more"
-        let display_filename = match file_count {
-            1 => primary_filename.clone(),
+        // Display name: 1 → filename, 2 → "a, b", 3+ → "a and N more"
+        let display_name = match file_count {
+            1 => filenames[0].clone(),
             2 => format!("{}, {}", filenames[0], filenames[1]),
             n => format!("{} and {} more", filenames[0], n - 1),
         };
 
-        // Additional files JSON (empty for single files)
-        let additional_files_json = if file_count > 1 {
-            let additional: Vec<serde_json::Value> = (1..paths.len())
-                .map(|i| {
-                    serde_json::json!({
-                        "path": paths[i],
-                        "filename": filenames[i],
-                        "fileSize": file_sizes[i],
-                        "uti": utis[i],
-                        "bookmarkData": base64_encode(&bookmark_data_list[i]),
-                    })
-                })
-                .collect();
-            serde_json::to_string(&additional).unwrap_or_default()
-        } else {
-            String::new()
-        };
+        // Build FileEntry vec (file_item_id=0 since not yet inserted)
+        let files: Vec<FileEntry> = (0..file_count)
+            .map(|i| FileEntry {
+                file_item_id: 0,
+                path: paths[i].clone(),
+                filename: filenames[i].clone(),
+                file_size: file_sizes[i],
+                uti: utis[i].clone(),
+                bookmark_data: bookmark_data_list[i].clone(),
+                file_status: FileStatus::Available,
+            })
+            .collect();
 
         Self {
             id: None,
             content: ClipboardContent::File {
-                path: primary_path.clone(),
-                filename: display_filename,
-                file_size: primary_size,
-                uti: primary_uti.clone(),
-                bookmark_data: primary_bookmark.clone(),
-                file_status: crate::interface::FileStatus::Available,
-                file_count,
-                additional_files_json: additional_files_json.clone(),
+                display_name,
+                files,
             },
             content_hash,
             timestamp_unix: chrono::Utc::now().timestamp(),
@@ -207,34 +161,18 @@ impl StoredItem {
             source_app_bundle_id,
             thumbnail,
             color_rgba: None,
-            file_path: Some(primary_path),
-            file_size: Some(primary_size),
-            file_uti: Some(primary_uti),
-            bookmark_data: Some(primary_bookmark),
-            file_status: Some("available".to_string()),
-            file_count: Some(file_count),
-            additional_files_json: if additional_files_json.is_empty() { None } else { Some(additional_files_json) },
         }
     }
 
     /// Get the index text for file items (all filenames and paths are searchable)
     pub fn file_index_text(&self) -> Option<String> {
-        if let ClipboardContent::File { filename, path, additional_files_json, .. } = &self.content {
-            let mut text = format!("{}\n{}", filename, path);
-            // Add additional file names/paths for searchability
-            if !additional_files_json.is_empty() {
-                if let Ok(files) = serde_json::from_str::<Vec<serde_json::Value>>(additional_files_json) {
-                    for file in &files {
-                        if let Some(name) = file.get("filename").and_then(|v| v.as_str()) {
-                            text.push('\n');
-                            text.push_str(name);
-                        }
-                        if let Some(p) = file.get("path").and_then(|v| v.as_str()) {
-                            text.push('\n');
-                            text.push_str(p);
-                        }
-                    }
-                }
+        if let ClipboardContent::File { display_name, files } = &self.content {
+            let mut text = display_name.clone();
+            for file in files {
+                text.push('\n');
+                text.push_str(&file.filename);
+                text.push('\n');
+                text.push_str(&file.path);
             }
             Some(text)
         } else {
@@ -255,12 +193,10 @@ impl StoredItem {
 
     /// Get the ItemIcon for display
     pub fn item_icon(&self) -> ItemIcon {
-        let (_, _, _, _, link_image_data, _) = self.content.to_database_fields();
         ItemIcon::from_database(
             self.content.database_type(),
             self.color_rgba,
             self.thumbnail.clone(),
-            link_image_data,
         )
     }
 

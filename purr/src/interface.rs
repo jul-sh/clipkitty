@@ -103,12 +103,12 @@ impl Default for ItemIcon {
 }
 
 impl ItemIcon {
-    /// Determine icon from database fields
+    /// Determine icon from database fields.
+    /// `thumbnail` is the unified thumbnail column — covers images, files, AND link preview images.
     pub fn from_database(
         db_type: &str,
         color_rgba: Option<u32>,
         thumbnail: Option<Vec<u8>>,
-        link_image_data: Option<Vec<u8>>,
     ) -> Self {
         match db_type {
             "color" => {
@@ -118,26 +118,16 @@ impl ItemIcon {
                     ItemIcon::Symbol { icon_type: IconType::Color }
                 }
             }
-            "image" => {
+            "image" | "link" | "file" => {
                 if let Some(thumb) = thumbnail {
                     ItemIcon::Thumbnail { bytes: thumb }
                 } else {
-                    ItemIcon::Symbol { icon_type: IconType::Image }
-                }
-            }
-            "link" => {
-                // Use link preview image as thumbnail if available
-                if let Some(img) = link_image_data {
-                    ItemIcon::Thumbnail { bytes: img }
-                } else {
-                    ItemIcon::Symbol { icon_type: IconType::Link }
-                }
-            }
-            "file" => {
-                if let Some(thumb) = thumbnail {
-                    ItemIcon::Thumbnail { bytes: thumb }
-                } else {
-                    ItemIcon::Symbol { icon_type: IconType::File }
+                    let icon_type = match db_type {
+                        "image" => IconType::Image,
+                        "link" => IconType::Link,
+                        _ => IconType::File,
+                    };
+                    ItemIcon::Symbol { icon_type }
                 }
             }
             "email" => ItemIcon::Symbol { icon_type: IconType::Email },
@@ -196,6 +186,19 @@ impl LinkMetadataState {
     }
 }
 
+/// A single file entry within a file clipboard item.
+/// Each file gets its own row in `file_items` with an independent ID for status tracking.
+#[derive(Debug, Clone, PartialEq, uniffi::Record)]
+pub struct FileEntry {
+    pub file_item_id: i64,
+    pub path: String,
+    pub filename: String,
+    pub file_size: u64,
+    pub uti: String,
+    pub bookmark_data: Vec<u8>,
+    pub file_status: FileStatus,
+}
+
 /// Type-safe clipboard content representation
 #[derive(Debug, Clone, PartialEq, uniffi::Enum)]
 pub enum ClipboardContent {
@@ -206,14 +209,8 @@ pub enum ClipboardContent {
     Phone { number: String },
     Image { data: Vec<u8>, description: String },
     File {
-        path: String,
-        filename: String,
-        file_size: u64,
-        uti: String,
-        bookmark_data: Vec<u8>,
-        file_status: FileStatus,
-        file_count: u32,
-        additional_files_json: String,
+        display_name: String,
+        files: Vec<FileEntry>,
     },
 }
 
@@ -227,7 +224,7 @@ impl ClipboardContent {
             ClipboardContent::Email { address } => address,
             ClipboardContent::Phone { number } => number,
             ClipboardContent::Image { description, .. } => description,
-            ClipboardContent::File { filename, .. } => filename,
+            ClipboardContent::File { display_name, .. } => display_name,
         }
     }
 
@@ -254,77 +251,6 @@ impl ClipboardContent {
             ClipboardContent::Phone { .. } => "phone",
             ClipboardContent::Image { .. } => "image",
             ClipboardContent::File { .. } => "file",
-        }
-    }
-
-    /// Extract database fields: (content, image_data, link_title, link_description, link_image_data, color_rgba)
-    pub fn to_database_fields(&self) -> (String, Option<Vec<u8>>, Option<String>, Option<String>, Option<Vec<u8>>, Option<u32>) {
-        match self {
-            ClipboardContent::Text { value } => (value.clone(), None, None, None, None, None),
-            ClipboardContent::Color { value } => {
-                let rgba = crate::content_detection::parse_color_to_rgba(value);
-                (value.clone(), None, None, None, None, rgba)
-            }
-            ClipboardContent::Link { url, metadata_state } => {
-                let (title, description, image_data) = metadata_state.to_database_fields();
-                (url.clone(), None, title, description, image_data, None)
-            }
-            ClipboardContent::Email { address } => (address.clone(), None, None, None, None, None),
-            ClipboardContent::Phone { number } => (number.clone(), None, None, None, None, None),
-            ClipboardContent::Image { data, description } => {
-                (description.clone(), Some(data.clone()), None, None, None, None)
-            }
-            ClipboardContent::File { filename, .. } => {
-                // File stores filename in content column; other fields stored in dedicated columns
-                (filename.clone(), None, None, None, None, None)
-            }
-        }
-    }
-
-    /// Reconstruct from database row
-    pub fn from_database(
-        db_type: &str,
-        content: &str,
-        image_data: Option<Vec<u8>>,
-        link_title: Option<&str>,
-        link_description: Option<&str>,
-        link_image_data: Option<Vec<u8>>,
-        _color_rgba: Option<u32>,
-        file_path: Option<&str>,
-        file_size: Option<u64>,
-        file_uti: Option<&str>,
-        bookmark_data: Option<Vec<u8>>,
-        file_status_str: Option<&str>,
-        file_count: Option<u32>,
-        additional_files_json: Option<&str>,
-    ) -> Self {
-        match db_type {
-            "color" => ClipboardContent::Color { value: content.to_string() },
-            "link" => ClipboardContent::Link {
-                url: content.to_string(),
-                metadata_state: LinkMetadataState::from_database(link_title, link_description, link_image_data),
-            },
-            "image" => ClipboardContent::Image {
-                data: image_data.unwrap_or_default(),
-                description: content.to_string(),
-            },
-            "email" => ClipboardContent::Email {
-                address: content.to_string(),
-            },
-            "phone" => ClipboardContent::Phone {
-                number: content.to_string(),
-            },
-            "file" => ClipboardContent::File {
-                path: file_path.unwrap_or("").to_string(),
-                filename: content.to_string(),
-                file_size: file_size.unwrap_or(0),
-                uti: file_uti.unwrap_or("public.item").to_string(),
-                bookmark_data: bookmark_data.unwrap_or_default(),
-                file_status: FileStatus::from_database_str(file_status_str.unwrap_or("available")),
-                file_count: file_count.unwrap_or(1),
-                additional_files_json: additional_files_json.unwrap_or("").to_string(),
-            },
-            _ => ClipboardContent::Text { value: content.to_string() },
         }
     }
 }
@@ -497,8 +423,9 @@ pub trait ClipboardStoreApi: Send + Sync {
         source_app_bundle_id: Option<String>,
     ) -> Result<i64, ClipKittyError>;
 
-    /// Update file status (called from Swift when file move/delete detected)
-    fn update_file_status(&self, item_id: i64, status: String, new_path: Option<String>) -> Result<(), ClipKittyError>;
+    /// Update file status (called from Swift when file move/delete detected).
+    /// `file_item_id` is the `file_items.id` — each file has its own status.
+    fn update_file_status(&self, file_item_id: i64, status: String, new_path: Option<String>) -> Result<(), ClipKittyError>;
 
     /// Update link metadata (called from Swift after LPMetadataProvider fetch)
     fn update_link_metadata(&self, item_id: i64, title: Option<String>, description: Option<String>, image_data: Option<Vec<u8>>) -> Result<(), ClipKittyError>;
