@@ -1022,10 +1022,34 @@ struct TextPreviewView: NSViewRepresentable {
         return scrollView
     }
 
+    private func scaledFontSize(baseFont: NSFont, containerWidth: CGFloat) -> CGFloat {
+        let lines = text.components(separatedBy: "\n")
+        if lines.count >= 10 { return fontSize }
+
+        let inset: CGFloat = 32 // textContainerInset.width * 2
+        let availableWidth = containerWidth - inset
+        if availableWidth <= 0 { return fontSize }
+
+        let attributes: [NSAttributedString.Key: Any] = [.font: baseFont]
+        var maxLineWidth: CGFloat = 0
+        for line in lines {
+            let lineWidth = (line as NSString).size(withAttributes: attributes).width
+            if lineWidth >= availableWidth { return fontSize }
+            maxLineWidth = max(maxLineWidth, lineWidth)
+        }
+
+        if maxLineWidth <= 0 { return fontSize }
+
+        let scale = min(2.0, availableWidth / maxLineWidth)
+        return fontSize * scale
+    }
+
     func updateNSView(_ nsView: NSScrollView, context: Context) {
         guard let textView = nsView.documentView as? NSTextView else { return }
 
-        let font = NSFont(name: fontName, size: fontSize) ?? NSFont.monospacedSystemFont(ofSize: fontSize, weight: .regular)
+        let baseFont = NSFont(name: fontName, size: fontSize) ?? NSFont.monospacedSystemFont(ofSize: fontSize, weight: .regular)
+        let scaledSize = scaledFontSize(baseFont: baseFont, containerWidth: nsView.contentSize.width)
+        let font = NSFont(name: fontName, size: scaledSize) ?? NSFont.monospacedSystemFont(ofSize: scaledSize, weight: .regular)
 
         // Only update if text or highlights changed
         let currentText = textView.string
