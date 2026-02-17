@@ -272,8 +272,7 @@ jobs:
             git config --unset-all http.https://github.com/.extraheader || true
             git remote set-url origin "https://x-access-token:${ADMIN_TOKEN}@github.com/${{ github.repository }}.git"
             git fetch origin main
-            git checkout -- .
-            git checkout main
+            git checkout -f main
             sed -i '' "s/\"MARKETING_VERSION\": \"$CURRENT\"/\"MARKETING_VERSION\": \"$VERSION\"/" Project.swift
             git add Project.swift
             git commit -m "bump version to $VERSION"
