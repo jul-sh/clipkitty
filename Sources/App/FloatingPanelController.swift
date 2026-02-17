@@ -118,7 +118,7 @@ final class FloatingPanelController: NSObject, NSWindowDelegate {
         store.paste(itemId: itemId, content: content)
         let targetApp = previousApp
         hide()
-        if AppSettings.shared.hasAccessibilityPermission {
+        if AppSettings.shared.hasAccessibilityPermission && AppSettings.shared.autoPasteEnabled {
             simulatePaste(targetApp: targetApp)
         }
     }
