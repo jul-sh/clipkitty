@@ -143,6 +143,25 @@ final class ClipKittyUITests: XCTestCase {
         XCTAssertGreaterThan(buttons.count, 0, "Should have items in the list")
     }
 
+
+    /// Tests that Cmd+number shortcuts select and paste the corresponding history item.
+    /// Cmd+2 should target the second item (index 1).
+    func testCommandNumberShortcutSelectsSecondItem() throws {
+        let searchField = app.textFields["SearchField"]
+        XCTAssertTrue(searchField.waitForExistence(timeout: 5), "Search field not found")
+
+        // Ensure keyboard focus and initial selection are stable.
+        searchField.click()
+        XCTAssertTrue(waitForSelectedIndex(0, timeout: 2), "Initial selection should be first item")
+
+        app.typeKey("2", modifierFlags: .command)
+
+        XCTAssertTrue(
+            waitForSelectedIndex(1, timeout: 2),
+            "Cmd+2 should select the second item before paste"
+        )
+    }
+
     /// Tests that selection resets to first when the selected item's position changes in the list.
     /// Selection should only reset when items are reordered, not on every search text change.
     func testSelectionResetsWhenItemPositionChanges() throws {
