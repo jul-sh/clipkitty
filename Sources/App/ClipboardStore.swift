@@ -124,7 +124,7 @@ final class ClipboardStore {
             // Initialize the Rust store
             rustStore = try ClipKittyRust.ClipboardStore(dbPath: dbPath)
         } catch {
-            state = .error("Database setup failed: \(error.localizedDescription)")
+            state = .error(String(format: NSLocalizedString("Database setup failed: %@", comment: "Error when database initialization fails"), error.localizedDescription))
         }
     }
 
@@ -222,7 +222,7 @@ final class ClipboardStore {
 
     private func performSearch(query: String) async {
         guard let rustStore else {
-            state = .error("Database not available")
+            state = .error(String(localized: "Database not available"))
             return
         }
 
@@ -241,7 +241,7 @@ final class ClipboardStore {
         } catch ClipKittyError.Cancelled {
         } catch {
             guard !Task.isCancelled else { return }
-            state = .error("Search failed: \(error.localizedDescription)")
+            state = .error(String(format: NSLocalizedString("Search failed: %@", comment: "Error when search operation fails"), error.localizedDescription))
         }
     }
 
