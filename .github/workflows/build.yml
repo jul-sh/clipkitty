@@ -19,6 +19,12 @@ jobs:
       - name: Checkout
         uses: actions/checkout@v4
 
+      - name: Configure macOS scrollbar behavior
+        run: |
+          defaults write -g AppleShowScrollBars -string WhenScrolling
+          killall cfprefsd || true
+          defaults read -g AppleShowScrollBars
+
       - name: Decrypt secrets
         id: secrets
         run: |
@@ -290,6 +296,12 @@ jobs:
     steps:
       - name: Checkout
         uses: actions/checkout@v4
+
+      - name: Configure macOS scrollbar behavior
+        run: |
+          defaults write -g AppleShowScrollBars -string WhenScrolling
+          killall cfprefsd || true
+          defaults read -g AppleShowScrollBars
 
       - name: Decrypt secrets
         id: secrets
