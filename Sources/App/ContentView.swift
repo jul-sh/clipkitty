@@ -666,10 +666,15 @@ struct ContentView: View {
     @ViewBuilder
     private func imagePreview(data: Data, description: String) -> some View {
         if let nsImage = NSImage(data: data) {
+            let imageRatio = nsImage.size.width / max(nsImage.size.height, 1)
+            // Clamp to minimum 3:2 aspect ratio (no taller than 2:3 portrait)
+            let displayRatio = max(imageRatio, 3.0 / 2.0)
             VStack(spacing: 8) {
                 Image(nsImage: nsImage)
                     .resizable()
-                    .aspectRatio(contentMode: .fit)
+                    .aspectRatio(contentMode: .fill)
+                    .aspectRatio(displayRatio, contentMode: .fit)
+                    .clipped()
                     .frame(maxWidth: .infinity)
                 if !description.isEmpty {
                     Text(description)
@@ -1033,7 +1038,7 @@ struct LinkPreviewView: NSViewRepresentable {
         if case .loaded(let title, _, let imageData) = metadataState {
             metadata.title = title
             if let imageData, let nsImage = NSImage(data: imageData) {
-                metadata.imageProvider = NSItemProvider(object: nsImage.croppedIfTooTall(maxRatio: 1.5))
+                metadata.imageProvider = NSItemProvider(object: nsImage)
             }
         }
         return metadata
@@ -1437,21 +1442,3 @@ private struct HideScrollIndicatorsWhenOverlay: ViewModifier {
 }
 
 
-// MARK: - Extensions
-
-extension NSImage {
-    /// Crops image from top if height/width > maxRatio.
-    func croppedIfTooTall(maxRatio: CGFloat) -> NSImage {
-        let size = self.size
-        guard size.width > 0, size.height > 0, size.height / size.width > maxRatio else { return self }
-
-        let newHeight = size.width * maxRatio
-        let cropRect = NSRect(x: 0, y: size.height - newHeight, width: size.width, height: newHeight)
-
-        let result = NSImage(size: cropRect.size)
-        result.lockFocus()
-        self.draw(in: NSRect(origin: .zero, size: cropRect.size), from: cropRect, operation: .copy, fraction: 1.0)
-        result.unlockFocus()
-        return result
-    }
-}
