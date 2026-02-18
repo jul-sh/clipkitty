@@ -173,12 +173,15 @@ fn match_query_words(
                     WordMatchKind::Fuzzy(dist) => {
                         let is_better = best.as_ref().map_or(true, |b| dist < b.edit_dist);
                         if is_better {
+                            // Short fuzzy matches (<=3 chars) get reduced weight —
+                            // they're low-confidence and shouldn't dominate scoring.
+                            let w = if qw.len() <= 3 { 1 } else { match_weight };
                             best = Some(WordMatch {
                                 matched: true,
                                 edit_dist: dist,
                                 doc_word_pos: dpos,
                                 is_exact: false,
-                                match_weight,
+                                match_weight: w,
                             });
                         }
                     }
@@ -186,12 +189,13 @@ fn match_query_words(
                         let dist = gaps.saturating_add(1);
                         let is_better = best.as_ref().map_or(true, |b| dist < b.edit_dist);
                         if is_better {
+                            let w = if qw.len() <= 3 { 1 } else { match_weight };
                             best = Some(WordMatch {
                                 matched: true,
                                 edit_dist: dist,
                                 doc_word_pos: dpos,
                                 is_exact: false,
-                                match_weight,
+                                match_weight: w,
                             });
                         }
                     }
@@ -250,8 +254,8 @@ fn subsequence_match(query: &str, target: &str) -> Option<u8> {
     let q_chars: Vec<char> = query.chars().collect();
     let t_chars: Vec<char> = target.chars().collect();
 
-    // Min 3 chars to avoid spurious matches
-    if q_chars.len() < 3 {
+    // Min 4 chars to avoid spurious matches (<=3 too short for meaningful subsequence)
+    if q_chars.len() <= 3 {
         return None;
     }
     // Must be shorter than target (equal/longer is exact territory)
@@ -291,7 +295,7 @@ fn subsequence_match(query: &str, target: &str) -> Option<u8> {
 }
 
 /// Maximum allowed edit distance based on word length (Milli's graduation).
-/// 3-4 char words allow 1 edit to catch common transpositions (teh→the, form→from).
+/// 1-2 char words get no fuzzy tolerance. 3+ chars allow 1 edit (catches transpositions).
 pub(crate) fn max_edit_distance(word_len: usize) -> u8 {
     if word_len < 3 {
         0
@@ -542,6 +546,8 @@ mod tests {
     #[test]
     fn test_subsequence_too_short() {
         assert_eq!(subsequence_match("ab", "abc"), None);
+        // 3 chars also too short now
+        assert_eq!(subsequence_match("abc", "abdc"), None);
     }
 
     #[test]
@@ -624,9 +630,9 @@ mod tests {
         assert_eq!(does_word_match("helo", "hello", false), WordMatchKind::Fuzzy(1));
         // "impt" (4 chars) -> len diff 2 exceeds max_dist 1, falls to subsequence
         assert_eq!(does_word_match("impt", "import", false), WordMatchKind::Subsequence(1));
-        // "cls" (3 chars) -> len diff 2 exceeds max_dist 1, falls to subsequence
-        assert_eq!(does_word_match("cls", "class", false), WordMatchKind::Subsequence(1));
-        // Too short for subsequence (< 3 chars)
+        // "cls" (3 chars) -> too short for both fuzzy and subsequence now
+        assert_eq!(does_word_match("cls", "class", false), WordMatchKind::None);
+        // Too short for subsequence (<= 3 chars)
         assert_eq!(does_word_match("ab", "abc", false), WordMatchKind::None);
         // Coverage too low: 3 chars vs 7 char target (43% < 50%)
         assert_eq!(does_word_match("abc", "abcdefg", false), WordMatchKind::None);
