@@ -76,6 +76,7 @@ let project = Project(
                 "CFBundleDisplayName": "ClipKitty",
                 "CFBundleIconName": "AppIcon",
                 "CFBundleIconFile": "AppIcon",
+                "CFBundleDevelopmentRegion": "en",
                 "LSMinimumSystemVersion": "15.0",
                 "NSHumanReadableCopyright": "Copyright © 2025 ClipKitty. All rights reserved.",
             ]),
@@ -83,6 +84,7 @@ let project = Project(
             resources: [
                 .folderReference(path: "Sources/App/Resources/Fonts"),
                 "Sources/App/Resources/menu-bar.svg",
+                "Sources/App/Resources/Localizable.xcstrings",
                 "Sources/App/Assets.xcassets",
                 "Sources/App/PrivacyInfo.xcprivacy",
             ],
@@ -94,6 +96,8 @@ let project = Project(
                 base: [
                     "OTHER_LDFLAGS": .array(["$(inherited)", "-lpurr"]),
                     "LIBRARY_SEARCH_PATHS": .array(["$(inherited)", "$(PROJECT_DIR)/Sources/ClipKittyRust"]),
+                    "SWIFT_EMIT_LOC_STRINGS": "YES",
+                    "LOCALIZATION_PREFERS_STRING_CATALOGS": "YES",
                 ],
                 configurations: [
                     .debug(name: "Debug", settings: [
