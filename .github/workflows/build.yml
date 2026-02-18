@@ -329,11 +329,33 @@ jobs:
           curl -sLo "$RUNNER_TEMP/AppleWWDRCAG3.cer" https://www.apple.com/certificateauthority/AppleWWDRCAG3.cer
           sudo security add-trusted-cert -d -r unspecified -k /Library/Keychains/System.keychain "$RUNNER_TEMP/AppleWWDRCAG3.cer"
 
-      - name: Install App Store Certificates
+      - name: Install App Store Installer Certificate
         uses: apple-actions/import-codesign-certs@v3
         with:
           p12-file-base64: ${{ steps.secrets.outputs.APPSTORE_CERT_BASE64 }}
           p12-password: ${{ steps.secrets.outputs.P12_PASSWORD }}
+
+      - name: Install App Store Application Certificate
+        uses: apple-actions/import-codesign-certs@v3
+        with:
+          p12-file-base64: ${{ steps.secrets.outputs.APPSTORE_APP_CERT_BASE64 }}
+          p12-password: ${{ steps.secrets.outputs.P12_PASSWORD }}
+          keychain: app_signing
+
+      - name: Remove duplicate Application cert from Installer P12
+        run: |
+          # The Installer P12 bundles an extra Application cert that causes ambiguity.
+          # Delete it, keeping only the dedicated one from APPSTORE_APP_CERT_BASE64.
+          WANTED=$(security find-certificate -c "3rd Party Mac Developer Application" -Z \
+            ~/Library/Keychains/app_signing.keychain-db 2>/dev/null \
+            | grep "SHA-1" | awk '{print $NF}')
+          for HASH in $(security find-certificate -a -c "3rd Party Mac Developer Application" -Z \
+            ~/Library/Keychains/signing_temp.keychain-db 2>/dev/null \
+            | grep "SHA-1" | awk '{print $NF}'); do
+            if [ "$HASH" != "$WANTED" ]; then
+              security delete-certificate -Z "$HASH" ~/Library/Keychains/signing_temp.keychain-db 2>/dev/null || true
+            fi
+          done
 
       - name: Install Nix
         uses: DeterminateSystems/nix-installer-action@main

@@ -767,6 +767,14 @@ final class ClipKittyUITests: XCTestCase {
         let searchField = app.textFields.firstMatch
         XCTAssertTrue(searchField.waitForExistence(timeout: 5), "Search field not found")
 
+        // Cycle the panel: hide then re-show to ensure clean visual state
+        app.typeKey(.escape, modifierFlags: [])
+        Thread.sleep(forTimeInterval: 0.5)
+        app.typeKey(" ", modifierFlags: .option)
+        let panel = app.dialogs.firstMatch
+        XCTAssertTrue(panel.waitForExistence(timeout: 5), "Panel should reappear after hotkey toggle")
+        Thread.sleep(forTimeInterval: 0.5)
+
         // Screenshot 1: Initial state showing clipboard history
         Thread.sleep(forTimeInterval: 1.0)
         saveScreenshot(name: "marketing_1_history")
