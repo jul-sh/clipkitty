@@ -1003,7 +1003,7 @@ struct TextPreviewView: NSViewRepresentable {
 
         if maxLineWidth <= 0 { return fontSize }
 
-        let scale = min(1.5, availableWidth / maxLineWidth)
+        let scale = min(1.5, availableWidth / maxLineWidth) * 0.95
         return fontSize * scale
     }
 
