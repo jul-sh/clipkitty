@@ -1172,18 +1172,47 @@ struct TextPreviewView: NSViewRepresentable {
         return scrollView
     }
 
-    private var scaledFontSize: CGFloat {
+    /// Last known container width, persisted across view recreations so the
+    /// first render already uses a good value instead of falling back to base font.
+    private static var lastKnownContainerWidth: CGFloat = 0
+
+    private func scaledFontSize(containerWidth: CGFloat) -> CGFloat {
         let lines = text.components(separatedBy: "\n")
-        if lines.count < 10 && lines.allSatisfy({ $0.count <= 30 }) {
-            return fontSize * 1.5
+        if lines.count >= 10 { return fontSize }
+
+        let baseFont = NSFont(name: fontName, size: fontSize)
+            ?? NSFont.monospacedSystemFont(ofSize: fontSize, weight: .regular)
+        let inset: CGFloat = 32 + 10 // textContainerInset.width * 2 + lineFragmentPadding * 2
+        let availableWidth = containerWidth - inset
+        if availableWidth <= 0 { return fontSize }
+
+        let attributes: [NSAttributedString.Key: Any] = [.font: baseFont]
+        var maxLineWidth: CGFloat = 0
+        for line in lines {
+            let lineWidth = (line as NSString).size(withAttributes: attributes).width
+            if lineWidth >= availableWidth { return fontSize }
+            maxLineWidth = max(maxLineWidth, lineWidth)
         }
-        return fontSize
+        if maxLineWidth <= 0 { return fontSize }
+
+        let scale = min(1.5, availableWidth / maxLineWidth) * 0.95
+        return fontSize * scale
     }
 
     func updateNSView(_ nsView: NSScrollView, context: Context) {
         guard let textView = nsView.documentView as? NSTextView else { return }
 
-        let font = NSFont(name: fontName, size: scaledFontSize) ?? NSFont.monospacedSystemFont(ofSize: scaledFontSize, weight: .regular)
+        // Use live container width if available, otherwise fall back to persisted value
+        let containerWidth = nsView.contentSize.width > 0
+            ? nsView.contentSize.width
+            : Self.lastKnownContainerWidth
+        if nsView.contentSize.width > 0 {
+            Self.lastKnownContainerWidth = nsView.contentSize.width
+        }
+
+        let scaledSize = scaledFontSize(containerWidth: containerWidth)
+        let font = NSFont(name: fontName, size: scaledSize)
+            ?? NSFont.monospacedSystemFont(ofSize: scaledSize, weight: .regular)
 
         // Only update if text or highlights changed
         let currentText = textView.string

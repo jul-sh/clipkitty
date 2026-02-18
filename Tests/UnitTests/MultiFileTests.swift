@@ -33,23 +33,18 @@ final class MultiFileTests: XCTestCase {
         let items = try store.fetchByIds(itemIds: [id])
         XCTAssertEqual(items.count, 1)
 
-        guard case .file(let path, let filename, let fileSize, _, _, _, let fileCount, let additionalFilesJson) = items[0].content else {
+        guard case .file(let displayName, let files) = items[0].content else {
             XCTFail("Expected File content, got \(items[0].content)")
             return
         }
 
-        XCTAssertEqual(path, "/tmp/a.pdf", "Primary path should be first file")
-        XCTAssertEqual(filename, "a.pdf and 2 more", "Display name for 3 files")
-        XCTAssertEqual(fileSize, 1000, "Primary file size")
-        XCTAssertEqual(fileCount, 3)
-        XCTAssertFalse(additionalFilesJson.isEmpty, "Should have additional files JSON")
-
-        // Parse and verify additional files
-        let data = additionalFilesJson.data(using: .utf8)!
-        let additional = try JSONSerialization.jsonObject(with: data) as! [[String: Any]]
-        XCTAssertEqual(additional.count, 2)
-        XCTAssertEqual(additional[0]["filename"] as? String, "b.txt")
-        XCTAssertEqual(additional[1]["filename"] as? String, "c.png")
+        XCTAssertEqual(displayName, "a.pdf and 2 more", "Display name for 3 files")
+        XCTAssertEqual(files.count, 3)
+        XCTAssertEqual(files[0].path, "/tmp/a.pdf", "Primary path should be first file")
+        XCTAssertEqual(files[0].filename, "a.pdf")
+        XCTAssertEqual(files[0].fileSize, 1000, "Primary file size")
+        XCTAssertEqual(files[1].filename, "b.txt")
+        XCTAssertEqual(files[2].filename, "c.png")
     }
 
     func testSaveFilesSingleFileEquivalent() throws {
@@ -68,14 +63,14 @@ final class MultiFileTests: XCTestCase {
         XCTAssertGreaterThan(id, 0)
 
         let items = try store.fetchByIds(itemIds: [id])
-        guard case .file(_, let filename, _, _, _, _, let fileCount, let additionalFilesJson) = items[0].content else {
+        guard case .file(let displayName, let files) = items[0].content else {
             XCTFail("Expected File content")
             return
         }
 
-        XCTAssertEqual(filename, "solo.txt")
-        XCTAssertEqual(fileCount, 1)
-        XCTAssertTrue(additionalFilesJson.isEmpty)
+        XCTAssertEqual(displayName, "solo.txt")
+        XCTAssertEqual(files.count, 1)
+        XCTAssertEqual(files[0].filename, "solo.txt")
     }
 
     // MARK: - Deduplication
@@ -240,19 +235,13 @@ final class MultiFileTests: XCTestCase {
         )
 
         let items = try store.fetchByIds(itemIds: [id])
-        guard case .file(_, _, _, _, _, _, _, let json) = items[0].content else {
+        guard case .file(_, let files) = items[0].content else {
             XCTFail("Expected File content")
             return
         }
 
-        let data = json.data(using: .utf8)!
-        let files = try JSONSerialization.jsonObject(with: data) as! [[String: Any]]
-        XCTAssertEqual(files.count, 1) // Only additional files (not primary)
-
-        // Verify bookmark data is base64-encoded and decodable
-        let b64 = files[0]["bookmarkData"] as! String
-        let decoded = Data(base64Encoded: b64)
-        XCTAssertNotNil(decoded)
-        XCTAssertEqual(decoded, bookmark2, "Decoded bookmark should match original")
+        XCTAssertEqual(files.count, 2)
+        XCTAssertEqual(files[0].bookmarkData, bookmark1, "First file bookmark should match")
+        XCTAssertEqual(files[1].bookmarkData, bookmark2, "Second file bookmark should match")
     }
 }
