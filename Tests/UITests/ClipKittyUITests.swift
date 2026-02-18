@@ -363,7 +363,7 @@ final class ClipKittyUITests: XCTestCase {
         XCTAssertFalse(deleteAction.exists, "Popover should close after Escape")
     }
 
-    /// Tests that the Delete action in the popover triggers the delete confirmation.
+    /// Tests that the Delete action in the popover shows inline confirmation.
     func testDeleteActionShowsConfirmation() throws {
         let actionsButton = app.buttons["ActionsButton"]
         XCTAssertTrue(actionsButton.waitForExistence(timeout: 5))
@@ -377,9 +377,53 @@ final class ClipKittyUITests: XCTestCase {
         deleteAction.click()
         Thread.sleep(forTimeInterval: 0.5)
 
-        // Delete confirmation dialog should appear
-        let deleteButton = app.buttons["Delete"]
-        XCTAssertTrue(deleteButton.waitForExistence(timeout: 3), "Delete confirmation should appear after clicking Delete action")
+        // Inline confirmation should appear within the popover (not a system alert)
+        let confirmDelete = app.buttons["Action_Delete"]
+        XCTAssertTrue(confirmDelete.waitForExistence(timeout: 3), "Inline delete confirmation should appear")
+        let cancelButton = app.buttons["Action_Cancel"]
+        XCTAssertTrue(cancelButton.waitForExistence(timeout: 3), "Cancel button should appear in confirmation")
+    }
+
+    /// Tests the full delete-via-keyboard flow: open actions, navigate to delete, confirm inline.
+    func testDeleteItemViaKeyboard() throws {
+        let searchField = app.textFields["SearchField"]
+        XCTAssertTrue(searchField.waitForExistence(timeout: 5), "Search field not found")
+
+        // Record initial item count
+        let initialCount = app.outlines.firstMatch.buttons.allElementsBoundByIndex.count
+        XCTAssertGreaterThan(initialCount, 0, "Should have items to delete")
+
+        // Press Option+Return to open actions popover
+        searchField.typeKey(.return, modifierFlags: .option)
+        Thread.sleep(forTimeInterval: 0.5)
+
+        let deleteAction = app.buttons["Action_Delete"]
+        XCTAssertTrue(deleteAction.waitForExistence(timeout: 3), "Actions popover should open")
+
+        // Navigate to Delete (it's the first item) with up arrow
+        app.typeKey(.upArrow, modifierFlags: [])
+        app.typeKey(.upArrow, modifierFlags: [])
+        Thread.sleep(forTimeInterval: 0.2)
+
+        // Press Return to select Delete
+        app.typeKey(.return, modifierFlags: [])
+        Thread.sleep(forTimeInterval: 0.5)
+
+        // Inline confirmation should appear
+        let confirmDelete = app.buttons["Action_Delete"]
+        XCTAssertTrue(confirmDelete.waitForExistence(timeout: 3), "Inline delete confirmation should appear")
+
+        // Press Return to confirm deletion (Delete button should be highlighted)
+        app.typeKey(.return, modifierFlags: [])
+        Thread.sleep(forTimeInterval: 0.5)
+
+        // Verify: item count decreased
+        let finalCount = app.outlines.firstMatch.buttons.allElementsBoundByIndex.count
+        XCTAssertEqual(finalCount, initialCount - 1, "Item count should decrease by 1 after deletion")
+
+        // Verify: window is still visible (not hidden)
+        let window = app.dialogs.firstMatch
+        XCTAssertTrue(window.exists, "Window should still be visible after deletion")
     }
 
     // MARK: - Marketing Assets
