@@ -26,9 +26,12 @@ INSTALLER_IDENTITY ?= 3rd Party Mac Developer Installer
 BUNDLE_ID := com.eviljuliette.clipkitty
 PROVISIONING_PROFILE ?=
 
+# All supported screenshot locales (App Store top 10)
+SCREENSHOT_LOCALES := en es zh-Hans zh-Hant ja ko fr de pt-BR ru
+
 .PHONY: dmg appstore icon-png \
         synthetic-data run-synthetic marketing marketing-screenshots \
-        marketing-screenshots-capture \
+        marketing-screenshots-capture marketing-screenshots-localized \
         preview-video
 
 # Build DMG installer
@@ -129,9 +132,42 @@ marketing-screenshots-capture:
 	@cp /tmp/clipkitty_marketing_3_filter.png $(PROJECT_ROOT)/marketing/screenshot_3.png
 	@echo "Screenshots saved to marketing/"
 
-# Full screenshot pipeline
+# Full screenshot pipeline (English only)
 marketing-screenshots: marketing-screenshots-capture
 	@echo "Marketing screenshots complete! See marketing/ directory"
+
+# Capture localized screenshots for all supported locales.
+# Each locale's screenshots are saved to marketing/{locale}/screenshot_*.png.
+# The app UI is localized via -AppleLanguages and demo content is patched.
+marketing-screenshots-localized:
+	@$(DIST_DIR)/patch-demo-items.sh
+	@$(MAKE) -C $(PROJECT_ROOT) all CONFIGURATION=AppStore
+	@codesign --force --options runtime \
+		--sign "$(SIGNING_IDENTITY)" \
+		--entitlements $(PROJECT_ROOT)/Sources/App/ClipKitty.entitlements \
+		"$(DERIVED_DATA)/Build/Products/AppStore/$(APP_NAME).app"
+	@for locale in $(SCREENSHOT_LOCALES); do \
+		echo "Capturing screenshots for $$locale..."; \
+		mkdir -p $(PROJECT_ROOT)/marketing/$$locale; \
+		$(DIST_DIR)/prepare-screenshot-environment.sh \
+			"cd $(PROJECT_ROOT) && SCREENSHOT_LOCALE=$$locale xcodebuild test \
+				-scheme ClipKittyUITests \
+				-destination \"platform=macOS\" \
+				-derivedDataPath DerivedData \
+				-only-testing:ClipKittyUITests/ClipKittyUITests/testTakeMarketingScreenshots \
+				2>&1 | grep -E '(Test Case|passed|failed)' || true"; \
+		if [ "$$locale" = "en" ]; then \
+			cp /tmp/clipkitty_marketing_1_history.png $(PROJECT_ROOT)/marketing/$$locale/screenshot_1.png; \
+			cp /tmp/clipkitty_marketing_2_search.png $(PROJECT_ROOT)/marketing/$$locale/screenshot_2.png; \
+			cp /tmp/clipkitty_marketing_3_filter.png $(PROJECT_ROOT)/marketing/$$locale/screenshot_3.png; \
+		else \
+			cp /tmp/clipkitty_$${locale}_marketing_1_history.png $(PROJECT_ROOT)/marketing/$$locale/screenshot_1.png; \
+			cp /tmp/clipkitty_$${locale}_marketing_2_search.png $(PROJECT_ROOT)/marketing/$$locale/screenshot_2.png; \
+			cp /tmp/clipkitty_$${locale}_marketing_3_filter.png $(PROJECT_ROOT)/marketing/$$locale/screenshot_3.png; \
+		fi; \
+		echo "  $$locale screenshots saved to marketing/$$locale/"; \
+	done
+	@echo "All localized screenshots complete!"
 
 # Record App Store preview video (uses AppStore config)
 preview-video:

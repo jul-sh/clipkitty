@@ -1,0 +1,25 @@
+Schluss mit dem Raten. Fang an zu finden.
+
+Die meisten Zwischenablage-Manager löschen deinen Verlauf nach wenigen Tagen oder begrenzen dich auf eine Handvoll Einträge. ClipKitty wurde für Power-User entwickelt, die ein unendliches, durchsuchbares Archiv von allem benötigen, was sie je kopiert haben.
+
+WARUM CLIPKITTY?
+
+Unbegrenzte History — Keine Obergrenzen, keine Limits. Hast du etwas vor einem Jahr kopiert, ist es immer noch da. Text, Code, Links, Farben — nichts läuft ab, nichts wird abgeschnitten.
+
+Mehrzeilige Vorschauen — Schluss damit, mit einzeiligen Snippets im Dunkeln zu tappen. Sieh vollständige Code-Blöcke, E-Mails und mehrabsätzige Texte in einem dedizierten Vorschaubereich, bevor du einfügst.
+
+Sofortige Suche — Finde jeden Snippet in Millisekunden, auch in einer Bibliothek mit Millionen von Einträgen. Dank Fuzzy-Matching bremsen dich Tippfehler nicht aus. Tippe „improt" und finde „import".
+
+Privatsphäre zuerst — Deine Daten verlassen deinen Mac nie. Keine Cloud-Synchronisation, keine Analysen, keine Telemetrie. Alles bleibt auf dem Gerät, immer.
+
+Nativ und schnell — Entwickelt mit Swift und Rust, optimiert für Apple Silicon. Läuft lautlos in deiner Menüleiste mit minimalem Speicherverbrauch und null CPU im Leerlauf.
+
+Open Source — ClipKitty ist vollständig Open Source. Jede Codezeile ist öffentlich und prüfbar.
+
+TASTATURGESTEUERTER WORKFLOW
+
+Wahltaste+Leertaste, um deinen Verlauf aufzurufen. Pfeiltasten zum Navigieren. Eingabetaste zum Einfügen. Befehlstaste+1 bis 9 zum Springen. Keine Maus erforderlich.
+
+Hinweis: In der Mac App Store-Version drücke nach der Auswahl eines Zwischenablage-Eintrags Befehlstaste+V, um ihn in deine Ziel-App einzufügen. Dies ist aufgrund der macOS-Sandbox-Sicherheitsbeschränkungen erforderlich.
+
+ClipKitty ist der Zwischenablage-Manager, der so hart arbeitet wie du.
