@@ -989,7 +989,7 @@ struct TextPreviewView: NSViewRepresentable {
         let lines = text.components(separatedBy: "\n")
         if lines.count >= 10 { return fontSize }
 
-        let inset: CGFloat = 32 // textContainerInset.width * 2
+        let inset: CGFloat = 32 + 10 // textContainerInset.width * 2 + lineFragmentPadding * 2
         let availableWidth = containerWidth - inset
         if availableWidth <= 0 { return fontSize }
 
@@ -1003,7 +1003,7 @@ struct TextPreviewView: NSViewRepresentable {
 
         if maxLineWidth <= 0 { return fontSize }
 
-        let scale = min(2.0, availableWidth / maxLineWidth)
+        let scale = min(1.5, availableWidth / maxLineWidth) * 0.95
         return fontSize * scale
     }
 
