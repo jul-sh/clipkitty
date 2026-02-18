@@ -343,7 +343,15 @@ jobs:
           p12-password: ${{ steps.secrets.outputs.P12_PASSWORD }}
 
       - name: Verify Signing Identities
-        run: security find-identity -v -p codesigning
+        run: |
+          echo "=== Keychain search list ==="
+          security list-keychains
+          echo "=== All identities (not just codesigning) ==="
+          security find-identity -v
+          echo "=== Codesigning identities ==="
+          security find-identity -v -p codesigning
+          echo "=== Certs in signing_temp keychain ==="
+          security find-certificate -a -p signing_temp.keychain-db 2>/dev/null | openssl x509 -noout -subject -dates 2>/dev/null || echo "No certs found or keychain not accessible"
 
       - name: Install Nix
         uses: DeterminateSystems/nix-installer-action@main
