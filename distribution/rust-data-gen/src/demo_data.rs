@@ -168,7 +168,7 @@ pub const DEMO_ITEMS: &[DemoItem] = &[
         offset: -40,
     },
     DemoItem {
-        content: "ClipKitty\n• Copy it once, find it forever\n• Fuzzy search forgives your typos\n• See multi line previews before you paste\n• ⌥Space to summon, keyboard-first\n• Secure + Private: Your data never leaves your Mac",
+        content: "ClipKitty\n• Copy it once, find it forever\n• Smart search handles typos\n• Preview before pasting\n• ⌥Space to summon, keyboard-first\n• Secure, on-device data storage"
         source_app: "Safari",
         bundle_id: "com.apple.Safari",
         offset: -10,
