@@ -23,7 +23,6 @@ jobs:
         run: |
           defaults write -g AppleShowScrollBars -string WhenScrolling
           killall cfprefsd || true
-          defaults read -g AppleShowScrollBars
 
       - name: Decrypt secrets
         id: secrets
