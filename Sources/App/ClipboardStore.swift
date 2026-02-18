@@ -198,16 +198,16 @@ final class ClipboardStore {
             return await fetchItem(id: itemId)
         }
 
-        // Persist to database
+        // Persist to database (await to ensure write completes before read)
         let imageData = metadata.imageData
-        Task.detached { [rustStore] in
+        await Task.detached { [rustStore] in
             try? rustStore.updateLinkMetadata(
                 itemId: itemId,
                 title: metadata.title,
                 description: metadata.description,
                 imageData: imageData
             )
-        }
+        }.value
 
         // Return updated item
         return await fetchItem(id: itemId)
@@ -395,8 +395,12 @@ final class ClipboardStore {
 
                 // If this is a new item (not duplicate) and looks like a URL, prefetch link metadata
                 if itemId > 0, URL(string: text) != nil, text.hasPrefix("http") {
-                    Task.detached { [weak self] in
-                        _ = await self?.fetchLinkMetadata(url: text, itemId: itemId)
+                    Task { @MainActor [weak self] in
+                        guard let self else { return }
+                        _ = await self.fetchLinkMetadata(url: text, itemId: itemId)
+                        if self.hasResults {
+                            self.refresh()
+                        }
                     }
                 }
             } catch {

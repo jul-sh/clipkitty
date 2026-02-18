@@ -659,17 +659,22 @@ struct ContentView: View {
                 linkPreview(url: url, metadataState: metadataState, itemId: item.itemMetadata.itemId)
             }
         case .file(_, let files):
-            FilePreviewView(files: files)
+            FilePreviewView(files: files, searchQuery: searchText)
         }
     }
 
     @ViewBuilder
     private func imagePreview(data: Data, description: String) -> some View {
         if let nsImage = NSImage(data: data) {
+            let imageRatio = nsImage.size.width / max(nsImage.size.height, 1)
+            // Clamp to minimum 3:2 aspect ratio (no taller than 2:3 portrait)
+            let displayRatio = max(imageRatio, 3.0 / 2.0)
             VStack(spacing: 8) {
                 Image(nsImage: nsImage)
                     .resizable()
-                    .aspectRatio(contentMode: .fit)
+                    .aspectRatio(contentMode: .fill)
+                    .aspectRatio(displayRatio, contentMode: .fit)
+                    .clipped()
                     .frame(maxWidth: .infinity)
                 if !description.isEmpty {
                     Text(description)
@@ -781,6 +786,15 @@ private extension View {
 
 struct FilePreviewView: View {
     let files: [FileEntry]
+    var searchQuery: String = ""
+
+    /// Query words for highlighting (lowercased, non-empty)
+    private var queryWords: [String] {
+        searchQuery.lowercased()
+            .split(whereSeparator: { !$0.isLetter && !$0.isNumber })
+            .map(String.init)
+            .filter { !$0.isEmpty }
+    }
 
     var body: some View {
         ScrollView(.vertical, showsIndicators: true) {
@@ -804,13 +818,10 @@ struct FilePreviewView: View {
                 .frame(width: 40, height: 40)
 
             VStack(alignment: .leading, spacing: 4) {
-                Text(file.filename)
-                    .font(.system(size: 14, weight: .medium))
+                highlightedFileText(file.filename, font: .system(size: 14, weight: .medium), color: .primary)
                     .lineLimit(1)
 
-                Text(file.path)
-                    .font(.system(size: 11))
-                    .foregroundStyle(.secondary)
+                highlightedFileText(file.path, font: .system(size: 11), color: .secondary)
                     .lineLimit(1)
                     .truncationMode(.middle)
 
@@ -824,6 +835,62 @@ struct FilePreviewView: View {
         }
         .padding(.horizontal, 16)
         .padding(.vertical, 8)
+    }
+
+    /// Highlight query word matches in file text
+    private func highlightedFileText(_ text: String, font: Font, color: Color) -> Text {
+        let words = queryWords
+        guard !words.isEmpty else {
+            return Text(text).font(font).foregroundColor(color)
+        }
+
+        // Find all match ranges (case-insensitive)
+        let textLower = text.lowercased()
+        var matchRanges: [(Int, Int)] = []
+        for word in words {
+            var searchStart = textLower.startIndex
+            while let range = textLower.range(of: word, range: searchStart..<textLower.endIndex) {
+                let start = textLower.distance(from: textLower.startIndex, to: range.lowerBound)
+                let end = textLower.distance(from: textLower.startIndex, to: range.upperBound)
+                matchRanges.append((start, end))
+                searchStart = range.upperBound
+            }
+        }
+
+        guard !matchRanges.isEmpty else {
+            return Text(text).font(font).foregroundColor(color)
+        }
+
+        // Merge overlapping ranges
+        matchRanges.sort { $0.0 < $1.0 }
+        var merged: [(Int, Int)] = [matchRanges[0]]
+        for r in matchRanges.dropFirst() {
+            if r.0 <= merged.last!.1 {
+                merged[merged.count - 1].1 = max(merged.last!.1, r.1)
+            } else {
+                merged.append(r)
+            }
+        }
+
+        // Build Text with highlights
+        var result = Text("")
+        var pos = 0
+        for (start, end) in merged {
+            if pos < start {
+                let plain = String(text[text.index(text.startIndex, offsetBy: pos)..<text.index(text.startIndex, offsetBy: start)])
+                result = result + Text(plain).font(font).foregroundColor(color)
+            }
+            let highlighted = String(text[text.index(text.startIndex, offsetBy: start)..<text.index(text.startIndex, offsetBy: end)])
+            result = result + Text(highlighted).font(font).foregroundColor(color)
+                .bold()
+                .underline()
+            pos = end
+        }
+        if pos < text.count {
+            let remaining = String(text[text.index(text.startIndex, offsetBy: pos)...])
+            result = result + Text(remaining).font(font).foregroundColor(color)
+        }
+        return result
     }
 
     private static func formatFileSize(_ bytes: UInt64) -> String {
@@ -1033,7 +1100,7 @@ struct LinkPreviewView: NSViewRepresentable {
         if case .loaded(let title, _, let imageData) = metadataState {
             metadata.title = title
             if let imageData, let nsImage = NSImage(data: imageData) {
-                metadata.imageProvider = NSItemProvider(object: nsImage.croppedIfTooTall(maxRatio: 1.5))
+                metadata.imageProvider = NSItemProvider(object: nsImage)
             }
         }
         return metadata
@@ -1437,21 +1504,3 @@ private struct HideScrollIndicatorsWhenOverlay: ViewModifier {
 }
 
 
-// MARK: - Extensions
-
-extension NSImage {
-    /// Crops image from top if height/width > maxRatio.
-    func croppedIfTooTall(maxRatio: CGFloat) -> NSImage {
-        let size = self.size
-        guard size.width > 0, size.height > 0, size.height / size.width > maxRatio else { return self }
-
-        let newHeight = size.width * maxRatio
-        let cropRect = NSRect(x: 0, y: size.height - newHeight, width: size.width, height: newHeight)
-
-        let result = NSImage(size: cropRect.size)
-        result.lockFocus()
-        self.draw(in: NSRect(origin: .zero, size: cropRect.size), from: cropRect, operation: .copy, fraction: 1.0)
-        result.unlockFocus()
-        return result
-    }
-}
