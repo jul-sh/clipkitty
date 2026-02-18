@@ -24,6 +24,7 @@ struct ContentView: View {
     @State private var showFilterPopover = false
     @State private var showDeleteConfirmation = false
     @State private var highlightedFilterIndex: Int = 0
+    @State private var commandNumberEventMonitor: Any?
     enum FocusTarget: Hashable {
         case search
         case filterDropdown
@@ -114,6 +115,8 @@ struct ContentView: View {
         }
 
         .onAppear {
+            installCommandNumberEventMonitor()
+
             // Apply initial search query if provided (for CI screenshots)
             if !initialSearchQuery.isEmpty && !didApplyInitialSearch {
                 searchText = initialSearchQuery
@@ -128,6 +131,9 @@ struct ContentView: View {
             // Initialize items signature for animation tracking
             lastItemsSignature = itemIds
             focusSearchField()
+        }
+        .onDisappear {
+            removeCommandNumberEventMonitor()
         }
         .onChange(of: store.displayVersion) { _, _ in
             // Reset local state when store signals a display reset
@@ -477,12 +483,53 @@ struct ContentView: View {
             return .ignored
         }
 
+        return handleCommandNumberShortcut(number) ? .handled : .ignored
+    }
+
+    @MainActor
+    private func installCommandNumberEventMonitor() {
+        guard commandNumberEventMonitor == nil else { return }
+        commandNumberEventMonitor = NSEvent.addLocalMonitorForEvents(matching: .keyDown) { event in
+            guard let number = commandNumber(from: event) else {
+                return event
+            }
+            return handleCommandNumberShortcut(number) ? nil : event
+        }
+    }
+
+    @MainActor
+    private func removeCommandNumberEventMonitor() {
+        guard let commandNumberEventMonitor else { return }
+        NSEvent.removeMonitor(commandNumberEventMonitor)
+        self.commandNumberEventMonitor = nil
+    }
+
+    private func commandNumber(from event: NSEvent) -> Int? {
+        let modifiers = event.modifierFlags.intersection(.deviceIndependentFlagsMask)
+        guard modifiers == .command else { return nil }
+
+        switch event.keyCode {
+        case 18: return 1
+        case 19: return 2
+        case 20: return 3
+        case 21: return 4
+        case 23: return 5
+        case 22: return 6
+        case 26: return 7
+        case 28: return 8
+        case 25: return 9
+        default: return nil
+        }
+    }
+
+    @discardableResult
+    private func handleCommandNumberShortcut(_ number: Int) -> Bool {
         let index = number - 1
-        guard index < itemCount else { return .ignored }
+        guard index < itemCount else { return false }
 
         selectedItemId = itemId(at: index)
         confirmSelection()
-        return .handled
+        return true
     }
 
     private func indexForItem(_ itemId: Int64?) -> Int? {
@@ -1502,5 +1549,4 @@ private struct HideScrollIndicatorsWhenOverlay: ViewModifier {
         }
     }
 }
-
 
