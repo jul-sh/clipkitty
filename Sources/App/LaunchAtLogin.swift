@@ -59,7 +59,7 @@ final class LaunchAtLogin: ObservableObject {
             return true
         } catch {
             objectWillChange.send()
-            errorMessage = "Could not enable launch at login. Please add ClipKitty manually in System Settings."
+            errorMessage = String(localized: "Could not enable launch at login. Please add ClipKitty manually in System Settings.")
             return false
         }
     }
@@ -75,7 +75,7 @@ final class LaunchAtLogin: ObservableObject {
             return true
         } catch {
             objectWillChange.send()
-            errorMessage = "Could not disable launch at login. Please remove ClipKitty manually in System Settings."
+            errorMessage = String(localized: "Could not disable launch at login. Please remove ClipKitty manually in System Settings.")
             return false
         }
     }

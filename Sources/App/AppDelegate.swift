@@ -75,18 +75,18 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate {
     private func setupMenuBar() {
         statusItem = NSStatusBar.system.statusItem(withLength: NSStatusItem.squareLength)
         if let button = statusItem?.button {
-            button.image = makeStatusItemImage() ?? NSImage(systemSymbolName: "clipboard", accessibilityDescription: "ClipKitty")
+            button.image = makeStatusItemImage() ?? NSImage(systemSymbolName: "clipboard", accessibilityDescription: NSLocalizedString("ClipKitty", comment: "App name used as accessibility description for menu bar icon"))
         }
 
         let menu = NSMenu()
         let hotKey = AppSettings.shared.hotKey
-        showHistoryMenuItem = NSMenuItem(title: "Show Clipboard History", action: #selector(showPanel), keyEquivalent: hotKey.keyEquivalent)
+        showHistoryMenuItem = NSMenuItem(title: NSLocalizedString("Show Clipboard History", comment: "Menu bar item to show clipboard history panel"), action: #selector(showPanel), keyEquivalent: hotKey.keyEquivalent)
         showHistoryMenuItem?.keyEquivalentModifierMask = hotKey.modifierMask
         menu.addItem(showHistoryMenuItem!)
         menu.addItem(NSMenuItem.separator())
-        menu.addItem(NSMenuItem(title: "Settings...", action: #selector(openSettings), keyEquivalent: ","))
+        menu.addItem(NSMenuItem(title: NSLocalizedString("Settings...", comment: "Menu bar item to open settings window"), action: #selector(openSettings), keyEquivalent: ","))
         menu.addItem(NSMenuItem.separator())
-        menu.addItem(NSMenuItem(title: "Quit", action: #selector(quit), keyEquivalent: "q"))
+        menu.addItem(NSMenuItem(title: NSLocalizedString("Quit", comment: "Menu bar item to quit the app"), action: #selector(quit), keyEquivalent: "q"))
 
         statusMenu = menu
         statusItem?.menu = menu
@@ -126,7 +126,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate {
                 backing: .buffered,
                 defer: false
             )
-            window.title = "ClipKitty Settings"
+            window.title = NSLocalizedString("ClipKitty Settings", comment: "Settings window title")
             window.contentView = NSHostingView(rootView: settingsView)
             window.center()
             window.isReleasedWhenClosed = false
@@ -167,7 +167,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate {
         } else if settings.launchAtLoginEnabled && !launchAtLogin.isInApplicationsDirectory {
             // User wants it enabled but app is not in Applications - disable the preference
             settings.launchAtLoginEnabled = false
-            launchAtLogin.errorMessage = "Launch at login was disabled because ClipKitty is not in the Applications folder."
+            launchAtLogin.errorMessage = String(localized: "Launch at login was disabled because ClipKitty is not in the Applications folder.")
             if launchAtLogin.isEnabled {
                 launchAtLogin.disable()
             }
