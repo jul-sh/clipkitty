@@ -22,12 +22,15 @@ struct ContentView: View {
     @State private var previewSpinnerTask: Task<Void, Never>?
     @State private var hasUserNavigated = false
     @State private var showFilterPopover = false
-    @State private var showDeleteConfirmation = false
     @State private var highlightedFilterIndex: Int = 0
+    @State private var showActionsPopover = false
+    @State private var highlightedActionIndex: Int = 0
+    @State private var showDeleteConfirm = false
     @State private var commandNumberEventMonitor: Any?
     enum FocusTarget: Hashable {
         case search
         case filterDropdown
+        case actionsDropdown
     }
     @FocusState private var focusTarget: FocusTarget?
 
@@ -103,17 +106,6 @@ struct ContentView: View {
         // This fixes the white gap at the top without breaking the scrollbars!
         .ignoresSafeArea(edges: .top)
 
-        .alert("Delete Item", isPresented: $showDeleteConfirmation) {
-            Button("Delete", role: .destructive) {
-                deleteSelectedItem()
-            }
-            Button("Cancel", role: .cancel) {}
-        } message: {
-            if let item = selectedItem {
-                Text("Delete \"\(item.itemMetadata.snippet)\"?")
-            }
-        }
-
         .onAppear {
             installCommandNumberEventMonitor()
 
@@ -145,6 +137,8 @@ struct ContentView: View {
                 searchText = ""
             }
             showFilterPopover = false
+            showActionsPopover = false
+            showDeleteConfirm = false
             // Select first item whenever display resets (re-open)
             if let firstId = firstItemId {
                 loadItem(id: firstId)
@@ -266,6 +260,13 @@ struct ContentView: View {
         }
     }
 
+    private func focusActionsDropdown() {
+        Task { @MainActor in
+            try? await Task.sleep(for: .milliseconds(50))
+            focusTarget = .actionsDropdown
+        }
+    }
+
     private func moveSelection(by offset: Int) {
         hasUserNavigated = true
         guard let currentIndex = selectedIndex else {
@@ -326,7 +327,20 @@ struct ContentView: View {
                     moveSelection(by: 1)
                     return .handled
                 }
-                .onKeyPress(.return) {
+                .onKeyPress(.return, phases: .down) { keyPress in
+                    if keyPress.modifiers.contains(.option) {
+                        guard selectedItem != nil else { return .handled }
+                        if showActionsPopover {
+                            showActionsPopover = false
+                            showDeleteConfirm = false
+                            return .handled
+                        }
+                        let actions = actionItems
+                        highlightedActionIndex = actions.count - 1
+                        showActionsPopover = true
+                        focusActionsDropdown()
+                        return .handled
+                    }
                     confirmSelection()
                     return .handled
                 }
@@ -346,12 +360,18 @@ struct ContentView: View {
                 }
                 .onKeyPress(.delete) {
                     guard selectedItemId != nil else { return .ignored }
-                    showDeleteConfirmation = true
+                    showDeleteConfirm = true
+                    highlightedActionIndex = 0
+                    showActionsPopover = true
+                    focusActionsDropdown()
                     return .handled
                 }
                 .onKeyPress(.deleteForward) {
                     guard selectedItemId != nil else { return .ignored }
-                    showDeleteConfirmation = true
+                    showDeleteConfirm = true
+                    highlightedActionIndex = 0
+                    showActionsPopover = true
+                    focusActionsDropdown()
                     return .handled
                 }
 
@@ -752,6 +772,8 @@ struct ContentView: View {
                         .lineLimit(1)
                 }
             }
+            actionsButton
+                .fixedSize()
             Spacer(minLength: 0)
             Button(buttonLabel(for: item)) { confirmSelection() }
                 .buttonStyle(.plain)
@@ -767,7 +789,178 @@ struct ContentView: View {
     }
 
     private func buttonLabel(for item: ClipboardItem) -> String {
-        return AppSettings.shared.shouldShowPasteLabel ? "⏎ paste" : "⏎ copy"
+        return AppSettings.shared.shouldShowPasteLabel ? "⏎ Paste" : "⏎ Copy"
+    }
+
+    // MARK: - Actions Dropdown
+
+    private enum ActionItem: Equatable {
+        case defaultAction  // copy or paste based on settings
+        case copyOnly       // only shown when default is paste
+        case delete
+    }
+
+    private var actionItems: [ActionItem] {
+        var items: [ActionItem] = [.delete]
+        if AppSettings.shared.shouldShowPasteLabel {
+            items.append(.copyOnly)
+        }
+        items.append(.defaultAction)
+        return items
+    }
+
+    private func actionLabel(for action: ActionItem) -> String {
+        switch action {
+        case .defaultAction:
+            return AppSettings.shared.shouldShowPasteLabel ? "Paste" : "Copy"
+        case .copyOnly:
+            return "Copy"
+        case .delete:
+            return "Delete"
+        }
+    }
+
+    private var actionsButton: some View {
+        Button {
+            let actions = actionItems
+            highlightedActionIndex = actions.count - 1
+            showDeleteConfirm = false
+            showActionsPopover.toggle()
+            if showActionsPopover {
+                focusActionsDropdown()
+            }
+        } label: {
+            Text("⌥⏎ Actions")
+                .font(.system(size: 13))
+                .foregroundStyle(.secondary)
+                .padding(.horizontal, 6)
+                .padding(.vertical, 2)
+        }
+        .buttonStyle(.plain)
+        .accessibilityIdentifier("ActionsButton")
+        .popover(isPresented: $showActionsPopover, arrowEdge: .top) {
+            actionsPopoverContent
+        }
+    }
+
+    private var actionsPopoverContent: some View {
+        let actions = actionItems
+        let confirmCount = 2
+        let itemCount = showDeleteConfirm ? confirmCount : actions.count
+        return VStack(spacing: 2) {
+            if showDeleteConfirm {
+                Text("Delete?")
+                    .font(.system(size: 13, weight: .medium))
+                    .foregroundStyle(.secondary)
+                    .frame(maxWidth: .infinity, alignment: .leading)
+                    .padding(.horizontal, 8)
+                    .padding(.bottom, 4)
+                ActionOptionRow(
+                    label: "Delete",
+                    isHighlighted: highlightedActionIndex == 0,
+                    isDestructive: true,
+                    action: {
+                        deleteSelectedItem()
+                        showActionsPopover = false
+                        showDeleteConfirm = false
+                    }
+                )
+                ActionOptionRow(
+                    label: "Cancel",
+                    isHighlighted: highlightedActionIndex == 1,
+                    isDestructive: false,
+                    action: {
+                        showDeleteConfirm = false
+                        highlightedActionIndex = actions.count - 1
+                    }
+                )
+            } else {
+                ForEach(Array(actions.enumerated()), id: \.offset) { index, action in
+                    if action == .delete && index < actions.count - 1 {
+                        ActionOptionRow(
+                            label: actionLabel(for: action),
+                            isHighlighted: highlightedActionIndex == index,
+                            isDestructive: true,
+                            action: { performAction(action) }
+                        )
+                        Divider().padding(.horizontal, 4).padding(.vertical, 3)
+                    } else {
+                        ActionOptionRow(
+                            label: actionLabel(for: action),
+                            isHighlighted: highlightedActionIndex == index,
+                            isDestructive: action == .delete,
+                            action: { performAction(action) }
+                        )
+                    }
+                }
+            }
+        }
+        .padding(10)
+        .frame(width: 160)
+        .focusable()
+        .focused($focusTarget, equals: .actionsDropdown)
+        .focusEffectDisabled()
+        .onKeyPress(.upArrow) {
+            highlightedActionIndex = max(highlightedActionIndex - 1, 0)
+            return .handled
+        }
+        .onKeyPress(.downArrow) {
+            highlightedActionIndex = min(highlightedActionIndex + 1, itemCount - 1)
+            return .handled
+        }
+        .onKeyPress(.return, phases: .down) { _ in
+            if showDeleteConfirm {
+                if highlightedActionIndex == 0 {
+                    deleteSelectedItem()
+                    showActionsPopover = false
+                    showDeleteConfirm = false
+                } else {
+                    showDeleteConfirm = false
+                    highlightedActionIndex = actions.count - 1
+                }
+            } else {
+                let action = actions[highlightedActionIndex]
+                performAction(action)
+            }
+            return .handled
+        }
+        .onKeyPress(.escape) {
+            if showDeleteConfirm {
+                showDeleteConfirm = false
+                highlightedActionIndex = actions.count - 1
+            } else {
+                showActionsPopover = false
+                focusSearchField()
+            }
+            return .handled
+        }
+        .onKeyPress(.tab) {
+            showActionsPopover = false
+            showDeleteConfirm = false
+            focusSearchField()
+            return .handled
+        }
+        .onAppear {
+            if !showDeleteConfirm {
+                let actions = actionItems
+                highlightedActionIndex = actions.count - 1
+            }
+            focusActionsDropdown()
+        }
+    }
+
+    private func performAction(_ action: ActionItem) {
+        switch action {
+        case .defaultAction:
+            showActionsPopover = false
+            confirmSelection()
+        case .copyOnly:
+            showActionsPopover = false
+            copyOnlySelection()
+        case .delete:
+            showDeleteConfirm = true
+            highlightedActionIndex = 0
+        }
     }
 
     private var emptyStateView: some View {
@@ -1480,6 +1673,50 @@ private struct FilterOptionRow: View {
         }
         .buttonStyle(.plain)
         .onHover { isHovered = $0 }
+    }
+}
+
+// MARK: - Action Option Row
+
+private struct ActionOptionRow: View {
+    let label: String
+    var isHighlighted: Bool = false
+    var isDestructive: Bool = false
+    let action: () -> Void
+    @State private var isHovered = false
+
+    var body: some View {
+        Button(action: action) {
+            Text(label)
+                .font(.system(size: 13))
+                .foregroundStyle(foregroundColor)
+                .frame(maxWidth: .infinity, alignment: .leading)
+                .padding(.horizontal, 8)
+                .padding(.vertical, 5)
+                .background {
+                    if isHighlighted {
+                        if isDestructive {
+                            RoundedRectangle(cornerRadius: 9)
+                                .fill(Color.red.opacity(0.8))
+                        } else {
+                            selectionBackground()
+                                .clipShape(RoundedRectangle(cornerRadius: 9))
+                        }
+                    } else {
+                        RoundedRectangle(cornerRadius: 9)
+                            .fill(isHovered ? Color.primary.opacity(0.05) : Color.clear)
+                    }
+                }
+        }
+        .buttonStyle(.plain)
+        .onHover { isHovered = $0 }
+        .accessibilityIdentifier("Action_\(label)")
+    }
+
+    private var foregroundColor: Color {
+        if isHighlighted { return .white }
+        if isDestructive { return .red }
+        return .secondary
     }
 }
 
