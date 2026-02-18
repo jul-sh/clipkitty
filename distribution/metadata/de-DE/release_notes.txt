@@ -1,0 +1,7 @@
+ClipKitty ist da.
+
+- Unbegrenzte Zwischenablage-History — nichts läuft ab, nichts wird abgeschnitten
+- Sofortige Fuzzy-Suche über dein gesamtes Archiv
+- Vollständiger mehrzeiliger Vorschaubereich für Code, Text und Links
+- Tastaturgesteuert: Wahltaste+Leertaste zum Öffnen, Eingabetaste zum Einfügen
+- Vollständig privat — deine Daten verlassen deinen Mac nie

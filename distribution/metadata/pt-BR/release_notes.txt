@@ -1,0 +1,7 @@
+Conheça o ClipKitty.
+
+- Histórico de área de transferência ilimitado — nada expira, nada é cortado
+- Busca aproximada instantânea em todo o seu arquivo
+- Painel de visualização multilinha completo para código, texto e links
+- Controlado pelo teclado: Option+Espaço para abrir, Return para colar
+- Completamente privado — seus dados nunca saem do seu Mac
