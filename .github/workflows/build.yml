@@ -105,8 +105,8 @@ jobs:
 
       - name: Generate Marketing Screenshots
         run: |
-          make -C distribution marketing-screenshots
-          ls -lh marketing/screenshot_*.png
+          make -C distribution marketing-screenshots-localized
+          ls -lh marketing/*/screenshot_*.png
 
       - name: Teardown Virtual Display
         if: always()
@@ -161,7 +161,7 @@ jobs:
           name: assets
           path: |
             icon.png
-            marketing/screenshot_*.png
+            marketing/*/screenshot_*.png
 
       - name: Deploy to gh-pages
         if: github.event_name == 'push' && github.ref == 'refs/heads/main'
@@ -183,9 +183,9 @@ jobs:
           fi
 
           cp "$GITHUB_WORKSPACE/icon.png" .
-          cp "$GITHUB_WORKSPACE/marketing/screenshot_1.png" marketing_1.png
-          cp "$GITHUB_WORKSPACE/marketing/screenshot_2.png" marketing_2.png
-          cp "$GITHUB_WORKSPACE/marketing/screenshot_3.png" marketing_3.png
+          cp "$GITHUB_WORKSPACE/marketing/en/screenshot_1.png" marketing_1.png
+          cp "$GITHUB_WORKSPACE/marketing/en/screenshot_2.png" marketing_2.png
+          cp "$GITHUB_WORKSPACE/marketing/en/screenshot_3.png" marketing_3.png
 
           # Generate landing page from README.md
           brew install cmark-gfm 2>/dev/null || true
@@ -264,7 +264,7 @@ jobs:
             --prerelease \
             ClipKitty.dmg \
             icon.png \
-            marketing/screenshot_*.png
+            marketing/en/screenshot_*.png
         env:
           GH_TOKEN: ${{ github.token }}
 
@@ -423,8 +423,17 @@ jobs:
           # Assemble metadata + screenshots for import
           IMPORT_DIR=$(mktemp -d)
           ln -s "$GITHUB_WORKSPACE/distribution/metadata" "$IMPORT_DIR/metadata"
-          mkdir -p "$IMPORT_DIR/screenshots/en-US"
-          cp marketing/screenshot_*.png "$IMPORT_DIR/screenshots/en-US/"
+          declare -A LOCALE_MAP=(
+            [en]=en-US [es]=es-ES [de]=de-DE [fr]=fr-FR
+            [ja]=ja [ko]=ko [pt-BR]=pt-BR [ru]=ru
+            [zh-Hans]=zh-Hans [zh-Hant]=zh-Hant
+          )
+          for dir in marketing/*/; do
+            locale=$(basename "$dir")
+            asc_locale="${LOCALE_MAP[$locale]:-$locale}"
+            mkdir -p "$IMPORT_DIR/screenshots/$asc_locale"
+            cp "$dir"screenshot_*.png "$IMPORT_DIR/screenshots/$asc_locale/"
+          done
 
           asc migrate import \
             --app 6759137247 \

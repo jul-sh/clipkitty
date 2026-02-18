@@ -126,11 +126,11 @@ marketing-screenshots-capture:
 		"$(DERIVED_DATA)/Build/Products/AppStore/$(APP_NAME).app"
 	@echo "Capturing marketing screenshots..."
 	@$(DIST_DIR)/prepare-screenshot-environment.sh 'cd $(PROJECT_ROOT) && xcodebuild test -scheme ClipKittyUITests -destination "platform=macOS" -derivedDataPath DerivedData -only-testing:ClipKittyUITests/ClipKittyUITests/testTakeMarketingScreenshots 2>&1 | grep -E "(Test Case|passed|failed)" || true'
-	@mkdir -p $(PROJECT_ROOT)/marketing
-	@cp /tmp/clipkitty_marketing_1_history.png $(PROJECT_ROOT)/marketing/screenshot_1.png
-	@cp /tmp/clipkitty_marketing_2_search.png $(PROJECT_ROOT)/marketing/screenshot_2.png
-	@cp /tmp/clipkitty_marketing_3_filter.png $(PROJECT_ROOT)/marketing/screenshot_3.png
-	@echo "Screenshots saved to marketing/"
+	@mkdir -p $(PROJECT_ROOT)/marketing/en
+	@cp /tmp/clipkitty_marketing_1_history.png $(PROJECT_ROOT)/marketing/en/screenshot_1.png
+	@cp /tmp/clipkitty_marketing_2_search.png $(PROJECT_ROOT)/marketing/en/screenshot_2.png
+	@cp /tmp/clipkitty_marketing_3_filter.png $(PROJECT_ROOT)/marketing/en/screenshot_3.png
+	@echo "Screenshots saved to marketing/en/"
 
 # Full screenshot pipeline (English only)
 marketing-screenshots: marketing-screenshots-capture
@@ -184,6 +184,6 @@ preview-video:
 marketing: marketing-screenshots preview-video
 	@echo ""
 	@echo "=== All Marketing Assets Generated ==="
-	@echo "Screenshots: marketing/screenshot_*.png"
+	@echo "Screenshots: marketing/*/screenshot_*.png"
 	@echo "Video: marketing/app_preview.mov"
 	@ls -lh $(PROJECT_ROOT)/marketing/ 2>/dev/null || true
