@@ -1207,11 +1207,14 @@ struct TextPreviewView: NSViewRepresentable {
         let scaledSize = scaledFontSize(baseFont: baseFont, containerWidth: nsView.contentSize.width)
         let font = NSFont(name: fontName, size: scaledSize) ?? NSFont.monospacedSystemFont(ofSize: scaledSize, weight: .regular)
 
-        // Only update if text or highlights changed
+        // Update if text, highlights, or computed font size changed
+        // Font size depends on container width which may not be final on first render
         let currentText = textView.string
-        let shouldScroll = currentText != text || context.coordinator.lastHighlights != highlights
-        if shouldScroll {
+        let textOrHighlightsChanged = currentText != text || context.coordinator.lastHighlights != highlights
+        let fontSizeChanged = scaledSize != context.coordinator.lastScaledFontSize
+        if textOrHighlightsChanged || fontSizeChanged {
             context.coordinator.lastHighlights = highlights
+            context.coordinator.lastScaledFontSize = scaledSize
 
             // Create paragraph style to ensure consistent word wrapping
             let paragraphStyle = NSMutableParagraphStyle()
@@ -1298,6 +1301,7 @@ struct TextPreviewView: NSViewRepresentable {
 
     class Coordinator {
         var lastHighlights: [HighlightRange] = []
+        var lastScaledFontSize: CGFloat = 0
     }
 }
 
