@@ -211,6 +211,7 @@ jobs:
       - name: Create Release
         if: github.ref == 'refs/heads/release'
         run: |
+          gh release delete "v$VERSION" --yes --cleanup-tag 2>/dev/null || true
           gh release create "v$VERSION" \
             --title "ClipKitty v$VERSION" \
             --generate-notes \
@@ -281,8 +282,10 @@ jobs:
             git checkout -f main
             sed -i '' "s/\"MARKETING_VERSION\": \"$CURRENT\"/\"MARKETING_VERSION\": \"$VERSION\"/" Project.swift
             git add Project.swift
-            git commit -m "bump version to $VERSION"
-            git push origin main
+            if ! git diff --cached --quiet; then
+              git commit -m "bump version to $VERSION"
+              git push origin main
+            fi
           fi
         env:
           ADMIN_TOKEN: ${{ steps.secrets.outputs.ADMIN_TOKEN }}
@@ -338,6 +341,9 @@ jobs:
         with:
           p12-file-base64: ${{ steps.secrets.outputs.APPSTORE_CERT_BASE64 }}
           p12-password: ${{ steps.secrets.outputs.P12_PASSWORD }}
+
+      - name: Verify Signing Identities
+        run: security find-identity -v -p codesigning
 
       - name: Install Nix
         uses: DeterminateSystems/nix-installer-action@main
