@@ -94,7 +94,6 @@ final class AppSettings: ObservableObject {
     private let defaults = UserDefaults.standard
     private let hotKeyKey = "hotKey"
     private let maxDbSizeKey = "maxDatabaseSizeGB"
-    private let legacyMaxDbSizeKey = "maxDatabaseSizeMB"
     private let launchAtLoginKey = "launchAtLogin"
     private let autoPasteKey = "autoPasteEnabled"
 
@@ -109,10 +108,8 @@ final class AppSettings: ObservableObject {
 
         if let stored = defaults.object(forKey: maxDbSizeKey) as? NSNumber {
             maxDatabaseSizeGB = stored.doubleValue
-        } else if let legacyStored = defaults.object(forKey: legacyMaxDbSizeKey) as? NSNumber {
-            maxDatabaseSizeGB = legacyStored.doubleValue / 1024.0
         } else {
-            maxDatabaseSizeGB = 10.0
+            maxDatabaseSizeGB = 7.0
         }
 
         launchAtLoginEnabled = defaults.object(forKey: launchAtLoginKey) as? Bool ?? true
