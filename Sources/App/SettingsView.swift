@@ -27,7 +27,7 @@ struct SettingsView: View {
                         let (labelText, backgroundColor): (String, Color) = {
                             switch hotKeyState {
                             case .recording:
-                                return ("Press keys...", Color.accentColor.opacity(0.2))
+                                return (String(localized: "Press keys..."), Color.accentColor.opacity(0.2))
                             case .idle:
                                 return (settings.hotKey.displayString, Color.secondary.opacity(0.1))
                             }
@@ -211,7 +211,7 @@ struct SettingsView: View {
     }
 
     private var databaseSizeLabel: String {
-        return String(format: "%.1f GB", settings.maxDatabaseSizeGB)
+        return String(localized: "\(settings.maxDatabaseSizeGB, specifier: "%.1f") GB")
     }
 
     private func sliderValue(for gb: Double) -> Double {
@@ -238,13 +238,13 @@ struct SettingsView: View {
         let gb = mb / 1024
 
         if gb >= 1 {
-            return String(format: "%.2f GB", gb)
+            return String(localized: "\(gb, specifier: "%.2f") GB")
         } else if mb >= 1 {
-            return String(format: "%.1f MB", mb)
+            return String(localized: "\(mb, specifier: "%.1f") MB")
         } else if kb >= 1 {
-            return String(format: "%.0f KB", kb)
+            return String(localized: "\(kb, specifier: "%.0f") KB")
         } else {
-            return "\(bytes) bytes"
+            return String(localized: "\(bytes) bytes")
         }
     }
 }

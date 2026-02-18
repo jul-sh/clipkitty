@@ -87,21 +87,18 @@ struct ImageDescriptionGenerator {
         // Format Labels
         if !labels.isEmpty {
             let list = labels.formatted(.list(type: .and, width: .standard))
-            parts.append("Image: \(list)")
-        } else {
-            parts.append("Image")
+            parts.append(list)
         }
 
         // Format Text with Truncation
         if let text, !text.isEmpty {
             let truncated: String
             if text.count > config.maxTextLength {
-                // Truncate and add proper ellipsis (…)
                 truncated = "\(text.prefix(config.maxTextLength))…"
             } else {
                 truncated = text
             }
-            parts.append("Text: \(truncated)")
+            parts.append(truncated)
         }
 
         return parts.joined(separator: ". ")

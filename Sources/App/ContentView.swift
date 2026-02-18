@@ -391,12 +391,12 @@ struct ContentView: View {
 
     private var filterLabel: String {
         switch store.contentTypeFilter {
-        case .all: return "All Types"
-        case .text: return "Text"
-        case .images: return "Images"
-        case .links: return "Links"
-        case .colors: return "Colors"
-        case .files: return "Files"
+        case .all: return String(localized: "All Types")
+        case .text: return String(localized: "Text")
+        case .images: return String(localized: "Images")
+        case .links: return String(localized: "Links")
+        case .colors: return String(localized: "Colors")
+        case .files: return String(localized: "Files")
         }
     }
 
@@ -429,13 +429,13 @@ struct ContentView: View {
 
     private static let filterOptions: [(ContentTypeFilter, String)] = {
         var options: [(ContentTypeFilter, String)] = [
-            (.all, "All Types"),
-            (.text, "Text"),
-            (.images, "Images"),
-            (.links, "Links"),
-            (.colors, "Colors"),
+            (.all, String(localized: "All Types")),
+            (.text, String(localized: "Text")),
+            (.images, String(localized: "Images")),
+            (.links, String(localized: "Links")),
+            (.colors, String(localized: "Colors")),
         ]
-        options.append((.files, "Files"))
+        options.append((.files, String(localized: "Files")))
         return options
     }()
 
@@ -784,7 +784,7 @@ struct ContentView: View {
     }
 
     private func buttonLabel(for item: ClipboardItem) -> String {
-        return AppSettings.shared.shouldShowPasteLabel ? "⏎ Paste" : "⏎ Copy"
+        return AppSettings.shared.shouldShowPasteLabel ? String(localized: "⏎ Paste") : String(localized: "⏎ Copy")
     }
 
     // MARK: - Actions Dropdown
@@ -807,11 +807,19 @@ struct ContentView: View {
     private func actionLabel(for action: ActionItem) -> String {
         switch action {
         case .defaultAction:
-            return AppSettings.shared.shouldShowPasteLabel ? "Paste" : "Copy"
+            return AppSettings.shared.shouldShowPasteLabel ? String(localized: "Paste") : String(localized: "Copy")
         case .copyOnly:
-            return "Copy"
+            return String(localized: "Copy")
         case .delete:
-            return "Delete"
+            return String(localized: "Delete")
+        }
+    }
+
+    private func actionIdentifier(for action: ActionItem) -> String {
+        switch action {
+        case .defaultAction: return AppSettings.shared.shouldShowPasteLabel ? "Paste" : "Copy"
+        case .copyOnly: return "Copy"
+        case .delete: return "Delete"
         }
     }
 
@@ -851,7 +859,8 @@ struct ContentView: View {
                     .padding(.horizontal, 8)
                     .padding(.bottom, 4)
                 ActionOptionRow(
-                    label: "Delete",
+                    label: String(localized: "Delete"),
+                    actionID: "Delete",
                     isHighlighted: highlightedActionIndex == 0,
                     isDestructive: true,
                     action: {
@@ -861,7 +870,8 @@ struct ContentView: View {
                     }
                 )
                 ActionOptionRow(
-                    label: "Cancel",
+                    label: String(localized: "Cancel"),
+                    actionID: "Cancel",
                     isHighlighted: highlightedActionIndex == 1,
                     isDestructive: false,
                     action: {
@@ -874,6 +884,7 @@ struct ContentView: View {
                     if action == .delete && index < actions.count - 1 {
                         ActionOptionRow(
                             label: actionLabel(for: action),
+                            actionID: actionIdentifier(for: action),
                             isHighlighted: highlightedActionIndex == index,
                             isDestructive: true,
                             action: { performAction(action) }
@@ -882,6 +893,7 @@ struct ContentView: View {
                     } else {
                         ActionOptionRow(
                             label: actionLabel(for: action),
+                            actionID: actionIdentifier(for: action),
                             isHighlighted: highlightedActionIndex == index,
                             isDestructive: action == .delete,
                             action: { performAction(action) }
@@ -972,9 +984,9 @@ struct ContentView: View {
 
     private var emptyStateMessage: String {
         if store.currentQuery.isEmpty && store.contentTypeFilter == .all {
-            return "No clipboard history"
+            return String(localized: "No clipboard history")
         } else {
-            return "No results"
+            return String(localized: "No results")
         }
     }
 
@@ -1132,10 +1144,10 @@ struct FilePreviewView: View {
         let mb = kb / 1024
         let gb = mb / 1024
 
-        if gb >= 1 { return String(format: "%.1f GB", gb) }
-        if mb >= 1 { return String(format: "%.1f MB", mb) }
-        if kb >= 1 { return String(format: "%.0f KB", kb) }
-        return "\(bytes) bytes"
+        if gb >= 1 { return String(localized: "\(gb, specifier: "%.1f") GB") }
+        if mb >= 1 { return String(localized: "\(mb, specifier: "%.1f") MB") }
+        if kb >= 1 { return String(localized: "\(kb, specifier: "%.0f") KB") }
+        return String(localized: "\(bytes) bytes")
     }
 }
 
@@ -1172,18 +1184,47 @@ struct TextPreviewView: NSViewRepresentable {
         return scrollView
     }
 
-    private var scaledFontSize: CGFloat {
+    /// Last known container width, persisted across view recreations so the
+    /// first render already uses a good value instead of falling back to base font.
+    private static var lastKnownContainerWidth: CGFloat = 0
+
+    private func scaledFontSize(containerWidth: CGFloat) -> CGFloat {
         let lines = text.components(separatedBy: "\n")
-        if lines.count < 10 && lines.allSatisfy({ $0.count <= 30 }) {
-            return fontSize * 1.5
+        if lines.count >= 10 { return fontSize }
+
+        let baseFont = NSFont(name: fontName, size: fontSize)
+            ?? NSFont.monospacedSystemFont(ofSize: fontSize, weight: .regular)
+        let inset: CGFloat = 32 + 10 // textContainerInset.width * 2 + lineFragmentPadding * 2
+        let availableWidth = containerWidth - inset
+        if availableWidth <= 0 { return fontSize }
+
+        let attributes: [NSAttributedString.Key: Any] = [.font: baseFont]
+        var maxLineWidth: CGFloat = 0
+        for line in lines {
+            let lineWidth = (line as NSString).size(withAttributes: attributes).width
+            if lineWidth >= availableWidth { return fontSize }
+            maxLineWidth = max(maxLineWidth, lineWidth)
         }
-        return fontSize
+        if maxLineWidth <= 0 { return fontSize }
+
+        let scale = min(1.5, availableWidth / maxLineWidth) * 0.95
+        return fontSize * scale
     }
 
     func updateNSView(_ nsView: NSScrollView, context: Context) {
         guard let textView = nsView.documentView as? NSTextView else { return }
 
-        let font = NSFont(name: fontName, size: scaledFontSize) ?? NSFont.monospacedSystemFont(ofSize: scaledFontSize, weight: .regular)
+        // Use live container width if available, otherwise fall back to persisted value
+        let containerWidth = nsView.contentSize.width > 0
+            ? nsView.contentSize.width
+            : Self.lastKnownContainerWidth
+        if nsView.contentSize.width > 0 {
+            Self.lastKnownContainerWidth = nsView.contentSize.width
+        }
+
+        let scaledSize = scaledFontSize(containerWidth: containerWidth)
+        let font = NSFont(name: fontName, size: scaledSize)
+            ?? NSFont.monospacedSystemFont(ofSize: scaledSize, weight: .regular)
 
         // Only update if text or highlights changed
         let currentText = textView.string
@@ -1487,7 +1528,7 @@ struct ItemRow: View, Equatable {
         .buttonStyle(.plain)
         .accessibilityElement(children: .combine)
         .accessibilityLabel(displayText)
-        .accessibilityHint(AppSettings.shared.shouldShowPasteLabel ? "Double tap to paste" : "Double tap to copy")
+        .accessibilityHint(AppSettings.shared.shouldShowPasteLabel ? String(localized: "Double tap to paste") : String(localized: "Double tap to copy"))
         .accessibilityAddTraits(.isButton)
         .accessibilityAddTraits(isSelected ? .isSelected : [])
     }
@@ -1658,6 +1699,7 @@ private struct FilterOptionRow: View {
 
 private struct ActionOptionRow: View {
     let label: String
+    let actionID: String
     var isHighlighted: Bool = false
     var isDestructive: Bool = false
     let action: () -> Void
@@ -1688,7 +1730,7 @@ private struct ActionOptionRow: View {
         }
         .buttonStyle(.plain)
         .onHover { isHovered = $0 }
-        .accessibilityIdentifier("Action_\(label)")
+        .accessibilityIdentifier("Action_\(actionID)")
     }
 
     private var foregroundColor: Color {

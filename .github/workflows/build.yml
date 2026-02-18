@@ -23,7 +23,6 @@ jobs:
         run: |
           defaults write -g AppleShowScrollBars -string WhenScrolling
           killall cfprefsd || true
-          defaults read -g AppleShowScrollBars
 
       - name: Decrypt secrets
         id: secrets
@@ -330,22 +329,19 @@ jobs:
           curl -sLo "$RUNNER_TEMP/AppleWWDRCAG3.cer" https://www.apple.com/certificateauthority/AppleWWDRCAG3.cer
           sudo security add-trusted-cert -d -r unspecified -k /Library/Keychains/System.keychain "$RUNNER_TEMP/AppleWWDRCAG3.cer"
 
-      - name: Install App Store Certificates
+      - name: Install App Store Installer Certificate
         uses: apple-actions/import-codesign-certs@v3
         with:
           p12-file-base64: ${{ steps.secrets.outputs.APPSTORE_CERT_BASE64 }}
           p12-password: ${{ steps.secrets.outputs.P12_PASSWORD }}
 
-      - name: Verify Signing Identities
-        run: |
-          echo "=== Keychain search list ==="
-          security list-keychains
-          echo "=== All identities (not just codesigning) ==="
-          security find-identity -v
-          echo "=== Codesigning identities ==="
-          security find-identity -v -p codesigning
-          echo "=== Certs in signing_temp keychain ==="
-          security find-certificate -a -p signing_temp.keychain-db 2>/dev/null | openssl x509 -noout -subject -dates 2>/dev/null || echo "No certs found or keychain not accessible"
+      - name: Install App Store Application Certificate
+        uses: apple-actions/import-codesign-certs@v3
+        with:
+          p12-file-base64: ${{ steps.secrets.outputs.APPSTORE_APP_CERT_BASE64 }}
+          p12-password: ${{ steps.secrets.outputs.P12_PASSWORD }}
+          keychain: signing_temp
+          create-keychain: false
 
       - name: Install Nix
         uses: DeterminateSystems/nix-installer-action@main
