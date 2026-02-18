@@ -733,15 +733,10 @@ struct ContentView: View {
     @ViewBuilder
     private func imagePreview(data: Data, description: String) -> some View {
         if let nsImage = NSImage(data: data) {
-            let imageRatio = nsImage.size.width / max(nsImage.size.height, 1)
-            // Clamp to minimum 3:2 aspect ratio (no taller than 2:3 portrait)
-            let displayRatio = max(imageRatio, 3.0 / 2.0)
             VStack(spacing: 8) {
                 Image(nsImage: nsImage)
                     .resizable()
-                    .aspectRatio(contentMode: .fill)
-                    .aspectRatio(displayRatio, contentMode: .fit)
-                    .clipped()
+                    .aspectRatio(contentMode: .fit)
                     .frame(maxWidth: .infinity)
                 if !description.isEmpty {
                     Text(description)
@@ -989,7 +984,6 @@ struct ContentView: View {
             // Native link preview using LPLinkView
             LinkPreviewView(url: url, metadataState: metadataState)
                 .frame(maxWidth: .infinity)
-                .frame(minHeight: 100, maxHeight: 300)
 
             // Full URL with line wrapping
             Text(url)
@@ -1178,39 +1172,23 @@ struct TextPreviewView: NSViewRepresentable {
         return scrollView
     }
 
-    private func scaledFontSize(baseFont: NSFont, containerWidth: CGFloat) -> CGFloat {
+    private var scaledFontSize: CGFloat {
         let lines = text.components(separatedBy: "\n")
-        if lines.count >= 10 { return fontSize }
-
-        let inset: CGFloat = 32 + 10 // textContainerInset.width * 2 + lineFragmentPadding * 2
-        let availableWidth = containerWidth - inset
-        if availableWidth <= 0 { return fontSize }
-
-        let attributes: [NSAttributedString.Key: Any] = [.font: baseFont]
-        var maxLineWidth: CGFloat = 0
-        for line in lines {
-            let lineWidth = (line as NSString).size(withAttributes: attributes).width
-            if lineWidth >= availableWidth { return fontSize }
-            maxLineWidth = max(maxLineWidth, lineWidth)
+        if lines.count < 10 && lines.allSatisfy({ $0.count <= 30 }) {
+            return fontSize * 1.5
         }
-
-        if maxLineWidth <= 0 { return fontSize }
-
-        let scale = min(1.5, availableWidth / maxLineWidth) * 0.95
-        return fontSize * scale
+        return fontSize
     }
 
     func updateNSView(_ nsView: NSScrollView, context: Context) {
         guard let textView = nsView.documentView as? NSTextView else { return }
 
-        let baseFont = NSFont(name: fontName, size: fontSize) ?? NSFont.monospacedSystemFont(ofSize: fontSize, weight: .regular)
-        let scaledSize = scaledFontSize(baseFont: baseFont, containerWidth: nsView.contentSize.width)
-        let font = NSFont(name: fontName, size: scaledSize) ?? NSFont.monospacedSystemFont(ofSize: scaledSize, weight: .regular)
+        let font = NSFont(name: fontName, size: scaledFontSize) ?? NSFont.monospacedSystemFont(ofSize: scaledFontSize, weight: .regular)
 
         // Only update if text or highlights changed
         let currentText = textView.string
-        let shouldScroll = currentText != text || context.coordinator.lastHighlights != highlights
-        if shouldScroll {
+        let shouldUpdate = currentText != text || context.coordinator.lastHighlights != highlights
+        if shouldUpdate {
             context.coordinator.lastHighlights = highlights
 
             // Create paragraph style to ensure consistent word wrapping
