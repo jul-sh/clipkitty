@@ -1,3 +1,4 @@
+import AppKit
 import Foundation
 @preconcurrency import LinkPresentation
 
@@ -47,14 +48,15 @@ final class LinkMetadataFetcher {
         // LPMetadataProvider doesn't directly expose og:description
         let description: String? = nil
 
-        // Fetch image data using async continuation
+        // Fetch image data and clamp to 3:2 aspect ratio (no taller)
         var imageData: Data?
         if let imageProvider = metadata.imageProvider {
-            imageData = await withCheckedContinuation { continuation in
+            let rawData: Data? = await withCheckedContinuation { continuation in
                 imageProvider.loadDataRepresentation(forTypeIdentifier: "public.image") { data, _ in
                     continuation.resume(returning: data)
                 }
             }
+            imageData = rawData.flatMap { Self.clampImageTo3x2($0) } ?? rawData
         }
 
         // Return nil if we got nothing useful
@@ -67,6 +69,29 @@ final class LinkMetadataFetcher {
             description: description,
             imageData: imageData
         )
+    }
+
+    /// Crop image to at most 3:2 aspect ratio, center-cropping excess height.
+    private static func clampImageTo3x2(_ data: Data) -> Data? {
+        guard let image = NSImage(data: data),
+              let rep = image.representations.first else { return nil }
+        let w = CGFloat(rep.pixelsWide)
+        let h = CGFloat(rep.pixelsHigh)
+        guard w > 0 && h > 0 else { return nil }
+
+        let minRatio: CGFloat = 3.0 / 2.0
+        let ratio = w / h
+        guard ratio < minRatio else { return nil } // already wide enough
+
+        let croppedH = w / minRatio
+        let cropY = (h - croppedH) / 2.0
+        let cropRect = CGRect(x: 0, y: cropY, width: w, height: croppedH)
+
+        guard let cgImage = image.cgImage(forProposedRect: nil, context: nil, hints: nil)?
+            .cropping(to: cropRect) else { return nil }
+
+        let cropped = NSBitmapImageRep(cgImage: cgImage)
+        return cropped.representation(using: .jpeg, properties: [.compressionFactor: 0.85])
     }
 }
 
