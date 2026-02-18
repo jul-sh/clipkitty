@@ -356,6 +356,11 @@ jobs:
               security delete-certificate -Z "$HASH" ~/Library/Keychains/signing_temp.keychain-db 2>/dev/null || true
             fi
           done
+          # Restore signing_temp to search list (the app_signing import above drops it)
+          security list-keychains -d user -s \
+            ~/Library/Keychains/signing_temp.keychain-db \
+            ~/Library/Keychains/app_signing.keychain-db \
+            ~/Library/Keychains/login.keychain-db
 
       - name: Install Nix
         uses: DeterminateSystems/nix-installer-action@main
