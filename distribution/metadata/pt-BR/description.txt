@@ -1,0 +1,25 @@
+Pare de adivinhar. Comece a encontrar.
+
+A maioria dos gerenciadores de área de transferência apaga seu histórico após alguns dias ou limita você a um punhado de itens. O ClipKitty foi criado para o usuário avançado que precisa de um arquivo infinito e pesquisável de tudo que já copiou.
+
+POR QUE O CLIPKITTY?
+
+Histórico Ilimitado — Sem limites, sem restrições. Se você copiou algo há um ano, ainda está lá. Texto, código, links, cores — nada expira, nada é cortado.
+
+Visualizações Multilinha — Pare de trabalhar às cegas com trechos de uma única linha. Veja blocos de código completos, e-mails e textos com vários parágrafos em um painel de visualização dedicado antes de colar.
+
+Busca Instantânea — Encontre qualquer trecho em milissegundos, mesmo em uma biblioteca com milhões de itens. A busca aproximada garante que erros de digitação não te atrasem. Digite "improt" e encontre "import".
+
+Privacidade em Primeiro Lugar — Seus dados nunca saem do seu Mac. Sem sincronização em nuvem, sem análises, sem telemetria. Tudo fica no dispositivo, sempre.
+
+Nativo e Rápido — Desenvolvido com Swift e Rust, otimizado para Apple Silicon. Roda silenciosamente na sua barra de menus com uso mínimo de memória e zero de CPU quando inativo.
+
+Código Aberto — O ClipKitty é totalmente open source. Cada linha de código é pública e auditável.
+
+FLUXO DE TRABALHO COM TECLADO
+
+Option+Espaço para chamar seu histórico. Teclas de seta para navegar. Return para colar. Command+1 a 9 para pular. Nenhum mouse necessário.
+
+Observação: Na versão da Mac App Store, após selecionar um item da área de transferência, pressione Command+V para colá-lo no app de destino. Isso é exigido pelas restrições de segurança do sandbox do macOS.
+
+O ClipKitty é o gerenciador de área de transferência que trabalha tão duro quanto você.
