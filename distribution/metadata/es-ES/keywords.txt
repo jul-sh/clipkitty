@@ -1,0 +1,1 @@
+portapapeles,historial,gestor,copiar,pegar,buscar,fragmentos,vista previa,productividad,archivo

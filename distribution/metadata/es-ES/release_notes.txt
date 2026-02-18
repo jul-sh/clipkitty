@@ -1,0 +1,7 @@
+Presentamos ClipKitty.
+
+- Historial de portapapeles ilimitado — nada caduca, nada se trunca
+- Búsqueda aproximada instantánea en todo tu archivo
+- Panel de vista previa multilínea para código, texto y enlaces
+- Controlado por teclado: Opción+Espacio para abrir, Retorno para pegar
+- Completamente privado — tus datos nunca salen de tu Mac
