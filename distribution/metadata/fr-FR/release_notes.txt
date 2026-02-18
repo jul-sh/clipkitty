@@ -1,0 +1,7 @@
+Voici ClipKitty.
+
+- Historique de presse-papiers illimité — rien n'expire, rien n'est tronqué
+- Recherche approximative instantanée dans toute votre archive
+- Volet d'aperçu multiligne pour le code, le texte et les liens
+- Piloté au clavier : Option+Espace pour ouvrir, Retour pour coller
+- Entièrement privé — vos données ne quittent jamais votre Mac
