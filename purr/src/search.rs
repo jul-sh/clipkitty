@@ -245,7 +245,12 @@ pub(crate) fn highlight_candidate(
                 let wmk = does_word_match(qw, doc_word, allow_prefix);
                 if wmk != WordMatchKind::None {
                     matched_query_words[qi] = true;
-                    word_highlights.push((*char_start, *char_end, word_match_to_highlight_kind(wmk)));
+                    // Only highlight word tokens directly. Punctuation tokens (match_weight=0)
+                    // are included via the bridging pass when they fall between word highlights,
+                    // preventing random punctuation elsewhere from being highlighted.
+                    if is_word_token(qw) {
+                        word_highlights.push((*char_start, *char_end, word_match_to_highlight_kind(wmk)));
+                    }
                     break; // Don't double-highlight from multiple query words
                 }
             }
