@@ -2,6 +2,10 @@
 <!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
 <plist version="1.0">
 <dict>
+    <!-- Application identifier for App Store / TestFlight -->
+    <key>com.apple.application-identifier</key>
+    <string>ANBBV7LQ2P.com.eviljuliette.clipkitty</string>
+
     <!-- macOS App Sandbox enabled -->
     <!-- Note: Sandboxed version cannot simulate Cmd+V paste keystroke -->
     <key>com.apple.security.app-sandbox</key>
