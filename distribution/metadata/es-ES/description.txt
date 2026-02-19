@@ -1,25 +1,8 @@
-Deja de adivinar. Empieza a encontrar.
+La mayoría de los gestores de portapapeles eliminan tu historial después de unos días o solo conservan un historial corto. ClipKitty lo guarda todo y te permite encontrarlo al instante.
 
-La mayoría de los gestores de portapapeles eliminan tu historial después de unos días o te limitan a unos pocos elementos. ClipKitty está diseñado para el usuario avanzado que necesita un archivo infinito y con búsqueda de todo lo que ha copiado alguna vez.
-
-¿POR QUÉ CLIPKITTY?
-
-Historial Ilimitado — Sin topes, sin límites. Si lo copiaste hace un año, sigue ahí. Texto, código, enlaces, colores — nada caduca, nada se trunca.
-
-Vistas Multilínea — Deja de trabajar a ciegas con fragmentos de una sola línea. Ve bloques de código completos, correos y textos de varios párrafos en un panel de vista previa dedicado antes de pegar.
-
-Búsqueda Instantánea — Encuentra cualquier fragmento en milisegundos, incluso en una biblioteca de millones. La búsqueda aproximada hace que los errores tipográficos no te frenen. Escribe "improt" y encuentra "import".
-
-Privacidad Ante Todo — Tus datos nunca salen de tu Mac. Sin sincronización en la nube, sin analíticas, sin telemetría. Todo permanece en el dispositivo, siempre.
-
-Nativo y Rápido — Desarrollado con Swift y Rust, optimizado para Apple Silicon. Se ejecuta silenciosamente en tu barra de menús con memoria mínima y cero CPU en reposo.
-
-Código Abierto — ClipKitty es completamente de código abierto. Cada línea de código es pública y auditable.
-
-FLUJO DE TRABAJO CON TECLADO
-
-Opción+Espacio para invocar tu historial. Teclas de flecha para navegar. Retorno para pegar. Comando+1 al 9 para saltar. No se necesita ratón.
-
-Nota: En la versión de Mac App Store, tras seleccionar un elemento del portapapeles, pulsa Comando+V para pegarlo en tu app de destino. Esto es requerido por las restricciones de seguridad del sandbox de macOS.
-
-ClipKitty es el gestor de portapapeles que trabaja tan duro como tú.
+Historial Ilimitado — Sin topes, sin límites. Si lo copiaste hace un año, sigue ahí. Texto, imágenes, enlaces, colores; nada caduca, nada se trunca.
+Vistas Multilínea — Ve exactamente lo que vas a pegar en un panel de vista previa dedicado.
+Búsqueda Instantánea — Encuentra cualquier fragmento en milisegundos, ya sea que busques entre diez elementos o diez millones. Pensado para quienes copian muchas cosas y necesitan volver a encontrarlas.
+Flujo de trabajo con teclado. — Optimizado para la velocidad con acceso mediante ⌥Space.
+Seguro y Privado — Tus datos nunca salen de tu equipo. ClipKitty funciona completamente en el dispositivo, sin sincronización en la nube, sin telemetría y sin suscripciones.
+Transparente y Abierto. — Licencia permisiva con código fuente disponible en GitHub. Apoya el desarrollo comprando a través del App Store.

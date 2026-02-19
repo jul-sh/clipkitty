@@ -1,1 +1,1 @@
-ClipKitty: Gestor de Portapapeles
+ClipKitty

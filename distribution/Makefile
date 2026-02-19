@@ -29,7 +29,7 @@ PROVISIONING_PROFILE ?=
 # All supported screenshot locales (App Store top 10)
 SCREENSHOT_LOCALES := en es zh-Hans zh-Hant ja ko fr de pt-BR ru
 
-.PHONY: dmg appstore icon-png \
+.PHONY: dmg appstore publish icon-png \
         synthetic-data run-synthetic marketing marketing-screenshots \
         marketing-screenshots-capture marketing-screenshots-localized \
         preview-video
@@ -81,6 +81,26 @@ appstore:
 		--sign "$(INSTALLER_IDENTITY)" \
 		"$(PROJECT_ROOT)/$(APP_NAME).pkg"
 	@echo "App Store package created: $(APP_NAME).pkg"
+
+# ============================================================================
+# Publish to App Store Connect (binary + metadata + screenshots)
+# ============================================================================
+# Usage:
+#   make -C distribution publish                    # Upload pkg + metadata + screenshots
+#   make -C distribution publish PUBLISH_FLAGS=--dry-run        # Preview without uploading
+#   make -C distribution publish PUBLISH_FLAGS=--metadata-only  # Metadata & screenshots only
+#
+# Requires:
+#   - AGE_SECRET_KEY env var (age private key for decrypting secrets/*.age)
+#   - ClipKitty.pkg at project root (from `make -C distribution appstore`)
+#   - An App Store version in PREPARE_FOR_SUBMISSION state
+#   - asc CLI installed (distribution/install-deps.sh)
+# ============================================================================
+
+PUBLISH_FLAGS ?=
+
+publish:
+	@$(DIST_DIR)/publish.py $(PUBLISH_FLAGS)
 
 # ============================================================================
 # Marketing Assets (Screenshots & Preview Video)
