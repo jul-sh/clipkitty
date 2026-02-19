@@ -1,1 +1,1 @@
-área de transferência,histórico,gerenciador,copiar,colar,buscar,trechos,visualização,produtividade,arquivo
+área de transferência,histórico,gerenciador,copiar,colar,buscar,trechos,produtividade
