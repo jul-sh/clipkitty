@@ -396,61 +396,11 @@ jobs:
       - name: Install ASC CLI
         run: brew tap rudrankriyam/tap && brew install rudrankriyam/tap/asc
 
-      - name: Authenticate with App Store Connect
-        run: |
-          echo "$ASC_PRIVATE_KEY_B64" | base64 --decode > /tmp/asc_key.p8
-          chmod 600 /tmp/asc_key.p8
+      - name: Publish to App Store Connect
+        run: make -C distribution publish
         env:
-          ASC_PRIVATE_KEY_B64: ${{ steps.secrets.outputs.NOTARY_KEY_BASE64 }}
-
-      - name: Upload binary
-        run: |
-          xcrun altool --upload-package ClipKitty.pkg \
-            --type osx \
-            --apiKey "$ASC_KEY_ID" \
-            --apiIssuer "$ASC_ISSUER_ID" \
-            --apiKeyPath /tmp/asc_key.p8
-        env:
-          ASC_KEY_ID: ${{ steps.secrets.outputs.APPSTORE_KEY_ID }}
-          ASC_ISSUER_ID: ${{ steps.secrets.outputs.NOTARY_ISSUER_ID }}
-
-      - name: Upload metadata and screenshots
-        run: |
-          # Find the editable App Store version
-          VERSION_ID=$(asc versions list \
-            --app 6759137247 --platform MAC_OS \
-            --state PREPARE_FOR_SUBMISSION \
-            --output json --pretty=false \
-            | python3 -c "import sys,json; print(json.load(sys.stdin)[0]['id'])")
-
-          # Assemble metadata + screenshots for import
-          IMPORT_DIR=$(mktemp -d)
-          ln -s "$GITHUB_WORKSPACE/distribution/metadata" "$IMPORT_DIR/metadata"
-          declare -A LOCALE_MAP=(
-            [en]=en-US [es]=es-ES [de]=de-DE [fr]=fr-FR
-            [ja]=ja [ko]=ko [pt-BR]=pt-BR [ru]=ru
-            [zh-Hans]=zh-Hans [zh-Hant]=zh-Hant
-          )
-          for dir in marketing/*/; do
-            locale=$(basename "$dir")
-            asc_locale="${LOCALE_MAP[$locale]:-$locale}"
-            mkdir -p "$IMPORT_DIR/screenshots/$asc_locale"
-            cp "$dir"screenshot_*.png "$IMPORT_DIR/screenshots/$asc_locale/"
-          done
-
-          asc migrate import \
-            --app 6759137247 \
-            --version-id "$VERSION_ID" \
-            --fastlane-dir "$IMPORT_DIR"
-
-          rm -rf "$IMPORT_DIR"
-        env:
-          ASC_KEY_ID: ${{ steps.secrets.outputs.APPSTORE_KEY_ID }}
-          ASC_ISSUER_ID: ${{ steps.secrets.outputs.NOTARY_ISSUER_ID }}
-          ASC_PRIVATE_KEY_PATH: /tmp/asc_key.p8
+          AGE_SECRET_KEY: ${{ secrets.AGE_SECRET_KEY }}
 
       - name: Cleanup
         if: always()
-        run: |
-          rm -f "$GITHUB_WORKSPACE/ClipKitty.provisionprofile"
-          rm -f /tmp/asc_key.p8
+        run: rm -f "$GITHUB_WORKSPACE/ClipKitty.provisionprofile"

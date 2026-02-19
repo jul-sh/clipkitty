@@ -1,25 +1,8 @@
-Fini les approximations. Place à la précision.
+La plupart des gestionnaires de presse-papiers suppriment votre historique au bout de quelques jours ou ne conservent qu'un historique limité. ClipKitty conserve tout et vous permet de retrouver n'importe quoi instantanément.
 
-La plupart des gestionnaires de presse-papiers suppriment votre historique après quelques jours ou vous limitent à une poignée d'éléments. ClipKitty est conçu pour l'utilisateur avancé qui a besoin d'une archive infinie et consultable de tout ce qu'il a copié.
-
-POURQUOI CLIPKITTY ?
-
-Historique Illimité — Aucun plafond, aucune limite. Si vous l'avez copié il y a un an, il est toujours là. Texte, code, liens, couleurs — rien n'expire, rien n'est tronqué.
-
-Aperçus Multilignes — Fini de travailler à l'aveugle avec des extraits sur une seule ligne. Visualisez des blocs de code complets, des e-mails et des textes sur plusieurs paragraphes dans un volet d'aperçu dédié avant de coller.
-
-Recherche Instantanée — Trouvez n'importe quel extrait en quelques millisecondes, même dans une bibliothèque de millions d'éléments. La recherche approximative fait que les fautes de frappe ne vous ralentissent plus. Tapez « improt » et trouvez « import ».
-
-Confidentialité Avant Tout — Vos données ne quittent jamais votre Mac. Pas de synchronisation cloud, pas d'analyses, pas de télémétrie. Tout reste sur l'appareil, en permanence.
-
-Natif et Rapide — Développé avec Swift et Rust, optimisé pour Apple Silicon. S'exécute discrètement dans votre barre des menus avec une mémoire minimale et zéro CPU au repos.
-
-Open Source — ClipKitty est entièrement open source. Chaque ligne de code est publique et auditable.
-
-FLUX DE TRAVAIL AU CLAVIER
-
-Option+Espace pour invoquer votre historique. Touches fléchées pour naviguer. Retour pour coller. Commande+1 à 9 pour sauter. Aucune souris requise.
-
-Remarque : Dans la version Mac App Store, après avoir sélectionné un élément du presse-papiers, appuyez sur Commande+V pour le coller dans votre app cible. Ceci est requis par les restrictions de sécurité du sandbox de macOS.
-
-ClipKitty est le gestionnaire de presse-papiers qui travaille aussi dur que vous.
+Historique Illimité — Aucun plafond, aucune limite. Si vous l'avez copié il y a un an, il est toujours là. Texte, images, liens, couleurs ; rien n'expire, rien n'est tronqué.
+Aperçus Multilignes — Voyez exactement ce que vous allez coller dans un volet d'aperçu dédié.
+Recherche Instantanée — Trouvez n'importe quel extrait en quelques millisecondes, que vous filtriez dix éléments ou dix millions. Conçu pour ceux qui copient beaucoup et ont besoin de tout retrouver.
+Flux de travail au clavier. — Optimisé pour la rapidité avec un accès par ⌥Space.
+Sécurisé et Confidentiel — Vos données ne quittent jamais votre machine. ClipKitty fonctionne entièrement en local, sans synchronisation cloud, sans télémétrie et sans abonnement.
+Transparent et Ouvert. — Licence permissive avec code source disponible sur GitHub. Soutenez le développement en achetant via l'App Store.
