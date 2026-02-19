@@ -5,4 +5,4 @@ Multi-Line Previews — See exactly what you'll paste in a dedicated preview pan
 Instant Search — Find any snippet in milliseconds, whether you're filtering through ten items or ten million. Built for people who copy lots of things and need to find them again.
 Keyboard-driven workflow. — Optimized for speed with ⌥Space access.
 Secure & Private — Your data never leaves your machine. ClipKitty operates entirely on-device with no cloud syncing, no telemetry, and no subscriptions.
-Transparent and Open. — Permissive license with source code available on GitHub. Support development by purchasing through the App Store.
+Transparent and Open. — Permissive license with publicly available source code. Support development by purchasing through the App Store.
