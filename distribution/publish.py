@@ -10,6 +10,9 @@ Usage:
   AGE_SECRET_KEY="AGE-SECRET-KEY-..." ./distribution/publish.py
   AGE_SECRET_KEY="AGE-SECRET-KEY-..." ./distribution/publish.py --dry-run
   AGE_SECRET_KEY="AGE-SECRET-KEY-..." ./distribution/publish.py --metadata-only
+
+If whatsNew cannot be set (e.g. first-ever submission), the script
+automatically retries without release_notes.txt.
 """
 
 import argparse
@@ -61,8 +64,6 @@ def main():
     parser = argparse.ArgumentParser(description="Publish to App Store Connect")
     parser.add_argument("--dry-run", action="store_true", help="Preview without uploading")
     parser.add_argument("--metadata-only", action="store_true", help="Skip binary upload")
-    parser.add_argument("--skip-release-notes", action="store_true",
-                        help="Exclude release_notes.txt (required for first-ever App Store submission)")
     args = parser.parse_args()
 
     # --- Validate prerequisites ---
@@ -158,12 +159,6 @@ def main():
         import_dir = tempfile.mkdtemp()
         import_metadata = os.path.join(import_dir, "metadata")
         shutil.copytree(METADATA_DIR, import_metadata)
-        if args.skip_release_notes:
-            for root, _, files in os.walk(import_metadata):
-                for f in files:
-                    if f == "release_notes.txt":
-                        os.unlink(os.path.join(root, f))
-            print("Skipping release_notes.txt (first submission)")
         screenshots_dir = os.path.join(import_dir, "screenshots")
         os.makedirs(screenshots_dir)
 
@@ -201,7 +196,17 @@ def main():
             print(f"  Screenshots: {screenshot_count} files")
             run(import_cmd + ["--dry-run"])
         else:
-            run(import_cmd)
+            r = run(import_cmd, check=False, capture=True)
+            if r.returncode != 0 and "whatsNew" in r.stderr and "cannot be edited" in r.stderr:
+                print("whatsNew rejected (first submission), retrying without release notes...")
+                for root, _, files in os.walk(import_metadata):
+                    for f in files:
+                        if f == "release_notes.txt":
+                            os.unlink(os.path.join(root, f))
+                run(import_cmd)
+            elif r.returncode != 0:
+                print(r.stderr, file=sys.stderr)
+                sys.exit(r.returncode)
             print("Metadata and screenshots uploaded.")
 
         print("\n=== Publish complete ===")
