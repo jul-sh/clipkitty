@@ -1,1 +1,1 @@
-ClipKitty: Zwischenablage-Manager
+ClipKitty
