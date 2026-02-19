@@ -597,19 +597,33 @@ final class ClipKittyUITests: XCTestCase {
             return
         }
 
-        // Upscale to exactly 2880×1800 using bicubic interpolation
+        // Upscale to exactly 2880×1800 pixels using a bitmap context.
+        // NSImage.lockFocus() scales with the display's backing factor (2x on Retina),
+        // which would produce 5760×3600 on CI's virtual HiDPI display.
         let finalWidth = 2880
         let finalHeight = 1800
-        let finalImage = NSImage(size: NSSize(width: finalWidth, height: finalHeight))
-        finalImage.lockFocus()
+        guard let bitmapRep = NSBitmapImageRep(
+            bitmapDataPlanes: nil,
+            pixelsWide: finalWidth,
+            pixelsHigh: finalHeight,
+            bitsPerSample: 8,
+            samplesPerPixel: 4,
+            hasAlpha: true,
+            isPlanar: false,
+            colorSpaceName: .deviceRGB,
+            bytesPerRow: 0,
+            bitsPerPixel: 0
+        ) else { return }
+        bitmapRep.size = NSSize(width: finalWidth, height: finalHeight)
+
+        NSGraphicsContext.saveGraphicsState()
+        NSGraphicsContext.current = NSGraphicsContext(bitmapImageRep: bitmapRep)
         NSGraphicsContext.current?.imageInterpolation = .high
         NSImage(cgImage: cropped, size: NSSize(width: cropped.width, height: cropped.height))
             .draw(in: NSRect(x: 0, y: 0, width: finalWidth, height: finalHeight))
-        finalImage.unlockFocus()
+        NSGraphicsContext.restoreGraphicsState()
 
-        if let tiff = finalImage.tiffRepresentation,
-           let bitmap = NSBitmapImageRep(data: tiff),
-           let png = bitmap.representation(using: .png, properties: [:]) {
+        if let png = bitmapRep.representation(using: .png, properties: [:]) {
             let localePrefix = screenshotLocale.map { "\($0)_" } ?? ""
             let url = URL(fileURLWithPath: "/tmp/clipkitty_\(localePrefix)\(name).png")
             try? png.write(to: url)
