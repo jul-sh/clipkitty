@@ -5,4 +5,4 @@ Vistas Multilínea — Ve exactamente lo que vas a pegar en un panel de vista pr
 Búsqueda Instantánea — Encuentra cualquier fragmento en milisegundos, ya sea que busques entre diez elementos o diez millones. Pensado para quienes copian muchas cosas y necesitan volver a encontrarlas.
 Flujo de trabajo con teclado. — Optimizado para la velocidad con acceso mediante ⌥Space.
 Seguro y Privado — Tus datos nunca salen de tu equipo. ClipKitty funciona completamente en el dispositivo, sin sincronización en la nube, sin telemetría y sin suscripciones.
-Transparente y Abierto. — Licencia permisiva con código fuente disponible en GitHub. Apoya el desarrollo comprando a través del App Store.
+Transparente y Abierto. — Licencia permisiva con código fuente disponible públicamente. Apoya el desarrollo comprando a través del App Store.
