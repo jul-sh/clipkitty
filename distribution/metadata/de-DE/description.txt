@@ -5,4 +5,4 @@ Mehrzeilige Vorschau — Sieh genau, was du einfügen wirst, in einem eigenen Vo
 Sofortige Suche — Finde jeden Eintrag in Millisekunden, egal ob du zehn oder zehn Millionen Einträge durchsuchst. Entwickelt für alle, die viel kopieren und es wiederfinden müssen.
 Tastaturgesteuerter Workflow. — Optimiert für Geschwindigkeit mit ⌥Space-Zugriff.
 Sicher & Privat — Deine Daten verlassen nie deinen Rechner. ClipKitty arbeitet vollständig lokal, ohne Cloud-Synchronisation, ohne Telemetrie und ohne Abonnements.
-Transparent und Offen. — Freizügige Lizenz mit öffentlich verfügbarem Quellcode auf GitHub. Unterstütze die Entwicklung durch einen Kauf im App Store.
+Transparent und Offen. — Freizügige Lizenz mit öffentlich verfügbarem Quellcode. Unterstütze die Entwicklung durch einen Kauf im App Store.

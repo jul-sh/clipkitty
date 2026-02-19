@@ -5,4 +5,4 @@ Aperçus Multilignes — Voyez exactement ce que vous allez coller dans un volet
 Recherche Instantanée — Trouvez n'importe quel extrait en quelques millisecondes, que vous filtriez dix éléments ou dix millions. Conçu pour ceux qui copient beaucoup et ont besoin de tout retrouver.
 Flux de travail au clavier. — Optimisé pour la rapidité avec un accès par ⌥Space.
 Sécurisé et Confidentiel — Vos données ne quittent jamais votre machine. ClipKitty fonctionne entièrement en local, sans synchronisation cloud, sans télémétrie et sans abonnement.
-Transparent et Ouvert. — Licence permissive avec code source disponible sur GitHub. Soutenez le développement en achetant via l'App Store.
+Transparent et Ouvert. — Licence permissive avec code source disponible publiquement. Soutenez le développement en achetant via l'App Store.
