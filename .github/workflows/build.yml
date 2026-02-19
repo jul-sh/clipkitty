@@ -405,16 +405,14 @@ jobs:
 
       - name: Upload binary
         run: |
-          asc builds upload \
-            --app 6759137247 \
-            --pkg ClipKitty.pkg \
-            --version "${{ needs.build.outputs.version }}" \
-            --build-number "$(git rev-list --count HEAD)" \
-            --wait
+          xcrun altool --upload-package ClipKitty.pkg \
+            --type osx \
+            --apiKey "$ASC_KEY_ID" \
+            --apiIssuer "$ASC_ISSUER_ID" \
+            --apiKeyPath /tmp/asc_key.p8
         env:
           ASC_KEY_ID: ${{ steps.secrets.outputs.APPSTORE_KEY_ID }}
           ASC_ISSUER_ID: ${{ steps.secrets.outputs.NOTARY_ISSUER_ID }}
-          ASC_PRIVATE_KEY_PATH: /tmp/asc_key.p8
 
       - name: Upload metadata and screenshots
         run: |
