@@ -1,8 +1,8 @@
 //! Milli-style bucket ranking for search results.
 //!
 //! Implements a lexicographic tuple where higher-priority signals always dominate
-//! lower ones. 3/3 words ALWAYS beats 2/3, 0 typos ALWAYS beats 1 typo, etc.
-//! Recency tiers sit above proximity/exactness/bm25 to strongly prefer recent items
+//! lower ones. 3/3 words ALWAYS beats 2/3, forward word order ALWAYS beats reversed, etc.
+//! Recency sits above typo/proximity/exactness/bm25 to strongly prefer recent items
 //! when word-match quality is equal.
 
 use crate::search::is_word_token;
@@ -12,15 +12,17 @@ use crate::search::is_word_token;
 ///
 /// Tuple order (most to least important):
 /// 1. words_matched_weight — sum of len² for each matched query word (IDF proxy)
-/// 2. recency_score — smooth exponential decay (255=now, 0=old), no cliff edges
-/// 3. typo_score — 255 - total_edit_distance (fewer typos = higher)
-/// 4. proximity_score — u16::MAX - sum_of_pair_distances
-/// 5. exactness_score — 0-6 level (prefix-of-content and anchored sequence rank highest)
-/// 6. bm25_quantized — BM25 scaled to integer
-/// 7. recency — raw unix timestamp (final tiebreaker)
+/// 2. in_sequence — 1 if matched words appear in query order, 0 if reversed/mixed
+/// 3. recency_score — smooth exponential decay (255=now, 0=old), no cliff edges
+/// 4. typo_score — 255 - total_edit_distance (fewer typos = higher)
+/// 5. proximity_score — u16::MAX - sum_of_pair_distances
+/// 6. exactness_score — 0-6 level (prefix-of-content and anchored sequence rank highest)
+/// 7. bm25_quantized — BM25 scaled to integer
+/// 8. recency — raw unix timestamp (final tiebreaker)
 #[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord)]
 pub struct BucketScore {
     pub words_matched_weight: u16,
+    pub in_sequence: u8,
     pub recency_score: u8,
     pub typo_score: u8,
     pub proximity_score: u16,
@@ -57,6 +59,7 @@ pub fn compute_bucket_score(
     if query_words.is_empty() {
         return BucketScore {
             words_matched_weight: 0,
+            in_sequence: 1,
             recency_score: compute_recency_score(timestamp, now),
             typo_score: 255,
             proximity_score: u16::MAX,
@@ -79,6 +82,7 @@ pub fn compute_bucket_score(
         .sum();
     let typo_score = 255u8.saturating_sub(total_edit_dist);
 
+    let in_sequence = compute_in_sequence(&word_matches);
     let proximity_score = compute_proximity(&word_matches);
     let exactness_score = compute_exactness(content_lower, query_words, &word_matches);
     let bm25_quantized = quantize_bm25(bm25_score);
@@ -86,6 +90,7 @@ pub fn compute_bucket_score(
 
     BucketScore {
         words_matched_weight,
+        in_sequence,
         recency_score,
         typo_score,
         proximity_score,
@@ -119,6 +124,22 @@ fn compute_recency_score(timestamp: i64, now: i64) -> u8 {
     let denom = (1.0 + k * max_hours).ln();
     let score = 255.0 * (1.0 - (1.0 + k * age_hours).ln() / denom);
     score.round().clamp(0.0, 255.0) as u8
+}
+
+/// Whether matched words appear in forward (query) order in the document.
+/// Returns 1 if words are in sequence or if fewer than 2 words matched
+/// (single-word queries have no ordering to check). Returns 0 if any
+/// matched word appears before a preceding matched word in the document.
+fn compute_in_sequence(word_matches: &[WordMatch]) -> u8 {
+    let positions: Vec<usize> = word_matches
+        .iter()
+        .filter(|m| m.matched)
+        .map(|m| m.doc_word_pos)
+        .collect();
+    if positions.len() < 2 {
+        return 1;
+    }
+    if positions.windows(2).all(|w| w[1] > w[0]) { 1 } else { 0 }
 }
 
 /// Quantize BM25 score to u16 for the tiebreaker bucket.
@@ -905,6 +926,7 @@ mod tests {
     #[test]
     fn test_recency_dominates_typo() {
         let now = 1700000000i64;
+        // Single-word query: both items have in_sequence=1, so recency decides.
         // Typo match from now vs exact match from 10 days ago
         let typo_new = score(
             "riversde park", &["riverside"], false, now, 1.0, now,
@@ -912,7 +934,7 @@ mod tests {
         let exact_old = score(
             "riverside park", &["riverside"], false, now - 864000, 1.0, now,
         );
-        assert!(typo_new > exact_old, "Recent fuzzy match should beat old exact match");
+        assert!(typo_new > exact_old, "Recent fuzzy match should beat old exact match (single-word, recency dominates)");
     }
 
     #[test]
@@ -966,11 +988,52 @@ mod tests {
             "hello world", &["hello", "world"], false, now, 5.0, now,
         );
         assert_eq!(s.words_matched_weight, 50); // 5² + 5² = 50
+        assert_eq!(s.in_sequence, 1); // "hello" at pos 0, "world" at pos 1: forward order
         assert_eq!(s.recency_score, 255); // just now
         assert_eq!(s.typo_score, 255);
         assert_eq!(s.proximity_score, u16::MAX - 1);
         assert_eq!(s.exactness_score, 6); // "hello world" starts with "hello world"
         assert_eq!(s.bm25_quantized, 500); // 5.0 * 100
+    }
+
+    // ── in_sequence tests ─────────────────────────────────────────
+
+    #[test]
+    fn test_in_sequence_dominates_recency() {
+        let now = 1700000000i64;
+        // "copy and paste" has words in query order; "paste before copy" is reversed.
+        // Forward order should win even though the reversed item is much more recent.
+        let forward_old = score(
+            "copy and paste", &["copy", "paste"], false, now - 10800, 1.0, now, // 3 hours ago
+        );
+        let reversed_new = score(
+            "paste before copy", &["copy", "paste"], false, now - 300, 1.0, now, // 5 min ago
+        );
+        assert_eq!(forward_old.in_sequence, 1);
+        assert_eq!(reversed_new.in_sequence, 0);
+        assert!(forward_old > reversed_new, "Forward word order should beat reversed regardless of recency");
+    }
+
+    #[test]
+    fn test_in_sequence_single_word_always_1() {
+        let now = 1700000000i64;
+        let s = score("hello world", &["hello"], false, now, 1.0, now);
+        assert_eq!(s.in_sequence, 1, "Single-word queries should always be in_sequence=1");
+    }
+
+    #[test]
+    fn test_in_sequence_no_effect_when_both_forward() {
+        let now = 1700000000i64;
+        // Both items have words in forward order — recency should decide as before.
+        let exact_old = score(
+            "meeting notes from standup", &["meeting", "notes"], false, now - 21600, 1.0, now, // 6h
+        );
+        let fuzzy_new = score(
+            "meetng notes draft", &["meeting", "notes"], false, now - 1200, 1.0, now, // 20min
+        );
+        assert_eq!(exact_old.in_sequence, 1);
+        assert_eq!(fuzzy_new.in_sequence, 1);
+        assert!(fuzzy_new > exact_old, "When both in sequence, recency should still decide");
     }
 
     // ── new exactness level 6 & 5 tests ─────────────────────────
