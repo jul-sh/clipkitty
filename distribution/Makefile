@@ -29,7 +29,7 @@ PROVISIONING_PROFILE ?=
 # All supported screenshot locales (App Store top 10)
 SCREENSHOT_LOCALES := en es zh-Hans zh-Hant ja ko fr de pt-BR ru
 
-.PHONY: dmg appstore publish icon-png \
+.PHONY: dmg appstore appstore-publish publish icon-png \
         synthetic-data run-synthetic marketing marketing-screenshots \
         marketing-screenshots-capture marketing-screenshots-localized \
         preview-video
@@ -101,6 +101,45 @@ PUBLISH_FLAGS ?=
 
 publish:
 	@$(DIST_DIR)/publish.py $(PUBLISH_FLAGS)
+
+# ============================================================================
+# Combined: Build + Publish to App Store Connect
+# ============================================================================
+# Usage (local):
+#   AGE_SECRET_KEY=... make -C distribution appstore-publish VERSION=1.2.3
+#
+# Usage (with explicit provisioning profile):
+#   AGE_SECRET_KEY=... make -C distribution appstore-publish \
+#     PROVISIONING_PROFILE=path/to/profile VERSION=1.2.3
+#
+# If PROVISIONING_PROFILE is not set but AGE_SECRET_KEY is available,
+# the provisioning profile is auto-decrypted from secrets/.
+# ============================================================================
+
+appstore-publish:
+	@if [ -z "$$AGE_SECRET_KEY" ]; then \
+		AGE_SECRET_KEY=$$(security find-generic-password -s clipkitty -a AGE_SECRET_KEY -w 2>/dev/null) || true; \
+	fi; \
+	export AGE_SECRET_KEY; \
+	$(DIST_DIR)/setup-signing.sh; \
+	PROV="$(PROVISIONING_PROFILE)"; \
+	if [ -z "$$PROV" ] && [ -n "$$AGE_SECRET_KEY" ]; then \
+		echo "Decrypting provisioning profile from secrets..."; \
+		printf '%s' "$$AGE_SECRET_KEY" > /tmp/_ck_age.txt; \
+		age -d -i /tmp/_ck_age.txt "$(PROJECT_ROOT)/secrets/PROVISION_PROFILE_BASE64.age" \
+			| base64 --decode > "$(PROJECT_ROOT)/ClipKitty.provisionprofile"; \
+		rm -f /tmp/_ck_age.txt; \
+		PROV="$(PROJECT_ROOT)/ClipKitty.provisionprofile"; \
+	fi; \
+	AGE_SECRET_KEY_SAVE=$$AGE_SECRET_KEY; unset AGE_SECRET_KEY; \
+	$(MAKE) appstore \
+		$${PROV:+PROVISIONING_PROFILE=$$PROV} \
+		$(if $(VERSION),VERSION=$(VERSION),) \
+		$(if $(BUILD_NUMBER),BUILD_NUMBER=$(BUILD_NUMBER),) && \
+	AGE_SECRET_KEY=$$AGE_SECRET_KEY_SAVE $(MAKE) publish $(if $(PUBLISH_FLAGS),PUBLISH_FLAGS=$(PUBLISH_FLAGS),); \
+	STATUS=$$?; \
+	$(DIST_DIR)/setup-signing.sh --cleanup; \
+	exit $$STATUS
 
 # ============================================================================
 # Marketing Assets (Screenshots & Preview Video)
