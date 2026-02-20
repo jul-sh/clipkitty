@@ -42,13 +42,14 @@ place.
 |------|-----------|-----------|
 | **4** | Content starts with query (prefix), OR first word anchored + forward sequence | Old exactness 6, 5 |
 | **3** | Full query is contiguous substring anywhere, OR acronym match (Step 5) | Old exactness 4, acronym |
-| **2** | All words matched exact or prefix (0 edit distance), forward order | Old exactness 3, 2 with sequence check |
-| **1** | Everything else (scattered, reversed, heavy fuzzy) | Old exactness 1, 0 |
+| **2** | All words in forward order, each with edit distance ≤ 1 | Old exactness 3, 2 + minor fuzzy |
+| **1** | Everything else (reversed, heavy fuzzy, scattered) | Old exactness 1, 0 |
 
 No single-word exception. The tier cascade handles single words naturally:
 - `password` matching doc `password` → Tier 4 (prefix of content)
 - `password` as substring in long doc → Tier 3
-- `pasword` (typo) matching `password` → Tier 1
+- `pasword` (1 edit) matching `password` in forward position → Tier 2
+- `passwrod` (2 edits) or reversed matches → Tier 1
 
 **Implementation:**
 1. Rename `compute_exactness` → `compute_intent_tier` with the 4-tier logic.
