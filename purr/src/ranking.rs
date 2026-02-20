@@ -2,29 +2,29 @@
 //!
 //! Implements a lexicographic tuple where higher-priority signals always dominate
 //! lower ones. 3/3 words ALWAYS beats 2/3, 0 typos ALWAYS beats 1 typo, etc.
-//! Recency tiers sit above proximity/exactness/bm25 to strongly prefer recent items
-//! when word-match quality is equal.
-
-use crate::search::is_word_token;
+//! Intent tier sits above recency to strongly prefer structural matches
+//! (anchored, contiguous) over scattered matches regardless of recency.
 
 /// Bucket score tuple — derived Ord gives lexicographic comparison.
 /// All components: higher = better.
 ///
 /// Tuple order (most to least important):
 /// 1. words_matched_weight — sum of len² for each matched query word (IDF proxy)
-/// 2. recency_score — smooth exponential decay (255=now, 0=old), no cliff edges
-/// 3. typo_score — 255 - total_edit_distance (fewer typos = higher)
-/// 4. proximity_score — u16::MAX - sum_of_pair_distances
-/// 5. exactness_score — 0-6 level (prefix-of-content and anchored sequence rank highest)
-/// 6. bm25_quantized — BM25 scaled to integer
-/// 7. recency — raw unix timestamp (final tiebreaker)
+/// 2. intent_tier — 4-tier structural intent (prefix/anchored/contiguous/forward)
+/// 3. density_score — ratio of matched query chars to doc length (0-255)
+/// 4. recency_score — smooth exponential decay (255=now, 0=old), no cliff edges
+/// 5. proximity_score — u16::MAX - sum_of_pair_distances
+/// 6. typo_score — 255 - total_edit_distance (fewer typos = higher)
+/// 7. bm25_quantized — BM25 scaled to integer
+/// 8. recency — raw unix timestamp (final tiebreaker)
 #[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord)]
 pub struct BucketScore {
     pub words_matched_weight: u16,
+    pub intent_tier: u8,
+    pub density_score: u8,
     pub recency_score: u8,
-    pub typo_score: u8,
     pub proximity_score: u16,
-    pub exactness_score: u8,
+    pub typo_score: u8,
     pub bm25_quantized: u16,
     pub recency: i64,
 }
@@ -36,8 +36,8 @@ struct WordMatch {
     doc_word_pos: usize,
     is_exact: bool,
     /// Weight toward the `words_matched_weight` bucket score.
-    /// Punctuation tokens (like "://", ".") get 0 — they participate in
-    /// proximity and highlighting only. Word tokens get len² (IDF proxy).
+    /// All tokens (including punctuation) get len² weight. Punctuation tokens
+    /// are short (weight 1-4), so they differentiate matches without dominating.
     match_weight: u16,
 }
 
@@ -57,10 +57,11 @@ pub fn compute_bucket_score(
     if query_words.is_empty() {
         return BucketScore {
             words_matched_weight: 0,
+            intent_tier: 1,
+            density_score: 0,
             recency_score: compute_recency_score(timestamp, now),
-            typo_score: 255,
             proximity_score: u16::MAX,
-            exactness_score: 0,
+            typo_score: 255,
             bm25_quantized: quantize_bm25(bm25_score),
             recency: timestamp,
         };
@@ -79,17 +80,25 @@ pub fn compute_bucket_score(
         .sum();
     let typo_score = 255u8.saturating_sub(total_edit_dist);
 
+    let matched_word_lengths: Vec<usize> = word_matches.iter()
+        .zip(query_words.iter())
+        .filter(|(m, _)| m.matched)
+        .map(|(_, qw)| qw.chars().count())
+        .collect();
+
+    let density_score = compute_density_score(&matched_word_lengths, content_lower.chars().count());
     let proximity_score = compute_proximity(&word_matches);
-    let exactness_score = compute_exactness(content_lower, query_words, &word_matches);
+    let intent_tier = compute_intent_tier(content_lower, query_words, &word_matches);
     let bm25_quantized = quantize_bm25(bm25_score);
     let recency_score = compute_recency_score(timestamp, now);
 
     BucketScore {
         words_matched_weight,
+        intent_tier,
+        density_score,
         recency_score,
-        typo_score,
         proximity_score,
-        exactness_score,
+        typo_score,
         bm25_quantized,
         recency: timestamp,
     }
@@ -127,6 +136,21 @@ fn quantize_bm25(score: f32) -> u16 {
     (score * 100.0).max(0.0).min(u16::MAX as f32) as u16
 }
 
+/// Compute density score: ratio of matched query chars to document length.
+/// Higher density = shorter, more focused document where the query represents
+/// a larger fraction of the content.
+fn compute_density_score(
+    matched_word_lengths: &[usize], // char lengths of matched query words
+    doc_char_len: usize,
+) -> u8 {
+    if doc_char_len == 0 {
+        return 255;
+    }
+    let matched_chars: usize = matched_word_lengths.iter().sum();
+    let ratio = matched_chars as f64 / doc_char_len as f64;
+    (ratio * 255.0).round().clamp(0.0, 255.0) as u8
+}
+
 /// For each query word, find the best-matching document word.
 fn match_query_words(
     query_words: &[&str],
@@ -140,11 +164,20 @@ fn match_query_words(
             let qw_lower = qw.to_lowercase();
             let is_last = qi == query_words.len() - 1;
             let allow_prefix = is_last && last_word_is_prefix;
-            let match_weight = if is_word_token(qw) {
-                (qw.len() as u16).saturating_mul(qw.len() as u16)
-            } else {
-                0
-            };
+            let match_weight = (qw.len() as u16).saturating_mul(qw.len() as u16);
+
+            // Try acronym match first (before per-word matching)
+            for start_pos in 0..doc_words.len() {
+                if let Some(_words_consumed) = try_acronym_match(&qw_lower, doc_words, start_pos) {
+                    return WordMatch {
+                        matched: true,
+                        edit_dist: 0,
+                        doc_word_pos: start_pos,
+                        is_exact: false,
+                        match_weight, // full weight for acronyms
+                    };
+                }
+            }
 
             let mut best: Option<WordMatch> = None;
 
@@ -173,15 +206,14 @@ fn match_query_words(
                     WordMatchKind::Fuzzy(dist) => {
                         let is_better = best.as_ref().map_or(true, |b| dist < b.edit_dist);
                         if is_better {
-                            // Short fuzzy matches (<=3 chars) get reduced weight —
-                            // they're low-confidence and shouldn't dominate scoring.
-                            let w = if qw.len() <= 3 { 1 } else { match_weight };
+                            // Fuzzy matches get full weight for words_matched_weight.
+                            // The typo penalty is captured in edit_dist → typo_score.
                             best = Some(WordMatch {
                                 matched: true,
                                 edit_dist: dist,
                                 doc_word_pos: dpos,
                                 is_exact: false,
-                                match_weight: w,
+                                match_weight,
                             });
                         }
                     }
@@ -189,15 +221,20 @@ fn match_query_words(
                         let dist = gaps.saturating_add(1);
                         let is_better = best.as_ref().map_or(true, |b| dist < b.edit_dist);
                         if is_better {
-                            let w = if qw.len() <= 3 { 1 } else { match_weight };
+                            // Subsequence matches get full weight for words_matched_weight.
+                            // The gap penalty is captured in edit_dist → typo_score.
                             best = Some(WordMatch {
                                 matched: true,
                                 edit_dist: dist,
                                 doc_word_pos: dpos,
                                 is_exact: false,
-                                match_weight: w,
+                                match_weight,
                             });
                         }
+                    }
+                    WordMatchKind::Acronym => {
+                        // Acronym matching is handled at the multi-word level above,
+                        // so this case is unreachable in the per-word loop
                     }
                     WordMatchKind::None => {}
                 }
@@ -222,6 +259,7 @@ pub(crate) enum WordMatchKind {
     Prefix,
     Fuzzy(u8),
     Subsequence(u8),
+    Acronym,  // NEW: query matches first letters of consecutive doc words
 }
 
 /// Check if a query word matches a document word using the same criteria
@@ -246,6 +284,49 @@ pub(crate) fn does_word_match(qw_lower: &str, dw_lower: &str, allow_prefix: bool
         return WordMatchKind::Subsequence(gaps);
     }
     WordMatchKind::None
+}
+
+/// Try to match a query word as an acronym of consecutive document words.
+/// Returns the number of document words consumed if matched, None otherwise.
+///
+/// Example: "lgtm" matches "looks good to me" (4 consecutive words).
+///
+/// Guards against false positives:
+/// - Minimum query length: 3 characters
+/// - Each query char must match first char of consecutive doc word
+/// - Only alphanumeric doc words count (skip punctuation)
+fn try_acronym_match(qw: &str, doc_words: &[&str], start: usize) -> Option<usize> {
+    let q_chars: Vec<char> = qw.chars().collect();
+    if q_chars.len() < 3 {
+        return None; // min 3 chars to avoid noise
+    }
+
+    let mut qi = 0;
+    let mut doc_idx = start;
+
+    while qi < q_chars.len() && doc_idx < doc_words.len() {
+        let dw = doc_words[doc_idx];
+        // Skip punctuation tokens (only match against word tokens)
+        if !dw.starts_with(|c: char| c.is_alphanumeric()) {
+            doc_idx += 1;
+            continue;
+        }
+
+        // Check if first char of doc word matches query char (case-insensitive)
+        let dw_first = dw.chars().next()?;
+        if dw_first.to_lowercase().next()? != q_chars[qi].to_lowercase().next()? {
+            return None; // Mismatch - no gaps allowed
+        }
+
+        qi += 1;
+        doc_idx += 1;
+    }
+
+    if qi == q_chars.len() {
+        Some(doc_idx - start) // Number of doc words consumed
+    } else {
+        None
+    }
 }
 
 /// Check if all characters in `query` appear in order in `target`.
@@ -332,18 +413,17 @@ fn compute_proximity(word_matches: &[WordMatch]) -> u16 {
     u16::MAX.saturating_sub(total_distance.min(u16::MAX as u32) as u16)
 }
 
-/// Compute exactness score (0-6 scale).
-/// 6: Full query is a prefix of the content (starts_with)
-/// 5: First query word matches first doc word exactly + all matched words in forward sequence
-/// 4: Full query appears as exact substring anywhere (case-insensitive)
-/// 3: All matched words are exact (0 edit distance, exact string match)
-/// 2: All matched words are exact or prefix (0 edit distance; "typing in progress")
-/// 1: At least one exact or prefix match mixed with fuzzy
-/// 0: All matches are fuzzy only
-fn compute_exactness(content_lower: &str, query_words: &[&str], word_matches: &[WordMatch]) -> u8 {
+/// Compute intent tier (1-4 scale, higher = stronger intent).
+/// Evaluated top-down, first match wins:
+///
+/// Tier 4: Content starts with query (prefix), OR first word anchored + forward sequence
+/// Tier 3: Full query is contiguous substring anywhere (but not Tier 4)
+/// Tier 2: All words in forward order, each with edit distance ≤ 1
+/// Tier 1: Everything else (reversed, heavy fuzzy, scattered)
+fn compute_intent_tier(content_lower: &str, query_words: &[&str], word_matches: &[WordMatch]) -> u8 {
     let matched: Vec<&WordMatch> = word_matches.iter().filter(|m| m.matched).collect();
     if matched.is_empty() {
-        return 0;
+        return 1;
     }
 
     let full_query = if !query_words.is_empty() {
@@ -352,47 +432,43 @@ fn compute_exactness(content_lower: &str, query_words: &[&str], word_matches: &[
         String::new()
     };
 
-    // Level 6: query is prefix of content
+    // Tier 4: Content starts with query (prefix match)
     if !full_query.is_empty() && content_lower.starts_with(&full_query) {
-        return 6;
+        return 4;
     }
 
-    // Level 5: first word anchored at doc start, all words in forward sequence
+    // Tier 4: First word anchored at doc start + all words in forward sequence
     let all_matched = word_matches.iter().all(|m| m.matched);
-    if all_matched && word_matches.len() > 1 {
+    if all_matched && !word_matches.is_empty() {
         let first = &word_matches[0];
         if first.doc_word_pos == 0 && first.edit_dist == 0 {
-            let in_sequence = word_matches.windows(2)
+            let in_forward_sequence = word_matches.windows(2)
                 .all(|w| w[1].doc_word_pos > w[0].doc_word_pos);
-            if in_sequence {
-                return 5;
+            if in_forward_sequence {
+                return 4;
             }
         }
     }
 
-    // Level 4: full query is substring anywhere
+    // Tier 3: Full query appears as contiguous substring anywhere
     if !full_query.is_empty() && content_lower.contains(&full_query) {
-        return 4;
-    }
-
-    let all_exact = matched.iter().all(|m| m.is_exact);
-    if all_exact {
         return 3;
     }
 
-    // Prefix matches have edit_dist == 0 but is_exact == false.
-    // They represent "typing in progress" — higher intent than a fuzzy typo.
-    let all_exact_or_prefix = matched.iter().all(|m| m.edit_dist == 0);
-    if all_exact_or_prefix {
-        return 2;
+    // Tier 2: All words in forward order, each with edit distance ≤ 1
+    // Check forward order AND edit distance
+    if all_matched && !word_matches.is_empty() {
+        let in_forward_order = word_matches.windows(2)
+            .all(|w| w[1].doc_word_pos > w[0].doc_word_pos);
+        let all_edit_dist_ok = matched.iter().all(|m| m.edit_dist <= 1);
+
+        if in_forward_order && all_edit_dist_ok {
+            return 2;
+        }
     }
 
-    let any_exact_or_prefix = matched.iter().any(|m| m.edit_dist == 0);
-    if any_exact_or_prefix {
-        return 1;
-    }
-
-    0
+    // Tier 1: Everything else (reversed, scattered, heavy fuzzy)
+    1
 }
 
 /// Damerau-Levenshtein edit distance (optimal string alignment) with threshold pruning.
@@ -768,71 +844,72 @@ mod tests {
         assert_eq!(compute_proximity(&matches), u16::MAX - 3);
     }
 
-    // ── compute_exactness tests ──────────────────────────────────
+    // ── compute_intent_tier tests ────────────────────────────────
 
     #[test]
-    fn test_exactness_full_substring() {
-        // "hello world" starts with "hello world" → level 6
+    fn test_intent_tier_prefix_of_content() {
+        // "hello world" starts with "hello world" → Tier 4
         let matches = vec![
             WordMatch { matched: true, edit_dist: 0, doc_word_pos: 0, is_exact: true, match_weight: 25 },
             WordMatch { matched: true, edit_dist: 0, doc_word_pos: 1, is_exact: true, match_weight: 25 },
         ];
-        assert_eq!(compute_exactness("hello world", &["hello", "world"], &matches), 6);
+        assert_eq!(compute_intent_tier("hello world", &["hello", "world"], &matches), 4);
     }
 
     #[test]
-    fn test_exactness_all_exact_but_not_substring() {
-        // first word at pos 0, forward sequence → level 5
+    fn test_intent_tier_anchored_forward_sequence() {
+        // first word at pos 0, forward sequence → Tier 4
         let matches = vec![
             WordMatch { matched: true, edit_dist: 0, doc_word_pos: 0, is_exact: true, match_weight: 25 },
             WordMatch { matched: true, edit_dist: 0, doc_word_pos: 2, is_exact: true, match_weight: 25 },
         ];
-        assert_eq!(compute_exactness("hello beautiful world", &["hello", "world"], &matches), 5);
+        assert_eq!(compute_intent_tier("hello beautiful world", &["hello", "world"], &matches), 4);
     }
 
     #[test]
-    fn test_exactness_mix_exact_fuzzy() {
-        // first word at pos 0 exact, second fuzzy in forward sequence → level 5
+    fn test_intent_tier_anchored_with_typo() {
+        // first word at pos 0 exact, second fuzzy (edit_dist 1) in forward sequence → Tier 4
         let matches = vec![
             WordMatch { matched: true, edit_dist: 0, doc_word_pos: 0, is_exact: true, match_weight: 25 },
             WordMatch { matched: true, edit_dist: 1, doc_word_pos: 1, is_exact: false, match_weight: 25 },
         ];
-        assert_eq!(compute_exactness("hello wrld", &["hello", "world"], &matches), 5);
+        assert_eq!(compute_intent_tier("hello wrld", &["hello", "world"], &matches), 4);
     }
 
     #[test]
-    fn test_exactness_all_prefix() {
-        // Multi-word query where both match as prefix (edit_dist 0, is_exact false).
-        // First word at pos 0 with edit_dist 0, forward sequence → level 5.
+    fn test_intent_tier_anchored_prefix_sequence() {
+        // Multi-word query matches as prefix (edit_dist 0, is_exact false).
+        // First word at pos 0 with edit_dist 0, forward sequence → Tier 4 (anchored)
         let matches = vec![
             WordMatch { matched: true, edit_dist: 0, doc_word_pos: 0, is_exact: false, match_weight: 25 },
             WordMatch { matched: true, edit_dist: 0, doc_word_pos: 1, is_exact: false, match_weight: 25 },
         ];
-        assert_eq!(compute_exactness("hello world", &["hel", "wor"], &matches), 5);
+        assert_eq!(compute_intent_tier("hello world", &["hel", "wor"], &matches), 4);
     }
 
     #[test]
-    fn test_exactness_prefix_beats_fuzzy() {
-        // Prefix (level 2) should rank above all-fuzzy (level 0)
-        let prefix = vec![
+    fn test_intent_tier_anchored_beats_scattered() {
+        // Anchored (Tier 4) should rank above scattered (Tier 2 or Tier 1)
+        let anchored = vec![
             WordMatch { matched: true, edit_dist: 0, doc_word_pos: 0, is_exact: false, match_weight: 25 },
             WordMatch { matched: true, edit_dist: 0, doc_word_pos: 1, is_exact: false, match_weight: 25 },
         ];
-        let fuzzy = vec![
+        let scattered = vec![
             WordMatch { matched: true, edit_dist: 1, doc_word_pos: 0, is_exact: false, match_weight: 25 },
         ];
         assert!(
-            compute_exactness("hello world", &["hel", "wor"], &prefix)
-            > compute_exactness("hallo", &["hello"], &fuzzy)
+            compute_intent_tier("hello world", &["hel", "wor"], &anchored)
+            > compute_intent_tier("hallo", &["hello"], &scattered)
         );
     }
 
     #[test]
-    fn test_exactness_all_fuzzy() {
+    fn test_intent_tier_forward_order_with_typo() {
+        // Single word with edit_dist 1 in forward order → Tier 2
         let matches = vec![
             WordMatch { matched: true, edit_dist: 1, doc_word_pos: 0, is_exact: false, match_weight: 25 },
         ];
-        assert_eq!(compute_exactness("hallo", &["hello"], &matches), 0);
+        assert_eq!(compute_intent_tier("hallo", &["hello"], &matches), 2);
     }
 
     // ── recency_score tests ───────────────────────────────────────
@@ -903,16 +980,16 @@ mod tests {
     }
 
     #[test]
-    fn test_recency_dominates_typo() {
+    fn test_intent_dominates_recency_for_typo() {
         let now = 1700000000i64;
-        // Typo match from now vs exact match from 10 days ago
+        // V2: intent_tier dominates recency. Exact match (higher tier) beats fuzzy.
         let typo_new = score(
             "riversde park", &["riverside"], false, now, 1.0, now,
         );
         let exact_old = score(
             "riverside park", &["riverside"], false, now - 864000, 1.0, now,
         );
-        assert!(typo_new > exact_old, "Recent fuzzy match should beat old exact match");
+        assert!(exact_old > typo_new, "Exact match beats fuzzy despite recency (intent > recency)");
     }
 
     #[test]
@@ -929,16 +1006,16 @@ mod tests {
     }
 
     #[test]
-    fn test_recency_dominates_proximity() {
+    fn test_density_dominates_recency() {
         let now = 1700000000i64;
-        // Same words, same typo, but different recency
-        let recent = score(
+        // V2: density_score dominates recency. Short focused doc beats long diluted doc.
+        let diluted_recent = score(
             "hello world and other things between", &["hello", "world"], false, now - 1800, 1.0, now,
         );
-        let old = score(
+        let dense_old = score(
             "hello world", &["hello", "world"], false, now - 864000, 1.0, now,
         );
-        assert!(recent > old, "Recent item should dominate proximity when words/typo equal");
+        assert!(dense_old > diluted_recent, "Dense doc beats diluted despite recency (density > recency)");
     }
 
     #[test]
@@ -966,66 +1043,66 @@ mod tests {
             "hello world", &["hello", "world"], false, now, 5.0, now,
         );
         assert_eq!(s.words_matched_weight, 50); // 5² + 5² = 50
+        assert_eq!(s.intent_tier, 4); // "hello world" starts with "hello world" → Tier 4
+        assert_eq!(s.density_score, 232); // 10 matched chars / 11 total chars = 0.909 → 232
         assert_eq!(s.recency_score, 255); // just now
-        assert_eq!(s.typo_score, 255);
         assert_eq!(s.proximity_score, u16::MAX - 1);
-        assert_eq!(s.exactness_score, 6); // "hello world" starts with "hello world"
+        assert_eq!(s.typo_score, 255);
         assert_eq!(s.bm25_quantized, 500); // 5.0 * 100
     }
 
-    // ── new exactness level 6 & 5 tests ─────────────────────────
+    // ── additional intent tier tests ─────────────────────────────
 
     #[test]
-    fn test_exactness_prefix_of_content() {
-        // "hello wo" is a prefix of "hello world foo" → level 6
+    fn test_intent_tier_content_prefix_multi_word() {
+        // "hello wo" is a prefix of "hello world foo" → Tier 4
         let matches = vec![
             WordMatch { matched: true, edit_dist: 0, doc_word_pos: 0, is_exact: true, match_weight: 25 },
             WordMatch { matched: true, edit_dist: 0, doc_word_pos: 1, is_exact: false, match_weight: 25 },
         ];
-        assert_eq!(compute_exactness("hello world foo", &["hello", "wo"], &matches), 6);
+        assert_eq!(compute_intent_tier("hello world foo", &["hello", "wo"], &matches), 4);
     }
 
     #[test]
-    fn test_exactness_prefix_of_content_single_word() {
-        // "hel" is a prefix of "hello world" → level 6
+    fn test_intent_tier_content_prefix_single_word() {
+        // "hel" is a prefix of "hello world" → Tier 4
         let matches = vec![
             WordMatch { matched: true, edit_dist: 0, doc_word_pos: 0, is_exact: false, match_weight: 25 },
         ];
-        assert_eq!(compute_exactness("hello world", &["hel"], &matches), 6);
+        assert_eq!(compute_intent_tier("hello world", &["hel"], &matches), 4);
     }
 
     #[test]
-    fn test_exactness_first_word_anchored_sequence() {
-        // first word exact at pos 0, second fuzzy at pos 1 → level 5
+    fn test_intent_tier_anchored_sequence_with_typo() {
+        // first word exact at pos 0, second fuzzy at pos 1 → Tier 4
         let matches = vec![
             WordMatch { matched: true, edit_dist: 0, doc_word_pos: 0, is_exact: true, match_weight: 25 },
             WordMatch { matched: true, edit_dist: 1, doc_word_pos: 1, is_exact: false, match_weight: 25 },
         ];
-        assert_eq!(compute_exactness("hello wrold foo", &["hello", "world"], &matches), 5);
+        assert_eq!(compute_intent_tier("hello wrold foo", &["hello", "world"], &matches), 4);
     }
 
     #[test]
-    fn test_exactness_first_word_not_at_start() {
-        // first word matches but not at pos 0 → falls through to lower level
+    fn test_intent_tier_not_anchored_but_substring() {
+        // first word matches but not at pos 0, but query is substring → Tier 3
         let matches = vec![
             WordMatch { matched: true, edit_dist: 0, doc_word_pos: 1, is_exact: true, match_weight: 25 },
             WordMatch { matched: true, edit_dist: 0, doc_word_pos: 2, is_exact: true, match_weight: 25 },
         ];
-        // "hello world" is not a substring of "say hello world" when query is ["hello", "world"]
-        // Wait — it IS a substring. Use a query that won't be a substring.
-        assert_eq!(compute_exactness("say hello beautiful world", &["hello", "world"], &matches), 3);
+        // "hello world" IS a substring of "say hello world"
+        assert_eq!(compute_intent_tier("say hello world", &["hello", "world"], &matches), 3);
     }
 
     #[test]
-    fn test_exactness_anchored_but_wrong_order() {
-        // first word at pos 0 but words out of order → falls through to level 3 (all exact)
+    fn test_intent_tier_wrong_order() {
+        // first word at pos 0 but words out of order → Tier 1 (not in forward sequence)
         let matches = vec![
             WordMatch { matched: true, edit_dist: 0, doc_word_pos: 0, is_exact: true, match_weight: 25 },
             WordMatch { matched: true, edit_dist: 0, doc_word_pos: 2, is_exact: true, match_weight: 25 },
             WordMatch { matched: true, edit_dist: 0, doc_word_pos: 1, is_exact: true, match_weight: 25 },
         ];
         // words go 0, 2, 1 — not strictly forward, and "hello beautiful world" is not a substring
-        assert_eq!(compute_exactness("hello world beautiful", &["hello", "beautiful", "world"], &matches), 3);
+        assert_eq!(compute_intent_tier("hello world beautiful", &["hello", "beautiful", "world"], &matches), 1);
     }
 
     // ── ranking v2: desired outcomes (currently failing) ─────────
@@ -1038,7 +1115,6 @@ mod tests {
     // Category A: Structural Intent vs Recency
 
     #[test]
-    #[ignore = "ranking-v2: intent should dominate recency"]
     fn test_v2_case1_anchored_docker_run_beats_buried() {
         let now = 1700000000i64;
         let anchored = score("docker run -d nginx", &["docker", "run"], false, now - 86400, 1.0, now);
@@ -1047,7 +1123,6 @@ mod tests {
     }
 
     #[test]
-    #[ignore = "ranking-v2: intent should dominate recency"]
     fn test_v2_case4_anchored_git_status_beats_scattered() {
         let now = 1700000000i64;
         let anchored = score("git status", &["git", "status"], false, now - 3600, 1.0, now);
@@ -1057,7 +1132,6 @@ mod tests {
     }
 
     #[test]
-    #[ignore = "ranking-v2: intent should dominate recency"]
     fn test_v2_case5_anchored_meeting_notes_beats_reversed() {
         let now = 1700000000i64;
         let anchored = score("Meeting Notes: Proj X", &["meeting", "notes"], false, now - 86400, 1.0, now);
@@ -1068,7 +1142,6 @@ mod tests {
     // Category B: Phrase Quality vs Recency
 
     #[test]
-    #[ignore = "ranking-v2: intent should dominate recency"]
     fn test_v2_case7_contiguous_git_push_beats_scattered() {
         let now = 1700000000i64;
         let contiguous = score("git push origin main", &["git", "push"], false, now - 7200, 1.0, now);
@@ -1077,7 +1150,6 @@ mod tests {
     }
 
     #[test]
-    #[ignore = "ranking-v2: intent should dominate recency"]
     fn test_v2_case8_contiguous_phrase_beats_gapped() {
         let now = 1700000000i64;
         // A: "react spring" contiguous at start → exactness 6
@@ -1091,7 +1163,6 @@ mod tests {
     }
 
     #[test]
-    #[ignore = "ranking-v2: punctuation should carry weight"]
     fn test_v2_case9_ip_with_dots_beats_spaces() {
         let now = 1700000000i64;
         // Both have same numeric tokens, but A also matches the dots
@@ -1109,7 +1180,6 @@ mod tests {
     // Category C: Tie-Breaking Hierarchy
 
     #[test]
-    #[ignore = "ranking-v2: proximity should dominate typo"]
     fn test_v2_case11_forward_order_beats_perfect_spelling() {
         let now = 1700000000i64;
         // A: forward order, minor typo — "git statuss"
@@ -1121,7 +1191,6 @@ mod tests {
     }
 
     #[test]
-    #[ignore = "ranking-v2: intent should dominate proximity"]
     fn test_v2_case12_anchored_beats_closer_proximity() {
         let now = 1700000000i64;
         // A: anchored at start, wider gap (distance 3)
@@ -1132,7 +1201,6 @@ mod tests {
     }
 
     #[test]
-    #[ignore = "ranking-v2: density should influence ranking"]
     fn test_v2_case13_dense_doc_beats_diluted() {
         let now = 1700000000i64;
         // A: short focused doc — "password" is >50% of content
@@ -1149,7 +1217,6 @@ mod tests {
     }
 
     #[test]
-    #[ignore = "ranking-v2: exact should survive recency quantization"]
     fn test_v2_case14_exact_beats_typo_close_recency() {
         let now = 1700000000i64;
         // 19 minutes apart — recency scores ~117 vs ~119 (2 points in u8)
@@ -1162,7 +1229,39 @@ mod tests {
     // Category D: Matching Pipeline Gaps
 
     #[test]
-    #[ignore = "ranking-v2: acronym matching needed"]
+    fn test_try_acronym_match_basic() {
+        let doc_words = vec!["looks", "good", "to", "me"];
+        assert_eq!(try_acronym_match("lgtm", &doc_words, 0), Some(4));
+    }
+
+    #[test]
+    fn test_try_acronym_match_too_short() {
+        let doc_words = vec!["as", "soon"];
+        // Only 2 chars, should fail
+        assert_eq!(try_acronym_match("as", &doc_words, 0), None);
+    }
+
+    #[test]
+    fn test_try_acronym_match_with_punctuation() {
+        let doc_words = vec!["looks", ".", "good", "to", "me"];
+        // Should skip the punctuation "."
+        assert_eq!(try_acronym_match("lgtm", &doc_words, 0), Some(5));
+    }
+
+    #[test]
+    fn test_try_acronym_match_case_insensitive() {
+        let doc_words = vec!["looks", "good", "to", "me"];
+        assert_eq!(try_acronym_match("LGTM", &doc_words, 0), Some(4));
+    }
+
+    #[test]
+    fn test_try_acronym_match_partial_fail() {
+        let doc_words = vec!["looks", "good", "time"];
+        // "lgtm" should fail because "time" doesn't start with "m"
+        assert_eq!(try_acronym_match("lgtm", &doc_words, 0), None);
+    }
+
+    #[test]
     fn test_v2_case15_acronym_match() {
         let now = 1700000000i64;
         let acronym = score("looks good to me", &["lgtm"], true, now - 18000, 1.0, now);

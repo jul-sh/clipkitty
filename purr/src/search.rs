@@ -213,6 +213,7 @@ fn word_match_to_highlight_kind(wmk: WordMatchKind) -> HighlightKind {
         WordMatchKind::Prefix => HighlightKind::Prefix,
         WordMatchKind::Fuzzy(_) => HighlightKind::Fuzzy,
         WordMatchKind::Subsequence(_) => HighlightKind::Subsequence,
+        WordMatchKind::Acronym => HighlightKind::Exact, // Highlight acronyms as exact matches
         WordMatchKind::None => HighlightKind::Exact, // unreachable in practice
     }
 }
