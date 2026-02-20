@@ -155,10 +155,12 @@ def main():
         version_id = versions[0]["id"]
         print(f"Target version ID: {version_id}")
 
-        # Assemble fastlane-style import directory (metadata only, no screenshots)
+        # Assemble fastlane-style import directory (metadata only, no screenshots).
+        # asc migrate import requires a screenshots/ dir to exist even if empty.
         import_dir = tempfile.mkdtemp()
         import_metadata = os.path.join(import_dir, "metadata")
         shutil.copytree(METADATA_DIR, import_metadata)
+        os.makedirs(os.path.join(import_dir, "screenshots"), exist_ok=True)
 
         import_cmd = [
             "asc", "migrate", "import",
