@@ -1027,4 +1027,146 @@ mod tests {
         // words go 0, 2, 1 — not strictly forward, and "hello beautiful world" is not a substring
         assert_eq!(compute_exactness("hello world beautiful", &["hello", "beautiful", "world"], &matches), 3);
     }
+
+    // ── ranking v2: desired outcomes (currently failing) ─────────
+    //
+    // These tests document ranking losses in the current algorithm.
+    // Each asserts the DESIRED outcome. Remove #[ignore] as fixes land.
+    //
+    // Cases 2, 3, 6, 10, 16 from the proposal already pass and are omitted.
+
+    // Category A: Structural Intent vs Recency
+
+    #[test]
+    #[ignore = "ranking-v2: intent should dominate recency"]
+    fn test_v2_case1_anchored_docker_run_beats_buried() {
+        let now = 1700000000i64;
+        let anchored = score("docker run -d nginx", &["docker", "run"], false, now - 86400, 1.0, now);
+        let buried = score("failed at docker run step", &["docker", "run"], false, now - 600, 1.0, now);
+        assert!(anchored > buried, "Anchored 'docker run' (1d old) should beat buried match (10m old)");
+    }
+
+    #[test]
+    #[ignore = "ranking-v2: intent should dominate recency"]
+    fn test_v2_case4_anchored_git_status_beats_scattered() {
+        let now = 1700000000i64;
+        let anchored = score("git status", &["git", "status"], false, now - 3600, 1.0, now);
+        // 30m old — enough recency gap to overcome proximity under current ordering
+        let scattered = score("status of the git migration", &["git", "status"], false, now - 1800, 1.0, now);
+        assert!(anchored > scattered, "Anchored 'git status' should beat reversed scattered match");
+    }
+
+    #[test]
+    #[ignore = "ranking-v2: intent should dominate recency"]
+    fn test_v2_case5_anchored_meeting_notes_beats_reversed() {
+        let now = 1700000000i64;
+        let anchored = score("Meeting Notes: Proj X", &["meeting", "notes"], false, now - 86400, 1.0, now);
+        let reversed = score("notes from the meeting", &["meeting", "notes"], false, now - 1800, 1.0, now);
+        assert!(anchored > reversed, "Anchored 'Meeting Notes' (1d old) should beat reversed (30m old)");
+    }
+
+    // Category B: Phrase Quality vs Recency
+
+    #[test]
+    #[ignore = "ranking-v2: intent should dominate recency"]
+    fn test_v2_case7_contiguous_git_push_beats_scattered() {
+        let now = 1700000000i64;
+        let contiguous = score("git push origin main", &["git", "push"], false, now - 7200, 1.0, now);
+        let scattered = score("git is failing to push changes", &["git", "push"], false, now - 300, 1.0, now);
+        assert!(contiguous > scattered, "Contiguous 'git push' (2h old) should beat scattered (5m old)");
+    }
+
+    #[test]
+    #[ignore = "ranking-v2: intent should dominate recency"]
+    fn test_v2_case8_contiguous_phrase_beats_gapped() {
+        let now = 1700000000i64;
+        // A: "react spring" contiguous at start → exactness 6
+        let contiguous = score("react spring config", &["react", "spring"], false, now - 10800, 1.0, now);
+        // B: "react" at start, "spring" far away → exactness 5
+        let gapped = score(
+            "react component with many features including spring",
+            &["react", "spring"], false, now - 600, 1.0, now,
+        );
+        assert!(contiguous > gapped, "Contiguous 'react spring' (3h old) should beat gapped (10m old)");
+    }
+
+    #[test]
+    #[ignore = "ranking-v2: punctuation should carry weight"]
+    fn test_v2_case9_ip_with_dots_beats_spaces() {
+        let now = 1700000000i64;
+        // Both have same numeric tokens, but A also matches the dots
+        let with_dots = score(
+            "192.168.1.1", &["192", ".", "168", ".", "1", ".", "1"],
+            false, now - 3600, 1.0, now,
+        );
+        let without_dots = score(
+            "192 168 1 1", &["192", ".", "168", ".", "1", ".", "1"],
+            false, now - 300, 1.0, now,
+        );
+        assert!(with_dots > without_dots, "IP '192.168.1.1' with dots should beat '192 168 1 1'");
+    }
+
+    // Category C: Tie-Breaking Hierarchy
+
+    #[test]
+    #[ignore = "ranking-v2: proximity should dominate typo"]
+    fn test_v2_case11_forward_order_beats_perfect_spelling() {
+        let now = 1700000000i64;
+        // A: forward order, minor typo — "git statuss"
+        let forward_typo = score("git statuss", &["git", "status"], false, now - 3600, 1.0, now);
+        // B: reversed order, no typos — "status git"
+        let reversed_exact = score("status git", &["git", "status"], false, now - 3600, 1.0, now);
+        assert!(forward_typo > reversed_exact,
+            "Forward 'git statuss' (typo) should beat reversed 'status git' (exact)");
+    }
+
+    #[test]
+    #[ignore = "ranking-v2: intent should dominate proximity"]
+    fn test_v2_case12_anchored_beats_closer_proximity() {
+        let now = 1700000000i64;
+        // A: anchored at start, wider gap (distance 3)
+        let anchored = score("npm --global install", &["npm", "install"], false, now - 3600, 1.0, now);
+        // B: not anchored, tighter gap (distance 1)
+        let closer = score("error: npm install failed", &["npm", "install"], false, now - 3600, 1.0, now);
+        assert!(anchored > closer, "Anchored 'npm' at start should beat closer but buried match");
+    }
+
+    #[test]
+    #[ignore = "ranking-v2: density should influence ranking"]
+    fn test_v2_case13_dense_doc_beats_diluted() {
+        let now = 1700000000i64;
+        // A: short focused doc — "password" is >50% of content
+        let dense = score("my password", &["password"], false, now - 7200, 10.0, now);
+        // B: long doc where "password" is <5% of content
+        let diluted = score(
+            "this is a very long document that contains many words and paragraphs \
+             of text discussing various topics including security and the word \
+             password appears somewhere in this enormous body of text among \
+             hundreds of other words that dilute its significance considerably",
+            &["password"], false, now - 300, 0.5, now,
+        );
+        assert!(dense > diluted, "Dense short doc should beat diluted long doc despite recency");
+    }
+
+    #[test]
+    #[ignore = "ranking-v2: exact should survive recency quantization"]
+    fn test_v2_case14_exact_beats_typo_close_recency() {
+        let now = 1700000000i64;
+        // 19 minutes apart — recency scores ~117 vs ~119 (2 points in u8)
+        let exact = score("localhost", &["localhost"], false, now - 22800, 1.0, now); // 6h20m
+        let typo = score("localhast", &["localhost"], false, now - 21660, 1.0, now); // 6h1m
+        assert!(exact > typo,
+            "Exact 'localhost' should beat typo 'localhast' despite 19min recency gap");
+    }
+
+    // Category D: Matching Pipeline Gaps
+
+    #[test]
+    #[ignore = "ranking-v2: acronym matching needed"]
+    fn test_v2_case15_acronym_match() {
+        let now = 1700000000i64;
+        let acronym = score("looks good to me", &["lgtm"], true, now - 18000, 1.0, now);
+        assert!(acronym.words_matched_weight > 0,
+            "'lgtm' should match 'looks good to me' via first-letter acronym");
+    }
 }
