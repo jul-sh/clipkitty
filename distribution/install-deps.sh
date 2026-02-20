@@ -5,6 +5,7 @@
 set -e
 
 DEPS=(
+    age           # For decrypting secrets (provisioning profile, API keys)
     create-dmg    # For building DMG installers
     ffmpeg        # For video recording and processing
     cliclick      # For UI automation in preview video recording

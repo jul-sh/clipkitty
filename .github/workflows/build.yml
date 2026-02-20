@@ -371,12 +371,8 @@ jobs:
           brew install --formula tuist
           tuist version
 
-      - name: Decode Provisioning Profile
-        run: |
-          echo "$PROVISION_PROFILE_BASE64" | base64 --decode \
-            > "$GITHUB_WORKSPACE/ClipKitty.provisionprofile"
-        env:
-          PROVISION_PROFILE_BASE64: ${{ steps.secrets.outputs.PROVISION_PROFILE_BASE64 }}
+      - name: Install Distribution Dependencies
+        run: ./distribution/install-deps.sh
 
       - name: Download marketing screenshots
         uses: actions/download-artifact@v4
@@ -384,20 +380,11 @@ jobs:
           name: assets
           path: .
 
-      - name: Build App Store Package
+      - name: Build and Publish to App Store Connect
         run: |
-          VERSION="${{ needs.build.outputs.version }}"
-          BUILD_NUMBER="$(git rev-list --count HEAD)"
-          make -C distribution appstore \
-            PROVISIONING_PROFILE="$GITHUB_WORKSPACE/ClipKitty.provisionprofile" \
-            VERSION="$VERSION" \
-            BUILD_NUMBER="$BUILD_NUMBER"
-
-      - name: Install ASC CLI
-        run: brew tap rudrankriyam/tap && brew install rudrankriyam/tap/asc
-
-      - name: Publish to App Store Connect
-        run: make -C distribution publish
+          make -C distribution appstore-publish \
+            VERSION="${{ needs.build.outputs.version }}" \
+            BUILD_NUMBER="$(git rev-list --count HEAD)"
         env:
           AGE_SECRET_KEY: ${{ secrets.AGE_SECRET_KEY }}
 
