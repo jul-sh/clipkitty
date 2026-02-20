@@ -133,9 +133,9 @@ def main():
                 ])
                 print("Binary uploaded.")
 
-        # --- Upload metadata & screenshots ---
+        # --- Upload metadata ---
 
-        print("\n=== Uploading metadata & screenshots ===")
+        print("\n=== Uploading metadata ===")
 
         # Find the editable App Store version
         r = run(
@@ -155,33 +155,10 @@ def main():
         version_id = versions[0]["id"]
         print(f"Target version ID: {version_id}")
 
-        # Assemble fastlane-style import directory (copy metadata so we can filter files)
+        # Assemble fastlane-style import directory (metadata only, no screenshots)
         import_dir = tempfile.mkdtemp()
         import_metadata = os.path.join(import_dir, "metadata")
         shutil.copytree(METADATA_DIR, import_metadata)
-        screenshots_dir = os.path.join(import_dir, "screenshots")
-        os.makedirs(screenshots_dir)
-
-        screenshot_count = 0
-        if os.path.isdir(MARKETING_DIR):
-            for entry in sorted(os.listdir(MARKETING_DIR)):
-                src_dir = os.path.join(MARKETING_DIR, entry)
-                if not os.path.isdir(src_dir):
-                    continue
-                asc_locale = LOCALE_MAP.get(entry)
-                if not asc_locale:
-                    continue
-                pngs = sorted(glob.glob(os.path.join(src_dir, "screenshot_*.png")))
-                if not pngs:
-                    continue
-                dest = os.path.join(screenshots_dir, asc_locale)
-                os.makedirs(dest)
-                for png in pngs:
-                    shutil.copy2(png, dest)
-                screenshot_count += len(pngs)
-                print(f"  Screenshots: {entry} -> {asc_locale} ({len(pngs)} files)")
-
-        print(f"Total screenshots: {screenshot_count}")
 
         import_cmd = [
             "asc", "migrate", "import",
@@ -191,9 +168,8 @@ def main():
         ]
 
         if args.dry_run:
-            print(f"\n[dry-run] Would import to version {version_id}:")
+            print(f"\n[dry-run] Would import metadata to version {version_id}:")
             print(f"  Metadata: {METADATA_DIR}")
-            print(f"  Screenshots: {screenshot_count} files")
             run(import_cmd + ["--dry-run"])
         else:
             r = run(import_cmd, check=False, capture=True)
@@ -207,7 +183,60 @@ def main():
             elif r.returncode != 0:
                 print(r.stderr, file=sys.stderr)
                 sys.exit(r.returncode)
-            print("Metadata and screenshots uploaded.")
+            print("Metadata uploaded.")
+
+        # --- Upload screenshots ---
+
+        print("\n=== Uploading screenshots ===")
+
+        # Get version localizations to map locale -> localization ID
+        r = run(
+            ["asc", "localizations", "list",
+             "--version", version_id, "--paginate"],
+            capture=True, check=False,
+        )
+        if r.returncode != 0:
+            sys.exit(f"Error listing localizations: {r.stderr.strip()}")
+
+        loc_data = json.loads(r.stdout)
+        loc_list = loc_data.get("data", loc_data) if isinstance(loc_data, dict) else loc_data
+        locale_to_loc_id = {}
+        for loc in loc_list:
+            locale = loc.get("attributes", {}).get("locale", "")
+            locale_to_loc_id[locale] = loc["id"]
+
+        screenshot_count = 0
+        if os.path.isdir(MARKETING_DIR):
+            for entry in sorted(os.listdir(MARKETING_DIR)):
+                src_dir = os.path.join(MARKETING_DIR, entry)
+                if not os.path.isdir(src_dir):
+                    continue
+                asc_locale = LOCALE_MAP.get(entry)
+                if not asc_locale:
+                    continue
+                loc_id = locale_to_loc_id.get(asc_locale)
+                if not loc_id:
+                    print(f"  Warning: no localization for {asc_locale}, skipping")
+                    continue
+                pngs = sorted(glob.glob(os.path.join(src_dir, "screenshot_*.png")))
+                if not pngs:
+                    continue
+
+                print(f"  Uploading {len(pngs)} screenshots for {asc_locale}...")
+                if args.dry_run:
+                    for png in pngs:
+                        print(f"    [dry-run] {os.path.basename(png)}")
+                else:
+                    for png in pngs:
+                        run([
+                            "asc", "screenshots", "upload",
+                            "--version-localization", loc_id,
+                            "--device-type", "APP_DESKTOP",
+                            "--path", png,
+                        ])
+                screenshot_count += len(pngs)
+
+        print(f"Total screenshots uploaded: {screenshot_count}")
 
         print("\n=== Publish complete ===")
 
