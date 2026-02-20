@@ -15,7 +15,7 @@ use crate::search::is_word_token;
 /// 2. recency_score — smooth exponential decay (255=now, 0=old), no cliff edges
 /// 3. typo_score — 255 - total_edit_distance (fewer typos = higher)
 /// 4. proximity_score — u16::MAX - sum_of_pair_distances
-/// 5. exactness_score — 0-4 level (prefix matches rank above fuzzy)
+/// 5. exactness_score — 0-6 level (prefix-of-content and anchored sequence rank highest)
 /// 6. bm25_quantized — BM25 scaled to integer
 /// 7. recency — raw unix timestamp (final tiebreaker)
 #[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord)]
@@ -332,8 +332,10 @@ fn compute_proximity(word_matches: &[WordMatch]) -> u16 {
     u16::MAX.saturating_sub(total_distance.min(u16::MAX as u32) as u16)
 }
 
-/// Compute exactness score (0-4 scale).
-/// 4: Full query appears as exact substring (case-insensitive)
+/// Compute exactness score (0-6 scale).
+/// 6: Full query is a prefix of the content (starts_with)
+/// 5: First query word matches first doc word exactly + all matched words in forward sequence
+/// 4: Full query appears as exact substring anywhere (case-insensitive)
 /// 3: All matched words are exact (0 edit distance, exact string match)
 /// 2: All matched words are exact or prefix (0 edit distance; "typing in progress")
 /// 1: At least one exact or prefix match mixed with fuzzy
@@ -344,11 +346,33 @@ fn compute_exactness(content_lower: &str, query_words: &[&str], word_matches: &[
         return 0;
     }
 
-    if !query_words.is_empty() {
-        let full_query = query_words.join(" ").to_lowercase();
-        if content_lower.contains(&full_query) {
-            return 4;
+    let full_query = if !query_words.is_empty() {
+        query_words.join(" ").to_lowercase()
+    } else {
+        String::new()
+    };
+
+    // Level 6: query is prefix of content
+    if !full_query.is_empty() && content_lower.starts_with(&full_query) {
+        return 6;
+    }
+
+    // Level 5: first word anchored at doc start, all words in forward sequence
+    let all_matched = word_matches.iter().all(|m| m.matched);
+    if all_matched && word_matches.len() > 1 {
+        let first = &word_matches[0];
+        if first.doc_word_pos == 0 && first.edit_dist == 0 {
+            let in_sequence = word_matches.windows(2)
+                .all(|w| w[1].doc_word_pos > w[0].doc_word_pos);
+            if in_sequence {
+                return 5;
+            }
         }
+    }
+
+    // Level 4: full query is substring anywhere
+    if !full_query.is_empty() && content_lower.contains(&full_query) {
+        return 4;
     }
 
     let all_exact = matched.iter().all(|m| m.is_exact);
@@ -748,40 +772,43 @@ mod tests {
 
     #[test]
     fn test_exactness_full_substring() {
+        // "hello world" starts with "hello world" → level 6
         let matches = vec![
             WordMatch { matched: true, edit_dist: 0, doc_word_pos: 0, is_exact: true, match_weight: 25 },
             WordMatch { matched: true, edit_dist: 0, doc_word_pos: 1, is_exact: true, match_weight: 25 },
         ];
-        assert_eq!(compute_exactness("hello world", &["hello", "world"], &matches), 4);
+        assert_eq!(compute_exactness("hello world", &["hello", "world"], &matches), 6);
     }
 
     #[test]
     fn test_exactness_all_exact_but_not_substring() {
+        // first word at pos 0, forward sequence → level 5
         let matches = vec![
             WordMatch { matched: true, edit_dist: 0, doc_word_pos: 0, is_exact: true, match_weight: 25 },
             WordMatch { matched: true, edit_dist: 0, doc_word_pos: 2, is_exact: true, match_weight: 25 },
         ];
-        assert_eq!(compute_exactness("hello beautiful world", &["hello", "world"], &matches), 3);
+        assert_eq!(compute_exactness("hello beautiful world", &["hello", "world"], &matches), 5);
     }
 
     #[test]
     fn test_exactness_mix_exact_fuzzy() {
+        // first word at pos 0 exact, second fuzzy in forward sequence → level 5
         let matches = vec![
             WordMatch { matched: true, edit_dist: 0, doc_word_pos: 0, is_exact: true, match_weight: 25 },
             WordMatch { matched: true, edit_dist: 1, doc_word_pos: 1, is_exact: false, match_weight: 25 },
         ];
-        assert_eq!(compute_exactness("hello wrld", &["hello", "world"], &matches), 1);
+        assert_eq!(compute_exactness("hello wrld", &["hello", "world"], &matches), 5);
     }
 
     #[test]
     fn test_exactness_all_prefix() {
-        // Multi-word query where both match as prefix (edit_dist 0, is_exact false)
-        // but the full query "hel wor" is NOT a substring of the content.
+        // Multi-word query where both match as prefix (edit_dist 0, is_exact false).
+        // First word at pos 0 with edit_dist 0, forward sequence → level 5.
         let matches = vec![
             WordMatch { matched: true, edit_dist: 0, doc_word_pos: 0, is_exact: false, match_weight: 25 },
             WordMatch { matched: true, edit_dist: 0, doc_word_pos: 1, is_exact: false, match_weight: 25 },
         ];
-        assert_eq!(compute_exactness("hello world", &["hel", "wor"], &matches), 2);
+        assert_eq!(compute_exactness("hello world", &["hel", "wor"], &matches), 5);
     }
 
     #[test]
@@ -942,7 +969,62 @@ mod tests {
         assert_eq!(s.recency_score, 255); // just now
         assert_eq!(s.typo_score, 255);
         assert_eq!(s.proximity_score, u16::MAX - 1);
-        assert_eq!(s.exactness_score, 4); // "hello world" contains "hello world"
+        assert_eq!(s.exactness_score, 6); // "hello world" starts with "hello world"
         assert_eq!(s.bm25_quantized, 500); // 5.0 * 100
+    }
+
+    // ── new exactness level 6 & 5 tests ─────────────────────────
+
+    #[test]
+    fn test_exactness_prefix_of_content() {
+        // "hello wo" is a prefix of "hello world foo" → level 6
+        let matches = vec![
+            WordMatch { matched: true, edit_dist: 0, doc_word_pos: 0, is_exact: true, match_weight: 25 },
+            WordMatch { matched: true, edit_dist: 0, doc_word_pos: 1, is_exact: false, match_weight: 25 },
+        ];
+        assert_eq!(compute_exactness("hello world foo", &["hello", "wo"], &matches), 6);
+    }
+
+    #[test]
+    fn test_exactness_prefix_of_content_single_word() {
+        // "hel" is a prefix of "hello world" → level 6
+        let matches = vec![
+            WordMatch { matched: true, edit_dist: 0, doc_word_pos: 0, is_exact: false, match_weight: 25 },
+        ];
+        assert_eq!(compute_exactness("hello world", &["hel"], &matches), 6);
+    }
+
+    #[test]
+    fn test_exactness_first_word_anchored_sequence() {
+        // first word exact at pos 0, second fuzzy at pos 1 → level 5
+        let matches = vec![
+            WordMatch { matched: true, edit_dist: 0, doc_word_pos: 0, is_exact: true, match_weight: 25 },
+            WordMatch { matched: true, edit_dist: 1, doc_word_pos: 1, is_exact: false, match_weight: 25 },
+        ];
+        assert_eq!(compute_exactness("hello wrold foo", &["hello", "world"], &matches), 5);
+    }
+
+    #[test]
+    fn test_exactness_first_word_not_at_start() {
+        // first word matches but not at pos 0 → falls through to lower level
+        let matches = vec![
+            WordMatch { matched: true, edit_dist: 0, doc_word_pos: 1, is_exact: true, match_weight: 25 },
+            WordMatch { matched: true, edit_dist: 0, doc_word_pos: 2, is_exact: true, match_weight: 25 },
+        ];
+        // "hello world" is not a substring of "say hello world" when query is ["hello", "world"]
+        // Wait — it IS a substring. Use a query that won't be a substring.
+        assert_eq!(compute_exactness("say hello beautiful world", &["hello", "world"], &matches), 3);
+    }
+
+    #[test]
+    fn test_exactness_anchored_but_wrong_order() {
+        // first word at pos 0 but words out of order → falls through to level 3 (all exact)
+        let matches = vec![
+            WordMatch { matched: true, edit_dist: 0, doc_word_pos: 0, is_exact: true, match_weight: 25 },
+            WordMatch { matched: true, edit_dist: 0, doc_word_pos: 2, is_exact: true, match_weight: 25 },
+            WordMatch { matched: true, edit_dist: 0, doc_word_pos: 1, is_exact: true, match_weight: 25 },
+        ];
+        // words go 0, 2, 1 — not strictly forward, and "hello beautiful world" is not a substring
+        assert_eq!(compute_exactness("hello world beautiful", &["hello", "beautiful", "world"], &matches), 3);
     }
 }
