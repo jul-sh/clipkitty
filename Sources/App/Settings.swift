@@ -50,6 +50,21 @@ struct HotKey: Codable, Equatable {
     }
 }
 
+enum PasteMode {
+    case noPermission
+    case copyOnly
+    case autoPaste
+
+    var buttonLabel: String {
+        switch self {
+        case .noPermission, .copyOnly:
+            return String(localized: "Copy")
+        case .autoPaste:
+            return String(localized: "Paste")
+        }
+    }
+}
+
 @MainActor
 final class AppSettings: ObservableObject {
     static let shared = AppSettings()
@@ -79,10 +94,11 @@ final class AppSettings: ObservableObject {
         didSet { save() }
     }
 
-    /// Whether the button should show "paste" or "copy"
-    var shouldShowPasteLabel: Bool {
-        return hasAccessibilityPermission && autoPasteEnabled
+    var pasteMode: PasteMode {
+        guard hasAccessibilityPermission else { return .noPermission }
+        return autoPasteEnabled ? .autoPaste : .copyOnly
     }
+
 
     let maxImageMegapixels: Double
     let imageCompressionQuality: Double

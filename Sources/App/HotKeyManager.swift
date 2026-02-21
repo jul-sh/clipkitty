@@ -1,9 +1,13 @@
 import Carbon
 import AppKit
 
+private enum RegistrationState {
+    case unregistered
+    case registered(hotKey: EventHotKeyRef, eventHandler: EventHandlerRef)
+}
+
 final class HotKeyManager: @unchecked Sendable {
-    private var hotKeyRef: EventHotKeyRef?
-    private var eventHandler: EventHandlerRef?
+    private var state: RegistrationState = .unregistered
     private let callback: @Sendable () -> Void
 
     init(callback: @escaping @Sendable () -> Void) {
@@ -12,7 +16,7 @@ final class HotKeyManager: @unchecked Sendable {
 
     func register(hotKey: HotKey = .default) {
         // Unregister existing hotkey first
-        if hotKeyRef != nil {
+        if case .registered = state {
             unregisterHotKey()
         }
 
@@ -29,23 +33,30 @@ final class HotKeyManager: @unchecked Sendable {
             &gMyHotKeyRef
         )
 
-        if status == noErr {
-            hotKeyRef = gMyHotKeyRef
-            if eventHandler == nil {
-                installEventHandler()
-            }
+        guard status == noErr, let newHotKeyRef = gMyHotKeyRef else {
+            return
+        }
+
+        // Install event handler and atomically create registered state
+        var newEventHandler: EventHandlerRef?
+        let handlerInstalled = installEventHandler(&newEventHandler)
+
+        if handlerInstalled, let eventHandler = newEventHandler {
+            state = .registered(hotKey: newHotKeyRef, eventHandler: eventHandler)
         } else {
+            // Partial registration failure - clean up the hot key
+            UnregisterEventHotKey(newHotKeyRef)
         }
     }
 
     private func unregisterHotKey() {
-        if let hotKeyRef = hotKeyRef {
-            UnregisterEventHotKey(hotKeyRef)
-            self.hotKeyRef = nil
+        if case .registered(let hotKey, _) = state {
+            UnregisterEventHotKey(hotKey)
+            state = .unregistered
         }
     }
 
-    private func installEventHandler() {
+    private func installEventHandler(_ eventHandler: inout EventHandlerRef?) -> Bool {
         var eventType = EventTypeSpec(eventClass: OSType(kEventClassKeyboard), eventKind: UInt32(kEventHotKeyPressed))
 
         let handler: EventHandlerUPP = { _, event, userData -> OSStatus in
@@ -57,7 +68,7 @@ final class HotKeyManager: @unchecked Sendable {
 
         let selfPtr = Unmanaged.passUnretained(self).toOpaque()
 
-        InstallEventHandler(
+        let status = InstallEventHandler(
             GetApplicationEventTarget(),
             handler,
             1,
@@ -65,13 +76,15 @@ final class HotKeyManager: @unchecked Sendable {
             selfPtr,
             &eventHandler
         )
+
+        return status == noErr
     }
 
     func unregister() {
-        unregisterHotKey()
-        if let eventHandler = eventHandler {
+        if case .registered(let hotKey, let eventHandler) = state {
+            UnregisterEventHotKey(hotKey)
             RemoveEventHandler(eventHandler)
-            self.eventHandler = nil
+            state = .unregistered
         }
     }
 

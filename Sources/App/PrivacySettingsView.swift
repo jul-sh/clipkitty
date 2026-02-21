@@ -95,19 +95,61 @@ struct PrivacySettingsView: View {
 
 struct IgnoredAppsListView: View {
     @ObservedObject private var settings = AppSettings.shared
-    @State private var ignoredApps: [IgnoredApp] = []
-    @State private var selectedAppId: String?
+    @State private var listState: AppListState = .empty
+
+    private enum AppListState: Equatable {
+        case empty
+        case populated(apps: [IgnoredApp], selectedId: String?)
+
+        var apps: [IgnoredApp] {
+            switch self {
+            case .empty: return []
+            case .populated(let apps, _): return apps
+            }
+        }
+
+        var selectedId: String? {
+            switch self {
+            case .empty: return nil
+            case .populated(_, let id): return id
+            }
+        }
+
+        mutating func setApps(_ apps: [IgnoredApp]) {
+            if apps.isEmpty {
+                self = .empty
+            } else {
+                // Preserve selection if still valid
+                let currentId = selectedId
+                let validId = currentId.flatMap { id in apps.contains { $0.id == id } ? id : nil }
+                self = .populated(apps: apps, selectedId: validId)
+            }
+        }
+
+        mutating func select(_ id: String?) {
+            guard case .populated(let apps, _) = self else { return }
+            self = .populated(apps: apps, selectedId: id)
+        }
+    }
+
+    private var selectedIdBinding: Binding<String?> {
+        Binding(
+            get: { listState.selectedId },
+            set: { listState.select($0) }
+        )
+    }
 
     var body: some View {
         VStack(spacing: 0) {
             // List of ignored apps
-            if ignoredApps.isEmpty {
+            switch listState {
+            case .empty:
                 Text("No applications ignored")
                     .foregroundStyle(.secondary)
                     .frame(maxWidth: .infinity, minHeight: 60)
-            } else {
-                List(selection: $selectedAppId) {
-                    ForEach(ignoredApps) { app in
+            case .populated(let apps, _):
+                List(selection: selectedIdBinding) {
+                    ForEach(apps) { app in
                         HStack(spacing: 10) {
                             if let icon = app.icon {
                                 Image(nsImage: icon)
@@ -147,7 +189,10 @@ struct IgnoredAppsListView: View {
                         .frame(width: 24, height: 20)
                 }
                 .buttonStyle(.borderless)
-                .disabled(selectedAppId == nil)
+                .disabled({
+                    if case .populated(_, .some) = listState { return false }
+                    return true
+                }())
 
                 Spacer()
             }
@@ -169,13 +214,10 @@ struct IgnoredAppsListView: View {
     }
 
     private func refreshIgnoredApps() {
-        ignoredApps = settings.ignoredAppBundleIds
+        let apps = settings.ignoredAppBundleIds
             .map { IgnoredApp.fromBundleId($0) }
             .sorted { $0.name.localizedCaseInsensitiveCompare($1.name) == .orderedAscending }
-        // Clear selection if selected app was removed
-        if let selected = selectedAppId, !ignoredApps.contains(where: { $0.id == selected }) {
-            selectedAppId = nil
-        }
+        listState.setApps(apps)
     }
 
     private func addApp() {
@@ -200,9 +242,9 @@ struct IgnoredAppsListView: View {
     }
 
     private func removeSelectedApp() {
-        guard let selectedId = selectedAppId else { return }
+        guard case .populated(_, let selectedId?) = listState else { return }
         settings.removeIgnoredApp(bundleId: selectedId)
-        selectedAppId = nil
+        listState.select(nil)
     }
 }
 
