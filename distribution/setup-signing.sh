@@ -6,7 +6,7 @@
 #   ./distribution/setup-signing.sh           # Create keychain & import certs
 #   ./distribution/setup-signing.sh --cleanup  # Remove temporary keychain
 #
-# Requires AGE_SECRET_KEY environment variable (or reads from macOS Keychain).
+# Requires AGE_SECRET_KEY environment variable (or reads from macOS Keychain via get-age-key.sh).
 
 set -e
 
@@ -32,13 +32,7 @@ if security find-identity -v -p codesigning 2>/dev/null | grep -q "3rd Party Mac
 fi
 
 # Resolve AGE_SECRET_KEY
-if [ -z "$AGE_SECRET_KEY" ]; then
-    AGE_SECRET_KEY=$(security find-generic-password -s clipkitty -a AGE_SECRET_KEY -w 2>/dev/null) || true
-fi
-if [ -z "$AGE_SECRET_KEY" ]; then
-    echo "Error: AGE_SECRET_KEY not set and not found in Keychain" >&2
-    exit 1
-fi
+AGE_SECRET_KEY=$("$SCRIPT_DIR/get-age-key.sh") || exit 1
 
 # Decrypt secrets
 printf '%s' "$AGE_SECRET_KEY" > /tmp/_ck_age.txt

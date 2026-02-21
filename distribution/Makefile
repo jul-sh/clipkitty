@@ -117,9 +117,7 @@ publish:
 # ============================================================================
 
 appstore-publish:
-	@if [ -z "$$AGE_SECRET_KEY" ]; then \
-		AGE_SECRET_KEY=$$(security find-generic-password -s clipkitty -a AGE_SECRET_KEY -w 2>/dev/null) || true; \
-	fi; \
+	@AGE_SECRET_KEY=$$($(DIST_DIR)/get-age-key.sh) || exit 1; \
 	export AGE_SECRET_KEY; \
 	$(DIST_DIR)/setup-signing.sh; \
 	PROV="$(PROVISIONING_PROFILE)"; \
@@ -198,6 +196,8 @@ marketing-screenshots: marketing-screenshots-capture
 # Capture localized screenshots for all supported locales.
 # Each locale's screenshots are saved to marketing/{locale}/screenshot_*.png.
 # The app UI is localized via -AppleLanguages and demo content is patched.
+# Database selection: uses SyntheticData.sqlite for English, SyntheticData_{locale}.sqlite for others.
+# Note: All databases share the same images (with locale column); only text items differ per locale.
 marketing-screenshots-localized:
 	@$(DIST_DIR)/patch-demo-items.sh
 	@$(MAKE) -C $(PROJECT_ROOT) all CONFIGURATION=AppStore
@@ -205,11 +205,19 @@ marketing-screenshots-localized:
 		--sign "$(SIGNING_IDENTITY)" \
 		--entitlements $(PROJECT_ROOT)/Sources/App/ClipKitty.entitlements \
 		"$(DERIVED_DATA)/Build/Products/AppStore/$(APP_NAME).app"
+	@rm -f /tmp/clipkitty_screenshot_locale.txt
+	@rm -f /tmp/clipkitty_screenshot_db.txt
 	@for locale in $(SCREENSHOT_LOCALES); do \
 		echo "Capturing screenshots for $$locale..."; \
 		mkdir -p $(PROJECT_ROOT)/marketing/$$locale; \
+		echo "$$locale" > /tmp/clipkitty_screenshot_locale.txt; \
+		if [ "$$locale" = "en" ]; then \
+			echo "SyntheticData.sqlite" > /tmp/clipkitty_screenshot_db.txt; \
+		else \
+			echo "SyntheticData_$$locale.sqlite" > /tmp/clipkitty_screenshot_db.txt; \
+		fi; \
 		$(DIST_DIR)/prepare-screenshot-environment.sh \
-			"cd $(PROJECT_ROOT) && SCREENSHOT_LOCALE=$$locale xcodebuild test \
+			"cd $(PROJECT_ROOT) && xcodebuild test \
 				-scheme ClipKittyUITests \
 				-destination \"platform=macOS\" \
 				-derivedDataPath DerivedData \
@@ -226,6 +234,8 @@ marketing-screenshots-localized:
 		fi; \
 		echo "  $$locale screenshots saved to marketing/$$locale/"; \
 	done
+	@rm -f /tmp/clipkitty_screenshot_locale.txt
+	@rm -f /tmp/clipkitty_screenshot_db.txt
 	@echo "All localized screenshots complete!"
 
 # Record App Store preview video (uses AppStore config)

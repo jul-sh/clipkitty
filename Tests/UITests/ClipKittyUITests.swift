@@ -3,94 +3,44 @@ import XCTest
 final class ClipKittyUITests: XCTestCase {
     var app: XCUIApplication!
 
-    /// Locale for localized screenshot capture, read from SCREENSHOT_LOCALE env var.
+    private static let localeConfigFile = "clipkitty_screenshot_locale.txt"
+    private static let dbConfigFile = "clipkitty_screenshot_db.txt"
+
+    /// Helper to read configuration from a temp file with optional environment fallback.
+    /// - Parameters:
+    ///   - filename: The temp file name (will be prefixed with /tmp/)
+    ///   - envFallback: Optional environment variable name to check if file is empty/missing
+    ///   - defaultValue: Optional default value if both file and env are empty/missing
+    /// - Returns: The trimmed content from file, env var, or default value
+    private func readTempConfig(_ filename: String, envFallback: String? = nil, defaultValue: String? = nil) -> String? {
+        if let content = try? String(contentsOfFile: "/tmp/\(filename)", encoding: .utf8) {
+            let trimmed = content.trimmingCharacters(in: .whitespacesAndNewlines)
+            if !trimmed.isEmpty {
+                return trimmed
+            }
+        }
+        if let envKey = envFallback, let envValue = ProcessInfo.processInfo.environment[envKey] {
+            if !envValue.isEmpty {
+                return envValue
+            }
+        }
+        return defaultValue
+    }
+
+    /// Locale for localized screenshot capture.
+    /// Read from /tmp/clipkitty_screenshot_locale.txt (written by Makefile before test run).
     /// When set (e.g. "ja", "de"), the app launches in that locale and demo content is patched.
     private var screenshotLocale: String? {
-        let locale = ProcessInfo.processInfo.environment["SCREENSHOT_LOCALE"]
-        if let locale, !locale.isEmpty, locale != "en" {
-            return locale
+        // First try reading from temp file (used by make marketing-screenshots-localized)
+        // Fallback to environment variable (for manual testing)
+        if let locale = readTempConfig(Self.localeConfigFile, envFallback: "SCREENSHOT_LOCALE") {
+            // Filter out "en" since that's the default
+            if locale != "en" {
+                return locale
+            }
         }
         return nil
     }
-
-    // MARK: - Localized Demo Content
-
-    /// Localized versions of the ClipKitty marketing bullet points shown in screenshot 1.
-    /// These replace the English text in SyntheticData.sqlite for localized screenshots.
-    private static let localizedBulletPoints: [String: String] = [
-        "es": """
-            ClipKitty
-            • Cópialo una vez, encuéntralo siempre
-            • La búsqueda inteligente perdona tus errores
-            • Ve bloques de código completos antes de pegar
-            • ⌥Espacio para invocar, teclado primero
-            • Tus datos nunca salen de tu Mac
-            """,
-        "zh-Hans": """
-            ClipKitty
-            • 复制一次，永久查找
-            • 智能搜索容忍拼写错误
-            • 粘贴前查看完整代码块
-            • ⌥空格唤出，键盘优先
-            • 数据永不离开你的 Mac
-            """,
-        "zh-Hant": """
-            ClipKitty
-            • 複製一次，永遠找得到
-            • 智慧搜尋容忍拼字錯誤
-            • 貼上前檢視完整程式碼區塊
-            • ⌥Space 喚出，鍵盤優先
-            • 資料永遠不會離開你的 Mac
-            """,
-        "ja": """
-            ClipKitty
-            • 一度コピーすれば、いつでも見つかる
-            • スマート検索でタイプミスも許容
-            • ペースト前にコードブロック全体を確認
-            • ⌥Spaceで呼び出し、キーボード操作
-            • データがMacの外に出ることはありません
-            """,
-        "ko": """
-            ClipKitty
-            • 한 번 복사하면 영원히 검색 가능
-            • 스마트 검색으로 오타도 문제없음
-            • 붙여넣기 전에 전체 코드 블록 확인
-            • ⌥Space로 호출, 키보드 중심
-            • 데이터가 Mac 밖으로 나가지 않음
-            """,
-        "fr": """
-            ClipKitty
-            • Copiez une fois, retrouvez toujours
-            • La recherche intelligente pardonne les fautes
-            • Visualisez les blocs de code avant de coller
-            • ⌥Espace pour invoquer, clavier d'abord
-            • Vos données ne quittent jamais votre Mac
-            """,
-        "de": """
-            ClipKitty
-            • Einmal kopieren, für immer finden
-            • Intelligente Suche verzeiht Tippfehler
-            • Code-Blöcke vor dem Einfügen ansehen
-            • ⌥Leertaste zum Aufrufen, Tastatur zuerst
-            • Deine Daten verlassen nie deinen Mac
-            """,
-        "pt-BR": """
-            ClipKitty
-            • Copie uma vez, encontre para sempre
-            • A busca inteligente perdoa erros de digitação
-            • Veja blocos de código completos antes de colar
-            • ⌥Espaço para chamar, teclado primeiro
-            • Seus dados nunca saem do seu Mac
-            """,
-        "ru": """
-            ClipKitty
-            • Скопируйте один раз — находите всегда
-            • Умный поиск прощает опечатки
-            • Просматривайте блоки кода перед вставкой
-            • ⌥Пробел для вызова, клавиатура в приоритете
-            • Ваши данные никогда не покидают Mac
-            """,
-    ]
 
     /// Read the bundle identifier from the app's Info.plist
     private func getBundleIdentifier(for appURL: URL) -> String {
@@ -110,11 +60,6 @@ final class ClipKittyUITests: XCTestCase {
 
         let appSupportDir = getAppSupportDirectory(for: appURL)
         try setupTestDatabase(in: appSupportDir)
-
-        // Patch localized demo content if a screenshot locale is set
-        if let locale = screenshotLocale {
-            patchLocalizedDemoContent(in: appSupportDir, locale: locale)
-        }
 
         app.launchArguments = ["--use-simulated-db"]
 
@@ -173,7 +118,12 @@ final class ClipKittyUITests: XCTestCase {
             .deletingLastPathComponent()
             .deletingLastPathComponent()
             .deletingLastPathComponent()
-        let sqliteSourceURL = projectRoot.appendingPathComponent("distribution/SyntheticData.sqlite")
+
+        // Read the database filename from temp file (written by Makefile)
+        // If it exists, use that filename; otherwise fall back to "SyntheticData.sqlite"
+        let databaseFilename = readTempConfig(Self.dbConfigFile, defaultValue: "SyntheticData.sqlite") ?? "SyntheticData.sqlite"
+
+        let sqliteSourceURL = projectRoot.appendingPathComponent("distribution/\(databaseFilename)")
         let targetURL = appSupportDir.appendingPathComponent("clipboard-screenshot.sqlite")
         let indexDirURL = appSupportDir.appendingPathComponent("tantivy_index_v3")
 
@@ -193,29 +143,10 @@ final class ClipKittyUITests: XCTestCase {
         try? FileManager.default.removeItem(at: targetURL.appendingPathExtension("shm"))
 
         guard FileManager.default.fileExists(atPath: sqliteSourceURL.path) else {
-            XCTFail("SyntheticData.sqlite not found at: \(sqliteSourceURL.path)")
+            XCTFail("\(databaseFilename) not found at: \(sqliteSourceURL.path)")
             return
         }
         try FileManager.default.copyItem(at: sqliteSourceURL, to: targetURL)
-    }
-
-    /// Patches the ClipKitty bullet points in the copied SQLite database with localized text.
-    /// This makes the most visible demo item (top of history list) appear in the target language.
-    private func patchLocalizedDemoContent(in appSupportDir: URL, locale: String) {
-        guard let localizedText = Self.localizedBulletPoints[locale] else { return }
-
-        let dbPath = appSupportDir.appendingPathComponent("clipboard-screenshot.sqlite").path
-        let escaped = localizedText
-            .trimmingCharacters(in: .whitespacesAndNewlines)
-            .replacingOccurrences(of: "'", with: "''")
-
-        let sql = "UPDATE text_items SET value = '\(escaped)' WHERE value LIKE 'ClipKitty%Copy it once%';"
-
-        let process = Process()
-        process.executableURL = URL(fileURLWithPath: "/usr/bin/sqlite3")
-        process.arguments = [dbPath, sql]
-        try? process.run()
-        process.waitUntilExit()
     }
 
     /// Helper to get the currently selected index by finding the button with isSelected trait
