@@ -224,6 +224,29 @@ def main():
                 if not pngs:
                     continue
 
+                # Delete existing screenshots before uploading new ones to avoid duplicates
+                print(f"  Deleting existing screenshots for {asc_locale}...")
+                if args.dry_run:
+                    print(f"    [dry-run] Would delete existing screenshots")
+                else:
+                    r = run(
+                        ["asc", "screenshots", "list",
+                         "--version-localization", loc_id,
+                         "--device-type", "APP_DESKTOP"],
+                        capture=True, check=False,
+                    )
+                    if r.returncode == 0:
+                        existing = json.loads(r.stdout)
+                        existing_list = existing.get("data", existing) if isinstance(existing, dict) else existing
+                        for screenshot in existing_list:
+                            screenshot_id = screenshot.get("id")
+                            if screenshot_id:
+                                run(
+                                    ["asc", "screenshots", "delete",
+                                     "--id", screenshot_id, "--confirm"],
+                                    check=False,
+                                )
+
                 print(f"  Uploading {len(pngs)} screenshots for {asc_locale}...")
                 if args.dry_run:
                     for png in pngs:
