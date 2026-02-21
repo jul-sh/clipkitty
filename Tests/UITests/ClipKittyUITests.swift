@@ -197,6 +197,41 @@ final class ClipKittyUITests: XCTestCase {
         XCTAssertGreaterThan(buttons.count, 0, "Should have items in the list")
     }
 
+    /// Tests that first item preview is visible after app reopen (hide/show cycle).
+    /// KNOWN ISSUE: First item shows once in preview pane, but then no more on subsequent app reopens.
+    /// Other items show fine when navigated to.
+    func testFirstItemPreviewVisibleAfterReopen() throws {
+        let panel = app.dialogs.firstMatch
+        XCTAssertTrue(panel.exists, "Panel should be visible initially")
+
+        // Verify first item preview is shown initially (text view exists with content)
+        XCTAssertTrue(waitForSelectedIndex(0, timeout: 3), "First item should be selected")
+        let textViews = app.textViews.allElementsBoundByIndex
+        XCTAssertGreaterThan(textViews.count, 0, "Preview text view should exist on initial open")
+        let initialPreviewValue = textViews.first?.value as? String ?? ""
+        XCTAssertFalse(initialPreviewValue.isEmpty, "Preview should have content on initial open")
+
+        // Hide the panel by activating another app
+        let finder = XCUIApplication(bundleIdentifier: "com.apple.finder")
+        finder.activate()
+        XCTAssertTrue(panel.waitForNonExistence(timeout: 3), "Panel should hide when focus lost")
+
+        // Re-show the panel via hotkey
+        app.typeKey(" ", modifierFlags: .option)
+        XCTAssertTrue(panel.waitForExistence(timeout: 5), "Panel should reappear after hotkey")
+        Thread.sleep(forTimeInterval: 0.5)
+
+        // First item should still be selected
+        XCTAssertTrue(waitForSelectedIndex(0, timeout: 3), "First item should be selected after reopen")
+
+        // CRITICAL: Preview text view should STILL exist and have content
+        // This is the known issue - after reopen, the preview pane is empty for first item
+        let textViewsAfterReopen = app.textViews.allElementsBoundByIndex
+        XCTAssertGreaterThan(textViewsAfterReopen.count, 0, "Preview text view should exist after reopen")
+
+        let previewValueAfterReopen = textViewsAfterReopen.first?.value as? String ?? ""
+        XCTAssertFalse(previewValueAfterReopen.isEmpty, "Preview should have content after reopen (KNOWN ISSUE: first item preview disappears)")
+    }
 
     /// Tests that Cmd+number shortcuts select and paste the corresponding history item.
     /// Cmd+2 should target the second item (index 1).
