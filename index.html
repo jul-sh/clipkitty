@@ -85,32 +85,49 @@
 <body>
 <h1>ClipKitty</h1>
 <img src="icon.png" alt="ClipKitty icon" width="60">
-<p><strong>Your clipboard history from day one. Searchable in milliseconds.</strong></p>
-<p>Unlimited history • Instant fuzzy search • Multi-line preview • Private</p>
+<p><strong>Never lose what you copied.</strong></p>
+<p>Unlimited history • Instant fuzzy search • Live preview • Private &amp; offline</p>
 <img src="marketing_1.png" alt="ClipKitty clipboard history" width="820">
 <img src="marketing_2.png" alt="ClipKitty fuzzy search" width="820">
 <img src="marketing_3.png" alt="ClipKitty content filter" width="820">
 <h2>Why it exists</h2>
-<p>You copied that command last week. That document yesterday. That address three months ago. Your clipboard manager either forgot it, slowed to a crawl searching for it, or truncated half of it.</p>
-<p>ClipKitty stores everything. Advanced fuzzy search means zero lag, whether you're filtering through ten items or ten million. Built for people who copy lots of things and need to find them again.</p>
-<h2>Why ClipKitty over alternatives?</h2>
-<ul>
-<li><strong>vs Maccy</strong>: Maccy caps at 999 items and slows down past 200. ClipKitty maintains unlimited history and scales to millions with no performance degradation. Plus, you get a live multi-line preview pane rather than waiting for hover tooltips.</li>
-<li><strong>vs Raycast</strong>: Raycast truncates items and limits free history to 3 months. ClipKitty has no character limits and preserves history forever. It is also strictly offline; your clipboard never touches the cloud.</li>
-<li><strong>vs Paste</strong>: No subscriptions, ever. Just a fast, local clipboard manager you own outright.</li>
-</ul>
+<p>You copied that command last week. That code snippet yesterday. That address six months ago. Your clipboard manager either forgot it, slowed down searching for it, or cut off half the content.</p>
+<p>ClipKitty stores everything. Finds it in milliseconds—whether you have 100 items or 100 million. Shows the full text, never truncated. Built for people who copy lots of things and need to find them again.</p>
+<h2>Why ClipKitty?</h2>
+<table>
+<thead>
+<tr>
+<th></th>
+<th>ClipKitty</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td><strong>vs Maccy</strong></td>
+<td>Same simplicity, no limits. Maccy caps at 999 items and slows past 200. ClipKitty scales to millions with live preview instead of hover tooltips.</td>
+</tr>
+<tr>
+<td><strong>vs Raycast</strong></td>
+<td>Same speed, no expiration. Raycast's free tier expires after 3 months and truncates content. ClipKitty preserves everything forever, strictly offline.</td>
+</tr>
+<tr>
+<td><strong>vs Paste</strong></td>
+<td>Same features, no subscription. Paste charges $30/year. ClipKitty is free via Homebrew or pay once on the App Store.</td>
+</tr>
+</tbody>
+</table>
 <h2>Features</h2>
 <ul>
-<li><strong>Unlimited History</strong>: Clipboard history that doesn’t forget, doesn’t truncate. ClipKitty stores it all while staying lightweight.</li>
-<li><strong>Fuzzy search that scales</strong>: Type “improt” and find “import”. ClipKitty uses tantivy; the same infrastructure as production search engines. Results stay fast whether your history holds 100 items or 1,000,000.</li>
-<li><strong>Live Preview</strong>: See full content instantly as you navigate. No truncation, no waiting for tooltips.</li>
-<li><strong>Keyboard-First</strong>: <code>⌥Space</code> to open, arrow keys to navigate, <code>Return</code> to paste.</li>
-<li><strong>Privacy-First</strong>: Runs on-device and offline. No telemetry.</li>
-<li><strong>Free &amp; Open Source</strong>: Licensed under GPL-3.0. The App Store version is paid in order to support development, but you can always build the app yourself or install it free via homebrew.</li>
+<li><strong>Unlimited History</strong>: No caps, no expiration. Text, images, links, colors—everything preserved in full, forever.</li>
+<li><strong>Fuzzy Search That Scales</strong>: Type &quot;improt&quot; and find &quot;import&quot;. Type &quot;dockr prodction&quot; and find &quot;docker push production&quot;. Powered by Tantivy, the same search engine used in production databases.</li>
+<li><strong>Live Preview Pane</strong>: See full content instantly as you navigate. Multi-line text, code blocks, images—no truncation, no waiting.</li>
+<li><strong>OCR &amp; Smart Search</strong>: Search text inside images and screenshots. AI-powered descriptions make visual content searchable.</li>
+<li><strong>Keyboard-First</strong>: <code>⌥Space</code> to open, arrow keys to navigate, <code>Return</code> to paste. <code>⌘1-9</code> for quick access.</li>
+<li><strong>Privacy-First</strong>: 100% on-device and offline. No telemetry, no cloud sync, no accounts.</li>
+<li><strong>Free &amp; Open Source</strong>: GPL-3.0 licensed. Install free via Homebrew or support development on the App Store.</li>
 </ul>
 <h2>Installation</h2>
-<h3>Easy Install via Homebrew</h3>
-<p>If you have <a href="https://brew.sh">Homebrew</a> installed, run:</p>
+<h3>Homebrew (Recommended)</h3>
 <pre><code class="language-bash">brew install jul-sh/clipkitty/clipkitty
 </code></pre>
 <h3>Manual Download</h3>
@@ -124,7 +141,7 @@
 <li>Type to fuzzy search.</li>
 <li>Use <strong>Arrow Keys</strong> to navigate and <strong>Return</strong> to paste.</li>
 </ol>
-<h2>Keyboard shortcuts</h2>
+<h2>Keyboard Shortcuts</h2>
 <table>
 <thead>
 <tr>
@@ -150,12 +167,20 @@
 <td>Jump to item 1–9</td>
 </tr>
 <tr>
+<td><strong>Tab</strong></td>
+<td>Cycle content type filter</td>
+</tr>
+<tr>
+<td><strong>Delete</strong></td>
+<td>Delete selected item</td>
+</tr>
+<tr>
 <td><strong>Escape</strong></td>
 <td>Close</td>
 </tr>
 </tbody>
 </table>
-<h2>Building from source</h2>
+<h2>Building from Source</h2>
 <pre><code class="language-bash">git clone https://github.com/jul-sh/clipkitty
 cd clipkitty
 make
