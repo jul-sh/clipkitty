@@ -149,7 +149,7 @@ final class MultiFileTests: XCTestCase {
         )
 
         let items = try store.fetchByIds(itemIds: [id])
-        XCTAssertEqual(items[0].textContent, "a.txt, b.txt")
+        XCTAssertEqual(items[0].content.textContent, "a.txt, b.txt")
     }
 
     func testThreeFilesDisplayName() throws {
@@ -167,7 +167,7 @@ final class MultiFileTests: XCTestCase {
         )
 
         let items = try store.fetchByIds(itemIds: [id])
-        XCTAssertEqual(items[0].textContent, "a.txt and 2 more")
+        XCTAssertEqual(items[0].content.textContent, "a.txt and 2 more")
     }
 
     // MARK: - Search

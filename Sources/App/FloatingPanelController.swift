@@ -2,29 +2,54 @@ import AppKit
 import SwiftUI
 import ClipKittyRust
 
+enum PanelMode {
+    case production
+    case testing
+}
+
+private enum PanelState {
+    case hidden
+    case visible(previousApp: NSRunningApplication?)
+}
+
 @MainActor
 final class FloatingPanelController: NSObject, NSWindowDelegate {
     private var panel: NSPanel!
     private let store: ClipboardStore
-    private var previousApp: NSRunningApplication?
-    private let persistPanel: Bool
+    private let mode: PanelMode
+    private var panelState: PanelState = .hidden
 
     /// Initial search query to pre-fill (for CI screenshots)
     var initialSearchQuery: String?
 
-    init(store: ClipboardStore, persistPanel: Bool = false) {
+    init(store: ClipboardStore, mode: PanelMode = .production) {
         self.store = store
-        self.persistPanel = persistPanel
+        self.mode = mode
         super.init()
         setupPanel()
     }
 
     private func setupPanel() {
-        // In test mode, omit .nonactivatingPanel so XCUITest can discover the window.
+        // Testing mode differences:
+        //
+        // styleMask: Omit .nonactivatingPanel so XCUITest can discover the window.
         // NSPanel with .nonactivatingPanel is invisible to the accessibility hierarchy.
-        let styleMask: NSWindow.StyleMask = persistPanel
-            ? [.titled, .fullSizeContentView]
-            : [.nonactivatingPanel, .titled, .fullSizeContentView]
+        // Safeguard: UI tests verify the panel is discoverable and interactive.
+        //
+        // windowLevel: Use a high custom level (2002) to ensure the panel appears above
+        // other windows during test screenshots, since .floating level may not suffice
+        // without .nonactivatingPanel.
+        // Safeguard: UI tests verify panel visibility and z-ordering in screenshots.
+        let styleMask: NSWindow.StyleMask
+        let windowLevel: NSWindow.Level
+        switch mode {
+        case .production:
+            styleMask = [.nonactivatingPanel, .titled, .fullSizeContentView]
+            windowLevel = .floating
+        case .testing:
+            styleMask = [.titled, .fullSizeContentView]
+            windowLevel = NSWindow.Level(rawValue: 2002)
+        }
 
         panel = NSPanel(
             contentRect: NSRect(x: 0, y: 0, width: 778, height: 518),
@@ -33,8 +58,10 @@ final class FloatingPanelController: NSObject, NSWindowDelegate {
             defer: false
         )
 
-        panel.isFloatingPanel = !persistPanel
-        panel.level = .floating
+        // isFloatingPanel must match whether styleMask contains .nonactivatingPanel,
+        // otherwise focus behaves incorrectly. Derived from styleMask to make this invariant unbreakable.
+        panel.isFloatingPanel = styleMask.contains(.nonactivatingPanel)
+        panel.level = windowLevel
         panel.collectionBehavior = [.canJoinAllSpaces, .fullScreenAuxiliary]
         panel.isMovableByWindowBackground = false
         panel.titlebarAppearsTransparent = true
@@ -44,13 +71,6 @@ final class FloatingPanelController: NSObject, NSWindowDelegate {
         panel.hasShadow = true
         panel.delegate = self
         panel.becomesKeyOnlyIfNeeded = false
-
-        // XCUITest installs an accessibility shield at window level 2001.
-        // Set the panel ABOVE this shield so UI tests can interact with it.
-        // Must be set after all other panel configuration to avoid being reset.
-        if persistPanel {
-            panel.level = NSWindow.Level(rawValue: 2002)
-        }
 
         updatePanelContent()
     }
@@ -74,22 +94,28 @@ final class FloatingPanelController: NSObject, NSWindowDelegate {
 
     nonisolated func windowDidResignKey(_ notification: Notification) {
         MainActor.assumeIsolated {
-            if !persistPanel {
+            // shouldDismissOnResignKey: In production, panel hides when it loses focus
+            // (user clicked elsewhere). In testing, panel must stay visible so XCUITest
+            // can interact with it across multiple actions.
+            // Safeguard: UI tests explicitly verify panel dismiss behavior via escape key.
+            if case .production = mode {
                 hide()
             }
         }
     }
 
     func toggle() {
-        if panel.isVisible {
-            hide()
-        } else {
+        switch panelState {
+        case .hidden:
             show()
+        case .visible:
+            hide()
         }
     }
 
     func show() {
-        previousApp = NSWorkspace.shared.frontmostApplication
+        let previousApp = NSWorkspace.shared.frontmostApplication
+        panelState = .visible(previousApp: previousApp)
         // Update content to apply any initial search query
         if initialSearchQuery != nil {
             updatePanelContent()
@@ -100,10 +126,11 @@ final class FloatingPanelController: NSObject, NSWindowDelegate {
     }
 
     func hide() {
+        guard case .visible(let previousApp) = panelState else { return }
         panel.orderOut(nil)
         store.resetForDisplay()
         previousApp?.activate()
-        previousApp = nil
+        panelState = .hidden
     }
 
     private func centerPanel() {
@@ -119,9 +146,14 @@ final class FloatingPanelController: NSObject, NSWindowDelegate {
 
     private func selectItem(itemId: Int64, content: ClipboardContent) {
         store.paste(itemId: itemId, content: content)
-        let targetApp = previousApp
+        let targetApp: NSRunningApplication?
+        if case .visible(let previousApp) = panelState {
+            targetApp = previousApp
+        } else {
+            targetApp = nil
+        }
         hide()
-        if AppSettings.shared.hasAccessibilityPermission && AppSettings.shared.autoPasteEnabled {
+        if case .autoPaste = AppSettings.shared.pasteMode {
             simulatePaste(targetApp: targetApp)
         }
     }

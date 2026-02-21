@@ -61,24 +61,30 @@ struct GeneralSettingsView: View {
     var body: some View {
         Form {
             Section("Startup") {
-                Toggle("Launch at login", isOn: launchAtLoginBinding)
-                    .disabled(!launchAtLogin.isInApplicationsDirectory)
-
-                if !launchAtLogin.isInApplicationsDirectory {
-                    Text("Move ClipKitty to the Applications folder to enable this option.")
-                        .font(.caption)
-                        .foregroundStyle(.secondary)
-                }
-
-                if let errorMessage = launchAtLogin.errorMessage {
-                    Text(errorMessage)
-                        .font(.caption)
-                        .foregroundStyle(.red)
-                    Button("Open Login Items Settings") {
-                        NSWorkspace.shared.open(URL(string: "x-apple.systempreferences:com.apple.LoginItems-Settings.extension")!)
-                        launchAtLogin.errorMessage = nil
+                let canToggle: Bool = {
+                    switch launchAtLogin.state {
+                    case .enabled, .disabled: return true
+                    case .unavailable, .error: return false
                     }
-                    .font(.caption)
+                }()
+
+                Toggle("Launch at login", isOn: launchAtLoginBinding)
+                    .disabled(!canToggle)
+
+                if let message = launchAtLogin.state.displayMessage {
+                    Text(message)
+                        .font(.caption)
+                        .foregroundStyle({
+                            if case .error = launchAtLogin.state { return AnyShapeStyle(.red) }
+                            return AnyShapeStyle(.secondary)
+                        }())
+
+                    if case .error = launchAtLogin.state {
+                        Button("Open Login Items Settings") {
+                            NSWorkspace.shared.open(URL(string: "x-apple.systempreferences:com.apple.LoginItems-Settings.extension")!)
+                        }
+                        .font(.caption)
+                    }
                 }
             }
 
