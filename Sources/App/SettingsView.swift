@@ -150,18 +150,6 @@ struct GeneralSettingsView: View {
                 }
             }
 
-            Section("Security") {
-                HStack {
-                    Image(systemName: "lock.shield")
-                        .foregroundStyle(.secondary)
-                    Text("Sandboxed")
-                        .font(.headline)
-                }
-                Text("ClipKitty runs in an isolated environment, protecting your privacy and keeping your data secure.")
-                    .font(.caption)
-                    .foregroundStyle(.secondary)
-            }
-
             Section("Data") {
                 Button(role: .destructive) {
                     showClearConfirmation = true

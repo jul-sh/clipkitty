@@ -118,13 +118,13 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate {
                     statusItem?.menu = nil
                 }
             } else {
-                // Left-click opens the panel
-                panelController.show()
+                // Left-click toggles the panel (show if hidden, hide if visible)
+                panelController.toggle()
             }
         } else {
             // Default behavior: menu is always attached, this shouldn't be called
-            // but just in case, show the panel
-            panelController.show()
+            // but just in case, toggle the panel
+            panelController.toggle()
         }
     }
 
