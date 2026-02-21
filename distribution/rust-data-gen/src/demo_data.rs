@@ -90,24 +90,6 @@ pub const DEMO_ITEMS: &[DemoItem] = &[
         offset: -1300,
     },
     DemoItem {
-        content: "#7C3AED",
-        source_app: "Freeform",
-        bundle_id: "com.apple.freeform",
-        offset: -1800,
-    },
-    DemoItem {
-        content: "#1E293B",
-        source_app: "Freeform",
-        bundle_id: "com.apple.freeform",
-        offset: -1550,
-    },
-    DemoItem {
-        content: "#F472B6",
-        source_app: "Preview",
-        bundle_id: "com.apple.Preview",
-        offset: -1500,
-    },
-    DemoItem {
         content: "#border-container { margin: 0; padding: 16px; display: flex; flex-direction: column; ...",
         source_app: "TextEdit",
         bundle_id: "com.apple.TextEdit",
@@ -141,13 +123,13 @@ pub const DEMO_ITEMS: &[DemoItem] = &[
         content: "#FF5733",
         source_app: "Freeform",
         bundle_id: "com.apple.freeform",
-        offset: -1700,
+        offset: -200,  // Orange - shows in first 10 items
     },
     DemoItem {
         content: "#2DD4BF",
         source_app: "Preview",
         bundle_id: "com.apple.Preview",
-        offset: -1600,
+        offset: -350,  // Teal - shows in first 10 items
     },
     DemoItem {
         content: "The quick brown fox jumps over the lazy dog",

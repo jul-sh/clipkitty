@@ -9,9 +9,9 @@ Example: ./inject-images.py SyntheticData.sqlite en
 
 import sqlite3
 import sys
-import os
 import csv
-import hashlib
+import json
+from datetime import datetime, timedelta
 from pathlib import Path
 
 def main():
@@ -25,10 +25,22 @@ def main():
     script_dir = Path(__file__).parent
     images_dir = script_dir / "images"
     keywords_csv = script_dir / "image_keywords.csv"
+    manifest_path = images_dir / "manifest.json"
 
     if not images_dir.exists():
         print(f"Error: images directory not found at {images_dir}")
         sys.exit(1)
+
+    if not manifest_path.exists():
+        print(f"Error: manifest.json not found at {manifest_path}")
+        sys.exit(1)
+
+    # Load manifest for image metadata (source_app, bundle_id, offset_seconds)
+    with open(manifest_path, 'r', encoding='utf-8') as f:
+        manifest = json.load(f)
+
+    # Build lookup by English description
+    manifest_by_desc = {item['description_en']: item for item in manifest}
 
     # Load localized keywords from CSV
     locale_keywords = {}  # description_en -> localized_description
@@ -56,9 +68,8 @@ def main():
     conn = sqlite3.connect(db_path)
     cursor = conn.cursor()
 
-    # Get current timestamp
-    cursor.execute("SELECT datetime('now')")
-    now = cursor.fetchone()[0]
+    # Get current timestamp as base
+    now = datetime.now()
 
     # Ensure image_items table has locale column
     cursor.execute("PRAGMA table_info(image_items)")
@@ -67,55 +78,32 @@ def main():
         cursor.execute("ALTER TABLE image_items ADD COLUMN locale TEXT DEFAULT 'en'")
         cursor.execute("CREATE INDEX IF NOT EXISTS idx_image_locale ON image_items(locale)")
 
-    # Find all HEIC images (skip thumbnails)
-    heic_files = sorted(images_dir.glob("*.heic"))
-
     inserted = 0
-    for heic_path in heic_files:
-        # Find matching thumbnail
-        thumb_path = heic_path.with_suffix("").with_name(heic_path.stem + "_thumb.webp")
 
-        # Get the English description from manifest or filename
-        # The filename format is: keywords_hash.heic
-        stem = heic_path.stem
-        # Remove hash suffix (last 9 chars: _xxxxxxxx)
-        if '_' in stem and len(stem.split('_')[-1]) == 8:
-            keywords_part = '_'.join(stem.split('_')[:-1])
-        else:
-            keywords_part = stem
+    # Process each image from the manifest
+    for item in manifest:
+        heic_path = images_dir / item['file']
+        thumb_path = images_dir / item['thumbnail']
 
-        # Convert filename back to keywords format (approximate)
-        # We need to match against the manifest or CSV
-        image_data = heic_path.read_bytes()
-        thumbnail_data = thumb_path.read_bytes() if thumb_path.exists() else None
-
-        # Find matching English description by hash
-        image_hash = hashlib.md5(image_data).hexdigest()[:8]
-
-        # Match by looking for the hash in the filename
-        en_description = None
-        for en_kw in locale_keywords.keys():
-            # Generate expected filename from English keywords
-            kw_parts = en_kw.split(', ')[:3]
-            expected_prefix = '_'.join(kw_parts).replace(' ', '_').replace('/', '_')[:50]
-            if heic_path.name.startswith(expected_prefix):
-                en_description = en_kw
-                break
-
-        if not en_description:
-            print(f"Warning: Could not match {heic_path.name} to keywords CSV")
+        if not heic_path.exists():
+            print(f"Warning: Image file not found: {heic_path}")
             continue
+
+        en_description = item['description_en']
+        source_app = item['source_app']
+        bundle_id = item['bundle_id']
+        offset_seconds = item.get('offset_seconds', -3600)  # Default 1 hour ago
 
         # Get localized description
         description = locale_keywords.get(en_description, en_description)
 
-        # Determine source app from keywords (simple heuristic)
-        if any(x in en_description for x in ['painting', 'woodblock', 'print', 'illustration']):
-            source_app = "Safari" if 'impressionist' in en_description else "Photos"
-            bundle_id = "com.apple.Safari" if source_app == "Safari" else "com.apple.Photos"
-        else:
-            source_app = "Photos" if 'photograph' in en_description else "Safari"
-            bundle_id = "com.apple.Photos" if source_app == "Photos" else "com.apple.Safari"
+        # Calculate timestamp with offset (images should appear older than text items)
+        timestamp = now + timedelta(seconds=offset_seconds)
+        timestamp_str = timestamp.strftime('%Y-%m-%d %H:%M:%S')
+
+        # Read image data
+        image_data = heic_path.read_bytes()
+        thumbnail_data = thumb_path.read_bytes() if thumb_path.exists() else None
 
         # Create content hash
         hash_input = f"{description}{len(image_data)}{locale}"
@@ -129,11 +117,11 @@ def main():
         if cursor.fetchone():
             continue
 
-        # Insert into items table
+        # Insert into items table with proper timestamp
         cursor.execute("""
             INSERT INTO items (contentType, contentHash, content, timestamp, sourceApp, sourceAppBundleId, thumbnail)
             VALUES ('image', ?, ?, ?, ?, ?, ?)
-        """, (content_hash, description, now, source_app, bundle_id, thumbnail_data))
+        """, (content_hash, description, timestamp_str, source_app, bundle_id, thumbnail_data))
 
         item_id = cursor.lastrowid
 

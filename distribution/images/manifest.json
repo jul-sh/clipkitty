@@ -3,91 +3,104 @@
     "file": "landscape_arctic_mountains_8883fec2.heic",
     "thumbnail": "landscape_arctic_mountains_8883fec2_thumb.webp",
     "description_en": "landscape, arctic, mountains, bay, tundra, cabin, norway, spitzbergen, photograph, vintage",
-    "source_app": "Safari",
-    "bundle_id": "com.apple.Safari"
+    "source_app": "Photos",
+    "bundle_id": "com.apple.Photos",
+    "offset_seconds": -7200
   },
   {
     "file": "painting_woman_portrait_e2344ed6.heic",
     "thumbnail": "painting_woman_portrait_e2344ed6_thumb.webp",
     "description_en": "painting, woman, portrait, garden, balcony, dress, spring, blossoms, trees, oil painting",
     "source_app": "Photos",
-    "bundle_id": "com.apple.Photos"
+    "bundle_id": "com.apple.Photos",
+    "offset_seconds": -6800
   },
   {
     "file": "painting_impressionist_pointillism_c6161cb8.heic",
     "thumbnail": "painting_impressionist_pointillism_c6161cb8_thumb.webp",
     "description_en": "painting, impressionist, pointillism, garden, blossoms, trees, gate, spring, colorful, oil painting",
     "source_app": "Safari",
-    "bundle_id": "com.apple.Safari"
+    "bundle_id": "com.apple.Safari",
+    "offset_seconds": -6400
   },
   {
     "file": "village_norway_fjord_0f27cc0f.heic",
     "thumbnail": "village_norway_fjord_0f27cc0f_thumb.webp",
     "description_en": "village, norway, fjord, harbor, boats, houses, mountains, coastal, photograph, vintage",
     "source_app": "Photos",
-    "bundle_id": "com.apple.Photos"
+    "bundle_id": "com.apple.Photos",
+    "offset_seconds": -6000
   },
   {
     "file": "painting_field_meadow_b6f242ec.heic",
     "thumbnail": "painting_field_meadow_b6f242ec_thumb.webp",
     "description_en": "painting, field, meadow, women, parasol, flowers, autumn, sky, clouds, impressionist",
     "source_app": "Safari",
-    "bundle_id": "com.apple.Safari"
+    "bundle_id": "com.apple.Safari",
+    "offset_seconds": -5600
   },
   {
     "file": "painting_pointillism_sunset_031969f0.heic",
     "thumbnail": "painting_pointillism_sunset_031969f0_thumb.webp",
     "description_en": "painting, pointillism, sunset, clouds, pink, sky, trees, landscape, neo-impressionist, oil painting",
     "source_app": "Photos",
-    "bundle_id": "com.apple.Photos"
+    "bundle_id": "com.apple.Photos",
+    "offset_seconds": -5200
   },
   {
     "file": "photograph_road_trees_ed1b91cd.heic",
     "thumbnail": "photograph_road_trees_ed1b91cd_thumb.webp",
     "description_en": "photograph, road, trees, rickshaw, path, forest, tall trees, japan, vintage, black and white",
-    "source_app": "Safari",
-    "bundle_id": "com.apple.Safari"
+    "source_app": "Photos",
+    "bundle_id": "com.apple.Photos",
+    "offset_seconds": -4800
   },
   {
     "file": "painting_miniature_mughal_0c2521b3.heic",
     "thumbnail": "painting_miniature_mughal_0c2521b3_thumb.webp",
     "description_en": "painting, miniature, mughal, emperor, akbar, throne, court, gold, turban, manuscript",
-    "source_app": "Safari",
-    "bundle_id": "com.apple.Safari"
+    "source_app": "Photos",
+    "bundle_id": "com.apple.Photos",
+    "offset_seconds": -4400
   },
   {
     "file": "painting_monet_train_station_56a53c2c.heic",
     "thumbnail": "painting_monet_train_station_56a53c2c_thumb.webp",
     "description_en": "painting, monet, train station, steam, locomotive, impressionist, paris, railway, smoke, oil painting",
-    "source_app": "Photos",
-    "bundle_id": "com.apple.Photos"
+    "source_app": "Safari",
+    "bundle_id": "com.apple.Safari",
+    "offset_seconds": -4000
   },
   {
     "file": "print_engraving_crowd_7484447d.heic",
     "thumbnail": "print_engraving_crowd_7484447d_thumb.webp",
     "description_en": "print, engraving, crowd, victorian, street scene, people, illustration, cruikshank, vintage, black and white",
-    "source_app": "Safari",
-    "bundle_id": "com.apple.Safari"
+    "source_app": "Photos",
+    "bundle_id": "com.apple.Photos",
+    "offset_seconds": -3600
   },
   {
     "file": "woodblock_print_wave_ocean_7264f984.heic",
     "thumbnail": "woodblock_print_wave_ocean_7264f984_thumb.webp",
     "description_en": "woodblock print, wave, ocean, hokusai, japan, mount fuji, boats, ukiyo-e, blue, sea",
     "source_app": "Photos",
-    "bundle_id": "com.apple.Photos"
+    "bundle_id": "com.apple.Photos",
+    "offset_seconds": -3200
   },
   {
     "file": "illustration_volcano_landscape_5a7d9992.heic",
     "thumbnail": "illustration_volcano_landscape_5a7d9992_thumb.webp",
     "description_en": "illustration, volcano, landscape, geological, lake, steam, fire, figure, tree, scientific",
-    "source_app": "Safari",
-    "bundle_id": "com.apple.Safari"
+    "source_app": "Photos",
+    "bundle_id": "com.apple.Photos",
+    "offset_seconds": -2800
   },
   {
     "file": "photograph_whale_building_5558248b.heic",
     "thumbnail": "photograph_whale_building_5558248b_thumb.webp",
     "description_en": "photograph, whale, building, roadside, blue, car wash, americana, kitsch, architecture, vintage",
     "source_app": "Photos",
-    "bundle_id": "com.apple.Photos"
+    "bundle_id": "com.apple.Photos",
+    "offset_seconds": -2400
   }
 ]
