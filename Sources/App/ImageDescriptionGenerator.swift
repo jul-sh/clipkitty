@@ -4,6 +4,12 @@ import Vision
 
 struct ImageDescriptionGenerator {
 
+    private enum VisionProcessingResult {
+        case success(labels: [String], recognizedText: String?)
+        case cancelled
+        case failed(Error)
+    }
+
     struct Configuration {
         /// Minimum confidence to accept a label (0.0 - 1.0).
         var minConfidence: Float = 0.35
@@ -43,16 +49,17 @@ struct ImageDescriptionGenerator {
         textRequest.usesLanguageCorrection = true
 
         // Run blocking Vision work in a detached task
-        let results = await Task.detached(priority: .userInitiated) { () -> (labels: [String], text: String?)? in
+        let result = await Task.detached(priority: .userInitiated) {
+            () -> VisionProcessingResult in
 
-            if Task.isCancelled { return nil }
+            if Task.isCancelled { return .cancelled }
 
             let handler = VNImageRequestHandler(cgImage: image, orientation: orientation, options: [:])
 
             do {
                 try handler.perform([labelRequest, textRequest])
 
-                if Task.isCancelled { return nil }
+                if Task.isCancelled { return .cancelled }
 
                 // Process Labels
                 let labels = (labelRequest.results ?? [])
@@ -69,16 +76,22 @@ struct ImageDescriptionGenerator {
                 // Join lines naturally with spaces
                 let text = strings.isEmpty ? nil : strings.joined(separator: " ")
 
-                return (Array(labels), text)
+                return .success(labels: Array(labels), recognizedText: text)
 
             } catch {
-                return nil
+                return .failed(error)
             }
         }.value
 
-        guard let (labels, recognizedText) = results else { return nil }
-
-        return formatOutput(labels: labels, text: recognizedText, config: config)
+        switch result {
+        case .success(let labels, let recognizedText):
+            return formatOutput(labels: labels, text: recognizedText, config: config)
+        case .cancelled:
+            return nil
+        case .failed(let error):
+            // Optionally log: print("Vision processing failed: \(error)")
+            return nil
+        }
     }
 
     private static func formatOutput(labels: [String], text: String?, config: Configuration) -> String {

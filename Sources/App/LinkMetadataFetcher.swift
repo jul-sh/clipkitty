@@ -60,15 +60,16 @@ final class LinkMetadataFetcher {
         }
 
         // Return nil if we got nothing useful
-        if title == nil && imageData == nil {
+        switch (title, imageData) {
+        case (nil, nil):
             return nil
+        case (let t?, nil):
+            return .titleOnly(title: t, description: description)
+        case (nil, let img?):
+            return .imageOnly(imageData: img, description: description)
+        case (let t?, let img?):
+            return .titleAndImage(title: t, imageData: img, description: description)
         }
-
-        return FetchedLinkMetadata(
-            title: title,
-            description: description,
-            imageData: imageData
-        )
     }
 
     /// Crop image to at most 3:2 aspect ratio, center-cropping excess height.
@@ -95,8 +96,33 @@ final class LinkMetadataFetcher {
     }
 }
 
-struct FetchedLinkMetadata: Sendable {
-    let title: String?
-    let description: String?
-    let imageData: Data?
+enum FetchedLinkMetadata: Sendable, Equatable {
+    case titleOnly(title: String, description: String?)
+    case imageOnly(imageData: Data, description: String?)
+    case titleAndImage(title: String, imageData: Data, description: String?)
+
+    var title: String? {
+        switch self {
+        case .titleOnly(let title, _), .titleAndImage(let title, _, _):
+            return title
+        case .imageOnly:
+            return nil
+        }
+    }
+
+    var description: String? {
+        switch self {
+        case .titleOnly(_, let desc), .imageOnly(_, let desc), .titleAndImage(_, _, let desc):
+            return desc
+        }
+    }
+
+    var imageData: Data? {
+        switch self {
+        case .imageOnly(let data, _), .titleAndImage(_, let data, _):
+            return data
+        case .titleOnly:
+            return nil
+        }
+    }
 }
