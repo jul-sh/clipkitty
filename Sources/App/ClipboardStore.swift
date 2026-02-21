@@ -349,10 +349,28 @@ final class ClipboardStore {
         // User is actively copying - enable faster polling
         lastActivityTime = Date()
 
-        // Skip concealed/sensitive content (e.g. passwords from 1Password, Bitwarden)
-        let concealedType = NSPasteboard.PasteboardType("org.nspasteboard.ConcealedType")
-        if pasteboard.data(forType: concealedType) != nil {
+        let settings = AppSettings.shared
+
+        // Check if the source app is ignored
+        let sourceAppBundleID = NSWorkspace.shared.frontmostApplication?.bundleIdentifier
+        if settings.isAppIgnored(bundleId: sourceAppBundleID) {
             return
+        }
+
+        // Skip concealed/sensitive content (e.g. passwords from 1Password, Bitwarden)
+        if settings.ignoreConfidentialContent {
+            let concealedType = NSPasteboard.PasteboardType("org.nspasteboard.ConcealedType")
+            if pasteboard.data(forType: concealedType) != nil {
+                return
+            }
+        }
+
+        // Skip transient content (temporary data from apps)
+        if settings.ignoreTransientContent {
+            let transientType = NSPasteboard.PasteboardType("org.nspasteboard.TransientType")
+            if pasteboard.data(forType: transientType) != nil {
+                return
+            }
         }
 
         // Check for file URLs first (file copies also put .tiff and .string on the pasteboard)
@@ -376,7 +394,6 @@ final class ClipboardStore {
         guard let text = pasteboard.string(forType: .string), !text.isEmpty else { return }
 
         let sourceApp = NSWorkspace.shared.frontmostApplication?.localizedName
-        let sourceAppBundleID = NSWorkspace.shared.frontmostApplication?.bundleIdentifier
 
         // Move all DB operations to background
         guard let rustStore else { return }
@@ -394,9 +411,11 @@ final class ClipboardStore {
                 }
 
                 // If this is a new item (not duplicate) and looks like a URL, prefetch link metadata
+                // Only if link previews are enabled in privacy settings
                 if itemId > 0, URL(string: text) != nil, text.hasPrefix("http") {
                     Task { @MainActor [weak self] in
                         guard let self else { return }
+                        guard AppSettings.shared.generateLinkPreviews else { return }
                         _ = await self.fetchLinkMetadata(url: text, itemId: itemId)
                         if self.hasResults {
                             self.refresh()
