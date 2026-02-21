@@ -29,7 +29,7 @@ final class ClipKittyUITests: XCTestCase {
 
     /// Locale for localized screenshot capture.
     /// Read from /tmp/clipkitty_screenshot_locale.txt (written by Makefile before test run).
-    /// When set (e.g. "ja", "de"), the app launches in that locale.
+    /// When set (e.g. "ja", "de"), the app launches in that locale and demo content is patched.
     private var screenshotLocale: String? {
         // First try reading from temp file (used by make marketing-screenshots-localized)
         // Fallback to environment variable (for manual testing)
