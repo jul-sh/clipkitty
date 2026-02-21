@@ -1,8 +1,16 @@
 Most clipboard managers delete your history after a few days or only keep a short history. ClipKitty stores everything and let's you find it instantly.
 
-Unlimited History — No caps, no limits. If you copied it a year ago, it's still there. Text, images, links, colors; nothing expires, nothing gets truncated.
-Multi-Line Previews — See exactly what you'll paste in a dedicated preview pane.
-Instant Search — Find any snippet in milliseconds, whether you're filtering through ten items or ten million. Built for people who copy lots of things and need to find them again.
-Keyboard-driven workflow. — Optimized for speed with ⌥Space access.
-Secure & Private — Your data never leaves your machine. ClipKitty operates entirely on-device with no cloud syncing, no telemetry, and no subscriptions.
-Transparent and Open. — Permissive license with publicly available source code. Support development by purchasing through the App Store.
+UNLIMITED HISTORY
+No 999-item caps. No 3-month expiration. ClipKitty remembers everything from day one: text, code, URLs, hex colors, images; all preserved in full, forever.
+
+INSTANT SEARCH THAT SCALES
+Type "dockr push prodction" and find "docker push production". Fuzzy matching works across millions of items without lag. Powered by Tantivy, the same search engine used in production databases.
+
+LIVE PREVIEW PANE
+See complete content before you paste. Multi-line text, full code blocks, image thumbnails, color swatches—all visible at a glance. No truncation, no waiting for hover tooltips.
+
+KEYBOARD-FIRST DESIGN
+⌥Space to open, arrow keys to navigate, Return to paste. ⌘1-9 to jump to any of the first 9 items. Filter by type or search across everything.
+
+PRIVACY-FIRST
+Runs 100% on-device with zero telemetry. No cloud sync, no accounts, no data ever leaving your Mac. Open source (GPL-3.0) with code available publicly
