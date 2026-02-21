@@ -21,8 +21,8 @@ ClipKitty stores everything. Finds it in milliseconds—whether you have 100 ite
 | | ClipKitty |
 |---|---|
 | **vs Maccy** | Same simplicity, no limits. Maccy caps at 999 items and slows past 200. ClipKitty scales to millions with live preview instead of hover tooltips. |
-| **vs Raycast** | Same speed, no expiration. Raycast's free tier expires after 3 months and truncates content. ClipKitty preserves everything forever, strictly offline. |
-| **vs Paste** | Same features, no subscription. Paste charges $30/year. ClipKitty is free via Homebrew or pay once on the App Store. |
+| **vs Raycast** | Same speed, no expiration. Raycast doesn't save long clips; it's free tier expires after 3 months ClipKitty preserves everything forever, strictly offline. |
+| **vs Paste** | Same utility, no subscription. Paste charges $30/year. ClipKitty is free on GitHub or pay once on the App Store. |
 
 ## Features
 
