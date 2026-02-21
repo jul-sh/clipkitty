@@ -117,9 +117,7 @@ publish:
 # ============================================================================
 
 appstore-publish:
-	@if [ -z "$$AGE_SECRET_KEY" ]; then \
-		AGE_SECRET_KEY=$$(security find-generic-password -s clipkitty -a AGE_SECRET_KEY -w 2>/dev/null) || true; \
-	fi; \
+	@AGE_SECRET_KEY=$$($(DIST_DIR)/get-age-key.sh) || exit 1; \
 	export AGE_SECRET_KEY; \
 	$(DIST_DIR)/setup-signing.sh; \
 	PROV="$(PROVISIONING_PROFILE)"; \
