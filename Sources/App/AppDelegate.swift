@@ -2,8 +2,27 @@ import AppKit
 import SwiftUI
 import ClipKittyRust
 
+private enum LaunchMode {
+    case production
+    case simulatedDatabase(initialSearchQuery: String?)
+
+    static func fromCommandLine() -> LaunchMode {
+        guard CommandLine.arguments.contains("--use-simulated-db") else {
+            return .production
+        }
+
+        var searchQuery: String? = nil
+        if let searchIndex = CommandLine.arguments.firstIndex(of: "--search"),
+           searchIndex + 1 < CommandLine.arguments.count {
+            searchQuery = CommandLine.arguments[searchIndex + 1]
+        }
+        return .simulatedDatabase(initialSearchQuery: searchQuery)
+    }
+}
+
 @MainActor
 final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate {
+    private let launchMode: LaunchMode = .fromCommandLine()
     private var panelController: FloatingPanelController!
     private var hotKeyManager: HotKeyManager!
     private var store: ClipboardStore!
@@ -16,31 +35,32 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate {
     /// Without LSUIElement in Info.plist, we must set the policy at runtime.
     /// This fires early enough for XCUITest to see the app as non-"Disabled".
     func applicationWillFinishLaunching(_ notification: Notification) {
-        if CommandLine.arguments.contains("--use-simulated-db") {
-            NSApp.setActivationPolicy(.regular)
-        } else {
+        switch launchMode {
+        case .production:
             NSApp.setActivationPolicy(.accessory)
+        case .simulatedDatabase:
+            NSApp.setActivationPolicy(.regular)
         }
     }
 
     func applicationDidFinishLaunching(_ notification: Notification) {
         FontManager.registerFonts()
 
-        // Use simulated database with test data (for UI tests and screenshots)
-        let useSimulatedDb = CommandLine.arguments.contains("--use-simulated-db")
-        let shouldShow = useSimulatedDb
         syncLaunchAtLogin()
 
-        if useSimulatedDb {
+        if case .simulatedDatabase = launchMode {
             populateTestDatabase()
         }
 
-        store = ClipboardStore(screenshotMode: useSimulatedDb)
-        if !useSimulatedDb {
+        switch launchMode {
+        case .production:
+            store = ClipboardStore(screenshotMode: false)
             store.startMonitoring()
+            panelController = FloatingPanelController(store: store, mode: .production)
+        case .simulatedDatabase:
+            store = ClipboardStore(screenshotMode: true)
+            panelController = FloatingPanelController(store: store, mode: .testing)
         }
-
-        panelController = FloatingPanelController(store: store, persistPanel: useSimulatedDb)
 
         hotKeyManager = HotKeyManager { [weak self] in
             Task { @MainActor in
@@ -51,12 +71,10 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate {
 
         setupMenuBar()
 
-        // When using simulated DB or --show, show the panel immediately
-        if shouldShow {
-            // Check for --search argument
-            if let searchIndex = CommandLine.arguments.firstIndex(of: "--search"),
-               searchIndex + 1 < CommandLine.arguments.count {
-                panelController.initialSearchQuery = CommandLine.arguments[searchIndex + 1]
+        // When using simulated DB, show the panel immediately
+        if case .simulatedDatabase(let initialSearchQuery) = launchMode {
+            if let searchQuery = initialSearchQuery {
+                panelController.initialSearchQuery = searchQuery
             }
 
             panelController.show()
@@ -209,7 +227,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate {
         } else if settings.launchAtLoginEnabled && !launchAtLogin.isInApplicationsDirectory {
             // User wants it enabled but app is not in Applications - disable the preference
             settings.launchAtLoginEnabled = false
-            launchAtLogin.errorMessage = String(localized: "Launch at login was disabled because ClipKitty is not in the Applications folder.")
+            launchAtLogin.setDisabledDueToLocationError()
             if launchAtLogin.isEnabled {
                 launchAtLogin.disable()
             }
