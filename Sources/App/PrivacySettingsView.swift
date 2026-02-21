@@ -76,6 +76,18 @@ struct PrivacySettingsView: View {
 
                 IgnoredAppsListView()
             }
+
+            Section("Security") {
+                HStack {
+                    Image(systemName: "lock.shield")
+                        .foregroundStyle(.secondary)
+                    Text("Sandboxed")
+                        .font(.headline)
+                }
+                Text("ClipKitty runs in an isolated environment, protecting your privacy and keeping your data secure.")
+                    .font(.caption)
+                    .foregroundStyle(.secondary)
+            }
         }
         .formStyle(.grouped)
     }
@@ -84,6 +96,7 @@ struct PrivacySettingsView: View {
 struct IgnoredAppsListView: View {
     @ObservedObject private var settings = AppSettings.shared
     @State private var ignoredApps: [IgnoredApp] = []
+    @State private var selectedAppId: String?
 
     var body: some View {
         VStack(spacing: 0) {
@@ -93,7 +106,7 @@ struct IgnoredAppsListView: View {
                     .foregroundStyle(.secondary)
                     .frame(maxWidth: .infinity, minHeight: 60)
             } else {
-                List {
+                List(selection: $selectedAppId) {
                     ForEach(ignoredApps) { app in
                         HStack(spacing: 10) {
                             if let icon = app.icon {
@@ -108,6 +121,7 @@ struct IgnoredAppsListView: View {
                             Text(app.name)
                             Spacer()
                         }
+                        .tag(app.id)
                         .contentShape(Rectangle())
                     }
                 }
@@ -133,7 +147,7 @@ struct IgnoredAppsListView: View {
                         .frame(width: 24, height: 20)
                 }
                 .buttonStyle(.borderless)
-                .disabled(ignoredApps.isEmpty)
+                .disabled(selectedAppId == nil)
 
                 Spacer()
             }
@@ -158,6 +172,10 @@ struct IgnoredAppsListView: View {
         ignoredApps = settings.ignoredAppBundleIds
             .map { IgnoredApp.fromBundleId($0) }
             .sorted { $0.name.localizedCaseInsensitiveCompare($1.name) == .orderedAscending }
+        // Clear selection if selected app was removed
+        if let selected = selectedAppId, !ignoredApps.contains(where: { $0.id == selected }) {
+            selectedAppId = nil
+        }
     }
 
     private func addApp() {
@@ -169,24 +187,22 @@ struct IgnoredAppsListView: View {
         panel.allowedContentTypes = [.application]
         panel.directoryURL = URL(fileURLWithPath: "/Applications")
 
-        panel.begin { response in
-            guard response == .OK else { return }
+        // Run modal on main thread to ensure proper display
+        let response = panel.runModal()
+        guard response == .OK else { return }
 
-            for url in panel.urls {
-                if let bundle = Bundle(url: url),
-                   let bundleId = bundle.bundleIdentifier {
-                    settings.addIgnoredApp(bundleId: bundleId)
-                }
+        for url in panel.urls {
+            if let bundle = Bundle(url: url),
+               let bundleId = bundle.bundleIdentifier {
+                settings.addIgnoredApp(bundleId: bundleId)
             }
         }
     }
 
     private func removeSelectedApp() {
-        // Remove the last app if any exist (simple approach)
-        // A more sophisticated UI would track selection
-        if let lastApp = ignoredApps.last {
-            settings.removeIgnoredApp(bundleId: lastApp.id)
-        }
+        guard let selectedId = selectedAppId else { return }
+        settings.removeIgnoredApp(bundleId: selectedId)
+        selectedAppId = nil
     }
 }
 
