@@ -15,7 +15,9 @@
     <key>com.apple.security.network.client</key>
     <true/>
 
-    <!-- FileSystem: files.user-selected.* is omitted; no access to host directories. -->
+    <!-- FileSystem: read-only access to user-selected files (for app picker in Privacy settings) -->
+    <key>com.apple.security.files.user-selected.read-only</key>
+    <true/>
 
     <!-- Hardware: camera/microphone/location are omitted; no sensor access. -->
 
