@@ -33,7 +33,7 @@ let project = Project(
             destinations: .macOS,
             product: .staticLibrary,
             bundleId: "com.eviljuliette.clipkitty.rustffi",
-            deploymentTargets: .macOS("15.0"),
+            deploymentTargets: .macOS("14.0"),
             sources: ["Sources/ClipKittyRust/ClipKittyRustFFI.c"],
             headers: .headers(
                 public: ["Sources/ClipKittyRust/purrFFI.h"]
@@ -52,7 +52,7 @@ let project = Project(
             destinations: .macOS,
             product: .staticLibrary,
             bundleId: "com.eviljuliette.clipkitty.rust",
-            deploymentTargets: .macOS("15.0"),
+            deploymentTargets: .macOS("14.0"),
             sources: ["Sources/ClipKittyRustWrapper/**"],
             dependencies: [
                 .target(name: "ClipKittyRustFFI"),
@@ -71,7 +71,7 @@ let project = Project(
             destinations: .macOS,
             product: .app,
             bundleId: "com.eviljuliette.clipkitty",
-            deploymentTargets: .macOS("15.0"),
+            deploymentTargets: .macOS("14.0"),
             infoPlist: .extendingDefault(with: [
                 "CFBundleDisplayName": "ClipKitty",
                 "CFBundleIconName": "AppIcon",
@@ -81,7 +81,7 @@ let project = Project(
                 "CFBundleVersion": "$(CURRENT_PROJECT_VERSION)",
                 "ITSAppUsesNonExemptEncryption": false,
                 "LSApplicationCategoryType": "public.app-category.utilities",
-                "LSMinimumSystemVersion": "15.0",
+                "LSMinimumSystemVersion": "14.0",
                 "NSHumanReadableCopyright": "Copyright © 2025 ClipKitty. All rights reserved.",
             ]),
             sources: ["Sources/App/**"],
@@ -123,7 +123,7 @@ let project = Project(
             destinations: .macOS,
             product: .unitTests,
             bundleId: "com.eviljuliette.clipkitty.tests",
-            deploymentTargets: .macOS("15.0"),
+            deploymentTargets: .macOS("14.0"),
             sources: .sourceFilesList(globs: [
                 .glob("Tests/**", excluding: ["Tests/UITests/**"]),
             ]),
@@ -144,7 +144,7 @@ let project = Project(
             destinations: .macOS,
             product: .uiTests,
             bundleId: "com.clipkitty.UITests",
-            deploymentTargets: .macOS("15.0"),
+            deploymentTargets: .macOS("14.0"),
             sources: ["Tests/UITests/**"],
             entitlements: .file(path: "Tests/UITests/ClipKittyUITests.entitlements"),
             dependencies: [
