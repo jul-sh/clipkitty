@@ -3,13 +3,13 @@
 
 Prerequisites:
   - ClipKitty.pkg exists at PROJECT_ROOT (run `make -C distribution appstore` first)
-  - AGE_SECRET_KEY env var set (the age private key string)
+  - AGE_SECRET_KEY env var or stored in macOS Keychain (via get-age-key.sh)
   - asc CLI installed (run distribution/install-deps.sh)
 
 Usage:
-  AGE_SECRET_KEY="AGE-SECRET-KEY-..." ./distribution/publish.py
-  AGE_SECRET_KEY="AGE-SECRET-KEY-..." ./distribution/publish.py --dry-run
-  AGE_SECRET_KEY="AGE-SECRET-KEY-..." ./distribution/publish.py --metadata-only
+  ./distribution/publish.py
+  ./distribution/publish.py --dry-run
+  ./distribution/publish.py --metadata-only
 
 If whatsNew cannot be set (e.g. first-ever submission), the script
 automatically retries without release_notes.txt.
@@ -70,8 +70,17 @@ def main():
 
     age_key = os.environ.get("AGE_SECRET_KEY", "")
     if not age_key:
-        sys.exit("Error: AGE_SECRET_KEY environment variable is required.\n"
-                 "  export AGE_SECRET_KEY='AGE-SECRET-KEY-...'")
+        # Try to get from keychain via helper script
+        try:
+            r = subprocess.run(
+                [os.path.join(SCRIPT_DIR, "get-age-key.sh")],
+                capture_output=True, text=True, check=True
+            )
+            age_key = r.stdout
+        except subprocess.CalledProcessError:
+            sys.exit("Error: AGE_SECRET_KEY not set and not found in Keychain.\n"
+                     "  Set via: export AGE_SECRET_KEY='AGE-SECRET-KEY-...'\n"
+                     "  Or store: security add-generic-password -s clipkitty -a AGE_SECRET_KEY -w 'KEY'")
 
     if not shutil.which("asc"):
         sys.exit("Error: asc CLI not found. Run: distribution/install-deps.sh")
