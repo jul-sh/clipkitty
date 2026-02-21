@@ -1614,7 +1614,7 @@ struct EditableTextPreview: NSViewRepresentable {
         let textView = EditablePreviewTextView()
         textView.isEditable = true
         textView.isSelectable = true
-        textView.isRichText = false
+        textView.isRichText = true  // Must be true for text to render properly
         textView.allowsUndo = true
         textView.drawsBackground = false
         textView.isVerticallyResizable = true
@@ -1623,26 +1623,20 @@ struct EditableTextPreview: NSViewRepresentable {
         textView.minSize = NSSize(width: 0, height: 0)
         textView.maxSize = NSSize(width: CGFloat.greatestFiniteMagnitude, height: CGFloat.greatestFiniteMagnitude)
         textView.textContainerInset = NSSize(width: 16, height: 16)
-        textView.textContainer?.widthTracksTextView = false  // We manage width manually
-        let initialContainerWidth = max(0, scrollView.contentSize.width - Self.textContainerHorizontalInset)
-        textView.textContainer?.containerSize = NSSize(width: initialContainerWidth, height: .greatestFiniteMagnitude)
+        textView.textContainer?.widthTracksTextView = true
+        textView.textContainer?.containerSize = NSSize(width: scrollView.contentSize.width, height: CGFloat.greatestFiniteMagnitude)
         textView.frame = NSRect(x: 0, y: 0, width: scrollView.contentSize.width, height: 0)
 
-        // Set up font (will be updated with scaling in updateNSView)
-        let font = NSFont(name: fontName, size: fontSize)
-            ?? NSFont.monospacedSystemFont(ofSize: fontSize, weight: .regular)
-        textView.font = font
-        textView.textColor = .labelColor
-
-        // Set initial text
-        textView.string = text
-
-        // Set up delegate and callbacks
+        // Set up delegate and callbacks (text will be set in updateNSView)
         textView.delegate = context.coordinator
         textView.onCmdReturn = onCmdReturn
         textView.onFocusChange = onEditingStateChange
-        context.coordinator.currentItemId = itemId
         context.coordinator.onTextChange = onTextChange
+
+        // Enable accessibility
+        textView.setAccessibilityElement(true)
+        textView.setAccessibilityRole(.textArea)
+        textView.setAccessibilityIdentifier("PreviewTextView")
 
         scrollView.documentView = textView
         return scrollView
