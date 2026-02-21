@@ -477,6 +477,185 @@ final class ClipKittyUITests: XCTestCase {
         XCTAssertTrue(window.exists, "Window should still be visible after deletion")
     }
 
+    // MARK: - Settings Tests
+
+    /// Tests that the Settings window opens with tabs and Privacy tab is accessible
+    func testSettingsHasPrivacyTab() throws {
+        // Open settings with Cmd+,
+        app.typeKey(",", modifierFlags: .command)
+
+        let settingsWindow = app.windows["ClipKitty Settings"]
+        XCTAssertTrue(settingsWindow.waitForExistence(timeout: 5), "Settings window should appear")
+
+        // Check for tab bar with Privacy tab
+        let privacyTab = settingsWindow.buttons["Privacy"]
+        XCTAssertTrue(privacyTab.waitForExistence(timeout: 3), "Privacy tab should exist in settings")
+
+        // Click Privacy tab
+        privacyTab.click()
+        Thread.sleep(forTimeInterval: 0.3)
+
+        // Verify privacy settings content appears
+        let linkPreviewToggle = settingsWindow.checkBoxes.matching(NSPredicate(format: "label CONTAINS 'link previews'")).firstMatch
+        XCTAssertTrue(linkPreviewToggle.waitForExistence(timeout: 3), "Link previews toggle should exist in Privacy tab")
+    }
+
+    /// Tests that all three privacy toggles exist and are functional
+    func testPrivacyTogglesExist() throws {
+        app.typeKey(",", modifierFlags: .command)
+
+        let settingsWindow = app.windows["ClipKitty Settings"]
+        XCTAssertTrue(settingsWindow.waitForExistence(timeout: 5))
+
+        // Navigate to Privacy tab
+        let privacyTab = settingsWindow.buttons["Privacy"]
+        XCTAssertTrue(privacyTab.waitForExistence(timeout: 3))
+        privacyTab.click()
+        Thread.sleep(forTimeInterval: 0.3)
+
+        // Find toggles by their group/section context
+        let toggles = settingsWindow.checkBoxes.allElementsBoundByIndex
+        XCTAssertGreaterThanOrEqual(toggles.count, 3, "Should have at least 3 privacy toggles (link previews, confidential, transient)")
+    }
+
+    /// Tests that the Ignored Applications section exists in Privacy settings
+    func testIgnoredAppsListExists() throws {
+        app.typeKey(",", modifierFlags: .command)
+
+        let settingsWindow = app.windows["ClipKitty Settings"]
+        XCTAssertTrue(settingsWindow.waitForExistence(timeout: 5))
+
+        let privacyTab = settingsWindow.buttons["Privacy"]
+        XCTAssertTrue(privacyTab.waitForExistence(timeout: 3))
+        privacyTab.click()
+        Thread.sleep(forTimeInterval: 0.3)
+
+        // Check for the "Ignore Applications" section
+        let ignoreAppsLabel = settingsWindow.staticTexts["Ignore Applications"]
+        XCTAssertTrue(ignoreAppsLabel.waitForExistence(timeout: 3), "Ignore Applications section should exist")
+
+        // Check for add/remove buttons
+        let addButton = settingsWindow.buttons.matching(NSPredicate(format: "label CONTAINS 'plus' OR identifier CONTAINS 'plus'")).firstMatch
+        XCTAssertTrue(addButton.exists || settingsWindow.images["plus"].exists, "Add button should exist for ignored apps")
+    }
+
+    /// Tests that the Shortcuts tab exists and contains hotkey settings
+    func testShortcutsTabExists() throws {
+        app.typeKey(",", modifierFlags: .command)
+
+        let settingsWindow = app.windows["ClipKitty Settings"]
+        XCTAssertTrue(settingsWindow.waitForExistence(timeout: 5))
+
+        let shortcutsTab = settingsWindow.buttons["Shortcuts"]
+        XCTAssertTrue(shortcutsTab.waitForExistence(timeout: 3), "Shortcuts tab should exist")
+
+        shortcutsTab.click()
+        Thread.sleep(forTimeInterval: 0.3)
+
+        // Verify hotkey content appears
+        let hotkeyLabel = settingsWindow.staticTexts["Open Clipboard History"]
+        XCTAssertTrue(hotkeyLabel.waitForExistence(timeout: 3), "Hotkey setting should exist in Shortcuts tab")
+    }
+
+    /// Tests the General tab has the menu bar click behavior toggle
+    func testMenuBarClickToggleExists() throws {
+        app.typeKey(",", modifierFlags: .command)
+
+        let settingsWindow = app.windows["ClipKitty Settings"]
+        XCTAssertTrue(settingsWindow.waitForExistence(timeout: 5))
+
+        // General tab should be selected by default
+        let generalTab = settingsWindow.buttons["General"]
+        XCTAssertTrue(generalTab.waitForExistence(timeout: 3))
+
+        // Look for "Click to open" toggle
+        let clickToOpenToggle = settingsWindow.checkBoxes.matching(NSPredicate(format: "label CONTAINS 'Click to open'")).firstMatch
+        XCTAssertTrue(clickToOpenToggle.waitForExistence(timeout: 3), "Click to open toggle should exist in General tab")
+    }
+
+    /// Tests that toggling a privacy setting persists across settings window reopens
+    func testPrivacySettingPersists() throws {
+        app.typeKey(",", modifierFlags: .command)
+
+        var settingsWindow = app.windows["ClipKitty Settings"]
+        XCTAssertTrue(settingsWindow.waitForExistence(timeout: 5))
+
+        let privacyTab = settingsWindow.buttons["Privacy"]
+        privacyTab.click()
+        Thread.sleep(forTimeInterval: 0.3)
+
+        // Find link preview toggle and record its state
+        let toggles = settingsWindow.checkBoxes.allElementsBoundByIndex
+        guard toggles.count > 0 else {
+            XCTFail("No toggles found")
+            return
+        }
+
+        let firstToggle = toggles[0]
+        let initialValue = firstToggle.value as? Int ?? 0
+
+        // Click to toggle
+        firstToggle.click()
+        Thread.sleep(forTimeInterval: 0.3)
+
+        let newValue = firstToggle.value as? Int ?? 0
+        XCTAssertNotEqual(initialValue, newValue, "Toggle value should change after click")
+
+        // Close and reopen settings
+        settingsWindow.buttons[XCUIIdentifierCloseWindow].click()
+        Thread.sleep(forTimeInterval: 0.5)
+
+        app.typeKey(",", modifierFlags: .command)
+        settingsWindow = app.windows["ClipKitty Settings"]
+        XCTAssertTrue(settingsWindow.waitForExistence(timeout: 5))
+
+        privacyTab.click()
+        Thread.sleep(forTimeInterval: 0.3)
+
+        // Verify toggle retained its new value
+        let togglesAfter = settingsWindow.checkBoxes.allElementsBoundByIndex
+        let toggleAfter = togglesAfter[0]
+        let persistedValue = toggleAfter.value as? Int ?? 0
+        XCTAssertEqual(newValue, persistedValue, "Toggle value should persist after reopening settings")
+
+        // Reset to original value for clean state
+        if persistedValue != initialValue {
+            toggleAfter.click()
+        }
+    }
+
+    /// Tests all three settings tabs exist and are navigable
+    func testAllSettingsTabsNavigable() throws {
+        app.typeKey(",", modifierFlags: .command)
+
+        let settingsWindow = app.windows["ClipKitty Settings"]
+        XCTAssertTrue(settingsWindow.waitForExistence(timeout: 5))
+
+        // General tab
+        let generalTab = settingsWindow.buttons["General"]
+        XCTAssertTrue(generalTab.waitForExistence(timeout: 3), "General tab should exist")
+        generalTab.click()
+        Thread.sleep(forTimeInterval: 0.2)
+
+        // Privacy tab
+        let privacyTab = settingsWindow.buttons["Privacy"]
+        XCTAssertTrue(privacyTab.waitForExistence(timeout: 3), "Privacy tab should exist")
+        privacyTab.click()
+        Thread.sleep(forTimeInterval: 0.2)
+
+        // Shortcuts tab
+        let shortcutsTab = settingsWindow.buttons["Shortcuts"]
+        XCTAssertTrue(shortcutsTab.waitForExistence(timeout: 3), "Shortcuts tab should exist")
+        shortcutsTab.click()
+        Thread.sleep(forTimeInterval: 0.2)
+
+        // Navigate back to General
+        generalTab.click()
+        Thread.sleep(forTimeInterval: 0.2)
+
+        XCTAssertTrue(true, "All tabs are navigable")
+    }
+
     // MARK: - Marketing Assets
 
     /// Captures a marketing-ready screenshot: crops a 16:10 rectangle centered

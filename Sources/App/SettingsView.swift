@@ -6,61 +6,60 @@ enum HotKeyEditState: Equatable {
     case recording
 }
 
+enum SettingsTab: String, CaseIterable {
+    case general = "General"
+    case privacy = "Privacy"
+    case shortcuts = "Shortcuts"
+}
+
 struct SettingsView: View {
+    @State private var selectedTab: SettingsTab = .general
+
+    let store: ClipboardStore
+    let onHotKeyChanged: (HotKey) -> Void
+    let onMenuBarBehaviorChanged: () -> Void
+
+    var body: some View {
+        TabView(selection: $selectedTab) {
+            GeneralSettingsView(
+                store: store,
+                onHotKeyChanged: onHotKeyChanged,
+                onMenuBarBehaviorChanged: onMenuBarBehaviorChanged
+            )
+                .tabItem {
+                    Label("General", systemImage: "gearshape")
+                }
+                .tag(SettingsTab.general)
+
+            PrivacySettingsView()
+                .tabItem {
+                    Label("Privacy", systemImage: "hand.raised")
+                }
+                .tag(SettingsTab.privacy)
+
+            ShortcutsSettingsView(onHotKeyChanged: onHotKeyChanged)
+                .tabItem {
+                    Label("Shortcuts", systemImage: "keyboard")
+                }
+                .tag(SettingsTab.shortcuts)
+        }
+        .frame(width: 480, height: 420)
+    }
+}
+
+struct GeneralSettingsView: View {
     @ObservedObject private var settings = AppSettings.shared
     @ObservedObject private var launchAtLogin = LaunchAtLogin.shared
-    @State private var hotKeyState: HotKeyEditState = .idle
     @State private var showClearConfirmation = false
 
     let store: ClipboardStore
     let onHotKeyChanged: (HotKey) -> Void
+    let onMenuBarBehaviorChanged: () -> Void
     private let minDatabaseSizeGB = 0.5
     private let maxDatabaseSizeGB = 64.0
 
     var body: some View {
         Form {
-            Section("Hotkey") {
-                HStack {
-                    Text("Open Clipboard History")
-                    Spacer()
-                    Button(action: { hotKeyState = .recording }) {
-                        let (labelText, backgroundColor): (String, Color) = {
-                            switch hotKeyState {
-                            case .recording:
-                                return (String(localized: "Press keys..."), Color.accentColor.opacity(0.2))
-                            case .idle:
-                                return (settings.hotKey.displayString, Color.secondary.opacity(0.1))
-                            }
-                        }()
-
-                        Text(labelText)
-                            .frame(minWidth: 100)
-                            .padding(.horizontal, 8)
-                            .padding(.vertical, 4)
-                            .background(backgroundColor)
-                            .cornerRadius(6)
-                    }
-                    .buttonStyle(.plain)
-                }
-                .background(
-                    HotKeyRecorder(
-                        state: $hotKeyState,
-                        onHotKeyRecorded: { hotKey in
-                            settings.hotKey = hotKey
-                            onHotKeyChanged(hotKey)
-                        }
-                    )
-                )
-
-                if settings.hotKey != .default {
-                    Button("Reset to Default (⌥Space)") {
-                        settings.hotKey = .default
-                        onHotKeyChanged(.default)
-                    }
-                    .font(.caption)
-                }
-            }
-
             Section("Startup") {
                 Toggle("Launch at login", isOn: launchAtLoginBinding)
                     .disabled(!launchAtLogin.isInApplicationsDirectory)
@@ -80,6 +79,17 @@ struct SettingsView: View {
                         launchAtLogin.errorMessage = nil
                     }
                     .font(.caption)
+                }
+            }
+
+            Section("Menu Bar") {
+                Toggle(isOn: clickToOpenBinding) {
+                    VStack(alignment: .leading, spacing: 2) {
+                        Text("Click to open")
+                        Text("Click opens ClipKitty, right-click shows menu.")
+                            .font(.caption)
+                            .foregroundStyle(.secondary)
+                    }
                 }
             }
 
@@ -140,18 +150,6 @@ struct SettingsView: View {
                 }
             }
 
-            Section("Security") {
-                HStack {
-                    Image(systemName: "lock.shield")
-                        .foregroundStyle(.secondary)
-                    Text("Sandboxed")
-                        .font(.headline)
-                }
-                Text("ClipKitty runs in an isolated environment, protecting your privacy and keeping your data secure.")
-                    .font(.caption)
-                    .foregroundStyle(.secondary)
-            }
-
             Section("Data") {
                 Button(role: .destructive) {
                     showClearConfirmation = true
@@ -178,7 +176,6 @@ struct SettingsView: View {
 
         }
         .formStyle(.grouped)
-        .frame(width: 420, height: 420)
         .onAppear {
             store.refreshDatabaseSize()
             if settings.maxDatabaseSizeGB <= 0 {
@@ -194,6 +191,16 @@ struct SettingsView: View {
                 if launchAtLogin.setEnabled(newValue) {
                     settings.launchAtLoginEnabled = newValue
                 }
+            }
+        )
+    }
+
+    private var clickToOpenBinding: Binding<Bool> {
+        Binding(
+            get: { settings.clickToOpenEnabled },
+            set: { newValue in
+                settings.clickToOpenEnabled = newValue
+                onMenuBarBehaviorChanged()
             }
         )
     }
@@ -302,4 +309,56 @@ class HotKeyRecorderView: NSView {
     }
 }
 
+struct ShortcutsSettingsView: View {
+    @ObservedObject private var settings = AppSettings.shared
+    @State private var hotKeyState: HotKeyEditState = .idle
 
+    let onHotKeyChanged: (HotKey) -> Void
+
+    var body: some View {
+        Form {
+            Section("Hotkey") {
+                HStack {
+                    Text("Open Clipboard History")
+                    Spacer()
+                    Button(action: { hotKeyState = .recording }) {
+                        let (labelText, backgroundColor): (String, Color) = {
+                            switch hotKeyState {
+                            case .recording:
+                                return (String(localized: "Press keys..."), Color.accentColor.opacity(0.2))
+                            case .idle:
+                                return (settings.hotKey.displayString, Color.secondary.opacity(0.1))
+                            }
+                        }()
+
+                        Text(labelText)
+                            .frame(minWidth: 100)
+                            .padding(.horizontal, 8)
+                            .padding(.vertical, 4)
+                            .background(backgroundColor)
+                            .cornerRadius(6)
+                    }
+                    .buttonStyle(.plain)
+                }
+                .background(
+                    HotKeyRecorder(
+                        state: $hotKeyState,
+                        onHotKeyRecorded: { hotKey in
+                            settings.hotKey = hotKey
+                            onHotKeyChanged(hotKey)
+                        }
+                    )
+                )
+
+                if settings.hotKey != .default {
+                    Button("Reset to Default (⌥Space)") {
+                        settings.hotKey = .default
+                        onHotKeyChanged(.default)
+                    }
+                    .font(.caption)
+                }
+            }
+        }
+        .formStyle(.grouped)
+    }
+}
