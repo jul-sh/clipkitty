@@ -147,7 +147,7 @@ final class AppSettings: ObservableObject {
 
         launchAtLoginEnabled = defaults.object(forKey: launchAtLoginKey) as? Bool ?? true
         autoPasteEnabled = defaults.object(forKey: autoPasteKey) as? Bool ?? true
-        clickToOpenEnabled = defaults.object(forKey: clickToOpenKey) as? Bool ?? false
+        clickToOpenEnabled = defaults.object(forKey: clickToOpenKey) as? Bool ?? true
 
         // Privacy settings - default to enabled for user protection
         ignoreConfidentialContent = defaults.object(forKey: ignoreConfidentialKey) as? Bool ?? true
