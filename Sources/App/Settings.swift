@@ -91,11 +91,44 @@ final class AppSettings: ObservableObject {
         didSet { save() }
     }
 
+    /// When enabled, clicking menu bar icon opens ClipKitty directly, right-click shows menu
+    /// When disabled (default), clicking shows the menu
+    @Published var clickToOpenEnabled: Bool {
+        didSet { save() }
+    }
+
+    // MARK: - Privacy Settings
+
+    /// Whether to ignore confidential/sensitive content (passwords from password managers)
+    @Published var ignoreConfidentialContent: Bool {
+        didSet { save() }
+    }
+
+    /// Whether to ignore transient content (temporary data from apps)
+    @Published var ignoreTransientContent: Bool {
+        didSet { save() }
+    }
+
+    /// Whether to generate link previews by fetching web content
+    @Published var generateLinkPreviews: Bool {
+        didSet { save() }
+    }
+
+    /// Bundle IDs of apps whose clipboard content should be ignored
+    @Published var ignoredAppBundleIds: Set<String> {
+        didSet { save() }
+    }
+
     private let defaults = UserDefaults.standard
     private let hotKeyKey = "hotKey"
     private let maxDbSizeKey = "maxDatabaseSizeGB"
     private let launchAtLoginKey = "launchAtLogin"
     private let autoPasteKey = "autoPasteEnabled"
+    private let ignoreConfidentialKey = "ignoreConfidentialContent"
+    private let ignoreTransientKey = "ignoreTransientContent"
+    private let generateLinkPreviewsKey = "generateLinkPreviews"
+    private let ignoredAppBundleIdsKey = "ignoredAppBundleIds"
+    private let clickToOpenKey = "clickToOpenEnabled"
 
     private init() {
         // Initialize all stored properties first
@@ -114,6 +147,23 @@ final class AppSettings: ObservableObject {
 
         launchAtLoginEnabled = defaults.object(forKey: launchAtLoginKey) as? Bool ?? true
         autoPasteEnabled = defaults.object(forKey: autoPasteKey) as? Bool ?? true
+        clickToOpenEnabled = defaults.object(forKey: clickToOpenKey) as? Bool ?? false
+
+        // Privacy settings - default to enabled for user protection
+        ignoreConfidentialContent = defaults.object(forKey: ignoreConfidentialKey) as? Bool ?? true
+        ignoreTransientContent = defaults.object(forKey: ignoreTransientKey) as? Bool ?? true
+        generateLinkPreviews = defaults.object(forKey: generateLinkPreviewsKey) as? Bool ?? true
+
+        // Load ignored app bundle IDs
+        if let storedIds = defaults.stringArray(forKey: ignoredAppBundleIdsKey) {
+            ignoredAppBundleIds = Set(storedIds)
+        } else {
+            // Default ignored apps: Keychain Access and Passwords
+            ignoredAppBundleIds = [
+                "com.apple.keychainaccess",
+                "com.apple.Passwords"
+            ]
+        }
 
         maxImageMegapixels = 2.0
         imageCompressionQuality = 0.3
@@ -126,5 +176,25 @@ final class AppSettings: ObservableObject {
         defaults.set(maxDatabaseSizeGB, forKey: maxDbSizeKey)
         defaults.set(launchAtLoginEnabled, forKey: launchAtLoginKey)
         defaults.set(autoPasteEnabled, forKey: autoPasteKey)
+        defaults.set(ignoreConfidentialContent, forKey: ignoreConfidentialKey)
+        defaults.set(ignoreTransientContent, forKey: ignoreTransientKey)
+        defaults.set(generateLinkPreviews, forKey: generateLinkPreviewsKey)
+        defaults.set(Array(ignoredAppBundleIds), forKey: ignoredAppBundleIdsKey)
+        defaults.set(clickToOpenEnabled, forKey: clickToOpenKey)
+    }
+
+    // MARK: - Ignored Apps Management
+
+    func addIgnoredApp(bundleId: String) {
+        ignoredAppBundleIds.insert(bundleId)
+    }
+
+    func removeIgnoredApp(bundleId: String) {
+        ignoredAppBundleIds.remove(bundleId)
+    }
+
+    func isAppIgnored(bundleId: String?) -> Bool {
+        guard let bundleId else { return false }
+        return ignoredAppBundleIds.contains(bundleId)
     }
 }
