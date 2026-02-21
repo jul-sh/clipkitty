@@ -58,6 +58,11 @@ struct Args {
     /// Reclassify text items as colors if they match color patterns
     #[arg(long)]
     reclassify_colors: bool,
+
+    /// Locale for localized demo items (e.g., "ja", "de", "fr")
+    /// When set, uses locale-specific demo content instead of English.
+    #[arg(short, long)]
+    locale: Option<String>,
 }
 
 // ─────────────────────────────────────────────────────────────────────────────
@@ -134,10 +139,50 @@ fn compress_to_heic(image_path: &std::path::Path, max_dimension: u32, quality: u
     Some(data)
 }
 
+/// Check if an image with the given description and locale already exists
+fn image_exists(db_path: &str, description: &str, locale: &str) -> bool {
+    let conn = match rusqlite::Connection::open(db_path) {
+        Ok(c) => c,
+        Err(_) => return false,
+    };
+
+    conn.query_row(
+        "SELECT 1 FROM image_items WHERE description = ?1 AND locale = ?2 LIMIT 1",
+        params![description, locale],
+        |_| Ok(()),
+    ).is_ok()
+}
+
+/// Ensure the locale column exists in the image_items table.
+/// This allows the schema to be migrated from single-locale to multi-locale.
+fn ensure_locale_column(db_path: &str) -> Result<()> {
+    let conn = rusqlite::Connection::open(db_path)?;
+
+    // Check if the locale column already exists
+    let column_exists: bool = conn.query_row(
+        "SELECT COUNT(*) FROM pragma_table_info('image_items') WHERE name = 'locale'",
+        [],
+        |row| {
+            let count: i64 = row.get(0)?;
+            Ok(count > 0)
+        }
+    )?;
+
+    if !column_exists {
+        // Add the locale column with a default value
+        conn.execute("ALTER TABLE image_items ADD COLUMN locale TEXT DEFAULT 'en'", [])?;
+        // Create an index for efficient locale-based queries
+        conn.execute("CREATE INDEX IF NOT EXISTS idx_image_locale ON image_items(locale)", [])?;
+    }
+
+    Ok(())
+}
+
 /// Save an image item directly via SQL (for synthetic data generation).
 /// Inserts into both `items` and `image_items` (normalized schema).
 /// If `thumbnail` is None, one is generated from `image_data` (requires a format
 /// the `image` crate can decode — not HEIC).
+/// The `locale` parameter is stored in the image_items table for multi-locale support.
 fn save_image_direct(
     db_path: &str,
     image_data: Vec<u8>,
@@ -145,12 +190,13 @@ fn save_image_direct(
     description: String,
     source_app: Option<String>,
     source_app_bundle_id: Option<String>,
+    locale: &str,
 ) -> Result<i64> {
     let conn = rusqlite::Connection::open(db_path)?;
     let now = chrono::Utc::now();
     let timestamp_str = now.format("%Y-%m-%d %H:%M:%S%.f").to_string();
 
-    let hash_input = format!("{}{}", description, image_data.len());
+    let hash_input = format!("{}{}{}", description, image_data.len(), locale);
     let mut hasher = DefaultHasher::new();
     hash_input.hash(&mut hasher);
     let content_hash = hasher.finish().to_string();
@@ -173,8 +219,8 @@ fn save_image_direct(
     let item_id = tx.last_insert_rowid();
 
     tx.execute(
-        "INSERT INTO image_items (itemId, data, description) VALUES (?1, ?2, ?3)",
-        params![item_id, image_data, description],
+        "INSERT INTO image_items (itemId, data, description, locale) VALUES (?1, ?2, ?3, ?4)",
+        params![item_id, image_data, description, locale],
     )?;
 
     tx.commit()?;
@@ -319,7 +365,79 @@ fn generate_timestamp(item_index: usize, now: i64) -> i64 {
 }
 
 mod demo_data;
+mod demo_data_localized;
 use demo_data::DEMO_ITEMS;
+use demo_data_localized::{get_localized_demo_items, get_localized_image_keywords};
+
+/// Source images with keyword captions (mirrors Vision framework output)
+/// Format: (filename, keywords, source_app, bundle_id, time_offset_seconds)
+const SOURCE_IMAGES: &[(&str, &str, &str, &str, i64)] = &[
+    (
+        "[Advent Bay, Spitzbergen, Norway].webp",
+        "landscape, arctic, mountains, bay, tundra, cabin, norway, spitzbergen, photograph, vintage",
+        "Safari", "com.apple.Safari", -7200,
+    ),
+    (
+        "At the French Windows. The Artist's Wife.webp",
+        "painting, woman, portrait, garden, balcony, dress, spring, blossoms, trees, oil painting",
+        "Photos", "com.apple.Photos", -6800,
+    ),
+    (
+        "Bemberg Fondation Toulouse.jpg",
+        "painting, impressionist, pointillism, garden, blossoms, trees, gate, spring, colorful, oil painting",
+        "Safari", "com.apple.Safari", -6400,
+    ),
+    (
+        "Eide : Granvin DATE ca. 1910.webp",
+        "village, norway, fjord, harbor, boats, houses, mountains, coastal, photograph, vintage",
+        "Photos", "com.apple.Photos", -6000,
+    ),
+    (
+        "Gathering Autumn Flowers A1758.jpg",
+        "painting, field, meadow, women, parasol, flowers, autumn, sky, clouds, impressionist",
+        "Safari", "com.apple.Safari", -5600,
+    ),
+    (
+        "Henri-Edmond Cross\u{a0}.jpg",
+        "painting, pointillism, sunset, clouds, pink, sky, trees, landscape, neo-impressionist, oil painting",
+        "Photos", "com.apple.Photos", -5200,
+    ),
+    (
+        "Man with rickshaw on tall tree lined dirt road.webp",
+        "photograph, road, trees, rickshaw, path, forest, tall trees, japan, vintage, black and white",
+        "Safari", "com.apple.Safari", -4800,
+    ),
+    (
+        "Miniature from an Akbarnama (detail) of Akbar wearing a bandhan\u{12b} patk\u{101} over a gold-brocaded silk sash.jpg.webp",
+        "painting, miniature, mughal, emperor, akbar, throne, court, gold, turban, manuscript",
+        "Safari", "com.apple.Safari", -4400,
+    ),
+    (
+        "Monet - The Gare Saint-Lazare.jpg",
+        "painting, monet, train station, steam, locomotive, impressionist, paris, railway, smoke, oil painting",
+        "Photos", "com.apple.Photos", -4000,
+    ),
+    (
+        "The Drunkard\u{2019}s Children (Plate 1).webp",
+        "print, engraving, crowd, victorian, street scene, people, illustration, cruikshank, vintage, black and white",
+        "Safari", "com.apple.Safari", -3600,
+    ),
+    (
+        "The Great Wave off Kanagawa.jpg",
+        "woodblock print, wave, ocean, hokusai, japan, mount fuji, boats, ukiyo-e, blue, sea",
+        "Photos", "com.apple.Photos", -3200,
+    ),
+    (
+        "The Solfatara, and the issue of hot vapours from underground lakes.webp",
+        "illustration, volcano, landscape, geological, lake, steam, fire, figure, tree, scientific",
+        "Safari", "com.apple.Safari", -2800,
+    ),
+    (
+        "The Whale Car Wash, Oklahoma City, Oklahoma.webp",
+        "photograph, whale, building, roadside, blue, car wash, americana, kitsch, architecture, vintage",
+        "Photos", "com.apple.Photos", -2400,
+    ),
+];
 
 /// Find item ID by content hash (for setting timestamps on duplicates)
 fn find_id_by_hash(db_path: &str, content_hash: &str) -> Option<i64> {
@@ -331,137 +449,189 @@ fn find_id_by_hash(db_path: &str, content_hash: &str) -> Option<i64> {
     ).ok()
 }
 
-fn insert_demo_items(store: &ClipboardStore, db_path: &str) -> Result<()> {
-    let now = Utc::now().timestamp();
 
+/// Delete English demo items from the database (used before inserting localized versions)
+fn delete_english_demo_items(db_path: &str) -> Result<()> {
+    let conn = rusqlite::Connection::open(db_path)?;
+
+    // Delete items matching English demo content by exact hash
     for item in DEMO_ITEMS {
-        let _ = store.save_text(
-            item.content.to_string(),
-            Some(item.source_app.to_string()),
-            Some(item.bundle_id.to_string()),
-        );
-        // Always set the correct timestamp (handles both new and duplicate items)
         let mut hasher = DefaultHasher::new();
         item.content.hash(&mut hasher);
         let content_hash = hasher.finish().to_string();
-        if let Some(id) = find_id_by_hash(db_path, &content_hash) {
-            let _ = set_timestamp_direct(db_path, id, now + item.offset);
+
+        // Get the item ID first
+        let item_id: Option<i64> = conn.query_row(
+            "SELECT id FROM items WHERE contentHash = ?1",
+            params![content_hash],
+            |row| row.get(0),
+        ).ok();
+
+        if let Some(id) = item_id {
+            // Delete from text_items first (foreign key)
+            conn.execute("DELETE FROM text_items WHERE itemId = ?1", params![id])?;
+            // Then delete from items
+            conn.execute("DELETE FROM items WHERE id = ?1", params![id])?;
         }
     }
 
-    // Add kitty image (most recent item)
-    let base_path = PathBuf::from(env!("CARGO_MANIFEST_DIR"));
-    let kitty_path = base_path.join("../../marketing/assets/kitty.jpg");
-    if let Ok(raw_data) = fs::read(&kitty_path) {
-        let thumbnail = generate_thumbnail(&raw_data, 64);
-        let image_data = compress_to_heic(&kitty_path, 1500, 60).unwrap_or(raw_data);
-        if let Ok(id) = save_image_direct(
-            db_path,
-            image_data,
-            thumbnail,
-            "cat, kitten, tabby, pet, animal, fur, whiskers".to_string(),
-            Some("Photos".to_string()),
-            Some("com.apple.Photos".to_string()),
-        ) {
-            if id > 0 {
-                let _ = set_timestamp_direct(db_path, id, now - 5); // Most recent demo item
-            }
-        }
-    }
-
-    // Add source images with keyword captions (mirrors Vision framework output)
-    // Images are compressed to HEIC (like the app does) to keep the DB small.
-    let source_images_dir = base_path.join("../source-images");
-    let source_images: &[(&str, &str, &str, &str, i64)] = &[
-        // (filename, keywords, source_app, bundle_id, time_offset_seconds)
-        (
-            "[Advent Bay, Spitzbergen, Norway].webp",
-            "landscape, arctic, mountains, bay, tundra, cabin, norway, spitzbergen, photograph, vintage",
-            "Safari", "com.apple.Safari", -7200,
-        ),
-        (
-            "At the French Windows. The Artist's Wife.webp",
-            "painting, woman, portrait, garden, balcony, dress, spring, blossoms, trees, oil painting",
-            "Photos", "com.apple.Photos", -6800,
-        ),
-        (
-            "Bemberg Fondation Toulouse.jpg",
-            "painting, impressionist, pointillism, garden, blossoms, trees, gate, spring, colorful, oil painting",
-            "Safari", "com.apple.Safari", -6400,
-        ),
-        (
-            "Eide : Granvin DATE ca. 1910.webp",
-            "village, norway, fjord, harbor, boats, houses, mountains, coastal, photograph, vintage",
-            "Photos", "com.apple.Photos", -6000,
-        ),
-        (
-            "Gathering Autumn Flowers A1758.jpg",
-            "painting, field, meadow, women, parasol, flowers, autumn, sky, clouds, impressionist",
-            "Safari", "com.apple.Safari", -5600,
-        ),
-        (
-            "Henri-Edmond Cross\u{a0}.jpg",
-            "painting, pointillism, sunset, clouds, pink, sky, trees, landscape, neo-impressionist, oil painting",
-            "Photos", "com.apple.Photos", -5200,
-        ),
-        (
-            "Man with rickshaw on tall tree lined dirt road.webp",
-            "photograph, road, trees, rickshaw, path, forest, tall trees, japan, vintage, black and white",
-            "Safari", "com.apple.Safari", -4800,
-        ),
-        (
-            "Miniature from an Akbarnama (detail) of Akbar wearing a bandhan\u{12b} patk\u{101} over a gold-brocaded silk sash.jpg.webp",
-            "painting, miniature, mughal, emperor, akbar, throne, court, gold, turban, manuscript",
-            "Safari", "com.apple.Safari", -4400,
-        ),
-        (
-            "Monet - The Gare Saint-Lazare.jpg",
-            "painting, monet, train station, steam, locomotive, impressionist, paris, railway, smoke, oil painting",
-            "Photos", "com.apple.Photos", -4000,
-        ),
-        (
-            "The Drunkard\u{2019}s Children (Plate 1).webp",
-            "print, engraving, crowd, victorian, street scene, people, illustration, cruikshank, vintage, black and white",
-            "Safari", "com.apple.Safari", -3600,
-        ),
-        (
-            "The Great Wave off Kanagawa.jpg",
-            "woodblock print, wave, ocean, hokusai, japan, mount fuji, boats, ukiyo-e, blue, sea",
-            "Photos", "com.apple.Photos", -3200,
-        ),
-        (
-            "The Solfatara, and the issue of hot vapours from underground lakes.webp",
-            "illustration, volcano, landscape, geological, lake, steam, fire, figure, tree, scientific",
-            "Safari", "com.apple.Safari", -2800,
-        ),
-        (
-            "The Whale Car Wash, Oklahoma City, Oklahoma.webp",
-            "photograph, whale, building, roadside, blue, car wash, americana, kitsch, architecture, vintage",
-            "Photos", "com.apple.Photos", -2400,
-        ),
+    // Also delete by pattern for items that might have slightly different content
+    // (e.g., older versions of ClipKitty bullet points with different wording)
+    let patterns = [
+        "ClipKitty\n• Copy it once%",                      // ClipKitty bullet points
+        "Apartment walkthrough notes:%",                    // Apartment notes
+        "# Deploy API server to production%",               // Deploy command
+        "The quick brown fox jumps over the lazy dog",     // Greeting text
+        "#!/bin/bash\nset -euo pipefail%",                 // Code comment/script
+        "https://developer.apple.com/documentation%",       // URL
+        "%riverside_park_picnic_directions.txt",            // File path
+        "%driver_config.yaml",                              // File path
+        "%river_animation_keyframes.css",                   // File path
+        "%private_key_backup.pem",                          // File path
+        "%README.md",                                       // File path
+        "%catalog_api_response.json",                       // File path
     ];
 
-    for (filename, keywords, source_app, bundle_id, offset) in source_images {
-        let image_path = source_images_dir.join(filename);
-        if let Ok(raw_data) = fs::read(&image_path) {
-            // Generate thumbnail from original data (image crate can't decode HEIC)
-            let thumbnail = generate_thumbnail(&raw_data, 64);
-            // Compress to HEIC using macOS sips, falling back to raw data
-            let image_data = compress_to_heic(&image_path, 1500, 60).unwrap_or(raw_data);
-            if let Ok(id) = save_image_direct(
-                db_path,
-                image_data,
-                thumbnail,
-                keywords.to_string(),
-                Some(source_app.to_string()),
-                Some(bundle_id.to_string()),
-            ) {
-                if id > 0 {
-                    let _ = set_timestamp_direct(db_path, id, now + offset);
+    for pattern in patterns {
+        // Find all matching item IDs
+        let mut stmt = conn.prepare(
+            "SELECT itemId FROM text_items WHERE value LIKE ?1"
+        )?;
+        let item_ids: Vec<i64> = stmt
+            .query_map(params![pattern], |row| row.get(0))?
+            .filter_map(|r| r.ok())
+            .collect();
+
+        for id in item_ids {
+            conn.execute("DELETE FROM text_items WHERE itemId = ?1", params![id])?;
+            conn.execute("DELETE FROM items WHERE id = ?1", params![id])?;
+        }
+    }
+
+    // Images are now stored with locale column and don't need to be deleted
+    // The base generation inserts images for all locales upfront
+
+    Ok(())
+}
+
+fn insert_demo_items(store: &ClipboardStore, db_path: &str, locale: Option<&str>) -> Result<()> {
+    let now = Utc::now().timestamp();
+
+    // Ensure the locale column exists in image_items table (migration from old schema)
+    ensure_locale_column(db_path)?;
+
+    match locale {
+        None => {
+            // Base generation: Insert English text items and images for ALL locales
+
+            // Insert English text demo items
+            for item in DEMO_ITEMS {
+                let _ = store.save_text(
+                    item.content.to_string(),
+                    Some(item.source_app.to_string()),
+                    Some(item.bundle_id.to_string()),
+                );
+                // Always set the correct timestamp (handles both new and duplicate items)
+                let mut hasher = DefaultHasher::new();
+                item.content.hash(&mut hasher);
+                let content_hash = hasher.finish().to_string();
+                if let Some(id) = find_id_by_hash(db_path, &content_hash) {
+                    let _ = set_timestamp_direct(db_path, id, now + item.offset);
                 }
             }
-        } else {
-            eprintln!("Warning: source image not found: {}", filename);
+
+            // Insert images for ALL locales (including English)
+            let base_path = PathBuf::from(env!("CARGO_MANIFEST_DIR"));
+            let source_images_dir = base_path.join("../source-images");
+            let kitty_path = base_path.join("../../marketing/assets/kitty.jpg");
+
+            // All supported locales (including English)
+            let all_locales = ["en", "es", "zh-Hans", "zh-Hant", "ja", "ko", "fr", "de", "pt-BR", "ru"];
+
+            for locale_code in all_locales.iter() {
+                // Insert kitty image for this locale
+                let kitty_keywords = get_localized_image_keywords(locale_code, "kitty.jpg")
+                    .unwrap_or("cat, kitten, tabby, pet, animal, fur, whiskers");
+
+                // Skip if this image+locale combination already exists
+                if !image_exists(db_path, kitty_keywords, locale_code) {
+                    if let Ok(raw_data) = fs::read(&kitty_path) {
+                        let thumbnail = generate_thumbnail(&raw_data, 64);
+                        let image_data = compress_to_heic(&kitty_path, 1500, 60).unwrap_or(raw_data);
+                        if let Ok(id) = save_image_direct(
+                            db_path,
+                            image_data,
+                            thumbnail,
+                            kitty_keywords.to_string(),
+                            Some("Photos".to_string()),
+                            Some("com.apple.Photos".to_string()),
+                            locale_code,
+                        ) {
+                            if id > 0 {
+                                let _ = set_timestamp_direct(db_path, id, now - 5); // Most recent demo item
+                            }
+                        }
+                    }
+                }
+
+                // Insert source images for this locale
+                for (filename, default_keywords, source_app, bundle_id, offset) in SOURCE_IMAGES.iter() {
+                    let keywords = get_localized_image_keywords(locale_code, filename)
+                        .unwrap_or(*default_keywords);
+
+                    // Skip if this image+locale combination already exists
+                    if image_exists(db_path, keywords, locale_code) {
+                        continue;
+                    }
+
+                    let image_path = source_images_dir.join(filename);
+                    if let Ok(raw_data) = fs::read(&image_path) {
+                        let thumbnail = generate_thumbnail(&raw_data, 64);
+                        let image_data = compress_to_heic(&image_path, 1500, 60).unwrap_or(raw_data);
+                        if let Ok(id) = save_image_direct(
+                            db_path,
+                            image_data,
+                            thumbnail,
+                            keywords.to_string(),
+                            Some(source_app.to_string()),
+                            Some(bundle_id.to_string()),
+                            locale_code,
+                        ) {
+                            if id > 0 {
+                                let _ = set_timestamp_direct(db_path, id, now + offset);
+                            }
+                        }
+                    } else {
+                        eprintln!("Warning: source image not found: {}", filename);
+                    }
+                }
+            }
+        },
+        Some(loc) => {
+            // Localized generation: Replace text items only (images already exist from base)
+
+            // Delete English text demo items
+            delete_english_demo_items(db_path)?;
+
+            // Insert localized text demo items
+            let demo_items = get_localized_demo_items(loc).unwrap_or(DEMO_ITEMS);
+            for item in demo_items {
+                let _ = store.save_text(
+                    item.content.to_string(),
+                    Some(item.source_app.to_string()),
+                    Some(item.bundle_id.to_string()),
+                );
+                // Always set the correct timestamp (handles both new and duplicate items)
+                let mut hasher = DefaultHasher::new();
+                item.content.hash(&mut hasher);
+                let content_hash = hasher.finish().to_string();
+                if let Some(id) = find_id_by_hash(db_path, &content_hash) {
+                    let _ = set_timestamp_direct(db_path, id, now + item.offset);
+                }
+            }
+
+            // Images are already in the database from the base generation (with locale column)
+            // The UI will filter images by locale when displaying them
         }
     }
 
@@ -509,8 +679,9 @@ async fn main() -> Result<()> {
 
     // Demo-only mode: skip AI generation, just insert demo items
     if args.demo_only {
-        println!("Inserting demo items only...");
-        insert_demo_items(&store, &abs_db_path)?;
+        let locale_str = args.locale.as_deref();
+        println!("Inserting demo items{}...", locale_str.map(|l| format!(" for locale '{}'", l)).unwrap_or_default());
+        insert_demo_items(&store, &abs_db_path, locale_str)?;
         println!("Demo items inserted.");
         return Ok(());
     }
@@ -594,7 +765,7 @@ async fn main() -> Result<()> {
     pb.finish_with_message("Generation complete");
 
     if args.demo {
-        insert_demo_items(&store, &abs_db_path)?;
+        insert_demo_items(&store, &abs_db_path, args.locale.as_deref())?;
         pb.println("Demo items inserted.");
     }
 
