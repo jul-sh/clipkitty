@@ -32,7 +32,7 @@ SCREENSHOT_LOCALES := en es zh-Hans zh-Hant ja ko fr de pt-BR ru
 .PHONY: dmg appstore appstore-publish publish icon-png \
         synthetic-data run-synthetic marketing marketing-screenshots \
         marketing-screenshots-capture marketing-screenshots-localized \
-        preview-video
+        preview-video screenshot
 
 # Build DMG installer
 dmg:
@@ -161,14 +161,17 @@ synthetic-data:
 	@echo "Synthetic data generated at distribution/SyntheticData.sqlite"
 	@echo "Run ./distribution/patch-demo-items.sh to add demo items"
 
+# Sandboxed app container path
+CONTAINER_APP_SUPPORT := ~/Library/Containers/com.eviljuliette.clipkitty/Data/Library/Application\ Support/ClipKitty
+
 # Open app with synthetic data for manual testing
 run-synthetic:
 	@$(MAKE) -C $(PROJECT_ROOT) all CONFIGURATION=Debug
 	@echo "Setting up synthetic data..."
-	@mkdir -p ~/Library/Containers/com.eviljuliette.clipkitty/Data/Library/Application\ Support/ClipKitty
-	@rm -f ~/Library/Containers/com.eviljuliette.clipkitty/Data/Library/Application\ Support/ClipKitty/clipboard-screenshot.sqlite*
-	@rm -rf ~/Library/Containers/com.eviljuliette.clipkitty/Data/Library/Application\ Support/ClipKitty/tantivy_index*
-	@cp $(DIST_DIR)/SyntheticData.sqlite ~/Library/Containers/com.eviljuliette.clipkitty/Data/Library/Application\ Support/ClipKitty/clipboard-screenshot.sqlite
+	@mkdir -p $(CONTAINER_APP_SUPPORT)
+	@rm -f $(CONTAINER_APP_SUPPORT)/clipboard-screenshot.sqlite*
+	@rm -rf $(CONTAINER_APP_SUPPORT)/tantivy_index*
+	@cp $(DIST_DIR)/SyntheticData.sqlite $(CONTAINER_APP_SUPPORT)/clipboard-screenshot.sqlite
 	@echo "Launching app with synthetic data..."
 	@open "$(DERIVED_DATA)/Build/Products/Debug/$(APP_NAME).app" --args --use-simulated-db
 
@@ -192,6 +195,9 @@ marketing-screenshots-capture:
 # Full screenshot pipeline (English only)
 marketing-screenshots: marketing-screenshots-capture
 	@echo "Marketing screenshots complete! See marketing/ directory"
+
+# Alias for quick English-only screenshot capture
+screenshot: marketing-screenshots-capture
 
 # Capture localized screenshots for all supported locales.
 # Each locale's screenshots are saved to marketing/{locale}/screenshot_*.png.
