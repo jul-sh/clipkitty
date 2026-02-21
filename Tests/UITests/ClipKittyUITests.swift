@@ -208,16 +208,19 @@ final class ClipKittyUITests: XCTestCase {
         XCTAssertTrue(waitForSelectedIndex(0, timeout: 3), "First item should be selected")
         Thread.sleep(forTimeInterval: 1.0)
 
-        // The panel should have at least 2 text views when preview is working:
-        // 1. The list item text (left side, in the outline/list)
-        // 2. The preview text (right side, EditableTextPreview's NSTextView)
-        //
-        // KNOWN ISSUE: The EditableTextPreview's text view is not rendering,
-        // so only the list item text view is found.
-        let textViewCount = panel.textViews.allElementsBoundByIndex.count
+        // Look for the preview text view by accessibility identifier
+        let previewTextView = panel.textViews["PreviewTextView"]
+        let previewExists = previewTextView.waitForExistence(timeout: 2)
 
-        XCTAssertGreaterThanOrEqual(textViewCount, 2,
-            "Preview pane should have text view. Found \(textViewCount). KNOWN ISSUE: EditableTextPreview not rendering.")
+        // Debug output
+        let allTextViews = panel.textViews.allElementsBoundByIndex
+        print("DEBUG: Found \(allTextViews.count) text views")
+        for (i, tv) in allTextViews.enumerated() {
+            print("DEBUG: TextView[\(i)] id='\(tv.identifier)' exists=\(tv.exists)")
+        }
+
+        XCTAssertTrue(previewExists,
+            "Preview text view (PreviewTextView) should exist. KNOWN ISSUE: EditableTextPreview not rendering.")
     }
 
     /// Tests that Cmd+number shortcuts select and paste the corresponding history item.
