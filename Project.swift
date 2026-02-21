@@ -17,7 +17,7 @@ let project = Project(
     name: "ClipKitty",
     settings: .settings(
         base: [
-            "MARKETING_VERSION": "1.7.23",
+            "MARKETING_VERSION": "1.8.0",
             "CURRENT_PROJECT_VERSION": "1",
         ],
         configurations: configurations,
@@ -79,6 +79,7 @@ let project = Project(
                 "CFBundleDevelopmentRegion": "en",
                 "CFBundleShortVersionString": "$(MARKETING_VERSION)",
                 "CFBundleVersion": "$(CURRENT_PROJECT_VERSION)",
+                "ITSAppUsesNonExemptEncryption": false,
                 "LSApplicationCategoryType": "public.app-category.utilities",
                 "LSMinimumSystemVersion": "15.0",
                 "NSHumanReadableCopyright": "Copyright © 2025 ClipKitty. All rights reserved.",
