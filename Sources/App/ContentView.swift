@@ -1788,7 +1788,7 @@ private struct HideScrollIndicatorsWhenOverlay: ViewModifier {
     @State private var hasScrolled = false
 
     func body(content: Content) -> some View {
-        if NSScroller.preferredScrollerStyle == .overlay {
+        if #available(macOS 15.0, *), NSScroller.preferredScrollerStyle == .overlay {
             content
                 .scrollIndicators(hasScrolled ? .automatic : .never)
                 .onScrollGeometryChange(for: CGFloat.self) { geometry in
