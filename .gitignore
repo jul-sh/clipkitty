@@ -70,5 +70,8 @@ purr/benches/tantivy_index*/
 *.p8
 *.provisionprofile
 
+# Localized synthetic databases (generated at screenshot time from base + images/)
+distribution/SyntheticData_*.sqlite
+
 # ASC CLI
 .asc/

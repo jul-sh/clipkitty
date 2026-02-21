@@ -18,3 +18,5 @@ chrono = { version = "*", features = ["serde"] }
 rusqlite = { version = "*", features = ["bundled", "modern_sqlite"] }
 image = { version = "*", default-features = false, features = ["jpeg", "png", "gif", "webp"] }
 futures = "*"
+csv = "1.3"
+once_cell = "1.19"
