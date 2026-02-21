@@ -197,40 +197,27 @@ final class ClipKittyUITests: XCTestCase {
         XCTAssertGreaterThan(buttons.count, 0, "Should have items in the list")
     }
 
-    /// Tests that first item preview is visible after app reopen (hide/show cycle).
-    /// KNOWN ISSUE: First item shows once in preview pane, but then no more on subsequent app reopens.
-    /// Other items show fine when navigated to.
-    func testFirstItemPreviewVisibleAfterReopen() throws {
+    /// Tests that first item's preview content is visible when selected.
+    /// KNOWN ISSUE: First item shows in list but NOT in preview pane.
+    /// The EditableTextPreview's NSTextView is not rendering/accessible.
+    func testFirstItemPreviewVisible() throws {
         let panel = app.dialogs.firstMatch
         XCTAssertTrue(panel.exists, "Panel should be visible initially")
 
-        // Verify first item preview is shown initially (text view exists with content)
+        // Wait for first item to be selected
         XCTAssertTrue(waitForSelectedIndex(0, timeout: 3), "First item should be selected")
-        let textViews = app.textViews.allElementsBoundByIndex
-        XCTAssertGreaterThan(textViews.count, 0, "Preview text view should exist on initial open")
-        let initialPreviewValue = textViews.first?.value as? String ?? ""
-        XCTAssertFalse(initialPreviewValue.isEmpty, "Preview should have content on initial open")
+        Thread.sleep(forTimeInterval: 1.0)
 
-        // Hide the panel by activating another app
-        let finder = XCUIApplication(bundleIdentifier: "com.apple.finder")
-        finder.activate()
-        XCTAssertTrue(panel.waitForNonExistence(timeout: 3), "Panel should hide when focus lost")
+        // The panel should have at least 2 text views when preview is working:
+        // 1. The list item text (left side, in the outline/list)
+        // 2. The preview text (right side, EditableTextPreview's NSTextView)
+        //
+        // KNOWN ISSUE: The EditableTextPreview's text view is not rendering,
+        // so only the list item text view is found.
+        let textViewCount = panel.textViews.allElementsBoundByIndex.count
 
-        // Re-show the panel via hotkey
-        app.typeKey(" ", modifierFlags: .option)
-        XCTAssertTrue(panel.waitForExistence(timeout: 5), "Panel should reappear after hotkey")
-        Thread.sleep(forTimeInterval: 0.5)
-
-        // First item should still be selected
-        XCTAssertTrue(waitForSelectedIndex(0, timeout: 3), "First item should be selected after reopen")
-
-        // CRITICAL: Preview text view should STILL exist and have content
-        // This is the known issue - after reopen, the preview pane is empty for first item
-        let textViewsAfterReopen = app.textViews.allElementsBoundByIndex
-        XCTAssertGreaterThan(textViewsAfterReopen.count, 0, "Preview text view should exist after reopen")
-
-        let previewValueAfterReopen = textViewsAfterReopen.first?.value as? String ?? ""
-        XCTAssertFalse(previewValueAfterReopen.isEmpty, "Preview should have content after reopen (KNOWN ISSUE: first item preview disappears)")
+        XCTAssertGreaterThanOrEqual(textViewCount, 2,
+            "Preview pane should have text view. Found \(textViewCount). KNOWN ISSUE: EditableTextPreview not rendering.")
     }
 
     /// Tests that Cmd+number shortcuts select and paste the corresponding history item.
