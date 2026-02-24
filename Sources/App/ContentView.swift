@@ -331,7 +331,13 @@ struct ContentView: View {
     }
 
     private func deleteSelectedItem() {
-        guard let id = selectedItemId, let currentIndex = selectedIndex else { return }
+        guard let id = selectedItemId else { return }
+        deleteItem(id: id)
+    }
+
+    /// Delete a specific item by ID (used by both selected item deletion and context menu)
+    private func deleteItem(id: Int64) {
+        guard let currentIndex = itemIds.firstIndex(of: id) else { return }
 
         // Compute next selection before deleting
         let nextId: Int64?
@@ -344,8 +350,27 @@ struct ContentView: View {
         }
 
         store.delete(itemId: id)
-        selectedItemId = nextId
-        selectedItem = nil
+
+        // Only update selection if we deleted the currently selected item
+        if selectedItemId == id {
+            selectedItemId = nextId
+            selectedItem = nil
+        }
+    }
+
+    /// Perform an action on a specific item (used by context menu)
+    private func performActionOnItem(itemId: Int64, action: ActionItem) {
+        Task {
+            guard let item = await store.fetchItem(id: itemId) else { return }
+            switch action {
+            case .defaultAction:
+                onSelect(item.itemMetadata.itemId, item.content)
+            case .copyOnly:
+                onCopyOnly(item.itemMetadata.itemId, item.content)
+            case .delete:
+                deleteItem(id: itemId)
+            }
+        }
     }
 
     // MARK: - Search Bar
@@ -680,6 +705,15 @@ struct ContentView: View {
                             hasUserNavigated = true
                             selectedItemId = row.metadata.itemId
                             focusSearchField()
+                        },
+                        onDefaultAction: {
+                            performActionOnItem(itemId: row.metadata.itemId, action: .defaultAction)
+                        },
+                        onCopyOnly: AppSettings.shared.pasteMode == .autoPaste ? {
+                            performActionOnItem(itemId: row.metadata.itemId, action: .copyOnly)
+                        } : nil,
+                        onDelete: {
+                            deleteItem(id: row.metadata.itemId)
                         }
                     )
                     .equatable()
@@ -1465,6 +1499,10 @@ struct ItemRow: View, Equatable {
     let isSelected: Bool
     let hasUserNavigated: Bool
     let onTap: () -> Void
+    // Context menu actions
+    let onDefaultAction: () -> Void
+    let onCopyOnly: (() -> Void)?  // nil when not in autoPaste mode
+    let onDelete: () -> Void
 
     private var accentSelected: Bool { isSelected && hasUserNavigated }
 
@@ -1486,12 +1524,13 @@ struct ItemRow: View, Equatable {
 
 
     // Define exactly what constitutes a "change" for SwiftUI diffing
-    // Note: onTap closure is intentionally excluded from equality comparison
+    // Note: closures (onTap, onDefaultAction, etc.) are intentionally excluded from equality comparison
     nonisolated static func == (lhs: ItemRow, rhs: ItemRow) -> Bool {
         return lhs.isSelected == rhs.isSelected &&
                lhs.hasUserNavigated == rhs.hasUserNavigated &&
                lhs.metadata == rhs.metadata &&
-               lhs.matchData == rhs.matchData
+               lhs.matchData == rhs.matchData &&
+               (lhs.onCopyOnly != nil) == (rhs.onCopyOnly != nil)
     }
 
     var body: some View {
@@ -1608,6 +1647,29 @@ struct ItemRow: View, Equatable {
         }
         // 2. Apply the plain style so it behaves like a standard row instead of a system button
         .buttonStyle(.plain)
+        .contextMenu {
+            // Default action (Copy or Paste depending on settings)
+            Button(action: onDefaultAction) {
+                Text(AppSettings.shared.pasteMode.buttonLabel)
+            }
+            .accessibilityIdentifier("ContextMenu_DefaultAction")
+
+            // Copy only (shown when autoPaste is enabled)
+            if let onCopyOnly {
+                Button(action: onCopyOnly) {
+                    Text("Copy", comment: "Context menu action to copy without pasting")
+                }
+                .accessibilityIdentifier("ContextMenu_Copy")
+            }
+
+            Divider()
+
+            // Delete action
+            Button(role: .destructive, action: onDelete) {
+                Text("Delete", comment: "Context menu action to delete item")
+            }
+            .accessibilityIdentifier("ContextMenu_Delete")
+        }
         .accessibilityElement(children: .combine)
         .accessibilityLabel(displayText)
         .accessibilityHint(AppSettings.shared.pasteMode == .autoPaste ? String(localized: "Double tap to paste") : String(localized: "Double tap to copy"))
