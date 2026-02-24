@@ -17,7 +17,7 @@ let project = Project(
     name: "ClipKitty",
     settings: .settings(
         base: [
-            "MARKETING_VERSION": "1.8.0",
+            "MARKETING_VERSION": "1.8.1",
             "CURRENT_PROJECT_VERSION": "1",
         ],
         configurations: configurations,
@@ -139,6 +139,8 @@ let project = Project(
         ),
 
         // MARK: ClipKittyUITests — UI tests
+        // Sign with Developer ID to preserve TCC permissions across builds.
+        // Run ./distribution/setup-dev-signing.sh first to import the certificate.
         .target(
             name: "ClipKittyUITests",
             destinations: .macOS,
@@ -150,6 +152,13 @@ let project = Project(
             dependencies: [
                 .target(name: "ClipKitty"),
             ],
+            settings: .settings(
+                base: [
+                    "CODE_SIGN_STYLE": "Manual",
+                    "CODE_SIGN_IDENTITY": "Developer ID Application",
+                    "DEVELOPMENT_TEAM": "ANBBV7LQ2P",
+                ]
+            ),
             environmentVariables: [
                 "CLIPKITTY_APP_PATH": "$(BUILT_PRODUCTS_DIR)/ClipKitty.app",
             ]

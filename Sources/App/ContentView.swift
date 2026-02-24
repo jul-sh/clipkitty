@@ -4,6 +4,39 @@ import ClipKittyRust
 import os.log
 import UniformTypeIdentifiers
 
+private enum SpinnerState: Equatable {
+    case idle
+    case debouncing(task: Task<Void, Never>)
+    case visible
+
+    static func == (lhs: SpinnerState, rhs: SpinnerState) -> Bool {
+        switch (lhs, rhs) {
+        case (.idle, .idle), (.visible, .visible), (.debouncing, .debouncing):
+            return true
+        default:
+            return false
+        }
+    }
+
+    mutating func cancel() {
+        if case .debouncing(let task) = self {
+            task.cancel()
+        }
+        self = .idle
+    }
+}
+
+private enum FilterPopoverState: Equatable {
+    case hidden
+    case visible(highlightedIndex: Int)
+}
+
+private enum ActionsPopoverState: Equatable {
+    case hidden
+    case showingActions(highlightedIndex: Int)
+    case showingDeleteConfirm(highlightedIndex: Int)
+}
+
 struct ContentView: View {
     var store: ClipboardStore
     let onSelect: (Int64, ClipboardContent) -> Void
@@ -16,16 +49,11 @@ struct ContentView: View {
     @State private var searchText: String = ""
     @State private var didApplyInitialSearch = false
     @State private var lastItemsSignature: [Int64] = []  // Track when items change to suppress animation
-    @State private var showSearchSpinner = false
-    @State private var searchSpinnerTask: Task<Void, Never>?
-    @State private var showPreviewSpinner = false
-    @State private var previewSpinnerTask: Task<Void, Never>?
+    @State private var searchSpinner: SpinnerState = .idle
+    @State private var previewSpinner: SpinnerState = .idle
     @State private var hasUserNavigated = false
-    @State private var showFilterPopover = false
-    @State private var highlightedFilterIndex: Int = 0
-    @State private var showActionsPopover = false
-    @State private var highlightedActionIndex: Int = 0
-    @State private var showDeleteConfirm = false
+    @State private var filterPopover: FilterPopoverState = .hidden
+    @State private var actionsPopover: ActionsPopoverState = .hidden
     @State private var commandNumberEventMonitor: Any?
     enum FocusTarget: Hashable {
         case search
@@ -33,6 +61,20 @@ struct ContentView: View {
         case actionsDropdown
     }
     @FocusState private var focusTarget: FocusTarget?
+
+    private var filterPopoverBinding: Binding<Bool> {
+        Binding(
+            get: { if case .visible = filterPopover { return true } else { return false } },
+            set: { if !$0 { filterPopover = .hidden } }
+        )
+    }
+
+    private var actionsPopoverBinding: Binding<Bool> {
+        Binding(
+            get: { if case .hidden = actionsPopover { return false } else { return true } },
+            set: { if !$0 { actionsPopover = .hidden } }
+        )
+    }
 
     private var itemIds: [Int64] {
         switch store.state {
@@ -136,9 +178,8 @@ struct ContentView: View {
             } else {
                 searchText = ""
             }
-            showFilterPopover = false
-            showActionsPopover = false
-            showDeleteConfirm = false
+            filterPopover = .hidden
+            actionsPopover = .hidden
             // Select first item whenever display resets (re-open)
             if let firstId = firstItemId {
                 loadItem(id: firstId)
@@ -164,13 +205,14 @@ struct ContentView: View {
             }
 
             // Show spinner after 100ms if still loading
-            searchSpinnerTask?.cancel()
+            searchSpinner.cancel()
             if case .resultsLoading = newState {
-                searchSpinnerTask = debouncedSpinnerTask {
-                    if case .resultsLoading = self.store.state { self.showSearchSpinner = true }
+                let task = debouncedSpinnerTask {
+                    if case .resultsLoading = self.store.state { self.searchSpinner = .visible }
                 }
+                searchSpinner = .debouncing(task: task)
             } else {
-                showSearchSpinner = false
+                searchSpinner = .idle
             }
         }
         .onChange(of: searchText) { _, newValue in
@@ -194,13 +236,14 @@ struct ContentView: View {
             }
         }
         .onChange(of: selectedItem) { _, newItem in
-            previewSpinnerTask?.cancel()
+            previewSpinner.cancel()
             if newItem == nil && selectedItemId != nil {
-                previewSpinnerTask = debouncedSpinnerTask {
-                    if self.selectedItem == nil && self.selectedItemId != nil { self.showPreviewSpinner = true }
+                let task = debouncedSpinnerTask {
+                    if self.selectedItem == nil && self.selectedItemId != nil { self.previewSpinner = .visible }
                 }
+                previewSpinner = .debouncing(task: task)
             } else {
-                showPreviewSpinner = false
+                previewSpinner = .idle
             }
         }
         .onChange(of: itemIds) { oldOrder, newOrder in
@@ -330,15 +373,13 @@ struct ContentView: View {
                 .onKeyPress(.return, phases: .down) { keyPress in
                     if keyPress.modifiers.contains(.option) {
                         guard selectedItem != nil else { return .handled }
-                        if showActionsPopover {
-                            showActionsPopover = false
-                            showDeleteConfirm = false
-                            return .handled
+                        if case .hidden = actionsPopover {
+                            let actions = actionItems
+                            actionsPopover = .showingActions(highlightedIndex: actions.count - 1)
+                            focusActionsDropdown()
+                        } else {
+                            actionsPopover = .hidden
                         }
-                        let actions = actionItems
-                        highlightedActionIndex = actions.count - 1
-                        showActionsPopover = true
-                        focusActionsDropdown()
                         return .handled
                     }
                     confirmSelection()
@@ -350,8 +391,8 @@ struct ContentView: View {
                 }
                 .onKeyPress(.tab) {
                     let allOptions = Self.filterOptions
-                    highlightedFilterIndex = allOptions.firstIndex(where: { $0.0 == store.contentTypeFilter }) ?? 0
-                    showFilterPopover = true
+                    let index = allOptions.firstIndex(where: { $0.0 == store.contentTypeFilter }) ?? 0
+                    filterPopover = .visible(highlightedIndex: index)
                     focusFilterDropdown()
                     return .handled
                 }
@@ -360,22 +401,18 @@ struct ContentView: View {
                 }
                 .onKeyPress(.delete) {
                     guard selectedItemId != nil else { return .ignored }
-                    showDeleteConfirm = true
-                    highlightedActionIndex = 0
-                    showActionsPopover = true
+                    actionsPopover = .showingDeleteConfirm(highlightedIndex: 0)
                     focusActionsDropdown()
                     return .handled
                 }
                 .onKeyPress(.deleteForward) {
                     guard selectedItemId != nil else { return .ignored }
-                    showDeleteConfirm = true
-                    highlightedActionIndex = 0
-                    showActionsPopover = true
+                    actionsPopover = .showingDeleteConfirm(highlightedIndex: 0)
                     focusActionsDropdown()
                     return .handled
                 }
 
-            if showSearchSpinner {
+            if case .visible = searchSpinner {
                 ProgressView()
                     .scaleEffect(0.5)
                     .frame(width: 16, height: 16)
@@ -403,9 +440,11 @@ struct ContentView: View {
     private var filterDropdown: some View {
         Button {
             let allOptions = Self.filterOptions
-            highlightedFilterIndex = allOptions.firstIndex(where: { $0.0 == store.contentTypeFilter }) ?? 0
-            showFilterPopover.toggle()
-            if showFilterPopover {
+            let index = allOptions.firstIndex(where: { $0.0 == store.contentTypeFilter }) ?? 0
+            if case .visible = filterPopover {
+                filterPopover = .hidden
+            } else {
+                filterPopover = .visible(highlightedIndex: index)
                 focusFilterDropdown()
             }
         } label: {
@@ -422,7 +461,7 @@ struct ContentView: View {
         }
         .buttonStyle(.plain)
         .accessibilityIdentifier("FilterDropdown")
-        .popover(isPresented: $showFilterPopover, arrowEdge: .bottom) {
+        .popover(isPresented: filterPopoverBinding, arrowEdge: .bottom) {
             filterPopoverContent
         }
     }
@@ -441,6 +480,12 @@ struct ContentView: View {
 
     private var filterPopoverContent: some View {
         let options = Self.filterOptions
+        let highlightedIndex: Int
+        if case .visible(let idx) = filterPopover {
+            highlightedIndex = idx
+        } else {
+            highlightedIndex = 0
+        }
         return VStack(spacing: 2) {
             ForEach(Array(options.enumerated()), id: \.offset) { index, entry in
                 let (option, label) = entry
@@ -450,10 +495,10 @@ struct ContentView: View {
                 FilterOptionRow(
                     label: label,
                     isSelected: store.contentTypeFilter == option,
-                    isHighlighted: highlightedFilterIndex == index,
+                    isHighlighted: highlightedIndex == index,
                     action: {
                         store.setContentTypeFilter(option)
-                        showFilterPopover = false
+                        filterPopover = .hidden
                         focusSearchField()
                     }
                 )
@@ -465,33 +510,38 @@ struct ContentView: View {
         .focused($focusTarget, equals: .filterDropdown)
         .focusEffectDisabled()
         .onKeyPress(.upArrow) {
-            highlightedFilterIndex = max(highlightedFilterIndex - 1, 0)
+            if case .visible(let idx) = filterPopover {
+                filterPopover = .visible(highlightedIndex: max(idx - 1, 0))
+            }
             return .handled
         }
         .onKeyPress(.downArrow) {
-            highlightedFilterIndex = min(highlightedFilterIndex + 1, options.count - 1)
+            if case .visible(let idx) = filterPopover {
+                filterPopover = .visible(highlightedIndex: min(idx + 1, options.count - 1))
+            }
             return .handled
         }
         .onKeyPress(.return, phases: .down) { _ in
-            let selected = options[highlightedFilterIndex]
+            let selected = options[highlightedIndex]
             store.setContentTypeFilter(selected.0)
-            showFilterPopover = false
+            filterPopover = .hidden
             focusSearchField()
             return .handled
         }
         .onKeyPress(.escape) {
-            showFilterPopover = false
+            filterPopover = .hidden
             focusSearchField()
             return .handled
         }
         .onKeyPress(.tab) {
-            showFilterPopover = false
+            filterPopover = .hidden
             focusSearchField()
             return .handled
         }
         .onAppear {
             let allOptions = Self.filterOptions
-            highlightedFilterIndex = allOptions.firstIndex(where: { $0.0 == store.contentTypeFilter }) ?? 0
+            let index = allOptions.firstIndex(where: { $0.0 == store.contentTypeFilter }) ?? 0
+            filterPopover = .visible(highlightedIndex: index)
             focusFilterDropdown()
         }
     }
@@ -689,7 +739,7 @@ struct ContentView: View {
                 metadataFooter(for: item)
             } else if itemIds.isEmpty {
                 emptyStateView
-            } else if showPreviewSpinner {
+            } else if case .visible = previewSpinner {
                 ProgressView()
                     .frame(maxWidth: .infinity, maxHeight: .infinity)
             } else if selectedItemId != nil {
@@ -710,7 +760,7 @@ struct ContentView: View {
         switch item.content {
         case .text, .color:
             TextPreviewView(
-                text: item.textContent,
+                text: item.content.textContent,
                 fontName: FontManager.mono,
                 fontSize: 15,
                 highlights: selectedItemMatchData?.fullContentHighlights ?? [],
@@ -753,9 +803,9 @@ struct ContentView: View {
         HStack(spacing: 12) {
             Label(item.timeAgo, systemImage: "clock")
                 .lineLimit(1)
-            if let app = item.sourceApp {
+            if let app = item.itemMetadata.sourceApp {
                 HStack(spacing: 4) {
-                    if let bundleID = item.sourceAppBundleID,
+                    if let bundleID = item.itemMetadata.sourceAppBundleId,
                        let appURL = NSWorkspace.shared.urlForApplication(withBundleIdentifier: bundleID) {
                         Image(nsImage: NSWorkspace.shared.icon(forFile: appURL.path))
                             .resizable()
@@ -784,11 +834,10 @@ struct ContentView: View {
     }
 
     private func buttonLabel(for item: ClipboardItem) -> String {
-        return AppSettings.shared.shouldShowPasteLabel ? String(localized: "⏎ Paste") : String(localized: "⏎ Copy")
+        return "⏎ \(AppSettings.shared.pasteMode.buttonLabel)"
     }
 
     // MARK: - Actions Dropdown
-
     private enum ActionItem: Equatable {
         case defaultAction  // copy or paste based on settings
         case copyOnly       // only shown when default is paste
@@ -797,7 +846,7 @@ struct ContentView: View {
 
     private var actionItems: [ActionItem] {
         var items: [ActionItem] = [.delete]
-        if AppSettings.shared.shouldShowPasteLabel {
+        if case .autoPaste = AppSettings.shared.pasteMode {
             items.append(.copyOnly)
         }
         items.append(.defaultAction)
@@ -807,7 +856,7 @@ struct ContentView: View {
     private func actionLabel(for action: ActionItem) -> String {
         switch action {
         case .defaultAction:
-            return AppSettings.shared.shouldShowPasteLabel ? String(localized: "Paste") : String(localized: "Copy")
+            return AppSettings.shared.pasteMode.buttonLabel
         case .copyOnly:
             return String(localized: "Copy")
         case .delete:
@@ -817,7 +866,7 @@ struct ContentView: View {
 
     private func actionIdentifier(for action: ActionItem) -> String {
         switch action {
-        case .defaultAction: return AppSettings.shared.shouldShowPasteLabel ? "Paste" : "Copy"
+        case .defaultAction: return AppSettings.shared.pasteMode.buttonLabel
         case .copyOnly: return "Copy"
         case .delete: return "Delete"
         }
@@ -826,11 +875,11 @@ struct ContentView: View {
     private var actionsButton: some View {
         Button {
             let actions = actionItems
-            highlightedActionIndex = actions.count - 1
-            showDeleteConfirm = false
-            showActionsPopover.toggle()
-            if showActionsPopover {
+            if case .hidden = actionsPopover {
+                actionsPopover = .showingActions(highlightedIndex: actions.count - 1)
                 focusActionsDropdown()
+            } else {
+                actionsPopover = .hidden
             }
         } label: {
             Text("⌥⏎ Actions")
@@ -841,7 +890,7 @@ struct ContentView: View {
         }
         .buttonStyle(.plain)
         .accessibilityIdentifier("ActionsButton")
-        .popover(isPresented: $showActionsPopover, arrowEdge: .top) {
+        .popover(isPresented: actionsPopoverBinding, arrowEdge: .top) {
             actionsPopoverContent
         }
     }
@@ -849,9 +898,25 @@ struct ContentView: View {
     private var actionsPopoverContent: some View {
         let actions = actionItems
         let confirmCount = 2
-        let itemCount = showDeleteConfirm ? confirmCount : actions.count
+        let isShowingDeleteConfirm: Bool
+        let highlightedIndex: Int
+
+        switch actionsPopover {
+        case .showingDeleteConfirm(let idx):
+            isShowingDeleteConfirm = true
+            highlightedIndex = idx
+        case .showingActions(let idx):
+            isShowingDeleteConfirm = false
+            highlightedIndex = idx
+        case .hidden:
+            isShowingDeleteConfirm = false
+            highlightedIndex = 0
+        }
+
+        let itemCount = isShowingDeleteConfirm ? confirmCount : actions.count
+
         return VStack(spacing: 2) {
-            if showDeleteConfirm {
+            if isShowingDeleteConfirm {
                 Text("Delete?")
                     .font(.system(size: 13, weight: .medium))
                     .foregroundStyle(.secondary)
@@ -861,22 +926,20 @@ struct ContentView: View {
                 ActionOptionRow(
                     label: String(localized: "Delete"),
                     actionID: "Delete",
-                    isHighlighted: highlightedActionIndex == 0,
+                    isHighlighted: highlightedIndex == 0,
                     isDestructive: true,
                     action: {
                         deleteSelectedItem()
-                        showActionsPopover = false
-                        showDeleteConfirm = false
+                        actionsPopover = .hidden
                     }
                 )
                 ActionOptionRow(
                     label: String(localized: "Cancel"),
                     actionID: "Cancel",
-                    isHighlighted: highlightedActionIndex == 1,
+                    isHighlighted: highlightedIndex == 1,
                     isDestructive: false,
                     action: {
-                        showDeleteConfirm = false
-                        highlightedActionIndex = actions.count - 1
+                        actionsPopover = .showingActions(highlightedIndex: actions.count - 1)
                     }
                 )
             } else {
@@ -885,7 +948,7 @@ struct ContentView: View {
                         ActionOptionRow(
                             label: actionLabel(for: action),
                             actionID: actionIdentifier(for: action),
-                            isHighlighted: highlightedActionIndex == index,
+                            isHighlighted: highlightedIndex == index,
                             isDestructive: true,
                             action: { performAction(action) }
                         )
@@ -894,7 +957,7 @@ struct ContentView: View {
                         ActionOptionRow(
                             label: actionLabel(for: action),
                             actionID: actionIdentifier(for: action),
-                            isHighlighted: highlightedActionIndex == index,
+                            isHighlighted: highlightedIndex == index,
                             isDestructive: action == .delete,
                             action: { performAction(action) }
                         )
@@ -908,49 +971,65 @@ struct ContentView: View {
         .focused($focusTarget, equals: .actionsDropdown)
         .focusEffectDisabled()
         .onKeyPress(.upArrow) {
-            highlightedActionIndex = max(highlightedActionIndex - 1, 0)
+            switch actionsPopover {
+            case .showingActions(let idx):
+                actionsPopover = .showingActions(highlightedIndex: max(idx - 1, 0))
+            case .showingDeleteConfirm(let idx):
+                actionsPopover = .showingDeleteConfirm(highlightedIndex: max(idx - 1, 0))
+            case .hidden:
+                break
+            }
             return .handled
         }
         .onKeyPress(.downArrow) {
-            highlightedActionIndex = min(highlightedActionIndex + 1, itemCount - 1)
+            switch actionsPopover {
+            case .showingActions(let idx):
+                actionsPopover = .showingActions(highlightedIndex: min(idx + 1, actions.count - 1))
+            case .showingDeleteConfirm(let idx):
+                actionsPopover = .showingDeleteConfirm(highlightedIndex: min(idx + 1, confirmCount - 1))
+            case .hidden:
+                break
+            }
             return .handled
         }
         .onKeyPress(.return, phases: .down) { _ in
-            if showDeleteConfirm {
-                if highlightedActionIndex == 0 {
+            switch actionsPopover {
+            case .showingDeleteConfirm(let idx):
+                if idx == 0 {
                     deleteSelectedItem()
-                    showActionsPopover = false
-                    showDeleteConfirm = false
+                    actionsPopover = .hidden
                 } else {
-                    showDeleteConfirm = false
-                    highlightedActionIndex = actions.count - 1
+                    actionsPopover = .showingActions(highlightedIndex: actions.count - 1)
                 }
-            } else {
-                let action = actions[highlightedActionIndex]
+            case .showingActions(let idx):
+                let action = actions[idx]
                 performAction(action)
+            case .hidden:
+                break
             }
             return .handled
         }
         .onKeyPress(.escape) {
-            if showDeleteConfirm {
-                showDeleteConfirm = false
-                highlightedActionIndex = actions.count - 1
-            } else {
-                showActionsPopover = false
+            switch actionsPopover {
+            case .showingDeleteConfirm:
+                actionsPopover = .showingActions(highlightedIndex: actions.count - 1)
+            case .showingActions, .hidden:
+                actionsPopover = .hidden
                 focusSearchField()
             }
             return .handled
         }
         .onKeyPress(.tab) {
-            showActionsPopover = false
-            showDeleteConfirm = false
+            actionsPopover = .hidden
             focusSearchField()
             return .handled
         }
         .onAppear {
-            if !showDeleteConfirm {
-                let actions = actionItems
-                highlightedActionIndex = actions.count - 1
+            switch actionsPopover {
+            case .hidden, .showingActions:
+                actionsPopover = .showingActions(highlightedIndex: actions.count - 1)
+            case .showingDeleteConfirm:
+                break
             }
             focusActionsDropdown()
         }
@@ -959,14 +1038,13 @@ struct ContentView: View {
     private func performAction(_ action: ActionItem) {
         switch action {
         case .defaultAction:
-            showActionsPopover = false
+            actionsPopover = .hidden
             confirmSelection()
         case .copyOnly:
-            showActionsPopover = false
+            actionsPopover = .hidden
             copyOnlySelection()
         case .delete:
-            showDeleteConfirm = true
-            highlightedActionIndex = 0
+            actionsPopover = .showingDeleteConfirm(highlightedIndex: 0)
         }
     }
 
@@ -1528,7 +1606,7 @@ struct ItemRow: View, Equatable {
         .buttonStyle(.plain)
         .accessibilityElement(children: .combine)
         .accessibilityLabel(displayText)
-        .accessibilityHint(AppSettings.shared.shouldShowPasteLabel ? String(localized: "Double tap to paste") : String(localized: "Double tap to copy"))
+        .accessibilityHint(AppSettings.shared.pasteMode == .autoPaste ? String(localized: "Double tap to paste") : String(localized: "Double tap to copy"))
         .accessibilityAddTraits(.isButton)
         .accessibilityAddTraits(isSelected ? .isSelected : [])
     }

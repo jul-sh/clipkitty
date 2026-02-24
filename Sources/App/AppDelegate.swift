@@ -2,8 +2,27 @@ import AppKit
 import SwiftUI
 import ClipKittyRust
 
+private enum LaunchMode {
+    case production
+    case simulatedDatabase(initialSearchQuery: String?)
+
+    static func fromCommandLine() -> LaunchMode {
+        guard CommandLine.arguments.contains("--use-simulated-db") else {
+            return .production
+        }
+
+        var searchQuery: String? = nil
+        if let searchIndex = CommandLine.arguments.firstIndex(of: "--search"),
+           searchIndex + 1 < CommandLine.arguments.count {
+            searchQuery = CommandLine.arguments[searchIndex + 1]
+        }
+        return .simulatedDatabase(initialSearchQuery: searchQuery)
+    }
+}
+
 @MainActor
 final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate {
+    private let launchMode: LaunchMode = .fromCommandLine()
     private var panelController: FloatingPanelController!
     private var hotKeyManager: HotKeyManager!
     private var store: ClipboardStore!
@@ -16,31 +35,32 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate {
     /// Without LSUIElement in Info.plist, we must set the policy at runtime.
     /// This fires early enough for XCUITest to see the app as non-"Disabled".
     func applicationWillFinishLaunching(_ notification: Notification) {
-        if CommandLine.arguments.contains("--use-simulated-db") {
-            NSApp.setActivationPolicy(.regular)
-        } else {
+        switch launchMode {
+        case .production:
             NSApp.setActivationPolicy(.accessory)
+        case .simulatedDatabase:
+            NSApp.setActivationPolicy(.regular)
         }
     }
 
     func applicationDidFinishLaunching(_ notification: Notification) {
         FontManager.registerFonts()
 
-        // Use simulated database with test data (for UI tests and screenshots)
-        let useSimulatedDb = CommandLine.arguments.contains("--use-simulated-db")
-        let shouldShow = useSimulatedDb
         syncLaunchAtLogin()
 
-        if useSimulatedDb {
+        if case .simulatedDatabase = launchMode {
             populateTestDatabase()
         }
 
-        store = ClipboardStore(screenshotMode: useSimulatedDb)
-        if !useSimulatedDb {
+        switch launchMode {
+        case .production:
+            store = ClipboardStore(screenshotMode: false)
             store.startMonitoring()
+            panelController = FloatingPanelController(store: store, mode: .production)
+        case .simulatedDatabase:
+            store = ClipboardStore(screenshotMode: true)
+            panelController = FloatingPanelController(store: store, mode: .testing)
         }
-
-        panelController = FloatingPanelController(store: store, persistPanel: useSimulatedDb)
 
         hotKeyManager = HotKeyManager { [weak self] in
             Task { @MainActor in
@@ -51,12 +71,10 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate {
 
         setupMenuBar()
 
-        // When using simulated DB or --show, show the panel immediately
-        if shouldShow {
-            // Check for --search argument
-            if let searchIndex = CommandLine.arguments.firstIndex(of: "--search"),
-               searchIndex + 1 < CommandLine.arguments.count {
-                panelController.initialSearchQuery = CommandLine.arguments[searchIndex + 1]
+        // When using simulated DB, show the panel immediately
+        if case .simulatedDatabase(let initialSearchQuery) = launchMode {
+            if let searchQuery = initialSearchQuery {
+                panelController.initialSearchQuery = searchQuery
             }
 
             panelController.show()
@@ -76,6 +94,9 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate {
         statusItem = NSStatusBar.system.statusItem(withLength: NSStatusItem.squareLength)
         if let button = statusItem?.button {
             button.image = makeStatusItemImage() ?? NSImage(systemSymbolName: "clipboard", accessibilityDescription: NSLocalizedString("ClipKitty", comment: "App name used as accessibility description for menu bar icon"))
+            button.target = self
+            button.action = #selector(statusItemClicked(_:))
+            button.sendAction(on: [.leftMouseUp, .rightMouseUp])
         }
 
         let menu = NSMenu()
@@ -89,7 +110,40 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate {
         menu.addItem(NSMenuItem(title: NSLocalizedString("Quit", comment: "Menu bar item to quit the app"), action: #selector(quit), keyEquivalent: "q"))
 
         statusMenu = menu
-        statusItem?.menu = menu
+        updateMenuBarBehavior()
+    }
+
+    /// Update menu bar click behavior based on settings
+    func updateMenuBarBehavior() {
+        if AppSettings.shared.clickToOpenEnabled {
+            // Click opens panel, right-click shows menu
+            statusItem?.menu = nil
+        } else {
+            // Default: click shows menu
+            statusItem?.menu = statusMenu
+        }
+    }
+
+    @objc private func statusItemClicked(_ sender: NSStatusBarButton) {
+        guard let event = NSApp.currentEvent else { return }
+
+        if AppSettings.shared.clickToOpenEnabled {
+            if event.type == .rightMouseUp {
+                // Right-click shows the menu
+                if let menu = statusMenu {
+                    statusItem?.menu = menu
+                    statusItem?.button?.performClick(nil)
+                    statusItem?.menu = nil
+                }
+            } else {
+                // Left-click toggles the panel (show if hidden, hide if visible)
+                panelController.toggle()
+            }
+        } else {
+            // Default behavior: menu is always attached, this shouldn't be called
+            // but just in case, toggle the panel
+            panelController.toggle()
+        }
     }
 
     private func updateMenuHotKey() {
@@ -115,10 +169,16 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate {
 
     @objc private func openSettings() {
         if settingsWindow == nil {
-            let settingsView = SettingsView(store: store) { [weak self] hotKey in
-                self?.hotKeyManager.register(hotKey: hotKey)
-                self?.updateMenuHotKey()
-            }
+            let settingsView = SettingsView(
+                store: store,
+                onHotKeyChanged: { [weak self] hotKey in
+                    self?.hotKeyManager.register(hotKey: hotKey)
+                    self?.updateMenuHotKey()
+                },
+                onMenuBarBehaviorChanged: { [weak self] in
+                    self?.updateMenuBarBehavior()
+                }
+            )
 
             let window = NSWindow(
                 contentRect: NSRect(x: 0, y: 0, width: 400, height: 250),
@@ -167,7 +227,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate {
         } else if settings.launchAtLoginEnabled && !launchAtLogin.isInApplicationsDirectory {
             // User wants it enabled but app is not in Applications - disable the preference
             settings.launchAtLoginEnabled = false
-            launchAtLogin.errorMessage = String(localized: "Launch at login was disabled because ClipKitty is not in the Applications folder.")
+            launchAtLogin.setDisabledDueToLocationError()
             if launchAtLogin.isEnabled {
                 launchAtLogin.disable()
             }

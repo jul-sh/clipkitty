@@ -9,21 +9,6 @@ import AppKit
 // MARK: - ClipboardItem Extensions
 
 extension ClipboardItem {
-    /// Convenience accessor for source app
-    public var sourceApp: String? {
-        itemMetadata.sourceApp
-    }
-
-    /// Convenience accessor for source app bundle ID (Swift naming convention)
-    public var sourceAppBundleID: String? {
-        itemMetadata.sourceAppBundleId
-    }
-
-    /// The raw text content for searching and display
-    public var textContent: String {
-        content.textContent
-    }
-
     @MainActor
     private static let timeAgoFormatter: RelativeDateTimeFormatter = {
         let formatter = RelativeDateTimeFormatter()
@@ -65,13 +50,6 @@ extension IconType {
 }
 
 // MARK: - ItemMatch Extensions
-
-extension ItemMatch {
-    /// Convenience accessor for item ID
-    public var itemId: Int64 {
-        itemMetadata.itemId
-    }
-}
 
 // MARK: - ClipboardContent Extensions
 
@@ -117,14 +95,6 @@ extension FileStatus {
         case .missing:
             return "missing"
         }
-    }
-
-    /// Extract the new path if status is .moved, nil otherwise
-    public var movedPath: String? {
-        if case .moved(let newPath) = self {
-            return newPath
-        }
-        return nil
     }
 }
 

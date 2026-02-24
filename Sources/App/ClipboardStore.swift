@@ -64,10 +64,28 @@ final class ClipboardStore {
     private var pollingTask: Task<Void, Never>?
 
     // MARK: - Adaptive Polling State
+
+    private enum SystemSleepMonitoring {
+        case notMonitoring
+        case monitoring(sleepObserver: NSObjectProtocol, wakeObserver: NSObjectProtocol, isAsleep: Bool)
+
+        var isAsleep: Bool {
+            switch self {
+            case .notMonitoring:
+                return false
+            case .monitoring(_, _, let isAsleep):
+                return isAsleep
+            }
+        }
+
+        mutating func setAsleep(_ asleep: Bool) {
+            guard case .monitoring(let sleep, let wake, _) = self else { return }
+            self = .monitoring(sleepObserver: sleep, wakeObserver: wake, isAsleep: asleep)
+        }
+    }
+
     private var lastActivityTime: Date = Date()
-    private var isSystemSleeping: Bool = false
-    private var sleepObserver: NSObjectProtocol?
-    private var wakeObserver: NSObjectProtocol?
+    private var sleepMonitoring: SystemSleepMonitoring = .notMonitoring
     private var searchTask: Task<Void, Never>?
     /// Current search query
     private var currentSearchQuery: String = ""
@@ -256,7 +274,7 @@ final class ClipboardStore {
                 guard let self else { return }
 
                 // Skip polling entirely while system is sleeping
-                if self.isSystemSleeping {
+                if self.sleepMonitoring.isAsleep {
                     try? await Task.sleep(for: .milliseconds(500))
                     continue
                 }
@@ -278,39 +296,39 @@ final class ClipboardStore {
         let workspace = NSWorkspace.shared
         let nc = workspace.notificationCenter
 
-        sleepObserver = nc.addObserver(
+        let sleepObs = nc.addObserver(
             forName: NSWorkspace.willSleepNotification,
             object: nil,
             queue: .main
         ) { [weak self] _ in
             Task { @MainActor in
-                self?.isSystemSleeping = true
+                self?.sleepMonitoring.setAsleep(true)
             }
         }
 
-        wakeObserver = nc.addObserver(
+        let wakeObs = nc.addObserver(
             forName: NSWorkspace.didWakeNotification,
             object: nil,
             queue: .main
         ) { [weak self] _ in
             Task { @MainActor in
-                self?.isSystemSleeping = false
+                self?.sleepMonitoring.setAsleep(false)
                 // Brief burst of faster polling after wake to catch any changes
                 self?.lastActivityTime = Date()
             }
         }
+
+        sleepMonitoring = .monitoring(sleepObserver: sleepObs, wakeObserver: wakeObs, isAsleep: false)
     }
 
     private func removeSystemObservers() {
+        guard case .monitoring(let sleepObs, let wakeObs, _) = sleepMonitoring else { return }
+
         let nc = NSWorkspace.shared.notificationCenter
-        if let observer = sleepObserver {
-            nc.removeObserver(observer)
-            sleepObserver = nil
-        }
-        if let observer = wakeObserver {
-            nc.removeObserver(observer)
-            wakeObserver = nil
-        }
+        nc.removeObserver(sleepObs)
+        nc.removeObserver(wakeObs)
+
+        sleepMonitoring = .notMonitoring
     }
 
     /// Returns polling interval in milliseconds based on system state and activity
@@ -349,10 +367,28 @@ final class ClipboardStore {
         // User is actively copying - enable faster polling
         lastActivityTime = Date()
 
-        // Skip concealed/sensitive content (e.g. passwords from 1Password, Bitwarden)
-        let concealedType = NSPasteboard.PasteboardType("org.nspasteboard.ConcealedType")
-        if pasteboard.data(forType: concealedType) != nil {
+        let settings = AppSettings.shared
+
+        // Check if the source app is ignored
+        let sourceAppBundleID = NSWorkspace.shared.frontmostApplication?.bundleIdentifier
+        if settings.isAppIgnored(bundleId: sourceAppBundleID) {
             return
+        }
+
+        // Skip concealed/sensitive content (e.g. passwords from 1Password, Bitwarden)
+        if settings.ignoreConfidentialContent {
+            let concealedType = NSPasteboard.PasteboardType("org.nspasteboard.ConcealedType")
+            if pasteboard.data(forType: concealedType) != nil {
+                return
+            }
+        }
+
+        // Skip transient content (temporary data from apps)
+        if settings.ignoreTransientContent {
+            let transientType = NSPasteboard.PasteboardType("org.nspasteboard.TransientType")
+            if pasteboard.data(forType: transientType) != nil {
+                return
+            }
         }
 
         // Check for file URLs first (file copies also put .tiff and .string on the pasteboard)
@@ -376,7 +412,6 @@ final class ClipboardStore {
         guard let text = pasteboard.string(forType: .string), !text.isEmpty else { return }
 
         let sourceApp = NSWorkspace.shared.frontmostApplication?.localizedName
-        let sourceAppBundleID = NSWorkspace.shared.frontmostApplication?.bundleIdentifier
 
         // Move all DB operations to background
         guard let rustStore else { return }
@@ -394,9 +429,11 @@ final class ClipboardStore {
                 }
 
                 // If this is a new item (not duplicate) and looks like a URL, prefetch link metadata
+                // Only if link previews are enabled in privacy settings
                 if itemId > 0, URL(string: text) != nil, text.hasPrefix("http") {
                     Task { @MainActor [weak self] in
                         guard let self else { return }
+                        guard AppSettings.shared.generateLinkPreviews else { return }
                         _ = await self.fetchLinkMetadata(url: text, itemId: itemId)
                         if self.hasResults {
                             self.refresh()
