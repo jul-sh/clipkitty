@@ -27,19 +27,19 @@ struct SettingsView: View {
                 onMenuBarBehaviorChanged: onMenuBarBehaviorChanged
             )
                 .tabItem {
-                    Label("General", systemImage: "gearshape")
+                    Label(String(localized: "General"), systemImage: "gearshape")
                 }
                 .tag(SettingsTab.general)
 
             PrivacySettingsView()
                 .tabItem {
-                    Label("Privacy", systemImage: "hand.raised")
+                    Label(String(localized: "Privacy"), systemImage: "hand.raised")
                 }
                 .tag(SettingsTab.privacy)
 
             ShortcutsSettingsView(onHotKeyChanged: onHotKeyChanged)
                 .tabItem {
-                    Label("Shortcuts", systemImage: "keyboard")
+                    Label(String(localized: "Shortcuts"), systemImage: "keyboard")
                 }
                 .tag(SettingsTab.shortcuts)
         }
@@ -60,7 +60,7 @@ struct GeneralSettingsView: View {
 
     var body: some View {
         Form {
-            Section("Startup") {
+            Section(String(localized: "Startup")) {
                 let canToggle: Bool = {
                     switch launchAtLogin.state {
                     case .enabled, .disabled: return true
@@ -68,7 +68,7 @@ struct GeneralSettingsView: View {
                     }
                 }()
 
-                Toggle("Launch at login", isOn: launchAtLoginBinding)
+                Toggle(String(localized: "Launch at login"), isOn: launchAtLoginBinding)
                     .disabled(!canToggle)
 
                 if let message = launchAtLogin.state.displayMessage {
@@ -80,7 +80,7 @@ struct GeneralSettingsView: View {
                         }())
 
                     if case .error = launchAtLogin.state {
-                        Button("Open Login Items Settings") {
+                        Button(String(localized: "Open Login Items Settings")) {
                             NSWorkspace.shared.open(URL(string: "x-apple.systempreferences:com.apple.LoginItems-Settings.extension")!)
                         }
                         .font(.caption)
@@ -88,24 +88,24 @@ struct GeneralSettingsView: View {
                 }
             }
 
-            Section("Menu Bar") {
+            Section(String(localized: "Menu Bar")) {
                 Toggle(isOn: clickToOpenBinding) {
                     VStack(alignment: .leading, spacing: 2) {
-                        Text("Click to open")
-                        Text("Click opens ClipKitty, right-click shows menu.")
+                        Text(String(localized: "Click to open"))
+                        Text(String(localized: "Click opens ClipKitty, right-click shows menu."))
                             .font(.caption)
                             .foregroundStyle(.secondary)
                     }
                 }
             }
 
-            Section("Storage") {
-                LabeledContent("Current Size") {
+            Section(String(localized: "Storage")) {
+                LabeledContent(String(localized: "Current Size")) {
                     Text(formatBytes(store.databaseSizeBytes))
                         .foregroundStyle(.secondary)
                 }
 
-                LabeledContent("Max Database Size") {
+                LabeledContent(String(localized: "Max Database Size")) {
                     HStack(spacing: 8) {
                         Slider(value: databaseSizeSlider, in: 0...1)
                             .frame(maxWidth: .infinity)
@@ -116,66 +116,66 @@ struct GeneralSettingsView: View {
                     .frame(maxWidth: .infinity)
                 }
 
-                Text("Oldest clipboard items will be automatically deleted when the database exceeds this size.")
+                Text(String(localized: "Oldest clipboard items will be automatically deleted when the database exceeds this size."))
                     .font(.caption)
                     .foregroundStyle(.secondary)
 
             }
 
-            Section("Behavior") {
+            Section(String(localized: "Behavior")) {
                 HStack {
-                    Text("Accessibility Permission")
+                    Text(String(localized: "Accessibility Permission"))
                     Spacer()
                     if settings.hasAccessibilityPermission {
-                        Label("Enabled", systemImage: "checkmark.circle.fill")
+                        Label(String(localized: "Enabled"), systemImage: "checkmark.circle.fill")
                             .foregroundStyle(.green)
                     } else {
-                        Label("Requires Permission", systemImage: "exclamationmark.triangle.fill")
+                        Label(String(localized: "Requires Permission"), systemImage: "exclamationmark.triangle.fill")
                             .foregroundStyle(.orange)
                     }
                 }
                 if settings.hasAccessibilityPermission {
-                    Toggle("Automatic Paste", isOn: $settings.autoPasteEnabled)
+                    Toggle(String(localized: "Automatic Paste"), isOn: $settings.autoPasteEnabled)
                     if settings.autoPasteEnabled {
-                        Text("ClipKitty will automatically paste items into the previous app when you press Enter.")
+                        Text(String(localized: "ClipKitty will automatically paste items into the previous app when you press Enter."))
                             .font(.caption)
                             .foregroundStyle(.secondary)
                     } else {
-                        Text("Items will be copied to the clipboard without pasting.")
+                        Text(String(localized: "Items will be copied to the clipboard without pasting."))
                             .font(.caption)
                             .foregroundStyle(.secondary)
                     }
                 } else {
-                    Text("Grant Accessibility permission to enable automatic pasting. Without it, items will only be copied to the clipboard. Restart the app after updating accessibility permissions for the change to take effect.")
+                    Text(String(localized: "Grant Accessibility permission to enable automatic pasting. Without it, items will only be copied to the clipboard. Restart the app after updating accessibility permissions for the change to take effect."))
                         .font(.caption)
                         .foregroundStyle(.secondary)
-                    Button("Open Accessibility Settings") {
+                    Button(String(localized: "Open Accessibility Settings")) {
                         NSWorkspace.shared.open(URL(string: "x-apple.systempreferences:com.apple.preference.security?Privacy_Accessibility")!)
                     }
                     .font(.caption)
                 }
             }
 
-            Section("Data") {
+            Section(String(localized: "Data")) {
                 Button(role: .destructive) {
                     showClearConfirmation = true
                 } label: {
                     HStack {
                         Image(systemName: "trash")
-                        Text("Clear Clipboard History")
+                        Text(String(localized: "Clear Clipboard History"))
                     }
                 }
                 .confirmationDialog(
-                    "Clear Clipboard History",
+                    String(localized: "Clear Clipboard History"),
                     isPresented: $showClearConfirmation,
                     titleVisibility: .visible
                 ) {
-                    Button("Clear All History", role: .destructive) {
+                    Button(String(localized: "Clear All History"), role: .destructive) {
                         store.clear()
                     }
-                    Button("Cancel", role: .cancel) {}
+                    Button(String(localized: "Cancel"), role: .cancel) {}
                 } message: {
-                    Text("Are you sure you want to delete all clipboard history? This cannot be undone.")
+                    Text(String(localized: "Are you sure you want to delete all clipboard history? This cannot be undone."))
                 }
             }
 
@@ -323,9 +323,9 @@ struct ShortcutsSettingsView: View {
 
     var body: some View {
         Form {
-            Section("Hotkey") {
+            Section(String(localized: "Hotkey")) {
                 HStack {
-                    Text("Open Clipboard History")
+                    Text(String(localized: "Open Clipboard History"))
                     Spacer()
                     Button(action: { hotKeyState = .recording }) {
                         let (labelText, backgroundColor): (String, Color) = {
@@ -357,7 +357,7 @@ struct ShortcutsSettingsView: View {
                 )
 
                 if settings.hotKey != .default {
-                    Button("Reset to Default (⌥Space)") {
+                    Button(String(localized: "Reset to Default (⌥Space)")) {
                         settings.hotKey = .default
                         onHotKeyChanged(.default)
                     }
