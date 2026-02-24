@@ -64,6 +64,7 @@ impl StoredItem {
         thumbnail: Option<Vec<u8>>,
         source_app: Option<String>,
         source_app_bundle_id: Option<String>,
+        is_animated: bool,
     ) -> Self {
         let hash_input = format!("Image{}", image_data.len());
         let content_hash = Self::hash_string(&hash_input);
@@ -72,6 +73,7 @@ impl StoredItem {
             content: ClipboardContent::Image {
                 data: image_data,
                 description: "Image".to_string(),
+                is_animated,
             },
             content_hash,
             timestamp_unix: chrono::Utc::now().timestamp(),
