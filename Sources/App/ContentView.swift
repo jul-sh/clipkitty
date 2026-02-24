@@ -1332,8 +1332,8 @@ struct TextPreviewView: NSViewRepresentable {
                     .paragraphStyle: paragraphStyle
                 ])
                 for range in highlights {
-                    let nsRange = range.nsRange
-                    if nsRange.location + nsRange.length <= attributed.length {
+                    let nsRange = range.nsRange(in: text)
+                    if nsRange.location != NSNotFound && nsRange.location + nsRange.length <= attributed.length {
                         let (bg, underline) = highlightStyle(for: range.kind)
                         attributed.addAttribute(.backgroundColor, value: bg, range: nsRange)
                         if underline {
@@ -1346,7 +1346,7 @@ struct TextPreviewView: NSViewRepresentable {
                 // Auto-scroll to the densest highlight region (offset computed by Rust)
                 // Defer to next run loop to ensure layout is complete
                 let targetHighlight = highlights.first { $0.start == densestHighlightStart } ?? highlights[0]
-                let targetRange = targetHighlight.nsRange
+                let targetRange = targetHighlight.nsRange(in: text)
                 DispatchQueue.main.async { [weak textView] in
                     guard let textView else { return }
                     guard let scrollView = textView.enclosingScrollView else { return }

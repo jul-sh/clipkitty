@@ -78,9 +78,40 @@ extension ClipboardContent {
 // MARK: - HighlightRange Extensions
 
 extension HighlightRange {
-    /// Convert to NSRange for use with NSAttributedString
+    /// Convert to NSRange for use with NSAttributedString.
+    /// IMPORTANT: Rust returns char indices (Unicode scalar values), but NSString/NSAttributedString
+    /// uses UTF-16 code units. For ASCII text they're the same, but for text with emojis or other
+    /// characters outside the BMP (Basic Multilingual Plane), they differ.
+    /// Use `nsRange(in:)` instead for correct handling of Unicode text.
+    @available(*, deprecated, message: "Use nsRange(in:) for correct Unicode handling")
     public var nsRange: NSRange {
         NSRange(location: Int(start), length: Int(end - start))
+    }
+
+    /// Convert Rust char indices to NSRange (UTF-16 code unit indices) for the given text.
+    /// This correctly handles emojis and other characters that take 2 UTF-16 code units.
+    public func nsRange(in text: String) -> NSRange {
+        let chars = Array(text)
+        let startCharIndex = Int(start)
+        let endCharIndex = Int(end)
+
+        // Bounds check
+        guard startCharIndex >= 0, endCharIndex <= chars.count, startCharIndex <= endCharIndex else {
+            return NSRange(location: NSNotFound, length: 0)
+        }
+
+        // Convert char index to UTF-16 index by summing UTF-16 lengths of preceding characters
+        var utf16Start = 0
+        for i in 0..<startCharIndex {
+            utf16Start += chars[i].utf16.count
+        }
+
+        var utf16Length = 0
+        for i in startCharIndex..<endCharIndex {
+            utf16Length += chars[i].utf16.count
+        }
+
+        return NSRange(location: utf16Start, length: utf16Length)
     }
 }
 
