@@ -1,0 +1,64 @@
+# SwiftLint configuration for ClipKitty
+# Primary focus: Catching hardcoded UI strings that should be localized
+
+# Paths to include
+included:
+  - Sources/App
+
+# Paths to exclude
+excluded:
+  - Sources/ClipKittyRustWrapper  # Auto-generated UniFFI bindings
+
+# Disabled rules - keep it simple, focus on localization
+disabled_rules:
+  - trailing_whitespace
+  - line_length
+  - vertical_whitespace
+  - trailing_newline
+  - identifier_name
+  - type_body_length
+  - file_length
+  - function_body_length
+  - cyclomatic_complexity
+  - modifier_order
+  - multiple_closures_with_trailing_closure
+  - unused_closure_parameter
+
+# Custom rules for localization
+custom_rules:
+  hardcoded_ui_string:
+    name: "Hardcoded UI String"
+    # Matches Text("...") but excludes interpolations like Text("L\(...)")
+    regex: '\bText\(\s*"[A-Za-z][^"\\]*"\s*\)'
+    message: "Use Text(String(localized:)) or Text(verbatim:) for UI strings"
+    severity: warning
+
+  hardcoded_label_string:
+    name: "Hardcoded Label String"
+    regex: '\bLabel\(\s*"[^"]+"\s*,'
+    message: "Use String(localized:) for Label text"
+    severity: warning
+
+  hardcoded_button_string:
+    name: "Hardcoded Button String"
+    regex: '\bButton\(\s*"[^"]+"\s*\)'
+    message: "Use String(localized:) for Button labels"
+    severity: warning
+
+  hardcoded_section_string:
+    name: "Hardcoded Section String"
+    regex: '\bSection\(\s*"[^"]+"\s*\)'
+    message: "Use Section(String(localized:)) for section headers"
+    severity: warning
+
+  hardcoded_toggle_string:
+    name: "Hardcoded Toggle String"
+    regex: '\bToggle\(\s*"[^"]+"\s*,'
+    message: "Use String(localized:) for Toggle labels"
+    severity: warning
+
+  hardcoded_alert_string:
+    name: "Hardcoded Alert String"
+    regex: '\.(alert|confirmationDialog)\(\s*"[^"]+"\s*,'
+    message: "Use String(localized:) for alert/dialog titles"
+    severity: warning
