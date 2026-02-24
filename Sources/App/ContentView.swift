@@ -1563,8 +1563,8 @@ private class EditablePreviewTextView: NSTextView {
     }
 }
 
-/// Unified editable text view with search highlighting using temporary attributes.
-/// Temporary attributes are visual-only and don't interfere with editing.
+/// Unified editable text view with search highlighting.
+/// Highlights are applied directly to the attributed string for reliable rendering.
 struct EditableTextPreview: NSViewRepresentable {
     let text: String
     let itemId: Int64
@@ -1702,8 +1702,14 @@ struct EditableTextPreview: NSViewRepresentable {
             context.coordinator.lastAppliedFontSize = scaledSize
         }
 
-        // Apply highlights using temporary attributes (visual-only, doesn't affect editing)
-        applyHighlights(to: textView, itemChanged: itemChanged)
+        // Apply highlights directly to attributed string (more reliable than temporary attributes)
+        applyHighlights(
+            to: textView,
+            font: font,
+            paragraphStyle: paragraphStyle,
+            itemChanged: itemChanged,
+            isEditing: context.coordinator.isEditing
+        )
 
         // Update container size and frame
         let textContainerWidth = max(0, nsView.contentSize.width - Self.textContainerHorizontalInset)
@@ -1714,30 +1720,54 @@ struct EditableTextPreview: NSViewRepresentable {
         textView.frame = NSRect(x: 0, y: 0, width: nsView.contentSize.width, height: textView.frame.height)
     }
 
-    private func applyHighlights(to textView: NSTextView, itemChanged: Bool) {
-        guard let layoutManager = textView.layoutManager else { return }
+    private func applyHighlights(
+        to textView: NSTextView,
+        font: NSFont,
+        paragraphStyle: NSParagraphStyle,
+        itemChanged: Bool,
+        isEditing: Bool
+    ) {
+        // Skip highlight updates during active editing to avoid disrupting cursor position
+        // Highlights will be reapplied when editing ends and item is selected again
+        if isEditing { return }
 
-        let textLength = (textView.string as NSString).length
-        let fullRange = NSRange(location: 0, length: textLength)
+        guard let textStorage = textView.textStorage else { return }
 
-        // Clear previous temporary attributes
-        layoutManager.removeTemporaryAttribute(.backgroundColor, forCharacterRange: fullRange)
-        layoutManager.removeTemporaryAttribute(.underlineStyle, forCharacterRange: fullRange)
+        let currentText = textView.string
+        let textLength = (currentText as NSString).length
 
-        // Apply new highlights
+        // Build attributed string with highlights baked in (like TextPreviewView)
+        // This is more reliable than temporary attributes for editable text
+        let attributed = NSMutableAttributedString(string: currentText, attributes: [
+            .font: font,
+            .foregroundColor: NSColor.labelColor,
+            .paragraphStyle: paragraphStyle
+        ])
+
+        // Apply highlights directly to the attributed string
         for highlight in highlights {
             let nsRange = highlight.nsRange
             guard nsRange.location >= 0,
                   nsRange.length > 0,
                   nsRange.location + nsRange.length <= textLength else { continue }
 
-            // Ensure glyphs exist for this range
-            layoutManager.ensureGlyphs(forCharacterRange: nsRange)
-
             let (bgColor, shouldUnderline) = highlightStyle(for: highlight.kind)
-            layoutManager.addTemporaryAttribute(.backgroundColor, value: bgColor, forCharacterRange: nsRange)
+            attributed.addAttribute(.backgroundColor, value: bgColor, range: nsRange)
             if shouldUnderline {
-                layoutManager.addTemporaryAttribute(.underlineStyle, value: NSUnderlineStyle.single.rawValue, forCharacterRange: nsRange)
+                attributed.addAttribute(.underlineStyle, value: NSUnderlineStyle.single.rawValue, range: nsRange)
+            }
+        }
+
+        // Only update if content or highlights actually changed
+        let currentStorageString = textStorage.string
+        let highlightsChanged = !highlights.isEmpty || (textLength > 0 && textStorage.attribute(.backgroundColor, at: 0, effectiveRange: nil) != nil)
+        if currentStorageString != currentText || highlightsChanged || itemChanged {
+            // Preserve selection before replacing
+            let selectedRange = textView.selectedRange()
+            textStorage.setAttributedString(attributed)
+            // Restore selection if still valid
+            if selectedRange.location + selectedRange.length <= textLength {
+                textView.setSelectedRange(selectedRange)
             }
         }
 
