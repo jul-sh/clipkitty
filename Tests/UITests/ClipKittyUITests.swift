@@ -139,6 +139,9 @@ final class ClipKittyUITests: XCTestCase {
 
         try? FileManager.default.removeItem(at: targetURL)
         try? FileManager.default.removeItem(at: indexDirURL)
+        // SQLite WAL files: handle both hyphen (-wal) and dot (.wal) naming conventions
+        try? FileManager.default.removeItem(at: URL(fileURLWithPath: targetURL.path + "-wal"))
+        try? FileManager.default.removeItem(at: URL(fileURLWithPath: targetURL.path + "-shm"))
         try? FileManager.default.removeItem(at: targetURL.appendingPathExtension("wal"))
         try? FileManager.default.removeItem(at: targetURL.appendingPathExtension("shm"))
 

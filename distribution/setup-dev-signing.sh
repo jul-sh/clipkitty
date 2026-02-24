@@ -14,10 +14,23 @@ SCRIPT_DIR="$(cd "$(dirname "$0")" && pwd)"
 PROJECT_ROOT="$(cd "$SCRIPT_DIR/.." && pwd)"
 KEYCHAIN_NAME="clipkitty_dev.keychain-db"
 KEYCHAIN_PATH="$HOME/Library/Keychains/$KEYCHAIN_NAME"
+KEYCHAIN_PASSWORD_FILE="$PROJECT_ROOT/.make/keychain_password"
 
 if [ "$1" = "--cleanup" ]; then
     security delete-keychain "$KEYCHAIN_PATH" 2>/dev/null || true
+    rm -f "$KEYCHAIN_PASSWORD_FILE"
     exit 0
+fi
+
+# If keychain exists and we have the password, just unlock it
+if [ -f "$KEYCHAIN_PATH" ] && [ -f "$KEYCHAIN_PASSWORD_FILE" ]; then
+    KEYCHAIN_PASSWORD=$(cat "$KEYCHAIN_PASSWORD_FILE")
+    if security unlock-keychain -p "$KEYCHAIN_PASSWORD" "$KEYCHAIN_PATH" 2>/dev/null; then
+        echo "Developer signing keychain unlocked: $KEYCHAIN_NAME"
+        exit 0
+    fi
+    # Password didn't work, remove stale keychain
+    security delete-keychain "$KEYCHAIN_PATH" 2>/dev/null || true
 fi
 
 # Check if Developer ID signing identity is already usable
@@ -42,6 +55,11 @@ security delete-keychain "$KEYCHAIN_PATH" 2>/dev/null || true
 security create-keychain -p "$KEYCHAIN_PASSWORD" "$KEYCHAIN_PATH"
 security set-keychain-settings -t 3600 "$KEYCHAIN_PATH"
 security unlock-keychain -p "$KEYCHAIN_PASSWORD" "$KEYCHAIN_PATH"
+
+# Store password for future unlocks
+mkdir -p "$(dirname "$KEYCHAIN_PASSWORD_FILE")"
+echo "$KEYCHAIN_PASSWORD" > "$KEYCHAIN_PASSWORD_FILE"
+chmod 600 "$KEYCHAIN_PASSWORD_FILE"
 
 # Import certificate
 security import /tmp/_ck_dev.p12 -k "$KEYCHAIN_PATH" -P "$P12_PASS" \
