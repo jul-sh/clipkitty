@@ -1746,8 +1746,8 @@ struct EditableTextPreview: NSViewRepresentable {
 
         // Apply highlights directly to the attributed string
         for highlight in highlights {
-            let nsRange = highlight.nsRange
-            guard nsRange.location >= 0,
+            let nsRange = highlight.nsRange(in: currentText)
+            guard nsRange.location != NSNotFound,
                   nsRange.length > 0,
                   nsRange.location + nsRange.length <= textLength else { continue }
 
@@ -1774,7 +1774,7 @@ struct EditableTextPreview: NSViewRepresentable {
         // Auto-scroll to densest highlight on item change
         if itemChanged && !highlights.isEmpty {
             let targetHighlight = highlights.first { $0.start == densestHighlightStart } ?? highlights[0]
-            let targetRange = targetHighlight.nsRange
+            let targetRange = targetHighlight.nsRange(in: currentText)
             DispatchQueue.main.async { [weak textView] in
                 guard let textView else { return }
                 guard let scrollView = textView.enclosingScrollView else { return }
