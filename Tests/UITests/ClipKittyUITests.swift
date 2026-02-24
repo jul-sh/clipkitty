@@ -477,6 +477,25 @@ final class ClipKittyUITests: XCTestCase {
         XCTAssertTrue(window.exists, "Window should still be visible after deletion")
     }
 
+    // MARK: - Toast Tests
+
+    /// Tests that a toast notification appears when copying an item
+    func testToastAppearsOnCopy() throws {
+        let searchField = app.textFields["SearchField"]
+        XCTAssertTrue(searchField.waitForExistence(timeout: 5), "Search field not found")
+
+        // Press Return to copy the selected item (auto-paste is disabled in test mode)
+        searchField.typeKey(.return, modifierFlags: [])
+
+        // Toast should appear
+        let toastWindow = app.windows["ToastWindow"]
+        XCTAssertTrue(toastWindow.waitForExistence(timeout: 3), "Toast window should appear after copying")
+
+        // Toast should disappear after ~1.5 seconds
+        let disappeared = toastWindow.waitForNonExistence(timeout: 3)
+        XCTAssertTrue(disappeared, "Toast should auto-dismiss")
+    }
+
     // MARK: - Settings Tests
 
     /// Tests that the Settings window opens with tabs and Privacy tab is accessible
