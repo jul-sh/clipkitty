@@ -25,10 +25,16 @@
         devShells.default = pkgs.mkShell {
           buildInputs = [
             rustToolchain
+            pkgs.swiftlint
           ];
 
           shellHook = ''
             export IN_NIX_SHELL=1
+
+            # Install git hooks if not already installed
+            if [ -d .git ] && [ ! -f .git/hooks/pre-commit ]; then
+              ./Scripts/install-hooks.sh
+            fi
           '';
         };
       }
