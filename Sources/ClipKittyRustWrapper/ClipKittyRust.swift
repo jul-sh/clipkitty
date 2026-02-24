@@ -64,7 +64,11 @@ extension ClipboardContent {
         case .link(let url, _):
             return url
         case .image(_, let description):
-            return description
+            // Avoid "Image: Image" when using the default description
+            if description == "Image" {
+                return String(localized: "Image")
+            }
+            return "\(String(localized: "Image:")) \(description)"
         case .file(let displayName, _):
             return displayName
         }
