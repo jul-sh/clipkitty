@@ -399,11 +399,18 @@ final class ClipboardStore {
             return
         }
 
-        // Check for image data first - get raw data only, defer compression
+        // Check for GIF first (preserve animation), then fall back to static image types
+        let gifType = NSPasteboard.PasteboardType("com.compuserve.gif")
+        if let gifData = pasteboard.data(forType: gifType) {
+            saveImageItem(rawImageData: gifData, isAnimated: true)
+            return
+        }
+
+        // Check for static image data - get raw data only, defer compression
         let imageTypes: [NSPasteboard.PasteboardType] = [.tiff, .png]
         for type in imageTypes {
             if let rawData = pasteboard.data(forType: type) {
-                saveImageItem(rawImageData: rawData)
+                saveImageItem(rawImageData: rawData, isAnimated: false)
                 return
             }
         }
@@ -466,7 +473,7 @@ final class ClipboardStore {
         }
     }
 
-    private func saveImageItem(rawImageData: Data) {
+    private func saveImageItem(rawImageData: Data, isAnimated: Bool) {
         let sourceApp = NSWorkspace.shared.frontmostApplication?.localizedName
         let sourceAppBundleID = NSWorkspace.shared.frontmostApplication?.bundleIdentifier
         let maxPixels = Int(AppSettings.shared.maxImageMegapixels * 1_000_000)
@@ -479,9 +486,22 @@ final class ClipboardStore {
             // HEIC is not supported by Rust's image crate, so we generate in Swift
             let thumbnail = Self.generateThumbnail(rawImageData)
 
-            // Compress image with HEIC (HEVC)
-            guard let compressedData = Self.compressToHEIC(rawImageData, quality: quality, maxPixels: maxPixels) else {
-                return
+            // Compress image - animated HEIC for GIFs, static HEIC otherwise
+            let compressedData: Data
+            let isActuallyAnimated: Bool
+
+            if isAnimated {
+                guard let (data, animated) = Self.compressToAnimatedHEIC(rawImageData, quality: quality, maxPixels: maxPixels) else {
+                    return
+                }
+                compressedData = data
+                isActuallyAnimated = animated
+            } else {
+                guard let data = Self.compressToHEIC(rawImageData, quality: quality, maxPixels: maxPixels) else {
+                    return
+                }
+                compressedData = data
+                isActuallyAnimated = false
             }
 
             do {
@@ -489,7 +509,8 @@ final class ClipboardStore {
                     imageData: compressedData,
                     thumbnail: thumbnail,
                     sourceApp: sourceApp,
-                    sourceAppBundleId: sourceAppBundleID
+                    sourceAppBundleId: sourceAppBundleID,
+                    isAnimated: isActuallyAnimated
                 )
 
                 guard let self else { return }
@@ -555,6 +576,116 @@ final class ClipboardStore {
             image = cgImage
         }
         return encodeCGImage(image, type: "public.heic" as CFString, quality: quality)
+    }
+
+    /// Maximum frames to preserve in animated HEIC (caps size)
+    private static let maxAnimatedFrames = 50
+    /// Maximum duration in seconds for animated content
+    private static let maxAnimatedDuration: Double = 3.0
+
+    /// Compress animated GIF to animated HEIC with frame reduction and duration cap
+    /// Returns (heicData, isAnimated) - isAnimated is false if GIF had only 1 frame
+    private nonisolated static func compressToAnimatedHEIC(_ gifData: Data, quality: CGFloat, maxPixels: Int) -> (Data, Bool)? {
+        guard let imageSource = CGImageSourceCreateWithData(gifData as CFData, nil) else { return nil }
+
+        let frameCount = CGImageSourceGetCount(imageSource)
+
+        // Single frame - just compress as static HEIC
+        if frameCount <= 1 {
+            guard let staticData = compressToHEIC(gifData, quality: quality, maxPixels: maxPixels) else { return nil }
+            return (staticData, false)
+        }
+
+        // Calculate total duration and frame delays
+        var frameDelays: [Double] = []
+        for i in 0..<frameCount {
+            let delay = gifFrameDelay(source: imageSource, index: i)
+            frameDelays.append(delay)
+        }
+        let totalDuration = frameDelays.reduce(0, +)
+
+        // Determine which frames to keep based on caps
+        let framesToKeep: [Int]
+        let adjustedDelays: [Double]
+
+        if totalDuration > maxAnimatedDuration || frameCount > maxAnimatedFrames {
+            // Need to reduce frames - sample evenly
+            let targetFrameCount = min(maxAnimatedFrames, Int(Double(frameCount) * (maxAnimatedDuration / totalDuration)))
+            let actualTargetCount = max(2, targetFrameCount) // Keep at least 2 frames for animation
+
+            var indices: [Int] = []
+            let step = Double(frameCount - 1) / Double(actualTargetCount - 1)
+            for i in 0..<actualTargetCount {
+                indices.append(min(Int(Double(i) * step), frameCount - 1))
+            }
+            framesToKeep = indices
+
+            // Adjust delays proportionally to maintain visual timing
+            let durationScale = min(1.0, maxAnimatedDuration / totalDuration)
+            adjustedDelays = framesToKeep.map { frameDelays[$0] * durationScale }
+        } else {
+            framesToKeep = Array(0..<frameCount)
+            adjustedDelays = frameDelays
+        }
+
+        // Create animated HEIC
+        let data = NSMutableData()
+        guard let destination = CGImageDestinationCreateWithData(
+            data as CFMutableData,
+            "public.heics" as CFString, // HEIC sequence format
+            framesToKeep.count,
+            nil
+        ) else { return nil }
+
+        // Get first frame to determine scaling
+        guard let firstCGImage = CGImageSourceCreateImageAtIndex(imageSource, 0, nil) else { return nil }
+        let pixels = firstCGImage.width * firstCGImage.height
+        let needsResize = pixels > maxPixels
+        let scale = needsResize ? sqrt(Double(maxPixels) / Double(pixels)) : 1.0
+        let targetW = needsResize ? max(1, Int(Double(firstCGImage.width) * scale)) : firstCGImage.width
+        let targetH = needsResize ? max(1, Int(Double(firstCGImage.height) * scale)) : firstCGImage.height
+
+        for (idx, frameIndex) in framesToKeep.enumerated() {
+            guard let cgImage = CGImageSourceCreateImageAtIndex(imageSource, frameIndex, nil) else { continue }
+
+            let finalImage: CGImage
+            if needsResize {
+                guard let resized = resizeCGImage(cgImage, maxWidth: targetW, maxHeight: targetH) else { continue }
+                finalImage = resized
+            } else {
+                finalImage = cgImage
+            }
+
+            let frameProperties: [CFString: Any] = [
+                kCGImagePropertyHEICSLoopCount: 0, // Loop forever
+                kCGImagePropertyHEICSDelayTime: adjustedDelays[idx]
+            ]
+
+            CGImageDestinationAddImage(destination, finalImage, [
+                kCGImageDestinationLossyCompressionQuality: quality,
+                kCGImagePropertyHEICSDictionary: frameProperties
+            ] as CFDictionary)
+        }
+
+        guard CGImageDestinationFinalize(destination) else { return nil }
+        return (data as Data, true)
+    }
+
+    /// Extract frame delay from GIF properties (default 0.1s if not specified)
+    private nonisolated static func gifFrameDelay(source: CGImageSource, index: Int) -> Double {
+        guard let properties = CGImageSourceCopyPropertiesAtIndex(source, index, nil) as? [CFString: Any],
+              let gifProps = properties[kCGImagePropertyGIFDictionary] as? [CFString: Any] else {
+            return 0.1
+        }
+
+        // Try unclamped delay first, then clamped
+        if let delay = gifProps[kCGImagePropertyGIFUnclampedDelayTime] as? Double, delay > 0 {
+            return delay
+        }
+        if let delay = gifProps[kCGImagePropertyGIFDelayTime] as? Double, delay > 0 {
+            return delay
+        }
+        return 0.1
     }
 
     /// Generate a small JPEG thumbnail (max 64x64) for list display
@@ -628,8 +759,8 @@ final class ClipboardStore {
 
     func paste(itemId: Int64, content: ClipboardContent) {
         // Handle images differently - convert off main thread
-        if case .image(let data, _) = content {
-            pasteImage(data: Data(data), itemId: itemId)
+        if case .image(let data, _, let isAnimated) = content {
+            pasteImage(data: Data(data), isAnimated: isAnimated, itemId: itemId)
             return
         }
 
@@ -648,36 +779,103 @@ final class ClipboardStore {
         }
     }
 
-    private func pasteImage(data: Data, itemId: Int64?) {
+    private func pasteImage(data: Data, isAnimated: Bool, itemId: Int64?) {
         // Pre-increment to avoid race with checkForChanges polling
         // The pasteboard changeCount will increment when we set data
         lastChangeCount = NSPasteboard.general.changeCount + 1
 
         Task {
-            // Convert from stored format (HEIC) to TIFF off main thread
-            let tiffData = await Task.detached {
-                guard let image = NSImage(data: data),
-                      let tiff = image.tiffRepresentation else {
-                    return nil as Data?
-                }
-                return tiff
-            }.value
+            let pasteboard = NSPasteboard.general
 
-            guard let tiffData else {
-                // Conversion failed, reset the change count
-                lastChangeCount = NSPasteboard.general.changeCount
-                return
+            if isAnimated {
+                // Convert animated HEIC to GIF for pasting
+                let gifData = await Task.detached {
+                    Self.convertAnimatedHEICToGIF(data)
+                }.value
+
+                guard let gifData else {
+                    lastChangeCount = NSPasteboard.general.changeCount
+                    return
+                }
+
+                pasteboard.clearContents()
+                pasteboard.setData(gifData, forType: NSPasteboard.PasteboardType("com.compuserve.gif"))
+                // Also provide TIFF fallback for apps that don't support GIF
+                if let image = NSImage(data: data), let tiff = image.tiffRepresentation {
+                    pasteboard.setData(tiff, forType: .tiff)
+                }
+            } else {
+                // Convert from stored format (HEIC) to TIFF off main thread
+                let tiffData = await Task.detached {
+                    guard let image = NSImage(data: data),
+                          let tiff = image.tiffRepresentation else {
+                        return nil as Data?
+                    }
+                    return tiff
+                }.value
+
+                guard let tiffData else {
+                    lastChangeCount = NSPasteboard.general.changeCount
+                    return
+                }
+
+                pasteboard.clearContents()
+                pasteboard.setData(tiffData, forType: .tiff)
             }
 
-            let pasteboard = NSPasteboard.general
-            pasteboard.clearContents()
-            pasteboard.setData(tiffData, forType: .tiff)
             lastChangeCount = pasteboard.changeCount
 
             if let itemId {
                 await updateItemTimestamp(id: itemId)
             }
         }
+    }
+
+    /// Convert animated HEIC (HEICS) to GIF format
+    private nonisolated static func convertAnimatedHEICToGIF(_ heicData: Data) -> Data? {
+        guard let imageSource = CGImageSourceCreateWithData(heicData as CFData, nil) else { return nil }
+
+        let frameCount = CGImageSourceGetCount(imageSource)
+        guard frameCount > 1 else { return nil }
+
+        let gifData = NSMutableData()
+        guard let destination = CGImageDestinationCreateWithData(
+            gifData as CFMutableData,
+            UTType.gif.identifier as CFString,
+            frameCount,
+            nil
+        ) else { return nil }
+
+        // Set GIF properties for looping
+        let gifProperties: [CFString: Any] = [
+            kCGImagePropertyGIFDictionary: [
+                kCGImagePropertyGIFLoopCount: 0 // Loop forever
+            ]
+        ]
+        CGImageDestinationSetProperties(destination, gifProperties as CFDictionary)
+
+        // Copy each frame with its delay
+        for i in 0..<frameCount {
+            guard let cgImage = CGImageSourceCreateImageAtIndex(imageSource, i, nil) else { continue }
+
+            // Get frame delay from HEICS properties
+            var delay: Double = 0.1
+            if let properties = CGImageSourceCopyPropertiesAtIndex(imageSource, i, nil) as? [CFString: Any],
+               let heicsProps = properties[kCGImagePropertyHEICSDictionary] as? [CFString: Any],
+               let frameDelay = heicsProps[kCGImagePropertyHEICSDelayTime] as? Double {
+                delay = frameDelay
+            }
+
+            let frameProperties: [CFString: Any] = [
+                kCGImagePropertyGIFDictionary: [
+                    kCGImagePropertyGIFDelayTime: delay
+                ]
+            ]
+            CGImageDestinationAddImage(destination, cgImage, frameProperties as CFDictionary)
+        }
+
+        guard CGImageDestinationFinalize(destination) else { return nil }
+        return gifData as Data
     }
 
     private func pasteFiles(files: [FileEntry], itemId: Int64) {

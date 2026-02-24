@@ -767,7 +767,7 @@ struct ContentView: View {
                 densestHighlightStart: selectedItemMatchData?.densestHighlightStart ?? 0
             )
             .frame(maxWidth: .infinity, maxHeight: .infinity)
-        case .image(let data, let description):
+        case .image(let data, let description, _):
             ScrollView(.vertical, showsIndicators: true) {
                 imagePreview(data: data, description: description)
             }
