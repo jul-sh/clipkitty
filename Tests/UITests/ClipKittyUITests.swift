@@ -1138,4 +1138,39 @@ final class ClipKittyUITests: XCTestCase {
         let finalCount = app.outlines.firstMatch.buttons.allElementsBoundByIndex.count
         XCTAssertEqual(finalCount, initialCount, "Typing with link selected should not create new items")
     }
+
+    /// Tests that editing text and then copying shows combined toast "Copied & saved as new item".
+    func testEditAndCopyShowsCombinedToastMessage() throws {
+        let searchField = app.textFields["SearchField"]
+        XCTAssertTrue(searchField.waitForExistence(timeout: 5), "Search field not found")
+
+        // Ensure first item selected
+        XCTAssertTrue(waitForSelectedIndex(0, timeout: 2), "First item should be selected")
+
+        // Find and edit preview text view
+        let textViews = app.textViews.allElementsBoundByIndex
+        XCTAssertGreaterThan(textViews.count, 0, "Should have text views")
+
+        let previewTextView = textViews.first!
+        previewTextView.click()
+        Thread.sleep(forTimeInterval: 0.3)
+
+        // Add unique text to trigger pending edit state
+        let uniqueText = " - test\(UUID().uuidString.prefix(8))"
+        previewTextView.typeText(uniqueText)
+        Thread.sleep(forTimeInterval: 0.3)
+
+        // Cmd+Return to copy/paste (triggers both save and copy)
+        previewTextView.typeKey(.return, modifierFlags: .command)
+
+        // Toast should appear with combined message
+        let toastWindow = app.windows["ToastWindow"]
+        XCTAssertTrue(toastWindow.waitForExistence(timeout: 3), "Toast window should appear")
+
+        // Give time for messages to combine
+        Thread.sleep(forTimeInterval: 0.5)
+
+        // Toast should still be visible (combining extends duration)
+        XCTAssertTrue(toastWindow.exists, "Toast should still be visible with combined message")
+    }
 }

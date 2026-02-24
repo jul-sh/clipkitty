@@ -439,6 +439,7 @@ struct ContentView: View {
                 searchText = ""
                 store.setSearchQuery("")
                 selectedItemId = itemId
+                ToastWindow.shared.show(message: String(localized: "Saved as new item"))
             }
         }
     }
