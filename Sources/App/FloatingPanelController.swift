@@ -155,12 +155,16 @@ final class FloatingPanelController: NSObject, NSWindowDelegate {
         hide()
         if case .autoPaste = AppSettings.shared.pasteMode {
             simulatePaste(targetApp: targetApp)
+        } else {
+            // Show toast when copying without auto-paste
+            ToastWindow.shared.show(message: String(localized: "Copied"))
         }
     }
 
     private func copyOnlyItem(itemId: Int64, content: ClipboardContent) {
         store.paste(itemId: itemId, content: content)
         hide()
+        ToastWindow.shared.show(message: String(localized: "Copied"))
     }
 
     /// Simulate Cmd+V keystroke to paste into the target app
