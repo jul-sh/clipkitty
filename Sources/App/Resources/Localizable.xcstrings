@@ -1857,70 +1857,6 @@
         }
       }
     },
-    "Enabled": {
-      "localizations": {
-        "en": {
-          "stringUnit": {
-            "state": "translated",
-            "value": "Enabled"
-          }
-        },
-        "es": {
-          "stringUnit": {
-            "state": "translated",
-            "value": "Habilitado"
-          }
-        },
-        "zh-Hans": {
-          "stringUnit": {
-            "state": "translated",
-            "value": "已启用"
-          }
-        },
-        "zh-Hant": {
-          "stringUnit": {
-            "state": "translated",
-            "value": "已啟用"
-          }
-        },
-        "ja": {
-          "stringUnit": {
-            "state": "translated",
-            "value": "有効"
-          }
-        },
-        "ko": {
-          "stringUnit": {
-            "state": "translated",
-            "value": "활성화됨"
-          }
-        },
-        "fr": {
-          "stringUnit": {
-            "state": "translated",
-            "value": "Activé"
-          }
-        },
-        "pt-BR": {
-          "stringUnit": {
-            "state": "translated",
-            "value": "Ativado"
-          }
-        },
-        "ru": {
-          "stringUnit": {
-            "state": "translated",
-            "value": "Включено"
-          }
-        },
-        "de": {
-          "stringUnit": {
-            "state": "translated",
-            "value": "Aktiviert"
-          }
-        }
-      }
-    },
     "Files": {
       "localizations": {
         "en": {
@@ -3713,70 +3649,6 @@
         }
       }
     },
-    "Requires Permission": {
-      "localizations": {
-        "en": {
-          "stringUnit": {
-            "state": "translated",
-            "value": "Requires Permission"
-          }
-        },
-        "es": {
-          "stringUnit": {
-            "state": "translated",
-            "value": "Requiere permiso"
-          }
-        },
-        "zh-Hans": {
-          "stringUnit": {
-            "state": "translated",
-            "value": "需要权限"
-          }
-        },
-        "zh-Hant": {
-          "stringUnit": {
-            "state": "translated",
-            "value": "需要權限"
-          }
-        },
-        "ja": {
-          "stringUnit": {
-            "state": "translated",
-            "value": "権限が必要"
-          }
-        },
-        "ko": {
-          "stringUnit": {
-            "state": "translated",
-            "value": "권한 필요"
-          }
-        },
-        "fr": {
-          "stringUnit": {
-            "state": "translated",
-            "value": "Permission requise"
-          }
-        },
-        "pt-BR": {
-          "stringUnit": {
-            "state": "translated",
-            "value": "Requer Permissão"
-          }
-        },
-        "ru": {
-          "stringUnit": {
-            "state": "translated",
-            "value": "Требуется разрешение"
-          }
-        },
-        "de": {
-          "stringUnit": {
-            "state": "translated",
-            "value": "Berechtigung erforderlich"
-          }
-        }
-      }
-    },
     "Reset to Default (⌥Space)": {
       "localizations": {
         "en": {
@@ -4801,70 +4673,6 @@
         }
       }
     },
-    "Grant permission to enable direct paste. Without it, items will only be copied to the clipboard. Restart the app after updating permissions for the change to take effect.": {
-      "localizations": {
-        "en": {
-          "stringUnit": {
-            "state": "translated",
-            "value": "Grant permission to enable direct paste. Without it, items will only be copied to the clipboard. Restart the app after updating permissions for the change to take effect."
-          }
-        },
-        "de": {
-          "stringUnit": {
-            "state": "translated",
-            "value": "Erteilen Sie die Berechtigung, um direktes Einsetzen zu aktivieren. Ohne sie werden Elemente nur in die Zwischenablage kopiert. Starten Sie die App nach dem Aktualisieren der Berechtigungen neu, damit die Änderung wirksam wird."
-          }
-        },
-        "es": {
-          "stringUnit": {
-            "state": "translated",
-            "value": "Concede el permiso para habilitar el pegado directo. Sin él, los elementos solo se copiarán al portapapeles. Reinicia la aplicación después de actualizar los permisos para que el cambio surta efecto."
-          }
-        },
-        "fr": {
-          "stringUnit": {
-            "state": "translated",
-            "value": "Accordez l'autorisation pour activer le collage direct. Sans elle, les éléments seront uniquement copiés dans le presse-papiers. Redémarrez l'application après avoir mis à jour les autorisations pour que le changement prenne effet."
-          }
-        },
-        "ja": {
-          "stringUnit": {
-            "state": "translated",
-            "value": "ダイレクトペーストを有効にするには、権限を許可してください。許可されていない場合、項目はクリップボードにコピーされるのみです。権限を更新した後、変更を有効にするにはアプリを再起動してください。"
-          }
-        },
-        "ko": {
-          "stringUnit": {
-            "state": "translated",
-            "value": "직접 붙여넣기를 활성화하려면 권한을 허용하세요. 권한이 없으면 항목이 클립보드에만 복사됩니다. 변경 사항을 적용하려면 권한을 업데이트한 후 앱을 다시 시작하세요."
-          }
-        },
-        "pt-BR": {
-          "stringUnit": {
-            "state": "translated",
-            "value": "Conceda a permissão para ativar a colagem direta. Sem ela, os itens serão apenas copiados para a área de transferência. Reinicie o aplicativo após atualizar as permissões para que a alteração tenha efeito."
-          }
-        },
-        "ru": {
-          "stringUnit": {
-            "state": "translated",
-            "value": "Предоставьте разрешение для включения прямой вставки. Без него элементы будут только копироваться в буфер обмена. Перезапустите приложение после обновления разрешений, чтобы изменения вступили в силу."
-          }
-        },
-        "zh-Hans": {
-          "stringUnit": {
-            "state": "translated",
-            "value": "授予权限以启用直接粘贴。如果没有该权限，项目将仅被复制到剪贴板。更新权限后，请重新启动应用程序以使更改生效。"
-          }
-        },
-        "zh-Hant": {
-          "stringUnit": {
-            "state": "translated",
-            "value": "授予權限以啟用直接貼上。如果沒有該權限，項目將僅被拷貝到剪貼簿。更新權限後，請重新啟動應用程式以使更改生效。"
-          }
-        }
-      }
-    },
     "ClipKitty will paste items directly into the previous app when you press Enter.": {
       "localizations": {
         "en": {
@@ -4925,6 +4733,70 @@
           "stringUnit": {
             "state": "translated",
             "value": "按下 Return 鍵時，ClipKitty 將直接將項目貼上到上一個應用程式中。"
+          }
+        }
+      }
+    },
+    "Paste items directly into the previous app. Requires permission in System Settings.": {
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Paste items directly into the previous app. Requires permission in System Settings."
+          }
+        },
+        "de": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Elemente direkt in die vorherige App einsetzen. Erfordert eine Berechtigung in den Systemeinstellungen."
+          }
+        },
+        "es": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Pega elementos directamente en la aplicación anterior. Requiere permiso en Configuración del Sistema."
+          }
+        },
+        "fr": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Coller les éléments directement dans l'application précédente. Nécessite une autorisation dans les Réglages Système."
+          }
+        },
+        "ja": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "前のアプリに直接項目をペーストします。システム設定で権限が必要です。"
+          }
+        },
+        "ko": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "이전 앱에 항목을 직접 붙여넣습니다. 시스템 설정에서 권한이 필요합니다."
+          }
+        },
+        "pt-BR": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Colar itens diretamente no aplicativo anterior. Requer permissão nos Ajustes do Sistema."
+          }
+        },
+        "ru": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Вставлять элементы напрямую в предыдущее приложение. Требуется разрешение в Системных настройках."
+          }
+        },
+        "zh-Hans": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "将项目直接粘贴到前一个应用程序中。需要在系统设置中授予权限。"
+          }
+        },
+        "zh-Hant": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "將項目直接貼上到上一個應用程式中。需要在系統設定中授予權限。"
           }
         }
       }
