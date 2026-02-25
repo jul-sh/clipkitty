@@ -124,9 +124,9 @@ struct GeneralSettingsView: View {
 
             Section(String(localized: "Behavior")) {
                 HStack {
-                    Text(String(localized: "Accessibility Permission"))
+                    Text(String(localized: "Direct Paste"))
                     Spacer()
-                    if settings.hasAccessibilityPermission {
+                    if settings.hasPostEventPermission {
                         Label(String(localized: "Enabled"), systemImage: "checkmark.circle.fill")
                             .foregroundStyle(.green)
                     } else {
@@ -134,10 +134,10 @@ struct GeneralSettingsView: View {
                             .foregroundStyle(.orange)
                     }
                 }
-                if settings.hasAccessibilityPermission {
-                    Toggle(String(localized: "Automatic Paste"), isOn: $settings.autoPasteEnabled)
+                if settings.hasPostEventPermission {
+                    Toggle(String(localized: "Direct Paste"), isOn: $settings.autoPasteEnabled)
                     if settings.autoPasteEnabled {
-                        Text(String(localized: "ClipKitty will automatically paste items into the previous app when you press Enter."))
+                        Text(String(localized: "ClipKitty will paste items directly into the previous app when you press Enter."))
                             .font(.caption)
                             .foregroundStyle(.secondary)
                     } else {
@@ -146,10 +146,10 @@ struct GeneralSettingsView: View {
                             .foregroundStyle(.secondary)
                     }
                 } else {
-                    Text(String(localized: "Grant Accessibility permission to enable automatic pasting. Without it, items will only be copied to the clipboard. Restart the app after updating accessibility permissions for the change to take effect."))
+                    Text(String(localized: "Grant permission to enable direct paste. Without it, items will only be copied to the clipboard. Restart the app after updating permissions for the change to take effect."))
                         .font(.caption)
                         .foregroundStyle(.secondary)
-                    Button(String(localized: "Open Accessibility Settings")) {
+                    Button(String(localized: "Open System Settings")) {
                         NSWorkspace.shared.open(URL(string: "x-apple.systempreferences:com.apple.preference.security?Privacy_Accessibility")!)
                     }
                     .font(.caption)
