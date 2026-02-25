@@ -153,7 +153,15 @@ final class FloatingPanelController: NSObject, NSWindowDelegate {
             targetApp = nil
         }
         hide()
-        if case .autoPaste = AppSettings.shared.pasteMode {
+
+        // Skip auto-paste for remote desktop apps — their clipboard protocol (CLIPRDR)
+        // uses lazy sync, and simulating Cmd+V causes the remote side to paste stale
+        // content or leaves the Cmd key stuck. Just restore to clipboard and let the
+        // user paste manually.
+        let isRemoteDesktop = targetApp?.bundleIdentifier
+            .map { Self.remoteDesktopBundleIDs.contains($0) } ?? false
+
+        if case .autoPaste = AppSettings.shared.pasteMode, !isRemoteDesktop {
             simulatePaste(targetApp: targetApp)
         }
     }
@@ -163,25 +171,9 @@ final class FloatingPanelController: NSObject, NSWindowDelegate {
         hide()
     }
 
-    // ⚠️ HACK: Remote desktop clipboard sync delay
-    //
-    // This is a UX hack, not a proper fix. RDP and similar protocols use lazy clipboard
-    // sync - when macOS clipboard changes, only a "format list" notification is sent over
-    // the network. The actual data isn't transferred until the remote side requests it.
-    //
-    // Problem: We send Cmd+V immediately after updating the clipboard. The keystroke can
-    // arrive at the remote machine before the format list notification, causing the remote
-    // app to paste stale clipboard content.
-    //
-    // Proper fix: Impossible from our side - would require the RDP client to synchronize
-    // keyboard events with clipboard channel updates.
-    //
-    // This hack: Delay 250ms before sending Cmd+V for known remote desktop apps. This
-    // usually gives enough time for the clipboard notification to propagate. It's a guess
-    // that works for most network conditions but may still fail on very slow connections.
-    //
-    // We do this because it makes the app feel magical for RDP users, even though it's
-    // technically papering over a protocol limitation.
+    /// Known remote desktop app bundle IDs. Auto-paste is disabled for these apps
+    /// because their clipboard protocol (CLIPRDR) uses lazy sync — simulating Cmd+V
+    /// causes stale pastes or leaves modifier keys stuck on the remote side.
     private static let remoteDesktopBundleIDs: Set<String> = [
         "com.microsoft.rdc.macos",        // Microsoft Remote Desktop
         "com.microsoft.rdc.osx",          // Microsoft Remote Desktop (older)
@@ -207,9 +199,6 @@ final class FloatingPanelController: NSObject, NSWindowDelegate {
             return
         }
 
-        let needsClipboardSyncDelay = targetApp.bundleIdentifier
-            .map { Self.remoteDesktopBundleIDs.contains($0) } ?? false
-
         // Wait for the target app to become active before sending keystroke
         Task {
             // Poll until the target app is active (max ~500ms)
@@ -218,11 +207,6 @@ final class FloatingPanelController: NSObject, NSWindowDelegate {
                     break
                 }
                 try? await Task.sleep(nanoseconds: 10_000_000) // 10ms
-            }
-
-            // Remote desktop apps need extra time for clipboard protocol sync
-            if needsClipboardSyncDelay {
-                try? await Task.sleep(nanoseconds: 250_000_000) // 250ms
             }
 
             await MainActor.run {
