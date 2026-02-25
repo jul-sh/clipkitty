@@ -26,8 +26,21 @@ if security find-identity -v -p codesigning 2>/dev/null | grep -q "Developer ID 
     exit 0
 fi
 
-# Resolve AGE_SECRET_KEY
+# Resolve AGE_SECRET_KEY - this is also used as the keychain password
 AGE_SECRET_KEY=$("$SCRIPT_DIR/get-age-key.sh") || exit 1
+
+# Use a hash of the AGE key as the keychain password (keychains have length limits)
+KEYCHAIN_PASSWORD=$(printf '%s' "$AGE_SECRET_KEY" | shasum -a 256 | cut -d' ' -f1)
+
+# If keychain exists, try to unlock it with the derived password
+if [ -f "$KEYCHAIN_PATH" ]; then
+    if security unlock-keychain -p "$KEYCHAIN_PASSWORD" "$KEYCHAIN_PATH" 2>/dev/null; then
+        echo "Developer signing keychain unlocked: $KEYCHAIN_NAME"
+        exit 0
+    fi
+    # Password didn't work (AGE key changed?), remove stale keychain
+    security delete-keychain "$KEYCHAIN_PATH" 2>/dev/null || true
+fi
 
 # Decrypt secrets
 printf '%s' "$AGE_SECRET_KEY" > /tmp/_ck_age.txt
@@ -36,8 +49,7 @@ age -d -i /tmp/_ck_age.txt "$PROJECT_ROOT/secrets/MACOS_P12_BASE64.age" \
     | base64 --decode > /tmp/_ck_dev.p12
 rm -f /tmp/_ck_age.txt
 
-# Create temporary keychain with known password
-KEYCHAIN_PASSWORD=$(openssl rand -hex 16)
+# Create temporary keychain with derived password
 security delete-keychain "$KEYCHAIN_PATH" 2>/dev/null || true
 security create-keychain -p "$KEYCHAIN_PASSWORD" "$KEYCHAIN_PATH"
 security set-keychain-settings -t 3600 "$KEYCHAIN_PATH"

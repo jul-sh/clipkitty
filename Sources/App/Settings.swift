@@ -1,7 +1,7 @@
 import Foundation
 import Carbon
 import AppKit
-@preconcurrency import ApplicationServices
+@preconcurrency import CoreGraphics
 
 struct HotKey: Codable, Equatable {
     var keyCode: UInt32
@@ -77,17 +77,17 @@ final class AppSettings: ObservableObject {
         didSet { save() }
     }
 
-    /// Check if accessibility permissions are granted
-    var hasAccessibilityPermission: Bool {
-        return AXIsProcessTrusted()
+    /// Check if the app can post synthetic keyboard events (e.g. Cmd+V for direct paste)
+    var hasPostEventPermission: Bool {
+        return CGPreflightPostEventAccess()
     }
 
-    /// Request accessibility permissions (shows system dialog if not yet prompted)
-    /// Returns true if permissions are already granted
+    /// Request permission to post synthetic keyboard events.
+    /// Opens System Settings if not yet granted.
+    /// Returns true if permissions are already granted.
     @discardableResult
-    func requestAccessibilityPermission() -> Bool {
-        let options = [kAXTrustedCheckOptionPrompt.takeUnretainedValue() as String: true] as CFDictionary
-        return AXIsProcessTrustedWithOptions(options)
+    func requestPostEventPermission() -> Bool {
+        return CGRequestPostEventAccess()
     }
 
     @Published var autoPasteEnabled: Bool {
@@ -95,7 +95,7 @@ final class AppSettings: ObservableObject {
     }
 
     var pasteMode: PasteMode {
-        guard hasAccessibilityPermission else { return .noPermission }
+        guard hasPostEventPermission else { return .noPermission }
         return autoPasteEnabled ? .autoPaste : .copyOnly
     }
 
@@ -161,7 +161,11 @@ final class AppSettings: ObservableObject {
             maxDatabaseSizeGB = 7.0
         }
 
+        #if APP_STORE
+        launchAtLoginEnabled = defaults.object(forKey: launchAtLoginKey) as? Bool ?? false
+        #else
         launchAtLoginEnabled = defaults.object(forKey: launchAtLoginKey) as? Bool ?? true
+        #endif
         autoPasteEnabled = defaults.object(forKey: autoPasteKey) as? Bool ?? true
         clickToOpenEnabled = defaults.object(forKey: clickToOpenKey) as? Bool ?? true
 

@@ -25,7 +25,7 @@ SIGNING_IDENTITY ?= $(shell security find-identity -v -p codesigning 2>/dev/null
 RUST_MARKER := .make/rust.marker
 RUST_LIB := Sources/ClipKittyRust/libpurr.a
 
-.PHONY: all clean rust rust-force generate build sign list-identities run
+.PHONY: all clean rust rust-force generate build sign list-identities run test uitest rust-test
 
 all: rust generate build
 
@@ -81,6 +81,34 @@ run: all
 clean:
 	@rm -rf .make DerivedData
 	@tuist clean 2>/dev/null || true
+
+# Run UI tests
+# Usage: make uitest [TEST=testName]
+# Example: make uitest TEST=testToastAppearsOnCopy
+uitest: all
+	@echo "Setting up signing keychain..."
+	@./distribution/setup-dev-signing.sh
+	@echo "Running UI tests..."
+	@if [ -n "$(TEST)" ]; then \
+		xcodebuild test -scheme ClipKittyUITests \
+			-destination "platform=macOS" \
+			-derivedDataPath $(DERIVED_DATA) \
+			-only-testing:ClipKittyUITests/ClipKittyUITests/$(TEST) \
+			2>&1 | grep -E "(Test Case|passed|failed|error:)" || true; \
+	else \
+		xcodebuild test -scheme ClipKittyUITests \
+			-destination "platform=macOS" \
+			-derivedDataPath $(DERIVED_DATA) \
+			2>&1 | grep -E "(Test Case|passed|failed|error:)" || true; \
+	fi
+
+# Run all tests (Rust + UI)
+test: rust-test uitest
+
+# Run Rust tests
+rust-test:
+	@echo "Running Rust tests..."
+	@$(NIX_SHELL) "cd purr && cargo test"
 
 # Show available signing identities (helpful for setup)
 list-identities:
