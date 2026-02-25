@@ -676,6 +676,7 @@ struct ContentView: View {
                         matchData: row.matchData,
                         isSelected: row.metadata.itemId == selectedItemId,
                         hasUserNavigated: hasUserNavigated,
+                        isAutoPaste: effectivePasteMode == .autoPaste,
                         onTap: {
                             hasUserNavigated = true
                             selectedItemId = row.metadata.itemId
@@ -1470,6 +1471,7 @@ struct ItemRow: View, Equatable {
     let matchData: MatchData?  // Only present in search mode
     let isSelected: Bool
     let hasUserNavigated: Bool
+    let isAutoPaste: Bool
     let onTap: () -> Void
 
     private var accentSelected: Bool { isSelected && hasUserNavigated }
@@ -1496,6 +1498,7 @@ struct ItemRow: View, Equatable {
     nonisolated static func == (lhs: ItemRow, rhs: ItemRow) -> Bool {
         return lhs.isSelected == rhs.isSelected &&
                lhs.hasUserNavigated == rhs.hasUserNavigated &&
+               lhs.isAutoPaste == rhs.isAutoPaste &&
                lhs.metadata == rhs.metadata &&
                lhs.matchData == rhs.matchData
     }
@@ -1616,7 +1619,7 @@ struct ItemRow: View, Equatable {
         .buttonStyle(.plain)
         .accessibilityElement(children: .combine)
         .accessibilityLabel(displayText)
-        .accessibilityHint(effectivePasteMode == .autoPaste ? String(localized: "Double tap to paste") : String(localized: "Double tap to copy"))
+        .accessibilityHint(isAutoPaste ? String(localized: "Double tap to paste") : String(localized: "Double tap to copy"))
         .accessibilityAddTraits(.isButton)
         .accessibilityAddTraits(isSelected ? .isSelected : [])
     }
