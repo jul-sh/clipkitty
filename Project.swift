@@ -112,6 +112,7 @@ let project = Project(
                     ]),
                     .release(name: .configuration("AppStore"), settings: [
                         "CODE_SIGN_ENTITLEMENTS": "Sources/App/ClipKitty.entitlements",
+                        "SWIFT_ACTIVE_COMPILATION_CONDITIONS": "APP_STORE",
                     ]),
                 ]
             )
