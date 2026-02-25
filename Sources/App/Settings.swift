@@ -161,7 +161,7 @@ final class AppSettings: ObservableObject {
             maxDatabaseSizeGB = 7.0
         }
 
-        launchAtLoginEnabled = defaults.object(forKey: launchAtLoginKey) as? Bool ?? true
+        launchAtLoginEnabled = defaults.object(forKey: launchAtLoginKey) as? Bool ?? false
         autoPasteEnabled = defaults.object(forKey: autoPasteKey) as? Bool ?? true
         clickToOpenEnabled = defaults.object(forKey: clickToOpenKey) as? Bool ?? true
 
