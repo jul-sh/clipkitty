@@ -636,12 +636,13 @@ impl ClipboardStoreApi for ClipboardStore {
         thumbnail: Option<Vec<u8>>,
         source_app: Option<String>,
         source_app_bundle_id: Option<String>,
+        is_animated: bool,
     ) -> Result<i64, ClipKittyError> {
         if image_data.is_empty() {
             return Err(ClipKittyError::InvalidInput("Empty image data".into()));
         }
 
-        let item = StoredItem::new_image_with_thumbnail(image_data, thumbnail, source_app, source_app_bundle_id);
+        let item = StoredItem::new_image_with_thumbnail(image_data, thumbnail, source_app, source_app_bundle_id, is_animated);
         let id = self.db.insert_item(&item)?;
 
         // Index with description (images can be searched by their description)
