@@ -499,6 +499,82 @@ final class ClipKittyUITests: XCTestCase {
         XCTAssertTrue(disappeared, "Toast should auto-dismiss")
     }
 
+    // MARK: - Context Menu Tests
+
+    /// Tests that right-clicking an item shows a context menu
+    func testContextMenuAppearsOnRightClick() throws {
+        let searchField = app.textFields["SearchField"]
+        XCTAssertTrue(searchField.waitForExistence(timeout: 5), "Search field not found")
+
+        // Ensure we have items in the list
+        let items = app.outlines.firstMatch.buttons.allElementsBoundByIndex
+        XCTAssertGreaterThan(items.count, 0, "Should have items in the list")
+
+        // Get the first item
+        let firstItem = app.buttons["ItemRow_0"]
+        XCTAssertTrue(firstItem.waitForExistence(timeout: 5), "First item should exist")
+
+        // Right-click the first item
+        firstItem.rightClick()
+        Thread.sleep(forTimeInterval: 0.5)
+
+        // Verify context menu appears by checking for at least one menu item
+        // SwiftUI context menus appear as menu items in the accessibility tree
+        let menuItems = app.menuItems
+        XCTAssertGreaterThan(menuItems.count, 0, "Context menu should appear with menu items after right-click")
+    }
+
+    /// Tests that the context menu contains the expected actions
+    func testContextMenuHasExpectedActions() throws {
+        let searchField = app.textFields["SearchField"]
+        XCTAssertTrue(searchField.waitForExistence(timeout: 5), "Search field not found")
+
+        // Right-click the first item
+        let firstItem = app.buttons["ItemRow_0"]
+        XCTAssertTrue(firstItem.waitForExistence(timeout: 5), "First item should exist")
+        firstItem.rightClick()
+        Thread.sleep(forTimeInterval: 0.5)
+
+        // Verify Delete action exists in menu items
+        let deleteMenuItem = app.menuItems["Delete"]
+        XCTAssertTrue(deleteMenuItem.waitForExistence(timeout: 3), "Context menu should have Delete action")
+
+        // Verify Copy action exists (shown as either "Copy" or "Paste" depending on settings)
+        let copyMenuItem = app.menuItems["Copy"]
+        let pasteMenuItem = app.menuItems["Paste"]
+        XCTAssertTrue(copyMenuItem.exists || pasteMenuItem.exists, "Context menu should have Copy or Paste action")
+    }
+
+    /// Tests that the Delete action in the context menu actually deletes the item
+    func testContextMenuDeleteAction() throws {
+        let searchField = app.textFields["SearchField"]
+        XCTAssertTrue(searchField.waitForExistence(timeout: 5), "Search field not found")
+
+        // Record initial item count
+        let initialCount = app.outlines.firstMatch.buttons.allElementsBoundByIndex.count
+        XCTAssertGreaterThan(initialCount, 0, "Should have items to delete")
+
+        // Right-click the first item
+        let firstItem = app.buttons["ItemRow_0"]
+        XCTAssertTrue(firstItem.waitForExistence(timeout: 5), "First item should exist")
+        firstItem.rightClick()
+        Thread.sleep(forTimeInterval: 0.5)
+
+        // Click the Delete action
+        let deleteMenuItem = app.menuItems["Delete"]
+        XCTAssertTrue(deleteMenuItem.waitForExistence(timeout: 3), "Delete action should exist in context menu")
+        deleteMenuItem.click()
+        Thread.sleep(forTimeInterval: 0.5)
+
+        // Verify: item count decreased by 1
+        let finalCount = app.outlines.firstMatch.buttons.allElementsBoundByIndex.count
+        XCTAssertEqual(finalCount, initialCount - 1, "Item count should decrease by 1 after deleting via context menu")
+
+        // Verify: window is still visible (not hidden)
+        let window = app.dialogs.firstMatch
+        XCTAssertTrue(window.exists, "Window should still be visible after deletion via context menu")
+    }
+
     // MARK: - Settings Tests
 
     /// Tests that the Settings window opens with tabs and Privacy tab is accessible
