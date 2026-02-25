@@ -95,7 +95,7 @@ jobs:
         run: make generate
 
       - name: Build App
-        run: make build CONFIGURATION=AppStore
+        run: make build CONFIGURATION=Release
 
       - name: Create Virtual Retina Display
         run: |
@@ -121,11 +121,11 @@ jobs:
         run: |
           chmod +x distribution/build-dmg.sh
 
-          make build CONFIGURATION=AppStore
+          make build CONFIGURATION=Release
           codesign --force --options runtime --sign "Developer ID Application" \
             --entitlements Sources/App/ClipKitty.entitlements \
-            DerivedData/Build/Products/AppStore/ClipKitty.app
-          ./distribution/build-dmg.sh DerivedData/Build/Products/AppStore/ClipKitty.app ClipKitty.dmg
+            DerivedData/Build/Products/Release/ClipKitty.app
+          ./distribution/build-dmg.sh DerivedData/Build/Products/Release/ClipKitty.app ClipKitty.dmg
 
           codesign --force --sign "Developer ID Application" ClipKitty.dmg
 

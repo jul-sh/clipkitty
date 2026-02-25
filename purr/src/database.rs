@@ -123,7 +123,8 @@ impl Database {
             CREATE TABLE IF NOT EXISTS image_items (
                 itemId INTEGER PRIMARY KEY REFERENCES items(id) ON DELETE CASCADE,
                 data BLOB NOT NULL,
-                description TEXT NOT NULL DEFAULT 'Image'
+                description TEXT NOT NULL DEFAULT 'Image',
+                is_animated INTEGER NOT NULL DEFAULT 0
             );
 
             CREATE TABLE IF NOT EXISTS link_items (
@@ -150,6 +151,13 @@ impl Database {
             CREATE INDEX IF NOT EXISTS idx_items_content_prefix ON items(content COLLATE NOCASE);
             CREATE INDEX IF NOT EXISTS idx_file_items_item ON file_items(itemId);
         "#)?;
+
+        // Migration: Add is_animated column to existing image_items tables
+        // This is idempotent - if the column already exists, the ALTER TABLE will fail silently
+        let _ = conn.execute(
+            "ALTER TABLE image_items ADD COLUMN is_animated INTEGER NOT NULL DEFAULT 0",
+            [],
+        );
 
         Ok(())
     }
@@ -205,10 +213,10 @@ impl Database {
                     params![item_id, value],
                 )?;
             }
-            ClipboardContent::Image { data, description } => {
+            ClipboardContent::Image { data, description, is_animated } => {
                 tx.execute(
-                    "INSERT INTO image_items (itemId, data, description) VALUES (?1, ?2, ?3)",
-                    params![item_id, data, description],
+                    "INSERT INTO image_items (itemId, data, description, is_animated) VALUES (?1, ?2, ?3, ?4)",
+                    params![item_id, data, description, *is_animated as i32],
                 )?;
             }
             ClipboardContent::Link { url, metadata_state } => {
@@ -657,7 +665,7 @@ impl Database {
         // Placeholder content — will be replaced by populate_child_content
         let content = match content_type.as_str() {
             "color" => ClipboardContent::Color { value: content_text },
-            "image" => ClipboardContent::Image { data: Vec::new(), description: content_text },
+            "image" => ClipboardContent::Image { data: Vec::new(), description: content_text, is_animated: false },
             "link" => ClipboardContent::Link {
                 url: content_text,
                 metadata_state: LinkMetadataState::Pending,
@@ -687,12 +695,16 @@ impl Database {
         match &item.content {
             ClipboardContent::Image { description, .. } => {
                 let description = description.clone();
-                let data: Vec<u8> = conn.query_row(
-                    "SELECT data FROM image_items WHERE itemId = ?1",
+                let (data, is_animated): (Vec<u8>, bool) = conn.query_row(
+                    "SELECT data, is_animated FROM image_items WHERE itemId = ?1",
                     [item_id],
-                    |row| row.get(0),
+                    |row| {
+                        let data: Vec<u8> = row.get(0)?;
+                        let is_animated: i32 = row.get(1)?;
+                        Ok((data, is_animated != 0))
+                    },
                 ).unwrap_or_default();
-                item.content = ClipboardContent::Image { data, description };
+                item.content = ClipboardContent::Image { data, description, is_animated };
             }
             ClipboardContent::Link { url, .. } => {
                 let url = url.clone();
