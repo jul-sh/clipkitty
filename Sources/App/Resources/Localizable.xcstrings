@@ -1,70 +1,6 @@
 {
   "sourceLanguage": "en",
   "strings": {
-    "Accessibility Permission": {
-      "localizations": {
-        "en": {
-          "stringUnit": {
-            "state": "translated",
-            "value": "Accessibility Permission"
-          }
-        },
-        "es": {
-          "stringUnit": {
-            "state": "translated",
-            "value": "Permiso de accesibilidad"
-          }
-        },
-        "zh-Hans": {
-          "stringUnit": {
-            "state": "translated",
-            "value": "辅助功能权限"
-          }
-        },
-        "zh-Hant": {
-          "stringUnit": {
-            "state": "translated",
-            "value": "輔助使用權限"
-          }
-        },
-        "ja": {
-          "stringUnit": {
-            "state": "translated",
-            "value": "アクセシビリティの権限"
-          }
-        },
-        "ko": {
-          "stringUnit": {
-            "state": "translated",
-            "value": "손쉬운 사용 권한"
-          }
-        },
-        "fr": {
-          "stringUnit": {
-            "state": "translated",
-            "value": "Permission d'accessibilité"
-          }
-        },
-        "pt-BR": {
-          "stringUnit": {
-            "state": "translated",
-            "value": "Permissão de Acessibilidade"
-          }
-        },
-        "ru": {
-          "stringUnit": {
-            "state": "translated",
-            "value": "Разрешение на универсальный доступ"
-          }
-        },
-        "de": {
-          "stringUnit": {
-            "state": "translated",
-            "value": "Bedienungshilfenberechtigung"
-          }
-        }
-      }
-    },
     "All Types": {
       "localizations": {
         "en": {
@@ -189,70 +125,6 @@
           "stringUnit": {
             "state": "translated",
             "value": "Möchten Sie wirklich den gesamten Zwischenablageverlauf löschen? Diese Aktion kann nicht rückgängig gemacht werden."
-          }
-        }
-      }
-    },
-    "Automatic Paste": {
-      "localizations": {
-        "en": {
-          "stringUnit": {
-            "state": "translated",
-            "value": "Automatic Paste"
-          }
-        },
-        "es": {
-          "stringUnit": {
-            "state": "translated",
-            "value": "Pegado automático"
-          }
-        },
-        "zh-Hans": {
-          "stringUnit": {
-            "state": "translated",
-            "value": "自动粘贴"
-          }
-        },
-        "zh-Hant": {
-          "stringUnit": {
-            "state": "translated",
-            "value": "自動貼上"
-          }
-        },
-        "ja": {
-          "stringUnit": {
-            "state": "translated",
-            "value": "自動ペースト"
-          }
-        },
-        "ko": {
-          "stringUnit": {
-            "state": "translated",
-            "value": "자동 붙여넣기"
-          }
-        },
-        "fr": {
-          "stringUnit": {
-            "state": "translated",
-            "value": "Collage automatique"
-          }
-        },
-        "pt-BR": {
-          "stringUnit": {
-            "state": "translated",
-            "value": "Colar Automaticamente"
-          }
-        },
-        "ru": {
-          "stringUnit": {
-            "state": "translated",
-            "value": "Автоматическая вставка"
-          }
-        },
-        "de": {
-          "stringUnit": {
-            "state": "translated",
-            "value": "Automatisches Einsetzen"
           }
         }
       }
@@ -829,70 +701,6 @@
           "stringUnit": {
             "state": "translated",
             "value": "ClipKitty wird in einer isolierten Umgebung ausgeführt, um Ihre Privatsphäre zu schützen und Ihre Daten zu sichern."
-          }
-        }
-      }
-    },
-    "ClipKitty will automatically paste items into the previous app when you press Enter.": {
-      "localizations": {
-        "en": {
-          "stringUnit": {
-            "state": "translated",
-            "value": "ClipKitty will automatically paste items into the previous app when you press Enter."
-          }
-        },
-        "es": {
-          "stringUnit": {
-            "state": "translated",
-            "value": "ClipKitty pegará automáticamente los elementos en la aplicación anterior cuando presiones Intro."
-          }
-        },
-        "zh-Hans": {
-          "stringUnit": {
-            "state": "translated",
-            "value": "按下回车键时，ClipKitty 将自动将项目粘贴到前一个应用程序中。"
-          }
-        },
-        "zh-Hant": {
-          "stringUnit": {
-            "state": "translated",
-            "value": "按下 Return 鍵時，ClipKitty 將自動將項目貼上到上一個應用程式中。"
-          }
-        },
-        "ja": {
-          "stringUnit": {
-            "state": "translated",
-            "value": "Enterを押すと、ClipKittyは自動的に前のアプリに項目をペーストします。"
-          }
-        },
-        "ko": {
-          "stringUnit": {
-            "state": "translated",
-            "value": "Enter를 누르면 ClipKitty가 이전 앱에 항목을 자동으로 붙여넣습니다."
-          }
-        },
-        "fr": {
-          "stringUnit": {
-            "state": "translated",
-            "value": "ClipKitty collera automatiquement les éléments dans l'application précédente lorsque vous appuyez sur Entrée."
-          }
-        },
-        "de": {
-          "stringUnit": {
-            "state": "translated",
-            "value": "ClipKitty setzt Elemente automatisch in die vorherige App ein, wenn Sie die Eingabetaste drücken."
-          }
-        },
-        "pt-BR": {
-          "stringUnit": {
-            "state": "translated",
-            "value": "O ClipKitty colará automaticamente os itens no aplicativo anterior quando você pressionar Enter."
-          }
-        },
-        "ru": {
-          "stringUnit": {
-            "state": "translated",
-            "value": "ClipKitty автоматически вставит элементы в предыдущее приложение при нажатии Enter."
           }
         }
       }
@@ -2305,70 +2113,6 @@
         }
       }
     },
-    "Grant Accessibility permission to enable automatic pasting. Without it, items will only be copied to the clipboard. Restart the app after updating accessibility permissions for the change to take effect.": {
-      "localizations": {
-        "en": {
-          "stringUnit": {
-            "state": "translated",
-            "value": "Grant Accessibility permission to enable automatic pasting. Without it, items will only be copied to the clipboard. Restart the app after updating accessibility permissions for the change to take effect."
-          }
-        },
-        "es": {
-          "stringUnit": {
-            "state": "translated",
-            "value": "Concede el permiso de accesibilidad para habilitar el pegado automático. Sin él, los elementos solo se copiarán al portapapeles. Reinicia la aplicación después de actualizar los permisos de accesibilidad para que el cambio surta efecto."
-          }
-        },
-        "zh-Hans": {
-          "stringUnit": {
-            "state": "translated",
-            "value": "授予辅助功能权限以启用自动粘贴。如果没有该权限，项目将仅被复制到剪贴板。更新辅助功能权限后，请重新启动应用程序以使更改生效。"
-          }
-        },
-        "zh-Hant": {
-          "stringUnit": {
-            "state": "translated",
-            "value": "授予輔助使用權限以啟用自動貼上。如果沒有該權限，項目將僅被拷貝到剪貼簿。更新輔助使用權限後，請重新啟動應用程式以使更改生效。"
-          }
-        },
-        "ja": {
-          "stringUnit": {
-            "state": "translated",
-            "value": "自動ペーストを有効にするには、アクセシビリティ権限を許可してください。許可されていない場合、項目はクリップボードにコピーされるのみです。アクセシビリティ権限を更新した後、変更を有効にするにはアプリを再起動してください。"
-          }
-        },
-        "ko": {
-          "stringUnit": {
-            "state": "translated",
-            "value": "자동 붙여넣기를 활성화하려면 손쉬운 사용 권한을 허용하세요. 권한이 없으면 항목이 클립보드에만 복사됩니다. 변경 사항을 적용하려면 손쉬운 사용 권한을 업데이트한 후 앱을 다시 시작하세요."
-          }
-        },
-        "fr": {
-          "stringUnit": {
-            "state": "translated",
-            "value": "Accordez l'autorisation d'accessibilité pour activer le collage automatique. Sans elle, les éléments seront uniquement copiés dans le presse-papiers. Redémarrez l'application après avoir mis à jour les autorisations d'accessibilité pour que le changement prenne effet."
-          }
-        },
-        "de": {
-          "stringUnit": {
-            "state": "translated",
-            "value": "Erteilen Sie die Bedienungshilfen-Berechtigung, um das automatische Einsetzen zu aktivieren. Ohne sie werden Elemente nur in die Zwischenablage kopiert. Starten Sie die App nach dem Aktualisieren der Bedienungshilfen-Berechtigungen neu, damit die Änderung wirksam wird."
-          }
-        },
-        "pt-BR": {
-          "stringUnit": {
-            "state": "translated",
-            "value": "Conceda a permissão de Acessibilidade para ativar a colagem automática. Sem ela, os itens serão apenas copiados para a área de transferência. Reinicie o aplicativo após atualizar as permissões de acessibilidade para que a alteração tenha efeito."
-          }
-        },
-        "ru": {
-          "stringUnit": {
-            "state": "translated",
-            "value": "Предоставьте разрешение Универсального доступа для включения автоматической вставки. Без него элементы будут только копироваться в буфер обмена. Перезапустите приложение после обновления разрешений Универсального доступа, чтобы изменения вступили в силу."
-          }
-        }
-      }
-    },
     "Hotkey": {
       "localizations": {
         "en": {
@@ -3581,70 +3325,6 @@
           "stringUnit": {
             "state": "translated",
             "value": "Die ältesten Zwischenablageelemente werden automatisch gelöscht, wenn die Datenbank diese Größe überschreitet."
-          }
-        }
-      }
-    },
-    "Open Accessibility Settings": {
-      "localizations": {
-        "en": {
-          "stringUnit": {
-            "state": "translated",
-            "value": "Open Accessibility Settings"
-          }
-        },
-        "es": {
-          "stringUnit": {
-            "state": "translated",
-            "value": "Abrir configuración de accesibilidad"
-          }
-        },
-        "zh-Hans": {
-          "stringUnit": {
-            "state": "translated",
-            "value": "打开辅助功能设置"
-          }
-        },
-        "zh-Hant": {
-          "stringUnit": {
-            "state": "translated",
-            "value": "開啟輔助使用設定"
-          }
-        },
-        "ja": {
-          "stringUnit": {
-            "state": "translated",
-            "value": "アクセシビリティ設定を開く"
-          }
-        },
-        "ko": {
-          "stringUnit": {
-            "state": "translated",
-            "value": "손쉬운 사용 설정 열기"
-          }
-        },
-        "fr": {
-          "stringUnit": {
-            "state": "translated",
-            "value": "Ouvrir les réglages d'accessibilité"
-          }
-        },
-        "pt-BR": {
-          "stringUnit": {
-            "state": "translated",
-            "value": "Abrir Ajustes de Acessibilidade"
-          }
-        },
-        "ru": {
-          "stringUnit": {
-            "state": "translated",
-            "value": "Открыть настройки универсального доступа"
-          }
-        },
-        "de": {
-          "stringUnit": {
-            "state": "translated",
-            "value": "Bedienungshilfen-Einstellungen öffnen"
           }
         }
       }
@@ -4989,6 +4669,262 @@
           "stringUnit": {
             "state": "translated",
             "value": "⏎ Вставить"
+          }
+        }
+      }
+    },
+    "Direct Paste": {
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Direct Paste"
+          }
+        },
+        "de": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Direktes Einsetzen"
+          }
+        },
+        "es": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Pegado directo"
+          }
+        },
+        "fr": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Collage direct"
+          }
+        },
+        "ja": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "ダイレクトペースト"
+          }
+        },
+        "ko": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "직접 붙여넣기"
+          }
+        },
+        "pt-BR": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Colar Diretamente"
+          }
+        },
+        "ru": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Прямая вставка"
+          }
+        },
+        "zh-Hans": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "直接粘贴"
+          }
+        },
+        "zh-Hant": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "直接貼上"
+          }
+        }
+      }
+    },
+    "Open System Settings": {
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Open System Settings"
+          }
+        },
+        "de": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Systemeinstellungen öffnen"
+          }
+        },
+        "es": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Abrir Configuración del Sistema"
+          }
+        },
+        "fr": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Ouvrir les Réglages Système"
+          }
+        },
+        "ja": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "システム設定を開く"
+          }
+        },
+        "ko": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "시스템 설정 열기"
+          }
+        },
+        "pt-BR": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Abrir Ajustes do Sistema"
+          }
+        },
+        "ru": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Открыть Системные настройки"
+          }
+        },
+        "zh-Hans": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "打开系统设置"
+          }
+        },
+        "zh-Hant": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "開啟系統設定"
+          }
+        }
+      }
+    },
+    "Grant permission to enable direct paste. Without it, items will only be copied to the clipboard. Restart the app after updating permissions for the change to take effect.": {
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Grant permission to enable direct paste. Without it, items will only be copied to the clipboard. Restart the app after updating permissions for the change to take effect."
+          }
+        },
+        "de": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Erteilen Sie die Berechtigung, um direktes Einsetzen zu aktivieren. Ohne sie werden Elemente nur in die Zwischenablage kopiert. Starten Sie die App nach dem Aktualisieren der Berechtigungen neu, damit die Änderung wirksam wird."
+          }
+        },
+        "es": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Concede el permiso para habilitar el pegado directo. Sin él, los elementos solo se copiarán al portapapeles. Reinicia la aplicación después de actualizar los permisos para que el cambio surta efecto."
+          }
+        },
+        "fr": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Accordez l'autorisation pour activer le collage direct. Sans elle, les éléments seront uniquement copiés dans le presse-papiers. Redémarrez l'application après avoir mis à jour les autorisations pour que le changement prenne effet."
+          }
+        },
+        "ja": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "ダイレクトペーストを有効にするには、権限を許可してください。許可されていない場合、項目はクリップボードにコピーされるのみです。権限を更新した後、変更を有効にするにはアプリを再起動してください。"
+          }
+        },
+        "ko": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "직접 붙여넣기를 활성화하려면 권한을 허용하세요. 권한이 없으면 항목이 클립보드에만 복사됩니다. 변경 사항을 적용하려면 권한을 업데이트한 후 앱을 다시 시작하세요."
+          }
+        },
+        "pt-BR": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Conceda a permissão para ativar a colagem direta. Sem ela, os itens serão apenas copiados para a área de transferência. Reinicie o aplicativo após atualizar as permissões para que a alteração tenha efeito."
+          }
+        },
+        "ru": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Предоставьте разрешение для включения прямой вставки. Без него элементы будут только копироваться в буфер обмена. Перезапустите приложение после обновления разрешений, чтобы изменения вступили в силу."
+          }
+        },
+        "zh-Hans": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "授予权限以启用直接粘贴。如果没有该权限，项目将仅被复制到剪贴板。更新权限后，请重新启动应用程序以使更改生效。"
+          }
+        },
+        "zh-Hant": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "授予權限以啟用直接貼上。如果沒有該權限，項目將僅被拷貝到剪貼簿。更新權限後，請重新啟動應用程式以使更改生效。"
+          }
+        }
+      }
+    },
+    "ClipKitty will paste items directly into the previous app when you press Enter.": {
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "ClipKitty will paste items directly into the previous app when you press Enter."
+          }
+        },
+        "de": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "ClipKitty setzt Elemente direkt in die vorherige App ein, wenn Sie die Eingabetaste drücken."
+          }
+        },
+        "es": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "ClipKitty pegará los elementos directamente en la aplicación anterior cuando presiones Intro."
+          }
+        },
+        "fr": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "ClipKitty collera les éléments directement dans l'application précédente lorsque vous appuyez sur Entrée."
+          }
+        },
+        "ja": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Enterを押すと、ClipKittyは前のアプリに直接項目をペーストします。"
+          }
+        },
+        "ko": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Enter를 누르면 ClipKitty가 이전 앱에 항목을 직접 붙여넣습니다."
+          }
+        },
+        "pt-BR": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "O ClipKitty colará os itens diretamente no aplicativo anterior quando você pressionar Enter."
+          }
+        },
+        "ru": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "ClipKitty вставит элементы напрямую в предыдущее приложение при нажатии Enter."
+          }
+        },
+        "zh-Hans": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "按下回车键时，ClipKitty 将直接将项目粘贴到前一个应用程序中。"
+          }
+        },
+        "zh-Hant": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "按下 Return 鍵時，ClipKitty 將直接將項目貼上到上一個應用程式中。"
           }
         }
       }

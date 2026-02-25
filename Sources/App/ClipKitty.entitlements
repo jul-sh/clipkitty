@@ -7,7 +7,7 @@
     <string>ANBBV7LQ2P.com.eviljuliette.clipkitty</string>
 
     <!-- macOS App Sandbox enabled -->
-    <!-- Note: Sandboxed version cannot simulate Cmd+V paste keystroke -->
+    <!-- Note: Direct paste (Cmd+V keystroke) requires user to grant permission at runtime via System Settings -->
     <key>com.apple.security.app-sandbox</key>
     <true/>
 
