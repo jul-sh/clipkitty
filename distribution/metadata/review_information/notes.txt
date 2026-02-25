@@ -1,4 +1,6 @@
-ClipKitty is a menu-bar clipboard history manager. It has no main window — it lives in the macOS menu bar and is activated via a global hotkey.
+ClipKitty is a clipboard history manager. Core functionality (storing and browsing clipboard history) works without any special permissions. Selecting an item copies it to the clipboard.
+
+It has no main window — it lives in the macOS menu bar and is activated via a global hotkey.
 
 HOW TO TEST:
 
