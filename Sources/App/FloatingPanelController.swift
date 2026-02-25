@@ -116,6 +116,10 @@ final class FloatingPanelController: NSObject, NSWindowDelegate {
     func show() {
         let previousApp = NSWorkspace.shared.frontmostApplication
         panelState = .visible(previousApp: previousApp)
+
+        store.isTargetRemoteDesktop = previousApp?.bundleIdentifier
+            .map { Self.remoteDesktopBundleIDs.contains($0) } ?? false
+
         // Update content to apply any initial search query
         if initialSearchQuery != nil {
             updatePanelContent()
@@ -128,6 +132,7 @@ final class FloatingPanelController: NSObject, NSWindowDelegate {
     func hide() {
         guard case .visible(let previousApp) = panelState else { return }
         panel.orderOut(nil)
+        store.isTargetRemoteDesktop = false
         store.resetForDisplay()
         previousApp?.activate()
         panelState = .hidden
@@ -152,16 +157,9 @@ final class FloatingPanelController: NSObject, NSWindowDelegate {
         } else {
             targetApp = nil
         }
+        let shouldAutoPaste = !store.isTargetRemoteDesktop
         hide()
-
-        // Skip auto-paste for remote desktop apps — their clipboard protocol (CLIPRDR)
-        // uses lazy sync, and simulating Cmd+V causes the remote side to paste stale
-        // content or leaves the Cmd key stuck. Just restore to clipboard and let the
-        // user paste manually.
-        let isRemoteDesktop = targetApp?.bundleIdentifier
-            .map { Self.remoteDesktopBundleIDs.contains($0) } ?? false
-
-        if case .autoPaste = AppSettings.shared.pasteMode, !isRemoteDesktop {
+        if case .autoPaste = AppSettings.shared.pasteMode, shouldAutoPaste {
             simulatePaste(targetApp: targetApp)
         }
     }

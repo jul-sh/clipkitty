@@ -833,8 +833,18 @@ struct ContentView: View {
         .background(.black.opacity(0.05))
     }
 
+    /// Effective paste mode accounting for remote desktop targets.
+    /// When the target app is a remote desktop client, auto-paste is suppressed
+    /// regardless of settings — so the UI shows "Copy" instead of "Paste".
+    private var effectivePasteMode: PasteMode {
+        if store.isTargetRemoteDesktop {
+            return .copyOnly
+        }
+        return AppSettings.shared.pasteMode
+    }
+
     private func buttonLabel(for item: ClipboardItem) -> String {
-        return "⏎ \(AppSettings.shared.pasteMode.buttonLabel)"
+        return "⏎ \(effectivePasteMode.buttonLabel)"
     }
 
     // MARK: - Actions Dropdown
@@ -846,7 +856,7 @@ struct ContentView: View {
 
     private var actionItems: [ActionItem] {
         var items: [ActionItem] = [.delete]
-        if case .autoPaste = AppSettings.shared.pasteMode {
+        if case .autoPaste = effectivePasteMode {
             items.append(.copyOnly)
         }
         items.append(.defaultAction)
@@ -856,7 +866,7 @@ struct ContentView: View {
     private func actionLabel(for action: ActionItem) -> String {
         switch action {
         case .defaultAction:
-            return AppSettings.shared.pasteMode.buttonLabel
+            return effectivePasteMode.buttonLabel
         case .copyOnly:
             return String(localized: "Copy")
         case .delete:
@@ -866,7 +876,7 @@ struct ContentView: View {
 
     private func actionIdentifier(for action: ActionItem) -> String {
         switch action {
-        case .defaultAction: return AppSettings.shared.pasteMode.buttonLabel
+        case .defaultAction: return effectivePasteMode.buttonLabel
         case .copyOnly: return "Copy"
         case .delete: return "Delete"
         }
@@ -1606,7 +1616,7 @@ struct ItemRow: View, Equatable {
         .buttonStyle(.plain)
         .accessibilityElement(children: .combine)
         .accessibilityLabel(displayText)
-        .accessibilityHint(AppSettings.shared.pasteMode == .autoPaste ? String(localized: "Double tap to paste") : String(localized: "Double tap to copy"))
+        .accessibilityHint(effectivePasteMode == .autoPaste ? String(localized: "Double tap to paste") : String(localized: "Double tap to copy"))
         .accessibilityAddTraits(.isButton)
         .accessibilityAddTraits(isSelected ? .isSelected : [])
     }

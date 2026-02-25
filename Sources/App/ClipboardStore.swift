@@ -55,6 +55,10 @@ final class ClipboardStore {
     /// Current content type filter (observable by views)
     private(set) var contentTypeFilter: ContentTypeFilter = .all
 
+    /// Whether the current target app is a remote desktop client.
+    /// When true, auto-paste is suppressed and UI shows "Copy" instead of "Paste".
+    var isTargetRemoteDesktop: Bool = false
+
     // MARK: - Private State
 
     /// Rust-backed clipboard store
