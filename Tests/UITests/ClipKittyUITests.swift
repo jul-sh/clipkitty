@@ -139,6 +139,9 @@ final class ClipKittyUITests: XCTestCase {
 
         try? FileManager.default.removeItem(at: targetURL)
         try? FileManager.default.removeItem(at: indexDirURL)
+        // SQLite WAL files: handle both hyphen (-wal) and dot (.wal) naming conventions
+        try? FileManager.default.removeItem(at: URL(fileURLWithPath: targetURL.path + "-wal"))
+        try? FileManager.default.removeItem(at: URL(fileURLWithPath: targetURL.path + "-shm"))
         try? FileManager.default.removeItem(at: targetURL.appendingPathExtension("wal"))
         try? FileManager.default.removeItem(at: targetURL.appendingPathExtension("shm"))
 
@@ -475,6 +478,25 @@ final class ClipKittyUITests: XCTestCase {
         // Verify: window is still visible (not hidden)
         let window = app.dialogs.firstMatch
         XCTAssertTrue(window.exists, "Window should still be visible after deletion")
+    }
+
+    // MARK: - Toast Tests
+
+    /// Tests that a toast notification appears when copying an item
+    func testToastAppearsOnCopy() throws {
+        let searchField = app.textFields["SearchField"]
+        XCTAssertTrue(searchField.waitForExistence(timeout: 5), "Search field not found")
+
+        // Press Return to copy the selected item (auto-paste is disabled in test mode)
+        searchField.typeKey(.return, modifierFlags: [])
+
+        // Toast should appear
+        let toastWindow = app.windows["ToastWindow"]
+        XCTAssertTrue(toastWindow.waitForExistence(timeout: 3), "Toast window should appear after copying")
+
+        // Toast should disappear after ~1.5 seconds
+        let disappeared = toastWindow.waitForNonExistence(timeout: 3)
+        XCTAssertTrue(disappeared, "Toast should auto-dismiss")
     }
 
     // MARK: - Settings Tests
