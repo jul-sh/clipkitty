@@ -64,6 +64,7 @@ def main():
     parser = argparse.ArgumentParser(description="Publish to App Store Connect")
     parser.add_argument("--dry-run", action="store_true", help="Preview without uploading")
     parser.add_argument("--metadata-only", action="store_true", help="Skip binary upload")
+    parser.add_argument("--version", help="App Store version string (used to auto-create version if needed)")
     args = parser.parse_args()
 
     # --- Validate prerequisites ---
@@ -146,7 +147,7 @@ def main():
 
         print("\n=== Uploading metadata ===")
 
-        # Find the editable App Store version
+        # Find the editable App Store version (or create one)
         r = run(
             ["asc", "versions", "list",
              "--app", APP_ID, "--platform", "MAC_OS",
@@ -159,10 +160,28 @@ def main():
         data = json.loads(r.stdout)
         versions = data.get("data", data) if isinstance(data, dict) else data
         if not versions:
-            sys.exit("Error: No App Store version in PREPARE_FOR_SUBMISSION state.\n"
-                     "Create a new version in App Store Connect first.")
-        version_id = versions[0]["id"]
-        print(f"Target version ID: {version_id}")
+            if not args.version:
+                sys.exit("Error: No App Store version in PREPARE_FOR_SUBMISSION state "
+                         "and no --version supplied to create one.")
+            print(f"No version in PREPARE_FOR_SUBMISSION state. Creating {args.version}...")
+            r = run(
+                ["asc", "versions", "create",
+                 "--app", APP_ID, "--platform", "MAC_OS",
+                 "--version", args.version],
+                capture=True, check=False,
+            )
+            if r.returncode != 0:
+                sys.exit(f"Error creating version: {r.stderr.strip()}")
+            created = json.loads(r.stdout)
+            created_data = created.get("data", created) if isinstance(created, dict) else created
+            if isinstance(created_data, list):
+                version_id = created_data[0]["id"]
+            else:
+                version_id = created_data["id"]
+            print(f"Created version {args.version} (ID: {version_id})")
+        else:
+            version_id = versions[0]["id"]
+            print(f"Target version ID: {version_id}")
 
         # Assemble fastlane-style import directory (metadata only, no screenshots).
         # asc migrate import requires a screenshots/ dir to exist even if empty.
