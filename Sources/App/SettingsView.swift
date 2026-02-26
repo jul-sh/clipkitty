@@ -333,11 +333,11 @@ struct AdvancedSettingsView: View {
                 }
             }
 
-            Section(String(localized: "Direct Paste")) {
+            Section(String(localized: "Integration")) {
                 if settings.hasPostEventPermission {
                     Toggle(String(localized: "Direct Paste"), isOn: $settings.autoPasteEnabled)
                     if settings.autoPasteEnabled {
-                        Text(String(localized: "ClipKitty will paste items directly into the previous app when you press Enter."))
+                        Text(String(localized: "ClipKitty will paste items directly into the previous app."))
                             .font(.caption)
                             .foregroundStyle(.secondary)
                     } else {

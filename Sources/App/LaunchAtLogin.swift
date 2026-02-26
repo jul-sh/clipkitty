@@ -9,7 +9,6 @@ enum LaunchAtLoginState: Equatable {
 
     enum UnavailableReason: Equatable {
         case notInApplicationsDirectory
-        case serviceNotFound
     }
 
     enum ErrorType: Equatable {
@@ -24,8 +23,6 @@ enum LaunchAtLoginState: Equatable {
             return nil
         case .unavailable(.notInApplicationsDirectory):
             return String(localized: "Move ClipKitty to the Applications folder to enable this option.")
-        case .unavailable(.serviceNotFound):
-            return String(localized: "Launch at login service not found.")
         case .error(.registrationFailed):
             return String(localized: "Could not enable launch at login. Please add ClipKitty manually in System Settings.")
         case .error(.unregistrationFailed):
@@ -100,7 +97,7 @@ final class LaunchAtLogin: ObservableObject {
         case .notRegistered, .requiresApproval:
             state = .disabled
         case .notFound:
-            state = .unavailable(reason: .serviceNotFound)
+            state = .disabled
         @unknown default:
             state = .disabled
         }
