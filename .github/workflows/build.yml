@@ -148,8 +148,20 @@ jobs:
         run: rm -f auth_key.p8
 
       # 3. Staple Notarization (Required for offline Gatekeeper approval)
+      #    Apple's CDN can take minutes to propagate the ticket after notarytool --wait returns.
       - name: Staple Notarization
-        run: xcrun stapler staple ClipKitty.dmg
+        run: |
+          sleep 30
+          for i in $(seq 1 10); do
+            if xcrun stapler staple ClipKitty.dmg; then
+              echo "Stapling succeeded on attempt $i"
+              exit 0
+            fi
+            echo "Staple attempt $i failed, retrying in 30s..."
+            sleep 30
+          done
+          echo "Stapling failed after 10 attempts"
+          exit 1
 
       - name: Upload Artifacts
         uses: actions/upload-artifact@v4
