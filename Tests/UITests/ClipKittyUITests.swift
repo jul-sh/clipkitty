@@ -110,17 +110,7 @@ final class ClipKittyUITests: XCTestCase {
     private func getAppSupportDirectory(for appURL: URL) -> URL {
         let bundleId = getBundleIdentifier(for: appURL)
         let userHome = URL(fileURLWithPath: "/Users/\(NSUserName())")
-        let containerDir = userHome.appendingPathComponent("Library/Containers/\(bundleId)/Data/Library/Application Support/ClipKitty")
-        // Test actual write access by creating and removing a probe file.
-        // isWritableFile returns true for container paths even when macOS
-        // sandbox restrictions will block the actual write.
-        let probeURL = containerDir.appendingPathComponent(".write_probe")
-        try? FileManager.default.createDirectory(at: containerDir, withIntermediateDirectories: true)
-        if FileManager.default.createFile(atPath: probeURL.path, contents: nil) {
-            try? FileManager.default.removeItem(at: probeURL)
-            return containerDir
-        }
-        return userHome.appendingPathComponent("Library/Application Support/ClipKitty")
+        return userHome.appendingPathComponent("Library/Containers/\(bundleId)/Data/Library/Application Support/ClipKitty")
     }
 
     private func setupTestDatabase(in appSupportDir: URL) throws {
@@ -160,14 +150,7 @@ final class ClipKittyUITests: XCTestCase {
             return
         }
 
-        // Use replaceItemAt if the target exists (handles cases where removeItem
-        // failed due to container permissions), otherwise copyItem.
-        if FileManager.default.fileExists(atPath: targetURL.path) {
-            _ = try FileManager.default.replaceItemAt(targetURL, withItemAt: sqliteSourceURL,
-                                                       backupItemName: nil, options: .withoutDeletingBackupItem)
-        } else {
-            try FileManager.default.copyItem(at: sqliteSourceURL, to: targetURL)
-        }
+        try FileManager.default.copyItem(at: sqliteSourceURL, to: targetURL)
     }
 
     /// Helper to get the currently selected index by finding the button with isSelected trait
