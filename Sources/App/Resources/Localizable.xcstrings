@@ -2753,66 +2753,66 @@
         }
       }
     },
-    "ClipKitty will automatically paste items into the previous app when you press Enter.": {
+    "ClipKitty will paste items directly into the previous app.": {
       "localizations": {
         "en": {
           "stringUnit": {
             "state": "translated",
-            "value": "ClipKitty will automatically paste items into the previous app when you press Enter."
+            "value": "ClipKitty will paste items directly into the previous app."
           }
         },
         "es": {
           "stringUnit": {
             "state": "translated",
-            "value": "ClipKitty pegará automáticamente los elementos en la aplicación anterior cuando presiones Enter."
+            "value": "ClipKitty pegará los elementos directamente en la aplicación anterior."
           }
         },
         "zh-Hans": {
           "stringUnit": {
             "state": "translated",
-            "value": "按下回车键时，ClipKitty 将自动把项目粘贴到上一个应用中。"
+            "value": "ClipKitty 将直接把项目粘贴到上一个应用中。"
           }
         },
         "zh-Hant": {
           "stringUnit": {
             "state": "translated",
-            "value": "按下 Enter 鍵時，ClipKitty 會自動將項目貼入先前的 App。"
+            "value": "ClipKitty 會直接將項目貼入先前的 App。"
           }
         },
         "ja": {
           "stringUnit": {
             "state": "translated",
-            "value": "Enterキーを押すと、ClipKittyは直前のアプリに項目を自動的にペーストします。"
+            "value": "ClipKittyは直前のアプリに項目を直接ペーストします。"
           }
         },
         "ko": {
           "stringUnit": {
             "state": "translated",
-            "value": "Enter 키를 누르면 ClipKitty가 이전 앱에 항목을 자동으로 붙여넣습니다."
+            "value": "ClipKitty가 이전 앱에 항목을 직접 붙여넣습니다."
           }
         },
         "fr": {
           "stringUnit": {
             "state": "translated",
-            "value": "ClipKitty collera automatiquement les éléments dans l'application précédente lorsque vous appuyez sur Entrée."
+            "value": "ClipKitty collera les éléments directement dans l'application précédente."
           }
         },
         "pt-BR": {
           "stringUnit": {
             "state": "translated",
-            "value": "O ClipKitty colará automaticamente os itens no app anterior quando você pressionar Enter."
+            "value": "O ClipKitty colará os itens diretamente no app anterior."
           }
         },
         "ru": {
           "stringUnit": {
             "state": "translated",
-            "value": "ClipKitty будет автоматически вставлять элементы в предыдущее приложение при нажатии клавиши Return."
+            "value": "ClipKitty будет вставлять элементы непосредственно в предыдущее приложение."
           }
         },
         "de": {
           "stringUnit": {
             "state": "translated",
-            "value": "ClipKitty setzt Einträge automatisch in die vorherige App ein, wenn Sie die Eingabetaste drücken."
+            "value": "ClipKitty setzt Einträge direkt in die vorherige App ein."
           }
         }
       }
