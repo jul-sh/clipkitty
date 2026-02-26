@@ -24,8 +24,10 @@ struct FilterTagView: View {
                     .foregroundColor(.secondary)
             }
             .buttonStyle(.plain)
+            .accessibilityIdentifier("RemoveFilter")
             .accessibilityLabel(String(localized: "Remove filter"))
         }
+        .accessibilityIdentifier("FilterTag_\(suggestion.displayName)")
         .padding(.horizontal, 8)
         .padding(.vertical, 4)
         .background(

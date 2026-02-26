@@ -128,10 +128,27 @@ struct ContentView: View {
     }
 
     var body: some View {
-        VStack(spacing: 0) {
-            searchBar
-            Divider()
-            content
+        ZStack(alignment: .topLeading) {
+            VStack(spacing: 0) {
+                searchBar
+                Divider()
+                content
+            }
+
+            // Autocomplete dropdown — rendered above all content to receive clicks
+            if case .visible(let suggestions, let highlightedIndex) = autocompleteState {
+                AutocompleteDropdownView(
+                    suggestions: suggestions,
+                    highlightedIndex: highlightedIndex,
+                    onSelect: { suggestion in
+                        activeFilter = suggestion.filter
+                        searchText = ""
+                        autocompleteState = .hidden
+                    }
+                )
+                .padding(.top, 50) // Below the search bar
+                .padding(.leading, 57) // Align with text field (17 padding + 40 icon area)
+            }
         }
         // Hidden element for UI testing - exposes selected index
         .accessibilityElement(children: .contain)
@@ -426,65 +443,47 @@ struct ContentView: View {
     // MARK: - Search Bar
 
     private var searchBar: some View {
-        ZStack(alignment: .topLeading) {
-            // Main search bar
-            HStack(spacing: 8) {
-                Image(systemName: "magnifyingglass")
-                    .foregroundStyle(.secondary)
-                    .font(.custom(FontManager.sansSerif, size: 17).weight(.medium))
+        HStack(spacing: 8) {
+            Image(systemName: "magnifyingglass")
+                .foregroundStyle(.secondary)
+                .font(.custom(FontManager.sansSerif, size: 17).weight(.medium))
 
-                SmartSearchField(
-                    textQuery: $searchText,
-                    activeFilter: $activeFilter,
-                    autocompleteState: $autocompleteState,
-                    onMoveSelection: { moveSelection(by: $0) },
-                    onConfirmSelection: { confirmSelection() },
-                    onDismiss: { onDismiss() },
-                    onShowActions: {
-                        guard selectedItem != nil else { return }
-                        if case .hidden = actionsPopover {
-                            let actions = actionItems
-                            actionsPopover = .showingActions(highlightedIndex: actions.count - 1)
-                            focusActionsDropdown()
-                        } else {
-                            actionsPopover = .hidden
-                        }
-                    },
-                    onShowDelete: {
-                        guard selectedItemId != nil else { return }
-                        actionsPopover = .showingDeleteConfirm(highlightedIndex: 0)
+            SmartSearchField(
+                textQuery: $searchText,
+                activeFilter: $activeFilter,
+                autocompleteState: $autocompleteState,
+                onMoveSelection: { moveSelection(by: $0) },
+                onConfirmSelection: { confirmSelection() },
+                onDismiss: { onDismiss() },
+                onShowActions: {
+                    guard selectedItem != nil else { return }
+                    if case .hidden = actionsPopover {
+                        let actions = actionItems
+                        actionsPopover = .showingActions(highlightedIndex: actions.count - 1)
                         focusActionsDropdown()
+                    } else {
+                        actionsPopover = .hidden
                     }
-                )
-                .focused($focusTarget, equals: .search)
-                .onKeyPress(characters: .decimalDigits, phases: .down) { keyPress in
-                    handleNumberKey(keyPress)
+                },
+                onShowDelete: {
+                    guard selectedItemId != nil else { return }
+                    actionsPopover = .showingDeleteConfirm(highlightedIndex: 0)
+                    focusActionsDropdown()
                 }
-
-                if case .visible = searchSpinner {
-                    ProgressView()
-                        .scaleEffect(0.5)
-                        .frame(width: 16, height: 16)
-                }
+            )
+            .focused($focusTarget, equals: .search)
+            .onKeyPress(characters: .decimalDigits, phases: .down) { keyPress in
+                handleNumberKey(keyPress)
             }
-            .padding(.horizontal, 17)
-            .padding(.vertical, 13)
 
-            // Autocomplete dropdown overlay
-            if case .visible(let suggestions, let highlightedIndex) = autocompleteState {
-                AutocompleteDropdownView(
-                    suggestions: suggestions,
-                    highlightedIndex: highlightedIndex,
-                    onSelect: { suggestion in
-                        activeFilter = suggestion.filter
-                        searchText = ""
-                        autocompleteState = .hidden
-                    }
-                )
-                .padding(.top, 50) // Position below the search bar
-                .padding(.leading, 40) // Align with text field
+            if case .visible = searchSpinner {
+                ProgressView()
+                    .scaleEffect(0.5)
+                    .frame(width: 16, height: 16)
             }
         }
+        .padding(.horizontal, 17)
+        .padding(.vertical, 13)
     }
 
     private func handleNumberKey(_ keyPress: KeyPress) -> KeyPress.Result {
@@ -501,6 +500,17 @@ struct ContentView: View {
     private func installCommandNumberEventMonitor() {
         guard commandNumberEventMonitor == nil else { return }
         commandNumberEventMonitor = NSEvent.addLocalMonitorForEvents(matching: .keyDown) { event in
+            // Backspace on empty search field removes the active filter.
+            // Handled here because SwiftUI's .onKeyPress(.delete) does not fire
+            // on an empty TextField.
+            if event.keyCode == 51, // 51 = backspace key
+               searchText.isEmpty,
+               activeFilter != nil,
+               focusTarget == .search {
+                activeFilter = nil
+                return nil
+            }
+
             guard let number = commandNumber(from: event) else {
                 return event
             }

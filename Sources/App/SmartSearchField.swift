@@ -50,9 +50,6 @@ struct SmartSearchField: View {
                 .onKeyPress(.tab) {
                     handleTab()
                 }
-                .onKeyPress(.delete) {
-                    handleBackspace()
-                }
                 .onKeyPress(.deleteForward) {
                     onShowDelete()
                     return .handled
@@ -140,16 +137,6 @@ struct SmartSearchField: View {
             return .handled
         }
         // Tab with no autocomplete does nothing special
-        return .ignored
-    }
-
-    private func handleBackspace() -> KeyPress.Result {
-        // If input is empty and we have an active filter, remove it
-        if textQuery.isEmpty && activeFilter != nil {
-            activeFilter = nil
-            return .handled
-        }
-        // Otherwise, let the default backspace behavior happen
         return .ignored
     }
 
