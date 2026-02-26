@@ -560,8 +560,8 @@ final class ClipKittyUITests: XCTestCase {
         firstItem.rightClick()
         Thread.sleep(forTimeInterval: 0.5)
 
-        // Click the Delete action
-        let deleteMenuItem = app.menuItems["Delete"]
+        // Click the Delete action (use identifier to avoid collision with Edit menu's Delete)
+        let deleteMenuItem = app.menuItems["ContextMenu_Delete"]
         XCTAssertTrue(deleteMenuItem.waitForExistence(timeout: 3), "Delete action should exist in context menu")
         deleteMenuItem.click()
         Thread.sleep(forTimeInterval: 0.5)
@@ -573,6 +573,66 @@ final class ClipKittyUITests: XCTestCase {
         // Verify: window is still visible (not hidden)
         let window = app.dialogs.firstMatch
         XCTAssertTrue(window.exists, "Window should still be visible after deletion via context menu")
+    }
+
+    /// Screenshot test to inspect the accent border that appears when right-clicking an item.
+    /// The screenshot is saved to /tmp/clipkitty_rightclick_border.png for manual inspection.
+    func testRightClickBorderScreenshot() throws {
+        let searchField = app.textFields["SearchField"]
+        XCTAssertTrue(searchField.waitForExistence(timeout: 5), "Search field not found")
+
+        // Ensure we have items in the list
+        let firstItem = app.buttons["ItemRow_0"]
+        XCTAssertTrue(firstItem.waitForExistence(timeout: 5), "First item should exist")
+
+        // Right-click the first item — this triggers the accent border
+        firstItem.rightClick()
+        Thread.sleep(forTimeInterval: 0.5)
+
+        // Context menu should be visible (border is showing now)
+        let menuItems = app.menuItems
+        XCTAssertGreaterThan(menuItems.count, 0, "Context menu should be visible")
+
+        // Capture window screenshot while the border is visible
+        let window = app.dialogs.firstMatch
+        XCTAssertTrue(window.exists, "Window should exist")
+
+        let screenShot = XCUIScreen.main.screenshot()
+        let image = screenShot.image
+
+        guard let cgImage = image.cgImage(forProposedRect: nil, context: nil, hints: nil) else {
+            XCTFail("Could not get CGImage from screenshot")
+            return
+        }
+
+        // Crop to the window area
+        let scaleFactor = NSScreen.main?.backingScaleFactor ?? 1.0
+        let frame = window.frame
+        let cropRect = CGRect(
+            x: frame.origin.x * scaleFactor,
+            y: frame.origin.y * scaleFactor,
+            width: frame.width * scaleFactor,
+            height: frame.height * scaleFactor
+        )
+
+        guard let cropped = cgImage.cropping(to: cropRect) else {
+            XCTFail("Could not crop screenshot to window frame")
+            return
+        }
+
+        let bitmapRep = NSBitmapImageRep(cgImage: cropped)
+        guard let png = bitmapRep.representation(using: .png, properties: [:]) else {
+            XCTFail("Could not create PNG data")
+            return
+        }
+
+        let url = URL(fileURLWithPath: "/tmp/clipkitty_rightclick_border.png")
+        try png.write(to: url)
+
+        let attachment = XCTAttachment(data: png, uniformTypeIdentifier: "public.png")
+        attachment.name = "rightclick_border"
+        attachment.lifetime = .keepAlways
+        add(attachment)
     }
 
     // MARK: - Settings Tests

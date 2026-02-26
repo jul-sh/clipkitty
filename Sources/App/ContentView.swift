@@ -1534,9 +1534,7 @@ struct ItemRow: View, Equatable {
     }
 
     var body: some View {
-        // 1. Wrap the content inside a Button
-        Button(action: onTap) {
-            HStack(spacing: 6) {
+        HStack(spacing: 6) {
             // Content type icon with source app badge overlay
             ZStack(alignment: .bottomTrailing) {
                 // Main icon: image thumbnail, browser icon for links, color swatch, or SF symbol
@@ -1644,31 +1642,29 @@ struct ItemRow: View, Equatable {
         }
         .clipShape(RoundedRectangle(cornerRadius: 10, style: .continuous))
         .contentShape(Rectangle())
-        }
-        // 2. Apply the plain style so it behaves like a standard row instead of a system button
-        .buttonStyle(.plain)
-        .contextMenu {
-            // Default action (Copy or Paste depending on settings)
-            Button(action: onDefaultAction) {
-                Text(AppSettings.shared.pasteMode.buttonLabel)
-            }
-            .accessibilityIdentifier("ContextMenu_DefaultAction")
-
-            // Copy only (shown when autoPaste is enabled)
-            if let onCopyOnly {
-                Button(action: onCopyOnly) {
-                    Text("Copy", comment: "Context menu action to copy without pasting")
+        .onTapGesture(perform: onTap)
+        .overlay {
+            AppKitContextMenuOverlay(items: {
+                var items: [AppKitContextMenuOverlay.Item] = []
+                items.append(.action(
+                    AppSettings.shared.pasteMode.buttonLabel,
+                    identifier: "ContextMenu_DefaultAction",
+                    action: onDefaultAction
+                ))
+                if let onCopyOnly {
+                    items.append(.action(
+                        String(localized: "Copy", comment: "Context menu action to copy without pasting"),
+                        identifier: "ContextMenu_Copy",
+                        action: onCopyOnly
+                    ))
                 }
-                .accessibilityIdentifier("ContextMenu_Copy")
-            }
-
-            Divider()
-
-            // Delete action
-            Button(role: .destructive, action: onDelete) {
-                Text("Delete", comment: "Context menu action to delete item")
-            }
-            .accessibilityIdentifier("ContextMenu_Delete")
+                items.append(.destructive(
+                    String(localized: "Delete", comment: "Context menu action to delete item"),
+                    identifier: "ContextMenu_Delete",
+                    action: onDelete
+                ))
+                return items
+            }())
         }
         .accessibilityElement(children: .combine)
         .accessibilityLabel(displayText)
@@ -1677,6 +1673,75 @@ struct ItemRow: View, Equatable {
         .accessibilityAddTraits(isSelected ? .isSelected : [])
     }
 
+}
+
+// MARK: - AppKit Context Menu (no accent border)
+
+/// Transparent NSView overlay that intercepts right-clicks and shows an NSMenu,
+/// bypassing SwiftUI's `.contextMenu` which draws an accent-colored border on macOS.
+private struct AppKitContextMenuOverlay: NSViewRepresentable {
+    struct Item {
+        let title: String
+        let identifier: String
+        let action: () -> Void
+        let isDestructive: Bool
+
+        static func action(_ title: String, identifier: String = "", action: @escaping () -> Void) -> Item {
+            Item(title: title, identifier: identifier, action: action, isDestructive: false)
+        }
+        static func destructive(_ title: String, identifier: String = "", action: @escaping () -> Void) -> Item {
+            Item(title: title, identifier: identifier, action: action, isDestructive: true)
+        }
+    }
+
+    let items: [Item]
+
+    func makeCoordinator() -> Coordinator { Coordinator() }
+
+    func makeNSView(context: Context) -> RightClickView {
+        let view = RightClickView()
+        view.coordinator = context.coordinator
+        context.coordinator.items = items
+        return view
+    }
+
+    func updateNSView(_ nsView: RightClickView, context: Context) {
+        context.coordinator.items = items
+    }
+
+    final class Coordinator: NSObject {
+        var items: [Item] = []
+
+        @objc func menuAction(_ sender: NSMenuItem) {
+            guard sender.tag >= 0, sender.tag < items.count else { return }
+            items[sender.tag].action()
+        }
+    }
+
+    final class RightClickView: NSView {
+        weak var coordinator: Coordinator?
+
+        override func menu(for event: NSEvent) -> NSMenu? {
+            guard let coordinator else { return nil }
+            let menu = NSMenu()
+            for (i, item) in coordinator.items.enumerated() {
+                let mi = NSMenuItem(title: item.title,
+                                    action: #selector(Coordinator.menuAction(_:)),
+                                    keyEquivalent: "")
+                mi.target = coordinator
+                mi.tag = i
+                mi.setAccessibilityIdentifier(item.identifier)
+                menu.addItem(mi)
+                // Add separator before the destructive section
+                if !item.isDestructive,
+                   i + 1 < coordinator.items.count,
+                   coordinator.items[i + 1].isDestructive {
+                    menu.addItem(.separator())
+                }
+            }
+            return menu
+        }
+    }
 }
 
 // MARK: - Three-Part HStack Highlighted Text
