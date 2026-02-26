@@ -32,14 +32,15 @@ ClipKitty stores everything. Finds it in milliseconds—whether you have 100 ite
 * **OCR & Smart Search**: Search text inside images and screenshots. AI-powered descriptions make visual content searchable.
 * **Keyboard-First**: `⌥Space` to open, arrow keys to navigate, `Return` to paste. `⌘1-9` for quick access.
 * **Privacy-First**: 100% on-device and offline. No telemetry, no cloud sync, no accounts.
-* **Free & Open Source**: GPL-3.0 licensed. Install free via Homebrew or support development on the App Store.
+* **Free & Open Source**: GPL-3.0 licensed. Install free from GitHub or support development on the App Store.
 
 ## Installation
 
-### Homebrew (Recommended)
+### Quick Install (Recommended)
 
 ```bash
-brew install jul-sh/clipkitty/clipkitty
+# Downloads the latest release and installs ClipKitty.app to /Applications
+curl -sL "$(curl -s https://api.github.com/repos/jul-sh/clipkitty/releases/latest | grep browser_download_url | grep .dmg | cut -d'"' -f4)" -o /tmp/ClipKitty.dmg && hdiutil attach /tmp/ClipKitty.dmg -quiet && cp -R "/Volumes/ClipKitty/ClipKitty.app" /Applications/ && hdiutil detach "/Volumes/ClipKitty" -quiet && rm /tmp/ClipKitty.dmg
 ```
 
 ### Manual Download
