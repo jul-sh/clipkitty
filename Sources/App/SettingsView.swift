@@ -333,7 +333,7 @@ struct AdvancedSettingsView: View {
                 }
             }
 
-            Section(String(localized: "Direct Paste")) {
+            Section(String(localized: "Integration")) {
                 if settings.hasPostEventPermission {
                     Toggle(String(localized: "Direct Paste"), isOn: $settings.autoPasteEnabled)
                     if settings.autoPasteEnabled {
