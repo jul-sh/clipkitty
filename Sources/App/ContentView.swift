@@ -711,6 +711,10 @@ struct ContentView: View {
                             return isDestructive
                                 ? .destructive(actionLabel(for: action), identifier: "ContextMenu_\(actionIdentifier(for: action))") { performActionOnItem(itemId: row.metadata.itemId, action: action) }
                                 : .action(actionLabel(for: action), identifier: "ContextMenu_\(actionIdentifier(for: action))") { performActionOnItem(itemId: row.metadata.itemId, action: action) }
+                        },
+                        onContextMenuShow: {
+                            hasUserNavigated = true
+                            selectedItemId = row.metadata.itemId
                         }
                     )
                     .equatable()
@@ -1496,7 +1500,8 @@ struct ItemRow: View, Equatable {
     let isSelected: Bool
     let hasUserNavigated: Bool
     let onTap: () -> Void
-    let contextMenuItems: [AppKitContextMenuOverlay.Item]
+    let contextMenuItems: [RightClickPopoverOverlay.Item]
+    let onContextMenuShow: () -> Void
 
     private var accentSelected: Bool { isSelected && hasUserNavigated }
 
@@ -1637,7 +1642,7 @@ struct ItemRow: View, Equatable {
         .clipShape(RoundedRectangle(cornerRadius: 10, style: .continuous))
         .contentShape(Rectangle())
         .onTapGesture(perform: onTap)
-        .overlay { AppKitContextMenuOverlay(items: contextMenuItems) }
+        .overlay { RightClickPopoverOverlay(items: contextMenuItems, onShow: onContextMenuShow) }
         .accessibilityElement(children: .combine)
         .accessibilityLabel(displayText)
         .accessibilityHint(AppSettings.shared.pasteMode == .autoPaste ? String(localized: "Double tap to paste") : String(localized: "Double tap to copy"))
@@ -1647,11 +1652,11 @@ struct ItemRow: View, Equatable {
 
 }
 
-// MARK: - AppKit Context Menu (no accent border)
+// MARK: - Right-Click Popover (no accent border)
 
-/// Transparent NSView overlay that intercepts right-clicks and shows an NSMenu,
+/// Transparent NSView overlay that intercepts right-clicks and shows an actions popover,
 /// bypassing SwiftUI's `.contextMenu` which draws an accent-colored border on macOS.
-struct AppKitContextMenuOverlay: NSViewRepresentable {
+struct RightClickPopoverOverlay: NSViewRepresentable {
     struct Item {
         let title: String
         let identifier: String
@@ -1667,6 +1672,7 @@ struct AppKitContextMenuOverlay: NSViewRepresentable {
     }
 
     let items: [Item]
+    var onShow: (() -> Void)? = nil
 
     func makeCoordinator() -> Coordinator { Coordinator() }
 
@@ -1674,45 +1680,109 @@ struct AppKitContextMenuOverlay: NSViewRepresentable {
         let view = RightClickView()
         view.coordinator = context.coordinator
         context.coordinator.items = items
+        context.coordinator.onShow = onShow
         return view
     }
 
     func updateNSView(_ nsView: RightClickView, context: Context) {
         context.coordinator.items = items
+        context.coordinator.onShow = onShow
     }
 
-    final class Coordinator: NSObject {
+    final class Coordinator {
         var items: [Item] = []
-
-        @objc func menuAction(_ sender: NSMenuItem) {
-            guard sender.tag >= 0, sender.tag < items.count else { return }
-            items[sender.tag].action()
-        }
+        var onShow: (() -> Void)?
+        weak var currentPopover: NSPopover?
     }
 
     final class RightClickView: NSView {
         weak var coordinator: Coordinator?
 
-        override func menu(for event: NSEvent) -> NSMenu? {
-            guard let coordinator else { return nil }
-            let menu = NSMenu()
-            for (i, item) in coordinator.items.enumerated() {
-                let mi = NSMenuItem(title: item.title,
-                                    action: #selector(Coordinator.menuAction(_:)),
-                                    keyEquivalent: "")
-                mi.target = coordinator
-                mi.tag = i
-                mi.setAccessibilityIdentifier(item.identifier)
-                menu.addItem(mi)
-                // Add separator before the destructive section
-                if !item.isDestructive,
-                   i + 1 < coordinator.items.count,
-                   coordinator.items[i + 1].isDestructive {
-                    menu.addItem(.separator())
+        override func rightMouseDown(with event: NSEvent) {
+            guard let coordinator, !coordinator.items.isEmpty else { return }
+
+            // Dismiss any existing popover
+            coordinator.currentPopover?.close()
+
+            // Notify parent (e.g. to select the right-clicked item)
+            coordinator.onShow?()
+
+            let localPoint = convert(event.locationInWindow, from: nil)
+            let items = coordinator.items
+
+            let popover = NSPopover()
+            popover.behavior = .transient
+            popover.contentViewController = NSHostingController(
+                rootView: ActionsMenuContent(items: items) { [weak popover] in
+                    popover?.close()
+                }
+            )
+            popover.show(
+                relativeTo: CGRect(origin: localPoint, size: .zero),
+                of: self,
+                preferredEdge: .minY
+            )
+            coordinator.currentPopover = popover
+        }
+
+        override func menu(for event: NSEvent) -> NSMenu? { nil }
+    }
+}
+
+// MARK: - Actions Menu Content (shared by right-click popover)
+
+/// Self-contained actions menu with delete confirmation, used inside NSPopover for right-click.
+private struct ActionsMenuContent: View {
+    let items: [RightClickPopoverOverlay.Item]
+    let dismiss: () -> Void
+
+    @State private var confirmingDelete = false
+
+    var body: some View {
+        VStack(spacing: 2) {
+            if confirmingDelete {
+                Text("Delete?")
+                    .font(.system(size: 13, weight: .medium))
+                    .foregroundStyle(.secondary)
+                    .frame(maxWidth: .infinity, alignment: .leading)
+                    .padding(.horizontal, 8)
+                    .padding(.bottom, 4)
+                ActionOptionRow(
+                    label: String(localized: "Delete"),
+                    actionID: "Delete",
+                    isDestructive: true
+                ) {
+                    items.first { $0.isDestructive }?.action()
+                    dismiss()
+                }
+                ActionOptionRow(
+                    label: String(localized: "Cancel"),
+                    actionID: "Cancel"
+                ) {
+                    confirmingDelete = false
+                }
+            } else {
+                ForEach(Array(items.enumerated()), id: \.offset) { index, item in
+                    if item.isDestructive && index > 0 {
+                        Divider().padding(.horizontal, 4).padding(.vertical, 3)
+                    }
+                    ActionOptionRow(
+                        label: item.title,
+                        actionID: item.identifier,
+                        isDestructive: item.isDestructive
+                    ) {
+                        if item.isDestructive {
+                            confirmingDelete = true
+                        } else {
+                            item.action()
+                            dismiss()
+                        }
+                    }
                 }
             }
-            return menu
         }
+        .padding(10)
+        .frame(width: 160)
     }
 }
 
@@ -1878,7 +1948,7 @@ private struct FilterOptionRow: View {
 
 // MARK: - Action Option Row
 
-private struct ActionOptionRow: View {
+struct ActionOptionRow: View {
     let label: String
     let actionID: String
     var isHighlighted: Bool = false
