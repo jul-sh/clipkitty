@@ -706,14 +706,11 @@ struct ContentView: View {
                             selectedItemId = row.metadata.itemId
                             focusSearchField()
                         },
-                        onDefaultAction: {
-                            performActionOnItem(itemId: row.metadata.itemId, action: .defaultAction)
-                        },
-                        onCopyOnly: AppSettings.shared.pasteMode == .autoPaste ? {
-                            performActionOnItem(itemId: row.metadata.itemId, action: .copyOnly)
-                        } : nil,
-                        onDelete: {
-                            deleteItem(id: row.metadata.itemId)
+                        contextMenuItems: actionItems.reversed().map { action in
+                            let isDestructive = action == .delete
+                            return isDestructive
+                                ? .destructive(actionLabel(for: action), identifier: "ContextMenu_\(actionIdentifier(for: action))") { performActionOnItem(itemId: row.metadata.itemId, action: action) }
+                                : .action(actionLabel(for: action), identifier: "ContextMenu_\(actionIdentifier(for: action))") { performActionOnItem(itemId: row.metadata.itemId, action: action) }
                         }
                     )
                     .equatable()
@@ -900,7 +897,7 @@ struct ContentView: View {
 
     private func actionIdentifier(for action: ActionItem) -> String {
         switch action {
-        case .defaultAction: return AppSettings.shared.pasteMode.buttonLabel
+        case .defaultAction: return "DefaultAction"
         case .copyOnly: return "Copy"
         case .delete: return "Delete"
         }
@@ -1499,10 +1496,7 @@ struct ItemRow: View, Equatable {
     let isSelected: Bool
     let hasUserNavigated: Bool
     let onTap: () -> Void
-    // Context menu actions
-    let onDefaultAction: () -> Void
-    let onCopyOnly: (() -> Void)?  // nil when not in autoPaste mode
-    let onDelete: () -> Void
+    let contextMenuItems: [AppKitContextMenuOverlay.Item]
 
     private var accentSelected: Bool { isSelected && hasUserNavigated }
 
@@ -1530,7 +1524,7 @@ struct ItemRow: View, Equatable {
                lhs.hasUserNavigated == rhs.hasUserNavigated &&
                lhs.metadata == rhs.metadata &&
                lhs.matchData == rhs.matchData &&
-               (lhs.onCopyOnly != nil) == (rhs.onCopyOnly != nil)
+               lhs.contextMenuItems.count == rhs.contextMenuItems.count
     }
 
     var body: some View {
@@ -1643,29 +1637,7 @@ struct ItemRow: View, Equatable {
         .clipShape(RoundedRectangle(cornerRadius: 10, style: .continuous))
         .contentShape(Rectangle())
         .onTapGesture(perform: onTap)
-        .overlay {
-            AppKitContextMenuOverlay(items: {
-                var items: [AppKitContextMenuOverlay.Item] = []
-                items.append(.action(
-                    AppSettings.shared.pasteMode.buttonLabel,
-                    identifier: "ContextMenu_DefaultAction",
-                    action: onDefaultAction
-                ))
-                if let onCopyOnly {
-                    items.append(.action(
-                        String(localized: "Copy", comment: "Context menu action to copy without pasting"),
-                        identifier: "ContextMenu_Copy",
-                        action: onCopyOnly
-                    ))
-                }
-                items.append(.destructive(
-                    String(localized: "Delete", comment: "Context menu action to delete item"),
-                    identifier: "ContextMenu_Delete",
-                    action: onDelete
-                ))
-                return items
-            }())
-        }
+        .overlay { AppKitContextMenuOverlay(items: contextMenuItems) }
         .accessibilityElement(children: .combine)
         .accessibilityLabel(displayText)
         .accessibilityHint(AppSettings.shared.pasteMode == .autoPaste ? String(localized: "Double tap to paste") : String(localized: "Double tap to copy"))
@@ -1679,7 +1651,7 @@ struct ItemRow: View, Equatable {
 
 /// Transparent NSView overlay that intercepts right-clicks and shows an NSMenu,
 /// bypassing SwiftUI's `.contextMenu` which draws an accent-colored border on macOS.
-private struct AppKitContextMenuOverlay: NSViewRepresentable {
+struct AppKitContextMenuOverlay: NSViewRepresentable {
     struct Item {
         let title: String
         let identifier: String
