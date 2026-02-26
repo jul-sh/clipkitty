@@ -9,7 +9,7 @@ enum HotKeyEditState: Equatable {
 enum SettingsTab: String, CaseIterable {
     case general = "General"
     case privacy = "Privacy"
-    case shortcuts = "Shortcuts"
+    case advanced = "Advanced"
 }
 
 struct SettingsView: View {
@@ -37,11 +37,11 @@ struct SettingsView: View {
                 }
                 .tag(SettingsTab.privacy)
 
-            ShortcutsSettingsView(onHotKeyChanged: onHotKeyChanged)
+            AdvancedSettingsView(onHotKeyChanged: onHotKeyChanged)
                 .tabItem {
-                    Label(String(localized: "Shortcuts"), systemImage: "keyboard")
+                    Label(String(localized: "Advanced"), systemImage: "gearshape.2")
                 }
-                .tag(SettingsTab.shortcuts)
+                .tag(SettingsTab.advanced)
         }
         .frame(width: 480, height: 420)
     }
@@ -122,30 +122,7 @@ struct GeneralSettingsView: View {
 
             }
 
-            Section(String(localized: "Behavior")) {
-                if settings.hasPostEventPermission {
-                    Toggle(String(localized: "Direct Paste"), isOn: $settings.autoPasteEnabled)
-                    if settings.autoPasteEnabled {
-                        Text(String(localized: "ClipKitty will paste items directly into the previous app when you press Enter."))
-                            .font(.caption)
-                            .foregroundStyle(.secondary)
-                    } else {
-                        Text(String(localized: "Items will be copied to the clipboard without pasting."))
-                            .font(.caption)
-                            .foregroundStyle(.secondary)
-                    }
-                } else {
-                    Toggle(String(localized: "Direct Paste"), isOn: .constant(false))
-                        .disabled(true)
-                    Text(String(localized: "Paste items directly into the previous app. Requires permission in System Settings."))
-                        .font(.caption)
-                        .foregroundStyle(.secondary)
-                    Button(String(localized: "Open System Settings")) {
-                        NSWorkspace.shared.open(URL(string: "x-apple.systempreferences:com.apple.preference.security?Privacy_Accessibility")!)
-                    }
-                    .font(.caption)
-                }
-            }
+
 
             Section(String(localized: "Data")) {
                 Button(role: .destructive) {
@@ -306,7 +283,7 @@ class HotKeyRecorderView: NSView {
     }
 }
 
-struct ShortcutsSettingsView: View {
+struct AdvancedSettingsView: View {
     @ObservedObject private var settings = AppSettings.shared
     @State private var hotKeyState: HotKeyEditState = .idle
 
@@ -351,6 +328,31 @@ struct ShortcutsSettingsView: View {
                     Button(String(localized: "Reset to Default (⌥Space)")) {
                         settings.hotKey = .default
                         onHotKeyChanged(.default)
+                    }
+                    .font(.caption)
+                }
+            }
+
+            Section(String(localized: "Direct Paste")) {
+                if settings.hasPostEventPermission {
+                    Toggle(String(localized: "Direct Paste"), isOn: $settings.autoPasteEnabled)
+                    if settings.autoPasteEnabled {
+                        Text(String(localized: "ClipKitty will paste items directly into the previous app when you press Enter."))
+                            .font(.caption)
+                            .foregroundStyle(.secondary)
+                    } else {
+                        Text(String(localized: "Items will be copied to the clipboard without pasting."))
+                            .font(.caption)
+                            .foregroundStyle(.secondary)
+                    }
+                } else {
+                    Toggle(String(localized: "Direct Paste"), isOn: .constant(false))
+                        .disabled(true)
+                    Text(String(localized: "Paste items directly into the previous app. Requires permission in System Settings."))
+                        .font(.caption)
+                        .foregroundStyle(.secondary)
+                    Button(String(localized: "Open System Settings")) {
+                        NSWorkspace.shared.open(URL(string: "x-apple.systempreferences:com.apple.preference.security?Privacy_Accessibility")!)
                     }
                     .font(.caption)
                 }
