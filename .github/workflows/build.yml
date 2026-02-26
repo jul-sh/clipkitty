@@ -123,11 +123,22 @@ jobs:
           chmod +x distribution/build-dmg.sh
 
           make build CONFIGURATION=Release
+
+          # Sign nested frameworks/bundles first (inside-out for Sparkle, XPC services, etc.)
+          APP="DerivedData/Build/Products/Release/ClipKitty.app"
+          if [ -d "$APP/Contents/Frameworks" ]; then
+            find "$APP/Contents/Frameworks" \( -type f -perm +111 -o -name "*.dylib" \) | while read -r binary; do
+              codesign --force --options runtime --sign "Developer ID Application" "$binary"
+            done
+          fi
+
+          # Sign the outer app (must come last)
           codesign --force --options runtime --sign "Developer ID Application" \
             --entitlements Sources/App/ClipKitty.entitlements \
-            DerivedData/Build/Products/Release/ClipKitty.app
-          ./distribution/build-dmg.sh DerivedData/Build/Products/Release/ClipKitty.app ClipKitty.dmg
+            "$APP"
+          codesign --verify --deep --strict "$APP"
 
+          ./distribution/build-dmg.sh "$APP" ClipKitty.dmg
           codesign --force --sign "Developer ID Application" ClipKitty.dmg
 
       # 2. Notarize with Apple
@@ -138,7 +149,19 @@ jobs:
             --key auth_key.p8 \
             --key-id "$NOTARY_KEY_ID" \
             --issuer "$NOTARY_ISSUER_ID" \
-            --wait
+            --wait --output-format json | tee notarization_result.json
+
+          STATUS=$(python3 -c "import json,sys; print(json.load(sys.stdin)['status'])" < notarization_result.json)
+
+          if [ "$STATUS" != "Accepted" ]; then
+            echo "::error::Notarization failed with status: $STATUS"
+            SUBMISSION_ID=$(python3 -c "import json,sys; print(json.load(sys.stdin)['id'])" < notarization_result.json)
+            xcrun notarytool log "$SUBMISSION_ID" \
+              --key auth_key.p8 \
+              --key-id "$NOTARY_KEY_ID" \
+              --issuer "$NOTARY_ISSUER_ID" || true
+            exit 1
+          fi
         env:
           NOTARY_KEY_BASE64: ${{ steps.secrets.outputs.NOTARY_KEY_BASE64 }}
           NOTARY_KEY_ID: ${{ steps.secrets.outputs.NOTARY_KEY_ID }}
@@ -149,17 +172,16 @@ jobs:
         run: rm -f auth_key.p8
 
       # 3. Staple Notarization (Required for offline Gatekeeper approval)
-      #    Apple's CDN can take minutes to propagate the ticket after notarytool --wait returns.
+      #    Apple's CDN can occasionally lag behind even after "Accepted" status.
       - name: Staple Notarization
         run: |
-          sleep 30
           for i in $(seq 1 10); do
             if xcrun stapler staple ClipKitty.dmg; then
               echo "Stapling succeeded on attempt $i"
               exit 0
             fi
-            echo "Staple attempt $i failed, retrying in 30s..."
-            sleep 30
+            echo "Staple attempt $i failed, retrying in 15s..."
+            sleep 15
           done
           echo "Stapling failed after 10 attempts"
           exit 1
