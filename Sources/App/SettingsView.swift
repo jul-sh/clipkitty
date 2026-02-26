@@ -1,3 +1,4 @@
+import AppKit
 import SwiftUI
 import Carbon
 
@@ -60,6 +61,18 @@ struct GeneralSettingsView: View {
 
     var body: some View {
         Form {
+            if settings.updateAvailable {
+                Section {
+                    HStack {
+                        Label(String(localized: "A new version of ClipKitty is available."), systemImage: "arrow.down.circle")
+                        Spacer()
+                        Button(String(localized: "Download")) {
+                            NSWorkspace.shared.open(URL(string: "https://github.com/jul-sh/clipkitty/releases/latest")!)
+                        }
+                    }
+                }
+            }
+
             Section(String(localized: "Startup")) {
                 let canToggle: Bool = {
                     switch launchAtLogin.state {
