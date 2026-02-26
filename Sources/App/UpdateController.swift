@@ -33,11 +33,17 @@ final class SilentUpdateDriver: NSObject, SPUUserDriver {
     func showUpdaterError(_ error: any Error, acknowledgement: @escaping () -> Void) {
         log.error("Updater error: \(error.localizedDescription)")
         let alert = NSAlert()
-        alert.messageText = NSLocalizedString("Update Error", comment: "Alert title when auto-update fails")
-        alert.informativeText = error.localizedDescription
-        alert.alertStyle = .warning
-        alert.addButton(withTitle: NSLocalizedString("OK", comment: "Dismiss button"))
-        alert.runModal()
+        alert.messageText = NSLocalizedString("Update Available", comment: "Alert title prompting user to update manually")
+        alert.informativeText = NSLocalizedString(
+            "A new version of ClipKitty is available. Please download it from GitHub.",
+            comment: "Alert message when silent auto-update fails"
+        )
+        alert.alertStyle = .informational
+        alert.addButton(withTitle: NSLocalizedString("Download", comment: "Button to open GitHub releases page"))
+        alert.addButton(withTitle: NSLocalizedString("Later", comment: "Dismiss button"))
+        if alert.runModal() == .alertFirstButtonReturn {
+            NSWorkspace.shared.open(URL(string: "https://github.com/jul-sh/clipkitty/releases/latest")!)
+        }
         acknowledgement()
     }
 
