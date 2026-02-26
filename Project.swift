@@ -85,6 +85,8 @@ let project = Project(
                 "NSHumanReadableCopyright": "Copyright © 2025 ClipKitty. All rights reserved.",
                 "SUFeedURL": "https://jul-sh.github.io/clipkitty/appcast.xml",
                 "SUPublicEDKey": "9VqfSPPY2Gr8QTYDLa99yJXAFWnHw5aybSbKaYDyCq0=",
+                "SUEnableAutomaticChecks": true,
+                "SUAutomaticallyUpdate": true,
             ]),
             sources: ["Sources/App/**"],
             resources: [
@@ -102,6 +104,8 @@ let project = Project(
                         PLIST="$BUILT_PRODUCTS_DIR/$INFOPLIST_PATH"
                         /usr/libexec/PlistBuddy -c "Delete :SUFeedURL" "$PLIST" 2>/dev/null || true
                         /usr/libexec/PlistBuddy -c "Delete :SUPublicEDKey" "$PLIST" 2>/dev/null || true
+                        /usr/libexec/PlistBuddy -c "Delete :SUEnableAutomaticChecks" "$PLIST" 2>/dev/null || true
+                        /usr/libexec/PlistBuddy -c "Delete :SUAutomaticallyUpdate" "$PLIST" 2>/dev/null || true
                     fi
                     """,
                     name: "Strip Sparkle from AppStore builds",

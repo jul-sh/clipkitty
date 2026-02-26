@@ -100,6 +100,9 @@ final class AppSettings: ObservableObject {
     }
 
 
+    /// Set by the silent update driver when an auto-update fails.
+    @Published var updateAvailable = false
+
     let maxImageMegapixels: Double
     let imageCompressionQuality: Double
 
