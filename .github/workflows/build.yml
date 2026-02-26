@@ -5,6 +5,12 @@ on:
     branches: [main, release]
   pull_request:
     branches: [main, release]
+  workflow_dispatch:
+    inputs:
+      simulate_release:
+        description: 'Simulate a release (builds, signs, generates appcast, but does not publish)'
+        type: boolean
+        default: false
 
 permissions:
   contents: write
@@ -48,7 +54,7 @@ jobs:
 
       - name: Resolve Release Version
         id: resolve-version
-        if: github.ref == 'refs/heads/release' || (github.event_name == 'pull_request' && github.base_ref == 'release')
+        if: github.ref == 'refs/heads/release' || (github.event_name == 'pull_request' && github.base_ref == 'release') || (github.event_name == 'workflow_dispatch' && inputs.simulate_release)
         run: |
           VERSION=$(grep 'MARKETING_VERSION' Project.swift | head -1 | sed 's/.*"\(.*\)".*/\1/')
           echo "Base version from Project.swift: $VERSION"
@@ -163,6 +169,49 @@ jobs:
           echo "Stapling failed after 10 attempts"
           exit 1
 
+      - name: Install Sparkle CLI Tools
+        if: github.ref == 'refs/heads/release' || (github.event_name == 'workflow_dispatch' && inputs.simulate_release)
+        run: |
+          SPARKLE_VERSION="2.9.0"
+          curl -sL "https://github.com/sparkle-project/Sparkle/releases/download/${SPARKLE_VERSION}/Sparkle-${SPARKLE_VERSION}.tar.xz" -o /tmp/sparkle.tar.xz
+          mkdir -p /tmp/sparkle
+          tar -xf /tmp/sparkle.tar.xz -C /tmp/sparkle
+          echo "/tmp/sparkle/bin" >> "$GITHUB_PATH"
+
+      - name: Sign DMG with EdDSA
+        if: github.ref == 'refs/heads/release' || (github.event_name == 'workflow_dispatch' && inputs.simulate_release)
+        id: eddsa-sign
+        run: |
+          SIGNATURE=$(echo "$SPARKLE_EDDSA_KEY" | sign_update ClipKitty.dmg --ed-key-file -)
+          # sign_update outputs: sparkle:edSignature="..." length="..."
+          ED_SIGNATURE=$(echo "$SIGNATURE" | sed 's/.*sparkle:edSignature="\([^"]*\)".*/\1/')
+          FILE_LENGTH=$(echo "$SIGNATURE" | sed 's/.*length="\([^"]*\)".*/\1/')
+          echo "ed_signature=$ED_SIGNATURE" >> "$GITHUB_OUTPUT"
+          echo "file_length=$FILE_LENGTH" >> "$GITHUB_OUTPUT"
+        env:
+          SPARKLE_EDDSA_KEY: ${{ steps.secrets.outputs.SPARKLE_EDDSA_KEY }}
+
+      - name: Generate Appcast
+        if: github.ref == 'refs/heads/release' || (github.event_name == 'workflow_dispatch' && inputs.simulate_release)
+        run: |
+          chmod +x distribution/generate-appcast.sh
+          ./distribution/generate-appcast.sh \
+            "$VERSION" \
+            "${{ steps.eddsa-sign.outputs.ed_signature }}" \
+            "${{ steps.eddsa-sign.outputs.file_length }}" \
+            > appcast.xml
+          echo "--- Generated appcast.xml ---"
+          cat appcast.xml
+          # Validate XML
+          xmllint --noout appcast.xml
+
+      - name: Upload Appcast Artifact
+        if: github.event_name == 'workflow_dispatch' && inputs.simulate_release
+        uses: actions/upload-artifact@v4
+        with:
+          name: appcast
+          path: appcast.xml
+
       - name: Upload Artifacts
         uses: actions/upload-artifact@v4
         with:
@@ -178,7 +227,7 @@ jobs:
             marketing/*/screenshot_*.png
 
       - name: Deploy to gh-pages
-        if: github.event_name == 'push' && github.ref == 'refs/heads/main'
+        if: github.event_name == 'push' && (github.ref == 'refs/heads/main' || github.ref == 'refs/heads/release')
         run: |
           git config --global user.name "github-actions[bot]"
           git config --global user.email "github-actions[bot]@users.noreply.github.com"
@@ -200,12 +249,14 @@ jobs:
           cp "$GITHUB_WORKSPACE/marketing/en/screenshot_1.png" marketing_1.png
           cp "$GITHUB_WORKSPACE/marketing/en/screenshot_2.png" marketing_2.png
           cp "$GITHUB_WORKSPACE/marketing/en/screenshot_3.png" marketing_3.png
+          [ -f "$GITHUB_WORKSPACE/appcast.xml" ] && cp "$GITHUB_WORKSPACE/appcast.xml" .
 
           # Generate landing page from README.md
           brew install cmark-gfm 2>/dev/null || true
           "$GITHUB_WORKSPACE/distribution/generate-landing-page.sh" > index.html
 
           git add icon.png marketing_1.png marketing_2.png marketing_3.png index.html
+          git add appcast.xml 2>/dev/null || true
           git commit -m "Update site, screenshots and icon [skip ci]" || echo "No changes to commit"
           git push origin gh-pages
 
@@ -222,7 +273,7 @@ jobs:
           echo "Marketing 3: https://raw.githubusercontent.com/$REPO/gh-pages/marketing_3.png"
 
       - name: Create Release
-        if: github.ref == 'refs/heads/release'
+        if: github.ref == 'refs/heads/release' && !(github.event_name == 'workflow_dispatch' && inputs.simulate_release)
         run: |
           gh release delete "v$VERSION" --yes --cleanup-tag 2>/dev/null || true
           gh release create "v$VERSION" \
@@ -231,43 +282,6 @@ jobs:
             ClipKitty.dmg
         env:
           GH_TOKEN: ${{ github.token }}
-
-      # Update Homebrew tap when releasing
-      - name: Update Homebrew Tap
-        if: github.ref == 'refs/heads/release'
-        run: |
-          TAG="v$VERSION"
-          SHA256=$(shasum -a 256 ClipKitty.dmg | cut -d' ' -f1)
-
-          # Clone the homebrew-clipkitty tap repository
-          git clone https://x-access-token:${HOMEBREW_TAP_TOKEN}@github.com/jul-sh/homebrew-clipkitty.git /tmp/homebrew-tap
-          cd /tmp/homebrew-tap
-
-          mkdir -p Casks
-          # Use the actual tag name in URL (not reconstructed with v prefix)
-          printf '%s\n' \
-            'cask "clipkitty" do' \
-            "  version \"$VERSION\"" \
-            "  sha256 \"$SHA256\"" \
-            '' \
-            "  url \"https://github.com/jul-sh/clipkitty/releases/download/$TAG/ClipKitty.dmg\"" \
-            '  name "ClipKitty"' \
-            '  desc "Clipboard history manager with instant fuzzy search"' \
-            '  homepage "https://github.com/jul-sh/clipkitty"' \
-            '' \
-            '  app "ClipKitty.app"' \
-            'end' > Casks/clipkitty.rb
-
-          git config user.name "github-actions[bot]"
-          git config user.email "github-actions[bot]@users.noreply.github.com"
-          git add Casks/clipkitty.rb
-          git diff --cached --quiet || git commit -m "Update ClipKitty to $VERSION"
-          git push origin main
-
-          cd -
-        env:
-          GH_TOKEN: ${{ github.token }}
-          HOMEBREW_TAP_TOKEN: ${{ steps.secrets.outputs.HOMEBREW_TAP_TOKEN }}
 
       # Create automatic pre-release on push to main (for development builds)
       - name: Create Development Release
