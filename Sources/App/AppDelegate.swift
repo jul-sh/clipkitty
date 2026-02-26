@@ -30,7 +30,9 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate {
     private var settingsWindow: NSWindow?
     private var showHistoryMenuItem: NSMenuItem?
     private var statusMenu: NSMenu?
+    #if !APP_STORE
     private var updateController: UpdateController?
+    #endif
 
     /// Set activation policy before the app finishes launching.
     /// Without LSUIElement in Info.plist, we must set the policy at runtime.
@@ -72,7 +74,9 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate {
 
         setupMenuBar()
 
+        #if !APP_STORE
         updateController = UpdateController()
+        #endif
 
         // When using simulated DB, show the panel immediately
         if case .simulatedDatabase(let initialSearchQuery) = launchMode {
