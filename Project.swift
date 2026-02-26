@@ -99,6 +99,9 @@ let project = Project(
                     script: """
                     if [ "$CONFIGURATION" = "AppStore" ]; then
                         rm -rf "$BUILT_PRODUCTS_DIR/$FRAMEWORKS_FOLDER_PATH/Sparkle.framework"
+                        PLIST="$BUILT_PRODUCTS_DIR/$INFOPLIST_PATH"
+                        /usr/libexec/PlistBuddy -c "Delete :SUFeedURL" "$PLIST" 2>/dev/null || true
+                        /usr/libexec/PlistBuddy -c "Delete :SUPublicEDKey" "$PLIST" 2>/dev/null || true
                     fi
                     """,
                     name: "Strip Sparkle from AppStore builds",

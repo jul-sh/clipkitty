@@ -1,10 +1,8 @@
 #if !APP_STORE
 import Sparkle
-#endif
 
 @MainActor
 final class UpdateController {
-    #if !APP_STORE
     private let updaterController: SPUStandardUpdaterController
 
     init() {
@@ -18,7 +16,5 @@ final class UpdateController {
 
     func checkForUpdates() { updaterController.checkForUpdates(nil) }
     var canCheckForUpdates: Bool { updaterController.updater.canCheckForUpdates }
-    #else
-    init() {}
-    #endif
 }
+#endif
