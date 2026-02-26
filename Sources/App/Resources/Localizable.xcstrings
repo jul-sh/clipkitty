@@ -129,66 +129,66 @@
         }
       }
     },
-    "Behavior": {
+    "Advanced": {
       "localizations": {
         "en": {
           "stringUnit": {
             "state": "translated",
-            "value": "Behavior"
+            "value": "Advanced"
           }
         },
         "es": {
           "stringUnit": {
             "state": "translated",
-            "value": "Comportamiento"
+            "value": "Avanzado"
           }
         },
         "zh-Hans": {
           "stringUnit": {
             "state": "translated",
-            "value": "行为"
+            "value": "高级"
           }
         },
         "zh-Hant": {
           "stringUnit": {
             "state": "translated",
-            "value": "行為"
+            "value": "進階"
           }
         },
         "ja": {
           "stringUnit": {
             "state": "translated",
-            "value": "動作"
+            "value": "詳細"
           }
         },
         "ko": {
           "stringUnit": {
             "state": "translated",
-            "value": "동작"
+            "value": "고급"
           }
         },
         "fr": {
           "stringUnit": {
             "state": "translated",
-            "value": "Comportement"
+            "value": "Avancé"
           }
         },
         "pt-BR": {
           "stringUnit": {
             "state": "translated",
-            "value": "Comportamento"
+            "value": "Avançado"
           }
         },
         "ru": {
           "stringUnit": {
             "state": "translated",
-            "value": "Поведение"
+            "value": "Дополнительно"
           }
         },
         "de": {
           "stringUnit": {
             "state": "translated",
-            "value": "Verhalten"
+            "value": "Erweitert"
           }
         }
       }
@@ -4033,70 +4033,7 @@
         }
       }
     },
-    "Shortcuts": {
-      "localizations": {
-        "en": {
-          "stringUnit": {
-            "state": "translated",
-            "value": "Shortcuts"
-          }
-        },
-        "es": {
-          "stringUnit": {
-            "state": "translated",
-            "value": "Atajos"
-          }
-        },
-        "zh-Hans": {
-          "stringUnit": {
-            "state": "translated",
-            "value": "快捷键"
-          }
-        },
-        "zh-Hant": {
-          "stringUnit": {
-            "state": "translated",
-            "value": "快速鍵"
-          }
-        },
-        "ja": {
-          "stringUnit": {
-            "state": "translated",
-            "value": "ショートカット"
-          }
-        },
-        "ko": {
-          "stringUnit": {
-            "state": "translated",
-            "value": "단축키"
-          }
-        },
-        "fr": {
-          "stringUnit": {
-            "state": "translated",
-            "value": "Raccourcis"
-          }
-        },
-        "de": {
-          "stringUnit": {
-            "state": "translated",
-            "value": "Kurzbefehle"
-          }
-        },
-        "pt-BR": {
-          "stringUnit": {
-            "state": "translated",
-            "value": "Atalhos"
-          }
-        },
-        "ru": {
-          "stringUnit": {
-            "state": "translated",
-            "value": "Сочетания клавиш"
-          }
-        }
-      }
-    },
+
     "Show Clipboard History": {
       "localizations": {
         "en": {

@@ -1304,6 +1304,16 @@ struct TextPreviewView: NSViewRepresentable {
         let font = NSFont(name: fontName, size: scaledSize)
             ?? NSFont.monospacedSystemFont(ofSize: scaledSize, weight: .regular)
 
+        // Settle container dimensions FIRST so that any deferred scroll
+        // computes geometry against the correct width.  Previously this ran
+        // *after* the text update and the async scroll was already scheduled,
+        // causing intermittent stale-layout scrolls to the document bottom.
+        textView.textContainer?.containerSize = NSSize(
+            width: nsView.contentSize.width,
+            height: .greatestFiniteMagnitude
+        )
+        textView.frame = NSRect(x: 0, y: 0, width: nsView.contentSize.width, height: textView.frame.height)
+
         // Only update if text or highlights changed
         let currentText = textView.string
         let shouldUpdate = currentText != text || context.coordinator.lastHighlights != highlights
@@ -1380,12 +1390,6 @@ struct TextPreviewView: NSViewRepresentable {
                 }
             }
         }
-
-        textView.textContainer?.containerSize = NSSize(
-            width: nsView.contentSize.width,
-            height: .greatestFiniteMagnitude
-        )
-        textView.frame = NSRect(x: 0, y: 0, width: nsView.contentSize.width, height: textView.frame.height)
     }
 
 
