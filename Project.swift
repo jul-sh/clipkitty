@@ -83,6 +83,8 @@ let project = Project(
                 "LSApplicationCategoryType": "public.app-category.utilities",
                 "LSMinimumSystemVersion": "14.0",
                 "NSHumanReadableCopyright": "Copyright © 2025 ClipKitty. All rights reserved.",
+                "SUFeedURL": "https://jul-sh.github.io/clipkitty/appcast.xml",
+                "SUPublicEDKey": "9VqfSPPY2Gr8QTYDLa99yJXAFWnHw5aybSbKaYDyCq0=",
             ]),
             sources: ["Sources/App/**"],
             resources: [
@@ -92,9 +94,21 @@ let project = Project(
                 "Sources/App/Assets.xcassets",
                 "Sources/App/PrivacyInfo.xcprivacy",
             ],
+            scripts: [
+                .post(
+                    script: """
+                    if [ "$CONFIGURATION" = "AppStore" ]; then
+                        rm -rf "$BUILT_PRODUCTS_DIR/$FRAMEWORKS_FOLDER_PATH/Sparkle.framework"
+                    fi
+                    """,
+                    name: "Strip Sparkle from AppStore builds",
+                    basedOnDependencyAnalysis: false
+                ),
+            ],
             dependencies: [
                 .target(name: "ClipKittyRust"),
                 .sdk(name: "SystemConfiguration", type: .framework),
+                .external(name: "Sparkle"),
             ],
             settings: .settings(
                 base: [
@@ -109,6 +123,7 @@ let project = Project(
                     ]),
                     .release(name: "Release", settings: [
                         "CODE_SIGN_ENTITLEMENTS": "Sources/App/ClipKitty.entitlements",
+                        "CURRENT_PROJECT_VERSION": "$(MARKETING_VERSION)",
                     ]),
                     .release(name: .configuration("AppStore"), settings: [
                         "CODE_SIGN_ENTITLEMENTS": "Sources/App/ClipKitty.entitlements",

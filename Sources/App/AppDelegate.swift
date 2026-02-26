@@ -30,6 +30,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate {
     private var settingsWindow: NSWindow?
     private var showHistoryMenuItem: NSMenuItem?
     private var statusMenu: NSMenu?
+    private var updateController: UpdateController?
 
     /// Set activation policy before the app finishes launching.
     /// Without LSUIElement in Info.plist, we must set the policy at runtime.
@@ -71,6 +72,8 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate {
 
         setupMenuBar()
 
+        updateController = UpdateController()
+
         // When using simulated DB, show the panel immediately
         if case .simulatedDatabase(let initialSearchQuery) = launchMode {
             if let searchQuery = initialSearchQuery {
@@ -105,6 +108,9 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate {
         showHistoryMenuItem?.keyEquivalentModifierMask = hotKey.modifierMask
         menu.addItem(showHistoryMenuItem!)
         menu.addItem(NSMenuItem.separator())
+        #if !APP_STORE
+        menu.addItem(NSMenuItem(title: NSLocalizedString("Check for Updates...", comment: "Menu bar item to check for app updates"), action: #selector(checkForUpdates), keyEquivalent: ""))
+        #endif
         menu.addItem(NSMenuItem(title: NSLocalizedString("Settings...", comment: "Menu bar item to open settings window"), action: #selector(openSettings), keyEquivalent: ","))
         menu.addItem(NSMenuItem.separator())
         menu.addItem(NSMenuItem(title: NSLocalizedString("Quit", comment: "Menu bar item to quit the app"), action: #selector(quit), keyEquivalent: "q"))
@@ -198,6 +204,12 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate {
         settingsWindow?.makeKeyAndOrderFront(nil)
         NSApp.activate(ignoringOtherApps: true)
     }
+
+    #if !APP_STORE
+    @objc private func checkForUpdates() {
+        updateController?.checkForUpdates()
+    }
+    #endif
 
     nonisolated func windowWillClose(_ notification: Notification) {
         Task { @MainActor in
