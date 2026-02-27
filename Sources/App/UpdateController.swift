@@ -10,6 +10,9 @@ private let log = Logger(subsystem: Bundle.main.bundleIdentifier ?? "ClipKitty",
 @MainActor
 final class SilentUpdateDriver: NSObject, SPUUserDriver {
 
+    /// When true, the next `showUpdateFound` will reply `.install` regardless of auto-install setting.
+    var forceInstall = false
+
     // MARK: Permission
 
     func show(_ request: SPUUpdatePermissionRequest, reply: @escaping (SUUpdatePermissionResponse) -> Void) {
@@ -22,12 +25,21 @@ final class SilentUpdateDriver: NSObject, SPUUserDriver {
     func showUserInitiatedUpdateCheck(cancellation: @escaping () -> Void) {}
 
     func showUpdateFound(with appcastItem: SUAppcastItem, state: SPUUserUpdateState, reply: @escaping (SPUUserUpdateChoice) -> Void) {
+        let settings = AppSettings.shared
+        settings.updateCheckFailed = false
+        settings.updateCheckFailingSince = nil
+
         if appcastItem.isInformationOnlyUpdate {
             log.info("Information-only update found — dismissing")
             reply(.dismiss)
-        } else {
-            log.info("Update found: \(appcastItem.displayVersionString) — auto-installing")
+        } else if forceInstall || settings.autoInstallUpdates {
+            log.info("Update found: \(appcastItem.displayVersionString) — installing")
+            forceInstall = false
             reply(.install)
+        } else {
+            log.info("Update found: \(appcastItem.displayVersionString) — awaiting user action")
+            settings.updateAvailable = true
+            reply(.dismiss)
         }
     }
 
@@ -37,12 +49,23 @@ final class SilentUpdateDriver: NSObject, SPUUserDriver {
 
     func showUpdateNotFoundWithError(_ error: Error, acknowledgement: @escaping () -> Void) {
         log.debug("No update found")
+        let settings = AppSettings.shared
+        settings.updateAvailable = false
+        settings.updateCheckFailed = false
+        settings.updateCheckFailingSince = nil
         acknowledgement()
     }
 
     func showUpdaterError(_ error: Error, acknowledgement: @escaping () -> Void) {
         log.error("Updater error: \(error.localizedDescription)")
-        AppSettings.shared.updateAvailable = true
+        let settings = AppSettings.shared
+        forceInstall = false
+        if settings.updateCheckFailingSince == nil {
+            settings.updateCheckFailingSince = Date()
+        } else if let since = settings.updateCheckFailingSince,
+                  Date().timeIntervalSince(since) > 14 * 24 * 60 * 60 {
+            settings.updateCheckFailed = true
+        }
         acknowledgement()
     }
 
@@ -71,14 +94,17 @@ final class SilentUpdateDriver: NSObject, SPUUserDriver {
 
     func showUpdateInstalledAndRelaunched(_ relaunched: Bool, acknowledgement: @escaping () -> Void) {
         log.info("Update installed (relaunched: \(relaunched))")
-        AppSettings.shared.updateAvailable = false
+        let settings = AppSettings.shared
+        settings.updateAvailable = false
+        settings.updateCheckFailed = false
+        settings.updateCheckFailingSince = nil
         acknowledgement()
     }
 
     // MARK: Dismiss
 
     func dismissUpdateInstallation() {
-        AppSettings.shared.updateAvailable = false
+        // No-op: Sparkle calls this after a `.dismiss` reply — we need `updateAvailable` to persist.
     }
 }
 
@@ -106,8 +132,17 @@ final class UpdateController {
     func checkForUpdates() { updater.checkForUpdates() }
     var canCheckForUpdates: Bool { updater.canCheckForUpdates }
 
+    func installUpdate() {
+        driver.forceInstall = true
+        updater.checkForUpdates()
+    }
+
     func setAutoInstall(_ enabled: Bool) {
         updater.automaticallyDownloadsUpdates = enabled
+        if enabled {
+            AppSettings.shared.updateAvailable = false
+            updater.resetUpdateCycle()
+        }
     }
 }
 #endif

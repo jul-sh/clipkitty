@@ -196,8 +196,8 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate {
                 onMenuBarBehaviorChanged: { [weak self] in
                     self?.updateMenuBarBehavior()
                 },
-                onCheckForUpdates: { [weak self] in
-                    self?.updateController?.checkForUpdates()
+                onInstallUpdate: { [weak self] in
+                    self?.updateController?.installUpdate()
                 }
             )
             #else

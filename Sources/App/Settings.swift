@@ -100,8 +100,17 @@ final class AppSettings: ObservableObject {
     }
 
 
-    /// Set by the silent update driver when an auto-update fails.
+    /// Set when a genuine update is available but not yet installed (e.g. auto-install is off).
     @Published var updateAvailable = false
+
+    /// Set to true when update checks have been failing for more than 14 days.
+    @Published var updateCheckFailed = false
+
+    /// Records when consecutive update-check failures started. Persisted to UserDefaults.
+    var updateCheckFailingSince: Date? {
+        get { defaults.object(forKey: updateCheckFailingSinceKey) as? Date }
+        set { defaults.set(newValue, forKey: updateCheckFailingSinceKey) }
+    }
 
     let maxImageMegapixels: Double
     let imageCompressionQuality: Double
@@ -156,6 +165,7 @@ final class AppSettings: ObservableObject {
     private let clickToOpenKey = "clickToOpenEnabled"
     #if !APP_STORE
     private let autoInstallUpdatesKey = "autoInstallUpdates"
+    private let updateCheckFailingSinceKey = "updateCheckFailingSince"
     #endif
 
     private init() {

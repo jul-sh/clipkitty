@@ -20,7 +20,7 @@ struct SettingsView: View {
     let onHotKeyChanged: (HotKey) -> Void
     let onMenuBarBehaviorChanged: () -> Void
     #if !APP_STORE
-    var onCheckForUpdates: (() -> Void)? = nil
+    var onInstallUpdate: (() -> Void)? = nil
     #endif
 
     var body: some View {
@@ -52,7 +52,7 @@ struct SettingsView: View {
             store: store,
             onHotKeyChanged: onHotKeyChanged,
             onMenuBarBehaviorChanged: onMenuBarBehaviorChanged,
-            onCheckForUpdates: onCheckForUpdates
+            onInstallUpdate: onInstallUpdate
         )
         #else
         GeneralSettingsView(
@@ -73,7 +73,7 @@ struct GeneralSettingsView: View {
     let onHotKeyChanged: (HotKey) -> Void
     let onMenuBarBehaviorChanged: () -> Void
     #if !APP_STORE
-    var onCheckForUpdates: (() -> Void)? = nil
+    var onInstallUpdate: (() -> Void)? = nil
     #endif
     private let minDatabaseSizeGB = 0.5
     private let maxDatabaseSizeGB = 64.0
@@ -82,21 +82,25 @@ struct GeneralSettingsView: View {
         Form {
             #if !APP_STORE
             Section(String(localized: "Updates")) {
-                if settings.updateAvailable {
+                if settings.updateCheckFailed {
                     HStack {
-                        Label(String(localized: "A new version of ClipKitty is available."), systemImage: "arrow.down.circle")
+                        Label(String(localized: "Unable to check for updates."), systemImage: "exclamationmark.triangle")
                         Spacer()
                         Button(String(localized: "Download")) {
                             NSWorkspace.shared.open(URL(string: "https://github.com/jul-sh/clipkitty/releases/latest")!)
                         }
                     }
+                } else if settings.updateAvailable {
+                    HStack {
+                        Label(String(localized: "A new version of ClipKitty is available."), systemImage: "arrow.down.circle")
+                        Spacer()
+                        Button(String(localized: "Install")) {
+                            onInstallUpdate?()
+                        }
+                    }
                 }
 
                 Toggle(String(localized: "Automatically install updates"), isOn: $settings.autoInstallUpdates)
-
-                Button(String(localized: "Check for Updates...")) {
-                    onCheckForUpdates?()
-                }
             }
             #endif
 
