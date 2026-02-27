@@ -386,17 +386,17 @@ final class ClipKittyUITests: XCTestCase {
         XCTAssertTrue(copyAction.waitForExistence(timeout: 3), "Copy action should appear in popover")
     }
 
-    /// Tests that Option+Return opens the actions popover.
-    func testOptionReturnOpensActionsPopover() throws {
+    /// Tests that Cmd+K opens the actions popover.
+    func testCmdKOpensActionsPopover() throws {
         let searchField = app.textFields["SearchField"]
         XCTAssertTrue(searchField.waitForExistence(timeout: 5), "Search field not found")
 
-        // Option+Return should open the actions menu
-        searchField.typeKey(.return, modifierFlags: .option)
+        // Cmd+K should open the actions menu
+        searchField.typeKey("k", modifierFlags: .command)
         Thread.sleep(forTimeInterval: 0.5)
 
         let deleteAction = app.buttons["Action_Delete"]
-        XCTAssertTrue(deleteAction.waitForExistence(timeout: 3), "Actions popover should open with Option+Return")
+        XCTAssertTrue(deleteAction.waitForExistence(timeout: 3), "Actions popover should open with Cmd+K")
     }
 
     /// Tests that Escape closes the actions popover.
@@ -447,8 +447,8 @@ final class ClipKittyUITests: XCTestCase {
         let initialCount = app.outlines.firstMatch.buttons.allElementsBoundByIndex.count
         XCTAssertGreaterThan(initialCount, 0, "Should have items to delete")
 
-        // Press Option+Return to open actions popover
-        searchField.typeKey(.return, modifierFlags: .option)
+        // Press Cmd+K to open actions popover
+        searchField.typeKey("k", modifierFlags: .command)
         Thread.sleep(forTimeInterval: 0.5)
 
         let deleteAction = app.buttons["Action_Delete"]
