@@ -370,8 +370,12 @@ struct ContentView: View {
                     moveSelection(by: 1)
                     return .handled
                 }
-                .onKeyPress(.return, phases: .down) { keyPress in
-                    if keyPress.modifiers.contains(.option) {
+                .onKeyPress(.return, phases: .down) { _ in
+                    confirmSelection()
+                    return .handled
+                }
+                .onKeyPress("k", phases: .down) { keyPress in
+                    if keyPress.modifiers.contains(.command) {
                         guard selectedItem != nil else { return .handled }
                         if case .hidden = actionsPopover {
                             let actions = actionItems
@@ -382,8 +386,7 @@ struct ContentView: View {
                         }
                         return .handled
                     }
-                    confirmSelection()
-                    return .handled
+                    return .ignored
                 }
                 .onKeyPress(.escape) {
                     onDismiss()
@@ -882,7 +885,7 @@ struct ContentView: View {
                 actionsPopover = .hidden
             }
         } label: {
-            Text("⌥⏎ Actions")
+            Text("⌘K Actions")
                 .font(.system(size: 13))
                 .foregroundStyle(.secondary)
                 .padding(.horizontal, 6)
