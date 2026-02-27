@@ -9,34 +9,23 @@ struct FilterTagView: View {
         HStack(spacing: 4) {
             // Filter icon
             Image(systemName: suggestion.icon)
-                .font(.system(size: 12, weight: .medium))
-                .foregroundColor(suggestion.iconColor)
+                .font(.system(size: 14, weight: .medium))
+                .foregroundColor(.primary)
 
             // Filter display name
             Text(suggestion.displayName)
-                .font(.custom(FontManager.sansSerif, size: 14))
+                .font(.custom(FontManager.sansSerif, size: 16))
                 .foregroundColor(.primary)
 
-            // Delete button
-            Button(action: onDelete) {
-                Image(systemName: "xmark.circle.fill")
-                    .font(.system(size: 12))
-                    .foregroundColor(.secondary)
-            }
-            .buttonStyle(.plain)
-            .accessibilityIdentifier("RemoveFilter")
-            .accessibilityLabel(String(localized: "Remove filter"))
         }
         .accessibilityIdentifier("FilterTag_\(suggestion.displayName)")
         .padding(.horizontal, 8)
         .padding(.vertical, 4)
         .background(
             Capsule()
-                .fill(suggestion.iconColor.opacity(0.15))
+                .fill(Color.primary.opacity(0.1))
         )
-        .overlay(
-            Capsule()
-                .stroke(suggestion.iconColor.opacity(0.3), lineWidth: 1)
-        )
+        .contentShape(Capsule())
+        .onTapGesture(perform: onDelete)
     }
 }

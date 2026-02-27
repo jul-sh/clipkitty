@@ -140,6 +140,7 @@ struct ContentView: View {
                 AutocompleteDropdownView(
                     suggestions: suggestions,
                     highlightedIndex: highlightedIndex,
+                    searchText: searchText,
                     onSelect: { suggestion in
                         activeFilter = suggestion.filter
                         searchText = ""

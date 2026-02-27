@@ -3,6 +3,7 @@ import SwiftUI
 struct AutocompleteDropdownView: View {
     let suggestions: [FilterSuggestion]
     let highlightedIndex: Int
+    let searchText: String
     let onSelect: (FilterSuggestion) -> Void
 
     var body: some View {
@@ -11,6 +12,7 @@ struct AutocompleteDropdownView: View {
                 AutocompleteSuggestionRow(
                     suggestion: suggestion,
                     isHighlighted: index == highlightedIndex,
+                    searchText: searchText,
                     onSelect: { onSelect(suggestion) }
                 )
             }

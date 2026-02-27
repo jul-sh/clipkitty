@@ -10,11 +10,9 @@ struct FilterSuggestion: Identifiable, Equatable {
 
     var id: ContentTypeFilter { filter }
 
-    /// Checks if this suggestion matches the given input (case-insensitive prefix/contains matching)
+    /// Checks if this suggestion matches the given input (case-insensitive prefix matching only)
     func matches(_ input: String) -> Bool {
-        let lowercasedInput = input.lowercased()
-        let lowercasedName = displayName.lowercased()
-        return lowercasedName.hasPrefix(lowercasedInput) || lowercasedName.contains(lowercasedInput)
+        displayName.lowercased().hasPrefix(input.lowercased())
     }
 
     /// All available filter suggestions (excluding .all)
