@@ -874,10 +874,15 @@ struct ContentView: View {
                 },
                 onSave: {
                     commitCurrentEdit()
-                },
-                onDiscard: {
-                    discardCurrentEdit()
                     focusSearchField()
+                },
+                onEscape: {
+                    if hasPendingEditForSelectedItem {
+                        discardCurrentEdit()
+                        focusSearchField()
+                    } else {
+                        onDismiss()
+                    }
                 }
             )
             .frame(maxWidth: .infinity, maxHeight: .infinity)
@@ -922,8 +927,7 @@ struct ContentView: View {
     private func metadataFooter(for item: ClipboardItem) -> some View {
         HStack(spacing: 12) {
             if hasPendingEditForSelectedItem {
-                Spacer(minLength: 0)
-                Button("⌘D Discard") {
+                Button(String(localized: "Esc Discard")) {
                     discardCurrentEdit()
                     focusSearchField()
                 }
@@ -931,8 +935,20 @@ struct ContentView: View {
                 .padding(.horizontal, 6)
                 .padding(.vertical, 2)
                 .fixedSize()
-                Button("⌘S Save") {
+                Button(String(localized: "⌘S Save")) {
                     commitCurrentEdit()
+                    focusSearchField()
+                }
+                .buttonStyle(.plain)
+                .padding(.horizontal, 8)
+                .padding(.vertical, 3)
+                .background(Color.accentColor)
+                .foregroundStyle(.white)
+                .cornerRadius(4)
+                .fixedSize()
+                Spacer(minLength: 0)
+                Button("⌘↩ \(AppSettings.shared.pasteMode.editConfirmLabel)") {
+                    confirmSelection()
                 }
                 .buttonStyle(.plain)
                 .padding(.horizontal, 8)
@@ -1554,7 +1570,7 @@ private class EditablePreviewTextView: NSTextView {
     var onCmdReturn: (() -> Void)?
     var onFocusChange: ((Bool) -> Void)?
     var onSave: (() -> Void)?
-    var onDiscard: (() -> Void)?
+    var onEscape: (() -> Void)?
 
     override func keyDown(with event: NSEvent) {
         if event.modifierFlags.contains(.command) {
@@ -1565,12 +1581,13 @@ private class EditablePreviewTextView: NSTextView {
             case 1: // Cmd+S
                 onSave?()
                 return
-            case 2: // Cmd+D
-                onDiscard?()
-                return
             default:
                 break
             }
+        }
+        if event.keyCode == 53 { // Escape
+            onEscape?()
+            return
         }
         super.keyDown(with: event)
     }
@@ -1606,7 +1623,7 @@ struct EditableTextPreview: NSViewRepresentable {
     var onEditingStateChange: ((Bool) -> Void)?  // Called when editing state changes
     var onCmdReturn: (() -> Void)?  // Called when Cmd+Return pressed (paste)
     var onSave: (() -> Void)?  // Called when Cmd+S pressed (save edit)
-    var onDiscard: (() -> Void)?  // Called when Cmd+D pressed (discard edit)
+    var onEscape: (() -> Void)?  // Called when Escape pressed
 
     /// Last known container width, persisted across view recreations
     private static var lastKnownContainerWidth: CGFloat = 0
@@ -1663,7 +1680,7 @@ struct EditableTextPreview: NSViewRepresentable {
         textView.onCmdReturn = onCmdReturn
         textView.onFocusChange = onEditingStateChange
         textView.onSave = onSave
-        textView.onDiscard = onDiscard
+        textView.onEscape = onEscape
         context.coordinator.onTextChange = onTextChange
 
         // Enable accessibility
@@ -1684,7 +1701,7 @@ struct EditableTextPreview: NSViewRepresentable {
             editableTextView.onCmdReturn = onCmdReturn
             editableTextView.onFocusChange = onEditingStateChange
             editableTextView.onSave = onSave
-            editableTextView.onDiscard = onDiscard
+            editableTextView.onEscape = onEscape
         }
 
         // Check if item changed
