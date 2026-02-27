@@ -63,8 +63,11 @@ struct FilterSuggestion: Identifiable, Equatable {
     }
 }
 
-/// State for the autocomplete dropdown
-enum AutocompleteState: Equatable {
-    case hidden
-    case visible(suggestions: [FilterSuggestion], highlightedIndex: Int)
+/// Combined state for filter tag and autocomplete suggestions.
+/// Exactly 3 valid states — the illegal combination of an active filter
+/// with visible autocomplete suggestions is structurally impossible.
+enum SearchFilterState: Equatable {
+    case idle
+    case suggesting(suggestions: [FilterSuggestion], highlightedIndex: Int)
+    case filtered(ContentTypeFilter)
 }

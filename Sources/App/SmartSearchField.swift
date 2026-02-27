@@ -4,8 +4,7 @@ import ClipKittyRust
 /// Custom search field with inline filter tag support and autocomplete suggestions
 struct SmartSearchField: View {
     @Binding var textQuery: String
-    @Binding var activeFilter: ContentTypeFilter?
-    @Binding var autocompleteState: AutocompleteState
+    @Binding var filterState: SearchFilterState
 
     let onMoveSelection: (Int) -> Void
     let onConfirmSelection: () -> Void
@@ -16,12 +15,12 @@ struct SmartSearchField: View {
     var body: some View {
         HStack(spacing: 6) {
             // Filter tag (if active)
-            if let filter = activeFilter,
+            if case .filtered(let filter) = filterState,
                let suggestion = FilterSuggestion.suggestion(for: filter) {
                 FilterTagView(
                     suggestion: suggestion,
                     onDelete: {
-                        activeFilter = nil
+                        filterState = .idle
                     }
                 )
             }
@@ -60,45 +59,39 @@ struct SmartSearchField: View {
     // MARK: - Input Processing
 
     private func processInput(_ input: String) {
-        if activeFilter != nil {
+        if case .filtered = filterState {
             // Filter already active, don't show autocomplete for filter names
-            autocompleteState = .hidden
+            return
+        }
+        // Check for filter suggestions
+        let suggestions = FilterSuggestion.suggestions(for: input)
+        if input.isEmpty || suggestions.isEmpty {
+            filterState = .idle
         } else {
-            // Check for filter suggestions
-            let suggestions = FilterSuggestion.suggestions(for: input)
-            if input.isEmpty || suggestions.isEmpty {
-                autocompleteState = .hidden
-            } else {
-                // Show autocomplete with matching suggestions
-                autocompleteState = .visible(suggestions: suggestions, highlightedIndex: 0)
-            }
+            filterState = .suggesting(suggestions: suggestions, highlightedIndex: 0)
         }
     }
 
     // MARK: - Keyboard Handlers
 
     private func handleUpArrow() -> KeyPress.Result {
-        switch autocompleteState {
-        case .visible(let suggestions, let index):
+        if case .suggesting(let suggestions, let index) = filterState {
             let newIndex = index > 0 ? index - 1 : suggestions.count - 1
-            autocompleteState = .visible(suggestions: suggestions, highlightedIndex: newIndex)
-            return .handled
-        case .hidden:
-            onMoveSelection(-1)
+            filterState = .suggesting(suggestions: suggestions, highlightedIndex: newIndex)
             return .handled
         }
+        onMoveSelection(-1)
+        return .handled
     }
 
     private func handleDownArrow() -> KeyPress.Result {
-        switch autocompleteState {
-        case .visible(let suggestions, let index):
+        if case .suggesting(let suggestions, let index) = filterState {
             let newIndex = index < suggestions.count - 1 ? index + 1 : 0
-            autocompleteState = .visible(suggestions: suggestions, highlightedIndex: newIndex)
-            return .handled
-        case .hidden:
-            onMoveSelection(1)
+            filterState = .suggesting(suggestions: suggestions, highlightedIndex: newIndex)
             return .handled
         }
+        onMoveSelection(1)
+        return .handled
     }
 
     private func handleReturn(modifiers: EventModifiers) -> KeyPress.Result {
@@ -109,7 +102,7 @@ struct SmartSearchField: View {
         }
 
         // If autocomplete is visible, select the highlighted suggestion
-        if case .visible(let suggestions, let index) = autocompleteState {
+        if case .suggesting(let suggestions, let index) = filterState {
             let suggestion = suggestions[index]
             selectFilterSuggestion(suggestion)
             return .handled
@@ -121,8 +114,8 @@ struct SmartSearchField: View {
     }
 
     private func handleEscape() -> KeyPress.Result {
-        if case .visible = autocompleteState {
-            autocompleteState = .hidden
+        if case .suggesting = filterState {
+            filterState = .idle
             return .handled
         }
         onDismiss()
@@ -130,7 +123,7 @@ struct SmartSearchField: View {
     }
 
     private func handleTab() -> KeyPress.Result {
-        if case .visible(let suggestions, let index) = autocompleteState {
+        if case .suggesting(let suggestions, let index) = filterState {
             // Tab acts like Return for autocomplete selection
             let suggestion = suggestions[index]
             selectFilterSuggestion(suggestion)
@@ -143,8 +136,7 @@ struct SmartSearchField: View {
     // MARK: - Selection
 
     private func selectFilterSuggestion(_ suggestion: FilterSuggestion) {
-        activeFilter = suggestion.filter
+        filterState = .filtered(suggestion.filter)
         textQuery = "" // Clear the text that matched the filter name
-        autocompleteState = .hidden
     }
 }

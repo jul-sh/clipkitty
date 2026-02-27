@@ -47,8 +47,7 @@ struct ContentView: View {
     @State private var selectedItemId: Int64?
     @State private var selectedItem: ClipboardItem?
     @State private var searchText: String = ""
-    @State private var activeFilter: ContentTypeFilter? = nil
-    @State private var autocompleteState: AutocompleteState = .hidden
+    @State private var filterState: SearchFilterState = .idle
     @State private var didApplyInitialSearch = false
     @State private var lastItemsSignature: [Int64] = []  // Track when items change to suppress animation
     @State private var searchSpinner: SpinnerState = .idle
@@ -136,15 +135,14 @@ struct ContentView: View {
             }
 
             // Autocomplete dropdown — rendered above all content to receive clicks
-            if case .visible(let suggestions, let highlightedIndex) = autocompleteState {
+            if case .suggesting(let suggestions, let highlightedIndex) = filterState {
                 AutocompleteDropdownView(
                     suggestions: suggestions,
                     highlightedIndex: highlightedIndex,
                     searchText: searchText,
                     onSelect: { suggestion in
-                        activeFilter = suggestion.filter
+                        filterState = .filtered(suggestion.filter)
                         searchText = ""
-                        autocompleteState = .hidden
                     }
                 )
                 .padding(.top, 50) // Below the search bar
@@ -179,6 +177,7 @@ struct ContentView: View {
             } else {
                 searchText = ""
             }
+            filterState = .idle
             // Select first item if nothing selected
             if selectedItemId == nil, let firstId = firstItemId {
                 loadItem(id: firstId)
@@ -205,7 +204,7 @@ struct ContentView: View {
             } else {
                 searchText = ""
             }
-            autocompleteState = .hidden
+            filterState = .idle
             actionsPopover = .hidden
             // Select first item whenever display resets (re-open)
             if let firstId = firstItemId {
@@ -246,9 +245,17 @@ struct ContentView: View {
             hasUserNavigated = false
             store.setSearchQuery(newValue)
         }
-        .onChange(of: activeFilter) { _, newFilter in
-            hasUserNavigated = false
-            store.setContentTypeFilter(newFilter ?? .all)
+        .onChange(of: filterState) { oldState, newState in
+            // Extract the filter from each state, defaulting to .all
+            let oldFilter: ContentTypeFilter
+            if case .filtered(let f) = oldState { oldFilter = f } else { oldFilter = .all }
+            let newFilter: ContentTypeFilter
+            if case .filtered(let f) = newState { newFilter = f } else { newFilter = .all }
+
+            if oldFilter != newFilter {
+                hasUserNavigated = false
+                store.setContentTypeFilter(newFilter)
+            }
         }
         .onChange(of: store.contentTypeFilter) { _, _ in
             // Reset selection when filter changes
@@ -451,8 +458,7 @@ struct ContentView: View {
 
             SmartSearchField(
                 textQuery: $searchText,
-                activeFilter: $activeFilter,
-                autocompleteState: $autocompleteState,
+                filterState: $filterState,
                 onMoveSelection: { moveSelection(by: $0) },
                 onConfirmSelection: { confirmSelection() },
                 onDismiss: { onDismiss() },
@@ -484,7 +490,7 @@ struct ContentView: View {
             }
         }
         .padding(.horizontal, 17)
-        .padding(.vertical, 13)
+        .frame(height: 46)
     }
 
     private func handleNumberKey(_ keyPress: KeyPress) -> KeyPress.Result {
@@ -506,9 +512,9 @@ struct ContentView: View {
             // on an empty TextField.
             if event.keyCode == 51, // 51 = backspace key
                searchText.isEmpty,
-               activeFilter != nil,
+               case .filtered = filterState,
                focusTarget == .search {
-                activeFilter = nil
+                filterState = .idle
                 return nil
             }
 
