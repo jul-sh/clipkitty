@@ -100,6 +100,7 @@ final class AppSettings: ObservableObject {
     }
 
 
+    #if !APP_STORE
     /// Set when a genuine update is available but not yet installed (e.g. auto-install is off).
     @Published var updateAvailable = false
 
@@ -111,6 +112,7 @@ final class AppSettings: ObservableObject {
         get { defaults.object(forKey: updateCheckFailingSinceKey) as? Date }
         set { defaults.set(newValue, forKey: updateCheckFailingSinceKey) }
     }
+    #endif
 
     let maxImageMegapixels: Double
     let imageCompressionQuality: Double
