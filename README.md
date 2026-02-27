@@ -38,8 +38,9 @@ ClipKitty stores everything. Finds it in milliseconds—whether you have 100 ite
 
 ### Quick Install (Recommended)
 
+Downloads the latest release and installs ClipKitty.app to /Applications
+
 ```bash
-# Downloads the latest release and installs ClipKitty.app to /Applications
 curl -sL "$(curl -s https://api.github.com/repos/jul-sh/clipkitty/releases/latest | grep browser_download_url | grep .dmg | cut -d'"' -f4)" -o /tmp/ClipKitty.dmg && hdiutil attach /tmp/ClipKitty.dmg -quiet && cp -R "/Volumes/ClipKitty/ClipKitty.app" /Applications/ && hdiutil detach "/Volumes/ClipKitty" -quiet && rm /tmp/ClipKitty.dmg
 ```
 
