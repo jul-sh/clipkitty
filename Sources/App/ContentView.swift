@@ -61,17 +61,14 @@ struct ContentView: View {
     @State private var actionsPopover: ActionsPopoverState = .hidden
     @State private var commandNumberEventMonitor: Any?
 
-    /// Editing state for preview pane text editing.
-    /// Sum type ensures only valid state combinations are representable.
-    enum PreviewEditState: Equatable {
-        /// No editing in progress
+    /// Which item's text editor currently has keyboard focus.
+    enum EditFocusState: Equatable {
         case idle
-        /// User is actively editing an item (has focus), no unsaved changes yet
-        case editing(itemId: Int64)
-        /// User made changes that will be saved when app closes
-        case pendingEdit(itemId: Int64, editedText: String)
+        case focused(itemId: Int64)
     }
-    @State private var previewEditState: PreviewEditState = .idle
+    @State private var editFocus: EditFocusState = .idle
+    /// Per-item cache of unsaved edited text. Cleared on window hide.
+    @State private var pendingEdits: [Int64: String] = [:]
 
     enum FocusTarget: Hashable {
         case search
@@ -186,14 +183,16 @@ struct ContentView: View {
         }
         .onDisappear {
             removeCommandNumberEventMonitor()
-            discardPendingEdit()
+            discardAllEdits()
         }
         .onReceive(NotificationCenter.default.publisher(for: .clipKittyWillHide)) { _ in
-            discardPendingEdit()
+            discardAllEdits()
         }
         .onChange(of: store.displayVersion) { _, _ in
             // Reset local state when store signals a display reset
             hasUserNavigated = false
+            pendingEdits.removeAll()
+            editFocus = .idle
             // But preserve initial search if it was just applied
             if didApplyInitialSearch && !initialSearchQuery.isEmpty {
                 didApplyInitialSearch = false // Allow reset next time
@@ -248,9 +247,8 @@ struct ContentView: View {
             selectedItem = nil
         }
         .onChange(of: selectedItemId) { oldId, newId in
-            // Discard pending edits when navigating to a different item
-            if case .pendingEdit(let editItemId, _) = previewEditState, editItemId != newId {
-                discardPendingEdit()
+            if case .focused(let focusedId) = editFocus, focusedId != newId {
+                editFocus = .idle
             }
             // Fetch full item when selection changes
             guard let newId else {
@@ -349,22 +347,20 @@ struct ContentView: View {
     private func confirmSelection() {
         guard let item = selectedItem else { return }
         let content = effectiveContent(for: item)
-        commitPendingEdit()
+        commitCurrentEdit()
         onSelect(item.itemMetadata.itemId, content)
     }
 
     private func copyOnlySelection() {
         guard let item = selectedItem else { return }
         let content = effectiveContent(for: item)
-        commitPendingEdit()
+        commitCurrentEdit()
         onCopyOnly(item.itemMetadata.itemId, content)
     }
 
     /// Returns the effective content for an item, accounting for pending edits.
     private func effectiveContent(for item: ClipboardItem) -> ClipboardContent {
-        // Use pattern matching on the sum type - compiler ensures all cases handled
-        if case .pendingEdit(let editItemId, let editedText) = previewEditState,
-           item.itemMetadata.itemId == editItemId {
+        if let editedText = pendingEdits[item.itemMetadata.itemId] {
             return .text(value: editedText)
         }
         return item.content
@@ -383,6 +379,7 @@ struct ContentView: View {
             nextId = nil
         }
 
+        pendingEdits.removeValue(forKey: id)
         store.delete(itemId: id)
         selectedItemId = nextId
         selectedItem = nil
@@ -391,65 +388,51 @@ struct ContentView: View {
     /// Called on each text change in the preview pane.
     /// Tracks the edit as pending - will be saved as new item when app closes.
     private func onTextEdit(_ newText: String, for itemId: Int64, originalText: String) {
-        // If text matches original, transition to editing (no pending changes)
         if newText == originalText {
-            previewEditState = .editing(itemId: itemId)
-            return
+            pendingEdits.removeValue(forKey: itemId)
+        } else {
+            pendingEdits[itemId] = newText
         }
-        // Track this as a pending edit
-        previewEditState = .pendingEdit(itemId: itemId, editedText: newText)
     }
 
     /// Called when editing focus state changes.
     private func onEditingStateChange(_ isEditing: Bool, for itemId: Int64) {
         if isEditing {
-            // User focused the editor - transition to editing state (preserving pending text if any)
-            switch previewEditState {
-            case .pendingEdit(let existingId, let text) where existingId == itemId:
-                // Keep the pending edit
-                break
-            default:
-                previewEditState = .editing(itemId: itemId)
-            }
-        } else {
-            // User defocused - keep pendingEdit state if text was changed, else go idle
-            switch previewEditState {
-            case .editing(let id) where id == itemId:
-                previewEditState = .idle
-            case .pendingEdit:
-                // Keep pending edit for commit on app close
-                break
-            default:
-                break
-            }
+            editFocus = .focused(itemId: itemId)
+        } else if case .focused(let id) = editFocus, id == itemId {
+            editFocus = .idle
         }
     }
 
-    /// Discards any pending edit without saving.
-    private func discardPendingEdit() {
-        previewEditState = .idle
+    /// Discards the currently selected item's pending edit.
+    private func discardCurrentEdit() {
+        if let id = selectedItemId {
+            pendingEdits.removeValue(forKey: id)
+        }
+        editFocus = .idle
     }
 
-    /// Commits any pending edit as a new clipboard item.
-    /// Called when the app is about to hide/dismiss.
-    private func commitPendingEdit() {
-        guard case .pendingEdit(_, let editedText) = previewEditState,
+    /// Discards ALL pending edits. Called on window hide.
+    private func discardAllEdits() {
+        pendingEdits.removeAll()
+        editFocus = .idle
+    }
+
+    /// Commits the currently selected item's edit as a new clipboard item.
+    private func commitCurrentEdit() {
+        guard let id = selectedItemId,
+              let editedText = pendingEdits.removeValue(forKey: id),
               !editedText.isEmpty else {
-            previewEditState = .idle
+            editFocus = .idle
             return
         }
-
-        // Clear state first
-        previewEditState = .idle
-
-        // Save as new item
+        editFocus = .idle
         Task {
-            let itemId = await store.saveEditedText(text: editedText)
-            if itemId > 0 {
-                // New item created
+            let newItemId = await store.saveEditedText(text: editedText)
+            if newItemId > 0 {
                 searchText = ""
                 store.setSearchQuery("")
-                selectedItemId = itemId
+                selectedItemId = newItemId
                 ToastWindow.shared.show(message: String(localized: "Saved as new item"))
             }
         }
@@ -784,12 +767,9 @@ struct ContentView: View {
                         isSelected: row.metadata.itemId == selectedItemId,
                         hasUserNavigated: hasUserNavigated,
                         isEditingPreview: {
-                            switch previewEditState {
-                            case .editing(let id), .pendingEdit(let id, _):
-                                return id == row.metadata.itemId && row.metadata.itemId == selectedItemId
-                            case .idle:
-                                return false
-                            }
+                            let id = row.metadata.itemId
+                            let isFocused = editFocus == .focused(itemId: id)
+                            return (isFocused || pendingEdits[id] != nil) && id == selectedItemId
                         }(),
                         onTap: {
                             hasUserNavigated = true
@@ -875,16 +855,8 @@ struct ContentView: View {
         switch item.content {
         case .text, .color:
             // Single unified view: editable with search highlighting via temporary attributes
-            // Use pattern matching on sum type to get pending text if this item has edits
             EditableTextPreview(
-                text: {
-                    switch previewEditState {
-                    case .pendingEdit(let id, let editedText) where id == item.itemMetadata.itemId:
-                        return editedText
-                    default:
-                        return item.content.textContent
-                    }
-                }(),
+                text: pendingEdits[item.itemMetadata.itemId] ?? item.content.textContent,
                 itemId: item.itemMetadata.itemId,
                 fontName: FontManager.mono,
                 fontSize: 15,
@@ -901,10 +873,10 @@ struct ContentView: View {
                     confirmSelection()
                 },
                 onSave: {
-                    commitPendingEdit()
+                    commitCurrentEdit()
                 },
                 onDiscard: {
-                    discardPendingEdit()
+                    discardCurrentEdit()
                     focusSearchField()
                 }
             )
@@ -943,11 +915,8 @@ struct ContentView: View {
 
     /// Whether the current item has a pending edit that can be saved/discarded.
     private var hasPendingEditForSelectedItem: Bool {
-        if case .pendingEdit(let editItemId, _) = previewEditState,
-           editItemId == selectedItemId {
-            return true
-        }
-        return false
+        guard let selectedItemId else { return false }
+        return pendingEdits[selectedItemId] != nil
     }
 
     private func metadataFooter(for item: ClipboardItem) -> some View {
@@ -955,7 +924,7 @@ struct ContentView: View {
             if hasPendingEditForSelectedItem {
                 Spacer(minLength: 0)
                 Button("⌘D Discard") {
-                    discardPendingEdit()
+                    discardCurrentEdit()
                     focusSearchField()
                 }
                 .buttonStyle(.plain)
@@ -963,7 +932,7 @@ struct ContentView: View {
                 .padding(.vertical, 2)
                 .fixedSize()
                 Button("⌘S Save") {
-                    commitPendingEdit()
+                    commitCurrentEdit()
                 }
                 .buttonStyle(.plain)
                 .padding(.horizontal, 8)
@@ -1007,13 +976,11 @@ struct ContentView: View {
     }
 
     private func buttonLabel(for item: ClipboardItem) -> String {
-        switch previewEditState {
-        case .editing, .pendingEdit:
-            // When editing, require Cmd+Return to paste
+        let isEditing = editFocus == .focused(itemId: item.itemMetadata.itemId)
+        if isEditing || pendingEdits[item.itemMetadata.itemId] != nil {
             return "⌘⏎ \(AppSettings.shared.pasteMode.buttonLabel)"
-        case .idle:
-            return "⏎ \(AppSettings.shared.pasteMode.buttonLabel)"
         }
+        return "⏎ \(AppSettings.shared.pasteMode.buttonLabel)"
     }
 
     // MARK: - Actions Dropdown
