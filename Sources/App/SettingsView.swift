@@ -19,14 +19,13 @@ struct SettingsView: View {
     let store: ClipboardStore
     let onHotKeyChanged: (HotKey) -> Void
     let onMenuBarBehaviorChanged: () -> Void
+    #if !APP_STORE
+    var onCheckForUpdates: (() -> Void)? = nil
+    #endif
 
     var body: some View {
         TabView(selection: $selectedTab) {
-            GeneralSettingsView(
-                store: store,
-                onHotKeyChanged: onHotKeyChanged,
-                onMenuBarBehaviorChanged: onMenuBarBehaviorChanged
-            )
+            generalSettingsView
                 .tabItem {
                     Label(String(localized: "General"), systemImage: "gearshape")
                 }
@@ -46,6 +45,23 @@ struct SettingsView: View {
         }
         .frame(width: 480, height: 420)
     }
+
+    private var generalSettingsView: GeneralSettingsView {
+        #if !APP_STORE
+        GeneralSettingsView(
+            store: store,
+            onHotKeyChanged: onHotKeyChanged,
+            onMenuBarBehaviorChanged: onMenuBarBehaviorChanged,
+            onCheckForUpdates: onCheckForUpdates
+        )
+        #else
+        GeneralSettingsView(
+            store: store,
+            onHotKeyChanged: onHotKeyChanged,
+            onMenuBarBehaviorChanged: onMenuBarBehaviorChanged
+        )
+        #endif
+    }
 }
 
 struct GeneralSettingsView: View {
@@ -56,13 +72,17 @@ struct GeneralSettingsView: View {
     let store: ClipboardStore
     let onHotKeyChanged: (HotKey) -> Void
     let onMenuBarBehaviorChanged: () -> Void
+    #if !APP_STORE
+    var onCheckForUpdates: (() -> Void)? = nil
+    #endif
     private let minDatabaseSizeGB = 0.5
     private let maxDatabaseSizeGB = 64.0
 
     var body: some View {
         Form {
-            if settings.updateAvailable {
-                Section {
+            #if !APP_STORE
+            Section(String(localized: "Updates")) {
+                if settings.updateAvailable {
                     HStack {
                         Label(String(localized: "A new version of ClipKitty is available."), systemImage: "arrow.down.circle")
                         Spacer()
@@ -71,7 +91,14 @@ struct GeneralSettingsView: View {
                         }
                     }
                 }
+
+                Toggle(String(localized: "Automatically install updates"), isOn: $settings.autoInstallUpdates)
+
+                Button(String(localized: "Check for Updates...")) {
+                    onCheckForUpdates?()
+                }
             }
+            #endif
 
             Section(String(localized: "Startup")) {
                 let canToggle: Bool = {

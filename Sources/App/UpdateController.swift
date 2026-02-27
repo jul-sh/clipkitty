@@ -93,7 +93,7 @@ final class UpdateController {
         let bundle = Bundle.main
         updater = SPUUpdater(hostBundle: bundle, applicationBundle: bundle, userDriver: driver, delegate: nil)
         updater.automaticallyChecksForUpdates = true
-        updater.automaticallyDownloadsUpdates = true
+        updater.automaticallyDownloadsUpdates = AppSettings.shared.autoInstallUpdates
         updater.updateCheckInterval = 14400 // 4 hours
 
         do {
@@ -105,5 +105,9 @@ final class UpdateController {
 
     func checkForUpdates() { updater.checkForUpdates() }
     var canCheckForUpdates: Bool { updater.canCheckForUpdates }
+
+    func setAutoInstall(_ enabled: Bool) {
+        updater.automaticallyDownloadsUpdates = enabled
+    }
 }
 #endif
