@@ -1,5 +1,8 @@
 import AppKit
 import SwiftUI
+#if !APP_STORE
+import Combine
+#endif
 import ClipKittyRust
 
 private enum LaunchMode {
@@ -31,6 +34,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate {
     private var showHistoryMenuItem: NSMenuItem?
     private var statusMenu: NSMenu?
     #if !APP_STORE
+    private var cancellables = Set<AnyCancellable>()
     private var updateController: UpdateController?
     #endif
 
@@ -76,6 +80,12 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate {
 
         #if !APP_STORE
         updateController = UpdateController()
+        AppSettings.shared.$autoInstallUpdates
+            .dropFirst()
+            .sink { [weak self] enabled in
+                self?.updateController?.setAutoInstall(enabled)
+            }
+            .store(in: &cancellables)
         #endif
 
         // When using simulated DB, show the panel immediately
@@ -112,9 +122,6 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate {
         showHistoryMenuItem?.keyEquivalentModifierMask = hotKey.modifierMask
         menu.addItem(showHistoryMenuItem!)
         menu.addItem(NSMenuItem.separator())
-        #if !APP_STORE
-        menu.addItem(NSMenuItem(title: NSLocalizedString("Check for Updates...", comment: "Menu bar item to check for app updates"), action: #selector(checkForUpdates), keyEquivalent: ""))
-        #endif
         menu.addItem(NSMenuItem(title: NSLocalizedString("Settings...", comment: "Menu bar item to open settings window"), action: #selector(openSettings), keyEquivalent: ","))
         menu.addItem(NSMenuItem.separator())
         menu.addItem(NSMenuItem(title: NSLocalizedString("Quit", comment: "Menu bar item to quit the app"), action: #selector(quit), keyEquivalent: "q"))
@@ -179,6 +186,21 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate {
 
     @objc private func openSettings() {
         if settingsWindow == nil {
+            #if !APP_STORE
+            let settingsView = SettingsView(
+                store: store,
+                onHotKeyChanged: { [weak self] hotKey in
+                    self?.hotKeyManager.register(hotKey: hotKey)
+                    self?.updateMenuHotKey()
+                },
+                onMenuBarBehaviorChanged: { [weak self] in
+                    self?.updateMenuBarBehavior()
+                },
+                onInstallUpdate: { [weak self] in
+                    self?.updateController?.installUpdate()
+                }
+            )
+            #else
             let settingsView = SettingsView(
                 store: store,
                 onHotKeyChanged: { [weak self] hotKey in
@@ -189,6 +211,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate {
                     self?.updateMenuBarBehavior()
                 }
             )
+            #endif
 
             let window = NSWindow(
                 contentRect: NSRect(x: 0, y: 0, width: 400, height: 250),
@@ -208,12 +231,6 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate {
         settingsWindow?.makeKeyAndOrderFront(nil)
         NSApp.activate(ignoringOtherApps: true)
     }
-
-    #if !APP_STORE
-    @objc private func checkForUpdates() {
-        updateController?.checkForUpdates()
-    }
-    #endif
 
     nonisolated func windowWillClose(_ notification: Notification) {
         Task { @MainActor in
