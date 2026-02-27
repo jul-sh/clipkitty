@@ -5,6 +5,7 @@ on:
     branches: [main, release]
   pull_request:
     branches: [main, release]
+  workflow_dispatch:
 
 permissions:
   contents: write
@@ -122,11 +123,22 @@ jobs:
           chmod +x distribution/build-dmg.sh
 
           make build CONFIGURATION=Release
+
+          # Sign nested frameworks/bundles first (inside-out for Sparkle, XPC services, etc.)
+          APP="DerivedData/Build/Products/Release/ClipKitty.app"
+          if [ -d "$APP/Contents/Frameworks" ]; then
+            find "$APP/Contents/Frameworks" \( -type f -perm +111 -o -name "*.dylib" \) | while read -r binary; do
+              codesign --force --options runtime --sign "Developer ID Application" "$binary"
+            done
+          fi
+
+          # Sign the outer app (must come last)
           codesign --force --options runtime --sign "Developer ID Application" \
             --entitlements Sources/App/ClipKitty.entitlements \
-            DerivedData/Build/Products/Release/ClipKitty.app
-          ./distribution/build-dmg.sh DerivedData/Build/Products/Release/ClipKitty.app ClipKitty.dmg
+            "$APP"
+          codesign --verify --deep --strict "$APP"
 
+          ./distribution/build-dmg.sh "$APP" ClipKitty.dmg
           codesign --force --sign "Developer ID Application" ClipKitty.dmg
 
       # 2. Notarize with Apple
@@ -137,7 +149,19 @@ jobs:
             --key auth_key.p8 \
             --key-id "$NOTARY_KEY_ID" \
             --issuer "$NOTARY_ISSUER_ID" \
-            --wait
+            --wait --output-format json | tee notarization_result.json
+
+          STATUS=$(python3 -c "import json,sys; print(json.load(sys.stdin)['status'])" < notarization_result.json)
+
+          if [ "$STATUS" != "Accepted" ]; then
+            echo "::error::Notarization failed with status: $STATUS"
+            SUBMISSION_ID=$(python3 -c "import json,sys; print(json.load(sys.stdin)['id'])" < notarization_result.json)
+            xcrun notarytool log "$SUBMISSION_ID" \
+              --key auth_key.p8 \
+              --key-id "$NOTARY_KEY_ID" \
+              --issuer "$NOTARY_ISSUER_ID" || true
+            exit 1
+          fi
         env:
           NOTARY_KEY_BASE64: ${{ steps.secrets.outputs.NOTARY_KEY_BASE64 }}
           NOTARY_KEY_ID: ${{ steps.secrets.outputs.NOTARY_KEY_ID }}
@@ -148,8 +172,55 @@ jobs:
         run: rm -f auth_key.p8
 
       # 3. Staple Notarization (Required for offline Gatekeeper approval)
+      #    Apple's CDN can occasionally lag behind even after "Accepted" status.
       - name: Staple Notarization
-        run: xcrun stapler staple ClipKitty.dmg
+        run: |
+          for i in $(seq 1 10); do
+            if xcrun stapler staple ClipKitty.dmg; then
+              echo "Stapling succeeded on attempt $i"
+              exit 0
+            fi
+            echo "Staple attempt $i failed, retrying in 15s..."
+            sleep 15
+          done
+          echo "Stapling failed after 10 attempts"
+          exit 1
+
+      - name: Install Sparkle CLI Tools
+        if: github.ref == 'refs/heads/release'
+        run: |
+          SPARKLE_VERSION="2.9.0"
+          curl -sL "https://github.com/sparkle-project/Sparkle/releases/download/${SPARKLE_VERSION}/Sparkle-${SPARKLE_VERSION}.tar.xz" -o /tmp/sparkle.tar.xz
+          mkdir -p /tmp/sparkle
+          tar -xf /tmp/sparkle.tar.xz -C /tmp/sparkle
+          echo "/tmp/sparkle/bin" >> "$GITHUB_PATH"
+
+      - name: Sign DMG with EdDSA
+        if: github.ref == 'refs/heads/release'
+        id: eddsa-sign
+        run: |
+          SIGNATURE=$(echo "$SPARKLE_EDDSA_KEY" | sign_update ClipKitty.dmg --ed-key-file -)
+          # sign_update outputs: sparkle:edSignature="..." length="..."
+          ED_SIGNATURE=$(echo "$SIGNATURE" | sed 's/.*sparkle:edSignature="\([^"]*\)".*/\1/')
+          FILE_LENGTH=$(echo "$SIGNATURE" | sed 's/.*length="\([^"]*\)".*/\1/')
+          echo "ed_signature=$ED_SIGNATURE" >> "$GITHUB_OUTPUT"
+          echo "file_length=$FILE_LENGTH" >> "$GITHUB_OUTPUT"
+        env:
+          SPARKLE_EDDSA_KEY: ${{ steps.secrets.outputs.SPARKLE_EDDSA_KEY }}
+
+      - name: Generate Appcast
+        if: github.ref == 'refs/heads/release'
+        run: |
+          chmod +x distribution/generate-appcast.sh
+          ./distribution/generate-appcast.sh \
+            "$VERSION" \
+            "${{ steps.eddsa-sign.outputs.ed_signature }}" \
+            "${{ steps.eddsa-sign.outputs.file_length }}" \
+            > appcast.xml
+          echo "--- Generated appcast.xml ---"
+          cat appcast.xml
+          # Validate XML
+          xmllint --noout appcast.xml
 
       - name: Upload Artifacts
         uses: actions/upload-artifact@v4
@@ -166,7 +237,7 @@ jobs:
             marketing/*/screenshot_*.png
 
       - name: Deploy to gh-pages
-        if: github.event_name == 'push' && github.ref == 'refs/heads/main'
+        if: github.event_name == 'push' && (github.ref == 'refs/heads/main' || github.ref == 'refs/heads/release')
         run: |
           git config --global user.name "github-actions[bot]"
           git config --global user.email "github-actions[bot]@users.noreply.github.com"
@@ -188,12 +259,14 @@ jobs:
           cp "$GITHUB_WORKSPACE/marketing/en/screenshot_1.png" marketing_1.png
           cp "$GITHUB_WORKSPACE/marketing/en/screenshot_2.png" marketing_2.png
           cp "$GITHUB_WORKSPACE/marketing/en/screenshot_3.png" marketing_3.png
+          [ -f "$GITHUB_WORKSPACE/appcast.xml" ] && cp "$GITHUB_WORKSPACE/appcast.xml" .
 
           # Generate landing page from README.md
           brew install cmark-gfm 2>/dev/null || true
           "$GITHUB_WORKSPACE/distribution/generate-landing-page.sh" > index.html
 
           git add icon.png marketing_1.png marketing_2.png marketing_3.png index.html
+          git add appcast.xml 2>/dev/null || true
           git commit -m "Update site, screenshots and icon [skip ci]" || echo "No changes to commit"
           git push origin gh-pages
 
@@ -219,43 +292,6 @@ jobs:
             ClipKitty.dmg
         env:
           GH_TOKEN: ${{ github.token }}
-
-      # Update Homebrew tap when releasing
-      - name: Update Homebrew Tap
-        if: github.ref == 'refs/heads/release'
-        run: |
-          TAG="v$VERSION"
-          SHA256=$(shasum -a 256 ClipKitty.dmg | cut -d' ' -f1)
-
-          # Clone the homebrew-clipkitty tap repository
-          git clone https://x-access-token:${HOMEBREW_TAP_TOKEN}@github.com/jul-sh/homebrew-clipkitty.git /tmp/homebrew-tap
-          cd /tmp/homebrew-tap
-
-          mkdir -p Casks
-          # Use the actual tag name in URL (not reconstructed with v prefix)
-          printf '%s\n' \
-            'cask "clipkitty" do' \
-            "  version \"$VERSION\"" \
-            "  sha256 \"$SHA256\"" \
-            '' \
-            "  url \"https://github.com/jul-sh/clipkitty/releases/download/$TAG/ClipKitty.dmg\"" \
-            '  name "ClipKitty"' \
-            '  desc "Clipboard history manager with instant fuzzy search"' \
-            '  homepage "https://github.com/jul-sh/clipkitty"' \
-            '' \
-            '  app "ClipKitty.app"' \
-            'end' > Casks/clipkitty.rb
-
-          git config user.name "github-actions[bot]"
-          git config user.email "github-actions[bot]@users.noreply.github.com"
-          git add Casks/clipkitty.rb
-          git diff --cached --quiet || git commit -m "Update ClipKitty to $VERSION"
-          git push origin main
-
-          cd -
-        env:
-          GH_TOKEN: ${{ github.token }}
-          HOMEBREW_TAP_TOKEN: ${{ steps.secrets.outputs.HOMEBREW_TAP_TOKEN }}
 
       # Create automatic pre-release on push to main (for development builds)
       - name: Create Development Release
