@@ -951,11 +951,8 @@ struct ContentView: View {
                     confirmSelection()
                 }
                 .buttonStyle(.plain)
-                .padding(.horizontal, 8)
-                .padding(.vertical, 3)
-                .background(Color.accentColor)
-                .foregroundStyle(.white)
-                .cornerRadius(4)
+                .padding(.horizontal, 6)
+                .padding(.vertical, 2)
                 .fixedSize()
             } else {
                 Label(item.timeAgo, systemImage: "clock")
@@ -1586,6 +1583,7 @@ private class EditablePreviewTextView: NSTextView {
             }
         }
         if event.keyCode == 53 { // Escape
+            self.window?.makeFirstResponder(nil)
             onEscape?()
             return
         }

@@ -67,9 +67,9 @@ enum PasteMode {
     var editConfirmLabel: String {
         switch self {
         case .noPermission, .copyOnly:
-            return String(localized: "Copy & Save")
+            return String(localized: "Save & Copy")
         case .autoPaste:
-            return String(localized: "Paste & Save")
+            return String(localized: "Save & Paste")
         }
     }
 }

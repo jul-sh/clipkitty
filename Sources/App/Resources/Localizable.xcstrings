@@ -1025,130 +1025,130 @@
         }
       }
     },
-    "Copy & Save": {
+    "Save & Copy": {
       "localizations": {
         "en": {
           "stringUnit": {
             "state": "translated",
-            "value": "Copy & Save"
+            "value": "Save & Copy"
           }
         },
         "es": {
           "stringUnit": {
             "state": "translated",
-            "value": "Copiar y guardar"
+            "value": "Guardar y copiar"
           }
         },
         "zh-Hans": {
           "stringUnit": {
             "state": "translated",
-            "value": "拷贝并保存"
+            "value": "保存并拷贝"
           }
         },
         "zh-Hant": {
           "stringUnit": {
             "state": "translated",
-            "value": "拷貝並儲存"
+            "value": "儲存並拷貝"
           }
         },
         "ja": {
           "stringUnit": {
             "state": "translated",
-            "value": "コピーして保存"
+            "value": "保存してコピー"
           }
         },
         "ko": {
           "stringUnit": {
             "state": "translated",
-            "value": "복사 및 저장"
+            "value": "저장 및 복사"
           }
         },
         "fr": {
           "stringUnit": {
             "state": "translated",
-            "value": "Copier et enregistrer"
+            "value": "Enregistrer et copier"
           }
         },
         "de": {
           "stringUnit": {
             "state": "translated",
-            "value": "Kopieren & Sichern"
+            "value": "Sichern & Kopieren"
           }
         },
         "pt-BR": {
           "stringUnit": {
             "state": "translated",
-            "value": "Copiar e salvar"
+            "value": "Salvar e copiar"
           }
         },
         "ru": {
           "stringUnit": {
             "state": "translated",
-            "value": "Скопировать и сохранить"
+            "value": "Сохранить и скопировать"
           }
         }
       }
     },
-    "Paste & Save": {
+    "Save & Paste": {
       "localizations": {
         "en": {
           "stringUnit": {
             "state": "translated",
-            "value": "Paste & Save"
+            "value": "Save & Paste"
           }
         },
         "es": {
           "stringUnit": {
             "state": "translated",
-            "value": "Pegar y guardar"
+            "value": "Guardar y pegar"
           }
         },
         "zh-Hans": {
           "stringUnit": {
             "state": "translated",
-            "value": "粘贴并保存"
+            "value": "保存并粘贴"
           }
         },
         "zh-Hant": {
           "stringUnit": {
             "state": "translated",
-            "value": "貼上並儲存"
+            "value": "儲存並貼上"
           }
         },
         "ja": {
           "stringUnit": {
             "state": "translated",
-            "value": "ペーストして保存"
+            "value": "保存してペースト"
           }
         },
         "ko": {
           "stringUnit": {
             "state": "translated",
-            "value": "붙여넣기 및 저장"
+            "value": "저장 및 붙여넣기"
           }
         },
         "fr": {
           "stringUnit": {
             "state": "translated",
-            "value": "Coller et enregistrer"
+            "value": "Enregistrer et coller"
           }
         },
         "de": {
           "stringUnit": {
             "state": "translated",
-            "value": "Einsetzen & Sichern"
+            "value": "Sichern & Einsetzen"
           }
         },
         "pt-BR": {
           "stringUnit": {
             "state": "translated",
-            "value": "Colar e salvar"
+            "value": "Salvar e colar"
           }
         },
         "ru": {
           "stringUnit": {
             "state": "translated",
-            "value": "Вставить и сохранить"
+            "value": "Сохранить и вставить"
           }
         }
       }
