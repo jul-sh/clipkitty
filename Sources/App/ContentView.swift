@@ -186,10 +186,10 @@ struct ContentView: View {
         }
         .onDisappear {
             removeCommandNumberEventMonitor()
-            commitPendingEdit()
+            discardPendingEdit()
         }
         .onReceive(NotificationCenter.default.publisher(for: .clipKittyWillHide)) { _ in
-            commitPendingEdit()
+            discardPendingEdit()
         }
         .onChange(of: store.displayVersion) { _, _ in
             // Reset local state when store signals a display reset
@@ -248,6 +248,10 @@ struct ContentView: View {
             selectedItem = nil
         }
         .onChange(of: selectedItemId) { oldId, newId in
+            // Discard pending edits when navigating to a different item
+            if case .pendingEdit(let editItemId, _) = previewEditState, editItemId != newId {
+                discardPendingEdit()
+            }
             // Fetch full item when selection changes
             guard let newId else {
                 selectedItem = nil
@@ -345,12 +349,14 @@ struct ContentView: View {
     private func confirmSelection() {
         guard let item = selectedItem else { return }
         let content = effectiveContent(for: item)
+        commitPendingEdit()
         onSelect(item.itemMetadata.itemId, content)
     }
 
     private func copyOnlySelection() {
         guard let item = selectedItem else { return }
         let content = effectiveContent(for: item)
+        commitPendingEdit()
         onCopyOnly(item.itemMetadata.itemId, content)
     }
 
@@ -417,6 +423,11 @@ struct ContentView: View {
                 break
             }
         }
+    }
+
+    /// Discards any pending edit without saving.
+    private func discardPendingEdit() {
+        previewEditState = .idle
     }
 
     /// Commits any pending edit as a new clipboard item.
@@ -888,6 +899,13 @@ struct ContentView: View {
                 },
                 onCmdReturn: {
                     confirmSelection()
+                },
+                onSave: {
+                    commitPendingEdit()
+                },
+                onDiscard: {
+                    discardPendingEdit()
+                    focusSearchField()
                 }
             )
             .frame(maxWidth: .infinity, maxHeight: .infinity)
@@ -923,32 +941,63 @@ struct ContentView: View {
         }
     }
 
+    /// Whether the current item has a pending edit that can be saved/discarded.
+    private var hasPendingEditForSelectedItem: Bool {
+        if case .pendingEdit(let editItemId, _) = previewEditState,
+           editItemId == selectedItemId {
+            return true
+        }
+        return false
+    }
+
     private func metadataFooter(for item: ClipboardItem) -> some View {
         HStack(spacing: 12) {
-            Label(item.timeAgo, systemImage: "clock")
-                .lineLimit(1)
-            if let app = item.itemMetadata.sourceApp {
-                HStack(spacing: 4) {
-                    if let bundleID = item.itemMetadata.sourceAppBundleId,
-                       let appURL = NSWorkspace.shared.urlForApplication(withBundleIdentifier: bundleID) {
-                        Image(nsImage: NSWorkspace.shared.icon(forFile: appURL.path))
-                            .resizable()
-                            .frame(width: 14, height: 14)
-                    } else {
-                        Image(systemName: "app")
-                    }
-                    Text(app)
-                        .lineLimit(1)
+            if hasPendingEditForSelectedItem {
+                Spacer(minLength: 0)
+                Button("⌘D Discard") {
+                    discardPendingEdit()
+                    focusSearchField()
                 }
-            }
-            actionsButton
-                .fixedSize()
-            Spacer(minLength: 0)
-            Button(buttonLabel(for: item)) { confirmSelection() }
                 .buttonStyle(.plain)
                 .padding(.horizontal, 6)
                 .padding(.vertical, 2)
                 .fixedSize()
+                Button("⌘S Save") {
+                    commitPendingEdit()
+                }
+                .buttonStyle(.plain)
+                .padding(.horizontal, 8)
+                .padding(.vertical, 3)
+                .background(Color.accentColor)
+                .foregroundStyle(.white)
+                .cornerRadius(4)
+                .fixedSize()
+            } else {
+                Label(item.timeAgo, systemImage: "clock")
+                    .lineLimit(1)
+                if let app = item.itemMetadata.sourceApp {
+                    HStack(spacing: 4) {
+                        if let bundleID = item.itemMetadata.sourceAppBundleId,
+                           let appURL = NSWorkspace.shared.urlForApplication(withBundleIdentifier: bundleID) {
+                            Image(nsImage: NSWorkspace.shared.icon(forFile: appURL.path))
+                                .resizable()
+                                .frame(width: 14, height: 14)
+                        } else {
+                            Image(systemName: "app")
+                        }
+                        Text(app)
+                            .lineLimit(1)
+                    }
+                }
+                actionsButton
+                    .fixedSize()
+                Spacer(minLength: 0)
+                Button(buttonLabel(for: item)) { confirmSelection() }
+                    .buttonStyle(.plain)
+                    .padding(.horizontal, 6)
+                    .padding(.vertical, 2)
+                    .fixedSize()
+            }
         }
         .font(.system(size: 13))
         .foregroundStyle(.secondary)
@@ -1537,12 +1586,24 @@ struct TextPreviewView: NSViewRepresentable {
 private class EditablePreviewTextView: NSTextView {
     var onCmdReturn: (() -> Void)?
     var onFocusChange: ((Bool) -> Void)?
+    var onSave: (() -> Void)?
+    var onDiscard: (() -> Void)?
 
     override func keyDown(with event: NSEvent) {
-        // Check for Cmd+Return
-        if event.modifierFlags.contains(.command) && event.keyCode == 36 {
-            onCmdReturn?()
-            return
+        if event.modifierFlags.contains(.command) {
+            switch event.keyCode {
+            case 36: // Cmd+Return
+                onCmdReturn?()
+                return
+            case 1: // Cmd+S
+                onSave?()
+                return
+            case 2: // Cmd+D
+                onDiscard?()
+                return
+            default:
+                break
+            }
         }
         super.keyDown(with: event)
     }
@@ -1577,6 +1638,8 @@ struct EditableTextPreview: NSViewRepresentable {
     var onTextChange: ((String) -> Void)?  // Called on each edit
     var onEditingStateChange: ((Bool) -> Void)?  // Called when editing state changes
     var onCmdReturn: (() -> Void)?  // Called when Cmd+Return pressed (paste)
+    var onSave: (() -> Void)?  // Called when Cmd+S pressed (save edit)
+    var onDiscard: (() -> Void)?  // Called when Cmd+D pressed (discard edit)
 
     /// Last known container width, persisted across view recreations
     private static var lastKnownContainerWidth: CGFloat = 0
@@ -1632,6 +1695,8 @@ struct EditableTextPreview: NSViewRepresentable {
         textView.delegate = context.coordinator
         textView.onCmdReturn = onCmdReturn
         textView.onFocusChange = onEditingStateChange
+        textView.onSave = onSave
+        textView.onDiscard = onDiscard
         context.coordinator.onTextChange = onTextChange
 
         // Enable accessibility
@@ -1651,6 +1716,8 @@ struct EditableTextPreview: NSViewRepresentable {
         if let editableTextView = textView as? EditablePreviewTextView {
             editableTextView.onCmdReturn = onCmdReturn
             editableTextView.onFocusChange = onEditingStateChange
+            editableTextView.onSave = onSave
+            editableTextView.onDiscard = onDiscard
         }
 
         // Check if item changed
