@@ -124,11 +124,12 @@
 <li><strong>OCR &amp; Smart Search</strong>: Search text inside images and screenshots. AI-powered descriptions make visual content searchable.</li>
 <li><strong>Keyboard-First</strong>: <code>⌥Space</code> to open, arrow keys to navigate, <code>Return</code> to paste. <code>⌘1-9</code> for quick access.</li>
 <li><strong>Privacy-First</strong>: 100% on-device and offline. No telemetry, no cloud sync, no accounts.</li>
-<li><strong>Free &amp; Open Source</strong>: GPL-3.0 licensed. Install free via Homebrew or support development on the App Store.</li>
+<li><strong>Free &amp; Open Source</strong>: GPL-3.0 licensed. Install free from GitHub or support development on the App Store.</li>
 </ul>
 <h2>Installation</h2>
-<h3>Homebrew (Recommended)</h3>
-<pre><code class="language-bash">brew install jul-sh/clipkitty/clipkitty
+<h3>Quick Install (Recommended)</h3>
+<pre><code class="language-bash"># Downloads the latest release and installs ClipKitty.app to /Applications
+curl -sL &quot;$(curl -s https://api.github.com/repos/jul-sh/clipkitty/releases/latest | grep browser_download_url | grep .dmg | cut -d'&quot;' -f4)&quot; -o /tmp/ClipKitty.dmg &amp;&amp; hdiutil attach /tmp/ClipKitty.dmg -quiet &amp;&amp; cp -R &quot;/Volumes/ClipKitty/ClipKitty.app&quot; /Applications/ &amp;&amp; hdiutil detach &quot;/Volumes/ClipKitty&quot; -quiet &amp;&amp; rm /tmp/ClipKitty.dmg
 </code></pre>
 <h3>Manual Download</h3>
 <ol>
