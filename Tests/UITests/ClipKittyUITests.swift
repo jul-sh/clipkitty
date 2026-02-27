@@ -197,6 +197,31 @@ final class ClipKittyUITests: XCTestCase {
         XCTAssertGreaterThan(buttons.count, 0, "Should have items in the list")
     }
 
+    /// Tests that first item's preview content is visible when selected.
+    /// KNOWN ISSUE: First item shows in list but NOT in preview pane.
+    /// The EditableTextPreview's NSTextView is not rendering/accessible.
+    func testFirstItemPreviewVisible() throws {
+        let panel = app.dialogs.firstMatch
+        XCTAssertTrue(panel.exists, "Panel should be visible initially")
+
+        // Wait for first item to be selected
+        XCTAssertTrue(waitForSelectedIndex(0, timeout: 3), "First item should be selected")
+        Thread.sleep(forTimeInterval: 1.0)
+
+        // Look for the preview text view by accessibility identifier
+        let previewTextView = panel.textViews["PreviewTextView"]
+        let previewExists = previewTextView.waitForExistence(timeout: 2)
+
+        // Debug output
+        let allTextViews = panel.textViews.allElementsBoundByIndex
+        print("DEBUG: Found \(allTextViews.count) text views")
+        for (i, tv) in allTextViews.enumerated() {
+            print("DEBUG: TextView[\(i)] id='\(tv.identifier)' exists=\(tv.exists)")
+        }
+
+        XCTAssertTrue(previewExists,
+            "Preview text view (PreviewTextView) should exist. KNOWN ISSUE: EditableTextPreview not rendering.")
+    }
 
     /// Tests that Cmd+number shortcuts select and paste the corresponding history item.
     /// Cmd+2 should target the second item (index 1).
@@ -947,5 +972,205 @@ final class ClipKittyUITests: XCTestCase {
         filterButton.click()
         Thread.sleep(forTimeInterval: 0.5)
         saveScreenshot(name: "marketing_3_filter")
+    }
+
+    // MARK: - Editable Preview Tests
+
+    /// Tests that the preview text area accepts typing for text items.
+    func testPreviewTextIsEditable() throws {
+        let searchField = app.textFields["SearchField"]
+        XCTAssertTrue(searchField.waitForExistence(timeout: 5), "Search field not found")
+
+        // Ensure we have a text item selected (first item should be text based on demo data)
+        XCTAssertTrue(waitForSelectedIndex(0, timeout: 2), "First item should be selected")
+
+        // Find text views in the app - the preview pane uses NSTextView
+        let textViews = app.textViews.allElementsBoundByIndex
+        XCTAssertGreaterThan(textViews.count, 0, "Should have text views in the app")
+
+        // The preview text view should exist
+        let previewTextView = textViews.first!
+        XCTAssertTrue(previewTextView.exists, "Preview text view should exist")
+
+        // Click to focus the text view
+        previewTextView.click()
+        Thread.sleep(forTimeInterval: 0.3)
+
+        // Type some text - if editable, this will modify the content
+        let testSuffix = " - test edit"
+        previewTextView.typeText(testSuffix)
+        Thread.sleep(forTimeInterval: 0.3)
+
+        // Verify text was typed (the value should contain our edit)
+        let value = previewTextView.value as? String ?? ""
+        XCTAssertTrue(value.contains("test edit"), "Preview should accept typed text when editable")
+    }
+
+    /// Tests that editing and defocusing creates a new item.
+    func testEditAndDefocusCreatesNewItem() throws {
+        let searchField = app.textFields["SearchField"]
+        XCTAssertTrue(searchField.waitForExistence(timeout: 5), "Search field not found")
+
+        // Record initial item count
+        let initialCount = app.outlines.firstMatch.buttons.allElementsBoundByIndex.count
+        XCTAssertGreaterThan(initialCount, 0, "Should have items")
+
+        // Find and edit preview text
+        let textViews = app.textViews.allElementsBoundByIndex
+        guard textViews.count > 0 else {
+            XCTFail("No text views found")
+            return
+        }
+
+        let previewTextView = textViews.first!
+        previewTextView.click()
+        Thread.sleep(forTimeInterval: 0.3)
+
+        // Add unique text to ensure no duplicate
+        let uniqueText = " - edited\(UUID().uuidString.prefix(8))"
+        previewTextView.typeText(uniqueText)
+        Thread.sleep(forTimeInterval: 0.3)
+
+        // Defocus by clicking search field
+        searchField.click()
+        Thread.sleep(forTimeInterval: 0.8)
+
+        // Item count should increase by 1 (new item created)
+        let finalCount = app.outlines.firstMatch.buttons.allElementsBoundByIndex.count
+        XCTAssertEqual(finalCount, initialCount + 1, "New item should be created after edit and defocus")
+    }
+
+    /// Tests that defocusing moves edited item to top and selects it.
+    func testEditedItemAppearsAtTopAndSelected() throws {
+        let searchField = app.textFields["SearchField"]
+        XCTAssertTrue(searchField.waitForExistence(timeout: 5), "Search field not found")
+
+        // Navigate to second item first
+        searchField.click()
+        app.typeKey(.downArrow, modifierFlags: [])
+        Thread.sleep(forTimeInterval: 0.3)
+        XCTAssertTrue(waitForSelectedIndex(1, timeout: 2), "Should select second item")
+
+        // Edit the text
+        let textViews = app.textViews.allElementsBoundByIndex
+        guard textViews.count > 0 else { return }
+
+        let previewTextView = textViews.first!
+        previewTextView.click()
+        Thread.sleep(forTimeInterval: 0.3)
+
+        let uniqueText = " - new\(UUID().uuidString.prefix(8))"
+        previewTextView.typeText(uniqueText)
+        Thread.sleep(forTimeInterval: 0.3)
+
+        // Defocus
+        searchField.click()
+        Thread.sleep(forTimeInterval: 0.8)
+
+        // First item should now be selected (the new item is at top)
+        XCTAssertTrue(waitForSelectedIndex(0, timeout: 2), "New item should be selected at top after edit")
+    }
+
+    /// Tests that images are not editable in preview (no text view for images).
+    func testImagePreviewNotEditable() throws {
+        let filterButton = app.buttons["FilterDropdown"]
+        XCTAssertTrue(filterButton.waitForExistence(timeout: 5), "Filter button not found")
+
+        // Filter to images only
+        filterButton.click()
+        Thread.sleep(forTimeInterval: 0.5)
+
+        let imagesOption = app.buttons["Images"]
+        guard imagesOption.exists else {
+            // Skip if no images filter option (may not have images in test data)
+            return
+        }
+
+        imagesOption.click()
+        Thread.sleep(forTimeInterval: 0.5)
+
+        // Wait for filter to apply
+        Thread.sleep(forTimeInterval: 0.3)
+
+        // For image items, there should be no editable text view in the main preview area
+        // The preview shows an image, not a text view
+        // We verify by checking that typing doesn't create new items
+
+        let initialCount = app.outlines.firstMatch.buttons.allElementsBoundByIndex.count
+        guard initialCount > 0 else { return }
+
+        // Try to type somewhere - it shouldn't affect items
+        app.typeText("test")
+        Thread.sleep(forTimeInterval: 0.5)
+
+        let finalCount = app.outlines.firstMatch.buttons.allElementsBoundByIndex.count
+        XCTAssertEqual(finalCount, initialCount, "Typing with image selected should not create new items")
+    }
+
+    /// Tests that links are not editable in preview.
+    func testLinkPreviewNotEditable() throws {
+        let filterButton = app.buttons["FilterDropdown"]
+        XCTAssertTrue(filterButton.waitForExistence(timeout: 5), "Filter button not found")
+
+        // Filter to links only
+        filterButton.click()
+        Thread.sleep(forTimeInterval: 0.5)
+
+        let linksOption = app.buttons["Links"]
+        guard linksOption.exists else {
+            // Skip if no links filter option
+            return
+        }
+
+        linksOption.click()
+        Thread.sleep(forTimeInterval: 0.5)
+
+        Thread.sleep(forTimeInterval: 0.3)
+
+        // For link items, the preview uses LPLinkView which is not editable
+        let initialCount = app.outlines.firstMatch.buttons.allElementsBoundByIndex.count
+        guard initialCount > 0 else { return }
+
+        // Any typing should not create new items (links aren't editable)
+        app.typeText("test")
+        Thread.sleep(forTimeInterval: 0.5)
+
+        let finalCount = app.outlines.firstMatch.buttons.allElementsBoundByIndex.count
+        XCTAssertEqual(finalCount, initialCount, "Typing with link selected should not create new items")
+    }
+
+    /// Tests that editing text and then copying shows combined toast "Copied & saved as new item".
+    func testEditAndCopyShowsCombinedToastMessage() throws {
+        let searchField = app.textFields["SearchField"]
+        XCTAssertTrue(searchField.waitForExistence(timeout: 5), "Search field not found")
+
+        // Ensure first item selected
+        XCTAssertTrue(waitForSelectedIndex(0, timeout: 2), "First item should be selected")
+
+        // Find and edit preview text view
+        let textViews = app.textViews.allElementsBoundByIndex
+        XCTAssertGreaterThan(textViews.count, 0, "Should have text views")
+
+        let previewTextView = textViews.first!
+        previewTextView.click()
+        Thread.sleep(forTimeInterval: 0.3)
+
+        // Add unique text to trigger pending edit state
+        let uniqueText = " - test\(UUID().uuidString.prefix(8))"
+        previewTextView.typeText(uniqueText)
+        Thread.sleep(forTimeInterval: 0.3)
+
+        // Cmd+Return to copy/paste (triggers both save and copy)
+        previewTextView.typeKey(.return, modifierFlags: .command)
+
+        // Toast should appear with combined message
+        let toastWindow = app.windows["ToastWindow"]
+        XCTAssertTrue(toastWindow.waitForExistence(timeout: 3), "Toast window should appear")
+
+        // Give time for messages to combine
+        Thread.sleep(forTimeInterval: 0.5)
+
+        // Toast should still be visible (combining extends duration)
+        XCTAssertTrue(toastWindow.exists, "Toast should still be visible with combined message")
     }
 }

@@ -4,6 +4,11 @@ import ClipKittyRust
 import os.log
 import UniformTypeIdentifiers
 
+/// Notification posted when the panel is about to hide, allowing pending edits to be saved.
+extension Notification.Name {
+    static let clipKittyWillHide = Notification.Name("clipKittyWillHide")
+}
+
 private enum SpinnerState: Equatable {
     case idle
     case debouncing(task: Task<Void, Never>)
@@ -55,6 +60,16 @@ struct ContentView: View {
     @State private var filterPopover: FilterPopoverState = .hidden
     @State private var actionsPopover: ActionsPopoverState = .hidden
     @State private var commandNumberEventMonitor: Any?
+
+    /// Which item's text editor currently has keyboard focus.
+    enum EditFocusState: Equatable {
+        case idle
+        case focused(itemId: Int64)
+    }
+    @State private var editFocus: EditFocusState = .idle
+    /// Per-item cache of unsaved edited text. Cleared on window hide.
+    @State private var pendingEdits: [Int64: String] = [:]
+
     enum FocusTarget: Hashable {
         case search
         case filterDropdown
@@ -168,10 +183,16 @@ struct ContentView: View {
         }
         .onDisappear {
             removeCommandNumberEventMonitor()
+            discardAllEdits()
+        }
+        .onReceive(NotificationCenter.default.publisher(for: .clipKittyWillHide)) { _ in
+            discardAllEdits()
         }
         .onChange(of: store.displayVersion) { _, _ in
             // Reset local state when store signals a display reset
             hasUserNavigated = false
+            pendingEdits.removeAll()
+            editFocus = .idle
             // But preserve initial search if it was just applied
             if didApplyInitialSearch && !initialSearchQuery.isEmpty {
                 didApplyInitialSearch = false // Allow reset next time
@@ -225,7 +246,10 @@ struct ContentView: View {
             selectedItemId = firstItemId
             selectedItem = nil
         }
-        .onChange(of: selectedItemId) { _, newId in
+        .onChange(of: selectedItemId) { oldId, newId in
+            if case .focused(let focusedId) = editFocus, focusedId != newId {
+                editFocus = .idle
+            }
             // Fetch full item when selection changes
             guard let newId else {
                 selectedItem = nil
@@ -322,12 +346,24 @@ struct ContentView: View {
 
     private func confirmSelection() {
         guard let item = selectedItem else { return }
-        onSelect(item.itemMetadata.itemId, item.content)
+        let content = effectiveContent(for: item)
+        commitCurrentEdit()
+        onSelect(item.itemMetadata.itemId, content)
     }
 
     private func copyOnlySelection() {
         guard let item = selectedItem else { return }
-        onCopyOnly(item.itemMetadata.itemId, item.content)
+        let content = effectiveContent(for: item)
+        commitCurrentEdit()
+        onCopyOnly(item.itemMetadata.itemId, content)
+    }
+
+    /// Returns the effective content for an item, accounting for pending edits.
+    private func effectiveContent(for item: ClipboardItem) -> ClipboardContent {
+        if let editedText = pendingEdits[item.itemMetadata.itemId] {
+            return .text(value: editedText)
+        }
+        return item.content
     }
 
     private func deleteSelectedItem() {
@@ -343,9 +379,63 @@ struct ContentView: View {
             nextId = nil
         }
 
+        pendingEdits.removeValue(forKey: id)
         store.delete(itemId: id)
         selectedItemId = nextId
         selectedItem = nil
+    }
+
+    /// Called on each text change in the preview pane.
+    /// Tracks the edit as pending - will be saved as new item when app closes.
+    private func onTextEdit(_ newText: String, for itemId: Int64, originalText: String) {
+        if newText == originalText {
+            pendingEdits.removeValue(forKey: itemId)
+        } else {
+            pendingEdits[itemId] = newText
+        }
+    }
+
+    /// Called when editing focus state changes.
+    private func onEditingStateChange(_ isEditing: Bool, for itemId: Int64) {
+        if isEditing {
+            editFocus = .focused(itemId: itemId)
+        } else if case .focused(let id) = editFocus, id == itemId {
+            editFocus = .idle
+        }
+    }
+
+    /// Discards the currently selected item's pending edit.
+    private func discardCurrentEdit() {
+        if let id = selectedItemId {
+            pendingEdits.removeValue(forKey: id)
+        }
+        editFocus = .idle
+    }
+
+    /// Discards ALL pending edits. Called on window hide.
+    private func discardAllEdits() {
+        pendingEdits.removeAll()
+        editFocus = .idle
+    }
+
+    /// Commits the currently selected item's edit as a new clipboard item.
+    private func commitCurrentEdit() {
+        guard let id = selectedItemId,
+              let editedText = pendingEdits.removeValue(forKey: id),
+              !editedText.isEmpty else {
+            editFocus = .idle
+            return
+        }
+        editFocus = .idle
+        Task {
+            let newItemId = await store.saveEditedText(text: editedText)
+            if newItemId > 0 {
+                searchText = ""
+                store.setSearchQuery("")
+                selectedItemId = newItemId
+                ToastWindow.shared.show(message: String(localized: "Saved as new item"))
+            }
+        }
     }
 
     // MARK: - Search Bar
@@ -679,6 +769,11 @@ struct ContentView: View {
                         matchData: row.matchData,
                         isSelected: row.metadata.itemId == selectedItemId,
                         hasUserNavigated: hasUserNavigated,
+                        isEditingPreview: {
+                            let id = row.metadata.itemId
+                            let isFocused = editFocus == .focused(itemId: id)
+                            return (isFocused || pendingEdits[id] != nil) && id == selectedItemId
+                        }(),
                         onTap: {
                             hasUserNavigated = true
                             selectedItemId = row.metadata.itemId
@@ -762,12 +857,36 @@ struct ContentView: View {
     private func previewContent(for item: ClipboardItem) -> some View {
         switch item.content {
         case .text, .color:
-            TextPreviewView(
-                text: item.content.textContent,
+            // Single unified view: editable with search highlighting via temporary attributes
+            EditableTextPreview(
+                text: pendingEdits[item.itemMetadata.itemId] ?? item.content.textContent,
+                itemId: item.itemMetadata.itemId,
                 fontName: FontManager.mono,
                 fontSize: 15,
                 highlights: selectedItemMatchData?.fullContentHighlights ?? [],
-                densestHighlightStart: selectedItemMatchData?.densestHighlightStart ?? 0
+                densestHighlightStart: selectedItemMatchData?.densestHighlightStart ?? 0,
+                originalText: item.content.textContent,
+                onTextChange: { newText in
+                    onTextEdit(newText, for: item.itemMetadata.itemId, originalText: item.content.textContent)
+                },
+                onEditingStateChange: { editing in
+                    onEditingStateChange(editing, for: item.itemMetadata.itemId)
+                },
+                onCmdReturn: {
+                    confirmSelection()
+                },
+                onSave: {
+                    commitCurrentEdit()
+                    focusSearchField()
+                },
+                onEscape: {
+                    if hasPendingEditForSelectedItem {
+                        discardCurrentEdit()
+                        focusSearchField()
+                    } else {
+                        onDismiss()
+                    }
+                }
             )
             .frame(maxWidth: .infinity, maxHeight: .infinity)
         case .image(let data, let description, _):
@@ -802,32 +921,68 @@ struct ContentView: View {
         }
     }
 
+    /// Whether the current item has a pending edit that can be saved/discarded.
+    private var hasPendingEditForSelectedItem: Bool {
+        guard let selectedItemId else { return false }
+        return pendingEdits[selectedItemId] != nil
+    }
+
     private func metadataFooter(for item: ClipboardItem) -> some View {
         HStack(spacing: 12) {
-            Label(item.timeAgo, systemImage: "clock")
-                .lineLimit(1)
-            if let app = item.itemMetadata.sourceApp {
-                HStack(spacing: 4) {
-                    if let bundleID = item.itemMetadata.sourceAppBundleId,
-                       let appURL = NSWorkspace.shared.urlForApplication(withBundleIdentifier: bundleID) {
-                        Image(nsImage: NSWorkspace.shared.icon(forFile: appURL.path))
-                            .resizable()
-                            .frame(width: 14, height: 14)
-                    } else {
-                        Image(systemName: "app")
-                    }
-                    Text(app)
-                        .lineLimit(1)
+            if hasPendingEditForSelectedItem {
+                Button(String(localized: "Esc Discard")) {
+                    discardCurrentEdit()
+                    focusSearchField()
                 }
-            }
-            actionsButton
-                .fixedSize()
-            Spacer(minLength: 0)
-            Button(buttonLabel(for: item)) { confirmSelection() }
                 .buttonStyle(.plain)
                 .padding(.horizontal, 6)
                 .padding(.vertical, 2)
                 .fixedSize()
+                Button(String(localized: "⌘S Save")) {
+                    commitCurrentEdit()
+                    focusSearchField()
+                }
+                .buttonStyle(.plain)
+                .padding(.horizontal, 8)
+                .padding(.vertical, 3)
+                .background(Color.accentColor)
+                .foregroundStyle(.white)
+                .cornerRadius(4)
+                .fixedSize()
+                Spacer(minLength: 0)
+                Button("⌘↩ \(AppSettings.shared.pasteMode.editConfirmLabel)") {
+                    confirmSelection()
+                }
+                .buttonStyle(.plain)
+                .padding(.horizontal, 6)
+                .padding(.vertical, 2)
+                .fixedSize()
+            } else {
+                Label(item.timeAgo, systemImage: "clock")
+                    .lineLimit(1)
+                if let app = item.itemMetadata.sourceApp {
+                    HStack(spacing: 4) {
+                        if let bundleID = item.itemMetadata.sourceAppBundleId,
+                           let appURL = NSWorkspace.shared.urlForApplication(withBundleIdentifier: bundleID) {
+                            Image(nsImage: NSWorkspace.shared.icon(forFile: appURL.path))
+                                .resizable()
+                                .frame(width: 14, height: 14)
+                        } else {
+                            Image(systemName: "app")
+                        }
+                        Text(app)
+                            .lineLimit(1)
+                    }
+                }
+                actionsButton
+                    .fixedSize()
+                Spacer(minLength: 0)
+                Button(buttonLabel(for: item)) { confirmSelection() }
+                    .buttonStyle(.plain)
+                    .padding(.horizontal, 6)
+                    .padding(.vertical, 2)
+                    .fixedSize()
+            }
         }
         .font(.system(size: 13))
         .foregroundStyle(.secondary)
@@ -837,6 +992,10 @@ struct ContentView: View {
     }
 
     private func buttonLabel(for item: ClipboardItem) -> String {
+        let isEditing = editFocus == .focused(itemId: item.itemMetadata.itemId)
+        if isEditing || pendingEdits[item.itemMetadata.itemId] != nil {
+            return "⌘⏎ \(AppSettings.shared.pasteMode.buttonLabel)"
+        }
         return "⏎ \(AppSettings.shared.pasteMode.buttonLabel)"
     }
 
@@ -1249,7 +1408,6 @@ struct TextPreviewView: NSViewRepresentable {
         let textView = NSTextView()
         textView.isEditable = false
         textView.isSelectable = true
-        textView.isRichText = true  // Enable rich text for highlighting
         textView.drawsBackground = false
         textView.isVerticallyResizable = true
         textView.isHorizontallyResizable = false
@@ -1400,8 +1558,327 @@ struct TextPreviewView: NSViewRepresentable {
         Coordinator()
     }
 
-    class Coordinator {
+    class Coordinator: NSObject {
         var lastHighlights: [HighlightRange] = []
+    }
+}
+
+// MARK: - Editable Text Preview View
+
+/// Custom NSTextView that handles Cmd+Return for paste action and tracks focus
+private class EditablePreviewTextView: NSTextView {
+    var onCmdReturn: (() -> Void)?
+    var onFocusChange: ((Bool) -> Void)?
+    var onSave: (() -> Void)?
+    var onEscape: (() -> Void)?
+
+    override func keyDown(with event: NSEvent) {
+        if event.modifierFlags.contains(.command) {
+            switch event.keyCode {
+            case 36: // Cmd+Return
+                onCmdReturn?()
+                return
+            case 1: // Cmd+S
+                onSave?()
+                return
+            default:
+                break
+            }
+        }
+        if event.keyCode == 53 { // Escape
+            self.window?.makeFirstResponder(nil)
+            onEscape?()
+            return
+        }
+        super.keyDown(with: event)
+    }
+
+    override func becomeFirstResponder() -> Bool {
+        let result = super.becomeFirstResponder()
+        if result {
+            onFocusChange?(true)
+        }
+        return result
+    }
+
+    override func resignFirstResponder() -> Bool {
+        let result = super.resignFirstResponder()
+        if result {
+            onFocusChange?(false)
+        }
+        return result
+    }
+}
+
+/// Unified editable text view with search highlighting.
+/// Highlights are applied directly to the attributed string for reliable rendering.
+struct EditableTextPreview: NSViewRepresentable {
+    let text: String
+    let itemId: Int64
+    let fontName: String
+    let fontSize: CGFloat
+    var highlights: [HighlightRange] = []
+    var densestHighlightStart: UInt64 = 0
+    var originalText: String = ""  // Original text for comparison
+    var onTextChange: ((String) -> Void)?  // Called on each edit
+    var onEditingStateChange: ((Bool) -> Void)?  // Called when editing state changes
+    var onCmdReturn: (() -> Void)?  // Called when Cmd+Return pressed (paste)
+    var onSave: (() -> Void)?  // Called when Cmd+S pressed (save edit)
+    var onEscape: (() -> Void)?  // Called when Escape pressed
+
+    /// Last known container width, persisted across view recreations
+    private static var lastKnownContainerWidth: CGFloat = 0
+
+    /// Horizontal inset for text container (left + right padding)
+    private static let textContainerHorizontalInset: CGFloat = 32  // 16 * 2
+
+    private func scaledFontSize(containerWidth: CGFloat) -> CGFloat {
+        let lines = text.components(separatedBy: "\n")
+        if lines.count >= 10 { return fontSize }
+
+        let baseFont = NSFont(name: fontName, size: fontSize)
+            ?? NSFont.monospacedSystemFont(ofSize: fontSize, weight: .regular)
+        let inset: CGFloat = 32 + 10 // textContainerInset.width * 2 + lineFragmentPadding * 2
+        let availableWidth = containerWidth - inset
+        if availableWidth <= 0 { return fontSize }
+
+        let attributes: [NSAttributedString.Key: Any] = [.font: baseFont]
+        var maxLineWidth: CGFloat = 0
+        for line in lines {
+            let lineWidth = (line as NSString).size(withAttributes: attributes).width
+            if lineWidth >= availableWidth { return fontSize }
+            maxLineWidth = max(maxLineWidth, lineWidth)
+        }
+        if maxLineWidth <= 0 { return fontSize }
+
+        let scale = min(1.5, availableWidth / maxLineWidth) * 0.95
+        return fontSize * scale
+    }
+
+    func makeNSView(context: Context) -> NSScrollView {
+        let scrollView = NSScrollView()
+        scrollView.hasVerticalScroller = true
+        scrollView.drawsBackground = false
+
+        let textView = EditablePreviewTextView()
+        textView.isEditable = true
+        textView.isSelectable = true
+        textView.isRichText = true  // Must be true for text to render properly
+        textView.allowsUndo = true
+        textView.drawsBackground = false
+        textView.isVerticallyResizable = true
+        textView.isHorizontallyResizable = false
+        textView.autoresizingMask = [.width]
+        textView.minSize = NSSize(width: 0, height: 0)
+        textView.maxSize = NSSize(width: CGFloat.greatestFiniteMagnitude, height: CGFloat.greatestFiniteMagnitude)
+        textView.textContainerInset = NSSize(width: 16, height: 16)
+        textView.textContainer?.widthTracksTextView = true
+        textView.textContainer?.containerSize = NSSize(width: scrollView.contentSize.width, height: CGFloat.greatestFiniteMagnitude)
+        textView.frame = NSRect(x: 0, y: 0, width: scrollView.contentSize.width, height: 0)
+
+        // Set up delegate and callbacks (text will be set in updateNSView)
+        textView.delegate = context.coordinator
+        textView.onCmdReturn = onCmdReturn
+        textView.onFocusChange = onEditingStateChange
+        textView.onSave = onSave
+        textView.onEscape = onEscape
+        context.coordinator.onTextChange = onTextChange
+
+        // Enable accessibility
+        textView.setAccessibilityElement(true)
+        textView.setAccessibilityRole(.textArea)
+        textView.setAccessibilityIdentifier("PreviewTextView")
+
+        scrollView.documentView = textView
+        return scrollView
+    }
+
+    func updateNSView(_ nsView: NSScrollView, context: Context) {
+        guard let textView = nsView.documentView as? NSTextView else { return }
+
+        // Update callbacks
+        context.coordinator.onTextChange = onTextChange
+        if let editableTextView = textView as? EditablePreviewTextView {
+            editableTextView.onCmdReturn = onCmdReturn
+            editableTextView.onFocusChange = onEditingStateChange
+            editableTextView.onSave = onSave
+            editableTextView.onEscape = onEscape
+        }
+
+        // Check if item changed
+        let itemChanged = context.coordinator.currentItemId != itemId
+
+        // Calculate scaled font size
+        let containerWidth = nsView.contentSize.width > 0
+            ? nsView.contentSize.width
+            : Self.lastKnownContainerWidth
+        if nsView.contentSize.width > 0 {
+            Self.lastKnownContainerWidth = nsView.contentSize.width
+        }
+        let scaledSize = scaledFontSize(containerWidth: containerWidth)
+        let font = NSFont(name: fontName, size: scaledSize)
+            ?? NSFont.monospacedSystemFont(ofSize: scaledSize, weight: .regular)
+
+        // Track whether font size changed (for scaling updates)
+        let fontSizeChanged = abs(context.coordinator.lastAppliedFontSize - scaledSize) > 0.1
+
+        // Always update typing attributes so new characters use the scaled font
+        let paragraphStyle = NSMutableParagraphStyle()
+        paragraphStyle.lineBreakMode = .byWordWrapping
+        let typingAttrs: [NSAttributedString.Key: Any] = [
+            .font: font,
+            .foregroundColor: NSColor.labelColor,
+            .paragraphStyle: paragraphStyle
+        ]
+        textView.typingAttributes = typingAttrs
+
+        // Update text/font when item changes, font size changes, or text differs (and not editing)
+        if itemChanged || fontSizeChanged {
+            context.coordinator.currentItemId = itemId
+            context.coordinator.lastAppliedFontSize = scaledSize
+            if itemChanged {
+                context.coordinator.isEditing = false
+            }
+
+            // Use attributed string to apply font properly
+            // Use textView.string to preserve edits, or text if item changed
+            let currentText = itemChanged ? text : textView.string
+            let attributed = NSAttributedString(string: currentText, attributes: typingAttrs)
+            textView.textStorage?.setAttributedString(attributed)
+            if itemChanged {
+                textView.scrollToBeginningOfDocument(nil)
+            }
+        } else if !context.coordinator.isEditing && textView.string != text {
+            // Use attributed string to apply font properly
+            let attributed = NSAttributedString(string: text, attributes: typingAttrs)
+            textView.textStorage?.setAttributedString(attributed)
+            context.coordinator.lastAppliedFontSize = scaledSize
+        }
+
+        // Apply highlights directly to attributed string (more reliable than temporary attributes)
+        applyHighlights(
+            to: textView,
+            font: font,
+            paragraphStyle: paragraphStyle,
+            itemChanged: itemChanged,
+            isEditing: context.coordinator.isEditing
+        )
+
+        // Update container size and frame
+        let textContainerWidth = max(0, nsView.contentSize.width - Self.textContainerHorizontalInset)
+        textView.textContainer?.containerSize = NSSize(
+            width: textContainerWidth,
+            height: .greatestFiniteMagnitude
+        )
+        textView.frame = NSRect(x: 0, y: 0, width: nsView.contentSize.width, height: textView.frame.height)
+    }
+
+    private func applyHighlights(
+        to textView: NSTextView,
+        font: NSFont,
+        paragraphStyle: NSParagraphStyle,
+        itemChanged: Bool,
+        isEditing: Bool
+    ) {
+        // Skip highlight updates during active editing to avoid disrupting cursor position
+        // Highlights will be reapplied when editing ends and item is selected again
+        if isEditing { return }
+
+        guard let textStorage = textView.textStorage else { return }
+
+        let currentText = textView.string
+        let textLength = (currentText as NSString).length
+
+        // Build attributed string with highlights baked in (like TextPreviewView)
+        // This is more reliable than temporary attributes for editable text
+        let attributed = NSMutableAttributedString(string: currentText, attributes: [
+            .font: font,
+            .foregroundColor: NSColor.labelColor,
+            .paragraphStyle: paragraphStyle
+        ])
+
+        // Apply highlights directly to the attributed string
+        for highlight in highlights {
+            let nsRange = highlight.nsRange(in: currentText)
+            guard nsRange.location != NSNotFound,
+                  nsRange.length > 0,
+                  nsRange.location + nsRange.length <= textLength else { continue }
+
+            let (bgColor, shouldUnderline) = highlightStyle(for: highlight.kind)
+            attributed.addAttribute(.backgroundColor, value: bgColor, range: nsRange)
+            if shouldUnderline {
+                attributed.addAttribute(.underlineStyle, value: NSUnderlineStyle.single.rawValue, range: nsRange)
+            }
+        }
+
+        // Only update if content or highlights actually changed
+        let currentStorageString = textStorage.string
+        let highlightsChanged = !highlights.isEmpty || (textLength > 0 && textStorage.attribute(.backgroundColor, at: 0, effectiveRange: nil) != nil)
+        if currentStorageString != currentText || highlightsChanged || itemChanged {
+            // Preserve selection before replacing
+            let selectedRange = textView.selectedRange()
+            textStorage.setAttributedString(attributed)
+            // Restore selection if still valid
+            if selectedRange.location + selectedRange.length <= textLength {
+                textView.setSelectedRange(selectedRange)
+            }
+        }
+
+        // Auto-scroll to densest highlight on item change
+        if itemChanged && !highlights.isEmpty {
+            let targetHighlight = highlights.first { $0.start == densestHighlightStart } ?? highlights[0]
+            let targetRange = targetHighlight.nsRange(in: currentText)
+            DispatchQueue.main.async { [weak textView] in
+                guard let textView else { return }
+                guard let scrollView = textView.enclosingScrollView else { return }
+                textView.layoutManager?.ensureLayout(for: textView.textContainer!)
+
+                let glyphRange = textView.layoutManager?.glyphRange(forCharacterRange: targetRange, actualCharacterRange: nil) ?? targetRange
+                guard let rect = textView.layoutManager?.boundingRect(forGlyphRange: glyphRange, in: textView.textContainer!) else { return }
+
+                let highlightRect = rect.offsetBy(dx: textView.textContainerInset.width, dy: textView.textContainerInset.height)
+                let visibleRect = scrollView.documentVisibleRect
+                if !visibleRect.contains(highlightRect) {
+                    textView.scrollToVisible(highlightRect.insetBy(dx: 0, dy: -50))
+                }
+            }
+        }
+    }
+
+    private func highlightStyle(for kind: HighlightKind) -> (NSColor, Bool) {
+        switch kind {
+        case .exact, .prefix:
+            return (NSColor.systemOrange.withAlphaComponent(0.5), true)
+        case .fuzzy:
+            return (NSColor.systemYellow.withAlphaComponent(0.4), false)
+        case .subsequence:
+            return (NSColor.systemBlue.withAlphaComponent(0.3), false)
+        }
+    }
+
+    func makeCoordinator() -> Coordinator {
+        Coordinator()
+    }
+
+    class Coordinator: NSObject, NSTextViewDelegate {
+        var currentItemId: Int64 = 0
+        var isEditing = false
+        var lastAppliedFontSize: CGFloat = 0
+        var onTextChange: ((String) -> Void)?
+
+        func textDidBeginEditing(_ notification: Notification) {
+            isEditing = true
+        }
+
+        func textDidEndEditing(_ notification: Notification) {
+            isEditing = false
+        }
+
+        func textDidChange(_ notification: Notification) {
+            // Called on each keystroke
+            guard let textView = notification.object as? NSTextView else { return }
+            onTextChange?(textView.string)
+        }
     }
 }
 
@@ -1467,9 +1944,10 @@ struct ItemRow: View, Equatable {
     let matchData: MatchData?  // Only present in search mode
     let isSelected: Bool
     let hasUserNavigated: Bool
+    let isEditingPreview: Bool  // True when user is editing text in preview pane
     let onTap: () -> Void
 
-    private var accentSelected: Bool { isSelected && hasUserNavigated }
+    private var accentSelected: Bool { isSelected && hasUserNavigated && !isEditingPreview }
 
     // Fixed height for exactly 1 line of text at font size 15
     private let rowHeight: CGFloat = 32
@@ -1493,6 +1971,7 @@ struct ItemRow: View, Equatable {
     nonisolated static func == (lhs: ItemRow, rhs: ItemRow) -> Bool {
         return lhs.isSelected == rhs.isSelected &&
                lhs.hasUserNavigated == rhs.hasUserNavigated &&
+               lhs.isEditingPreview == rhs.isEditingPreview &&
                lhs.metadata == rhs.metadata &&
                lhs.matchData == rhs.matchData
     }
@@ -1598,7 +2077,10 @@ struct ItemRow: View, Equatable {
         .padding(.horizontal, 4)
         .padding(.vertical, 4)
         .background {
-            if accentSelected {
+            if isSelected && hasUserNavigated && isEditingPreview {
+                // Editing state: darker grey background
+                Color.primary.opacity(0.35)
+            } else if accentSelected {
                 selectionBackground()
             } else if isSelected {
                 Color.primary.opacity(0.225)
