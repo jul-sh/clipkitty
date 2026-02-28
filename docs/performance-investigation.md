@@ -22,83 +22,49 @@ UI freezes (up to ~400ms) when typing rapidly in the search field.
 
 ### Root Cause
 
-**`NSTextStorage.setAttributedString()` triggers full text re-layout**
+**TextKit 1's `NSLayoutManager` performs full document layout**
 
-In `EditableTextPreview.updateNSView()` (ContentView.swift:1779, 1786):
+With TextKit 1, any change to `NSTextStorage` triggers a complete re-layout of the entire document. For large clipboard items (50KB+), this blocks the main thread for 70-400ms.
 
-```swift
-let attributed = NSAttributedString(string: currentText, attributes: typingAttrs)
-textView.textStorage?.setAttributedString(attributed)
-```
-
-This is called:
-1. When the selected item changes
-2. When font size changes
-3. When text differs from current (and not editing)
-
-For large clipboard items (50KB+), `setAttributedString` forces NSTextView to:
-- Parse the entire string
-- Calculate glyph positions for all characters
-- Compute line breaks and layout
-- This blocks the main thread for 70-400ms
-
-### Trigger Chain
-
+The trigger chain:
 ```
 User types in search
     → ClipboardStore.DisplayState changes
         → SwiftUI re-renders affected views
             → List selection changes to new filtered item
-                → EditableTextPreview.updateNSView called
+                → NSViewRepresentable.updateNSView called
                     → textStorage.setAttributedString(newText)
                         → Full NSLayoutManager layout pass (BLOCKING)
 ```
 
-### Secondary Issues
+## Solution: TextKit 2
 
-1. **Highlight updates also replaced full text** - `applyHighlights()` was creating a new `NSMutableAttributedString` and calling `setAttributedString()` on every highlight change
+Migrated from TextKit 1 (`NSLayoutManager`) to TextKit 2 (`NSTextLayoutManager`).
 
-2. **Layout computation for scroll** - `ensureLayout(forGlyphRange:)` called for the entire document when scrolling to highlights
+### Key Differences
 
-## Fixes Applied
+| TextKit 1 | TextKit 2 |
+|-----------|-----------|
+| Full document layout on any change | Viewport-based layout (only visible text) |
+| Highlight changes trigger re-layout | Rendering attributes don't trigger layout |
+| Synchronous layout computation | Incremental/lazy layout |
 
-### 1. In-place highlight updates (applyHighlights)
-Instead of replacing entire attributed string:
+### Implementation
+
+1. **NSTextView with TextKit 2** - Use `NSTextView(usingTextLayoutManager: true)` to opt into TextKit 2
+
+2. **Rendering attributes for highlights** - Use `textLayoutManager.addRenderingAttribute()` instead of modifying text storage. Rendering attributes only affect drawing, not layout.
+
 ```swift
-// Before (slow)
-let attributed = NSMutableAttributedString(string: currentText, attributes: [...])
-textStorage.setAttributedString(attributed)
-
-// After (fast)
-textStorage.beginEditing()
-textStorage.removeAttribute(.backgroundColor, range: fullRange)
-textStorage.removeAttribute(.underlineStyle, range: fullRange)
-// Add new highlights...
-textStorage.endEditing()
+// TextKit 2: Non-blocking highlight updates
+textLayoutManager.removeRenderingAttribute(.backgroundColor, for: documentRange)
+textLayoutManager.addRenderingAttribute(.backgroundColor, value: color, for: highlightRange)
 ```
 
-### 2. Async loading for large text (updateNSView)
-For items >50KB, show truncated preview immediately and load full text async:
-```swift
-if isLargeText && itemChanged {
-    // Show first 10KB immediately
-    let truncated = String(currentText.prefix(10_000))
-    textStorage.setAttributedString(truncatedAttr)
+3. **Viewport-based layout** - TextKit 2's `NSTextViewportLayoutController` automatically manages which text fragments are laid out based on the visible area.
 
-    // Load full text after UI settles
-    Task { @MainActor in
-        try? await Task.sleep(for: .milliseconds(50))
-        textStorage.setAttributedString(fullAttr)
-    }
-}
-```
+### Result
 
-## Recommendations
-
-1. **Consider TextKit 2** - NSTextLayoutManager (macOS 12+) has better incremental layout support
-
-2. **Virtualized text rendering** - Only render visible portion of large text, similar to how List virtualizes rows
-
-3. **Background text processing** - Move attributed string creation off main thread (though `setAttributedString` must be called on main)
-
-4. **Limit preview size** - For very large items (>100KB), always show truncated preview with "Show full content" button
+- No more 70-400ms freezes when typing in search
+- Smooth scrolling through large documents
+- Instant highlight updates without re-layout
