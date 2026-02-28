@@ -5,14 +5,14 @@
     <link>https://jul-sh.github.io/clipkitty/appcast.xml</link>
     <language>en</language>
     <item>
-      <title>ClipKitty 1.8.8</title>
-      <sparkle:version>1.8.8</sparkle:version>
-      <sparkle:shortVersionString>1.8.8</sparkle:shortVersionString>
+      <title>ClipKitty 1.8.9</title>
+      <sparkle:version>1.8.9</sparkle:version>
+      <sparkle:shortVersionString>1.8.9</sparkle:shortVersionString>
       <sparkle:minimumSystemVersion>14.0</sparkle:minimumSystemVersion>
-      <enclosure url="https://github.com/jul-sh/clipkitty/releases/download/v1.8.8/ClipKitty.dmg"
+      <enclosure url="https://github.com/jul-sh/clipkitty/releases/download/v1.8.9/ClipKitty.dmg"
                  type="application/octet-stream"
-                 sparkle:edSignature="ej294SWpJm6hXSpVVW+mFSHOqrXJP2fzuE6aGdNuyIqD0kQOdAfGK1aEDiCRqqYXiJHXwqmlNs9fFt/SvOxCDw=="
-                 length="11107705" />
+                 sparkle:edSignature="5+/SVb597jG12E1QDMKoz5Rzrzak/1FFRF4OUIC3OrCxb/ZapR6vOc9l4+uYg2gOYFeb4lUd/D+jrWja0TciBQ=="
+                 length="11113471" />
     </item>
   </channel>
 </rss>

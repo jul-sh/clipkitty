@@ -128,8 +128,7 @@
 </ul>
 <h2>Installation</h2>
 <h3>Quick Install (Recommended)</h3>
-<p>Downloads the latest release and installs ClipKitty.app to /Applications</p>
-<pre><code class="language-bash">curl -sL &quot;$(curl -s https://api.github.com/repos/jul-sh/clipkitty/releases/latest | grep browser_download_url | grep .dmg | cut -d'&quot;' -f4)&quot; -o /tmp/ClipKitty.dmg &amp;&amp; hdiutil attach /tmp/ClipKitty.dmg -quiet &amp;&amp; cp -R &quot;/Volumes/ClipKitty/ClipKitty.app&quot; /Applications/ &amp;&amp; hdiutil detach &quot;/Volumes/ClipKitty&quot; -quiet &amp;&amp; rm /tmp/ClipKitty.dmg
+<pre><code class="language-bash">curl -sL &quot;$(curl -s https://api.github.com/repos/jul-sh/clipkitty/releases/latest | grep -o 'https://[^&quot;]*\.dmg')&quot; -o /tmp/ck.dmg &amp;&amp; hdiutil attach /tmp/ck.dmg -quiet &amp;&amp; rm -rf /Applications/ClipKitty.app &amp;&amp; cp -R /Volumes/ClipKitty/ClipKitty.app /Applications/ &amp;&amp; hdiutil detach /Volumes/ClipKitty -quiet &amp;&amp; rm /tmp/ck.dmg
 </code></pre>
 <h3>Manual Download</h3>
 <ol>
