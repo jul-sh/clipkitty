@@ -774,6 +774,7 @@ struct ContentView: View {
                             let isFocused = editFocus == .focused(itemId: id)
                             return (isFocused || pendingEdits[id] != nil) && id == selectedItemId
                         }(),
+                        hasPendingEdit: pendingEdits[row.metadata.itemId] != nil,
                         onTap: {
                             hasUserNavigated = true
                             selectedItemId = row.metadata.itemId
@@ -927,10 +928,17 @@ struct ContentView: View {
         return pendingEdits[selectedItemId] != nil
     }
 
+    private var isPreviewFocused: Bool {
+        if case .focused(let id) = editFocus, id == selectedItemId {
+            return true
+        }
+        return false
+    }
+
     private func metadataFooter(for item: ClipboardItem) -> some View {
         HStack(spacing: 12) {
             if hasPendingEditForSelectedItem {
-                Button(String(localized: "Esc Discard")) {
+                Button(isPreviewFocused ? String(localized: "Esc Discard") : String(localized: "Discard")) {
                     discardCurrentEdit()
                     focusSearchField()
                 }
@@ -938,16 +946,17 @@ struct ContentView: View {
                 .padding(.horizontal, 6)
                 .padding(.vertical, 2)
                 .fixedSize()
-                Button(String(localized: "⌘S Save")) {
+                Button(isPreviewFocused ? String(localized: "⌘S Save") : String(localized: "Save")) {
                     commitCurrentEdit()
                     focusSearchField()
                 }
                 .buttonStyle(.plain)
                 .padding(.horizontal, 8)
                 .padding(.vertical, 3)
-                .background(Color.accentColor)
-                .foregroundStyle(.white)
-                .cornerRadius(4)
+                .overlay(
+                    RoundedRectangle(cornerRadius: 4)
+                        .strokeBorder(Color.primary.opacity(0.4), lineWidth: 1)
+                )
                 .fixedSize()
                 Spacer(minLength: 0)
                 Button("⌘↩ \(AppSettings.shared.pasteMode.editConfirmLabel)") {
@@ -1945,6 +1954,7 @@ struct ItemRow: View, Equatable {
     let isSelected: Bool
     let hasUserNavigated: Bool
     let isEditingPreview: Bool  // True when user is editing text in preview pane
+    let hasPendingEdit: Bool    // True when this item has unsaved text edits
     let onTap: () -> Void
 
     private var accentSelected: Bool { isSelected && hasUserNavigated && !isEditingPreview }
@@ -1972,6 +1982,7 @@ struct ItemRow: View, Equatable {
         return lhs.isSelected == rhs.isSelected &&
                lhs.hasUserNavigated == rhs.hasUserNavigated &&
                lhs.isEditingPreview == rhs.isEditingPreview &&
+               lhs.hasPendingEdit == rhs.hasPendingEdit &&
                lhs.metadata == rhs.metadata &&
                lhs.matchData == rhs.matchData
     }
@@ -2058,6 +2069,14 @@ struct ItemRow: View, Equatable {
                     .foregroundColor(accentSelected ? .white.opacity(0.7) : .secondary)
                     .lineLimit(1)
                     .fixedSize()
+                    .allowsHitTesting(false)
+            }
+
+            // Pending edit indicator
+            if hasPendingEdit {
+                Image(systemName: "pencil")
+                    .font(.system(size: 11))
+                    .foregroundColor(accentSelected ? .white.opacity(0.7) : .secondary)
                     .allowsHitTesting(false)
             }
 
