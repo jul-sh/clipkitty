@@ -64,6 +64,7 @@ def main():
     parser = argparse.ArgumentParser(description="Publish to App Store Connect")
     parser.add_argument("--dry-run", action="store_true", help="Preview without uploading")
     parser.add_argument("--metadata-only", action="store_true", help="Skip binary upload")
+    parser.add_argument("--version", help="Version string (e.g., 1.8.8) for auto-creating App Store version")
     args = parser.parse_args()
 
     # --- Validate prerequisites ---
@@ -158,10 +159,33 @@ def main():
 
         data = json.loads(r.stdout)
         versions = data.get("data", data) if isinstance(data, dict) else data
+        version_id = None
+
         if not versions:
-            sys.exit("Error: No App Store version in PREPARE_FOR_SUBMISSION state.\n"
-                     "Create a new version in App Store Connect first.")
-        version_id = versions[0]["id"]
+            if args.version:
+                print(f"No version in PREPARE_FOR_SUBMISSION state. Attempting to create {args.version}...")
+                r = run(
+                    ["asc", "versions", "create",
+                     "--app", APP_ID, "--platform", "MAC_OS",
+                     "--version", args.version, "--release-type", "MANUAL"],
+                    capture=True, check=False,
+                )
+                if r.returncode == 0:
+                    create_data = json.loads(r.stdout)
+                    version_id = create_data.get("data", create_data).get("id") if isinstance(create_data, dict) else create_data.get("id")
+                    print(f"Created version {args.version} (ID: {version_id})")
+                else:
+                    print(f"Warning: Could not create version {args.version}: {r.stderr.strip()}")
+                    print("Skipping metadata and screenshot upload (binary was uploaded successfully).")
+                    return
+            else:
+                print("Warning: No App Store version in PREPARE_FOR_SUBMISSION state.")
+                print("Skipping metadata and screenshot upload (binary was uploaded successfully).")
+                print("Hint: Pass --version to auto-create a new version, or create one manually in App Store Connect.")
+                return
+        else:
+            version_id = versions[0]["id"]
+
         print(f"Target version ID: {version_id}")
 
         # Assemble fastlane-style import directory (metadata only, no screenshots).
