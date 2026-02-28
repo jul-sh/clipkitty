@@ -61,13 +61,14 @@ class AnalysisReport:
     passed: bool
 
 
-def export_trace_data(trace_path: str, output_dir: str) -> Optional[str]:
+def export_trace_data(trace_path: str, output_dir: str, quiet: bool = False) -> Optional[str]:
     """Export trace data to XML using xctrace."""
     toc_path = os.path.join(output_dir, "toc.xml")
     time_profile_path = os.path.join(output_dir, "time_profile.xml")
 
     # First, export table of contents to understand trace structure
-    print(f"Exporting trace table of contents...")
+    if not quiet:
+        print(f"Exporting trace table of contents...", file=sys.stderr)
     result = subprocess.run(
         ["xcrun", "xctrace", "export", "--input", trace_path, "--toc", "--output", toc_path],
         capture_output=True,
@@ -78,7 +79,8 @@ def export_trace_data(trace_path: str, output_dir: str) -> Optional[str]:
         print(f"Warning: Failed to export TOC: {result.stderr}", file=sys.stderr)
 
     # Try to export time profile data
-    print(f"Exporting time profile data...")
+    if not quiet:
+        print(f"Exporting time profile data...", file=sys.stderr)
 
     # Try different XPath expressions for different Instruments templates
     xpaths = [
@@ -97,11 +99,13 @@ def export_trace_data(trace_path: str, output_dir: str) -> Optional[str]:
         if result.returncode == 0 and os.path.exists(time_profile_path):
             file_size = os.path.getsize(time_profile_path)
             if file_size > 100:  # Non-empty file
-                print(f"  Exported {file_size} bytes using xpath: {xpath}")
+                if not quiet:
+                    print(f"  Exported {file_size} bytes using xpath: {xpath}", file=sys.stderr)
                 return time_profile_path
 
     # If time profile export failed, try exporting all data
-    print("Time profile export failed, trying generic export...")
+    if not quiet:
+        print("Time profile export failed, trying generic export...", file=sys.stderr)
     all_data_path = os.path.join(output_dir, "all_data.xml")
     result = subprocess.run(
         ["xcrun", "xctrace", "export", "--input", trace_path, "--output", all_data_path],
@@ -186,10 +190,10 @@ def parse_time_profile(xml_path: str, hang_threshold_ms: float, stutter_threshol
     return hangs, stutters, all_durations
 
 
-def analyze_trace(trace_path: str, hang_threshold_ms: float, stutter_threshold_ms: float) -> AnalysisReport:
+def analyze_trace(trace_path: str, hang_threshold_ms: float, stutter_threshold_ms: float, quiet: bool = False) -> AnalysisReport:
     """Analyze a trace file and generate a report."""
     with tempfile.TemporaryDirectory() as tmpdir:
-        xml_path = export_trace_data(trace_path, tmpdir)
+        xml_path = export_trace_data(trace_path, tmpdir, quiet=quiet)
 
         if xml_path is None:
             # Return empty report if export failed
@@ -330,7 +334,7 @@ def main():
         print(f"Error: Trace file not found: {args.trace_file}", file=sys.stderr)
         sys.exit(1)
 
-    report = analyze_trace(args.trace_file, args.hang_threshold, args.stutter_threshold)
+    report = analyze_trace(args.trace_file, args.hang_threshold, args.stutter_threshold, quiet=args.json)
 
     if args.json:
         print(json.dumps(asdict(report), indent=2))
