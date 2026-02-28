@@ -1,0 +1,33 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+<plist version="1.0">
+<dict>
+    <!-- Application identifier for App Store / TestFlight -->
+    <key>com.apple.application-identifier</key>
+    <string>ANBBV7LQ2P.com.eviljuliette.clipkitty</string>
+
+    <!-- macOS App Sandbox enabled -->
+    <!-- Note: Direct paste (Cmd+V keystroke) requires user to grant permission at runtime via System Settings -->
+    <key>com.apple.security.app-sandbox</key>
+    <true/>
+
+    <!-- Network: outgoing connections for LPMetadataProvider link preview fetching -->
+    <key>com.apple.security.network.client</key>
+    <true/>
+
+    <!-- FileSystem: read-only access to user-selected files (for app picker in Privacy settings) -->
+    <key>com.apple.security.files.user-selected.read-only</key>
+    <true/>
+
+    <!-- Sparkle: mach-lookup for XPC services (installer & status) -->
+    <key>com.apple.security.temporary-exception.mach-lookup.global-name</key>
+    <array>
+        <string>$(PRODUCT_BUNDLE_IDENTIFIER)-spks</string>
+        <string>$(PRODUCT_BUNDLE_IDENTIFIER)-spki</string>
+    </array>
+
+    <!-- Hardware: camera/microphone/location are omitted; no sensor access. -->
+
+    <!-- Automation: automation.apple-events is omitted; no cross-app scripting. -->
+</dict>
+</plist>
