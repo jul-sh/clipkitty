@@ -26,7 +26,7 @@ final class SilentUpdateDriver: NSObject, SPUUserDriver {
 
     func showUpdateFound(with appcastItem: SUAppcastItem, state: SPUUserUpdateState, reply: @escaping (SPUUserUpdateChoice) -> Void) {
         let settings = AppSettings.shared
-        settings.updateCheckFailed = false
+        settings.updateCheckState = .idle
         settings.updateCheckFailingSince = nil
 
         if appcastItem.isInformationOnlyUpdate {
@@ -38,7 +38,7 @@ final class SilentUpdateDriver: NSObject, SPUUserDriver {
             reply(.install)
         } else {
             log.info("Update found: \(appcastItem.displayVersionString) — awaiting user action")
-            settings.updateAvailable = true
+            settings.updateCheckState = .available
             reply(.dismiss)
         }
     }
@@ -50,8 +50,7 @@ final class SilentUpdateDriver: NSObject, SPUUserDriver {
     func showUpdateNotFoundWithError(_ error: Error, acknowledgement: @escaping () -> Void) {
         log.debug("No update found")
         let settings = AppSettings.shared
-        settings.updateAvailable = false
-        settings.updateCheckFailed = false
+        settings.updateCheckState = .idle
         settings.updateCheckFailingSince = nil
         acknowledgement()
     }
@@ -64,7 +63,7 @@ final class SilentUpdateDriver: NSObject, SPUUserDriver {
             settings.updateCheckFailingSince = Date()
         } else if let since = settings.updateCheckFailingSince,
                   Date().timeIntervalSince(since) > 14 * 24 * 60 * 60 {
-            settings.updateCheckFailed = true
+            settings.updateCheckState = .checkFailed
         }
         acknowledgement()
     }
@@ -95,8 +94,7 @@ final class SilentUpdateDriver: NSObject, SPUUserDriver {
     func showUpdateInstalledAndRelaunched(_ relaunched: Bool, acknowledgement: @escaping () -> Void) {
         log.info("Update installed (relaunched: \(relaunched))")
         let settings = AppSettings.shared
-        settings.updateAvailable = false
-        settings.updateCheckFailed = false
+        settings.updateCheckState = .idle
         settings.updateCheckFailingSince = nil
         acknowledgement()
     }
@@ -104,7 +102,7 @@ final class SilentUpdateDriver: NSObject, SPUUserDriver {
     // MARK: Dismiss
 
     func dismissUpdateInstallation() {
-        // No-op: Sparkle calls this after a `.dismiss` reply — we need `updateAvailable` to persist.
+        // No-op: Sparkle calls this after a `.dismiss` reply — we need `updateCheckState` to persist.
     }
 }
 
@@ -140,7 +138,7 @@ final class UpdateController {
     func setAutoInstall(_ enabled: Bool) {
         updater.automaticallyDownloadsUpdates = enabled
         if enabled {
-            AppSettings.shared.updateAvailable = false
+            AppSettings.shared.updateCheckState = .idle
             updater.resetUpdateCycle()
         }
     }
