@@ -31,11 +31,6 @@ private enum SpinnerState: Equatable {
     }
 }
 
-private enum FilterPopoverState: Equatable {
-    case hidden
-    case visible(highlightedIndex: Int)
-}
-
 private enum ActionsPopoverState: Equatable {
     case hidden
     case showingActions(highlightedIndex: Int)
@@ -52,12 +47,12 @@ struct ContentView: View {
     @State private var selectedItemId: Int64?
     @State private var selectedItem: ClipboardItem?
     @State private var searchText: String = ""
+    @State private var filterState: SearchFilterState = .idle
     @State private var didApplyInitialSearch = false
     @State private var lastItemsSignature: [Int64] = []  // Track when items change to suppress animation
     @State private var searchSpinner: SpinnerState = .idle
     @State private var previewSpinner: SpinnerState = .idle
     @State private var hasUserNavigated = false
-    @State private var filterPopover: FilterPopoverState = .hidden
     @State private var actionsPopover: ActionsPopoverState = .hidden
     @State private var commandNumberEventMonitor: Any?
 
@@ -72,17 +67,9 @@ struct ContentView: View {
 
     enum FocusTarget: Hashable {
         case search
-        case filterDropdown
         case actionsDropdown
     }
     @FocusState private var focusTarget: FocusTarget?
-
-    private var filterPopoverBinding: Binding<Bool> {
-        Binding(
-            get: { if case .visible = filterPopover { return true } else { return false } },
-            set: { if !$0 { filterPopover = .hidden } }
-        )
-    }
 
     private var actionsPopoverBinding: Binding<Bool> {
         Binding(
@@ -140,10 +127,27 @@ struct ContentView: View {
     }
 
     var body: some View {
-        VStack(spacing: 0) {
-            searchBar
-            Divider()
-            content
+        ZStack(alignment: .topLeading) {
+            VStack(spacing: 0) {
+                searchBar
+                Divider()
+                content
+            }
+
+            // Autocomplete dropdown — rendered above all content to receive clicks
+            if case .suggesting(let suggestions, let highlightedIndex) = filterState {
+                AutocompleteDropdownView(
+                    suggestions: suggestions,
+                    highlightedIndex: highlightedIndex,
+                    searchText: searchText,
+                    onSelect: { suggestion in
+                        filterState = .filtered(suggestion.filter)
+                        searchText = ""
+                    }
+                )
+                .padding(.top, 50) // Below the search bar
+                .padding(.leading, 57) // Align with text field (17 padding + 40 icon area)
+            }
         }
         // Hidden element for UI testing - exposes selected index
         .accessibilityElement(children: .contain)
@@ -173,6 +177,7 @@ struct ContentView: View {
             } else {
                 searchText = ""
             }
+            filterState = .idle
             // Select first item if nothing selected
             if selectedItemId == nil, let firstId = firstItemId {
                 loadItem(id: firstId)
@@ -199,7 +204,7 @@ struct ContentView: View {
             } else {
                 searchText = ""
             }
-            filterPopover = .hidden
+            filterState = .idle
             actionsPopover = .hidden
             // Select first item whenever display resets (re-open)
             if let firstId = firstItemId {
@@ -239,6 +244,18 @@ struct ContentView: View {
         .onChange(of: searchText) { _, newValue in
             hasUserNavigated = false
             store.setSearchQuery(newValue)
+        }
+        .onChange(of: filterState) { oldState, newState in
+            // Extract the filter from each state, defaulting to .all
+            let oldFilter: ContentTypeFilter
+            if case .filtered(let f) = oldState { oldFilter = f } else { oldFilter = .all }
+            let newFilter: ContentTypeFilter
+            if case .filtered(let f) = newState { newFilter = f } else { newFilter = .all }
+
+            if oldFilter != newFilter {
+                hasUserNavigated = false
+                store.setContentTypeFilter(newFilter)
+            }
         }
         .onChange(of: store.contentTypeFilter) { _, _ in
             // Reset selection when filter changes
@@ -317,13 +334,6 @@ struct ContentView: View {
         Task { @MainActor in
             try? await Task.sleep(for: .milliseconds(10))
             focusTarget = .search
-        }
-    }
-
-    private func focusFilterDropdown() {
-        Task { @MainActor in
-            try? await Task.sleep(for: .milliseconds(50))
-            focusTarget = .filterDropdown
         }
     }
 
@@ -446,208 +456,41 @@ struct ContentView: View {
                 .foregroundStyle(.secondary)
                 .font(.custom(FontManager.sansSerif, size: 17).weight(.medium))
 
-            TextField("Clipboard History Search", text: $searchText)
-                .textFieldStyle(.plain)
-                .font(.custom(FontManager.sansSerif, size: 17))
-                .tint(.primary)
-                .focused($focusTarget, equals: .search)
-                .accessibilityIdentifier("SearchField")
-                .onKeyPress(.upArrow) {
-                    moveSelection(by: -1)
-                    return .handled
-                }
-                .onKeyPress(.downArrow) {
-                    moveSelection(by: 1)
-                    return .handled
-                }
-                .onKeyPress(.return, phases: .down) { _ in
-                    confirmSelection()
-                    return .handled
-                }
-                .onKeyPress("k", phases: .down) { keyPress in
-                    if keyPress.modifiers.contains(.command) {
-                        guard selectedItem != nil else { return .handled }
-                        if case .hidden = actionsPopover {
-                            let actions = actionItems
-                            actionsPopover = .showingActions(highlightedIndex: actions.count - 1)
-                            focusActionsDropdown()
-                        } else {
-                            actionsPopover = .hidden
-                        }
-                        return .handled
-                    }
-                    return .ignored
-                }
-                .onKeyPress(.escape) {
-                    if hasPendingEditForSelectedItem {
-                        discardCurrentEdit()
+            SmartSearchField(
+                textQuery: $searchText,
+                filterState: $filterState,
+                onMoveSelection: { moveSelection(by: $0) },
+                onConfirmSelection: { confirmSelection() },
+                onDismiss: { onDismiss() },
+                onShowActions: {
+                    guard selectedItem != nil else { return }
+                    if case .hidden = actionsPopover {
+                        let actions = actionItems
+                        actionsPopover = .showingActions(highlightedIndex: actions.count - 1)
+                        focusActionsDropdown()
                     } else {
-                        onDismiss()
+                        actionsPopover = .hidden
                     }
-                    return .handled
-                }
-                .onKeyPress("s", phases: .down) { keyPress in
-                    if keyPress.modifiers.contains(.command) && hasPendingEditForSelectedItem {
-                        commitCurrentEdit()
-                        return .handled
-                    }
-                    return .ignored
-                }
-                .onKeyPress(.tab) {
-                    let allOptions = Self.filterOptions
-                    let index = allOptions.firstIndex(where: { $0.0 == store.contentTypeFilter }) ?? 0
-                    filterPopover = .visible(highlightedIndex: index)
-                    focusFilterDropdown()
-                    return .handled
-                }
-                .onKeyPress(characters: .decimalDigits, phases: .down) { keyPress in
-                    handleNumberKey(keyPress)
-                }
-                .onKeyPress(.delete) {
-                    guard selectedItemId != nil else { return .ignored }
+                },
+                onShowDelete: {
+                    guard selectedItemId != nil else { return }
                     actionsPopover = .showingDeleteConfirm(highlightedIndex: 0)
                     focusActionsDropdown()
-                    return .handled
                 }
-                .onKeyPress(.deleteForward) {
-                    guard selectedItemId != nil else { return .ignored }
-                    actionsPopover = .showingDeleteConfirm(highlightedIndex: 0)
-                    focusActionsDropdown()
-                    return .handled
-                }
+            )
+            .focused($focusTarget, equals: .search)
+            .onKeyPress(characters: .decimalDigits, phases: .down) { keyPress in
+                handleNumberKey(keyPress)
+            }
 
             if case .visible = searchSpinner {
                 ProgressView()
                     .scaleEffect(0.5)
                     .frame(width: 16, height: 16)
             }
-
-            filterDropdown
         }
         .padding(.horizontal, 17)
-        .padding(.vertical, 13)
-    }
-
-    // MARK: - Filter Dropdown
-
-    private var filterLabel: String {
-        switch store.contentTypeFilter {
-        case .all: return String(localized: "All Types")
-        case .text: return String(localized: "Text")
-        case .images: return String(localized: "Images")
-        case .links: return String(localized: "Links")
-        case .colors: return String(localized: "Colors")
-        case .files: return String(localized: "Files")
-        }
-    }
-
-    private var filterDropdown: some View {
-        Button {
-            let allOptions = Self.filterOptions
-            let index = allOptions.firstIndex(where: { $0.0 == store.contentTypeFilter }) ?? 0
-            if case .visible = filterPopover {
-                filterPopover = .hidden
-            } else {
-                filterPopover = .visible(highlightedIndex: index)
-                focusFilterDropdown()
-            }
-        } label: {
-            HStack(spacing: 4) {
-                Text(filterLabel)
-                    .font(.system(size: 13))
-                Image(systemName: "chevron.down")
-                    .font(.system(size: 9, weight: .semibold))
-            }
-            .foregroundStyle(.secondary)
-            .padding(.horizontal, 12)
-            .padding(.vertical, 6)
-            .overlay(Capsule().strokeBorder(Color.primary.opacity(0.15)))
-        }
-        .buttonStyle(.plain)
-        .accessibilityIdentifier("FilterDropdown")
-        .popover(isPresented: filterPopoverBinding, arrowEdge: .bottom) {
-            filterPopoverContent
-        }
-    }
-
-    private static let filterOptions: [(ContentTypeFilter, String)] = {
-        var options: [(ContentTypeFilter, String)] = [
-            (.all, String(localized: "All Types")),
-            (.text, String(localized: "Text")),
-            (.images, String(localized: "Images")),
-            (.links, String(localized: "Links")),
-            (.colors, String(localized: "Colors")),
-        ]
-        options.append((.files, String(localized: "Files")))
-        return options
-    }()
-
-    private var filterPopoverContent: some View {
-        let options = Self.filterOptions
-        let highlightedIndex: Int
-        if case .visible(let idx) = filterPopover {
-            highlightedIndex = idx
-        } else {
-            highlightedIndex = 0
-        }
-        return VStack(spacing: 2) {
-            ForEach(Array(options.enumerated()), id: \.offset) { index, entry in
-                let (option, label) = entry
-                if index == 1 {
-                    Divider().padding(.horizontal, 4).padding(.vertical, 3)
-                }
-                FilterOptionRow(
-                    label: label,
-                    isSelected: store.contentTypeFilter == option,
-                    isHighlighted: highlightedIndex == index,
-                    action: {
-                        store.setContentTypeFilter(option)
-                        filterPopover = .hidden
-                        focusSearchField()
-                    }
-                )
-            }
-        }
-        .padding(10)
-        .frame(width: 160)
-        .focusable()
-        .focused($focusTarget, equals: .filterDropdown)
-        .focusEffectDisabled()
-        .onKeyPress(.upArrow) {
-            if case .visible(let idx) = filterPopover {
-                filterPopover = .visible(highlightedIndex: max(idx - 1, 0))
-            }
-            return .handled
-        }
-        .onKeyPress(.downArrow) {
-            if case .visible(let idx) = filterPopover {
-                filterPopover = .visible(highlightedIndex: min(idx + 1, options.count - 1))
-            }
-            return .handled
-        }
-        .onKeyPress(.return, phases: .down) { _ in
-            let selected = options[highlightedIndex]
-            store.setContentTypeFilter(selected.0)
-            filterPopover = .hidden
-            focusSearchField()
-            return .handled
-        }
-        .onKeyPress(.escape) {
-            filterPopover = .hidden
-            focusSearchField()
-            return .handled
-        }
-        .onKeyPress(.tab) {
-            filterPopover = .hidden
-            focusSearchField()
-            return .handled
-        }
-        .onAppear {
-            let allOptions = Self.filterOptions
-            let index = allOptions.firstIndex(where: { $0.0 == store.contentTypeFilter }) ?? 0
-            filterPopover = .visible(highlightedIndex: index)
-            focusFilterDropdown()
-        }
+        .frame(height: 46)
     }
 
     private func handleNumberKey(_ keyPress: KeyPress) -> KeyPress.Result {
@@ -664,6 +507,17 @@ struct ContentView: View {
     private func installCommandNumberEventMonitor() {
         guard commandNumberEventMonitor == nil else { return }
         commandNumberEventMonitor = NSEvent.addLocalMonitorForEvents(matching: .keyDown) { event in
+            // Backspace on empty search field removes the active filter.
+            // Handled here because SwiftUI's .onKeyPress(.delete) does not fire
+            // on an empty TextField.
+            if event.keyCode == 51, // 51 = backspace key
+               searchText.isEmpty,
+               case .filtered = filterState,
+               focusTarget == .search {
+                filterState = .idle
+                return nil
+            }
+
             guard let number = commandNumber(from: event) else {
                 return event
             }
@@ -2260,38 +2114,6 @@ struct HighlightedTextView: View, Equatable {
     }
 }
 
-// MARK: - Filter Option Row
-
-private struct FilterOptionRow: View {
-    let label: String
-    let isSelected: Bool
-    var isHighlighted: Bool = false
-    let action: () -> Void
-    @State private var isHovered = false
-
-    var body: some View {
-        Button(action: action) {
-            Text(label)
-                .font(.system(size: 13))
-                .foregroundStyle(isHighlighted ? .white : .secondary)
-                .frame(maxWidth: .infinity, alignment: .leading)
-                .padding(.horizontal, 8)
-                .padding(.vertical, 5)
-                .background {
-                    if isHighlighted {
-                        selectionBackground()
-                            .clipShape(RoundedRectangle(cornerRadius: 9))
-                    } else {
-                        RoundedRectangle(cornerRadius: 9)
-                            .fill(isSelected ? Color.primary.opacity(0.1) : isHovered ? Color.primary.opacity(0.05) : Color.clear)
-                    }
-                }
-        }
-        .buttonStyle(.plain)
-        .onHover { isHovered = $0 }
-    }
-}
-
 // MARK: - Action Option Row
 
 private struct ActionOptionRow: View {
@@ -2341,7 +2163,7 @@ private struct ActionOptionRow: View {
 
 /// Shared selection highlight matching Spotlight's style (H220 S68 B71)
 @ViewBuilder
-private func selectionBackground() -> some View {
+func selectionBackground() -> some View {
     Color.accentColor
         .opacity(0.9)
         .saturation(0.78)

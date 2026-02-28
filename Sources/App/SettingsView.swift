@@ -80,33 +80,6 @@ struct GeneralSettingsView: View {
 
     var body: some View {
         Form {
-            #if !APP_STORE
-            Section(String(localized: "Updates")) {
-                switch settings.updateCheckState {
-                case .checkFailed:
-                    HStack {
-                        Label(String(localized: "Unable to check for updates."), systemImage: "exclamationmark.triangle")
-                        Spacer()
-                        Button(String(localized: "Download")) {
-                            NSWorkspace.shared.open(URL(string: "https://github.com/jul-sh/clipkitty/releases/latest")!)
-                        }
-                    }
-                case .available:
-                    HStack {
-                        Label(String(localized: "A new version of ClipKitty is available."), systemImage: "arrow.down.circle")
-                        Spacer()
-                        Button(String(localized: "Install")) {
-                            onInstallUpdate?()
-                        }
-                    }
-                case .idle:
-                    EmptyView()
-                }
-
-                Toggle(String(localized: "Automatically install updates"), isOn: $settings.autoInstallUpdates)
-            }
-            #endif
-
             Section(String(localized: "Startup")) {
                 let canToggle: Bool = {
                     switch launchAtLogin.state {
@@ -145,6 +118,33 @@ struct GeneralSettingsView: View {
                     }
                 }
             }
+
+            #if !APP_STORE
+            Section(String(localized: "Updates")) {
+                switch settings.updateCheckState {
+                case .checkFailed:
+                    HStack {
+                        Label(String(localized: "Unable to check for updates."), systemImage: "exclamationmark.triangle")
+                        Spacer()
+                        Button(String(localized: "Download")) {
+                            NSWorkspace.shared.open(URL(string: "https://github.com/jul-sh/clipkitty/releases/latest")!)
+                        }
+                    }
+                case .available:
+                    HStack {
+                        Label(String(localized: "A new version of ClipKitty is available."), systemImage: "arrow.down.circle")
+                        Spacer()
+                        Button(String(localized: "Install")) {
+                            onInstallUpdate?()
+                        }
+                    }
+                case .idle:
+                    EmptyView()
+                }
+
+                Toggle(String(localized: "Automatically install updates"), isOn: $settings.autoInstallUpdates)
+            }
+            #endif
 
             Section(String(localized: "Storage")) {
                 LabeledContent(String(localized: "Current Size")) {
