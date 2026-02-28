@@ -7,10 +7,10 @@
 
 pub(crate) mod candidate;
 pub mod content_detection;
-mod database;
+pub mod database;
 mod indexer;
 pub mod interface;
-pub(crate) mod models;
+pub mod models;
 pub mod ranking;
 pub mod search;
 mod store;

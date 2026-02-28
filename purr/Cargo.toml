@@ -17,6 +17,10 @@ path = "src/bin/uniffi-bindgen.rs"
 name = "generate-bindings"
 path = "src/bin/generate_bindings.rs"
 
+[[bin]]
+name = "generate-perf-db"
+path = "src/bin/generate_perf_db.rs"
+
 [dependencies]
 rusqlite = { version = "*", features = ["bundled", "modern_sqlite"] }
 r2d2 = "*"

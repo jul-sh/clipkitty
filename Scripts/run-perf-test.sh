@@ -1,13 +1,13 @@
 #!/bin/bash
 #
-# Run performance UI tests with Instruments tracing.
+# Run performance tests with Instruments tracing.
 #
 # This script:
-# 1. Builds the app and test bundle
-# 2. Generates a performance test database (if needed)
+# 1. Builds the app in Release mode
+# 2. Sets up a performance test database with large items
 # 3. Launches the app
 # 4. Starts xctrace recording
-# 5. Runs the performance UI tests
+# 5. Simulates rapid typing via AppleScript
 # 6. Stops tracing and analyzes results
 #
 # Usage:
@@ -21,11 +21,12 @@
 #   --output DIR      Output directory for traces (default: perf_traces)
 #   --hang-threshold  Hang threshold in ms (default: 250)
 #   --fail-on-hangs   Exit with code 1 if hangs detected
+#   --typing-delay    Delay between keystrokes in ms (default: 50)
 #
 # Examples:
 #   ./Scripts/run-perf-test.sh
 #   ./Scripts/run-perf-test.sh --skip-build --fail-on-hangs
-#   ./Scripts/run-perf-test.sh --template "System Trace" --output /tmp/traces
+#   ./Scripts/run-perf-test.sh --template "System Trace"
 #
 
 set -e
@@ -34,7 +35,8 @@ set -e
 SCRIPT_DIR="$(cd "$(dirname "$0")" && pwd)"
 PROJECT_ROOT="$(dirname "$SCRIPT_DIR")"
 DERIVED_DATA="$PROJECT_ROOT/DerivedData"
-APP_PATH="$DERIVED_DATA/Build/Products/Debug/ClipKitty.app"
+APP_PATH="$DERIVED_DATA/Build/Products/Release/ClipKitty.app"
+BUNDLE_ID="com.eviljuliette.clipkitty"
 
 # Defaults
 SKIP_BUILD=false
@@ -44,6 +46,7 @@ TEMPLATE="Time Profiler"
 OUTPUT_DIR="$PROJECT_ROOT/perf_traces"
 HANG_THRESHOLD=250
 FAIL_ON_HANGS=false
+TYPING_DELAY=50
 TIMESTAMP=$(date +%Y%m%d_%H%M%S)
 
 # Parse arguments
@@ -77,6 +80,10 @@ while [[ $# -gt 0 ]]; do
             FAIL_ON_HANGS=true
             shift
             ;;
+        --typing-delay)
+            TYPING_DELAY="$2"
+            shift 2
+            ;;
         *)
             echo "Unknown option: $1"
             exit 1
@@ -89,46 +96,63 @@ TRACE_FILE="$OUTPUT_DIR/perf_${TIMESTAMP}.trace"
 echo "=== ClipKitty Performance Test ==="
 echo "Template: $TEMPLATE"
 echo "Output: $TRACE_FILE"
+echo "Typing delay: ${TYPING_DELAY}ms"
 echo ""
 
 # Create output directory
 mkdir -p "$OUTPUT_DIR"
 
-# Step 1: Build
+# Step 1: Build Release
 if [ "$SKIP_BUILD" = false ]; then
-    echo ">>> Building app and tests..."
+    echo ">>> Building app (Release)..."
     cd "$PROJECT_ROOT"
-    make all
-
-    # Build test bundle
-    xcodebuild build-for-testing \
-        -scheme ClipKittyUITests \
-        -destination "platform=macOS" \
-        -derivedDataPath "$DERIVED_DATA" \
-        -quiet
-
+    make all CONFIGURATION=Release
     echo "    Build complete."
 else
     echo ">>> Skipping build (--skip-build)"
 fi
 
+# Verify app exists
+if [ ! -d "$APP_PATH" ]; then
+    echo "Error: App not found at $APP_PATH"
+    echo "Try running without --skip-build"
+    exit 1
+fi
+
 # Step 2: Generate performance database
+PERF_DB="$PROJECT_ROOT/distribution/SyntheticData_perf.sqlite"
 if [ "$SKIP_DB_GEN" = false ]; then
-    PERF_DB="$PROJECT_ROOT/distribution/SyntheticData_perf.sqlite"
     if [ ! -f "$PERF_DB" ]; then
         echo ">>> Generating performance test database..."
-        python3 "$SCRIPT_DIR/generate-perf-db.py"
+        # Use native Rust code to ensure schema compatibility
+        "$PROJECT_ROOT/Scripts/run-in-nix.sh" -c "cd purr && cargo run --release --bin generate-perf-db"
     else
-        echo ">>> Using existing performance database: $PERF_DB"
+        echo ">>> Using existing performance database"
     fi
 else
     echo ">>> Skipping database generation (--skip-db-gen)"
 fi
 
-# Step 3: Kill any existing instances
-echo ">>> Terminating existing ClipKitty instances..."
+# Step 3: Set up database in app container
+echo ">>> Setting up test database..."
+APP_SUPPORT_DIR="$HOME/Library/Containers/$BUNDLE_ID/Data/Library/Application Support/ClipKitty"
+mkdir -p "$APP_SUPPORT_DIR"
+
+# Kill any existing instance
 pkill -9 ClipKitty 2>/dev/null || true
 sleep 1
+
+# Clean up existing data
+rm -f "$APP_SUPPORT_DIR/clipboard-screenshot.sqlite"*
+rm -rf "$APP_SUPPORT_DIR/tantivy_index_v3"
+
+# Copy performance database
+if [ -f "$PERF_DB" ]; then
+    cp "$PERF_DB" "$APP_SUPPORT_DIR/clipboard-screenshot.sqlite"
+    echo "    Database copied to app container"
+else
+    echo "Warning: Performance database not found, using empty database"
+fi
 
 # Step 4: Launch app
 echo ">>> Launching ClipKitty..."
@@ -140,6 +164,7 @@ if ! pgrep -x ClipKitty > /dev/null; then
     echo "Error: ClipKitty failed to launch"
     exit 1
 fi
+echo "    App running (PID: $(pgrep -x ClipKitty))"
 
 # Step 5: Start xctrace recording
 echo ">>> Starting Instruments trace (template: $TEMPLATE)..."
@@ -153,18 +178,11 @@ XCTRACE_PID=$!
 echo "    xctrace PID: $XCTRACE_PID"
 
 # Give xctrace time to attach
-sleep 2
+sleep 3
 
-# Step 6: Run performance tests
-echo ">>> Running performance UI tests..."
-
-TEST_RESULT=0
-xcodebuild test-without-building \
-    -scheme ClipKittyUITests \
-    -destination "platform=macOS" \
-    -derivedDataPath "$DERIVED_DATA" \
-    -only-testing:ClipKittyUITests/PerformanceTests \
-    2>&1 | tee "$OUTPUT_DIR/test_output_${TIMESTAMP}.log" || TEST_RESULT=$?
+# Step 6: Run typing simulation
+echo ">>> Running typing simulation..."
+"$SCRIPT_DIR/simulate-typing.sh" --delay "$TYPING_DELAY" 2>&1 | tee "$OUTPUT_DIR/typing_log_${TIMESTAMP}.txt"
 
 # Step 7: Stop trace
 echo ">>> Stopping trace..."
@@ -199,31 +217,24 @@ if [ "$TRACE_ONLY" = false ]; then
         ANALYSIS_ARGS="$ANALYSIS_ARGS --fail-on-hangs"
     fi
 
-    python3 "$SCRIPT_DIR/analyze-trace.py" "$TRACE_FILE" $ANALYSIS_ARGS
-    ANALYSIS_RESULT=$?
+    python3 "$SCRIPT_DIR/analyze-trace.py" "$TRACE_FILE" $ANALYSIS_ARGS || ANALYSIS_RESULT=$?
 
     # Save JSON report
-    python3 "$SCRIPT_DIR/analyze-trace.py" "$TRACE_FILE" $ANALYSIS_ARGS --json > "$OUTPUT_DIR/report_${TIMESTAMP}.json"
+    python3 "$SCRIPT_DIR/analyze-trace.py" "$TRACE_FILE" --json > "$OUTPUT_DIR/report_${TIMESTAMP}.json" 2>/dev/null || true
 
     echo ""
     echo ">>> Reports saved:"
     echo "    Trace: $TRACE_FILE"
     echo "    JSON:  $OUTPUT_DIR/report_${TIMESTAMP}.json"
-    echo "    Log:   $OUTPUT_DIR/test_output_${TIMESTAMP}.log"
+    echo "    Log:   $OUTPUT_DIR/typing_log_${TIMESTAMP}.txt"
 
     # Return appropriate exit code
-    if [ "$FAIL_ON_HANGS" = true ] && [ $ANALYSIS_RESULT -ne 0 ]; then
+    if [ "$FAIL_ON_HANGS" = true ] && [ "${ANALYSIS_RESULT:-0}" -ne 0 ]; then
         echo ""
-        echo "❌ Performance test FAILED: Hangs detected"
+        echo "Performance test FAILED: Hangs detected"
         exit 1
     fi
 fi
 
-if [ $TEST_RESULT -ne 0 ]; then
-    echo ""
-    echo "⚠️  UI tests reported failures (exit code: $TEST_RESULT)"
-    echo "    Check test output for details."
-fi
-
 echo ""
-echo "✅ Performance test complete"
+echo "Performance test complete"
