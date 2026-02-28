@@ -479,8 +479,19 @@ struct ContentView: View {
                     return .ignored
                 }
                 .onKeyPress(.escape) {
-                    onDismiss()
+                    if hasPendingEditForSelectedItem {
+                        discardCurrentEdit()
+                    } else {
+                        onDismiss()
+                    }
                     return .handled
+                }
+                .onKeyPress("s", phases: .down) { keyPress in
+                    if keyPress.modifiers.contains(.command) && hasPendingEditForSelectedItem {
+                        commitCurrentEdit()
+                        return .handled
+                    }
+                    return .ignored
                 }
                 .onKeyPress(.tab) {
                     let allOptions = Self.filterOptions
@@ -938,7 +949,7 @@ struct ContentView: View {
     private func metadataFooter(for item: ClipboardItem) -> some View {
         HStack(spacing: 12) {
             if hasPendingEditForSelectedItem {
-                Button(isPreviewFocused ? String(localized: "Esc Discard") : String(localized: "Discard")) {
+                Button(String(localized: "Esc Discard")) {
                     discardCurrentEdit()
                     focusSearchField()
                 }
@@ -946,7 +957,7 @@ struct ContentView: View {
                 .padding(.horizontal, 6)
                 .padding(.vertical, 2)
                 .fixedSize()
-                Button(isPreviewFocused ? String(localized: "⌘S Save") : String(localized: "Save")) {
+                Button(String(localized: "⌘S Save")) {
                     commitCurrentEdit()
                     focusSearchField()
                 }
@@ -959,7 +970,7 @@ struct ContentView: View {
                 )
                 .fixedSize()
                 Spacer(minLength: 0)
-                Button("⌘↩ \(AppSettings.shared.pasteMode.editConfirmLabel)") {
+                Button("\(isPreviewFocused ? "⌘" : "")↩ \(AppSettings.shared.pasteMode.editConfirmLabel)") {
                     confirmSelection()
                 }
                 .buttonStyle(.plain)
