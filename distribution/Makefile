@@ -40,7 +40,7 @@ dmg:
 	@echo "Signing for distribution..."
 	@codesign --force --options runtime \
 		--sign "$(SIGNING_IDENTITY)" \
-		--entitlements $(PROJECT_ROOT)/Sources/App/ClipKitty.entitlements \
+		--entitlements $(PROJECT_ROOT)/Sources/App/ClipKitty.oss.entitlements \
 		"$(APP_PATH)"
 	@echo "Building DMG installer..."
 	@$(DIST_DIR)/build-dmg.sh "$(APP_PATH)" "$(PROJECT_ROOT)/$(APP_NAME).dmg"
