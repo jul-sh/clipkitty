@@ -1876,7 +1876,8 @@ struct EditableTextPreview: NSViewRepresentable {
                 font: font,
                 paragraphStyle: paragraphStyle,
                 itemChanged: itemChanged,
-                isEditing: context.coordinator.isEditing
+                isEditing: context.coordinator.isEditing,
+                context: context
             )
         }
 
@@ -1894,7 +1895,8 @@ struct EditableTextPreview: NSViewRepresentable {
         font: NSFont,
         paragraphStyle: NSParagraphStyle,
         itemChanged: Bool,
-        isEditing: Bool
+        isEditing: Bool,
+        context: Context
     ) {
         // Skip highlight updates during active editing to avoid disrupting cursor position
         // Highlights will be reapplied when editing ends and item is selected again
@@ -1940,17 +1942,38 @@ struct EditableTextPreview: NSViewRepresentable {
             }
         }
 
-        // Auto-scroll to densest highlight on item change
-        if itemChanged && !highlights.isEmpty {
+        // Auto-scroll to densest highlight
+        // Debounce scroll during search to avoid jank while typing, but keep highlight updates instant
+        if !highlights.isEmpty {
             let targetHighlight = highlights.first { $0.start == densestHighlightStart } ?? highlights[0]
             let targetRange = targetHighlight.nsRange(in: currentText)
-            DispatchQueue.main.async { [weak textView] in
-                guard let textView else { return }
-                guard let scrollView = textView.enclosingScrollView else { return }
-                textView.layoutManager?.ensureLayout(for: textView.textContainer!)
+            let textLen = textLength
 
-                let glyphRange = textView.layoutManager?.glyphRange(forCharacterRange: targetRange, actualCharacterRange: nil) ?? targetRange
-                guard let rect = textView.layoutManager?.boundingRect(forGlyphRange: glyphRange, in: textView.textContainer!) else { return }
+            // Cancel any pending scroll
+            context.coordinator.pendingScrollTask?.cancel()
+
+            // Debounce scroll: 100ms while typing, immediate on item change
+            let debounceMs = itemChanged ? 0 : 100
+            context.coordinator.pendingScrollTask = Task { @MainActor in
+                if debounceMs > 0 {
+                    try? await Task.sleep(for: .milliseconds(debounceMs))
+                    guard !Task.isCancelled else { return }
+                }
+
+                guard let scrollView = textView.enclosingScrollView else { return }
+                guard let layoutManager = textView.layoutManager,
+                      let textContainer = textView.textContainer else { return }
+
+                // Only ensure layout around the highlight region, not entire document
+                // This keeps large documents responsive
+                let layoutStart = max(0, targetRange.location - 500)
+                let layoutLength = min(1000, textLen - layoutStart)
+                let glyphRangeToLayout = layoutManager.glyphRange(forCharacterRange: NSRange(location: layoutStart, length: layoutLength), actualCharacterRange: nil)
+                layoutManager.ensureLayout(forGlyphRange: glyphRangeToLayout)
+
+                let glyphRange = layoutManager.glyphRange(forCharacterRange: targetRange, actualCharacterRange: nil)
+                let rect = layoutManager.boundingRect(forGlyphRange: glyphRange, in: textContainer)
+                guard rect.width > 0 else { return }
 
                 let highlightRect = rect.offsetBy(dx: textView.textContainerInset.width, dy: textView.textContainerInset.height)
                 let visibleRect = scrollView.documentVisibleRect
@@ -1982,6 +2005,7 @@ struct EditableTextPreview: NSViewRepresentable {
         var lastAppliedFontSize: CGFloat = 0
         var lastHighlights: [HighlightRange] = []
         var onTextChange: ((String) -> Void)?
+        var pendingScrollTask: Task<Void, Never>?
 
         func textDidBeginEditing(_ notification: Notification) {
             isEditing = true
