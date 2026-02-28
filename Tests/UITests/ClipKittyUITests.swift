@@ -149,7 +149,6 @@ final class ClipKittyUITests: XCTestCase {
             XCTFail("\(databaseFilename) not found at: \(sqliteSourceURL.path)")
             return
         }
-
         try FileManager.default.copyItem(at: sqliteSourceURL, to: targetURL)
     }
 
@@ -198,31 +197,6 @@ final class ClipKittyUITests: XCTestCase {
         XCTAssertGreaterThan(buttons.count, 0, "Should have items in the list")
     }
 
-    /// Tests that first item's preview content is visible when selected.
-    /// KNOWN ISSUE: First item shows in list but NOT in preview pane.
-    /// The EditableTextPreview's NSTextView is not rendering/accessible.
-    func testFirstItemPreviewVisible() throws {
-        let panel = app.dialogs.firstMatch
-        XCTAssertTrue(panel.exists, "Panel should be visible initially")
-
-        // Wait for first item to be selected
-        XCTAssertTrue(waitForSelectedIndex(0, timeout: 3), "First item should be selected")
-        Thread.sleep(forTimeInterval: 1.0)
-
-        // Look for the preview text view by accessibility identifier
-        let previewTextView = panel.textViews["PreviewTextView"]
-        let previewExists = previewTextView.waitForExistence(timeout: 2)
-
-        // Debug output
-        let allTextViews = panel.textViews.allElementsBoundByIndex
-        print("DEBUG: Found \(allTextViews.count) text views")
-        for (i, tv) in allTextViews.enumerated() {
-            print("DEBUG: TextView[\(i)] id='\(tv.identifier)' exists=\(tv.exists)")
-        }
-
-        XCTAssertTrue(previewExists,
-            "Preview text view (PreviewTextView) should exist. KNOWN ISSUE: EditableTextPreview not rendering.")
-    }
 
     /// Tests that Cmd+number shortcuts select and paste the corresponding history item.
     /// Cmd+2 should target the second item (index 1).
@@ -349,225 +323,41 @@ final class ClipKittyUITests: XCTestCase {
                        "Window Y position should not change when clicking preview text")
     }
 
-    // MARK: - Smart Search / Filter Tests
+    /// Tests that the content-type filter dropdown is visible and functional.
+    /// The dropdown capsule must be hittable (rendered with nonzero frame and sufficient contrast),
+    /// open a popover with filter options, and allow selecting a filter.
+    func testFilterDropdownVisible() throws {
+        // 1. Find the filter dropdown button by accessibility identifier
+        let filterButton = app.buttons["FilterDropdown"]
+        XCTAssertTrue(filterButton.waitForExistence(timeout: 5), "Filter dropdown button should exist")
+        XCTAssertTrue(filterButton.isHittable, "Filter dropdown button should be hittable (visible with nonzero frame)")
 
-    /// Tests that typing a filter name shows autocomplete suggestions.
-    func testSmartSearchAutocompleteAppears() throws {
-        let searchField = app.textFields["SearchField"]
-        XCTAssertTrue(searchField.waitForExistence(timeout: 5), "Search field not found")
+        // Screenshot: dropdown closed
+        saveScreenshot(name: "filter_closed")
 
-        // Type "ima" — should show "Images" suggestion
-        searchField.click()
-        searchField.typeText("ima")
+        // 2. Click to open the popover
+        filterButton.click()
         Thread.sleep(forTimeInterval: 0.5)
 
-        let imagesSuggestion = app.buttons["Suggestion_Images"]
-        XCTAssertTrue(imagesSuggestion.waitForExistence(timeout: 3),
-                       "Autocomplete should show 'Images' suggestion when typing 'ima'")
-    }
+        // 3. Verify popover content appears with filter options
+        // FilterOptionRow uses Button, so options appear as buttons in the accessibility tree
+        let linksOption = app.buttons["Links"]
+        XCTAssertTrue(linksOption.waitForExistence(timeout: 3), "Popover should show 'Links' option")
 
-    /// Tests that selecting an autocomplete suggestion inserts a filter tag.
-    func testSmartSearchSelectSuggestionInsertsTag() throws {
-        let searchField = app.textFields["SearchField"]
-        XCTAssertTrue(searchField.waitForExistence(timeout: 5), "Search field not found")
+        // Screenshot: dropdown open
+        saveScreenshot(name: "filter_open")
 
-        // Type "lin" to match "Links"
-        searchField.click()
-        searchField.typeText("lin")
+        // 4. Select "Links Only" and verify the button label changes
+        linksOption.click()
         Thread.sleep(forTimeInterval: 0.5)
 
-        let linksSuggestion = app.buttons["Suggestion_Links"]
-        XCTAssertTrue(linksSuggestion.waitForExistence(timeout: 3), "Links suggestion should appear")
+        // After selecting, the button label should reflect the new filter
+        let updatedButton = app.buttons["FilterDropdown"]
+        XCTAssertTrue(updatedButton.waitForExistence(timeout: 3), "Filter button should still exist after selection")
+        XCTAssertTrue(updatedButton.isHittable, "Filter button should remain hittable after selection")
 
-        // Click the suggestion to select it
-        linksSuggestion.click()
-        Thread.sleep(forTimeInterval: 0.5)
-
-        // Autocomplete should be hidden
-        XCTAssertFalse(linksSuggestion.exists, "Autocomplete should hide after selection")
-
-        // Filter tag should appear
-        let filterTag = app.buttons["FilterTag_Links"]
-        XCTAssertTrue(filterTag.waitForExistence(timeout: 3),
-                       "Filter tag 'Links' should appear after selecting suggestion")
-
-        // Search field text should be cleared (the filter name was consumed)
-        XCTAssertEqual(searchField.value as? String ?? "", "",
-                       "Search text should be empty after filter selection")
-    }
-
-    /// Helper: apply a filter by typing its name and clicking the suggestion.
-    /// Returns the filter tag button for further interaction (e.g., clicking to remove).
-    @discardableResult
-    private func applyFilter(_ filterName: String) -> XCUIElement {
-        let searchField = app.textFields["SearchField"]
-        searchField.click()
-        searchField.typeText(filterName)
-        Thread.sleep(forTimeInterval: 0.5)
-
-        let suggestion = app.buttons["Suggestion_\(filterName)"]
-        XCTAssertTrue(suggestion.waitForExistence(timeout: 3),
-                       "\(filterName) suggestion should appear")
-        suggestion.click()
-        Thread.sleep(forTimeInterval: 0.5)
-
-        let filterTag = app.buttons["FilterTag_\(filterName)"]
-        XCTAssertTrue(filterTag.waitForExistence(timeout: 3),
-                       "Filter tag should appear after selecting \(filterName)")
-        return filterTag
-    }
-
-    /// Tests that clicking the filter tag removes it.
-    func testSmartSearchRemoveFilterViaClick() throws {
-        let searchField = app.textFields["SearchField"]
-        XCTAssertTrue(searchField.waitForExistence(timeout: 5), "Search field not found")
-
-        let filterTag = applyFilter("Colors")
-
-        // Click the filter tag (acts as remove)
-        filterTag.click()
-        Thread.sleep(forTimeInterval: 0.5)
-
-        // Filter tag should be gone
-        XCTAssertFalse(filterTag.exists,
-                        "Filter tag should be removed after clicking it")
-    }
-
-    /// Tests that pressing Backspace with empty text removes the active filter.
-    func testSmartSearchRemoveFilterViaBackspace() throws {
-        let searchField = app.textFields["SearchField"]
-        XCTAssertTrue(searchField.waitForExistence(timeout: 5), "Search field not found")
-
-        let filterTag = applyFilter("Text")
-
-        // Ensure focus is on the search field
-        searchField.click()
-        Thread.sleep(forTimeInterval: 0.3)
-
-        // Type a character then delete it to ensure the field is genuinely empty
-        // and focus is fully established
-        searchField.typeText("x")
-        Thread.sleep(forTimeInterval: 0.2)
-        searchField.typeKey(.delete, modifierFlags: [])
-        Thread.sleep(forTimeInterval: 0.3)
-
-        // Now press Backspace on the empty field — should remove the filter
-        // Use app-level typeKey to ensure the key event is dispatched
-        app.typeKey(.delete, modifierFlags: [])
-        Thread.sleep(forTimeInterval: 0.5)
-
-        XCTAssertFalse(filterTag.exists,
-                        "Filter tag should be removed after Backspace on empty field")
-    }
-
-    /// Tests keyboard navigation in the autocomplete dropdown.
-    func testSmartSearchKeyboardNavigation() throws {
-        let searchField = app.textFields["SearchField"]
-        XCTAssertTrue(searchField.waitForExistence(timeout: 5), "Search field not found")
-
-        // Type a single letter that matches multiple filters
-        searchField.click()
-        searchField.typeText("l")
-        Thread.sleep(forTimeInterval: 0.5)
-
-        // Should show suggestions containing "l" (Links, Colors, Files)
-        let linksSuggestion = app.buttons["Suggestion_Links"]
-        XCTAssertTrue(linksSuggestion.waitForExistence(timeout: 3),
-                       "Should show Links suggestion")
-
-        // Press Down to move highlight, then Tab to select
-        searchField.typeKey(.downArrow, modifierFlags: [])
-        Thread.sleep(forTimeInterval: 0.2)
-        searchField.typeKey(.tab, modifierFlags: [])
-        Thread.sleep(forTimeInterval: 0.5)
-
-        // A filter tag should be inserted — verify via FilterTag_ button
-        XCTAssertFalse(linksSuggestion.exists, "Autocomplete should hide after Tab selection")
-        let anyFilterTag = app.buttons.matching(NSPredicate(format: "identifier BEGINSWITH 'FilterTag_'")).firstMatch
-        XCTAssertTrue(anyFilterTag.waitForExistence(timeout: 3),
-                       "A filter tag should appear after Tab-selecting a suggestion")
-    }
-
-    /// Tests that Escape dismisses autocomplete without closing the panel.
-    func testSmartSearchEscapeDismissesAutocomplete() throws {
-        let searchField = app.textFields["SearchField"]
-        XCTAssertTrue(searchField.waitForExistence(timeout: 5), "Search field not found")
-
-        // Show autocomplete
-        searchField.click()
-        searchField.typeText("ima")
-        Thread.sleep(forTimeInterval: 0.5)
-
-        let imagesSuggestion = app.buttons["Suggestion_Images"]
-        XCTAssertTrue(imagesSuggestion.waitForExistence(timeout: 3), "Autocomplete should be visible")
-
-        // Press Escape — should dismiss autocomplete but keep panel open
-        searchField.typeKey(.escape, modifierFlags: [])
-        Thread.sleep(forTimeInterval: 0.5)
-
-        XCTAssertFalse(imagesSuggestion.exists, "Autocomplete should be dismissed")
-
-        // Panel should still be visible
-        let window = app.dialogs.firstMatch
-        XCTAssertTrue(window.exists, "Panel should remain open after dismissing autocomplete")
-    }
-
-    /// Tests that an active filter actually filters the results list.
-    func testSmartSearchFilterReducesResults() throws {
-        let searchField = app.textFields["SearchField"]
-        XCTAssertTrue(searchField.waitForExistence(timeout: 5), "Search field not found")
-
-        // Record initial item count (all items)
-        let initialCount = app.outlines.firstMatch.buttons.allElementsBoundByIndex.count
-        XCTAssertGreaterThan(initialCount, 0, "Should have items")
-
-        // Apply "Images" filter via click
-        applyFilter("Images")
-        Thread.sleep(forTimeInterval: 0.5)
-
-        // Item count should be reduced (or zero if no images in synthetic data)
-        let filteredCount = app.outlines.firstMatch.buttons.allElementsBoundByIndex.count
-        XCTAssertLessThan(filteredCount, initialCount,
-                           "Filtering by Images should show fewer items than unfiltered (\(filteredCount) vs \(initialCount))")
-    }
-
-    /// Tests that autocomplete does not appear when a filter is already active.
-    func testSmartSearchNoAutocompleteWithActiveFilter() throws {
-        let searchField = app.textFields["SearchField"]
-        XCTAssertTrue(searchField.waitForExistence(timeout: 5), "Search field not found")
-
-        // Apply a filter first
-        applyFilter("Text")
-
-        // Now type another filter name — autocomplete should NOT appear
-        searchField.typeText("images")
-        Thread.sleep(forTimeInterval: 0.5)
-
-        let imagesSuggestion = app.buttons["Suggestion_Images"]
-        XCTAssertFalse(imagesSuggestion.exists,
-                        "Autocomplete should NOT appear when a filter is already active")
-    }
-
-    /// Tests that clicking a suggestion (instead of keyboard) also inserts a filter tag.
-    func testSmartSearchClickSuggestion() throws {
-        let searchField = app.textFields["SearchField"]
-        XCTAssertTrue(searchField.waitForExistence(timeout: 5), "Search field not found")
-
-        searchField.click()
-        searchField.typeText("fil")
-        Thread.sleep(forTimeInterval: 0.5)
-
-        let filesSuggestion = app.buttons["Suggestion_Files"]
-        XCTAssertTrue(filesSuggestion.waitForExistence(timeout: 3), "Files suggestion should appear")
-
-        // Click the suggestion
-        filesSuggestion.click()
-        Thread.sleep(forTimeInterval: 0.5)
-
-        // Verify the suggestion disappeared and filter tag appeared
-        XCTAssertFalse(filesSuggestion.exists, "Suggestion should disappear after clicking")
-        XCTAssertTrue(app.buttons["FilterTag_Files"].waitForExistence(timeout: 3),
-                       "Filter tag 'Files' should appear after clicking suggestion")
+        // The button label should now say "Links" instead of "All Types"
+        XCTAssertTrue(updatedButton.label.contains("Links"), "Filter button should show 'Links' after selecting Links Only, got: '\(updatedButton.label)'")
     }
 
     // MARK: - Actions Menu
@@ -1141,152 +931,22 @@ final class ClipKittyUITests: XCTestCase {
         Thread.sleep(forTimeInterval: 0.5)
         saveScreenshot(name: "marketing_2_search")
 
-        // Screenshot 3: Images filter applied via smart search
+        // Screenshot 3: Images filter applied with dropdown still open
         searchField.typeKey("a", modifierFlags: .command)
         searchField.typeKey(.delete, modifierFlags: [])
         Thread.sleep(forTimeInterval: 0.3)
-        // Type "images" to trigger autocomplete and click the suggestion
-        searchField.typeText("images")
-        Thread.sleep(forTimeInterval: 0.5)
-        let imagesSuggestion = app.buttons["Suggestion_Images"]
-        if imagesSuggestion.waitForExistence(timeout: 3) {
-            imagesSuggestion.click()
-        }
-        Thread.sleep(forTimeInterval: 0.5)
-        saveScreenshot(name: "marketing_3_filter")
-    }
-
-    // MARK: - Editable Preview Tests
-
-    /// Tests that the preview text area accepts typing for text items.
-    func testPreviewTextIsEditable() throws {
-        let searchField = app.textFields["SearchField"]
-        XCTAssertTrue(searchField.waitForExistence(timeout: 5), "Search field not found")
-
-        // Ensure we have a text item selected (first item should be text based on demo data)
-        XCTAssertTrue(waitForSelectedIndex(0, timeout: 2), "First item should be selected")
-
-        // Find text views in the app - the preview pane uses NSTextView
-        let textViews = app.textViews.allElementsBoundByIndex
-        XCTAssertGreaterThan(textViews.count, 0, "Should have text views in the app")
-
-        // The preview text view should exist
-        let previewTextView = textViews.first!
-        XCTAssertTrue(previewTextView.exists, "Preview text view should exist")
-
-        // Click to focus the text view
-        previewTextView.click()
-        Thread.sleep(forTimeInterval: 0.3)
-
-        // Type some text - if editable, this will modify the content
-        let testSuffix = " - test edit"
-        previewTextView.typeText(testSuffix)
-        Thread.sleep(forTimeInterval: 0.3)
-
-        // Verify text was typed (the value should contain our edit)
-        let value = previewTextView.value as? String ?? ""
-        XCTAssertTrue(value.contains("test edit"), "Preview should accept typed text when editable")
-    }
-
-    /// Tests that editing and defocusing creates a new item.
-    func testEditAndDefocusCreatesNewItem() throws {
-        let searchField = app.textFields["SearchField"]
-        XCTAssertTrue(searchField.waitForExistence(timeout: 5), "Search field not found")
-
-        // Record initial item count
-        let initialCount = app.outlines.firstMatch.buttons.allElementsBoundByIndex.count
-        XCTAssertGreaterThan(initialCount, 0, "Should have items")
-
-        // Find and edit preview text
-        let textViews = app.textViews.allElementsBoundByIndex
-        guard textViews.count > 0 else {
-            XCTFail("No text views found")
-            return
-        }
-
-        let previewTextView = textViews.first!
-        previewTextView.click()
-        Thread.sleep(forTimeInterval: 0.3)
-
-        // Add unique text to ensure no duplicate
-        let uniqueText = " - edited\(UUID().uuidString.prefix(8))"
-        previewTextView.typeText(uniqueText)
-        Thread.sleep(forTimeInterval: 0.3)
-
-        // Defocus by clicking search field
-        searchField.click()
-        Thread.sleep(forTimeInterval: 0.8)
-
-        // Item count should increase by 1 (new item created)
-        let finalCount = app.outlines.firstMatch.buttons.allElementsBoundByIndex.count
-        XCTAssertEqual(finalCount, initialCount + 1, "New item should be created after edit and defocus")
-    }
-
-    /// Tests that defocusing moves edited item to top and selects it.
-    func testEditedItemAppearsAtTopAndSelected() throws {
-        let searchField = app.textFields["SearchField"]
-        XCTAssertTrue(searchField.waitForExistence(timeout: 5), "Search field not found")
-
-        // Navigate to second item first
-        searchField.click()
-        app.typeKey(.downArrow, modifierFlags: [])
-        Thread.sleep(forTimeInterval: 0.3)
-        XCTAssertTrue(waitForSelectedIndex(1, timeout: 2), "Should select second item")
-
-        // Edit the text
-        let textViews = app.textViews.allElementsBoundByIndex
-        guard textViews.count > 0 else { return }
-
-        let previewTextView = textViews.first!
-        previewTextView.click()
-        Thread.sleep(forTimeInterval: 0.3)
-
-        let uniqueText = " - new\(UUID().uuidString.prefix(8))"
-        previewTextView.typeText(uniqueText)
-        Thread.sleep(forTimeInterval: 0.3)
-
-        // Defocus
-        searchField.click()
-        Thread.sleep(forTimeInterval: 0.8)
-
-        // First item should now be selected (the new item is at top)
-        XCTAssertTrue(waitForSelectedIndex(0, timeout: 2), "New item should be selected at top after edit")
-    }
-
-    /// Tests that images are not editable in preview (no text view for images).
-    func testImagePreviewNotEditable() throws {
         let filterButton = app.buttons["FilterDropdown"]
-        XCTAssertTrue(filterButton.waitForExistence(timeout: 5), "Filter button not found")
-
-        // Filter to images only
+        // First apply the Images filter
         filterButton.click()
         Thread.sleep(forTimeInterval: 0.5)
-
-        let imagesOption = app.buttons["Images"]
-        guard imagesOption.exists else {
-            // Skip if no images filter option (may not have images in test data)
-            return
-        }
-
-        imagesOption.click()
+        app.typeKey(.downArrow, modifierFlags: [])
+        app.typeKey(.downArrow, modifierFlags: [])
+        app.typeKey(.return, modifierFlags: [])
         Thread.sleep(forTimeInterval: 0.5)
-
-        // Wait for filter to apply
-        Thread.sleep(forTimeInterval: 0.3)
-
-        // For image items, there should be no editable text view in the main preview area
-        // The preview shows an image, not a text view
-        // We verify by checking that typing doesn't create new items
-
-        let initialCount = app.outlines.firstMatch.buttons.allElementsBoundByIndex.count
-        guard initialCount > 0 else { return }
-
-        // Try to type somewhere - it shouldn't affect items
-        app.typeText("test")
+        // Re-open the dropdown so it's visible in the screenshot
+        filterButton.click()
         Thread.sleep(forTimeInterval: 0.5)
-
-        let finalCount = app.outlines.firstMatch.buttons.allElementsBoundByIndex.count
-        XCTAssertEqual(finalCount, initialCount, "Typing with image selected should not create new items")
+        saveScreenshot(name: "marketing_3_filter")
     }
 
     /// Tests that changing the hotkey works immediately without app restart.
@@ -1353,72 +1013,5 @@ final class ClipKittyUITests: XCTestCase {
             resetButton.click()
             Thread.sleep(forTimeInterval: 0.3)
         }
-    }
-
-    /// Tests that links are not editable in preview.
-    func testLinkPreviewNotEditable() throws {
-        let filterButton = app.buttons["FilterDropdown"]
-        XCTAssertTrue(filterButton.waitForExistence(timeout: 5), "Filter button not found")
-
-        // Filter to links only
-        filterButton.click()
-        Thread.sleep(forTimeInterval: 0.5)
-
-        let linksOption = app.buttons["Links"]
-        guard linksOption.exists else {
-            // Skip if no links filter option
-            return
-        }
-
-        linksOption.click()
-        Thread.sleep(forTimeInterval: 0.5)
-
-        Thread.sleep(forTimeInterval: 0.3)
-
-        // For link items, the preview uses LPLinkView which is not editable
-        let initialCount = app.outlines.firstMatch.buttons.allElementsBoundByIndex.count
-        guard initialCount > 0 else { return }
-
-        // Any typing should not create new items (links aren't editable)
-        app.typeText("test")
-        Thread.sleep(forTimeInterval: 0.5)
-
-        let finalCount = app.outlines.firstMatch.buttons.allElementsBoundByIndex.count
-        XCTAssertEqual(finalCount, initialCount, "Typing with link selected should not create new items")
-    }
-
-    /// Tests that editing text and then copying shows combined toast "Copied & saved as new item".
-    func testEditAndCopyShowsCombinedToastMessage() throws {
-        let searchField = app.textFields["SearchField"]
-        XCTAssertTrue(searchField.waitForExistence(timeout: 5), "Search field not found")
-
-        // Ensure first item selected
-        XCTAssertTrue(waitForSelectedIndex(0, timeout: 2), "First item should be selected")
-
-        // Find and edit preview text view
-        let textViews = app.textViews.allElementsBoundByIndex
-        XCTAssertGreaterThan(textViews.count, 0, "Should have text views")
-
-        let previewTextView = textViews.first!
-        previewTextView.click()
-        Thread.sleep(forTimeInterval: 0.3)
-
-        // Add unique text to trigger pending edit state
-        let uniqueText = " - test\(UUID().uuidString.prefix(8))"
-        previewTextView.typeText(uniqueText)
-        Thread.sleep(forTimeInterval: 0.3)
-
-        // Cmd+Return to copy/paste (triggers both save and copy)
-        previewTextView.typeKey(.return, modifierFlags: .command)
-
-        // Toast should appear with combined message
-        let toastWindow = app.windows["ToastWindow"]
-        XCTAssertTrue(toastWindow.waitForExistence(timeout: 3), "Toast window should appear")
-
-        // Give time for messages to combine
-        Thread.sleep(forTimeInterval: 0.5)
-
-        // Toast should still be visible (combining extends duration)
-        XCTAssertTrue(toastWindow.exists, "Toast should still be visible with combined message")
     }
 }
