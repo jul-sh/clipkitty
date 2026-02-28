@@ -1107,6 +1107,72 @@ final class ClipKittyUITests: XCTestCase {
         XCTAssertEqual(finalCount, initialCount, "Typing with image selected should not create new items")
     }
 
+    /// Tests that changing the hotkey works immediately without app restart.
+    /// This verifies the new hotkey can open the panel right after being set.
+    func testHotkeyChangeWorksImmediately() throws {
+        let panel = app.dialogs.firstMatch
+        XCTAssertTrue(panel.exists, "Panel should be visible initially")
+
+        // Open settings
+        app.typeKey(",", modifierFlags: .command)
+
+        let settingsWindow = app.windows["ClipKitty Settings"]
+        XCTAssertTrue(settingsWindow.waitForExistence(timeout: 5), "Settings window should appear")
+
+        // Navigate to Advanced tab (where hotkey setting is)
+        let advancedTab = settingsWindow.buttons["Advanced"]
+        XCTAssertTrue(advancedTab.waitForExistence(timeout: 3), "Advanced tab should exist")
+        advancedTab.click()
+        Thread.sleep(forTimeInterval: 0.3)
+
+        // Find the hotkey button - it shows the current hotkey (default is "⌥Space")
+        let hotkeyButton = settingsWindow.buttons.matching(NSPredicate(format: "label CONTAINS 'Space' OR label CONTAINS 'Press keys'")).firstMatch
+        XCTAssertTrue(hotkeyButton.waitForExistence(timeout: 3), "Hotkey button should exist")
+
+        // Click to start recording
+        hotkeyButton.click()
+        Thread.sleep(forTimeInterval: 0.3)
+
+        // Press a new hotkey: Ctrl+Shift+V
+        settingsWindow.typeKey("v", modifierFlags: [.control, .shift])
+        Thread.sleep(forTimeInterval: 0.5)
+
+        // Button should now show the new hotkey (⌃⇧V)
+        let newLabel = hotkeyButton.label
+        XCTAssertTrue(newLabel.contains("V") || newLabel.contains("⌃") || newLabel.contains("⇧"),
+                      "Button should show new hotkey after recording, got: '\(newLabel)'")
+
+        // Close settings
+        settingsWindow.buttons[XCUIIdentifierCloseWindow].click()
+        Thread.sleep(forTimeInterval: 0.5)
+
+        // Hide the panel
+        app.typeKey(.escape, modifierFlags: [])
+        XCTAssertTrue(panel.waitForNonExistence(timeout: 3), "Panel should hide after Escape")
+
+        // Press the NEW hotkey (Ctrl+Shift+V) - this should open the panel immediately
+        // without needing to restart the app
+        app.typeKey("v", modifierFlags: [.control, .shift])
+        Thread.sleep(forTimeInterval: 0.5)
+
+        // Panel should reappear with the new hotkey
+        XCTAssertTrue(panel.waitForExistence(timeout: 3),
+                      "Panel should open with new hotkey immediately after changing it (no restart required)")
+
+        // Clean up: Reset hotkey to default
+        app.typeKey(",", modifierFlags: .command)
+        let settingsWindow2 = app.windows["ClipKitty Settings"]
+        XCTAssertTrue(settingsWindow2.waitForExistence(timeout: 5))
+        advancedTab.click()
+        Thread.sleep(forTimeInterval: 0.3)
+
+        let resetButton = settingsWindow2.buttons.matching(NSPredicate(format: "label CONTAINS 'Reset' OR label CONTAINS 'Default'")).firstMatch
+        if resetButton.exists {
+            resetButton.click()
+            Thread.sleep(forTimeInterval: 0.3)
+        }
+    }
+
     /// Tests that links are not editable in preview.
     func testLinkPreviewNotEditable() throws {
         let filterButton = app.buttons["FilterDropdown"]

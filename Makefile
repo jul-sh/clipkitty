@@ -29,13 +29,14 @@ RUST_LIB := Sources/ClipKittyRust/libpurr.a
 
 all: rust generate build
 
-# Marker-based Rust build - only rebuilds if sources changed
-# Uses git ls-files to get all tracked files in purr (respects .gitignore)
+# Marker-based Rust build - uses git tree hash for change detection
+# This marker is shared with Xcode pre-build actions for consistency
 $(RUST_MARKER): $(shell git ls-files purr 2>/dev/null)
 	@echo "Building Rust core..."
 	@$(NIX_SHELL) "cd purr && cargo run --release --bin generate-bindings"
 	@mkdir -p .make
 	@touch $(RUST_MARKER)
+	@git rev-parse HEAD:purr > .make/rust-tree-hash 2>/dev/null || true
 
 # Also rebuild if the output library is missing
 rust: $(RUST_MARKER)

@@ -15,11 +15,32 @@ final class HotKeyManager: @unchecked Sendable {
     }
 
     func register(hotKey: HotKey = .default) {
-        // Unregister existing hotkey first
-        if case .registered = state {
-            unregisterHotKey()
+        // If already registered, just update the hotkey (reuse event handler)
+        if case .registered(let oldHotKeyRef, let existingEventHandler) = state {
+            UnregisterEventHotKey(oldHotKeyRef)
+
+            let hotKeyID = EventHotKeyID(signature: OSType(0x434C4950), id: 1) // "CLIP"
+            var gMyHotKeyRef: EventHotKeyRef?
+            let status = RegisterEventHotKey(
+                hotKey.keyCode,
+                hotKey.modifiers,
+                hotKeyID,
+                GetApplicationEventTarget(),
+                0,
+                &gMyHotKeyRef
+            )
+
+            if status == noErr, let newHotKeyRef = gMyHotKeyRef {
+                state = .registered(hotKey: newHotKeyRef, eventHandler: existingEventHandler)
+            } else {
+                // Registration failed - remove the orphaned event handler
+                RemoveEventHandler(existingEventHandler)
+                state = .unregistered
+            }
+            return
         }
 
+        // First time registration - need to install event handler
         let hotKeyID = EventHotKeyID(signature: OSType(0x434C4950), id: 1) // "CLIP"
 
         var gMyHotKeyRef: EventHotKeyRef?
@@ -37,22 +58,13 @@ final class HotKeyManager: @unchecked Sendable {
             return
         }
 
-        // Install event handler and atomically create registered state
         var newEventHandler: EventHandlerRef?
         let handlerInstalled = installEventHandler(&newEventHandler)
 
         if handlerInstalled, let eventHandler = newEventHandler {
             state = .registered(hotKey: newHotKeyRef, eventHandler: eventHandler)
         } else {
-            // Partial registration failure - clean up the hot key
             UnregisterEventHotKey(newHotKeyRef)
-        }
-    }
-
-    private func unregisterHotKey() {
-        if case .registered(let hotKey, _) = state {
-            UnregisterEventHotKey(hotKey)
-            state = .unregistered
         }
     }
 
