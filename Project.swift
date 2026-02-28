@@ -17,7 +17,7 @@ let project = Project(
     name: "ClipKitty",
     settings: .settings(
         base: [
-            "MARKETING_VERSION": "1.8.8",
+            "MARKETING_VERSION": "1.8.9",
             "CURRENT_PROJECT_VERSION": "1",
         ],
         configurations: configurations,
