@@ -78,19 +78,13 @@ jobs:
       - name: Generate Xcode Project
         run: make generate
 
-      - name: Build App
-        run: make build CONFIGURATION=Debug
-
-      - name: Build Test Bundle
-        run: |
-          xcodebuild build-for-testing \
-            -scheme ClipKittyUITests \
-            -destination "platform=macOS" \
-            -derivedDataPath DerivedData \
-            -quiet
+      - name: Build App (Release)
+        run: make build CONFIGURATION=Release
 
       - name: Generate Performance Database
-        run: python3 Scripts/generate-perf-db.py
+        run: |
+          # Use native Rust code to ensure schema compatibility
+          ./Scripts/run-in-nix.sh -c "cd purr && cargo run --release --bin generate-perf-db"
 
       - name: Run Performance Tests
         id: perf-test
