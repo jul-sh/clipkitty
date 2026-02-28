@@ -462,7 +462,7 @@ struct ContentView: View {
                     return .ignored
                 }
                 .onKeyPress(.escape) {
-                    if hasPendingEditForSelectedItem {
+                    if let id = selectedItemId, pendingEdits[id] != nil {
                         discardCurrentEdit()
                     } else {
                         onDismiss()
@@ -470,7 +470,9 @@ struct ContentView: View {
                     return .handled
                 }
                 .onKeyPress("s", phases: .down) { keyPress in
-                    if keyPress.modifiers.contains(.command) && hasPendingEditForSelectedItem {
+                    if keyPress.modifiers.contains(.command),
+                       let id = selectedItemId,
+                       pendingEdits[id] != nil {
                         commitCurrentEdit()
                         return .handled
                     }
@@ -876,7 +878,7 @@ struct ContentView: View {
                     focusSearchField()
                 },
                 onEscape: {
-                    if hasPendingEditForSelectedItem {
+                    if let id = selectedItemId, pendingEdits[id] != nil {
                         discardCurrentEdit()
                         focusSearchField()
                     } else {
@@ -917,22 +919,13 @@ struct ContentView: View {
         }
     }
 
-    /// Whether the current item has a pending edit that can be saved/discarded.
-    private var hasPendingEditForSelectedItem: Bool {
-        guard let selectedItemId else { return false }
-        return pendingEdits[selectedItemId] != nil
-    }
-
-    private var isPreviewFocused: Bool {
-        if case .focused(let id) = editFocus, id == selectedItemId {
-            return true
-        }
-        return false
-    }
-
     private func metadataFooter(for item: ClipboardItem) -> some View {
-        HStack(spacing: 12) {
-            if hasPendingEditForSelectedItem {
+        let itemId = item.itemMetadata.itemId
+        let hasPendingEdit = pendingEdits[itemId] != nil
+        let isFocused = editFocus == .focused(itemId: itemId) && itemId == selectedItemId
+
+        return HStack(spacing: 12) {
+            if hasPendingEdit {
                 Button(String(localized: "Esc Discard")) {
                     discardCurrentEdit()
                     focusSearchField()
@@ -954,7 +947,7 @@ struct ContentView: View {
                 )
                 .fixedSize()
                 Spacer(minLength: 0)
-                Button("\(isPreviewFocused ? "⌘" : "")↩ \(AppSettings.shared.pasteMode.editConfirmLabel)") {
+                Button("\(isFocused ? "⌘" : "")↩ \(AppSettings.shared.pasteMode.editConfirmLabel)") {
                     confirmSelection()
                 }
                 .buttonStyle(.plain)
