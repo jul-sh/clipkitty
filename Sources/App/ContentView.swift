@@ -3,11 +3,6 @@ import AppKit
 import ClipKittyRust
 import UniformTypeIdentifiers
 
-/// Notification posted when the panel is about to hide, allowing pending edits to be saved.
-extension Notification.Name {
-    static let clipKittyWillHide = Notification.Name("clipKittyWillHide")
-}
-
 private enum SpinnerState: Equatable {
     case idle
     case debouncing(task: Task<Void, Never>)
@@ -182,15 +177,10 @@ struct ContentView: View {
         }
         .onDisappear {
             removeCommandNumberEventMonitor()
-            discardAllEdits()
-        }
-        .onReceive(NotificationCenter.default.publisher(for: .clipKittyWillHide)) { _ in
-            discardAllEdits()
         }
         .onChange(of: store.displayVersion) { _, _ in
             // Reset local state when store signals a display reset
             hasUserNavigated = false
-            pendingEdits.removeAll()
             editFocus = .idle
             // But preserve initial search if it was just applied
             if didApplyInitialSearch && !initialSearchQuery.isEmpty {
@@ -408,12 +398,6 @@ struct ContentView: View {
         if let id = selectedItemId {
             pendingEdits.removeValue(forKey: id)
         }
-        editFocus = .idle
-    }
-
-    /// Discards ALL pending edits. Called on window hide.
-    private func discardAllEdits() {
-        pendingEdits.removeAll()
         editFocus = .idle
     }
 
