@@ -149,6 +149,7 @@ final class ClipKittyUITests: XCTestCase {
             XCTFail("\(databaseFilename) not found at: \(sqliteSourceURL.path)")
             return
         }
+
         try FileManager.default.copyItem(at: sqliteSourceURL, to: targetURL)
     }
 
@@ -323,41 +324,225 @@ final class ClipKittyUITests: XCTestCase {
                        "Window Y position should not change when clicking preview text")
     }
 
-    /// Tests that the content-type filter dropdown is visible and functional.
-    /// The dropdown capsule must be hittable (rendered with nonzero frame and sufficient contrast),
-    /// open a popover with filter options, and allow selecting a filter.
-    func testFilterDropdownVisible() throws {
-        // 1. Find the filter dropdown button by accessibility identifier
-        let filterButton = app.buttons["FilterDropdown"]
-        XCTAssertTrue(filterButton.waitForExistence(timeout: 5), "Filter dropdown button should exist")
-        XCTAssertTrue(filterButton.isHittable, "Filter dropdown button should be hittable (visible with nonzero frame)")
+    // MARK: - Smart Search / Filter Tests
 
-        // Screenshot: dropdown closed
-        saveScreenshot(name: "filter_closed")
+    /// Tests that typing a filter name shows autocomplete suggestions.
+    func testSmartSearchAutocompleteAppears() throws {
+        let searchField = app.textFields["SearchField"]
+        XCTAssertTrue(searchField.waitForExistence(timeout: 5), "Search field not found")
 
-        // 2. Click to open the popover
-        filterButton.click()
+        // Type "ima" — should show "Images" suggestion
+        searchField.click()
+        searchField.typeText("ima")
         Thread.sleep(forTimeInterval: 0.5)
 
-        // 3. Verify popover content appears with filter options
-        // FilterOptionRow uses Button, so options appear as buttons in the accessibility tree
-        let linksOption = app.buttons["Links"]
-        XCTAssertTrue(linksOption.waitForExistence(timeout: 3), "Popover should show 'Links' option")
+        let imagesSuggestion = app.buttons["Suggestion_Images"]
+        XCTAssertTrue(imagesSuggestion.waitForExistence(timeout: 3),
+                       "Autocomplete should show 'Images' suggestion when typing 'ima'")
+    }
 
-        // Screenshot: dropdown open
-        saveScreenshot(name: "filter_open")
+    /// Tests that selecting an autocomplete suggestion inserts a filter tag.
+    func testSmartSearchSelectSuggestionInsertsTag() throws {
+        let searchField = app.textFields["SearchField"]
+        XCTAssertTrue(searchField.waitForExistence(timeout: 5), "Search field not found")
 
-        // 4. Select "Links Only" and verify the button label changes
-        linksOption.click()
+        // Type "lin" to match "Links"
+        searchField.click()
+        searchField.typeText("lin")
         Thread.sleep(forTimeInterval: 0.5)
 
-        // After selecting, the button label should reflect the new filter
-        let updatedButton = app.buttons["FilterDropdown"]
-        XCTAssertTrue(updatedButton.waitForExistence(timeout: 3), "Filter button should still exist after selection")
-        XCTAssertTrue(updatedButton.isHittable, "Filter button should remain hittable after selection")
+        let linksSuggestion = app.buttons["Suggestion_Links"]
+        XCTAssertTrue(linksSuggestion.waitForExistence(timeout: 3), "Links suggestion should appear")
 
-        // The button label should now say "Links" instead of "All Types"
-        XCTAssertTrue(updatedButton.label.contains("Links"), "Filter button should show 'Links' after selecting Links Only, got: '\(updatedButton.label)'")
+        // Click the suggestion to select it
+        linksSuggestion.click()
+        Thread.sleep(forTimeInterval: 0.5)
+
+        // Autocomplete should be hidden
+        XCTAssertFalse(linksSuggestion.exists, "Autocomplete should hide after selection")
+
+        // Filter tag should appear
+        let filterTag = app.buttons["FilterTag_Links"]
+        XCTAssertTrue(filterTag.waitForExistence(timeout: 3),
+                       "Filter tag 'Links' should appear after selecting suggestion")
+
+        // Search field text should be cleared (the filter name was consumed)
+        XCTAssertEqual(searchField.value as? String ?? "", "",
+                       "Search text should be empty after filter selection")
+    }
+
+    /// Helper: apply a filter by typing its name and clicking the suggestion.
+    /// Returns the filter tag button for further interaction (e.g., clicking to remove).
+    @discardableResult
+    private func applyFilter(_ filterName: String) -> XCUIElement {
+        let searchField = app.textFields["SearchField"]
+        searchField.click()
+        searchField.typeText(filterName)
+        Thread.sleep(forTimeInterval: 0.5)
+
+        let suggestion = app.buttons["Suggestion_\(filterName)"]
+        XCTAssertTrue(suggestion.waitForExistence(timeout: 3),
+                       "\(filterName) suggestion should appear")
+        suggestion.click()
+        Thread.sleep(forTimeInterval: 0.5)
+
+        let filterTag = app.buttons["FilterTag_\(filterName)"]
+        XCTAssertTrue(filterTag.waitForExistence(timeout: 3),
+                       "Filter tag should appear after selecting \(filterName)")
+        return filterTag
+    }
+
+    /// Tests that clicking the filter tag removes it.
+    func testSmartSearchRemoveFilterViaClick() throws {
+        let searchField = app.textFields["SearchField"]
+        XCTAssertTrue(searchField.waitForExistence(timeout: 5), "Search field not found")
+
+        let filterTag = applyFilter("Colors")
+
+        // Click the filter tag (acts as remove)
+        filterTag.click()
+        Thread.sleep(forTimeInterval: 0.5)
+
+        // Filter tag should be gone
+        XCTAssertFalse(filterTag.exists,
+                        "Filter tag should be removed after clicking it")
+    }
+
+    /// Tests that pressing Backspace with empty text removes the active filter.
+    func testSmartSearchRemoveFilterViaBackspace() throws {
+        let searchField = app.textFields["SearchField"]
+        XCTAssertTrue(searchField.waitForExistence(timeout: 5), "Search field not found")
+
+        let filterTag = applyFilter("Text")
+
+        // Ensure focus is on the search field
+        searchField.click()
+        Thread.sleep(forTimeInterval: 0.3)
+
+        // Type a character then delete it to ensure the field is genuinely empty
+        // and focus is fully established
+        searchField.typeText("x")
+        Thread.sleep(forTimeInterval: 0.2)
+        searchField.typeKey(.delete, modifierFlags: [])
+        Thread.sleep(forTimeInterval: 0.3)
+
+        // Now press Backspace on the empty field — should remove the filter
+        // Use app-level typeKey to ensure the key event is dispatched
+        app.typeKey(.delete, modifierFlags: [])
+        Thread.sleep(forTimeInterval: 0.5)
+
+        XCTAssertFalse(filterTag.exists,
+                        "Filter tag should be removed after Backspace on empty field")
+    }
+
+    /// Tests keyboard navigation in the autocomplete dropdown.
+    func testSmartSearchKeyboardNavigation() throws {
+        let searchField = app.textFields["SearchField"]
+        XCTAssertTrue(searchField.waitForExistence(timeout: 5), "Search field not found")
+
+        // Type a single letter that matches multiple filters
+        searchField.click()
+        searchField.typeText("l")
+        Thread.sleep(forTimeInterval: 0.5)
+
+        // Should show suggestions containing "l" (Links, Colors, Files)
+        let linksSuggestion = app.buttons["Suggestion_Links"]
+        XCTAssertTrue(linksSuggestion.waitForExistence(timeout: 3),
+                       "Should show Links suggestion")
+
+        // Press Down to move highlight, then Tab to select
+        searchField.typeKey(.downArrow, modifierFlags: [])
+        Thread.sleep(forTimeInterval: 0.2)
+        searchField.typeKey(.tab, modifierFlags: [])
+        Thread.sleep(forTimeInterval: 0.5)
+
+        // A filter tag should be inserted — verify via FilterTag_ button
+        XCTAssertFalse(linksSuggestion.exists, "Autocomplete should hide after Tab selection")
+        let anyFilterTag = app.buttons.matching(NSPredicate(format: "identifier BEGINSWITH 'FilterTag_'")).firstMatch
+        XCTAssertTrue(anyFilterTag.waitForExistence(timeout: 3),
+                       "A filter tag should appear after Tab-selecting a suggestion")
+    }
+
+    /// Tests that Escape dismisses autocomplete without closing the panel.
+    func testSmartSearchEscapeDismissesAutocomplete() throws {
+        let searchField = app.textFields["SearchField"]
+        XCTAssertTrue(searchField.waitForExistence(timeout: 5), "Search field not found")
+
+        // Show autocomplete
+        searchField.click()
+        searchField.typeText("ima")
+        Thread.sleep(forTimeInterval: 0.5)
+
+        let imagesSuggestion = app.buttons["Suggestion_Images"]
+        XCTAssertTrue(imagesSuggestion.waitForExistence(timeout: 3), "Autocomplete should be visible")
+
+        // Press Escape — should dismiss autocomplete but keep panel open
+        searchField.typeKey(.escape, modifierFlags: [])
+        Thread.sleep(forTimeInterval: 0.5)
+
+        XCTAssertFalse(imagesSuggestion.exists, "Autocomplete should be dismissed")
+
+        // Panel should still be visible
+        let window = app.dialogs.firstMatch
+        XCTAssertTrue(window.exists, "Panel should remain open after dismissing autocomplete")
+    }
+
+    /// Tests that an active filter actually filters the results list.
+    func testSmartSearchFilterReducesResults() throws {
+        let searchField = app.textFields["SearchField"]
+        XCTAssertTrue(searchField.waitForExistence(timeout: 5), "Search field not found")
+
+        // Record initial item count (all items)
+        let initialCount = app.outlines.firstMatch.buttons.allElementsBoundByIndex.count
+        XCTAssertGreaterThan(initialCount, 0, "Should have items")
+
+        // Apply "Images" filter via click
+        applyFilter("Images")
+        Thread.sleep(forTimeInterval: 0.5)
+
+        // Item count should be reduced (or zero if no images in synthetic data)
+        let filteredCount = app.outlines.firstMatch.buttons.allElementsBoundByIndex.count
+        XCTAssertLessThan(filteredCount, initialCount,
+                           "Filtering by Images should show fewer items than unfiltered (\(filteredCount) vs \(initialCount))")
+    }
+
+    /// Tests that autocomplete does not appear when a filter is already active.
+    func testSmartSearchNoAutocompleteWithActiveFilter() throws {
+        let searchField = app.textFields["SearchField"]
+        XCTAssertTrue(searchField.waitForExistence(timeout: 5), "Search field not found")
+
+        // Apply a filter first
+        applyFilter("Text")
+
+        // Now type another filter name — autocomplete should NOT appear
+        searchField.typeText("images")
+        Thread.sleep(forTimeInterval: 0.5)
+
+        let imagesSuggestion = app.buttons["Suggestion_Images"]
+        XCTAssertFalse(imagesSuggestion.exists,
+                        "Autocomplete should NOT appear when a filter is already active")
+    }
+
+    /// Tests that clicking a suggestion (instead of keyboard) also inserts a filter tag.
+    func testSmartSearchClickSuggestion() throws {
+        let searchField = app.textFields["SearchField"]
+        XCTAssertTrue(searchField.waitForExistence(timeout: 5), "Search field not found")
+
+        searchField.click()
+        searchField.typeText("fil")
+        Thread.sleep(forTimeInterval: 0.5)
+
+        let filesSuggestion = app.buttons["Suggestion_Files"]
+        XCTAssertTrue(filesSuggestion.waitForExistence(timeout: 3), "Files suggestion should appear")
+
+        // Click the suggestion
+        filesSuggestion.click()
+        Thread.sleep(forTimeInterval: 0.5)
+
+        // Verify the suggestion disappeared and filter tag appeared
+        XCTAssertFalse(filesSuggestion.exists, "Suggestion should disappear after clicking")
+        XCTAssertTrue(app.buttons["FilterTag_Files"].waitForExistence(timeout: 3),
+                       "Filter tag 'Files' should appear after clicking suggestion")
     }
 
     // MARK: - Actions Menu
@@ -931,20 +1116,17 @@ final class ClipKittyUITests: XCTestCase {
         Thread.sleep(forTimeInterval: 0.5)
         saveScreenshot(name: "marketing_2_search")
 
-        // Screenshot 3: Images filter applied with dropdown still open
+        // Screenshot 3: Images filter applied via smart search
         searchField.typeKey("a", modifierFlags: .command)
         searchField.typeKey(.delete, modifierFlags: [])
         Thread.sleep(forTimeInterval: 0.3)
-        let filterButton = app.buttons["FilterDropdown"]
-        // First apply the Images filter
-        filterButton.click()
+        // Type "images" to trigger autocomplete and click the suggestion
+        searchField.typeText("images")
         Thread.sleep(forTimeInterval: 0.5)
-        app.typeKey(.downArrow, modifierFlags: [])
-        app.typeKey(.downArrow, modifierFlags: [])
-        app.typeKey(.return, modifierFlags: [])
-        Thread.sleep(forTimeInterval: 0.5)
-        // Re-open the dropdown so it's visible in the screenshot
-        filterButton.click()
+        let imagesSuggestion = app.buttons["Suggestion_Images"]
+        if imagesSuggestion.waitForExistence(timeout: 3) {
+            imagesSuggestion.click()
+        }
         Thread.sleep(forTimeInterval: 0.5)
         saveScreenshot(name: "marketing_3_filter")
     }
