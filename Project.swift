@@ -17,7 +17,7 @@ let project = Project(
     name: "ClipKitty",
     settings: .settings(
         base: [
-            "MARKETING_VERSION": "1.8.7",
+            "MARKETING_VERSION": "1.8.8",
             "CURRENT_PROJECT_VERSION": "1",
         ],
         configurations: configurations,
@@ -198,10 +198,22 @@ let project = Project(
                     .executionAction(
                         title: "Build Rust Core",
                         scriptText: """
-                        if [ -f "$PROJECT_DIR/.make/rust.marker" ]; then
-                            echo "Rust already built by Makefile, skipping."
-                        elif [ -x "$PROJECT_DIR/Scripts/run-in-nix.sh" ]; then
-                            "$PROJECT_DIR/Scripts/run-in-nix.sh" -c "cd $PROJECT_DIR/purr && cargo run --release --bin generate-bindings"
+                        # Use git tree hash to detect purr/ changes (fast, handles branches/rebases)
+                        cd "$PROJECT_DIR"
+                        MARKER=".make/rust-tree-hash"
+                        LIB="Sources/ClipKittyRust/libpurr.a"
+                        CURRENT_HASH=$(git rev-parse HEAD:purr 2>/dev/null || echo "unknown")
+                        STORED_HASH=$(cat "$MARKER" 2>/dev/null || echo "none")
+
+                        if [ -f "$LIB" ] && [ "$CURRENT_HASH" = "$STORED_HASH" ]; then
+                            echo "Rust bindings up to date (tree hash: ${CURRENT_HASH:0:8}), skipping."
+                            exit 0
+                        fi
+
+                        echo "Rust changed: $STORED_HASH -> $CURRENT_HASH"
+                        if [ -x "Scripts/run-in-nix.sh" ]; then
+                            Scripts/run-in-nix.sh -c "cd purr && cargo run --release --bin generate-bindings"
+                            mkdir -p .make && echo "$CURRENT_HASH" > "$MARKER"
                         fi
                         """,
                         target: .target("ClipKitty")
@@ -235,10 +247,37 @@ let project = Project(
         .scheme(
             name: "ClipKittyUITests",
             shared: true,
-            buildAction: .buildAction(targets: [
-                .target("ClipKittyUITests"),
-                .target("ClipKitty"),
-            ]),
+            buildAction: .buildAction(
+                targets: [
+                    .target("ClipKittyUITests"),
+                    .target("ClipKitty"),
+                ],
+                preActions: [
+                    .executionAction(
+                        title: "Build Rust Core",
+                        scriptText: """
+                        # Use git tree hash to detect purr/ changes (fast, handles branches/rebases)
+                        cd "$PROJECT_DIR"
+                        MARKER=".make/rust-tree-hash"
+                        LIB="Sources/ClipKittyRust/libpurr.a"
+                        CURRENT_HASH=$(git rev-parse HEAD:purr 2>/dev/null || echo "unknown")
+                        STORED_HASH=$(cat "$MARKER" 2>/dev/null || echo "none")
+
+                        if [ -f "$LIB" ] && [ "$CURRENT_HASH" = "$STORED_HASH" ]; then
+                            echo "Rust bindings up to date (tree hash: ${CURRENT_HASH:0:8}), skipping."
+                            exit 0
+                        fi
+
+                        echo "Rust changed: $STORED_HASH -> $CURRENT_HASH"
+                        if [ -x "Scripts/run-in-nix.sh" ]; then
+                            Scripts/run-in-nix.sh -c "cd purr && cargo run --release --bin generate-bindings"
+                            mkdir -p .make && echo "$CURRENT_HASH" > "$MARKER"
+                        fi
+                        """,
+                        target: .target("ClipKitty")
+                    ),
+                ]
+            ),
             testAction: .targets(
                 [.testableTarget(target: .target("ClipKittyUITests"))],
                 configuration: "Debug"

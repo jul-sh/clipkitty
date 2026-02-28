@@ -100,7 +100,7 @@ appstore:
 PUBLISH_FLAGS ?=
 
 publish:
-	@$(DIST_DIR)/publish.py $(PUBLISH_FLAGS)
+	@$(DIST_DIR)/publish.py $(PUBLISH_FLAGS) $(if $(VERSION),--version $(VERSION),)
 
 # ============================================================================
 # Combined: Build + Publish to App Store Connect
