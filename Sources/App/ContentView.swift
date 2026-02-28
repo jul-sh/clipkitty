@@ -1871,14 +1871,37 @@ struct EditableTextPreview: NSViewRepresentable {
         let highlightsChanged = highlights != context.coordinator.lastHighlights
         if highlightsChanged || itemChanged {
             context.coordinator.lastHighlights = highlights
-            applyHighlights(
-                to: textView,
-                font: font,
-                paragraphStyle: paragraphStyle,
-                itemChanged: itemChanged,
-                isEditing: context.coordinator.isEditing,
-                context: context
-            )
+
+            // Debounce highlight updates for large items (>10KB) to keep typing smooth
+            // Item changes are always immediate for responsive selection
+            let textLen = text.count
+            let shouldDebounce = !itemChanged && textLen > 10_000
+
+            context.coordinator.pendingHighlightTask?.cancel()
+
+            if shouldDebounce {
+                context.coordinator.pendingHighlightTask = Task { @MainActor in
+                    try? await Task.sleep(for: .milliseconds(80))
+                    guard !Task.isCancelled else { return }
+                    applyHighlights(
+                        to: textView,
+                        font: font,
+                        paragraphStyle: paragraphStyle,
+                        itemChanged: itemChanged,
+                        isEditing: context.coordinator.isEditing,
+                        context: context
+                    )
+                }
+            } else {
+                applyHighlights(
+                    to: textView,
+                    font: font,
+                    paragraphStyle: paragraphStyle,
+                    itemChanged: itemChanged,
+                    isEditing: context.coordinator.isEditing,
+                    context: context
+                )
+            }
         }
 
         // Update container size and frame
@@ -2006,6 +2029,7 @@ struct EditableTextPreview: NSViewRepresentable {
         var lastHighlights: [HighlightRange] = []
         var onTextChange: ((String) -> Void)?
         var pendingScrollTask: Task<Void, Never>?
+        var pendingHighlightTask: Task<Void, Never>?
 
         func textDidBeginEditing(_ notification: Notification) {
             isEditing = true
