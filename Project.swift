@@ -17,7 +17,7 @@ let project = Project(
     name: "ClipKitty",
     settings: .settings(
         base: [
-            "MARKETING_VERSION": "1.8.8",
+            "MARKETING_VERSION": "1.8.10",
             "CURRENT_PROJECT_VERSION": "1",
         ],
         configurations: configurations,
@@ -87,6 +87,7 @@ let project = Project(
                 "SUPublicEDKey": "9VqfSPPY2Gr8QTYDLa99yJXAFWnHw5aybSbKaYDyCq0=",
                 "SUEnableAutomaticChecks": true,
                 "SUAutomaticallyUpdate": true,
+                "SUEnableInstallerLauncherService": true,
             ]),
             sources: ["Sources/App/**"],
             resources: [
@@ -106,6 +107,7 @@ let project = Project(
                         /usr/libexec/PlistBuddy -c "Delete :SUPublicEDKey" "$PLIST" 2>/dev/null || true
                         /usr/libexec/PlistBuddy -c "Delete :SUEnableAutomaticChecks" "$PLIST" 2>/dev/null || true
                         /usr/libexec/PlistBuddy -c "Delete :SUAutomaticallyUpdate" "$PLIST" 2>/dev/null || true
+                        /usr/libexec/PlistBuddy -c "Delete :SUEnableInstallerLauncherService" "$PLIST" 2>/dev/null || true
                     fi
                     """,
                     name: "Strip Sparkle from AppStore builds",
@@ -126,14 +128,14 @@ let project = Project(
                 ],
                 configurations: [
                     .debug(name: "Debug", settings: [
-                        "CODE_SIGN_ENTITLEMENTS": "Sources/App/ClipKitty.entitlements",
+                        "CODE_SIGN_ENTITLEMENTS": "Sources/App/ClipKitty.oss.entitlements",
                     ]),
                     .release(name: "Release", settings: [
-                        "CODE_SIGN_ENTITLEMENTS": "Sources/App/ClipKitty.entitlements",
+                        "CODE_SIGN_ENTITLEMENTS": "Sources/App/ClipKitty.oss.entitlements",
                         "CURRENT_PROJECT_VERSION": "$(MARKETING_VERSION)",
                     ]),
                     .release(name: .configuration("AppStore"), settings: [
-                        "CODE_SIGN_ENTITLEMENTS": "Sources/App/ClipKitty.entitlements",
+                        "CODE_SIGN_ENTITLEMENTS": "Sources/App/ClipKitty.appstore.entitlements",
                         "SWIFT_ACTIVE_COMPILATION_CONDITIONS": "APP_STORE",
                     ]),
                 ]

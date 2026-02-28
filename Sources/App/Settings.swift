@@ -110,11 +110,13 @@ final class AppSettings: ObservableObject {
 
 
     #if !APP_STORE
-    /// Set when a genuine update is available but not yet installed (e.g. auto-install is off).
-    @Published var updateAvailable = false
+    enum UpdateCheckState: Equatable {
+        case idle
+        case available
+        case checkFailed
+    }
 
-    /// Set to true when update checks have been failing for more than 14 days.
-    @Published var updateCheckFailed = false
+    @Published var updateCheckState: UpdateCheckState = .idle
 
     /// Records when consecutive update-check failures started. Persisted to UserDefaults.
     var updateCheckFailingSince: Date? {
