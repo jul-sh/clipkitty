@@ -25,7 +25,7 @@ SIGNING_IDENTITY ?= $(shell security find-identity -v -p codesigning 2>/dev/null
 RUST_MARKER := .make/rust.marker
 RUST_LIB := Sources/ClipKittyRust/libpurr.a
 
-.PHONY: all clean rust rust-force generate build sign list-identities run test uitest rust-test
+.PHONY: all clean rust rust-force generate build sign list-identities run test uitest rust-test perf-test perf-db
 
 all: rust generate build
 
@@ -118,3 +118,14 @@ list-identities:
 	@echo ""
 	@echo "Set SIGNING_IDENTITY in your environment or pass to make:"
 	@echo "  make sign SIGNING_IDENTITY=\"Developer ID Application: Your Name (TEAMID)\""
+
+# Generate performance test database with large text items
+perf-db:
+	@echo "Generating performance test database..."
+	@python3 Scripts/generate-perf-db.py
+
+# Run performance tests with Instruments tracing
+# Usage: make perf-test [PERF_ARGS="--skip-build --fail-on-hangs"]
+perf-test: all perf-db
+	@echo "Running performance tests with tracing..."
+	@./Scripts/run-perf-test.sh --skip-build $(PERF_ARGS)
