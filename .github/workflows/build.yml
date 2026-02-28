@@ -134,7 +134,7 @@ jobs:
 
           # Sign the outer app (must come last)
           codesign --force --options runtime --sign "Developer ID Application" \
-            --entitlements Sources/App/ClipKitty.entitlements \
+            --entitlements Sources/App/ClipKitty.oss.entitlements \
             "$APP"
           codesign --verify --deep --strict "$APP"
 

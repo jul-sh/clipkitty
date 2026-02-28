@@ -287,6 +287,6 @@ let project = Project(
         ),
     ],
     additionalFiles: [
-        "Sources/App/ClipKitty.entitlements",
+        "Sources/App/ClipKitty.oss.entitlements",
     ]
 )
