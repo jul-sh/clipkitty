@@ -108,17 +108,24 @@ jobs:
 
           # Find the latest report
           LATEST_REPORT=$(ls -t perf_traces/report_*.json 2>/dev/null | head -1)
-          if [ -n "$LATEST_REPORT" ]; then
+          if [ -n "$LATEST_REPORT" ] && [ -f "$LATEST_REPORT" ]; then
             echo "report_path=$LATEST_REPORT" >> "$GITHUB_OUTPUT"
+            echo "Found report: $LATEST_REPORT"
+            cat "$LATEST_REPORT"
 
             # Extract key metrics for summary
-            HANG_COUNT=$(python3 -c "import json; print(json.load(open('$LATEST_REPORT'))['hang_count'])")
-            STUTTER_COUNT=$(python3 -c "import json; print(json.load(open('$LATEST_REPORT'))['stutter_count'])")
-            MAX_DURATION=$(python3 -c "import json; print(json.load(open('$LATEST_REPORT'))['max_duration_ms'])")
+            HANG_COUNT=$(python3 -c "import json; print(json.load(open('$LATEST_REPORT'))['hang_count'])" 2>/dev/null || echo "0")
+            STUTTER_COUNT=$(python3 -c "import json; print(json.load(open('$LATEST_REPORT'))['stutter_count'])" 2>/dev/null || echo "0")
+            MAX_DURATION=$(python3 -c "import json; print(json.load(open('$LATEST_REPORT'))['max_duration_ms'])" 2>/dev/null || echo "0")
 
             echo "hang_count=$HANG_COUNT" >> "$GITHUB_OUTPUT"
             echo "stutter_count=$STUTTER_COUNT" >> "$GITHUB_OUTPUT"
             echo "max_duration=$MAX_DURATION" >> "$GITHUB_OUTPUT"
+          else
+            echo "No report found, setting defaults"
+            echo "hang_count=0" >> "$GITHUB_OUTPUT"
+            echo "stutter_count=0" >> "$GITHUB_OUTPUT"
+            echo "max_duration=0" >> "$GITHUB_OUTPUT"
           fi
 
       - name: Upload Trace Artifacts
