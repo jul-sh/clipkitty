@@ -1867,13 +1867,18 @@ struct EditableTextPreview: NSViewRepresentable {
         }
 
         // Apply highlights directly to attributed string (more reliable than temporary attributes)
-        applyHighlights(
-            to: textView,
-            font: font,
-            paragraphStyle: paragraphStyle,
-            itemChanged: itemChanged,
-            isEditing: context.coordinator.isEditing
-        )
+        // Skip if highlights haven't changed
+        let highlightsChanged = highlights != context.coordinator.lastHighlights
+        if highlightsChanged || itemChanged {
+            context.coordinator.lastHighlights = highlights
+            applyHighlights(
+                to: textView,
+                font: font,
+                paragraphStyle: paragraphStyle,
+                itemChanged: itemChanged,
+                isEditing: context.coordinator.isEditing
+            )
+        }
 
         // Update container size and frame
         let textContainerWidth = max(0, nsView.contentSize.width - Self.textContainerHorizontalInset)
@@ -1975,6 +1980,7 @@ struct EditableTextPreview: NSViewRepresentable {
         var currentItemId: Int64 = 0
         var isEditing = false
         var lastAppliedFontSize: CGFloat = 0
+        var lastHighlights: [HighlightRange] = []
         var onTextChange: ((String) -> Void)?
 
         func textDidBeginEditing(_ notification: Notification) {
@@ -1986,9 +1992,9 @@ struct EditableTextPreview: NSViewRepresentable {
         }
 
         func textDidChange(_ notification: Notification) {
-            // Called on each keystroke
-            guard let textView = notification.object as? NSTextView else { return }
-            onTextChange?(textView.string)
+            // Called on each keystroke - only notify if callback exists
+            guard let onTextChange, let textView = notification.object as? NSTextView else { return }
+            onTextChange(textView.string)
         }
     }
 }
