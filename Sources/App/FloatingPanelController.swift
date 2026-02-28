@@ -127,8 +127,6 @@ final class FloatingPanelController: NSObject, NSWindowDelegate {
 
     func hide() {
         guard case .visible(let previousApp) = panelState else { return }
-        // Notify ContentView to commit any pending edits before hiding
-        NotificationCenter.default.post(name: .clipKittyWillHide, object: nil)
         panel.orderOut(nil)
         store.resetForDisplay()
         previousApp?.activate()
