@@ -20,15 +20,18 @@ final class IconCache {
     // Pre-cached system icons (loaded once at startup)
     private(set) var browserIcon: NSImage?
     private(set) var finderIcon: NSImage?
+    private(set) var genericDocumentIcon: NSImage?
 
     private init() {
         // Load commonly used icons on background thread at init
         Task.detached { [weak self] in
             let browser = Self.loadBrowserIcon()
             let finder = Self.loadFinderIcon()
+            let genericDoc = NSWorkspace.shared.icon(for: .item)
             await MainActor.run {
                 self?.browserIcon = browser
                 self?.finderIcon = finder
+                self?.genericDocumentIcon = genericDoc
             }
         }
     }
@@ -1256,10 +1259,11 @@ struct FilePreviewView: View {
                 if let icon = IconCache.shared.icon(forFilePath: file.path) {
                     Image(nsImage: icon)
                         .resizable()
-                } else {
-                    Image(systemName: "doc")
+                } else if let genericIcon = IconCache.shared.genericDocumentIcon {
+                    Image(nsImage: genericIcon)
                         .resizable()
-                        .foregroundStyle(.secondary)
+                } else {
+                    Color.clear
                 }
             }
             .frame(width: 40, height: 40)
