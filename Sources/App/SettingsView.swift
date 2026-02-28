@@ -82,7 +82,8 @@ struct GeneralSettingsView: View {
         Form {
             #if !APP_STORE
             Section(String(localized: "Updates")) {
-                if settings.updateCheckFailed {
+                switch settings.updateCheckState {
+                case .checkFailed:
                     HStack {
                         Label(String(localized: "Unable to check for updates."), systemImage: "exclamationmark.triangle")
                         Spacer()
@@ -90,7 +91,7 @@ struct GeneralSettingsView: View {
                             NSWorkspace.shared.open(URL(string: "https://github.com/jul-sh/clipkitty/releases/latest")!)
                         }
                     }
-                } else if settings.updateAvailable {
+                case .available:
                     HStack {
                         Label(String(localized: "A new version of ClipKitty is available."), systemImage: "arrow.down.circle")
                         Spacer()
@@ -98,6 +99,8 @@ struct GeneralSettingsView: View {
                             onInstallUpdate?()
                         }
                     }
+                case .idle:
+                    EmptyView()
                 }
 
                 Toggle(String(localized: "Automatically install updates"), isOn: $settings.autoInstallUpdates)
