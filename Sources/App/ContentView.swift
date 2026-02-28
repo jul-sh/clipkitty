@@ -1,13 +1,7 @@
 import SwiftUI
 import AppKit
 import ClipKittyRust
-import os.log
-import os.signpost
 import UniformTypeIdentifiers
-
-// MARK: - Performance Logging
-private let perfLog = OSLog(subsystem: "com.eviljuliette.clipkitty", category: "Performance")
-private let signposter = OSSignposter(logHandle: perfLog)
 
 /// Notification posted when the panel is about to hide, allowing pending edits to be saved.
 extension Notification.Name {
@@ -874,8 +868,9 @@ struct ContentView: View {
     private func previewContent(for item: ClipboardItem) -> some View {
         switch item.content {
         case .text, .color:
-            // Single unified view: editable with search highlighting via temporary attributes
-            EditableTextPreview(
+            // TextKit 2 based preview with viewport-based layout
+            // Only visible text is laid out, eliminating main thread blocking
+            TextKit2TextPreview(
                 text: pendingEdits[item.itemMetadata.itemId] ?? item.content.textContent,
                 itemId: item.itemMetadata.itemId,
                 fontName: FontManager.mono,
@@ -1588,10 +1583,10 @@ struct TextPreviewView: NSViewRepresentable {
     }
 }
 
-// MARK: - Editable Text Preview View
+// MARK: - TextKit 2 Text Preview
 
-/// Custom NSTextView that handles Cmd+Return for paste action and tracks focus
-private class EditablePreviewTextView: NSTextView {
+/// NSTextView subclass with custom key handling for the preview pane
+private final class TextKit2PreviewTextView: NSTextView {
     var onCmdReturn: (() -> Void)?
     var onFocusChange: ((Bool) -> Void)?
     var onSave: (() -> Void)?
@@ -1611,7 +1606,7 @@ private class EditablePreviewTextView: NSTextView {
             }
         }
         if event.keyCode == 53 { // Escape
-            self.window?.makeFirstResponder(nil)
+            window?.makeFirstResponder(nil)
             onEscape?()
             return
         }
@@ -1620,43 +1615,38 @@ private class EditablePreviewTextView: NSTextView {
 
     override func becomeFirstResponder() -> Bool {
         let result = super.becomeFirstResponder()
-        if result {
-            onFocusChange?(true)
-        }
+        if result { onFocusChange?(true) }
         return result
     }
 
     override func resignFirstResponder() -> Bool {
         let result = super.resignFirstResponder()
-        if result {
-            onFocusChange?(false)
-        }
+        if result { onFocusChange?(false) }
         return result
     }
 }
 
-/// Unified editable text view with search highlighting.
-/// Highlights are applied directly to the attributed string for reliable rendering.
-struct EditableTextPreview: NSViewRepresentable {
+/// TextKit 2 based text preview with viewport-based layout.
+/// Uses NSTextLayoutManager for efficient rendering of large documents -
+/// only visible text is laid out, eliminating the main thread blocking issue.
+struct TextKit2TextPreview: NSViewRepresentable {
     let text: String
     let itemId: Int64
     let fontName: String
     let fontSize: CGFloat
     var highlights: [HighlightRange] = []
     var densestHighlightStart: UInt64 = 0
-    var originalText: String = ""  // Original text for comparison
-    var onTextChange: ((String) -> Void)?  // Called on each edit
-    var onEditingStateChange: ((Bool) -> Void)?  // Called when editing state changes
-    var onCmdReturn: (() -> Void)?  // Called when Cmd+Return pressed (paste)
-    var onSave: (() -> Void)?  // Called when Cmd+S pressed (save edit)
-    var onEscape: (() -> Void)?  // Called when Escape pressed
+    var originalText: String = ""
+    var onTextChange: ((String) -> Void)?
+    var onEditingStateChange: ((Bool) -> Void)?
+    var onCmdReturn: (() -> Void)?
+    var onSave: (() -> Void)?
+    var onEscape: (() -> Void)?
 
-    /// Last known container width, persisted across view recreations
     private static var lastKnownContainerWidth: CGFloat = 0
+    private static let textContainerHorizontalInset: CGFloat = 32
 
-    /// Horizontal inset for text container (left + right padding)
-    private static let textContainerHorizontalInset: CGFloat = 32  // 16 * 2
-
+    /// Scale up font size for short text that doesn't fill the width
     private func scaledFontSize(containerWidth: CGFloat) -> CGFloat {
         let lines = text.components(separatedBy: "\n")
         if lines.count >= 10 { return fontSize }
@@ -1684,24 +1674,28 @@ struct EditableTextPreview: NSViewRepresentable {
         let scrollView = NSScrollView()
         scrollView.hasVerticalScroller = true
         scrollView.drawsBackground = false
+        scrollView.autohidesScrollers = true
 
-        let textView = EditablePreviewTextView()
+        // Create NSTextView with TextKit 2 enabled
+        // Using the usingTextLayoutManager initializer opts into TextKit 2
+        let textView = TextKit2PreviewTextView(usingTextLayoutManager: true)
+
         textView.isEditable = true
         textView.isSelectable = true
-        textView.isRichText = true  // Must be true for text to render properly
+        textView.isRichText = false  // Plain text only
         textView.allowsUndo = true
         textView.drawsBackground = false
         textView.isVerticallyResizable = true
         textView.isHorizontallyResizable = false
         textView.autoresizingMask = [.width]
-        textView.minSize = NSSize(width: 0, height: 0)
-        textView.maxSize = NSSize(width: CGFloat.greatestFiniteMagnitude, height: CGFloat.greatestFiniteMagnitude)
         textView.textContainerInset = NSSize(width: 16, height: 16)
         textView.textContainer?.widthTracksTextView = true
-        textView.textContainer?.containerSize = NSSize(width: scrollView.contentSize.width, height: CGFloat.greatestFiniteMagnitude)
-        textView.frame = NSRect(x: 0, y: 0, width: scrollView.contentSize.width, height: 0)
+        textView.textContainer?.containerSize = NSSize(
+            width: scrollView.contentSize.width,
+            height: CGFloat.greatestFiniteMagnitude
+        )
 
-        // Set up delegate and callbacks (text will be set in updateNSView)
+        // Setup delegate and callbacks
         textView.delegate = context.coordinator
         textView.onCmdReturn = onCmdReturn
         textView.onFocusChange = onEditingStateChange
@@ -1709,54 +1703,42 @@ struct EditableTextPreview: NSViewRepresentable {
         textView.onEscape = onEscape
         context.coordinator.onTextChange = onTextChange
 
-        // Enable accessibility
-        textView.setAccessibilityElement(true)
-        textView.setAccessibilityRole(.textArea)
-        textView.setAccessibilityIdentifier("PreviewTextView")
-
         scrollView.documentView = textView
         return scrollView
     }
 
-    func updateNSView(_ nsView: NSScrollView, context: Context) {
-        let startTime = CFAbsoluteTimeGetCurrent()
-        defer {
-            let elapsed = (CFAbsoluteTimeGetCurrent() - startTime) * 1000
-            if elapsed > 5 {
-                os_log(.debug, log: perfLog, "EditableTextPreview.updateNSView took %.1fms", elapsed)
-            }
-        }
-        guard let textView = nsView.documentView as? NSTextView else { return }
+    func updateNSView(_ scrollView: NSScrollView, context: Context) {
+        guard let textView = scrollView.documentView as? TextKit2PreviewTextView else { return }
 
         // Update callbacks
         context.coordinator.onTextChange = onTextChange
-        if let editableTextView = textView as? EditablePreviewTextView {
-            editableTextView.onCmdReturn = onCmdReturn
-            editableTextView.onFocusChange = onEditingStateChange
-            editableTextView.onSave = onSave
-            editableTextView.onEscape = onEscape
-        }
+        textView.onCmdReturn = onCmdReturn
+        textView.onFocusChange = onEditingStateChange
+        textView.onSave = onSave
+        textView.onEscape = onEscape
 
         // Check if item changed
         let itemChanged = context.coordinator.currentItemId != itemId
+        if itemChanged {
+            context.coordinator.currentItemId = itemId
+            context.coordinator.isEditing = false
+        }
 
-        // Calculate scaled font size
-        let containerWidth = nsView.contentSize.width > 0
-            ? nsView.contentSize.width
+        // Calculate scaled font size for short text
+        let containerWidth = scrollView.contentSize.width > 0
+            ? scrollView.contentSize.width
             : Self.lastKnownContainerWidth
-        if nsView.contentSize.width > 0 {
-            Self.lastKnownContainerWidth = nsView.contentSize.width
+        if scrollView.contentSize.width > 0 {
+            Self.lastKnownContainerWidth = scrollView.contentSize.width
         }
         let scaledSize = scaledFontSize(containerWidth: containerWidth)
+
         let font = NSFont(name: fontName, size: scaledSize)
             ?? NSFont.monospacedSystemFont(ofSize: scaledSize, weight: .regular)
 
-        // Track whether font size changed (for scaling updates)
-        let fontSizeChanged = abs(context.coordinator.lastAppliedFontSize - scaledSize) > 0.1
-
-        // Always update typing attributes so new characters use the scaled font
         let paragraphStyle = NSMutableParagraphStyle()
         paragraphStyle.lineBreakMode = .byWordWrapping
+
         let typingAttrs: [NSAttributedString.Key: Any] = [
             .font: font,
             .foregroundColor: NSColor.labelColor,
@@ -1764,195 +1746,104 @@ struct EditableTextPreview: NSViewRepresentable {
         ]
         textView.typingAttributes = typingAttrs
 
-        // Update text/font when item changes, font size changes, or text differs (and not editing)
-        if itemChanged || fontSizeChanged {
-            context.coordinator.currentItemId = itemId
-            context.coordinator.lastAppliedFontSize = scaledSize
-            if itemChanged {
-                context.coordinator.isEditing = false
-            }
-
-            // Use textView.string to preserve edits, or text if item changed
-            let currentText = itemChanged ? text : textView.string
-
-            if let textStorage = textView.textStorage {
-                // For large text (>50KB), defer the heavy work to avoid blocking
-                // Smaller text is fine to process immediately
-                let isLargeText = currentText.count > 50_000
-
-                if isLargeText && itemChanged {
-                    // Show truncated preview immediately, load full async
-                    let truncated = String(currentText.prefix(10_000))
-                    let truncatedAttr = NSAttributedString(string: truncated + "\n\n[Loading...]", attributes: typingAttrs)
-                    textStorage.setAttributedString(truncatedAttr)
-                    textView.scrollToBeginningOfDocument(nil)
-
-                    // Load full text async
-                    let fullText = currentText
-                    Task { @MainActor in
-                        // Small delay to let UI settle
-                        try? await Task.sleep(for: .milliseconds(50))
-                        let fullAttr = NSAttributedString(string: fullText, attributes: typingAttrs)
-                        textStorage.setAttributedString(fullAttr)
-                    }
-                } else {
-                    // Small text or font size change - process immediately
-                    let attributed = NSAttributedString(string: currentText, attributes: typingAttrs)
-                    textStorage.setAttributedString(attributed)
-                    if itemChanged {
-                        textView.scrollToBeginningOfDocument(nil)
-                    }
-                }
-            }
+        // Update text when item changes
+        if itemChanged {
+            let attributed = NSAttributedString(string: text, attributes: typingAttrs)
+            textView.textStorage?.setAttributedString(attributed)
+            textView.scrollToBeginningOfDocument(nil)
         } else if !context.coordinator.isEditing && textView.string != text {
-            // Text changed externally (not by user editing)
-            if let textStorage = textView.textStorage {
-                let attributed = NSAttributedString(string: text, attributes: typingAttrs)
-                textStorage.setAttributedString(attributed)
-            }
-            context.coordinator.lastAppliedFontSize = scaledSize
+            let attributed = NSAttributedString(string: text, attributes: typingAttrs)
+            textView.textStorage?.setAttributedString(attributed)
         }
 
-        // Apply highlights directly to attributed string (more reliable than temporary attributes)
-        // Skip if highlights haven't changed
+        // Apply highlights using rendering attributes (TextKit 2 feature)
+        // This doesn't trigger re-layout, only affects rendering
         let highlightsChanged = highlights != context.coordinator.lastHighlights
         if highlightsChanged || itemChanged {
             context.coordinator.lastHighlights = highlights
-
-            // Debounce highlight updates for large items (>10KB) to keep typing smooth
-            // Item changes are always immediate for responsive selection
-            let textLen = text.count
-            let shouldDebounce = !itemChanged && textLen > 10_000
-
-            context.coordinator.pendingHighlightTask?.cancel()
-
-            if shouldDebounce {
-                context.coordinator.pendingHighlightTask = Task { @MainActor in
-                    try? await Task.sleep(for: .milliseconds(80))
-                    guard !Task.isCancelled else { return }
-                    applyHighlights(
-                        to: textView,
-                        font: font,
-                        paragraphStyle: paragraphStyle,
-                        itemChanged: itemChanged,
-                        isEditing: context.coordinator.isEditing,
-                        context: context
-                    )
-                }
-            } else {
-                applyHighlights(
-                    to: textView,
-                    font: font,
-                    paragraphStyle: paragraphStyle,
-                    itemChanged: itemChanged,
-                    isEditing: context.coordinator.isEditing,
-                    context: context
-                )
-            }
+            applyHighlights(to: textView, context: context)
         }
 
-        // Update container size and frame
-        let textContainerWidth = max(0, nsView.contentSize.width - Self.textContainerHorizontalInset)
+        // Update container size
+        let textContainerWidth = max(0, scrollView.contentSize.width - Self.textContainerHorizontalInset)
         textView.textContainer?.containerSize = NSSize(
             width: textContainerWidth,
             height: .greatestFiniteMagnitude
         )
-        textView.frame = NSRect(x: 0, y: 0, width: nsView.contentSize.width, height: textView.frame.height)
     }
 
-    private func applyHighlights(
-        to textView: NSTextView,
-        font: NSFont,
-        paragraphStyle: NSParagraphStyle,
-        itemChanged: Bool,
-        isEditing: Bool,
-        context: Context
-    ) {
-        // Skip highlight updates during active editing to avoid disrupting cursor position
-        // Highlights will be reapplied when editing ends and item is selected again
-        if isEditing { return }
+    private func applyHighlights(to textView: NSTextView, context: Context) {
+        // Skip during editing
+        if context.coordinator.isEditing { return }
 
-        guard let textStorage = textView.textStorage else { return }
+        guard let textLayoutManager = textView.textLayoutManager,
+              let textContentStorage = textLayoutManager.textContentManager as? NSTextContentStorage else { return }
+
+        let documentRange = textContentStorage.documentRange
 
         let currentText = textView.string
-        let textLength = (currentText as NSString).length
-        guard textLength > 0 else { return }
 
-        let fullRange = NSRange(location: 0, length: textLength)
+        // Clear existing rendering attributes (non-blocking)
+        textLayoutManager.removeRenderingAttribute(.backgroundColor, for: documentRange)
+        textLayoutManager.removeRenderingAttribute(.underlineStyle, for: documentRange)
 
-        // If item changed, we need to set base attributes for the new text
-        if itemChanged {
-            textStorage.beginEditing()
-            textStorage.setAttributes([
-                .font: font,
-                .foregroundColor: NSColor.labelColor,
-                .paragraphStyle: paragraphStyle
-            ], range: fullRange)
-            textStorage.endEditing()
-        }
-
-        // Update highlights in-place without replacing entire text storage
-        // This avoids expensive full re-layout
-        textStorage.beginEditing()
-
-        // Clear existing highlight attributes (only background and underline)
-        textStorage.removeAttribute(.backgroundColor, range: fullRange)
-        textStorage.removeAttribute(.underlineStyle, range: fullRange)
-
-        // Apply new highlights
+        // Apply new highlights using rendering attributes
+        // This is the key TextKit 2 optimization - rendering attributes don't trigger layout
         for highlight in highlights {
-            let nsRange = highlight.nsRange(in: currentText)
-            guard nsRange.location != NSNotFound,
-                  nsRange.length > 0,
-                  nsRange.location + nsRange.length <= textLength else { continue }
+            guard let textRange = textRange(for: highlight, in: currentText, layoutManager: textLayoutManager, documentRange: documentRange) else { continue }
 
             let (bgColor, shouldUnderline) = highlightStyle(for: highlight.kind)
-            textStorage.addAttribute(.backgroundColor, value: bgColor, range: nsRange)
+            textLayoutManager.addRenderingAttribute(.backgroundColor, value: bgColor, for: textRange)
             if shouldUnderline {
-                textStorage.addAttribute(.underlineStyle, value: NSUnderlineStyle.single.rawValue, range: nsRange)
+                textLayoutManager.addRenderingAttribute(.underlineStyle, value: NSUnderlineStyle.single.rawValue, for: textRange)
             }
         }
 
-        textStorage.endEditing()
-
-        // Auto-scroll to densest highlight
-        // Debounce scroll during search to avoid jank while typing, but keep highlight updates instant
+        // Scroll to densest highlight
         if !highlights.isEmpty {
             let targetHighlight = highlights.first { $0.start == densestHighlightStart } ?? highlights[0]
-            let targetRange = targetHighlight.nsRange(in: currentText)
-            let textLen = textLength
+            if let textRange = textRange(for: targetHighlight, in: currentText, layoutManager: textLayoutManager, documentRange: documentRange) {
+                scrollToTextRange(textRange, in: textView, layoutManager: textLayoutManager)
+            }
+        }
+    }
 
-            // Cancel any pending scroll
-            context.coordinator.pendingScrollTask?.cancel()
+    private func textRange(
+        for highlight: HighlightRange,
+        in text: String,
+        layoutManager: NSTextLayoutManager,
+        documentRange: NSTextRange
+    ) -> NSTextRange? {
+        let nsRange = highlight.nsRange(in: text)
+        guard nsRange.location != NSNotFound,
+              nsRange.length > 0,
+              nsRange.location + nsRange.length <= (text as NSString).length else { return nil }
 
-            // Debounce scroll: 100ms while typing, immediate on item change
-            let debounceMs = itemChanged ? 0 : 100
-            context.coordinator.pendingScrollTask = Task { @MainActor in
-                if debounceMs > 0 {
-                    try? await Task.sleep(for: .milliseconds(debounceMs))
-                    guard !Task.isCancelled else { return }
-                }
+        guard let start = layoutManager.location(documentRange.location, offsetBy: nsRange.location),
+              let end = layoutManager.location(start, offsetBy: nsRange.length) else { return nil }
 
-                guard let scrollView = textView.enclosingScrollView else { return }
-                guard let layoutManager = textView.layoutManager,
-                      let textContainer = textView.textContainer else { return }
+        return NSTextRange(location: start, end: end)
+    }
 
-                // Only ensure layout around the highlight region, not entire document
-                // This keeps large documents responsive
-                let layoutStart = max(0, targetRange.location - 500)
-                let layoutLength = min(1000, textLen - layoutStart)
-                let glyphRangeToLayout = layoutManager.glyphRange(forCharacterRange: NSRange(location: layoutStart, length: layoutLength), actualCharacterRange: nil)
-                layoutManager.ensureLayout(forGlyphRange: glyphRangeToLayout)
+    private func scrollToTextRange(_ textRange: NSTextRange, in textView: NSTextView, layoutManager: NSTextLayoutManager) {
+        // Ensure layout for the target range
+        layoutManager.ensureLayout(for: textRange)
 
-                let glyphRange = layoutManager.glyphRange(forCharacterRange: targetRange, actualCharacterRange: nil)
-                let rect = layoutManager.boundingRect(forGlyphRange: glyphRange, in: textContainer)
-                guard rect.width > 0 else { return }
+        // Find the layout fragment containing this range
+        var targetRect: CGRect?
+        layoutManager.enumerateTextLayoutFragments(from: textRange.location, options: [.ensuresLayout]) { fragment in
+            targetRect = fragment.layoutFragmentFrame
+            return false
+        }
 
-                let highlightRect = rect.offsetBy(dx: textView.textContainerInset.width, dy: textView.textContainerInset.height)
-                let visibleRect = scrollView.documentVisibleRect
-                if !visibleRect.contains(highlightRect) {
-                    textView.scrollToVisible(highlightRect.insetBy(dx: 0, dy: -50))
-                }
+        if let rect = targetRect, let scrollView = textView.enclosingScrollView {
+            let adjustedRect = rect.offsetBy(
+                dx: textView.textContainerInset.width,
+                dy: textView.textContainerInset.height
+            )
+            let visibleRect = scrollView.documentVisibleRect
+            if !visibleRect.contains(adjustedRect) {
+                textView.scrollToVisible(adjustedRect.insetBy(dx: 0, dy: -50))
             }
         }
     }
@@ -1975,11 +1866,8 @@ struct EditableTextPreview: NSViewRepresentable {
     class Coordinator: NSObject, NSTextViewDelegate {
         var currentItemId: Int64 = 0
         var isEditing = false
-        var lastAppliedFontSize: CGFloat = 0
         var lastHighlights: [HighlightRange] = []
         var onTextChange: ((String) -> Void)?
-        var pendingScrollTask: Task<Void, Never>?
-        var pendingHighlightTask: Task<Void, Never>?
 
         func textDidBeginEditing(_ notification: Notification) {
             isEditing = true
@@ -1990,7 +1878,6 @@ struct EditableTextPreview: NSViewRepresentable {
         }
 
         func textDidChange(_ notification: Notification) {
-            // Called on each keystroke - only notify if callback exists
             guard let onTextChange, let textView = notification.object as? NSTextView else { return }
             onTextChange(textView.string)
         }
