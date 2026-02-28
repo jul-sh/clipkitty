@@ -473,6 +473,25 @@ final class ClipboardStore {
         }
     }
 
+    /// Save text that was edited in the preview pane.
+    /// Uses "ClipKitty" as source app since the edit happened within the app.
+    /// Returns new item ID, or 0 if duplicate (timestamp updated).
+    func saveEditedText(text: String) async -> Int64 {
+        guard let rustStore else { return 0 }
+
+        return await Task.detached { [rustStore] in
+            do {
+                return try rustStore.saveText(
+                    text: text,
+                    sourceApp: "ClipKitty",
+                    sourceAppBundleId: Bundle.main.bundleIdentifier
+                )
+            } catch {
+                return 0
+            }
+        }.value
+    }
+
     private func saveImageItem(rawImageData: Data, isAnimated: Bool) {
         let sourceApp = NSWorkspace.shared.frontmostApplication?.localizedName
         let sourceAppBundleID = NSWorkspace.shared.frontmostApplication?.bundleIdentifier
