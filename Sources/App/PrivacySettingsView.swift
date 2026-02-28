@@ -33,7 +33,7 @@ struct PrivacySettingsView: View {
 
     var body: some View {
         Form {
-            Section {
+            Section(String(localized: "Networking")) {
                 Toggle(isOn: $settings.generateLinkPreviews) {
                     VStack(alignment: .leading, spacing: 2) {
                         Text(String(localized: "Generate link previews"))
@@ -44,7 +44,7 @@ struct PrivacySettingsView: View {
                 }
             }
 
-            Section {
+            Section(String(localized: "Storage")) {
                 Toggle(isOn: $settings.ignoreConfidentialContent) {
                     VStack(alignment: .leading, spacing: 2) {
                         Text(String(localized: "Ignore confidential content"))
@@ -62,12 +62,9 @@ struct PrivacySettingsView: View {
                             .foregroundStyle(.secondary)
                     }
                 }
-            }
 
-            Section {
                 VStack(alignment: .leading, spacing: 4) {
                     Text(String(localized: "Ignore Applications"))
-                        .font(.headline)
                     Text(String(localized: "Do not save content copied from the applications below."))
                         .font(.caption)
                         .foregroundStyle(.secondary)
@@ -75,18 +72,6 @@ struct PrivacySettingsView: View {
                 .padding(.bottom, 4)
 
                 IgnoredAppsListView()
-            }
-
-            Section(String(localized: "Security")) {
-                HStack {
-                    Image(systemName: "lock.shield")
-                        .foregroundStyle(.secondary)
-                    Text(String(localized: "Sandboxed"))
-                        .font(.headline)
-                }
-                Text(String(localized: "ClipKitty runs in an isolated environment, protecting your privacy and keeping your data secure."))
-                    .font(.caption)
-                    .foregroundStyle(.secondary)
             }
         }
         .formStyle(.grouped)
