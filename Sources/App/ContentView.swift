@@ -14,6 +14,7 @@ final class IconCache {
 
     private var bundleIconCache: [String: NSImage] = [:]
     private var utTypeIconCache: [String: NSImage] = [:]
+    private var filePathIconCache: [String: NSImage] = [:]
     private var pendingLoads: Set<String> = []
 
     // Pre-cached system icons (loaded once at startup)
@@ -92,6 +93,26 @@ final class IconCache {
             return nil
         }
         return NSWorkspace.shared.icon(forFile: appURL.path)
+    }
+
+    /// Get cached icon for file path, or nil if not yet loaded.
+    /// Triggers async load if not cached.
+    func icon(forFilePath path: String) -> NSImage? {
+        if let cached = filePathIconCache[path] {
+            return cached
+        }
+        let key = "file:\(path)"
+        if !pendingLoads.contains(key) {
+            pendingLoads.insert(key)
+            Task.detached { [weak self] in
+                let icon = NSWorkspace.shared.icon(forFile: path)
+                await MainActor.run {
+                    self?.pendingLoads.remove(key)
+                    self?.filePathIconCache[path] = icon
+                }
+            }
+        }
+        return nil
     }
 }
 
@@ -1231,9 +1252,17 @@ struct FilePreviewView: View {
 
     private func fileRow(_ file: FileEntry) -> some View {
         HStack(spacing: 12) {
-            Image(nsImage: NSWorkspace.shared.icon(forFile: file.path))
-                .resizable()
-                .frame(width: 40, height: 40)
+            Group {
+                if let icon = IconCache.shared.icon(forFilePath: file.path) {
+                    Image(nsImage: icon)
+                        .resizable()
+                } else {
+                    Image(systemName: "doc")
+                        .resizable()
+                        .foregroundStyle(.secondary)
+                }
+            }
+            .frame(width: 40, height: 40)
 
             VStack(alignment: .leading, spacing: 4) {
                 highlightedFileText(file.filename, font: .system(size: 14, weight: .medium), color: .primary)
