@@ -2,7 +2,12 @@ import SwiftUI
 import AppKit
 import ClipKittyRust
 import os.log
+import os.signpost
 import UniformTypeIdentifiers
+
+// MARK: - Performance Logging
+private let perfLog = OSLog(subsystem: "com.eviljuliette.clipkitty", category: "Performance")
+private let signposter = OSSignposter(logHandle: perfLog)
 
 /// Notification posted when the panel is about to hide, allowing pending edits to be saved.
 extension Notification.Name {
@@ -1714,6 +1719,13 @@ struct EditableTextPreview: NSViewRepresentable {
     }
 
     func updateNSView(_ nsView: NSScrollView, context: Context) {
+        let startTime = CFAbsoluteTimeGetCurrent()
+        defer {
+            let elapsed = (CFAbsoluteTimeGetCurrent() - startTime) * 1000
+            if elapsed > 5 {
+                os_log(.debug, log: perfLog, "EditableTextPreview.updateNSView took %.1fms", elapsed)
+            }
+        }
         guard let textView = nsView.documentView as? NSTextView else { return }
 
         // Update callbacks
@@ -1760,18 +1772,44 @@ struct EditableTextPreview: NSViewRepresentable {
                 context.coordinator.isEditing = false
             }
 
-            // Use attributed string to apply font properly
             // Use textView.string to preserve edits, or text if item changed
             let currentText = itemChanged ? text : textView.string
-            let attributed = NSAttributedString(string: currentText, attributes: typingAttrs)
-            textView.textStorage?.setAttributedString(attributed)
-            if itemChanged {
-                textView.scrollToBeginningOfDocument(nil)
+
+            if let textStorage = textView.textStorage {
+                // For large text (>50KB), defer the heavy work to avoid blocking
+                // Smaller text is fine to process immediately
+                let isLargeText = currentText.count > 50_000
+
+                if isLargeText && itemChanged {
+                    // Show truncated preview immediately, load full async
+                    let truncated = String(currentText.prefix(10_000))
+                    let truncatedAttr = NSAttributedString(string: truncated + "\n\n[Loading...]", attributes: typingAttrs)
+                    textStorage.setAttributedString(truncatedAttr)
+                    textView.scrollToBeginningOfDocument(nil)
+
+                    // Load full text async
+                    let fullText = currentText
+                    Task { @MainActor in
+                        // Small delay to let UI settle
+                        try? await Task.sleep(for: .milliseconds(50))
+                        let fullAttr = NSAttributedString(string: fullText, attributes: typingAttrs)
+                        textStorage.setAttributedString(fullAttr)
+                    }
+                } else {
+                    // Small text or font size change - process immediately
+                    let attributed = NSAttributedString(string: currentText, attributes: typingAttrs)
+                    textStorage.setAttributedString(attributed)
+                    if itemChanged {
+                        textView.scrollToBeginningOfDocument(nil)
+                    }
+                }
             }
         } else if !context.coordinator.isEditing && textView.string != text {
-            // Use attributed string to apply font properly
-            let attributed = NSAttributedString(string: text, attributes: typingAttrs)
-            textView.textStorage?.setAttributedString(attributed)
+            // Text changed externally (not by user editing)
+            if let textStorage = textView.textStorage {
+                let attributed = NSAttributedString(string: text, attributes: typingAttrs)
+                textStorage.setAttributedString(attributed)
+            }
             context.coordinator.lastAppliedFontSize = scaledSize
         }
 
@@ -1838,16 +1876,30 @@ struct EditableTextPreview: NSViewRepresentable {
 
         let currentText = textView.string
         let textLength = (currentText as NSString).length
+        guard textLength > 0 else { return }
 
-        // Build attributed string with highlights baked in (like TextPreviewView)
-        // This is more reliable than temporary attributes for editable text
-        let attributed = NSMutableAttributedString(string: currentText, attributes: [
-            .font: font,
-            .foregroundColor: NSColor.labelColor,
-            .paragraphStyle: paragraphStyle
-        ])
+        let fullRange = NSRange(location: 0, length: textLength)
 
-        // Apply highlights directly to the attributed string
+        // If item changed, we need to set base attributes for the new text
+        if itemChanged {
+            textStorage.beginEditing()
+            textStorage.setAttributes([
+                .font: font,
+                .foregroundColor: NSColor.labelColor,
+                .paragraphStyle: paragraphStyle
+            ], range: fullRange)
+            textStorage.endEditing()
+        }
+
+        // Update highlights in-place without replacing entire text storage
+        // This avoids expensive full re-layout
+        textStorage.beginEditing()
+
+        // Clear existing highlight attributes (only background and underline)
+        textStorage.removeAttribute(.backgroundColor, range: fullRange)
+        textStorage.removeAttribute(.underlineStyle, range: fullRange)
+
+        // Apply new highlights
         for highlight in highlights {
             let nsRange = highlight.nsRange(in: currentText)
             guard nsRange.location != NSNotFound,
@@ -1855,24 +1907,13 @@ struct EditableTextPreview: NSViewRepresentable {
                   nsRange.location + nsRange.length <= textLength else { continue }
 
             let (bgColor, shouldUnderline) = highlightStyle(for: highlight.kind)
-            attributed.addAttribute(.backgroundColor, value: bgColor, range: nsRange)
+            textStorage.addAttribute(.backgroundColor, value: bgColor, range: nsRange)
             if shouldUnderline {
-                attributed.addAttribute(.underlineStyle, value: NSUnderlineStyle.single.rawValue, range: nsRange)
+                textStorage.addAttribute(.underlineStyle, value: NSUnderlineStyle.single.rawValue, range: nsRange)
             }
         }
 
-        // Only update if content or highlights actually changed
-        let currentStorageString = textStorage.string
-        let highlightsChanged = !highlights.isEmpty || (textLength > 0 && textStorage.attribute(.backgroundColor, at: 0, effectiveRange: nil) != nil)
-        if currentStorageString != currentText || highlightsChanged || itemChanged {
-            // Preserve selection before replacing
-            let selectedRange = textView.selectedRange()
-            textStorage.setAttributedString(attributed)
-            // Restore selection if still valid
-            if selectedRange.location + selectedRange.length <= textLength {
-                textView.setSelectedRange(selectedRange)
-            }
-        }
+        textStorage.endEditing()
 
         // Auto-scroll to densest highlight
         // Debounce scroll during search to avoid jank while typing, but keep highlight updates instant
