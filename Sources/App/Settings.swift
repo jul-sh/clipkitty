@@ -166,6 +166,13 @@ final class AppSettings: ObservableObject {
         didSet { save() }
     }
 
+    // MARK: - Editing Settings
+
+    /// When true, editing replaces the original item. When false, saves as a new item.
+    @Published var editInPlace: Bool {
+        didSet { save() }
+    }
+
     private let defaults = UserDefaults.standard
     private let hotKeyKey = "hotKey"
     private let maxDbSizeKey = "maxDatabaseSizeGB"
@@ -176,6 +183,7 @@ final class AppSettings: ObservableObject {
     private let generateLinkPreviewsKey = "generateLinkPreviews"
     private let ignoredAppBundleIdsKey = "ignoredAppBundleIds"
     private let clickToOpenKey = "clickToOpenEnabled"
+    private let editInPlaceKey = "editInPlace"
     #if !APP_STORE
     private let autoInstallUpdatesKey = "autoInstallUpdates"
     private let updateCheckFailingSinceKey = "updateCheckFailingSince"
@@ -212,6 +220,8 @@ final class AppSettings: ObservableObject {
         ignoreTransientContent = defaults.object(forKey: ignoreTransientKey) as? Bool ?? true
         generateLinkPreviews = defaults.object(forKey: generateLinkPreviewsKey) as? Bool ?? true
 
+        editInPlace = defaults.object(forKey: editInPlaceKey) as? Bool ?? false
+
         // Load ignored app bundle IDs
         if let storedIds = defaults.stringArray(forKey: ignoredAppBundleIdsKey) {
             ignoredAppBundleIds = Set(storedIds)
@@ -239,6 +249,7 @@ final class AppSettings: ObservableObject {
         defaults.set(generateLinkPreviews, forKey: generateLinkPreviewsKey)
         defaults.set(Array(ignoredAppBundleIds), forKey: ignoredAppBundleIdsKey)
         defaults.set(clickToOpenEnabled, forKey: clickToOpenKey)
+        defaults.set(editInPlace, forKey: editInPlaceKey)
         #if !APP_STORE
         defaults.set(autoInstallUpdates, forKey: autoInstallUpdatesKey)
         #endif

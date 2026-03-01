@@ -119,6 +119,17 @@ struct GeneralSettingsView: View {
                 }
             }
 
+            Section(String(localized: "Editing")) {
+                Toggle(isOn: $settings.editInPlace) {
+                    VStack(alignment: .leading, spacing: 2) {
+                        Text(String(localized: "Edit in place"))
+                        Text(String(localized: "Edits replace the original item. When off, edits are saved as a new item."))
+                            .font(.caption)
+                            .foregroundStyle(.secondary)
+                    }
+                }
+            }
+
             #if !APP_STORE
             Section(String(localized: "Updates")) {
                 switch settings.updateCheckState {

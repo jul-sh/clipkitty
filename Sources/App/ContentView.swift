@@ -401,7 +401,9 @@ struct ContentView: View {
         editFocus = .idle
     }
 
-    /// Commits the currently selected item's edit as a new clipboard item.
+    /// Commits the currently selected item's edit.
+    /// When editInPlace is enabled, replaces the original item.
+    /// Otherwise, saves as a new clipboard item.
     private func commitCurrentEdit() {
         guard let id = selectedItemId,
               let editedText = pendingEdits.removeValue(forKey: id),
@@ -410,13 +412,19 @@ struct ContentView: View {
             return
         }
         editFocus = .idle
+        let replaceOriginal = AppSettings.shared.editInPlace
         Task {
             let newItemId = await store.saveEditedText(text: editedText)
             if newItemId > 0 {
+                if replaceOriginal {
+                    store.delete(itemId: id)
+                }
                 searchText = ""
                 store.setSearchQuery("")
                 selectedItemId = newItemId
-                ToastWindow.shared.show(message: String(localized: "Saved as new item"))
+                ToastWindow.shared.show(message: replaceOriginal
+                    ? String(localized: "Item replaced")
+                    : String(localized: "Saved as new item"))
             }
         }
     }
