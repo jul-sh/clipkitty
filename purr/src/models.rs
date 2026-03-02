@@ -29,6 +29,8 @@ pub struct StoredItem {
     pub thumbnail: Option<Vec<u8>>,
     /// Parsed color RGBA for color content (stored for quick display)
     pub color_rgba: Option<u32>,
+    /// Tags associated with this item (populated from item_tags junction table)
+    pub tags: Vec<String>,
 }
 
 impl StoredItem {
@@ -54,6 +56,7 @@ impl StoredItem {
             source_app_bundle_id,
             thumbnail: None,
             color_rgba,
+            tags: Vec::new(),
         }
     }
 
@@ -81,6 +84,7 @@ impl StoredItem {
             source_app_bundle_id,
             thumbnail,
             color_rgba: None,
+            tags: Vec::new(),
         }
     }
 
@@ -178,6 +182,7 @@ impl StoredItem {
             source_app_bundle_id,
             thumbnail,
             color_rgba: None,
+            tags: Vec::new(),
         }
     }
 
@@ -238,6 +243,7 @@ impl StoredItem {
             source_app: self.source_app.clone(),
             source_app_bundle_id: self.source_app_bundle_id.clone(),
             timestamp_unix: self.timestamp_unix,
+            tags: self.tags.clone(),
         }
     }
 

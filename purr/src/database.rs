@@ -26,6 +26,8 @@ pub enum DatabaseError {
     Io(#[from] std::io::Error),
     #[error("Connection pool error: {0}")]
     Pool(#[from] r2d2::Error),
+    #[error("{0}")]
+    Other(String),
 }
 
 pub type DatabaseResult<T> = Result<T, DatabaseError>;
@@ -146,10 +148,22 @@ impl Database {
                 fileStatus TEXT NOT NULL DEFAULT 'available'
             );
 
+            CREATE TABLE IF NOT EXISTS tags (
+                id INTEGER PRIMARY KEY AUTOINCREMENT,
+                name TEXT NOT NULL UNIQUE COLLATE NOCASE
+            );
+
+            CREATE TABLE IF NOT EXISTS item_tags (
+                itemId INTEGER NOT NULL REFERENCES items(id) ON DELETE CASCADE,
+                tagId INTEGER NOT NULL REFERENCES tags(id) ON DELETE CASCADE,
+                PRIMARY KEY (itemId, tagId)
+            );
+
             CREATE INDEX IF NOT EXISTS idx_items_hash ON items(contentHash);
             CREATE INDEX IF NOT EXISTS idx_items_timestamp ON items(timestamp);
             CREATE INDEX IF NOT EXISTS idx_items_content_prefix ON items(content COLLATE NOCASE);
             CREATE INDEX IF NOT EXISTS idx_file_items_item ON file_items(itemId);
+            CREATE INDEX IF NOT EXISTS idx_item_tags_tag ON item_tags(tagId);
         "#)?;
 
         // Migration: Add is_animated column to existing image_items tables
@@ -176,6 +190,102 @@ impl Database {
         let count: i64 = conn.query_row("SELECT COUNT(*) FROM items", [], |row| row.get(0))?;
         Ok(count as u64)
     }
+
+    // ─────────────────────────────────────────────────────────────────────────────
+    // Tag Operations
+    // ─────────────────────────────────────────────────────────────────────────────
+
+    /// Add a tag to an item. Creates the tag if it doesn't exist.
+    /// Returns the tag ID.
+    pub fn add_tag(&self, item_id: i64, tag_name: &str) -> DatabaseResult<i64> {
+        let conn = self.get_conn()?;
+        let trimmed = tag_name.trim();
+        if trimmed.is_empty() {
+            return Err(DatabaseError::Other("Tag name cannot be empty".to_string()));
+        }
+
+        // Insert or get existing tag
+        conn.execute(
+            "INSERT OR IGNORE INTO tags (name) VALUES (?1)",
+            params![trimmed],
+        )?;
+        let tag_id: i64 = conn.query_row(
+            "SELECT id FROM tags WHERE name = ?1 COLLATE NOCASE",
+            params![trimmed],
+            |row| row.get(0),
+        )?;
+
+        // Link tag to item (ignore if already exists)
+        conn.execute(
+            "INSERT OR IGNORE INTO item_tags (itemId, tagId) VALUES (?1, ?2)",
+            params![item_id, tag_id],
+        )?;
+
+        Ok(tag_id)
+    }
+
+    /// Remove a tag from an item.
+    pub fn remove_tag(&self, item_id: i64, tag_name: &str) -> DatabaseResult<()> {
+        let conn = self.get_conn()?;
+        conn.execute(
+            "DELETE FROM item_tags WHERE itemId = ?1 AND tagId = (SELECT id FROM tags WHERE name = ?2 COLLATE NOCASE)",
+            params![item_id, tag_name.trim()],
+        )?;
+        // Clean up orphaned tags
+        conn.execute(
+            "DELETE FROM tags WHERE id NOT IN (SELECT DISTINCT tagId FROM item_tags)",
+            [],
+        )?;
+        Ok(())
+    }
+
+    /// Get all tags for an item.
+    pub fn get_item_tags(&self, item_id: i64) -> DatabaseResult<Vec<String>> {
+        let conn = self.get_conn()?;
+        let mut stmt = conn.prepare(
+            "SELECT t.name FROM tags t JOIN item_tags it ON t.id = it.tagId WHERE it.itemId = ?1 ORDER BY t.name"
+        )?;
+        let tags = stmt.query_map(params![item_id], |row| row.get::<_, String>(0))?
+            .collect::<Result<Vec<_>, _>>()?;
+        Ok(tags)
+    }
+
+    /// Get all tags that exist in the database.
+    pub fn get_all_tags(&self) -> DatabaseResult<Vec<String>> {
+        let conn = self.get_conn()?;
+        let mut stmt = conn.prepare("SELECT name FROM tags ORDER BY name")?;
+        let tags = stmt.query_map([], |row| row.get::<_, String>(0))?
+            .collect::<Result<Vec<_>, _>>()?;
+        Ok(tags)
+    }
+
+    /// Get tags for multiple items at once (batch).
+    /// Returns a map from item_id to list of tag names.
+    pub fn get_tags_for_items(&self, item_ids: &[i64]) -> DatabaseResult<std::collections::HashMap<i64, Vec<String>>> {
+        if item_ids.is_empty() {
+            return Ok(std::collections::HashMap::new());
+        }
+        let conn = self.get_conn()?;
+        let placeholders: String = item_ids.iter().map(|_| "?").collect::<Vec<_>>().join(",");
+        let sql = format!(
+            "SELECT it.itemId, t.name FROM item_tags it JOIN tags t ON it.tagId = t.id WHERE it.itemId IN ({}) ORDER BY t.name",
+            placeholders
+        );
+        let mut stmt = conn.prepare(&sql)?;
+        let params: Vec<&dyn rusqlite::types::ToSql> = item_ids.iter().map(|id| id as &dyn rusqlite::types::ToSql).collect();
+        let mut map: std::collections::HashMap<i64, Vec<String>> = std::collections::HashMap::new();
+        let mut rows = stmt.query(params.as_slice())?;
+        while let Some(row) = rows.next()? {
+            let item_id: i64 = row.get(0)?;
+            let tag_name: String = row.get(1)?;
+            map.entry(item_id).or_default().push(tag_name);
+        }
+        Ok(map)
+    }
+
+    // ─────────────────────────────────────────────────────────────────────────────
+    // Item Operations
+    // ─────────────────────────────────────────────────────────────────────────────
 
     /// Insert a new clipboard item using a transaction.
     /// Inserts into `items` + the appropriate child table(s).
@@ -375,7 +485,7 @@ impl Database {
 
         let mut stmt = conn.prepare(&sql)?;
         let mapper = |row: &rusqlite::Row| Self::row_to_metadata(row, snippet_chars);
-        let items = if let Some(ts) = before_timestamp {
+        let mut items = if let Some(ts) = before_timestamp {
             let ts_str = ts.format("%Y-%m-%d %H:%M:%S%.f").to_string();
             stmt.query_map(params![ts_str, limit as i64], mapper)?
                 .collect::<Result<Vec<_>, _>>()?
@@ -383,6 +493,17 @@ impl Database {
             stmt.query_map(params![limit as i64], mapper)?
                 .collect::<Result<Vec<_>, _>>()?
         };
+
+        // Batch-populate tags
+        let item_ids: Vec<i64> = items.iter().map(|m| m.item_id).collect();
+        drop(stmt);
+        drop(conn);
+        let mut tags_map = self.get_tags_for_items(&item_ids)?;
+        for item in &mut items {
+            if let Some(tags) = tags_map.remove(&item.item_id) {
+                item.tags = tags;
+            }
+        }
 
         Ok((items, total_count))
     }
@@ -400,16 +521,29 @@ impl Database {
             placeholders
         );
 
-        let mut stmt = conn.prepare(&sql)?;
-        let params: Vec<rusqlite::types::Value> = ids.iter().map(|&id| id.into()).collect();
-        let mut items: Vec<StoredItem> = stmt
-            .query_map(rusqlite::params_from_iter(params), Self::row_to_base_item)?
-            .collect::<Result<Vec<_>, _>>()?;
+        let mut items: Vec<StoredItem> = {
+            let mut stmt = conn.prepare(&sql)?;
+            let params: Vec<rusqlite::types::Value> = ids.iter().map(|&id| id.into()).collect();
+            let result = stmt.query_map(rusqlite::params_from_iter(params), Self::row_to_base_item)?
+                .collect::<Result<Vec<_>, _>>()?;
+            result
+        };
 
         // Populate child content for each item
         for item in &mut items {
             if let Some(id) = item.id {
                 Self::populate_child_content(&conn, item, id)?;
+            }
+        }
+
+        // Batch-populate tags
+        drop(conn);
+        let mut tags_map = self.get_tags_for_items(ids)?;
+        for item in &mut items {
+            if let Some(id) = item.id {
+                if let Some(tags) = tags_map.remove(&id) {
+                    item.tags = tags;
+                }
             }
         }
 
@@ -451,21 +585,34 @@ impl Database {
             placeholders
         );
 
-        let mut stmt = conn.prepare(&sql)?;
-        let params: Vec<rusqlite::types::Value> = ids.iter().map(|&id| id.into()).collect();
-
-        let mut items: Vec<StoredItem> = match stmt.query_map(rusqlite::params_from_iter(params), Self::row_to_base_item) {
-            Ok(rows) => rows.collect::<Result<Vec<_>, _>>()?,
-            Err(rusqlite::Error::SqliteFailure(err, _)) if err.code == rusqlite::ffi::ErrorCode::OperationInterrupted => {
-                return Ok(Vec::new());
-            }
-            Err(e) => return Err(e.into()),
+        let mut items: Vec<StoredItem> = {
+            let mut stmt = conn.prepare(&sql)?;
+            let params: Vec<rusqlite::types::Value> = ids.iter().map(|&id| id.into()).collect();
+            let result = match stmt.query_map(rusqlite::params_from_iter(params), Self::row_to_base_item) {
+                Ok(rows) => rows.collect::<Result<Vec<_>, _>>()?,
+                Err(rusqlite::Error::SqliteFailure(err, _)) if err.code == rusqlite::ffi::ErrorCode::OperationInterrupted => {
+                    return Ok(Vec::new());
+                }
+                Err(e) => return Err(e.into()),
+            };
+            result
         };
 
         // Populate child content
         for item in &mut items {
             if let Some(id) = item.id {
                 Self::populate_child_content(&conn, item, id)?;
+            }
+        }
+
+        // Batch-populate tags (conn released for pool reuse)
+        drop(conn);
+        let mut tags_map = self.get_tags_for_items(ids)?;
+        for item in &mut items {
+            if let Some(id) = item.id {
+                if let Some(tags) = tags_map.remove(&id) {
+                    item.tags = tags;
+                }
             }
         }
 
@@ -492,6 +639,19 @@ impl Database {
         for item in &mut items {
             if let Some(id) = item.id {
                 Self::populate_child_content(&conn, item, id)?;
+            }
+        }
+
+        // Batch-populate tags
+        let item_ids: Vec<i64> = items.iter().filter_map(|i| i.id).collect();
+        drop(stmt);
+        drop(conn);
+        let mut tags_map = self.get_tags_for_items(&item_ids)?;
+        for item in &mut items {
+            if let Some(id) = item.id {
+                if let Some(tags) = tags_map.remove(&id) {
+                    item.tags = tags;
+                }
             }
         }
 
@@ -689,6 +849,7 @@ impl Database {
             source_app_bundle_id,
             thumbnail,
             color_rgba,
+            tags: Vec::new(), // populated by caller via batch tag fetch
         })
     }
 
@@ -790,6 +951,7 @@ impl Database {
             source_app,
             source_app_bundle_id,
             timestamp_unix: timestamp.timestamp(),
+            tags: Vec::new(), // populated by caller via batch tag fetch
         })
     }
 }

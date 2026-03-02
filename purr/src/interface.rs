@@ -313,6 +313,7 @@ pub struct ItemMetadata {
     pub source_app: Option<String>,
     pub source_app_bundle_id: Option<String>,
     pub timestamp_unix: i64,
+    pub tags: Vec<String>,
 }
 
 /// Search match: metadata + match context
@@ -420,6 +421,22 @@ pub trait ClipboardStoreApi: Send + Sync {
 
     /// Update item timestamp to now
     fn update_timestamp(&self, item_id: i64) -> Result<(), ClipKittyError>;
+
+    // ─────────────────────────────────────────────────────────────────────────────
+    // Tag Operations
+    // ─────────────────────────────────────────────────────────────────────────────
+
+    /// Add a tag to an item. Creates the tag if it doesn't exist. Re-indexes the item.
+    fn add_tag(&self, item_id: i64, tag: String) -> Result<(), ClipKittyError>;
+
+    /// Remove a tag from an item. Re-indexes the item.
+    fn remove_tag(&self, item_id: i64, tag: String) -> Result<(), ClipKittyError>;
+
+    /// Get all tags for an item.
+    fn get_item_tags(&self, item_id: i64) -> Result<Vec<String>, ClipKittyError>;
+
+    /// Get all tags that exist in the database.
+    fn get_all_tags(&self) -> Result<Vec<String>, ClipKittyError>;
 
     // ─────────────────────────────────────────────────────────────────────────────
     // Delete Operations

@@ -126,7 +126,7 @@ impl ClipboardStore {
         items.into_par_iter().try_for_each(|item| {
             if let Some(id) = item.id {
                 let index_text = item.file_index_text().unwrap_or_else(|| item.text_content().to_string());
-                self.indexer.add_document(id, &index_text, item.timestamp_unix)?;
+                self.indexer.add_document(id, &index_text, item.timestamp_unix, &item.tags)?;
             }
             Ok::<(), ClipKittyError>(())
         })?;
@@ -275,8 +275,8 @@ impl ClipboardStore {
         let db_path_buf = PathBuf::from(&path);
         let index_path = db_path_buf
             .parent()
-            .map(|p| p.join("tantivy_index_v3"))
-            .unwrap_or_else(|| PathBuf::from("tantivy_index_v3"));
+            .map(|p| p.join("tantivy_index_v4"))
+            .unwrap_or_else(|| PathBuf::from("tantivy_index_v4"));
 
         let indexer = Indexer::new(&index_path)?;
 
@@ -420,9 +420,10 @@ impl ClipboardStoreApi for ClipboardStore {
                 let now = Utc::now();
                 self.db.update_timestamp(id, now)?;
 
-                // Update index timestamp
+                // Update index timestamp (preserve existing tags)
+                let tags = self.db.get_item_tags(id)?;
                 self.indexer
-                    .add_document(id, existing.text_content(), now.timestamp())?;
+                    .add_document(id, existing.text_content(), now.timestamp(), &tags)?;
                 self.indexer.commit()?;
 
                 return Ok(0); // Indicates duplicate
@@ -432,9 +433,9 @@ impl ClipboardStoreApi for ClipboardStore {
         // Insert new item into database
         let id = self.db.insert_item(&item)?;
 
-        // Index the new item
+        // Index the new item (no tags yet)
         self.indexer
-            .add_document(id, item.text_content(), item.timestamp_unix)?;
+            .add_document(id, item.text_content(), item.timestamp_unix, &[])?;
         self.indexer.commit()?;
 
         // Link metadata fetching is handled by Swift using LinkPresentation framework
@@ -579,7 +580,8 @@ impl ClipboardStoreApi for ClipboardStore {
                 self.db.update_timestamp(id, now)?;
 
                 let index_text = item.file_index_text().unwrap_or_else(|| item.text_content().to_string());
-                self.indexer.add_document(id, &index_text, now.timestamp())?;
+                let tags = self.db.get_item_tags(id)?;
+                self.indexer.add_document(id, &index_text, now.timestamp(), &tags)?;
                 self.indexer.commit()?;
 
                 return Ok(0);
@@ -588,7 +590,7 @@ impl ClipboardStoreApi for ClipboardStore {
 
         let index_text = item.file_index_text().unwrap_or_else(|| item.text_content().to_string());
         let id = self.db.insert_item(&item)?;
-        self.indexer.add_document(id, &index_text, item.timestamp_unix)?;
+        self.indexer.add_document(id, &index_text, item.timestamp_unix, &[])?;
         self.indexer.commit()?;
 
         Ok(id)
@@ -619,7 +621,8 @@ impl ClipboardStoreApi for ClipboardStore {
                 self.db.update_timestamp(id, now)?;
 
                 let index_text = item.file_index_text().unwrap_or_else(|| item.text_content().to_string());
-                self.indexer.add_document(id, &index_text, now.timestamp())?;
+                let tags = self.db.get_item_tags(id)?;
+                self.indexer.add_document(id, &index_text, now.timestamp(), &tags)?;
                 self.indexer.commit()?;
 
                 return Ok(0);
@@ -630,7 +633,7 @@ impl ClipboardStoreApi for ClipboardStore {
         let index_text = item.file_index_text().unwrap_or_else(|| item.text_content().to_string());
 
         let id = self.db.insert_item(&item)?;
-        self.indexer.add_document(id, &index_text, item.timestamp_unix)?;
+        self.indexer.add_document(id, &index_text, item.timestamp_unix, &[])?;
         self.indexer.commit()?;
 
         Ok(id)
@@ -653,9 +656,9 @@ impl ClipboardStoreApi for ClipboardStore {
         let item = StoredItem::new_image_with_thumbnail(image_data, thumbnail, source_app, source_app_bundle_id, is_animated);
         let id = self.db.insert_item(&item)?;
 
-        // Index with description (images can be searched by their description)
+        // Index with description (images can be searched by their description, no tags yet)
         self.indexer
-            .add_document(id, item.text_content(), item.timestamp_unix)?;
+            .add_document(id, item.text_content(), item.timestamp_unix, &[])?;
         self.indexer.commit()?;
 
         Ok(id)
@@ -685,10 +688,10 @@ impl ClipboardStoreApi for ClipboardStore {
     ) -> Result<(), ClipKittyError> {
         self.db.update_image_description(item_id, &description)?;
 
-        // Re-index with new description
+        // Re-index with new description (preserve existing tags)
         if let Some(item) = self.get_stored_item(item_id)? {
             self.indexer
-                .add_document(item_id, &description, item.timestamp_unix)?;
+                .add_document(item_id, &description, item.timestamp_unix, &item.tags)?;
             self.indexer.commit()?;
         }
 
@@ -700,14 +703,56 @@ impl ClipboardStoreApi for ClipboardStore {
         let now = Utc::now();
         self.db.update_timestamp(item_id, now)?;
 
-        // Update index timestamp
+        // Update index timestamp (preserve existing tags)
         if let Some(item) = self.get_stored_item(item_id)? {
             self.indexer
-                .add_document(item_id, item.text_content(), now.timestamp())?;
+                .add_document(item_id, item.text_content(), now.timestamp(), &item.tags)?;
             self.indexer.commit()?;
         }
 
         Ok(())
+    }
+
+    // ─────────────────────────────────────────────────────────────────────────────
+    // Tag Operations
+    // ─────────────────────────────────────────────────────────────────────────────
+
+    /// Add a tag to an item. Creates the tag if it doesn't exist. Re-indexes the item.
+    fn add_tag(&self, item_id: i64, tag: String) -> Result<(), ClipKittyError> {
+        self.db.add_tag(item_id, &tag)?;
+
+        // Re-index with updated tags
+        if let Some(item) = self.get_stored_item(item_id)? {
+            let index_text = item.file_index_text().unwrap_or_else(|| item.text_content().to_string());
+            self.indexer.add_document(item_id, &index_text, item.timestamp_unix, &item.tags)?;
+            self.indexer.commit()?;
+        }
+
+        Ok(())
+    }
+
+    /// Remove a tag from an item. Re-indexes the item.
+    fn remove_tag(&self, item_id: i64, tag: String) -> Result<(), ClipKittyError> {
+        self.db.remove_tag(item_id, &tag)?;
+
+        // Re-index with updated tags
+        if let Some(item) = self.get_stored_item(item_id)? {
+            let index_text = item.file_index_text().unwrap_or_else(|| item.text_content().to_string());
+            self.indexer.add_document(item_id, &index_text, item.timestamp_unix, &item.tags)?;
+            self.indexer.commit()?;
+        }
+
+        Ok(())
+    }
+
+    /// Get all tags for an item.
+    fn get_item_tags(&self, item_id: i64) -> Result<Vec<String>, ClipKittyError> {
+        Ok(self.db.get_item_tags(item_id)?)
+    }
+
+    /// Get all tags that exist in the database.
+    fn get_all_tags(&self) -> Result<Vec<String>, ClipKittyError> {
+        Ok(self.db.get_all_tags()?)
     }
 
     // ─────────────────────────────────────────────────────────────────────────────
