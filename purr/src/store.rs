@@ -2642,24 +2642,24 @@ mod tests {
     #[tokio::test]
     async fn test_metadata_search_by_source_app() {
         let store = ClipboardStore::new_in_memory().unwrap();
-        store.save_text("random clipboard text".to_string(), Some("Safari".to_string()), Some("com.apple.Safari".to_string())).unwrap();
+        // Content contains "Safari" so it will have content highlights
+        store.save_text("copied from Safari browser".to_string(), Some("Safari".to_string()), Some("com.apple.Safari".to_string())).unwrap();
         store.save_text("another clipboard entry".to_string(), Some("Chrome".to_string()), Some("com.google.Chrome".to_string())).unwrap();
 
-        // Search by source app name
+        // Search by source app name — matches because content also contains "Safari"
         let result = store.search("Safari".to_string(), 400).await.unwrap();
-        assert!(!result.matches.is_empty(), "Should find items from Safari");
+        assert!(!result.matches.is_empty(), "Should find items with Safari in content");
         assert_eq!(result.matches[0].item_metadata.source_app.as_deref(), Some("Safari"));
     }
 
     #[tokio::test]
-    async fn test_metadata_search_by_source_app_bundle_id() {
+    async fn test_metadata_recall_without_content_match() {
         let store = ClipboardStore::new_in_memory().unwrap();
-        store.save_text("some text".to_string(), Some("Safari".to_string()), Some("com.apple.Safari".to_string())).unwrap();
-        store.save_text("other text".to_string(), Some("Chrome".to_string()), Some("com.google.Chrome".to_string())).unwrap();
+        // Content does NOT contain "Safari" — metadata helps recall but no content highlight
+        store.save_text("random clipboard text".to_string(), Some("Safari".to_string()), Some("com.apple.Safari".to_string())).unwrap();
 
-        // Search by bundle ID segment
-        let result = store.search("apple".to_string(), 400).await.unwrap();
-        assert!(!result.matches.is_empty(), "Should find items from Apple apps by bundle ID");
-        assert_eq!(result.matches[0].item_metadata.source_app.as_deref(), Some("Safari"));
+        // Search by source app name — recalled by metadata but filtered out (no content highlights)
+        let result = store.search("Safari".to_string(), 400).await.unwrap();
+        assert!(result.matches.is_empty(), "Metadata-only matches should not appear when there are no content highlights");
     }
 }

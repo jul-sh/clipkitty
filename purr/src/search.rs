@@ -76,7 +76,7 @@ pub(crate) fn search_trigram(indexer: &Indexer, query: &str, token: &Cancellatio
         #[cfg(feature = "perf-log")]
         let t1 = std::time::Instant::now();
         use rayon::prelude::*;
-        let results: Vec<(FuzzyMatch, String)> = ranked
+        let mut sorted: Vec<FuzzyMatch> = ranked
             .into_par_iter()
             .take_any_while(|_| !token.is_cancelled())
             .map(|(rank, c)| {
@@ -85,42 +85,13 @@ pub(crate) fn search_trigram(indexer: &Indexer, query: &str, token: &Cancellatio
                 let mut m = highlight_candidate(c.id, c.content(), &content_lower, &doc_words, c.timestamp, c.tantivy_score, &query_words, last_word_is_prefix);
                 // Preserve bucket ranking order: score = inverse rank so sort is stable
                 m.score = (MAX_RESULTS - rank) as f64;
-                let source_app = c.source_app.clone();
-                (m, source_app)
+                m
             })
+            .filter(|m| !m.highlight_ranges.is_empty())
             .collect();
 
-        // Separate content matches (with highlights) from metadata-only matches
-        let mut sorted = Vec::new();
-        let mut metadata_matches = Vec::new();
-        for (m, source_app) in results {
-            if !m.highlight_ranges.is_empty() {
-                sorted.push(m);
-            } else if !source_app.is_empty() {
-                // Check if any query word matches a source_app word
-                let sa_lower = source_app.to_lowercase();
-                let sa_words = tokenize_words(&sa_lower);
-                let has_sa_match = query_words.iter().any(|qw| {
-                    let ql = qw.to_lowercase();
-                    sa_words.iter().any(|(_, _, sw)| {
-                        does_word_match(&ql, sw, true) != WordMatchKind::None
-                    })
-                });
-                if has_sa_match {
-                    // Create a metadata match with source_app as content, highlighted
-                    let mut meta_m = highlight_candidate(
-                        m.id, &source_app, &sa_lower, &sa_words,
-                        m.timestamp, 0.0, &query_words, last_word_is_prefix,
-                    );
-                    meta_m.score = 0.0; // rank after all content matches
-                    metadata_matches.push(meta_m);
-                }
-            }
-        }
-
-        // Sort content matches by bucket ranking, then append metadata matches
+        // par_iter + take_any_while doesn't preserve order — restore bucket ranking
         sorted.sort_unstable_by(|a, b| b.score.total_cmp(&a.score));
-        sorted.extend(metadata_matches);
 
         #[cfg(feature = "perf-log")]
         {
