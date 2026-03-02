@@ -178,12 +178,15 @@ impl Indexer {
         let ct_options = TextOptions::default().set_indexing_options(ct_field_indexing);
         builder.add_text_field("content_type", ct_options);
 
-        // Source app field (word-tokenized, not stored) for metadata search.
+        // Source app field (word-tokenized, stored) for metadata search.
         // Contains app name and bundle ID, e.g. "Safari com.apple.Safari"
+        // Stored so we can retrieve it for metadata-match highlighting.
         let sa_field_indexing = TextFieldIndexing::default()
             .set_tokenizer("default")
             .set_index_option(IndexRecordOption::Basic);
-        let sa_options = TextOptions::default().set_indexing_options(sa_field_indexing);
+        let sa_options = TextOptions::default()
+            .set_indexing_options(sa_field_indexing)
+            .set_stored();
         builder.add_text_field("source_app", sa_options);
 
         builder.add_i64_field("timestamp", STORED | FAST);
@@ -476,7 +479,13 @@ impl Indexer {
                 .and_then(|v| v.as_i64())
                 .unwrap_or(0);
 
-            candidates.push(SearchCandidate::new(id, content, timestamp, blended_score as f32));
+            let source_app = doc
+                .get_first(self.source_app_field)
+                .and_then(|v| v.as_str())
+                .unwrap_or("")
+                .to_string();
+
+            candidates.push(SearchCandidate::new(id, content, timestamp, blended_score as f32, source_app));
         }
 
         Ok(candidates)
