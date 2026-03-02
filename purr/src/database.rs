@@ -8,7 +8,7 @@ use crate::interface::{
     LinkMetadataState,
 };
 use crate::models::StoredItem;
-use crate::search::{generate_preview, SNIPPET_CONTEXT_CHARS};
+use crate::search::generate_preview;
 use chrono::{DateTime, TimeZone, Utc};
 use r2d2::{Pool, PooledConnection};
 use r2d2_sqlite::SqliteConnectionManager;
@@ -342,11 +342,13 @@ impl Database {
 
     /// Fetch lightweight item metadata for list display.
     /// No JOINs needed — `thumbnail` covers link images too.
+    /// `snippet_chars` controls the maximum character length of the snippet preview.
     pub fn fetch_item_metadata(
         &self,
         before_timestamp: Option<DateTime<Utc>>,
         limit: usize,
         filter: Option<&ContentTypeFilter>,
+        snippet_chars: usize,
     ) -> DatabaseResult<(Vec<ItemMetadata>, u64)> {
         let conn = self.get_conn()?;
 
@@ -372,12 +374,13 @@ impl Database {
         };
 
         let mut stmt = conn.prepare(&sql)?;
+        let mapper = |row: &rusqlite::Row| Self::row_to_metadata(row, snippet_chars);
         let items = if let Some(ts) = before_timestamp {
             let ts_str = ts.format("%Y-%m-%d %H:%M:%S%.f").to_string();
-            stmt.query_map(params![ts_str, limit as i64], Self::row_to_metadata)?
+            stmt.query_map(params![ts_str, limit as i64], mapper)?
                 .collect::<Result<Vec<_>, _>>()?
         } else {
-            stmt.query_map(params![limit as i64], Self::row_to_metadata)?
+            stmt.query_map(params![limit as i64], mapper)?
                 .collect::<Result<Vec<_>, _>>()?
         };
 
@@ -764,7 +767,7 @@ impl Database {
     }
 
     /// Convert a database row to lightweight ItemMetadata
-    fn row_to_metadata(row: &rusqlite::Row) -> rusqlite::Result<ItemMetadata> {
+    fn row_to_metadata(row: &rusqlite::Row, snippet_chars: usize) -> rusqlite::Result<ItemMetadata> {
         let id: i64 = row.get(0)?;
         let content: String = row.get(1)?;
         let content_type: Option<String> = row.get(2)?;
@@ -778,7 +781,7 @@ impl Database {
         let db_type = content_type.as_deref().unwrap_or("text");
 
         let icon = ItemIcon::from_database(db_type, color_rgba, thumbnail);
-        let snippet = generate_preview(&content, SNIPPET_CONTEXT_CHARS * 2);
+        let snippet = generate_preview(&content, snippet_chars);
 
         Ok(ItemMetadata {
             item_id: id,

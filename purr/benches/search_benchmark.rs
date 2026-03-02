@@ -149,7 +149,7 @@ fn bench_search(c: &mut Criterion) {
         group.bench_function(name, |b| {
             b.iter(|| {
                 rt.block_on(async {
-                    store.search(query.to_string()).await.unwrap()
+                    store.search(query.to_string(), 400).await.unwrap()
                 })
             });
         });

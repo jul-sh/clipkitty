@@ -472,13 +472,12 @@ pub fn generate_snippet(content: &str, highlights: &[HighlightRange], max_len: u
 }
 
 /// Create MatchData from a FuzzyMatch
-pub(crate) fn create_match_data(fuzzy_match: &FuzzyMatch) -> MatchData {
+pub(crate) fn create_match_data(fuzzy_match: &FuzzyMatch, snippet_chars: usize) -> MatchData {
     let full_content_highlights = fuzzy_match.highlight_ranges.clone();
-    let max_len = SNIPPET_CONTEXT_CHARS * 2;
     let (text, adjusted_highlights, line_number) = generate_snippet(
         &fuzzy_match.content,
         &full_content_highlights,
-        max_len,
+        snippet_chars,
     );
 
     let densest_highlight_start = find_densest_highlight(&full_content_highlights, SNIPPET_CONTEXT_CHARS as u64)
@@ -495,10 +494,10 @@ pub(crate) fn create_match_data(fuzzy_match: &FuzzyMatch) -> MatchData {
 }
 
 /// Create ItemMatch from StoredItem and FuzzyMatch
-pub(crate) fn create_item_match(item: &StoredItem, fuzzy_match: &FuzzyMatch) -> ItemMatch {
+pub(crate) fn create_item_match(item: &StoredItem, fuzzy_match: &FuzzyMatch, snippet_chars: usize) -> ItemMatch {
     ItemMatch {
-        item_metadata: item.to_metadata(),
-        match_data: create_match_data(fuzzy_match),
+        item_metadata: item.to_metadata_with_snippet_len(snippet_chars),
+        match_data: create_match_data(fuzzy_match, snippet_chars),
     }
 }
 

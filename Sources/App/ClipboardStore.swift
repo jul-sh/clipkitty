@@ -247,9 +247,9 @@ final class ClipboardStore {
         do {
             let searchResult: SearchResult
             if contentTypeFilter != .all {
-                searchResult = try await rustStore.searchFiltered(query: query, filter: contentTypeFilter)
+                searchResult = try await rustStore.searchFiltered(query: query, filter: contentTypeFilter, snippetChars: 400)
             } else {
-                searchResult = try await rustStore.search(query: query)
+                searchResult = try await rustStore.search(query: query, snippetChars: 400)
             }
 
             guard !Task.isCancelled else { return }

@@ -226,10 +226,15 @@ impl StoredItem {
     /// Preview is generous (SNIPPET_CONTEXT_CHARS * 2) - Swift handles final truncation
     pub fn to_metadata(&self) -> ItemMetadata {
         use crate::search::SNIPPET_CONTEXT_CHARS;
+        self.to_metadata_with_snippet_len(SNIPPET_CONTEXT_CHARS * 2)
+    }
+
+    /// Convert to ItemMetadata with a custom snippet length
+    pub fn to_metadata_with_snippet_len(&self, snippet_chars: usize) -> ItemMetadata {
         ItemMetadata {
             item_id: self.id.unwrap_or(0),
             icon: self.item_icon(),
-            snippet: self.display_text(SNIPPET_CONTEXT_CHARS * 2),
+            snippet: self.display_text(snippet_chars),
             source_app: self.source_app.clone(),
             source_app_bundle_id: self.source_app_bundle_id.clone(),
             timestamp_unix: self.timestamp_unix,

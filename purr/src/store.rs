@@ -143,6 +143,7 @@ impl ClipboardStore {
         token: &CancellationToken,
         runtime: &tokio::runtime::Handle,
         filter: Option<&ContentTypeFilter>,
+        snippet_chars: usize,
     ) -> Result<Vec<ItemMatch>, ClipKittyError> {
         if token.is_cancelled() {
             return Err(ClipKittyError::Cancelled);
@@ -182,7 +183,7 @@ impl ClipboardStore {
                 if token.is_cancelled() {
                     return Err(ClipKittyError::Cancelled);
                 }
-                Ok((i, item_map.get(&fm.id).map(|item| search::create_item_match(item, &fm))))
+                Ok((i, item_map.get(&fm.id).map(|item| search::create_item_match(item, &fm, snippet_chars))))
             })
             .collect::<Result<Vec<_>, ClipKittyError>>()?;
 
@@ -198,6 +199,7 @@ impl ClipboardStore {
         token: &CancellationToken,
         runtime: &tokio::runtime::Handle,
         filter: Option<&ContentTypeFilter>,
+        snippet_chars: usize,
     ) -> Result<Vec<ItemMatch>, ClipKittyError> {
         if token.is_cancelled() {
             return Err(ClipKittyError::Cancelled);
@@ -227,7 +229,7 @@ impl ClipboardStore {
             token,
         );
 
-        Self::fuzzy_matches_to_item_matches(db, fuzzy_matches, token, runtime, filter)
+        Self::fuzzy_matches_to_item_matches(db, fuzzy_matches, token, runtime, filter, snippet_chars)
     }
 
     /// Trigram query search using Tantivy with phrase-boost scoring
@@ -238,6 +240,7 @@ impl ClipboardStore {
         token: &CancellationToken,
         runtime: &tokio::runtime::Handle,
         filter: Option<&ContentTypeFilter>,
+        snippet_chars: usize,
     ) -> Result<Vec<ItemMatch>, ClipKittyError> {
         if token.is_cancelled() {
             return Err(ClipKittyError::Cancelled);
@@ -248,7 +251,7 @@ impl ClipboardStore {
             return Ok(Vec::new());
         }
 
-        Self::fuzzy_matches_to_item_matches(db, fuzzy_matches, token, runtime, filter)
+        Self::fuzzy_matches_to_item_matches(db, fuzzy_matches, token, runtime, filter, snippet_chars)
     }
 
     /// Get a single stored item by ID (internal use)
@@ -293,20 +296,24 @@ impl ClipboardStore {
 impl ClipboardStore {
     /// Search with a content type filter.
     /// When filter is All, delegates to the trait's search() method.
+    /// `snippet_chars` controls the maximum character length of returned snippets.
     pub async fn search_filtered(
         &self,
         query: String,
         filter: ContentTypeFilter,
+        snippet_chars: u32,
     ) -> Result<SearchResult, ClipKittyError> {
         if filter == ContentTypeFilter::All {
-            return self.search(query).await;
+            return self.search(query, snippet_chars).await;
         }
 
         let trimmed = query.trim();
 
+        let snippet_len = snippet_chars as usize;
+
         // Empty query with filter: return recent items of that type
         if trimmed.is_empty() {
-            let (items, total_count) = self.db.fetch_item_metadata(None, 1000, Some(&filter))?;
+            let (items, total_count) = self.db.fetch_item_metadata(None, 1000, Some(&filter), snippet_len)?;
 
             let first_item = if let Some(first_metadata) = items.first() {
                 self.db
@@ -348,11 +355,11 @@ impl ClipboardStore {
 
         let handle = runtime.spawn_blocking(move || {
             if trimmed_owned.len() < MIN_TRIGRAM_QUERY_LEN {
-                let matches = Self::search_short_query_sync(&db, &trimmed_owned, &token_clone, &runtime_for_closure, Some(&filter))?;
+                let matches = Self::search_short_query_sync(&db, &trimmed_owned, &token_clone, &runtime_for_closure, Some(&filter), snippet_len)?;
                 let total_count = matches.len() as u64;
                 Ok((matches, total_count))
             } else {
-                let matches = Self::search_trigram_query_sync(&db, &indexer, &query_owned, &token_clone, &runtime_for_closure, Some(&filter))?;
+                let matches = Self::search_trigram_query_sync(&db, &indexer, &query_owned, &token_clone, &runtime_for_closure, Some(&filter), snippet_len)?;
                 let total_count = matches.len() as u64;
                 Ok((matches, total_count))
             }
@@ -442,12 +449,13 @@ impl ClipboardStoreApi for ClipboardStore {
     ///
     /// This is an async function that supports cancellation. When Swift drops the Task,
     /// the DropGuard triggers the CancellationToken, allowing mid-flight abortion.
-    async fn search(&self, query: String) -> Result<SearchResult, ClipKittyError> {
+    async fn search(&self, query: String, snippet_chars: u32) -> Result<SearchResult, ClipKittyError> {
         let trimmed = query.trim();
+        let snippet_len = snippet_chars as usize;
 
         // Empty query: return recent items with empty MatchData (no highlights)
         if trimmed.is_empty() {
-            let (items, total_count) = self.db.fetch_item_metadata(None, 1000, None)?;
+            let (items, total_count) = self.db.fetch_item_metadata(None, 1000, None, snippet_len)?;
 
             // Fetch first item's full content for preview pane
             let first_item = if let Some(first_metadata) = items.first() {
@@ -496,11 +504,11 @@ impl ClipboardStoreApi for ClipboardStore {
         // because UniFFI doesn't provide a tokio runtime context
         let handle = runtime.spawn_blocking(move || {
             if trimmed_owned.len() < MIN_TRIGRAM_QUERY_LEN {
-                let matches = Self::search_short_query_sync(&db, &trimmed_owned, &token_clone, &runtime_for_closure, None)?;
+                let matches = Self::search_short_query_sync(&db, &trimmed_owned, &token_clone, &runtime_for_closure, None, snippet_len)?;
                 let total_count = matches.len() as u64;
                 Ok((matches, total_count))
             } else {
-                let matches = Self::search_trigram_query_sync(&db, &indexer, &query_owned, &token_clone, &runtime_for_closure, None)?;
+                let matches = Self::search_trigram_query_sync(&db, &indexer, &query_owned, &token_clone, &runtime_for_closure, None, snippet_len)?;
                 let total_count = matches.len() as u64;
                 Ok((matches, total_count))
             }
@@ -765,7 +773,7 @@ mod tests {
             .unwrap();
         assert!(id > 0);
 
-        let result = rt.block_on(store.search("".to_string())).unwrap();
+        let result = rt.block_on(store.search("".to_string(), 400)).unwrap();
         assert_eq!(result.matches.len(), 1);
         assert!(result.matches[0].item_metadata.snippet.contains("Hello World"));
     }
@@ -785,7 +793,7 @@ mod tests {
             .unwrap();
         assert_eq!(id2, 0); // Duplicate returns 0
 
-        let result = rt.block_on(store.search("".to_string())).unwrap();
+        let result = rt.block_on(store.search("".to_string(), 400)).unwrap();
         assert_eq!(result.matches.len(), 1); // Only one item
     }
 
@@ -797,10 +805,10 @@ mod tests {
         let id = store
             .save_text("To delete".to_string(), None, None)
             .unwrap();
-        assert_eq!(rt.block_on(store.search("".to_string())).unwrap().matches.len(), 1);
+        assert_eq!(rt.block_on(store.search("".to_string(), 400)).unwrap().matches.len(), 1);
 
         store.delete_item(id).unwrap();
-        assert_eq!(rt.block_on(store.search("".to_string())).unwrap().matches.len(), 0);
+        assert_eq!(rt.block_on(store.search("".to_string(), 400)).unwrap().matches.len(), 0);
     }
 
     #[test]
@@ -811,7 +819,7 @@ mod tests {
         store.save_text("Hello World from ClipKitty".to_string(), None, None).unwrap();
         store.save_text("Another test item".to_string(), None, None).unwrap();
 
-        let result = rt.block_on(store.search("Hello".to_string())).unwrap();
+        let result = rt.block_on(store.search("Hello".to_string(), 400)).unwrap();
 
         assert_eq!(result.matches.len(), 1);
         assert!(result.matches[0].item_metadata.snippet.contains("Hello"));
@@ -885,7 +893,7 @@ mod tests {
         }
 
         // Search should also return the link
-        let result = rt.block_on(store.search("github".to_string())).unwrap();
+        let result = rt.block_on(store.search("github".to_string(), 400)).unwrap();
         assert!(!result.matches.is_empty(), "Should find the link by searching 'github'");
         assert!(result.matches[0].item_metadata.snippet.contains("github"));
 
@@ -936,6 +944,7 @@ mod tests {
             &token,
             &runtime_handle,
             None,
+            400,
         );
         assert!(matches!(result, Err(crate::interface::ClipKittyError::Cancelled)));
 
@@ -947,6 +956,7 @@ mod tests {
             &token,
             &runtime_handle,
             None,
+            400,
         );
         assert!(matches!(result, Err(crate::interface::ClipKittyError::Cancelled)));
     }
@@ -1003,7 +1013,7 @@ mod tests {
         }
 
         // Start a search but drop it immediately
-        let search_future = store.search("Item".to_string());
+        let search_future = store.search("Item".to_string(), 400);
 
         // Drop the future without awaiting - this should trigger DropGuard
         drop(search_future);
@@ -1012,7 +1022,7 @@ mod tests {
         // The DropGuard should have cancelled the token
 
         // Verify we can still search normally after cancellation
-        let result = store.search("Item".to_string()).await.unwrap();
+        let result = store.search("Item".to_string(), 400).await.unwrap();
         assert!(!result.matches.is_empty());
     }
 
@@ -1026,11 +1036,11 @@ mod tests {
         store.save_text("Unrelated content".to_string(), None, None).unwrap();
 
         // Short query (< 3 chars)
-        let result = store.search("He".to_string()).await.unwrap();
+        let result = store.search("He".to_string(), 400).await.unwrap();
         assert!(!result.matches.is_empty());
 
         // Trigram query (>= 3 chars)
-        let result = store.search("Hello".to_string()).await.unwrap();
+        let result = store.search("Hello".to_string(), 400).await.unwrap();
         assert!(!result.matches.is_empty());
         assert!(result.matches.iter().all(|m|
             m.item_metadata.snippet.to_lowercase().contains("hello")
@@ -1053,15 +1063,15 @@ mod tests {
 
         // Start multiple searches concurrently
         let search1 = tokio::spawn(async move {
-            store1.search("Test".to_string()).await
+            store1.search("Test".to_string(), 400).await
         });
 
         let search2 = tokio::spawn(async move {
-            store2.search("item".to_string()).await
+            store2.search("item".to_string(), 400).await
         });
 
         let search3 = tokio::spawn(async move {
-            store3.search("for".to_string()).await
+            store3.search("for".to_string(), 400).await
         });
 
         // All should complete successfully
@@ -1074,7 +1084,7 @@ mod tests {
         assert!(!result3.matches.is_empty());
 
         // Store should still be usable after concurrent access
-        let result = store.search("Test".to_string()).await.unwrap();
+        let result = store.search("Test".to_string(), 400).await.unwrap();
         assert!(!result.matches.is_empty());
     }
 
@@ -1092,7 +1102,7 @@ mod tests {
         for _ in 0..5 {
             let store_clone = store.clone();
             let handle = tokio::spawn(async move {
-                store_clone.search("Item".to_string()).await
+                store_clone.search("Item".to_string(), 400).await
             });
             handle.abort();
             // Ignore the result - it may complete or be aborted
@@ -1100,12 +1110,12 @@ mod tests {
         }
 
         // Store should still work correctly
-        let result = store.search("Item".to_string()).await.unwrap();
+        let result = store.search("Item".to_string(), 400).await.unwrap();
         assert!(!result.matches.is_empty());
 
         // Can still add and search for new items
         store.save_text("New item after aborts".to_string(), None, None).unwrap();
-        let result = store.search("after aborts".to_string()).await.unwrap();
+        let result = store.search("after aborts".to_string(), 400).await.unwrap();
         assert!(!result.matches.is_empty());
     }
 
@@ -1155,7 +1165,7 @@ mod tests {
 
         // Block on the future without a surrounding tokio runtime
         // We use futures::executor to simulate UniFFI's async handling
-        let result = futures::executor::block_on(store.search("Hello".to_string()));
+        let result = futures::executor::block_on(store.search("Hello".to_string(), 400));
 
         // Should complete successfully, not panic
         assert!(result.is_ok());
@@ -1278,7 +1288,7 @@ mod tests {
         assert_eq!(id2, 0, "Duplicate file should return 0");
 
         // Only one item in the store
-        let result = rt.block_on(store.search("".to_string())).unwrap();
+        let result = rt.block_on(store.search("".to_string(), 400)).unwrap();
         assert_eq!(result.matches.len(), 1);
     }
 
@@ -1298,7 +1308,7 @@ mod tests {
         ).unwrap();
 
         // Search by filename
-        let result = store.search("quarterly".to_string()).await.unwrap();
+        let result = store.search("quarterly".to_string(), 400).await.unwrap();
         assert!(!result.matches.is_empty(), "Should find file by filename search");
     }
 
@@ -1318,7 +1328,7 @@ mod tests {
         ).unwrap();
 
         // Search by path component
-        let result = store.search("Documents".to_string()).await.unwrap();
+        let result = store.search("Documents".to_string(), 400).await.unwrap();
         assert!(!result.matches.is_empty(), "Should find file by path component search");
     }
 
@@ -1340,16 +1350,16 @@ mod tests {
         ).unwrap();
 
         // Unfiltered search should return both
-        let all = store.search("".to_string()).await.unwrap();
+        let all = store.search("".to_string(), 400).await.unwrap();
         assert_eq!(all.matches.len(), 2);
 
         // Files filter should return only the file
-        let files = store.search_filtered("".to_string(), ContentTypeFilter::Files).await.unwrap();
+        let files = store.search_filtered("".to_string(), ContentTypeFilter::Files, 400).await.unwrap();
         assert_eq!(files.matches.len(), 1);
         assert!(files.matches[0].item_metadata.snippet.contains("test.pdf"));
 
         // Text filter should return only the text
-        let texts = store.search_filtered("".to_string(), ContentTypeFilter::Text).await.unwrap();
+        let texts = store.search_filtered("".to_string(), ContentTypeFilter::Text, 400).await.unwrap();
         assert_eq!(texts.matches.len(), 1);
         assert!(texts.matches[0].item_metadata.snippet.contains("Hello World"));
     }
@@ -1519,7 +1529,7 @@ mod tests {
             None,
         ).unwrap();
 
-        let result = store.search("resume".to_string()).await.unwrap();
+        let result = store.search("resume".to_string(), 400).await.unwrap();
         assert!(!result.matches.is_empty(), "Should find file by filename");
         assert!(
             result.matches[0].item_metadata.snippet.contains("resume"),
@@ -1544,7 +1554,7 @@ mod tests {
             None,
         ).unwrap();
 
-        let texts = store.search_filtered("".to_string(), ContentTypeFilter::Text).await.unwrap();
+        let texts = store.search_filtered("".to_string(), ContentTypeFilter::Text, 400).await.unwrap();
         assert_eq!(texts.matches.len(), 1);
         assert!(texts.matches[0].item_metadata.snippet.contains("plain text"));
     }
@@ -1566,7 +1576,7 @@ mod tests {
             None,
         ).unwrap();
 
-        let files = store.search_filtered("".to_string(), ContentTypeFilter::Files).await.unwrap();
+        let files = store.search_filtered("".to_string(), ContentTypeFilter::Files, 400).await.unwrap();
         assert_eq!(files.matches.len(), 1);
         assert!(files.matches[0].item_metadata.snippet.contains("doc.pdf"));
     }
@@ -1679,7 +1689,7 @@ mod tests {
         assert_eq!(files[0].path, "/Users/test/My Documents/Annual Report 2024.pdf");
 
         // Should be searchable by terms with spaces
-        let result = store.search("Annual Report".to_string()).await.unwrap();
+        let result = store.search("Annual Report".to_string(), 400).await.unwrap();
         assert!(!result.matches.is_empty(), "Should find file with spaces in name");
     }
 
@@ -1779,7 +1789,7 @@ mod tests {
             None,
         ).unwrap();
 
-        let result = store.search("meeting".to_string()).await.unwrap();
+        let result = store.search("meeting".to_string(), 400).await.unwrap();
         assert_eq!(result.matches.len(), 2, "Both text and file should appear in results");
     }
 
@@ -1799,7 +1809,7 @@ mod tests {
             None,
         ).unwrap();
 
-        let result = store.search("".to_string()).await.unwrap();
+        let result = store.search("".to_string(), 400).await.unwrap();
         assert!(!result.matches.is_empty());
         // Snippet should contain the filename
         assert!(
@@ -1827,7 +1837,7 @@ mod tests {
         ).unwrap();
 
         // Both contain "project" but filter should isolate files
-        let result = store.search_filtered("project".to_string(), ContentTypeFilter::Files).await.unwrap();
+        let result = store.search_filtered("project".to_string(), ContentTypeFilter::Files, 400).await.unwrap();
         assert_eq!(result.matches.len(), 1, "Only file should match");
         assert!(result.matches[0].item_metadata.snippet.contains("project-design"));
     }
@@ -1849,7 +1859,7 @@ mod tests {
             None,
         ).unwrap();
 
-        let result = store.search_filtered("budget".to_string(), ContentTypeFilter::Text).await.unwrap();
+        let result = store.search_filtered("budget".to_string(), ContentTypeFilter::Text, 400).await.unwrap();
         assert_eq!(result.matches.len(), 1, "Only text should match");
         assert!(result.matches[0].item_metadata.snippet.contains("budget spreadsheet"));
     }
@@ -1883,7 +1893,7 @@ mod tests {
         assert_eq!(items.len(), 0);
 
         // Gone from search
-        let result = rt.block_on(store.search("delete-me".to_string())).unwrap();
+        let result = rt.block_on(store.search("delete-me".to_string(), 400)).unwrap();
         assert_eq!(result.matches.len(), 0, "Deleted file should not appear in search");
     }
 
@@ -1908,7 +1918,7 @@ mod tests {
             None,
         ).unwrap();
 
-        let result = store.search("".to_string()).await.unwrap();
+        let result = store.search("".to_string(), 400).await.unwrap();
         assert!(result.first_item.is_some(), "first_item should be populated");
         let first = result.first_item.unwrap();
         assert_eq!(first.content.text_content(), "File: latest.pdf");
@@ -1935,26 +1945,26 @@ mod tests {
         ).unwrap();
 
         // All items visible without filter
-        let all = store.search("".to_string()).await.unwrap();
+        let all = store.search("".to_string(), 400).await.unwrap();
         assert_eq!(all.matches.len(), 5, "All 5 items should be present");
 
         // Files filter
-        let files = store.search_filtered("".to_string(), ContentTypeFilter::Files).await.unwrap();
+        let files = store.search_filtered("".to_string(), ContentTypeFilter::Files, 400).await.unwrap();
         assert_eq!(files.matches.len(), 1);
         assert!(files.matches[0].item_metadata.snippet.contains("doc.pdf"));
 
         // Colors filter
-        let colors = store.search_filtered("".to_string(), ContentTypeFilter::Colors).await.unwrap();
+        let colors = store.search_filtered("".to_string(), ContentTypeFilter::Colors, 400).await.unwrap();
         assert_eq!(colors.matches.len(), 1);
         assert!(colors.matches[0].item_metadata.snippet.contains("FF0000"));
 
         // Links filter
-        let links = store.search_filtered("".to_string(), ContentTypeFilter::Links).await.unwrap();
+        let links = store.search_filtered("".to_string(), ContentTypeFilter::Links, 400).await.unwrap();
         assert_eq!(links.matches.len(), 1);
         assert!(links.matches[0].item_metadata.snippet.contains("example.com"));
 
         // Text filter
-        let texts = store.search_filtered("".to_string(), ContentTypeFilter::Text).await.unwrap();
+        let texts = store.search_filtered("".to_string(), ContentTypeFilter::Text, 400).await.unwrap();
         assert!(texts.matches.len() >= 2, "Text filter should include text items, got {}", texts.matches.len());
     }
 
@@ -1984,7 +1994,7 @@ mod tests {
         assert!(id1 > 0);
 
         // Verify file is most recent
-        let result = rt.block_on(store.search("".to_string())).unwrap();
+        let result = rt.block_on(store.search("".to_string(), 400)).unwrap();
         assert!(result.matches[0].item_metadata.snippet.contains("bump.txt"),
             "File should be most recent, got: {}", result.matches[0].item_metadata.snippet);
 
@@ -1993,7 +2003,7 @@ mod tests {
         store.save_text("newer text".to_string(), None, None).unwrap();
 
         // Text should now be most recent
-        let result = rt.block_on(store.search("".to_string())).unwrap();
+        let result = rt.block_on(store.search("".to_string(), 400)).unwrap();
         assert!(result.matches[0].item_metadata.snippet.contains("newer text"),
             "New text should be most recent");
 
@@ -2012,7 +2022,7 @@ mod tests {
         assert_eq!(id2, 0, "Should return 0 for dedup");
 
         // File should now be most recent again (timestamp bumped)
-        let result = rt.block_on(store.search("".to_string())).unwrap();
+        let result = rt.block_on(store.search("".to_string(), 400)).unwrap();
         assert!(result.matches[0].item_metadata.snippet.contains("bump.txt"),
             "File should be back on top after dedup timestamp bump, got: {}", result.matches[0].item_metadata.snippet);
     }
@@ -2051,15 +2061,15 @@ mod tests {
             "com.apple.disk-image-udif".to_string(), vec![3], None, None, None).unwrap();
 
         // All should appear in Files filter
-        let files = store.search_filtered("".to_string(), ContentTypeFilter::Files).await.unwrap();
+        let files = store.search_filtered("".to_string(), ContentTypeFilter::Files, 400).await.unwrap();
         assert_eq!(files.matches.len(), 3);
 
         // Each searchable by name
-        let r1 = store.search("doc.pdf".to_string()).await.unwrap();
+        let r1 = store.search("doc.pdf".to_string(), 400).await.unwrap();
         assert_eq!(r1.matches.len(), 1);
-        let r2 = store.search("photo".to_string()).await.unwrap();
+        let r2 = store.search("photo".to_string(), 400).await.unwrap();
         assert_eq!(r2.matches.len(), 1);
-        let r3 = store.search("app.dmg".to_string()).await.unwrap();
+        let r3 = store.search("app.dmg".to_string(), 400).await.unwrap();
         assert_eq!(r3.matches.len(), 1);
     }
 
@@ -2081,7 +2091,7 @@ mod tests {
             Some("com.apple.Preview".to_string()),
         ).unwrap();
 
-        let result = store.search("".to_string()).await.unwrap();
+        let result = store.search("".to_string(), 400).await.unwrap();
         let first = result.first_item.expect("first_item should be populated");
 
         let files = extract_files(&first.content);
@@ -2121,12 +2131,12 @@ mod tests {
         ).unwrap();
 
         // Short query "do" with Files filter
-        let result = store.search_filtered("do".to_string(), ContentTypeFilter::Files).await.unwrap();
+        let result = store.search_filtered("do".to_string(), ContentTypeFilter::Files, 400).await.unwrap();
         assert_eq!(result.matches.len(), 1, "Only file starting with 'do' should match");
         assert!(result.matches[0].item_metadata.snippet.contains("docs.txt"));
 
         // Short query "do" with Text filter
-        let result = store.search_filtered("do".to_string(), ContentTypeFilter::Text).await.unwrap();
+        let result = store.search_filtered("do".to_string(), ContentTypeFilter::Text, 400).await.unwrap();
         assert_eq!(result.matches.len(), 1, "Only text starting with 'do' should match");
         assert!(result.matches[0].item_metadata.snippet.contains("do something"));
     }
@@ -2141,12 +2151,12 @@ mod tests {
         store.save_file("/tmp/f.txt".to_string(), "f.txt".to_string(), 10,
             "public.plain-text".to_string(), vec![1], None, None, None).unwrap();
 
-        let result = rt.block_on(store.search("".to_string())).unwrap();
+        let result = rt.block_on(store.search("".to_string(), 400)).unwrap();
         assert_eq!(result.matches.len(), 2);
 
         store.clear().unwrap();
 
-        let result = rt.block_on(store.search("".to_string())).unwrap();
+        let result = rt.block_on(store.search("".to_string(), 400)).unwrap();
         assert_eq!(result.matches.len(), 0, "clear should remove all items including files");
     }
 
@@ -2195,7 +2205,7 @@ mod tests {
         store.rebuild_index_if_needed().unwrap();
 
         // Should still be searchable
-        let result = store.search("rebuild-test".to_string()).await.unwrap();
+        let result = store.search("rebuild-test".to_string(), 400).await.unwrap();
         assert!(!result.matches.is_empty(), "File should be searchable after index rebuild");
     }
 
@@ -2215,14 +2225,14 @@ mod tests {
             ).unwrap();
         }
 
-        let all = store.search("".to_string()).await.unwrap();
+        let all = store.search("".to_string(), 400).await.unwrap();
         assert_eq!(all.total_count, 8);
 
-        let files = store.search_filtered("".to_string(), ContentTypeFilter::Files).await.unwrap();
+        let files = store.search_filtered("".to_string(), ContentTypeFilter::Files, 400).await.unwrap();
         assert_eq!(files.total_count, 3, "total_count should be 3 for files filter");
         assert_eq!(files.matches.len(), 3);
 
-        let texts = store.search_filtered("".to_string(), ContentTypeFilter::Text).await.unwrap();
+        let texts = store.search_filtered("".to_string(), ContentTypeFilter::Text, 400).await.unwrap();
         assert_eq!(texts.total_count, 5, "total_count should be 5 for text filter");
         assert_eq!(texts.matches.len(), 5);
     }
@@ -2317,11 +2327,11 @@ mod tests {
         ).unwrap();
 
         // Should find by primary filename
-        let result = store.search("report".to_string()).await.unwrap();
+        let result = store.search("report".to_string(), 400).await.unwrap();
         assert!(!result.matches.is_empty(), "Should find by primary filename");
 
         // Should find by additional filename
-        let result = store.search("summary".to_string()).await.unwrap();
+        let result = store.search("summary".to_string(), 400).await.unwrap();
         assert!(!result.matches.is_empty(), "Should find by additional filename");
     }
 

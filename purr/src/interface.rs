@@ -367,7 +367,8 @@ pub trait ClipboardStoreApi: Send + Sync {
     // ─────────────────────────────────────────────────────────────────────────────
 
     /// Search for items. Empty query returns all recent items.
-    async fn search(&self, query: String) -> Result<SearchResult, ClipKittyError>;
+    /// `snippet_chars` controls the maximum character length of returned snippets.
+    async fn search(&self, query: String, snippet_chars: u32) -> Result<SearchResult, ClipKittyError>;
 
     /// Fetch full items by IDs for preview pane
     fn fetch_by_ids(&self, item_ids: Vec<i64>) -> Result<Vec<ClipboardItem>, ClipKittyError>;
