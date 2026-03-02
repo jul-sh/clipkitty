@@ -87,7 +87,6 @@ pub(crate) fn search_trigram(indexer: &Indexer, query: &str, token: &Cancellatio
                 m.score = (MAX_RESULTS - rank) as f64;
                 m
             })
-            .filter(|m| !m.highlight_ranges.is_empty())
             .collect();
 
         // par_iter + take_any_while doesn't preserve order — restore bucket ranking

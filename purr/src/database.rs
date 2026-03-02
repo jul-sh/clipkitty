@@ -436,6 +436,99 @@ impl Database {
         Ok(())
     }
 
+    /// Edit a text-based item: replace content, timestamp, and source app.
+    /// Re-detects content type (text/color/link). Deletes old child rows and inserts new ones.
+    /// Only works for text/color/link items.
+    pub fn update_item_content(
+        &self,
+        id: i64,
+        new_content: &ClipboardContent,
+        new_hash: &str,
+        color_rgba: Option<u32>,
+        timestamp: DateTime<Utc>,
+        source_app: Option<&str>,
+        source_app_bundle_id: Option<&str>,
+    ) -> DatabaseResult<()> {
+        let conn = self.get_conn()?;
+        let tx = conn.unchecked_transaction()?;
+
+        let content_type = new_content.database_type();
+        let content_text = new_content.text_content().to_string();
+        let timestamp_str = timestamp.format("%Y-%m-%d %H:%M:%S%.f").to_string();
+
+        // Update the items row
+        tx.execute(
+            r#"UPDATE items SET contentType = ?1, contentHash = ?2, content = ?3,
+               timestamp = ?4, sourceApp = ?5, sourceAppBundleId = ?6, colorRgba = ?7
+               WHERE id = ?8"#,
+            params![content_type, new_hash, content_text, timestamp_str, source_app, source_app_bundle_id, color_rgba, id],
+        )?;
+
+        // Delete old child rows (text_items, link_items — image/file not supported)
+        tx.execute("DELETE FROM text_items WHERE itemId = ?1", [id])?;
+        tx.execute("DELETE FROM link_items WHERE itemId = ?1", [id])?;
+
+        // Insert new child row
+        match new_content {
+            ClipboardContent::Text { value }
+            | ClipboardContent::Color { value } => {
+                tx.execute(
+                    "INSERT INTO text_items (itemId, value) VALUES (?1, ?2)",
+                    params![id, value],
+                )?;
+            }
+            ClipboardContent::Link { url, metadata_state } => {
+                let (title, description, image_data) = metadata_state.to_database_fields();
+                if image_data.is_some() {
+                    tx.execute(
+                        "UPDATE items SET thumbnail = ?1 WHERE id = ?2",
+                        params![image_data, id],
+                    )?;
+                }
+                tx.execute(
+                    "INSERT INTO link_items (itemId, url, title, description) VALUES (?1, ?2, ?3, ?4)",
+                    params![id, url, title, description],
+                )?;
+            }
+            _ => {
+                // Image/File should not reach here
+            }
+        }
+
+        tx.commit()?;
+        Ok(())
+    }
+
+    /// Replace all tags for an item. Removes existing tags and adds new ones.
+    pub fn replace_tags(&self, item_id: i64, new_tags: &[String]) -> DatabaseResult<()> {
+        let conn = self.get_conn()?;
+        let tx = conn.unchecked_transaction()?;
+
+        // Remove all existing tag associations
+        tx.execute("DELETE FROM item_tags WHERE itemId = ?1", [item_id])?;
+
+        // Add new tags (create if needed)
+        for tag in new_tags {
+            tx.execute(
+                "INSERT OR IGNORE INTO tags (name) VALUES (?1)",
+                params![tag],
+            )?;
+            tx.execute(
+                "INSERT OR IGNORE INTO item_tags (itemId, tagId) SELECT ?1, id FROM tags WHERE name = ?2",
+                params![item_id, tag],
+            )?;
+        }
+
+        // Clean up orphaned tags
+        tx.execute(
+            "DELETE FROM tags WHERE id NOT IN (SELECT DISTINCT tagId FROM item_tags)",
+            [],
+        )?;
+
+        tx.commit()?;
+        Ok(())
+    }
+
     /// Delete an item by ID (CASCADE handles child tables)
     pub fn delete_item(&self, id: i64) -> DatabaseResult<()> {
         let conn = self.get_conn()?;

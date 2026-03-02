@@ -93,6 +93,8 @@ pub struct Indexer {
     content_field: Field,
     content_words_field: Field,
     tags_field: Field,
+    content_type_field: Field,
+    source_app_field: Field,
 }
 
 impl Indexer {
@@ -129,6 +131,8 @@ impl Indexer {
             content_field: schema.get_field("content").unwrap(),
             content_words_field: schema.get_field("content_words").unwrap(),
             tags_field: schema.get_field("tags").unwrap(),
+            content_type_field: schema.get_field("content_type").unwrap(),
+            source_app_field: schema.get_field("source_app").unwrap(),
             schema,
             index,
             writer: RwLock::new(writer),
@@ -166,6 +170,22 @@ impl Indexer {
             .set_stored();
         builder.add_text_field("tags", tags_options);
 
+        // Content type field (word-tokenized, not stored) for metadata search.
+        // Values: "text", "color", "link", "image", "file"
+        let ct_field_indexing = TextFieldIndexing::default()
+            .set_tokenizer("default")
+            .set_index_option(IndexRecordOption::Basic);
+        let ct_options = TextOptions::default().set_indexing_options(ct_field_indexing);
+        builder.add_text_field("content_type", ct_options);
+
+        // Source app field (word-tokenized, not stored) for metadata search.
+        // Contains app name and bundle ID, e.g. "Safari com.apple.Safari"
+        let sa_field_indexing = TextFieldIndexing::default()
+            .set_tokenizer("default")
+            .set_index_option(IndexRecordOption::Basic);
+        let sa_options = TextOptions::default().set_indexing_options(sa_field_indexing);
+        builder.add_text_field("source_app", sa_options);
+
         builder.add_i64_field("timestamp", STORED | FAST);
         builder.build()
     }
@@ -182,21 +202,44 @@ impl Indexer {
     }
 
     /// Add or update a document in the index
-    pub fn add_document(&self, id: i64, content: &str, timestamp: i64, tags: &[String]) -> IndexerResult<()> {
+    pub fn add_document(
+        &self,
+        id: i64,
+        content: &str,
+        timestamp: i64,
+        tags: &[String],
+        content_type: &str,
+        source_app: &str,
+    ) -> IndexerResult<()> {
         let writer = self.writer.read();
 
         // Delete existing document with same ID (upsert semantics)
         let id_term = tantivy::Term::from_field_i64(self.id_field, id);
         writer.delete_term(id_term);
 
+        // Build enriched text for word-indexed field: original text + source_app
+        // so FuzzyTermQuery matches source app names like "Safari".
+        // Content type is NOT appended — short keywords like "text", "link", "file"
+        // cause false positives in fuzzy matching. Use ContentTypeFilter for type filtering.
+        // Only the word field gets the enriched text — the stored content field stays clean
+        // so Phase 2 scoring uses original content only.
+        let mut enriched_words = content.to_string();
+        if !source_app.is_empty() {
+            enriched_words.push('\n');
+            enriched_words.push_str(source_app);
+        }
+
         // Add new document
         let mut doc = tantivy::TantivyDocument::default();
         doc.add_i64(self.id_field, id);
-        doc.add_text(self.content_field, content);
-        doc.add_text(self.content_words_field, content);
+        doc.add_text(self.content_field, content); // stored + trigram-indexed (original content only)
+        doc.add_text(self.content_words_field, &enriched_words); // word-indexed only (enriched with source_app)
         // Index tags as space-separated lowercased words for cheap TermQuery matching
         let tags_text = tags.iter().map(|t| t.to_lowercase()).collect::<Vec<_>>().join(" ");
         doc.add_text(self.tags_field, &tags_text);
+        // Index content type and source app in dedicated fields too (for future filtered search)
+        doc.add_text(self.content_type_field, content_type);
+        doc.add_text(self.source_app_field, source_app);
         doc.add_i64(self.schema.get_field("timestamp").unwrap(), timestamp);
 
         writer.add_document(doc)?;
@@ -317,23 +360,81 @@ impl Indexer {
             .collect())
     }
 
+    /// Build a metadata query that matches on content_type and source_app fields.
+    /// Returns None if no useful metadata clauses can be built.
+    fn build_metadata_query(&self, query: &str) -> Option<Box<dyn tantivy::query::Query>> {
+        let words: Vec<&str> = query.split_whitespace().collect();
+        if words.is_empty() {
+            return None;
+        }
+
+        let mut clauses: Vec<(Occur, Box<dyn tantivy::query::Query>)> = Vec::new();
+
+        for word in &words {
+            let lower = word.to_lowercase();
+            if lower.len() < 2 {
+                continue;
+            }
+            // TermQuery on content_type field
+            let ct_term = Term::from_field_text(self.content_type_field, &lower);
+            clauses.push((
+                Occur::Should,
+                Box::new(TermQuery::new(ct_term, IndexRecordOption::Basic)),
+            ));
+            // TermQuery on source_app field
+            let sa_term = Term::from_field_text(self.source_app_field, &lower);
+            clauses.push((
+                Occur::Should,
+                Box::new(TermQuery::new(sa_term, IndexRecordOption::Basic)),
+            ));
+        }
+
+        if clauses.is_empty() {
+            return None;
+        }
+
+        let mut bool_query = BooleanQuery::new(clauses);
+        bool_query.set_minimum_number_should_match(1);
+        Some(Box::new(bool_query))
+    }
+
     /// Phase 1: Trigram recall using Tantivy BM25.
     ///
     /// Builds an OR query from trigram terms with a min_match threshold.
     /// For long queries (4+ words), only per-word trigrams are used (skipping
     /// cross-word boundary trigrams) to reduce posting list evaluations.
+    ///
+    /// Also includes metadata field matching (content_type, source_app) so
+    /// searching "safari" or "image" recalls items by source app or type.
     fn trigram_recall(&self, query: &str, limit: usize) -> IndexerResult<Vec<SearchCandidate>> {
         let reader = self.reader.read();
         let searcher = reader.searcher();
 
-        // Query too short for trigrams — return empty vec (caller handles fallback)
+        // Query too short for trigrams — but may still match metadata fields
         let has_trigrams = query.split_whitespace().any(|w| w.len() >= 3)
             || query.trim().len() >= 3;
-        if !has_trigrams {
+
+        let metadata_query = self.build_metadata_query(query);
+
+        if !has_trigrams && metadata_query.is_none() {
             return Ok(Vec::new());
         }
 
-        let final_query = self.build_trigram_query(query);
+        // Build the search query: trigram recall OR metadata match
+        let final_query: Box<dyn tantivy::query::Query> = match (has_trigrams, metadata_query) {
+            (true, Some(meta_q)) => {
+                let trigram_q = self.build_trigram_query(query);
+                let mut combined = BooleanQuery::new(vec![
+                    (Occur::Should, trigram_q),
+                    (Occur::Should, meta_q),
+                ]);
+                combined.set_minimum_number_should_match(1);
+                Box::new(combined)
+            }
+            (true, None) => self.build_trigram_query(query),
+            (false, Some(meta_q)) => meta_q,
+            (false, None) => return Ok(Vec::new()),
+        };
 
         // Use tweak_score to blend BM25 with recency at collection time.
         let timestamp_field = self.schema.get_field("timestamp").unwrap();
@@ -593,8 +694,8 @@ mod tests {
     #[test]
     fn test_phrase_query_works_with_position_fix() {
         let indexer = Indexer::new_in_memory().unwrap();
-        indexer.add_document(1, "hello world", 1000, &[]).unwrap();
-        indexer.add_document(2, "shell output log", 1000, &[]).unwrap();
+        indexer.add_document(1, "hello world", 1000, &[], "text", "").unwrap();
+        indexer.add_document(2, "shell output log", 1000, &[], "text", "").unwrap();
         indexer.commit().unwrap();
 
         let reader = indexer.reader.read();
@@ -618,7 +719,7 @@ mod tests {
     fn test_delete_document() {
         let indexer = Indexer::new_in_memory().unwrap();
 
-        indexer.add_document(1, "Hello World", 1000, &[]).unwrap();
+        indexer.add_document(1, "Hello World", 1000, &[], "text", "").unwrap();
         indexer.commit().unwrap();
         assert_eq!(indexer.num_docs(), 1);
 
@@ -631,12 +732,12 @@ mod tests {
     fn test_upsert_semantics() {
         let indexer = Indexer::new_in_memory().unwrap();
 
-        indexer.add_document(1, "Hello World", 1000, &[]).unwrap();
+        indexer.add_document(1, "Hello World", 1000, &[], "text", "").unwrap();
         indexer.commit().unwrap();
         assert_eq!(indexer.num_docs(), 1);
 
         // Update same ID - should replace, not duplicate
-        indexer.add_document(1, "Updated content", 2000, &[]).unwrap();
+        indexer.add_document(1, "Updated content", 2000, &[], "text", "").unwrap();
         indexer.commit().unwrap();
         assert_eq!(indexer.num_docs(), 1);
     }
@@ -646,7 +747,7 @@ mod tests {
         let indexer = Indexer::new_in_memory().unwrap();
 
         for i in 0..10 {
-            indexer.add_document(i, &format!("Item {}", i), i * 1000, &[]).unwrap();
+            indexer.add_document(i, &format!("Item {}", i), i * 1000, &[], "text", "").unwrap();
         }
         indexer.commit().unwrap();
         assert_eq!(indexer.num_docs(), 10);
@@ -659,8 +760,8 @@ mod tests {
     fn test_transposition_recall_single_short_word() {
         // "teh" (transposition of "the") should recall a doc containing "the"
         let indexer = Indexer::new_in_memory().unwrap();
-        indexer.add_document(1, "the quick brown fox", 1000, &[]).unwrap();
-        indexer.add_document(2, "a slow red dog", 1000, &[]).unwrap();
+        indexer.add_document(1, "the quick brown fox", 1000, &[], "text", "").unwrap();
+        indexer.add_document(2, "a slow red dog", 1000, &[], "text", "").unwrap();
         indexer.commit().unwrap();
 
         let results = indexer.search("teh", 10).unwrap();
@@ -673,8 +774,8 @@ mod tests {
     fn test_transposition_recall_multi_word() {
         // "form react" where "form" is a transposition of "from"
         let indexer = Indexer::new_in_memory().unwrap();
-        indexer.add_document(1, "import Button from react", 1000, &[]).unwrap();
-        indexer.add_document(2, "html form element submit", 1000, &[]).unwrap();
+        indexer.add_document(1, "import Button from react", 1000, &[], "text", "").unwrap();
+        indexer.add_document(2, "html form element submit", 1000, &[], "text", "").unwrap();
         indexer.commit().unwrap();
 
         let results = indexer.search("form react", 10).unwrap();
@@ -687,7 +788,7 @@ mod tests {
     fn test_transposition_trigrams_dedup() {
         // Variant trigrams that duplicate originals shouldn't cause issues
         let indexer = Indexer::new_in_memory().unwrap();
-        indexer.add_document(1, "and also other things", 1000, &[]).unwrap();
+        indexer.add_document(1, "and also other things", 1000, &[], "text", "").unwrap();
         indexer.commit().unwrap();
 
         // "adn" transpositions: "dan", "and" — "and" trigram already exists in doc
@@ -703,8 +804,8 @@ mod tests {
         // "tast" (substitution typo of "test") has zero trigram overlap:
         // tast → [tas, ast], test → [tes, est]. FuzzyTermQuery catches it.
         let indexer = Indexer::new_in_memory().unwrap();
-        indexer.add_document(1, "run the test suite", 1000, &[]).unwrap();
-        indexer.add_document(2, "a slow red dog", 1000, &[]).unwrap();
+        indexer.add_document(1, "run the test suite", 1000, &[], "text", "").unwrap();
+        indexer.add_document(2, "a slow red dog", 1000, &[], "text", "").unwrap();
         indexer.commit().unwrap();
 
         let results = indexer.search("tast", 10).unwrap();
@@ -717,8 +818,8 @@ mod tests {
     fn test_insertion_typo_recall() {
         // "tesst" (insertion typo of "test")
         let indexer = Indexer::new_in_memory().unwrap();
-        indexer.add_document(1, "run the test suite", 1000, &[]).unwrap();
-        indexer.add_document(2, "a slow red dog", 1000, &[]).unwrap();
+        indexer.add_document(1, "run the test suite", 1000, &[], "text", "").unwrap();
+        indexer.add_document(2, "a slow red dog", 1000, &[], "text", "").unwrap();
         indexer.commit().unwrap();
 
         let results = indexer.search("tesst", 10).unwrap();
@@ -731,8 +832,8 @@ mod tests {
     fn test_deletion_typo_recall() {
         // "tst" (deletion typo of "test")
         let indexer = Indexer::new_in_memory().unwrap();
-        indexer.add_document(1, "run the test suite", 1000, &[]).unwrap();
-        indexer.add_document(2, "a slow red dog", 1000, &[]).unwrap();
+        indexer.add_document(1, "run the test suite", 1000, &[], "text", "").unwrap();
+        indexer.add_document(2, "a slow red dog", 1000, &[], "text", "").unwrap();
         indexer.commit().unwrap();
 
         let results = indexer.search("tst", 10).unwrap();
@@ -744,8 +845,8 @@ mod tests {
     fn test_fuzzy_word_multi_word_query() {
         // "quikc brown" — substitution typo in "quick"
         let indexer = Indexer::new_in_memory().unwrap();
-        indexer.add_document(1, "the quick brown fox jumps", 1000, &[]).unwrap();
-        indexer.add_document(2, "a slow red dog sleeps", 1000, &[]).unwrap();
+        indexer.add_document(1, "the quick brown fox jumps", 1000, &[], "text", "").unwrap();
+        indexer.add_document(2, "a slow red dog sleeps", 1000, &[], "text", "").unwrap();
         indexer.commit().unwrap();
 
         let results = indexer.search("quikc brown", 10).unwrap();
@@ -758,8 +859,8 @@ mod tests {
     fn test_existing_trigram_recall_unchanged() {
         // Exact match still works through the trigram pathway
         let indexer = Indexer::new_in_memory().unwrap();
-        indexer.add_document(1, "hello world greeting", 1000, &[]).unwrap();
-        indexer.add_document(2, "goodbye universe farewell", 1000, &[]).unwrap();
+        indexer.add_document(1, "hello world greeting", 1000, &[], "text", "").unwrap();
+        indexer.add_document(2, "goodbye universe farewell", 1000, &[], "text", "").unwrap();
         indexer.commit().unwrap();
 
         let results = indexer.search("hello", 10).unwrap();

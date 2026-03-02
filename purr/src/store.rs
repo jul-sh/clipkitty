@@ -87,6 +87,22 @@ pub struct ClipboardStore {
     indexer: Arc<Indexer>,
 }
 
+/// Build source_app string for Tantivy indexing from app name and bundle ID.
+fn source_app_index_text(source_app: Option<&str>, bundle_id: Option<&str>) -> String {
+    let mut parts = Vec::new();
+    if let Some(app) = source_app {
+        if !app.is_empty() {
+            parts.push(app.to_string());
+        }
+    }
+    if let Some(bid) = bundle_id {
+        if !bid.is_empty() {
+            parts.push(bid.to_string());
+        }
+    }
+    parts.join(" ")
+}
+
 // Internal implementation (not exported via FFI)
 impl ClipboardStore {
     /// Create a store with an in-memory database (for testing)
@@ -126,7 +142,8 @@ impl ClipboardStore {
         items.into_par_iter().try_for_each(|item| {
             if let Some(id) = item.id {
                 let index_text = item.file_index_text().unwrap_or_else(|| item.text_content().to_string());
-                self.indexer.add_document(id, &index_text, item.timestamp_unix, &item.tags)?;
+                let sa = source_app_index_text(item.source_app.as_deref(), item.source_app_bundle_id.as_deref());
+                self.indexer.add_document(id, &index_text, item.timestamp_unix, &item.tags, item.content.database_type(), &sa)?;
             }
             Ok::<(), ClipKittyError>(())
         })?;
@@ -275,8 +292,8 @@ impl ClipboardStore {
         let db_path_buf = PathBuf::from(&path);
         let index_path = db_path_buf
             .parent()
-            .map(|p| p.join("tantivy_index_v4"))
-            .unwrap_or_else(|| PathBuf::from("tantivy_index_v4"));
+            .map(|p| p.join("tantivy_index_v5"))
+            .unwrap_or_else(|| PathBuf::from("tantivy_index_v5"));
 
         let indexer = Indexer::new(&index_path)?;
 
@@ -414,6 +431,9 @@ impl ClipboardStoreApi for ClipboardStore {
     ) -> Result<i64, ClipKittyError> {
         let item = StoredItem::new_text(text.clone(), source_app, source_app_bundle_id);
 
+        let sa = source_app_index_text(item.source_app.as_deref(), item.source_app_bundle_id.as_deref());
+        let ct = item.content.database_type();
+
         // Check for duplicate
         if let Some(existing) = self.db.find_by_hash(&item.content_hash)? {
             if let Some(id) = existing.id {
@@ -422,8 +442,9 @@ impl ClipboardStoreApi for ClipboardStore {
 
                 // Update index timestamp (preserve existing tags)
                 let tags = self.db.get_item_tags(id)?;
+                let existing_sa = source_app_index_text(existing.source_app.as_deref(), existing.source_app_bundle_id.as_deref());
                 self.indexer
-                    .add_document(id, existing.text_content(), now.timestamp(), &tags)?;
+                    .add_document(id, existing.text_content(), now.timestamp(), &tags, existing.content.database_type(), &existing_sa)?;
                 self.indexer.commit()?;
 
                 return Ok(0); // Indicates duplicate
@@ -435,7 +456,7 @@ impl ClipboardStoreApi for ClipboardStore {
 
         // Index the new item (no tags yet)
         self.indexer
-            .add_document(id, item.text_content(), item.timestamp_unix, &[])?;
+            .add_document(id, item.text_content(), item.timestamp_unix, &[], ct, &sa)?;
         self.indexer.commit()?;
 
         // Link metadata fetching is handled by Swift using LinkPresentation framework
@@ -572,6 +593,7 @@ impl ClipboardStoreApi for ClipboardStore {
             paths, filenames, file_sizes, utis, bookmark_data_list,
             thumbnail, source_app, source_app_bundle_id,
         );
+        let sa = source_app_index_text(item.source_app.as_deref(), item.source_app_bundle_id.as_deref());
 
         // Check for duplicate
         if let Some(existing) = self.db.find_by_hash(&item.content_hash)? {
@@ -581,7 +603,7 @@ impl ClipboardStoreApi for ClipboardStore {
 
                 let index_text = item.file_index_text().unwrap_or_else(|| item.text_content().to_string());
                 let tags = self.db.get_item_tags(id)?;
-                self.indexer.add_document(id, &index_text, now.timestamp(), &tags)?;
+                self.indexer.add_document(id, &index_text, now.timestamp(), &tags, "file", &sa)?;
                 self.indexer.commit()?;
 
                 return Ok(0);
@@ -590,7 +612,7 @@ impl ClipboardStoreApi for ClipboardStore {
 
         let index_text = item.file_index_text().unwrap_or_else(|| item.text_content().to_string());
         let id = self.db.insert_item(&item)?;
-        self.indexer.add_document(id, &index_text, item.timestamp_unix, &[])?;
+        self.indexer.add_document(id, &index_text, item.timestamp_unix, &[], "file", &sa)?;
         self.indexer.commit()?;
 
         Ok(id)
@@ -613,6 +635,7 @@ impl ClipboardStoreApi for ClipboardStore {
             path, filename, file_size, uti, bookmark_data,
             thumbnail, source_app, source_app_bundle_id,
         );
+        let sa = source_app_index_text(item.source_app.as_deref(), item.source_app_bundle_id.as_deref());
 
         // Check for duplicate
         if let Some(existing) = self.db.find_by_hash(&item.content_hash)? {
@@ -622,7 +645,7 @@ impl ClipboardStoreApi for ClipboardStore {
 
                 let index_text = item.file_index_text().unwrap_or_else(|| item.text_content().to_string());
                 let tags = self.db.get_item_tags(id)?;
-                self.indexer.add_document(id, &index_text, now.timestamp(), &tags)?;
+                self.indexer.add_document(id, &index_text, now.timestamp(), &tags, "file", &sa)?;
                 self.indexer.commit()?;
 
                 return Ok(0);
@@ -633,7 +656,7 @@ impl ClipboardStoreApi for ClipboardStore {
         let index_text = item.file_index_text().unwrap_or_else(|| item.text_content().to_string());
 
         let id = self.db.insert_item(&item)?;
-        self.indexer.add_document(id, &index_text, item.timestamp_unix, &[])?;
+        self.indexer.add_document(id, &index_text, item.timestamp_unix, &[], "file", &sa)?;
         self.indexer.commit()?;
 
         Ok(id)
@@ -654,11 +677,12 @@ impl ClipboardStoreApi for ClipboardStore {
         }
 
         let item = StoredItem::new_image_with_thumbnail(image_data, thumbnail, source_app, source_app_bundle_id, is_animated);
+        let sa = source_app_index_text(item.source_app.as_deref(), item.source_app_bundle_id.as_deref());
         let id = self.db.insert_item(&item)?;
 
         // Index with description (images can be searched by their description, no tags yet)
         self.indexer
-            .add_document(id, item.text_content(), item.timestamp_unix, &[])?;
+            .add_document(id, item.text_content(), item.timestamp_unix, &[], "image", &sa)?;
         self.indexer.commit()?;
 
         Ok(id)
@@ -690,8 +714,9 @@ impl ClipboardStoreApi for ClipboardStore {
 
         // Re-index with new description (preserve existing tags)
         if let Some(item) = self.get_stored_item(item_id)? {
+            let sa = source_app_index_text(item.source_app.as_deref(), item.source_app_bundle_id.as_deref());
             self.indexer
-                .add_document(item_id, &description, item.timestamp_unix, &item.tags)?;
+                .add_document(item_id, &description, item.timestamp_unix, &item.tags, item.content.database_type(), &sa)?;
             self.indexer.commit()?;
         }
 
@@ -705,10 +730,77 @@ impl ClipboardStoreApi for ClipboardStore {
 
         // Update index timestamp (preserve existing tags)
         if let Some(item) = self.get_stored_item(item_id)? {
+            let sa = source_app_index_text(item.source_app.as_deref(), item.source_app_bundle_id.as_deref());
             self.indexer
-                .add_document(item_id, item.text_content(), now.timestamp(), &item.tags)?;
+                .add_document(item_id, item.text_content(), now.timestamp(), &item.tags, item.content.database_type(), &sa)?;
             self.indexer.commit()?;
         }
+
+        Ok(())
+    }
+
+    /// Edit a text-based item: replace content, tags, timestamp, and source app.
+    fn edit_item(
+        &self,
+        item_id: i64,
+        new_text: String,
+        new_tags: Vec<String>,
+        timestamp_unix: i64,
+        source_app: Option<String>,
+        source_app_bundle_id: Option<String>,
+    ) -> Result<(), ClipKittyError> {
+        // Verify item exists and is text-based
+        let existing = self.get_stored_item(item_id)?
+            .ok_or_else(|| ClipKittyError::InvalidInput(format!("Item {} not found", item_id)))?;
+
+        match &existing.content {
+            crate::interface::ClipboardContent::Image { .. }
+            | crate::interface::ClipboardContent::File { .. } => {
+                return Err(ClipKittyError::InvalidInput(
+                    "edit_item only supports text/color/link items".into(),
+                ));
+            }
+            _ => {}
+        }
+
+        // Re-detect content type from the new text
+        let new_content = crate::content_detection::detect_content(&new_text);
+        let new_hash = StoredItem::hash_string(&new_text);
+        let color_rgba = if let crate::interface::ClipboardContent::Color { ref value } = new_content {
+            crate::content_detection::parse_color_to_rgba(value)
+        } else {
+            None
+        };
+
+        let timestamp = chrono::TimeZone::timestamp_opt(&Utc, timestamp_unix, 0)
+            .single()
+            .unwrap_or_else(Utc::now);
+
+        // Update database: content, hash, type, timestamp, source app
+        self.db.update_item_content(
+            item_id,
+            &new_content,
+            &new_hash,
+            color_rgba,
+            timestamp,
+            source_app.as_deref(),
+            source_app_bundle_id.as_deref(),
+        )?;
+
+        // Replace tags
+        self.db.replace_tags(item_id, &new_tags)?;
+
+        // Re-index in Tantivy
+        let sa = source_app_index_text(source_app.as_deref(), source_app_bundle_id.as_deref());
+        self.indexer.add_document(
+            item_id,
+            &new_text,
+            timestamp_unix,
+            &new_tags,
+            new_content.database_type(),
+            &sa,
+        )?;
+        self.indexer.commit()?;
 
         Ok(())
     }
@@ -724,7 +816,8 @@ impl ClipboardStoreApi for ClipboardStore {
         // Re-index with updated tags
         if let Some(item) = self.get_stored_item(item_id)? {
             let index_text = item.file_index_text().unwrap_or_else(|| item.text_content().to_string());
-            self.indexer.add_document(item_id, &index_text, item.timestamp_unix, &item.tags)?;
+            let sa = source_app_index_text(item.source_app.as_deref(), item.source_app_bundle_id.as_deref());
+            self.indexer.add_document(item_id, &index_text, item.timestamp_unix, &item.tags, item.content.database_type(), &sa)?;
             self.indexer.commit()?;
         }
 
@@ -738,7 +831,8 @@ impl ClipboardStoreApi for ClipboardStore {
         // Re-index with updated tags
         if let Some(item) = self.get_stored_item(item_id)? {
             let index_text = item.file_index_text().unwrap_or_else(|| item.text_content().to_string());
-            self.indexer.add_document(item_id, &index_text, item.timestamp_unix, &item.tags)?;
+            let sa = source_app_index_text(item.source_app.as_deref(), item.source_app_bundle_id.as_deref());
+            self.indexer.add_document(item_id, &index_text, item.timestamp_unix, &item.tags, item.content.database_type(), &sa)?;
             self.indexer.commit()?;
         }
 
@@ -2451,5 +2545,121 @@ mod tests {
 
         let items = store.fetch_by_ids(vec![id]).unwrap();
         assert_eq!(items[0].content.text_content(), "1 Directory and 2 Files: MyDir and 2 more");
+    }
+
+    #[test]
+    fn test_edit_item_text() {
+        let store = ClipboardStore::new_in_memory().unwrap();
+        let id = store.save_text(
+            "Original text".to_string(),
+            Some("Safari".to_string()),
+            Some("com.apple.Safari".to_string()),
+        ).unwrap();
+        assert!(id > 0);
+
+        let now = chrono::Utc::now().timestamp();
+        store.edit_item(
+            id,
+            "Updated text".to_string(),
+            vec!["tag1".to_string(), "tag2".to_string()],
+            now,
+            Some("Notes".to_string()),
+            Some("com.apple.Notes".to_string()),
+        ).unwrap();
+
+        // Verify content was updated
+        let items = store.fetch_by_ids(vec![id]).unwrap();
+        assert_eq!(items.len(), 1);
+        assert_eq!(items[0].content.text_content(), "Updated text");
+        assert_eq!(items[0].item_metadata.source_app.as_deref(), Some("Notes"));
+        assert_eq!(items[0].item_metadata.source_app_bundle_id.as_deref(), Some("com.apple.Notes"));
+
+        // Verify tags were set
+        let tags = store.get_item_tags(id).unwrap();
+        assert_eq!(tags.len(), 2);
+        assert!(tags.contains(&"tag1".to_string()));
+        assert!(tags.contains(&"tag2".to_string()));
+    }
+
+    #[test]
+    fn test_edit_item_content_redetection() {
+        let store = ClipboardStore::new_in_memory().unwrap();
+        let id = store.save_text("Just plain text".to_string(), None, None).unwrap();
+
+        // Edit to a color value — should be re-detected as Color
+        let now = chrono::Utc::now().timestamp();
+        store.edit_item(id, "#FF0000".to_string(), vec![], now, None, None).unwrap();
+
+        let items = store.fetch_by_ids(vec![id]).unwrap();
+        assert!(matches!(items[0].content, crate::interface::ClipboardContent::Color { .. }));
+    }
+
+    #[test]
+    fn test_edit_item_replaces_tags() {
+        let store = ClipboardStore::new_in_memory().unwrap();
+        let id = store.save_text("Some text".to_string(), None, None).unwrap();
+
+        // Add initial tags
+        store.add_tag(id, "old-tag".to_string()).unwrap();
+        assert_eq!(store.get_item_tags(id).unwrap(), vec!["old-tag".to_string()]);
+
+        // Edit replaces all tags
+        let now = chrono::Utc::now().timestamp();
+        store.edit_item(id, "Some text".to_string(), vec!["new-tag".to_string()], now, None, None).unwrap();
+
+        let tags = store.get_item_tags(id).unwrap();
+        assert_eq!(tags, vec!["new-tag".to_string()]);
+    }
+
+    #[test]
+    fn test_edit_item_rejects_image() {
+        let store = ClipboardStore::new_in_memory().unwrap();
+        let id = store.save_image(vec![1, 2, 3, 4], None, None, None, false).unwrap();
+
+        let now = chrono::Utc::now().timestamp();
+        let result = store.edit_item(id, "text".to_string(), vec![], now, None, None);
+        assert!(result.is_err());
+    }
+
+    #[tokio::test]
+    async fn test_edit_item_searchable() {
+        let store = ClipboardStore::new_in_memory().unwrap();
+        let id = store.save_text("original content here".to_string(), None, None).unwrap();
+
+        let now = chrono::Utc::now().timestamp();
+        store.edit_item(id, "completely different text".to_string(), vec![], now, None, None).unwrap();
+
+        // Should find by new content
+        let result = store.search("completely different".to_string(), 400).await.unwrap();
+        assert!(!result.matches.is_empty());
+        assert_eq!(result.matches[0].item_metadata.item_id, id);
+
+        // Should NOT find by old content
+        let result = store.search("original content".to_string(), 400).await.unwrap();
+        assert!(result.matches.is_empty());
+    }
+
+    #[tokio::test]
+    async fn test_metadata_search_by_source_app() {
+        let store = ClipboardStore::new_in_memory().unwrap();
+        store.save_text("random clipboard text".to_string(), Some("Safari".to_string()), Some("com.apple.Safari".to_string())).unwrap();
+        store.save_text("another clipboard entry".to_string(), Some("Chrome".to_string()), Some("com.google.Chrome".to_string())).unwrap();
+
+        // Search by source app name
+        let result = store.search("Safari".to_string(), 400).await.unwrap();
+        assert!(!result.matches.is_empty(), "Should find items from Safari");
+        assert_eq!(result.matches[0].item_metadata.source_app.as_deref(), Some("Safari"));
+    }
+
+    #[tokio::test]
+    async fn test_metadata_search_by_source_app_bundle_id() {
+        let store = ClipboardStore::new_in_memory().unwrap();
+        store.save_text("some text".to_string(), Some("Safari".to_string()), Some("com.apple.Safari".to_string())).unwrap();
+        store.save_text("other text".to_string(), Some("Chrome".to_string()), Some("com.google.Chrome".to_string())).unwrap();
+
+        // Search by bundle ID segment
+        let result = store.search("apple".to_string(), 400).await.unwrap();
+        assert!(!result.matches.is_empty(), "Should find items from Apple apps by bundle ID");
+        assert_eq!(result.matches[0].item_metadata.source_app.as_deref(), Some("Safari"));
     }
 }

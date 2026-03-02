@@ -422,6 +422,19 @@ pub trait ClipboardStoreApi: Send + Sync {
     /// Update item timestamp to now
     fn update_timestamp(&self, item_id: i64) -> Result<(), ClipKittyError>;
 
+    /// Edit a text-based item: replace content (with re-detection), tags, timestamp, and source app.
+    /// Content re-detection means text may become a link, color, etc.
+    /// Only works for text/color/link items. Returns error for image/file items.
+    fn edit_item(
+        &self,
+        item_id: i64,
+        new_text: String,
+        new_tags: Vec<String>,
+        timestamp_unix: i64,
+        source_app: Option<String>,
+        source_app_bundle_id: Option<String>,
+    ) -> Result<(), ClipKittyError>;
+
     // ─────────────────────────────────────────────────────────────────────────────
     // Tag Operations
     // ─────────────────────────────────────────────────────────────────────────────
