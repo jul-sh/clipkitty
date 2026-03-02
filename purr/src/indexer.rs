@@ -4,6 +4,7 @@
 //! For queries under 3 characters, returns empty (handled by search.rs streaming fallback).
 
 use crate::candidate::SearchCandidate;
+use crate::interface::ContentType;
 use crate::ranking::compute_bucket_score;
 use crate::search::{RECENCY_BOOST_MAX, RECENCY_HALF_LIFE_SECS};
 use chrono::Utc;
@@ -171,7 +172,7 @@ impl Indexer {
         builder.add_text_field("tags", tags_options);
 
         // Content type field (word-tokenized, not stored) for metadata search.
-        // Values: "text", "color", "link", "image", "file"
+        // Values from ContentType enum: "text", "color", "link", "image", "file"
         let ct_field_indexing = TextFieldIndexing::default()
             .set_tokenizer("default")
             .set_index_option(IndexRecordOption::Basic);
@@ -208,7 +209,7 @@ impl Indexer {
         content: &str,
         timestamp: i64,
         tags: &[String],
-        content_type: &str,
+        content_type: ContentType,
         source_app: &str,
     ) -> IndexerResult<()> {
         let writer = self.writer.read();
@@ -238,7 +239,7 @@ impl Indexer {
         let tags_text = tags.iter().map(|t| t.to_lowercase()).collect::<Vec<_>>().join(" ");
         doc.add_text(self.tags_field, &tags_text);
         // Index content type and source app in dedicated fields too (for future filtered search)
-        doc.add_text(self.content_type_field, content_type);
+        doc.add_text(self.content_type_field, content_type.as_str());
         doc.add_text(self.source_app_field, source_app);
         doc.add_i64(self.schema.get_field("timestamp").unwrap(), timestamp);
 
@@ -694,8 +695,8 @@ mod tests {
     #[test]
     fn test_phrase_query_works_with_position_fix() {
         let indexer = Indexer::new_in_memory().unwrap();
-        indexer.add_document(1, "hello world", 1000, &[], "text", "").unwrap();
-        indexer.add_document(2, "shell output log", 1000, &[], "text", "").unwrap();
+        indexer.add_document(1, "hello world", 1000, &[], ContentType::Text, "").unwrap();
+        indexer.add_document(2, "shell output log", 1000, &[], ContentType::Text, "").unwrap();
         indexer.commit().unwrap();
 
         let reader = indexer.reader.read();
@@ -719,7 +720,7 @@ mod tests {
     fn test_delete_document() {
         let indexer = Indexer::new_in_memory().unwrap();
 
-        indexer.add_document(1, "Hello World", 1000, &[], "text", "").unwrap();
+        indexer.add_document(1, "Hello World", 1000, &[], ContentType::Text, "").unwrap();
         indexer.commit().unwrap();
         assert_eq!(indexer.num_docs(), 1);
 
@@ -732,12 +733,12 @@ mod tests {
     fn test_upsert_semantics() {
         let indexer = Indexer::new_in_memory().unwrap();
 
-        indexer.add_document(1, "Hello World", 1000, &[], "text", "").unwrap();
+        indexer.add_document(1, "Hello World", 1000, &[], ContentType::Text, "").unwrap();
         indexer.commit().unwrap();
         assert_eq!(indexer.num_docs(), 1);
 
         // Update same ID - should replace, not duplicate
-        indexer.add_document(1, "Updated content", 2000, &[], "text", "").unwrap();
+        indexer.add_document(1, "Updated content", 2000, &[], ContentType::Text, "").unwrap();
         indexer.commit().unwrap();
         assert_eq!(indexer.num_docs(), 1);
     }
@@ -747,7 +748,7 @@ mod tests {
         let indexer = Indexer::new_in_memory().unwrap();
 
         for i in 0..10 {
-            indexer.add_document(i, &format!("Item {}", i), i * 1000, &[], "text", "").unwrap();
+            indexer.add_document(i, &format!("Item {}", i), i * 1000, &[], ContentType::Text, "").unwrap();
         }
         indexer.commit().unwrap();
         assert_eq!(indexer.num_docs(), 10);
@@ -760,8 +761,8 @@ mod tests {
     fn test_transposition_recall_single_short_word() {
         // "teh" (transposition of "the") should recall a doc containing "the"
         let indexer = Indexer::new_in_memory().unwrap();
-        indexer.add_document(1, "the quick brown fox", 1000, &[], "text", "").unwrap();
-        indexer.add_document(2, "a slow red dog", 1000, &[], "text", "").unwrap();
+        indexer.add_document(1, "the quick brown fox", 1000, &[], ContentType::Text, "").unwrap();
+        indexer.add_document(2, "a slow red dog", 1000, &[], ContentType::Text, "").unwrap();
         indexer.commit().unwrap();
 
         let results = indexer.search("teh", 10).unwrap();
@@ -774,8 +775,8 @@ mod tests {
     fn test_transposition_recall_multi_word() {
         // "form react" where "form" is a transposition of "from"
         let indexer = Indexer::new_in_memory().unwrap();
-        indexer.add_document(1, "import Button from react", 1000, &[], "text", "").unwrap();
-        indexer.add_document(2, "html form element submit", 1000, &[], "text", "").unwrap();
+        indexer.add_document(1, "import Button from react", 1000, &[], ContentType::Text, "").unwrap();
+        indexer.add_document(2, "html form element submit", 1000, &[], ContentType::Text, "").unwrap();
         indexer.commit().unwrap();
 
         let results = indexer.search("form react", 10).unwrap();
@@ -788,7 +789,7 @@ mod tests {
     fn test_transposition_trigrams_dedup() {
         // Variant trigrams that duplicate originals shouldn't cause issues
         let indexer = Indexer::new_in_memory().unwrap();
-        indexer.add_document(1, "and also other things", 1000, &[], "text", "").unwrap();
+        indexer.add_document(1, "and also other things", 1000, &[], ContentType::Text, "").unwrap();
         indexer.commit().unwrap();
 
         // "adn" transpositions: "dan", "and" — "and" trigram already exists in doc
@@ -804,8 +805,8 @@ mod tests {
         // "tast" (substitution typo of "test") has zero trigram overlap:
         // tast → [tas, ast], test → [tes, est]. FuzzyTermQuery catches it.
         let indexer = Indexer::new_in_memory().unwrap();
-        indexer.add_document(1, "run the test suite", 1000, &[], "text", "").unwrap();
-        indexer.add_document(2, "a slow red dog", 1000, &[], "text", "").unwrap();
+        indexer.add_document(1, "run the test suite", 1000, &[], ContentType::Text, "").unwrap();
+        indexer.add_document(2, "a slow red dog", 1000, &[], ContentType::Text, "").unwrap();
         indexer.commit().unwrap();
 
         let results = indexer.search("tast", 10).unwrap();
@@ -818,8 +819,8 @@ mod tests {
     fn test_insertion_typo_recall() {
         // "tesst" (insertion typo of "test")
         let indexer = Indexer::new_in_memory().unwrap();
-        indexer.add_document(1, "run the test suite", 1000, &[], "text", "").unwrap();
-        indexer.add_document(2, "a slow red dog", 1000, &[], "text", "").unwrap();
+        indexer.add_document(1, "run the test suite", 1000, &[], ContentType::Text, "").unwrap();
+        indexer.add_document(2, "a slow red dog", 1000, &[], ContentType::Text, "").unwrap();
         indexer.commit().unwrap();
 
         let results = indexer.search("tesst", 10).unwrap();
@@ -832,8 +833,8 @@ mod tests {
     fn test_deletion_typo_recall() {
         // "tst" (deletion typo of "test")
         let indexer = Indexer::new_in_memory().unwrap();
-        indexer.add_document(1, "run the test suite", 1000, &[], "text", "").unwrap();
-        indexer.add_document(2, "a slow red dog", 1000, &[], "text", "").unwrap();
+        indexer.add_document(1, "run the test suite", 1000, &[], ContentType::Text, "").unwrap();
+        indexer.add_document(2, "a slow red dog", 1000, &[], ContentType::Text, "").unwrap();
         indexer.commit().unwrap();
 
         let results = indexer.search("tst", 10).unwrap();
@@ -845,8 +846,8 @@ mod tests {
     fn test_fuzzy_word_multi_word_query() {
         // "quikc brown" — substitution typo in "quick"
         let indexer = Indexer::new_in_memory().unwrap();
-        indexer.add_document(1, "the quick brown fox jumps", 1000, &[], "text", "").unwrap();
-        indexer.add_document(2, "a slow red dog sleeps", 1000, &[], "text", "").unwrap();
+        indexer.add_document(1, "the quick brown fox jumps", 1000, &[], ContentType::Text, "").unwrap();
+        indexer.add_document(2, "a slow red dog sleeps", 1000, &[], ContentType::Text, "").unwrap();
         indexer.commit().unwrap();
 
         let results = indexer.search("quikc brown", 10).unwrap();
@@ -859,8 +860,8 @@ mod tests {
     fn test_existing_trigram_recall_unchanged() {
         // Exact match still works through the trigram pathway
         let indexer = Indexer::new_in_memory().unwrap();
-        indexer.add_document(1, "hello world greeting", 1000, &[], "text", "").unwrap();
-        indexer.add_document(2, "goodbye universe farewell", 1000, &[], "text", "").unwrap();
+        indexer.add_document(1, "hello world greeting", 1000, &[], ContentType::Text, "").unwrap();
+        indexer.add_document(2, "goodbye universe farewell", 1000, &[], ContentType::Text, "").unwrap();
         indexer.commit().unwrap();
 
         let results = indexer.search("hello", 10).unwrap();

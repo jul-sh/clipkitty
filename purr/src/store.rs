@@ -11,7 +11,7 @@
 use crate::database::Database;
 use crate::indexer::Indexer;
 use crate::interface::{
-    ClipboardItem, ContentTypeFilter, ItemMatch, MatchData, SearchResult, ClipKittyError, ClipboardStoreApi,
+    ClipboardItem, ContentType, ContentTypeFilter, ItemMatch, MatchData, SearchResult, ClipKittyError, ClipboardStoreApi,
 };
 use crate::models::StoredItem;
 use crate::search::{self, MIN_TRIGRAM_QUERY_LEN, MAX_RESULTS};
@@ -143,7 +143,7 @@ impl ClipboardStore {
             if let Some(id) = item.id {
                 let index_text = item.file_index_text().unwrap_or_else(|| item.text_content().to_string());
                 let sa = source_app_index_text(item.source_app.as_deref(), item.source_app_bundle_id.as_deref());
-                self.indexer.add_document(id, &index_text, item.timestamp_unix, &item.tags, item.content.database_type(), &sa)?;
+                self.indexer.add_document(id, &index_text, item.timestamp_unix, &item.tags, item.content.content_type(), &sa)?;
             }
             Ok::<(), ClipKittyError>(())
         })?;
@@ -179,7 +179,7 @@ impl ClipboardStore {
             // Apply content type filter post-retrieval (Tantivy doesn't index content type)
             .filter(|(_, item)| {
                 match filter {
-                    Some(f) => f.matches_db_type(item.content.database_type()),
+                    Some(f) => f.matches(item.content.content_type()),
                     None => true,
                 }
             })
@@ -432,7 +432,7 @@ impl ClipboardStoreApi for ClipboardStore {
         let item = StoredItem::new_text(text.clone(), source_app, source_app_bundle_id);
 
         let sa = source_app_index_text(item.source_app.as_deref(), item.source_app_bundle_id.as_deref());
-        let ct = item.content.database_type();
+        let ct = item.content.content_type();
 
         // Check for duplicate
         if let Some(existing) = self.db.find_by_hash(&item.content_hash)? {
@@ -444,7 +444,7 @@ impl ClipboardStoreApi for ClipboardStore {
                 let tags = self.db.get_item_tags(id)?;
                 let existing_sa = source_app_index_text(existing.source_app.as_deref(), existing.source_app_bundle_id.as_deref());
                 self.indexer
-                    .add_document(id, existing.text_content(), now.timestamp(), &tags, existing.content.database_type(), &existing_sa)?;
+                    .add_document(id, existing.text_content(), now.timestamp(), &tags, existing.content.content_type(), &existing_sa)?;
                 self.indexer.commit()?;
 
                 return Ok(0); // Indicates duplicate
@@ -603,7 +603,7 @@ impl ClipboardStoreApi for ClipboardStore {
 
                 let index_text = item.file_index_text().unwrap_or_else(|| item.text_content().to_string());
                 let tags = self.db.get_item_tags(id)?;
-                self.indexer.add_document(id, &index_text, now.timestamp(), &tags, "file", &sa)?;
+                self.indexer.add_document(id, &index_text, now.timestamp(), &tags, ContentType::File, &sa)?;
                 self.indexer.commit()?;
 
                 return Ok(0);
@@ -612,7 +612,7 @@ impl ClipboardStoreApi for ClipboardStore {
 
         let index_text = item.file_index_text().unwrap_or_else(|| item.text_content().to_string());
         let id = self.db.insert_item(&item)?;
-        self.indexer.add_document(id, &index_text, item.timestamp_unix, &[], "file", &sa)?;
+        self.indexer.add_document(id, &index_text, item.timestamp_unix, &[], ContentType::File, &sa)?;
         self.indexer.commit()?;
 
         Ok(id)
@@ -645,7 +645,7 @@ impl ClipboardStoreApi for ClipboardStore {
 
                 let index_text = item.file_index_text().unwrap_or_else(|| item.text_content().to_string());
                 let tags = self.db.get_item_tags(id)?;
-                self.indexer.add_document(id, &index_text, now.timestamp(), &tags, "file", &sa)?;
+                self.indexer.add_document(id, &index_text, now.timestamp(), &tags, ContentType::File, &sa)?;
                 self.indexer.commit()?;
 
                 return Ok(0);
@@ -656,7 +656,7 @@ impl ClipboardStoreApi for ClipboardStore {
         let index_text = item.file_index_text().unwrap_or_else(|| item.text_content().to_string());
 
         let id = self.db.insert_item(&item)?;
-        self.indexer.add_document(id, &index_text, item.timestamp_unix, &[], "file", &sa)?;
+        self.indexer.add_document(id, &index_text, item.timestamp_unix, &[], ContentType::File, &sa)?;
         self.indexer.commit()?;
 
         Ok(id)
@@ -682,7 +682,7 @@ impl ClipboardStoreApi for ClipboardStore {
 
         // Index with description (images can be searched by their description, no tags yet)
         self.indexer
-            .add_document(id, item.text_content(), item.timestamp_unix, &[], "image", &sa)?;
+            .add_document(id, item.text_content(), item.timestamp_unix, &[], ContentType::Image, &sa)?;
         self.indexer.commit()?;
 
         Ok(id)
@@ -716,7 +716,7 @@ impl ClipboardStoreApi for ClipboardStore {
         if let Some(item) = self.get_stored_item(item_id)? {
             let sa = source_app_index_text(item.source_app.as_deref(), item.source_app_bundle_id.as_deref());
             self.indexer
-                .add_document(item_id, &description, item.timestamp_unix, &item.tags, item.content.database_type(), &sa)?;
+                .add_document(item_id, &description, item.timestamp_unix, &item.tags, item.content.content_type(), &sa)?;
             self.indexer.commit()?;
         }
 
@@ -732,7 +732,7 @@ impl ClipboardStoreApi for ClipboardStore {
         if let Some(item) = self.get_stored_item(item_id)? {
             let sa = source_app_index_text(item.source_app.as_deref(), item.source_app_bundle_id.as_deref());
             self.indexer
-                .add_document(item_id, item.text_content(), now.timestamp(), &item.tags, item.content.database_type(), &sa)?;
+                .add_document(item_id, item.text_content(), now.timestamp(), &item.tags, item.content.content_type(), &sa)?;
             self.indexer.commit()?;
         }
 
@@ -797,7 +797,7 @@ impl ClipboardStoreApi for ClipboardStore {
             &new_text,
             timestamp_unix,
             &new_tags,
-            new_content.database_type(),
+            new_content.content_type(),
             &sa,
         )?;
         self.indexer.commit()?;
@@ -817,7 +817,7 @@ impl ClipboardStoreApi for ClipboardStore {
         if let Some(item) = self.get_stored_item(item_id)? {
             let index_text = item.file_index_text().unwrap_or_else(|| item.text_content().to_string());
             let sa = source_app_index_text(item.source_app.as_deref(), item.source_app_bundle_id.as_deref());
-            self.indexer.add_document(item_id, &index_text, item.timestamp_unix, &item.tags, item.content.database_type(), &sa)?;
+            self.indexer.add_document(item_id, &index_text, item.timestamp_unix, &item.tags, item.content.content_type(), &sa)?;
             self.indexer.commit()?;
         }
 
@@ -832,7 +832,7 @@ impl ClipboardStoreApi for ClipboardStore {
         if let Some(item) = self.get_stored_item(item_id)? {
             let index_text = item.file_index_text().unwrap_or_else(|| item.text_content().to_string());
             let sa = source_app_index_text(item.source_app.as_deref(), item.source_app_bundle_id.as_deref());
-            self.indexer.add_document(item_id, &index_text, item.timestamp_unix, &item.tags, item.content.database_type(), &sa)?;
+            self.indexer.add_document(item_id, &index_text, item.timestamp_unix, &item.tags, item.content.content_type(), &sa)?;
             self.indexer.commit()?;
         }
 
@@ -1649,7 +1649,7 @@ mod tests {
         ).unwrap();
 
         let items = store.fetch_by_ids(vec![id]).unwrap();
-        assert_eq!(items[0].content.database_type(), "file");
+        assert_eq!(items[0].content.content_type(), ContentType::File);
     }
 
     #[tokio::test]

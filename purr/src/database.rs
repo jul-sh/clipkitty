@@ -4,7 +4,7 @@
 //! Uses r2d2 connection pooling to allow concurrent reads without mutex blocking.
 
 use crate::interface::{
-    ClipboardContent, ContentTypeFilter, FileEntry, FileStatus, ItemMetadata, ItemIcon,
+    ClipboardContent, ContentType, ContentTypeFilter, FileEntry, FileStatus, ItemMetadata, ItemIcon,
     LinkMetadataState,
 };
 use crate::models::StoredItem;
@@ -296,14 +296,14 @@ impl Database {
 
         let timestamp = Utc.timestamp_opt(item.timestamp_unix, 0).single().unwrap_or_else(Utc::now);
         let timestamp_str = timestamp.format("%Y-%m-%d %H:%M:%S%.f").to_string();
-        let content_type = item.content.database_type();
+        let content_type = item.content.content_type();
         let content_text = item.content.text_content().to_string();
 
         tx.execute(
             r#"INSERT INTO items (contentType, contentHash, content, timestamp, sourceApp, sourceAppBundleId, thumbnail, colorRgba)
                VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8)"#,
             params![
-                content_type,
+                content_type.as_str(),
                 item.content_hash,
                 content_text,
                 timestamp_str,
@@ -426,8 +426,8 @@ impl Database {
         let conn = self.get_conn()?;
         // Update both the denormalized content in items and the child table
         conn.execute(
-            "UPDATE items SET content = ?1 WHERE id = ?2 AND contentType = 'image'",
-            params![description, id],
+            "UPDATE items SET content = ?1 WHERE id = ?2 AND contentType = ?3",
+            params![description, id, ContentType::Image.as_str()],
         )?;
         conn.execute(
             "UPDATE image_items SET description = ?1 WHERE itemId = ?2",
@@ -452,7 +452,7 @@ impl Database {
         let conn = self.get_conn()?;
         let tx = conn.unchecked_transaction()?;
 
-        let content_type = new_content.database_type();
+        let content_type = new_content.content_type();
         let content_text = new_content.text_content().to_string();
         let timestamp_str = timestamp.format("%Y-%m-%d %H:%M:%S%.f").to_string();
 
@@ -461,7 +461,7 @@ impl Database {
             r#"UPDATE items SET contentType = ?1, contentHash = ?2, content = ?3,
                timestamp = ?4, sourceApp = ?5, sourceAppBundleId = ?6, colorRgba = ?7
                WHERE id = ?8"#,
-            params![content_type, new_hash, content_text, timestamp_str, source_app, source_app_bundle_id, color_rgba, id],
+            params![content_type.as_str(), new_hash, content_text, timestamp_str, source_app, source_app_bundle_id, color_rgba, id],
         )?;
 
         // Delete old child rows (text_items, link_items — image/file not supported)
@@ -890,13 +890,13 @@ impl Database {
     /// Build a SQL clause for filtering by content type.
     fn content_type_where_clause(filter: Option<&ContentTypeFilter>, prefix: &str) -> String {
         let types = match filter {
-            Some(f) => f.database_types(),
+            Some(f) => f.content_types(),
             None => None,
         };
         match types {
             None => String::new(),
             Some(types) => {
-                let quoted: Vec<String> = types.iter().map(|t| format!("'{}'", t)).collect();
+                let quoted: Vec<String> = types.iter().map(|t| format!("'{}'", t.as_str())).collect();
                 let keyword = if prefix.is_empty() { "WHERE" } else { prefix };
                 format!("{} contentType IN ({})", keyword, quoted.join(","))
             }
@@ -919,18 +919,19 @@ impl Database {
         let timestamp = parse_db_timestamp(&timestamp_str);
 
         // Placeholder content — will be replaced by populate_child_content
-        let content = match content_type.as_str() {
-            "color" => ClipboardContent::Color { value: content_text },
-            "image" => ClipboardContent::Image { data: Vec::new(), description: content_text, is_animated: false },
-            "link" => ClipboardContent::Link {
+        let ct = ContentType::from_db_str(&content_type);
+        let content = match ct {
+            ContentType::Color => ClipboardContent::Color { value: content_text },
+            ContentType::Image => ClipboardContent::Image { data: Vec::new(), description: content_text, is_animated: false },
+            ContentType::Link => ClipboardContent::Link {
                 url: content_text,
                 metadata_state: LinkMetadataState::Pending,
             },
-            "file" => ClipboardContent::File {
+            ContentType::File => ClipboardContent::File {
                 display_name: content_text,
                 files: Vec::new(),
             },
-            _ => ClipboardContent::Text { value: content_text },
+            ContentType::Text => ClipboardContent::Text { value: content_text },
         };
 
         Ok(StoredItem {
@@ -1032,9 +1033,9 @@ impl Database {
         let color_rgba: Option<u32> = row.get(7)?;
 
         let timestamp = parse_db_timestamp(&timestamp_str);
-        let db_type = content_type.as_deref().unwrap_or("text");
+        let ct = ContentType::from_db_str(content_type.as_deref().unwrap_or("text"));
 
-        let icon = ItemIcon::from_database(db_type, color_rgba, thumbnail);
+        let icon = ItemIcon::from_content_type(ct, color_rgba, thumbnail);
         let snippet = generate_preview(&content, snippet_chars);
 
         Ok(ItemMetadata {

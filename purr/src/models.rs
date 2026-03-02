@@ -215,8 +215,8 @@ impl StoredItem {
 
     /// Get the ItemIcon for display
     pub fn item_icon(&self) -> ItemIcon {
-        ItemIcon::from_database(
-            self.content.database_type(),
+        ItemIcon::from_content_type(
+            self.content.content_type(),
             self.color_rgba,
             self.thumbnail.clone(),
         )

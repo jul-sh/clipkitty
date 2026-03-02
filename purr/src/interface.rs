@@ -9,6 +9,42 @@ use thiserror::Error;
 // ENUMS
 // ═══════════════════════════════════════════════════════════════════════════════
 
+/// Content type discriminator for clipboard items.
+/// Replaces raw string literals "text", "color", "link", "image", "file"
+/// throughout database and indexer layers.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum ContentType {
+    Text,
+    Color,
+    Link,
+    Image,
+    File,
+}
+
+impl ContentType {
+    /// Database/Tantivy string representation
+    pub fn as_str(&self) -> &'static str {
+        match self {
+            ContentType::Text => "text",
+            ContentType::Color => "color",
+            ContentType::Link => "link",
+            ContentType::Image => "image",
+            ContentType::File => "file",
+        }
+    }
+
+    /// Parse from database string. Unknown values default to Text.
+    pub fn from_db_str(s: &str) -> Self {
+        match s {
+            "color" => ContentType::Color,
+            "link" => ContentType::Link,
+            "image" => ContentType::Image,
+            "file" => ContentType::File,
+            _ => ContentType::Text,
+        }
+    }
+}
+
 /// SF Symbol icon type for content categories
 #[derive(Debug, Clone, Copy, PartialEq, Eq, uniffi::Enum)]
 pub enum IconType {
@@ -65,23 +101,23 @@ pub enum ContentTypeFilter {
 }
 
 impl ContentTypeFilter {
-    /// Returns the database content type strings this filter matches, or None for All.
-    pub fn database_types(&self) -> Option<&[&str]> {
+    /// Returns the content types this filter matches, or None for All.
+    pub fn content_types(&self) -> Option<&[ContentType]> {
         match self {
             ContentTypeFilter::All => None,
-            ContentTypeFilter::Text => Some(&["text"]),
-            ContentTypeFilter::Images => Some(&["image"]),
-            ContentTypeFilter::Links => Some(&["link"]),
-            ContentTypeFilter::Colors => Some(&["color"]),
-            ContentTypeFilter::Files => Some(&["file"]),
+            ContentTypeFilter::Text => Some(&[ContentType::Text]),
+            ContentTypeFilter::Images => Some(&[ContentType::Image]),
+            ContentTypeFilter::Links => Some(&[ContentType::Link]),
+            ContentTypeFilter::Colors => Some(&[ContentType::Color]),
+            ContentTypeFilter::Files => Some(&[ContentType::File]),
         }
     }
 
-    /// Check if a database content type string matches this filter.
-    pub fn matches_db_type(&self, db_type: &str) -> bool {
-        match self.database_types() {
+    /// Check if a content type matches this filter.
+    pub fn matches(&self, ct: ContentType) -> bool {
+        match self.content_types() {
             None => true,
-            Some(types) => types.contains(&db_type),
+            Some(types) => types.contains(&ct),
         }
     }
 }
@@ -101,34 +137,34 @@ impl Default for ItemIcon {
 }
 
 impl ItemIcon {
-    /// Determine icon from database fields.
+    /// Determine icon from content type and database fields.
     /// `thumbnail` is the unified thumbnail column — covers images, files, AND link preview images.
-    pub fn from_database(
-        db_type: &str,
+    pub fn from_content_type(
+        ct: ContentType,
         color_rgba: Option<u32>,
         thumbnail: Option<Vec<u8>>,
     ) -> Self {
-        match db_type {
-            "color" => {
+        match ct {
+            ContentType::Color => {
                 if let Some(rgba) = color_rgba {
                     ItemIcon::ColorSwatch { rgba }
                 } else {
                     ItemIcon::Symbol { icon_type: IconType::Color }
                 }
             }
-            "image" | "link" | "file" => {
+            ContentType::Image | ContentType::Link | ContentType::File => {
                 if let Some(thumb) = thumbnail {
                     ItemIcon::Thumbnail { bytes: thumb }
                 } else {
-                    let icon_type = match db_type {
-                        "image" => IconType::Image,
-                        "link" => IconType::Link,
+                    let icon_type = match ct {
+                        ContentType::Image => IconType::Image,
+                        ContentType::Link => IconType::Link,
                         _ => IconType::File,
                     };
                     ItemIcon::Symbol { icon_type }
                 }
             }
-            _ => ItemIcon::Symbol { icon_type: IconType::Text },
+            ContentType::Text => ItemIcon::Symbol { icon_type: IconType::Text },
         }
     }
 }
@@ -231,14 +267,14 @@ impl ClipboardContent {
         }
     }
 
-    /// Database storage type string
-    pub fn database_type(&self) -> &str {
+    /// Content type discriminator
+    pub fn content_type(&self) -> ContentType {
         match self {
-            ClipboardContent::Text { .. } => "text",
-            ClipboardContent::Color { .. } => "color",
-            ClipboardContent::Link { .. } => "link",
-            ClipboardContent::Image { .. } => "image",
-            ClipboardContent::File { .. } => "file",
+            ClipboardContent::Text { .. } => ContentType::Text,
+            ClipboardContent::Color { .. } => ContentType::Color,
+            ClipboardContent::Link { .. } => ContentType::Link,
+            ClipboardContent::Image { .. } => ContentType::Image,
+            ClipboardContent::File { .. } => ContentType::File,
         }
     }
 }
