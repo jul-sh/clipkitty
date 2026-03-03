@@ -25,6 +25,7 @@ final class SilentUpdateDriver: NSObject, SPUUserDriver {
     func showUserInitiatedUpdateCheck(cancellation: @escaping () -> Void) {}
 
     func showUpdateFound(with appcastItem: SUAppcastItem, state: SPUUserUpdateState, reply: @escaping (SPUUserUpdateChoice) -> Void) {
+        log.info("Update found: \(appcastItem.displayVersionString) (build \(appcastItem.versionString))")
         let settings = AppSettings.shared
         settings.updateCheckState = .idle
         settings.updateCheckFailingSince = nil
@@ -120,8 +121,19 @@ final class UpdateController {
         updater.automaticallyDownloadsUpdates = AppSettings.shared.autoInstallUpdates
         updater.updateCheckInterval = 14400 // 4 hours
 
+        log.info("Feed URL: \(bundle.object(forInfoDictionaryKey: "SUFeedURL") as? String ?? "not set")")
+        log.info("Version: \(bundle.object(forInfoDictionaryKey: "CFBundleShortVersionString") as? String ?? "unknown"), build: \(bundle.object(forInfoDictionaryKey: "CFBundleVersion") as? String ?? "unknown")")
+
         do {
             try updater.start()
+            log.info("Sparkle updater started")
+            // Trigger a check shortly after launch to ensure updates are found promptly,
+            // rather than waiting for the full scheduled interval on first launch.
+            DispatchQueue.main.asyncAfter(deadline: .now() + 5) { [weak self] in
+                guard let self, self.updater.canCheckForUpdates else { return }
+                log.info("Running startup update check")
+                self.updater.checkForUpdates()
+            }
         } catch {
             log.error("Failed to start updater: \(error.localizedDescription)")
         }
