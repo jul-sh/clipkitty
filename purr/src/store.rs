@@ -18,6 +18,10 @@ use crate::search::{self, MIN_TRIGRAM_QUERY_LEN, MAX_RESULTS};
 
 /// Number of results to eagerly compute MatchData for (the rest are lazy)
 const EAGER_MATCH_DATA_COUNT: usize = 25;
+/// Content length threshold for "short" items that get eager highlights
+const SHORT_CONTENT_THRESHOLD: usize = 1024;
+/// Skip eager short-item highlights when results exceed this count
+const EAGER_SHORT_RESULT_LIMIT: usize = 200;
 use chrono::Utc;
 use once_cell::sync::Lazy;
 use std::path::PathBuf;
@@ -245,21 +249,23 @@ impl ClipboardStore {
             .filter_map(|item| item.id.map(|id| (id, item)))
             .collect();
 
-        // Create item matches: eager for first N, lazy for the rest
+        // Create item matches: eager for first N, lazy for the rest.
+        // Also eagerly highlight short items when result count is manageable.
+        let fuzzy_matches_len = fuzzy_matches.len();
+        let few_results = fuzzy_matches_len <= EAGER_SHORT_RESULT_LIMIT;
         let results: Vec<ItemMatch> = fuzzy_matches
             .into_iter()
             .enumerate()
             .filter_map(|(idx, fm)| {
                 item_map.get(&fm.id).map(|item| {
-                    if idx < EAGER_MATCH_DATA_COUNT {
-                        // Eager: compute match data for first N results
-                        let content = item.content.text_content();
+                    let content = item.content.text_content();
+                    let is_short = content.len() <= SHORT_CONTENT_THRESHOLD;
+                    if idx < EAGER_MATCH_DATA_COUNT || (is_short && few_results) {
                         ItemMatch {
                             item_metadata: item.to_metadata(),
                             match_data: Some(search::compute_item_match_data(&content, query)),
                         }
                     } else {
-                        // Lazy: no match data
                         search::create_lazy_item_match(item)
                     }
                 })
@@ -307,21 +313,23 @@ impl ClipboardStore {
             })
             .collect();
 
-        // Create item matches: eager for first N, lazy for the rest
+        // Create item matches: eager for first N, lazy for the rest.
+        // Also eagerly highlight short items when result count is manageable.
+        let fuzzy_matches_len = fuzzy_matches.len();
+        let few_results = fuzzy_matches_len <= EAGER_SHORT_RESULT_LIMIT;
         let results: Vec<ItemMatch> = fuzzy_matches
             .into_iter()
             .enumerate()
             .filter_map(|(idx, fm)| {
                 item_map.get(&fm.id).map(|item| {
-                    if idx < EAGER_MATCH_DATA_COUNT {
-                        // Eager: compute match data for first N results
-                        let content = item.content.text_content();
+                    let content = item.content.text_content();
+                    let is_short = content.len() <= SHORT_CONTENT_THRESHOLD;
+                    if idx < EAGER_MATCH_DATA_COUNT || (is_short && few_results) {
                         ItemMatch {
                             item_metadata: item.to_metadata(),
                             match_data: Some(search::compute_item_match_data(&content, query)),
                         }
                     } else {
-                        // Lazy: no match data
                         search::create_lazy_item_match(item)
                     }
                 })
