@@ -233,6 +233,7 @@ impl StoredItem {
             source_app: self.source_app.clone(),
             source_app_bundle_id: self.source_app_bundle_id.clone(),
             timestamp_unix: self.timestamp_unix,
+            tags: Vec::new(),
         }
     }
 

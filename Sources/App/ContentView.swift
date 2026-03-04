@@ -453,7 +453,7 @@ struct ContentView: View {
         editFocus = .idle
     }
 
-    /// Commits the currently selected item's edit as a new clipboard item.
+    /// Commits the currently selected item's edit, either as a new item or in-place update.
     private func commitCurrentEdit() {
         guard let id = selectedItemId,
               let editedText = pendingEdits.removeValue(forKey: id),
@@ -462,13 +462,22 @@ struct ContentView: View {
             return
         }
         editFocus = .idle
-        Task {
-            let newItemId = await store.saveEditedText(text: editedText)
-            if newItemId > 0 {
-                searchText = ""
-                store.setSearchQuery("")
-                selectedItemId = newItemId
-                ToastWindow.shared.show(message: String(localized: "Saved as new item"))
+
+        if AppSettings.shared.editsCreateNewItem {
+            Task {
+                let newItemId = await store.saveEditedText(text: editedText)
+                if newItemId > 0 {
+                    searchText = ""
+                    store.setSearchQuery("")
+                    selectedItemId = newItemId
+                    ToastWindow.shared.show(message: String(localized: "Saved as new item"))
+                }
+            }
+        } else {
+            Task {
+                await store.updateEditedText(itemId: id, text: editedText)
+                store.setSearchQuery(searchText)
+                ToastWindow.shared.show(message: String(localized: "Item updated"))
             }
         }
     }
@@ -532,7 +541,12 @@ struct ContentView: View {
                 }
                 .onKeyPress(.tab) {
                     let allOptions = Self.filterOptions
-                    let index = allOptions.firstIndex(where: { $0.0 == store.contentTypeFilter }) ?? 0
+                    let index: Int
+                    if store.currentTag == "pinned" {
+                        index = 0
+                    } else {
+                        index = (allOptions.firstIndex(where: { $0.0 == store.contentTypeFilter }) ?? 0) + 1
+                    }
                     filterPopover = .visible(highlightedIndex: index)
                     focusFilterDropdown()
                     return .handled
@@ -568,6 +582,9 @@ struct ContentView: View {
     // MARK: - Filter Dropdown
 
     private var filterLabel: String {
+        if store.currentTag == "pinned" {
+            return String(localized: "Pinned")
+        }
         switch store.contentTypeFilter {
         case .all: return String(localized: "All Types")
         case .text: return String(localized: "Text")
@@ -581,7 +598,12 @@ struct ContentView: View {
     private var filterDropdown: some View {
         Button {
             let allOptions = Self.filterOptions
-            let index = allOptions.firstIndex(where: { $0.0 == store.contentTypeFilter }) ?? 0
+            let index: Int
+            if store.currentTag == "pinned" {
+                index = 0
+            } else {
+                index = (allOptions.firstIndex(where: { $0.0 == store.contentTypeFilter }) ?? 0) + 1
+            }
             if case .visible = filterPopover {
                 filterPopover = .hidden
             } else {
@@ -619,8 +641,14 @@ struct ContentView: View {
         return options
     }()
 
+    /// Total number of filter popover entries (content type options + divider placeholder + pinned)
+    private var filterPopoverTotalCount: Int {
+        Self.filterOptions.count + 1  // +1 for pinned option
+    }
+
     private var filterPopoverContent: some View {
         let options = Self.filterOptions
+        let pinnedIndex = 0  // pinned option is first
         let highlightedIndex: Int
         if case .visible(let idx) = filterPopover {
             highlightedIndex = idx
@@ -628,16 +656,37 @@ struct ContentView: View {
             highlightedIndex = 0
         }
         return VStack(spacing: 2) {
+            FilterOptionRow(
+                label: String(localized: "Pinned"),
+                isSelected: store.currentTag == "pinned",
+                isHighlighted: highlightedIndex == pinnedIndex,
+                action: {
+                    if store.currentTag == "pinned" {
+                        store.setTagFilter(nil)
+                    } else {
+                        store.setContentTypeFilter(.all)
+                        store.setTagFilter("pinned")
+                    }
+                    filterPopover = .hidden
+                    focusSearchField()
+                }
+            )
+
+            Divider().padding(.horizontal, 4).padding(.vertical, 3)
+
             ForEach(Array(options.enumerated()), id: \.offset) { index, entry in
                 let (option, label) = entry
+                // Content type indices are offset by 1 (pinned is at 0)
+                let adjustedIndex = index + 1
                 if index == 1 {
                     Divider().padding(.horizontal, 4).padding(.vertical, 3)
                 }
                 FilterOptionRow(
                     label: label,
-                    isSelected: store.contentTypeFilter == option,
-                    isHighlighted: highlightedIndex == index,
+                    isSelected: store.contentTypeFilter == option && store.currentTag == nil,
+                    isHighlighted: highlightedIndex == adjustedIndex,
                     action: {
+                        store.setTagFilter(nil)
                         store.setContentTypeFilter(option)
                         filterPopover = .hidden
                         focusSearchField()
@@ -658,13 +707,23 @@ struct ContentView: View {
         }
         .onKeyPress(.downArrow) {
             if case .visible(let idx) = filterPopover {
-                filterPopover = .visible(highlightedIndex: min(idx + 1, options.count - 1))
+                filterPopover = .visible(highlightedIndex: min(idx + 1, filterPopoverTotalCount - 1))
             }
             return .handled
         }
         .onKeyPress(.return, phases: .down) { _ in
-            let selected = options[highlightedIndex]
-            store.setContentTypeFilter(selected.0)
+            if highlightedIndex == pinnedIndex {
+                if store.currentTag == "pinned" {
+                    store.setTagFilter(nil)
+                } else {
+                    store.setContentTypeFilter(.all)
+                    store.setTagFilter("pinned")
+                }
+            } else {
+                let selected = options[highlightedIndex - 1]
+                store.setTagFilter(nil)
+                store.setContentTypeFilter(selected.0)
+            }
             filterPopover = .hidden
             focusSearchField()
             return .handled
@@ -681,7 +740,13 @@ struct ContentView: View {
         }
         .onAppear {
             let allOptions = Self.filterOptions
-            let index = allOptions.firstIndex(where: { $0.0 == store.contentTypeFilter }) ?? 0
+            let index: Int
+            if store.currentTag == "pinned" {
+                index = 0  // pinned option index
+            } else {
+                // Content type indices are offset by 1
+                index = (allOptions.firstIndex(where: { $0.0 == store.contentTypeFilter }) ?? 0) + 1
+            }
             filterPopover = .visible(highlightedIndex: index)
             focusFilterDropdown()
         }
@@ -1052,11 +1117,21 @@ struct ContentView: View {
     private enum ActionItem: Equatable {
         case defaultAction  // copy or paste based on settings
         case copyOnly       // only shown when default is paste
+        case pin
+        case unpin
         case delete
     }
 
     private var actionItems: [ActionItem] {
         var items: [ActionItem] = [.delete]
+
+        // Pin/unpin based on selected item's tags
+        if let selectedItem, selectedItem.itemMetadata.tags.contains("pinned") {
+            items.append(.unpin)
+        } else {
+            items.append(.pin)
+        }
+
         if case .autoPaste = AppSettings.shared.pasteMode {
             items.append(.copyOnly)
         }
@@ -1070,6 +1145,10 @@ struct ContentView: View {
             return AppSettings.shared.pasteMode.buttonLabel
         case .copyOnly:
             return String(localized: "Copy")
+        case .pin:
+            return String(localized: "Pin")
+        case .unpin:
+            return String(localized: "Unpin")
         case .delete:
             return String(localized: "Delete")
         }
@@ -1079,6 +1158,8 @@ struct ContentView: View {
         switch action {
         case .defaultAction: return AppSettings.shared.pasteMode.buttonLabel
         case .copyOnly: return "Copy"
+        case .pin: return "Pin"
+        case .unpin: return "Unpin"
         case .delete: return "Delete"
         }
     }
@@ -1254,6 +1335,20 @@ struct ContentView: View {
         case .copyOnly:
             actionsPopover = .hidden
             copyOnlySelection()
+        case .pin:
+            actionsPopover = .hidden
+            if let id = selectedItemId {
+                Task {
+                    await store.pinItem(itemId: id)
+                }
+            }
+        case .unpin:
+            actionsPopover = .hidden
+            if let id = selectedItemId {
+                Task {
+                    await store.unpinItem(itemId: id)
+                }
+            }
         case .delete:
             actionsPopover = .showingDeleteConfirm(highlightedIndex: 0)
         }
@@ -1989,7 +2084,11 @@ struct ItemRow: View, Equatable {
     /// Text to display - uses matchData.text if in search mode, otherwise metadata.snippet
     /// SwiftUI's Three-Part HStack handles truncation with proper ellipsis via layout priorities
     private var displayText: String {
-        matchData?.text.isEmpty == false ? matchData!.text : metadata.snippet
+        let text = matchData?.text.isEmpty == false ? matchData!.text : metadata.snippet
+        if metadata.tags.contains("pinned") {
+            return "📌 " + text
+        }
+        return text
     }
 
     /// Highlights for display - passed directly from Rust (already adjusted for normalization)

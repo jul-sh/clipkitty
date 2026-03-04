@@ -56,6 +56,9 @@ final class ClipboardStore {
     /// Current content type filter (observable by views)
     private(set) var contentTypeFilter: ContentTypeFilter = .all
 
+    /// Current tag filter (observable by views)
+    private(set) var currentTag: String? = nil
+
     // MARK: - Private State
 
     /// Rust-backed clipboard store
@@ -183,12 +186,18 @@ final class ClipboardStore {
     func resetForDisplay() {
         searchTask?.cancel()
         contentTypeFilter = .all
+        currentTag = nil
         displayVersion += 1
         refresh()
     }
 
     func setContentTypeFilter(_ filter: ContentTypeFilter) {
         contentTypeFilter = filter
+        refresh()
+    }
+
+    func setTagFilter(_ tag: String?) {
+        currentTag = tag
         refresh()
     }
 
@@ -250,8 +259,8 @@ final class ClipboardStore {
 
         do {
             let searchResult: SearchResult
-            if contentTypeFilter != .all {
-                searchResult = try await rustStore.searchFiltered(query: query, filter: contentTypeFilter)
+            if contentTypeFilter != .all || currentTag != nil {
+                searchResult = try await rustStore.searchFiltered(query: query, filter: contentTypeFilter, tag: currentTag)
             } else {
                 searchResult = try await rustStore.search(query: query)
             }
@@ -275,6 +284,32 @@ final class ClipboardStore {
             guard !Task.isCancelled else { return }
             state = .error(String(format: NSLocalizedString("Search failed: %@", comment: "Error when search operation fails"), error.localizedDescription))
         }
+    }
+
+    // MARK: - Tags
+
+    func addTag(itemId: Int64, tag: String) async {
+        guard let rustStore else { return }
+        await Task.detached { [rustStore] in
+            try? rustStore.addTag(itemId: itemId, tag: tag)
+        }.value
+    }
+
+    func removeTag(itemId: Int64, tag: String) async {
+        guard let rustStore else { return }
+        await Task.detached { [rustStore] in
+            try? rustStore.removeTag(itemId: itemId, tag: tag)
+        }.value
+    }
+
+    func pinItem(itemId: Int64) async {
+        await addTag(itemId: itemId, tag: "pinned")
+        refresh()
+    }
+
+    func unpinItem(itemId: Int64) async {
+        await removeTag(itemId: itemId, tag: "pinned")
+        refresh()
     }
 
     // MARK: - Clipboard Monitoring
@@ -503,6 +538,15 @@ final class ClipboardStore {
             } catch {
                 return 0
             }
+        }.value
+    }
+
+    /// Update an existing text item's content in-place.
+    func updateEditedText(itemId: Int64, text: String) async {
+        guard let rustStore else { return }
+
+        await Task.detached { [rustStore] in
+            try? rustStore.updateText(itemId: itemId, text: text)
         }.value
     }
 

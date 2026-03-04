@@ -150,6 +150,13 @@ impl Database {
             CREATE INDEX IF NOT EXISTS idx_items_timestamp ON items(timestamp);
             CREATE INDEX IF NOT EXISTS idx_items_content_prefix ON items(content COLLATE NOCASE);
             CREATE INDEX IF NOT EXISTS idx_file_items_item ON file_items(itemId);
+
+            CREATE TABLE IF NOT EXISTS item_tags (
+                itemId INTEGER NOT NULL REFERENCES items(id) ON DELETE CASCADE,
+                tag TEXT NOT NULL,
+                PRIMARY KEY (itemId, tag)
+            );
+            CREATE INDEX IF NOT EXISTS idx_item_tags_tag ON item_tags(tag);
         "#)?;
 
         // Migration: Add is_animated column to existing image_items tables
@@ -311,6 +318,23 @@ impl Database {
         Ok(())
     }
 
+    /// Update a text item's content, hash, and timestamp in both `items` and `text_items`
+    pub fn update_text(&self, id: i64, text: &str, content_hash: &str, timestamp: DateTime<Utc>) -> DatabaseResult<()> {
+        let conn = self.get_conn()?;
+        let timestamp_str = timestamp.format("%Y-%m-%d %H:%M:%S%.f").to_string();
+
+        conn.execute(
+            "UPDATE items SET content = ?1, contentHash = ?2, timestamp = ?3 WHERE id = ?4",
+            params![text, content_hash, timestamp_str, id],
+        )?;
+        conn.execute(
+            "UPDATE text_items SET value = ?1 WHERE itemId = ?2",
+            params![text, id],
+        )?;
+
+        Ok(())
+    }
+
     /// Update image description
     pub fn update_image_description(&self, id: i64, description: &str) -> DatabaseResult<()> {
         let conn = self.get_conn()?;
@@ -347,37 +371,64 @@ impl Database {
         before_timestamp: Option<DateTime<Utc>>,
         limit: usize,
         filter: Option<&ContentTypeFilter>,
+        tag: Option<&str>,
     ) -> DatabaseResult<(Vec<ItemMetadata>, u64)> {
         let conn = self.get_conn()?;
 
         let type_filter_clause = Self::content_type_where_clause(filter, "");
         let type_filter_clause_and = Self::content_type_where_clause(filter, "AND");
+        let tag_clause_where = if tag.is_some() {
+            let prefix = if type_filter_clause.is_empty() { "WHERE" } else { "AND" };
+            format!("{} id IN (SELECT itemId FROM item_tags WHERE tag = ?)", prefix)
+        } else {
+            String::new()
+        };
+        let tag_clause_and = if tag.is_some() {
+            "AND id IN (SELECT itemId FROM item_tags WHERE tag = ?)".to_string()
+        } else {
+            String::new()
+        };
 
-        let count_sql = format!("SELECT COUNT(*) FROM items {}", type_filter_clause);
-        let total_count: i64 = conn.query_row(&count_sql, [], |row| row.get(0))?;
+        // Build count query with dynamic params
+        let count_sql = format!("SELECT COUNT(*) FROM items {} {}", type_filter_clause, tag_clause_where);
+        let total_count: i64 = if let Some(t) = tag {
+            conn.query_row(&count_sql, params![t], |row| row.get(0))?
+        } else {
+            conn.query_row(&count_sql, [], |row| row.get(0))?
+        };
         let total_count = total_count as u64;
 
         let sql = if before_timestamp.is_some() {
             format!(
                 r#"SELECT id, content, contentType, timestamp, sourceApp, sourceAppBundleId, thumbnail, colorRgba
-                   FROM items WHERE timestamp < ?1 {} ORDER BY timestamp DESC LIMIT ?2"#,
-                type_filter_clause_and
+                   FROM items WHERE timestamp < ? {} {} ORDER BY timestamp DESC LIMIT ?"#,
+                type_filter_clause_and, tag_clause_and
             )
         } else {
             format!(
                 r#"SELECT id, content, contentType, timestamp, sourceApp, sourceAppBundleId, thumbnail, colorRgba
-                   FROM items {} ORDER BY timestamp DESC LIMIT ?1"#,
-                type_filter_clause
+                   FROM items {} {} ORDER BY timestamp DESC LIMIT ?"#,
+                type_filter_clause, tag_clause_where
             )
         };
 
         let mut stmt = conn.prepare(&sql)?;
         let items = if let Some(ts) = before_timestamp {
             let ts_str = ts.format("%Y-%m-%d %H:%M:%S%.f").to_string();
-            stmt.query_map(params![ts_str, limit as i64], Self::row_to_metadata)?
+            let mut param_values: Vec<rusqlite::types::Value> = vec![ts_str.into()];
+            if let Some(t) = tag {
+                param_values.push(t.to_string().into());
+            }
+            param_values.push((limit as i64).into());
+            stmt.query_map(rusqlite::params_from_iter(param_values), Self::row_to_metadata)?
                 .collect::<Result<Vec<_>, _>>()?
         } else {
-            stmt.query_map(params![limit as i64], Self::row_to_metadata)?
+            let mut param_values: Vec<rusqlite::types::Value> = Vec::new();
+            if let Some(t) = tag {
+                param_values.push(t.to_string().into());
+            }
+            param_values.push((limit as i64).into());
+            stmt.query_map(rusqlite::params_from_iter(param_values), Self::row_to_metadata)?
                 .collect::<Result<Vec<_>, _>>()?
         };
 
@@ -530,25 +581,36 @@ impl Database {
         query: &str,
         limit: usize,
         filter: Option<&ContentTypeFilter>,
+        tag: Option<&str>,
     ) -> DatabaseResult<Vec<(i64, String, i64)>> {
         let conn = self.get_conn()?;
         let query_lower = query.to_lowercase();
         let escaped = query_lower.replace('%', "\\%").replace('_', "\\_");
         let type_filter_and = Self::content_type_where_clause(filter, "AND");
+        let tag_clause_and = if tag.is_some() {
+            "AND id IN (SELECT itemId FROM item_tags WHERE tag = ?)"
+        } else {
+            ""
+        };
 
         // Part 1: Prefix match
         let prefix_pattern = format!("{}%", escaped);
         let prefix_sql = format!(
             r#"SELECT id, content, CAST(strftime('%s', timestamp) AS INTEGER)
                FROM items
-               WHERE content LIKE ?1 ESCAPE '\' COLLATE NOCASE {}
+               WHERE content LIKE ? ESCAPE '\' COLLATE NOCASE {} {}
                ORDER BY timestamp DESC
-               LIMIT ?2"#,
-            type_filter_and
+               LIMIT ?"#,
+            type_filter_and, tag_clause_and
         );
         let mut stmt_prefix = conn.prepare(&prefix_sql)?;
+        let mut prefix_params: Vec<rusqlite::types::Value> = vec![prefix_pattern.clone().into()];
+        if let Some(t) = tag {
+            prefix_params.push(t.to_string().into());
+        }
+        prefix_params.push((limit as i64).into());
         let prefix_results: Vec<(i64, String, i64)> = stmt_prefix
-            .query_map(params![prefix_pattern, limit as i64], |row| {
+            .query_map(rusqlite::params_from_iter(&prefix_params), |row| {
                 Ok((
                     row.get::<_, i64>(0)?,
                     row.get::<_, String>(1)?,
@@ -562,14 +624,19 @@ impl Database {
         let like_sql = format!(
             r#"SELECT id, content, CAST(strftime('%s', timestamp) AS INTEGER)
                FROM (SELECT id, content, contentType, timestamp FROM items ORDER BY timestamp DESC LIMIT 2000)
-               WHERE content LIKE ?1 ESCAPE '\' COLLATE NOCASE {}
+               WHERE content LIKE ? ESCAPE '\' COLLATE NOCASE {} {}
                ORDER BY timestamp DESC
-               LIMIT ?2"#,
-            type_filter_and
+               LIMIT ?"#,
+            type_filter_and, tag_clause_and
         );
         let mut stmt_like = conn.prepare(&like_sql)?;
+        let mut like_params: Vec<rusqlite::types::Value> = vec![like_pattern.into()];
+        if let Some(t) = tag {
+            like_params.push(t.to_string().into());
+        }
+        like_params.push((limit as i64).into());
         let like_results: Vec<(i64, String, i64)> = stmt_like
-            .query_map(params![like_pattern, limit as i64], |row| {
+            .query_map(rusqlite::params_from_iter(&like_params), |row| {
                 Ok((
                     row.get::<_, i64>(0)?,
                     row.get::<_, String>(1)?,
@@ -629,6 +696,82 @@ impl Database {
         )?;
 
         Ok(items_to_delete)
+    }
+
+    // ─────────────────────────────────────────────────────────────────────────────
+    // Tag Operations
+    // ─────────────────────────────────────────────────────────────────────────────
+
+    /// Add a tag to an item (idempotent)
+    pub fn add_tag(&self, item_id: i64, tag: &str) -> DatabaseResult<()> {
+        let conn = self.get_conn()?;
+        conn.execute(
+            "INSERT OR IGNORE INTO item_tags (itemId, tag) VALUES (?1, ?2)",
+            params![item_id, tag],
+        )?;
+        Ok(())
+    }
+
+    /// Remove a tag from an item
+    pub fn remove_tag(&self, item_id: i64, tag: &str) -> DatabaseResult<()> {
+        let conn = self.get_conn()?;
+        conn.execute(
+            "DELETE FROM item_tags WHERE itemId = ?1 AND tag = ?2",
+            params![item_id, tag],
+        )?;
+        Ok(())
+    }
+
+    /// Batch-fetch tags for a set of item IDs
+    pub fn get_tags_for_ids(&self, ids: &[i64]) -> DatabaseResult<std::collections::HashMap<i64, Vec<String>>> {
+        if ids.is_empty() {
+            return Ok(std::collections::HashMap::new());
+        }
+
+        let conn = self.get_conn()?;
+        let placeholders = ids.iter().map(|_| "?").collect::<Vec<_>>().join(",");
+        let sql = format!(
+            "SELECT itemId, tag FROM item_tags WHERE itemId IN ({}) ORDER BY tag",
+            placeholders
+        );
+
+        let mut stmt = conn.prepare(&sql)?;
+        let params: Vec<rusqlite::types::Value> = ids.iter().map(|&id| id.into()).collect();
+        let rows = stmt.query_map(rusqlite::params_from_iter(params), |row| {
+            Ok((row.get::<_, i64>(0)?, row.get::<_, String>(1)?))
+        })?;
+
+        let mut map: std::collections::HashMap<i64, Vec<String>> = std::collections::HashMap::new();
+        for row in rows {
+            let (id, tag) = row?;
+            map.entry(id).or_default().push(tag);
+        }
+
+        Ok(map)
+    }
+
+    /// Filter a set of IDs to only those having a specific tag
+    pub fn filter_ids_by_tag(&self, ids: &[i64], tag: &str) -> DatabaseResult<Vec<i64>> {
+        if ids.is_empty() {
+            return Ok(Vec::new());
+        }
+
+        let conn = self.get_conn()?;
+        let placeholders = ids.iter().map(|_| "?").collect::<Vec<_>>().join(",");
+        let sql = format!(
+            "SELECT itemId FROM item_tags WHERE tag = ? AND itemId IN ({})",
+            placeholders
+        );
+
+        let mut params: Vec<rusqlite::types::Value> = vec![tag.to_string().into()];
+        params.extend(ids.iter().map(|&id| rusqlite::types::Value::from(id)));
+
+        let mut stmt = conn.prepare(&sql)?;
+        let result: Vec<i64> = stmt
+            .query_map(rusqlite::params_from_iter(params), |row| row.get(0))?
+            .collect::<Result<Vec<_>, _>>()?;
+
+        Ok(result)
     }
 
     /// Build a SQL clause for filtering by content type.
@@ -787,6 +930,7 @@ impl Database {
             source_app,
             source_app_bundle_id,
             timestamp_unix: timestamp.timestamp(),
+            tags: Vec::new(),
         })
     }
 }

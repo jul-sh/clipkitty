@@ -313,6 +313,7 @@ pub struct ItemMetadata {
     pub source_app: Option<String>,
     pub source_app_bundle_id: Option<String>,
     pub timestamp_unix: i64,
+    pub tags: Vec<String>,
 }
 
 /// Search match: metadata + match context
@@ -414,11 +415,24 @@ pub trait ClipboardStoreApi: Send + Sync {
     /// Update link metadata (called from Swift after LPMetadataProvider fetch)
     fn update_link_metadata(&self, item_id: i64, title: Option<String>, description: Option<String>, image_data: Option<Vec<u8>>) -> Result<(), ClipKittyError>;
 
+    /// Update a text item's content in-place and re-index
+    fn update_text(&self, item_id: i64, text: String) -> Result<(), ClipKittyError>;
+
     /// Update image description and re-index
     fn update_image_description(&self, item_id: i64, description: String) -> Result<(), ClipKittyError>;
 
     /// Update item timestamp to now
     fn update_timestamp(&self, item_id: i64) -> Result<(), ClipKittyError>;
+
+    // ─────────────────────────────────────────────────────────────────────────────
+    // Tag Operations
+    // ─────────────────────────────────────────────────────────────────────────────
+
+    /// Add a tag to an item
+    fn add_tag(&self, item_id: i64, tag: String) -> Result<(), ClipKittyError>;
+
+    /// Remove a tag from an item
+    fn remove_tag(&self, item_id: i64, tag: String) -> Result<(), ClipKittyError>;
 
     // ─────────────────────────────────────────────────────────────────────────────
     // Delete Operations
