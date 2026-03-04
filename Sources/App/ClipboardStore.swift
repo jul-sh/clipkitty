@@ -255,7 +255,14 @@ final class ClipboardStore {
             guard !Task.isCancelled else { return }
             guard case .resultsLoading(let currentQuery, _) = state, currentQuery == query else { return }
 
+            // Capture old state before replacing - deallocation of large arrays can block main thread
+            let oldState = state
             state = .results(query: query, items: searchResult.matches, firstItem: searchResult.firstItem)
+
+            // Defer deallocation of old state to background queue
+            Task.detached(priority: .background) {
+                _ = oldState  // Force capture and release on background thread
+            }
         } catch ClipKittyError.Cancelled {
         } catch {
             guard !Task.isCancelled else { return }
