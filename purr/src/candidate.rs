@@ -27,3 +27,16 @@ impl SearchCandidate {
         &self.content
     }
 }
+
+/// Candidate with cached tokenization for lazy highlighting.
+/// Content and tokenized words are preserved so highlighting can happen
+/// after collection without re-tokenizing.
+#[derive(Debug, Clone)]
+pub struct ScoredCandidate {
+    pub id: i64,
+    pub content: String,
+    pub timestamp: i64,
+    pub tantivy_score: f32,
+    /// Cached tokenized words from content: (char_start, char_end, word_lowercase)
+    pub doc_words: Vec<(usize, usize, String)>,
+}

@@ -939,7 +939,7 @@ mod tests {
         );
         assert!(matches!(result, Err(crate::interface::ClipKittyError::Cancelled)));
 
-        // Test trigram query sync with pre-cancelled token
+        // Test trigram sync with pre-cancelled token
         let result = ClipboardStore::search_trigram_query_sync(
             &store.db,
             &store.indexer,

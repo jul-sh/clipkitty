@@ -3,7 +3,7 @@
 //! Two-phase search: trigram recall (Phase 1) + Milli-style bucket re-ranking (Phase 2).
 //! For queries under 3 characters, returns empty (handled by search.rs streaming fallback).
 
-use crate::candidate::SearchCandidate;
+use crate::candidate::{SearchCandidate, ScoredCandidate};
 use crate::ranking::compute_bucket_score;
 use crate::search::{RECENCY_BOOST_MAX, RECENCY_HALF_LIFE_SECS};
 use chrono::Utc;
@@ -239,7 +239,8 @@ impl Indexer {
     }
 
     /// Two-phase search: trigram recall (Phase 1) + bucket re-ranking (Phase 2).
-    pub fn search(&self, query: &str, limit: usize) -> IndexerResult<Vec<SearchCandidate>> {
+    /// Tokenized words are cached in results for lazy highlighting.
+    pub fn search(&self, query: &str, limit: usize) -> IndexerResult<Vec<ScoredCandidate>> {
         #[cfg(feature = "perf-log")]
         let t0 = std::time::Instant::now();
         let candidates = self.trigram_recall(query, limit)?;
@@ -249,7 +250,7 @@ impl Indexer {
         if candidates.is_empty() || query.split_whitespace().count() == 0 {
             #[cfg(feature = "perf-log")]
             eprintln!("[perf] phase1={:.1}ms candidates=0", (t1 - t0).as_secs_f64() * 1000.0);
-            return Ok(candidates);
+            return Ok(Vec::new());
         }
 
         // Phase 2: Bucket re-ranking (parallelized — compute_bucket_score is a pure function)
@@ -259,14 +260,13 @@ impl Indexer {
         let now = Utc::now().timestamp();
 
         use rayon::prelude::*;
-        let mut scored: Vec<(crate::ranking::BucketScore, usize)> = candidates
-            .par_iter()
-            .enumerate()
-            .map(|(i, c)| {
+        let mut scored: Vec<(crate::ranking::BucketScore, ScoredCandidate)> = candidates
+            .into_par_iter()
+            .filter_map(|c| {
                 let content_lower = c.content().to_lowercase();
                 let doc_words = crate::search::tokenize_words(&content_lower);
                 let doc_word_strs: Vec<&str> = doc_words.iter().map(|(_, _, w)| w.as_str()).collect();
-                let bucket = compute_bucket_score(
+                let bucket_score = compute_bucket_score(
                     &content_lower,
                     &doc_word_strs,
                     &query_words,
@@ -275,7 +275,17 @@ impl Indexer {
                     c.tantivy_score,
                     now,
                 );
-                (bucket, i)
+                // Skip documents with no matched words
+                if bucket_score.words_matched_weight == 0 {
+                    return None;
+                }
+                Some((bucket_score, ScoredCandidate {
+                    id: c.id,
+                    content: c.content().to_string(),
+                    timestamp: c.timestamp,
+                    tantivy_score: c.tantivy_score,
+                    doc_words,
+                }))
             })
             .collect();
 
@@ -293,20 +303,13 @@ impl Indexer {
             );
         }
 
-        let mut candidate_slots: Vec<Option<SearchCandidate>> =
-            candidates.into_iter().map(Some).collect();
-
-        Ok(scored
-            .into_iter()
-            .filter_map(|(_, i)| candidate_slots[i].take())
-            .collect())
+        Ok(scored.into_iter().map(|(_, c)| c).collect())
     }
 
     /// Phase 1: Trigram recall using Tantivy BM25.
     ///
-    /// Builds an OR query from trigram terms with a min_match threshold.
-    /// For long queries (4+ words), only per-word trigrams are used (skipping
-    /// cross-word boundary trigrams) to reduce posting list evaluations.
+    /// Returns candidates with id, content, timestamp, tantivy_score.
+    /// Tokenization happens in Phase 2 for caching.
     fn trigram_recall(&self, query: &str, limit: usize) -> IndexerResult<Vec<SearchCandidate>> {
         let reader = self.reader.read();
         let searcher = reader.searcher();
@@ -360,7 +363,12 @@ impl Indexer {
                 .and_then(|v| v.as_i64())
                 .unwrap_or(0);
 
-            candidates.push(SearchCandidate::new(id, content, timestamp, blended_score as f32));
+            candidates.push(SearchCandidate::new(
+                id,
+                content,
+                timestamp,
+                blended_score as f32,
+            ));
         }
 
         Ok(candidates)

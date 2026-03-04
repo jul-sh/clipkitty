@@ -6,7 +6,6 @@
 //! what's highlighted matches what's ranked (exact, prefix, fuzzy edit-distance).
 //! Short queries (< 3 chars) use a streaming fallback.
 
-use crate::candidate::SearchCandidate;
 use crate::indexer::{Indexer, IndexerResult};
 use crate::interface::{HighlightKind, HighlightRange, MatchData, ItemMatch};
 use crate::models::StoredItem;
@@ -55,55 +54,67 @@ pub(crate) struct FuzzyMatch {
 /// Phase 1 (trigram recall) and Phase 2 (bucket re-ranking) happen inside indexer.search().
 /// This function handles highlighting via rayon parallelism with cancellation support.
 pub(crate) fn search_trigram(indexer: &Indexer, query: &str, token: &CancellationToken) -> IndexerResult<Vec<FuzzyMatch>> {
-        if query.trim().is_empty() {
-            return Ok(Vec::new());
-        }
-        let trimmed = query.trim_start();
-        let query_words_owned = tokenize_words(trimmed.trim_end());
-        let query_words: Vec<&str> = query_words_owned.iter().map(|(_, _, w)| w.as_str()).collect();
-        let last_word_is_prefix = trimmed.trim_end().ends_with(|c: char| c.is_alphanumeric());
+    if query.trim().is_empty() {
+        return Ok(Vec::new());
+    }
+    let trimmed = query.trim_start();
+    let query_words_owned = tokenize_words(trimmed.trim_end());
+    let query_words: Vec<&str> = query_words_owned.iter().map(|(_, _, w)| w.as_str()).collect();
+    let last_word_is_prefix = trimmed.trim_end().ends_with(|c: char| c.is_alphanumeric());
 
-        // Bucket-ranked candidates from two-phase search
-        #[cfg(feature = "perf-log")]
-        let t0 = std::time::Instant::now();
-        let candidates = indexer.search(trimmed.trim_end(), MAX_RESULTS)?;
-        #[cfg(feature = "perf-log")]
-        let num_candidates = candidates.len();
+    // Bucket-ranked candidates from two-phase search
+    #[cfg(feature = "perf-log")]
+    let t0 = std::time::Instant::now();
+    let candidates = indexer.search(trimmed.trim_end(), MAX_RESULTS)?;
+    #[cfg(feature = "perf-log")]
+    let num_candidates = candidates.len();
 
-        // Assign rank before parallelizing so we can restore bucket order after
-        let ranked: Vec<(usize, SearchCandidate)> = candidates.into_iter().enumerate().collect();
+    if token.is_cancelled() {
+        return Ok(Vec::new());
+    }
 
-        #[cfg(feature = "perf-log")]
-        let t1 = std::time::Instant::now();
-        use rayon::prelude::*;
-        let mut sorted: Vec<FuzzyMatch> = ranked
-            .into_par_iter()
-            .take_any_while(|_| !token.is_cancelled())
-            .map(|(rank, c)| {
-                let content_lower = c.content().to_lowercase();
-                let doc_words = tokenize_words(&content_lower);
-                let mut m = highlight_candidate(c.id, c.content(), &content_lower, &doc_words, c.timestamp, c.tantivy_score, &query_words, last_word_is_prefix);
-                // Preserve bucket ranking order: score = inverse rank so sort is stable
-                m.score = (MAX_RESULTS - rank) as f64;
-                m
-            })
-            .filter(|m| !m.highlight_ranges.is_empty())
-            .collect();
+    // Assign rank before parallelizing so we can restore bucket order after
+    let ranked: Vec<(usize, crate::candidate::ScoredCandidate)> =
+        candidates.into_iter().enumerate().collect();
 
-        // par_iter + take_any_while doesn't preserve order — restore bucket ranking
-        sorted.sort_unstable_by(|a, b| b.score.total_cmp(&a.score));
-
-        #[cfg(feature = "perf-log")]
-        {
-            let t2 = std::time::Instant::now();
-            eprintln!(
-                "[perf] indexer_total={:.1}ms highlight={:.1}ms candidates={} highlighted={}",
-                (t1 - t0).as_secs_f64() * 1000.0,
-                (t2 - t1).as_secs_f64() * 1000.0,
-                num_candidates,
-                sorted.len(),
+    #[cfg(feature = "perf-log")]
+    let t1 = std::time::Instant::now();
+    use rayon::prelude::*;
+    let mut sorted: Vec<FuzzyMatch> = ranked
+        .into_par_iter()
+        .take_any_while(|_| !token.is_cancelled())
+        .map(|(rank, c)| {
+            // Use cached doc_words for highlighting (no re-tokenization)
+            let mut m = highlight_with_cached_tokens(
+                c.id,
+                &c.content,
+                &c.doc_words,
+                c.timestamp,
+                c.tantivy_score,
+                &query_words,
+                last_word_is_prefix,
             );
-        }
+            // Preserve bucket ranking order: score = inverse rank so sort is stable
+            m.score = (MAX_RESULTS - rank) as f64;
+            m
+        })
+        .filter(|m| !m.highlight_ranges.is_empty())
+        .collect();
+
+    // par_iter + take_any_while doesn't preserve order — restore bucket ranking
+    sorted.sort_unstable_by(|a, b| b.score.total_cmp(&a.score));
+
+    #[cfg(feature = "perf-log")]
+    {
+        let t2 = std::time::Instant::now();
+        eprintln!(
+            "[perf] indexer_total={:.1}ms highlight={:.1}ms candidates={} highlighted={}",
+            (t1 - t0).as_secs_f64() * 1000.0,
+            (t2 - t1).as_secs_f64() * 1000.0,
+            num_candidates,
+            sorted.len(),
+        );
+    }
 
     Ok(sorted)
 }
@@ -323,6 +334,36 @@ pub(crate) fn highlight_candidate(
         content: content.to_string(),
         is_prefix_match: false,
     }
+}
+
+/// Highlight using pre-tokenized words from cached doc_words.
+/// Used by the BucketScoreCollector path for lazy highlighting.
+///
+/// This is the same logic as `highlight_candidate` but takes pre-tokenized
+/// words to avoid re-tokenizing content that was already tokenized during
+/// bucket score computation.
+pub(crate) fn highlight_with_cached_tokens(
+    id: i64,
+    content: &str,
+    doc_words: &[(usize, usize, String)],
+    timestamp: i64,
+    tantivy_score: f32,
+    query_words: &[&str],
+    last_word_is_prefix: bool,
+) -> FuzzyMatch {
+    // Delegate to existing highlight_candidate with a dummy content_lower
+    // (it's not actually used in the function body)
+    let content_lower = content.to_lowercase();
+    highlight_candidate(
+        id,
+        content,
+        &content_lower,
+        doc_words,
+        timestamp,
+        tantivy_score,
+        query_words,
+        last_word_is_prefix,
+    )
 }
 
 /// Convert matched indices to highlight ranges with a specified kind
