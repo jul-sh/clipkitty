@@ -30,9 +30,6 @@ pub(crate) const RECENCY_HALF_LIFE_SECS: f64 = 1.0 * 60.0 * 60.0;
 /// Context chars to include before/after match in snippet
 pub(crate) const SNIPPET_CONTEXT_CHARS: usize = 200;
 
-/// Maximum highlights to find in large documents before early termination.
-/// This prevents O(D×Q) full scans on large documents.
-const MAX_HIGHLIGHTS_LARGE_DOC: usize = 30;
 
 #[derive(Debug, Clone)]
 pub(crate) struct FuzzyMatch {
@@ -92,8 +89,8 @@ fn word_match_to_highlight_kind(wmk: WordMatchKind) -> HighlightKind {
 /// `content_lower` and `doc_words` are pre-computed in Phase 2 to avoid
 /// redundant lowercasing and tokenization (~4000 allocations per search).
 ///
-/// For large documents (>5KB), uses fast matching (exact + prefix only) and
-/// early termination after MAX_HIGHLIGHTS_LARGE_DOC matches to avoid O(D×Q) scans.
+/// For large documents (>5KB), uses fast matching (exact + prefix only)
+/// to avoid expensive fuzzy/subsequence matching.
 pub(crate) fn highlight_candidate(
         id: i64,
         content: &str,
@@ -113,7 +110,7 @@ pub(crate) fn highlight_candidate(
         // Use fast matching for large documents
         let is_large_doc = content.len() > LARGE_DOC_THRESHOLD_BYTES;
 
-        'outer: for (char_start, char_end, doc_word) in doc_words {
+        for (char_start, char_end, doc_word) in doc_words {
             let doc_word_lower = doc_word.to_lowercase();
             for (qi, qw) in query_lower.iter().enumerate() {
                 let allow_prefix = qi == last_qi && last_word_is_prefix;
@@ -129,10 +126,6 @@ pub(crate) fn highlight_candidate(
                     // preventing random punctuation elsewhere from being highlighted.
                     if is_word_token(qw) {
                         word_highlights.push((*char_start, *char_end, word_match_to_highlight_kind(wmk)));
-                        // Early termination for large documents after finding enough highlights
-                        if is_large_doc && word_highlights.len() >= MAX_HIGHLIGHTS_LARGE_DOC {
-                            break 'outer;
-                        }
                     }
                     break; // Don't double-highlight from multiple query words
                 }
