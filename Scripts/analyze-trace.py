@@ -107,11 +107,105 @@ def export_trace_data(trace_path: str, output_dir: str, quiet: bool = False) -> 
     return exported_files
 
 
+def is_idle_backtrace(function: str, backtrace: str) -> bool:
+    """Check if a backtrace indicates the main thread was idle (waiting for events).
+
+    When the main thread is idle, it's typically blocked in mach_msg waiting for:
+    - Run loop events
+    - Window server messages
+    - System notifications
+
+    These are NOT true hangs - they're normal idle periods.
+
+    We check BOTH the sample BEFORE and AFTER the gap:
+    - If BEFORE was in mach_msg/RunLoop AND AFTER is also in mach_msg/RunLoop,
+      this was just an idle period between events.
+    - If BEFORE was doing work (not idle) but AFTER is idle, we still count
+      it because the work finished and then thread went idle.
+    - If AFTER shows active work (not idle), it's likely a real hang that
+      blocked until that work could proceed.
+
+    This function checks if a SINGLE sample shows idle behavior.
+    The caller should check BOTH samples around a gap.
+    """
+    if not function and not backtrace:
+        return False
+
+    # Idle indicators: main thread waiting for events or committing idle CA transactions
+    idle_patterns = [
+        'mach_msg',              # Blocked waiting for Mach message
+        'mach_msg2_trap',        # Same, kernel trap
+        '__CFRunLoopRun',        # In run loop (normal)
+        '__CFRunLoopServiceMachPort',  # Waiting for mach port
+        'ReceiveNextEvent',      # Waiting for next event
+        '_BlockUntilNextEvent',  # Waiting for window event
+        'stepIdle',              # Core Animation idle step
+    ]
+
+    # Check if the TOP of the stack (leaf function) is an idle wait
+    # The function parameter is the leaf (top of stack)
+    if function:
+        for pattern in idle_patterns:
+            if pattern in function:
+                return True
+
+    # Also check first few frames of backtrace
+    if backtrace:
+        first_frames = backtrace.split('\n')[:3]
+        for frame in first_frames:
+            for pattern in idle_patterns:
+                if pattern in frame:
+                    return True
+
+    return False
+
+
+def is_gap_idle_period(before_func: str, before_bt: str, after_func: str, after_bt: str) -> bool:
+    """Determine if a gap between samples was an idle period vs a true hang.
+
+    A gap is considered an IDLE PERIOD (not a hang) if:
+    1. BOTH before and after samples show idle behavior (waiting for events)
+    2. OR the gap occurred during Core Animation idle commit (stepIdle)
+
+    A gap is a TRUE HANG if:
+    1. The sample AFTER the gap shows active work (SwiftUI, app code, etc.)
+    2. This indicates the main thread was blocked and then resumed doing work
+
+    Returns True if this was an idle period (should be filtered out).
+    """
+    before_idle = is_idle_backtrace(before_func, before_bt)
+    after_idle = is_idle_backtrace(after_func, after_bt)
+
+    # If both before and after are idle, this was definitely an idle period
+    if before_idle and after_idle:
+        return True
+
+    # If before was idle but after shows work, it might be a real hang
+    # (thread was waiting, then had to do blocking work)
+    # But we should check if the "work" is just run loop housekeeping
+    if before_idle and not after_idle:
+        # Check if after is just run loop observer callbacks (not real work)
+        if after_bt:
+            # These are run loop callbacks that happen between events
+            runloop_housekeeping = [
+                'stepTransactionFlush',
+                'objc_autoreleasePoolPop',
+                '__CFRunLoopDoObservers',
+                '__CFRunLoopDoBlocks',
+            ]
+            for pattern in runloop_housekeeping:
+                if pattern in (after_func or '') or pattern in after_bt:
+                    return True
+
+    return False
+
+
 def parse_time_profile(xml_path: str, hang_threshold_ms: float, stutter_threshold_ms: float) -> tuple:
     """Parse time profile XML and extract duration samples.
 
     Returns: (hangs, stutters, all_durations, main_thread_gaps)
-    - main_thread_gaps: list of (gap_ms, timestamp_ms) for gaps between main thread samples
+    - main_thread_gaps: list of (gap_ms, timestamp_ms, function, backtrace, is_idle)
+      where is_idle indicates if this was likely an idle period vs true hang
     """
     hangs = []
     stutters = []
@@ -125,10 +219,11 @@ def parse_time_profile(xml_path: str, hang_threshold_ms: float, stutter_threshol
         print(f"Warning: Could not parse XML: {e}", file=sys.stderr)
         return hangs, stutters, all_durations, []
 
-    # Build lookup table for referenced values (xctrace uses ref="id" for deduplication)
-    value_lookup = {}
-    # Also track thread info by id
-    thread_lookup = {}
+    # Build lookup tables for referenced values (xctrace uses ref="id" for deduplication)
+    value_lookup = {}      # id -> text value
+    thread_lookup = {}     # id -> thread fmt string
+    frame_lookup = {}      # id -> frame name
+    backtrace_lookup = {}  # id -> list of (name, ref) tuples for frames
 
     for elem in root.iter():
         elem_id = elem.get('id')
@@ -139,6 +234,17 @@ def parse_time_profile(xml_path: str, hang_threshold_ms: float, stutter_threshol
             fmt = elem.get('fmt')
             if fmt and elem.tag == 'thread':
                 thread_lookup[elem_id] = fmt
+            # Track frame names
+            if elem.tag == 'frame':
+                frame_lookup[elem_id] = elem.get('name', '?')
+            # Track backtraces with their frame refs
+            if elem.tag == 'backtrace':
+                frames = []
+                for frame in elem.findall('frame'):
+                    name = frame.get('name')
+                    ref = frame.get('ref')
+                    frames.append((name, ref))
+                backtrace_lookup[elem_id] = frames
 
     def get_element_value(elem):
         """Get element value, handling ref attributes for deduplication."""
@@ -164,6 +270,40 @@ def parse_time_profile(xml_path: str, hang_threshold_ms: float, stutter_threshol
         if ref and ref in thread_lookup:
             return 'Main Thread' in thread_lookup[ref]
         return False
+
+    def resolve_backtrace(bt_elem):
+        """Resolve a backtrace element to (function, backtrace_str)."""
+        if bt_elem is None:
+            return 'unknown', None
+
+        # Check if this is a reference to another backtrace
+        ref = bt_elem.get('ref')
+        if ref and ref in backtrace_lookup:
+            frame_data = backtrace_lookup[ref]
+        else:
+            # Parse inline frames
+            frame_data = []
+            for frame in bt_elem.findall('frame'):
+                name = frame.get('name')
+                fref = frame.get('ref')
+                frame_data.append((name, fref))
+
+        # Resolve frame names
+        resolved = []
+        for name, fref in frame_data:
+            if name:
+                resolved.append(name)
+            elif fref and fref in frame_lookup:
+                resolved.append(frame_lookup[fref])
+            else:
+                resolved.append('?')
+
+        if not resolved:
+            return 'unknown', None
+
+        function = resolved[0]
+        backtrace_str = '\n'.join(resolved[:10])
+        return function, backtrace_str
 
     # Parse xctrace export format - rows with child elements for data
     for row in root.iter('row'):
@@ -220,16 +360,10 @@ def parse_time_profile(xml_path: str, hang_threshold_ms: float, stutter_threshol
                 except ValueError:
                     pass
 
-        # Get function name from backtrace's first frame
+        # Get function name from backtrace's first frame (with ref resolution)
         backtrace_elem = row.find('.//backtrace')
         if backtrace_elem is not None:
-            first_frame = backtrace_elem.find('.//frame')
-            if first_frame is not None:
-                function = first_frame.get('name', 'unknown')
-            # Build backtrace string from frame names
-            frames = [f.get('name', '?') for f in backtrace_elem.findall('.//frame')]
-            if frames:
-                backtrace_str = '\n'.join(frames[:10])  # Top 10 frames
+            function, backtrace_str = resolve_backtrace(backtrace_elem)
 
         # Also check hang-type element for potential-hangs
         hang_type_elem = row.find('.//hang-type')
@@ -260,15 +394,18 @@ def parse_time_profile(xml_path: str, hang_threshold_ms: float, stutter_threshol
 
     # Calculate gaps between consecutive main thread samples
     # Large gaps indicate the main thread was blocked (not being sampled)
+    # We check BOTH before and after samples to distinguish idle vs real hangs
     main_thread_gaps = []
     main_thread_samples.sort(key=lambda x: x[0])  # Sort by timestamp
 
     for i in range(1, len(main_thread_samples)):
-        prev_ts = main_thread_samples[i-1][0]
-        curr_ts = main_thread_samples[i][0]
+        prev_ts, prev_func, prev_bt = main_thread_samples[i-1]
+        curr_ts, curr_func, curr_bt = main_thread_samples[i]
         gap = curr_ts - prev_ts
         if gap > 0:
-            main_thread_gaps.append((gap, curr_ts, main_thread_samples[i][1], main_thread_samples[i][2]))
+            # Use improved idle detection that considers both samples
+            is_idle = is_gap_idle_period(prev_func, prev_bt, curr_func, curr_bt)
+            main_thread_gaps.append((gap, curr_ts, curr_func, curr_bt, is_idle))
 
     return hangs, stutters, all_durations, main_thread_gaps
 
@@ -336,13 +473,24 @@ def analyze_trace(trace_path: str, hang_threshold_ms: float, stutter_threshold_m
 
     # Max duration: use the largest gap between main thread samples
     # This represents the longest period the main thread was unresponsive
-    # (gaps are: (gap_ms, timestamp_ms, function, backtrace))
-    if all_main_thread_gaps:
-        max_gap = max(all_main_thread_gaps, key=lambda x: x[0])
+    # (gaps are: (gap_ms, timestamp_ms, function, backtrace, is_idle))
+    #
+    # IMPORTANT: We filter out idle periods - these are NOT hangs.
+    # Only gaps where the thread resumed doing work (not idle wait) count as hangs.
+    non_idle_gaps = [g for g in all_main_thread_gaps if not g[4]]  # g[4] is is_idle
+    idle_gaps = [g for g in all_main_thread_gaps if g[4]]
+
+    if not quiet and idle_gaps:
+        significant_idle = [g for g in idle_gaps if g[0] >= hang_threshold_ms]
+        if significant_idle:
+            print(f"  Filtered out {len(significant_idle)} idle period(s) >= {hang_threshold_ms}ms", file=sys.stderr)
+
+    if non_idle_gaps:
+        max_gap = max(non_idle_gaps, key=lambda x: x[0])
         max_duration = max_gap[0]
 
-        # Create hang events from significant gaps
-        for gap_ms, ts, func, bt in all_main_thread_gaps:
+        # Create hang events from significant NON-IDLE gaps
+        for gap_ms, ts, func, bt, is_idle in non_idle_gaps:
             if gap_ms >= hang_threshold_ms:
                 event = HangEvent(
                     duration_ms=gap_ms,
@@ -363,6 +511,10 @@ def analyze_trace(trace_path: str, hang_threshold_ms: float, stutter_threshold_m
                 )
                 if event not in stutters:
                     stutters.append(event)
+    elif all_main_thread_gaps:
+        # All gaps were idle periods - use largest for max but no hangs
+        max_gap = max(all_main_thread_gaps, key=lambda x: x[0])
+        max_duration = max_gap[0]
     else:
         max_duration = max(all_durations) if all_durations else 0
 
