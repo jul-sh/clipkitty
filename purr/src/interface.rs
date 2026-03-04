@@ -293,17 +293,14 @@ pub struct MatchData {
     /// Snippet text with whitespace normalized, "…" prefix if Rust truncated from start, "…" suffix if Rust truncated from end
     pub text: String,
     /// Highlight ranges into `text`, adjusted for normalization and Rust's leading ellipsis prefix.
-    /// None = highlights not yet computed (lazy mode), Swift should display text without highlights.
-    pub highlights: Option<Vec<HighlightRange>>,
+    pub highlights: Vec<HighlightRange>,
     /// 1-indexed line number where the match occurs in the original content
     pub line_number: u64,
     /// Full-content highlights (not snippet-adjusted).
-    /// None = highlights not yet computed (lazy mode), call compute_highlights() to fetch.
     /// Used for preview pane to ensure consistent highlighting.
-    pub full_content_highlights: Option<Vec<HighlightRange>>,
+    pub full_content_highlights: Vec<HighlightRange>,
     /// Character offset (in full content) of the first highlight in the densest cluster.
     /// Used by Swift for preview pane auto-scrolling — same algorithm as snippet centering.
-    /// Only valid when full_content_highlights is Some.
     pub densest_highlight_start: u64,
 }
 
@@ -318,11 +315,13 @@ pub struct ItemMetadata {
     pub timestamp_unix: i64,
 }
 
-/// Search match: metadata + match context
+/// Search match: metadata + optional match context
+/// In lazy mode, match_data is None until compute_match_data is called.
 #[derive(Debug, Clone, uniffi::Record)]
 pub struct ItemMatch {
     pub item_metadata: ItemMetadata,
-    pub match_data: MatchData,
+    /// Match context data. None for lazy results - call compute_match_data to populate.
+    pub match_data: Option<MatchData>,
 }
 
 /// Search result container
@@ -370,14 +369,14 @@ pub trait ClipboardStoreApi: Send + Sync {
     // ─────────────────────────────────────────────────────────────────────────────
 
     /// Search for items. Empty query returns all recent items.
-    /// Returns results with lazy highlights (None) - call compute_highlights to get highlights.
+    /// Returns results with lazy match_data (None) - call compute_match_data to populate.
     async fn search(&self, query: String) -> Result<SearchResult, ClipKittyError>;
 
-    /// Compute highlights for multiple items given the search query.
+    /// Compute match data (snippet, highlights, line number) for multiple items.
     /// Called on-demand for visible items in the list view.
     /// Returns MatchData for each item in the same order as input IDs.
-    /// Missing items are returned as MatchData with empty highlights.
-    fn compute_highlights(&self, item_ids: Vec<i64>, query: String) -> Result<Vec<MatchData>, ClipKittyError>;
+    /// Missing items are returned as default MatchData.
+    fn compute_match_data(&self, item_ids: Vec<i64>, query: String) -> Result<Vec<MatchData>, ClipKittyError>;
 
     /// Fetch full items by IDs for preview pane
     fn fetch_by_ids(&self, item_ids: Vec<i64>) -> Result<Vec<ClipboardItem>, ClipKittyError>;

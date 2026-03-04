@@ -116,6 +116,11 @@ struct ContentView: View {
     /// Per-item cache of unsaved edited text. Cleared on window hide.
     @State private var pendingEdits: [Int64: String] = [:]
 
+    /// Prefetch buffer - how many items beyond visible to preload match_data for.
+    /// Set generously so users almost never see items without highlights.
+    /// Combined with 25 eager items from Rust, this should cover all visible scrolling.
+    private let matchDataPrefetchBuffer = 20
+
     enum FocusTarget: Hashable {
         case search
         case filterDropdown
@@ -748,6 +753,35 @@ struct ContentView: View {
         return itemIds.firstIndex(of: itemId)
     }
 
+    /// Called when an item row appears. Prefetches match_data for nearby items that don't have it.
+    private func onItemAppear(index: Int) {
+        // Calculate range to prefetch (visible + buffer in both directions)
+        let startIndex = max(0, index - matchDataPrefetchBuffer)
+        let endIndex = min(itemCount - 1, index + matchDataPrefetchBuffer)
+
+        guard startIndex <= endIndex else { return }
+
+        // Get item IDs in range that need match_data
+        let idsToLoad = (startIndex...endIndex).compactMap { idx -> Int64? in
+            guard let id = itemId(at: idx) else { return nil }
+            // Check if this item needs match_data
+            switch store.state {
+            case .results(_, let items, _):
+                if items.first(where: { $0.itemMetadata.itemId == id })?.matchData == nil {
+                    return id
+                }
+            default:
+                break
+            }
+            return nil
+        }
+
+        guard !idsToLoad.isEmpty else { return }
+
+        // Load match_data for these items
+        store.loadMatchDataForItems(itemIds: idsToLoad)
+    }
+
     // MARK: - Content
 
     @ViewBuilder
@@ -831,6 +865,9 @@ struct ContentView: View {
                     )
                     .equatable()
                     .accessibilityIdentifier("ItemRow_\(index)")
+                    .onAppear {
+                        onItemAppear(index: index)
+                    }
                     .listRowInsets(EdgeInsets(top: 2, leading: 0, bottom: 2, trailing: 0))
                     .listRowSeparator(.hidden)
                     .listRowBackground(Color.clear)
@@ -1993,9 +2030,9 @@ struct ItemRow: View, Equatable {
     }
 
     /// Highlights for display - passed directly from Rust (already adjusted for normalization)
-    /// Returns empty array if highlights are nil (lazy mode - not yet computed)
+    /// Returns empty array if matchData is nil (lazy mode - not yet computed)
     private var displayHighlights: [HighlightRange] {
-        matchData?.highlights.flatMap { $0 } ?? []
+        matchData?.highlights ?? []
     }
 
 

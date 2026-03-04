@@ -526,25 +526,10 @@ pub(crate) fn create_match_data(fuzzy_match: &FuzzyMatch) -> MatchData {
 
     MatchData {
         text,
-        highlights: Some(adjusted_highlights),
+        highlights: adjusted_highlights,
         line_number,
-        full_content_highlights: Some(full_content_highlights),
+        full_content_highlights,
         densest_highlight_start,
-    }
-}
-
-/// Create MatchData without highlights (lazy mode - highlights computed on-demand)
-pub(crate) fn create_lazy_match_data(content: &str) -> MatchData {
-    let max_len = SNIPPET_CONTEXT_CHARS * 2;
-    // Generate snippet without highlights - just take from start of content
-    let (text, _, _) = generate_snippet(content, &[], max_len);
-
-    MatchData {
-        text,
-        highlights: None,
-        line_number: 0,
-        full_content_highlights: None,
-        densest_highlight_start: 0,
     }
 }
 
@@ -553,27 +538,36 @@ pub(crate) fn create_lazy_match_data(content: &str) -> MatchData {
 pub(crate) fn create_item_match(item: &StoredItem, fuzzy_match: &FuzzyMatch) -> ItemMatch {
     ItemMatch {
         item_metadata: item.to_metadata(),
-        match_data: create_match_data(fuzzy_match),
+        match_data: Some(create_match_data(fuzzy_match)),
     }
 }
 
-/// Create ItemMatch without highlights (lazy mode)
+/// Create ItemMatch without match_data (lazy mode - computed on-demand via compute_match_data)
 pub(crate) fn create_lazy_item_match(item: &StoredItem) -> ItemMatch {
     ItemMatch {
         item_metadata: item.to_metadata(),
-        match_data: create_lazy_match_data(&item.content.text_content()),
+        match_data: None,
     }
 }
 
-/// Compute highlights for an item given a query.
-/// Used for on-demand highlight computation in lazy mode.
-pub(crate) fn compute_item_highlights(
+/// Compute match data (snippet, highlights, line number) for an item given a query.
+/// Used for on-demand computation in lazy mode.
+pub(crate) fn compute_item_match_data(
     content: &str,
     query: &str,
 ) -> MatchData {
     let trimmed = query.trim();
     if trimmed.is_empty() {
-        return create_lazy_match_data(content);
+        // No query - return default MatchData with snippet from content start
+        let max_len = SNIPPET_CONTEXT_CHARS * 2;
+        let (text, _, _) = generate_snippet(content, &[], max_len);
+        return MatchData {
+            text,
+            highlights: Vec::new(),
+            line_number: 0,
+            full_content_highlights: Vec::new(),
+            densest_highlight_start: 0,
+        };
     }
 
     let query_words_owned = tokenize_words(trimmed);
