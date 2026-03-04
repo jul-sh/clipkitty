@@ -87,7 +87,7 @@ let project = Project(
                 "SUPublicEDKey": "9VqfSPPY2Gr8QTYDLa99yJXAFWnHw5aybSbKaYDyCq0=",
                 "SUEnableAutomaticChecks": true,
                 "SUAutomaticallyUpdate": true,
-                "SUEnableInstallerLauncherService": false,
+                "SUEnableInstallerLauncherService": true,
             ]),
             sources: ["Sources/App/**"],
             resources: [
