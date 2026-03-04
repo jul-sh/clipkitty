@@ -463,7 +463,7 @@ struct ContentView: View {
         }
         editFocus = .idle
 
-        if AppSettings.shared.editsCreateNewItem {
+        if selectedItem?.itemMetadata.isPinned != true {
             Task {
                 let newItemId = await store.saveEditedText(text: editedText)
                 if newItemId > 0 {
