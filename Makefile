@@ -27,7 +27,7 @@ SIGNING_IDENTITY ?= $(shell security find-identity -v -p codesigning 2>/dev/null
 RUST_MARKER := .make/rust.marker
 RUST_LIB := Sources/ClipKittyRust/libpurr.a
 
-.PHONY: all clean rust rust-force generate build sign list-identities run test uitest rust-test
+.PHONY: all clean rust rust-force generate build sign list-identities run run-perf test uitest rust-test perf-test perf-db
 
 all: rust generate build
 
@@ -81,6 +81,23 @@ run: all
 	@echo "Opening $(APP_NAME)..."
 	@open "$(DERIVED_DATA)/Build/Products/$(CONFIGURATION)/$(APP_NAME).app"
 
+# Run with synthetic perf test database (150 large items)
+BUNDLE_ID := com.eviljuliette.clipkitty
+APP_SUPPORT := $(HOME)/Library/Containers/$(BUNDLE_ID)/Data/Library/Application Support/ClipKitty
+
+run-perf: all perf-db
+	@echo "Closing existing $(APP_NAME)..."
+	@pkill -9 $(APP_NAME) 2>/dev/null || true
+	@sleep 1
+	@echo "Setting up perf test database and index..."
+	@mkdir -p "$(APP_SUPPORT)"
+	@rm -f "$(APP_SUPPORT)/clipboard-screenshot.sqlite"*
+	@rm -rf "$(APP_SUPPORT)/tantivy_index_v3"
+	@cp distribution/SyntheticData_perf.sqlite "$(APP_SUPPORT)/clipboard-screenshot.sqlite"
+	@cp -r distribution/tantivy_index_v3 "$(APP_SUPPORT)/tantivy_index_v3"
+	@echo "Opening $(APP_NAME) with perf database..."
+	@open "$(DERIVED_DATA)/Build/Products/$(CONFIGURATION)/$(APP_NAME).app" --args --use-simulated-db
+
 clean:
 	@rm -rf .make DerivedData
 	@tuist clean 2>/dev/null || true
@@ -120,3 +137,14 @@ list-identities:
 	@echo ""
 	@echo "Set SIGNING_IDENTITY in your environment or pass to make:"
 	@echo "  make sign SIGNING_IDENTITY=\"Developer ID Application: Your Name (TEAMID)\""
+
+# Generate performance test database with large text items (uses native Rust)
+perf-db:
+	@echo "Generating performance test database..."
+	@$(NIX_SHELL) "cd purr && cargo run --release --bin generate-perf-db"
+
+# Run performance tests with Instruments tracing
+# Usage: make perf-test [PERF_ARGS="--skip-build --fail-on-hangs"]
+perf-test: all perf-db
+	@echo "Running performance tests with tracing..."
+	@./Scripts/run-perf-test.sh --skip-build $(PERF_ARGS)
