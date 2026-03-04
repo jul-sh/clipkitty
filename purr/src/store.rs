@@ -198,12 +198,13 @@ impl ClipboardStore {
         token: &CancellationToken,
         runtime: &tokio::runtime::Handle,
         filter: Option<&ContentTypeFilter>,
+        tag: Option<&str>,
     ) -> Result<Vec<ItemMatch>, ClipKittyError> {
         if token.is_cancelled() {
             return Err(ClipKittyError::Cancelled);
         }
 
-        let candidates = db.search_short_query(query, MAX_RESULTS, filter)?;
+        let candidates = db.search_short_query(query, MAX_RESULTS, filter, tag)?;
         if candidates.is_empty() {
             return Ok(Vec::new());
         }
@@ -238,14 +239,26 @@ impl ClipboardStore {
         token: &CancellationToken,
         runtime: &tokio::runtime::Handle,
         filter: Option<&ContentTypeFilter>,
+        tag: Option<&str>,
     ) -> Result<Vec<ItemMatch>, ClipKittyError> {
         if token.is_cancelled() {
             return Err(ClipKittyError::Cancelled);
         }
 
-        let fuzzy_matches = search::search_trigram(indexer, query, token)?;
+        let mut fuzzy_matches = search::search_trigram(indexer, query, token)?;
         if fuzzy_matches.is_empty() {
             return Ok(Vec::new());
+        }
+
+        // Pre-filter by tag before fetching full items
+        if let Some(t) = tag {
+            let ids: Vec<i64> = fuzzy_matches.iter().map(|m| m.id).collect();
+            let tagged_ids: std::collections::HashSet<i64> = db.filter_ids_by_tag(&ids, t)?
+                .into_iter().collect();
+            fuzzy_matches.retain(|m| tagged_ids.contains(&m.id));
+            if fuzzy_matches.is_empty() {
+                return Ok(Vec::new());
+            }
         }
 
         Self::fuzzy_matches_to_item_matches(db, fuzzy_matches, token, runtime, filter)
@@ -255,6 +268,27 @@ impl ClipboardStore {
     fn get_stored_item(&self, item_id: i64) -> Result<Option<StoredItem>, ClipKittyError> {
         let items = self.db.fetch_items_by_ids(&[item_id])?;
         Ok(items.into_iter().next())
+    }
+
+    /// Populate tags on ItemMatch results by batch-fetching from the database
+    fn populate_tags(&self, matches: &mut [ItemMatch]) {
+        let ids: Vec<i64> = matches.iter().map(|m| m.item_metadata.item_id).collect();
+        if let Ok(tags_map) = self.db.get_tags_for_ids(&ids) {
+            for m in matches.iter_mut() {
+                if let Some(tags) = tags_map.get(&m.item_metadata.item_id) {
+                    m.item_metadata.tags = tags.clone();
+                }
+            }
+        }
+    }
+
+    /// Populate tags on a single ClipboardItem's metadata
+    fn populate_item_tags(&self, item: &mut crate::interface::ClipboardItem) {
+        if let Ok(tags_map) = self.db.get_tags_for_ids(&[item.item_metadata.item_id]) {
+            if let Some(tags) = tags_map.get(&item.item_metadata.item_id) {
+                item.item_metadata.tags = tags.clone();
+            }
+        }
     }
 }
 
@@ -291,22 +325,24 @@ impl ClipboardStore {
 // Filtered search (not on trait, to avoid breaking foreign interface)
 #[uniffi::export]
 impl ClipboardStore {
-    /// Search with a content type filter.
-    /// When filter is All, delegates to the trait's search() method.
+    /// Search with a content type filter and optional tag filter.
+    /// When filter is All and tag is None, delegates to the trait's search() method.
     pub async fn search_filtered(
         &self,
         query: String,
         filter: ContentTypeFilter,
+        tag: Option<String>,
     ) -> Result<SearchResult, ClipKittyError> {
-        if filter == ContentTypeFilter::All {
+        if filter == ContentTypeFilter::All && tag.is_none() {
             return self.search(query).await;
         }
 
         let trimmed = query.trim();
+        let filter_opt = if filter == ContentTypeFilter::All { None } else { Some(&filter) };
 
-        // Empty query with filter: return recent items of that type
+        // Empty query with filter/tag: return recent items matching
         if trimmed.is_empty() {
-            let (items, total_count) = self.db.fetch_item_metadata(None, 1000, Some(&filter))?;
+            let (items, total_count) = self.db.fetch_item_metadata(None, 1000, filter_opt, tag.as_deref())?;
 
             let first_item = if let Some(first_metadata) = items.first() {
                 self.db
@@ -318,13 +354,20 @@ impl ClipboardStore {
                 None
             };
 
-            let matches: Vec<ItemMatch> = items
+            let mut matches: Vec<ItemMatch> = items
                 .into_iter()
                 .map(|metadata| ItemMatch {
                     item_metadata: metadata,
                     match_data: MatchData::default(),
                 })
                 .collect();
+
+            self.populate_tags(&mut matches);
+
+            let mut first_item = first_item;
+            if let Some(ref mut fi) = first_item {
+                self.populate_item_tags(fi);
+            }
 
             return Ok(SearchResult {
                 matches,
@@ -345,21 +388,25 @@ impl ClipboardStore {
         let query_owned = query.to_string();
         let trimmed_owned = trimmed.to_string();
         let token_clone = token.clone();
+        let tag_clone = tag.clone();
 
         let handle = runtime.spawn_blocking(move || {
+            let filter_opt = if filter == ContentTypeFilter::All { None } else { Some(&filter) };
             if trimmed_owned.len() < MIN_TRIGRAM_QUERY_LEN {
-                let matches = Self::search_short_query_sync(&db, &trimmed_owned, &token_clone, &runtime_for_closure, Some(&filter))?;
+                let matches = Self::search_short_query_sync(&db, &trimmed_owned, &token_clone, &runtime_for_closure, filter_opt, tag_clone.as_deref())?;
                 let total_count = matches.len() as u64;
                 Ok((matches, total_count))
             } else {
-                let matches = Self::search_trigram_query_sync(&db, &indexer, &query_owned, &token_clone, &runtime_for_closure, Some(&filter))?;
+                let matches = Self::search_trigram_query_sync(&db, &indexer, &query_owned, &token_clone, &runtime_for_closure, filter_opt, tag_clone.as_deref())?;
                 let total_count = matches.len() as u64;
                 Ok((matches, total_count))
             }
         });
 
         match handle.await {
-            Ok(Ok((matches, total_count))) => {
+            Ok(Ok((mut matches, total_count))) => {
+                self.populate_tags(&mut matches);
+
                 let first_item = if let Some(first_match) = matches.first() {
                     let id = first_match.item_metadata.item_id;
                     self.db
@@ -370,6 +417,11 @@ impl ClipboardStore {
                 } else {
                     None
                 };
+
+                let mut first_item = first_item;
+                if let Some(ref mut fi) = first_item {
+                    self.populate_item_tags(fi);
+                }
 
                 Ok(SearchResult { matches, total_count, first_item })
             }
@@ -447,10 +499,10 @@ impl ClipboardStoreApi for ClipboardStore {
 
         // Empty query: return recent items with empty MatchData (no highlights)
         if trimmed.is_empty() {
-            let (items, total_count) = self.db.fetch_item_metadata(None, 1000, None)?;
+            let (items, total_count) = self.db.fetch_item_metadata(None, 1000, None, None)?;
 
             // Fetch first item's full content for preview pane
-            let first_item = if let Some(first_metadata) = items.first() {
+            let mut first_item = if let Some(first_metadata) = items.first() {
                 self.db
                     .fetch_items_by_ids(&[first_metadata.item_id])?
                     .into_iter()
@@ -460,13 +512,18 @@ impl ClipboardStoreApi for ClipboardStore {
                 None
             };
 
-            let matches: Vec<ItemMatch> = items
+            let mut matches: Vec<ItemMatch> = items
                 .into_iter()
                 .map(|metadata| ItemMatch {
                     item_metadata: metadata,
                     match_data: MatchData::default(),
                 })
                 .collect();
+
+            self.populate_tags(&mut matches);
+            if let Some(ref mut fi) = first_item {
+                self.populate_item_tags(fi);
+            }
 
             return Ok(SearchResult {
                 matches,
@@ -496,11 +553,11 @@ impl ClipboardStoreApi for ClipboardStore {
         // because UniFFI doesn't provide a tokio runtime context
         let handle = runtime.spawn_blocking(move || {
             if trimmed_owned.len() < MIN_TRIGRAM_QUERY_LEN {
-                let matches = Self::search_short_query_sync(&db, &trimmed_owned, &token_clone, &runtime_for_closure, None)?;
+                let matches = Self::search_short_query_sync(&db, &trimmed_owned, &token_clone, &runtime_for_closure, None, None)?;
                 let total_count = matches.len() as u64;
                 Ok((matches, total_count))
             } else {
-                let matches = Self::search_trigram_query_sync(&db, &indexer, &query_owned, &token_clone, &runtime_for_closure, None)?;
+                let matches = Self::search_trigram_query_sync(&db, &indexer, &query_owned, &token_clone, &runtime_for_closure, None, None)?;
                 let total_count = matches.len() as u64;
                 Ok((matches, total_count))
             }
@@ -508,10 +565,11 @@ impl ClipboardStoreApi for ClipboardStore {
 
         // Await the result
         match handle.await {
-            Ok(Ok((matches, total_count))) => {
+            Ok(Ok((mut matches, total_count))) => {
+                self.populate_tags(&mut matches);
 
                 // Fetch first item's full content for preview pane
-                let first_item = if let Some(first_match) = matches.first() {
+                let mut first_item = if let Some(first_match) = matches.first() {
                     let id = first_match.item_metadata.item_id;
                     self.db
                         .fetch_items_by_ids(&[id])?
@@ -521,6 +579,10 @@ impl ClipboardStoreApi for ClipboardStore {
                 } else {
                     None
                 };
+
+                if let Some(ref mut fi) = first_item {
+                    self.populate_item_tags(fi);
+                }
 
                 Ok(SearchResult { matches, total_count, first_item })
             }
@@ -535,10 +597,13 @@ impl ClipboardStoreApi for ClipboardStore {
     /// Fetch full items by IDs for preview pane
     fn fetch_by_ids(&self, item_ids: Vec<i64>) -> Result<Vec<ClipboardItem>, ClipKittyError> {
         let stored_items = self.db.fetch_items_by_ids(&item_ids)?;
-        let items: Vec<ClipboardItem> = stored_items
+        let mut items: Vec<ClipboardItem> = stored_items
             .into_iter()
             .map(|item| item.to_clipboard_item())
             .collect();
+        for item in &mut items {
+            self.populate_item_tags(item);
+        }
         Ok(items)
     }
 
@@ -670,6 +735,23 @@ impl ClipboardStoreApi for ClipboardStore {
     }
 
     /// Update image description and re-index
+    fn update_text(
+        &self,
+        item_id: i64,
+        text: String,
+    ) -> Result<(), ClipKittyError> {
+        let content_hash = StoredItem::hash_string(&text);
+        let now = Utc::now();
+
+        self.db.update_text(item_id, &text, &content_hash, now)?;
+
+        // Re-index with new text and timestamp
+        self.indexer.add_document(item_id, &text, now.timestamp())?;
+        self.indexer.commit()?;
+
+        Ok(())
+    }
+
     fn update_image_description(
         &self,
         item_id: i64,
@@ -699,6 +781,20 @@ impl ClipboardStoreApi for ClipboardStore {
             self.indexer.commit()?;
         }
 
+        Ok(())
+    }
+
+    // ─────────────────────────────────────────────────────────────────────────────
+    // Tag Operations
+    // ─────────────────────────────────────────────────────────────────────────────
+
+    fn add_tag(&self, item_id: i64, tag: String) -> Result<(), ClipKittyError> {
+        self.db.add_tag(item_id, &tag)?;
+        Ok(())
+    }
+
+    fn remove_tag(&self, item_id: i64, tag: String) -> Result<(), ClipKittyError> {
+        self.db.remove_tag(item_id, &tag)?;
         Ok(())
     }
 
@@ -936,6 +1032,7 @@ mod tests {
             &token,
             &runtime_handle,
             None,
+            None,
         );
         assert!(matches!(result, Err(crate::interface::ClipKittyError::Cancelled)));
 
@@ -946,6 +1043,7 @@ mod tests {
             "Hello",
             &token,
             &runtime_handle,
+            None,
             None,
         );
         assert!(matches!(result, Err(crate::interface::ClipKittyError::Cancelled)));
@@ -1344,12 +1442,12 @@ mod tests {
         assert_eq!(all.matches.len(), 2);
 
         // Files filter should return only the file
-        let files = store.search_filtered("".to_string(), ContentTypeFilter::Files).await.unwrap();
+        let files = store.search_filtered("".to_string(), ContentTypeFilter::Files, None).await.unwrap();
         assert_eq!(files.matches.len(), 1);
         assert!(files.matches[0].item_metadata.snippet.contains("test.pdf"));
 
         // Text filter should return only the text
-        let texts = store.search_filtered("".to_string(), ContentTypeFilter::Text).await.unwrap();
+        let texts = store.search_filtered("".to_string(), ContentTypeFilter::Text, None).await.unwrap();
         assert_eq!(texts.matches.len(), 1);
         assert!(texts.matches[0].item_metadata.snippet.contains("Hello World"));
     }
@@ -1544,7 +1642,7 @@ mod tests {
             None,
         ).unwrap();
 
-        let texts = store.search_filtered("".to_string(), ContentTypeFilter::Text).await.unwrap();
+        let texts = store.search_filtered("".to_string(), ContentTypeFilter::Text, None).await.unwrap();
         assert_eq!(texts.matches.len(), 1);
         assert!(texts.matches[0].item_metadata.snippet.contains("plain text"));
     }
@@ -1566,7 +1664,7 @@ mod tests {
             None,
         ).unwrap();
 
-        let files = store.search_filtered("".to_string(), ContentTypeFilter::Files).await.unwrap();
+        let files = store.search_filtered("".to_string(), ContentTypeFilter::Files, None).await.unwrap();
         assert_eq!(files.matches.len(), 1);
         assert!(files.matches[0].item_metadata.snippet.contains("doc.pdf"));
     }
@@ -1827,7 +1925,7 @@ mod tests {
         ).unwrap();
 
         // Both contain "project" but filter should isolate files
-        let result = store.search_filtered("project".to_string(), ContentTypeFilter::Files).await.unwrap();
+        let result = store.search_filtered("project".to_string(), ContentTypeFilter::Files, None).await.unwrap();
         assert_eq!(result.matches.len(), 1, "Only file should match");
         assert!(result.matches[0].item_metadata.snippet.contains("project-design"));
     }
@@ -1849,7 +1947,7 @@ mod tests {
             None,
         ).unwrap();
 
-        let result = store.search_filtered("budget".to_string(), ContentTypeFilter::Text).await.unwrap();
+        let result = store.search_filtered("budget".to_string(), ContentTypeFilter::Text, None).await.unwrap();
         assert_eq!(result.matches.len(), 1, "Only text should match");
         assert!(result.matches[0].item_metadata.snippet.contains("budget spreadsheet"));
     }
@@ -1939,22 +2037,22 @@ mod tests {
         assert_eq!(all.matches.len(), 5, "All 5 items should be present");
 
         // Files filter
-        let files = store.search_filtered("".to_string(), ContentTypeFilter::Files).await.unwrap();
+        let files = store.search_filtered("".to_string(), ContentTypeFilter::Files, None).await.unwrap();
         assert_eq!(files.matches.len(), 1);
         assert!(files.matches[0].item_metadata.snippet.contains("doc.pdf"));
 
         // Colors filter
-        let colors = store.search_filtered("".to_string(), ContentTypeFilter::Colors).await.unwrap();
+        let colors = store.search_filtered("".to_string(), ContentTypeFilter::Colors, None).await.unwrap();
         assert_eq!(colors.matches.len(), 1);
         assert!(colors.matches[0].item_metadata.snippet.contains("FF0000"));
 
         // Links filter
-        let links = store.search_filtered("".to_string(), ContentTypeFilter::Links).await.unwrap();
+        let links = store.search_filtered("".to_string(), ContentTypeFilter::Links, None).await.unwrap();
         assert_eq!(links.matches.len(), 1);
         assert!(links.matches[0].item_metadata.snippet.contains("example.com"));
 
         // Text filter
-        let texts = store.search_filtered("".to_string(), ContentTypeFilter::Text).await.unwrap();
+        let texts = store.search_filtered("".to_string(), ContentTypeFilter::Text, None).await.unwrap();
         assert!(texts.matches.len() >= 2, "Text filter should include text items, got {}", texts.matches.len());
     }
 
@@ -2051,7 +2149,7 @@ mod tests {
             "com.apple.disk-image-udif".to_string(), vec![3], None, None, None).unwrap();
 
         // All should appear in Files filter
-        let files = store.search_filtered("".to_string(), ContentTypeFilter::Files).await.unwrap();
+        let files = store.search_filtered("".to_string(), ContentTypeFilter::Files, None).await.unwrap();
         assert_eq!(files.matches.len(), 3);
 
         // Each searchable by name
@@ -2121,12 +2219,12 @@ mod tests {
         ).unwrap();
 
         // Short query "do" with Files filter
-        let result = store.search_filtered("do".to_string(), ContentTypeFilter::Files).await.unwrap();
+        let result = store.search_filtered("do".to_string(), ContentTypeFilter::Files, None).await.unwrap();
         assert_eq!(result.matches.len(), 1, "Only file starting with 'do' should match");
         assert!(result.matches[0].item_metadata.snippet.contains("docs.txt"));
 
         // Short query "do" with Text filter
-        let result = store.search_filtered("do".to_string(), ContentTypeFilter::Text).await.unwrap();
+        let result = store.search_filtered("do".to_string(), ContentTypeFilter::Text, None).await.unwrap();
         assert_eq!(result.matches.len(), 1, "Only text starting with 'do' should match");
         assert!(result.matches[0].item_metadata.snippet.contains("do something"));
     }
@@ -2218,11 +2316,11 @@ mod tests {
         let all = store.search("".to_string()).await.unwrap();
         assert_eq!(all.total_count, 8);
 
-        let files = store.search_filtered("".to_string(), ContentTypeFilter::Files).await.unwrap();
+        let files = store.search_filtered("".to_string(), ContentTypeFilter::Files, None).await.unwrap();
         assert_eq!(files.total_count, 3, "total_count should be 3 for files filter");
         assert_eq!(files.matches.len(), 3);
 
-        let texts = store.search_filtered("".to_string(), ContentTypeFilter::Text).await.unwrap();
+        let texts = store.search_filtered("".to_string(), ContentTypeFilter::Text, None).await.unwrap();
         assert_eq!(texts.total_count, 5, "total_count should be 5 for text filter");
         assert_eq!(texts.matches.len(), 5);
     }
