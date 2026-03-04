@@ -1,0 +1,230 @@
+name: Performance Tests
+
+on:
+  # Run on PRs to catch regressions before merge
+  pull_request:
+    branches: [main, release]
+  # Manual trigger for on-demand testing
+  workflow_dispatch:
+    inputs:
+      hang_threshold:
+        description: 'Hang threshold in ms'
+        required: false
+        default: '250'
+      fail_on_hangs:
+        description: 'Fail workflow if hangs detected'
+        required: false
+        default: 'true'
+        type: boolean
+
+permissions:
+  contents: read
+  pull-requests: write
+
+jobs:
+  perf-test:
+    name: Performance Regression Test
+    runs-on: macos-26
+    timeout-minutes: 30
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+        with:
+          lfs: true
+
+      - name: Decrypt secrets
+        id: secrets
+        run: |
+          brew install age
+          echo "$AGE_SECRET_KEY" > /tmp/age-key.txt
+          chmod 600 /tmp/age-key.txt
+          for f in secrets/*.age; do
+            name=$(basename "$f" .age)
+            value=$(age -d -i /tmp/age-key.txt "$f")
+            echo "::add-mask::$value"
+            {
+              echo "${name}<<AGEDELIM"
+              echo "$value"
+              echo "AGEDELIM"
+            } >> "$GITHUB_OUTPUT"
+          done
+          rm -f /tmp/age-key.txt
+        env:
+          AGE_SECRET_KEY: ${{ secrets.AGE_SECRET_KEY }}
+
+      - name: Setup Swift
+        uses: swift-actions/setup-swift@v2
+        with:
+          swift-version: "6.2"
+
+      - name: Install Apple Certificate
+        uses: apple-actions/import-codesign-certs@v3
+        with:
+          p12-file-base64: ${{ steps.secrets.outputs.MACOS_P12_BASE64 }}
+          p12-password: ${{ steps.secrets.outputs.MACOS_P12_PASSWORD }}
+
+      - name: Install Nix
+        uses: DeterminateSystems/nix-installer-action@main
+
+      - name: Install Dependencies
+        run: |
+          brew tap tuist/tuist
+          brew install --formula tuist
+
+      - name: Build Rust Core
+        run: make rust
+
+      - name: Generate Xcode Project
+        run: make generate
+
+      - name: Build App (Release)
+        run: make build CONFIGURATION=Release
+
+      - name: Generate Performance Database
+        run: |
+          # Use native Rust code to ensure schema compatibility
+          ./Scripts/run-in-nix.sh -c "cd purr && cargo run --release --bin generate-perf-db"
+
+      - name: Run Performance Tests
+        id: perf-test
+        run: |
+          HANG_THRESHOLD="${{ inputs.hang_threshold || '250' }}"
+          FAIL_FLAG=""
+          if [ "${{ inputs.fail_on_hangs }}" = "true" ] || [ -z "${{ inputs.fail_on_hangs }}" ]; then
+            FAIL_FLAG="--fail-on-hangs"
+          fi
+
+          mkdir -p perf_traces
+
+          # Run performance tests with tracing
+          ./Scripts/run-perf-test.sh \
+            --skip-build \
+            --skip-db-gen \
+            --hang-threshold "$HANG_THRESHOLD" \
+            $FAIL_FLAG \
+            --output perf_traces \
+            2>&1 | tee perf_traces/full_output.log
+
+          # Find the latest report
+          LATEST_REPORT=$(ls -t perf_traces/report_*.json 2>/dev/null | head -1)
+          if [ -n "$LATEST_REPORT" ] && [ -f "$LATEST_REPORT" ]; then
+            echo "report_path=$LATEST_REPORT" >> "$GITHUB_OUTPUT"
+            echo "Found report: $LATEST_REPORT"
+            cat "$LATEST_REPORT"
+
+            # Extract key metrics for summary
+            HANG_COUNT=$(python3 -c "import json; print(json.load(open('$LATEST_REPORT'))['hang_count'])" 2>/dev/null || echo "0")
+            STUTTER_COUNT=$(python3 -c "import json; print(json.load(open('$LATEST_REPORT'))['stutter_count'])" 2>/dev/null || echo "0")
+            MAX_DURATION=$(python3 -c "import json; print(json.load(open('$LATEST_REPORT'))['max_duration_ms'])" 2>/dev/null || echo "0")
+
+            echo "hang_count=$HANG_COUNT" >> "$GITHUB_OUTPUT"
+            echo "stutter_count=$STUTTER_COUNT" >> "$GITHUB_OUTPUT"
+            echo "max_duration=$MAX_DURATION" >> "$GITHUB_OUTPUT"
+          else
+            echo "No report found, setting defaults"
+            echo "hang_count=0" >> "$GITHUB_OUTPUT"
+            echo "stutter_count=0" >> "$GITHUB_OUTPUT"
+            echo "max_duration=0" >> "$GITHUB_OUTPUT"
+          fi
+
+      - name: Upload Trace Artifacts
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: performance-traces
+          path: |
+            perf_traces/*.trace
+            perf_traces/*.json
+            perf_traces/*.log
+          retention-days: 14
+
+      - name: Comment PR with Results
+        if: github.event_name == 'pull_request' && always()
+        uses: actions/github-script@v7
+        with:
+          script: |
+            const fs = require('fs');
+
+            let reportPath = '${{ steps.perf-test.outputs.report_path }}';
+            let hangCount = '${{ steps.perf-test.outputs.hang_count }}' || '?';
+            let stutterCount = '${{ steps.perf-test.outputs.stutter_count }}' || '?';
+            let maxDuration = '${{ steps.perf-test.outputs.max_duration }}' || '?';
+
+            let status = hangCount === '0' ? '✅' : '❌';
+            let statusText = hangCount === '0'
+              ? 'No performance regressions detected'
+              : `**Performance regression detected!** ${hangCount} hang(s) found`;
+
+            const body = `## ${status} Performance Test Results
+
+            ${statusText}
+
+            | Metric | Value |
+            |--------|-------|
+            | Hangs (≥250ms) | ${hangCount} |
+            | Stutters (100-250ms) | ${stutterCount} |
+            | Max duration | ${maxDuration}ms |
+
+            <details>
+            <summary>What do these metrics mean?</summary>
+
+            - **Hangs**: Main thread blocked ≥250ms (Apple's definition). These cause visible UI freezing.
+            - **Stutters**: Blocking between 100-250ms. These can cause dropped frames and janky scrolling.
+            - **Max duration**: The longest single main thread block detected.
+
+            </details>
+
+            [Download trace artifacts](https://github.com/${{ github.repository }}/actions/runs/${{ github.run_id }})
+
+            ---
+            *Triggered by rapid typing test in search field with large text items.*
+            `;
+
+            // Find and update existing comment or create new one
+            const { data: comments } = await github.rest.issues.listComments({
+              owner: context.repo.owner,
+              repo: context.repo.repo,
+              issue_number: context.issue.number,
+            });
+
+            const botComment = comments.find(c =>
+              c.user.type === 'Bot' &&
+              c.body.includes('Performance Test Results')
+            );
+
+            if (botComment) {
+              await github.rest.issues.updateComment({
+                owner: context.repo.owner,
+                repo: context.repo.repo,
+                comment_id: botComment.id,
+                body: body
+              });
+            } else {
+              await github.rest.issues.createComment({
+                owner: context.repo.owner,
+                repo: context.repo.repo,
+                issue_number: context.issue.number,
+                body: body
+              });
+            }
+
+      - name: Summary
+        if: always()
+        run: |
+          echo "## Performance Test Summary" >> "$GITHUB_STEP_SUMMARY"
+          echo "" >> "$GITHUB_STEP_SUMMARY"
+
+          HANG_COUNT="${{ steps.perf-test.outputs.hang_count }}"
+          if [ "$HANG_COUNT" = "0" ]; then
+            echo "✅ **No hangs detected**" >> "$GITHUB_STEP_SUMMARY"
+          else
+            echo "❌ **${HANG_COUNT} hang(s) detected**" >> "$GITHUB_STEP_SUMMARY"
+          fi
+
+          echo "" >> "$GITHUB_STEP_SUMMARY"
+          echo "| Metric | Value |" >> "$GITHUB_STEP_SUMMARY"
+          echo "|--------|-------|" >> "$GITHUB_STEP_SUMMARY"
+          echo "| Hangs | ${{ steps.perf-test.outputs.hang_count }} |" >> "$GITHUB_STEP_SUMMARY"
+          echo "| Stutters | ${{ steps.perf-test.outputs.stutter_count }} |" >> "$GITHUB_STEP_SUMMARY"
+          echo "| Max duration | ${{ steps.perf-test.outputs.max_duration }}ms |" >> "$GITHUB_STEP_SUMMARY"

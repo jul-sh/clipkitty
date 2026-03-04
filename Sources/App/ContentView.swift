@@ -3,6 +3,58 @@ import AppKit
 import ClipKittyRust
 import UniformTypeIdentifiers
 
+// MARK: - Icon Cache
+
+/// Thread-safe cache for app icons to avoid blocking main thread on NSWorkspace.icon calls.
+/// Icons are cached by bundle ID since app icons rarely change.
+@MainActor
+private final class AppIconCache {
+    static let shared = AppIconCache()
+
+    private var iconsByBundleID: [String: NSImage] = [:]
+    private var iconsByPath: [String: NSImage] = [:]
+    private var iconsByUTType: [String: NSImage] = [:]
+
+    private init() {}
+
+    /// Get cached icon for bundle ID, loading synchronously only on cache miss.
+    /// After first load, subsequent calls are O(1) dictionary lookups.
+    func icon(forBundleID bundleID: String) -> NSImage? {
+        if let cached = iconsByBundleID[bundleID] {
+            return cached
+        }
+
+        // Cache miss - load and cache
+        guard let appURL = NSWorkspace.shared.urlForApplication(withBundleIdentifier: bundleID) else {
+            return nil
+        }
+        let icon = NSWorkspace.shared.icon(forFile: appURL.path)
+        iconsByBundleID[bundleID] = icon
+        return icon
+    }
+
+    /// Get cached icon for file path (used for file previews)
+    func icon(forFile path: String) -> NSImage {
+        if let cached = iconsByPath[path] {
+            return cached
+        }
+        let icon = NSWorkspace.shared.icon(forFile: path)
+        iconsByPath[path] = icon
+        return icon
+    }
+
+    /// Get cached icon for UTType (used for generic type icons)
+    func icon(for utType: UTType) -> NSImage {
+        let key = utType.identifier
+        if let cached = iconsByUTType[key] {
+            return cached
+        }
+        let icon = NSWorkspace.shared.icon(for: utType)
+        iconsByUTType[key] = icon
+        return icon
+    }
+}
+
 private enum SpinnerState: Equatable {
     case idle
     case debouncing(task: Task<Void, Never>)
@@ -960,8 +1012,8 @@ struct ContentView: View {
                 if let app = item.itemMetadata.sourceApp {
                     HStack(spacing: 4) {
                         if let bundleID = item.itemMetadata.sourceAppBundleId,
-                           let appURL = NSWorkspace.shared.urlForApplication(withBundleIdentifier: bundleID) {
-                            Image(nsImage: NSWorkspace.shared.icon(forFile: appURL.path))
+                           let icon = AppIconCache.shared.icon(forBundleID: bundleID) {
+                            Image(nsImage: icon)
                                 .resizable()
                                 .frame(width: 14, height: 14)
                         } else {
@@ -1296,7 +1348,7 @@ struct FilePreviewView: View {
 
     private func fileRow(_ file: FileEntry) -> some View {
         HStack(spacing: 12) {
-            Image(nsImage: NSWorkspace.shared.icon(forFile: file.path))
+            Image(nsImage: AppIconCache.shared.icon(forFile: file.path))
                 .resizable()
                 .frame(width: 40, height: 40)
 
@@ -1990,14 +2042,14 @@ struct ItemRow: View, Equatable {
                     case .symbol(let iconType):
                         if case .link = iconType,
                            let browserURL = NSWorkspace.shared.urlForApplication(toOpen: URL(string: "https://")!) {
-                            Image(nsImage: NSWorkspace.shared.icon(forFile: browserURL.path))
+                            Image(nsImage: AppIconCache.shared.icon(forFile: browserURL.path))
                                 .resizable()
                         } else if case .file = iconType,
-                                  let finderURL = NSWorkspace.shared.urlForApplication(withBundleIdentifier: "com.apple.finder") {
-                            Image(nsImage: NSWorkspace.shared.icon(forFile: finderURL.path))
+                                  let finderIcon = AppIconCache.shared.icon(forBundleID: "com.apple.finder") {
+                            Image(nsImage: finderIcon)
                                 .resizable()
                         } else {
-                            Image(nsImage: NSWorkspace.shared.icon(for: iconType.utType))
+                            Image(nsImage: AppIconCache.shared.icon(for: iconType.utType))
                                 .resizable()
                         }
                     }
@@ -2008,7 +2060,7 @@ struct ItemRow: View, Equatable {
                 // Badge: Source app icon
                 // Show for symbols (except pure link icons) and thumbnails (images, links with images)
                 if let bundleID = metadata.sourceAppBundleId,
-                   let appURL = NSWorkspace.shared.urlForApplication(withBundleIdentifier: bundleID) {
+                   let icon = AppIconCache.shared.icon(forBundleID: bundleID) {
                     // Skip badge for symbol links/files (app icon is already shown)
                     let showBadge: Bool = {
                         switch metadata.icon {
@@ -2020,7 +2072,7 @@ struct ItemRow: View, Equatable {
                     }()
 
                     if showBadge {
-                        Image(nsImage: NSWorkspace.shared.icon(forFile: appURL.path))
+                        Image(nsImage: icon)
                             .resizable()
                             .frame(width: 22, height: 22)
                             .clipShape(RoundedRectangle(cornerRadius: 3))
