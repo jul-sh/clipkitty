@@ -61,124 +61,195 @@ class AnalysisReport:
     passed: bool
 
 
-def export_trace_data(trace_path: str, output_dir: str, quiet: bool = False) -> Optional[str]:
-    """Export trace data to XML using xctrace."""
-    toc_path = os.path.join(output_dir, "toc.xml")
-    time_profile_path = os.path.join(output_dir, "time_profile.xml")
+def export_trace_data(trace_path: str, output_dir: str, quiet: bool = False) -> list:
+    """Export trace data to XML using xctrace. Returns list of exported file paths."""
+    exported_files = []
 
     # First, export table of contents to understand trace structure
     if not quiet:
-        print(f"Exporting trace table of contents...", file=sys.stderr)
+        print(f"Exporting trace data...", file=sys.stderr)
+
+    # Export potential-hangs table (direct hang detection by Instruments)
+    hangs_path = os.path.join(output_dir, "potential_hangs.xml")
     result = subprocess.run(
-        ["xcrun", "xctrace", "export", "--input", trace_path, "--toc", "--output", toc_path],
+        ["xcrun", "xctrace", "export", "--input", trace_path,
+         "--xpath", '/trace-toc/run[@number="1"]/data/table[@schema="potential-hangs"]',
+         "--output", hangs_path],
         capture_output=True,
         text=True
     )
+    if result.returncode == 0 and os.path.exists(hangs_path):
+        file_size = os.path.getsize(hangs_path)
+        if file_size > 100:
+            if not quiet:
+                print(f"  Exported potential-hangs: {file_size} bytes", file=sys.stderr)
+            exported_files.append(hangs_path)
 
-    if result.returncode != 0:
-        print(f"Warning: Failed to export TOC: {result.stderr}", file=sys.stderr)
-
-    # Try to export time profile data
-    if not quiet:
-        print(f"Exporting time profile data...", file=sys.stderr)
-
-    # Try different XPath expressions for different Instruments templates
-    xpaths = [
-        '/trace-toc/run[@number="1"]/data/table[@schema="time-profile"]',
-        '/trace-toc/run[@number="1"]/tracks/track/table[@schema="time-profile"]',
-        '/trace-toc/run/data/table',
-    ]
-
-    for xpath in xpaths:
-        result = subprocess.run(
-            ["xcrun", "xctrace", "export", "--input", trace_path, "--xpath", xpath, "--output", time_profile_path],
-            capture_output=True,
-            text=True
-        )
-
-        if result.returncode == 0 and os.path.exists(time_profile_path):
-            file_size = os.path.getsize(time_profile_path)
-            if file_size > 100:  # Non-empty file
-                if not quiet:
-                    print(f"  Exported {file_size} bytes using xpath: {xpath}", file=sys.stderr)
-                return time_profile_path
-
-    # If time profile export failed, try exporting all data
-    if not quiet:
-        print("Time profile export failed, trying generic export...", file=sys.stderr)
-    all_data_path = os.path.join(output_dir, "all_data.xml")
+    # Export time-profile table (sample weights for analysis)
+    time_profile_path = os.path.join(output_dir, "time_profile.xml")
     result = subprocess.run(
-        ["xcrun", "xctrace", "export", "--input", trace_path, "--output", all_data_path],
+        ["xcrun", "xctrace", "export", "--input", trace_path,
+         "--xpath", '/trace-toc/run[@number="1"]/data/table[@schema="time-profile"]',
+         "--output", time_profile_path],
         capture_output=True,
         text=True
     )
+    if result.returncode == 0 and os.path.exists(time_profile_path):
+        file_size = os.path.getsize(time_profile_path)
+        if file_size > 100:
+            if not quiet:
+                print(f"  Exported time-profile: {file_size} bytes", file=sys.stderr)
+            exported_files.append(time_profile_path)
 
-    if result.returncode == 0 and os.path.exists(all_data_path):
-        return all_data_path
+    if not exported_files and not quiet:
+        print("Warning: No trace data could be exported", file=sys.stderr)
 
-    print(f"Error: Could not export trace data: {result.stderr}", file=sys.stderr)
-    return None
+    return exported_files
 
 
 def parse_time_profile(xml_path: str, hang_threshold_ms: float, stutter_threshold_ms: float) -> tuple:
-    """Parse time profile XML and extract duration samples."""
+    """Parse time profile XML and extract duration samples.
+
+    Returns: (hangs, stutters, all_durations, main_thread_gaps)
+    - main_thread_gaps: list of (gap_ms, timestamp_ms) for gaps between main thread samples
+    """
     hangs = []
     stutters = []
     all_durations = []
+    main_thread_samples = []  # (timestamp_ms, function, backtrace)
 
     try:
         tree = ET.parse(xml_path)
         root = tree.getroot()
     except ET.ParseError as e:
         print(f"Warning: Could not parse XML: {e}", file=sys.stderr)
-        return hangs, stutters, all_durations
+        return hangs, stutters, all_durations, []
 
-    # Look for duration information in various XML structures
-    # The exact structure depends on Instruments template and version
+    # Build lookup table for referenced values (xctrace uses ref="id" for deduplication)
+    value_lookup = {}
+    # Also track thread info by id
+    thread_lookup = {}
 
-    # Try finding rows with duration/weight attributes
-    for row in root.iter():
-        # Check various attribute names that might contain duration info
+    for elem in root.iter():
+        elem_id = elem.get('id')
+        if elem_id:
+            if elem.text:
+                value_lookup[elem_id] = elem.text
+            # Track thread format strings
+            fmt = elem.get('fmt')
+            if fmt and elem.tag == 'thread':
+                thread_lookup[elem_id] = fmt
+
+    def get_element_value(elem):
+        """Get element value, handling ref attributes for deduplication."""
+        if elem is None:
+            return None
+        # Direct value
+        if elem.text:
+            return elem.text
+        # Reference to another element
+        ref = elem.get('ref')
+        if ref and ref in value_lookup:
+            return value_lookup[ref]
+        return None
+
+    def is_main_thread(thread_elem):
+        """Check if this is the main thread."""
+        if thread_elem is None:
+            return False
+        fmt = thread_elem.get('fmt')
+        if fmt:
+            return 'Main Thread' in fmt
+        ref = thread_elem.get('ref')
+        if ref and ref in thread_lookup:
+            return 'Main Thread' in thread_lookup[ref]
+        return False
+
+    # Parse xctrace export format - rows with child elements for data
+    for row in root.iter('row'):
         duration = None
-        for attr in ['duration', 'weight', 'self-weight', 'total-weight', 'sample-count']:
-            if attr in row.attrib:
+        timestamp = None
+        function = "unknown"
+        backtrace_str = None
+        is_main = False
+
+        # Check if this sample is from main thread
+        thread_elem = row.find('.//thread')
+        is_main = is_main_thread(thread_elem)
+
+        # Look for weight element (duration in nanoseconds) - handles ref attribute
+        weight_elem = row.find('.//weight')
+        if weight_elem is not None:
+            weight_val = get_element_value(weight_elem)
+            if weight_val:
                 try:
-                    # Duration might be in nanoseconds, microseconds, or milliseconds
-                    value = float(row.attrib[attr])
-
-                    # Heuristic: if value > 1000000, assume nanoseconds
-                    # if value > 1000, assume microseconds
-                    if value > 1_000_000_000:
-                        duration = value / 1_000_000  # ns to ms
-                    elif value > 1_000_000:
-                        duration = value / 1_000  # us to ms
-                    else:
-                        duration = value  # assume ms
-
-                    break
+                    value = float(weight_val)
+                    # Weight is in nanoseconds, convert to ms
+                    duration = value / 1_000_000
                 except ValueError:
-                    continue
+                    pass
+
+        # Look for duration element (for potential-hangs table)
+        duration_elem = row.find('.//duration')
+        if duration_elem is not None:
+            dur_val = get_element_value(duration_elem)
+            if dur_val:
+                try:
+                    value = float(dur_val)
+                    # Duration is in nanoseconds, convert to ms
+                    duration = value / 1_000_000
+                except ValueError:
+                    pass
+
+        # Get timestamp from sample-time or start-time
+        time_elem = row.find('.//sample-time')
+        if time_elem is not None:
+            time_val = get_element_value(time_elem)
+            if time_val:
+                try:
+                    timestamp = float(time_val) / 1_000_000  # ns to ms
+                except ValueError:
+                    pass
+
+        start_elem = row.find('.//start-time')
+        if start_elem is not None:
+            start_val = get_element_value(start_elem)
+            if start_val:
+                try:
+                    timestamp = float(start_val) / 1_000_000  # ns to ms
+                except ValueError:
+                    pass
+
+        # Get function name from backtrace's first frame
+        backtrace_elem = row.find('.//backtrace')
+        if backtrace_elem is not None:
+            first_frame = backtrace_elem.find('.//frame')
+            if first_frame is not None:
+                function = first_frame.get('name', 'unknown')
+            # Build backtrace string from frame names
+            frames = [f.get('name', '?') for f in backtrace_elem.findall('.//frame')]
+            if frames:
+                backtrace_str = '\n'.join(frames[:10])  # Top 10 frames
+
+        # Also check hang-type element for potential-hangs
+        hang_type_elem = row.find('.//hang-type')
+        if hang_type_elem is not None:
+            hang_type = get_element_value(hang_type_elem) or hang_type_elem.get('fmt', '')
+            if hang_type:
+                function = f"[{hang_type}] {function}"
 
         if duration is not None and duration > 0:
             all_durations.append(duration)
 
-            # Get function/symbol name
-            function = row.attrib.get('symbol', row.attrib.get('name', row.tag))
-
-            # Get timestamp if available
-            timestamp = float(row.attrib.get('start', row.attrib.get('time', 0)))
-
-            # Get backtrace if available
-            backtrace = None
-            bt_elem = row.find('.//backtrace')
-            if bt_elem is not None and bt_elem.text:
-                backtrace = bt_elem.text
+            # Track main thread samples for gap analysis
+            if is_main and timestamp is not None:
+                main_thread_samples.append((timestamp, function, backtrace_str))
 
             event = HangEvent(
                 duration_ms=duration,
-                timestamp_ms=timestamp,
+                timestamp_ms=timestamp or 0,
                 function=function,
-                backtrace=backtrace,
+                backtrace=backtrace_str,
                 is_hang=(duration >= hang_threshold_ms)
             )
 
@@ -187,15 +258,32 @@ def parse_time_profile(xml_path: str, hang_threshold_ms: float, stutter_threshol
             elif duration >= stutter_threshold_ms:
                 stutters.append(event)
 
-    return hangs, stutters, all_durations
+    # Calculate gaps between consecutive main thread samples
+    # Large gaps indicate the main thread was blocked (not being sampled)
+    main_thread_gaps = []
+    main_thread_samples.sort(key=lambda x: x[0])  # Sort by timestamp
+
+    for i in range(1, len(main_thread_samples)):
+        prev_ts = main_thread_samples[i-1][0]
+        curr_ts = main_thread_samples[i][0]
+        gap = curr_ts - prev_ts
+        if gap > 0:
+            main_thread_gaps.append((gap, curr_ts, main_thread_samples[i][1], main_thread_samples[i][2]))
+
+    return hangs, stutters, all_durations, main_thread_gaps
 
 
-def analyze_trace(trace_path: str, hang_threshold_ms: float, stutter_threshold_ms: float, quiet: bool = False) -> AnalysisReport:
-    """Analyze a trace file and generate a report."""
+def analyze_trace(trace_path: str, hang_threshold_ms: float, stutter_threshold_ms: float, quiet: bool = False, ignore_first_ms: float = 3000) -> AnalysisReport:
+    """Analyze a trace file and generate a report.
+
+    Args:
+        ignore_first_ms: Ignore hangs occurring in the first N milliseconds (startup period).
+                        Set to 0 to analyze all samples.
+    """
     with tempfile.TemporaryDirectory() as tmpdir:
-        xml_path = export_trace_data(trace_path, tmpdir, quiet=quiet)
+        xml_paths = export_trace_data(trace_path, tmpdir, quiet=quiet)
 
-        if xml_path is None:
+        if not xml_paths:
             # Return empty report if export failed
             return AnalysisReport(
                 trace_file=trace_path,
@@ -214,7 +302,29 @@ def analyze_trace(trace_path: str, hang_threshold_ms: float, stutter_threshold_m
                 passed=True  # No data means no detected failures
             )
 
-        hangs, stutters, all_durations = parse_time_profile(xml_path, hang_threshold_ms, stutter_threshold_ms)
+        # Parse all exported files and combine results
+        hangs = []
+        stutters = []
+        all_durations = []
+        all_main_thread_gaps = []
+
+        for xml_path in xml_paths:
+            h, s, d, gaps = parse_time_profile(xml_path, hang_threshold_ms, stutter_threshold_ms)
+            hangs.extend(h)
+            stutters.extend(s)
+            all_durations.extend(d)
+            all_main_thread_gaps.extend(gaps)
+
+    # Find the earliest timestamp to determine trace start time
+    all_timestamps = [g[1] for g in all_main_thread_gaps if g[1] > 0]
+    trace_start_ms = min(all_timestamps) if all_timestamps else 0
+
+    # Filter out startup period from gaps
+    if ignore_first_ms > 0:
+        cutoff_ms = trace_start_ms + ignore_first_ms
+        all_main_thread_gaps = [g for g in all_main_thread_gaps if g[1] > cutoff_ms]
+        if not quiet:
+            print(f"  Ignoring first {ignore_first_ms/1000:.1f}s (timestamps < {cutoff_ms:.0f}ms)", file=sys.stderr)
 
     # Calculate statistics
     total_samples = len(all_durations)
@@ -224,14 +334,49 @@ def analyze_trace(trace_path: str, hang_threshold_ms: float, stutter_threshold_m
     total_hang_duration = sum(h.duration_ms for h in hangs)
     total_stutter_duration = sum(s.duration_ms for s in stutters)
 
-    max_duration = max(all_durations) if all_durations else 0
+    # Max duration: use the largest gap between main thread samples
+    # This represents the longest period the main thread was unresponsive
+    # (gaps are: (gap_ms, timestamp_ms, function, backtrace))
+    if all_main_thread_gaps:
+        max_gap = max(all_main_thread_gaps, key=lambda x: x[0])
+        max_duration = max_gap[0]
+
+        # Create hang events from significant gaps
+        for gap_ms, ts, func, bt in all_main_thread_gaps:
+            if gap_ms >= hang_threshold_ms:
+                event = HangEvent(
+                    duration_ms=gap_ms,
+                    timestamp_ms=ts,
+                    function=func,
+                    backtrace=bt,
+                    is_hang=True
+                )
+                if event not in hangs:  # Avoid duplicates from potential-hangs table
+                    hangs.append(event)
+            elif gap_ms >= stutter_threshold_ms:
+                event = HangEvent(
+                    duration_ms=gap_ms,
+                    timestamp_ms=ts,
+                    function=func,
+                    backtrace=bt,
+                    is_hang=False
+                )
+                if event not in stutters:
+                    stutters.append(event)
+    else:
+        max_duration = max(all_durations) if all_durations else 0
+
+    # Recalculate counts after adding gap-detected hangs
+    hang_count = len(hangs)
+    stutter_count = len(stutters)
+
     avg_duration = sum(all_durations) / len(all_durations) if all_durations else 0
 
-    # Calculate P95
-    if all_durations:
-        sorted_durations = sorted(all_durations)
-        p95_index = int(len(sorted_durations) * 0.95)
-        p95_duration = sorted_durations[min(p95_index, len(sorted_durations) - 1)]
+    # Calculate P95 of main thread gaps (more meaningful than sample weights)
+    if all_main_thread_gaps:
+        sorted_gaps = sorted([g[0] for g in all_main_thread_gaps])
+        p95_index = int(len(sorted_gaps) * 0.95)
+        p95_duration = sorted_gaps[min(p95_index, len(sorted_gaps) - 1)]
     else:
         p95_duration = 0
 
@@ -327,6 +472,12 @@ def main():
         action="store_true",
         help="Exit with code 1 if hangs detected"
     )
+    parser.add_argument(
+        "--ignore-first",
+        type=float,
+        default=3.0,
+        help="Ignore hangs in first N seconds (startup period, default: 3.0)"
+    )
 
     args = parser.parse_args()
 
@@ -334,7 +485,13 @@ def main():
         print(f"Error: Trace file not found: {args.trace_file}", file=sys.stderr)
         sys.exit(1)
 
-    report = analyze_trace(args.trace_file, args.hang_threshold, args.stutter_threshold, quiet=args.json)
+    report = analyze_trace(
+        args.trace_file,
+        args.hang_threshold,
+        args.stutter_threshold,
+        quiet=args.json,
+        ignore_first_ms=args.ignore_first * 1000
+    )
 
     if args.json:
         print(json.dumps(asdict(report), indent=2))

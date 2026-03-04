@@ -121,10 +121,10 @@ list-identities:
 	@echo "Set SIGNING_IDENTITY in your environment or pass to make:"
 	@echo "  make sign SIGNING_IDENTITY=\"Developer ID Application: Your Name (TEAMID)\""
 
-# Generate performance test database with large text items
+# Generate performance test database with large text items (uses native Rust)
 perf-db:
 	@echo "Generating performance test database..."
-	@python3 Scripts/generate-perf-db.py
+	@$(NIX_SHELL) "cd purr && cargo run --release --bin generate-perf-db"
 
 # Run performance tests with Instruments tracing
 # Usage: make perf-test [PERF_ARGS="--skip-build --fail-on-hangs"]

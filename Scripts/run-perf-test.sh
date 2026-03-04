@@ -22,6 +22,7 @@
 #   --hang-threshold  Hang threshold in ms (default: 250)
 #   --fail-on-hangs   Exit with code 1 if hangs detected
 #   --typing-delay    Delay between keystrokes in ms (default: 50)
+#   --ignore-first    Ignore hangs in first N seconds (default: 3)
 #
 # Examples:
 #   ./Scripts/run-perf-test.sh
@@ -47,6 +48,7 @@ OUTPUT_DIR="$PROJECT_ROOT/perf_traces"
 HANG_THRESHOLD=250
 FAIL_ON_HANGS=false
 TYPING_DELAY=50
+IGNORE_FIRST=3
 TIMESTAMP=$(date +%Y%m%d_%H%M%S)
 
 # Parse arguments
@@ -82,6 +84,10 @@ while [[ $# -gt 0 ]]; do
             ;;
         --typing-delay)
             TYPING_DELAY="$2"
+            shift 2
+            ;;
+        --ignore-first)
+            IGNORE_FIRST="$2"
             shift 2
             ;;
         *)
@@ -212,15 +218,15 @@ if [ "$TRACE_ONLY" = false ]; then
     echo ""
     echo ">>> Analyzing trace..."
 
-    ANALYSIS_ARGS="--hang-threshold $HANG_THRESHOLD"
+    ANALYSIS_ARGS="--hang-threshold $HANG_THRESHOLD --ignore-first $IGNORE_FIRST"
     if [ "$FAIL_ON_HANGS" = true ]; then
         ANALYSIS_ARGS="$ANALYSIS_ARGS --fail-on-hangs"
     fi
 
     python3 "$SCRIPT_DIR/analyze-trace.py" "$TRACE_FILE" $ANALYSIS_ARGS || ANALYSIS_RESULT=$?
 
-    # Save JSON report
-    python3 "$SCRIPT_DIR/analyze-trace.py" "$TRACE_FILE" --json > "$OUTPUT_DIR/report_${TIMESTAMP}.json" 2>/dev/null || true
+    # Save JSON report (with same ignore-first setting)
+    python3 "$SCRIPT_DIR/analyze-trace.py" "$TRACE_FILE" --ignore-first "$IGNORE_FIRST" --json > "$OUTPUT_DIR/report_${TIMESTAMP}.json" 2>/dev/null || true
 
     echo ""
     echo ">>> Reports saved:"
