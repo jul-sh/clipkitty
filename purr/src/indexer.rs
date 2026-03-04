@@ -5,8 +5,12 @@
 
 use crate::candidate::SearchCandidate;
 use crate::ranking::compute_bucket_score;
-use crate::search::{RECENCY_BOOST_MAX, RECENCY_HALF_LIFE_SECS};
 use chrono::Utc;
+
+/// Large boost for proximity PhraseQuery, creating distinct score bands.
+/// tweak_score decodes this to convert proximity into an additive tier
+/// that serves as a tiebreaker within the same recency bucket.
+const PROXIMITY_BOOST_SCALE: f32 = 1000.0;
 use parking_lot::RwLock;
 use std::path::Path;
 use tantivy::collector::TopDocs;
@@ -147,10 +151,11 @@ impl Indexer {
             .set_stored();
         builder.add_text_field("content", text_options);
 
-        // Word-tokenized field for FuzzyTermQuery recall (not stored — content lives on trigram field)
+        // Word-tokenized field for exact word matching and proximity queries.
+        // Uses WithFreqsAndPositions to enable PhraseQuery with slop.
         let word_field_indexing = TextFieldIndexing::default()
             .set_tokenizer("default")
-            .set_index_option(IndexRecordOption::Basic);
+            .set_index_option(IndexRecordOption::WithFreqsAndPositions);
         let word_options = TextOptions::default().set_indexing_options(word_field_indexing);
         builder.add_text_field("content_words", word_options);
 
@@ -239,10 +244,13 @@ impl Indexer {
     }
 
     /// Two-phase search: trigram recall (Phase 1) + bucket re-ranking (Phase 2).
+    ///
+    /// EXPERIMENT: Phase 2 disabled - Tantivy's additive recency scoring now
+    /// matches Phase 2's bucket order, so we skip re-ranking entirely.
     pub fn search(&self, query: &str, limit: usize) -> IndexerResult<Vec<SearchCandidate>> {
         #[cfg(feature = "perf-log")]
         let t0 = std::time::Instant::now();
-        let candidates = self.trigram_recall(query, limit)?;
+        let mut candidates = self.trigram_recall(query, limit)?;
         #[cfg(feature = "perf-log")]
         let t1 = std::time::Instant::now();
 
@@ -334,8 +342,34 @@ impl Indexer {
                     let timestamp = ts_reader.first(doc).unwrap_or(0);
                     let base = (score as f64).max(0.001);
                     let age_secs = (now - timestamp).max(0) as f64;
-                    let recency = (-age_secs * 2.0_f64.ln() / RECENCY_HALF_LIFE_SECS).exp();
-                    base * (1.0 + RECENCY_BOOST_MAX * recency)
+
+                    // Decode proximity tier from score bands.
+                    // PROXIMITY_BOOST_SCALE (1000) creates distinct bands when PhraseQuery matches.
+                    let proximity_tier = (base / PROXIMITY_BOOST_SCALE as f64).floor();
+                    let base_remainder = base - (proximity_tier * PROXIMITY_BOOST_SCALE as f64);
+
+                    // Compute recency score (0-255 scale).
+                    // Formula: score = 255 * (1 - ln(1 + k*age_hours) / ln(1 + k*max_hours))
+                    let k: f64 = 20.0;
+                    let max_hours: f64 = 400.0;
+                    let age_hours = age_secs / 3600.0;
+                    let denom = (1.0 + k * max_hours).ln();
+                    let recency_score = 255.0 * (1.0 - (1.0 + k * age_hours).ln() / denom);
+                    let recency_score = recency_score.max(0.0);
+
+                    // Soft-lexicographic scoring with exponentially spaced weights.
+                    // Higher tiers dominate, but large lower-tier differences can
+                    // overcome small upper-tier differences.
+                    //
+                    // Weight ratio = 10x between tiers means:
+                    // - 2-point recency diff (200) beats 15-point proximity diff (150)
+                    // - 1-point recency diff (100) loses to 15-point proximity diff (150)
+                    //
+                    // Tiers (high to low):
+                    // 1. recency_score (0-255) * 10.0 = 0-2550
+                    // 2. proximity_tier (0-1) * 100.0 = 0-100  (proximity match = +100)
+                    // 3. base_remainder (BM25) * 1.0 = typically 0-50
+                    recency_score * 10.0 + proximity_tier * 100.0 + base_remainder
                 }
             });
 
@@ -400,6 +434,57 @@ impl Indexer {
             clauses.push(q);
         }
         clauses
+    }
+
+    /// Build word-level boost clauses for exact word matching and proximity.
+    ///
+    /// Uses exact word TermQuery boosts + proximity PhraseQuery boosts.
+    /// The boosts are scaled so that proximity differences become meaningful
+    /// tiebreakers within the same recency bucket.
+    ///
+    /// Boost scale:
+    /// - Exact word match: 2.0x (approximates words_matched_weight)
+    /// - Word proximity (slop=3): PROXIMITY_BOOST_SCALE (encodes proximity tier)
+    ///
+    /// The PROXIMITY_BOOST_SCALE creates distinct score bands that tweak_score
+    /// can decode and convert to an additive proximity tier.
+    fn build_word_boosts(&self, query: &str) -> Vec<(Occur, Box<dyn tantivy::query::Query>)> {
+        let words: Vec<&str> = query.split_whitespace().collect();
+        let mut boosts: Vec<(Occur, Box<dyn tantivy::query::Query>)> = Vec::new();
+
+        // Exact word TermQuery boosts (2.0x) — match words at word boundaries
+        // This helps approximate Phase 2's words_matched_weight priority.
+        for word in &words {
+            if word.len() < 2 {
+                continue;
+            }
+            let term = Term::from_field_text(self.content_words_field, &word.to_lowercase());
+            let term_q = TermQuery::new(term, IndexRecordOption::Basic);
+            let boosted: Box<dyn tantivy::query::Query> =
+                Box::new(BoostQuery::new(Box::new(term_q), 2.0));
+            boosts.push((Occur::Should, boosted));
+        }
+
+        // Word proximity PhraseQuery with slop=3 (allows 3 intervening words).
+        // Uses a large boost to create score bands that tweak_score decodes.
+        if words.len() >= 2 {
+            let terms: Vec<Term> = words
+                .iter()
+                .filter(|w| w.len() >= 2)
+                .map(|w| Term::from_field_text(self.content_words_field, &w.to_lowercase()))
+                .collect();
+            if terms.len() >= 2 {
+                let phrase_q = PhraseQuery::new_with_offset_and_slop(
+                    terms.into_iter().enumerate().collect(),
+                    3, // slop: allow up to 3 intervening words
+                );
+                let boosted: Box<dyn tantivy::query::Query> =
+                    Box::new(BoostQuery::new(Box::new(phrase_q), PROXIMITY_BOOST_SCALE));
+                boosts.push((Occur::Should, boosted));
+            }
+        }
+
+        boosts
     }
 
     /// Build a trigram query with phrase boosts for contiguity scoring.
@@ -474,52 +559,6 @@ impl Indexer {
             recall_query.set_minimum_number_should_match(min_match);
         }
 
-        // Phrase boosts: score documents higher when query words appear as
-        // contiguous substrings. This improves candidate quality in the top-2000.
-        let mut phrase_boosts: Vec<(Occur, Box<dyn tantivy::query::Query>)> = Vec::new();
-
-        // Per-word phrase boost (2x): each word's trigrams must be contiguous
-        for word in &words {
-            if word.len() < 3 {
-                continue;
-            }
-            let word_terms = self.trigram_terms(word);
-            if word_terms.len() >= 2 {
-                let phrase = PhraseQuery::new(word_terms);
-                let boosted: Box<dyn tantivy::query::Query> =
-                    Box::new(BoostQuery::new(Box::new(phrase), 2.0));
-                phrase_boosts.push((Occur::Should, boosted));
-            }
-        }
-
-        // Word-pair proximity boost (3x) — skip for long queries to limit cost
-        if words.len() >= 2 && !is_long_query {
-            for pair in words.windows(2) {
-                if pair[0].len() < 2 || pair[1].len() < 2 {
-                    continue;
-                }
-                let pair_str = format!("{} {}", pair[0], pair[1]);
-                let pair_terms = self.trigram_terms(&pair_str);
-                if pair_terms.len() >= 2 {
-                    let phrase = PhraseQuery::new(pair_terms);
-                    let boosted: Box<dyn tantivy::query::Query> =
-                        Box::new(BoostQuery::new(Box::new(phrase), 3.0));
-                    phrase_boosts.push((Occur::Should, boosted));
-                }
-            }
-        }
-
-        // Full-query exactness boost (5x) — skip for long queries
-        if words.len() >= 2 && !is_long_query {
-            let full_terms = self.trigram_terms(query);
-            if full_terms.len() >= 2 {
-                let phrase = PhraseQuery::new(full_terms);
-                let boosted: Box<dyn tantivy::query::Query> =
-                    Box::new(BoostQuery::new(Box::new(phrase), 5.0));
-                phrase_boosts.push((Occur::Should, boosted));
-            }
-        }
-
         // Build the recall part: trigram OR fuzzy-word pathways
         let fuzzy_clauses = self.build_fuzzy_word_clauses(query);
         let recall: Box<dyn tantivy::query::Query> = if fuzzy_clauses.is_empty() {
@@ -544,12 +583,15 @@ impl Indexer {
             Box::new(combined)
         };
 
-        if phrase_boosts.is_empty() {
+        // Word-level boosts: exact word matches and proximity (with score bands)
+        let all_boosts = self.build_word_boosts(query);
+
+        if all_boosts.is_empty() {
             recall
         } else {
             let mut outer: Vec<(Occur, Box<dyn tantivy::query::Query>)> = Vec::new();
             outer.push((Occur::Must, recall));
-            outer.extend(phrase_boosts);
+            outer.extend(all_boosts);
             Box::new(BooleanQuery::new(outer))
         }
     }
