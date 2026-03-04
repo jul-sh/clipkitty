@@ -15,6 +15,9 @@ use crate::interface::{
 };
 use crate::models::StoredItem;
 use crate::search::{self, MIN_TRIGRAM_QUERY_LEN, MAX_RESULTS};
+
+/// Number of results to eagerly compute MatchData for (the rest are lazy)
+const EAGER_MATCH_DATA_COUNT: usize = 25;
 use chrono::Utc;
 use once_cell::sync::Lazy;
 use std::path::PathBuf;
@@ -242,11 +245,24 @@ impl ClipboardStore {
             .filter_map(|item| item.id.map(|id| (id, item)))
             .collect();
 
-        // Create lazy item matches (no highlights)
+        // Create item matches: eager for first N, lazy for the rest
         let results: Vec<ItemMatch> = fuzzy_matches
             .into_iter()
-            .filter_map(|fm| {
-                item_map.get(&fm.id).map(|item| search::create_lazy_item_match(item))
+            .enumerate()
+            .filter_map(|(idx, fm)| {
+                item_map.get(&fm.id).map(|item| {
+                    if idx < EAGER_MATCH_DATA_COUNT {
+                        // Eager: compute match data for first N results
+                        let content = item.content.text_content();
+                        ItemMatch {
+                            item_metadata: item.to_metadata(),
+                            match_data: Some(search::compute_item_match_data(&content, query)),
+                        }
+                    } else {
+                        // Lazy: no match data
+                        search::create_lazy_item_match(item)
+                    }
+                })
             })
             .collect();
 
@@ -291,11 +307,24 @@ impl ClipboardStore {
             })
             .collect();
 
-        // Create lazy item matches (no highlights)
+        // Create item matches: eager for first N, lazy for the rest
         let results: Vec<ItemMatch> = fuzzy_matches
             .into_iter()
-            .filter_map(|fm| {
-                item_map.get(&fm.id).map(|item| search::create_lazy_item_match(item))
+            .enumerate()
+            .filter_map(|(idx, fm)| {
+                item_map.get(&fm.id).map(|item| {
+                    if idx < EAGER_MATCH_DATA_COUNT {
+                        // Eager: compute match data for first N results
+                        let content = item.content.text_content();
+                        ItemMatch {
+                            item_metadata: item.to_metadata(),
+                            match_data: Some(search::compute_item_match_data(&content, query)),
+                        }
+                    } else {
+                        // Lazy: no match data
+                        search::create_lazy_item_match(item)
+                    }
+                })
             })
             .collect();
 
@@ -373,7 +402,7 @@ impl ClipboardStore {
                 .into_iter()
                 .map(|metadata| ItemMatch {
                     item_metadata: metadata,
-                    match_data: MatchData::default(),
+                    match_data: None,
                 })
                 .collect();
 
@@ -515,7 +544,7 @@ impl ClipboardStoreApi for ClipboardStore {
                 .into_iter()
                 .map(|metadata| ItemMatch {
                     item_metadata: metadata,
-                    match_data: MatchData::default(),
+                    match_data: None,
                 })
                 .collect();
 
@@ -593,9 +622,9 @@ impl ClipboardStoreApi for ClipboardStore {
         Ok(items)
     }
 
-    /// Compute highlights for multiple items given the search query.
+    /// Compute match data (snippet, highlights, line number) for multiple items.
     /// Called on-demand for visible items in the list view.
-    fn compute_highlights(&self, item_ids: Vec<i64>, query: String) -> Result<Vec<MatchData>, ClipKittyError> {
+    fn compute_match_data(&self, item_ids: Vec<i64>, query: String) -> Result<Vec<MatchData>, ClipKittyError> {
         if item_ids.is_empty() {
             return Ok(Vec::new());
         }
@@ -606,17 +635,17 @@ impl ClipboardStoreApi for ClipboardStore {
             .filter_map(|item| item.id.map(|id| (id, item)))
             .collect();
 
-        // Compute highlights in parallel for efficiency
+        // Compute match data in parallel for efficiency
         use rayon::prelude::*;
         let results: Vec<MatchData> = item_ids
             .par_iter()
             .map(|id| {
                 if let Some(item) = item_map.get(id) {
                     let content = item.content.text_content();
-                    search::compute_item_highlights(&content, &query)
+                    search::compute_item_match_data(&content, &query)
                 } else {
-                    // Item not found - return empty match data
-                    search::create_lazy_match_data("")
+                    // Item not found - return default match data
+                    MatchData::default()
                 }
             })
             .collect();
@@ -897,14 +926,15 @@ mod tests {
 
         assert_eq!(result.matches.len(), 1);
         assert!(result.matches[0].item_metadata.snippet.contains("Hello"));
-        // Search returns lazy highlights (None) - call compute_highlights to get actual highlights
-        assert!(result.matches[0].match_data.highlights.is_none());
+        // First 25 results have eager match_data with highlights
+        assert!(result.matches[0].match_data.is_some());
+        assert!(!result.matches[0].match_data.as_ref().unwrap().highlights.is_empty());
 
-        // Verify compute_highlights returns actual highlights
+        // Verify compute_match_data also works for on-demand computation
         let item_id = result.matches[0].item_metadata.item_id;
-        let highlights = store.compute_highlights(vec![item_id], "Hello".to_string()).unwrap();
-        assert_eq!(highlights.len(), 1);
-        assert!(highlights[0].highlights.as_ref().map_or(false, |h| !h.is_empty()));
+        let match_data = store.compute_match_data(vec![item_id], "Hello".to_string()).unwrap();
+        assert_eq!(match_data.len(), 1);
+        assert!(!match_data[0].highlights.is_empty());
     }
 
     #[test]
