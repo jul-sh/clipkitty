@@ -913,7 +913,7 @@ struct ContentView: View {
                 itemId: item.itemMetadata.itemId,
                 fontName: FontManager.mono,
                 fontSize: 15,
-                highlights: selectedItemMatchData?.fullContentHighlights ?? [],
+                highlights: selectedItemMatchData?.fullContentHighlights.flatMap { $0 } ?? [],
                 densestHighlightStart: selectedItemMatchData?.densestHighlightStart ?? 0,
                 originalText: item.content.textContent,
                 onTextChange: { newText in
@@ -1993,8 +1993,9 @@ struct ItemRow: View, Equatable {
     }
 
     /// Highlights for display - passed directly from Rust (already adjusted for normalization)
+    /// Returns empty array if highlights are nil (lazy mode - not yet computed)
     private var displayHighlights: [HighlightRange] {
-        matchData?.highlights ?? []
+        matchData?.highlights.flatMap { $0 } ?? []
     }
 
 

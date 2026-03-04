@@ -137,6 +137,7 @@ impl ClipboardStore {
 
     /// Fetch stored items for fuzzy matches and generate ItemMatches in parallel.
     /// Shared by both short-query and trigram search paths.
+    #[allow(dead_code)]
     fn fuzzy_matches_to_item_matches(
         db: &Database,
         fuzzy_matches: Vec<search::FuzzyMatch>,
@@ -191,12 +192,12 @@ impl ClipboardStore {
         Ok(sorted.into_iter().filter_map(|(_, item)| item).collect())
     }
 
-    /// Short query search using prefix matching + LIKE on recent items
+    /// Short query search using prefix matching + LIKE on recent items (lazy highlights)
     fn search_short_query_sync(
         db: &Database,
         query: &str,
         token: &CancellationToken,
-        runtime: &tokio::runtime::Handle,
+        _runtime: &tokio::runtime::Handle,
         filter: Option<&ContentTypeFilter>,
     ) -> Result<Vec<ItemMatch>, ClipKittyError> {
         if token.is_cancelled() {
@@ -212,6 +213,7 @@ impl ClipboardStore {
             return Err(ClipKittyError::Cancelled);
         }
 
+        // For short queries, we need to score/rank but can skip highlights
         let query_lower = query.to_lowercase();
         let candidates_with_prefix: Vec<_> = candidates
             .into_iter()
@@ -227,28 +229,77 @@ impl ClipboardStore {
             token,
         );
 
-        Self::fuzzy_matches_to_item_matches(db, fuzzy_matches, token, runtime, filter)
+        // Fetch stored items for metadata
+        let ids: Vec<i64> = fuzzy_matches.iter().map(|m| m.id).collect();
+        let stored_items = db.fetch_items_by_ids(&ids)?;
+
+        if token.is_cancelled() {
+            return Err(ClipKittyError::Cancelled);
+        }
+
+        let item_map: std::collections::HashMap<i64, StoredItem> = stored_items
+            .into_iter()
+            .filter_map(|item| item.id.map(|id| (id, item)))
+            .collect();
+
+        // Create lazy item matches (no highlights)
+        let results: Vec<ItemMatch> = fuzzy_matches
+            .into_iter()
+            .filter_map(|fm| {
+                item_map.get(&fm.id).map(|item| search::create_lazy_item_match(item))
+            })
+            .collect();
+
+        Ok(results)
     }
 
-    /// Trigram query search using Tantivy with phrase-boost scoring
+    /// Trigram query search using Tantivy with phrase-boost scoring (lazy highlights)
     fn search_trigram_query_sync(
         db: &Database,
         indexer: &Indexer,
         query: &str,
         token: &CancellationToken,
-        runtime: &tokio::runtime::Handle,
+        _runtime: &tokio::runtime::Handle,
         filter: Option<&ContentTypeFilter>,
     ) -> Result<Vec<ItemMatch>, ClipKittyError> {
         if token.is_cancelled() {
             return Err(ClipKittyError::Cancelled);
         }
 
-        let fuzzy_matches = search::search_trigram(indexer, query, token)?;
+        // Use lazy search - no highlighting computed
+        let fuzzy_matches = search::search_trigram_lazy(indexer, query, token)?;
         if fuzzy_matches.is_empty() {
             return Ok(Vec::new());
         }
 
-        Self::fuzzy_matches_to_item_matches(db, fuzzy_matches, token, runtime, filter)
+        // Fetch stored items for metadata
+        let ids: Vec<i64> = fuzzy_matches.iter().map(|m| m.id).collect();
+        let stored_items = db.fetch_items_by_ids(&ids)?;
+
+        if token.is_cancelled() {
+            return Err(ClipKittyError::Cancelled);
+        }
+
+        let item_map: std::collections::HashMap<i64, StoredItem> = stored_items
+            .into_iter()
+            .filter_map(|item| item.id.map(|id| (id, item)))
+            .filter(|(_, item)| {
+                match filter {
+                    Some(f) => f.matches_db_type(item.content.database_type()),
+                    None => true,
+                }
+            })
+            .collect();
+
+        // Create lazy item matches (no highlights)
+        let results: Vec<ItemMatch> = fuzzy_matches
+            .into_iter()
+            .filter_map(|fm| {
+                item_map.get(&fm.id).map(|item| search::create_lazy_item_match(item))
+            })
+            .collect();
+
+        Ok(results)
     }
 
     /// Get a single stored item by ID (internal use)
@@ -542,6 +593,37 @@ impl ClipboardStoreApi for ClipboardStore {
         Ok(items)
     }
 
+    /// Compute highlights for multiple items given the search query.
+    /// Called on-demand for visible items in the list view.
+    fn compute_highlights(&self, item_ids: Vec<i64>, query: String) -> Result<Vec<MatchData>, ClipKittyError> {
+        if item_ids.is_empty() {
+            return Ok(Vec::new());
+        }
+
+        let items = self.db.fetch_items_by_ids(&item_ids)?;
+        let item_map: std::collections::HashMap<i64, StoredItem> = items
+            .into_iter()
+            .filter_map(|item| item.id.map(|id| (id, item)))
+            .collect();
+
+        // Compute highlights in parallel for efficiency
+        use rayon::prelude::*;
+        let results: Vec<MatchData> = item_ids
+            .par_iter()
+            .map(|id| {
+                if let Some(item) = item_map.get(id) {
+                    let content = item.content.text_content();
+                    search::compute_item_highlights(&content, &query)
+                } else {
+                    // Item not found - return empty match data
+                    search::create_lazy_match_data("")
+                }
+            })
+            .collect();
+
+        Ok(results)
+    }
+
     /// Save multiple file items as a single grouped entry
     /// Returns the new item ID, or 0 if duplicate (timestamp updated)
     fn save_files(
@@ -815,7 +897,14 @@ mod tests {
 
         assert_eq!(result.matches.len(), 1);
         assert!(result.matches[0].item_metadata.snippet.contains("Hello"));
-        assert!(!result.matches[0].match_data.highlights.is_empty());
+        // Search returns lazy highlights (None) - call compute_highlights to get actual highlights
+        assert!(result.matches[0].match_data.highlights.is_none());
+
+        // Verify compute_highlights returns actual highlights
+        let item_id = result.matches[0].item_metadata.item_id;
+        let highlights = store.compute_highlights(vec![item_id], "Hello".to_string()).unwrap();
+        assert_eq!(highlights.len(), 1);
+        assert!(highlights[0].highlights.as_ref().map_or(false, |h| !h.is_empty()));
     }
 
     #[test]

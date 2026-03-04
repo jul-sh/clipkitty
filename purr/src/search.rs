@@ -53,7 +53,44 @@ pub(crate) struct FuzzyMatch {
 
 /// Search using Tantivy with bucket re-ranking for trigram queries (>= 3 chars).
 /// Phase 1 (trigram recall) and Phase 2 (bucket re-ranking) happen inside indexer.search().
+/// Returns lazy FuzzyMatch objects WITHOUT highlights - highlights are computed on-demand.
+pub(crate) fn search_trigram_lazy(indexer: &Indexer, query: &str, token: &CancellationToken) -> IndexerResult<Vec<FuzzyMatch>> {
+    if query.trim().is_empty() {
+        return Ok(Vec::new());
+    }
+
+    // Bucket-ranked candidates from two-phase search
+    #[cfg(feature = "perf-log")]
+    let t0 = std::time::Instant::now();
+    let candidates = indexer.search(query.trim(), MAX_RESULTS)?;
+    #[cfg(feature = "perf-log")]
+    eprintln!("[perf] indexer_total={:.1}ms candidates={}", (std::time::Instant::now() - t0).as_secs_f64() * 1000.0, candidates.len());
+
+    if token.is_cancelled() {
+        return Ok(Vec::new());
+    }
+
+    // Convert to FuzzyMatch without computing highlights
+    let results: Vec<FuzzyMatch> = candidates
+        .into_iter()
+        .enumerate()
+        .map(|(rank, c)| FuzzyMatch {
+            id: c.id,
+            score: (MAX_RESULTS - rank) as f64,
+            highlight_ranges: Vec::new(), // Lazy: no highlights
+            timestamp: c.timestamp,
+            content: c.content().to_string(),
+            is_prefix_match: false,
+        })
+        .collect();
+
+    Ok(results)
+}
+
+/// Search using Tantivy with bucket re-ranking for trigram queries (>= 3 chars).
+/// Phase 1 (trigram recall) and Phase 2 (bucket re-ranking) happen inside indexer.search().
 /// This function handles highlighting via rayon parallelism with cancellation support.
+#[allow(dead_code)]
 pub(crate) fn search_trigram(indexer: &Indexer, query: &str, token: &CancellationToken) -> IndexerResult<Vec<FuzzyMatch>> {
         if query.trim().is_empty() {
             return Ok(Vec::new());
@@ -473,7 +510,7 @@ pub fn generate_snippet(content: &str, highlights: &[HighlightRange], max_len: u
     (final_snippet, adjusted_highlights, line_number)
 }
 
-/// Create MatchData from a FuzzyMatch
+/// Create MatchData from a FuzzyMatch with pre-computed highlights
 pub(crate) fn create_match_data(fuzzy_match: &FuzzyMatch) -> MatchData {
     let full_content_highlights = fuzzy_match.highlight_ranges.clone();
     let max_len = SNIPPET_CONTEXT_CHARS * 2;
@@ -489,19 +526,76 @@ pub(crate) fn create_match_data(fuzzy_match: &FuzzyMatch) -> MatchData {
 
     MatchData {
         text,
-        highlights: adjusted_highlights,
+        highlights: Some(adjusted_highlights),
         line_number,
-        full_content_highlights,
+        full_content_highlights: Some(full_content_highlights),
         densest_highlight_start,
     }
 }
 
-/// Create ItemMatch from StoredItem and FuzzyMatch
+/// Create MatchData without highlights (lazy mode - highlights computed on-demand)
+pub(crate) fn create_lazy_match_data(content: &str) -> MatchData {
+    let max_len = SNIPPET_CONTEXT_CHARS * 2;
+    // Generate snippet without highlights - just take from start of content
+    let (text, _, _) = generate_snippet(content, &[], max_len);
+
+    MatchData {
+        text,
+        highlights: None,
+        line_number: 0,
+        full_content_highlights: None,
+        densest_highlight_start: 0,
+    }
+}
+
+/// Create ItemMatch from StoredItem and FuzzyMatch with pre-computed highlights
+#[allow(dead_code)]
 pub(crate) fn create_item_match(item: &StoredItem, fuzzy_match: &FuzzyMatch) -> ItemMatch {
     ItemMatch {
         item_metadata: item.to_metadata(),
         match_data: create_match_data(fuzzy_match),
     }
+}
+
+/// Create ItemMatch without highlights (lazy mode)
+pub(crate) fn create_lazy_item_match(item: &StoredItem) -> ItemMatch {
+    ItemMatch {
+        item_metadata: item.to_metadata(),
+        match_data: create_lazy_match_data(&item.content.text_content()),
+    }
+}
+
+/// Compute highlights for an item given a query.
+/// Used for on-demand highlight computation in lazy mode.
+pub(crate) fn compute_item_highlights(
+    content: &str,
+    query: &str,
+) -> MatchData {
+    let trimmed = query.trim();
+    if trimmed.is_empty() {
+        return create_lazy_match_data(content);
+    }
+
+    let query_words_owned = tokenize_words(trimmed);
+    let query_words: Vec<&str> = query_words_owned.iter().map(|(_, _, w)| w.as_str()).collect();
+    let last_word_is_prefix = trimmed.ends_with(|c: char| c.is_alphanumeric());
+
+    let content_lower = content.to_lowercase();
+    let doc_words = tokenize_words(&content_lower);
+
+    // Create a temporary FuzzyMatch to reuse highlight_candidate
+    let fm = highlight_candidate(
+        0, // id not used
+        content,
+        &content_lower,
+        &doc_words,
+        0, // timestamp not used
+        0.0, // tantivy_score not used
+        &query_words,
+        last_word_is_prefix,
+    );
+
+    create_match_data(&fm)
 }
 
 /// Tokenize text into tokens with char offsets.
