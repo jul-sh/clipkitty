@@ -91,24 +91,24 @@ extension HighlightRange {
     /// Convert Rust char indices to NSRange (UTF-16 code unit indices) for the given text.
     /// This correctly handles emojis and other characters that take 2 UTF-16 code units.
     public func nsRange(in text: String) -> NSRange {
-        let chars = Array(text)
-        let startCharIndex = Int(start)
-        let endCharIndex = Int(end)
+        let scalars = Array(text.unicodeScalars)
+        let startIdx = Int(start)
+        let endIdx = Int(end)
 
-        // Bounds check
-        guard startCharIndex >= 0, endCharIndex <= chars.count, startCharIndex <= endCharIndex else {
+        // Bounds check against Unicode scalar count (matches Rust's .chars() counting)
+        guard startIdx >= 0, endIdx <= scalars.count, startIdx <= endIdx else {
             return NSRange(location: NSNotFound, length: 0)
         }
 
-        // Convert char index to UTF-16 index by summing UTF-16 lengths of preceding characters
+        // Convert scalar index to UTF-16 index by summing UTF-16 lengths of preceding scalars
         var utf16Start = 0
-        for i in 0..<startCharIndex {
-            utf16Start += chars[i].utf16.count
+        for i in 0..<startIdx {
+            utf16Start += scalars[i].utf16.count
         }
 
         var utf16Length = 0
-        for i in startCharIndex..<endCharIndex {
-            utf16Length += chars[i].utf16.count
+        for i in startIdx..<endIdx {
+            utf16Length += scalars[i].utf16.count
         }
 
         return NSRange(location: utf16Start, length: utf16Length)

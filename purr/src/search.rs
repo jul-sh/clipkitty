@@ -121,7 +121,7 @@ pub(crate) fn search_trigram(indexer: &Indexer, query: &str, token: &Cancellatio
             .take_any_while(|_| !token.is_cancelled())
             .map(|(rank, c)| {
                 let content_lower = c.content().to_lowercase();
-                let doc_words = tokenize_words(&content_lower);
+                let doc_words = tokenize_words(c.content());
                 let mut m = highlight_candidate(c.id, c.content(), &content_lower, &doc_words, c.timestamp, c.tantivy_score, &query_words, last_word_is_prefix);
                 // Preserve bucket ranking order: score = inverse rank so sort is stable
                 m.score = (MAX_RESULTS - rank) as f64;
@@ -279,9 +279,10 @@ pub(crate) fn highlight_candidate(
         let last_qi = query_lower.len().saturating_sub(1);
 
         for (char_start, char_end, doc_word) in doc_words {
+            let doc_word_lower = doc_word.to_lowercase();
             for (qi, qw) in query_lower.iter().enumerate() {
                 let allow_prefix = qi == last_qi && last_word_is_prefix;
-                let wmk = does_word_match(qw, doc_word, allow_prefix);
+                let wmk = does_word_match(qw, &doc_word_lower, allow_prefix);
                 if wmk != WordMatchKind::None {
                     matched_query_words[qi] = true;
                     // Only highlight word tokens directly. Punctuation tokens (match_weight=0)
@@ -575,7 +576,7 @@ pub(crate) fn compute_item_match_data(
     let last_word_is_prefix = trimmed.ends_with(|c: char| c.is_alphanumeric());
 
     let content_lower = content.to_lowercase();
-    let doc_words = tokenize_words(&content_lower);
+    let doc_words = tokenize_words(content);
 
     // Create a temporary FuzzyMatch to reuse highlight_candidate
     let fm = highlight_candidate(
@@ -866,7 +867,7 @@ mod tests {
     /// Helper: call highlight_candidate with automatic lowercasing/tokenization.
     fn hc(id: i64, content: &str, timestamp: i64, tantivy_score: f32, query_words: &[&str], last_word_is_prefix: bool) -> FuzzyMatch {
         let content_lower = content.to_lowercase();
-        let doc_words = tokenize_words(&content_lower);
+        let doc_words = tokenize_words(content);
         super::highlight_candidate(id, content, &content_lower, &doc_words, timestamp, tantivy_score, query_words, last_word_is_prefix)
     }
 
