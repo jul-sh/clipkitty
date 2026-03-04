@@ -17,7 +17,7 @@ let project = Project(
     name: "ClipKitty",
     settings: .settings(
         base: [
-            "MARKETING_VERSION": "1.8.11",
+            "MARKETING_VERSION": "1.8.12",
             "CURRENT_PROJECT_VERSION": "1",
         ],
         configurations: configurations,
@@ -87,7 +87,7 @@ let project = Project(
                 "SUPublicEDKey": "9VqfSPPY2Gr8QTYDLa99yJXAFWnHw5aybSbKaYDyCq0=",
                 "SUEnableAutomaticChecks": true,
                 "SUAutomaticallyUpdate": true,
-                "SUEnableInstallerLauncherService": true,
+                "SUEnableInstallerLauncherService": false,
             ]),
             sources: ["Sources/App/**"],
             resources: [
@@ -132,7 +132,6 @@ let project = Project(
                     ]),
                     .release(name: "Release", settings: [
                         "CODE_SIGN_ENTITLEMENTS": "Sources/App/ClipKitty.oss.entitlements",
-                        "CURRENT_PROJECT_VERSION": "$(MARKETING_VERSION)",
                     ]),
                     .release(name: .configuration("AppStore"), settings: [
                         "CODE_SIGN_ENTITLEMENTS": "Sources/App/ClipKitty.appstore.entitlements",

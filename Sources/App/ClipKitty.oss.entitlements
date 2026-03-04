@@ -6,10 +6,11 @@
     <key>com.apple.application-identifier</key>
     <string>ANBBV7LQ2P.com.eviljuliette.clipkitty</string>
 
-    <!-- macOS App Sandbox enabled -->
-    <!-- Note: Direct paste (Cmd+V keystroke) requires user to grant permission at runtime via System Settings -->
+    <!-- macOS App Sandbox disabled for DMG distribution -->
+    <!-- Sparkle needs filesystem access to replace the app bundle during updates. -->
+    <!-- App Store builds use ClipKitty.appstore.entitlements which keeps sandbox enabled. -->
     <key>com.apple.security.app-sandbox</key>
-    <true/>
+    <false/>
 
     <!-- Network: outgoing connections for LPMetadataProvider link preview fetching -->
     <key>com.apple.security.network.client</key>
