@@ -6,11 +6,12 @@
 # allowing accurate measurement of UI responsiveness via Instruments.
 #
 # Usage:
-#   ./Scripts/simulate-typing.sh [--delay MS] [--queries "q1,q2,q3"]
+#   ./Scripts/simulate-typing.sh [--delay MS] [--query-delay MS] [--queries "q1,q2,q3"]
 #
 # Options:
-#   --delay MS     Delay between keystrokes in milliseconds (default: 50)
-#   --queries STR  Comma-separated list of queries (default: built-in set)
+#   --delay MS       Delay between keystrokes in milliseconds (default: 100)
+#   --query-delay MS Delay between search queries in milliseconds (default: 5000)
+#   --queries STR    Comma-separated list of queries (default: built-in set)
 #
 # Requirements:
 #   - ClipKitty must be running and have accessibility permissions
@@ -20,7 +21,8 @@
 set -e
 
 # Defaults
-KEYSTROKE_DELAY_MS=50
+KEYSTROKE_DELAY_MS=100
+QUERY_DELAY_MS=5000
 QUERIES="function,import,return value,error handling,async await,class struct,for loop"
 
 # Parse arguments
@@ -28,6 +30,10 @@ while [[ $# -gt 0 ]]; do
     case $1 in
         --delay)
             KEYSTROKE_DELAY_MS="$2"
+            shift 2
+            ;;
+        --query-delay)
+            QUERY_DELAY_MS="$2"
             shift 2
             ;;
         --queries)
@@ -43,9 +49,11 @@ done
 
 # Convert ms to seconds for AppleScript
 DELAY_SECONDS=$(echo "scale=3; $KEYSTROKE_DELAY_MS / 1000" | bc)
+QUERY_DELAY_SECONDS=$(echo "scale=3; $QUERY_DELAY_MS / 1000" | bc)
 
 echo "=== ClipKitty Typing Simulation ==="
 echo "Keystroke delay: ${KEYSTROKE_DELAY_MS}ms"
+echo "Query delay: ${QUERY_DELAY_MS}ms"
 echo "Queries: $QUERIES"
 echo ""
 
@@ -83,7 +91,7 @@ tell application "System Events"
         end repeat
 
         -- Pause between queries
-        delay 0.3
+        delay $QUERY_DELAY_SECONDS
     end repeat
 
     -- Final clear

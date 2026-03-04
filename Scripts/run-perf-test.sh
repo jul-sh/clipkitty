@@ -21,7 +21,7 @@
 #   --output DIR      Output directory for traces (default: perf_traces)
 #   --hang-threshold  Hang threshold in ms (default: 250)
 #   --fail-on-hangs   Exit with code 1 if hangs detected
-#   --typing-delay    Delay between keystrokes in ms (default: 50)
+#   --typing-delay    Delay between keystrokes in ms (default: 100)
 #   --ignore-first    Ignore hangs in first N seconds (default: 3)
 #
 # Examples:
@@ -47,7 +47,7 @@ TEMPLATE="Time Profiler"
 OUTPUT_DIR="$PROJECT_ROOT/perf_traces"
 HANG_THRESHOLD=250
 FAIL_ON_HANGS=false
-TYPING_DELAY=50
+TYPING_DELAY=100
 IGNORE_FIRST=3
 TIMESTAMP=$(date +%Y%m%d_%H%M%S)
 
@@ -125,15 +125,16 @@ if [ ! -d "$APP_PATH" ]; then
     exit 1
 fi
 
-# Step 2: Generate performance database
+# Step 2: Generate performance database and index
 PERF_DB="$PROJECT_ROOT/distribution/SyntheticData_perf.sqlite"
+PERF_INDEX="$PROJECT_ROOT/distribution/tantivy_index_v3"
 if [ "$SKIP_DB_GEN" = false ]; then
-    if [ ! -f "$PERF_DB" ]; then
-        echo ">>> Generating performance test database..."
+    if [ ! -f "$PERF_DB" ] || [ ! -d "$PERF_INDEX" ]; then
+        echo ">>> Generating performance test database and index..."
         # Use native Rust code to ensure schema compatibility
         "$PROJECT_ROOT/Scripts/run-in-nix.sh" -c "cd purr && cargo run --release --bin generate-perf-db"
     else
-        echo ">>> Using existing performance database"
+        echo ">>> Using existing performance database and index"
     fi
 else
     echo ">>> Skipping database generation (--skip-db-gen)"
@@ -152,12 +153,19 @@ sleep 1
 rm -f "$APP_SUPPORT_DIR/clipboard-screenshot.sqlite"*
 rm -rf "$APP_SUPPORT_DIR/tantivy_index_v3"
 
-# Copy performance database
+# Copy performance database and pre-built index
 if [ -f "$PERF_DB" ]; then
     cp "$PERF_DB" "$APP_SUPPORT_DIR/clipboard-screenshot.sqlite"
     echo "    Database copied to app container"
 else
     echo "Warning: Performance database not found, using empty database"
+fi
+
+if [ -d "$PERF_INDEX" ]; then
+    cp -r "$PERF_INDEX" "$APP_SUPPORT_DIR/tantivy_index_v3"
+    echo "    Pre-built index copied to app container"
+else
+    echo "Warning: Pre-built index not found, index will be built at startup"
 fi
 
 # Step 4: Launch app

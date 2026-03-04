@@ -1,15 +1,18 @@
-//! Generate a performance test database with large text items.
+//! Generate a performance test database with large text items and pre-built index.
 //!
-//! This creates a SQLite database using the native Rust database code,
-//! ensuring schema compatibility with the app.
+//! This creates a SQLite database and Tantivy index using the native Rust code,
+//! ensuring schema compatibility with the app and avoiding index-build overhead
+//! during performance testing.
 //!
 //! Usage:
 //!     cargo run --release --bin generate_perf_db [output_path]
 //!
 //! Default output: ../distribution/SyntheticData_perf.sqlite
+//!                 ../distribution/tantivy_index_v3/ (index directory)
 
 use purr::database::Database;
 use purr::models::StoredItem;
+use purr::ClipboardStore;
 use rand::Rng;
 use std::env;
 use std::path::PathBuf;
@@ -254,8 +257,19 @@ fn main() {
         }
     }
 
+    // Close database handle before opening store
+    drop(db);
+
+    // Build the Tantivy index by opening via ClipboardStore
+    println!("Building search index...");
+    let _store = ClipboardStore::new(output_path.to_str().unwrap().to_string())
+        .expect("Failed to open store for indexing");
+
+    let index_path = output_path.parent().unwrap().join("tantivy_index_v3");
+
     println!();
     println!("Database created: {}", output_path.display());
+    println!("Index created: {}", index_path.display());
     println!("  Items: {}", NUM_ITEMS);
     println!(
         "  Total text size: {:.2} MB",

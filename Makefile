@@ -82,17 +82,21 @@ run: all
 	@open "$(DERIVED_DATA)/Build/Products/$(CONFIGURATION)/$(APP_NAME).app"
 
 # Run with synthetic perf test database (150 large items)
+BUNDLE_ID := com.eviljuliette.clipkitty
+APP_SUPPORT := $(HOME)/Library/Containers/$(BUNDLE_ID)/Data/Library/Application Support/ClipKitty
+
 run-perf: all perf-db
 	@echo "Closing existing $(APP_NAME)..."
 	@pkill -9 $(APP_NAME) 2>/dev/null || true
 	@sleep 1
-	@echo "Setting up perf test database..."
-	@mkdir -p "$(HOME)/Library/Containers/com.eviljuliette.clipkitty/Data/Library/Application Support/ClipKitty"
-	@rm -f "$(HOME)/Library/Containers/com.eviljuliette.clipkitty/Data/Library/Application Support/ClipKitty/clipboard-screenshot.sqlite"*
-	@rm -rf "$(HOME)/Library/Containers/com.eviljuliette.clipkitty/Data/Library/Application Support/ClipKitty/tantivy_index_v3"
-	@cp distribution/SyntheticData_perf.sqlite "$(HOME)/Library/Containers/com.eviljuliette.clipkitty/Data/Library/Application Support/ClipKitty/clipboard-screenshot.sqlite"
+	@echo "Setting up perf test database and index..."
+	@mkdir -p "$(APP_SUPPORT)"
+	@rm -f "$(APP_SUPPORT)/clipboard-screenshot.sqlite"*
+	@rm -rf "$(APP_SUPPORT)/tantivy_index_v3"
+	@cp distribution/SyntheticData_perf.sqlite "$(APP_SUPPORT)/clipboard-screenshot.sqlite"
+	@cp -r distribution/tantivy_index_v3 "$(APP_SUPPORT)/tantivy_index_v3"
 	@echo "Opening $(APP_NAME) with perf database..."
-	@open "$(DERIVED_DATA)/Build/Products/$(CONFIGURATION)/$(APP_NAME).app"
+	@open "$(DERIVED_DATA)/Build/Products/$(CONFIGURATION)/$(APP_NAME).app" --args --use-simulated-db
 
 clean:
 	@rm -rf .make DerivedData
