@@ -542,7 +542,7 @@ struct ContentView: View {
                 .onKeyPress(.tab) {
                     let allOptions = Self.filterOptions
                     let index: Int
-                    if store.currentTag == "pinned" {
+                    if store.tagFilter == .pinned {
                         index = 0
                     } else {
                         index = (allOptions.firstIndex(where: { $0.0 == store.contentTypeFilter }) ?? 0) + 1
@@ -582,7 +582,7 @@ struct ContentView: View {
     // MARK: - Filter Dropdown
 
     private var filterLabel: String {
-        if store.currentTag == "pinned" {
+        if store.tagFilter == .pinned {
             return String(localized: "Pinned")
         }
         switch store.contentTypeFilter {
@@ -599,7 +599,7 @@ struct ContentView: View {
         Button {
             let allOptions = Self.filterOptions
             let index: Int
-            if store.currentTag == "pinned" {
+            if store.tagFilter == .pinned {
                 index = 0
             } else {
                 index = (allOptions.firstIndex(where: { $0.0 == store.contentTypeFilter }) ?? 0) + 1
@@ -658,14 +658,14 @@ struct ContentView: View {
         return VStack(spacing: 2) {
             FilterOptionRow(
                 label: String(localized: "Pinned"),
-                isSelected: store.currentTag == "pinned",
+                isSelected: store.tagFilter == .pinned,
                 isHighlighted: highlightedIndex == pinnedIndex,
                 action: {
-                    if store.currentTag == "pinned" {
-                        store.setTagFilter(nil)
+                    if store.tagFilter == .pinned {
+                        store.setTagFilter(.none)
                     } else {
                         store.setContentTypeFilter(.all)
-                        store.setTagFilter("pinned")
+                        store.setTagFilter(.pinned)
                     }
                     filterPopover = .hidden
                     focusSearchField()
@@ -683,10 +683,10 @@ struct ContentView: View {
                 }
                 FilterOptionRow(
                     label: label,
-                    isSelected: store.contentTypeFilter == option && store.currentTag == nil,
+                    isSelected: store.contentTypeFilter == option && store.tagFilter == .none,
                     isHighlighted: highlightedIndex == adjustedIndex,
                     action: {
-                        store.setTagFilter(nil)
+                        store.setTagFilter(.none)
                         store.setContentTypeFilter(option)
                         filterPopover = .hidden
                         focusSearchField()
@@ -713,15 +713,15 @@ struct ContentView: View {
         }
         .onKeyPress(.return, phases: .down) { _ in
             if highlightedIndex == pinnedIndex {
-                if store.currentTag == "pinned" {
-                    store.setTagFilter(nil)
+                if store.tagFilter == .pinned {
+                    store.setTagFilter(.none)
                 } else {
                     store.setContentTypeFilter(.all)
-                    store.setTagFilter("pinned")
+                    store.setTagFilter(.pinned)
                 }
             } else {
                 let selected = options[highlightedIndex - 1]
-                store.setTagFilter(nil)
+                store.setTagFilter(.none)
                 store.setContentTypeFilter(selected.0)
             }
             filterPopover = .hidden
@@ -741,7 +741,7 @@ struct ContentView: View {
         .onAppear {
             let allOptions = Self.filterOptions
             let index: Int
-            if store.currentTag == "pinned" {
+            if store.tagFilter == .pinned {
                 index = 0  // pinned option index
             } else {
                 // Content type indices are offset by 1
@@ -1126,7 +1126,7 @@ struct ContentView: View {
         var items: [ActionItem] = [.delete]
 
         // Pin/unpin based on selected item's tags
-        if let selectedItem, selectedItem.itemMetadata.tags.contains("pinned") {
+        if let selectedItem, selectedItem.itemMetadata.isPinned {
             items.append(.unpin)
         } else {
             items.append(.pin)
@@ -2085,7 +2085,7 @@ struct ItemRow: View, Equatable {
     /// SwiftUI's Three-Part HStack handles truncation with proper ellipsis via layout priorities
     private var displayText: String {
         let text = matchData?.text.isEmpty == false ? matchData!.text : metadata.snippet
-        if metadata.tags.contains("pinned") {
+        if metadata.isPinned {
             return "📌 " + text
         }
         return text

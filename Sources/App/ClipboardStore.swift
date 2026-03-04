@@ -11,6 +11,24 @@ import UniformTypeIdentifiers
 
 
 
+/// Tag filter for narrowing clipboard items by tag
+enum TagFilter: Equatable {
+    case none
+    case pinned
+
+    /// The tag string for the Rust/database layer, nil when no filter active
+    var tagString: String? {
+        switch self {
+        case .none: nil
+        case .pinned: "pinned"
+        }
+    }
+}
+
+extension ItemMetadata {
+    var isPinned: Bool { tags.contains(TagFilter.pinned.tagString!) }
+}
+
 /// Display state for the clipboard list
 /// Search with empty query returns all items (what was previously called "browse mode")
 enum DisplayState: Equatable {
@@ -57,7 +75,7 @@ final class ClipboardStore {
     private(set) var contentTypeFilter: ContentTypeFilter = .all
 
     /// Current tag filter (observable by views)
-    private(set) var currentTag: String? = nil
+    private(set) var tagFilter: TagFilter = .none
 
     // MARK: - Private State
 
@@ -186,7 +204,7 @@ final class ClipboardStore {
     func resetForDisplay() {
         searchTask?.cancel()
         contentTypeFilter = .all
-        currentTag = nil
+        tagFilter = .none
         displayVersion += 1
         refresh()
     }
@@ -196,8 +214,8 @@ final class ClipboardStore {
         refresh()
     }
 
-    func setTagFilter(_ tag: String?) {
-        currentTag = tag
+    func setTagFilter(_ filter: TagFilter) {
+        tagFilter = filter
         refresh()
     }
 
@@ -259,8 +277,8 @@ final class ClipboardStore {
 
         do {
             let searchResult: SearchResult
-            if contentTypeFilter != .all || currentTag != nil {
-                searchResult = try await rustStore.searchFiltered(query: query, filter: contentTypeFilter, tag: currentTag)
+            if contentTypeFilter != .all || tagFilter != .none {
+                searchResult = try await rustStore.searchFiltered(query: query, filter: contentTypeFilter, tag: tagFilter.tagString)
             } else {
                 searchResult = try await rustStore.search(query: query)
             }
@@ -303,12 +321,12 @@ final class ClipboardStore {
     }
 
     func pinItem(itemId: Int64) async {
-        await addTag(itemId: itemId, tag: "pinned")
+        await addTag(itemId: itemId, tag: TagFilter.pinned.tagString!)
         refresh()
     }
 
     func unpinItem(itemId: Int64) async {
-        await removeTag(itemId: itemId, tag: "pinned")
+        await removeTag(itemId: itemId, tag: TagFilter.pinned.tagString!)
         refresh()
     }
 
