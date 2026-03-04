@@ -52,6 +52,7 @@ futures = "*"
 default = ["serde"]
 serde = ["chrono/serde"]
 perf-log = []
+ranking-comparison = []
 
 
 
