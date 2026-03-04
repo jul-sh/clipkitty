@@ -27,7 +27,7 @@ SIGNING_IDENTITY ?= $(shell security find-identity -v -p codesigning 2>/dev/null
 RUST_MARKER := .make/rust.marker
 RUST_LIB := Sources/ClipKittyRust/libpurr.a
 
-.PHONY: all clean rust rust-force generate build sign list-identities run test uitest rust-test perf-test perf-db
+.PHONY: all clean rust rust-force generate build sign list-identities run run-perf test uitest rust-test perf-test perf-db
 
 all: rust generate build
 
@@ -79,6 +79,19 @@ run: all
 	@pkill -x $(APP_NAME) 2>/dev/null || true
 	@sleep 0.5
 	@echo "Opening $(APP_NAME)..."
+	@open "$(DERIVED_DATA)/Build/Products/$(CONFIGURATION)/$(APP_NAME).app"
+
+# Run with synthetic perf test database (150 large items)
+run-perf: all perf-db
+	@echo "Closing existing $(APP_NAME)..."
+	@pkill -9 $(APP_NAME) 2>/dev/null || true
+	@sleep 1
+	@echo "Setting up perf test database..."
+	@mkdir -p "$(HOME)/Library/Containers/com.eviljuliette.clipkitty/Data/Library/Application Support/ClipKitty"
+	@rm -f "$(HOME)/Library/Containers/com.eviljuliette.clipkitty/Data/Library/Application Support/ClipKitty/clipboard-screenshot.sqlite"*
+	@rm -rf "$(HOME)/Library/Containers/com.eviljuliette.clipkitty/Data/Library/Application Support/ClipKitty/tantivy_index_v3"
+	@cp distribution/SyntheticData_perf.sqlite "$(HOME)/Library/Containers/com.eviljuliette.clipkitty/Data/Library/Application Support/ClipKitty/clipboard-screenshot.sqlite"
+	@echo "Opening $(APP_NAME) with perf database..."
 	@open "$(DERIVED_DATA)/Build/Products/$(CONFIGURATION)/$(APP_NAME).app"
 
 clean:
