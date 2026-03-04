@@ -201,6 +201,13 @@ final class ClipboardStore {
         }.value
     }
 
+    /// Compute highlights for visible items (called on-demand as rows become visible)
+    /// Returns MatchData array in same order as input IDs, or empty array on error
+    func computeHighlights(itemIds: [Int64], query: String) -> [MatchData] {
+        guard let rustStore else { return [] }
+        return (try? rustStore.computeHighlights(itemIds: itemIds, query: query)) ?? []
+    }
+
     /// Fetch link metadata using LinkPresentation and persist to database
     /// Returns the updated item if successful
     func fetchLinkMetadata(url: String, itemId: Int64) async -> ClipboardItem? {
