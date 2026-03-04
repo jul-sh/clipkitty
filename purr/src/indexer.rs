@@ -4,7 +4,6 @@
 //! For queries under 3 characters, returns empty (handled by search.rs streaming fallback).
 
 use crate::candidate::SearchCandidate;
-use crate::ranking::compute_bucket_score;
 use chrono::Utc;
 
 /// Large boost for proximity PhraseQuery, creating distinct score bands.
@@ -260,54 +259,14 @@ impl Indexer {
             return Ok(candidates);
         }
 
-        // Phase 2: Bucket re-ranking (parallelized — compute_bucket_score is a pure function)
-        let query_words_owned = crate::search::tokenize_words(query);
-        let query_words: Vec<&str> = query_words_owned.iter().map(|(_, _, w)| w.as_str()).collect();
-        let last_word_is_prefix = query.ends_with(|c: char| c.is_alphanumeric());
-        let now = Utc::now().timestamp();
-
-        use rayon::prelude::*;
-        let mut scored: Vec<(crate::ranking::BucketScore, usize)> = candidates
-            .par_iter()
-            .enumerate()
-            .map(|(i, c)| {
-                let content_lower = c.content().to_lowercase();
-                let doc_words = crate::search::tokenize_words(&content_lower);
-                let doc_word_strs: Vec<&str> = doc_words.iter().map(|(_, _, w)| w.as_str()).collect();
-                let bucket = compute_bucket_score(
-                    &content_lower,
-                    &doc_word_strs,
-                    &query_words,
-                    last_word_is_prefix,
-                    c.timestamp,
-                    c.tantivy_score,
-                    now,
-                );
-                (bucket, i)
-            })
-            .collect();
-
-        scored.sort_unstable_by(|a, b| b.0.cmp(&a.0));
-        scored.truncate(limit);
+        // Tantivy handles ranking directly via soft-lexicographic scoring in tweak_score.
+        // No Phase 2 re-ranking needed.
+        candidates.truncate(limit);
 
         #[cfg(feature = "perf-log")]
-        {
-            let t2 = std::time::Instant::now();
-            eprintln!(
-                "[perf] phase1={:.1}ms phase2={:.1}ms candidates={}",
-                (t1 - t0).as_secs_f64() * 1000.0,
-                (t2 - t1).as_secs_f64() * 1000.0,
-                scored.len(),
-            );
-        }
+        eprintln!("[perf] phase1={:.1}ms candidates={}", (t1 - t0).as_secs_f64() * 1000.0, candidates.len());
 
-        let mut candidate_slots: Vec<Option<SearchCandidate>> =
-            candidates.into_iter().map(Some).collect();
-
-        Ok(scored
-            .into_iter()
-            .filter_map(|(_, i)| candidate_slots[i].take())
-            .collect())
+        Ok(candidates)
     }
 
     /// Phase 1: Trigram recall using Tantivy BM25.
@@ -361,13 +320,9 @@ impl Indexer {
                     // Higher tiers dominate, but large lower-tier differences can
                     // overcome small upper-tier differences.
                     //
-                    // Weight ratio = 10x between tiers means:
-                    // - 2-point recency diff (200) beats 15-point proximity diff (150)
-                    // - 1-point recency diff (100) loses to 15-point proximity diff (150)
-                    //
                     // Tiers (high to low):
                     // 1. recency_score (0-255) * 10.0 = 0-2550
-                    // 2. proximity_tier (0-1) * 100.0 = 0-100  (proximity match = +100)
+                    // 2. proximity_tier (0-1) * 100.0 = 0-100 (proximity match = +100)
                     // 3. base_remainder (BM25) * 1.0 = typically 0-50
                     recency_score * 10.0 + proximity_tier * 100.0 + base_remainder
                 }
