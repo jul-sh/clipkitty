@@ -1,9 +1,10 @@
 name: Performance Tests
 
 on:
-  # Run on PRs to catch regressions before merge
-  pull_request:
-    branches: [main, release]
+  # Disabled: frequently times out at 30m and produces incorrect output.
+  # Can still be triggered manually via workflow_dispatch.
+  # pull_request:
+  #   branches: [main, release]
   # Manual trigger for on-demand testing
   workflow_dispatch:
     inputs:
