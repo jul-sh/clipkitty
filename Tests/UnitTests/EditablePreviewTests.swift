@@ -61,7 +61,7 @@ final class EditablePreviewTests: XCTestCase {
         // Original should be unchanged
         let items = try store.fetchByIds(itemIds: [originalId])
         XCTAssertEqual(items.count, 1)
-        XCTAssertEqual(items[0].textContent, originalText, "Original item content should be preserved")
+        XCTAssertEqual(items[0].content.textContent, originalText, "Original item content should be preserved")
     }
 
     func testSaveEditedTextDuplicateReturnsZero() throws {

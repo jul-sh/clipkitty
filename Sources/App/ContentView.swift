@@ -2213,13 +2213,14 @@ struct HighlightedTextView: View, Equatable {
                 let startIndex = Int(firstHighlight.start)
                 let endIndex = Int(firstHighlight.end)
 
-                // Clamp indices to valid range
-                let safeStart = min(max(0, startIndex), text.count)
-                let safeEnd = min(max(safeStart, endIndex), text.count)
+                // Clamp indices to valid range (Unicode scalar count matches Rust's .chars())
+                let safeStart = min(max(0, startIndex), text.unicodeScalars.count)
+                let safeEnd = min(max(safeStart, endIndex), text.unicodeScalars.count)
 
-                let prefixEnd = text.index(text.startIndex, offsetBy: safeStart)
+                // Use unicodeScalars view for offsetting, then convert to String.Index
+                let prefixEnd = text.unicodeScalars.index(text.unicodeScalars.startIndex, offsetBy: safeStart)
                 let matchStart = prefixEnd
-                let matchEnd = text.index(text.startIndex, offsetBy: safeEnd)
+                let matchEnd = text.unicodeScalars.index(text.unicodeScalars.startIndex, offsetBy: safeEnd)
 
                 let prefix = String(text[..<prefixEnd])
                 let match = String(text[matchStart..<matchEnd])
@@ -2271,7 +2272,7 @@ struct HighlightedTextView: View, Equatable {
     private func suffixView(suffix: String, suffixStartIndex: Int) -> some View {
         // Check for additional highlights in the suffix (beyond the first one)
         let additionalHighlights = highlights.dropFirst().filter { h in
-            Int(h.start) >= suffixStartIndex && Int(h.start) < suffixStartIndex + suffix.count
+            Int(h.start) >= suffixStartIndex && Int(h.start) < suffixStartIndex + suffix.unicodeScalars.count
         }
 
         if additionalHighlights.isEmpty {
@@ -2290,14 +2291,19 @@ struct HighlightedTextView: View, Equatable {
             let relativeStart = Int(highlight.start) - suffixStartIndex
             let relativeEnd = Int(highlight.end) - suffixStartIndex
 
-            // Clamp to suffix bounds
+            // Clamp to suffix bounds (Unicode scalar count matches Rust's .chars())
             let safeStart = max(0, relativeStart)
-            let safeEnd = min(suffix.count, relativeEnd)
+            let safeEnd = min(suffix.unicodeScalars.count, relativeEnd)
 
             guard safeStart < safeEnd else { continue }
 
-            let startIdx = attributed.index(attributed.startIndex, offsetByCharacters: safeStart)
-            let endIdx = attributed.index(attributed.startIndex, offsetByCharacters: safeEnd)
+            // Use unicodeScalars view for correct offset calculation
+            let suffixScalars = suffix.unicodeScalars
+            let scalarStart = suffixScalars.index(suffixScalars.startIndex, offsetBy: safeStart)
+            let scalarEnd = suffixScalars.index(suffixScalars.startIndex, offsetBy: safeEnd)
+            // Convert scalar indices to AttributedString indices
+            let startIdx = AttributedString.Index(scalarStart, within: attributed)!
+            let endIdx = AttributedString.Index(scalarEnd, within: attributed)!
 
             attributed[startIdx..<endIdx].backgroundColor = highlightBackground(for: highlight.kind)
             if highlight.kind == .subsequence {
