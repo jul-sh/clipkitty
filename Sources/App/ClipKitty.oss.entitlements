@@ -6,11 +6,9 @@
     <key>com.apple.application-identifier</key>
     <string>ANBBV7LQ2P.com.eviljuliette.clipkitty</string>
 
-    <!-- macOS App Sandbox disabled for DMG distribution -->
-    <!-- Sparkle needs filesystem access to replace the app bundle during updates. -->
-    <!-- App Store builds use ClipKitty.appstore.entitlements which keeps sandbox enabled. -->
+    <!-- macOS App Sandbox — enabled; Sparkle uses XPC installer service to update outside sandbox -->
     <key>com.apple.security.app-sandbox</key>
-    <false/>
+    <true/>
 
     <!-- Network: outgoing connections for LPMetadataProvider link preview fetching -->
     <key>com.apple.security.network.client</key>
@@ -20,11 +18,13 @@
     <key>com.apple.security.files.user-selected.read-only</key>
     <true/>
 
-    <!-- Sparkle: mach-lookup for XPC services (installer & status) -->
+    <!-- Sparkle: mach-lookup for XPC services (installer & status).
+         Hardcoded because $(PRODUCT_BUNDLE_IDENTIFIER) is not expanded when
+         codesign is invoked directly in CI (outside xcodebuild). -->
     <key>com.apple.security.temporary-exception.mach-lookup.global-name</key>
     <array>
-        <string>$(PRODUCT_BUNDLE_IDENTIFIER)-spks</string>
-        <string>$(PRODUCT_BUNDLE_IDENTIFIER)-spki</string>
+        <string>com.eviljuliette.clipkitty-spks</string>
+        <string>com.eviljuliette.clipkitty-spki</string>
     </array>
 
     <!-- Hardware: camera/microphone/location are omitted; no sensor access. -->
