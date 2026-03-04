@@ -76,6 +76,9 @@ pub(crate) fn search_trigram(indexer: &Indexer, query: &str, token: &Cancellatio
         #[cfg(feature = "perf-log")]
         let t1 = std::time::Instant::now();
         use rayon::prelude::*;
+        // No filter needed: bucket ranking already excludes candidates with
+        // words_matched_weight == 0 (punctuation-only matches), so all candidates
+        // here will produce at least one word highlight.
         let mut sorted: Vec<FuzzyMatch> = ranked
             .into_par_iter()
             .take_any_while(|_| !token.is_cancelled())
@@ -87,7 +90,6 @@ pub(crate) fn search_trigram(indexer: &Indexer, query: &str, token: &Cancellatio
                 m.score = (MAX_RESULTS - rank) as f64;
                 m
             })
-            .filter(|m| !m.highlight_ranges.is_empty())
             .collect();
 
         // par_iter + take_any_while doesn't preserve order — restore bucket ranking
