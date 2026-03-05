@@ -11,7 +11,6 @@ use crate::indexer::{Indexer, IndexerResult};
 use crate::interface::{HighlightKind, HighlightRange, MatchData, ItemMatch};
 use crate::models::StoredItem;
 use crate::ranking::{does_word_match, WordMatchKind};
-use chrono::Utc;
 use tokio_util::sync::CancellationToken;
 
 /// Maximum results to return from search.
@@ -25,8 +24,6 @@ pub(crate) const RECENCY_BOOST_MAX: f64 = 0.5;
 /// Half-life for recency decay: 3 days (stronger recency bias than 7-day default)
 pub(crate) const RECENCY_HALF_LIFE_SECS: f64 = 3.0 * 24.0 * 60.0 * 60.0;
 
-/// Boost factor for prefix matches in short query scoring
-const PREFIX_MATCH_BOOST: f64 = 2.0;
 
 /// Boost for entries where highlighted chars cover most of the document.
 const COVERAGE_BOOST_MAX: f64 = 3.0;
@@ -45,10 +42,7 @@ pub(crate) struct FuzzyMatch {
     pub(crate) id: i64,
     pub(crate) score: f64,
     pub(crate) highlight_ranges: Vec<HighlightRange>,
-    pub(crate) timestamp: i64,
     pub(crate) content: String,
-    /// Whether this was a prefix match (for short query scoring)
-    pub(crate) is_prefix_match: bool,
 }
 
 /// Search using Tantivy with bucket re-ranking for trigram queries (>= 3 chars).
@@ -78,9 +72,7 @@ pub(crate) fn search_trigram_lazy(indexer: &Indexer, query: &str, token: &Cancel
             id: c.id,
             score: (MAX_RESULTS - rank) as f64,
             highlight_ranges: Vec::new(), // Lazy: no highlights
-            timestamp: c.timestamp,
             content: c.content().to_string(),
-            is_prefix_match: false,
         })
         .collect();
 
@@ -147,104 +139,6 @@ pub(crate) fn search_trigram(indexer: &Indexer, query: &str, token: &Cancellatio
     Ok(sorted)
 }
 
-/// Score candidates for short queries (< 3 chars)
-/// Uses recency as primary metric with prefix match boost
-pub(crate) fn score_short_query_batch(
-    candidates: impl Iterator<Item = (i64, String, i64, bool)> + Send, // (id, content, timestamp, is_prefix)
-    query: &str,
-    token: &CancellationToken,
-) -> Vec<FuzzyMatch> {
-        let trimmed = query.trim();
-        if trimmed.is_empty() {
-            return Vec::new();
-        }
-
-        let query_lower = trimmed.to_lowercase();
-        let now = Utc::now().timestamp();
-
-        use rayon::prelude::*;
-        let query_len = query_lower.len();
-        let mut results: Vec<FuzzyMatch> = candidates
-            .par_bridge()
-            .take_any_while(|_| !token.is_cancelled())
-            .filter_map(|(id, content, timestamp, is_prefix_match)| {
-                let content_lower = content.to_lowercase();
-
-                // Find ALL match positions for highlighting (not just the first)
-                let positions: Vec<usize> = content_lower
-                    .match_indices(&query_lower)
-                    .map(|(pos, _)| pos)
-                    .collect();
-                if positions.is_empty() {
-                    return None;
-                }
-
-                let highlight_ranges: Vec<HighlightRange> = positions.iter()
-                    .map(|&pos| HighlightRange {
-                        start: pos as u64,
-                        end: (pos + query_len) as u64,
-                        kind: HighlightKind::Exact,
-                    })
-                    .collect();
-
-                // Score based on recency with prefix boost
-                let base_score = 1000.0_f64;
-                let mut score = if is_prefix_match {
-                    base_score * PREFIX_MATCH_BOOST
-                } else {
-                    base_score
-                };
-
-                // Word-boundary boost: prefer "hi there" over "within" for query "hi"
-                let chars: Vec<char> = content_lower.chars().collect();
-                let has_word_boundary_match = positions.iter().any(|&pos| {
-                    let at_start = pos == 0 || !chars.get(pos - 1).map_or(false, |c| c.is_alphanumeric());
-                    let at_end = pos + query_len >= chars.len()
-                        || !chars.get(pos + query_len).map_or(false, |c| c.is_alphanumeric());
-                    at_start && at_end
-                });
-                if has_word_boundary_match {
-                    score *= PREFIX_MATCH_BOOST;
-                }
-
-                // Coverage boost
-                let content_char_len = chars.len().max(1);
-                let matched_char_count: u64 = highlight_ranges.iter().map(|r| r.end - r.start).sum();
-                let coverage = matched_char_count as f64 / content_char_len as f64;
-                if coverage > COVERAGE_BOOST_THRESHOLD {
-                    let t = (coverage - COVERAGE_BOOST_THRESHOLD) / (1.0 - COVERAGE_BOOST_THRESHOLD);
-                    score *= 1.0 + (COVERAGE_BOOST_MAX - 1.0) * t;
-                }
-
-                // Position boost for matches near the start
-                if positions[0] < POSITION_BOOST_WINDOW {
-                    let t = 1.0 - (positions[0] as f64 / POSITION_BOOST_WINDOW as f64);
-                    let boost = POSITION_BOOST_MIN + (POSITION_BOOST_MAX - POSITION_BOOST_MIN) * t;
-                    score *= boost;
-                }
-
-                Some(FuzzyMatch {
-                    id,
-                    score,
-                    highlight_ranges,
-                    timestamp,
-                    content,
-                    is_prefix_match,
-                })
-            })
-            .collect();
-
-        // Sort by blended score (recency primary, prefix boost)
-        results.sort_unstable_by(|a, b| {
-            let score_a = recency_weighted_score(a.score, a.timestamp, now, a.is_prefix_match);
-            let score_b = recency_weighted_score(b.score, b.timestamp, now, b.is_prefix_match);
-            score_b.total_cmp(&score_a).then_with(|| b.timestamp.cmp(&a.timestamp))
-        });
-
-    results.truncate(MAX_RESULTS);
-    results
-}
-
 /// Map a `WordMatchKind` from ranking to a `HighlightKind` for the UI.
 fn word_match_to_highlight_kind(wmk: WordMatchKind) -> HighlightKind {
     match wmk {
@@ -267,7 +161,7 @@ pub(crate) fn highlight_candidate(
         content: &str,
         _content_lower: &str,
         doc_words: &[(usize, usize, String)],
-        timestamp: i64,
+        _timestamp: i64,
         tantivy_score: f32,
         query_words: &[&str],
         last_word_is_prefix: bool,
@@ -359,9 +253,7 @@ pub(crate) fn highlight_candidate(
         id,
         score,
         highlight_ranges,
-        timestamp,
         content: content.to_string(),
-        is_prefix_match: false,
     }
 }
 
@@ -551,6 +443,31 @@ pub(crate) fn create_lazy_item_match(item: &StoredItem) -> ItemMatch {
     }
 }
 
+/// Compute trivial match data for prefix queries (< 3 chars).
+/// The highlight is always just the first `query.len()` chars of the content.
+pub(crate) fn compute_prefix_match_data(content: &str, query_char_len: usize) -> MatchData {
+    let max_len = SNIPPET_CONTEXT_CHARS * 2;
+    let highlight = if query_char_len > 0 && content.chars().count() >= query_char_len {
+        vec![HighlightRange {
+            start: 0,
+            end: query_char_len as u64,
+            kind: HighlightKind::Prefix,
+        }]
+    } else {
+        Vec::new()
+    };
+
+    let (text, adjusted_highlights, line_number) = generate_snippet(content, &highlight, max_len);
+
+    MatchData {
+        text,
+        highlights: adjusted_highlights,
+        line_number,
+        full_content_highlights: highlight,
+        densest_highlight_start: 0,
+    }
+}
+
 /// Compute match data (snippet, highlights, line number) for an item given a query.
 /// Used for on-demand computation in lazy mode.
 pub(crate) fn compute_item_match_data(
@@ -627,18 +544,6 @@ pub(crate) fn tokenize_words(content: &str) -> Vec<(usize, usize, String)> {
 /// so checking the first character is sufficient.
 pub(crate) fn is_word_token(token: &str) -> bool {
     token.starts_with(|c: char| c.is_alphanumeric())
-}
-
-/// Combine a base relevance score with exponential recency decay and prefix boost.
-fn recency_weighted_score(fuzzy_score: f64, timestamp: i64, now: i64, is_prefix_match: bool) -> f64 {
-    let base_score = fuzzy_score;
-
-    let age_secs = (now - timestamp).max(0) as f64;
-    let recency_factor = (-age_secs * 2.0_f64.ln() / RECENCY_HALF_LIFE_SECS).exp();
-
-    let prefix_boost = if is_prefix_match { PREFIX_MATCH_BOOST } else { 1.0 };
-
-    base_score * prefix_boost * (1.0 + RECENCY_BOOST_MAX * recency_factor)
 }
 
 fn normalize_snippet_with_mapping(content: &str, start: usize, end: usize, max_chars: usize) -> (String, Vec<usize>) {
@@ -795,17 +700,6 @@ mod tests {
             .take((h.end - h.start) as usize)
             .collect();
         assert_eq!(highlighted, "MATCH");
-    }
-
-    #[test]
-    fn test_recency_weighted_score() {
-        let now = 1700000000i64;
-        let recent = recency_weighted_score(1000.0, now, now, false);
-        let old = recency_weighted_score(1000.0, now - 86400 * 30, now, false);
-        assert!(recent > old, "Recent items should score higher with same quality");
-        let prefix = recency_weighted_score(1000.0, now, now, true);
-        let non_prefix = recency_weighted_score(1000.0, now, now, false);
-        assert!(prefix > non_prefix, "Prefix matches should score higher");
     }
 
     #[test]
