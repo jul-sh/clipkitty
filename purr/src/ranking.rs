@@ -7,6 +7,10 @@
 
 use crate::search::is_word_token;
 
+/// Documents larger than this threshold use fast matching (exact + prefix only).
+/// This trades typo tolerance for performance on large documents like code files.
+pub const LARGE_DOC_THRESHOLD_BYTES: usize = 5 * 1024; // 5KB
+
 /// Bucket score tuple — derived Ord gives lexicographic comparison.
 /// All components: higher = better.
 ///
@@ -45,6 +49,9 @@ struct WordMatch {
 ///
 /// `content_lower` and `doc_word_strs` should be pre-computed from the candidate's
 /// content to avoid redundant work when the same tokens are needed for highlighting.
+///
+/// For large documents (>5KB), uses fast matching mode which only supports exact
+/// and prefix matching, trading typo tolerance for performance.
 pub fn compute_bucket_score(
     content_lower: &str,
     doc_word_strs: &[&str],
@@ -66,7 +73,9 @@ pub fn compute_bucket_score(
         };
     }
 
-    let word_matches = match_query_words(query_words, doc_word_strs, last_word_is_prefix);
+    // Use fast matching for large documents to avoid expensive fuzzy matching
+    let fast_mode = content_lower.len() > LARGE_DOC_THRESHOLD_BYTES;
+    let word_matches = match_query_words(query_words, doc_word_strs, last_word_is_prefix, fast_mode);
 
     let words_matched_weight: u16 = word_matches.iter()
         .filter(|m| m.matched)
@@ -128,10 +137,13 @@ fn quantize_bm25(score: f32) -> u16 {
 }
 
 /// For each query word, find the best-matching document word.
+/// When `fast_mode` is true (for large documents), only exact and prefix matching
+/// is used, skipping expensive fuzzy edit distance and subsequence matching.
 fn match_query_words(
     query_words: &[&str],
     doc_words: &[&str],
     last_word_is_prefix: bool,
+    fast_mode: bool,
 ) -> Vec<WordMatch> {
     query_words
         .iter()
@@ -149,7 +161,12 @@ fn match_query_words(
             let mut best: Option<WordMatch> = None;
 
             for (dpos, dw) in doc_words.iter().enumerate() {
-                match does_word_match(&qw_lower, dw, allow_prefix) {
+                let wmk = if fast_mode {
+                    does_word_match_fast(&qw_lower, dw, allow_prefix)
+                } else {
+                    does_word_match(&qw_lower, dw, allow_prefix)
+                };
+                match wmk {
                     WordMatchKind::Exact => {
                         return WordMatch {
                             matched: true,
@@ -244,6 +261,19 @@ pub(crate) fn does_word_match(qw_lower: &str, dw_lower: &str, allow_prefix: bool
     }
     if let Some(gaps) = subsequence_match(qw_lower, dw_lower) {
         return WordMatchKind::Subsequence(gaps);
+    }
+    WordMatchKind::None
+}
+
+/// Fast word matching for large documents (>5KB). Only exact and prefix matching,
+/// no fuzzy edit distance or subsequence matching. This is much faster as it avoids
+/// expensive DP table allocations for edit distance computation.
+pub(crate) fn does_word_match_fast(qw_lower: &str, dw_lower: &str, allow_prefix: bool) -> WordMatchKind {
+    if dw_lower == qw_lower {
+        return WordMatchKind::Exact;
+    }
+    if allow_prefix && qw_lower.len() >= 2 && dw_lower.starts_with(qw_lower) {
+        return WordMatchKind::Prefix;
     }
     WordMatchKind::None
 }
@@ -670,7 +700,7 @@ mod tests {
     #[test]
     fn test_match_exact() {
         let doc_words = vec!["hello", "world"];
-        let matches = match_query_words(&["hello"], &doc_words, false);
+        let matches = match_query_words(&["hello"], &doc_words, false, false);
         assert_eq!(matches.len(), 1);
         assert!(matches[0].matched);
         assert_eq!(matches[0].edit_dist, 0);
@@ -680,7 +710,7 @@ mod tests {
     #[test]
     fn test_match_prefix_last_word() {
         let doc_words = vec!["clipkitty"];
-        let matches = match_query_words(&["cl"], &doc_words, true);
+        let matches = match_query_words(&["cl"], &doc_words, true, false);
         assert_eq!(matches.len(), 1);
         assert!(matches[0].matched);
         assert_eq!(matches[0].edit_dist, 0);
@@ -689,14 +719,14 @@ mod tests {
     #[test]
     fn test_match_prefix_not_allowed_non_last() {
         let doc_words = vec!["clipkitty"];
-        let matches = match_query_words(&["cl", "hello"], &doc_words, true);
+        let matches = match_query_words(&["cl", "hello"], &doc_words, true, false);
         assert!(!matches[0].matched);
     }
 
     #[test]
     fn test_match_fuzzy() {
         let doc_words = vec!["riverside", "park"];
-        let matches = match_query_words(&["riversde"], &doc_words, false);
+        let matches = match_query_words(&["riversde"], &doc_words, false, false);
         assert!(matches[0].matched);
         assert_eq!(matches[0].edit_dist, 1);
     }
@@ -705,7 +735,7 @@ mod tests {
     fn test_match_fuzzy_short_word() {
         // "helo" (4 chars) matches "hello" via fuzzy (edit distance 1)
         let doc_words = vec!["hello"];
-        let matches = match_query_words(&["helo"], &doc_words, false);
+        let matches = match_query_words(&["helo"], &doc_words, false, false);
         assert!(matches[0].matched);
         assert_eq!(matches[0].edit_dist, 1);
     }
@@ -714,7 +744,7 @@ mod tests {
     fn test_match_transposition_short_word() {
         // "teh" (3 chars) matches "the" via fuzzy (transposition = 1 edit)
         let doc_words = vec!["the", "quick"];
-        let matches = match_query_words(&["teh"], &doc_words, false);
+        let matches = match_query_words(&["teh"], &doc_words, false, false);
         assert!(matches[0].matched);
         assert_eq!(matches[0].edit_dist, 1);
         assert!(!matches[0].is_exact);
@@ -723,7 +753,7 @@ mod tests {
     #[test]
     fn test_match_multi_word() {
         let doc_words = vec!["hello", "beautiful", "world"];
-        let matches = match_query_words(&["hello", "world"], &doc_words, false);
+        let matches = match_query_words(&["hello", "world"], &doc_words, false, false);
         assert!(matches[0].matched);
         assert!(matches[1].matched);
         assert_eq!(matches[0].doc_word_pos, 0);
