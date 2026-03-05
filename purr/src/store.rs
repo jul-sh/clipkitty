@@ -1072,9 +1072,10 @@ mod tests {
         store.save_text("Another greeting hello".to_string(), None, None).unwrap();
         store.save_text("Unrelated content".to_string(), None, None).unwrap();
 
-        // Short query (< 3 chars)
+        // Short query (< 3 chars) — prefix-only: only "Hello World..." starts with "He"
         let result = store.search("He".to_string()).await.unwrap();
-        assert!(!result.matches.is_empty());
+        assert_eq!(result.matches.len(), 1, "Only items starting with 'He' should match");
+        assert!(result.matches[0].item_metadata.snippet.contains("Hello World"));
 
         // Trigram query (>= 3 chars)
         let result = store.search("Hello".to_string()).await.unwrap();
@@ -1082,6 +1083,39 @@ mod tests {
         assert!(result.matches.iter().all(|m|
             m.item_metadata.snippet.to_lowercase().contains("hello")
         ));
+    }
+
+    #[tokio::test]
+    async fn test_short_query_prefix_only() {
+        // Short queries (< 3 chars) must only match items whose content
+        // starts with the query. Substring matches must NOT appear.
+        let store = ClipboardStore::new_in_memory().unwrap();
+
+        store.save_text("apple pie".to_string(), None, None).unwrap();
+        store.save_text("pineapple".to_string(), None, None).unwrap();
+        store.save_text("crab apple".to_string(), None, None).unwrap();
+        store.save_text("AP class".to_string(), None, None).unwrap();
+
+        // "ap" should match "apple pie" and "AP class" (case-insensitive prefix)
+        // but NOT "pineapple" (substring) or "crab apple" (substring)
+        let result = store.search("ap".to_string()).await.unwrap();
+        assert_eq!(result.matches.len(), 2, "Only prefix matches, not substring");
+        let snippets: Vec<&str> = result.matches.iter().map(|m| m.item_metadata.snippet.as_str()).collect();
+        assert!(snippets.iter().any(|s| s.contains("apple pie")));
+        assert!(snippets.iter().any(|s| s.contains("AP class")));
+
+        // Single char "a" should only match "apple pie" and "AP class"
+        let result = store.search("a".to_string()).await.unwrap();
+        assert_eq!(result.matches.len(), 2, "Only items starting with 'a'");
+
+        // All results should have eager match_data with prefix highlight
+        for m in &result.matches {
+            let md = m.match_data.as_ref().expect("short query results must have eager match_data");
+            assert!(!md.highlights.is_empty(), "must have highlight");
+            assert_eq!(md.highlights[0].start, 0, "highlight must start at 0");
+            assert_eq!(md.highlights[0].end, 1, "single-char query highlights 1 char");
+            assert!(matches!(md.highlights[0].kind, crate::interface::HighlightKind::Prefix));
+        }
     }
 
     #[tokio::test]
