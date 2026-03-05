@@ -3,6 +3,58 @@ import AppKit
 import ClipKittyRust
 import UniformTypeIdentifiers
 
+// MARK: - Icon Cache
+
+/// Thread-safe cache for app icons to avoid blocking main thread on NSWorkspace.icon calls.
+/// Icons are cached by bundle ID since app icons rarely change.
+@MainActor
+private final class AppIconCache {
+    static let shared = AppIconCache()
+
+    private var iconsByBundleID: [String: NSImage] = [:]
+    private var iconsByPath: [String: NSImage] = [:]
+    private var iconsByUTType: [String: NSImage] = [:]
+
+    private init() {}
+
+    /// Get cached icon for bundle ID, loading synchronously only on cache miss.
+    /// After first load, subsequent calls are O(1) dictionary lookups.
+    func icon(forBundleID bundleID: String) -> NSImage? {
+        if let cached = iconsByBundleID[bundleID] {
+            return cached
+        }
+
+        // Cache miss - load and cache
+        guard let appURL = NSWorkspace.shared.urlForApplication(withBundleIdentifier: bundleID) else {
+            return nil
+        }
+        let icon = NSWorkspace.shared.icon(forFile: appURL.path)
+        iconsByBundleID[bundleID] = icon
+        return icon
+    }
+
+    /// Get cached icon for file path (used for file previews)
+    func icon(forFile path: String) -> NSImage {
+        if let cached = iconsByPath[path] {
+            return cached
+        }
+        let icon = NSWorkspace.shared.icon(forFile: path)
+        iconsByPath[path] = icon
+        return icon
+    }
+
+    /// Get cached icon for UTType (used for generic type icons)
+    func icon(for utType: UTType) -> NSImage {
+        let key = utType.identifier
+        if let cached = iconsByUTType[key] {
+            return cached
+        }
+        let icon = NSWorkspace.shared.icon(for: utType)
+        iconsByUTType[key] = icon
+        return icon
+    }
+}
+
 private enum SpinnerState: Equatable {
     case idle
     case debouncing(task: Task<Void, Never>)
@@ -63,6 +115,11 @@ struct ContentView: View {
     @State private var editFocus: EditFocusState = .idle
     /// Per-item cache of unsaved edited text. Cleared on window hide.
     @State private var pendingEdits: [Int64: String] = [:]
+
+    /// Prefetch buffer - how many items beyond visible to preload match_data for.
+    /// Set generously so users almost never see items without highlights.
+    /// Combined with 25 eager items from Rust, this should cover all visible scrolling.
+    private let matchDataPrefetchBuffer = 20
 
     enum FocusTarget: Hashable {
         case search
@@ -696,6 +753,35 @@ struct ContentView: View {
         return itemIds.firstIndex(of: itemId)
     }
 
+    /// Called when an item row appears. Prefetches match_data for nearby items that don't have it.
+    private func onItemAppear(index: Int) {
+        // Calculate range to prefetch (visible + buffer in both directions)
+        let startIndex = max(0, index - matchDataPrefetchBuffer)
+        let endIndex = min(itemCount - 1, index + matchDataPrefetchBuffer)
+
+        guard startIndex <= endIndex else { return }
+
+        // Get item IDs in range that need match_data
+        let idsToLoad = (startIndex...endIndex).compactMap { idx -> Int64? in
+            guard let id = itemId(at: idx) else { return nil }
+            // Check if this item needs match_data
+            switch store.state {
+            case .results(_, let items, _):
+                if items.first(where: { $0.itemMetadata.itemId == id })?.matchData == nil {
+                    return id
+                }
+            default:
+                break
+            }
+            return nil
+        }
+
+        guard !idsToLoad.isEmpty else { return }
+
+        // Load match_data for these items
+        store.loadMatchDataForItems(itemIds: idsToLoad)
+    }
+
     // MARK: - Content
 
     @ViewBuilder
@@ -779,6 +865,9 @@ struct ContentView: View {
                     )
                     .equatable()
                     .accessibilityIdentifier("ItemRow_\(index)")
+                    .onAppear {
+                        onItemAppear(index: index)
+                    }
                     .listRowInsets(EdgeInsets(top: 2, leading: 0, bottom: 2, trailing: 0))
                     .listRowSeparator(.hidden)
                     .listRowBackground(Color.clear)
@@ -861,7 +950,7 @@ struct ContentView: View {
                 itemId: item.itemMetadata.itemId,
                 fontName: FontManager.mono,
                 fontSize: 15,
-                highlights: selectedItemMatchData?.fullContentHighlights ?? [],
+                highlights: selectedItemMatchData?.fullContentHighlights.flatMap { $0 } ?? [],
                 densestHighlightStart: selectedItemMatchData?.densestHighlightStart ?? 0,
                 originalText: item.content.textContent,
                 onTextChange: { newText in
@@ -960,8 +1049,8 @@ struct ContentView: View {
                 if let app = item.itemMetadata.sourceApp {
                     HStack(spacing: 4) {
                         if let bundleID = item.itemMetadata.sourceAppBundleId,
-                           let appURL = NSWorkspace.shared.urlForApplication(withBundleIdentifier: bundleID) {
-                            Image(nsImage: NSWorkspace.shared.icon(forFile: appURL.path))
+                           let icon = AppIconCache.shared.icon(forBundleID: bundleID) {
+                            Image(nsImage: icon)
                                 .resizable()
                                 .frame(width: 14, height: 14)
                         } else {
@@ -1296,7 +1385,7 @@ struct FilePreviewView: View {
 
     private func fileRow(_ file: FileEntry) -> some View {
         HStack(spacing: 12) {
-            Image(nsImage: NSWorkspace.shared.icon(forFile: file.path))
+            Image(nsImage: AppIconCache.shared.icon(forFile: file.path))
                 .resizable()
                 .frame(width: 40, height: 40)
 
@@ -1941,6 +2030,7 @@ struct ItemRow: View, Equatable {
     }
 
     /// Highlights for display - passed directly from Rust (already adjusted for normalization)
+    /// Returns empty array if matchData is nil (lazy mode - not yet computed)
     private var displayHighlights: [HighlightRange] {
         matchData?.highlights ?? []
     }
@@ -1990,14 +2080,14 @@ struct ItemRow: View, Equatable {
                     case .symbol(let iconType):
                         if case .link = iconType,
                            let browserURL = NSWorkspace.shared.urlForApplication(toOpen: URL(string: "https://")!) {
-                            Image(nsImage: NSWorkspace.shared.icon(forFile: browserURL.path))
+                            Image(nsImage: AppIconCache.shared.icon(forFile: browserURL.path))
                                 .resizable()
                         } else if case .file = iconType,
-                                  let finderURL = NSWorkspace.shared.urlForApplication(withBundleIdentifier: "com.apple.finder") {
-                            Image(nsImage: NSWorkspace.shared.icon(forFile: finderURL.path))
+                                  let finderIcon = AppIconCache.shared.icon(forBundleID: "com.apple.finder") {
+                            Image(nsImage: finderIcon)
                                 .resizable()
                         } else {
-                            Image(nsImage: NSWorkspace.shared.icon(for: iconType.utType))
+                            Image(nsImage: AppIconCache.shared.icon(for: iconType.utType))
                                 .resizable()
                         }
                     }
@@ -2008,7 +2098,7 @@ struct ItemRow: View, Equatable {
                 // Badge: Source app icon
                 // Show for symbols (except pure link icons) and thumbnails (images, links with images)
                 if let bundleID = metadata.sourceAppBundleId,
-                   let appURL = NSWorkspace.shared.urlForApplication(withBundleIdentifier: bundleID) {
+                   let icon = AppIconCache.shared.icon(forBundleID: bundleID) {
                     // Skip badge for symbol links/files (app icon is already shown)
                     let showBadge: Bool = {
                         switch metadata.icon {
@@ -2020,7 +2110,7 @@ struct ItemRow: View, Equatable {
                     }()
 
                     if showBadge {
-                        Image(nsImage: NSWorkspace.shared.icon(forFile: appURL.path))
+                        Image(nsImage: icon)
                             .resizable()
                             .frame(width: 22, height: 22)
                             .clipShape(RoundedRectangle(cornerRadius: 3))
@@ -2123,13 +2213,14 @@ struct HighlightedTextView: View, Equatable {
                 let startIndex = Int(firstHighlight.start)
                 let endIndex = Int(firstHighlight.end)
 
-                // Clamp indices to valid range
-                let safeStart = min(max(0, startIndex), text.count)
-                let safeEnd = min(max(safeStart, endIndex), text.count)
+                // Clamp indices to valid range (Unicode scalar count matches Rust's .chars())
+                let safeStart = min(max(0, startIndex), text.unicodeScalars.count)
+                let safeEnd = min(max(safeStart, endIndex), text.unicodeScalars.count)
 
-                let prefixEnd = text.index(text.startIndex, offsetBy: safeStart)
+                // Use unicodeScalars view for offsetting, then convert to String.Index
+                let prefixEnd = text.unicodeScalars.index(text.unicodeScalars.startIndex, offsetBy: safeStart)
                 let matchStart = prefixEnd
-                let matchEnd = text.index(text.startIndex, offsetBy: safeEnd)
+                let matchEnd = text.unicodeScalars.index(text.unicodeScalars.startIndex, offsetBy: safeEnd)
 
                 let prefix = String(text[..<prefixEnd])
                 let match = String(text[matchStart..<matchEnd])
@@ -2181,7 +2272,7 @@ struct HighlightedTextView: View, Equatable {
     private func suffixView(suffix: String, suffixStartIndex: Int) -> some View {
         // Check for additional highlights in the suffix (beyond the first one)
         let additionalHighlights = highlights.dropFirst().filter { h in
-            Int(h.start) >= suffixStartIndex && Int(h.start) < suffixStartIndex + suffix.count
+            Int(h.start) >= suffixStartIndex && Int(h.start) < suffixStartIndex + suffix.unicodeScalars.count
         }
 
         if additionalHighlights.isEmpty {
@@ -2200,14 +2291,19 @@ struct HighlightedTextView: View, Equatable {
             let relativeStart = Int(highlight.start) - suffixStartIndex
             let relativeEnd = Int(highlight.end) - suffixStartIndex
 
-            // Clamp to suffix bounds
+            // Clamp to suffix bounds (Unicode scalar count matches Rust's .chars())
             let safeStart = max(0, relativeStart)
-            let safeEnd = min(suffix.count, relativeEnd)
+            let safeEnd = min(suffix.unicodeScalars.count, relativeEnd)
 
             guard safeStart < safeEnd else { continue }
 
-            let startIdx = attributed.index(attributed.startIndex, offsetByCharacters: safeStart)
-            let endIdx = attributed.index(attributed.startIndex, offsetByCharacters: safeEnd)
+            // Use unicodeScalars view for correct offset calculation
+            let suffixScalars = suffix.unicodeScalars
+            let scalarStart = suffixScalars.index(suffixScalars.startIndex, offsetBy: safeStart)
+            let scalarEnd = suffixScalars.index(suffixScalars.startIndex, offsetBy: safeEnd)
+            // Convert scalar indices to AttributedString indices
+            let startIdx = AttributedString.Index(scalarStart, within: attributed)!
+            let endIdx = AttributedString.Index(scalarEnd, within: attributed)!
 
             attributed[startIdx..<endIdx].backgroundColor = highlightBackground(for: highlight.kind)
             if highlight.kind == .subsequence {
