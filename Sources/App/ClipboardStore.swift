@@ -201,6 +201,53 @@ final class ClipboardStore {
         }.value
     }
 
+    /// Compute match data (snippet, highlights) for items (called on-demand for lazy results)
+    /// Returns MatchData array in same order as input IDs, or empty array on error
+    func computeMatchData(itemIds: [Int64], query: String) -> [MatchData] {
+        guard let rustStore else { return [] }
+        return (try? rustStore.computeMatchData(itemIds: itemIds, query: query)) ?? []
+    }
+
+    /// Compute and merge match data for items that don't have it yet.
+    /// Updates state in-place to avoid full refresh. Called when items scroll into view.
+    func loadMatchDataForItems(itemIds: [Int64]) {
+        // Only load if we have results and a non-empty query
+        guard case .results(let query, var items, let firstItem) = state,
+              !query.isEmpty,
+              !itemIds.isEmpty else { return }
+
+        // Filter to items that need match_data
+        let idsNeedingData = itemIds.filter { id in
+            items.first { $0.itemMetadata.itemId == id }?.matchData == nil
+        }
+        guard !idsNeedingData.isEmpty else { return }
+
+        // Compute match data for these items
+        let matchDataResults = computeMatchData(itemIds: idsNeedingData, query: query)
+        guard matchDataResults.count == idsNeedingData.count else { return }
+
+        // Merge results into items
+        var idToMatchData: [Int64: MatchData] = [:]
+        for (idx, id) in idsNeedingData.enumerated() {
+            idToMatchData[id] = matchDataResults[idx]
+        }
+
+        for i in items.indices {
+            if let matchData = idToMatchData[items[i].itemMetadata.itemId] {
+                items[i] = ItemMatch(
+                    itemMetadata: items[i].itemMetadata,
+                    matchData: matchData
+                )
+            }
+        }
+
+        // Update state without animation
+        CATransaction.begin()
+        CATransaction.setDisableActions(true)
+        state = .results(query: query, items: items, firstItem: firstItem)
+        CATransaction.commit()
+    }
+
     /// Fetch link metadata using LinkPresentation and persist to database
     /// Returns the updated item if successful
     func fetchLinkMetadata(url: String, itemId: Int64) async -> ClipboardItem? {

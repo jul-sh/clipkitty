@@ -146,8 +146,15 @@ final class HighlightRangeTests: XCTestCase {
             return
         }
 
+        // Compute match data (lazy on this branch)
+        let matchDataArray = try store.computeMatchData(itemIds: [match.itemMetadata.itemId], query: "Files")
+        guard let matchData = matchDataArray.first else {
+            XCTFail("No match data computed")
+            return
+        }
+
         // Get the full content highlights from Rust (not snippet highlights)
-        let highlights = match.matchData.fullContentHighlights
+        let highlights = matchData.fullContentHighlights
 
         // Find the highlight for "Files"
         guard let filesHighlight = highlights.first(where: { highlight in
@@ -196,9 +203,16 @@ final class HighlightRangeTests: XCTestCase {
             return
         }
 
+        // Compute match data (lazy on this branch)
+        let matchDataArray = try store.computeMatchData(itemIds: [match.itemMetadata.itemId], query: "Files")
+        guard let matchData = matchDataArray.first else {
+            XCTFail("No match data computed")
+            return
+        }
+
         // Verify ALL highlights extract the correct text using nsRange(in:)
         let nsString = content as NSString
-        for highlight in match.matchData.fullContentHighlights {
+        for highlight in matchData.fullContentHighlights {
             let nsRange = highlight.nsRange(in: content)
             guard nsRange.location != NSNotFound else { continue }
             guard nsRange.location + nsRange.length <= nsString.length else { continue }
@@ -209,6 +223,125 @@ final class HighlightRangeTests: XCTestCase {
             // It should NOT be random text like "iles", "fy re", etc.
             XCTAssertEqual(extracted.lowercased(), "files",
                 "Highlight extracted '\(extracted)' but should be 'Files'. Position drift bug detected!")
+        }
+    }
+
+    // MARK: - NFD Combining Character Tests
+
+    /// Test nsRange(in:) with NFD combining characters (e.g. é = e + \u{0301}).
+    /// Rust's .chars() counts each Unicode scalar separately, so NFD é is 2 scalars.
+    /// Swift's String.count treats é as 1 grapheme cluster. Using unicodeScalars fixes the mismatch.
+    func testNsRangeWithNFDCombiningCharacters() {
+        // NFD "café résumé hello world"
+        // c=0 a=1 f=2 e=3 \u{0301}=4 ' '=5 r=6 e=7 \u{0301}=8 s=9 u=10 m=11 e=12 \u{0301}=13 ' '=14 h=15 e=16 l=17 l=18 o=19 ' '=20 w=21 o=22 r=23 l=24 d=25
+        let text = "caf\u{0065}\u{0301} r\u{0065}\u{0301}sum\u{0065}\u{0301} hello world"
+        XCTAssertEqual(text.unicodeScalars.count, 26, "NFD text should have 26 Unicode scalars")
+        XCTAssertEqual(text.count, 23, "NFD text should have 23 grapheme clusters")
+
+        // Rust would report "hello" at scalar indices 15-20 (after "café résumé " = 15 scalars)
+        let range = HighlightRange(start: 15, end: 20, kind: .exact)
+        let nsRange = range.nsRange(in: text)
+
+        let nsString = text as NSString
+        guard nsRange.location != NSNotFound, nsRange.location + nsRange.length <= nsString.length else {
+            XCTFail("nsRange out of bounds: \(nsRange)")
+            return
+        }
+        let extracted = nsString.substring(with: nsRange)
+        XCTAssertEqual(extracted, "hello", "Should extract 'hello' from NFD text, not shifted characters")
+    }
+
+    /// Integration test: search NFD content with query "he" returns correct highlight.
+    func testSearchHighlightsWithNFDContent() async throws {
+        let store = try makeStore()
+
+        // NFD "café résumé hello world" — combining accents cause scalar/grapheme mismatch
+        let text = "caf\u{0065}\u{0301} r\u{0065}\u{0301}sum\u{0065}\u{0301} hello world"
+
+        _ = try store.saveText(
+            text: text,
+            sourceApp: "Test",
+            sourceAppBundleId: "com.test"
+        )
+
+        let results = try await store.search(query: "he")
+        XCTAssertFalse(results.matches.isEmpty, "Should find 'he' in NFD content")
+
+        guard let match = results.matches.first else {
+            XCTFail("No match found")
+            return
+        }
+
+        // Compute match data (lazy on this branch)
+        let matchDataArray = try store.computeMatchData(itemIds: [match.itemMetadata.itemId], query: "he")
+        guard let matchData = matchDataArray.first else {
+            XCTFail("No match data computed")
+            return
+        }
+
+        // Verify highlights extract "hello" (the word containing "he"), not shifted text
+        let nsString = text as NSString
+        for highlight in matchData.fullContentHighlights {
+            let nsRange = highlight.nsRange(in: text)
+            guard nsRange.location != NSNotFound, nsRange.location + nsRange.length <= nsString.length else { continue }
+            let extracted = nsString.substring(with: nsRange)
+            XCTAssertEqual(extracted, "hello",
+                "NFD highlight extracted '\(extracted)' but should be 'hello'. Grapheme/scalar mismatch bug!")
+        }
+    }
+
+    /// Regression test: real clipboard content that triggered highlight drift.
+    /// The text contains special Unicode characters (curly quotes, em dash, ellipsis)
+    /// that may be represented as combining sequences depending on normalization.
+    func testSearchHighlightsWithRealClipContent() async throws {
+        let store = try makeStore()
+
+        let clipContent = """
+        Bash(gh pr edit 173 --title "Re-add editable preview feature" --body "## Summary\u{2026})
+          \u{23EE}  Error: Exit code 1
+             GraphQL: Projects (classic) is being deprecated in favor of the new Projects experience, see:
+             https://github.blog/changelog/2024-05-23-sunset-notice-projects-classic/. (repository.pullRequest.projectCards)
+
+        > same for re-add-smart-search, revert on main pr to re add
+
+        \u{23EE} The edit went through despite the warning. Now let me do the same for smart search - revert on main and update the PR:
+        """
+
+        _ = try store.saveText(
+            text: clipContent,
+            sourceApp: "Test",
+            sourceAppBundleId: "com.test"
+        )
+
+        let results = try await store.search(query: "he")
+        XCTAssertFalse(results.matches.isEmpty, "Should find 'he' in clip content")
+
+        guard let match = results.matches.first else {
+            XCTFail("No match found")
+            return
+        }
+
+        let matchDataArray = try store.computeMatchData(itemIds: [match.itemMetadata.itemId], query: "he")
+        guard let matchData = matchDataArray.first else {
+            XCTFail("No match data computed")
+            return
+        }
+
+        // Every highlight should extract valid text that actually contains "he"
+        let nsString = clipContent as NSString
+        for highlight in matchData.fullContentHighlights {
+            let nsRange = highlight.nsRange(in: clipContent)
+            guard nsRange.location != NSNotFound else {
+                XCTFail("Highlight produced NSNotFound range")
+                continue
+            }
+            guard nsRange.location + nsRange.length <= nsString.length else {
+                XCTFail("Highlight range \(nsRange) out of bounds (length \(nsString.length))")
+                continue
+            }
+            let extracted = nsString.substring(with: nsRange)
+            XCTAssertTrue(extracted.lowercased().contains("he"),
+                "Highlight extracted '\(extracted)' which doesn't contain 'he' — position drift bug!")
         }
     }
 }

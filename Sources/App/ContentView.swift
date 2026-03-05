@@ -116,6 +116,11 @@ struct ContentView: View {
     /// Per-item cache of unsaved edited text. Cleared on window hide.
     @State private var pendingEdits: [Int64: String] = [:]
 
+    /// Prefetch buffer - how many items beyond visible to preload match_data for.
+    /// Set generously so users almost never see items without highlights.
+    /// Combined with 25 eager items from Rust, this should cover all visible scrolling.
+    private let matchDataPrefetchBuffer = 20
+
     enum FocusTarget: Hashable {
         case search
         case filterDropdown
@@ -748,6 +753,35 @@ struct ContentView: View {
         return itemIds.firstIndex(of: itemId)
     }
 
+    /// Called when an item row appears. Prefetches match_data for nearby items that don't have it.
+    private func onItemAppear(index: Int) {
+        // Calculate range to prefetch (visible + buffer in both directions)
+        let startIndex = max(0, index - matchDataPrefetchBuffer)
+        let endIndex = min(itemCount - 1, index + matchDataPrefetchBuffer)
+
+        guard startIndex <= endIndex else { return }
+
+        // Get item IDs in range that need match_data
+        let idsToLoad = (startIndex...endIndex).compactMap { idx -> Int64? in
+            guard let id = itemId(at: idx) else { return nil }
+            // Check if this item needs match_data
+            switch store.state {
+            case .results(_, let items, _):
+                if items.first(where: { $0.itemMetadata.itemId == id })?.matchData == nil {
+                    return id
+                }
+            default:
+                break
+            }
+            return nil
+        }
+
+        guard !idsToLoad.isEmpty else { return }
+
+        // Load match_data for these items
+        store.loadMatchDataForItems(itemIds: idsToLoad)
+    }
+
     // MARK: - Content
 
     @ViewBuilder
@@ -831,6 +865,9 @@ struct ContentView: View {
                     )
                     .equatable()
                     .accessibilityIdentifier("ItemRow_\(index)")
+                    .onAppear {
+                        onItemAppear(index: index)
+                    }
                     .listRowInsets(EdgeInsets(top: 2, leading: 0, bottom: 2, trailing: 0))
                     .listRowSeparator(.hidden)
                     .listRowBackground(Color.clear)
@@ -913,7 +950,7 @@ struct ContentView: View {
                 itemId: item.itemMetadata.itemId,
                 fontName: FontManager.mono,
                 fontSize: 15,
-                highlights: selectedItemMatchData?.fullContentHighlights ?? [],
+                highlights: selectedItemMatchData?.fullContentHighlights.flatMap { $0 } ?? [],
                 densestHighlightStart: selectedItemMatchData?.densestHighlightStart ?? 0,
                 originalText: item.content.textContent,
                 onTextChange: { newText in
@@ -1993,6 +2030,7 @@ struct ItemRow: View, Equatable {
     }
 
     /// Highlights for display - passed directly from Rust (already adjusted for normalization)
+    /// Returns empty array if matchData is nil (lazy mode - not yet computed)
     private var displayHighlights: [HighlightRange] {
         matchData?.highlights ?? []
     }
@@ -2175,13 +2213,14 @@ struct HighlightedTextView: View, Equatable {
                 let startIndex = Int(firstHighlight.start)
                 let endIndex = Int(firstHighlight.end)
 
-                // Clamp indices to valid range
-                let safeStart = min(max(0, startIndex), text.count)
-                let safeEnd = min(max(safeStart, endIndex), text.count)
+                // Clamp indices to valid range (Unicode scalar count matches Rust's .chars())
+                let safeStart = min(max(0, startIndex), text.unicodeScalars.count)
+                let safeEnd = min(max(safeStart, endIndex), text.unicodeScalars.count)
 
-                let prefixEnd = text.index(text.startIndex, offsetBy: safeStart)
+                // Use unicodeScalars view for offsetting, then convert to String.Index
+                let prefixEnd = text.unicodeScalars.index(text.unicodeScalars.startIndex, offsetBy: safeStart)
                 let matchStart = prefixEnd
-                let matchEnd = text.index(text.startIndex, offsetBy: safeEnd)
+                let matchEnd = text.unicodeScalars.index(text.unicodeScalars.startIndex, offsetBy: safeEnd)
 
                 let prefix = String(text[..<prefixEnd])
                 let match = String(text[matchStart..<matchEnd])
@@ -2233,7 +2272,7 @@ struct HighlightedTextView: View, Equatable {
     private func suffixView(suffix: String, suffixStartIndex: Int) -> some View {
         // Check for additional highlights in the suffix (beyond the first one)
         let additionalHighlights = highlights.dropFirst().filter { h in
-            Int(h.start) >= suffixStartIndex && Int(h.start) < suffixStartIndex + suffix.count
+            Int(h.start) >= suffixStartIndex && Int(h.start) < suffixStartIndex + suffix.unicodeScalars.count
         }
 
         if additionalHighlights.isEmpty {
@@ -2252,14 +2291,19 @@ struct HighlightedTextView: View, Equatable {
             let relativeStart = Int(highlight.start) - suffixStartIndex
             let relativeEnd = Int(highlight.end) - suffixStartIndex
 
-            // Clamp to suffix bounds
+            // Clamp to suffix bounds (Unicode scalar count matches Rust's .chars())
             let safeStart = max(0, relativeStart)
-            let safeEnd = min(suffix.count, relativeEnd)
+            let safeEnd = min(suffix.unicodeScalars.count, relativeEnd)
 
             guard safeStart < safeEnd else { continue }
 
-            let startIdx = attributed.index(attributed.startIndex, offsetByCharacters: safeStart)
-            let endIdx = attributed.index(attributed.startIndex, offsetByCharacters: safeEnd)
+            // Use unicodeScalars view for correct offset calculation
+            let suffixScalars = suffix.unicodeScalars
+            let scalarStart = suffixScalars.index(suffixScalars.startIndex, offsetBy: safeStart)
+            let scalarEnd = suffixScalars.index(suffixScalars.startIndex, offsetBy: safeEnd)
+            // Convert scalar indices to AttributedString indices
+            let startIdx = AttributedString.Index(scalarStart, within: attributed)!
+            let endIdx = AttributedString.Index(scalarEnd, within: attributed)!
 
             attributed[startIdx..<endIdx].backgroundColor = highlightBackground(for: highlight.kind)
             if highlight.kind == .subsequence {
