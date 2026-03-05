@@ -142,63 +142,6 @@ impl ClipboardStore {
         Ok(())
     }
 
-    /// Fetch stored items for fuzzy matches and generate ItemMatches in parallel.
-    /// Shared by both short-query and trigram search paths.
-    #[allow(dead_code)]
-    fn fuzzy_matches_to_item_matches(
-        db: &Database,
-        fuzzy_matches: Vec<search::FuzzyMatch>,
-        token: &CancellationToken,
-        runtime: &tokio::runtime::Handle,
-        filter: Option<&ContentTypeFilter>,
-    ) -> Result<Vec<ItemMatch>, ClipKittyError> {
-        if token.is_cancelled() {
-            return Err(ClipKittyError::Cancelled);
-        }
-
-        let ids: Vec<i64> = fuzzy_matches.iter().map(|m| m.id).collect();
-        let stored_items = db.fetch_items_by_ids_interruptible(&ids, token, runtime)?;
-
-        if stored_items.is_empty() && !ids.is_empty() && token.is_cancelled() {
-            return Err(ClipKittyError::Cancelled);
-        }
-
-        let item_map: std::collections::HashMap<i64, StoredItem> = stored_items
-            .into_iter()
-            .filter_map(|item| item.id.map(|id| (id, item)))
-            // Apply content type filter post-retrieval (Tantivy doesn't index content type)
-            .filter(|(_, item)| {
-                match filter {
-                    Some(f) => f.matches_db_type(item.content.database_type()),
-                    None => true,
-                }
-            })
-            .collect();
-
-        if token.is_cancelled() {
-            return Err(ClipKittyError::Cancelled);
-        }
-
-        // Use indexed par_iter to preserve the ranking order from search.
-        // into_par_iter() on Vec<T> is an IndexedParallelIterator, so
-        // enumerate + collect preserves input order.
-        use rayon::prelude::*;
-        let indexed: Vec<(usize, Option<ItemMatch>)> = fuzzy_matches
-            .into_par_iter()
-            .enumerate()
-            .map(|(i, fm)| {
-                if token.is_cancelled() {
-                    return Err(ClipKittyError::Cancelled);
-                }
-                Ok((i, item_map.get(&fm.id).map(|item| search::create_item_match(item, &fm))))
-            })
-            .collect::<Result<Vec<_>, ClipKittyError>>()?;
-
-        let mut sorted = indexed;
-        sorted.sort_unstable_by_key(|(i, _)| *i);
-        Ok(sorted.into_iter().filter_map(|(_, item)| item).collect())
-    }
-
     /// Short query search using prefix-only matching (< 3 chars).
     /// Results come back in recency order from the DB. Highlights are trivial:
     /// just the first `query.len()` characters, always eagerly computed.
