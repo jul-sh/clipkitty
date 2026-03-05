@@ -525,7 +525,10 @@ impl Database {
     }
 
     /// Search for short queries (<3 chars) using prefix matching + substring LIKE on recent items.
-    pub fn search_short_query(
+    /// Prefix-only search for very short queries (< 3 chars).
+    /// Uses LIKE prefix matching which can leverage the index.
+    /// Returns (id, content, timestamp) sorted by recency.
+    pub fn search_prefix_query(
         &self,
         query: &str,
         limit: usize,
@@ -536,9 +539,8 @@ impl Database {
         let escaped = query_lower.replace('%', "\\%").replace('_', "\\_");
         let type_filter_and = Self::content_type_where_clause(filter, "AND");
 
-        // Part 1: Prefix match
         let prefix_pattern = format!("{}%", escaped);
-        let prefix_sql = format!(
+        let sql = format!(
             r#"SELECT id, content, CAST(strftime('%s', timestamp) AS INTEGER)
                FROM items
                WHERE content LIKE ?1 ESCAPE '\' COLLATE NOCASE {}
@@ -546,8 +548,8 @@ impl Database {
                LIMIT ?2"#,
             type_filter_and
         );
-        let mut stmt_prefix = conn.prepare(&prefix_sql)?;
-        let prefix_results: Vec<(i64, String, i64)> = stmt_prefix
+        let mut stmt = conn.prepare(&sql)?;
+        let results: Vec<(i64, String, i64)> = stmt
             .query_map(params![prefix_pattern, limit as i64], |row| {
                 Ok((
                     row.get::<_, i64>(0)?,
@@ -556,46 +558,6 @@ impl Database {
                 ))
             })?
             .collect::<Result<Vec<_>, _>>()?;
-
-        // Part 2: Substring LIKE on last 2k items
-        let like_pattern = format!("%{}%", escaped);
-        let like_sql = format!(
-            r#"SELECT id, content, CAST(strftime('%s', timestamp) AS INTEGER)
-               FROM (SELECT id, content, contentType, timestamp FROM items ORDER BY timestamp DESC LIMIT 2000)
-               WHERE content LIKE ?1 ESCAPE '\' COLLATE NOCASE {}
-               ORDER BY timestamp DESC
-               LIMIT ?2"#,
-            type_filter_and
-        );
-        let mut stmt_like = conn.prepare(&like_sql)?;
-        let like_results: Vec<(i64, String, i64)> = stmt_like
-            .query_map(params![like_pattern, limit as i64], |row| {
-                Ok((
-                    row.get::<_, i64>(0)?,
-                    row.get::<_, String>(1)?,
-                    row.get::<_, i64>(2)?,
-                ))
-            })?
-            .collect::<Result<Vec<_>, _>>()?;
-
-        // Merge, deduplicate
-        let mut seen_ids = std::collections::HashSet::new();
-        let mut results = Vec::with_capacity(limit);
-
-        for item in prefix_results {
-            if seen_ids.insert(item.0) {
-                results.push(item);
-            }
-        }
-
-        for item in like_results {
-            if results.len() >= limit {
-                break;
-            }
-            if seen_ids.insert(item.0) {
-                results.push(item);
-            }
-        }
 
         Ok(results)
     }

@@ -199,7 +199,9 @@ impl ClipboardStore {
         Ok(sorted.into_iter().filter_map(|(_, item)| item).collect())
     }
 
-    /// Short query search using prefix matching + LIKE on recent items (lazy highlights)
+    /// Short query search using prefix-only matching (< 3 chars).
+    /// Results come back in recency order from the DB. Highlights are trivial:
+    /// just the first `query.len()` characters, always eagerly computed.
     fn search_short_query_sync(
         db: &Database,
         query: &str,
@@ -211,7 +213,7 @@ impl ClipboardStore {
             return Err(ClipKittyError::Cancelled);
         }
 
-        let candidates = db.search_short_query(query, MAX_RESULTS, filter)?;
+        let candidates = db.search_prefix_query(query, MAX_RESULTS, filter)?;
         if candidates.is_empty() {
             return Ok(Vec::new());
         }
@@ -220,53 +222,22 @@ impl ClipboardStore {
             return Err(ClipKittyError::Cancelled);
         }
 
-        // For short queries, we need to score/rank but can skip highlights
-        let query_lower = query.to_lowercase();
-        let candidates_with_prefix: Vec<_> = candidates
-            .into_iter()
-            .map(|(id, content, timestamp)| {
-                let is_prefix = content.to_lowercase().starts_with(&query_lower);
-                (id, content, timestamp, is_prefix)
-            })
-            .collect();
-
-        let fuzzy_matches = search::score_short_query_batch(
-            candidates_with_prefix.into_iter(),
-            query,
-            token,
-        );
-
         // Fetch stored items for metadata
-        let ids: Vec<i64> = fuzzy_matches.iter().map(|m| m.id).collect();
+        let ids: Vec<i64> = candidates.iter().map(|(id, _, _)| *id).collect();
         let stored_items = db.fetch_items_by_ids(&ids)?;
 
-        if token.is_cancelled() {
-            return Err(ClipKittyError::Cancelled);
-        }
+        let query_char_len = query.chars().count();
 
-        let item_map: std::collections::HashMap<i64, StoredItem> = stored_items
-            .into_iter()
-            .filter_map(|item| item.id.map(|id| (id, item)))
-            .collect();
-
-        // Create item matches: eager for first N, lazy for the rest.
-        // Also eagerly highlight short items when result count is manageable.
-        let fuzzy_matches_len = fuzzy_matches.len();
-        let few_results = fuzzy_matches_len <= EAGER_SHORT_RESULT_LIMIT;
-        let results: Vec<ItemMatch> = fuzzy_matches
-            .into_iter()
-            .enumerate()
-            .filter_map(|(idx, fm)| {
-                item_map.get(&fm.id).map(|item| {
+        // Build results preserving recency order from DB.
+        // Highlights are trivial (prefix of query length), always eager.
+        let results: Vec<ItemMatch> = ids
+            .iter()
+            .filter_map(|id| {
+                stored_items.iter().find(|item| item.id == Some(*id)).map(|item| {
                     let content = item.content.text_content();
-                    let is_short = content.len() <= SHORT_CONTENT_THRESHOLD;
-                    if idx < EAGER_MATCH_DATA_COUNT || (is_short && few_results) {
-                        ItemMatch {
-                            item_metadata: item.to_metadata(),
-                            match_data: Some(search::compute_item_match_data(&content, query)),
-                        }
-                    } else {
-                        search::create_lazy_item_match(item)
+                    ItemMatch {
+                        item_metadata: item.to_metadata(),
+                        match_data: Some(search::compute_prefix_match_data(content, query_char_len)),
                     }
                 })
             })
@@ -643,6 +614,9 @@ impl ClipboardStoreApi for ClipboardStore {
             .filter_map(|item| item.id.map(|id| (id, item)))
             .collect();
 
+        let trimmed = query.trim();
+        let is_prefix_query = trimmed.len() < search::MIN_TRIGRAM_QUERY_LEN;
+
         // Compute match data in parallel for efficiency
         use rayon::prelude::*;
         let results: Vec<MatchData> = item_ids
@@ -650,9 +624,12 @@ impl ClipboardStoreApi for ClipboardStore {
             .map(|id| {
                 if let Some(item) = item_map.get(id) {
                     let content = item.content.text_content();
-                    search::compute_item_match_data(&content, &query)
+                    if is_prefix_query {
+                        search::compute_prefix_match_data(content, trimmed.chars().count())
+                    } else {
+                        search::compute_item_match_data(content, &query)
+                    }
                 } else {
-                    // Item not found - return default match data
                     MatchData::default()
                 }
             })
@@ -2232,7 +2209,9 @@ mod tests {
 
     #[tokio::test]
     async fn test_file_search_filtered_short_query() {
-        // Short queries (<3 chars) should work with file filter
+        // Short queries (<3 chars) use prefix-only matching.
+        // File content is stored as "File: <name>", so prefix queries
+        // must match that prefix (e.g. "Fi" matches "File: docs.txt").
         let store = ClipboardStore::new_in_memory().unwrap();
 
         store.save_text("do something".to_string(), None, None).unwrap();
@@ -2247,15 +2226,19 @@ mod tests {
             None,
         ).unwrap();
 
-        // Short query "do" with Files filter
-        let result = store.search_filtered("do".to_string(), ContentTypeFilter::Files).await.unwrap();
-        assert_eq!(result.matches.len(), 1, "Only file starting with 'do' should match");
+        // Short query "Fi" with Files filter — matches "File: docs.txt"
+        let result = store.search_filtered("Fi".to_string(), ContentTypeFilter::Files).await.unwrap();
+        assert_eq!(result.matches.len(), 1, "File starting with 'Fi' should match");
         assert!(result.matches[0].item_metadata.snippet.contains("docs.txt"));
 
-        // Short query "do" with Text filter
+        // Short query "do" with Text filter — matches "do something"
         let result = store.search_filtered("do".to_string(), ContentTypeFilter::Text).await.unwrap();
         assert_eq!(result.matches.len(), 1, "Only text starting with 'do' should match");
         assert!(result.matches[0].item_metadata.snippet.contains("do something"));
+
+        // Short query "do" with Files filter — no match (file content starts with "File:")
+        let result = store.search_filtered("do".to_string(), ContentTypeFilter::Files).await.unwrap();
+        assert_eq!(result.matches.len(), 0, "No file starts with 'do'");
     }
 
     #[test]
