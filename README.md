@@ -36,15 +36,7 @@ ClipKitty stores everything. Finds it in milliseconds—whether you have 100 ite
 
 ## Installation
 
-### Quick Install (Recommended)
-
-```bash
-curl -sL "$(curl -s https://api.github.com/repos/jul-sh/clipkitty/releases/latest | grep -o 'https://[^"]*\.dmg')" -o /tmp/ck.dmg && hdiutil attach /tmp/ck.dmg -quiet && rm -rf /Applications/ClipKitty.app && cp -R /Volumes/ClipKitty/ClipKitty.app /Applications/ && hdiutil detach /Volumes/ClipKitty -quiet && rm /tmp/ck.dmg
-```
-
-### Manual Download
-
-1. Download the latest DMG from [GitHub Releases](https://github.com/jul-sh/clipkitty/releases).
+1. Download the latest DMG from [GitHub Releases](https://github.com/jul-sh/clipkitty/releases/latest).
 2. Drag ClipKitty to your Applications folder.
 
 ## Getting Started
