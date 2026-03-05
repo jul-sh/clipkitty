@@ -37,11 +37,6 @@ fn char_to_utf16_index(content: &str, char_index: usize) -> usize {
         .sum()
 }
 
-/// Check if a query word matches a doc word
-fn word_matches(qw: &str, dw: &str) -> bool {
-    dw == qw || (qw.len() >= 2 && dw.starts_with(qw))
-}
-
 #[test]
 fn test_char_vs_utf16_position_mismatch() {
     let content = test_data::LONG_TEST_CONTENT;

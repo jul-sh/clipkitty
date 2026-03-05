@@ -15,6 +15,13 @@ use crate::interface::{
 };
 use crate::models::StoredItem;
 use crate::search::{self, MIN_TRIGRAM_QUERY_LEN, MAX_RESULTS};
+
+/// Number of results to eagerly compute MatchData for (the rest are lazy)
+const EAGER_MATCH_DATA_COUNT: usize = 25;
+/// Content length threshold for "short" items that get eager highlights
+const SHORT_CONTENT_THRESHOLD: usize = 1024;
+/// Skip eager short-item highlights when results exceed this count
+const EAGER_SHORT_RESULT_LIMIT: usize = 200;
 use chrono::Utc;
 use once_cell::sync::Lazy;
 use std::path::PathBuf;
@@ -135,75 +142,21 @@ impl ClipboardStore {
         Ok(())
     }
 
-    /// Fetch stored items for fuzzy matches and generate ItemMatches in parallel.
-    /// Shared by both short-query and trigram search paths.
-    fn fuzzy_matches_to_item_matches(
-        db: &Database,
-        fuzzy_matches: Vec<search::FuzzyMatch>,
-        token: &CancellationToken,
-        runtime: &tokio::runtime::Handle,
-        filter: Option<&ContentTypeFilter>,
-    ) -> Result<Vec<ItemMatch>, ClipKittyError> {
-        if token.is_cancelled() {
-            return Err(ClipKittyError::Cancelled);
-        }
-
-        let ids: Vec<i64> = fuzzy_matches.iter().map(|m| m.id).collect();
-        let stored_items = db.fetch_items_by_ids_interruptible(&ids, token, runtime)?;
-
-        if stored_items.is_empty() && !ids.is_empty() && token.is_cancelled() {
-            return Err(ClipKittyError::Cancelled);
-        }
-
-        let item_map: std::collections::HashMap<i64, StoredItem> = stored_items
-            .into_iter()
-            .filter_map(|item| item.id.map(|id| (id, item)))
-            // Apply content type filter post-retrieval (Tantivy doesn't index content type)
-            .filter(|(_, item)| {
-                match filter {
-                    Some(f) => f.matches_db_type(item.content.database_type()),
-                    None => true,
-                }
-            })
-            .collect();
-
-        if token.is_cancelled() {
-            return Err(ClipKittyError::Cancelled);
-        }
-
-        // Use indexed par_iter to preserve the ranking order from search.
-        // into_par_iter() on Vec<T> is an IndexedParallelIterator, so
-        // enumerate + collect preserves input order.
-        use rayon::prelude::*;
-        let indexed: Vec<(usize, Option<ItemMatch>)> = fuzzy_matches
-            .into_par_iter()
-            .enumerate()
-            .map(|(i, fm)| {
-                if token.is_cancelled() {
-                    return Err(ClipKittyError::Cancelled);
-                }
-                Ok((i, item_map.get(&fm.id).map(|item| search::create_item_match(item, &fm))))
-            })
-            .collect::<Result<Vec<_>, ClipKittyError>>()?;
-
-        let mut sorted = indexed;
-        sorted.sort_unstable_by_key(|(i, _)| *i);
-        Ok(sorted.into_iter().filter_map(|(_, item)| item).collect())
-    }
-
-    /// Short query search using prefix matching + LIKE on recent items
+    /// Short query search using prefix-only matching (< 3 chars).
+    /// Results come back in recency order from the DB. Highlights are trivial:
+    /// just the first `query.len()` characters, always eagerly computed.
     fn search_short_query_sync(
         db: &Database,
         query: &str,
         token: &CancellationToken,
-        runtime: &tokio::runtime::Handle,
+        _runtime: &tokio::runtime::Handle,
         filter: Option<&ContentTypeFilter>,
     ) -> Result<Vec<ItemMatch>, ClipKittyError> {
         if token.is_cancelled() {
             return Err(ClipKittyError::Cancelled);
         }
 
-        let candidates = db.search_short_query(query, MAX_RESULTS, filter)?;
+        let candidates = db.search_prefix_query(query, MAX_RESULTS, filter)?;
         if candidates.is_empty() {
             return Ok(Vec::new());
         }
@@ -212,43 +165,92 @@ impl ClipboardStore {
             return Err(ClipKittyError::Cancelled);
         }
 
-        let query_lower = query.to_lowercase();
-        let candidates_with_prefix: Vec<_> = candidates
-            .into_iter()
-            .map(|(id, content, timestamp)| {
-                let is_prefix = content.to_lowercase().starts_with(&query_lower);
-                (id, content, timestamp, is_prefix)
+        // Fetch stored items for metadata
+        let ids: Vec<i64> = candidates.iter().map(|(id, _, _)| *id).collect();
+        let stored_items = db.fetch_items_by_ids(&ids)?;
+
+        let query_char_len = query.chars().count();
+
+        // Build results preserving recency order from DB.
+        // Highlights are trivial (prefix of query length), always eager.
+        let results: Vec<ItemMatch> = ids
+            .iter()
+            .filter_map(|id| {
+                stored_items.iter().find(|item| item.id == Some(*id)).map(|item| {
+                    let content = item.content.text_content();
+                    ItemMatch {
+                        item_metadata: item.to_metadata(),
+                        match_data: Some(search::compute_prefix_match_data(content, query_char_len)),
+                    }
+                })
             })
             .collect();
 
-        let fuzzy_matches = search::score_short_query_batch(
-            candidates_with_prefix.into_iter(),
-            query,
-            token,
-        );
-
-        Self::fuzzy_matches_to_item_matches(db, fuzzy_matches, token, runtime, filter)
+        Ok(results)
     }
 
-    /// Trigram query search using Tantivy with phrase-boost scoring
+    /// Trigram query search using Tantivy with phrase-boost scoring (lazy highlights)
     fn search_trigram_query_sync(
         db: &Database,
         indexer: &Indexer,
         query: &str,
         token: &CancellationToken,
-        runtime: &tokio::runtime::Handle,
+        _runtime: &tokio::runtime::Handle,
         filter: Option<&ContentTypeFilter>,
     ) -> Result<Vec<ItemMatch>, ClipKittyError> {
         if token.is_cancelled() {
             return Err(ClipKittyError::Cancelled);
         }
 
-        let fuzzy_matches = search::search_trigram(indexer, query, token)?;
+        // Use lazy search - no highlighting computed
+        let fuzzy_matches = search::search_trigram_lazy(indexer, query, token)?;
         if fuzzy_matches.is_empty() {
             return Ok(Vec::new());
         }
 
-        Self::fuzzy_matches_to_item_matches(db, fuzzy_matches, token, runtime, filter)
+        // Fetch stored items for metadata
+        let ids: Vec<i64> = fuzzy_matches.iter().map(|m| m.id).collect();
+        let stored_items = db.fetch_items_by_ids(&ids)?;
+
+        if token.is_cancelled() {
+            return Err(ClipKittyError::Cancelled);
+        }
+
+        let item_map: std::collections::HashMap<i64, StoredItem> = stored_items
+            .into_iter()
+            .filter_map(|item| item.id.map(|id| (id, item)))
+            .filter(|(_, item)| {
+                match filter {
+                    Some(f) => f.matches_db_type(item.content.database_type()),
+                    None => true,
+                }
+            })
+            .collect();
+
+        // Create item matches: eager for first N, lazy for the rest.
+        // Also eagerly highlight short items when result count is manageable.
+        let fuzzy_matches_len = fuzzy_matches.len();
+        let few_results = fuzzy_matches_len <= EAGER_SHORT_RESULT_LIMIT;
+        let results: Vec<ItemMatch> = fuzzy_matches
+            .into_iter()
+            .enumerate()
+            .filter_map(|(idx, fm)| {
+                item_map.get(&fm.id).map(|item| {
+                    let content = item.content.text_content();
+                    let is_short = content.len() <= SHORT_CONTENT_THRESHOLD;
+                    if idx < EAGER_MATCH_DATA_COUNT || (is_short && few_results) {
+                        ItemMatch {
+                            item_metadata: item.to_metadata(),
+                            match_data: Some(search::compute_item_match_data(&content, query)),
+                        }
+                    } else {
+                        search::create_lazy_item_match(item)
+                    }
+                })
+            })
+            .collect();
+
+        Ok(results)
     }
 
     /// Get a single stored item by ID (internal use)
@@ -322,7 +324,7 @@ impl ClipboardStore {
                 .into_iter()
                 .map(|metadata| ItemMatch {
                     item_metadata: metadata,
-                    match_data: MatchData::default(),
+                    match_data: None,
                 })
                 .collect();
 
@@ -464,7 +466,7 @@ impl ClipboardStoreApi for ClipboardStore {
                 .into_iter()
                 .map(|metadata| ItemMatch {
                     item_metadata: metadata,
-                    match_data: MatchData::default(),
+                    match_data: None,
                 })
                 .collect();
 
@@ -540,6 +542,43 @@ impl ClipboardStoreApi for ClipboardStore {
             .map(|item| item.to_clipboard_item())
             .collect();
         Ok(items)
+    }
+
+    /// Compute match data (snippet, highlights, line number) for multiple items.
+    /// Called on-demand for visible items in the list view.
+    fn compute_match_data(&self, item_ids: Vec<i64>, query: String) -> Result<Vec<MatchData>, ClipKittyError> {
+        if item_ids.is_empty() {
+            return Ok(Vec::new());
+        }
+
+        let items = self.db.fetch_items_by_ids(&item_ids)?;
+        let item_map: std::collections::HashMap<i64, StoredItem> = items
+            .into_iter()
+            .filter_map(|item| item.id.map(|id| (id, item)))
+            .collect();
+
+        let trimmed = query.trim();
+        let is_prefix_query = trimmed.len() < search::MIN_TRIGRAM_QUERY_LEN;
+
+        // Compute match data in parallel for efficiency
+        use rayon::prelude::*;
+        let results: Vec<MatchData> = item_ids
+            .par_iter()
+            .map(|id| {
+                if let Some(item) = item_map.get(id) {
+                    let content = item.content.text_content();
+                    if is_prefix_query {
+                        search::compute_prefix_match_data(content, trimmed.chars().count())
+                    } else {
+                        search::compute_item_match_data(content, &query)
+                    }
+                } else {
+                    MatchData::default()
+                }
+            })
+            .collect();
+
+        Ok(results)
     }
 
     /// Save multiple file items as a single grouped entry
@@ -815,7 +854,15 @@ mod tests {
 
         assert_eq!(result.matches.len(), 1);
         assert!(result.matches[0].item_metadata.snippet.contains("Hello"));
-        assert!(!result.matches[0].match_data.highlights.is_empty());
+        // First 25 results have eager match_data with highlights
+        assert!(result.matches[0].match_data.is_some());
+        assert!(!result.matches[0].match_data.as_ref().unwrap().highlights.is_empty());
+
+        // Verify compute_match_data also works for on-demand computation
+        let item_id = result.matches[0].item_metadata.item_id;
+        let match_data = store.compute_match_data(vec![item_id], "Hello".to_string()).unwrap();
+        assert_eq!(match_data.len(), 1);
+        assert!(!match_data[0].highlights.is_empty());
     }
 
     #[test]
@@ -1025,9 +1072,10 @@ mod tests {
         store.save_text("Another greeting hello".to_string(), None, None).unwrap();
         store.save_text("Unrelated content".to_string(), None, None).unwrap();
 
-        // Short query (< 3 chars)
+        // Short query (< 3 chars) — prefix-only: only "Hello World..." starts with "He"
         let result = store.search("He".to_string()).await.unwrap();
-        assert!(!result.matches.is_empty());
+        assert_eq!(result.matches.len(), 1, "Only items starting with 'He' should match");
+        assert!(result.matches[0].item_metadata.snippet.contains("Hello World"));
 
         // Trigram query (>= 3 chars)
         let result = store.search("Hello".to_string()).await.unwrap();
@@ -1035,6 +1083,39 @@ mod tests {
         assert!(result.matches.iter().all(|m|
             m.item_metadata.snippet.to_lowercase().contains("hello")
         ));
+    }
+
+    #[tokio::test]
+    async fn test_short_query_prefix_only() {
+        // Short queries (< 3 chars) must only match items whose content
+        // starts with the query. Substring matches must NOT appear.
+        let store = ClipboardStore::new_in_memory().unwrap();
+
+        store.save_text("apple pie".to_string(), None, None).unwrap();
+        store.save_text("pineapple".to_string(), None, None).unwrap();
+        store.save_text("crab apple".to_string(), None, None).unwrap();
+        store.save_text("AP class".to_string(), None, None).unwrap();
+
+        // "ap" should match "apple pie" and "AP class" (case-insensitive prefix)
+        // but NOT "pineapple" (substring) or "crab apple" (substring)
+        let result = store.search("ap".to_string()).await.unwrap();
+        assert_eq!(result.matches.len(), 2, "Only prefix matches, not substring");
+        let snippets: Vec<&str> = result.matches.iter().map(|m| m.item_metadata.snippet.as_str()).collect();
+        assert!(snippets.iter().any(|s| s.contains("apple pie")));
+        assert!(snippets.iter().any(|s| s.contains("AP class")));
+
+        // Single char "a" should only match "apple pie" and "AP class"
+        let result = store.search("a".to_string()).await.unwrap();
+        assert_eq!(result.matches.len(), 2, "Only items starting with 'a'");
+
+        // All results should have eager match_data with prefix highlight
+        for m in &result.matches {
+            let md = m.match_data.as_ref().expect("short query results must have eager match_data");
+            assert!(!md.highlights.is_empty(), "must have highlight");
+            assert_eq!(md.highlights[0].start, 0, "highlight must start at 0");
+            assert_eq!(md.highlights[0].end, 1, "single-char query highlights 1 char");
+            assert!(matches!(md.highlights[0].kind, crate::interface::HighlightKind::Prefix));
+        }
     }
 
     #[tokio::test]
@@ -2105,7 +2186,9 @@ mod tests {
 
     #[tokio::test]
     async fn test_file_search_filtered_short_query() {
-        // Short queries (<3 chars) should work with file filter
+        // Short queries (<3 chars) use prefix-only matching.
+        // File content is stored as "File: <name>", so prefix queries
+        // must match that prefix (e.g. "Fi" matches "File: docs.txt").
         let store = ClipboardStore::new_in_memory().unwrap();
 
         store.save_text("do something".to_string(), None, None).unwrap();
@@ -2120,15 +2203,19 @@ mod tests {
             None,
         ).unwrap();
 
-        // Short query "do" with Files filter
-        let result = store.search_filtered("do".to_string(), ContentTypeFilter::Files).await.unwrap();
-        assert_eq!(result.matches.len(), 1, "Only file starting with 'do' should match");
+        // Short query "Fi" with Files filter — matches "File: docs.txt"
+        let result = store.search_filtered("Fi".to_string(), ContentTypeFilter::Files).await.unwrap();
+        assert_eq!(result.matches.len(), 1, "File starting with 'Fi' should match");
         assert!(result.matches[0].item_metadata.snippet.contains("docs.txt"));
 
-        // Short query "do" with Text filter
+        // Short query "do" with Text filter — matches "do something"
         let result = store.search_filtered("do".to_string(), ContentTypeFilter::Text).await.unwrap();
         assert_eq!(result.matches.len(), 1, "Only text starting with 'do' should match");
         assert!(result.matches[0].item_metadata.snippet.contains("do something"));
+
+        // Short query "do" with Files filter — no match (file content starts with "File:")
+        let result = store.search_filtered("do".to_string(), ContentTypeFilter::Files).await.unwrap();
+        assert_eq!(result.matches.len(), 0, "No file starts with 'do'");
     }
 
     #[test]

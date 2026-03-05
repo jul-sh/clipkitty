@@ -20,6 +20,10 @@ fn source_db_path() -> PathBuf {
     PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("../SyntheticData.sqlite")
 }
 
+fn large_doc_db_path() -> PathBuf {
+    PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("../distribution/SyntheticData_perf.sqlite")
+}
+
 fn hash_string(s: &str) -> String {
     let mut hasher = DefaultHasher::new();
     s.hash(&mut hasher);
@@ -157,5 +161,47 @@ fn bench_search(c: &mut Criterion) {
     group.finish();
 }
 
-criterion_group!(benches, bench_search);
+/// Setup store using the large document perf database (5KB-100KB items).
+/// Run `cargo run --release --bin generate-perf-db` first to create it.
+fn setup_large_doc_store() -> ClipboardStore {
+    let db_path = large_doc_db_path();
+    assert!(
+        db_path.exists(),
+        "Large doc database not found at {}. Run: cargo run --release --bin generate-perf-db",
+        db_path.display()
+    );
+    ClipboardStore::new(db_path.to_str().unwrap().to_string())
+        .expect("Failed to open large doc database")
+}
+
+fn bench_search_large_docs(c: &mut Criterion) {
+    let store = setup_large_doc_store();
+    let rt = tokio::runtime::Runtime::new().unwrap();
+
+    // Queries that will hit large documents (5KB-100KB)
+    let queries = vec![
+        ("large_function", "function"),
+        ("large_error", "error"),
+        ("large_class", "class"),
+        ("large_fuzzy", "functoin"),  // typo - will use fuzzy matching
+        ("large_multi", "error return"),
+        ("large_lorem", "lorem ipsum"),
+    ];
+
+    let mut group = c.benchmark_group("search_large_docs");
+    group.sample_size(50);
+
+    for (name, query) in queries {
+        group.bench_function(name, |b| {
+            b.iter(|| {
+                rt.block_on(async {
+                    store.search(query.to_string()).await.unwrap()
+                })
+            });
+        });
+    }
+    group.finish();
+}
+
+criterion_group!(benches, bench_search, bench_search_large_docs);
 criterion_main!(benches);
