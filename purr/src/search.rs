@@ -6,7 +6,6 @@
 //! what's highlighted matches what's ranked (exact, prefix, fuzzy edit-distance).
 //! Short queries (< 3 chars) use a streaming fallback.
 
-use crate::candidate::SearchCandidate;
 use crate::indexer::{Indexer, IndexerResult};
 use crate::interface::{HighlightKind, HighlightRange, MatchData, ItemMatch};
 use crate::models::StoredItem;
@@ -25,22 +24,12 @@ pub(crate) const RECENCY_BOOST_MAX: f64 = 0.5;
 pub(crate) const RECENCY_HALF_LIFE_SECS: f64 = 3.0 * 24.0 * 60.0 * 60.0;
 
 
-/// Boost for entries where highlighted chars cover most of the document.
-const COVERAGE_BOOST_MAX: f64 = 3.0;
-const COVERAGE_BOOST_THRESHOLD: f64 = 0.4;
-
-/// Boost for matches starting in the first N characters of content.
-const POSITION_BOOST_MAX: f64 = 1.5;
-const POSITION_BOOST_MIN: f64 = 1.1;
-const POSITION_BOOST_WINDOW: usize = 50;
-
 /// Context chars to include before/after match in snippet
 pub(crate) const SNIPPET_CONTEXT_CHARS: usize = 200;
 
 #[derive(Debug, Clone)]
 pub(crate) struct FuzzyMatch {
     pub(crate) id: i64,
-    pub(crate) score: f64,
     pub(crate) highlight_ranges: Vec<HighlightRange>,
     pub(crate) content: String,
 }
@@ -68,75 +57,14 @@ pub(crate) fn search_trigram_lazy(indexer: &Indexer, query: &str, token: &Cancel
     let results: Vec<FuzzyMatch> = candidates
         .into_iter()
         .enumerate()
-        .map(|(rank, c)| FuzzyMatch {
+        .map(|(_rank, c)| FuzzyMatch {
             id: c.id,
-            score: (MAX_RESULTS - rank) as f64,
             highlight_ranges: Vec::new(), // Lazy: no highlights
             content: c.content().to_string(),
         })
         .collect();
 
     Ok(results)
-}
-
-/// Search using Tantivy with bucket re-ranking for trigram queries (>= 3 chars).
-/// Phase 1 (trigram recall) and Phase 2 (bucket re-ranking) happen inside indexer.search().
-/// This function handles highlighting via rayon parallelism with cancellation support.
-#[allow(dead_code)]
-pub(crate) fn search_trigram(indexer: &Indexer, query: &str, token: &CancellationToken) -> IndexerResult<Vec<FuzzyMatch>> {
-        if query.trim().is_empty() {
-            return Ok(Vec::new());
-        }
-        let trimmed = query.trim_start();
-        let query_words_owned = tokenize_words(trimmed.trim_end());
-        let query_words: Vec<&str> = query_words_owned.iter().map(|(_, _, w)| w.as_str()).collect();
-        let last_word_is_prefix = trimmed.trim_end().ends_with(|c: char| c.is_alphanumeric());
-
-        // Bucket-ranked candidates from two-phase search
-        #[cfg(feature = "perf-log")]
-        let t0 = std::time::Instant::now();
-        let candidates = indexer.search(trimmed.trim_end(), MAX_RESULTS)?;
-        #[cfg(feature = "perf-log")]
-        let num_candidates = candidates.len();
-
-        // Assign rank before parallelizing so we can restore bucket order after
-        let ranked: Vec<(usize, SearchCandidate)> = candidates.into_iter().enumerate().collect();
-
-        #[cfg(feature = "perf-log")]
-        let t1 = std::time::Instant::now();
-        use rayon::prelude::*;
-        // No filter needed: bucket ranking already excludes candidates with
-        // words_matched_weight == 0 (punctuation-only matches), so all candidates
-        // here will produce at least one word highlight.
-        let mut sorted: Vec<FuzzyMatch> = ranked
-            .into_par_iter()
-            .take_any_while(|_| !token.is_cancelled())
-            .map(|(rank, c)| {
-                let content_lower = c.content().to_lowercase();
-                let doc_words = tokenize_words(c.content());
-                let mut m = highlight_candidate(c.id, c.content(), &content_lower, &doc_words, c.timestamp, c.tantivy_score, &query_words, last_word_is_prefix);
-                // Preserve bucket ranking order: score = inverse rank so sort is stable
-                m.score = (MAX_RESULTS - rank) as f64;
-                m
-            })
-            .collect();
-
-        // par_iter + take_any_while doesn't preserve order — restore bucket ranking
-        sorted.sort_unstable_by(|a, b| b.score.total_cmp(&a.score));
-
-        #[cfg(feature = "perf-log")]
-        {
-            let t2 = std::time::Instant::now();
-            eprintln!(
-                "[perf] indexer_total={:.1}ms highlight={:.1}ms candidates={} highlighted={}",
-                (t1 - t0).as_secs_f64() * 1000.0,
-                (t2 - t1).as_secs_f64() * 1000.0,
-                num_candidates,
-                sorted.len(),
-            );
-        }
-
-    Ok(sorted)
 }
 
 /// Map a `WordMatchKind` from ranking to a `HighlightKind` for the UI.
@@ -162,7 +90,7 @@ pub(crate) fn highlight_candidate(
         _content_lower: &str,
         doc_words: &[(usize, usize, String)],
         _timestamp: i64,
-        tantivy_score: f32,
+        _tantivy_score: f32,
         query_words: &[&str],
         last_word_is_prefix: bool,
     ) -> FuzzyMatch {
@@ -223,35 +151,8 @@ pub(crate) fn highlight_candidate(
             .map(|&(s, e, k)| HighlightRange { start: s as u64, end: e as u64, kind: k })
             .collect();
 
-        // Start with tantivy score for display scoring (coverage/position boosts)
-        let mut score = tantivy_score as f64;
-
-        if !highlight_ranges.is_empty() {
-            let content_char_len = content.chars().count().max(1);
-            let matched_char_count: usize = highlight_ranges.iter().map(|r| (r.end - r.start) as usize).sum();
-
-            // Coverage boost based on unique query words matched
-            let unique_matched = matched_query_words.iter().filter(|&&m| m).count();
-            let query_coverage = unique_matched as f64 / query_words.len().max(1) as f64;
-            let content_coverage = matched_char_count as f64 / content_char_len as f64;
-            let coverage = query_coverage.min(content_coverage);
-            if coverage > COVERAGE_BOOST_THRESHOLD {
-                let t = (coverage - COVERAGE_BOOST_THRESHOLD) / (1.0 - COVERAGE_BOOST_THRESHOLD);
-                score *= 1.0 + (COVERAGE_BOOST_MAX - 1.0) * t;
-            }
-
-            // Position boost
-            let first_match_pos = highlight_ranges[0].start as usize;
-            if first_match_pos < POSITION_BOOST_WINDOW {
-                let t = 1.0 - (first_match_pos as f64 / POSITION_BOOST_WINDOW as f64);
-                let boost = POSITION_BOOST_MIN + (POSITION_BOOST_MAX - POSITION_BOOST_MIN) * t;
-                score *= boost;
-            }
-        }
-
     FuzzyMatch {
         id,
-        score,
         highlight_ranges,
         content: content.to_string(),
     }
@@ -423,15 +324,6 @@ pub(crate) fn create_match_data(fuzzy_match: &FuzzyMatch) -> MatchData {
         line_number,
         full_content_highlights,
         densest_highlight_start,
-    }
-}
-
-/// Create ItemMatch from StoredItem and FuzzyMatch with pre-computed highlights
-#[allow(dead_code)]
-pub(crate) fn create_item_match(item: &StoredItem, fuzzy_match: &FuzzyMatch) -> ItemMatch {
-    ItemMatch {
-        item_metadata: item.to_metadata(),
-        match_data: Some(create_match_data(fuzzy_match)),
     }
 }
 
