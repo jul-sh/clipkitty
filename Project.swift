@@ -132,7 +132,6 @@ let project = Project(
                     ]),
                     .release(name: "Release", settings: [
                         "CODE_SIGN_ENTITLEMENTS": "Sources/App/ClipKitty.oss.entitlements",
-                        "CURRENT_PROJECT_VERSION": "$(MARKETING_VERSION)",
                     ]),
                     .release(name: .configuration("AppStore"), settings: [
                         "CODE_SIGN_ENTITLEMENTS": "Sources/App/ClipKitty.appstore.entitlements",
