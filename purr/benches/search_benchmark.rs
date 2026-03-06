@@ -72,7 +72,7 @@ fn generate_bench_db(out_path: &std::path::Path) {
         drop(store);
     }
     // Clean up the tantivy index created as a side-effect; only the sqlite file is needed.
-    let tantivy_dir = out_path.parent().unwrap().join("tantivy_index_v3");
+    let tantivy_dir = out_path.parent().unwrap().join(format!("tantivy_index_{}", purr::indexer::INDEX_VERSION));
     if tantivy_dir.exists() {
         std::fs::remove_dir_all(&tantivy_dir).ok();
     }
