@@ -17,16 +17,6 @@ pub(crate) const MAX_RESULTS: usize = 2000;
 
 pub(crate) const MIN_TRIGRAM_QUERY_LEN: usize = 3;
 
-/// Maximum recency boost multiplier for Phase 1 trigram recall.
-/// 10.0 = up to 1000% boost for brand new items. Very strong recency is needed
-/// because Phase 2 bucket ranking uses lexicographic ordering where recency
-/// completely dominates proximity/exactness when words_matched is equal.
-pub(crate) const RECENCY_BOOST_MAX: f64 = 10.0;
-/// Half-life for recency decay: 1 hour (very aggressive recency bias)
-/// This makes even small timestamp differences matter significantly.
-pub(crate) const RECENCY_HALF_LIFE_SECS: f64 = 1.0 * 60.0 * 60.0;
-
-
 /// Context chars to include before/after match in snippet
 pub(crate) const SNIPPET_CONTEXT_CHARS: usize = 200;
 

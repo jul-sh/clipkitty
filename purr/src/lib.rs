@@ -8,7 +8,7 @@
 pub(crate) mod candidate;
 pub mod content_detection;
 pub mod database;
-mod indexer;
+pub mod indexer;
 pub mod interface;
 pub mod models;
 pub mod ranking;
