@@ -8,11 +8,9 @@ NIX_SHELL := ./Scripts/run-in-nix.sh -c
 APP_NAME := ClipKitty
 SCRIPT_DIR := $(abspath $(dir $(lastword $(MAKEFILE_LIST))))
 
-# Version: override via `make all VERSION=1.2.3`
-# BUILD_NUMBER defaults to VERSION so CFBundleVersion matches sparkle:version in the appcast.
-# App Store CI overrides BUILD_NUMBER explicitly with an integer commit count.
+# Version: override via `make all VERSION=1.2.3 BUILD_NUMBER=42`
 VERSION ?= 1.0.0
-BUILD_NUMBER ?= $(VERSION)
+BUILD_NUMBER ?= $(shell git rev-list --count HEAD 2>/dev/null || echo 1)
 
 # Build configuration: Debug, Release (DMG), or AppStore (sandboxed)
 CONFIGURATION ?= Release
