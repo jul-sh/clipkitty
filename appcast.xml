@@ -1,0 +1,18 @@
+<?xml version="1.0" encoding="utf-8"?>
+<rss version="2.0" xmlns:sparkle="http://www.andymatuschak.org/xml-namespaces/sparkle" xmlns:dc="http://purl.org/dc/elements/1.1/">
+  <channel>
+    <title>ClipKitty Updates</title>
+    <link>https://jul-sh.github.io/clipkitty/appcast.xml</link>
+    <language>en</language>
+    <item>
+      <title>ClipKitty 1.8.13</title>
+      <sparkle:version>1.8.13</sparkle:version>
+      <sparkle:shortVersionString>1.8.13</sparkle:shortVersionString>
+      <sparkle:minimumSystemVersion>14.0</sparkle:minimumSystemVersion>
+      <enclosure url="https://github.com/jul-sh/clipkitty/releases/download/v1.8.13/ClipKitty.dmg"
+                 type="application/octet-stream"
+                 sparkle:edSignature="Er8+BCS/xkUH5dQnmP1pMWmrajN2a4/xNqXlMKJBQoEb3xkf0op+QU13e1dRCH63QCfhqvXF9hwxOCAm7ieeCA=="
+                 length="11075715" />
+    </item>
+  </channel>
+</rss>
