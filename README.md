@@ -1,5 +1,7 @@
 # ClipKitty
 
+> **⚠️ Pre-release Software**: The GitHub version is pre-release software. I use it as my daily driver, but bugs are expected. Please [report issues](https://github.com/jul-sh/clipkitty/issues) as they occur.
+
 <img src="https://raw.githubusercontent.com/jul-sh/clipkitty/gh-pages/icon.png" alt="ClipKitty icon" width="60">
 
 **Never lose what you copied.**

@@ -272,10 +272,11 @@ impl ClipboardStore {
 
         // Create index directory next to database
         let db_path_buf = PathBuf::from(&path);
+        let index_dir = format!("tantivy_index_{}", crate::indexer::INDEX_VERSION);
         let index_path = db_path_buf
             .parent()
-            .map(|p| p.join("tantivy_index_v3"))
-            .unwrap_or_else(|| PathBuf::from("tantivy_index_v3"));
+            .map(|p| p.join(&index_dir))
+            .unwrap_or_else(|| PathBuf::from(&index_dir));
 
         let indexer = Indexer::new(&index_path)?;
 
