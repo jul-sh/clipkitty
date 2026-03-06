@@ -8,7 +8,7 @@
 //!     cargo run --release --bin generate_perf_db [output_path]
 //!
 //! Default output: ../distribution/SyntheticData_perf.sqlite
-//!                 ../distribution/tantivy_index_v3/ (index directory)
+//!                 ../distribution/tantivy_index_v4/ (index directory)
 
 use purr::database::Database;
 use purr::models::StoredItem;
@@ -265,7 +265,7 @@ fn main() {
     let _store = ClipboardStore::new(output_path.to_str().unwrap().to_string())
         .expect("Failed to open store for indexing");
 
-    let index_path = output_path.parent().unwrap().join("tantivy_index_v3");
+    let index_path = output_path.parent().unwrap().join(format!("tantivy_index_{}", purr::indexer::INDEX_VERSION));
 
     println!();
     println!("Database created: {}", output_path.display());

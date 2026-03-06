@@ -90,9 +90,9 @@ run-perf: all perf-db
 	@echo "Setting up perf test database and index..."
 	@mkdir -p "$(APP_SUPPORT)"
 	@rm -f "$(APP_SUPPORT)/clipboard-screenshot.sqlite"*
-	@rm -rf "$(APP_SUPPORT)/tantivy_index_v3"
+	@rm -rf "$(APP_SUPPORT)/tantivy_index_v4"
 	@cp distribution/SyntheticData_perf.sqlite "$(APP_SUPPORT)/clipboard-screenshot.sqlite"
-	@cp -r distribution/tantivy_index_v3 "$(APP_SUPPORT)/tantivy_index_v3"
+	@cp -r distribution/tantivy_index_v4 "$(APP_SUPPORT)/tantivy_index_v4"
 	@echo "Opening $(APP_NAME) with perf database..."
 	@open "$(DERIVED_DATA)/Build/Products/$(CONFIGURATION)/$(APP_NAME).app" --args --use-simulated-db
 
