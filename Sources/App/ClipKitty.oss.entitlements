@@ -6,8 +6,7 @@
     <key>com.apple.application-identifier</key>
     <string>ANBBV7LQ2P.com.eviljuliette.clipkitty</string>
 
-    <!-- macOS App Sandbox enabled -->
-    <!-- Note: Direct paste (Cmd+V keystroke) requires user to grant permission at runtime via System Settings -->
+    <!-- macOS App Sandbox — enabled; Sparkle uses XPC installer service to update outside sandbox -->
     <key>com.apple.security.app-sandbox</key>
     <true/>
 
@@ -19,11 +18,13 @@
     <key>com.apple.security.files.user-selected.read-only</key>
     <true/>
 
-    <!-- Sparkle: mach-lookup for XPC services (installer & status) -->
+    <!-- Sparkle: mach-lookup for XPC services (installer & status).
+         Hardcoded because $(PRODUCT_BUNDLE_IDENTIFIER) is not expanded when
+         codesign is invoked directly in CI (outside xcodebuild). -->
     <key>com.apple.security.temporary-exception.mach-lookup.global-name</key>
     <array>
-        <string>$(PRODUCT_BUNDLE_IDENTIFIER)-spks</string>
-        <string>$(PRODUCT_BUNDLE_IDENTIFIER)-spki</string>
+        <string>com.eviljuliette.clipkitty-spks</string>
+        <string>com.eviljuliette.clipkitty-spki</string>
     </array>
 
     <!-- Hardware: camera/microphone/location are omitted; no sensor access. -->
