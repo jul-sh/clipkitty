@@ -127,7 +127,7 @@ fi
 
 # Step 2: Generate performance database and index
 PERF_DB="$PROJECT_ROOT/distribution/SyntheticData_perf.sqlite"
-PERF_INDEX="$PROJECT_ROOT/distribution/tantivy_index_v3"
+PERF_INDEX="$PROJECT_ROOT/distribution/tantivy_index_v4"
 if [ "$SKIP_DB_GEN" = false ]; then
     if [ ! -f "$PERF_DB" ] || [ ! -d "$PERF_INDEX" ]; then
         echo ">>> Generating performance test database and index..."
@@ -151,7 +151,7 @@ sleep 1
 
 # Clean up existing data
 rm -f "$APP_SUPPORT_DIR/clipboard-screenshot.sqlite"*
-rm -rf "$APP_SUPPORT_DIR/tantivy_index_v3"
+rm -rf "$APP_SUPPORT_DIR/tantivy_index_v4"
 
 # Copy performance database and pre-built index
 if [ -f "$PERF_DB" ]; then
@@ -162,7 +162,7 @@ else
 fi
 
 if [ -d "$PERF_INDEX" ]; then
-    cp -r "$PERF_INDEX" "$APP_SUPPORT_DIR/tantivy_index_v3"
+    cp -r "$PERF_INDEX" "$APP_SUPPORT_DIR/tantivy_index_v4"
     echo "    Pre-built index copied to app container"
 else
     echo "Warning: Pre-built index not found, index will be built at startup"

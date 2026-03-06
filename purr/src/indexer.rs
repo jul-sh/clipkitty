@@ -7,6 +7,10 @@ use crate::candidate::SearchCandidate;
 use crate::ranking::compute_bucket_score;
 use chrono::Utc;
 
+/// Index version - bump this when schema changes to trigger automatic rebuild.
+/// History: v3 = initial trigram, v4 = content_words WithFreqsAndPositions
+pub const INDEX_VERSION: &str = "v4";
+
 /// Large boost for proximity PhraseQuery, creating distinct score bands.
 /// tweak_score decodes this to convert proximity into an additive tier
 /// that serves as a tiebreaker within the same recency bucket.
@@ -99,11 +103,26 @@ pub struct Indexer {
 }
 
 impl Indexer {
-    /// Create a new indexer at the given path
+    /// Create a new indexer at the given path.
+    /// Automatically detects schema mismatches and rebuilds the index if needed.
     pub fn new(path: &Path) -> IndexerResult<Self> {
+        let schema = Self::build_schema();
+
+        // Check for existing index with incompatible schema
+        if path.exists() {
+            if let Ok(dir) = MmapDirectory::open(path) {
+                if let Ok(existing_index) = Index::open(dir) {
+                    if existing_index.schema() != schema {
+                        // Schema mismatch - delete and rebuild
+                        drop(existing_index);
+                        std::fs::remove_dir_all(path)?;
+                    }
+                }
+            }
+        }
+
         std::fs::create_dir_all(path)?;
         let dir = MmapDirectory::open(path)?;
-        let schema = Self::build_schema();
         let index = Index::open_or_create(dir, schema.clone())?;
         Self::register_tokenizer(&index);
 
@@ -250,7 +269,7 @@ impl Indexer {
     pub fn search(&self, query: &str, limit: usize) -> IndexerResult<Vec<SearchCandidate>> {
         #[cfg(feature = "perf-log")]
         let t0 = std::time::Instant::now();
-        let mut candidates = self.trigram_recall(query, limit)?;
+        let candidates = self.trigram_recall(query, limit)?;
         #[cfg(feature = "perf-log")]
         let t1 = std::time::Instant::now();
 
