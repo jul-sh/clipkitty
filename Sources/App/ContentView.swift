@@ -1249,7 +1249,7 @@ struct TextPreviewView: NSViewRepresentable {
         let textView = NSTextView()
         textView.isEditable = false
         textView.isSelectable = true
-        textView.isRichText = true  // Enable rich text for highlighting
+        textView.isRichText = true
         textView.drawsBackground = false
         textView.isVerticallyResizable = true
         textView.isHorizontallyResizable = false
@@ -1308,9 +1308,7 @@ struct TextPreviewView: NSViewRepresentable {
             ?? NSFont.monospacedSystemFont(ofSize: scaledSize, weight: .regular)
 
         // Settle container dimensions FIRST so that any deferred scroll
-        // computes geometry against the correct width.  Previously this ran
-        // *after* the text update and the async scroll was already scheduled,
-        // causing intermittent stale-layout scrolls to the document bottom.
+        // computes geometry against the correct width.
         textView.textContainer?.containerSize = NSSize(
             width: nsView.contentSize.width,
             height: .greatestFiniteMagnitude
@@ -1327,74 +1325,64 @@ struct TextPreviewView: NSViewRepresentable {
             let paragraphStyle = NSMutableParagraphStyle()
             paragraphStyle.lineBreakMode = .byWordWrapping
 
+            // Set base text with font
+            let attributed = NSMutableAttributedString(string: text, attributes: [
+                .font: font,
+                .foregroundColor: NSColor.labelColor,
+                .paragraphStyle: paragraphStyle
+            ])
+
             if highlights.isEmpty {
-                // Clear any previous highlighting by setting plain string with consistent style
-                let attributed = NSMutableAttributedString(string: text, attributes: [
-                    .font: font,
-                    .foregroundColor: NSColor.labelColor,
-                    .paragraphStyle: paragraphStyle
-                ])
                 textView.textStorage?.setAttributedString(attributed)
                 // Scroll to top when no highlights
                 textView.scrollToBeginningOfDocument(nil)
             } else {
-                // Apply Rust-computed highlights
-                let attributed = NSMutableAttributedString(string: text, attributes: [
-                    .font: font,
-                    .foregroundColor: NSColor.labelColor,
-                    .paragraphStyle: paragraphStyle
-                ])
-                for range in highlights {
-                    let nsRange = range.nsRange(in: text)
-                    if nsRange.location != NSNotFound && nsRange.location + nsRange.length <= attributed.length {
-                        let (bg, underline) = highlightStyle(for: range.kind)
-                        attributed.addAttribute(.backgroundColor, value: bg, range: nsRange)
-                        if underline {
-                            attributed.addAttribute(.underlineStyle, value: NSUnderlineStyle.single.rawValue, range: nsRange)
-                        }
-                    }
-                }
+                // Apply highlights using shared HighlightStyler
+                HighlightStyler.applyHighlights(highlights, to: attributed, text: text)
                 textView.textStorage?.setAttributedString(attributed)
 
-                // Auto-scroll to the densest highlight region (offset computed by Rust)
-                // Defer to next run loop to ensure layout is complete
-                let targetHighlight = highlights.first { $0.start == densestHighlightStart } ?? highlights[0]
-                let targetRange = targetHighlight.nsRange(in: text)
-                DispatchQueue.main.async { [weak textView] in
-                    guard let textView else { return }
-                    guard let scrollView = textView.enclosingScrollView else { return }
-                    textView.layoutManager?.ensureLayout(for: textView.textContainer!)
-
-                    let glyphRange = textView.layoutManager?.glyphRange(forCharacterRange: targetRange, actualCharacterRange: nil) ?? targetRange
-                    guard let rect = textView.layoutManager?.boundingRect(forGlyphRange: glyphRange, in: textView.textContainer!) else { return }
-
-                    // Convert rect to scroll view coordinates and check if already visible
-                    let highlightRect = rect.offsetBy(dx: textView.textContainerInset.width, dy: textView.textContainerInset.height)
-                    let visibleRect = scrollView.documentVisibleRect
-                    if visibleRect.contains(highlightRect) {
-                        return  // Already visible, no scroll needed
-                    }
-
-                    // Check if highlight is near the end of the document
-                    let documentHeight = textView.layoutManager?.usedRect(for: textView.textContainer!).height ?? 0
-                    let highlightY = rect.origin.y + rect.height
-                    let isNearEnd = documentHeight - highlightY < 100
-
-                    // Perform scroll with animations explicitly disabled
-                    CATransaction.begin()
-                    CATransaction.setDisableActions(true)
-                    if isNearEnd {
-                        textView.scrollToEndOfDocument(nil)
-                    } else {
-                        let scrollRect = highlightRect.insetBy(dx: 0, dy: -50)
-                        textView.scrollToVisible(scrollRect)
-                    }
-                    CATransaction.commit()
-                }
+                // Auto-scroll to the densest highlight region
+                scrollToHighlight(textView: textView)
             }
         }
     }
 
+    private func scrollToHighlight(textView: NSTextView) {
+        let targetHighlight = highlights.first { $0.start == densestHighlightStart } ?? highlights[0]
+        let targetRange = targetHighlight.nsRange(in: text)
+
+        DispatchQueue.main.async { [weak textView] in
+            guard let textView else { return }
+            guard let scrollView = textView.enclosingScrollView else { return }
+            textView.layoutManager?.ensureLayout(for: textView.textContainer!)
+
+            let glyphRange = textView.layoutManager?.glyphRange(forCharacterRange: targetRange, actualCharacterRange: nil) ?? targetRange
+            guard let rect = textView.layoutManager?.boundingRect(forGlyphRange: glyphRange, in: textView.textContainer!) else { return }
+
+            // Convert rect to scroll view coordinates and check if already visible
+            let highlightRect = rect.offsetBy(dx: textView.textContainerInset.width, dy: textView.textContainerInset.height)
+            let visibleRect = scrollView.documentVisibleRect
+            if visibleRect.contains(highlightRect) {
+                return  // Already visible, no scroll needed
+            }
+
+            // Check if highlight is near the end of the document
+            let documentHeight = textView.layoutManager?.usedRect(for: textView.textContainer!).height ?? 0
+            let highlightY = rect.origin.y + rect.height
+            let isNearEnd = documentHeight - highlightY < 100
+
+            // Perform scroll with animations explicitly disabled
+            CATransaction.begin()
+            CATransaction.setDisableActions(true)
+            if isNearEnd {
+                textView.scrollToEndOfDocument(nil)
+            } else {
+                let scrollRect = highlightRect.insetBy(dx: 0, dy: -50)
+                textView.scrollToVisible(scrollRect)
+            }
+            CATransaction.commit()
+        }
+    }
 
     func makeCoordinator() -> Coordinator {
         Coordinator()
@@ -1627,6 +1615,8 @@ struct ItemRow: View, Equatable {
 /// - Prefix: Truncates from head (`.head`) showing "...text"
 /// - Highlight: Has `.layoutPriority(1)` to claim space first, never pushed off-screen
 /// - Suffix: Truncates from tail (`.tail`) showing "text..."
+///
+/// Uses HighlightStyler for all index calculations with proper Unicode scalar handling.
 struct HighlightedTextView: View, Equatable {
     let text: String
     let highlights: [HighlightRange]
@@ -1649,20 +1639,9 @@ struct HighlightedTextView: View, Equatable {
         // Use firstTextBaseline so text aligns perfectly even with different weights
         HStack(alignment: .firstTextBaseline, spacing: 0) {
             if let firstHighlight = highlights.first {
-                let startIndex = Int(firstHighlight.start)
-                let endIndex = Int(firstHighlight.end)
-
-                // Clamp indices to valid range
-                let safeStart = min(max(0, startIndex), text.count)
-                let safeEnd = min(max(safeStart, endIndex), text.count)
-
-                let prefixEnd = text.index(text.startIndex, offsetBy: safeStart)
-                let matchStart = prefixEnd
-                let matchEnd = text.index(text.startIndex, offsetBy: safeEnd)
-
-                let prefix = String(text[..<prefixEnd])
-                let match = String(text[matchStart..<matchEnd])
-                let suffix = String(text[matchEnd...])
+                // Use HighlightStyler for correct Unicode scalar handling
+                let (prefix, match, suffix) = HighlightStyler.splitText(text, highlight: firstHighlight)
+                let suffixStartScalarIndex = Int(firstHighlight.end)
 
                 // 1. PREFIX: Truncates on the left ("...text")
                 if !prefix.isEmpty {
@@ -1674,18 +1653,12 @@ struct HighlightedTextView: View, Equatable {
                 }
 
                 // 2. HIGHLIGHT: High priority ensures it claims space first
-                Text(match)
-                    .font(font)
-                    .foregroundColor(textColor)
-                    .lineLimit(1)
-                    .truncationMode(.tail) // Fallback if highlight itself is wider than container
-                    .layoutPriority(1)     // CRITICAL: Guarantees visibility
-                    .background(highlightBackground(for: firstHighlight.kind))
+                highlightedMatchView(match: match, kind: firstHighlight.kind)
 
                 // 3. SUFFIX: Truncates on the right ("text...")
                 // Apply any additional highlights that fall within suffix
                 if !suffix.isEmpty {
-                    suffixView(suffix: suffix, suffixStartIndex: safeEnd)
+                    suffixView(suffix: suffix, suffixStartScalarIndex: suffixStartScalarIndex)
                         .font(font)
                         .foregroundColor(textColor)
                         .lineLimit(1)
@@ -1705,46 +1678,40 @@ struct HighlightedTextView: View, Equatable {
         .frame(maxWidth: .infinity, alignment: .leading)
     }
 
+    /// Build the highlighted match view with optional underline
+    @ViewBuilder
+    private func highlightedMatchView(match: String, kind: HighlightKind) -> some View {
+        let baseView = Text(match)
+            .font(font)
+            .foregroundColor(textColor)
+            .lineLimit(1)
+            .truncationMode(.tail)
+            .layoutPriority(1)
+            .background(HighlightStyler.color(for: kind))
+
+        if HighlightStyler.usesUnderline(kind) {
+            baseView.underline()
+        } else {
+            baseView
+        }
+    }
+
     /// Build suffix view with any additional highlights
     @ViewBuilder
-    private func suffixView(suffix: String, suffixStartIndex: Int) -> some View {
+    private func suffixView(suffix: String, suffixStartScalarIndex: Int) -> some View {
         // Check for additional highlights in the suffix (beyond the first one)
+        // Use Unicode scalar count for correct bounds checking
+        let suffixScalarCount = suffix.unicodeScalars.count
         let additionalHighlights = highlights.dropFirst().filter { h in
-            Int(h.start) >= suffixStartIndex && Int(h.start) < suffixStartIndex + suffix.count
+            HighlightStyler.highlightInSuffix(h, suffixStartScalarIndex: suffixStartScalarIndex, suffixScalarCount: suffixScalarCount)
         }
 
         if additionalHighlights.isEmpty {
             Text(suffix)
         } else {
-            // Build attributed string for suffix with additional highlights
-            Text(attributedSuffix(suffix: suffix, suffixStartIndex: suffixStartIndex, highlights: Array(additionalHighlights)))
+            // Use HighlightStyler for correct Unicode scalar handling
+            Text(HighlightStyler.attributedSuffix(suffix, suffixStartScalarIndex: suffixStartScalarIndex, highlights: Array(additionalHighlights)))
         }
-    }
-
-    /// Create AttributedString for suffix with multiple highlights
-    private func attributedSuffix(suffix: String, suffixStartIndex: Int, highlights: [HighlightRange]) -> AttributedString {
-        var attributed = AttributedString(suffix)
-
-        for highlight in highlights {
-            let relativeStart = Int(highlight.start) - suffixStartIndex
-            let relativeEnd = Int(highlight.end) - suffixStartIndex
-
-            // Clamp to suffix bounds
-            let safeStart = max(0, relativeStart)
-            let safeEnd = min(suffix.count, relativeEnd)
-
-            guard safeStart < safeEnd else { continue }
-
-            let startIdx = attributed.index(attributed.startIndex, offsetByCharacters: safeStart)
-            let endIdx = attributed.index(attributed.startIndex, offsetByCharacters: safeEnd)
-
-            attributed[startIdx..<endIdx].backgroundColor = highlightBackground(for: highlight.kind)
-            if highlight.kind == .subsequence {
-                attributed[startIdx..<endIdx].underlineStyle = .single
-            }
-        }
-
-        return attributed
     }
 }
 
@@ -1837,31 +1804,6 @@ private func selectionBackground() -> some View {
 }
 
 // MARK: - Highlight Kind Color Mapping
-
-/// NSColor styling for TextPreviewView (NSAttributedString path)
-/// Returns (backgroundColor, shouldUnderline) based on match kind
-private func highlightStyle(for kind: HighlightKind) -> (NSColor, Bool) {
-    switch kind {
-    case .exact, .prefix:
-        return (NSColor.yellow.withAlphaComponent(0.4), false)
-    case .fuzzy:
-        return (NSColor.orange.withAlphaComponent(0.3), false)
-    case .subsequence:
-        return (NSColor.orange.withAlphaComponent(0.2), true)
-    }
-}
-
-/// SwiftUI Color for HighlightedTextView (SwiftUI Text path)
-private func highlightBackground(for kind: HighlightKind) -> Color {
-    switch kind {
-    case .exact, .prefix:
-        return Color.yellow.opacity(0.4)
-    case .fuzzy:
-        return Color.orange.opacity(0.3)
-    case .subsequence:
-        return Color.orange.opacity(0.2)
-    }
-}
 
 // MARK: - Hide Scroll Indicators When System Uses Overlay Style
 
