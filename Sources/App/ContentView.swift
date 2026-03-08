@@ -1447,7 +1447,19 @@ struct TextPreviewView: NSViewRepresentable {
         let work = { [weak textView] in
             guard let textView else { return }
             guard coordinator.scrollGeneration == generation else { return }
-            guard let scrollView = textView.enclosingScrollView else { return }
+            guard let scrollView = textView.enclosingScrollView else {
+                // View hierarchy not ready yet - retry
+                if attempt < maxAttempts - 1 {
+                    self.performScrollAttempt(
+                        textView: textView,
+                        targetNSRange: targetNSRange,
+                        generation: generation,
+                        coordinator: coordinator,
+                        attempt: attempt + 1
+                    )
+                }
+                return
+            }
             guard let tlm = textView.textLayoutManager,
                   let tcm = tlm.textContentManager else { return }
 
@@ -1495,9 +1507,7 @@ struct TextPreviewView: NSViewRepresentable {
 
             let currentOrigin = scrollView.contentView.bounds.origin
             let newOrigin = NSPoint(x: currentOrigin.x, y: clampedY)
-            if abs(currentOrigin.y - newOrigin.y) < 1 {
-                return
-            }
+            guard abs(currentOrigin.y - newOrigin.y) >= 1 else { return }
 
             // Perform scroll with animations explicitly disabled
             CATransaction.begin()
