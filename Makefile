@@ -27,7 +27,7 @@ SIGNING_IDENTITY ?= $(shell security find-identity -v -p codesigning 2>/dev/null
 RUST_MARKER := .make/rust.marker
 RUST_LIB := Sources/ClipKittyRust/libpurr.a
 
-.PHONY: all clean rust rust-force generate build sign list-identities run run-perf test uitest rust-test perf-test perf-db
+.PHONY: all clean rust rust-force generate build sign list-identities run run-perf test unittest uitest rust-test perf-test perf-db
 
 all: rust generate build
 
@@ -130,13 +130,34 @@ uitest: all
 			2>&1 | grep -E "(Test Case|passed|failed|error:)" || true; \
 	fi
 
-# Run all tests (Rust + UI)
-test: rust-test uitest
+# Run all tests (Rust + Swift unit + UI)
+test: rust-test unittest uitest
 
 # Run Rust tests
 rust-test:
 	@echo "Running Rust tests..."
 	@$(NIX_SHELL) "cd purr && cargo test"
+
+# Run Swift unit tests (requires workspace for STTextKitPlus dependency)
+# Usage: make unittest [TEST=testName]
+# Example: make unittest TEST=testNsRangeWithEmoji
+unittest: rust generate
+	@echo "Running Swift unit tests..."
+	@if [ -n "$(TEST)" ]; then \
+		xcodebuild test -workspace $(APP_NAME).xcworkspace \
+			-scheme $(APP_NAME) \
+			-destination "platform=macOS" \
+			-derivedDataPath $(DERIVED_DATA) \
+			-only-testing:ClipKittyTests/$(TEST) \
+			2>&1 | grep -E "(Test Case|Test Suite|passed|failed|error:|warning:)" || true; \
+	else \
+		xcodebuild test -workspace $(APP_NAME).xcworkspace \
+			-scheme $(APP_NAME) \
+			-destination "platform=macOS" \
+			-derivedDataPath $(DERIVED_DATA) \
+			-only-testing:ClipKittyTests \
+			2>&1 | grep -E "(Test Case|Test Suite|passed|failed|error:|warning:)" || true; \
+	fi
 
 # Show available signing identities (helpful for setup)
 list-identities:

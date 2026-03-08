@@ -1,25 +1,27 @@
 import Carbon
 import AppKit
 
-private enum RegistrationState {
+// MARK: - HotKey Registration State
+
+private enum RegistrationState: Sendable {
     case unregistered
     case registered(hotKey: EventHotKeyRef, eventHandler: EventHandlerRef)
 }
 
-final class HotKeyManager: @unchecked Sendable {
-    private var state: RegistrationState = .unregistered
-    private let callback: @Sendable () -> Void
-    /// Lock protecting state mutations for thread safety (@unchecked Sendable)
-    private let stateLock = NSLock()
+// MARK: - HotKeyManager
 
-    init(callback: @escaping @Sendable () -> Void) {
+/// Manages global hotkey registration using Carbon APIs.
+/// @MainActor isolated because Carbon hotkey APIs must be called from the main thread.
+@MainActor
+final class HotKeyManager {
+    private var state: RegistrationState = .unregistered
+    private let callback: @MainActor () -> Void
+
+    init(callback: @escaping @MainActor () -> Void) {
         self.callback = callback
     }
 
     func register(hotKey: HotKey = .default) {
-        stateLock.lock()
-        defer { stateLock.unlock() }
-
         // If already registered, just update the hotkey (reuse event handler)
         if case .registered(let oldHotKeyRef, let existingEventHandler) = state {
             UnregisterEventHotKey(oldHotKeyRef)
@@ -76,10 +78,17 @@ final class HotKeyManager: @unchecked Sendable {
     private func installEventHandler(_ eventHandler: inout EventHandlerRef?) -> Bool {
         var eventType = EventTypeSpec(eventClass: OSType(kEventClassKeyboard), eventKind: UInt32(kEventHotKeyPressed))
 
+        // Capture callback for use in the C function pointer
+        let callback = self.callback
+
         let handler: EventHandlerUPP = { _, event, userData -> OSStatus in
-            guard let userData = userData else { return OSStatus(eventNotHandledErr) }
-            let manager = Unmanaged<HotKeyManager>.fromOpaque(userData).takeUnretainedValue()
-            manager.callback()
+            guard userData != nil else { return OSStatus(eventNotHandledErr) }
+            // Carbon callbacks run on main thread, so we can safely call MainActor code
+            MainActor.assumeIsolated {
+                // Get the callback from the manager
+                let manager = Unmanaged<HotKeyManager>.fromOpaque(userData!).takeUnretainedValue()
+                manager.callback()
+            }
             return noErr
         }
 
@@ -98,9 +107,6 @@ final class HotKeyManager: @unchecked Sendable {
     }
 
     func unregister() {
-        stateLock.lock()
-        defer { stateLock.unlock() }
-
         if case .registered(let hotKey, let eventHandler) = state {
             UnregisterEventHotKey(hotKey)
             RemoveEventHandler(eventHandler)
@@ -109,6 +115,12 @@ final class HotKeyManager: @unchecked Sendable {
     }
 
     deinit {
-        unregister()
+        // deinit runs on whatever thread deallocates, but Carbon APIs need main thread.
+        // Since this class is @MainActor, it should typically be deallocated on main.
+        // The state will be cleaned up by the OS when the process exits anyway.
+        if case .registered(let hotKey, let eventHandler) = state {
+            UnregisterEventHotKey(hotKey)
+            RemoveEventHandler(eventHandler)
+        }
     }
 }

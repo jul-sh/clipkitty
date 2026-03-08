@@ -8,7 +8,48 @@ import os
 import ImageIO
 import UniformTypeIdentifiers
 
-// MARK: - Performance Tracing
+// MARK: - Background Operation Helpers
+
+/// Execute a database operation on a background thread and return the result.
+/// Uses structured concurrency with proper Sendable handling for the Rust store.
+private func runInBackground<T: Sendable>(
+    _ operation: String,
+    on store: ClipKittyRust.ClipboardStore,
+    body: @escaping @Sendable (ClipKittyRust.ClipboardStore) throws -> T
+) async -> Result<T, ClipboardError> {
+    // The Rust store is @unchecked Sendable, so we can safely capture it
+    do {
+        let result = try await Task.detached(priority: .userInitiated) {
+            try body(store)
+        }.value
+        return .success(result)
+    } catch {
+        return .failure(.databaseOperationFailed(operation: operation, underlying: error))
+    }
+}
+
+/// Execute a database operation on a background thread, ignoring the result.
+/// Logs errors via ErrorReporter and optionally shows a toast.
+@MainActor
+private func runInBackgroundIgnoringResult(
+    _ operation: String,
+    on store: ClipKittyRust.ClipboardStore,
+    showToast: Bool = false,
+    body: @escaping @Sendable (ClipKittyRust.ClipboardStore) throws -> Void
+) {
+    Task.detached(priority: .utility) {
+        do {
+            try body(store)
+        } catch {
+            await ErrorReporter.report(
+                ClipboardError.databaseOperationFailed(operation: operation, underlying: error),
+                showToast: showToast
+            )
+        }
+    }
+}
+
+// MARK: - Logging
 
 private let logger = Logger(subsystem: Bundle.main.bundleIdentifier ?? "ClipKitty", category: "ClipboardStore")
 
@@ -100,14 +141,17 @@ final class ClipboardStore {
     /// Link metadata fetcher using LinkPresentation framework
     private let linkMetadataFetcher = LinkMetadataFetcher()
 
+    /// Pasteboard for clipboard operations (injected for testability)
+    private let pasteboard: PasteboardProtocol
 
     // MARK: - Initialization
 
     private let isScreenshotMode: Bool
 
-    init(screenshotMode: Bool = false) {
+    init(screenshotMode: Bool = false, pasteboard: PasteboardProtocol = NSPasteboard.general) {
         self.isScreenshotMode = screenshotMode
-        lastChangeCount = NSPasteboard.general.changeCount
+        self.pasteboard = pasteboard
+        lastChangeCount = pasteboard.changeCount
         setupDatabase()
         refresh()
         pruneIfNeeded()
@@ -119,10 +163,12 @@ final class ClipboardStore {
     /// Refresh database size asynchronously
     func refreshDatabaseSize() {
         guard let rustStore else { return }
-        Task.detached {
-            let size = rustStore.databaseSize()
-            await MainActor.run { [weak self] in
-                self?.databaseSizeBytes = size
+        Task {
+            let result = await runInBackground("databaseSize", on: rustStore) { store in
+                store.databaseSize()
+            }
+            if case .success(let size) = result {
+                self.databaseSizeBytes = size
             }
         }
     }
@@ -137,7 +183,9 @@ final class ClipboardStore {
     private func setupDatabase() {
         do {
             guard let appSupport = FileManager.default.urls(for: .applicationSupportDirectory, in: .userDomainMask).first else {
-                state = .error(String(localized: "Failed to locate application support directory"))
+                let error = ClipboardError.databaseInitFailed(underlying: NSError(domain: "ClipKitty", code: 1, userInfo: [NSLocalizedDescriptionKey: "Failed to locate application support directory"]))
+                ErrorReporter.reportCritical(error)
+                state = .error(error.localizedDescription)
                 return
             }
             let appDir = appSupport.appendingPathComponent("ClipKitty", isDirectory: true)
@@ -148,7 +196,9 @@ final class ClipboardStore {
             // Initialize the Rust store
             rustStore = try ClipKittyRust.ClipboardStore(dbPath: dbPath)
         } catch {
-            state = .error(String(format: NSLocalizedString("Database setup failed: %@", comment: "Error when database initialization fails"), error.localizedDescription))
+            let dbError = ClipboardError.databaseInitFailed(underlying: error)
+            ErrorReporter.reportCritical(dbError)
+            state = .error(dbError.localizedDescription)
         }
     }
 
@@ -202,10 +252,13 @@ final class ClipboardStore {
     /// Fetch full ClipboardItem by ID
     func fetchItem(id: Int64) async -> ClipboardItem? {
         guard let rustStore else { return nil }
-        return try? await Task.detached {
-            let items = try rustStore.fetchByIds(itemIds: [id])
+        let result = await runInBackground("fetchItem", on: rustStore) { store in
+            try store.fetchByIds(itemIds: [id])
+        }
+        if case .success(let items) = result {
             return items.first
-        }.value
+        }
+        return nil
     }
 
     /// Compute highlights for visible items (called on-demand as rows become visible)
@@ -223,27 +276,27 @@ final class ClipboardStore {
         // Fetch metadata using LinkPresentation framework
         guard let metadata = await linkMetadataFetcher.fetchMetadata(for: url, itemId: itemId) else {
             // Mark as failed
-            await Task.detached { [rustStore] in
-                try? rustStore.updateLinkMetadata(
+            _ = await runInBackground("updateLinkMetadata", on: rustStore) { store in
+                try store.updateLinkMetadata(
                     itemId: itemId,
                     title: "",
                     description: nil,
                     imageData: nil
                 )
-            }.value
+            }
             return await fetchItem(id: itemId)
         }
 
         // Persist to database (await to ensure write completes before read)
         let imageData = metadata.imageData
-        await Task.detached { [rustStore] in
-            try? rustStore.updateLinkMetadata(
+        _ = await runInBackground("updateLinkMetadata", on: rustStore) { store in
+            try store.updateLinkMetadata(
                 itemId: itemId,
                 title: metadata.title,
                 description: metadata.description,
                 imageData: imageData
             )
-        }.value
+        }
 
         // Return updated item
         return await fetchItem(id: itemId)
@@ -287,9 +340,12 @@ final class ClipboardStore {
                 _ = oldState  // Force capture and release on background thread
             }
         } catch ClipKittyError.Cancelled {
+            // Search was cancelled - this is normal, not an error
         } catch {
             guard !Task.isCancelled else { return }
-            state = .error(String(format: NSLocalizedString("Search failed: %@", comment: "Error when search operation fails"), error.localizedDescription))
+            let searchError = ClipboardError.databaseOperationFailed(operation: "search", underlying: error)
+            ErrorReporter.report(searchError, showToast: false)
+            state = .error(searchError.localizedDescription)
         }
     }
 
@@ -390,8 +446,10 @@ final class ClipboardStore {
     }
 
     private func checkForChanges() {
-        let pasteboard = NSPasteboard.general
-        let currentCount = pasteboard.changeCount
+        // Note: Uses NSPasteboard.general directly since readObjects is not in the protocol
+        // The injected pasteboard is used for paste operations (testable)
+        let systemPasteboard = NSPasteboard.general
+        let currentCount = systemPasteboard.changeCount
 
         guard currentCount != lastChangeCount else { return }
         lastChangeCount = currentCount
@@ -410,7 +468,7 @@ final class ClipboardStore {
         // Skip concealed/sensitive content (e.g. passwords from 1Password, Bitwarden)
         if settings.ignoreConfidentialContent {
             let concealedType = NSPasteboard.PasteboardType("org.nspasteboard.ConcealedType")
-            if pasteboard.data(forType: concealedType) != nil {
+            if systemPasteboard.data(forType: concealedType) != nil {
                 return
             }
         }
@@ -418,13 +476,13 @@ final class ClipboardStore {
         // Skip transient content (temporary data from apps)
         if settings.ignoreTransientContent {
             let transientType = NSPasteboard.PasteboardType("org.nspasteboard.TransientType")
-            if pasteboard.data(forType: transientType) != nil {
+            if systemPasteboard.data(forType: transientType) != nil {
                 return
             }
         }
 
         // Check for file URLs first (file copies also put .tiff and .string on the pasteboard)
-        if let fileURLs = pasteboard.readObjects(forClasses: [NSURL.self], options: [
+        if let fileURLs = systemPasteboard.readObjects(forClasses: [NSURL.self], options: [
             .urlReadingFileURLsOnly: true
         ]) as? [URL], !fileURLs.isEmpty {
             saveFileItems(urls: fileURLs)
@@ -433,7 +491,7 @@ final class ClipboardStore {
 
         // Check for GIF first (preserve animation), then fall back to static image types
         let gifType = NSPasteboard.PasteboardType("com.compuserve.gif")
-        if let gifData = pasteboard.data(forType: gifType) {
+        if let gifData = systemPasteboard.data(forType: gifType) {
             saveImageItem(rawImageData: gifData, isAnimated: true)
             return
         }
@@ -441,46 +499,44 @@ final class ClipboardStore {
         // Check for static image data - get raw data only, defer compression
         let imageTypes: [NSPasteboard.PasteboardType] = [.tiff, .png]
         for type in imageTypes {
-            if let rawData = pasteboard.data(forType: type) {
+            if let rawData = systemPasteboard.data(forType: type) {
                 saveImageItem(rawImageData: rawData, isAnimated: false)
                 return
             }
         }
 
         // Otherwise check for text
-        guard let text = pasteboard.string(forType: .string), !text.isEmpty else { return }
+        guard let text = systemPasteboard.string(forType: .string), !text.isEmpty else { return }
 
         let sourceApp = NSWorkspace.shared.frontmostApplication?.localizedName
 
         // Move all DB operations to background
         guard let rustStore else { return }
-        Task.detached { [weak self] in
-            do {
+        Task {
+            let result = await runInBackground("saveText", on: rustStore) { store in
                 // Rust handles URL detection and metadata fetching automatically
-                let itemId = try rustStore.saveText(text: text, sourceApp: sourceApp, sourceAppBundleId: sourceAppBundleID)
+                try store.saveText(text: text, sourceApp: sourceApp, sourceAppBundleId: sourceAppBundleID)
+            }
 
-                // Reload on main actor if in browse mode
-                guard let self else { return }
-                await MainActor.run { [weak self] in
-                    if self?.hasResults == true {
-                        self?.refresh()
-                    }
+            switch result {
+            case .success(let itemId):
+                // Reload if in browse mode
+                if self.hasResults {
+                    self.refresh()
                 }
 
                 // If this is a new item (not duplicate) and looks like a URL, prefetch link metadata
                 // Only if link previews are enabled in privacy settings
                 if itemId > 0, URL(string: text) != nil, text.hasPrefix("http") {
-                    Task { @MainActor [weak self] in
-                        guard let self else { return }
-                        guard AppSettings.shared.generateLinkPreviews else { return }
-                        _ = await self.fetchLinkMetadata(url: text, itemId: itemId)
-                        if self.hasResults {
-                            self.refresh()
-                        }
+                    guard AppSettings.shared.generateLinkPreviews else { return }
+                    _ = await self.fetchLinkMetadata(url: text, itemId: itemId)
+                    if self.hasResults {
+                        self.refresh()
                     }
                 }
-            } catch {
-                logger.error("Failed to save text: \(error.localizedDescription)")
+
+            case .failure(let error):
+                ErrorReporter.report(error, showToast: false)
             }
         }
     }
@@ -492,18 +548,16 @@ final class ClipboardStore {
         guard !trimmed.isEmpty else { return }
 
         guard let rustStore else { return }
-        await Task.detached { [rustStore] in
-            do {
-                try rustStore.updateImageDescription(itemId: itemId, description: trimmed)
-            } catch {
-                logger.error("Failed to update image description: \(error.localizedDescription)")
-            }
-        }.value
+        let result = await runInBackground("updateImageDescription", on: rustStore) { store in
+            try store.updateImageDescription(itemId: itemId, description: trimmed)
+        }
 
-        await MainActor.run { [weak self] in
-            if self?.hasResults == true {
-                self?.refresh()
-            }
+        if case .failure(let error) = result {
+            ErrorReporter.report(error, showToast: false)
+        }
+
+        if self.hasResults {
+            self.refresh()
         }
     }
 
@@ -513,17 +567,21 @@ final class ClipboardStore {
     func saveEditedText(text: String) async -> Int64 {
         guard let rustStore else { return 0 }
 
-        return await Task.detached { [rustStore] in
-            do {
-                return try rustStore.saveText(
-                    text: text,
-                    sourceApp: "ClipKitty",
-                    sourceAppBundleId: Bundle.main.bundleIdentifier
-                )
-            } catch {
-                return 0
-            }
-        }.value
+        let result = await runInBackground("saveEditedText", on: rustStore) { store in
+            try store.saveText(
+                text: text,
+                sourceApp: "ClipKitty",
+                sourceAppBundleId: Bundle.main.bundleIdentifier
+            )
+        }
+
+        switch result {
+        case .success(let itemId):
+            return itemId
+        case .failure(let error):
+            ErrorReporter.report(error, showToast: false)
+            return 0
+        }
     }
 
     private func saveImageItem(rawImageData: Data, isAnimated: Bool) {
@@ -534,50 +592,67 @@ final class ClipboardStore {
 
         // Move compression and DB write to background
         guard let rustStore else { return }
-        Task.detached { [weak self] in
-            // Generate thumbnail from original image (before HEIC compression)
-            // HEIC is not supported by Rust's image crate, so we generate in Swift
-            let thumbnail = Self.generateThumbnail(rawImageData)
+        Task {
+            // Compress image on background thread
+            let compressionResult: (data: Data, isAnimated: Bool)? = await withCheckedContinuation { continuation in
+                Task.detached(priority: .userInitiated) {
+                    // Generate thumbnail from original image (before HEIC compression)
+                    // HEIC is not supported by Rust's image crate, so we generate in Swift
+                    let thumbnail = Self.generateThumbnail(rawImageData)
 
-            // Compress image - animated HEIC for GIFs, static HEIC otherwise
-            let compressedData: Data
-            let isActuallyAnimated: Bool
-
-            if isAnimated {
-                guard let (data, animated) = Self.compressToAnimatedHEIC(rawImageData, quality: quality, maxPixels: maxPixels) else {
-                    return
+                    // Compress image - animated HEIC for GIFs, static HEIC otherwise
+                    if isAnimated {
+                        guard let (data, animated) = Self.compressToAnimatedHEIC(rawImageData, quality: quality, maxPixels: maxPixels) else {
+                            continuation.resume(returning: nil)
+                            return
+                        }
+                        continuation.resume(returning: (data, animated))
+                    } else {
+                        guard let data = Self.compressToHEIC(rawImageData, quality: quality, maxPixels: maxPixels) else {
+                            continuation.resume(returning: nil)
+                            return
+                        }
+                        continuation.resume(returning: (data, false))
+                    }
                 }
-                compressedData = data
-                isActuallyAnimated = animated
-            } else {
-                guard let data = Self.compressToHEIC(rawImageData, quality: quality, maxPixels: maxPixels) else {
-                    return
-                }
-                compressedData = data
-                isActuallyAnimated = false
             }
 
-            do {
-                let itemId = try rustStore.saveImage(
+            guard let (compressedData, isActuallyAnimated) = compressionResult else {
+                ErrorReporter.report(ClipboardError.imageCompressionFailed, showToast: false)
+                return
+            }
+
+            // Generate thumbnail
+            let thumbnail = await withCheckedContinuation { continuation in
+                Task.detached(priority: .utility) {
+                    continuation.resume(returning: Self.generateThumbnail(rawImageData))
+                }
+            }
+
+            // Save to database
+            let result = await runInBackground("saveImage", on: rustStore) { store in
+                try store.saveImage(
                     imageData: compressedData,
                     thumbnail: thumbnail,
                     sourceApp: sourceApp,
                     sourceAppBundleId: sourceAppBundleID,
                     isAnimated: isActuallyAnimated
                 )
+            }
 
-                guard let self else { return }
-                await MainActor.run { [weak self] in
-                    if self?.hasResults == true {
-                        self?.refresh()
-                    }
+            switch result {
+            case .success(let itemId):
+                if self.hasResults {
+                    self.refresh()
                 }
 
-                Task.detached { [weak self] in
-                    await self?.generateAndUpdateImageDescription(itemId: itemId, imageData: compressedData)
+                // Generate image description in background
+                Task {
+                    await self.generateAndUpdateImageDescription(itemId: itemId, imageData: compressedData)
                 }
-            } catch {
-                logger.error("Failed to save image: \(error.localizedDescription)")
+
+            case .failure(let error):
+                ErrorReporter.report(error, showToast: false)
             }
         }
     }
@@ -761,7 +836,8 @@ final class ClipboardStore {
         let sourceAppBundleID = NSWorkspace.shared.frontmostApplication?.bundleIdentifier
 
         guard let rustStore else { return }
-        Task.detached { [weak self] in
+        Task {
+            // Collect file metadata (CPU-bound, safe to run on any thread)
             var paths: [String] = []
             var filenames: [String] = []
             var fileSizes: [UInt64] = []
@@ -792,8 +868,8 @@ final class ClipboardStore {
 
             guard !paths.isEmpty else { return }
 
-            do {
-                _ = try rustStore.saveFiles(
+            let result = await runInBackground("saveFiles", on: rustStore) { store in
+                try store.saveFiles(
                     paths: paths,
                     filenames: filenames,
                     fileSizes: fileSizes,
@@ -803,15 +879,15 @@ final class ClipboardStore {
                     sourceApp: sourceApp,
                     sourceAppBundleId: sourceAppBundleID
                 )
+            }
 
-                guard let self else { return }
-                await MainActor.run { [weak self] in
-                    if self?.hasResults == true {
-                        self?.refresh()
-                    }
+            switch result {
+            case .success:
+                if self.hasResults {
+                    self.refresh()
                 }
-            } catch {
-                logger.error("Failed to save files: \(error.localizedDescription)")
+            case .failure(let error):
+                ErrorReporter.report(error, showToast: false)
             }
         }
     }
@@ -830,7 +906,6 @@ final class ClipboardStore {
             return
         }
 
-        let pasteboard = NSPasteboard.general
         pasteboard.clearContents()
         pasteboard.setString(content.textContent, forType: .string)
         lastChangeCount = pasteboard.changeCount
@@ -843,49 +918,51 @@ final class ClipboardStore {
     private func pasteImage(data: Data, isAnimated: Bool, itemId: Int64?) {
         // Pre-increment to avoid race with checkForChanges polling
         // The pasteboard changeCount will increment when we set data
-        lastChangeCount = NSPasteboard.general.changeCount + 1
+        lastChangeCount = pasteboard.changeCount + 1
 
-        Task { [weak self] in
-            guard let self else { return }
-            let pasteboard = NSPasteboard.general
-
+        Task {
             if isAnimated {
-                // Convert animated HEIC to GIF for pasting
-                let gifData = await Task.detached {
-                    Self.convertAnimatedHEICToGIF(data)
-                }.value
+                // Convert animated HEIC to GIF for pasting (CPU-intensive, use background)
+                let gifData: Data? = await withCheckedContinuation { continuation in
+                    Task.detached(priority: .userInitiated) {
+                        continuation.resume(returning: Self.convertAnimatedHEICToGIF(data))
+                    }
+                }
 
                 guard let gifData else {
-                    self.lastChangeCount = NSPasteboard.general.changeCount
+                    self.lastChangeCount = self.pasteboard.changeCount
                     return
                 }
 
-                pasteboard.clearContents()
-                pasteboard.setData(gifData, forType: NSPasteboard.PasteboardType("com.compuserve.gif"))
+                self.pasteboard.clearContents()
+                self.pasteboard.setData(gifData, forType: NSPasteboard.PasteboardType("com.compuserve.gif"))
                 // Also provide TIFF fallback for apps that don't support GIF
                 if let image = NSImage(data: data), let tiff = image.tiffRepresentation {
-                    pasteboard.setData(tiff, forType: .tiff)
+                    self.pasteboard.setData(tiff, forType: .tiff)
                 }
             } else {
                 // Convert from stored format (HEIC) to TIFF off main thread
-                let tiffData = await Task.detached {
-                    guard let image = NSImage(data: data),
-                          let tiff = image.tiffRepresentation else {
-                        return nil as Data?
+                let tiffData: Data? = await withCheckedContinuation { continuation in
+                    Task.detached(priority: .userInitiated) {
+                        guard let image = NSImage(data: data),
+                              let tiff = image.tiffRepresentation else {
+                            continuation.resume(returning: nil)
+                            return
+                        }
+                        continuation.resume(returning: tiff)
                     }
-                    return tiff
-                }.value
+                }
 
                 guard let tiffData else {
-                    self.lastChangeCount = NSPasteboard.general.changeCount
+                    self.lastChangeCount = self.pasteboard.changeCount
                     return
                 }
 
-                pasteboard.clearContents()
-                pasteboard.setData(tiffData, forType: .tiff)
+                self.pasteboard.clearContents()
+                self.pasteboard.setData(tiffData, forType: .tiff)
             }
 
-            self.lastChangeCount = pasteboard.changeCount
+            self.lastChangeCount = self.pasteboard.changeCount
 
             if let itemId {
                 await self.updateItemTimestamp(id: itemId)
@@ -942,7 +1019,7 @@ final class ClipboardStore {
 
     private func pasteFiles(files: [FileEntry], itemId: Int64) {
         // Pre-increment to avoid race with checkForChanges polling
-        lastChangeCount = NSPasteboard.general.changeCount + 1
+        lastChangeCount = pasteboard.changeCount + 1
 
         // Resolve each file's bookmark to get current URL
         var resolvedURLs: [URL] = []
@@ -955,7 +1032,6 @@ final class ClipboardStore {
 
         // Write to pasteboard with both modern and legacy types for broad compatibility.
         // Finder requires NSFilenamesPboardType for file paste; other apps use public.file-url.
-        let pasteboard = NSPasteboard.general
         let filenameType = NSPasteboard.PasteboardType("NSFilenamesPboardType")
         let allPaths = resolvedURLs.map { $0.path }
         pasteboard.declareTypes([filenameType, .fileURL, .string], owner: nil)
@@ -972,13 +1048,14 @@ final class ClipboardStore {
     private func updateItemTimestamp(id: Int64) async {
         guard let rustStore else { return }
         // Defer database operations to avoid blocking clipboard availability
-        await Task.detached { [rustStore] in
-            do {
-                try rustStore.updateTimestamp(itemId: id)
-            } catch {
-                logger.error("Failed to update item timestamp: \(error.localizedDescription)")
-            }
-        }.value
+        let result = await runInBackground("updateTimestamp", on: rustStore) { store in
+            try store.updateTimestamp(itemId: id)
+        }
+
+        // Log any errors but don't show toast (timestamp update is non-critical)
+        if case .failure(let error) = result {
+            ErrorReporter.report(error, showToast: false)
+        }
 
         // Reload if in browse mode
         if hasResults {
@@ -1002,14 +1079,10 @@ final class ClipboardStore {
             break
         }
 
-        // Perform DB delete in background
+        // Perform DB delete in background with error reporting
         guard let rustStore else { return }
-        Task.detached { [rustStore] in
-            do {
-                try rustStore.deleteItem(itemId: itemId)
-            } catch {
-                logger.error("Failed to delete item: \(error.localizedDescription)")
-            }
+        runInBackgroundIgnoringResult("deleteItem", on: rustStore, showToast: true) { store in
+            try store.deleteItem(itemId: itemId)
         }
     }
 
@@ -1017,14 +1090,10 @@ final class ClipboardStore {
         // Update UI immediately
         state = .results(query: "", items: [], firstItem: nil)
 
-        // Perform expensive DB operations in background
+        // Perform expensive DB operations in background with error reporting
         guard let rustStore else { return }
-        Task.detached { [rustStore] in
-            do {
-                try rustStore.clear()
-            } catch {
-                logger.error("Failed to clear clipboard history: \(error.localizedDescription)")
-            }
+        runInBackgroundIgnoringResult("clear", on: rustStore, showToast: true) { store in
+            try store.clear()
         }
     }
 
@@ -1036,12 +1105,8 @@ final class ClipboardStore {
 
         let maxBytes = Int64(maxSizeGB * 1024 * 1024 * 1024)
 
-        Task.detached { [rustStore] in
-            do {
-                _ = try rustStore.pruneToSize(maxBytes: maxBytes, keepRatio: 0.8)
-            } catch {
-                logger.error("Failed to prune database: \(error.localizedDescription)")
-            }
+        runInBackgroundIgnoringResult("pruneToSize", on: rustStore) { store in
+            _ = try store.pruneToSize(maxBytes: maxBytes, keepRatio: 0.8)
         }
     }
 }
