@@ -16,6 +16,13 @@ use crate::interface::{
 use crate::models::StoredItem;
 use crate::search::{self, MIN_TRIGRAM_QUERY_LEN, MAX_RESULTS};
 
+/// Number of results to eagerly compute MatchData for (the rest are lazy)
+const EAGER_MATCH_DATA_COUNT: usize = 25;
+/// Content length threshold for "short" items that get eager highlights
+const SHORT_CONTENT_THRESHOLD: usize = 1024;
+/// Skip eager short-item highlights when results exceed this count
+const EAGER_SHORT_RESULT_LIMIT: usize = 200;
+
 use chrono::Utc;
 use once_cell::sync::Lazy;
 use std::path::PathBuf;
@@ -174,7 +181,7 @@ impl ClipboardStore {
                     let content = item.content.text_content();
                     ItemMatch {
                         item_metadata: item.to_metadata(),
-                        match_data: search::compute_prefix_match_data(content, query_char_len),
+                        match_data: Some(search::compute_prefix_match_data(content, query_char_len)),
                     }
                 })
             })
@@ -183,7 +190,7 @@ impl ClipboardStore {
         Ok(results)
     }
 
-    /// Trigram query search using Tantivy with phrase-boost scoring
+    /// Trigram query search using Tantivy with phrase-boost scoring (lazy highlights)
     fn search_trigram_query_sync(
         db: &Database,
         indexer: &Indexer,
@@ -221,11 +228,23 @@ impl ClipboardStore {
             })
             .collect();
 
-        // Create item matches with eager highlights
+        // Create item matches: eager for first N, lazy for the rest.
+        // Also eagerly highlight short items when result count is manageable.
+        let fuzzy_matches_len = fuzzy_matches.len();
+        let few_results = fuzzy_matches_len <= EAGER_SHORT_RESULT_LIMIT;
         let results: Vec<ItemMatch> = fuzzy_matches
             .into_iter()
-            .filter_map(|fm| {
-                item_map.get(&fm.id).map(|item| search::create_item_match(item, query))
+            .enumerate()
+            .filter_map(|(idx, fm)| {
+                item_map.get(&fm.id).map(|item| {
+                    let content = item.content.text_content();
+                    let is_short = content.len() <= SHORT_CONTENT_THRESHOLD;
+                    if idx < EAGER_MATCH_DATA_COUNT || (is_short && few_results) {
+                        search::create_item_match(item, query)
+                    } else {
+                        search::create_lazy_item_match(item)
+                    }
+                })
             })
             .collect();
 
@@ -304,7 +323,7 @@ impl ClipboardStore {
                 .into_iter()
                 .map(|metadata| ItemMatch {
                     item_metadata: metadata,
-                    match_data: MatchData::default(),
+                    match_data: None,
                 })
                 .collect();
 
@@ -446,7 +465,7 @@ impl ClipboardStoreApi for ClipboardStore {
                 .into_iter()
                 .map(|metadata| ItemMatch {
                     item_metadata: metadata,
-                    match_data: MatchData::default(),
+                    match_data: None,
                 })
                 .collect();
 
@@ -835,7 +854,11 @@ mod tests {
         assert_eq!(result.matches.len(), 1);
         assert!(result.matches[0].item_metadata.snippet.contains("Hello"));
         // Search returns eager match_data with highlights
-        assert!(!result.matches[0].match_data.highlights.is_empty());
+        let match_data = result.matches[0]
+            .match_data
+            .as_ref()
+            .expect("expected eager match_data for top trigram result");
+        assert!(!match_data.highlights.is_empty());
 
         // Verify compute_highlights also works for on-demand computation
         let item_id = result.matches[0].item_metadata.item_id;
@@ -1089,7 +1112,10 @@ mod tests {
 
         // All results should have eager match_data with prefix highlight
         for m in &result.matches {
-            let md = &m.match_data;
+            let md = m
+                .match_data
+                .as_ref()
+                .expect("expected eager match_data for short query");
             assert!(!md.highlights.is_empty(), "must have highlight");
             assert_eq!(md.highlights[0].start, 0, "highlight must start at 0");
             assert_eq!(md.highlights[0].end, 1, "single-char query highlights 1 char");

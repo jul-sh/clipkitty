@@ -336,7 +336,15 @@ pub(crate) fn create_item_match(item: &StoredItem, query: &str) -> ItemMatch {
     let content = item.content.text_content();
     ItemMatch {
         item_metadata: item.to_metadata(),
-        match_data: compute_item_highlights(&content, query),
+        match_data: Some(compute_item_highlights(&content, query)),
+    }
+}
+
+/// Create ItemMatch without match_data (lazy mode - computed on-demand via compute_highlights)
+pub(crate) fn create_lazy_item_match(item: &StoredItem) -> ItemMatch {
+    ItemMatch {
+        item_metadata: item.to_metadata(),
+        match_data: None,
     }
 }
 
