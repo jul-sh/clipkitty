@@ -6,7 +6,8 @@
 //! what's highlighted matches what's ranked (exact, prefix, fuzzy edit-distance).
 //! Short queries (< 3 chars) use a streaming fallback.
 
-use crate::indexer::{Indexer, IndexerResult};
+use crate::indexer::Indexer;
+use crate::interface::ClipKittyError;
 use crate::interface::{HighlightKind, HighlightRange, MatchData, ItemMatch};
 use crate::models::StoredItem;
 use crate::ranking::{does_word_match, does_word_match_fast, WordMatchKind, LARGE_DOC_THRESHOLD_BYTES};
@@ -31,7 +32,11 @@ pub(crate) struct FuzzyMatch {
 /// Search using Tantivy with bucket re-ranking for trigram queries (>= 3 chars).
 /// Phase 1 (trigram recall) and Phase 2 (bucket re-ranking) happen inside indexer.search().
 /// Returns lazy FuzzyMatch objects WITHOUT highlights - highlights are computed on-demand.
-pub(crate) fn search_trigram_lazy(indexer: &Indexer, query: &str, token: &CancellationToken) -> IndexerResult<Vec<FuzzyMatch>> {
+pub(crate) fn search_trigram_lazy(
+    indexer: &Indexer,
+    query: &str,
+    token: &CancellationToken,
+) -> Result<Vec<FuzzyMatch>, ClipKittyError> {
     if query.trim().is_empty() {
         return Ok(Vec::new());
     }
@@ -44,7 +49,7 @@ pub(crate) fn search_trigram_lazy(indexer: &Indexer, query: &str, token: &Cancel
     eprintln!("[perf] indexer_total={:.1}ms candidates={}", (std::time::Instant::now() - t0).as_secs_f64() * 1000.0, candidates.len());
 
     if token.is_cancelled() {
-        return Ok(Vec::new());
+        return Err(ClipKittyError::Cancelled);
     }
 
     // Convert to FuzzyMatch without computing highlights

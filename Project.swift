@@ -153,6 +153,7 @@ let project = Project(
                 .glob("Tests/**", excluding: ["Tests/UITests/**"]),
             ]),
             dependencies: [
+                .target(name: "ClipKitty"),
                 .target(name: "ClipKittyRust"),
             ],
             settings: .settings(
@@ -164,8 +165,9 @@ let project = Project(
         ),
 
         // MARK: ClipKittyUITests — UI tests
-        // Sign with Developer ID to preserve TCC permissions across builds.
-        // Run ./distribution/setup-dev-signing.sh first to import the certificate.
+        // Debug runs should sign locally so `make uitest` can execute without
+        // requiring a Developer ID identity. Non-debug builds can still opt into
+        // Developer ID signing for stable TCC behavior across rebuilds.
         .target(
             name: "ClipKittyUITests",
             destinations: .macOS,
@@ -173,15 +175,25 @@ let project = Project(
             bundleId: "com.clipkitty.UITests",
             deploymentTargets: .macOS("14.0"),
             sources: ["Tests/UITests/**"],
-            entitlements: .file(path: "Tests/UITests/ClipKittyUITests.entitlements"),
             dependencies: [
                 .target(name: "ClipKitty"),
             ],
             settings: .settings(
-                base: [
-                    "CODE_SIGN_STYLE": "Manual",
-                    "CODE_SIGN_IDENTITY": "Developer ID Application",
-                    "DEVELOPMENT_TEAM": "ANBBV7LQ2P",
+                configurations: [
+                    .debug(name: "Debug", settings: [
+                        "CODE_SIGN_STYLE": "Automatic",
+                        "CODE_SIGN_IDENTITY": "-",
+                    ]),
+                    .release(name: "Release", settings: [
+                        "CODE_SIGN_STYLE": "Manual",
+                        "CODE_SIGN_IDENTITY": "Developer ID Application",
+                        "DEVELOPMENT_TEAM": "ANBBV7LQ2P",
+                    ]),
+                    .release(name: .configuration("AppStore"), settings: [
+                        "CODE_SIGN_STYLE": "Manual",
+                        "CODE_SIGN_IDENTITY": "Developer ID Application",
+                        "DEVELOPMENT_TEAM": "ANBBV7LQ2P",
+                    ]),
                 ]
             ),
             environmentVariables: [
@@ -225,7 +237,6 @@ let project = Project(
             testAction: .targets(
                 [
                     .testableTarget(target: .target("ClipKittyTests")),
-                    .testableTarget(target: .target("ClipKittyUITests")),
                 ],
                 configuration: "Debug"
             ),

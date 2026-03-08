@@ -88,8 +88,7 @@ struct ImageDescriptionGenerator {
             return formatOutput(labels: labels, text: recognizedText, config: config)
         case .cancelled:
             return nil
-        case .failed(let error):
-            // Optionally log: print("Vision processing failed: \(error)")
+        case .failed:
             return nil
         }
     }

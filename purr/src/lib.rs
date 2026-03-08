@@ -13,6 +13,8 @@ pub mod interface;
 pub mod models;
 pub mod ranking;
 pub mod search;
+mod search_service;
+mod save_service;
 mod store;
 
 pub use interface::*;
