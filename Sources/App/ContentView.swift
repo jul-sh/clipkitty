@@ -57,6 +57,7 @@ struct ContentView: View {
     @State private var selectedItemLoadGeneration = 0
     @State private var searchSpinner: SpinnerState = .idle
     @State private var previewSpinner: SpinnerState = .idle
+    @State private var lastPreviewSelection: PreviewSelection?
     @State private var prefetchCache: [Int64: ClipboardItem] = [:]  // Cache for prefetched adjacent items
     @State private var hasUserNavigated = false
     @State private var filterPopover: FilterPopoverState = .hidden
@@ -109,6 +110,13 @@ struct ContentView: View {
         let matchData: MatchData?
     }
 
+    private enum PreviewPaneState {
+        case emptyResults
+        case noSelection
+        case loading(stale: PreviewSelection?)
+        case loaded(PreviewSelection)
+    }
+
     /// Get match data for a specific item from the current result set.
     private func matchDataForItem(_ itemId: Int64) -> MatchData? {
         switch store.state {
@@ -122,7 +130,31 @@ struct ContentView: View {
     /// Coherent preview state: text content and highlights always come from the same item ID.
     private var previewSelection: PreviewSelection? {
         guard let item = selectedItem else { return nil }
-        return PreviewSelection(
+        return makePreviewSelection(for: item)
+    }
+
+    private var previewPaneState: PreviewPaneState {
+        if let previewSelection {
+            return .loaded(previewSelection)
+        }
+        if itemIds.isEmpty {
+            return .emptyResults
+        }
+        if selectedItemId != nil {
+            return .loading(stale: lastPreviewSelection)
+        }
+        return .noSelection
+    }
+
+    private var isPreviewSpinnerVisible: Bool {
+        if case .visible = previewSpinner {
+            return true
+        }
+        return false
+    }
+
+    private func makePreviewSelection(for item: ClipboardItem) -> PreviewSelection {
+        PreviewSelection(
             item: item,
             matchData: matchDataForItem(item.itemMetadata.itemId)
         )
@@ -213,6 +245,7 @@ struct ContentView: View {
             } else {
                 selectedItemId = nil
                 selectedItem = nil
+                lastPreviewSelection = nil
             }
             focusSearchField()
         }
@@ -222,6 +255,7 @@ struct ContentView: View {
             if let selectedItemId, !itemIds.contains(selectedItemId) {
                 self.selectedItemId = firstItemId
                 self.selectedItem = nil
+                self.lastPreviewSelection = nil
             }
 
             // If first item is available from state and matches selection, use it
@@ -256,6 +290,7 @@ struct ContentView: View {
             prefetchCache.removeAll()
             selectedItemId = firstItemId
             selectedItem = nil
+            lastPreviewSelection = nil
         }
         // 5. Item list changes (validates selection position)
         .onChange(of: itemIds) { oldOrder, newOrder in
@@ -269,6 +304,7 @@ struct ContentView: View {
             if !newOrder.contains(selectedItemId) {
                 self.selectedItemId = firstItemId
                 self.selectedItem = nil
+                self.lastPreviewSelection = nil
                 hasUserNavigated = false
                 return
             }
@@ -279,6 +315,7 @@ struct ContentView: View {
             if oldIndex != newIndex {
                 self.selectedItemId = firstItemId
                 self.selectedItem = nil
+                self.lastPreviewSelection = nil
                 hasUserNavigated = false
             }
         }
@@ -288,12 +325,16 @@ struct ContentView: View {
             guard let newId else {
                 selectedItemLoadGeneration += 1
                 selectedItem = nil
+                lastPreviewSelection = nil
                 return
             }
             refreshSelectedItem(for: newId)
         }
         // 7. Selected item changes (updates preview spinner)
         .onChange(of: selectedItem) { _, newItem in
+            if let newItem {
+                lastPreviewSelection = makePreviewSelection(for: newItem)
+            }
             previewSpinner.cancel()
             if newItem == nil && selectedItemId != nil {
                 let task = debouncedSpinnerTask {
@@ -463,6 +504,7 @@ struct ContentView: View {
         store.delete(itemId: id)
         selectedItemId = nextId
         selectedItem = nil
+        lastPreviewSelection = nil
     }
 
     // MARK: - Search Bar
@@ -852,20 +894,31 @@ struct ContentView: View {
     // MARK: - Preview Pane
 
     private var previewPane: some View {
-        VStack(spacing: 0) {
-            if let previewSelection {
-                previewContent(for: previewSelection.item, matchData: previewSelection.matchData)
-                Divider()
-                metadataFooter(for: previewSelection.item)
-            } else if itemIds.isEmpty {
+        Group {
+            switch previewPaneState {
+            case .loaded(let selection):
+                VStack(spacing: 0) {
+                    previewContent(for: selection.item, matchData: selection.matchData)
+                    Divider()
+                    metadataFooter(for: selection.item)
+                }
+            case .loading(let stale):
+                ZStack {
+                    if let stale {
+                        previewContent(for: stale.item, matchData: stale.matchData)
+                            .allowsHitTesting(false)
+                    } else {
+                        Color.clear
+                            .frame(maxWidth: .infinity, maxHeight: .infinity)
+                    }
+
+                    if isPreviewSpinnerVisible {
+                        ProgressView()
+                    }
+                }
+            case .emptyResults:
                 emptyStateView
-            } else if case .visible = previewSpinner {
-                ProgressView()
-                    .frame(maxWidth: .infinity, maxHeight: .infinity)
-            } else if selectedItemId != nil {
-                Color.clear
-                    .frame(maxWidth: .infinity, maxHeight: .infinity)
-            } else {
+            case .noSelection:
                 Text("No item selected")
                     .font(.custom(FontManager.sansSerif, size: 16))
                     .foregroundStyle(.secondary)
@@ -1304,6 +1357,11 @@ struct TextPreviewView: NSViewRepresentable {
     var highlights: [HighlightRange] = []
     var densestHighlightStart: UInt64 = 0
 
+    private enum ScrollTarget {
+        case top
+        case highlight(NSRange)
+    }
+
     func makeNSView(context: Context) -> NSScrollView {
         let scrollView = NSScrollView()
         scrollView.hasVerticalScroller = true
@@ -1388,6 +1446,9 @@ struct TextPreviewView: NSViewRepresentable {
         coordinator.lastContentWidth = containerWidth
 
         guard textChanged || highlightsChanged || contentWidthChanged else { return }
+        if textChanged || contentWidthChanged {
+            coordinator.needsGeometrySync = true
+        }
 
         if textChanged {
             // Text content changed — replace storage attributes (font, color, paragraph style only).
@@ -1447,14 +1508,19 @@ struct TextPreviewView: NSViewRepresentable {
             }
         }
 
+        let scrollTarget: ScrollTarget
         if highlights.isEmpty {
-            textView.scrollToBeginningOfDocument(nil)
+            scrollTarget = .top
         } else {
-            scrollToHighlight(
-                textView: textView,
-                coordinator: coordinator
-            )
+            let targetHighlight = highlights.first { $0.start == densestHighlightStart } ?? highlights[0]
+            scrollTarget = .highlight(targetHighlight.nsRange(in: text))
         }
+
+        scroll(
+            textView: textView,
+            target: scrollTarget,
+            coordinator: coordinator
+        )
     }
 
     // MARK: - Highlight Resolution
@@ -1481,32 +1547,31 @@ struct TextPreviewView: NSViewRepresentable {
         }
     }
 
-    // MARK: - Scroll to Match
+    // MARK: - Scroll
 
-    private func scrollToHighlight(
+    private func scroll(
         textView: NSTextView,
+        target: ScrollTarget,
         coordinator: Coordinator
     ) {
         coordinator.scrollGeneration += 1
         let generation = coordinator.scrollGeneration
-        let targetHighlight = highlights.first { $0.start == densestHighlightStart } ?? highlights[0]
-        let targetNSRange = targetHighlight.nsRange(in: text)
 
         performScrollAttempt(
             textView: textView,
-            targetNSRange: targetNSRange,
+            target: target,
             generation: generation,
             coordinator: coordinator,
             attempt: 0
         )
     }
 
-    /// Attempt to scroll to the target range, retrying if layout is not ready.
+    /// Attempt to scroll to the target position, retrying if layout is not ready.
     /// TextKit 2's lazy layout may not have computed text segment frames immediately,
     /// so we retry with increasing delays up to a maximum number of attempts.
     private func performScrollAttempt(
         textView: NSTextView,
-        targetNSRange: NSRange,
+        target: ScrollTarget,
         generation: Int,
         coordinator: Coordinator,
         attempt: Int
@@ -1523,7 +1588,7 @@ struct TextPreviewView: NSViewRepresentable {
                 if attempt < maxAttempts - 1 {
                     self.performScrollAttempt(
                         textView: textView,
-                        targetNSRange: targetNSRange,
+                        target: target,
                         generation: generation,
                         coordinator: coordinator,
                         attempt: attempt + 1
@@ -1531,8 +1596,43 @@ struct TextPreviewView: NSViewRepresentable {
                 }
                 return
             }
+            guard scrollView.contentSize.width > 0 else {
+                if attempt < maxAttempts - 1 {
+                    self.performScrollAttempt(
+                        textView: textView,
+                        target: target,
+                        generation: generation,
+                        coordinator: coordinator,
+                        attempt: attempt + 1
+                    )
+                }
+                return
+            }
+
+            if coordinator.needsGeometrySync {
+                self.syncTextViewGeometry(textView: textView, containerWidth: scrollView.contentSize.width)
+                coordinator.needsGeometrySync = false
+            }
+
+            switch target {
+            case .top:
+                let currentOrigin = scrollView.contentView.bounds.origin
+                let newOrigin = NSPoint(x: currentOrigin.x, y: 0)
+                guard abs(currentOrigin.y - newOrigin.y) >= 1 else { return }
+
+                CATransaction.begin()
+                CATransaction.setDisableActions(true)
+                scrollView.contentView.scroll(to: newOrigin)
+                scrollView.reflectScrolledClipView(scrollView.contentView)
+                CATransaction.commit()
+                return
+            case .highlight:
+                break
+            }
+
             guard let tlm = textView.textLayoutManager,
                   let tcm = tlm.textContentManager else { return }
+            guard case .highlight(let targetNSRange) = target else { return }
 
             // Convert NSRange to NSTextRange
             guard let start = tcm.location(tcm.documentRange.location, offsetBy: targetNSRange.location),
@@ -1549,7 +1649,7 @@ struct TextPreviewView: NSViewRepresentable {
                 if attempt < maxAttempts - 1 {
                     self.performScrollAttempt(
                         textView: textView,
-                        targetNSRange: targetNSRange,
+                        target: target,
                         generation: generation,
                         coordinator: coordinator,
                         attempt: attempt + 1
@@ -1595,6 +1695,38 @@ struct TextPreviewView: NSViewRepresentable {
         }
     }
 
+    private func syncTextViewGeometry(textView: NSTextView, containerWidth: CGFloat) {
+        textView.textContainer?.containerSize = NSSize(
+            width: containerWidth,
+            height: .greatestFiniteMagnitude
+        )
+        textView.frame = NSRect(x: 0, y: 0, width: containerWidth, height: textView.frame.height)
+
+        guard let scrollView = textView.enclosingScrollView else {
+            return
+        }
+
+        let targetHeight = max(
+            scrollView.contentSize.height,
+            documentHeight(for: textView) + textView.textContainerInset.height * 2
+        )
+        textView.frame = NSRect(x: 0, y: 0, width: containerWidth, height: targetHeight)
+    }
+
+    private func documentHeight(for textView: NSTextView) -> CGFloat {
+        guard let tlm = textView.textLayoutManager else { return 0 }
+
+        var documentHeight: CGFloat = 0
+        tlm.enumerateTextLayoutFragments(
+            from: tlm.documentRange.endLocation,
+            options: [.reverse, .ensuresLayout]
+        ) { fragment in
+            documentHeight = fragment.layoutFragmentFrame.maxY
+            return false
+        }
+        return documentHeight
+    }
+
     func makeCoordinator() -> Coordinator {
         Coordinator()
     }
@@ -1628,6 +1760,7 @@ struct TextPreviewView: NSViewRepresentable {
         var currentMatchRanges: [MatchRange] = []
         var scrollGeneration: Int = 0
         var lastContentWidth: CGFloat = 0
+        var needsGeometrySync: Bool = false
     }
 }
 
