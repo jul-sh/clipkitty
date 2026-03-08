@@ -1,3 +1,23 @@
+# UI Test Database Seeding Fix
+
+## Root Cause
+
+UI tests reported 0 items (`testDatabaseNotEmpty` failed) because `distribution/SyntheticData.sqlite` was a **Git LFS pointer** (132-byte ASCII text) instead of the actual 3.7MB SQLite database. `git lfs pull` had not been run on this checkout.
+
+The test copied this pointer file as the database. Rust's SQLite opened it as a corrupt/empty database — 0 items. No error was surfaced because the test had no validation of the source file.
+
+## Fixes Applied
+
+1. **LFS validation in `setupTestDatabase`**: Checks file size and content to detect LFS pointers. Fails with descriptive message: "Run `git lfs pull` first."
+2. **Post-copy size validation**: Asserts the copied database exceeds 1KB.
+3. **Makefile `uitest` target**: Runs `git lfs pull` before launching tests.
+
+## Files Changed
+- `Tests/UITests/ClipKittyUITests.swift` — LFS guard, post-copy size assertion
+- `Makefile` — `git lfs pull` in `uitest` target
+
+---
+
 # TextPreviewView: Migrate to TextKit 2 + STTextKitPlus
 
 ## Summary
