@@ -110,6 +110,8 @@ clean:
 # Usage: make uitest [TEST=testName]
 # Example: make uitest TEST=testToastAppearsOnCopy
 uitest: all
+	@echo "Ensuring Git LFS files are pulled..."
+	@git lfs pull 2>/dev/null || echo "Warning: git lfs pull failed (LFS not installed?)"
 	@echo "Setting up signing keychain..."
 	@./distribution/setup-dev-signing.sh
 	@echo "Running UI tests..."
