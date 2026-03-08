@@ -150,7 +150,6 @@ impl ClipboardStore {
         db: &Database,
         query: &str,
         token: &CancellationToken,
-        _runtime: &tokio::runtime::Handle,
         filter: Option<&ContentTypeFilter>,
     ) -> Result<Vec<ItemMatch>, ClipKittyError> {
         if token.is_cancelled() {
@@ -196,7 +195,6 @@ impl ClipboardStore {
         indexer: &Indexer,
         query: &str,
         token: &CancellationToken,
-        _runtime: &tokio::runtime::Handle,
         filter: Option<&ContentTypeFilter>,
     ) -> Result<Vec<ItemMatch>, ClipKittyError> {
         if token.is_cancelled() {
@@ -349,11 +347,11 @@ impl ClipboardStore {
 
         let handle = runtime.spawn_blocking(move || {
             if trimmed_owned.len() < MIN_TRIGRAM_QUERY_LEN {
-                let matches = Self::search_short_query_sync(&db, &trimmed_owned, &token_clone, &runtime_for_closure, Some(&filter))?;
+                let matches = Self::search_short_query_sync(&db, &trimmed_owned, &token_clone, Some(&filter))?;
                 let total_count = matches.len() as u64;
                 Ok((matches, total_count))
             } else {
-                let matches = Self::search_trigram_query_sync(&db, &indexer, &query_owned, &token_clone, &runtime_for_closure, Some(&filter))?;
+                let matches = Self::search_trigram_query_sync(&db, &indexer, &query_owned, &token_clone, Some(&filter))?;
                 let total_count = matches.len() as u64;
                 Ok((matches, total_count))
             }
@@ -497,11 +495,11 @@ impl ClipboardStoreApi for ClipboardStore {
         // because UniFFI doesn't provide a tokio runtime context
         let handle = runtime.spawn_blocking(move || {
             if trimmed_owned.len() < MIN_TRIGRAM_QUERY_LEN {
-                let matches = Self::search_short_query_sync(&db, &trimmed_owned, &token_clone, &runtime_for_closure, None)?;
+                let matches = Self::search_short_query_sync(&db, &trimmed_owned, &token_clone, None)?;
                 let total_count = matches.len() as u64;
                 Ok((matches, total_count))
             } else {
-                let matches = Self::search_trigram_query_sync(&db, &indexer, &query_owned, &token_clone, &runtime_for_closure, None)?;
+                let matches = Self::search_trigram_query_sync(&db, &indexer, &query_owned, &token_clone, None)?;
                 let total_count = matches.len() as u64;
                 Ok((matches, total_count))
             }
@@ -976,14 +974,11 @@ mod tests {
         let token = CancellationToken::new();
         token.cancel();
 
-        let runtime_handle = rt.handle().clone();
-
         // Test short query sync with pre-cancelled token
         let result = ClipboardStore::search_short_query_sync(
             &store.db,
             "He",
             &token,
-            &runtime_handle,
             None,
         );
         assert!(matches!(result, Err(crate::interface::ClipKittyError::Cancelled)));
@@ -994,7 +989,6 @@ mod tests {
             &store.indexer,
             "Hello",
             &token,
-            &runtime_handle,
             None,
         );
         assert!(matches!(result, Err(crate::interface::ClipKittyError::Cancelled)));

@@ -108,9 +108,9 @@ final class LaunchAtLogin: ObservableObject {
     @discardableResult
     func enable() -> Bool {
         switch state {
-        case .enabled, .disabled:
+        case .enabled, .disabled, .error:
             break
-        case .unavailable, .error:
+        case .unavailable:
             return false
         }
 
@@ -131,9 +131,9 @@ final class LaunchAtLogin: ObservableObject {
     @discardableResult
     func disable() -> Bool {
         switch state {
-        case .enabled, .disabled:
+        case .enabled, .disabled, .error:
             break
-        case .unavailable, .error:
+        case .unavailable:
             return false
         }
 

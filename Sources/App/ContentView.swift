@@ -55,6 +55,7 @@ struct ContentView: View {
     @State private var didApplyInitialSearch = false
     @State private var lastItemsSignature: [Int64] = []  // Track when items change to suppress animation
     @State private var selectedItemLoadGeneration = 0
+    @State private var linkMetadataGeneration = 0
     @State private var searchSpinner: SpinnerState = .idle
     @State private var previewSpinner: SpinnerState = .idle
     @State private var lastPreviewSelection: PreviewSelection?
@@ -1283,7 +1284,14 @@ struct ContentView: View {
         .task(id: itemId) {
             // Fetch metadata on-demand if pending
             guard case .pending = metadataState else { return }
+
+            // Track generation to discard stale completions
+            linkMetadataGeneration += 1
+            let generation = linkMetadataGeneration
+
             if let updatedItem = await store.fetchLinkMetadata(url: url, itemId: itemId) {
+                // Only update if this is still the current request and item is still selected
+                guard linkMetadataGeneration == generation, selectedItemId == itemId else { return }
                 selectedItem = updatedItem
             }
         }

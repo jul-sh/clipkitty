@@ -669,54 +669,36 @@ final class ClipboardStore {
         // Move compression and DB write to background
         guard let rustStore else { return }
         Task {
-            // Compress image on background thread
-            let compressionResult: (data: Data, isAnimated: Bool)? = await withCheckedContinuation { continuation in
+            // Process image on background thread using ImageIngestService
+            let ingestResult: ImageIngestResult? = await withCheckedContinuation { continuation in
                 Task.detached(priority: .userInitiated) {
-                    // Generate thumbnail from original image (before HEIC compression)
-                    // HEIC is not supported by Rust's image crate, so we generate in Swift
-                    let thumbnail = Self.generateThumbnail(rawImageData)
-
-                    // Compress image - animated HEIC for GIFs, static HEIC otherwise
-                    if isAnimated {
-                        guard let (data, animated) = Self.compressToAnimatedHEIC(rawImageData, quality: quality, maxPixels: maxPixels) else {
-                            continuation.resume(returning: nil)
-                            return
-                        }
-                        continuation.resume(returning: (data, animated))
-                    } else {
-                        guard let data = Self.compressToHEIC(rawImageData, quality: quality, maxPixels: maxPixels) else {
-                            continuation.resume(returning: nil)
-                            return
-                        }
-                        continuation.resume(returning: (data, false))
-                    }
+                    let result = ImageIngestService.processImage(
+                        rawData: rawImageData,
+                        isAnimated: isAnimated,
+                        quality: quality,
+                        maxPixels: maxPixels
+                    )
+                    continuation.resume(returning: result)
                 }
             }
 
-            guard let (compressedData, isActuallyAnimated) = compressionResult else {
+            guard let result = ingestResult else {
                 ErrorReporter.report(ClipboardError.imageCompressionFailed, showToast: false)
                 return
             }
 
-            // Generate thumbnail
-            let thumbnail = await withCheckedContinuation { continuation in
-                Task.detached(priority: .utility) {
-                    continuation.resume(returning: Self.generateThumbnail(rawImageData))
-                }
-            }
-
             // Save to database
-            let result = await runInBackground("saveImage", on: rustStore) { store in
+            let saveResult = await runInBackground("saveImage", on: rustStore) { store in
                 try store.saveImage(
-                    imageData: compressedData,
-                    thumbnail: thumbnail,
+                    imageData: result.compressedData,
+                    thumbnail: result.thumbnail,
                     sourceApp: sourceApp,
                     sourceAppBundleId: sourceAppBundleID,
-                    isAnimated: isActuallyAnimated
+                    isAnimated: result.isAnimated
                 )
             }
 
-            switch result {
+            switch saveResult {
             case .success(let itemId):
                 if self.hasResults {
                     self.refresh()
@@ -724,185 +706,13 @@ final class ClipboardStore {
 
                 // Generate image description in background
                 Task {
-                    await self.generateAndUpdateImageDescription(itemId: itemId, imageData: compressedData)
+                    await self.generateAndUpdateImageDescription(itemId: itemId, imageData: result.compressedData)
                 }
 
             case .failure(let error):
                 ErrorReporter.report(error, showToast: false)
             }
         }
-    }
-
-    /// Resize a CGImage to fit within maxWidth x maxHeight, preserving aspect ratio.
-    private nonisolated static func resizeCGImage(_ cgImage: CGImage, maxWidth: Int, maxHeight: Int, quality: CGInterpolationQuality = .high) -> CGImage? {
-        let width = cgImage.width
-        let height = cgImage.height
-        guard width > maxWidth || height > maxHeight else { return cgImage }
-
-        let scale = min(Double(maxWidth) / Double(width), Double(maxHeight) / Double(height))
-        let newWidth = max(1, Int(Double(width) * scale))
-        let newHeight = max(1, Int(Double(height) * scale))
-
-        guard let context = CGContext(
-            data: nil, width: newWidth, height: newHeight,
-            bitsPerComponent: 8, bytesPerRow: 0,
-            space: CGColorSpaceCreateDeviceRGB(),
-            bitmapInfo: CGImageAlphaInfo.premultipliedLast.rawValue
-        ) else { return nil }
-
-        context.interpolationQuality = quality
-        context.draw(cgImage, in: CGRect(x: 0, y: 0, width: newWidth, height: newHeight))
-        return context.makeImage()
-    }
-
-    /// Encode a CGImage to a specific format with the given quality.
-    private nonisolated static func encodeCGImage(_ cgImage: CGImage, type: CFString, quality: CGFloat) -> Data? {
-        let data = NSMutableData()
-        guard let destination = CGImageDestinationCreateWithData(data as CFMutableData, type, 1, nil) else { return nil }
-        CGImageDestinationAddImage(destination, cgImage, [kCGImageDestinationLossyCompressionQuality: quality] as CFDictionary)
-        guard CGImageDestinationFinalize(destination) else { return nil }
-        return data as Data
-    }
-
-    /// Compress image data to HEIC format, resizing to maxPixels if larger
-    private nonisolated static func compressToHEIC(_ imageData: Data, quality: CGFloat, maxPixels: Int) -> Data? {
-        guard let imageSource = CGImageSourceCreateWithData(imageData as CFData, nil),
-              let cgImage = CGImageSourceCreateImageAtIndex(imageSource, 0, nil) else { return nil }
-
-        let pixels = cgImage.width * cgImage.height
-        let image: CGImage
-        if pixels > maxPixels {
-            let scale = sqrt(Double(maxPixels) / Double(pixels))
-            let targetW = max(1, Int(Double(cgImage.width) * scale))
-            let targetH = max(1, Int(Double(cgImage.height) * scale))
-            guard let resized = resizeCGImage(cgImage, maxWidth: targetW, maxHeight: targetH) else { return nil }
-            image = resized
-        } else {
-            image = cgImage
-        }
-        return encodeCGImage(image, type: "public.heic" as CFString, quality: quality)
-    }
-
-    /// Maximum frames to preserve in animated HEIC (caps size)
-    private static let maxAnimatedFrames = 50
-    /// Maximum duration in seconds for animated content
-    private static let maxAnimatedDuration: Double = 3.0
-
-    /// Compress animated GIF to animated HEIC with frame reduction and duration cap
-    /// Returns (heicData, isAnimated) - isAnimated is false if GIF had only 1 frame
-    private nonisolated static func compressToAnimatedHEIC(_ gifData: Data, quality: CGFloat, maxPixels: Int) -> (Data, Bool)? {
-        guard let imageSource = CGImageSourceCreateWithData(gifData as CFData, nil) else { return nil }
-
-        let frameCount = CGImageSourceGetCount(imageSource)
-
-        // Single frame - just compress as static HEIC
-        if frameCount <= 1 {
-            guard let staticData = compressToHEIC(gifData, quality: quality, maxPixels: maxPixels) else { return nil }
-            return (staticData, false)
-        }
-
-        // Calculate total duration and frame delays
-        var frameDelays: [Double] = []
-        for i in 0..<frameCount {
-            let delay = gifFrameDelay(source: imageSource, index: i)
-            frameDelays.append(delay)
-        }
-        let totalDuration = frameDelays.reduce(0, +)
-
-        // Determine which frames to keep based on caps
-        let framesToKeep: [Int]
-        let adjustedDelays: [Double]
-
-        if totalDuration > maxAnimatedDuration || frameCount > maxAnimatedFrames {
-            // Need to reduce frames - sample evenly
-            let targetFrameCount = min(maxAnimatedFrames, Int(Double(frameCount) * (maxAnimatedDuration / totalDuration)))
-            let actualTargetCount = max(2, targetFrameCount) // Keep at least 2 frames for animation
-
-            var indices: [Int] = []
-            let step = Double(frameCount - 1) / Double(actualTargetCount - 1)
-            for i in 0..<actualTargetCount {
-                indices.append(min(Int(Double(i) * step), frameCount - 1))
-            }
-            framesToKeep = indices
-
-            // Adjust delays proportionally to maintain visual timing
-            let durationScale = min(1.0, maxAnimatedDuration / totalDuration)
-            adjustedDelays = framesToKeep.map { frameDelays[$0] * durationScale }
-        } else {
-            framesToKeep = Array(0..<frameCount)
-            adjustedDelays = frameDelays
-        }
-
-        // Create animated HEIC
-        let data = NSMutableData()
-        guard let destination = CGImageDestinationCreateWithData(
-            data as CFMutableData,
-            "public.heics" as CFString, // HEIC sequence format
-            framesToKeep.count,
-            nil
-        ) else { return nil }
-
-        // Get first frame to determine scaling
-        guard let firstCGImage = CGImageSourceCreateImageAtIndex(imageSource, 0, nil) else { return nil }
-        let pixels = firstCGImage.width * firstCGImage.height
-        let needsResize = pixels > maxPixels
-        let scale = needsResize ? sqrt(Double(maxPixels) / Double(pixels)) : 1.0
-        let targetW = needsResize ? max(1, Int(Double(firstCGImage.width) * scale)) : firstCGImage.width
-        let targetH = needsResize ? max(1, Int(Double(firstCGImage.height) * scale)) : firstCGImage.height
-
-        for (idx, frameIndex) in framesToKeep.enumerated() {
-            // Check for task cancellation to allow early termination of expensive frame processing
-            guard !Task.isCancelled else { return nil }
-
-            guard let cgImage = CGImageSourceCreateImageAtIndex(imageSource, frameIndex, nil) else { continue }
-
-            let finalImage: CGImage
-            if needsResize {
-                guard let resized = resizeCGImage(cgImage, maxWidth: targetW, maxHeight: targetH) else { continue }
-                finalImage = resized
-            } else {
-                finalImage = cgImage
-            }
-
-            let frameProperties: [CFString: Any] = [
-                kCGImagePropertyHEICSLoopCount: 0, // Loop forever
-                kCGImagePropertyHEICSDelayTime: adjustedDelays[idx]
-            ]
-
-            CGImageDestinationAddImage(destination, finalImage, [
-                kCGImageDestinationLossyCompressionQuality: quality,
-                kCGImagePropertyHEICSDictionary: frameProperties
-            ] as CFDictionary)
-        }
-
-        guard CGImageDestinationFinalize(destination) else { return nil }
-        return (data as Data, true)
-    }
-
-    /// Extract frame delay from GIF properties (default 0.1s if not specified)
-    private nonisolated static func gifFrameDelay(source: CGImageSource, index: Int) -> Double {
-        guard let properties = CGImageSourceCopyPropertiesAtIndex(source, index, nil) as? [CFString: Any],
-              let gifProps = properties[kCGImagePropertyGIFDictionary] as? [CFString: Any] else {
-            return 0.1
-        }
-
-        // Try unclamped delay first, then clamped
-        if let delay = gifProps[kCGImagePropertyGIFUnclampedDelayTime] as? Double, delay > 0 {
-            return delay
-        }
-        if let delay = gifProps[kCGImagePropertyGIFDelayTime] as? Double, delay > 0 {
-            return delay
-        }
-        return 0.1
-    }
-
-    /// Generate a small JPEG thumbnail (max 64x64) for list display
-    private nonisolated static func generateThumbnail(_ imageData: Data, maxSize: Int = 64) -> Data? {
-        guard let imageSource = CGImageSourceCreateWithData(imageData as CFData, nil),
-              let cgImage = CGImageSourceCreateImageAtIndex(imageSource, 0, nil) else { return nil }
-
-        guard let resized = resizeCGImage(cgImage, maxWidth: maxSize, maxHeight: maxSize, quality: .medium) else { return nil }
-        return encodeCGImage(resized, type: "public.jpeg" as CFString, quality: 0.6)
     }
 
     // MARK: - File Items
@@ -1001,7 +811,7 @@ final class ClipboardStore {
                 // Convert animated HEIC to GIF for pasting (CPU-intensive, use background)
                 let gifData: Data? = await withCheckedContinuation { continuation in
                     Task.detached(priority: .userInitiated) {
-                        continuation.resume(returning: Self.convertAnimatedHEICToGIF(data))
+                        continuation.resume(returning: ImageIngestService.convertAnimatedHEICToGIF(data))
                     }
                 }
 
@@ -1044,53 +854,6 @@ final class ClipboardStore {
                 await self.updateItemTimestamp(id: itemId)
             }
         }
-    }
-
-    /// Convert animated HEIC (HEICS) to GIF format
-    private nonisolated static func convertAnimatedHEICToGIF(_ heicData: Data) -> Data? {
-        guard let imageSource = CGImageSourceCreateWithData(heicData as CFData, nil) else { return nil }
-
-        let frameCount = CGImageSourceGetCount(imageSource)
-        guard frameCount > 1 else { return nil }
-
-        let gifData = NSMutableData()
-        guard let destination = CGImageDestinationCreateWithData(
-            gifData as CFMutableData,
-            UTType.gif.identifier as CFString,
-            frameCount,
-            nil
-        ) else { return nil }
-
-        // Set GIF properties for looping
-        let gifProperties: [CFString: Any] = [
-            kCGImagePropertyGIFDictionary: [
-                kCGImagePropertyGIFLoopCount: 0 // Loop forever
-            ]
-        ]
-        CGImageDestinationSetProperties(destination, gifProperties as CFDictionary)
-
-        // Copy each frame with its delay
-        for i in 0..<frameCount {
-            guard let cgImage = CGImageSourceCreateImageAtIndex(imageSource, i, nil) else { continue }
-
-            // Get frame delay from HEICS properties
-            var delay: Double = 0.1
-            if let properties = CGImageSourceCopyPropertiesAtIndex(imageSource, i, nil) as? [CFString: Any],
-               let heicsProps = properties[kCGImagePropertyHEICSDictionary] as? [CFString: Any],
-               let frameDelay = heicsProps[kCGImagePropertyHEICSDelayTime] as? Double {
-                delay = frameDelay
-            }
-
-            let frameProperties: [CFString: Any] = [
-                kCGImagePropertyGIFDictionary: [
-                    kCGImagePropertyGIFDelayTime: delay
-                ]
-            ]
-            CGImageDestinationAddImage(destination, cgImage, frameProperties as CFDictionary)
-        }
-
-        guard CGImageDestinationFinalize(destination) else { return nil }
-        return gifData as Data
     }
 
     private func pasteFiles(files: [FileEntry], itemId: Int64) {
@@ -1139,8 +902,34 @@ final class ClipboardStore {
         }
     }
 
+    /// Execute a background operation with rollback on failure
+    private func runWithRollback<T: Sendable>(
+        _ operation: String,
+        snapshot: DisplayState,
+        on store: ClipKittyRust.ClipboardStore,
+        body: @escaping @Sendable (ClipKittyRust.ClipboardStore) throws -> T
+    ) async -> Result<T, ClipboardError> {
+        let result = await runInBackground(operation, on: store, body: body)
+
+        switch result {
+        case .success(let value):
+            return .success(value)
+        case .failure(let error):
+            // Rollback state to snapshot
+            self.state = snapshot
+
+            // Report error with toast
+            await ErrorReporter.report(error, showToast: true)
+
+            return .failure(error)
+        }
+    }
+
     func delete(itemId: Int64) {
-        // Update UI immediately
+        // Capture state snapshot BEFORE modifying
+        let snapshot = state
+
+        // Update UI immediately (optimistic update)
         switch state {
         case .results(let query, let items, let firstItem):
             let filteredItems = items.filter { $0.itemMetadata.itemId != itemId }
@@ -1155,21 +944,28 @@ final class ClipboardStore {
             break
         }
 
-        // Perform DB delete in background with error reporting
+        // Perform DB delete in background with rollback on failure
         guard let rustStore else { return }
-        runInBackgroundIgnoringResult("deleteItem", on: rustStore, showToast: true) { store in
-            try store.deleteItem(itemId: itemId)
+        Task {
+            _ = await runWithRollback("deleteItem", snapshot: snapshot, on: rustStore) { store in
+                try store.deleteItem(itemId: itemId)
+            }
         }
     }
 
     func clear() {
-        // Update UI immediately
+        // Capture state snapshot BEFORE modifying
+        let snapshot = state
+
+        // Update UI immediately (optimistic update)
         state = .results(query: "", items: [], firstItem: nil)
 
-        // Perform expensive DB operations in background with error reporting
+        // Perform DB clear in background with rollback on failure
         guard let rustStore else { return }
-        runInBackgroundIgnoringResult("clear", on: rustStore, showToast: true) { store in
-            try store.clear()
+        Task {
+            _ = await runWithRollback("clear", snapshot: snapshot, on: rustStore) { store in
+                try store.clear()
+            }
         }
     }
 
