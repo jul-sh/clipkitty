@@ -5,7 +5,16 @@ import PackageDescription
 import ProjectDescription
 
 let packageSettings = PackageSettings(
-    productTypes: ["Sparkle": .framework]
+    productTypes: ["Sparkle": .framework],
+    // Custom configurations must be declared so SPM dependencies build for all configs
+    // AppStore maps to Release base, so it gets Release-optimized builds
+    baseSettings: .settings(
+        configurations: [
+            .debug(name: "Debug"),
+            .release(name: "Release"),
+            .release(name: .configuration("AppStore")),
+        ]
+    )
 )
 #endif
 

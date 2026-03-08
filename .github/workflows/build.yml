@@ -99,10 +99,7 @@ jobs:
         run: make build CONFIGURATION=Release
 
       - name: Build App (AppStore)
-        run: |
-          # Force rebuild SPM dependencies for AppStore config by cleaning module interfaces
-          rm -rf DerivedData/Build/Intermediates.noindex/*.build
-          make build CONFIGURATION=AppStore
+        run: make build CONFIGURATION=AppStore
 
       - name: Create Virtual Retina Display
         run: |
