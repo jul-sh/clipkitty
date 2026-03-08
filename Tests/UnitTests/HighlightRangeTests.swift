@@ -147,7 +147,7 @@ final class HighlightRangeTests: XCTestCase {
         }
 
         // Compute match data (lazy on this branch)
-        let matchDataArray = try store.computeMatchData(itemIds: [match.itemMetadata.itemId], query: "Files")
+        let matchDataArray = try store.computeHighlights(itemIds: [match.itemMetadata.itemId], query: "Files")
         guard let matchData = matchDataArray.first else {
             XCTFail("No match data computed")
             return
@@ -204,7 +204,7 @@ final class HighlightRangeTests: XCTestCase {
         }
 
         // Compute match data (lazy on this branch)
-        let matchDataArray = try store.computeMatchData(itemIds: [match.itemMetadata.itemId], query: "Files")
+        let matchDataArray = try store.computeHighlights(itemIds: [match.itemMetadata.itemId], query: "Files")
         guard let matchData = matchDataArray.first else {
             XCTFail("No match data computed")
             return
@@ -273,7 +273,7 @@ final class HighlightRangeTests: XCTestCase {
         }
 
         // Compute match data (lazy on this branch)
-        let matchDataArray = try store.computeMatchData(itemIds: [match.itemMetadata.itemId], query: "he")
+        let matchDataArray = try store.computeHighlights(itemIds: [match.itemMetadata.itemId], query: "he")
         guard let matchData = matchDataArray.first else {
             XCTFail("No match data computed")
             return
@@ -321,7 +321,7 @@ final class HighlightRangeTests: XCTestCase {
             return
         }
 
-        let matchDataArray = try store.computeMatchData(itemIds: [match.itemMetadata.itemId], query: "he")
+        let matchDataArray = try store.computeHighlights(itemIds: [match.itemMetadata.itemId], query: "he")
         guard let matchData = matchDataArray.first else {
             XCTFail("No match data computed")
             return
