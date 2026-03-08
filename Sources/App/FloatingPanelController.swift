@@ -134,7 +134,8 @@ final class FloatingPanelController: NSObject, NSWindowDelegate {
     }
 
     private func centerPanel() {
-        guard let screen = NSScreen.main else { return }
+        // Fallback to any available screen if main screen is unavailable
+        guard let screen = NSScreen.main ?? NSScreen.screens.first else { return }
         let screenFrame = screen.visibleFrame
         let panelFrame = panel.frame
 
