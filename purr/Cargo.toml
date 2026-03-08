@@ -47,6 +47,7 @@ rand = "*"
 anyhow = "*"
 clap = { version = "*", features = ["derive"] }
 futures = "*"
+sha2 = "*"
 
 [features]
 default = ["serde"]
@@ -87,4 +88,3 @@ harness = false
 tempfile = "*"
 criterion = { version = "*", features = ["html_reports"] }
 rusqlite = { version = "*", features = ["bundled"] }
-

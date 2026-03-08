@@ -7,52 +7,15 @@ enum PanelMode {
     case testing
 }
 
-// MARK: - Panel State Machine
-
-/// State machine for panel visibility with transition states to prevent race conditions.
-/// Valid transitions:
-///   hidden -> showing -> visible
-///   visible -> hiding -> hidden
-///   showing -> hiding (cancel show)
-///   hiding -> showing (cancel hide)
 private enum PanelState: Equatable {
     case hidden
-    case showing(previousApp: NSRunningApplication?)
     case visible(previousApp: NSRunningApplication?)
-    case hiding(previousApp: NSRunningApplication?)
-
-    /// Whether the panel is in a transitioning state
-    var isTransitioning: Bool {
-        switch self {
-        case .showing, .hiding: return true
-        case .hidden, .visible: return false
-        }
-    }
-
-    /// Whether the panel should be considered "open" (showing or visible)
-    var isOpen: Bool {
-        switch self {
-        case .showing, .visible: return true
-        case .hidden, .hiding: return false
-        }
-    }
 
     /// The previous app captured when showing, if any
     var previousApp: NSRunningApplication? {
         switch self {
         case .hidden: return nil
-        case .showing(let app), .visible(let app), .hiding(let app): return app
-        }
-    }
-
-    // Equatable conformance for NSRunningApplication comparison
-    static func == (lhs: PanelState, rhs: PanelState) -> Bool {
-        switch (lhs, rhs) {
-        case (.hidden, .hidden): return true
-        case (.showing(let a), .showing(let b)): return a == b
-        case (.visible(let a), .visible(let b)): return a == b
-        case (.hiding(let a), .hiding(let b)): return a == b
-        default: return false
+        case .visible(let app): return app
         }
     }
 }
@@ -62,6 +25,7 @@ final class FloatingPanelController: NSObject, NSWindowDelegate {
     private var panel: NSPanel!
     private let store: ClipboardStore
     private let mode: PanelMode
+    private let activationService: AppActivationService
     private var panelState: PanelState = .hidden
 
     /// Debounce interval to prevent rapid toggle race conditions
@@ -71,9 +35,14 @@ final class FloatingPanelController: NSObject, NSWindowDelegate {
     /// Initial search query to pre-fill (for CI screenshots)
     var initialSearchQuery: String?
 
-    init(store: ClipboardStore, mode: PanelMode = .production) {
+    init(
+        store: ClipboardStore,
+        mode: PanelMode = .production,
+        activationService: AppActivationService? = nil
+    ) {
         self.store = store
         self.mode = mode
+        self.activationService = activationService ?? AppActivationService()
         super.init()
         setupPanel()
     }
@@ -163,24 +132,17 @@ final class FloatingPanelController: NSObject, NSWindowDelegate {
         lastToggleTime = now
 
         switch panelState {
-        case .hidden, .hiding:
+        case .hidden:
             show()
-        case .visible, .showing:
+        case .visible:
             hide()
         }
     }
 
     func show() {
-        // Guard: only allow show from hidden or hiding states
-        switch panelState {
-        case .visible, .showing:
-            return  // Already visible or showing
-        case .hidden, .hiding:
-            break   // Valid transition
-        }
+        guard case .hidden = panelState else { return }
 
-        let previousApp = NSWorkspace.shared.frontmostApplication
-        panelState = .showing(previousApp: previousApp)
+        let previousApp = activationService.frontmostApplication()
 
         // Update content to apply any initial search query
         if initialSearchQuery != nil {
@@ -189,32 +151,24 @@ final class FloatingPanelController: NSObject, NSWindowDelegate {
         centerPanel()
         panel.makeKeyAndOrderFront(nil)
         NSApp.activate(ignoringOtherApps: true)
-
-        // Transition to stable visible state
         panelState = .visible(previousApp: previousApp)
     }
 
-    func hide() {
-        // Guard: only allow hide from visible or showing states
+    @discardableResult
+    func hide() -> NSRunningApplication? {
         let previousApp: NSRunningApplication?
         switch panelState {
-        case .hidden, .hiding:
-            return  // Already hidden or hiding
-        case .visible(let app), .showing(let app):
+        case .hidden:
+            return nil
+        case .visible(let app):
             previousApp = app
         }
 
-        panelState = .hiding(previousApp: previousApp)
-
         panel.orderOut(nil)
         store.resetForDisplay()
-
-        // Only activate previous app if it hasn't been terminated
-        if let app = previousApp, !app.isTerminated {
-            app.activate()
-        }
-
         panelState = .hidden
+        activationService.activate(previousApp)
+        return previousApp
     }
 
     private func centerPanel() {
@@ -231,11 +185,9 @@ final class FloatingPanelController: NSObject, NSWindowDelegate {
 
     private func selectItem(itemId: Int64, content: ClipboardContent) {
         store.paste(itemId: itemId, content: content)
-        // Capture previous app before hiding (uses state machine's previousApp property)
-        let targetApp = panelState.previousApp
-        hide()
+        let targetApp = hide()
         if case .autoPaste = AppSettings.shared.pasteMode {
-            simulatePaste(targetApp: targetApp)
+            activationService.simulatePaste(to: targetApp)
         } else {
             // Show toast when copying without auto-paste
             ToastWindow.shared.show(message: String(localized: "Copied"))
@@ -246,45 +198,5 @@ final class FloatingPanelController: NSObject, NSWindowDelegate {
         store.paste(itemId: itemId, content: content)
         hide()
         ToastWindow.shared.show(message: String(localized: "Copied"))
-    }
-
-    /// Simulate Cmd+V keystroke to paste into the target app
-    private func simulatePaste(targetApp: NSRunningApplication?) {
-        guard let targetApp = targetApp, !targetApp.isTerminated else {
-            return
-        }
-
-        // Wait for the target app to become active before sending keystroke
-        Task {
-            // Poll until the target app is active (max ~500ms)
-            for _ in 0..<50 {
-                // Check if app was terminated during polling
-                guard !targetApp.isTerminated else { return }
-                if NSWorkspace.shared.frontmostApplication == targetApp {
-                    break
-                }
-                try? await Task.sleep(nanoseconds: 10_000_000) // 10ms
-            }
-
-            await MainActor.run {
-                guard let source = CGEventSource(stateID: .hidSystemState) else {
-                    return
-                }
-
-                // Key down: Cmd+V
-                guard let keyDown = CGEvent(keyboardEventSource: source, virtualKey: 0x09, keyDown: true) else {
-                    return
-                }
-                keyDown.flags = .maskCommand
-                keyDown.post(tap: .cgSessionEventTap)
-
-                // Key up: Cmd+V
-                guard let keyUp = CGEvent(keyboardEventSource: source, virtualKey: 0x09, keyDown: false) else {
-                    return
-                }
-                keyUp.flags = .maskCommand
-                keyUp.post(tap: .cgSessionEventTap)
-            }
-        }
     }
 }

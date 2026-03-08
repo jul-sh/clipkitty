@@ -7,10 +7,11 @@ use std::collections::hash_map::DefaultHasher;
 use std::hash::{Hash, Hasher};
 
 use crate::interface::{
-    ClipboardContent, FileEntry, FileStatus, ItemIcon, ItemMetadata, ClipboardItem,
+    ClipboardContent, ClipboardItem, FileEntry, FileStatus, ItemIcon, ItemMetadata,
 };
 #[cfg(test)]
-use crate::interface::IconType;
+use crate::interface::{IconType, LinkMetadataPayload, LinkMetadataState};
+use sha2::{Digest, Sha256};
 
 // ─────────────────────────────────────────────────────────────────────────────
 // INTERNAL ITEM (not exposed via FFI, used for storage)
@@ -66,8 +67,7 @@ impl StoredItem {
         source_app_bundle_id: Option<String>,
         is_animated: bool,
     ) -> Self {
-        let hash_input = format!("Image{}", image_data.len());
-        let content_hash = Self::hash_string(&hash_input);
+        let content_hash = Self::hash_bytes(&image_data);
         Self {
             id: None,
             content: ClipboardContent::Image {
@@ -250,13 +250,19 @@ impl StoredItem {
         s.hash(&mut hasher);
         hasher.finish().to_string()
     }
+
+    /// Hash raw bytes for content types where byte identity matters.
+    pub fn hash_bytes(bytes: &[u8]) -> String {
+        let mut hasher = Sha256::new();
+        hasher.update(bytes);
+        format!("{:x}", hasher.finalize())
+    }
 }
 
 
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::interface::LinkMetadataState;
 
     #[test]
     fn test_stored_item_text() {
@@ -290,7 +296,7 @@ mod tests {
         let pending = LinkMetadataState::Pending;
         let (title, desc, img) = pending.to_database_fields();
         assert_eq!(
-            LinkMetadataState::from_database(title.as_deref(), desc.as_deref(), img),
+            LinkMetadataState::from_database(title.as_deref(), desc.as_deref(), img).unwrap(),
             pending
         );
 
@@ -298,21 +304,44 @@ mod tests {
         let failed = LinkMetadataState::Failed;
         let (title, desc, img) = failed.to_database_fields();
         assert_eq!(
-            LinkMetadataState::from_database(title.as_deref(), desc.as_deref(), img),
+            LinkMetadataState::from_database(title.as_deref(), desc.as_deref(), img).unwrap(),
             failed
         );
 
         // Loaded
         let loaded = LinkMetadataState::Loaded {
-            title: Some("Test Title".to_string()),
-            description: Some("Test Description".to_string()),
-            image_data: Some(vec![1, 2, 3]),
+            payload: LinkMetadataPayload::TitleAndImage {
+                title: "Test Title".to_string(),
+                description: Some("Test Description".to_string()),
+                image_data: vec![1, 2, 3],
+            },
         };
         let (title, desc, img) = loaded.to_database_fields();
         assert_eq!(
-            LinkMetadataState::from_database(title.as_deref(), desc.as_deref(), img),
+            LinkMetadataState::from_database(title.as_deref(), desc.as_deref(), img).unwrap(),
             loaded
         );
+    }
+
+    #[test]
+    fn test_link_metadata_state_image_only_roundtrip() {
+        let loaded = LinkMetadataState::Loaded {
+            payload: LinkMetadataPayload::ImageOnly {
+                image_data: vec![4, 5, 6],
+                description: Some("Image only".to_string()),
+            },
+        };
+        let (title, desc, img) = loaded.to_database_fields();
+        assert_eq!(
+            LinkMetadataState::from_database(title.as_deref(), desc.as_deref(), img).unwrap(),
+            loaded
+        );
+    }
+
+    #[test]
+    fn test_link_metadata_state_rejects_empty_loaded_payload() {
+        let result = LinkMetadataState::from_database(Some(""), Some("dangling"), None);
+        assert!(result.is_err());
     }
 
     #[test]
@@ -406,5 +435,15 @@ mod tests {
         assert!(index_text.contains("a.txt"), "Index text should contain first filename");
         assert!(index_text.contains("b.txt"), "Index text should contain second filename");
         assert!(index_text.contains("/tmp/b.txt"), "Index text should contain second path");
+    }
+
+    #[test]
+    fn test_image_hash_uses_content_not_length() {
+        let item1 = StoredItem::new_image_with_thumbnail(vec![1, 2, 3], None, None, None, false);
+        let item2 = StoredItem::new_image_with_thumbnail(vec![4, 5, 6], None, None, None, false);
+        let item3 = StoredItem::new_image_with_thumbnail(vec![1, 2, 3], None, None, None, false);
+
+        assert_ne!(item1.content_hash, item2.content_hash);
+        assert_eq!(item1.content_hash, item3.content_hash);
     }
 }

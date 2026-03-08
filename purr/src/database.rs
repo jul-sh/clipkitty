@@ -26,6 +26,10 @@ pub enum DatabaseError {
     Io(#[from] std::io::Error),
     #[error("Connection pool error: {0}")]
     Pool(#[from] r2d2::Error),
+    #[error("Operation interrupted")]
+    Interrupted,
+    #[error("Database inconsistency: {0}")]
+    InconsistentData(String),
 }
 
 pub type DatabaseResult<T> = Result<T, DatabaseError>;
@@ -454,7 +458,7 @@ impl Database {
         let mut items: Vec<StoredItem> = match stmt.query_map(rusqlite::params_from_iter(params), Self::row_to_base_item) {
             Ok(rows) => rows.collect::<Result<Vec<_>, _>>()?,
             Err(rusqlite::Error::SqliteFailure(err, _)) if err.code == rusqlite::ffi::ErrorCode::OperationInterrupted => {
-                return Ok(Vec::new());
+                return Err(DatabaseError::Interrupted);
             }
             Err(e) => return Err(e.into()),
         };
@@ -471,6 +475,10 @@ impl Database {
             .into_iter()
             .filter_map(|item| item.id.map(|id| (id, item)))
             .collect();
+
+        if token.is_cancelled() {
+            return Err(DatabaseError::Interrupted);
+        }
 
         Ok(ids.iter().filter_map(|id| id_to_item.get(id).cloned()).collect())
     }
@@ -665,7 +673,12 @@ impl Database {
                         let is_animated: i32 = row.get(1)?;
                         Ok((data, is_animated != 0))
                     },
-                ).unwrap_or_default();
+                ).map_err(|error| match error {
+                    rusqlite::Error::QueryReturnedNoRows => DatabaseError::InconsistentData(
+                        format!("image item {item_id} is missing its image_items child row"),
+                    ),
+                    other => DatabaseError::Sqlite(other),
+                })?;
                 item.content = ClipboardContent::Image { data, description, is_animated };
             }
             ClipboardContent::Link { url, .. } => {
@@ -680,15 +693,22 @@ impl Database {
                     },
                 );
                 let metadata_state = match result {
-                    Ok((title, desc)) => {
-                        // Reconstruct from link_items + items.thumbnail for image
-                        LinkMetadataState::from_database(
-                            title.as_deref(),
-                            desc.as_deref(),
-                            item.thumbnail.clone(),
-                        )
+                    Ok((title, desc)) => LinkMetadataState::from_database(
+                        title.as_deref(),
+                        desc.as_deref(),
+                        item.thumbnail.clone(),
+                    )
+                    .map_err(|message| {
+                        DatabaseError::InconsistentData(format!(
+                            "link item {item_id} has invalid metadata state: {message}"
+                        ))
+                    })?,
+                    Err(rusqlite::Error::QueryReturnedNoRows) => {
+                        return Err(DatabaseError::InconsistentData(format!(
+                            "link item {item_id} is missing its link_items child row"
+                        )));
                     }
-                    Err(_) => LinkMetadataState::Pending,
+                    Err(other) => return Err(DatabaseError::Sqlite(other)),
                 };
                 item.content = ClipboardContent::Link { url, metadata_state };
             }
@@ -756,3 +776,70 @@ impl Database {
 // Database is now inherently thread-safe via r2d2 pool
 unsafe impl Send for Database {}
 unsafe impl Sync for Database {}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    fn seed_base_item(
+        db: &Database,
+        content_type: &str,
+        content: &str,
+        thumbnail: Option<Vec<u8>>,
+    ) -> i64 {
+        let conn = db.get_conn().unwrap();
+        conn.execute(
+            "INSERT INTO items (contentType, contentHash, content, timestamp, thumbnail) VALUES (?1, ?2, ?3, '2026-01-01 00:00:00', ?4)",
+            params![content_type, format!("hash-{content_type}-{content}"), content, thumbnail],
+        )
+        .unwrap();
+        conn.last_insert_rowid()
+    }
+
+    #[test]
+    fn test_missing_image_child_row_is_inconsistency() {
+        let db = Database::open_in_memory().unwrap();
+        let item_id = seed_base_item(&db, "image", "Image", None);
+
+        let result = db.fetch_items_by_ids(&[item_id]);
+        assert!(matches!(
+            result,
+            Err(DatabaseError::InconsistentData(message))
+            if message.contains("missing its image_items child row")
+        ));
+    }
+
+    #[test]
+    fn test_missing_link_child_row_is_inconsistency() {
+        let db = Database::open_in_memory().unwrap();
+        let item_id = seed_base_item(&db, "link", "https://example.com", None);
+
+        let result = db.fetch_items_by_ids(&[item_id]);
+        assert!(matches!(
+            result,
+            Err(DatabaseError::InconsistentData(message))
+            if message.contains("missing its link_items child row")
+        ));
+    }
+
+    #[test]
+    fn test_invalid_link_metadata_shape_is_inconsistency() {
+        let db = Database::open_in_memory().unwrap();
+        let item_id = seed_base_item(&db, "link", "https://example.com", None);
+        let conn = db.get_conn().unwrap();
+        conn.execute(
+            "INSERT INTO link_items (itemId, url, title, description) VALUES (?1, ?2, ?3, ?4)",
+            params![item_id, "https://example.com", "", "dangling"],
+        )
+        .unwrap();
+        drop(conn);
+
+        let result = db.fetch_items_by_ids(&[item_id]);
+        match result {
+            Err(DatabaseError::InconsistentData(message)) => {
+                assert!(message.contains("link item"));
+            }
+            other => panic!("expected inconsistency error, got {other:?}"),
+        }
+    }
+}
