@@ -1,59 +1,8 @@
 import SwiftUI
 import AppKit
 import ClipKittyRust
+import os.log
 import UniformTypeIdentifiers
-
-// MARK: - Icon Cache
-
-/// Thread-safe cache for app icons to avoid blocking main thread on NSWorkspace.icon calls.
-/// Icons are cached by bundle ID since app icons rarely change.
-@MainActor
-private final class AppIconCache {
-    static let shared = AppIconCache()
-
-    private var iconsByBundleID: [String: NSImage] = [:]
-    private var iconsByPath: [String: NSImage] = [:]
-    private var iconsByUTType: [String: NSImage] = [:]
-
-    private init() {}
-
-    /// Get cached icon for bundle ID, loading synchronously only on cache miss.
-    /// After first load, subsequent calls are O(1) dictionary lookups.
-    func icon(forBundleID bundleID: String) -> NSImage? {
-        if let cached = iconsByBundleID[bundleID] {
-            return cached
-        }
-
-        // Cache miss - load and cache
-        guard let appURL = NSWorkspace.shared.urlForApplication(withBundleIdentifier: bundleID) else {
-            return nil
-        }
-        let icon = NSWorkspace.shared.icon(forFile: appURL.path)
-        iconsByBundleID[bundleID] = icon
-        return icon
-    }
-
-    /// Get cached icon for file path (used for file previews)
-    func icon(forFile path: String) -> NSImage {
-        if let cached = iconsByPath[path] {
-            return cached
-        }
-        let icon = NSWorkspace.shared.icon(forFile: path)
-        iconsByPath[path] = icon
-        return icon
-    }
-
-    /// Get cached icon for UTType (used for generic type icons)
-    func icon(for utType: UTType) -> NSImage {
-        let key = utType.identifier
-        if let cached = iconsByUTType[key] {
-            return cached
-        }
-        let icon = NSWorkspace.shared.icon(for: utType)
-        iconsByUTType[key] = icon
-        return icon
-    }
-}
 
 private enum SpinnerState: Equatable {
     case idle
@@ -106,21 +55,6 @@ struct ContentView: View {
     @State private var filterPopover: FilterPopoverState = .hidden
     @State private var actionsPopover: ActionsPopoverState = .hidden
     @State private var commandNumberEventMonitor: Any?
-
-    /// Which item's text editor currently has keyboard focus.
-    enum EditFocusState: Equatable {
-        case idle
-        case focused(itemId: Int64)
-    }
-    @State private var editFocus: EditFocusState = .idle
-    /// Per-item cache of unsaved edited text. Cleared on window hide.
-    @State private var pendingEdits: [Int64: String] = [:]
-
-    /// Prefetch buffer - how many items beyond visible to preload match_data for.
-    /// Set generously so users almost never see items without highlights.
-    /// Combined with 25 eager items from Rust, this should cover all visible scrolling.
-    private let matchDataPrefetchBuffer = 20
-
     enum FocusTarget: Hashable {
         case search
         case filterDropdown
@@ -167,7 +101,7 @@ struct ContentView: View {
         switch store.state {
         case .results(_, let items, _), .resultsLoading(_, let items):
             return items.first { $0.itemMetadata.itemId == selectedItemId }?.matchData
-        case .loading, .error:
+        default:
             return nil
         }
     }
@@ -238,7 +172,6 @@ struct ContentView: View {
         .onChange(of: store.displayVersion) { _, _ in
             // Reset local state when store signals a display reset
             hasUserNavigated = false
-            editFocus = .idle
             // But preserve initial search if it was just applied
             if didApplyInitialSearch && !initialSearchQuery.isEmpty {
                 didApplyInitialSearch = false // Allow reset next time
@@ -292,10 +225,7 @@ struct ContentView: View {
             selectedItemId = firstItemId
             selectedItem = nil
         }
-        .onChange(of: selectedItemId) { oldId, newId in
-            if case .focused(let focusedId) = editFocus, focusedId != newId {
-                editFocus = .idle
-            }
+        .onChange(of: selectedItemId) { _, newId in
             // Fetch full item when selection changes
             guard let newId else {
                 selectedItem = nil
@@ -392,24 +322,12 @@ struct ContentView: View {
 
     private func confirmSelection() {
         guard let item = selectedItem else { return }
-        let content = effectiveContent(for: item)
-        commitCurrentEdit()
-        onSelect(item.itemMetadata.itemId, content)
+        onSelect(item.itemMetadata.itemId, item.content)
     }
 
     private func copyOnlySelection() {
         guard let item = selectedItem else { return }
-        let content = effectiveContent(for: item)
-        commitCurrentEdit()
-        onCopyOnly(item.itemMetadata.itemId, content)
-    }
-
-    /// Returns the effective content for an item, accounting for pending edits.
-    private func effectiveContent(for item: ClipboardItem) -> ClipboardContent {
-        if let editedText = pendingEdits[item.itemMetadata.itemId] {
-            return .text(value: editedText)
-        }
-        return item.content
+        onCopyOnly(item.itemMetadata.itemId, item.content)
     }
 
     private func deleteSelectedItem() {
@@ -425,57 +343,9 @@ struct ContentView: View {
             nextId = nil
         }
 
-        pendingEdits.removeValue(forKey: id)
         store.delete(itemId: id)
         selectedItemId = nextId
         selectedItem = nil
-    }
-
-    /// Called on each text change in the preview pane.
-    /// Tracks the edit as pending - will be saved as new item when app closes.
-    private func onTextEdit(_ newText: String, for itemId: Int64, originalText: String) {
-        if newText == originalText {
-            pendingEdits.removeValue(forKey: itemId)
-        } else {
-            pendingEdits[itemId] = newText
-        }
-    }
-
-    /// Called when editing focus state changes.
-    private func onEditingStateChange(_ isEditing: Bool, for itemId: Int64) {
-        if isEditing {
-            editFocus = .focused(itemId: itemId)
-        } else if case .focused(let id) = editFocus, id == itemId {
-            editFocus = .idle
-        }
-    }
-
-    /// Discards the currently selected item's pending edit.
-    private func discardCurrentEdit() {
-        if let id = selectedItemId {
-            pendingEdits.removeValue(forKey: id)
-        }
-        editFocus = .idle
-    }
-
-    /// Commits the currently selected item's edit as a new clipboard item.
-    private func commitCurrentEdit() {
-        guard let id = selectedItemId,
-              let editedText = pendingEdits.removeValue(forKey: id),
-              !editedText.isEmpty else {
-            editFocus = .idle
-            return
-        }
-        editFocus = .idle
-        Task {
-            let newItemId = await store.saveEditedText(text: editedText)
-            if newItemId > 0 {
-                searchText = ""
-                store.setSearchQuery("")
-                selectedItemId = newItemId
-                ToastWindow.shared.show(message: String(localized: "Saved as new item"))
-            }
-        }
     }
 
     // MARK: - Search Bar
@@ -519,21 +389,8 @@ struct ContentView: View {
                     return .ignored
                 }
                 .onKeyPress(.escape) {
-                    if let id = selectedItemId, pendingEdits[id] != nil {
-                        discardCurrentEdit()
-                    } else {
-                        onDismiss()
-                    }
+                    onDismiss()
                     return .handled
-                }
-                .onKeyPress("s", phases: .down) { keyPress in
-                    if keyPress.modifiers.contains(.command),
-                       let id = selectedItemId,
-                       pendingEdits[id] != nil {
-                        commitCurrentEdit()
-                        return .handled
-                    }
-                    return .ignored
                 }
                 .onKeyPress(.tab) {
                     let allOptions = Self.filterOptions
@@ -753,35 +610,6 @@ struct ContentView: View {
         return itemIds.firstIndex(of: itemId)
     }
 
-    /// Called when an item row appears. Prefetches match_data for nearby items that don't have it.
-    private func onItemAppear(index: Int) {
-        // Calculate range to prefetch (visible + buffer in both directions)
-        let startIndex = max(0, index - matchDataPrefetchBuffer)
-        let endIndex = min(itemCount - 1, index + matchDataPrefetchBuffer)
-
-        guard startIndex <= endIndex else { return }
-
-        // Get item IDs in range that need match_data
-        let idsToLoad = (startIndex...endIndex).compactMap { idx -> Int64? in
-            guard let id = itemId(at: idx) else { return nil }
-            // Check if this item needs match_data
-            switch store.state {
-            case .results(_, let items, _):
-                if items.first(where: { $0.itemMetadata.itemId == id })?.matchData == nil {
-                    return id
-                }
-            default:
-                break
-            }
-            return nil
-        }
-
-        guard !idsToLoad.isEmpty else { return }
-
-        // Load match_data for these items
-        store.loadMatchDataForItems(itemIds: idsToLoad)
-    }
-
     // MARK: - Content
 
     @ViewBuilder
@@ -832,7 +660,7 @@ struct ContentView: View {
     // MARK: - Item List
 
     /// Row data for display - preserves matchData during loading to prevent text flash
-    private var displayRows: [(metadata: ItemMetadata, matchData: MatchData?)] {
+    private var displayRows: [(metadata: ItemMetadata, matchData: MatchData)] {
         switch store.state {
         case .results(_, let items, _), .resultsLoading(_, let items):
             return items.map { ($0.itemMetadata, $0.matchData) }
@@ -851,12 +679,6 @@ struct ContentView: View {
                         matchData: row.matchData,
                         isSelected: row.metadata.itemId == selectedItemId,
                         hasUserNavigated: hasUserNavigated,
-                        isEditingPreview: {
-                            let id = row.metadata.itemId
-                            let isFocused = editFocus == .focused(itemId: id)
-                            return (isFocused || pendingEdits[id] != nil) && id == selectedItemId
-                        }(),
-                        hasPendingEdit: pendingEdits[row.metadata.itemId] != nil,
                         onTap: {
                             hasUserNavigated = true
                             selectedItemId = row.metadata.itemId
@@ -865,9 +687,6 @@ struct ContentView: View {
                     )
                     .equatable()
                     .accessibilityIdentifier("ItemRow_\(index)")
-                    .onAppear {
-                        onItemAppear(index: index)
-                    }
                     .listRowInsets(EdgeInsets(top: 2, leading: 0, bottom: 2, trailing: 0))
                     .listRowSeparator(.hidden)
                     .listRowBackground(Color.clear)
@@ -943,37 +762,12 @@ struct ContentView: View {
     private func previewContent(for item: ClipboardItem) -> some View {
         switch item.content {
         case .text, .color:
-            // TextKit 2 based preview with viewport-based layout
-            // Only visible text is laid out, eliminating main thread blocking
-            TextKit2TextPreview(
-                text: pendingEdits[item.itemMetadata.itemId] ?? item.content.textContent,
-                itemId: item.itemMetadata.itemId,
+            TextPreviewView(
+                text: item.content.textContent,
                 fontName: FontManager.mono,
                 fontSize: 15,
-                highlights: selectedItemMatchData?.fullContentHighlights.flatMap { $0 } ?? [],
-                densestHighlightStart: selectedItemMatchData?.densestHighlightStart ?? 0,
-                originalText: item.content.textContent,
-                onTextChange: { newText in
-                    onTextEdit(newText, for: item.itemMetadata.itemId, originalText: item.content.textContent)
-                },
-                onEditingStateChange: { editing in
-                    onEditingStateChange(editing, for: item.itemMetadata.itemId)
-                },
-                onCmdReturn: {
-                    confirmSelection()
-                },
-                onSave: {
-                    commitCurrentEdit()
-                    focusSearchField()
-                },
-                onEscape: {
-                    if let id = selectedItemId, pendingEdits[id] != nil {
-                        discardCurrentEdit()
-                        focusSearchField()
-                    } else {
-                        onDismiss()
-                    }
-                }
+                highlights: selectedItemMatchData?.fullContentHighlights ?? [],
+                densestHighlightStart: selectedItemMatchData?.densestHighlightStart ?? 0
             )
             .frame(maxWidth: .infinity, maxHeight: .infinity)
         case .image(let data, let description, _):
@@ -1009,66 +803,31 @@ struct ContentView: View {
     }
 
     private func metadataFooter(for item: ClipboardItem) -> some View {
-        let itemId = item.itemMetadata.itemId
-        let hasPendingEdit = pendingEdits[itemId] != nil
-        let isFocused = editFocus == .focused(itemId: itemId) && itemId == selectedItemId
-
-        return HStack(spacing: 12) {
-            if hasPendingEdit {
-                Button(String(localized: "Esc Discard")) {
-                    discardCurrentEdit()
-                    focusSearchField()
-                }
-                .buttonStyle(.plain)
-                .padding(.horizontal, 6)
-                .padding(.vertical, 2)
-                .fixedSize()
-                Button(String(localized: "⌘S Save")) {
-                    commitCurrentEdit()
-                    focusSearchField()
-                }
-                .buttonStyle(.plain)
-                .padding(.horizontal, 8)
-                .padding(.vertical, 3)
-                .overlay(
-                    RoundedRectangle(cornerRadius: 4)
-                        .strokeBorder(Color.primary.opacity(0.4), lineWidth: 1)
-                )
-                .fixedSize()
-                Spacer(minLength: 0)
-                Button("\(isFocused ? "⌘" : "")↩ \(AppSettings.shared.pasteMode.editConfirmLabel)") {
-                    confirmSelection()
-                }
-                .buttonStyle(.plain)
-                .padding(.horizontal, 6)
-                .padding(.vertical, 2)
-                .fixedSize()
-            } else {
-                Label(item.timeAgo, systemImage: "clock")
-                    .lineLimit(1)
-                if let app = item.itemMetadata.sourceApp {
-                    HStack(spacing: 4) {
-                        if let bundleID = item.itemMetadata.sourceAppBundleId,
-                           let icon = AppIconCache.shared.icon(forBundleID: bundleID) {
-                            Image(nsImage: icon)
-                                .resizable()
-                                .frame(width: 14, height: 14)
-                        } else {
-                            Image(systemName: "app")
-                        }
-                        Text(app)
-                            .lineLimit(1)
+        HStack(spacing: 12) {
+            Label(item.timeAgo, systemImage: "clock")
+                .lineLimit(1)
+            if let app = item.itemMetadata.sourceApp {
+                HStack(spacing: 4) {
+                    if let bundleID = item.itemMetadata.sourceAppBundleId,
+                       let appURL = NSWorkspace.shared.urlForApplication(withBundleIdentifier: bundleID) {
+                        Image(nsImage: NSWorkspace.shared.icon(forFile: appURL.path))
+                            .resizable()
+                            .frame(width: 14, height: 14)
+                    } else {
+                        Image(systemName: "app")
                     }
+                    Text(app)
+                        .lineLimit(1)
                 }
-                actionsButton
-                    .fixedSize()
-                Spacer(minLength: 0)
-                Button(buttonLabel(for: item)) { confirmSelection() }
-                    .buttonStyle(.plain)
-                    .padding(.horizontal, 6)
-                    .padding(.vertical, 2)
-                    .fixedSize()
             }
+            actionsButton
+                .fixedSize()
+            Spacer(minLength: 0)
+            Button(buttonLabel(for: item)) { confirmSelection() }
+                .buttonStyle(.plain)
+                .padding(.horizontal, 6)
+                .padding(.vertical, 2)
+                .fixedSize()
         }
         .font(.system(size: 13))
         .foregroundStyle(.secondary)
@@ -1078,10 +837,6 @@ struct ContentView: View {
     }
 
     private func buttonLabel(for item: ClipboardItem) -> String {
-        let isEditing = editFocus == .focused(itemId: item.itemMetadata.itemId)
-        if isEditing || pendingEdits[item.itemMetadata.itemId] != nil {
-            return "⌘⏎ \(AppSettings.shared.pasteMode.buttonLabel)"
-        }
         return "⏎ \(AppSettings.shared.pasteMode.buttonLabel)"
     }
 
@@ -1385,7 +1140,7 @@ struct FilePreviewView: View {
 
     private func fileRow(_ file: FileEntry) -> some View {
         HStack(spacing: 12) {
-            Image(nsImage: AppIconCache.shared.icon(forFile: file.path))
+            Image(nsImage: NSWorkspace.shared.icon(forFile: file.path))
                 .resizable()
                 .frame(width: 40, height: 40)
 
@@ -1494,6 +1249,7 @@ struct TextPreviewView: NSViewRepresentable {
         let textView = NSTextView()
         textView.isEditable = false
         textView.isSelectable = true
+        textView.isRichText = true  // Enable rich text for highlighting
         textView.drawsBackground = false
         textView.isVerticallyResizable = true
         textView.isHorizontallyResizable = false
@@ -1644,309 +1400,8 @@ struct TextPreviewView: NSViewRepresentable {
         Coordinator()
     }
 
-    class Coordinator: NSObject {
+    class Coordinator {
         var lastHighlights: [HighlightRange] = []
-    }
-}
-
-// MARK: - TextKit 2 Text Preview
-
-/// NSTextView subclass with custom key handling for the preview pane
-private final class TextKit2PreviewTextView: NSTextView {
-    var onCmdReturn: (() -> Void)?
-    var onFocusChange: ((Bool) -> Void)?
-    var onSave: (() -> Void)?
-    var onEscape: (() -> Void)?
-
-    override func keyDown(with event: NSEvent) {
-        if event.modifierFlags.contains(.command) {
-            switch event.keyCode {
-            case 36: // Cmd+Return
-                onCmdReturn?()
-                return
-            case 1: // Cmd+S
-                onSave?()
-                return
-            default:
-                break
-            }
-        }
-        if event.keyCode == 53 { // Escape
-            window?.makeFirstResponder(nil)
-            onEscape?()
-            return
-        }
-        super.keyDown(with: event)
-    }
-
-    override func becomeFirstResponder() -> Bool {
-        let result = super.becomeFirstResponder()
-        if result { onFocusChange?(true) }
-        return result
-    }
-
-    override func resignFirstResponder() -> Bool {
-        let result = super.resignFirstResponder()
-        if result { onFocusChange?(false) }
-        return result
-    }
-}
-
-/// TextKit 2 based text preview with viewport-based layout.
-/// Uses NSTextLayoutManager for efficient rendering of large documents -
-/// only visible text is laid out, eliminating the main thread blocking issue.
-struct TextKit2TextPreview: NSViewRepresentable {
-    let text: String
-    let itemId: Int64
-    let fontName: String
-    let fontSize: CGFloat
-    var highlights: [HighlightRange] = []
-    var densestHighlightStart: UInt64 = 0
-    var originalText: String = ""
-    var onTextChange: ((String) -> Void)?
-    var onEditingStateChange: ((Bool) -> Void)?
-    var onCmdReturn: (() -> Void)?
-    var onSave: (() -> Void)?
-    var onEscape: (() -> Void)?
-
-    private static var lastKnownContainerWidth: CGFloat = 0
-    private static let textContainerHorizontalInset: CGFloat = 32
-
-    /// Scale up font size for short text that doesn't fill the width
-    private func scaledFontSize(containerWidth: CGFloat) -> CGFloat {
-        let lines = text.components(separatedBy: "\n")
-        if lines.count >= 10 { return fontSize }
-
-        let baseFont = NSFont(name: fontName, size: fontSize)
-            ?? NSFont.monospacedSystemFont(ofSize: fontSize, weight: .regular)
-        let inset: CGFloat = 32 + 10 // textContainerInset.width * 2 + lineFragmentPadding * 2
-        let availableWidth = containerWidth - inset
-        if availableWidth <= 0 { return fontSize }
-
-        let attributes: [NSAttributedString.Key: Any] = [.font: baseFont]
-        var maxLineWidth: CGFloat = 0
-        for line in lines {
-            let lineWidth = (line as NSString).size(withAttributes: attributes).width
-            if lineWidth >= availableWidth { return fontSize }
-            maxLineWidth = max(maxLineWidth, lineWidth)
-        }
-        if maxLineWidth <= 0 { return fontSize }
-
-        let scale = min(1.5, availableWidth / maxLineWidth) * 0.95
-        return fontSize * scale
-    }
-
-    func makeNSView(context: Context) -> NSScrollView {
-        let scrollView = NSScrollView()
-        scrollView.hasVerticalScroller = true
-        scrollView.drawsBackground = false
-        scrollView.autohidesScrollers = true
-
-        // Create NSTextView with TextKit 2 enabled
-        // Using the usingTextLayoutManager initializer opts into TextKit 2
-        let textView = TextKit2PreviewTextView(usingTextLayoutManager: true)
-
-        textView.isEditable = true
-        textView.isSelectable = true
-        textView.isRichText = false  // Plain text only
-        textView.allowsUndo = true
-        textView.drawsBackground = false
-        textView.isVerticallyResizable = true
-        textView.isHorizontallyResizable = false
-        textView.autoresizingMask = [.width]
-        textView.textContainerInset = NSSize(width: 16, height: 16)
-        textView.textContainer?.widthTracksTextView = true
-        textView.textContainer?.containerSize = NSSize(
-            width: scrollView.contentSize.width,
-            height: CGFloat.greatestFiniteMagnitude
-        )
-
-        // Setup delegate and callbacks
-        textView.delegate = context.coordinator
-        textView.onCmdReturn = onCmdReturn
-        textView.onFocusChange = onEditingStateChange
-        textView.onSave = onSave
-        textView.onEscape = onEscape
-        context.coordinator.onTextChange = onTextChange
-
-        scrollView.documentView = textView
-        return scrollView
-    }
-
-    func updateNSView(_ scrollView: NSScrollView, context: Context) {
-        guard let textView = scrollView.documentView as? TextKit2PreviewTextView else { return }
-
-        // Update callbacks
-        context.coordinator.onTextChange = onTextChange
-        textView.onCmdReturn = onCmdReturn
-        textView.onFocusChange = onEditingStateChange
-        textView.onSave = onSave
-        textView.onEscape = onEscape
-
-        // Check if item changed
-        let itemChanged = context.coordinator.currentItemId != itemId
-        if itemChanged {
-            context.coordinator.currentItemId = itemId
-            context.coordinator.isEditing = false
-        }
-
-        // Calculate scaled font size for short text
-        let containerWidth = scrollView.contentSize.width > 0
-            ? scrollView.contentSize.width
-            : Self.lastKnownContainerWidth
-        if scrollView.contentSize.width > 0 {
-            Self.lastKnownContainerWidth = scrollView.contentSize.width
-        }
-        let scaledSize = scaledFontSize(containerWidth: containerWidth)
-
-        let font = NSFont(name: fontName, size: scaledSize)
-            ?? NSFont.monospacedSystemFont(ofSize: scaledSize, weight: .regular)
-
-        let paragraphStyle = NSMutableParagraphStyle()
-        paragraphStyle.lineBreakMode = .byWordWrapping
-
-        let typingAttrs: [NSAttributedString.Key: Any] = [
-            .font: font,
-            .foregroundColor: NSColor.labelColor,
-            .paragraphStyle: paragraphStyle
-        ]
-        textView.typingAttributes = typingAttrs
-
-        // Update text when item changes
-        if itemChanged {
-            let attributed = NSAttributedString(string: text, attributes: typingAttrs)
-            textView.textStorage?.setAttributedString(attributed)
-            textView.scrollToBeginningOfDocument(nil)
-        } else if !context.coordinator.isEditing && textView.string != text {
-            let attributed = NSAttributedString(string: text, attributes: typingAttrs)
-            textView.textStorage?.setAttributedString(attributed)
-        }
-
-        // Apply highlights using rendering attributes (TextKit 2 feature)
-        // This doesn't trigger re-layout, only affects rendering
-        let highlightsChanged = highlights != context.coordinator.lastHighlights
-        if highlightsChanged || itemChanged {
-            context.coordinator.lastHighlights = highlights
-            applyHighlights(to: textView, context: context)
-        }
-
-        // Update container size
-        let textContainerWidth = max(0, scrollView.contentSize.width - Self.textContainerHorizontalInset)
-        textView.textContainer?.containerSize = NSSize(
-            width: textContainerWidth,
-            height: .greatestFiniteMagnitude
-        )
-    }
-
-    private func applyHighlights(to textView: NSTextView, context: Context) {
-        // Skip during editing
-        if context.coordinator.isEditing { return }
-
-        guard let textLayoutManager = textView.textLayoutManager,
-              let textContentStorage = textLayoutManager.textContentManager as? NSTextContentStorage else { return }
-
-        let documentRange = textContentStorage.documentRange
-
-        let currentText = textView.string
-
-        // Clear existing rendering attributes (non-blocking)
-        textLayoutManager.removeRenderingAttribute(.backgroundColor, for: documentRange)
-        textLayoutManager.removeRenderingAttribute(.underlineStyle, for: documentRange)
-
-        // Apply new highlights using rendering attributes
-        // This is the key TextKit 2 optimization - rendering attributes don't trigger layout
-        for highlight in highlights {
-            guard let textRange = textRange(for: highlight, in: currentText, layoutManager: textLayoutManager, documentRange: documentRange) else { continue }
-
-            let (bgColor, shouldUnderline) = highlightStyle(for: highlight.kind)
-            textLayoutManager.addRenderingAttribute(.backgroundColor, value: bgColor, for: textRange)
-            if shouldUnderline {
-                textLayoutManager.addRenderingAttribute(.underlineStyle, value: NSUnderlineStyle.single.rawValue, for: textRange)
-            }
-        }
-
-        // Scroll to densest highlight
-        if !highlights.isEmpty {
-            let targetHighlight = highlights.first { $0.start == densestHighlightStart } ?? highlights[0]
-            if let textRange = textRange(for: targetHighlight, in: currentText, layoutManager: textLayoutManager, documentRange: documentRange) {
-                scrollToTextRange(textRange, in: textView, layoutManager: textLayoutManager)
-            }
-        }
-    }
-
-    private func textRange(
-        for highlight: HighlightRange,
-        in text: String,
-        layoutManager: NSTextLayoutManager,
-        documentRange: NSTextRange
-    ) -> NSTextRange? {
-        let nsRange = highlight.nsRange(in: text)
-        guard nsRange.location != NSNotFound,
-              nsRange.length > 0,
-              nsRange.location + nsRange.length <= (text as NSString).length else { return nil }
-
-        guard let start = layoutManager.location(documentRange.location, offsetBy: nsRange.location),
-              let end = layoutManager.location(start, offsetBy: nsRange.length) else { return nil }
-
-        return NSTextRange(location: start, end: end)
-    }
-
-    private func scrollToTextRange(_ textRange: NSTextRange, in textView: NSTextView, layoutManager: NSTextLayoutManager) {
-        // Ensure layout for the target range
-        layoutManager.ensureLayout(for: textRange)
-
-        // Find the layout fragment containing this range
-        var targetRect: CGRect?
-        layoutManager.enumerateTextLayoutFragments(from: textRange.location, options: [.ensuresLayout]) { fragment in
-            targetRect = fragment.layoutFragmentFrame
-            return false
-        }
-
-        if let rect = targetRect, let scrollView = textView.enclosingScrollView {
-            let adjustedRect = rect.offsetBy(
-                dx: textView.textContainerInset.width,
-                dy: textView.textContainerInset.height
-            )
-            let visibleRect = scrollView.documentVisibleRect
-            if !visibleRect.contains(adjustedRect) {
-                textView.scrollToVisible(adjustedRect.insetBy(dx: 0, dy: -50))
-            }
-        }
-    }
-
-    private func highlightStyle(for kind: HighlightKind) -> (NSColor, Bool) {
-        switch kind {
-        case .exact, .prefix:
-            return (NSColor.systemOrange.withAlphaComponent(0.5), true)
-        case .fuzzy:
-            return (NSColor.systemYellow.withAlphaComponent(0.4), false)
-        case .subsequence:
-            return (NSColor.systemBlue.withAlphaComponent(0.3), false)
-        }
-    }
-
-    func makeCoordinator() -> Coordinator {
-        Coordinator()
-    }
-
-    class Coordinator: NSObject, NSTextViewDelegate {
-        var currentItemId: Int64 = 0
-        var isEditing = false
-        var lastHighlights: [HighlightRange] = []
-        var onTextChange: ((String) -> Void)?
-
-        func textDidBeginEditing(_ notification: Notification) {
-            isEditing = true
-        }
-
-        func textDidEndEditing(_ notification: Notification) {
-            isEditing = false
-        }
-
-        func textDidChange(_ notification: Notification) {
-            guard let onTextChange, let textView = notification.object as? NSTextView else { return }
-            onTextChange(textView.string)
-        }
     }
 }
 
@@ -2009,14 +1464,12 @@ struct LinkPreviewView: NSViewRepresentable {
 
 struct ItemRow: View, Equatable {
     let metadata: ItemMetadata
-    let matchData: MatchData?  // Only present in search mode
+    let matchData: MatchData
     let isSelected: Bool
     let hasUserNavigated: Bool
-    let isEditingPreview: Bool  // True when user is editing text in preview pane
-    let hasPendingEdit: Bool    // True when this item has unsaved text edits
     let onTap: () -> Void
 
-    private var accentSelected: Bool { isSelected && hasUserNavigated && !isEditingPreview }
+    private var accentSelected: Bool { isSelected && hasUserNavigated }
 
     // Fixed height for exactly 1 line of text at font size 15
     private let rowHeight: CGFloat = 32
@@ -2026,13 +1479,12 @@ struct ItemRow: View, Equatable {
     /// Text to display - uses matchData.text if in search mode, otherwise metadata.snippet
     /// SwiftUI's Three-Part HStack handles truncation with proper ellipsis via layout priorities
     private var displayText: String {
-        matchData?.text.isEmpty == false ? matchData!.text : metadata.snippet
+        !matchData.text.isEmpty ? matchData.text : metadata.snippet
     }
 
     /// Highlights for display - passed directly from Rust (already adjusted for normalization)
-    /// Returns empty array if matchData is nil (lazy mode - not yet computed)
     private var displayHighlights: [HighlightRange] {
-        matchData?.highlights ?? []
+        matchData.highlights
     }
 
 
@@ -2041,8 +1493,6 @@ struct ItemRow: View, Equatable {
     nonisolated static func == (lhs: ItemRow, rhs: ItemRow) -> Bool {
         return lhs.isSelected == rhs.isSelected &&
                lhs.hasUserNavigated == rhs.hasUserNavigated &&
-               lhs.isEditingPreview == rhs.isEditingPreview &&
-               lhs.hasPendingEdit == rhs.hasPendingEdit &&
                lhs.metadata == rhs.metadata &&
                lhs.matchData == rhs.matchData
     }
@@ -2080,14 +1530,14 @@ struct ItemRow: View, Equatable {
                     case .symbol(let iconType):
                         if case .link = iconType,
                            let browserURL = NSWorkspace.shared.urlForApplication(toOpen: URL(string: "https://")!) {
-                            Image(nsImage: AppIconCache.shared.icon(forFile: browserURL.path))
+                            Image(nsImage: NSWorkspace.shared.icon(forFile: browserURL.path))
                                 .resizable()
                         } else if case .file = iconType,
-                                  let finderIcon = AppIconCache.shared.icon(forBundleID: "com.apple.finder") {
-                            Image(nsImage: finderIcon)
+                                  let finderURL = NSWorkspace.shared.urlForApplication(withBundleIdentifier: "com.apple.finder") {
+                            Image(nsImage: NSWorkspace.shared.icon(forFile: finderURL.path))
                                 .resizable()
                         } else {
-                            Image(nsImage: AppIconCache.shared.icon(for: iconType.utType))
+                            Image(nsImage: NSWorkspace.shared.icon(for: iconType.utType))
                                 .resizable()
                         }
                     }
@@ -2098,7 +1548,7 @@ struct ItemRow: View, Equatable {
                 // Badge: Source app icon
                 // Show for symbols (except pure link icons) and thumbnails (images, links with images)
                 if let bundleID = metadata.sourceAppBundleId,
-                   let icon = AppIconCache.shared.icon(forBundleID: bundleID) {
+                   let appURL = NSWorkspace.shared.urlForApplication(withBundleIdentifier: bundleID) {
                     // Skip badge for symbol links/files (app icon is already shown)
                     let showBadge: Bool = {
                         switch metadata.icon {
@@ -2110,7 +1560,7 @@ struct ItemRow: View, Equatable {
                     }()
 
                     if showBadge {
-                        Image(nsImage: icon)
+                        Image(nsImage: NSWorkspace.shared.icon(forFile: appURL.path))
                             .resizable()
                             .frame(width: 22, height: 22)
                             .clipShape(RoundedRectangle(cornerRadius: 3))
@@ -2123,20 +1573,12 @@ struct ItemRow: View, Equatable {
             .allowsHitTesting(false)
 
             // Line number (shown in search mode when line > 1)
-            if let matchData, matchData.lineNumber > 1 {
+            if matchData.lineNumber > 1 {
                 Text("L\(matchData.lineNumber):")
                     .font(.custom(FontManager.mono, size: 13))
                     .foregroundColor(accentSelected ? .white.opacity(0.7) : .secondary)
                     .lineLimit(1)
                     .fixedSize()
-                    .allowsHitTesting(false)
-            }
-
-            // Pending edit indicator
-            if hasPendingEdit {
-                Image(systemName: "pencil")
-                    .font(.system(size: 11))
-                    .foregroundColor(accentSelected ? .white.opacity(0.7) : .secondary)
                     .allowsHitTesting(false)
             }
 
@@ -2156,10 +1598,7 @@ struct ItemRow: View, Equatable {
         .padding(.horizontal, 4)
         .padding(.vertical, 4)
         .background {
-            if isSelected && hasUserNavigated && isEditingPreview {
-                // Editing state: darker grey background
-                Color.primary.opacity(0.35)
-            } else if accentSelected {
+            if accentSelected {
                 selectionBackground()
             } else if isSelected {
                 Color.primary.opacity(0.225)
@@ -2213,14 +1652,13 @@ struct HighlightedTextView: View, Equatable {
                 let startIndex = Int(firstHighlight.start)
                 let endIndex = Int(firstHighlight.end)
 
-                // Clamp indices to valid range (Unicode scalar count matches Rust's .chars())
-                let safeStart = min(max(0, startIndex), text.unicodeScalars.count)
-                let safeEnd = min(max(safeStart, endIndex), text.unicodeScalars.count)
+                // Clamp indices to valid range
+                let safeStart = min(max(0, startIndex), text.count)
+                let safeEnd = min(max(safeStart, endIndex), text.count)
 
-                // Use unicodeScalars view for offsetting, then convert to String.Index
-                let prefixEnd = text.unicodeScalars.index(text.unicodeScalars.startIndex, offsetBy: safeStart)
+                let prefixEnd = text.index(text.startIndex, offsetBy: safeStart)
                 let matchStart = prefixEnd
-                let matchEnd = text.unicodeScalars.index(text.unicodeScalars.startIndex, offsetBy: safeEnd)
+                let matchEnd = text.index(text.startIndex, offsetBy: safeEnd)
 
                 let prefix = String(text[..<prefixEnd])
                 let match = String(text[matchStart..<matchEnd])
@@ -2272,7 +1710,7 @@ struct HighlightedTextView: View, Equatable {
     private func suffixView(suffix: String, suffixStartIndex: Int) -> some View {
         // Check for additional highlights in the suffix (beyond the first one)
         let additionalHighlights = highlights.dropFirst().filter { h in
-            Int(h.start) >= suffixStartIndex && Int(h.start) < suffixStartIndex + suffix.unicodeScalars.count
+            Int(h.start) >= suffixStartIndex && Int(h.start) < suffixStartIndex + suffix.count
         }
 
         if additionalHighlights.isEmpty {
@@ -2291,19 +1729,14 @@ struct HighlightedTextView: View, Equatable {
             let relativeStart = Int(highlight.start) - suffixStartIndex
             let relativeEnd = Int(highlight.end) - suffixStartIndex
 
-            // Clamp to suffix bounds (Unicode scalar count matches Rust's .chars())
+            // Clamp to suffix bounds
             let safeStart = max(0, relativeStart)
-            let safeEnd = min(suffix.unicodeScalars.count, relativeEnd)
+            let safeEnd = min(suffix.count, relativeEnd)
 
             guard safeStart < safeEnd else { continue }
 
-            // Use unicodeScalars view for correct offset calculation
-            let suffixScalars = suffix.unicodeScalars
-            let scalarStart = suffixScalars.index(suffixScalars.startIndex, offsetBy: safeStart)
-            let scalarEnd = suffixScalars.index(suffixScalars.startIndex, offsetBy: safeEnd)
-            // Convert scalar indices to AttributedString indices
-            let startIdx = AttributedString.Index(scalarStart, within: attributed)!
-            let endIdx = AttributedString.Index(scalarEnd, within: attributed)!
+            let startIdx = attributed.index(attributed.startIndex, offsetByCharacters: safeStart)
+            let endIdx = attributed.index(attributed.startIndex, offsetByCharacters: safeEnd)
 
             attributed[startIdx..<endIdx].backgroundColor = highlightBackground(for: highlight.kind)
             if highlight.kind == .subsequence {
