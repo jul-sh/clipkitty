@@ -237,7 +237,7 @@ final class AppSettings: ObservableObject {
         defaults.set(ignoreConfidentialContent, forKey: ignoreConfidentialKey)
         defaults.set(ignoreTransientContent, forKey: ignoreTransientKey)
         defaults.set(generateLinkPreviews, forKey: generateLinkPreviewsKey)
-        defaults.set(Array(ignoredAppBundleIds), forKey: ignoredAppBundleIdsKey)
+        defaults.set(Array(ignoredAppBundleIds).sorted(), forKey: ignoredAppBundleIdsKey)
         defaults.set(clickToOpenEnabled, forKey: clickToOpenKey)
         #if !APP_STORE
         defaults.set(autoInstallUpdates, forKey: autoInstallUpdatesKey)

@@ -78,6 +78,8 @@ struct ContentView: View {
         )
     }
 
+    /// Computed on every access - acceptable for small result sets (typical: <100 items).
+    /// If performance becomes an issue with large result sets, consider caching with onChange(of: store.state).
     private var itemIds: [Int64] {
         switch store.state {
         case .results(_, let items, _), .resultsLoading(_, let items):
@@ -129,6 +131,8 @@ struct ContentView: View {
         itemIds.count
     }
 
+    /// Computed on every access - acceptable for small result sets (typical: <100 items).
+    /// O(n) search through itemIds array, but n is small in practice.
     private var selectedIndex: Int? {
         guard let selectedItemId else { return nil }
         return itemIds.firstIndex(of: selectedItemId)
@@ -184,6 +188,8 @@ struct ContentView: View {
         .onDisappear {
             removeCommandNumberEventMonitor()
         }
+        // MARK: - onChange Handlers (Ordered by Dependency)
+        // 1. Display reset (highest priority - resets all other state)
         .onChange(of: store.displayVersion) { _, _ in
             // Reset local state when store signals a display reset
             hasUserNavigated = false
@@ -204,6 +210,7 @@ struct ContentView: View {
             }
             focusSearchField()
         }
+        // 2. Store state changes (updates available items and spinners)
         .onChange(of: store.state) { _, newState in
             // Validate selection - ensure selected item still exists in results
             if let selectedItemId, !itemIds.contains(selectedItemId) {
@@ -230,40 +237,30 @@ struct ContentView: View {
                 searchSpinner = .idle
             }
         }
+        // 3. Search query changes (triggers store refresh)
         .onChange(of: searchText) { _, newValue in
             hasUserNavigated = false
             store.setSearchQuery(newValue)
         }
+        // 4. Filter changes (triggers store refresh and resets selection)
         .onChange(of: store.contentTypeFilter) { _, _ in
             // Reset selection when filter changes
             hasUserNavigated = false
             selectedItemId = firstItemId
             selectedItem = nil
         }
-        .onChange(of: selectedItemId) { _, newId in
-            // Fetch full item when selection changes
-            guard let newId else {
-                selectedItemLoadGeneration += 1
-                selectedItem = nil
-                return
-            }
-            refreshSelectedItem(for: newId)
-        }
-        .onChange(of: selectedItem) { _, newItem in
-            previewSpinner.cancel()
-            if newItem == nil && selectedItemId != nil {
-                let task = debouncedSpinnerTask {
-                    if self.selectedItem == nil && self.selectedItemId != nil { self.previewSpinner = .visible }
-                }
-                previewSpinner = .debouncing(task: task)
-            } else {
-                previewSpinner = .idle
-            }
-        }
+        // 5. Item list changes (validates selection position)
         .onChange(of: itemIds) { oldOrder, newOrder in
             // Select first item by default if nothing is selected
             guard let selectedItemId else {
                 self.selectedItemId = firstItemId
+                hasUserNavigated = false
+                return
+            }
+            // Check if item still exists in new order
+            if !newOrder.contains(selectedItemId) {
+                self.selectedItemId = firstItemId
+                self.selectedItem = nil
                 hasUserNavigated = false
                 return
             }
@@ -275,6 +272,28 @@ struct ContentView: View {
                 self.selectedItemId = firstItemId
                 self.selectedItem = nil
                 hasUserNavigated = false
+            }
+        }
+        // 6. Selection ID changes (triggers item fetch)
+        .onChange(of: selectedItemId) { _, newId in
+            // Fetch full item when selection changes
+            guard let newId else {
+                selectedItemLoadGeneration += 1
+                selectedItem = nil
+                return
+            }
+            refreshSelectedItem(for: newId)
+        }
+        // 7. Selected item changes (updates preview spinner)
+        .onChange(of: selectedItem) { _, newItem in
+            previewSpinner.cancel()
+            if newItem == nil && selectedItemId != nil {
+                let task = debouncedSpinnerTask {
+                    if self.selectedItem == nil && self.selectedItemId != nil { self.previewSpinner = .visible }
+                }
+                previewSpinner = .debouncing(task: task)
+            } else {
+                previewSpinner = .idle
             }
         }
     }
@@ -318,25 +337,23 @@ struct ContentView: View {
         }
     }
 
-    private func focusSearchField() {
+    private func setFocus(to target: FocusTarget, delay: Duration = .milliseconds(1)) {
         Task { @MainActor in
-            try? await Task.sleep(for: .milliseconds(10))
-            focusTarget = .search
+            try? await Task.sleep(for: delay)
+            focusTarget = target
         }
+    }
+
+    private func focusSearchField() {
+        setFocus(to: .search, delay: .milliseconds(1))
     }
 
     private func focusFilterDropdown() {
-        Task { @MainActor in
-            try? await Task.sleep(for: .milliseconds(50))
-            focusTarget = .filterDropdown
-        }
+        setFocus(to: .filterDropdown, delay: .milliseconds(50))
     }
 
     private func focusActionsDropdown() {
-        Task { @MainActor in
-            try? await Task.sleep(for: .milliseconds(50))
-            focusTarget = .actionsDropdown
-        }
+        setFocus(to: .actionsDropdown, delay: .milliseconds(50))
     }
 
     private func moveSelection(by offset: Int) {
@@ -1182,7 +1199,7 @@ struct FilePreviewView: View {
                     .truncationMode(.middle)
 
                 if file.fileSize > 0 {
-                    Text(Self.formatFileSize(file.fileSize))
+                    Text(Utilities.formatBytes(Int64(file.fileSize)))
                         .font(.system(size: 11))
                         .foregroundStyle(.tertiary)
                 }
@@ -1205,16 +1222,6 @@ struct FilePreviewView: View {
             .foregroundColor(color)
     }
 
-    private static func formatFileSize(_ bytes: UInt64) -> String {
-        let kb = Double(bytes) / 1024
-        let mb = kb / 1024
-        let gb = mb / 1024
-
-        if gb >= 1 { return String(localized: "\(gb, specifier: "%.1f") GB") }
-        if mb >= 1 { return String(localized: "\(mb, specifier: "%.1f") MB") }
-        if kb >= 1 { return String(localized: "\(kb, specifier: "%.0f") KB") }
-        return String(localized: "\(bytes) bytes")
-    }
 }
 
 // MARK: - Text Preview (AppKit)
@@ -1314,6 +1321,11 @@ struct TextPreviewView: NSViewRepresentable {
         if textChanged {
             // Text content changed — replace storage attributes (font, color, paragraph style only).
             // Highlights are applied as rendering attributes, not storage attributes.
+            //
+            // Memory consideration: For very large text (>100KB), NSAttributedString allocation
+            // can be expensive. TextKit 2 handles large documents efficiently via lazy layout,
+            // but the initial attributed string creation is still proportional to text size.
+            // Consider implementing a size limit or truncation if clipboard items exceed ~1MB.
             let paragraphStyle = NSMutableParagraphStyle()
             paragraphStyle.lineBreakMode = .byWordWrapping
 
