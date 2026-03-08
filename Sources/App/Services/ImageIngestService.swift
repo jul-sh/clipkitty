@@ -78,7 +78,7 @@ enum ImageIngestService {
             return (staticData, false)
         }
 
-        var frameDelays: [Double] = (0..<frameCount).map { gifFrameDelay(source: imageSource, index: $0) }
+        let frameDelays: [Double] = (0..<frameCount).map { gifFrameDelay(source: imageSource, index: $0) }
         let totalDuration = frameDelays.reduce(0, +)
 
         let framesToKeep: [Int]

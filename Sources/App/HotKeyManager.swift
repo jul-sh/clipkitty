@@ -3,7 +3,7 @@ import AppKit
 
 // MARK: - HotKey Registration State
 
-private enum RegistrationState: Sendable {
+private enum RegistrationState: @unchecked Sendable {
     case unregistered
     case registered(hotKey: EventHotKeyRef, eventHandler: EventHandlerRef)
 }
@@ -78,8 +78,7 @@ final class HotKeyManager {
     private func installEventHandler(_ eventHandler: inout EventHandlerRef?) -> Bool {
         var eventType = EventTypeSpec(eventClass: OSType(kEventClassKeyboard), eventKind: UInt32(kEventHotKeyPressed))
 
-        // Capture callback for use in the C function pointer
-        let callback = self.callback
+        // Note: callback is captured via self pointer passed to InstallEventHandler
 
         let handler: EventHandlerUPP = { _, event, userData -> OSStatus in
             guard userData != nil else { return OSStatus(eventNotHandledErr) }

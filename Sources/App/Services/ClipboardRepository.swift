@@ -101,7 +101,7 @@ actor ClipboardRepository {
 
     // MARK: - Store Statistics
 
-    func databaseSize() throws -> Int64 {
-        try store.databaseSize()
+    func databaseSize() -> Int64 {
+        store.databaseSize()
     }
 }

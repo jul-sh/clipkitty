@@ -1109,7 +1109,7 @@ struct ContentView: View {
             highlightedIndex = 0
         }
 
-        let itemCount = isShowingDeleteConfirm ? confirmCount : actions.count
+        _ = isShowingDeleteConfirm ? confirmCount : actions.count
 
         return VStack(spacing: 2) {
             if isShowingDeleteConfirm {

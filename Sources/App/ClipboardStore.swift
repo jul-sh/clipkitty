@@ -754,13 +754,20 @@ final class ClipboardStore {
 
             guard !paths.isEmpty else { return }
 
+            // Capture as let constants for Sendable closure
+            let pathsToSave = paths
+            let filenamesToSave = filenames
+            let fileSizesToSave = fileSizes
+            let utisToSave = utis
+            let bookmarkDataToSave = bookmarkDataList
+
             let result = await runInBackground("saveFiles", on: rustStore) { store in
                 try store.saveFiles(
-                    paths: paths,
-                    filenames: filenames,
-                    fileSizes: fileSizes,
-                    utis: utis,
-                    bookmarkDataList: bookmarkDataList,
+                    paths: pathsToSave,
+                    filenames: filenamesToSave,
+                    fileSizes: fileSizesToSave,
+                    utis: utisToSave,
+                    bookmarkDataList: bookmarkDataToSave,
                     thumbnail: nil,
                     sourceApp: sourceApp,
                     sourceAppBundleId: sourceAppBundleID
@@ -793,7 +800,7 @@ final class ClipboardStore {
         }
 
         pasteboard.clearContents()
-        pasteboard.setString(content.textContent, forType: .string)
+        _ = pasteboard.setString(content.textContent, forType: .string)
         lastChangeCount = pasteboard.changeCount
 
         Task { [weak self] in
@@ -821,10 +828,10 @@ final class ClipboardStore {
                 }
 
                 self.pasteboard.clearContents()
-                self.pasteboard.setData(gifData, forType: NSPasteboard.PasteboardType("com.compuserve.gif"))
+                _ = self.pasteboard.setData(gifData, forType: NSPasteboard.PasteboardType("com.compuserve.gif"))
                 // Also provide TIFF fallback for apps that don't support GIF
                 if let image = NSImage(data: data), let tiff = image.tiffRepresentation {
-                    self.pasteboard.setData(tiff, forType: .tiff)
+                    _ = self.pasteboard.setData(tiff, forType: .tiff)
                 }
             } else {
                 // Convert from stored format (HEIC) to TIFF off main thread
@@ -845,7 +852,7 @@ final class ClipboardStore {
                 }
 
                 self.pasteboard.clearContents()
-                self.pasteboard.setData(tiffData, forType: .tiff)
+                _ = self.pasteboard.setData(tiffData, forType: .tiff)
             }
 
             self.lastChangeCount = self.pasteboard.changeCount
@@ -873,10 +880,10 @@ final class ClipboardStore {
         // Finder requires NSFilenamesPboardType for file paste; other apps use public.file-url.
         let filenameType = NSPasteboard.PasteboardType("NSFilenamesPboardType")
         let allPaths = resolvedURLs.map { $0.path }
-        pasteboard.declareTypes([filenameType, .fileURL, .string], owner: nil)
-        pasteboard.setPropertyList(allPaths, forType: filenameType)  // All files (array)
-        pasteboard.setString(resolvedURLs[0].absoluteString, forType: .fileURL)  // First file only (.fileURL is singular)
-        pasteboard.setString(allPaths.joined(separator: "\n"), forType: .string)  // All files (text)
+        _ = pasteboard.declareTypes([filenameType, .fileURL, .string], owner: nil)
+        _ = pasteboard.setPropertyList(allPaths, forType: filenameType)  // All files (array)
+        _ = pasteboard.setString(resolvedURLs[0].absoluteString, forType: .fileURL)  // First file only (.fileURL is singular)
+        _ = pasteboard.setString(allPaths.joined(separator: "\n"), forType: .string)  // All files (text)
         lastChangeCount = pasteboard.changeCount
 
         Task { [weak self] in
@@ -919,7 +926,7 @@ final class ClipboardStore {
             self.state = snapshot
 
             // Report error with toast
-            await ErrorReporter.report(error, showToast: true)
+            ErrorReporter.report(error, showToast: true)
 
             return .failure(error)
         }

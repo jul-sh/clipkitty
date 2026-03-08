@@ -337,7 +337,6 @@ impl ClipboardStore {
         let _guard = DropGuard::new(token.clone());
 
         let runtime = self.runtime_handle();
-        let runtime_for_closure = runtime.clone();
 
         let db = Arc::clone(&self.db);
         let indexer = Arc::clone(&self.indexer);
@@ -481,7 +480,6 @@ impl ClipboardStoreApi for ClipboardStore {
         // Get runtime handle - uses current runtime if available, otherwise our fallback
         // This ensures we work both in tokio tests and when called from UniFFI
         let runtime = self.runtime_handle();
-        let runtime_for_closure = runtime.clone();
 
         // Clone Arcs for the blocking closure
         let db = Arc::clone(&self.db);
