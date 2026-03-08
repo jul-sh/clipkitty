@@ -29,9 +29,13 @@ final class LinkMetadataFetcher {
             }
         }
 
+        let taskId = ObjectIdentifier(task as AnyObject)
         activeFetches[itemId] = task
         let result = await task.value
-        activeFetches.removeValue(forKey: itemId)
+        // Check if we're still the active fetch for this itemId (re-entrancy protection)
+        if let currentTask = activeFetches[itemId], ObjectIdentifier(currentTask as AnyObject) == taskId {
+            activeFetches.removeValue(forKey: itemId)
+        }
 
         return result
     }
@@ -40,6 +44,14 @@ final class LinkMetadataFetcher {
     func cancelFetch(for itemId: Int64) {
         activeFetches[itemId]?.cancel()
         activeFetches.removeValue(forKey: itemId)
+    }
+
+    /// Cancel all in-flight fetches (cleanup on deinit)
+    func cancelAllFetches() {
+        for (_, task) in activeFetches {
+            task.cancel()
+        }
+        activeFetches.removeAll()
     }
 
     private static func convert(_ metadata: LPLinkMetadata) async -> FetchedLinkMetadata? {
