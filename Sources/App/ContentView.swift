@@ -1263,6 +1263,7 @@ struct TextPreviewView: NSViewRepresentable {
         textView.textContainer?.widthTracksTextView = true
         textView.textContainer?.containerSize = NSSize(width: scrollView.contentSize.width, height: .greatestFiniteMagnitude)
         textView.frame = NSRect(x: 0, y: 0, width: scrollView.contentSize.width, height: 0)
+        textView.setAccessibilityIdentifier("PreviewTextView")
 
         scrollView.documentView = textView
         return scrollView
