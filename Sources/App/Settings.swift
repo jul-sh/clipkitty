@@ -181,6 +181,9 @@ final class AppSettings: ObservableObject {
     private let updateCheckFailingSinceKey = "updateCheckFailingSince"
     #endif
 
+    /// Flag to prevent save() calls during initialization (didSet triggers before init completes)
+    private var isInitializing = true
+
     private init() {
         // Initialize all stored properties first
         if let data = defaults.data(forKey: hotKeyKey),
@@ -225,9 +228,14 @@ final class AppSettings: ObservableObject {
 
         maxImageMegapixels = 2.0
         imageCompressionQuality = 0.3
+
+        // Mark initialization complete - save() calls are now allowed
+        isInitializing = false
     }
 
     private func save() {
+        // Prevent save during init (didSet fires before init completes)
+        guard !isInitializing else { return }
         if let data = try? JSONEncoder().encode(hotKey) {
             defaults.set(data, forKey: hotKeyKey)
         }
@@ -237,7 +245,7 @@ final class AppSettings: ObservableObject {
         defaults.set(ignoreConfidentialContent, forKey: ignoreConfidentialKey)
         defaults.set(ignoreTransientContent, forKey: ignoreTransientKey)
         defaults.set(generateLinkPreviews, forKey: generateLinkPreviewsKey)
-        defaults.set(Array(ignoredAppBundleIds), forKey: ignoredAppBundleIdsKey)
+        defaults.set(Array(ignoredAppBundleIds).sorted(), forKey: ignoredAppBundleIdsKey)
         defaults.set(clickToOpenEnabled, forKey: clickToOpenKey)
         #if !APP_STORE
         defaults.set(autoInstallUpdates, forKey: autoInstallUpdatesKey)

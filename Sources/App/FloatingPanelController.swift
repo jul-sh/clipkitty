@@ -7,9 +7,54 @@ enum PanelMode {
     case testing
 }
 
-private enum PanelState {
+// MARK: - Panel State Machine
+
+/// State machine for panel visibility with transition states to prevent race conditions.
+/// Valid transitions:
+///   hidden -> showing -> visible
+///   visible -> hiding -> hidden
+///   showing -> hiding (cancel show)
+///   hiding -> showing (cancel hide)
+private enum PanelState: Equatable {
     case hidden
+    case showing(previousApp: NSRunningApplication?)
     case visible(previousApp: NSRunningApplication?)
+    case hiding(previousApp: NSRunningApplication?)
+
+    /// Whether the panel is in a transitioning state
+    var isTransitioning: Bool {
+        switch self {
+        case .showing, .hiding: return true
+        case .hidden, .visible: return false
+        }
+    }
+
+    /// Whether the panel should be considered "open" (showing or visible)
+    var isOpen: Bool {
+        switch self {
+        case .showing, .visible: return true
+        case .hidden, .hiding: return false
+        }
+    }
+
+    /// The previous app captured when showing, if any
+    var previousApp: NSRunningApplication? {
+        switch self {
+        case .hidden: return nil
+        case .showing(let app), .visible(let app), .hiding(let app): return app
+        }
+    }
+
+    // Equatable conformance for NSRunningApplication comparison
+    static func == (lhs: PanelState, rhs: PanelState) -> Bool {
+        switch (lhs, rhs) {
+        case (.hidden, .hidden): return true
+        case (.showing(let a), .showing(let b)): return a == b
+        case (.visible(let a), .visible(let b)): return a == b
+        case (.hiding(let a), .hiding(let b)): return a == b
+        default: return false
+        }
+    }
 }
 
 @MainActor
@@ -18,6 +63,10 @@ final class FloatingPanelController: NSObject, NSWindowDelegate {
     private let store: ClipboardStore
     private let mode: PanelMode
     private var panelState: PanelState = .hidden
+
+    /// Debounce interval to prevent rapid toggle race conditions
+    private var lastToggleTime: Date?
+    private let toggleDebounceInterval: TimeInterval = 0.15
 
     /// Initial search query to pre-fill (for CI screenshots)
     var initialSearchQuery: String?
@@ -105,17 +154,34 @@ final class FloatingPanelController: NSObject, NSWindowDelegate {
     }
 
     func toggle() {
+        // Debounce rapid toggles to prevent race conditions
+        let now = Date()
+        if let lastToggle = lastToggleTime,
+           now.timeIntervalSince(lastToggle) < toggleDebounceInterval {
+            return
+        }
+        lastToggleTime = now
+
         switch panelState {
-        case .hidden:
+        case .hidden, .hiding:
             show()
-        case .visible:
+        case .visible, .showing:
             hide()
         }
     }
 
     func show() {
+        // Guard: only allow show from hidden or hiding states
+        switch panelState {
+        case .visible, .showing:
+            return  // Already visible or showing
+        case .hidden, .hiding:
+            break   // Valid transition
+        }
+
         let previousApp = NSWorkspace.shared.frontmostApplication
-        panelState = .visible(previousApp: previousApp)
+        panelState = .showing(previousApp: previousApp)
+
         // Update content to apply any initial search query
         if initialSearchQuery != nil {
             updatePanelContent()
@@ -123,18 +189,37 @@ final class FloatingPanelController: NSObject, NSWindowDelegate {
         centerPanel()
         panel.makeKeyAndOrderFront(nil)
         NSApp.activate(ignoringOtherApps: true)
+
+        // Transition to stable visible state
+        panelState = .visible(previousApp: previousApp)
     }
 
     func hide() {
-        guard case .visible(let previousApp) = panelState else { return }
+        // Guard: only allow hide from visible or showing states
+        let previousApp: NSRunningApplication?
+        switch panelState {
+        case .hidden, .hiding:
+            return  // Already hidden or hiding
+        case .visible(let app), .showing(let app):
+            previousApp = app
+        }
+
+        panelState = .hiding(previousApp: previousApp)
+
         panel.orderOut(nil)
         store.resetForDisplay()
-        previousApp?.activate()
+
+        // Only activate previous app if it hasn't been terminated
+        if let app = previousApp, !app.isTerminated {
+            app.activate()
+        }
+
         panelState = .hidden
     }
 
     private func centerPanel() {
-        guard let screen = NSScreen.main else { return }
+        // Fallback to any available screen if main screen is unavailable
+        guard let screen = NSScreen.main ?? NSScreen.screens.first else { return }
         let screenFrame = screen.visibleFrame
         let panelFrame = panel.frame
 
@@ -146,12 +231,8 @@ final class FloatingPanelController: NSObject, NSWindowDelegate {
 
     private func selectItem(itemId: Int64, content: ClipboardContent) {
         store.paste(itemId: itemId, content: content)
-        let targetApp: NSRunningApplication?
-        if case .visible(let previousApp) = panelState {
-            targetApp = previousApp
-        } else {
-            targetApp = nil
-        }
+        // Capture previous app before hiding (uses state machine's previousApp property)
+        let targetApp = panelState.previousApp
         hide()
         if case .autoPaste = AppSettings.shared.pasteMode {
             simulatePaste(targetApp: targetApp)
@@ -169,7 +250,7 @@ final class FloatingPanelController: NSObject, NSWindowDelegate {
 
     /// Simulate Cmd+V keystroke to paste into the target app
     private func simulatePaste(targetApp: NSRunningApplication?) {
-        guard let targetApp = targetApp else {
+        guard let targetApp = targetApp, !targetApp.isTerminated else {
             return
         }
 
@@ -177,6 +258,8 @@ final class FloatingPanelController: NSObject, NSWindowDelegate {
         Task {
             // Poll until the target app is active (max ~500ms)
             for _ in 0..<50 {
+                // Check if app was terminated during polling
+                guard !targetApp.isTerminated else { return }
                 if NSWorkspace.shared.frontmostApplication == targetApp {
                     break
                 }

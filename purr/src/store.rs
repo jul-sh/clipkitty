@@ -22,6 +22,7 @@ const EAGER_MATCH_DATA_COUNT: usize = 25;
 const SHORT_CONTENT_THRESHOLD: usize = 1024;
 /// Skip eager short-item highlights when results exceed this count
 const EAGER_SHORT_RESULT_LIMIT: usize = 200;
+
 use chrono::Utc;
 use once_cell::sync::Lazy;
 use std::path::PathBuf;
@@ -239,10 +240,7 @@ impl ClipboardStore {
                     let content = item.content.text_content();
                     let is_short = content.len() <= SHORT_CONTENT_THRESHOLD;
                     if idx < EAGER_MATCH_DATA_COUNT || (is_short && few_results) {
-                        ItemMatch {
-                            item_metadata: item.to_metadata(),
-                            match_data: Some(search::compute_item_match_data(&content, query)),
-                        }
+                        search::create_item_match(item, query)
                     } else {
                         search::create_lazy_item_match(item)
                     }
@@ -545,9 +543,9 @@ impl ClipboardStoreApi for ClipboardStore {
         Ok(items)
     }
 
-    /// Compute match data (snippet, highlights, line number) for multiple items.
+    /// Compute highlights for multiple items given the search query.
     /// Called on-demand for visible items in the list view.
-    fn compute_match_data(&self, item_ids: Vec<i64>, query: String) -> Result<Vec<MatchData>, ClipKittyError> {
+    fn compute_highlights(&self, item_ids: Vec<i64>, query: String) -> Result<Vec<MatchData>, ClipKittyError> {
         if item_ids.is_empty() {
             return Ok(Vec::new());
         }
@@ -561,7 +559,7 @@ impl ClipboardStoreApi for ClipboardStore {
         let trimmed = query.trim();
         let is_prefix_query = trimmed.len() < search::MIN_TRIGRAM_QUERY_LEN;
 
-        // Compute match data in parallel for efficiency
+        // Compute highlights in parallel for efficiency
         use rayon::prelude::*;
         let results: Vec<MatchData> = item_ids
             .par_iter()
@@ -571,7 +569,7 @@ impl ClipboardStoreApi for ClipboardStore {
                     if is_prefix_query {
                         search::compute_prefix_match_data(content, trimmed.chars().count())
                     } else {
-                        search::compute_item_match_data(content, &query)
+                        search::compute_item_highlights(content, &query)
                     }
                 } else {
                     MatchData::default()
@@ -855,15 +853,18 @@ mod tests {
 
         assert_eq!(result.matches.len(), 1);
         assert!(result.matches[0].item_metadata.snippet.contains("Hello"));
-        // First 25 results have eager match_data with highlights
-        assert!(result.matches[0].match_data.is_some());
-        assert!(!result.matches[0].match_data.as_ref().unwrap().highlights.is_empty());
+        // Search returns eager match_data with highlights
+        let match_data = result.matches[0]
+            .match_data
+            .as_ref()
+            .expect("expected eager match_data for top trigram result");
+        assert!(!match_data.highlights.is_empty());
 
-        // Verify compute_match_data also works for on-demand computation
+        // Verify compute_highlights also works for on-demand computation
         let item_id = result.matches[0].item_metadata.item_id;
-        let match_data = store.compute_match_data(vec![item_id], "Hello".to_string()).unwrap();
-        assert_eq!(match_data.len(), 1);
-        assert!(!match_data[0].highlights.is_empty());
+        let highlights = store.compute_highlights(vec![item_id], "Hello".to_string()).unwrap();
+        assert_eq!(highlights.len(), 1);
+        assert!(!highlights[0].highlights.is_empty());
     }
 
     #[test]
@@ -1111,7 +1112,10 @@ mod tests {
 
         // All results should have eager match_data with prefix highlight
         for m in &result.matches {
-            let md = m.match_data.as_ref().expect("short query results must have eager match_data");
+            let md = m
+                .match_data
+                .as_ref()
+                .expect("expected eager match_data for short query");
             assert!(!md.highlights.is_empty(), "must have highlight");
             assert_eq!(md.highlights[0].start, 0, "highlight must start at 0");
             assert_eq!(md.highlights[0].end, 1, "single-char query highlights 1 char");

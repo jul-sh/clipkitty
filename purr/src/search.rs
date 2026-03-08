@@ -331,7 +331,16 @@ pub(crate) fn create_match_data(fuzzy_match: &FuzzyMatch) -> MatchData {
     }
 }
 
-/// Create ItemMatch without match_data (lazy mode - computed on-demand via compute_match_data)
+/// Create ItemMatch with eager match_data
+pub(crate) fn create_item_match(item: &StoredItem, query: &str) -> ItemMatch {
+    let content = item.content.text_content();
+    ItemMatch {
+        item_metadata: item.to_metadata(),
+        match_data: Some(compute_item_highlights(&content, query)),
+    }
+}
+
+/// Create ItemMatch without match_data (lazy mode - computed on-demand via compute_highlights)
 pub(crate) fn create_lazy_item_match(item: &StoredItem) -> ItemMatch {
     ItemMatch {
         item_metadata: item.to_metadata(),
@@ -364,9 +373,9 @@ pub(crate) fn compute_prefix_match_data(content: &str, query_char_len: usize) ->
     }
 }
 
-/// Compute match data (snippet, highlights, line number) for an item given a query.
-/// Used for on-demand computation in lazy mode.
-pub(crate) fn compute_item_match_data(
+/// Compute highlights for an item given a query.
+/// Used for on-demand highlight computation.
+pub(crate) fn compute_item_highlights(
     content: &str,
     query: &str,
 ) -> MatchData {

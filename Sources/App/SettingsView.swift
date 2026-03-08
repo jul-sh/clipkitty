@@ -148,7 +148,7 @@ struct GeneralSettingsView: View {
 
             Section(String(localized: "Storage")) {
                 LabeledContent(String(localized: "Current Size")) {
-                    Text(formatBytes(store.databaseSizeBytes))
+                    Text(Utilities.formatBytes(store.databaseSizeBytes))
                         .foregroundStyle(.secondary)
                 }
 
@@ -260,21 +260,6 @@ struct GeneralSettingsView: View {
         return min(max(rounded, minDatabaseSizeGB), maxDatabaseSizeGB)
     }
 
-    private func formatBytes(_ bytes: Int64) -> String {
-        let kb = Double(bytes) / 1024
-        let mb = kb / 1024
-        let gb = mb / 1024
-
-        if gb >= 1 {
-            return String(localized: "\(gb, specifier: "%.2f") GB")
-        } else if mb >= 1 {
-            return String(localized: "\(mb, specifier: "%.1f") MB")
-        } else if kb >= 1 {
-            return String(localized: "\(kb, specifier: "%.0f") KB")
-        } else {
-            return String(localized: "\(bytes) bytes")
-        }
-    }
 }
 
 struct HotKeyRecorder: NSViewRepresentable {

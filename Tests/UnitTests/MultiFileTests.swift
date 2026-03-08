@@ -38,7 +38,7 @@ final class MultiFileTests: XCTestCase {
             return
         }
 
-        XCTAssertEqual(displayName, "a.pdf and 2 more", "Display name for 3 files")
+        XCTAssertEqual(displayName, "3 Files: a.pdf and 2 more", "Display name for 3 files")
         XCTAssertEqual(files.count, 3)
         XCTAssertEqual(files[0].path, "/tmp/a.pdf", "Primary path should be first file")
         XCTAssertEqual(files[0].filename, "a.pdf")
@@ -68,7 +68,7 @@ final class MultiFileTests: XCTestCase {
             return
         }
 
-        XCTAssertEqual(displayName, "solo.txt")
+        XCTAssertEqual(displayName, "File: solo.txt")
         XCTAssertEqual(files.count, 1)
         XCTAssertEqual(files[0].filename, "solo.txt")
     }
@@ -149,7 +149,7 @@ final class MultiFileTests: XCTestCase {
         )
 
         let items = try store.fetchByIds(itemIds: [id])
-        XCTAssertEqual(items[0].content.textContent, "a.txt, b.txt")
+        XCTAssertEqual(items[0].content.textContent, "2 Files: a.txt, b.txt")
     }
 
     func testThreeFilesDisplayName() throws {
@@ -167,7 +167,7 @@ final class MultiFileTests: XCTestCase {
         )
 
         let items = try store.fetchByIds(itemIds: [id])
-        XCTAssertEqual(items[0].content.textContent, "a.txt and 2 more")
+        XCTAssertEqual(items[0].content.textContent, "3 Files: a.txt and 2 more")
     }
 
     // MARK: - Search
@@ -212,8 +212,8 @@ final class MultiFileTests: XCTestCase {
         )
 
         let items = try store.fetchByIds(itemIds: [id])
-        // textContent should return the filename
-        XCTAssertEqual(items[0].content.textContent, "test.pdf")
+        // textContent should return the filename with prefix
+        XCTAssertEqual(items[0].content.textContent, "File: test.pdf")
     }
 
     // MARK: - Additional files JSON bookmark encoding
