@@ -1,5 +1,5 @@
 {
-  "originHash" : "5e0eef2df3b50215cad95ed18d8fc6d2f58ae789c67daf93632199c014365006",
+  "originHash" : "5c0ca289901cca1fd64045b75fb18383b646b1a8ffd4cacfba0aa4991b54b54b",
   "pins" : [
     {
       "identity" : "grdb.swift",
@@ -17,6 +17,15 @@
       "state" : {
         "revision" : "21d8df80440b1ca3b65fa82e40782f1e5a9e6ba2",
         "version" : "2.9.0"
+      }
+    },
+    {
+      "identity" : "sttextkitplus",
+      "kind" : "remoteSourceControl",
+      "location" : "https://github.com/krzyzanowskim/STTextKitPlus.git",
+      "state" : {
+        "revision" : "2ee74906f4d753458eeaa9a2f6d4538aacb86a1d",
+        "version" : "0.3.0"
       }
     }
   ],

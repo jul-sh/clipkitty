@@ -59,7 +59,8 @@ generate:
 # Build using xcodebuild
 build:
 	@echo "Building $(APP_NAME) ($(CONFIGURATION))..."
-	@xcodebuild -scheme $(APP_NAME) \
+	@xcodebuild -workspace $(APP_NAME).xcworkspace \
+		-scheme $(APP_NAME) \
 		-configuration $(CONFIGURATION) \
 		-derivedDataPath $(DERIVED_DATA) \
 		MARKETING_VERSION=$(VERSION) \
@@ -110,13 +111,15 @@ uitest: all
 	@./distribution/setup-dev-signing.sh
 	@echo "Running UI tests..."
 	@if [ -n "$(TEST)" ]; then \
-		xcodebuild test -scheme ClipKittyUITests \
+		xcodebuild test -workspace $(APP_NAME).xcworkspace \
+			-scheme ClipKittyUITests \
 			-destination "platform=macOS" \
 			-derivedDataPath $(DERIVED_DATA) \
 			-only-testing:ClipKittyUITests/ClipKittyUITests/$(TEST) \
 			2>&1 | grep -E "(Test Case|passed|failed|error:)" || true; \
 	else \
-		xcodebuild test -scheme ClipKittyUITests \
+		xcodebuild test -workspace $(APP_NAME).xcworkspace \
+			-scheme ClipKittyUITests \
 			-destination "platform=macOS" \
 			-derivedDataPath $(DERIVED_DATA) \
 			2>&1 | grep -E "(Test Case|passed|failed|error:)" || true; \

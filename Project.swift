@@ -118,6 +118,7 @@ let project = Project(
                 .target(name: "ClipKittyRust"),
                 .sdk(name: "SystemConfiguration", type: .framework),
                 .external(name: "Sparkle"),
+                .external(name: "STTextKitPlus"),
             ],
             settings: .settings(
                 base: [

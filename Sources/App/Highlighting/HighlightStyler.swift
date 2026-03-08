@@ -46,24 +46,13 @@ enum HighlightStyler {
         return attrs
     }
 
-    // MARK: - NSAttributedString Application (for TextPreviewView)
+    // MARK: - Rendering Attributes (for TextKit 2 TextPreviewView)
 
-    /// Apply highlights to an NSMutableAttributedString.
-    /// Uses `nsRange(in:)` for correct Unicode scalar → UTF-16 conversion.
-    static func applyHighlights(
-        _ highlights: [HighlightRange],
-        to attributed: NSMutableAttributedString,
-        text: String
-    ) {
-        for range in highlights {
-            let nsRange = range.nsRange(in: text)
-            if nsRange.location != NSNotFound && nsRange.location + nsRange.length <= attributed.length {
-                let attrs = attributes(for: range.kind)
-                for (key, value) in attrs {
-                    attributed.addAttribute(key, value: value, range: nsRange)
-                }
-            }
-        }
+    /// Rendering attributes for a highlight kind.
+    /// Applied via `NSTextLayoutManager.setRenderingAttributes(_:for:)` to style
+    /// highlights without mutating NSTextContentStorage.
+    static func renderingAttributes(for kind: HighlightKind) -> [NSAttributedString.Key: Any] {
+        attributes(for: kind)
     }
 
     // MARK: - SwiftUI Text Support

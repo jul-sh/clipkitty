@@ -1,6 +1,7 @@
 import SwiftUI
 import AppKit
 import ClipKittyRust
+import STTextKitPlus
 import os.log
 import UniformTypeIdentifiers
 
@@ -1246,7 +1247,16 @@ struct TextPreviewView: NSViewRepresentable {
         scrollView.hasVerticalScroller = true
         scrollView.drawsBackground = false
 
-        let textView = NSTextView()
+        // Use TextKit 2 by creating NSTextView with the textLayoutManager-based initializer.
+        // IMPORTANT: never access .layoutManager — that silently downgrades to TextKit 1.
+        let textContainer = NSTextContainer()
+        textContainer.widthTracksTextView = true
+        textContainer.containerSize = NSSize(
+            width: scrollView.contentSize.width,
+            height: .greatestFiniteMagnitude
+        )
+
+        let textView = NSTextView(frame: .zero, textContainer: textContainer)
         textView.isEditable = false
         textView.isSelectable = true
         textView.isRichText = true
@@ -1257,8 +1267,6 @@ struct TextPreviewView: NSViewRepresentable {
         textView.minSize = NSSize(width: 0, height: 0)
         textView.maxSize = NSSize(width: CGFloat.greatestFiniteMagnitude, height: CGFloat.greatestFiniteMagnitude)
         textView.textContainerInset = NSSize(width: 16, height: 16)
-        textView.textContainer?.widthTracksTextView = true
-        textView.textContainer?.containerSize = NSSize(width: scrollView.contentSize.width, height: .greatestFiniteMagnitude)
         textView.frame = NSRect(x: 0, y: 0, width: scrollView.contentSize.width, height: 0)
 
         scrollView.documentView = textView
@@ -1315,51 +1323,118 @@ struct TextPreviewView: NSViewRepresentable {
         )
         textView.frame = NSRect(x: 0, y: 0, width: nsView.contentSize.width, height: textView.frame.height)
 
-        // Only update if text or highlights changed
-        let currentText = textView.string
-        let shouldUpdate = currentText != text || context.coordinator.lastHighlights != highlights
-        if shouldUpdate {
-            context.coordinator.lastHighlights = highlights
+        let coordinator = context.coordinator
+        let textChanged = textView.string != text
+        let highlightsChanged = coordinator.lastHighlights != highlights
 
-            // Create paragraph style to ensure consistent word wrapping
+        guard textChanged || highlightsChanged else { return }
+
+        if textChanged {
+            // Text content changed — replace storage attributes (font, color, paragraph style only).
+            // Highlights are applied as rendering attributes, not storage attributes.
             let paragraphStyle = NSMutableParagraphStyle()
             paragraphStyle.lineBreakMode = .byWordWrapping
 
-            // Set base text with font
             let attributed = NSMutableAttributedString(string: text, attributes: [
                 .font: font,
                 .foregroundColor: NSColor.labelColor,
                 .paragraphStyle: paragraphStyle
             ])
 
-            if highlights.isEmpty {
-                textView.textStorage?.setAttributedString(attributed)
-                // Scroll to top when no highlights
-                textView.scrollToBeginningOfDocument(nil)
-            } else {
-                // Apply highlights using shared HighlightStyler
-                HighlightStyler.applyHighlights(highlights, to: attributed, text: text)
-                textView.textStorage?.setAttributedString(attributed)
+            textView.textStorage?.setAttributedString(attributed)
+        }
 
-                // Auto-scroll to the densest highlight region
-                scrollToHighlight(textView: textView)
+        // Convert highlights to NSTextRanges for the layout manager
+        let tlm = textView.textLayoutManager
+        let newMatchRanges = resolveTextRanges(highlights: highlights, text: text, layoutManager: tlm)
+        let oldMatchRanges = coordinator.currentMatchRanges
+
+        coordinator.currentMatchRanges = newMatchRanges
+        coordinator.lastHighlights = highlights
+
+        if let tlm {
+            if textChanged {
+                // Full text replacement — apply all new highlights from scratch
+                for match in newMatchRanges {
+                    tlm.setRenderingAttributes(
+                        HighlightStyler.renderingAttributes(for: match.kind),
+                        for: match.range
+                    )
+                }
+            } else {
+                // Only highlights changed — diff and invalidate minimally.
+                // Remove old rendering attributes for ranges no longer highlighted
+                let newSet = Set(newMatchRanges.map { MatchRangeKey($0) })
+                for old in oldMatchRanges where !newSet.contains(MatchRangeKey(old)) {
+                    tlm.invalidateRenderingAttributes(for: old.range)
+                }
+
+                // Apply new rendering attributes
+                let oldSet = Set(oldMatchRanges.map { MatchRangeKey($0) })
+                for new in newMatchRanges where !oldSet.contains(MatchRangeKey(new)) {
+                    tlm.setRenderingAttributes(
+                        HighlightStyler.renderingAttributes(for: new.kind),
+                        for: new.range
+                    )
+                }
             }
+        }
+
+        if highlights.isEmpty {
+            textView.scrollToBeginningOfDocument(nil)
+        } else {
+            scrollToHighlight(textView: textView)
         }
     }
 
+    // MARK: - Highlight Resolution
+
+    /// Convert [HighlightRange] to [(NSTextRange, HighlightKind)] using the text layout manager.
+    private func resolveTextRanges(
+        highlights: [HighlightRange],
+        text: String,
+        layoutManager: NSTextLayoutManager?
+    ) -> [MatchRange] {
+        guard let tlm = layoutManager,
+              let tcm = tlm.textContentManager else { return [] }
+
+        return highlights.compactMap { highlight in
+            let nsRange = highlight.nsRange(in: text)
+            guard nsRange.location != NSNotFound else { return nil }
+
+            guard let start = tcm.location(tcm.documentRange.location, offsetBy: nsRange.location),
+                  let end = tcm.location(start, offsetBy: nsRange.length) else { return nil }
+
+            guard let textRange = NSTextRange(location: start, end: end) else { return nil }
+            return MatchRange(range: textRange, kind: highlight.kind,
+                              scalarStart: highlight.start, scalarEnd: highlight.end)
+        }
+    }
+
+    // MARK: - Scroll to Match
+
     private func scrollToHighlight(textView: NSTextView) {
         let targetHighlight = highlights.first { $0.start == densestHighlightStart } ?? highlights[0]
-        let targetRange = targetHighlight.nsRange(in: text)
+        let targetNSRange = targetHighlight.nsRange(in: text)
 
         DispatchQueue.main.async { [weak textView] in
             guard let textView else { return }
             guard let scrollView = textView.enclosingScrollView else { return }
-            textView.layoutManager?.ensureLayout(for: textView.textContainer!)
+            guard let tlm = textView.textLayoutManager,
+                  let tcm = tlm.textContentManager else { return }
 
-            let glyphRange = textView.layoutManager?.glyphRange(forCharacterRange: targetRange, actualCharacterRange: nil) ?? targetRange
-            guard let rect = textView.layoutManager?.boundingRect(forGlyphRange: glyphRange, in: textView.textContainer!) else { return }
+            // Convert NSRange to NSTextRange
+            guard let start = tcm.location(tcm.documentRange.location, offsetBy: targetNSRange.location),
+                  let end = tcm.location(start, offsetBy: targetNSRange.length),
+                  let targetTextRange = NSTextRange(location: start, end: end) else { return }
 
-            // Convert rect to scroll view coordinates and check if already visible
+            // Ensure layout for just this range
+            tlm.ensureLayout(for: targetTextRange)
+
+            // Get the frame of the highlight using STTextKitPlus
+            guard let rect = tlm.textSegmentFrame(in: targetTextRange, type: .highlight) else { return }
+
+            // Convert rect to scroll view coordinates
             let highlightRect = rect.offsetBy(dx: textView.textContainerInset.width, dy: textView.textContainerInset.height)
             let visibleRect = scrollView.documentVisibleRect
             if visibleRect.contains(highlightRect) {
@@ -1367,7 +1442,12 @@ struct TextPreviewView: NSViewRepresentable {
             }
 
             // Check if highlight is near the end of the document
-            let documentHeight = textView.layoutManager?.usedRect(for: textView.textContainer!).height ?? 0
+            var documentHeight: CGFloat = 0
+            tlm.enumerateTextLayoutFragments(from: tlm.documentRange.endLocation,
+                                              options: [.reverse, .ensuresLayout]) { fragment in
+                documentHeight = fragment.layoutFragmentFrame.maxY
+                return false  // stop after first (last) fragment
+            }
             let highlightY = rect.origin.y + rect.height
             let isNearEnd = documentHeight - highlightY < 100
 
@@ -1388,8 +1468,31 @@ struct TextPreviewView: NSViewRepresentable {
         Coordinator()
     }
 
+    // MARK: - Supporting Types
+
+    /// A resolved match: the original scalar indices (for identity) plus the TextKit 2 range (for operations).
+    struct MatchRange {
+        let range: NSTextRange
+        let kind: HighlightKind
+        let scalarStart: UInt64
+        let scalarEnd: UInt64
+    }
+
+    /// Hashable key for efficient Set-based diffing of match ranges.
+    private struct MatchRangeKey: Hashable {
+        let scalarStart: UInt64
+        let scalarEnd: UInt64
+
+        init(_ match: MatchRange) {
+            self.scalarStart = match.scalarStart
+            self.scalarEnd = match.scalarEnd
+        }
+    }
+
     class Coordinator {
         var lastHighlights: [HighlightRange] = []
+        /// Current match ranges for diffing on next update.
+        var currentMatchRanges: [MatchRange] = []
     }
 }
 
