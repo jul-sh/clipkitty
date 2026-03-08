@@ -9,12 +9,17 @@ private enum RegistrationState {
 final class HotKeyManager: @unchecked Sendable {
     private var state: RegistrationState = .unregistered
     private let callback: @Sendable () -> Void
+    /// Lock protecting state mutations for thread safety (@unchecked Sendable)
+    private let stateLock = NSLock()
 
     init(callback: @escaping @Sendable () -> Void) {
         self.callback = callback
     }
 
     func register(hotKey: HotKey = .default) {
+        stateLock.lock()
+        defer { stateLock.unlock() }
+
         // If already registered, just update the hotkey (reuse event handler)
         if case .registered(let oldHotKeyRef, let existingEventHandler) = state {
             UnregisterEventHotKey(oldHotKeyRef)
@@ -93,6 +98,9 @@ final class HotKeyManager: @unchecked Sendable {
     }
 
     func unregister() {
+        stateLock.lock()
+        defer { stateLock.unlock() }
+
         if case .registered(let hotKey, let eventHandler) = state {
             UnregisterEventHotKey(hotKey)
             RemoveEventHandler(eventHandler)
