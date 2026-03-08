@@ -63,6 +63,8 @@ struct ContentView: View {
     @State private var filterPopover: FilterPopoverState = .hidden
     @State private var actionsPopover: ActionsPopoverState = .hidden
     @State private var commandNumberEventMonitor: Any?
+    /// Prefetch match data beyond the currently visible rows so scrolling rarely lands on lazy items.
+    private let matchDataPrefetchBuffer = 20
     enum FocusTarget: Hashable {
         case search
         case filterDropdown
@@ -276,6 +278,12 @@ struct ContentView: View {
             } else {
                 searchSpinner = .idle
             }
+
+            if case .results = newState,
+               let selectedItemId,
+               matchDataForItem(selectedItemId) == nil {
+                store.loadMatchDataForItems(itemIds: [selectedItemId])
+            }
         }
         // 3. Search query changes (triggers store refresh)
         .onChange(of: searchText) { _, newValue in
@@ -328,6 +336,7 @@ struct ContentView: View {
                 lastPreviewSelection = nil
                 return
             }
+            store.loadMatchDataForItems(itemIds: [newId])
             refreshSelectedItem(for: newId)
         }
         // 7. Selected item changes (updates preview spinner)
@@ -769,6 +778,18 @@ struct ContentView: View {
         return itemIds.firstIndex(of: itemId)
     }
 
+    /// Called when an item row appears. Prefetches match data for nearby rows that are still lazy.
+    private func onItemAppear(index: Int) {
+        let startIndex = max(0, index - matchDataPrefetchBuffer)
+        let endIndex = min(itemCount - 1, index + matchDataPrefetchBuffer)
+        guard startIndex <= endIndex else { return }
+
+        let idsToLoad = (startIndex...endIndex).compactMap { itemId(at: $0) }
+        guard !idsToLoad.isEmpty else { return }
+
+        store.loadMatchDataForItems(itemIds: idsToLoad)
+    }
+
     // MARK: - Content
 
     @ViewBuilder
@@ -819,7 +840,7 @@ struct ContentView: View {
     // MARK: - Item List
 
     /// Row data for display - preserves matchData during loading to prevent text flash
-    private var displayRows: [(metadata: ItemMetadata, matchData: MatchData)] {
+    private var displayRows: [(metadata: ItemMetadata, matchData: MatchData?)] {
         switch store.state {
         case .results(_, let items, _), .resultsLoading(_, let items):
             return items.map { ($0.itemMetadata, $0.matchData) }
@@ -845,6 +866,7 @@ struct ContentView: View {
                         }
                     )
                     .equatable()
+                    .onAppear { onItemAppear(index: index) }
                     .accessibilityIdentifier("ItemRow_\(index)")
                     .listRowInsets(EdgeInsets(top: 2, leading: 0, bottom: 2, trailing: 0))
                     .listRowSeparator(.hidden)
@@ -1823,7 +1845,7 @@ struct LinkPreviewView: NSViewRepresentable {
 
 struct ItemRow: View, Equatable {
     let metadata: ItemMetadata
-    let matchData: MatchData
+    let matchData: MatchData?
     let isSelected: Bool
     let hasUserNavigated: Bool
     let onTap: () -> Void
@@ -1838,12 +1860,15 @@ struct ItemRow: View, Equatable {
     /// Text to display - uses matchData.text if in search mode, otherwise metadata.snippet
     /// SwiftUI's Three-Part HStack handles truncation with proper ellipsis via layout priorities
     private var displayText: String {
-        !matchData.text.isEmpty ? matchData.text : metadata.snippet
+        if let matchText = matchData?.text, !matchText.isEmpty {
+            return matchText
+        }
+        return metadata.snippet
     }
 
     /// Highlights for display - passed directly from Rust (already adjusted for normalization)
     private var displayHighlights: [HighlightRange] {
-        matchData.highlights
+        matchData?.highlights ?? []
     }
 
 
@@ -1932,8 +1957,8 @@ struct ItemRow: View, Equatable {
             .allowsHitTesting(false)
 
             // Line number (shown in search mode when line > 1)
-            if matchData.lineNumber > 1 {
-                Text("L\(matchData.lineNumber):")
+            if let lineNumber = matchData?.lineNumber, lineNumber > 1 {
+                Text("L\(lineNumber):")
                     .font(.custom(FontManager.mono, size: 13))
                     .foregroundColor(accentSelected ? .white.opacity(0.7) : .secondary)
                     .lineLimit(1)

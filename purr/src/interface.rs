@@ -319,7 +319,8 @@ pub struct ItemMetadata {
 #[derive(Debug, Clone, uniffi::Record)]
 pub struct ItemMatch {
     pub item_metadata: ItemMetadata,
-    pub match_data: MatchData,
+    /// Match context data. None for lazy results - call compute_highlights to populate.
+    pub match_data: Option<MatchData>,
 }
 
 /// Search result container
@@ -451,5 +452,4 @@ impl From<crate::indexer::IndexerError> for ClipKittyError {
         ClipKittyError::IndexError(e.to_string())
     }
 }
-
 
