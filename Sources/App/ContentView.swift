@@ -1305,18 +1305,18 @@ struct TextPreviewView: NSViewRepresentable {
         // Settle container dimensions FIRST so that any deferred scroll
         // computes geometry against the correct width.
         textView.textContainer?.containerSize = NSSize(
-            width: nsView.contentSize.width,
+            width: containerWidth,
             height: .greatestFiniteMagnitude
         )
-        textView.frame = NSRect(x: 0, y: 0, width: nsView.contentSize.width, height: textView.frame.height)
+        textView.frame = NSRect(x: 0, y: 0, width: containerWidth, height: textView.frame.height)
 
         let coordinator = context.coordinator
         let textChanged = textView.string != text
         let highlightsChanged = coordinator.lastHighlights != highlights
-        coordinator.scrollGeneration += 1
-        let scrollGeneration = coordinator.scrollGeneration
+        let contentWidthChanged = abs(coordinator.lastContentWidth - containerWidth) > 0.5
+        coordinator.lastContentWidth = containerWidth
 
-        guard textChanged || highlightsChanged else { return }
+        guard textChanged || highlightsChanged || contentWidthChanged else { return }
 
         if textChanged {
             // Text content changed — replace storage attributes (font, color, paragraph style only).
@@ -1338,38 +1338,40 @@ struct TextPreviewView: NSViewRepresentable {
             textView.textStorage?.setAttributedString(attributed)
         }
 
-        // Convert highlights to NSTextRanges for the layout manager
         let tlm = textView.textLayoutManager
-        let newMatchRanges = resolveTextRanges(highlights: highlights, text: text, layoutManager: tlm)
-        let oldMatchRanges = coordinator.currentMatchRanges
+        if textChanged || highlightsChanged {
+            // Convert highlights to NSTextRanges for the layout manager
+            let newMatchRanges = resolveTextRanges(highlights: highlights, text: text, layoutManager: tlm)
+            let oldMatchRanges = coordinator.currentMatchRanges
 
-        coordinator.currentMatchRanges = newMatchRanges
-        coordinator.lastHighlights = highlights
+            coordinator.currentMatchRanges = newMatchRanges
+            coordinator.lastHighlights = highlights
 
-        if let tlm {
-            if textChanged {
-                // Full text replacement — apply all new highlights from scratch
-                for match in newMatchRanges {
-                    tlm.setRenderingAttributes(
-                        HighlightStyler.renderingAttributes(for: match.kind),
-                        for: match.range
-                    )
-                }
-            } else {
-                // Only highlights changed — diff and invalidate minimally.
-                // Remove old rendering attributes for ranges no longer highlighted
-                let newSet = Set(newMatchRanges.map { MatchRangeKey($0) })
-                for old in oldMatchRanges where !newSet.contains(MatchRangeKey(old)) {
-                    tlm.invalidateRenderingAttributes(for: old.range)
-                }
+            if let tlm {
+                if textChanged {
+                    // Full text replacement — apply all new highlights from scratch
+                    for match in newMatchRanges {
+                        tlm.setRenderingAttributes(
+                            HighlightStyler.renderingAttributes(for: match.kind),
+                            for: match.range
+                        )
+                    }
+                } else {
+                    // Only highlights changed — diff and invalidate minimally.
+                    // Remove old rendering attributes for ranges no longer highlighted
+                    let newSet = Set(newMatchRanges.map { MatchRangeKey($0) })
+                    for old in oldMatchRanges where !newSet.contains(MatchRangeKey(old)) {
+                        tlm.invalidateRenderingAttributes(for: old.range)
+                    }
 
-                // Apply new rendering attributes
-                let oldSet = Set(oldMatchRanges.map { MatchRangeKey($0) })
-                for new in newMatchRanges where !oldSet.contains(MatchRangeKey(new)) {
-                    tlm.setRenderingAttributes(
-                        HighlightStyler.renderingAttributes(for: new.kind),
-                        for: new.range
-                    )
+                    // Apply new rendering attributes
+                    let oldSet = Set(oldMatchRanges.map { MatchRangeKey($0) })
+                    for new in newMatchRanges where !oldSet.contains(MatchRangeKey(new)) {
+                        tlm.setRenderingAttributes(
+                            HighlightStyler.renderingAttributes(for: new.kind),
+                            for: new.range
+                        )
+                    }
                 }
             }
         }
@@ -1379,7 +1381,6 @@ struct TextPreviewView: NSViewRepresentable {
         } else {
             scrollToHighlight(
                 textView: textView,
-                generation: scrollGeneration,
                 coordinator: coordinator
             )
         }
@@ -1413,13 +1414,37 @@ struct TextPreviewView: NSViewRepresentable {
 
     private func scrollToHighlight(
         textView: NSTextView,
-        generation: Int,
         coordinator: Coordinator
     ) {
+        coordinator.scrollGeneration += 1
+        let generation = coordinator.scrollGeneration
         let targetHighlight = highlights.first { $0.start == densestHighlightStart } ?? highlights[0]
         let targetNSRange = targetHighlight.nsRange(in: text)
 
-        DispatchQueue.main.async { [weak textView] in
+        performScrollAttempt(
+            textView: textView,
+            targetNSRange: targetNSRange,
+            generation: generation,
+            coordinator: coordinator,
+            attempt: 0
+        )
+    }
+
+    /// Attempt to scroll to the target range, retrying if layout is not ready.
+    /// TextKit 2's lazy layout may not have computed text segment frames immediately,
+    /// so we retry with increasing delays up to a maximum number of attempts.
+    private func performScrollAttempt(
+        textView: NSTextView,
+        targetNSRange: NSRange,
+        generation: Int,
+        coordinator: Coordinator,
+        attempt: Int
+    ) {
+        // Retry delays: 0ms, 16ms, 32ms, 64ms (total max ~112ms, about 7 frames at 60fps)
+        let maxAttempts = 4
+        let delayMs = attempt == 0 ? 0 : (16 * (1 << (attempt - 1)))
+
+        let work = { [weak textView] in
             guard let textView else { return }
             guard coordinator.scrollGeneration == generation else { return }
             guard let scrollView = textView.enclosingScrollView else { return }
@@ -1435,7 +1460,20 @@ struct TextPreviewView: NSViewRepresentable {
             tlm.ensureLayout(for: targetTextRange)
 
             // Get the frame of the highlight using STTextKitPlus
-            guard let rect = tlm.textSegmentFrame(in: targetTextRange, type: .highlight) else { return }
+            // TextKit 2 may return nil if layout isn't fully computed yet
+            guard let rect = tlm.textSegmentFrame(in: targetTextRange, type: .highlight) else {
+                // Layout not ready - retry with exponential backoff
+                if attempt < maxAttempts - 1 {
+                    self.performScrollAttempt(
+                        textView: textView,
+                        targetNSRange: targetNSRange,
+                        generation: generation,
+                        coordinator: coordinator,
+                        attempt: attempt + 1
+                    )
+                }
+                return
+            }
 
             // Convert rect to scroll view coordinates.
             let highlightRect = rect.offsetBy(dx: textView.textContainerInset.width, dy: textView.textContainerInset.height)
@@ -1467,6 +1505,12 @@ struct TextPreviewView: NSViewRepresentable {
             scrollView.contentView.scroll(to: newOrigin)
             scrollView.reflectScrolledClipView(scrollView.contentView)
             CATransaction.commit()
+        }
+
+        if delayMs == 0 {
+            DispatchQueue.main.async(execute: work)
+        } else {
+            DispatchQueue.main.asyncAfter(deadline: .now() + .milliseconds(delayMs), execute: work)
         }
     }
 
@@ -1502,6 +1546,7 @@ struct TextPreviewView: NSViewRepresentable {
         /// Current match ranges for diffing on next update.
         var currentMatchRanges: [MatchRange] = []
         var scrollGeneration: Int = 0
+        var lastContentWidth: CGFloat = 0
     }
 }
 
