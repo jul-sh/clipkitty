@@ -1247,16 +1247,9 @@ struct TextPreviewView: NSViewRepresentable {
         scrollView.hasVerticalScroller = true
         scrollView.drawsBackground = false
 
-        // Use TextKit 2 by creating NSTextView with the textLayoutManager-based initializer.
+        // NSTextView() defaults to TextKit 2 on macOS 12+.
         // IMPORTANT: never access .layoutManager — that silently downgrades to TextKit 1.
-        let textContainer = NSTextContainer()
-        textContainer.widthTracksTextView = true
-        textContainer.containerSize = NSSize(
-            width: scrollView.contentSize.width,
-            height: .greatestFiniteMagnitude
-        )
-
-        let textView = NSTextView(frame: .zero, textContainer: textContainer)
+        let textView = NSTextView()
         textView.isEditable = false
         textView.isSelectable = true
         textView.isRichText = true
@@ -1267,6 +1260,8 @@ struct TextPreviewView: NSViewRepresentable {
         textView.minSize = NSSize(width: 0, height: 0)
         textView.maxSize = NSSize(width: CGFloat.greatestFiniteMagnitude, height: CGFloat.greatestFiniteMagnitude)
         textView.textContainerInset = NSSize(width: 16, height: 16)
+        textView.textContainer?.widthTracksTextView = true
+        textView.textContainer?.containerSize = NSSize(width: scrollView.contentSize.width, height: .greatestFiniteMagnitude)
         textView.frame = NSRect(x: 0, y: 0, width: scrollView.contentSize.width, height: 0)
 
         scrollView.documentView = textView
