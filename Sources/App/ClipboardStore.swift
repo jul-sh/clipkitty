@@ -3,13 +3,14 @@ import AppKit
 import Observation
 import ClipKittyRust
 import QuartzCore
+import os
 
 import ImageIO
 import UniformTypeIdentifiers
 
 // MARK: - Performance Tracing
 
-
+private let logger = Logger(subsystem: Bundle.main.bundleIdentifier ?? "ClipKitty", category: "ClipboardStore")
 
 /// Display state for the clipboard list
 /// Search with empty query returns all items (what was previously called "browse mode")
@@ -92,6 +93,8 @@ final class ClipboardStore {
     private var currentSearchQuery: String = ""
 
     /// Increments each time the display is reset - views observe this to reset local state
+    /// Uses Int which will overflow after ~2 billion increments, but this is acceptable
+    /// as the counter only needs to detect changes, not maintain absolute ordering
     private(set) var displayVersion: Int = 0
 
     /// Link metadata fetcher using LinkPresentation framework
@@ -109,7 +112,6 @@ final class ClipboardStore {
         refresh()
         pruneIfNeeded()
     }
-
 
     /// Current database size in bytes (cached, updated async)
     private(set) var databaseSizeBytes: Int64 = 0
@@ -134,7 +136,10 @@ final class ClipboardStore {
 
     private func setupDatabase() {
         do {
-            let appSupport = FileManager.default.urls(for: .applicationSupportDirectory, in: .userDomainMask).first!
+            guard let appSupport = FileManager.default.urls(for: .applicationSupportDirectory, in: .userDomainMask).first else {
+                state = .error(String(localized: "Failed to locate application support directory"))
+                return
+            }
             let appDir = appSupport.appendingPathComponent("ClipKitty", isDirectory: true)
             try FileManager.default.createDirectory(at: appDir, withIntermediateDirectories: true)
 
@@ -152,6 +157,8 @@ final class ClipboardStore {
     func setSearchQuery(_ newQuery: String) {
         let query = newQuery.trimmingCharacters(in: .whitespacesAndNewlines)
 
+        // Cancel previous search task. Note: cancelled tasks may still complete their
+        // Rust search operation, but will be discarded in performSearch() via query check.
         searchTask?.cancel()
         currentSearchQuery = query
 
@@ -264,6 +271,8 @@ final class ClipboardStore {
             }
 
             guard !Task.isCancelled else { return }
+            // Verify we're still showing results for this query (acts as generation check).
+            // If the query changed while we were searching, a newer search is already running.
             guard case .resultsLoading(let currentQuery, _) = state, currentQuery == query else { return }
 
             // Capture old state before replacing - deallocation of large arrays can block main thread
@@ -290,7 +299,7 @@ final class ClipboardStore {
         pollingTask?.cancel()
         setupSystemObservers()
 
-        pollingTask = Task { [weak self] in
+        pollingTask = Task { @MainActor [weak self] in
             while !Task.isCancelled {
                 guard let self else { return }
 
@@ -352,7 +361,9 @@ final class ClipboardStore {
         sleepMonitoring = .notMonitoring
     }
 
-    /// Returns polling interval in milliseconds based on system state and activity
+    /// Returns polling interval in milliseconds based on system state and activity.
+    /// NOTE: Uses wall clock time (Date()) which can be affected by system time changes.
+    /// This is acceptable for polling intervals - worst case is a single incorrect interval.
     private func adaptivePollingInterval() -> Int {
         let idleTime = Date().timeIntervalSince(lastActivityTime)
 
@@ -469,6 +480,7 @@ final class ClipboardStore {
                     }
                 }
             } catch {
+                logger.error("Failed to save text: \(error.localizedDescription)")
             }
         }
     }
@@ -484,6 +496,7 @@ final class ClipboardStore {
             do {
                 try rustStore.updateImageDescription(itemId: itemId, description: trimmed)
             } catch {
+                logger.error("Failed to update image description: \(error.localizedDescription)")
             }
         }.value
 
@@ -564,6 +577,7 @@ final class ClipboardStore {
                     await self?.generateAndUpdateImageDescription(itemId: itemId, imageData: compressedData)
                 }
             } catch {
+                logger.error("Failed to save image: \(error.localizedDescription)")
             }
         }
     }
@@ -686,6 +700,9 @@ final class ClipboardStore {
         let targetH = needsResize ? max(1, Int(Double(firstCGImage.height) * scale)) : firstCGImage.height
 
         for (idx, frameIndex) in framesToKeep.enumerated() {
+            // Check for task cancellation to allow early termination of expensive frame processing
+            guard !Task.isCancelled else { return nil }
+
             guard let cgImage = CGImageSourceCreateImageAtIndex(imageSource, frameIndex, nil) else { continue }
 
             let finalImage: CGImage
@@ -767,6 +784,9 @@ final class ClipboardStore {
                     utis.append(UTType(filenameExtension: url.pathExtension)?.identifier ?? "public.item")
                 }
 
+                // NOTE: Bookmark data is always empty in sandboxed mode (App Store build).
+                // Security-scoped bookmarks require user-initiated file selection via NSOpenPanel.
+                // For clipboard monitoring, we use direct file paths which are accessible while the app is running.
                 bookmarkDataList.append(Data())
             }
 
@@ -791,6 +811,7 @@ final class ClipboardStore {
                     }
                 }
             } catch {
+                logger.error("Failed to save files: \(error.localizedDescription)")
             }
         }
     }
@@ -814,8 +835,8 @@ final class ClipboardStore {
         pasteboard.setString(content.textContent, forType: .string)
         lastChangeCount = pasteboard.changeCount
 
-        Task {
-            await updateItemTimestamp(id: itemId)
+        Task { [weak self] in
+            await self?.updateItemTimestamp(id: itemId)
         }
     }
 
@@ -824,7 +845,8 @@ final class ClipboardStore {
         // The pasteboard changeCount will increment when we set data
         lastChangeCount = NSPasteboard.general.changeCount + 1
 
-        Task {
+        Task { [weak self] in
+            guard let self else { return }
             let pasteboard = NSPasteboard.general
 
             if isAnimated {
@@ -834,7 +856,7 @@ final class ClipboardStore {
                 }.value
 
                 guard let gifData else {
-                    lastChangeCount = NSPasteboard.general.changeCount
+                    self.lastChangeCount = NSPasteboard.general.changeCount
                     return
                 }
 
@@ -855,7 +877,7 @@ final class ClipboardStore {
                 }.value
 
                 guard let tiffData else {
-                    lastChangeCount = NSPasteboard.general.changeCount
+                    self.lastChangeCount = NSPasteboard.general.changeCount
                     return
                 }
 
@@ -863,10 +885,10 @@ final class ClipboardStore {
                 pasteboard.setData(tiffData, forType: .tiff)
             }
 
-            lastChangeCount = pasteboard.changeCount
+            self.lastChangeCount = pasteboard.changeCount
 
             if let itemId {
-                await updateItemTimestamp(id: itemId)
+                await self.updateItemTimestamp(id: itemId)
             }
         }
     }
@@ -937,13 +959,13 @@ final class ClipboardStore {
         let filenameType = NSPasteboard.PasteboardType("NSFilenamesPboardType")
         let allPaths = resolvedURLs.map { $0.path }
         pasteboard.declareTypes([filenameType, .fileURL, .string], owner: nil)
-        pasteboard.setPropertyList(allPaths, forType: filenameType)
-        pasteboard.setString(resolvedURLs[0].absoluteString, forType: .fileURL)
-        pasteboard.setString(allPaths.joined(separator: "\n"), forType: .string)
+        pasteboard.setPropertyList(allPaths, forType: filenameType)  // All files (array)
+        pasteboard.setString(resolvedURLs[0].absoluteString, forType: .fileURL)  // First file only (.fileURL is singular)
+        pasteboard.setString(allPaths.joined(separator: "\n"), forType: .string)  // All files (text)
         lastChangeCount = pasteboard.changeCount
 
-        Task {
-            await updateItemTimestamp(id: itemId)
+        Task { [weak self] in
+            await self?.updateItemTimestamp(id: itemId)
         }
     }
 
@@ -954,6 +976,7 @@ final class ClipboardStore {
             do {
                 try rustStore.updateTimestamp(itemId: id)
             } catch {
+                logger.error("Failed to update item timestamp: \(error.localizedDescription)")
             }
         }.value
 
@@ -985,6 +1008,7 @@ final class ClipboardStore {
             do {
                 try rustStore.deleteItem(itemId: itemId)
             } catch {
+                logger.error("Failed to delete item: \(error.localizedDescription)")
             }
         }
     }
@@ -999,6 +1023,7 @@ final class ClipboardStore {
             do {
                 try rustStore.clear()
             } catch {
+                logger.error("Failed to clear clipboard history: \(error.localizedDescription)")
             }
         }
     }
@@ -1015,6 +1040,7 @@ final class ClipboardStore {
             do {
                 _ = try rustStore.pruneToSize(maxBytes: maxBytes, keepRatio: 0.8)
             } catch {
+                logger.error("Failed to prune database: \(error.localizedDescription)")
             }
         }
     }

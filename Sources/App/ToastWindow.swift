@@ -31,6 +31,7 @@ final class ToastWindow {
             dismissTask = Task { @MainActor in
                 try? await Task.sleep(for: .seconds(self.duration))
                 guard !Task.isCancelled else { return }
+                guard self.window != nil else { return }
                 self.dismiss()
             }
 
@@ -84,6 +85,7 @@ final class ToastWindow {
         dismissTask = Task { @MainActor in
             try? await Task.sleep(for: .seconds(self.duration))
             guard !Task.isCancelled else { return }
+            guard self.window != nil else { return }
             self.dismiss()
         }
     }

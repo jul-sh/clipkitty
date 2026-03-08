@@ -36,8 +36,8 @@ enum FontManager {
         for fontURL in fontFiles {
             var errorRef: Unmanaged<CFError>?
             if !CTFontManagerRegisterFontsForURL(fontURL as CFURL, .process, &errorRef) {
-                if let error = errorRef?.takeRetainedValue() {
-                }
+                // Release the error to avoid memory leak
+                _ = errorRef?.takeRetainedValue()
             }
         }
     }
