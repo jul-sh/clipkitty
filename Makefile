@@ -74,7 +74,9 @@ sign:
 		--sign "$(SIGNING_IDENTITY)" \
 		"$(DERIVED_DATA)/Build/Products/$(CONFIGURATION)/$(APP_NAME).app"
 
-# Build, kill any running instance, and open the app
+# Build, kill any running instance, and open the app.
+# Uses a high version so Sparkle never thinks there's a newer release.
+run: VERSION=99.0.0
 run: all
 	@echo "Closing existing $(APP_NAME)..."
 	@pkill -x $(APP_NAME) 2>/dev/null || true
@@ -86,6 +88,7 @@ run: all
 BUNDLE_ID := com.eviljuliette.clipkitty
 APP_SUPPORT := $(HOME)/Library/Containers/$(BUNDLE_ID)/Data/Library/Application Support/ClipKitty
 
+run-perf: VERSION=99.0.0
 run-perf: all perf-db
 	@echo "Closing existing $(APP_NAME)..."
 	@pkill -9 $(APP_NAME) 2>/dev/null || true
