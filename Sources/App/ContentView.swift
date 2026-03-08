@@ -50,6 +50,7 @@ struct ContentView: View {
     @State private var searchText: String = ""
     @State private var didApplyInitialSearch = false
     @State private var lastItemsSignature: [Int64] = []  // Track when items change to suppress animation
+    @State private var selectedItemLoadGeneration = 0
     @State private var searchSpinner: SpinnerState = .idle
     @State private var previewSpinner: SpinnerState = .idle
     @State private var hasUserNavigated = false
@@ -96,15 +97,28 @@ struct ContentView: View {
         }
     }
 
-    /// Get match data for the selected item from results
-    private var selectedItemMatchData: MatchData? {
-        guard let selectedItemId else { return nil }
+    private struct PreviewSelection {
+        let item: ClipboardItem
+        let matchData: MatchData?
+    }
+
+    /// Get match data for a specific item from the current result set.
+    private func matchDataForItem(_ itemId: Int64) -> MatchData? {
         switch store.state {
         case .results(_, let items, _), .resultsLoading(_, let items):
-            return items.first { $0.itemMetadata.itemId == selectedItemId }?.matchData
+            return items.first { $0.itemMetadata.itemId == itemId }?.matchData
         default:
             return nil
         }
+    }
+
+    /// Coherent preview state: text content and highlights always come from the same item ID.
+    private var previewSelection: PreviewSelection? {
+        guard let item = selectedItem else { return nil }
+        return PreviewSelection(
+            item: item,
+            matchData: matchDataForItem(item.itemMetadata.itemId)
+        )
     }
 
     private var firstItemId: Int64? {
@@ -229,12 +243,11 @@ struct ContentView: View {
         .onChange(of: selectedItemId) { _, newId in
             // Fetch full item when selection changes
             guard let newId else {
+                selectedItemLoadGeneration += 1
                 selectedItem = nil
                 return
             }
-            Task {
-                selectedItem = await store.fetchItem(id: newId)
-            }
+            refreshSelectedItem(for: newId)
         }
         .onChange(of: selectedItem) { _, newItem in
             previewSpinner.cancel()
@@ -268,14 +281,29 @@ struct ContentView: View {
 
     // MARK: - Selection Management
 
-    /// Select an item and load it, preferring cached stateFirstItem to avoid extra fetch.
+    /// Select an item. Preview loading happens in `onChange(of: selectedItemId)`.
     private func loadItem(id: Int64) {
         selectedItemId = id
+    }
+
+    /// Load the selected preview item, ignoring completions for stale selections.
+    private func refreshSelectedItem(for id: Int64) {
+        selectedItemLoadGeneration += 1
+        let generation = selectedItemLoadGeneration
+
         if let firstItem = stateFirstItem, firstItem.itemMetadata.itemId == id {
             selectedItem = firstItem
-        } else {
-            selectedItem = nil
-            Task { selectedItem = await store.fetchItem(id: id) }
+            return
+        }
+
+        selectedItem = nil
+        Task {
+            let item = await store.fetchItem(id: id)
+            guard !Task.isCancelled else { return }
+            await MainActor.run {
+                guard selectedItemLoadGeneration == generation, selectedItemId == id else { return }
+                selectedItem = item
+            }
         }
     }
 
@@ -737,10 +765,10 @@ struct ContentView: View {
 
     private var previewPane: some View {
         VStack(spacing: 0) {
-            if let item = selectedItem {
-                previewContent(for: item)
+            if let previewSelection {
+                previewContent(for: previewSelection.item, matchData: previewSelection.matchData)
                 Divider()
-                metadataFooter(for: item)
+                metadataFooter(for: previewSelection.item)
             } else if itemIds.isEmpty {
                 emptyStateView
             } else if case .visible = previewSpinner {
@@ -760,15 +788,15 @@ struct ContentView: View {
     }
 
     @ViewBuilder
-    private func previewContent(for item: ClipboardItem) -> some View {
+    private func previewContent(for item: ClipboardItem, matchData: MatchData?) -> some View {
         switch item.content {
         case .text, .color:
             TextPreviewView(
                 text: item.content.textContent,
                 fontName: FontManager.mono,
                 fontSize: 15,
-                highlights: selectedItemMatchData?.fullContentHighlights ?? [],
-                densestHighlightStart: selectedItemMatchData?.densestHighlightStart ?? 0
+                highlights: matchData?.fullContentHighlights ?? [],
+                densestHighlightStart: matchData?.densestHighlightStart ?? 0
             )
             .frame(maxWidth: .infinity, maxHeight: .infinity)
         case .image(let data, let description, _):
@@ -1322,6 +1350,8 @@ struct TextPreviewView: NSViewRepresentable {
         let coordinator = context.coordinator
         let textChanged = textView.string != text
         let highlightsChanged = coordinator.lastHighlights != highlights
+        coordinator.scrollGeneration += 1
+        let scrollGeneration = coordinator.scrollGeneration
 
         guard textChanged || highlightsChanged else { return }
 
@@ -1379,7 +1409,11 @@ struct TextPreviewView: NSViewRepresentable {
         if highlights.isEmpty {
             textView.scrollToBeginningOfDocument(nil)
         } else {
-            scrollToHighlight(textView: textView)
+            scrollToHighlight(
+                textView: textView,
+                generation: scrollGeneration,
+                coordinator: coordinator
+            )
         }
     }
 
@@ -1409,12 +1443,17 @@ struct TextPreviewView: NSViewRepresentable {
 
     // MARK: - Scroll to Match
 
-    private func scrollToHighlight(textView: NSTextView) {
+    private func scrollToHighlight(
+        textView: NSTextView,
+        generation: Int,
+        coordinator: Coordinator
+    ) {
         let targetHighlight = highlights.first { $0.start == densestHighlightStart } ?? highlights[0]
         let targetNSRange = targetHighlight.nsRange(in: text)
 
         DispatchQueue.main.async { [weak textView] in
             guard let textView else { return }
+            guard coordinator.scrollGeneration == generation else { return }
             guard let scrollView = textView.enclosingScrollView else { return }
             guard let tlm = textView.textLayoutManager,
                   let tcm = tlm.textContentManager else { return }
@@ -1430,32 +1469,35 @@ struct TextPreviewView: NSViewRepresentable {
             // Get the frame of the highlight using STTextKitPlus
             guard let rect = tlm.textSegmentFrame(in: targetTextRange, type: .highlight) else { return }
 
-            // Convert rect to scroll view coordinates
+            // Convert rect to scroll view coordinates.
             let highlightRect = rect.offsetBy(dx: textView.textContainerInset.width, dy: textView.textContainerInset.height)
-            let visibleRect = scrollView.documentVisibleRect
-            if visibleRect.contains(highlightRect) {
-                return  // Already visible, no scroll needed
-            }
-
-            // Check if highlight is near the end of the document
             var documentHeight: CGFloat = 0
             tlm.enumerateTextLayoutFragments(from: tlm.documentRange.endLocation,
                                               options: [.reverse, .ensuresLayout]) { fragment in
                 documentHeight = fragment.layoutFragmentFrame.maxY
                 return false  // stop after first (last) fragment
             }
-            let highlightY = rect.origin.y + rect.height
-            let isNearEnd = documentHeight - highlightY < 100
+
+            let visibleHeight = scrollView.documentVisibleRect.height
+            let targetOffsetY = highlightRect.midY - (visibleHeight / 3)
+            let contentHeight = max(
+                textView.bounds.height,
+                documentHeight + textView.textContainerInset.height * 2
+            )
+            let maxScrollY = max(0, contentHeight - visibleHeight)
+            let clampedY = min(max(0, targetOffsetY), maxScrollY)
+
+            let currentOrigin = scrollView.contentView.bounds.origin
+            let newOrigin = NSPoint(x: currentOrigin.x, y: clampedY)
+            if abs(currentOrigin.y - newOrigin.y) < 1 {
+                return
+            }
 
             // Perform scroll with animations explicitly disabled
             CATransaction.begin()
             CATransaction.setDisableActions(true)
-            if isNearEnd {
-                textView.scrollToEndOfDocument(nil)
-            } else {
-                let scrollRect = highlightRect.insetBy(dx: 0, dy: -50)
-                textView.scrollToVisible(scrollRect)
-            }
+            scrollView.contentView.scroll(to: newOrigin)
+            scrollView.reflectScrolledClipView(scrollView.contentView)
             CATransaction.commit()
         }
     }
@@ -1489,6 +1531,7 @@ struct TextPreviewView: NSViewRepresentable {
         var lastHighlights: [HighlightRange] = []
         /// Current match ranges for diffing on next update.
         var currentMatchRanges: [MatchRange] = []
+        var scrollGeneration: Int = 0
     }
 }
 
@@ -1932,4 +1975,3 @@ private struct HideScrollIndicatorsWhenOverlay: ViewModifier {
         }
     }
 }
-
