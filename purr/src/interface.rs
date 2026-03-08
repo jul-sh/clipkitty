@@ -315,13 +315,11 @@ pub struct ItemMetadata {
     pub timestamp_unix: i64,
 }
 
-/// Search match: metadata + optional match context
-/// In lazy mode, match_data is None until compute_match_data is called.
+/// Search match: metadata + match context
 #[derive(Debug, Clone, uniffi::Record)]
 pub struct ItemMatch {
     pub item_metadata: ItemMetadata,
-    /// Match context data. None for lazy results - call compute_match_data to populate.
-    pub match_data: Option<MatchData>,
+    pub match_data: MatchData,
 }
 
 /// Search result container
@@ -369,14 +367,13 @@ pub trait ClipboardStoreApi: Send + Sync {
     // ─────────────────────────────────────────────────────────────────────────────
 
     /// Search for items. Empty query returns all recent items.
-    /// Returns results with lazy match_data (None) - call compute_match_data to populate.
     async fn search(&self, query: String) -> Result<SearchResult, ClipKittyError>;
 
-    /// Compute match data (snippet, highlights, line number) for multiple items.
+    /// Compute highlights for multiple items given the search query.
     /// Called on-demand for visible items in the list view.
     /// Returns MatchData for each item in the same order as input IDs.
-    /// Missing items are returned as default MatchData.
-    fn compute_match_data(&self, item_ids: Vec<i64>, query: String) -> Result<Vec<MatchData>, ClipKittyError>;
+    /// Missing items are returned as MatchData with empty highlights.
+    fn compute_highlights(&self, item_ids: Vec<i64>, query: String) -> Result<Vec<MatchData>, ClipKittyError>;
 
     /// Fetch full items by IDs for preview pane
     fn fetch_by_ids(&self, item_ids: Vec<i64>) -> Result<Vec<ClipboardItem>, ClipKittyError>;
