@@ -1195,58 +1195,14 @@ struct FilePreviewView: View {
 
     /// Highlight query word matches in file text
     private func highlightedFileText(_ text: String, font: Font, color: Color) -> Text {
-        let words = queryWords
-        guard !words.isEmpty else {
+        let highlights = HighlightStyler.exactHighlights(in: text, queryWords: queryWords)
+        guard !highlights.isEmpty else {
             return Text(text).font(font).foregroundColor(color)
         }
 
-        // Find all match ranges (case-insensitive)
-        let textLower = text.lowercased()
-        var matchRanges: [(Int, Int)] = []
-        for word in words {
-            var searchStart = textLower.startIndex
-            while let range = textLower.range(of: word, range: searchStart..<textLower.endIndex) {
-                let start = textLower.distance(from: textLower.startIndex, to: range.lowerBound)
-                let end = textLower.distance(from: textLower.startIndex, to: range.upperBound)
-                matchRanges.append((start, end))
-                searchStart = range.upperBound
-            }
-        }
-
-        guard !matchRanges.isEmpty else {
-            return Text(text).font(font).foregroundColor(color)
-        }
-
-        // Merge overlapping ranges
-        matchRanges.sort { $0.0 < $1.0 }
-        var merged: [(Int, Int)] = [matchRanges[0]]
-        for r in matchRanges.dropFirst() {
-            if r.0 <= merged.last!.1 {
-                merged[merged.count - 1].1 = max(merged.last!.1, r.1)
-            } else {
-                merged.append(r)
-            }
-        }
-
-        // Build Text with highlights
-        var result = Text("")
-        var pos = 0
-        for (start, end) in merged {
-            if pos < start {
-                let plain = String(text[text.index(text.startIndex, offsetBy: pos)..<text.index(text.startIndex, offsetBy: start)])
-                result = result + Text(plain).font(font).foregroundColor(color)
-            }
-            let highlighted = String(text[text.index(text.startIndex, offsetBy: start)..<text.index(text.startIndex, offsetBy: end)])
-            result = result + Text(highlighted).font(font).foregroundColor(color)
-                .bold()
-                .underline()
-            pos = end
-        }
-        if pos < text.count {
-            let remaining = String(text[text.index(text.startIndex, offsetBy: pos)...])
-            result = result + Text(remaining).font(font).foregroundColor(color)
-        }
-        return result
+        return Text(HighlightStyler.attributedText(text, highlights: highlights))
+            .font(font)
+            .foregroundColor(color)
     }
 
     private static func formatFileSize(_ bytes: UInt64) -> String {
@@ -1520,10 +1476,12 @@ struct TextPreviewView: NSViewRepresentable {
     private struct MatchRangeKey: Hashable {
         let scalarStart: UInt64
         let scalarEnd: UInt64
+        let kind: HighlightKind
 
         init(_ match: MatchRange) {
             self.scalarStart = match.scalarStart
             self.scalarEnd = match.scalarEnd
+            self.kind = match.kind
         }
     }
 
