@@ -108,6 +108,10 @@ final class ClipKittyUITests: XCTestCase {
     }
 
     private func getAppSupportDirectory(for appURL: URL) -> URL {
+        // The app is always sandboxed (entitlements have com.apple.security.app-sandbox = true).
+        // FileManager.urls(for: .applicationSupportDirectory) inside the sandbox resolves to
+        // ~/Library/Containers/{bundleId}/Data/Library/Application Support/
+        // We must place the test database at that same path.
         let bundleId = getBundleIdentifier(for: appURL)
         let userHome = URL(fileURLWithPath: "/Users/\(NSUserName())")
         return userHome.appendingPathComponent("Library/Containers/\(bundleId)/Data/Library/Application Support/ClipKitty")
@@ -149,7 +153,30 @@ final class ClipKittyUITests: XCTestCase {
             XCTFail("\(databaseFilename) not found at: \(sqliteSourceURL.path)")
             return
         }
+
+        // Guard against Git LFS pointer files — if LFS hasn't been pulled, the .sqlite file
+        // is a ~132-byte text file starting with "version https://git-lfs.github.com/spec/v1"
+        // instead of the actual SQLite database. This causes silent 0-item test failures.
+        let fileSize = (try? FileManager.default.attributesOfItem(atPath: sqliteSourceURL.path)[.size] as? Int) ?? 0
+        if fileSize < 1024 {
+            // Read first bytes to check for LFS pointer signature
+            let headerData = FileManager.default.contents(atPath: sqliteSourceURL.path).flatMap { data in
+                String(data: data.prefix(64), encoding: .utf8)
+            }
+            if headerData?.contains("git-lfs.github.com") == true {
+                XCTFail("Git LFS pointer not resolved for \(databaseFilename). Run 'git lfs pull' first. File at: \(sqliteSourceURL.path)")
+                return
+            }
+            XCTFail("\(databaseFilename) is too small (\(fileSize) bytes) — likely corrupt or an LFS pointer. Path: \(sqliteSourceURL.path)")
+            return
+        }
+
         try FileManager.default.copyItem(at: sqliteSourceURL, to: targetURL)
+
+        // Verify the copy succeeded and the file is a real SQLite database
+        let copiedSize = (try? FileManager.default.attributesOfItem(atPath: targetURL.path)[.size] as? Int) ?? 0
+        XCTAssertGreaterThan(copiedSize, 1024,
+            "Copied database is too small (\(copiedSize) bytes). Target: \(targetURL.path)")
     }
 
     /// Helper to get the currently selected index by finding the button with isSelected trait

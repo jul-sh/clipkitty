@@ -117,8 +117,15 @@ final class UpdateController {
     init() {
         let bundle = Bundle.main
         updater = SPUUpdater(hostBundle: bundle, applicationBundle: bundle, userDriver: driver, delegate: nil)
+        #if DEBUG
+        // Disable auto-updates in debug builds to avoid interrupting development
+        updater.automaticallyChecksForUpdates = false
+        updater.automaticallyDownloadsUpdates = false
+        log.info("Debug build — auto-updates disabled")
+        #else
         updater.automaticallyChecksForUpdates = true
         updater.automaticallyDownloadsUpdates = AppSettings.shared.autoInstallUpdates
+        #endif
         updater.updateCheckInterval = 14400 // 4 hours
 
         log.info("Feed URL: \(bundle.object(forInfoDictionaryKey: "SUFeedURL") as? String ?? "not set")")
@@ -127,6 +134,7 @@ final class UpdateController {
         do {
             try updater.start()
             log.info("Sparkle updater started")
+            #if !DEBUG
             // Trigger a check shortly after launch to ensure updates are found promptly,
             // rather than waiting for the full scheduled interval on first launch.
             DispatchQueue.main.asyncAfter(deadline: .now() + 5) { [weak self] in
@@ -134,6 +142,7 @@ final class UpdateController {
                 log.info("Running startup update check")
                 self.updater.checkForUpdates()
             }
+            #endif
         } catch {
             log.error("Failed to start updater: \(error.localizedDescription)")
         }

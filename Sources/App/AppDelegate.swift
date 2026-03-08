@@ -101,7 +101,9 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate {
 
     /// Ensure the simulated database directory exists (UI Test runner handles file placement)
     private func populateTestDatabase() {
-        let appSupport = FileManager.default.urls(for: .applicationSupportDirectory, in: .userDomainMask).first!
+        guard let appSupport = FileManager.default.urls(for: .applicationSupportDirectory, in: .userDomainMask).first else {
+            return
+        }
         let appDir = appSupport.appendingPathComponent("ClipKitty", isDirectory: true)
         try? FileManager.default.createDirectory(at: appDir, withIntermediateDirectories: true)
 
@@ -150,7 +152,10 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate {
                 if let menu = statusMenu {
                     statusItem?.menu = menu
                     statusItem?.button?.performClick(nil)
-                    statusItem?.menu = nil
+                    // Remove menu asynchronously to let the menu system handle it
+                    DispatchQueue.main.async { [weak self] in
+                        self?.statusItem?.menu = nil
+                    }
                 }
             } else {
                 // Left-click toggles the panel (show if hidden, hide if visible)
@@ -235,6 +240,8 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate {
     nonisolated func windowWillClose(_ notification: Notification) {
         Task { @MainActor in
             NSApp.setActivationPolicy(.accessory)
+            // Nullify window reference when closed to refresh content on next open
+            self.settingsWindow = nil
         }
     }
 

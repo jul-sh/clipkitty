@@ -27,7 +27,7 @@ SIGNING_IDENTITY ?= $(shell security find-identity -v -p codesigning 2>/dev/null
 RUST_MARKER := .make/rust.marker
 RUST_LIB := Sources/ClipKittyRust/libpurr.a
 
-.PHONY: all clean rust rust-force generate build sign list-identities run run-perf test uitest rust-test perf-test perf-db
+.PHONY: all clean rust rust-force generate build sign list-identities run run-perf test unittest uitest rust-test perf-test perf-db
 
 all: rust generate build
 
@@ -59,7 +59,8 @@ generate:
 # Build using xcodebuild
 build:
 	@echo "Building $(APP_NAME) ($(CONFIGURATION))..."
-	@xcodebuild -scheme $(APP_NAME) \
+	@xcodebuild -workspace $(APP_NAME).xcworkspace \
+		-scheme $(APP_NAME) \
 		-configuration $(CONFIGURATION) \
 		-derivedDataPath $(DERIVED_DATA) \
 		MARKETING_VERSION=$(VERSION) \
@@ -73,7 +74,7 @@ sign:
 		--sign "$(SIGNING_IDENTITY)" \
 		"$(DERIVED_DATA)/Build/Products/$(CONFIGURATION)/$(APP_NAME).app"
 
-# Build, kill any running instance, and open the app
+# Build, kill any running instance, and open the app.
 run: all
 	@echo "Closing existing $(APP_NAME)..."
 	@pkill -x $(APP_NAME) 2>/dev/null || true
@@ -106,29 +107,54 @@ clean:
 # Usage: make uitest [TEST=testName]
 # Example: make uitest TEST=testToastAppearsOnCopy
 uitest: all
+	@echo "Ensuring Git LFS files are pulled..."
+	@git lfs pull 2>/dev/null || echo "Warning: git lfs pull failed (LFS not installed?)"
 	@echo "Setting up signing keychain..."
 	@./distribution/setup-dev-signing.sh
 	@echo "Running UI tests..."
 	@if [ -n "$(TEST)" ]; then \
-		xcodebuild test -scheme ClipKittyUITests \
+		xcodebuild test -workspace $(APP_NAME).xcworkspace \
+			-scheme ClipKittyUITests \
 			-destination "platform=macOS" \
 			-derivedDataPath $(DERIVED_DATA) \
 			-only-testing:ClipKittyUITests/ClipKittyUITests/$(TEST) \
 			2>&1 | grep -E "(Test Case|passed|failed|error:)" || true; \
 	else \
-		xcodebuild test -scheme ClipKittyUITests \
+		xcodebuild test -workspace $(APP_NAME).xcworkspace \
+			-scheme ClipKittyUITests \
 			-destination "platform=macOS" \
 			-derivedDataPath $(DERIVED_DATA) \
 			2>&1 | grep -E "(Test Case|passed|failed|error:)" || true; \
 	fi
 
-# Run all tests (Rust + UI)
-test: rust-test uitest
+# Run all tests (Rust + Swift unit + UI)
+test: rust-test unittest uitest
 
 # Run Rust tests
 rust-test:
 	@echo "Running Rust tests..."
 	@$(NIX_SHELL) "cd purr && cargo test"
+
+# Run Swift unit tests (requires workspace for STTextKitPlus dependency)
+# Usage: make unittest [TEST=testName]
+# Example: make unittest TEST=testNsRangeWithEmoji
+unittest: rust generate
+	@echo "Running Swift unit tests..."
+	@if [ -n "$(TEST)" ]; then \
+		xcodebuild test -workspace $(APP_NAME).xcworkspace \
+			-scheme $(APP_NAME) \
+			-destination "platform=macOS" \
+			-derivedDataPath $(DERIVED_DATA) \
+			-only-testing:ClipKittyTests/$(TEST) \
+			2>&1 | grep -E "(Test Case|Test Suite|passed|failed|error:|warning:)" || true; \
+	else \
+		xcodebuild test -workspace $(APP_NAME).xcworkspace \
+			-scheme $(APP_NAME) \
+			-destination "platform=macOS" \
+			-derivedDataPath $(DERIVED_DATA) \
+			-only-testing:ClipKittyTests \
+			2>&1 | grep -E "(Test Case|Test Suite|passed|failed|error:|warning:)" || true; \
+	fi
 
 # Show available signing identities (helpful for setup)
 list-identities:

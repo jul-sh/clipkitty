@@ -147,7 +147,7 @@ final class HighlightRangeTests: XCTestCase {
         }
 
         // Compute match data (lazy on this branch)
-        let matchDataArray = try store.computeMatchData(itemIds: [match.itemMetadata.itemId], query: "Files")
+        let matchDataArray = try store.computeHighlights(itemIds: [match.itemMetadata.itemId], query: "Files")
         guard let matchData = matchDataArray.first else {
             XCTFail("No match data computed")
             return
@@ -204,7 +204,7 @@ final class HighlightRangeTests: XCTestCase {
         }
 
         // Compute match data (lazy on this branch)
-        let matchDataArray = try store.computeMatchData(itemIds: [match.itemMetadata.itemId], query: "Files")
+        let matchDataArray = try store.computeHighlights(itemIds: [match.itemMetadata.itemId], query: "Files")
         guard let matchData = matchDataArray.first else {
             XCTFail("No match data computed")
             return
@@ -251,7 +251,8 @@ final class HighlightRangeTests: XCTestCase {
         XCTAssertEqual(extracted, "hello", "Should extract 'hello' from NFD text, not shifted characters")
     }
 
-    /// Integration test: search NFD content with query "he" returns correct highlight.
+    /// Integration test: search NFD content with query "hello" returns correct highlight.
+    /// Note: Queries must be at least 3 characters for full-text search (MIN_TRIGRAM_QUERY_LEN).
     func testSearchHighlightsWithNFDContent() async throws {
         let store = try makeStore()
 
@@ -264,8 +265,8 @@ final class HighlightRangeTests: XCTestCase {
             sourceAppBundleId: "com.test"
         )
 
-        let results = try await store.search(query: "he")
-        XCTAssertFalse(results.matches.isEmpty, "Should find 'he' in NFD content")
+        let results = try await store.search(query: "hello")
+        XCTAssertFalse(results.matches.isEmpty, "Should find 'hello' in NFD content")
 
         guard let match = results.matches.first else {
             XCTFail("No match found")
@@ -273,13 +274,13 @@ final class HighlightRangeTests: XCTestCase {
         }
 
         // Compute match data (lazy on this branch)
-        let matchDataArray = try store.computeMatchData(itemIds: [match.itemMetadata.itemId], query: "he")
+        let matchDataArray = try store.computeHighlights(itemIds: [match.itemMetadata.itemId], query: "hello")
         guard let matchData = matchDataArray.first else {
             XCTFail("No match data computed")
             return
         }
 
-        // Verify highlights extract "hello" (the word containing "he"), not shifted text
+        // Verify highlights extract "hello", not shifted text
         let nsString = text as NSString
         for highlight in matchData.fullContentHighlights {
             let nsRange = highlight.nsRange(in: text)
@@ -293,6 +294,7 @@ final class HighlightRangeTests: XCTestCase {
     /// Regression test: real clipboard content that triggered highlight drift.
     /// The text contains special Unicode characters (curly quotes, em dash, ellipsis)
     /// that may be represented as combining sequences depending on normalization.
+    /// Note: Queries must be at least 3 characters for full-text search (MIN_TRIGRAM_QUERY_LEN).
     func testSearchHighlightsWithRealClipContent() async throws {
         let store = try makeStore()
 
@@ -313,21 +315,22 @@ final class HighlightRangeTests: XCTestCase {
             sourceAppBundleId: "com.test"
         )
 
-        let results = try await store.search(query: "he")
-        XCTAssertFalse(results.matches.isEmpty, "Should find 'he' in clip content")
+        // Use "the" (3 chars) instead of "he" (2 chars) - minimum query length is 3
+        let results = try await store.search(query: "the")
+        XCTAssertFalse(results.matches.isEmpty, "Should find 'the' in clip content")
 
         guard let match = results.matches.first else {
             XCTFail("No match found")
             return
         }
 
-        let matchDataArray = try store.computeMatchData(itemIds: [match.itemMetadata.itemId], query: "he")
+        let matchDataArray = try store.computeHighlights(itemIds: [match.itemMetadata.itemId], query: "the")
         guard let matchData = matchDataArray.first else {
             XCTFail("No match data computed")
             return
         }
 
-        // Every highlight should extract valid text that actually contains "he"
+        // Every highlight should extract valid text that actually contains "the"
         let nsString = clipContent as NSString
         for highlight in matchData.fullContentHighlights {
             let nsRange = highlight.nsRange(in: clipContent)
@@ -340,8 +343,8 @@ final class HighlightRangeTests: XCTestCase {
                 continue
             }
             let extracted = nsString.substring(with: nsRange)
-            XCTAssertTrue(extracted.lowercased().contains("he"),
-                "Highlight extracted '\(extracted)' which doesn't contain 'he' — position drift bug!")
+            XCTAssertTrue(extracted.lowercased().contains("the"),
+                "Highlight extracted '\(extracted)' which doesn't contain 'the' — position drift bug!")
         }
     }
 }
