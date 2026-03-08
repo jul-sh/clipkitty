@@ -167,7 +167,9 @@ enum HighlightStyler {
         to attributed: inout AttributedString,
         scalarOffset: Int
     ) {
-        let scalars = attributed.characters.unicodeScalars
+        // Convert AttributedString to String to access unicodeScalars
+        let text = String(attributed.characters)
+        let scalars = text.unicodeScalars
 
         for highlight in highlights {
             let relativeStart = Int(highlight.start) - scalarOffset
