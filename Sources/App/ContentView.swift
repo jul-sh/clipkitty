@@ -5,6 +5,10 @@ import STTextKitPlus
 import os.log
 import UniformTypeIdentifiers
 
+/// Max time to show stale content before clearing to spinner during slow loads.
+/// Used for both preview item loading and search result loading.
+private let staleContentTimeout: Duration = .milliseconds(150)
+
 private enum SpinnerState: Equatable {
     case idle
     case debouncing(task: Task<Void, Never>)
@@ -53,6 +57,7 @@ struct ContentView: View {
     @State private var selectedItemLoadGeneration = 0
     @State private var searchSpinner: SpinnerState = .idle
     @State private var previewSpinner: SpinnerState = .idle
+    @State private var prefetchCache: [Int64: ClipboardItem] = [:]  // Cache for prefetched adjacent items
     @State private var hasUserNavigated = false
     @State private var filterPopover: FilterPopoverState = .hidden
     @State private var actionsPopover: ActionsPopoverState = .hidden
@@ -193,6 +198,7 @@ struct ContentView: View {
         .onChange(of: store.displayVersion) { _, _ in
             // Reset local state when store signals a display reset
             hasUserNavigated = false
+            prefetchCache.removeAll()
             // But preserve initial search if it was just applied
             if didApplyInitialSearch && !initialSearchQuery.isEmpty {
                 didApplyInitialSearch = false // Allow reset next time
@@ -240,12 +246,14 @@ struct ContentView: View {
         // 3. Search query changes (triggers store refresh)
         .onChange(of: searchText) { _, newValue in
             hasUserNavigated = false
+            prefetchCache.removeAll()
             store.setSearchQuery(newValue)
         }
         // 4. Filter changes (triggers store refresh and resets selection)
         .onChange(of: store.contentTypeFilter) { _, _ in
             // Reset selection when filter changes
             hasUserNavigated = false
+            prefetchCache.removeAll()
             selectedItemId = firstItemId
             selectedItem = nil
         }
@@ -306,32 +314,95 @@ struct ContentView: View {
     }
 
     /// Load the selected preview item, ignoring completions for stale selections.
+    /// Uses prefetch cache for instant display when navigating to adjacent items.
     private func refreshSelectedItem(for id: Int64) {
         selectedItemLoadGeneration += 1
         let generation = selectedItemLoadGeneration
 
+        // Fast path 1: first item is already available from search results
         if let firstItem = stateFirstItem, firstItem.itemMetadata.itemId == id {
             selectedItem = firstItem
+            prefetchAdjacentItems(around: id)
             return
         }
 
-        selectedItem = nil
+        // Fast path 2: item is in prefetch cache
+        if let cachedItem = prefetchCache[id] {
+            selectedItem = cachedItem
+            prefetchAdjacentItems(around: id)
+            return
+        }
+
+        // Slow path: fetch from store
+        // Keep old preview visible briefly, then clear to trigger spinner
         Task {
+            // Start timeout task to clear stale preview
+            let timeoutTask = Task {
+                try? await Task.sleep(for: staleContentTimeout)
+                guard !Task.isCancelled else { return }
+                await MainActor.run {
+                    if selectedItemLoadGeneration == generation && selectedItemId == id {
+                        selectedItem = nil
+                    }
+                }
+            }
+
             let item = await store.fetchItem(id: id)
+            timeoutTask.cancel()
+
             guard !Task.isCancelled else { return }
             await MainActor.run {
                 guard selectedItemLoadGeneration == generation, selectedItemId == id else { return }
                 selectedItem = item
+                if item != nil {
+                    prefetchAdjacentItems(around: id)
+                }
             }
         }
     }
 
-    /// Schedule a spinner to show after 100ms debounce if a condition persists.
+    /// Prefetch items adjacent to the given ID for instant navigation.
+    private func prefetchAdjacentItems(around id: Int64) {
+        guard let currentIndex = itemIds.firstIndex(of: id) else { return }
+
+        // Prefetch prev and next items
+        var toPrefetch: [Int64] = []
+        if currentIndex > 0 {
+            let prevId = itemIds[currentIndex - 1]
+            if prefetchCache[prevId] == nil && stateFirstItem?.itemMetadata.itemId != prevId {
+                toPrefetch.append(prevId)
+            }
+        }
+        if currentIndex < itemIds.count - 1 {
+            let nextId = itemIds[currentIndex + 1]
+            if prefetchCache[nextId] == nil && stateFirstItem?.itemMetadata.itemId != nextId {
+                toPrefetch.append(nextId)
+            }
+        }
+
+        guard !toPrefetch.isEmpty else { return }
+
+        Task {
+            for itemId in toPrefetch {
+                guard !Task.isCancelled else { return }
+                if let item = await store.fetchItem(id: itemId) {
+                    await MainActor.run {
+                        // Only cache if still relevant (item still in list)
+                        if itemIds.contains(itemId) {
+                            prefetchCache[itemId] = item
+                        }
+                    }
+                }
+            }
+        }
+    }
+
+    /// Schedule a spinner to show after staleContentTimeout if a condition persists.
     private func debouncedSpinnerTask(
         action: @escaping @MainActor @Sendable () -> Void
     ) -> Task<Void, Never> {
         Task {
-            try? await Task.sleep(for: .milliseconds(100))
+            try? await Task.sleep(for: staleContentTimeout)
             guard !Task.isCancelled else { return }
             action()
         }
