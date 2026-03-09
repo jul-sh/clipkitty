@@ -80,23 +80,20 @@ appstore:
 	@productbuild --component "$(DERIVED_DATA)/Build/Products/AppStore/$(APP_NAME).app" /Applications \
 		--sign "$(INSTALLER_IDENTITY)" \
 		"$(PROJECT_ROOT)/$(APP_NAME).pkg"
-	@echo "App Store package created: $(APP_NAME).pkg"
+	@echo "Installer package created: $(PROJECT_ROOT)/$(APP_NAME).pkg"
 
-# ============================================================================
-# Publish to App Store Connect (binary + metadata + screenshots)
-# ============================================================================
-# Usage:
-#   make -C distribution publish                    # Upload pkg + metadata + screenshots
-#   make -C distribution publish PUBLISH_FLAGS=--dry-run        # Preview without uploading
-#   make -C distribution publish PUBLISH_FLAGS=--metadata-only  # Metadata & screenshots only
-#
-# Requires:
-#   - AGE_SECRET_KEY env var (age private key for decrypting secrets/*.age)
-#   - ClipKitty.pkg at project root (from `make -C distribution appstore`)
-#   - An App Store version in PREPARE_FOR_SUBMISSION state
-#   - asc CLI installed (distribution/install-deps.sh)
-# ============================================================================
+# Validate the installer package against App Store Connect requirements
+# Must match the provisioning profile, bundle ID, and team info exactly
+appstore-validate:
+	@xcrun altool --validate-app \
+		--file "$(PROJECT_ROOT)/$(APP_NAME).pkg" \
+		--type osx \
+		--apiKey "$(API_KEY_ID)" \
+		--apiIssuer "$(API_ISSUER_ID)" \
+		-v
 
+# Publish using custom upload script (handles metadata, screenshots, etc.)
+# Usage: make -C distribution publish [VERSION=x.y.z] [PUBLISH_FLAGS=--force]
 PUBLISH_FLAGS ?=
 
 publish:
@@ -185,7 +182,7 @@ marketing-screenshots-capture:
 		--entitlements $(PROJECT_ROOT)/Sources/App/ClipKitty.appstore.entitlements \
 		"$(DERIVED_DATA)/Build/Products/AppStore/$(APP_NAME).app"
 	@echo "Capturing marketing screenshots..."
-	@$(DIST_DIR)/prepare-screenshot-environment.sh 'cd $(PROJECT_ROOT) && xcodebuild test -scheme ClipKittyUITests -configuration AppStore -destination "platform=macOS" -derivedDataPath DerivedData -only-testing:ClipKittyUITests/ClipKittyUITests/testTakeMarketingScreenshots 2>&1 | grep -E "(Test Case|passed|failed)" || true'
+	@$(DIST_DIR)/prepare-screenshot-environment.sh 'cd $(PROJECT_ROOT) && xcodebuild test -scheme ClipKittyUITests -destination "platform=macOS" -derivedDataPath DerivedData -only-testing:ClipKittyUITests/ClipKittyUITests/testTakeMarketingScreenshots 2>&1 | grep -E "(Test Case|passed|failed)" || true'
 	@mkdir -p $(PROJECT_ROOT)/marketing/en
 	@cp /tmp/clipkitty_marketing_1_history.png $(PROJECT_ROOT)/marketing/en/screenshot_1.png
 	@cp /tmp/clipkitty_marketing_2_search.png $(PROJECT_ROOT)/marketing/en/screenshot_2.png
@@ -225,7 +222,6 @@ marketing-screenshots-localized:
 		$(DIST_DIR)/prepare-screenshot-environment.sh \
 			"cd $(PROJECT_ROOT) && xcodebuild test \
 				-scheme ClipKittyUITests \
-				-configuration AppStore \
 				-destination \"platform=macOS\" \
 				-derivedDataPath DerivedData \
 				-only-testing:ClipKittyUITests/ClipKittyUITests/testTakeMarketingScreenshots \
@@ -241,25 +237,15 @@ marketing-screenshots-localized:
 		fi; \
 		echo "  $$locale screenshots saved to marketing/$$locale/"; \
 	done
-	@rm -f /tmp/clipkitty_screenshot_locale.txt
-	@rm -f /tmp/clipkitty_screenshot_db.txt
+	@rm -f /tmp/clipkitty_screenshot_locale.txt /tmp/clipkitty_screenshot_db.txt
 	@echo "All localized screenshots complete!"
 
-# Record App Store preview video (uses AppStore config)
-preview-video:
-	@$(DIST_DIR)/patch-demo-items.sh
-	@$(MAKE) -C $(PROJECT_ROOT) all CONFIGURATION=AppStore
-	@codesign --force --options runtime \
-		--sign "$(SIGNING_IDENTITY)" \
-		--entitlements $(PROJECT_ROOT)/Sources/App/ClipKitty.appstore.entitlements \
-		"$(DERIVED_DATA)/Build/Products/AppStore/$(APP_NAME).app"
-	@echo "Recording preview video..."
-	@$(DIST_DIR)/record-preview-video.sh
-
 # Generate all marketing assets
-marketing: marketing-screenshots preview-video
-	@echo ""
-	@echo "=== All Marketing Assets Generated ==="
-	@echo "Screenshots: marketing/*/screenshot_*.png"
-	@echo "Video: marketing/app_preview.mov"
-	@ls -lh $(PROJECT_ROOT)/marketing/ 2>/dev/null || true
+marketing: marketing-screenshots-localized
+	@echo "All marketing assets generated!"
+
+# Record App Store preview video
+preview-video:
+	@echo "Recording App Store preview video..."
+	@$(DIST_DIR)/record-preview-video.sh
+	@echo "Preview video saved!"
