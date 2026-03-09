@@ -85,6 +85,7 @@ impl StoredItem {
     }
 
     /// Create a file item with optional QuickLook thumbnail
+    #[allow(clippy::too_many_arguments)]
     pub fn new_file(
         path: String,
         filename: String,
@@ -108,6 +109,7 @@ impl StoredItem {
     }
 
     /// Create a (possibly grouped) file item from multiple files
+    #[allow(clippy::too_many_arguments)]
     pub fn new_files(
         paths: Vec<String>,
         filenames: Vec<String>,
@@ -123,7 +125,8 @@ impl StoredItem {
         // Content hash: sort all paths, hash joined
         let mut sorted_paths = paths.clone();
         sorted_paths.sort();
-        let hash_input = sorted_paths.iter()
+        let hash_input = sorted_paths
+            .iter()
             .map(|p| format!("file://{}", p))
             .collect::<Vec<_>>()
             .join("\n");
@@ -131,7 +134,10 @@ impl StoredItem {
 
         let file_count = paths.len();
 
-        let folder_count = utis.iter().filter(|u| u.starts_with("public.folder")).count();
+        let folder_count = utis
+            .iter()
+            .filter(|u| u.starts_with("public.folder"))
+            .count();
         let file_only_count = file_count - folder_count;
 
         let dir_count = folder_count;
@@ -140,9 +146,13 @@ impl StoredItem {
             (0, n) => format!("{} Files:", n),
             (1, 0) => "Directory:".to_string(),
             (n, 0) => format!("{} Directories:", n),
-            (d, f) => format!("{} {} and {} {}:",
-                d, if d == 1 { "Directory" } else { "Directories" },
-                f, if f == 1 { "File" } else { "Files" }),
+            (d, f) => format!(
+                "{} {} and {} {}:",
+                d,
+                if d == 1 { "Directory" } else { "Directories" },
+                f,
+                if f == 1 { "File" } else { "Files" }
+            ),
         };
 
         let items_summary = match file_count {
@@ -183,7 +193,11 @@ impl StoredItem {
 
     /// Get the index text for file items (all filenames and paths are searchable)
     pub fn file_index_text(&self) -> Option<String> {
-        if let ClipboardContent::File { display_name, files } = &self.content {
+        if let ClipboardContent::File {
+            display_name,
+            files,
+        } = &self.content
+        {
             let mut text = display_name.clone();
             for file in files {
                 text.push('\n');
@@ -219,7 +233,7 @@ impl StoredItem {
 
     /// Display text (truncated, normalized whitespace) for preview
     pub fn display_text(&self, max_chars: usize) -> String {
-        crate::search::generate_preview(&self.text_content(), max_chars)
+        crate::search::generate_preview(self.text_content(), max_chars)
     }
 
     /// Convert to ItemMetadata for list display
@@ -259,7 +273,6 @@ impl StoredItem {
     }
 }
 
-
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -281,7 +294,10 @@ mod tests {
         let item = StoredItem::new_text(long_text, None, None);
         let display = item.display_text(200);
         // Rust truncates; Swift adds ellipsis
-        assert!(display.chars().count() <= 200, "Should be at most 200 chars");
+        assert!(
+            display.chars().count() <= 200,
+            "Should be at most 200 chars"
+        );
     }
 
     #[test]
@@ -371,18 +387,26 @@ mod tests {
             vec![100, 200],
             vec!["public.plain-text".into(), "public.plain-text".into()],
             vec![vec![1], vec![2]],
-            None, None, None,
+            None,
+            None,
+            None,
         );
         assert_eq!(item.text_content(), "2 Files: a.txt, b.txt");
 
         // 3 files: "3 Files: a.txt and 2 more"
         let item = StoredItem::new_files(
-            vec!["/tmp/a.txt".into(), "/tmp/b.txt".into(), "/tmp/c.txt".into()],
+            vec![
+                "/tmp/a.txt".into(),
+                "/tmp/b.txt".into(),
+                "/tmp/c.txt".into(),
+            ],
             vec!["a.txt".into(), "b.txt".into(), "c.txt".into()],
             vec![100, 200, 300],
             vec!["public.plain-text".into(); 3],
             vec![vec![1], vec![2], vec![3]],
-            None, None, None,
+            None,
+            None,
+            None,
         );
         assert_eq!(item.text_content(), "3 Files: a.txt and 2 more");
 
@@ -393,7 +417,9 @@ mod tests {
             vec![42],
             vec!["public.plain-text".into()],
             vec![vec![1]],
-            None, None, None,
+            None,
+            None,
+            None,
         );
         assert_eq!(item.text_content(), "File: solo.txt");
     }
@@ -406,7 +432,9 @@ mod tests {
             vec![100, 200],
             vec!["public.plain-text".into(); 2],
             vec![vec![1], vec![2]],
-            None, None, None,
+            None,
+            None,
+            None,
         );
 
         let item2 = StoredItem::new_files(
@@ -415,10 +443,15 @@ mod tests {
             vec![200, 100],
             vec!["public.plain-text".into(); 2],
             vec![vec![2], vec![1]],
-            None, None, None,
+            None,
+            None,
+            None,
         );
 
-        assert_eq!(item1.content_hash, item2.content_hash, "Same files in different order should produce same hash");
+        assert_eq!(
+            item1.content_hash, item2.content_hash,
+            "Same files in different order should produce same hash"
+        );
     }
 
     #[test]
@@ -429,12 +462,23 @@ mod tests {
             vec![100, 200],
             vec!["public.plain-text".into(); 2],
             vec![vec![1], vec![2]],
-            None, None, None,
+            None,
+            None,
+            None,
         );
         let index_text = item.file_index_text().unwrap();
-        assert!(index_text.contains("a.txt"), "Index text should contain first filename");
-        assert!(index_text.contains("b.txt"), "Index text should contain second filename");
-        assert!(index_text.contains("/tmp/b.txt"), "Index text should contain second path");
+        assert!(
+            index_text.contains("a.txt"),
+            "Index text should contain first filename"
+        );
+        assert!(
+            index_text.contains("b.txt"),
+            "Index text should contain second filename"
+        );
+        assert!(
+            index_text.contains("/tmp/b.txt"),
+            "Index text should contain second path"
+        );
     }
 
     #[test]

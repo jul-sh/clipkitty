@@ -12,9 +12,9 @@ pub mod indexer;
 pub mod interface;
 pub mod models;
 pub mod ranking;
+mod save_service;
 pub mod search;
 mod search_service;
-mod save_service;
 mod store;
 
 pub use interface::*;

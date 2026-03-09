@@ -15,6 +15,7 @@ pub(crate) fn save_text(
     dedupe_or_insert_and_index(db, indexer, item)
 }
 
+#[allow(clippy::too_many_arguments)]
 pub(crate) fn save_file(
     db: &Database,
     indexer: &Indexer,

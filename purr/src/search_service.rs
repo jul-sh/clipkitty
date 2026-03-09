@@ -1,10 +1,10 @@
 use crate::database::Database;
 use crate::indexer::Indexer;
 use crate::interface::{
-    ClipboardItem, ClipKittyError, ContentTypeFilter, ItemMatch, MatchData, SearchResult,
+    ClipKittyError, ClipboardItem, ContentTypeFilter, ItemMatch, MatchData, SearchResult,
 };
 use crate::models::StoredItem;
-use crate::search::{self, MIN_TRIGRAM_QUERY_LEN, MAX_RESULTS};
+use crate::search::{self, MAX_RESULTS, MIN_TRIGRAM_QUERY_LEN};
 use std::sync::Arc;
 use tokio_util::sync::CancellationToken;
 
@@ -27,12 +27,12 @@ pub(crate) async fn execute_search(
     query: String,
     filter: Option<ContentTypeFilter>,
 ) -> Result<SearchResult, ClipKittyError> {
-    let trimmed = query.trim().to_string();
+    let parsed_query = search::SearchQuery::parse(&query);
     if context.token.is_cancelled() {
         return Err(ClipKittyError::Cancelled);
     }
 
-    if trimmed.is_empty() {
+    if parsed_query.raw_text().is_empty() {
         return execute_empty_query(&context, filter.as_ref());
     }
 
@@ -42,8 +42,7 @@ pub(crate) async fn execute_search(
         runtime,
         token,
     } = context;
-    let query_owned = query.clone();
-    let trimmed_owned = trimmed.clone();
+    let parsed_query_owned = parsed_query.clone();
     let filter_copy = filter;
     let runtime_for_closure = runtime.clone();
     let db_for_closure = Arc::clone(&db);
@@ -54,8 +53,7 @@ pub(crate) async fn execute_search(
         execute_search_sync(
             &db_for_closure,
             &indexer_for_closure,
-            &query_owned,
-            &trimmed_owned,
+            &parsed_query_owned,
             filter_copy.as_ref(),
             &token_for_closure,
             &runtime_for_closure,
@@ -166,7 +164,7 @@ pub(crate) fn search_short_query_sync(
 pub(crate) fn search_trigram_query_sync(
     db: &Database,
     indexer: &Indexer,
-    query: &str,
+    query: &search::SearchQuery,
     token: &CancellationToken,
     runtime: &tokio::runtime::Handle,
     filter: Option<&ContentTypeFilter>,
@@ -204,7 +202,7 @@ pub(crate) fn search_trigram_query_sync(
                 let content = item.content.text_content();
                 let is_short = content.len() <= SHORT_CONTENT_THRESHOLD;
                 if index < EAGER_MATCH_DATA_COUNT || (is_short && few_results) {
-                    search::create_item_match(item, query)
+                    search::create_item_match(item, query.raw_text())
                 } else {
                     search::create_lazy_item_match(item)
                 }
@@ -244,16 +242,22 @@ fn execute_empty_query(
 fn execute_search_sync(
     db: &Database,
     indexer: &Indexer,
-    query: &str,
-    trimmed: &str,
+    parsed_query: &search::SearchQuery,
     filter: Option<&ContentTypeFilter>,
     token: &CancellationToken,
     runtime: &tokio::runtime::Handle,
 ) -> Result<(Vec<ItemMatch>, u64), ClipKittyError> {
-    let matches = if trimmed.len() < MIN_TRIGRAM_QUERY_LEN {
-        search_short_query_sync(db, trimmed, token, runtime, filter)?
+    let matches = if parsed_query.recall_text().len() < MIN_TRIGRAM_QUERY_LEN {
+        match parsed_query {
+            search::SearchQuery::Plain { text } => {
+                search_short_query_sync(db, text, token, runtime, filter)?
+            }
+            search::SearchQuery::PreferPrefix { stripped_text, .. } => {
+                search_short_query_sync(db, stripped_text, token, runtime, filter)?
+            }
+        }
     } else {
-        search_trigram_query_sync(db, indexer, query, token, runtime, filter)?
+        search_trigram_query_sync(db, indexer, parsed_query, token, runtime, filter)?
     };
     let total_count = matches.len() as u64;
     Ok((matches, total_count))

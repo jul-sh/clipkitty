@@ -23,7 +23,11 @@ use purr::{HighlightKind, HighlightRange};
 
 /// Helper: create a HighlightRange with Exact kind
 fn hr(start: u64, end: u64) -> HighlightRange {
-    HighlightRange { start, end, kind: HighlightKind::Exact }
+    HighlightRange {
+        start,
+        end,
+        kind: HighlightKind::Exact,
+    }
 }
 
 // ─────────────────────────────────────────────────────────────────────────────
@@ -100,9 +104,18 @@ fn snippet_short_text_returns_full_content() {
     let highlights = vec![hr(0, 5)];
     let (snippet, _, line_number) = generate_snippet(content, &highlights, 400);
     assert_eq!(snippet, "Hello World");
-    assert!(!snippet.starts_with('…'), "Rust should not add leading ellipsis");
-    assert!(!snippet.ends_with('…'), "Rust should not add trailing ellipsis");
-    assert_eq!(line_number, 1, "Match on first line should have line_number=1");
+    assert!(
+        !snippet.starts_with('…'),
+        "Rust should not add leading ellipsis"
+    );
+    assert!(
+        !snippet.ends_with('…'),
+        "Rust should not add trailing ellipsis"
+    );
+    assert_eq!(
+        line_number, 1,
+        "Match on first line should have line_number=1"
+    );
 }
 
 #[test]
@@ -114,10 +127,16 @@ fn snippet_no_ellipsis_from_rust() {
     let highlights = vec![hr(100, 105)];
     let (snippet, _, _) = generate_snippet(&content, &highlights, 400);
 
-    assert!(!snippet.starts_with('…'),
-        "Rust should not add leading ellipsis. Got: '{}'", snippet);
-    assert!(!snippet.ends_with('…'),
-        "Rust should not add trailing ellipsis. Got: '{}'", snippet);
+    assert!(
+        !snippet.starts_with('…'),
+        "Rust should not add leading ellipsis. Got: '{}'",
+        snippet
+    );
+    assert!(
+        !snippet.ends_with('…'),
+        "Rust should not add trailing ellipsis. Got: '{}'",
+        snippet
+    );
 }
 
 #[test]
@@ -131,7 +150,8 @@ fn snippet_contains_match_with_context() {
 
     // Verify highlight points to "fox" in snippet
     let h = &adjusted_highlights[0];
-    let highlighted: String = snippet.chars()
+    let highlighted: String = snippet
+        .chars()
         .skip(h.start as usize)
         .take((h.end - h.start) as usize)
         .collect();
@@ -144,7 +164,10 @@ fn snippet_normalizes_whitespace() {
     let highlights = vec![hr(0, 5)];
     let (snippet, _, _) = generate_snippet(content, &highlights, 400);
 
-    assert!(!snippet.contains('\n'), "Snippet should not contain newlines");
+    assert!(
+        !snippet.contains('\n'),
+        "Snippet should not contain newlines"
+    );
     assert_eq!(snippet, "Hello World");
 }
 
@@ -154,7 +177,10 @@ fn snippet_line_number_calculated_correctly() {
     let highlights = vec![hr(21, 26)]; // "MATCH"
     let (_, _, line_number) = generate_snippet(content, &highlights, 400);
 
-    assert_eq!(line_number, 3, "Match on third line should have line_number=3");
+    assert_eq!(
+        line_number, 3,
+        "Match on third line should have line_number=3"
+    );
 }
 
 #[test]
@@ -163,7 +189,10 @@ fn snippet_line_number_first_line() {
     let highlights = vec![hr(0, 5)];
     let (_, _, line_number) = generate_snippet(content, &highlights, 400);
 
-    assert_eq!(line_number, 1, "Match on first line should have line_number=1");
+    assert_eq!(
+        line_number, 1,
+        "Match on first line should have line_number=1"
+    );
 }
 
 #[test]
@@ -173,8 +202,11 @@ fn snippet_respects_max_length() {
     let (snippet, _, _) = generate_snippet(&content, &highlights, 400);
 
     let char_count = snippet.chars().count();
-    assert!(char_count <= 400,
-        "Snippet length {} exceeds max of 400", char_count);
+    assert!(
+        char_count <= 400,
+        "Snippet length {} exceeds max of 400",
+        char_count
+    );
 }
 
 #[test]
@@ -186,14 +218,21 @@ fn snippet_highlight_positions_correct_without_ellipsis() {
     let (snippet, adjusted_highlights, _) = generate_snippet(&content, &highlights, 400);
 
     // The highlight should point to "MATCH" in the snippet
-    assert!(!adjusted_highlights.is_empty(), "Should have adjusted highlights");
+    assert!(
+        !adjusted_highlights.is_empty(),
+        "Should have adjusted highlights"
+    );
     let h = &adjusted_highlights[0];
-    let highlighted: String = snippet.chars()
+    let highlighted: String = snippet
+        .chars()
         .skip(h.start as usize)
         .take((h.end - h.start) as usize)
         .collect();
-    assert_eq!(highlighted, "MATCH",
-        "Highlight should correctly identify MATCH in snippet: '{}'", snippet);
+    assert_eq!(
+        highlighted, "MATCH",
+        "Highlight should correctly identify MATCH in snippet: '{}'",
+        snippet
+    );
 }
 
 #[test]
@@ -239,26 +278,32 @@ fn snippet_code_with_newline_hello_query() {
     // "Hello" appears inside the string literal at the end
     // Full string is 70 chars, "Hello" is at chars 63-68 in ORIGINAL
     let highlights = vec![
-        hr(63, 68),  // "Hello" in original
+        hr(63, 68), // "Hello" in original
     ];
 
     let (snippet, adjusted_highlights, line_number) = generate_snippet(content, &highlights, 400);
 
     // Document exactly what Rust returns:
     // 1. Newlines are converted to spaces
-    assert_eq!(snippet, "// handler.py def handler(event, context): return {'message': 'Hello'}",
-        "Newlines should be converted to spaces");
+    assert_eq!(
+        snippet, "// handler.py def handler(event, context): return {'message': 'Hello'}",
+        "Newlines should be converted to spaces"
+    );
 
     // 2. Highlight positions are adjusted for normalized text
     assert_eq!(adjusted_highlights.len(), 1);
     let h = &adjusted_highlights[0];
 
     // Extract the highlighted portion from the normalized snippet
-    let highlighted: String = snippet.chars()
+    let highlighted: String = snippet
+        .chars()
         .skip(h.start as usize)
         .take((h.end - h.start) as usize)
         .collect();
-    assert_eq!(highlighted, "Hello", "Highlight should correctly identify 'Hello'");
+    assert_eq!(
+        highlighted, "Hello",
+        "Highlight should correctly identify 'Hello'"
+    );
 
     // 3. Line number should be 2 (match is on line 2 of original, after the newline)
     assert_eq!(line_number, 2);
