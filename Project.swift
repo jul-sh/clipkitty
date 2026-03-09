@@ -1,13 +1,15 @@
 import ProjectDescription
 
 // MARK: - Build Configurations
-// Debug:    for development
-// Release:  for DMG distribution
-// AppStore: for App Store (differs only in signing)
+// Debug:          for development (no Sparkle)
+// Release:        for DMG distribution without Sparkle (plain release build)
+// SparkleRelease: for DMG distribution with Sparkle auto-updates
+// AppStore:       for App Store (no Sparkle, different signing)
 
 let configurations: [Configuration] = [
     .debug(name: "Debug", settings: [:]),
     .release(name: "Release", settings: [:]),
+    .release(name: .configuration("SparkleRelease"), settings: [:]),
     .release(name: .configuration("AppStore"), settings: [:]),
 ]
 
@@ -83,11 +85,12 @@ let project = Project(
                 "LSApplicationCategoryType": "public.app-category.utilities",
                 "LSMinimumSystemVersion": "14.0",
                 "NSHumanReadableCopyright": "Copyright © 2025 ClipKitty. All rights reserved.",
-                "SUFeedURL": "https://jul-sh.github.io/clipkitty/appcast.xml",
-                "SUPublicEDKey": "9VqfSPPY2Gr8QTYDLa99yJXAFWnHw5aybSbKaYDyCq0=",
-                "SUEnableAutomaticChecks": true,
-                "SUAutomaticallyUpdate": true,
-                "SUEnableInstallerLauncherService": true,
+                // Sparkle keys use build settings so they're empty for AppStore
+                "SUFeedURL": "$(SPARKLE_FEED_URL)",
+                "SUPublicEDKey": "$(SPARKLE_PUBLIC_KEY)",
+                "SUEnableAutomaticChecks": "$(SPARKLE_AUTO_CHECK)",
+                "SUAutomaticallyUpdate": "$(SPARKLE_AUTO_UPDATE)",
+                "SUEnableInstallerLauncherService": "$(SPARKLE_INSTALLER_SERVICE)",
             ]),
             sources: ["Sources/App/**"],
             resources: [
@@ -100,25 +103,22 @@ let project = Project(
             scripts: [
                 .post(
                     script: """
-                    if [ "$CONFIGURATION" = "AppStore" ]; then
+                    # Strip Sparkle frameworks from non-SparkleRelease builds
+                    # (Info.plist keys are handled via empty build settings)
+                    if [ "$CONFIGURATION" != "SparkleRelease" ]; then
                         rm -rf "$BUILT_PRODUCTS_DIR/$FRAMEWORKS_FOLDER_PATH/Sparkle.framework"
-                        PLIST="$BUILT_PRODUCTS_DIR/$INFOPLIST_PATH"
-                        /usr/libexec/PlistBuddy -c "Delete :SUFeedURL" "$PLIST" 2>/dev/null || true
-                        /usr/libexec/PlistBuddy -c "Delete :SUPublicEDKey" "$PLIST" 2>/dev/null || true
-                        /usr/libexec/PlistBuddy -c "Delete :SUEnableAutomaticChecks" "$PLIST" 2>/dev/null || true
-                        /usr/libexec/PlistBuddy -c "Delete :SUAutomaticallyUpdate" "$PLIST" 2>/dev/null || true
-                        /usr/libexec/PlistBuddy -c "Delete :SUEnableInstallerLauncherService" "$PLIST" 2>/dev/null || true
+                        rm -rf "$BUILT_PRODUCTS_DIR/$FRAMEWORKS_FOLDER_PATH/SparkleUpdater.framework"
                     fi
                     """,
-                    name: "Strip Sparkle from AppStore builds",
+                    name: "Strip Sparkle from non-SparkleRelease builds",
                     basedOnDependencyAnalysis: false
                 ),
             ],
             dependencies: [
                 .target(name: "ClipKittyRust"),
                 .sdk(name: "SystemConfiguration", type: .framework),
-                .external(name: "Sparkle"),
                 .external(name: "STTextKitPlus"),
+                .external(name: "SparkleUpdater"),
             ],
             settings: .settings(
                 base: [
@@ -134,9 +134,18 @@ let project = Project(
                     .release(name: "Release", settings: [
                         "CODE_SIGN_ENTITLEMENTS": "Sources/App/ClipKitty.oss.entitlements",
                     ]),
+                    .release(name: .configuration("SparkleRelease"), settings: [
+                        "CODE_SIGN_ENTITLEMENTS": "Sources/App/ClipKitty.oss.entitlements",
+                        "SWIFT_ACTIVE_COMPILATION_CONDITIONS": "SPARKLE_RELEASE",
+                        // Sparkle configuration - only set for SparkleRelease
+                        "SPARKLE_FEED_URL": "https://jul-sh.github.io/clipkitty/appcast.xml",
+                        "SPARKLE_PUBLIC_KEY": "9VqfSPPY2Gr8QTYDLa99yJXAFWnHw5aybSbKaYDyCq0=",
+                        "SPARKLE_AUTO_CHECK": "YES",
+                        "SPARKLE_AUTO_UPDATE": "YES",
+                        "SPARKLE_INSTALLER_SERVICE": "YES",
+                    ]),
                     .release(name: .configuration("AppStore"), settings: [
                         "CODE_SIGN_ENTITLEMENTS": "Sources/App/ClipKitty.appstore.entitlements",
-                        "SWIFT_ACTIVE_COMPILATION_CONDITIONS": "APP_STORE",
                     ]),
                 ]
             )
@@ -186,6 +195,11 @@ let project = Project(
                         "CODE_SIGN_IDENTITY": "-",
                     ]),
                     .release(name: "Release", settings: [
+                        "CODE_SIGN_STYLE": "Manual",
+                        "CODE_SIGN_IDENTITY": "Developer ID Application",
+                        "DEVELOPMENT_TEAM": "ANBBV7LQ2P",
+                    ]),
+                    .release(name: .configuration("SparkleRelease"), settings: [
                         "CODE_SIGN_STYLE": "Manual",
                         "CODE_SIGN_IDENTITY": "Developer ID Application",
                         "DEVELOPMENT_TEAM": "ANBBV7LQ2P",

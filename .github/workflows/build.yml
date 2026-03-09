@@ -95,8 +95,8 @@ jobs:
       - name: Generate Xcode Project
         run: make generate
 
-      - name: Build App
-        run: make build CONFIGURATION=Release
+      - name: Build App (SparkleRelease)
+        run: make build CONFIGURATION=SparkleRelease
 
       - name: Build App (AppStore)
         run: make build CONFIGURATION=AppStore
@@ -125,10 +125,10 @@ jobs:
         run: |
           chmod +x distribution/build-dmg.sh
 
-          make build CONFIGURATION=Release
+          make build CONFIGURATION=SparkleRelease
 
           # Sign nested frameworks/bundles first (inside-out for Sparkle, XPC services, etc.)
-          APP="DerivedData/Build/Products/Release/ClipKitty.app"
+          APP="DerivedData/Build/Products/SparkleRelease/ClipKitty.app"
           if [ -d "$APP/Contents/Frameworks" ]; then
             find "$APP/Contents/Frameworks" \( -type f -perm +111 -o -name "*.dylib" \) | while read -r binary; do
               codesign --force --options runtime --sign "Developer ID Application" "$binary"
