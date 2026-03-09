@@ -153,13 +153,15 @@ impl ItemIcon {
                     }
                 }
             }
-            "image" | "link" | "file" => {
+            "link" => ItemIcon::Symbol {
+                icon_type: IconType::Link,
+            },
+            "image" | "file" => {
                 if let Some(thumb) = thumbnail {
                     ItemIcon::Thumbnail { bytes: thumb }
                 } else {
                     let icon_type = match db_type {
                         "image" => IconType::Image,
-                        "link" => IconType::Link,
                         _ => IconType::File,
                     };
                     ItemIcon::Symbol { icon_type }
