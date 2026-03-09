@@ -1,27 +1,6 @@
 import AppKit
 import Foundation
-
-// MARK: - Pasteboard Protocol (duplicated for test target)
-
-/// Protocol for clipboard access, enabling mock injection for testing
-protocol PasteboardProtocol: AnyObject {
-    var changeCount: Int { get }
-    @discardableResult func clearContents() -> Int
-    func setString(_ string: String, forType type: NSPasteboard.PasteboardType) -> Bool
-    func setData(_ data: Data?, forType type: NSPasteboard.PasteboardType) -> Bool
-    func setPropertyList(_ plist: Any, forType type: NSPasteboard.PasteboardType) -> Bool
-    func declareTypes(_ newTypes: [NSPasteboard.PasteboardType], owner newOwner: Any?) -> Int
-    func string(forType type: NSPasteboard.PasteboardType) -> String?
-    func data(forType type: NSPasteboard.PasteboardType) -> Data?
-    func types() -> [NSPasteboard.PasteboardType]?
-    func propertyList(forType type: NSPasteboard.PasteboardType) -> Any?
-}
-
-extension NSPasteboard: PasteboardProtocol {
-    func types() -> [NSPasteboard.PasteboardType]? {
-        return self.types
-    }
-}
+@testable import ClipKitty
 
 // MARK: - Mock Pasteboard
 
@@ -86,6 +65,14 @@ final class MockPasteboard: PasteboardProtocol {
         return storage[type]
     }
 
+    func readFileURLs() -> [URL] {
+        guard let fileURL = storage[.fileURL] as? String,
+              let url = URL(string: fileURL) else {
+            return []
+        }
+        return [url]
+    }
+
     // MARK: - Test Helpers
 
     /// Simulate external clipboard change
@@ -105,11 +92,14 @@ final class MockPasteboard: PasteboardProtocol {
 // MARK: - Mock Workspace
 
 /// Mock workspace for unit testing
-final class MockWorkspace: @unchecked Sendable {
+final class MockWorkspace: WorkspaceProtocol, @unchecked Sendable {
     var frontmostApplication: NSRunningApplication?
+    let notificationCenter = NotificationCenter()
 
     private var fileIcons: [String: NSImage] = [:]
     private var typeIcons: [String: NSImage] = [:]
+    private var bundleIDToURL: [String: URL] = [:]
+    private var opener: ((URL) -> Void)?
 
     func icon(forFile path: String) -> NSImage {
         return fileIcons[path] ?? NSImage()
@@ -117,6 +107,20 @@ final class MockWorkspace: @unchecked Sendable {
 
     func icon(forFileType type: String) -> NSImage {
         return typeIcons[type] ?? NSImage()
+    }
+
+    func urlForApplication(withBundleIdentifier bundleIdentifier: String) -> URL? {
+        bundleIDToURL[bundleIdentifier]
+    }
+
+    func urlForApplication(toOpen url: URL) -> URL? {
+        bundleIDToURL[url.absoluteString]
+    }
+
+    @discardableResult
+    func open(_ url: URL) -> Bool {
+        opener?(url)
+        return true
     }
 
     // MARK: - Test Helpers
@@ -128,19 +132,37 @@ final class MockWorkspace: @unchecked Sendable {
     func setIcon(_ icon: NSImage, forFileType type: String) {
         typeIcons[type] = icon
     }
+
+    func setApplicationURL(_ url: URL, forBundleIdentifier bundleIdentifier: String) {
+        bundleIDToURL[bundleIdentifier] = url
+    }
+
+    func setApplicationURLToOpen(_ appURL: URL, forTargetURL url: URL) {
+        bundleIDToURL[url.absoluteString] = appURL
+    }
+
+    func setOpenHandler(_ handler: @escaping (URL) -> Void) {
+        opener = handler
+    }
 }
 
 // MARK: - Mock File Manager
 
 /// Mock file manager for unit testing
-final class MockFileManager {
+final class MockFileManager: FileManagerProtocol {
     private var files: Set<String> = []
     private var directories: [String: [String]] = [:]
     private var attributes: [String: [FileAttributeKey: Any]] = [:]
     private var searchPaths: [FileManager.SearchPathDirectory: [URL]] = [:]
+    private var fileData: [String: Data] = [:]
+    var homeDirectoryForCurrentUser = URL(fileURLWithPath: "/Users/tester")
 
     func fileExists(atPath path: String) -> Bool {
         return files.contains(path)
+    }
+
+    func contents(atPath path: String) -> Data? {
+        fileData[path]
     }
 
     func contentsOfDirectory(atPath path: String) throws -> [String] {
@@ -165,11 +187,21 @@ final class MockFileManager {
         return searchPaths[directory] ?? []
     }
 
+    func removeItem(at url: URL) throws {
+        files.remove(url.path)
+        directories.removeValue(forKey: url.path)
+        attributes.removeValue(forKey: url.path)
+        fileData.removeValue(forKey: url.path)
+    }
+
     // MARK: - Test Helpers
 
-    func addFile(_ path: String, attributes: [FileAttributeKey: Any] = [:]) {
+    func addFile(_ path: String, attributes: [FileAttributeKey: Any] = [:], data: Data? = nil) {
         files.insert(path)
         self.attributes[path] = attributes
+        if let data {
+            fileData[path] = data
+        }
     }
 
     func addDirectory(_ path: String, contents: [String] = []) {

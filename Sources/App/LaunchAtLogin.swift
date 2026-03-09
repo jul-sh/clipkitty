@@ -1,17 +1,28 @@
 import Foundation
 import ServiceManagement
 
+protocol LaunchAtLoginServiceProtocol {
+    var status: SMAppService.Status { get }
+    func register() throws
+    func unregister() throws
+}
+
+extension SMAppService: LaunchAtLoginServiceProtocol {}
+
 enum LaunchAtLoginState: Equatable {
-    case enabled
-    case disabled
-    case unavailable(reason: UnavailableReason)
-    case error(type: ErrorType)
+    case unavailable(reason: UnavailableReason, notice: Notice?)
+    case available(status: RegistrationStatus, notice: Notice?)
+
+    enum RegistrationStatus: Equatable {
+        case enabled
+        case disabled
+    }
 
     enum UnavailableReason: Equatable {
         case notInApplicationsDirectory
     }
 
-    enum ErrorType: Equatable {
+    enum Notice: Equatable {
         case registrationFailed
         case unregistrationFailed
         case disabledDueToLocation
@@ -19,16 +30,47 @@ enum LaunchAtLoginState: Equatable {
 
     var displayMessage: String? {
         switch self {
-        case .enabled, .disabled:
-            return nil
-        case .unavailable(.notInApplicationsDirectory):
-            return String(localized: "Move ClipKitty to the Applications folder to enable this option.")
-        case .error(.registrationFailed):
-            return String(localized: "Could not enable launch at login. Please add ClipKitty manually in System Settings.")
-        case .error(.unregistrationFailed):
-            return String(localized: "Could not disable launch at login. Please remove ClipKitty manually in System Settings.")
-        case .error(.disabledDueToLocation):
+        case .unavailable(.notInApplicationsDirectory, .disabledDueToLocation):
             return String(localized: "Launch at login was disabled because ClipKitty is not in the Applications folder.")
+        case .unavailable(.notInApplicationsDirectory, _):
+            return String(localized: "Move ClipKitty to the Applications folder to enable this option.")
+        case .available(_, .registrationFailed):
+            return String(localized: "Could not enable launch at login. Please add ClipKitty manually in System Settings.")
+        case .available(_, .unregistrationFailed):
+            return String(localized: "Could not disable launch at login. Please remove ClipKitty manually in System Settings.")
+        case .available(_, .disabledDueToLocation):
+            return String(localized: "Launch at login was disabled because ClipKitty is not in the Applications folder.")
+        case .available, .unavailable(_, nil):
+            return nil
+        }
+    }
+
+    var isEnabled: Bool {
+        switch self {
+        case .available(.enabled, _):
+            return true
+        case .available(.disabled, _), .unavailable:
+            return false
+        }
+    }
+
+    var canToggle: Bool {
+        if case .available = self {
+            return true
+        }
+        return false
+    }
+
+    var hasFailureNotice: Bool {
+        switch self {
+        case .available(_, .registrationFailed), .available(_, .unregistrationFailed):
+            return true
+        case .available(_, .disabledDueToLocation):
+            return true
+        case .unavailable(_, .disabledDueToLocation):
+            return true
+        case .available(_, nil), .unavailable:
+            return false
         }
     }
 }
@@ -38,133 +80,114 @@ enum LaunchAtLoginState: Equatable {
 /// Key behaviors:
 /// - Only allows registration when the app is in /Applications or ~/Applications
 /// - Uses the app's bundle identifier to ensure only one registration exists
-/// - Silent operation - no terminal windows or user prompts
+/// - Keeps the toggle actionable after transient failures
 @MainActor
 final class LaunchAtLogin: ObservableObject {
     static let shared = LaunchAtLogin()
 
-    /// The current state of launch at login
-    @Published private(set) var state: LaunchAtLoginState = .disabled
+    @Published private(set) var state: LaunchAtLoginState
 
-    /// Whether the app is currently registered to launch at login (reads directly from system)
     var isEnabled: Bool {
-        service.status == .enabled
+        state.isEnabled
     }
 
-    /// Error message to display to user, if any (for backward compatibility)
     var errorMessage: String? {
         state.displayMessage
     }
 
-    /// Whether the app is in a valid location to enable launch at login
     var isInApplicationsDirectory: Bool {
-        guard let bundlePath = Bundle.main.bundlePath as NSString? else {
-            return false
-        }
+        Self.isInApplicationsDirectory(bundle: bundle, fileManager: fileManager)
+    }
 
-        let path = bundlePath as String
+    private let service: LaunchAtLoginServiceProtocol
+    private let bundle: BundleInfoProtocol
+    private let fileManager: FileManagerProtocol
 
-        // Check for /Applications or ~/Applications
+    init(
+        service: LaunchAtLoginServiceProtocol = SMAppService.mainApp,
+        bundle: BundleInfoProtocol = Bundle.main,
+        fileManager: FileManagerProtocol = FileManager.default
+    ) {
+        self.service = service
+        self.bundle = bundle
+        self.fileManager = fileManager
+        self.state = .available(status: .disabled, notice: nil)
+        refreshState()
+    }
+
+    static func isInApplicationsDirectory(
+        bundle: BundleInfoProtocol,
+        fileManager: FileManagerProtocol
+    ) -> Bool {
+        let path = bundle.bundlePath
         let systemApps = "/Applications/"
-        let userApps = FileManager.default.homeDirectoryForCurrentUser
+        let userApps = fileManager.homeDirectoryForCurrentUser
             .appendingPathComponent("Applications")
             .path + "/"
-
         return path.hasPrefix(systemApps) || path.hasPrefix(userApps)
     }
 
-    private let service: SMAppService
-
-    private init() {
-        // SMAppService uses the app's bundle identifier automatically
-        // This ensures only one registration per bundle ID (no duplicates)
-        service = SMAppService.mainApp
-        updateState()
+    func refreshState() {
+        refreshState(retaining: nil)
     }
 
-    /// Updates the state based on current service status and app location
-    private func updateState() {
-        // First check if we're in the Applications directory
+    private func refreshState(retaining notice: LaunchAtLoginState.Notice?) {
         guard isInApplicationsDirectory else {
-            state = .unavailable(reason: .notInApplicationsDirectory)
+            state = .unavailable(reason: .notInApplicationsDirectory, notice: notice)
             return
         }
 
-        // Check service status
+        let status: LaunchAtLoginState.RegistrationStatus
         switch service.status {
         case .enabled:
-            state = .enabled
-        case .notRegistered, .requiresApproval:
-            state = .disabled
-        case .notFound:
-            state = .disabled
+            status = .enabled
+        case .notRegistered, .requiresApproval, .notFound:
+            status = .disabled
         @unknown default:
-            state = .disabled
+            status = .disabled
         }
+
+        state = .available(status: status, notice: notice)
     }
 
-    /// Enable launch at login
-    /// - Returns: true if successful, false if failed or not in Applications directory
     @discardableResult
     func enable() -> Bool {
-        switch state {
-        case .enabled, .disabled:
-            break
-        case .unavailable, .error:
-            return false
-        }
+        guard state.canToggle else { return false }
 
         do {
             try service.register()
             objectWillChange.send()
-            updateState()
+            refreshState()
             return true
         } catch {
             objectWillChange.send()
-            state = .error(type: .registrationFailed)
+            refreshState(retaining: .registrationFailed)
             return false
         }
     }
 
-    /// Disable launch at login
-    /// - Returns: true if successful
     @discardableResult
     func disable() -> Bool {
-        switch state {
-        case .enabled, .disabled:
-            break
-        case .unavailable, .error:
-            return false
-        }
+        guard state.canToggle else { return false }
 
         do {
             try service.unregister()
             objectWillChange.send()
-            updateState()
+            refreshState()
             return true
         } catch {
             objectWillChange.send()
-            state = .error(type: .unregistrationFailed)
+            refreshState(retaining: .unregistrationFailed)
             return false
         }
     }
 
-    /// Set the launch at login state
-    /// - Parameter enabled: whether to enable or disable
-    /// - Returns: true if the operation succeeded
     @discardableResult
     func setEnabled(_ enabled: Bool) -> Bool {
-        if enabled {
-            return enable()
-        } else {
-            return disable()
-        }
+        enabled ? enable() : disable()
     }
 
-    /// Sets an error state indicating launch at login was disabled due to location
-    /// This is used when the app is moved out of the Applications directory
     func setDisabledDueToLocationError() {
-        state = .error(type: .disabledDueToLocation)
+        state = .unavailable(reason: .notInApplicationsDirectory, notice: .disabledDueToLocation)
     }
 }
-

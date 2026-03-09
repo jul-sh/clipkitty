@@ -61,7 +61,9 @@ pub fn detect_content(text: &str) -> ClipboardContent {
 
     // Check for color values (before URLs since some color formats might look URL-ish)
     if is_color(trimmed) {
-        return ClipboardContent::Color { value: trimmed.to_string() };
+        return ClipboardContent::Color {
+            value: trimmed.to_string(),
+        };
     }
 
     // Check for URLs (but not mailto: links — those are just text)
@@ -73,7 +75,9 @@ pub fn detect_content(text: &str) -> ClipboardContent {
     }
 
     // Default to plain text (emails, phone numbers, and everything else)
-    ClipboardContent::Text { value: text.to_string() }
+    ClipboardContent::Text {
+        value: text.to_string(),
+    }
 }
 
 #[cfg(test)]
