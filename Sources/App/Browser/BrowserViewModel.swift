@@ -809,6 +809,12 @@ final class BrowserViewModel {
                 ))
             }
         }
+
+        // Update prefetch cache to reflect tag mutation
+        if let cachedItem = prefetchCache[itemId] {
+            let updatedMetadata = applyingTagMutation(to: cachedItem.itemMetadata, tag: tag, shouldInclude: shouldInclude)
+            prefetchCache[itemId] = ClipboardItem(itemMetadata: updatedMetadata, content: cachedItem.content)
+        }
     }
 
     private func applyingTagMutation(
