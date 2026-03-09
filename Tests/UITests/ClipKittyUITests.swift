@@ -12,6 +12,38 @@ final class ClipKittyUITests: XCTestCase {
         FileManager.default.fileExists(atPath: "/Users/runner")
     }
 
+    /// CI runners are slower; use longer timeouts to avoid flaky failures.
+    private var ciTimeout: TimeInterval { isCI ? 2.0 : 0.5 }
+
+    /// Wait for a condition to become true, polling at short intervals.
+    private func waitForCondition(timeout: TimeInterval = 5, _ condition: () -> Bool) -> Bool {
+        let deadline = Date().addingTimeInterval(timeout)
+        while Date() < deadline {
+            if condition() { return true }
+            Thread.sleep(forTimeInterval: 0.1)
+        }
+        return condition()
+    }
+
+    /// Click an element and wait for it to become focused/ready. Retries on CI.
+    private func clickAndWait(_ element: XCUIElement, timeout: TimeInterval = 1.0) {
+        element.click()
+        Thread.sleep(forTimeInterval: isCI ? timeout : min(timeout, 0.3))
+    }
+
+    /// Type text into an element with CI-appropriate pacing.
+    private func typeTextSlowly(_ element: XCUIElement, text: String) {
+        if isCI {
+            // In CI, type one character at a time with small delays for reliability
+            for char in text {
+                element.typeText(String(char))
+                Thread.sleep(forTimeInterval: 0.05)
+            }
+        } else {
+            element.typeText(text)
+        }
+    }
+
     /// Helper to read configuration from a temp file with optional environment fallback.
     /// - Parameters:
     ///   - filename: The temp file name (will be prefixed with /tmp/)
@@ -259,19 +291,20 @@ final class ClipKittyUITests: XCTestCase {
     /// Tests that Cmd+number shortcuts select and paste the corresponding history item.
     /// Cmd+2 should target the second item (index 1).
     func testCommandNumberShortcutSelectsSecondItem() throws {
-        // Skip in CI - known flaky due to keyboard shortcut timing issues
-        try XCTSkipIf(isCI, "Flaky in CI")
         let searchField = app.textFields["SearchField"]
         XCTAssertTrue(searchField.waitForExistence(timeout: 5), "Search field not found")
 
         // Ensure keyboard focus and initial selection are stable.
-        searchField.click()
-        XCTAssertTrue(waitForSelectedIndex(0, timeout: 2), "Initial selection should be first item")
+        clickAndWait(searchField)
+        XCTAssertTrue(waitForSelectedIndex(0, timeout: 3), "Initial selection should be first item")
+
+        // Extra stabilization in CI before sending keyboard shortcut
+        Thread.sleep(forTimeInterval: ciTimeout)
 
         app.typeKey("2", modifierFlags: .command)
 
         XCTAssertTrue(
-            waitForSelectedIndex(1, timeout: 2),
+            waitForSelectedIndex(1, timeout: 5),
             "Cmd+2 should select the second item before paste"
         )
     }
@@ -324,19 +357,20 @@ final class ClipKittyUITests: XCTestCase {
     /// The panel should only appear via hotkey or menu - not automatically on app focus.
     /// This ensures settings and other interactions don't get overlaid by the panel.
     func testPanelDoesNotAutoShowOnAppFocus() throws {
-        // Skip in CI - app focus behavior differs in headless/runner environment
-        try XCTSkipIf(isCI, "Flaky in CI")
         let panel = app.dialogs.firstMatch
         XCTAssertTrue(panel.exists, "Panel should be visible initially")
 
         // First, hide the panel by activating another app
         let finder = XCUIApplication(bundleIdentifier: "com.apple.finder")
         finder.activate()
-        XCTAssertTrue(panel.waitForNonExistence(timeout: 3), "Panel should hide when focus lost")
+        XCTAssertTrue(panel.waitForNonExistence(timeout: 5), "Panel should hide when focus lost")
+
+        // Give CI time to fully transfer focus
+        Thread.sleep(forTimeInterval: ciTimeout)
 
         // Re-activate the app - panel should NOT auto-show
         app.activate()
-        Thread.sleep(forTimeInterval: 0.5)
+        Thread.sleep(forTimeInterval: ciTimeout)
 
         // Panel should still be hidden - it should only show via hotkey/menu
         XCTAssertFalse(panel.exists, "Panel should NOT auto-show when app is activated")
@@ -344,7 +378,7 @@ final class ClipKittyUITests: XCTestCase {
         // Now open settings - it should work without panel overlay
         app.typeKey(",", modifierFlags: .command)
         let settingsWindow = app.windows["ClipKitty Settings"]
-        XCTAssertTrue(settingsWindow.waitForExistence(timeout: 3), "Settings window should appear")
+        XCTAssertTrue(settingsWindow.waitForExistence(timeout: 5), "Settings window should appear")
         XCTAssertTrue(settingsWindow.isHittable, "Settings window should be interactable")
 
         // Panel should still not be visible
@@ -502,8 +536,6 @@ final class ClipKittyUITests: XCTestCase {
 
     /// Tests the full delete-via-keyboard flow: open actions, navigate to delete, confirm inline.
     func testDeleteItemViaKeyboard() throws {
-        // Skip in CI - known flaky due to keyboard navigation timing
-        try XCTSkipIf(isCI, "Flaky in CI")
         let searchField = app.textFields["SearchField"]
         XCTAssertTrue(searchField.waitForExistence(timeout: 5), "Search field not found")
 
@@ -511,33 +543,39 @@ final class ClipKittyUITests: XCTestCase {
         let initialCount = app.outlines.firstMatch.buttons.allElementsBoundByIndex.count
         XCTAssertGreaterThan(initialCount, 0, "Should have items to delete")
 
+        // Ensure focus is on the search field before sending keyboard shortcut
+        clickAndWait(searchField)
+        Thread.sleep(forTimeInterval: ciTimeout)
+
         // Press Cmd+K to open actions popover
         searchField.typeKey("k", modifierFlags: .command)
-        Thread.sleep(forTimeInterval: 0.5)
 
         let deleteAction = app.buttons["Action_Delete"]
-        XCTAssertTrue(deleteAction.waitForExistence(timeout: 3), "Actions popover should open")
+        XCTAssertTrue(deleteAction.waitForExistence(timeout: 5), "Actions popover should open")
 
         // Navigate to Delete (it's the first item) with up arrow
-        app.typeKey(.upArrow, modifierFlags: [])
+        Thread.sleep(forTimeInterval: ciTimeout)
         app.typeKey(.upArrow, modifierFlags: [])
         Thread.sleep(forTimeInterval: 0.2)
+        app.typeKey(.upArrow, modifierFlags: [])
+        Thread.sleep(forTimeInterval: 0.3)
 
         // Press Return to select Delete
         app.typeKey(.return, modifierFlags: [])
-        Thread.sleep(forTimeInterval: 0.5)
 
         // Inline confirmation should appear
         let confirmDelete = app.buttons["Action_Delete"]
-        XCTAssertTrue(confirmDelete.waitForExistence(timeout: 3), "Inline delete confirmation should appear")
+        XCTAssertTrue(confirmDelete.waitForExistence(timeout: 5), "Inline delete confirmation should appear")
+        Thread.sleep(forTimeInterval: ciTimeout)
 
         // Press Return to confirm deletion (Delete button should be highlighted)
         app.typeKey(.return, modifierFlags: [])
-        Thread.sleep(forTimeInterval: 0.5)
 
-        // Verify: item count decreased
-        let finalCount = app.outlines.firstMatch.buttons.allElementsBoundByIndex.count
-        XCTAssertEqual(finalCount, initialCount - 1, "Item count should decrease by 1 after deletion")
+        // Wait for deletion to process
+        let deleted = waitForCondition(timeout: 5) {
+            self.app.outlines.firstMatch.buttons.allElementsBoundByIndex.count == initialCount - 1
+        }
+        XCTAssertTrue(deleted, "Item count should decrease by 1 after deletion")
 
         // Verify: window is still visible (not hidden)
         let window = app.dialogs.firstMatch
@@ -1132,40 +1170,42 @@ final class ClipKittyUITests: XCTestCase {
 
     /// Tests that the preview text area accepts typing for text items.
     func testPreviewTextIsEditable() throws {
-        // Skip in CI - text view focus/typing behaves differently in CI
-        try XCTSkipIf(isCI, "Flaky in CI")
         let searchField = app.textFields["SearchField"]
         XCTAssertTrue(searchField.waitForExistence(timeout: 5), "Search field not found")
 
         // Ensure we have a text item selected (first item should be text based on demo data)
-        XCTAssertTrue(waitForSelectedIndex(0, timeout: 2), "First item should be selected")
+        XCTAssertTrue(waitForSelectedIndex(0, timeout: 3), "First item should be selected")
+
+        // Wait for preview to render
+        Thread.sleep(forTimeInterval: ciTimeout)
 
         // Find text views in the app - the preview pane uses NSTextView
-        let textViews = app.textViews.allElementsBoundByIndex
-        XCTAssertGreaterThan(textViews.count, 0, "Should have text views in the app")
+        let hasTextViews = waitForCondition(timeout: 5) {
+            self.app.textViews.allElementsBoundByIndex.count > 0
+        }
+        XCTAssertTrue(hasTextViews, "Should have text views in the app")
 
-        // The preview text view should exist
-        let previewTextView = textViews.first!
+        let previewTextView = app.textViews.allElementsBoundByIndex.first!
         XCTAssertTrue(previewTextView.exists, "Preview text view should exist")
 
-        // Click to focus the text view
-        previewTextView.click()
-        Thread.sleep(forTimeInterval: 0.3)
+        // Click to focus the text view — double-click for reliability in CI
+        clickAndWait(previewTextView, timeout: ciTimeout)
 
         // Type some text - if editable, this will modify the content
         let testSuffix = " - test edit"
-        previewTextView.typeText(testSuffix)
-        Thread.sleep(forTimeInterval: 0.3)
+        typeTextSlowly(previewTextView, text: testSuffix)
+        Thread.sleep(forTimeInterval: ciTimeout)
 
         // Verify text was typed (the value should contain our edit)
-        let value = previewTextView.value as? String ?? ""
-        XCTAssertTrue(value.contains("test edit"), "Preview should accept typed text when editable")
+        let contains = waitForCondition(timeout: 3) {
+            let value = previewTextView.value as? String ?? ""
+            return value.contains("test edit")
+        }
+        XCTAssertTrue(contains, "Preview should accept typed text when editable")
     }
 
     /// Tests that editing and defocusing creates a new item.
     func testEditAndDefocusCreatesNewItem() throws {
-        // Skip in CI - text editing requires proper focus which is flaky in CI
-        try XCTSkipIf(isCI, "Flaky in CI")
         let searchField = app.textFields["SearchField"]
         XCTAssertTrue(searchField.waitForExistence(timeout: 5), "Search field not found")
 
@@ -1173,97 +1213,96 @@ final class ClipKittyUITests: XCTestCase {
         let initialCount = app.outlines.firstMatch.buttons.allElementsBoundByIndex.count
         XCTAssertGreaterThan(initialCount, 0, "Should have items")
 
+        // Wait for preview to render
+        Thread.sleep(forTimeInterval: ciTimeout)
+
         // Find and edit preview text
-        let textViews = app.textViews.allElementsBoundByIndex
-        guard textViews.count > 0 else {
+        let hasTextViews = waitForCondition(timeout: 5) {
+            self.app.textViews.allElementsBoundByIndex.count > 0
+        }
+        guard hasTextViews else {
             XCTFail("No text views found")
             return
         }
 
-        let previewTextView = textViews.first!
-        previewTextView.click()
-        Thread.sleep(forTimeInterval: 0.3)
+        let previewTextView = app.textViews.allElementsBoundByIndex.first!
+        clickAndWait(previewTextView, timeout: ciTimeout)
 
         // Add unique text to ensure no duplicate
         let uniqueText = " - edited\(UUID().uuidString.prefix(8))"
-        previewTextView.typeText(uniqueText)
-        Thread.sleep(forTimeInterval: 0.3)
+        typeTextSlowly(previewTextView, text: uniqueText)
+        Thread.sleep(forTimeInterval: ciTimeout)
 
         // Defocus by clicking search field
-        searchField.click()
-        Thread.sleep(forTimeInterval: 0.8)
+        clickAndWait(searchField, timeout: ciTimeout)
 
         // Item count should increase by 1 (new item created)
-        let finalCount = app.outlines.firstMatch.buttons.allElementsBoundByIndex.count
-        XCTAssertEqual(finalCount, initialCount + 1, "New item should be created after edit and defocus")
+        let created = waitForCondition(timeout: 5) {
+            self.app.outlines.firstMatch.buttons.allElementsBoundByIndex.count == initialCount + 1
+        }
+        XCTAssertTrue(created, "New item should be created after edit and defocus")
     }
 
     /// Tests that defocusing moves edited item to top and selects it.
     func testEditedItemAppearsAtTopAndSelected() throws {
-        // Skip in CI - text editing requires proper focus which is flaky in CI
-        try XCTSkipIf(isCI, "Flaky in CI")
         let searchField = app.textFields["SearchField"]
         XCTAssertTrue(searchField.waitForExistence(timeout: 5), "Search field not found")
 
         // Navigate to second item first
-        searchField.click()
+        clickAndWait(searchField)
+        Thread.sleep(forTimeInterval: ciTimeout)
         app.typeKey(.downArrow, modifierFlags: [])
-        Thread.sleep(forTimeInterval: 0.3)
-        XCTAssertTrue(waitForSelectedIndex(1, timeout: 2), "Should select second item")
+        XCTAssertTrue(waitForSelectedIndex(1, timeout: 3), "Should select second item")
+
+        // Wait for preview to render
+        Thread.sleep(forTimeInterval: ciTimeout)
 
         // Edit the text
-        let textViews = app.textViews.allElementsBoundByIndex
-        guard textViews.count > 0 else { return }
+        let hasTextViews = waitForCondition(timeout: 5) {
+            self.app.textViews.allElementsBoundByIndex.count > 0
+        }
+        guard hasTextViews else { return }
 
-        let previewTextView = textViews.first!
-        previewTextView.click()
-        Thread.sleep(forTimeInterval: 0.3)
+        let previewTextView = app.textViews.allElementsBoundByIndex.first!
+        clickAndWait(previewTextView, timeout: ciTimeout)
 
         let uniqueText = " - new\(UUID().uuidString.prefix(8))"
-        previewTextView.typeText(uniqueText)
-        Thread.sleep(forTimeInterval: 0.3)
+        typeTextSlowly(previewTextView, text: uniqueText)
+        Thread.sleep(forTimeInterval: ciTimeout)
 
         // Defocus
-        searchField.click()
-        Thread.sleep(forTimeInterval: 0.8)
+        clickAndWait(searchField, timeout: ciTimeout)
 
         // First item should now be selected (the new item is at top)
-        XCTAssertTrue(waitForSelectedIndex(0, timeout: 2), "New item should be selected at top after edit")
+        XCTAssertTrue(waitForSelectedIndex(0, timeout: 5), "New item should be selected at top after edit")
     }
 
     /// Tests that images are not editable in preview (no text view for images).
     func testImagePreviewNotEditable() throws {
-        // Skip in CI - filter/outline interaction differs in CI environment
-        try XCTSkipIf(isCI, "Flaky in CI")
         let filterButton = app.buttons["FilterDropdown"]
         XCTAssertTrue(filterButton.waitForExistence(timeout: 5), "Filter button not found")
 
         // Filter to images only
-        filterButton.click()
-        Thread.sleep(forTimeInterval: 0.5)
+        clickAndWait(filterButton, timeout: ciTimeout)
 
         let imagesOption = app.buttons["Images"]
-        guard imagesOption.exists else {
+        guard imagesOption.waitForExistence(timeout: 3) else {
             // Skip if no images filter option (may not have images in test data)
             return
         }
 
-        imagesOption.click()
-        Thread.sleep(forTimeInterval: 0.5)
+        clickAndWait(imagesOption, timeout: ciTimeout)
 
-        // Wait for filter to apply
-        Thread.sleep(forTimeInterval: 0.3)
+        // Wait for filter to apply and outline to update
+        Thread.sleep(forTimeInterval: ciTimeout)
 
         // For image items, there should be no editable text view in the main preview area
-        // The preview shows an image, not a text view
-        // We verify by checking that typing doesn't create new items
-
         let initialCount = app.outlines.firstMatch.buttons.allElementsBoundByIndex.count
         guard initialCount > 0 else { return }
 
         // Try to type somewhere - it shouldn't affect items
         app.typeText("test")
-        Thread.sleep(forTimeInterval: 0.5)
+        Thread.sleep(forTimeInterval: ciTimeout)
 
         let finalCount = app.outlines.firstMatch.buttons.allElementsBoundByIndex.count
         XCTAssertEqual(finalCount, initialCount, "Typing with image selected should not create new items")
@@ -1337,25 +1376,22 @@ final class ClipKittyUITests: XCTestCase {
 
     /// Tests that links are not editable in preview.
     func testLinkPreviewNotEditable() throws {
-        // Skip in CI - filter/outline interaction differs in CI environment
-        try XCTSkipIf(isCI, "Flaky in CI")
         let filterButton = app.buttons["FilterDropdown"]
         XCTAssertTrue(filterButton.waitForExistence(timeout: 5), "Filter button not found")
 
         // Filter to links only
-        filterButton.click()
-        Thread.sleep(forTimeInterval: 0.5)
+        clickAndWait(filterButton, timeout: ciTimeout)
 
         let linksOption = app.buttons["Links"]
-        guard linksOption.exists else {
+        guard linksOption.waitForExistence(timeout: 3) else {
             // Skip if no links filter option
             return
         }
 
-        linksOption.click()
-        Thread.sleep(forTimeInterval: 0.5)
+        clickAndWait(linksOption, timeout: ciTimeout)
 
-        Thread.sleep(forTimeInterval: 0.3)
+        // Wait for filter to apply and outline to update
+        Thread.sleep(forTimeInterval: ciTimeout)
 
         // For link items, the preview uses LPLinkView which is not editable
         let initialCount = app.outlines.firstMatch.buttons.allElementsBoundByIndex.count
@@ -1363,7 +1399,7 @@ final class ClipKittyUITests: XCTestCase {
 
         // Any typing should not create new items (links aren't editable)
         app.typeText("test")
-        Thread.sleep(forTimeInterval: 0.5)
+        Thread.sleep(forTimeInterval: ciTimeout)
 
         let finalCount = app.outlines.firstMatch.buttons.allElementsBoundByIndex.count
         XCTAssertEqual(finalCount, initialCount, "Typing with link selected should not create new items")
@@ -1371,36 +1407,38 @@ final class ClipKittyUITests: XCTestCase {
 
     /// Tests that editing text and then copying shows combined toast "Copied & saved as new item".
     func testEditAndCopyShowsCombinedToastMessage() throws {
-        // Skip in CI - text editing and toast timing is flaky in CI
-        try XCTSkipIf(isCI, "Flaky in CI")
         let searchField = app.textFields["SearchField"]
         XCTAssertTrue(searchField.waitForExistence(timeout: 5), "Search field not found")
 
         // Ensure first item selected
-        XCTAssertTrue(waitForSelectedIndex(0, timeout: 2), "First item should be selected")
+        XCTAssertTrue(waitForSelectedIndex(0, timeout: 3), "First item should be selected")
+
+        // Wait for preview to render
+        Thread.sleep(forTimeInterval: ciTimeout)
 
         // Find and edit preview text view
-        let textViews = app.textViews.allElementsBoundByIndex
-        XCTAssertGreaterThan(textViews.count, 0, "Should have text views")
+        let hasTextViews = waitForCondition(timeout: 5) {
+            self.app.textViews.allElementsBoundByIndex.count > 0
+        }
+        XCTAssertTrue(hasTextViews, "Should have text views")
 
-        let previewTextView = textViews.first!
-        previewTextView.click()
-        Thread.sleep(forTimeInterval: 0.3)
+        let previewTextView = app.textViews.allElementsBoundByIndex.first!
+        clickAndWait(previewTextView, timeout: ciTimeout)
 
         // Add unique text to trigger pending edit state
         let uniqueText = " - test\(UUID().uuidString.prefix(8))"
-        previewTextView.typeText(uniqueText)
-        Thread.sleep(forTimeInterval: 0.3)
+        typeTextSlowly(previewTextView, text: uniqueText)
+        Thread.sleep(forTimeInterval: ciTimeout)
 
         // Cmd+Return to copy/paste (triggers both save and copy)
         previewTextView.typeKey(.return, modifierFlags: .command)
 
         // Toast should appear with combined message
         let toastWindow = app.windows["ToastWindow"]
-        XCTAssertTrue(toastWindow.waitForExistence(timeout: 3), "Toast window should appear")
+        XCTAssertTrue(toastWindow.waitForExistence(timeout: 5), "Toast window should appear")
 
         // Give time for messages to combine
-        Thread.sleep(forTimeInterval: 0.5)
+        Thread.sleep(forTimeInterval: ciTimeout)
 
         // Toast should still be visible (combining extends duration)
         XCTAssertTrue(toastWindow.exists, "Toast should still be visible with combined message")
