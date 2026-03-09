@@ -7,6 +7,8 @@ protocol BrowserStoreClient: AnyObject {
     func fetchItem(id: Int64) async -> ClipboardItem?
     func loadMatchData(itemIds: [Int64], query: String) async -> [MatchData]
     func fetchLinkMetadata(url: String, itemId: Int64) async -> ClipboardItem?
+    func addTag(itemId: Int64, tag: ItemTag) async -> Result<Void, ClipboardError>
+    func removeTag(itemId: Int64, tag: ItemTag) async -> Result<Void, ClipboardError>
     func delete(itemId: Int64) async -> Result<Void, ClipboardError>
     func clear() async -> Result<Void, ClipboardError>
 }
@@ -39,6 +41,14 @@ final class ClipboardStoreBrowserClient: BrowserStoreClient {
 
     func fetchLinkMetadata(url: String, itemId: Int64) async -> ClipboardItem? {
         await store.fetchLinkMetadata(url: url, itemId: itemId)
+    }
+
+    func addTag(itemId: Int64, tag: ItemTag) async -> Result<Void, ClipboardError> {
+        await store.addTag(itemId: itemId, tag: tag)
+    }
+
+    func removeTag(itemId: Int64, tag: ItemTag) async -> Result<Void, ClipboardError> {
+        await store.removeTag(itemId: itemId, tag: tag)
     }
 
     func delete(itemId: Int64) async -> Result<Void, ClipboardError> {

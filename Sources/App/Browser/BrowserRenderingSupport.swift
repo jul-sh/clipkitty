@@ -728,14 +728,23 @@ struct ItemRow: View, Equatable {
             }
 
             // Text content - SwiftUI Three-Part HStack with layout priorities
-            HighlightedTextView(
-                text: displayText,
-                highlights: displayHighlights,
-                accentSelected: accentSelected
-            )
+            HStack(spacing: 6) {
+                if metadata.tags.contains(.pinned) {
+                    Image(systemName: "pin.fill")
+                        .font(.system(size: 11, weight: .semibold))
+                        .foregroundStyle(accentSelected ? .white.opacity(0.9) : .secondary)
+                }
+
+                HighlightedTextView(
+                    text: displayText,
+                    highlights: displayHighlights,
+                    accentSelected: accentSelected
+                )
+                .frame(maxWidth: .infinity, alignment: .leading)
+                .allowsHitTesting(false)
+                .layoutPriority(1)
+            }
             .frame(maxWidth: .infinity, alignment: .leading)
-            .allowsHitTesting(false)
-            .layoutPriority(1)
 
 
         }

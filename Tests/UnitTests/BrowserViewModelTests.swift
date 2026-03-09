@@ -167,7 +167,8 @@ final class BrowserViewModelTests: XCTestCase {
                 snippet: snippet,
                 sourceApp: nil,
                 sourceAppBundleId: nil,
-                timestampUnix: 0
+                timestampUnix: 0,
+                tags: []
             ),
             matchData: nil
         )
@@ -181,7 +182,8 @@ final class BrowserViewModelTests: XCTestCase {
                 snippet: text,
                 sourceApp: nil,
                 sourceAppBundleId: nil,
-                timestampUnix: 0
+                timestampUnix: 0,
+                tags: []
             ),
             content: .text(value: text)
         )
@@ -217,6 +219,14 @@ private final class MockBrowserStoreClient: BrowserStoreClient {
 
     func fetchLinkMetadata(url: String, itemId: Int64) async -> ClipboardItem? {
         nil
+    }
+
+    func addTag(itemId: Int64, tag: ItemTag) async -> Result<Void, ClipboardError> {
+        .success(())
+    }
+
+    func removeTag(itemId: Int64, tag: ItemTag) async -> Result<Void, ClipboardError> {
+        .success(())
     }
 
     func delete(itemId: Int64) async -> Result<Void, ClipboardError> {

@@ -42,7 +42,19 @@ final class BrowserViewModel {
     }
 
     var contentTypeFilter: ContentTypeFilter {
-        session.query.request.filter
+        switch session.query.request.filter {
+        case .contentType(let contentType):
+            return contentType
+        case .all, .tagged:
+            return .all
+        }
+    }
+
+    var selectedTagFilter: ItemTag? {
+        if case .tagged(let tag) = session.query.request.filter {
+            return tag
+        }
+        return nil
     }
 
     var itemIds: [Int64] {
@@ -129,11 +141,22 @@ final class BrowserViewModel {
     }
 
     func updateSearchText(_ value: String) {
-        submitSearch(text: value, filter: contentTypeFilter)
+        submitSearch(text: value, filter: session.query.request.filter)
     }
 
     func setContentTypeFilter(_ filter: ContentTypeFilter) {
-        submitSearch(text: searchText, filter: filter)
+        let queryFilter: ItemQueryFilter = filter == .all ? .all : .contentType(contentType: filter)
+        submitSearch(text: searchText, filter: queryFilter)
+    }
+
+    func setTagFilter(_ tag: ItemTag?) {
+        let queryFilter: ItemQueryFilter
+        if let tag {
+            queryFilter = .tagged(tag: tag)
+        } else {
+            queryFilter = .all
+        }
+        submitSearch(text: searchText, filter: queryFilter)
     }
 
     func openFilterOverlay(highlightedIndex: Int) {
@@ -312,7 +335,15 @@ final class BrowserViewModel {
         }
     }
 
-    private func submitSearch(text rawText: String, filter: ContentTypeFilter) {
+    func addTagToSelectedItem(_ tag: ItemTag) {
+        mutateSelectedItemTag(tag, shouldInclude: true)
+    }
+
+    func removeTagFromSelectedItem(_ tag: ItemTag) {
+        mutateSelectedItemTag(tag, shouldInclude: false)
+    }
+
+    private func submitSearch(text rawText: String, filter: ItemQueryFilter) {
         let request = SearchRequest(
             text: rawText.trimmingCharacters(in: .whitespacesAndNewlines),
             filter: filter
@@ -595,6 +626,124 @@ final class BrowserViewModel {
     private var currentResponse: BrowserSearchResponse? {
         guard case .ready(let response) = session.query else { return nil }
         return response
+    }
+
+    private func mutateSelectedItemTag(_ tag: ItemTag, shouldInclude: Bool) {
+        guard let itemId = selectedItemId else { return }
+        let snapshot = currentResponse
+        let previewSnapshot = session.preview
+        let selectionSnapshot = session.selection
+
+        applyOptimisticTagMutation(itemId: itemId, tag: tag, shouldInclude: shouldInclude)
+
+        Task { [weak self] in
+            guard let self else { return }
+            let result: Result<Void, ClipboardError>
+            if shouldInclude {
+                result = await self.client.addTag(itemId: itemId, tag: tag)
+            } else {
+                result = await self.client.removeTag(itemId: itemId, tag: tag)
+            }
+
+            await MainActor.run {
+                switch result {
+                case .success:
+                    self.session.mutation = .idle
+                case .failure(let error):
+                    self.restoreSnapshot(
+                        snapshot: snapshot,
+                        preview: previewSnapshot,
+                        selection: selectionSnapshot
+                    )
+                    self.session.mutation = .failed(ActionFailure(message: error.localizedDescription))
+                }
+            }
+        }
+    }
+
+    private func applyOptimisticTagMutation(itemId: Int64, tag: ItemTag, shouldInclude: Bool) {
+        guard case .ready(let response) = session.query else { return }
+        session.mutation = .idle
+
+        let updatedItems = response.items.compactMap { itemMatch -> ItemMatch? in
+            let isTarget = itemMatch.itemMetadata.itemId == itemId
+            let updatedMetadata = isTarget
+                ? applyingTagMutation(to: itemMatch.itemMetadata, tag: tag, shouldInclude: shouldInclude)
+                : itemMatch.itemMetadata
+
+            if case .tagged(let activeTag) = response.request.filter,
+               activeTag == tag,
+               !updatedMetadata.tags.contains(tag) {
+                return nil
+            }
+
+            return ItemMatch(itemMetadata: updatedMetadata, matchData: itemMatch.matchData)
+        }
+
+        let updatedFirstItem = response.firstItem.flatMap { firstItem -> ClipboardItem? in
+            guard firstItem.itemMetadata.itemId == itemId else { return firstItem }
+            let updatedMetadata = applyingTagMutation(
+                to: firstItem.itemMetadata,
+                tag: tag,
+                shouldInclude: shouldInclude
+            )
+            if case .tagged(let activeTag) = response.request.filter,
+               activeTag == tag,
+               !updatedMetadata.tags.contains(tag) {
+                return nil
+            }
+            return ClipboardItem(itemMetadata: updatedMetadata, content: firstItem.content)
+        }
+
+        session.query = .ready(response: BrowserSearchResponse(
+            request: response.request,
+            items: updatedItems,
+            firstItem: updatedFirstItem,
+            totalCount: updatedItems.count
+        ))
+
+        if let selectedItem = selectedItem {
+            let updatedMetadata = selectedItem.itemMetadata.itemId == itemId
+                ? applyingTagMutation(to: selectedItem.itemMetadata, tag: tag, shouldInclude: shouldInclude)
+                : selectedItem.itemMetadata
+            if case .tagged(let activeTag) = response.request.filter,
+               activeTag == tag,
+               !updatedMetadata.tags.contains(tag) {
+                session.selection = .none
+                session.preview = .empty
+                if let firstItemId = updatedItems.first?.itemMetadata.itemId {
+                    select(itemId: firstItemId, origin: .automatic)
+                }
+            } else if selectedItem.itemMetadata.itemId == itemId {
+                session.preview = .loaded(PreviewSelection(
+                    item: ClipboardItem(itemMetadata: updatedMetadata, content: selectedItem.content),
+                    matchData: previewSelection?.matchData
+                ))
+            }
+        }
+    }
+
+    private func applyingTagMutation(
+        to metadata: ItemMetadata,
+        tag: ItemTag,
+        shouldInclude: Bool
+    ) -> ItemMetadata {
+        let updatedTags: [ItemTag]
+        if shouldInclude {
+            updatedTags = metadata.tags.contains(tag) ? metadata.tags : metadata.tags + [tag]
+        } else {
+            updatedTags = metadata.tags.filter { $0 != tag }
+        }
+
+        return ItemMetadata(
+            itemId: metadata.itemId,
+            icon: metadata.icon,
+            snippet: metadata.snippet,
+            sourceApp: metadata.sourceApp,
+            sourceAppBundleId: metadata.sourceAppBundleId,
+            timestampUnix: metadata.timestampUnix,
+            tags: updatedTags
+        )
     }
 
     func matchData(for itemId: Int64) -> MatchData? {

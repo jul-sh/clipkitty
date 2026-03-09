@@ -32,8 +32,7 @@ struct BrowserView: View {
                     get: { viewModel.searchText },
                     set: { viewModel.updateSearchText($0) }
                 ),
-                filter: viewModel.contentTypeFilter,
-                filterOptions: Self.filterOptions,
+                filterLabel: filterLabel,
                 searchSpinnerVisible: viewModel.searchSpinnerVisible,
                 selectedItemAvailable: viewModel.selectedItem != nil,
                 isFilterPopoverPresented: Binding(
@@ -94,6 +93,14 @@ struct BrowserView: View {
         }
     }
 
+    private var filterLabel: String {
+        if viewModel.selectedTagFilter == .pinned {
+            return String(localized: "Pinned")
+        }
+        return Self.filterOptions.first(where: { $0.0 == viewModel.contentTypeFilter })?.1
+            ?? String(localized: "All Types")
+    }
+
     @ViewBuilder
     private var content: some View {
         switch viewModel.session.query {
@@ -121,14 +128,19 @@ struct BrowserView: View {
     }
 
     private func openFilterOverlay() {
-        let index = Self.filterOptions.firstIndex(where: { $0.0 == viewModel.contentTypeFilter }) ?? 0
+        let index: Int
+        if viewModel.selectedTagFilter == .pinned {
+            index = 0
+        } else {
+            index = (Self.filterOptions.firstIndex(where: { $0.0 == viewModel.contentTypeFilter }) ?? 0) + 1
+        }
         viewModel.openFilterOverlay(highlightedIndex: index)
         focusFilterDropdown()
     }
 
     private func openActionsOverlay() {
         guard viewModel.selectedItem != nil else { return }
-        viewModel.openActionsOverlay(highlightedIndex: BrowserActionsOverlay.defaultActionIndex)
+        viewModel.openActionsOverlay(highlightedIndex: 0)
         focusActionsDropdown()
     }
 

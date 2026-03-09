@@ -1,6 +1,6 @@
 use crate::database::Database;
 use crate::indexer::Indexer;
-use crate::interface::{ClipKittyError, LinkMetadataPayload, LinkMetadataState};
+use crate::interface::{ClipKittyError, ItemTag, LinkMetadataPayload, LinkMetadataState};
 use crate::models::StoredItem;
 use chrono::Utc;
 
@@ -154,6 +154,16 @@ pub(crate) fn update_timestamp(
         indexer.add_document(item_id, item.text_content(), now.timestamp())?;
         indexer.commit()?;
     }
+    Ok(())
+}
+
+pub(crate) fn add_tag(db: &Database, item_id: i64, tag: ItemTag) -> Result<(), ClipKittyError> {
+    db.add_tag(item_id, tag)?;
+    Ok(())
+}
+
+pub(crate) fn remove_tag(db: &Database, item_id: i64, tag: ItemTag) -> Result<(), ClipKittyError> {
+    db.remove_tag(item_id, tag)?;
     Ok(())
 }
 
