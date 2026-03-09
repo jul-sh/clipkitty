@@ -100,8 +100,10 @@ let project = Project(
             scripts: [
                 .post(
                     script: """
+                    # Strip Sparkle frameworks from AppStore builds
                     if [ "$CONFIGURATION" = "AppStore" ]; then
                         rm -rf "$BUILT_PRODUCTS_DIR/$FRAMEWORKS_FOLDER_PATH/Sparkle.framework"
+                        rm -rf "$BUILT_PRODUCTS_DIR/$FRAMEWORKS_FOLDER_PATH/SparkleUpdater.framework"
                         PLIST="$BUILT_PRODUCTS_DIR/$INFOPLIST_PATH"
                         /usr/libexec/PlistBuddy -c "Delete :SUFeedURL" "$PLIST" 2>/dev/null || true
                         /usr/libexec/PlistBuddy -c "Delete :SUPublicEDKey" "$PLIST" 2>/dev/null || true
@@ -117,8 +119,8 @@ let project = Project(
             dependencies: [
                 .target(name: "ClipKittyRust"),
                 .sdk(name: "SystemConfiguration", type: .framework),
-                .external(name: "Sparkle"),
                 .external(name: "STTextKitPlus"),
+                .external(name: "SparkleUpdater"),
             ],
             settings: .settings(
                 base: [
