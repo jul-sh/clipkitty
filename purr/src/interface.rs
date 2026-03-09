@@ -438,7 +438,7 @@ pub struct ItemMetadata {
 }
 
 /// Search match: metadata + match context
-#[derive(Debug, Clone, uniffi::Record)]
+#[derive(Debug, Clone, PartialEq, uniffi::Record)]
 pub struct ItemMatch {
     pub item_metadata: ItemMetadata,
     /// Match context data. None for lazy results - call compute_highlights to populate.
@@ -446,12 +446,19 @@ pub struct ItemMatch {
 }
 
 /// Search result container
-#[derive(Debug, Clone, uniffi::Record)]
+#[derive(Debug, Clone, PartialEq, uniffi::Record)]
 pub struct SearchResult {
     pub matches: Vec<ItemMatch>,
     pub total_count: u64,
     /// The first item's full content (avoids separate fetch for preview pane)
     pub first_item: Option<ClipboardItem>,
+}
+
+/// Terminal outcome for an explicit search operation.
+#[derive(Debug, Clone, PartialEq, uniffi::Enum)]
+pub enum SearchOutcome {
+    Success { result: SearchResult },
+    Cancelled,
 }
 
 /// Full clipboard item for preview pane
@@ -462,7 +469,7 @@ pub struct ClipboardItem {
 }
 
 /// Error type for ClipKitty operations
-#[derive(Debug, Error, uniffi::Error)]
+#[derive(Debug, Clone, Error, PartialEq, uniffi::Error)]
 pub enum ClipKittyError {
     #[error("Database error: {0}")]
     DatabaseError(String),

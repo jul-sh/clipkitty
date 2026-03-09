@@ -9,6 +9,48 @@ use crate::search::{self, MAX_RESULTS, MIN_TRIGRAM_QUERY_LEN};
 use std::sync::Arc;
 use tokio_util::sync::CancellationToken;
 
+#[cfg(test)]
+pub(crate) mod test_support {
+    use once_cell::sync::Lazy;
+    use parking_lot::Mutex;
+    use std::sync::Arc;
+
+    #[derive(Default, Clone)]
+    pub(crate) struct SearchTestHooks {
+        pub(crate) before_eager_matches: Option<Arc<dyn Fn() + Send + Sync>>,
+        pub(crate) on_eager_match: Option<Arc<dyn Fn(usize) + Send + Sync>>,
+    }
+
+    static HOOKS: Lazy<Mutex<SearchTestHooks>> = Lazy::new(|| Mutex::new(SearchTestHooks::default()));
+
+    pub(crate) struct SearchTestHookGuard;
+
+    impl Drop for SearchTestHookGuard {
+        fn drop(&mut self) {
+            *HOOKS.lock() = SearchTestHooks::default();
+        }
+    }
+
+    pub(crate) fn install_search_hooks(hooks: SearchTestHooks) -> SearchTestHookGuard {
+        *HOOKS.lock() = hooks;
+        SearchTestHookGuard
+    }
+
+    pub(crate) fn before_eager_matches() {
+        let callback = HOOKS.lock().before_eager_matches.clone();
+        if let Some(callback) = callback {
+            callback();
+        }
+    }
+
+    pub(crate) fn on_eager_match(index: usize) {
+        let callback = HOOKS.lock().on_eager_match.clone();
+        if let Some(callback) = callback {
+            callback(index);
+        }
+    }
+}
+
 /// Number of results to eagerly compute MatchData for (the rest are lazy).
 const EAGER_MATCH_DATA_COUNT: usize = 25;
 /// Content length threshold for "short" items that get eager highlights.
@@ -211,21 +253,27 @@ pub(crate) fn search_trigram_query_sync(
         .collect();
 
     let few_results = fuzzy_matches.len() <= EAGER_SHORT_RESULT_LIMIT;
-    let results = fuzzy_matches
-        .into_iter()
-        .enumerate()
-        .filter_map(|(index, fuzzy_match)| {
-            item_map.get(&fuzzy_match.id).map(|item| {
-                let content = item.content.text_content();
-                let is_short = content.len() <= SHORT_CONTENT_THRESHOLD;
-                if index < EAGER_MATCH_DATA_COUNT || (is_short && few_results) {
-                    search::create_item_match(item, query.raw_text())
-                } else {
-                    search::create_lazy_item_match(item)
-                }
-            })
-        })
-        .collect();
+    #[cfg(test)]
+    test_support::before_eager_matches();
+    let mut results = Vec::with_capacity(fuzzy_matches.len());
+    for (index, fuzzy_match) in fuzzy_matches.into_iter().enumerate() {
+        if token.is_cancelled() {
+            return Err(ClipKittyError::Cancelled);
+        }
+        let Some(item) = item_map.get(&fuzzy_match.id) else {
+            continue;
+        };
+        let content = item.content.text_content();
+        let is_short = content.len() <= SHORT_CONTENT_THRESHOLD;
+        let item_match = if index < EAGER_MATCH_DATA_COUNT || (is_short && few_results) {
+            #[cfg(test)]
+            test_support::on_eager_match(index);
+            search::create_item_match(item, query.raw_text())
+        } else {
+            search::create_lazy_item_match(item)
+        };
+        results.push(item_match);
+    }
 
     Ok(results)
 }

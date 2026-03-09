@@ -13,6 +13,21 @@ private let logger = Logger(subsystem: Bundle.main.bundleIdentifier ?? "ClipKitt
 private let maxAnimatedFrames = 50
 private let maxAnimatedDuration: Double = 3.0
 
+private final class MissingRepositorySearchOperation: ClipboardSearchOperation {
+    func cancel() {}
+
+    func awaitOutcome() async -> RepositorySearchOutcome {
+        .failure(.databaseOperationFailed(
+            operation: "search",
+            underlying: NSError(
+                domain: "ClipKitty",
+                code: 1,
+                userInfo: [NSLocalizedDescriptionKey: "Database not available"]
+            )
+        ))
+    }
+}
+
 /// Display state for the clipboard list
 /// Search with empty query returns all items (what was previously called "browse mode")
 enum DisplayState: Equatable {
@@ -63,7 +78,26 @@ final class ClipboardStore {
     /// Rust-backed repository facade
     private var repository: ClipboardRepository?
 
-    private var searchTask: Task<Void, Never>?
+    private enum SearchExecution {
+        case idle
+        case debouncing(query: String, task: Task<Void, Never>)
+        case running(query: String, operation: ClipboardSearchOperation, observer: Task<Void, Never>)
+
+        mutating func cancel() {
+            switch self {
+            case .idle:
+                break
+            case .debouncing(_, let task):
+                task.cancel()
+            case .running(_, let operation, let observer):
+                operation.cancel()
+                observer.cancel()
+            }
+            self = .idle
+        }
+    }
+
+    private var searchExecution: SearchExecution = .idle
     /// Current search query
     private var currentSearchQuery: String = ""
     /// Query-scoped lazy match-data loads currently in flight.
@@ -163,9 +197,7 @@ final class ClipboardStore {
     func setSearchQuery(_ newQuery: String) {
         let query = newQuery.trimmingCharacters(in: .whitespacesAndNewlines)
 
-        // Cancel previous search task. Note: cancelled tasks may still complete their
-        // Rust search operation, but will be discarded in performSearch() via query check.
-        searchTask?.cancel()
+        searchExecution.cancel()
         currentSearchQuery = query
 
         // Capture fallback results from current state (preserves match text to prevent flash)
@@ -183,18 +215,23 @@ final class ClipboardStore {
         state = .resultsLoading(query: query, fallback: fallback)
         CATransaction.commit()
 
-        searchTask = Task {
-            // Small debounce for typed queries
-            if !query.isEmpty {
-                try? await Task.sleep(for: .milliseconds(50))
-                guard !Task.isCancelled else { return }
-            }
-            await performSearch(query: query)
+        if query.isEmpty {
+            beginSearch(query: query)
+            return
         }
+
+        let debounceTask = Task { [weak self] in
+            try? await Task.sleep(for: .milliseconds(50))
+            guard !Task.isCancelled else { return }
+            await MainActor.run {
+                self?.beginSearch(query: query)
+            }
+        }
+        searchExecution = .debouncing(query: query, task: debounceTask)
     }
 
     func resetForDisplay() {
-        searchTask?.cancel()
+        searchExecution.cancel()
         queryFilter = .all
         displayVersion += 1
         refresh()
@@ -205,18 +242,22 @@ final class ClipboardStore {
         refresh()
     }
 
-    func search(query: String, filter: ItemQueryFilter) async throws -> SearchResult {
+    func startSearch(query: String, filter: ItemQueryFilter) -> ClipboardSearchOperation {
         guard let repository else {
-            throw ClipboardError.databaseOperationFailed(
-                operation: "search",
-                underlying: NSError(domain: "ClipKitty", code: 1, userInfo: [NSLocalizedDescriptionKey: "Database not available"])
-            )
+            return MissingRepositorySearchOperation()
         }
+        return repository.startSearch(query: query, filter: filter)
+    }
 
-        let result = await repository.search(query: query, filter: filter)
-        switch result {
+    func search(query: String, filter: ItemQueryFilter) async throws -> SearchResult {
+        switch await startSearch(query: query, filter: filter).awaitOutcome() {
         case .success(let searchResult):
             return searchResult
+        case .cancelled:
+            throw ClipboardError.databaseOperationFailed(
+                operation: "search",
+                underlying: ClipKittyError.Cancelled
+            )
         case .failure(let error):
             throw error
         }
@@ -315,37 +356,45 @@ final class ClipboardStore {
         setSearchQuery(currentSearchQuery)
     }
 
-    private func performSearch(query: String) async {
+    private func beginSearch(query: String) {
         guard let repository else {
             state = .error(String(localized: "Database not available"))
             return
         }
 
-        let result = await repository.search(query: query, filter: queryFilter)
+        let operation = repository.startSearch(query: query, filter: queryFilter)
+        let observer = Task { [weak self] in
+            let outcome = await operation.awaitOutcome()
+            await MainActor.run {
+                self?.applySearchOutcome(outcome, query: query)
+            }
+        }
+        searchExecution = .running(query: query, operation: operation, observer: observer)
+    }
 
-        switch result {
+    private func applySearchOutcome(_ outcome: RepositorySearchOutcome, query: String) {
+        guard case .resultsLoading(let currentQuery, _) = state, currentQuery == query else { return }
+
+        switch outcome {
         case .success(let searchResult):
-            guard !Task.isCancelled else { return }
-            guard case .resultsLoading(let currentQuery, _) = state, currentQuery == query else { return }
-
             let oldState = state
             CATransaction.begin()
             CATransaction.setDisableActions(true)
             state = .results(query: query, items: searchResult.matches, firstItem: searchResult.firstItem)
             CATransaction.commit()
 
-            // Defer deallocation of old state to background queue
             Task.detached(priority: .background) {
-                _ = oldState  // Force capture and release on background thread
+                _ = oldState
             }
+        case .cancelled:
+            break
         case .failure(let error):
-            if case let .databaseOperationFailed(_, underlying as ClipKittyError) = error,
-               case .Cancelled = underlying {
-                return
-            }
-            guard !Task.isCancelled else { return }
             ErrorReporter.report(error, showToast: false)
             state = .error(error.localizedDescription)
+        }
+
+        if case .running(let runningQuery, _, _) = searchExecution, runningQuery == query {
+            searchExecution = .idle
         }
     }
 

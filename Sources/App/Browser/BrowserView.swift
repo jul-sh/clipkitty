@@ -104,9 +104,9 @@ struct BrowserView: View {
     @ViewBuilder
     private var content: some View {
         switch viewModel.session.query {
-        case .failed(_, let message):
+        case .failed(_, let message, _):
             BrowserPreviewPane.error(message)
-        case .idle, .searching, .ready:
+        case .idle, .pending, .ready:
             HStack(spacing: 0) {
                 BrowserResultsList(
                     viewModel: viewModel,
