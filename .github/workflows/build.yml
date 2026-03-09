@@ -150,12 +150,12 @@ jobs:
           APP="DerivedData/Build/Products/SparkleRelease/ClipKitty.app"
           if [ -d "$APP/Contents/Frameworks" ]; then
             find "$APP/Contents/Frameworks" \( -type f -perm +111 -o -name "*.dylib" \) | while read -r binary; do
-              codesign --force --options runtime --sign "Developer ID Application" "$binary"
+              codesign --force --options runtime --timestamp --sign "Developer ID Application" "$binary"
             done
           fi
 
           # Sign the outer app (must come last)
-          codesign --force --options runtime --sign "Developer ID Application" \
+          codesign --force --options runtime --timestamp --sign "Developer ID Application" \
             --entitlements Sources/App/ClipKitty.oss.entitlements \
             "$APP"
           codesign --verify --deep --strict "$APP"
