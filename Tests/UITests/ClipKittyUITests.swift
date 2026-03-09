@@ -6,6 +6,12 @@ final class ClipKittyUITests: XCTestCase {
     private static let localeConfigFile = "clipkitty_screenshot_locale.txt"
     private static let dbConfigFile = "clipkitty_screenshot_db.txt"
 
+    /// Detect if running in CI (GitHub Actions). Since env vars don't propagate to XCTest,
+    /// we check for the presence of /Users/runner which is the home directory on GitHub-hosted runners.
+    private var isCI: Bool {
+        FileManager.default.fileExists(atPath: "/Users/runner")
+    }
+
     /// Helper to read configuration from a temp file with optional environment fallback.
     /// - Parameters:
     ///   - filename: The temp file name (will be prefixed with /tmp/)
@@ -254,7 +260,7 @@ final class ClipKittyUITests: XCTestCase {
     /// Cmd+2 should target the second item (index 1).
     func testCommandNumberShortcutSelectsSecondItem() throws {
         // Skip in CI - known flaky due to keyboard shortcut timing issues
-        try XCTSkipIf(ProcessInfo.processInfo.environment["CI"] != nil, "Flaky in CI")
+        try XCTSkipIf(isCI, "Flaky in CI")
         let searchField = app.textFields["SearchField"]
         XCTAssertTrue(searchField.waitForExistence(timeout: 5), "Search field not found")
 
@@ -319,7 +325,7 @@ final class ClipKittyUITests: XCTestCase {
     /// This ensures settings and other interactions don't get overlaid by the panel.
     func testPanelDoesNotAutoShowOnAppFocus() throws {
         // Skip in CI - app focus behavior differs in headless/runner environment
-        try XCTSkipIf(ProcessInfo.processInfo.environment["CI"] != nil, "Flaky in CI")
+        try XCTSkipIf(isCI, "Flaky in CI")
         let panel = app.dialogs.firstMatch
         XCTAssertTrue(panel.exists, "Panel should be visible initially")
 
@@ -497,7 +503,7 @@ final class ClipKittyUITests: XCTestCase {
     /// Tests the full delete-via-keyboard flow: open actions, navigate to delete, confirm inline.
     func testDeleteItemViaKeyboard() throws {
         // Skip in CI - known flaky due to keyboard navigation timing
-        try XCTSkipIf(ProcessInfo.processInfo.environment["CI"] != nil, "Flaky in CI")
+        try XCTSkipIf(isCI, "Flaky in CI")
         let searchField = app.textFields["SearchField"]
         XCTAssertTrue(searchField.waitForExistence(timeout: 5), "Search field not found")
 
@@ -1137,7 +1143,7 @@ final class ClipKittyUITests: XCTestCase {
     /// Tests that the preview text area accepts typing for text items.
     func testPreviewTextIsEditable() throws {
         // Skip in CI - text view focus/typing behaves differently in CI
-        try XCTSkipIf(ProcessInfo.processInfo.environment["CI"] != nil, "Flaky in CI")
+        try XCTSkipIf(isCI, "Flaky in CI")
         let searchField = app.textFields["SearchField"]
         XCTAssertTrue(searchField.waitForExistence(timeout: 5), "Search field not found")
 
@@ -1169,7 +1175,7 @@ final class ClipKittyUITests: XCTestCase {
     /// Tests that editing and defocusing creates a new item.
     func testEditAndDefocusCreatesNewItem() throws {
         // Skip in CI - text editing requires proper focus which is flaky in CI
-        try XCTSkipIf(ProcessInfo.processInfo.environment["CI"] != nil, "Flaky in CI")
+        try XCTSkipIf(isCI, "Flaky in CI")
         let searchField = app.textFields["SearchField"]
         XCTAssertTrue(searchField.waitForExistence(timeout: 5), "Search field not found")
 
@@ -1205,7 +1211,7 @@ final class ClipKittyUITests: XCTestCase {
     /// Tests that defocusing moves edited item to top and selects it.
     func testEditedItemAppearsAtTopAndSelected() throws {
         // Skip in CI - text editing requires proper focus which is flaky in CI
-        try XCTSkipIf(ProcessInfo.processInfo.environment["CI"] != nil, "Flaky in CI")
+        try XCTSkipIf(isCI, "Flaky in CI")
         let searchField = app.textFields["SearchField"]
         XCTAssertTrue(searchField.waitForExistence(timeout: 5), "Search field not found")
 
@@ -1238,7 +1244,7 @@ final class ClipKittyUITests: XCTestCase {
     /// Tests that images are not editable in preview (no text view for images).
     func testImagePreviewNotEditable() throws {
         // Skip in CI - filter/outline interaction differs in CI environment
-        try XCTSkipIf(ProcessInfo.processInfo.environment["CI"] != nil, "Flaky in CI")
+        try XCTSkipIf(isCI, "Flaky in CI")
         let filterButton = app.buttons["FilterDropdown"]
         XCTAssertTrue(filterButton.waitForExistence(timeout: 5), "Filter button not found")
 
@@ -1342,7 +1348,7 @@ final class ClipKittyUITests: XCTestCase {
     /// Tests that links are not editable in preview.
     func testLinkPreviewNotEditable() throws {
         // Skip in CI - filter/outline interaction differs in CI environment
-        try XCTSkipIf(ProcessInfo.processInfo.environment["CI"] != nil, "Flaky in CI")
+        try XCTSkipIf(isCI, "Flaky in CI")
         let filterButton = app.buttons["FilterDropdown"]
         XCTAssertTrue(filterButton.waitForExistence(timeout: 5), "Filter button not found")
 
@@ -1376,7 +1382,7 @@ final class ClipKittyUITests: XCTestCase {
     /// Tests that editing text and then copying shows combined toast "Copied & saved as new item".
     func testEditAndCopyShowsCombinedToastMessage() throws {
         // Skip in CI - text editing and toast timing is flaky in CI
-        try XCTSkipIf(ProcessInfo.processInfo.environment["CI"] != nil, "Flaky in CI")
+        try XCTSkipIf(isCI, "Flaky in CI")
         let searchField = app.textFields["SearchField"]
         XCTAssertTrue(searchField.waitForExistence(timeout: 5), "Search field not found")
 
