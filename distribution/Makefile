@@ -182,7 +182,7 @@ marketing-screenshots-capture:
 		--entitlements $(PROJECT_ROOT)/Sources/App/ClipKitty.appstore.entitlements \
 		"$(DERIVED_DATA)/Build/Products/AppStore/$(APP_NAME).app"
 	@echo "Capturing marketing screenshots..."
-	@$(DIST_DIR)/prepare-screenshot-environment.sh 'cd $(PROJECT_ROOT) && xcodebuild test -scheme ClipKittyUITests -destination "platform=macOS" -derivedDataPath DerivedData -only-testing:ClipKittyUITests/ClipKittyUITests/testTakeMarketingScreenshots 2>&1 | grep -E "(Test Case|passed|failed)" || true'
+	@$(DIST_DIR)/prepare-screenshot-environment.sh 'cd $(PROJECT_ROOT) && xcodebuild test -scheme ClipKittyUITests -configuration AppStore -destination "platform=macOS" -derivedDataPath DerivedData -only-testing:ClipKittyUITests/ClipKittyUITests/testTakeMarketingScreenshots 2>&1 | grep -E "(Test Case|passed|failed)" || true'
 	@mkdir -p $(PROJECT_ROOT)/marketing/en
 	@cp /tmp/clipkitty_marketing_1_history.png $(PROJECT_ROOT)/marketing/en/screenshot_1.png
 	@cp /tmp/clipkitty_marketing_2_search.png $(PROJECT_ROOT)/marketing/en/screenshot_2.png
@@ -222,6 +222,7 @@ marketing-screenshots-localized:
 		$(DIST_DIR)/prepare-screenshot-environment.sh \
 			"cd $(PROJECT_ROOT) && xcodebuild test \
 				-scheme ClipKittyUITests \
+				-configuration AppStore \
 				-destination \"platform=macOS\" \
 				-derivedDataPath DerivedData \
 				-only-testing:ClipKittyUITests/ClipKittyUITests/testTakeMarketingScreenshots \
