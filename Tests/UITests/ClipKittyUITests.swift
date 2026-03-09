@@ -652,47 +652,35 @@ final class ClipKittyUITests: XCTestCase {
 
     // MARK: - Settings Tests
 
-    /// Helper to find a settings tab by name. SwiftUI TabView tabs are exposed differently on different macOS versions.
+    /// Helper to find a settings tab by name using accessibility identifiers.
+    /// Uses "SettingsTab_<Name>" identifiers which are stable across macOS versions.
     private func findSettingsTab(in window: XCUIElement, named name: String) -> XCUIElement {
-        // Try radioButtons first (common on older macOS)
+        // Primary method: use accessibility identifier (stable across macOS versions)
+        let identifier = "SettingsTab_\(name)"
+        let byIdentifier = window.descendants(matching: .any)[identifier]
+        if byIdentifier.exists {
+            return byIdentifier
+        }
+
+        // Fallback: try radioButtons (common on older macOS)
         let radioButton = window.radioButtons[name]
         if radioButton.exists {
             return radioButton
         }
 
-        // Try buttons (common on some macOS versions)
+        // Fallback: try buttons
         let button = window.buttons[name]
         if button.exists {
             return button
         }
 
-        // Try tabs in tabGroups
-        let tabGroup = window.tabGroups.firstMatch
-        if tabGroup.exists {
-            let tab = tabGroup.buttons[name]
-            if tab.exists {
-                return tab
-            }
-        }
-
-        // Try segmented control (macOS 15+ may use this for TabView)
-        for group in window.groups.allElementsBoundByIndex {
-            let tab = group.buttons[name]
-            if tab.exists {
-                return tab
-            }
-        }
-
-        // Last resort: search entire window for any clickable element with matching identifier
-        let predicate = NSPredicate(format: "identifier == %@ OR label == %@", name, name)
-        let anyElement = window.descendants(matching: .any).matching(predicate).firstMatch
-        return anyElement
+        // Fallback: search for any element with matching label
+        let predicate = NSPredicate(format: "label == %@", name)
+        return window.descendants(matching: .any).matching(predicate).firstMatch
     }
 
     /// Tests that the Settings window opens with tabs and Privacy tab is accessible
     func testSettingsHasPrivacyTab() throws {
-        // Skip in CI - SwiftUI TabView accessibility varies by macOS version
-        try XCTSkipIf(isCI, "Settings tab navigation flaky in CI")
         // Open settings with Cmd+,
         app.typeKey(",", modifierFlags: .command)
 
@@ -714,8 +702,6 @@ final class ClipKittyUITests: XCTestCase {
 
     /// Tests that all three privacy toggles exist and are functional
     func testPrivacyTogglesExist() throws {
-        // Skip in CI - SwiftUI TabView accessibility varies by macOS version
-        try XCTSkipIf(isCI, "Settings tab navigation flaky in CI")
         app.typeKey(",", modifierFlags: .command)
 
         let settingsWindow = app.windows["ClipKitty Settings"]
@@ -734,8 +720,6 @@ final class ClipKittyUITests: XCTestCase {
 
     /// Tests that the Ignored Applications section exists in Privacy settings
     func testIgnoredAppsListExists() throws {
-        // Skip in CI - SwiftUI TabView accessibility varies by macOS version
-        try XCTSkipIf(isCI, "Settings tab navigation flaky in CI")
         app.typeKey(",", modifierFlags: .command)
 
         let settingsWindow = app.windows["ClipKitty Settings"]
@@ -757,8 +741,6 @@ final class ClipKittyUITests: XCTestCase {
 
     /// Tests that the Advanced tab exists
     func testAdvancedTabExists() throws {
-        // Skip in CI - SwiftUI TabView accessibility varies by macOS version
-        try XCTSkipIf(isCI, "Settings tab navigation flaky in CI")
         app.typeKey(",", modifierFlags: .command)
 
         let settingsWindow = app.windows["ClipKitty Settings"]
@@ -777,8 +759,6 @@ final class ClipKittyUITests: XCTestCase {
 
     /// Tests the General tab has the menu bar click behavior toggle
     func testMenuBarClickToggleExists() throws {
-        // Skip in CI - SwiftUI TabView accessibility varies by macOS version
-        try XCTSkipIf(isCI, "Settings tab navigation flaky in CI")
         app.typeKey(",", modifierFlags: .command)
 
         let settingsWindow = app.windows["ClipKitty Settings"]
@@ -795,8 +775,6 @@ final class ClipKittyUITests: XCTestCase {
 
     /// Tests that toggling a privacy setting persists across settings window reopens
     func testPrivacySettingPersists() throws {
-        // Skip in CI - SwiftUI TabView accessibility varies by macOS version
-        try XCTSkipIf(isCI, "Settings tab navigation flaky in CI")
         app.typeKey(",", modifierFlags: .command)
 
         var settingsWindow = app.windows["ClipKitty Settings"]
@@ -849,8 +827,6 @@ final class ClipKittyUITests: XCTestCase {
 
     /// Tests all three settings tabs exist and are navigable
     func testAllSettingsTabsNavigable() throws {
-        // Skip in CI - SwiftUI TabView accessibility varies by macOS version
-        try XCTSkipIf(isCI, "Settings tab navigation flaky in CI")
         app.typeKey(",", modifierFlags: .command)
 
         let settingsWindow = app.windows["ClipKitty Settings"]
@@ -1296,8 +1272,6 @@ final class ClipKittyUITests: XCTestCase {
     /// Tests that changing the hotkey works immediately without app restart.
     /// This verifies the new hotkey can open the panel right after being set.
     func testHotkeyChangeWorksImmediately() throws {
-        // Skip in CI - SwiftUI TabView accessibility varies by macOS version
-        try XCTSkipIf(isCI, "Settings tab navigation flaky in CI")
         let panel = app.dialogs.firstMatch
         XCTAssertTrue(panel.exists, "Panel should be visible initially")
 
