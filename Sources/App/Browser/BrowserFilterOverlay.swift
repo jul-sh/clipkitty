@@ -29,6 +29,8 @@ struct BrowserFilterOverlay: View {
                 )
             }
 
+            Divider().padding(.horizontal, 4).padding(.vertical, 3)
+
             // Second item: Bookmarks
             filterButton(
                 label: String(localized: "Bookmarks"),

@@ -537,21 +537,60 @@ final class BrowserViewModel {
                       self.selectedItemId == item.itemMetadata.itemId,
                       let updatedItem else { return }
 
-                self.session.preview = .loaded(self.makePreviewSelection(for: updatedItem))
+                // Preserve optimistic tags from current preview
+                let currentTags = self.previewSelection?.item.itemMetadata.tags ?? updatedItem.itemMetadata.tags
+                let mergedPreviewMetadata = ItemMetadata(
+                    itemId: updatedItem.itemMetadata.itemId,
+                    icon: updatedItem.itemMetadata.icon,
+                    snippet: updatedItem.itemMetadata.snippet,
+                    sourceApp: updatedItem.itemMetadata.sourceApp,
+                    sourceAppBundleId: updatedItem.itemMetadata.sourceAppBundleId,
+                    timestampUnix: updatedItem.itemMetadata.timestampUnix,
+                    tags: currentTags
+                )
+                let mergedPreviewItem = ClipboardItem(itemMetadata: mergedPreviewMetadata, content: updatedItem.content)
+                self.session.preview = .loaded(self.makePreviewSelection(for: mergedPreviewItem))
                 if case .ready(let response) = self.session.query {
                     let updatedItems = response.items.map { itemMatch in
                         if itemMatch.itemMetadata.itemId == updatedItem.itemMetadata.itemId {
+                            // Preserve optimistic tag mutations by merging with current tags
+                            let mergedMetadata = ItemMetadata(
+                                itemId: updatedItem.itemMetadata.itemId,
+                                icon: updatedItem.itemMetadata.icon,
+                                snippet: updatedItem.itemMetadata.snippet,
+                                sourceApp: updatedItem.itemMetadata.sourceApp,
+                                sourceAppBundleId: updatedItem.itemMetadata.sourceAppBundleId,
+                                timestampUnix: updatedItem.itemMetadata.timestampUnix,
+                                tags: itemMatch.itemMetadata.tags
+                            )
                             return ItemMatch(
-                                itemMetadata: updatedItem.itemMetadata,
+                                itemMetadata: mergedMetadata,
                                 matchData: itemMatch.matchData
                             )
                         }
                         return itemMatch
                     }
+                    // Preserve tags for firstItem as well
+                    let updatedFirstItem: ClipboardItem? = {
+                        guard let firstItem = response.firstItem,
+                              firstItem.itemMetadata.itemId == updatedItem.itemMetadata.itemId else {
+                            return response.firstItem
+                        }
+                        let mergedMetadata = ItemMetadata(
+                            itemId: updatedItem.itemMetadata.itemId,
+                            icon: updatedItem.itemMetadata.icon,
+                            snippet: updatedItem.itemMetadata.snippet,
+                            sourceApp: updatedItem.itemMetadata.sourceApp,
+                            sourceAppBundleId: updatedItem.itemMetadata.sourceAppBundleId,
+                            timestampUnix: updatedItem.itemMetadata.timestampUnix,
+                            tags: firstItem.itemMetadata.tags
+                        )
+                        return ClipboardItem(itemMetadata: mergedMetadata, content: updatedItem.content)
+                    }()
                     self.session.query = .ready(response: BrowserSearchResponse(
                         request: response.request,
                         items: updatedItems,
-                        firstItem: response.firstItem?.itemMetadata.itemId == updatedItem.itemMetadata.itemId ? updatedItem : response.firstItem,
+                        firstItem: updatedFirstItem,
                         totalCount: response.totalCount
                     ))
                 }
@@ -769,6 +808,12 @@ final class BrowserViewModel {
                     matchData: previewSelection?.matchData
                 ))
             }
+        }
+
+        // Update prefetch cache to reflect tag mutation
+        if let cachedItem = prefetchCache[itemId] {
+            let updatedMetadata = applyingTagMutation(to: cachedItem.itemMetadata, tag: tag, shouldInclude: shouldInclude)
+            prefetchCache[itemId] = ClipboardItem(itemMetadata: updatedMetadata, content: cachedItem.content)
         }
     }
 
