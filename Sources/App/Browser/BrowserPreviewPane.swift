@@ -113,7 +113,16 @@ struct BrowserPreviewPane: View {
             Label(item.timeAgo, systemImage: "clock")
                 .lineLimit(1)
 
-            if let app = item.itemMetadata.sourceApp {
+            // Show bookmark icon and "Bookmark" for bookmarked items, otherwise show source app
+            if item.itemMetadata.tags.contains(.bookmark) {
+                HStack(spacing: 4) {
+                    Image("BookmarkIcon")
+                        .resizable()
+                        .frame(width: 14, height: 14)
+                    Text("Bookmark")
+                        .lineLimit(1)
+                }
+            } else if let app = item.itemMetadata.sourceApp {
                 HStack(spacing: 4) {
                     if let bundleID = item.itemMetadata.sourceAppBundleId,
                        let appURL = NSWorkspace.shared.urlForApplication(withBundleIdentifier: bundleID) {
@@ -165,7 +174,9 @@ struct BrowserPreviewPane: View {
     }
 
     private var emptyStateMessage: String {
-        if viewModel.searchText.isEmpty && viewModel.contentTypeFilter == .all {
+        if viewModel.searchText.isEmpty,
+           viewModel.contentTypeFilter == .all,
+           viewModel.selectedTagFilter == nil {
             return String(localized: "No clipboard history")
         }
         return String(localized: "No results")

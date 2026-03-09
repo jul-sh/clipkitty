@@ -9,9 +9,6 @@ struct GeneralSettingsView: View {
     let store: ClipboardStore
     let onHotKeyChanged: (HotKey) -> Void
     let onMenuBarBehaviorChanged: () -> Void
-    #if SPARKLE_RELEASE
-    var onInstallUpdate: (() -> Void)? = nil
-    #endif
 
     private let minDatabaseSizeGB = 0.5
     private let maxDatabaseSizeGB = 64.0
@@ -46,33 +43,6 @@ struct GeneralSettingsView: View {
                     }
                 }
             }
-
-            #if SPARKLE_RELEASE
-            Section(String(localized: "Updates")) {
-                switch settings.updateCheckState {
-                case .checkFailed:
-                    HStack {
-                        Label(String(localized: "Unable to check for updates."), systemImage: "exclamationmark.triangle")
-                        Spacer()
-                        Button(String(localized: "Download")) {
-                            NSWorkspace.shared.open(URL(string: "https://github.com/jul-sh/clipkitty/releases/latest")!)
-                        }
-                    }
-                case .available:
-                    HStack {
-                        Label(String(localized: "A new version of ClipKitty is available."), systemImage: "arrow.down.circle")
-                        Spacer()
-                        Button(String(localized: "Install")) {
-                            onInstallUpdate?()
-                        }
-                    }
-                case .idle:
-                    EmptyView()
-                }
-
-                Toggle(String(localized: "Automatically install updates"), isOn: $settings.autoInstallUpdates)
-            }
-            #endif
 
             Section(String(localized: "Storage")) {
                 LabeledContent(String(localized: "Current Size")) {

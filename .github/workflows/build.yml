@@ -2,9 +2,9 @@ name: Build and Release
 
 on:
   push:
-    branches: [main, release]
+    branches: [main, release, release-stable]
   pull_request:
-    branches: [main, release]
+    branches: [main, release, release-stable]
   workflow_dispatch:
 
 permissions:
@@ -49,18 +49,37 @@ jobs:
 
       - name: Resolve Release Version
         id: resolve-version
-        if: github.ref == 'refs/heads/release' || (github.event_name == 'pull_request' && github.base_ref == 'release')
+        if: github.ref == 'refs/heads/release' || github.ref == 'refs/heads/release-stable' || (github.event_name == 'pull_request' && (github.base_ref == 'release' || github.base_ref == 'release-stable'))
         run: |
+          TARGET_BRANCH="${GITHUB_BASE_REF:-${GITHUB_REF#refs/heads/}}"
           VERSION=$(grep 'MARKETING_VERSION' Project.swift | head -1 | sed 's/.*"\(.*\)".*/\1/')
           echo "Base version from Project.swift: $VERSION"
-          while gh release view "v$VERSION" &>/dev/null; do
-            IFS='.' read -r major minor patch <<< "$VERSION"
-            patch=$((patch + 1))
-            VERSION="$major.$minor.$patch"
-            echo "Version exists, bumped to: $VERSION"
-          done
+
+          if [ "$TARGET_BRANCH" = "release" ]; then
+            while gh release view "v$VERSION" &>/dev/null || gh release view "v$VERSION-beta" &>/dev/null; do
+              IFS='.' read -r major minor patch <<< "$VERSION"
+              patch=$((patch + 1))
+              VERSION="$major.$minor.$patch"
+              echo "Version exists, bumped to: $VERSION"
+            done
+
+            CHANNEL="beta"
+            RELEASE_TAG="v${VERSION}-beta"
+            RELEASE_TITLE="ClipKitty v${VERSION} Beta"
+            RELEASE_URL="https://github.com/${{ github.repository }}/releases/download/v${VERSION}-beta/ClipKitty.dmg"
+          else
+            CHANNEL="stable"
+            RELEASE_TAG="v${VERSION}"
+            RELEASE_TITLE="ClipKitty v${VERSION}"
+            RELEASE_URL="https://github.com/${{ github.repository }}/releases/download/v${VERSION}/ClipKitty.dmg"
+          fi
+
           echo "VERSION=$VERSION" >> "$GITHUB_ENV"
           echo "version=$VERSION" >> "$GITHUB_OUTPUT"
+          echo "channel=$CHANNEL" >> "$GITHUB_OUTPUT"
+          echo "release_tag=$RELEASE_TAG" >> "$GITHUB_OUTPUT"
+          echo "release_title=$RELEASE_TITLE" >> "$GITHUB_OUTPUT"
+          echo "release_url=$RELEASE_URL" >> "$GITHUB_OUTPUT"
           echo "Final release version: $VERSION"
         env:
           GH_TOKEN: ${{ github.token }}
@@ -131,12 +150,12 @@ jobs:
           APP="DerivedData/Build/Products/SparkleRelease/ClipKitty.app"
           if [ -d "$APP/Contents/Frameworks" ]; then
             find "$APP/Contents/Frameworks" \( -type f -perm +111 -o -name "*.dylib" \) | while read -r binary; do
-              codesign --force --options runtime --sign "Developer ID Application" "$binary"
+              codesign --force --options runtime --timestamp --sign "Developer ID Application" "$binary"
             done
           fi
 
           # Sign the outer app (must come last)
-          codesign --force --options runtime --sign "Developer ID Application" \
+          codesign --force --options runtime --timestamp --sign "Developer ID Application" \
             --entitlements Sources/App/ClipKitty.oss.entitlements \
             "$APP"
           codesign --verify --deep --strict "$APP"
@@ -190,7 +209,7 @@ jobs:
           exit 1
 
       - name: Install Sparkle CLI Tools
-        if: github.ref == 'refs/heads/release'
+        if: github.event_name == 'push' && (github.ref == 'refs/heads/release' || github.ref == 'refs/heads/release-stable')
         run: |
           SPARKLE_VERSION="2.9.0"
           curl -sL "https://github.com/sparkle-project/Sparkle/releases/download/${SPARKLE_VERSION}/Sparkle-${SPARKLE_VERSION}.tar.xz" -o /tmp/sparkle.tar.xz
@@ -199,7 +218,7 @@ jobs:
           echo "/tmp/sparkle/bin" >> "$GITHUB_PATH"
 
       - name: Sign DMG with EdDSA
-        if: github.ref == 'refs/heads/release'
+        if: github.event_name == 'push' && (github.ref == 'refs/heads/release' || github.ref == 'refs/heads/release-stable')
         id: eddsa-sign
         run: |
           SIGNATURE=$(echo "$SPARKLE_EDDSA_KEY" | sign_update ClipKitty.dmg --ed-key-file -)
@@ -211,19 +230,26 @@ jobs:
         env:
           SPARKLE_EDDSA_KEY: ${{ steps.secrets.outputs.SPARKLE_EDDSA_KEY }}
 
-      - name: Generate Appcast
-        if: github.ref == 'refs/heads/release'
+      - name: Create Channel Release
+        if: github.event_name == 'push' && (github.ref == 'refs/heads/release' || github.ref == 'refs/heads/release-stable')
         run: |
-          chmod +x distribution/generate-appcast.sh
-          ./distribution/generate-appcast.sh \
-            "$VERSION" \
-            "${{ steps.eddsa-sign.outputs.ed_signature }}" \
-            "${{ steps.eddsa-sign.outputs.file_length }}" \
-            > appcast.xml
-          echo "--- Generated appcast.xml ---"
-          cat appcast.xml
-          # Validate XML
-          xmllint --noout appcast.xml
+          gh release delete "${{ steps.resolve-version.outputs.release_tag }}" --yes --cleanup-tag 2>/dev/null || true
+
+          args=(
+            release create "${{ steps.resolve-version.outputs.release_tag }}"
+            --title "${{ steps.resolve-version.outputs.release_title }}"
+            --generate-notes
+            --target "$GITHUB_SHA"
+            ClipKitty.dmg
+          )
+
+          if [ "${{ steps.resolve-version.outputs.channel }}" = "beta" ]; then
+            args+=(--prerelease)
+          fi
+
+          gh "${args[@]}"
+        env:
+          GH_TOKEN: ${{ github.token }}
 
       - name: Upload Artifacts
         uses: actions/upload-artifact@v4
@@ -240,7 +266,7 @@ jobs:
             marketing/*/screenshot_*.png
 
       - name: Deploy to gh-pages
-        if: github.event_name == 'push' && (github.ref == 'refs/heads/main' || github.ref == 'refs/heads/release')
+        if: github.event_name == 'push' && (github.ref == 'refs/heads/main' || github.ref == 'refs/heads/release' || github.ref == 'refs/heads/release-stable')
         run: |
           git config --global user.name "github-actions[bot]"
           git config --global user.email "github-actions[bot]@users.noreply.github.com"
@@ -262,14 +288,31 @@ jobs:
           cp "$GITHUB_WORKSPACE/marketing/en/screenshot_1.png" marketing_1.png
           cp "$GITHUB_WORKSPACE/marketing/en/screenshot_2.png" marketing_2.png
           cp "$GITHUB_WORKSPACE/marketing/en/screenshot_3.png" marketing_3.png
-          [ -f "$GITHUB_WORKSPACE/appcast.xml" ] && cp "$GITHUB_WORKSPACE/appcast.xml" .
+
+          if [ "$GITHUB_REF_NAME" = "release" ] || [ "$GITHUB_REF_NAME" = "release-stable" ]; then
+            [ -f appcast-state.json ] || printf '{}\n' > appcast-state.json
+
+            python3 "$GITHUB_WORKSPACE/distribution/update_appcast_state.py" \
+              --state-path appcast-state.json \
+              --channel "${{ steps.resolve-version.outputs.channel }}" \
+              --version "${{ steps.resolve-version.outputs.version }}" \
+              --url "${{ steps.resolve-version.outputs.release_url }}" \
+              --signature "${{ steps.eddsa-sign.outputs.ed_signature }}" \
+              --length "${{ steps.eddsa-sign.outputs.file_length }}"
+
+            python3 "$GITHUB_WORKSPACE/distribution/generate_appcast.py" \
+              --state-path appcast-state.json \
+              --output-path appcast.xml
+
+            xmllint --noout appcast.xml
+          fi
 
           # Generate landing page from README.md
           brew install cmark-gfm 2>/dev/null || true
           "$GITHUB_WORKSPACE/distribution/generate-landing-page.sh" > index.html
 
           git add icon.png marketing_1.png marketing_2.png marketing_3.png index.html
-          git add appcast.xml 2>/dev/null || true
+          git add appcast.xml appcast-state.json 2>/dev/null || true
           git commit -m "Update site, screenshots and icon [skip ci]" || echo "No changes to commit"
           git push origin gh-pages
 
@@ -284,17 +327,6 @@ jobs:
           echo "Marketing 1: https://raw.githubusercontent.com/$REPO/gh-pages/marketing_1.png"
           echo "Marketing 2: https://raw.githubusercontent.com/$REPO/gh-pages/marketing_2.png"
           echo "Marketing 3: https://raw.githubusercontent.com/$REPO/gh-pages/marketing_3.png"
-
-      - name: Create Release
-        if: github.ref == 'refs/heads/release'
-        run: |
-          gh release delete "v$VERSION" --yes --cleanup-tag 2>/dev/null || true
-          gh release create "v$VERSION" \
-            --title "ClipKitty v$VERSION" \
-            --generate-notes \
-            ClipKitty.dmg
-        env:
-          GH_TOKEN: ${{ github.token }}
 
       # Create automatic pre-release on push to main (for development builds)
       - name: Create Development Release

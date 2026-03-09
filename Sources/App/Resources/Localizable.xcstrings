@@ -385,66 +385,258 @@
         }
       }
     },
-    "All Types": {
+    "All": {
       "localizations": {
         "en": {
           "stringUnit": {
             "state": "translated",
-            "value": "All Types"
+            "value": "All"
           }
         },
         "es": {
           "stringUnit": {
             "state": "translated",
-            "value": "Todos los tipos"
+            "value": "Todo"
           }
         },
         "zh-Hans": {
           "stringUnit": {
             "state": "translated",
-            "value": "所有类型"
+            "value": "全部"
           }
         },
         "zh-Hant": {
           "stringUnit": {
             "state": "translated",
-            "value": "所有類型"
+            "value": "全部"
           }
         },
         "ja": {
           "stringUnit": {
             "state": "translated",
-            "value": "すべての種類"
+            "value": "すべて"
           }
         },
         "ko": {
           "stringUnit": {
             "state": "translated",
-            "value": "모든 유형"
+            "value": "전체"
           }
         },
         "fr": {
           "stringUnit": {
             "state": "translated",
-            "value": "Tous les types"
+            "value": "Tout"
           }
         },
         "de": {
           "stringUnit": {
             "state": "translated",
-            "value": "Alle Typen"
+            "value": "Alle"
           }
         },
         "pt-BR": {
           "stringUnit": {
             "state": "translated",
-            "value": "Todos os Tipos"
+            "value": "Tudo"
           }
         },
         "ru": {
           "stringUnit": {
             "state": "translated",
-            "value": "Все типы"
+            "value": "Все"
+          }
+        }
+      }
+    },
+    "Bookmark": {
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Bookmark"
+          }
+        },
+        "es": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Marcar"
+          }
+        },
+        "zh-Hans": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "收藏"
+          }
+        },
+        "zh-Hant": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "收藏"
+          }
+        },
+        "ja": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "ブックマーク"
+          }
+        },
+        "ko": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "북마크"
+          }
+        },
+        "fr": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Ajouter aux favoris"
+          }
+        },
+        "de": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Lesezeichen"
+          }
+        },
+        "pt-BR": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Favoritar"
+          }
+        },
+        "ru": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Добавить в избранное"
+          }
+        }
+      }
+    },
+    "Bookmarks": {
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Bookmarks"
+          }
+        },
+        "es": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Favoritos"
+          }
+        },
+        "zh-Hans": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "收藏夹"
+          }
+        },
+        "zh-Hant": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "收藏夾"
+          }
+        },
+        "ja": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "ブックマーク"
+          }
+        },
+        "ko": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "북마크"
+          }
+        },
+        "fr": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Favoris"
+          }
+        },
+        "de": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Lesezeichen"
+          }
+        },
+        "pt-BR": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Favoritos"
+          }
+        },
+        "ru": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Избранное"
+          }
+        }
+      }
+    },
+    "Unbookmark": {
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Unbookmark"
+          }
+        },
+        "es": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Desmarcar"
+          }
+        },
+        "zh-Hans": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "取消收藏"
+          }
+        },
+        "zh-Hant": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "取消收藏"
+          }
+        },
+        "ja": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "ブックマーク解除"
+          }
+        },
+        "ko": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "북마크 해제"
+          }
+        },
+        "fr": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Retirer des favoris"
+          }
+        },
+        "de": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Lesezeichen entfernen"
+          }
+        },
+        "pt-BR": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Desfavoritar"
+          }
+        },
+        "ru": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Удалить из избранного"
           }
         }
       }
@@ -4029,6 +4221,262 @@
           "stringUnit": {
             "state": "translated",
             "value": "Suche fehlgeschlagen: %@"
+          }
+        }
+      }
+    },
+    "Get beta updates": {
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Get beta updates"
+          }
+        },
+        "es": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Recibir actualizaciones beta"
+          }
+        },
+        "zh-Hans": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "获取 Beta 更新"
+          }
+        },
+        "zh-Hant": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "取得 Beta 更新"
+          }
+        },
+        "ja": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "ベータ版アップデートを受け取る"
+          }
+        },
+        "ko": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "베타 업데이트 받기"
+          }
+        },
+        "fr": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Recevoir les mises a jour beta"
+          }
+        },
+        "pt-BR": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Receber atualizacoes beta"
+          }
+        },
+        "ru": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Получать бета-обновления"
+          }
+        },
+        "de": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Beta-Updates erhalten"
+          }
+        }
+      }
+    },
+    "Beta releases ship to testers first. Turn this on to receive early builds from the release branch before they roll out to everyone.": {
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Beta releases ship to testers first. Turn this on to receive early builds from the release branch before they roll out to everyone."
+          }
+        },
+        "es": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Las versiones beta llegan primero a los testers. Activa esto para recibir compilaciones tempranas de la rama release antes de que se publiquen para todos."
+          }
+        },
+        "zh-Hans": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Beta 版本会先推送给测试者。启用此选项后，你会先收到 release 分支的早期构建，再向所有人发布。"
+          }
+        },
+        "zh-Hant": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Beta 版本會先提供給測試者。啟用此選項後，你會先收到 release 分支的早期版本，再向所有人推出。"
+          }
+        },
+        "ja": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "ベータ版はまずテスターに配信されます。これをオンにすると、release ブランチの早期ビルドを一般公開前に受け取れます。"
+          }
+        },
+        "ko": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "베타 릴리스는 먼저 테스터에게 배포됩니다. 이 옵션을 켜면 모든 사용자에게 배포되기 전에 release 브랜치의 초기 빌드를 받을 수 있습니다."
+          }
+        },
+        "fr": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Les versions beta sont d'abord diffusees aux testeurs. Activez ceci pour recevoir les builds anticipees de la branche release avant leur deploiement general."
+          }
+        },
+        "pt-BR": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "As versoes beta chegam primeiro aos testadores. Ative isto para receber builds iniciais da branch release antes do lancamento para todos."
+          }
+        },
+        "ru": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Бета-версии сначала получают тестировщики. Включите это, чтобы получать ранние сборки из ветки release до их публикации для всех."
+          }
+        },
+        "de": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Beta-Versionen gehen zuerst an Tester. Aktivieren Sie dies, um fruhe Builds aus dem Release-Branch zu erhalten, bevor sie fur alle ausgerollt werden."
+          }
+        }
+      }
+    },
+    "If you hit a bug in a beta build, please report it on GitHub with what broke, steps to reproduce it, your ClipKitty version, and your macOS version.": {
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "If you hit a bug in a beta build, please report it on GitHub with what broke, steps to reproduce it, your ClipKitty version, and your macOS version."
+          }
+        },
+        "es": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Si encuentras un error en una compilacion beta, informalo en GitHub indicando que fallo, como reproducirlo, tu version de ClipKitty y tu version de macOS."
+          }
+        },
+        "zh-Hans": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "如果你在 Beta 构建中遇到问题，请在 GitHub 上报告，并说明哪里出了问题、如何复现、你的 ClipKitty 版本以及 macOS 版本。"
+          }
+        },
+        "zh-Hant": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "如果你在 Beta 版本中遇到問題，請到 GitHub 回報，並附上故障內容、重現步驟、你的 ClipKitty 版本，以及 macOS 版本。"
+          }
+        },
+        "ja": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "ベータ版ビルドで不具合が発生した場合は、何が壊れたか、再現手順、ClipKitty のバージョン、macOS のバージョンを添えて GitHub で報告してください。"
+          }
+        },
+        "ko": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "베타 빌드에서 버그를 발견하면 무엇이 깨졌는지, 재현 단계, ClipKitty 버전, macOS 버전을 포함해 GitHub에 제보해 주세요."
+          }
+        },
+        "fr": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Si vous rencontrez un bug dans une build beta, signalez-le sur GitHub en indiquant ce qui casse, les etapes de reproduction, votre version de ClipKitty et votre version de macOS."
+          }
+        },
+        "pt-BR": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Se voce encontrar um bug em uma build beta, relate-o no GitHub informando o que quebrou, como reproduzir, sua versao do ClipKitty e sua versao do macOS."
+          }
+        },
+        "ru": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Если вы столкнулись с ошибкой в бета-сборке, сообщите о ней на GitHub: что сломалось, как это воспроизвести, вашу версию ClipKitty и версию macOS."
+          }
+        },
+        "de": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Wenn in einer Beta-Version ein Fehler auftritt, melden Sie ihn bitte auf GitHub mit einer Beschreibung des Problems, Reproduktionsschritten sowie Ihrer ClipKitty- und macOS-Version."
+          }
+        }
+      }
+    },
+    "Report a Bug": {
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Report a Bug"
+          }
+        },
+        "es": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Reportar un error"
+          }
+        },
+        "zh-Hans": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "报告问题"
+          }
+        },
+        "zh-Hant": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "回報問題"
+          }
+        },
+        "ja": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "不具合を報告"
+          }
+        },
+        "ko": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "버그 신고"
+          }
+        },
+        "fr": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Signaler un bug"
+          }
+        },
+        "pt-BR": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Reportar erro"
+          }
+        },
+        "ru": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Сообщить об ошибке"
+          }
+        },
+        "de": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Fehler melden"
           }
         }
       }

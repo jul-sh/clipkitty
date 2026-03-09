@@ -19,7 +19,7 @@ struct BrowserSession {
 
 struct SearchRequest: Hashable {
     let text: String
-    let filter: ContentTypeFilter
+    let filter: ItemQueryFilter
 }
 
 struct BrowserSearchResponse {
@@ -29,15 +29,20 @@ struct BrowserSearchResponse {
     let totalCount: Int
 }
 
+enum QueryLoadPhase {
+    case debouncing
+    case running(spinnerVisible: Bool)
+}
+
 enum QuerySession {
     case idle(request: SearchRequest)
-    case searching(request: SearchRequest, fallback: [ItemMatch])
+    case pending(request: SearchRequest, fallback: [ItemMatch], phase: QueryLoadPhase)
     case ready(response: BrowserSearchResponse)
-    case failed(request: SearchRequest, message: String)
+    case failed(request: SearchRequest, message: String, fallback: [ItemMatch])
 
     var request: SearchRequest {
         switch self {
-        case .idle(let request), .searching(let request, _), .failed(let request, _):
+        case .idle(let request), .pending(let request, _, _), .failed(let request, _, _):
             return request
         case .ready(let response):
             return response.request
@@ -48,12 +53,10 @@ enum QuerySession {
         switch self {
         case .idle:
             return []
-        case .searching(_, let fallback):
+        case .pending(_, let fallback, _), .failed(_, _, let fallback):
             return fallback
         case .ready(let response):
             return response.items
-        case .failed:
-            return []
         }
     }
 
@@ -61,9 +64,14 @@ enum QuerySession {
         switch self {
         case .ready(let response):
             return response.firstItem
-        case .idle, .searching, .failed:
+        case .idle, .pending, .failed:
             return nil
         }
+    }
+
+    var isSearchSpinnerVisible: Bool {
+        guard case .pending(_, _, .running(let spinnerVisible)) = self else { return false }
+        return spinnerVisible
     }
 }
 

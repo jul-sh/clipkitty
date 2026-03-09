@@ -89,7 +89,11 @@ pub(crate) fn search_trigram_lazy(
     // Bucket-ranked candidates from two-phase search
     #[cfg(feature = "perf-log")]
     let t0 = std::time::Instant::now();
-    let candidates = indexer.search_parsed(query, MAX_RESULTS)?;
+    let candidates = match indexer.search_parsed(query, MAX_RESULTS, token) {
+        Ok(candidates) => candidates,
+        Err(_) if token.is_cancelled() => return Err(ClipKittyError::Cancelled),
+        Err(error) => return Err(error.into()),
+    };
     #[cfg(feature = "perf-log")]
     eprintln!(
         "[perf] indexer_total={:.1}ms candidates={}",

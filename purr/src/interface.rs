@@ -56,7 +56,7 @@ impl FileStatus {
 }
 
 /// Content type filter for narrowing search results
-#[derive(Debug, Clone, Copy, PartialEq, Eq, uniffi::Enum)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, uniffi::Enum)]
 pub enum ContentTypeFilter {
     All,
     Text,   // matches "text"
@@ -86,6 +86,37 @@ impl ContentTypeFilter {
             Some(types) => types.contains(&db_type),
         }
     }
+}
+
+/// Typed item tags stored in the database.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, uniffi::Enum)]
+pub enum ItemTag {
+    Bookmark,
+}
+
+impl ItemTag {
+    pub fn database_str(&self) -> &'static str {
+        match self {
+            // Keep "pinned" for database backwards compatibility
+            ItemTag::Bookmark => "pinned",
+        }
+    }
+
+    pub fn from_database_str(value: &str) -> Result<Self, String> {
+        match value {
+            // Accept "pinned" from database for backwards compatibility
+            "pinned" => Ok(ItemTag::Bookmark),
+            other => Err(format!("unknown item tag `{other}`")),
+        }
+    }
+}
+
+/// Mutually exclusive search filters for the browser.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, uniffi::Enum)]
+pub enum ItemQueryFilter {
+    All,
+    ContentType { content_type: ContentTypeFilter },
+    Tagged { tag: ItemTag },
 }
 
 /// Icon representation for list items
@@ -122,13 +153,15 @@ impl ItemIcon {
                     }
                 }
             }
-            "image" | "link" | "file" => {
+            "link" => ItemIcon::Symbol {
+                icon_type: IconType::Link,
+            },
+            "image" | "file" => {
                 if let Some(thumb) = thumbnail {
                     ItemIcon::Thumbnail { bytes: thumb }
                 } else {
                     let icon_type = match db_type {
                         "image" => IconType::Image,
-                        "link" => IconType::Link,
                         _ => IconType::File,
                     };
                     ItemIcon::Symbol { icon_type }
@@ -403,10 +436,11 @@ pub struct ItemMetadata {
     pub source_app: Option<String>,
     pub source_app_bundle_id: Option<String>,
     pub timestamp_unix: i64,
+    pub tags: Vec<ItemTag>,
 }
 
 /// Search match: metadata + match context
-#[derive(Debug, Clone, uniffi::Record)]
+#[derive(Debug, Clone, PartialEq, uniffi::Record)]
 pub struct ItemMatch {
     pub item_metadata: ItemMetadata,
     /// Match context data. None for lazy results - call compute_highlights to populate.
@@ -414,12 +448,19 @@ pub struct ItemMatch {
 }
 
 /// Search result container
-#[derive(Debug, Clone, uniffi::Record)]
+#[derive(Debug, Clone, PartialEq, uniffi::Record)]
 pub struct SearchResult {
     pub matches: Vec<ItemMatch>,
     pub total_count: u64,
     /// The first item's full content (avoids separate fetch for preview pane)
     pub first_item: Option<ClipboardItem>,
+}
+
+/// Terminal outcome for an explicit search operation.
+#[derive(Debug, Clone, PartialEq, uniffi::Enum)]
+pub enum SearchOutcome {
+    Success { result: SearchResult },
+    Cancelled,
 }
 
 /// Full clipboard item for preview pane
@@ -430,7 +471,7 @@ pub struct ClipboardItem {
 }
 
 /// Error type for ClipKitty operations
-#[derive(Debug, Error, uniffi::Error)]
+#[derive(Debug, Clone, Error, PartialEq, uniffi::Error)]
 pub enum ClipKittyError {
     #[error("Database error: {0}")]
     DatabaseError(String),
@@ -461,6 +502,13 @@ pub trait ClipboardStoreApi: Send + Sync {
 
     /// Search for items. Empty query returns all recent items.
     async fn search(&self, query: String) -> Result<SearchResult, ClipKittyError>;
+
+    /// Search with a typed filter scope.
+    async fn search_filtered(
+        &self,
+        query: String,
+        filter: ItemQueryFilter,
+    ) -> Result<SearchResult, ClipKittyError>;
 
     /// Compute highlights for multiple items given the search query.
     /// Called on-demand for visible items in the list view.
@@ -546,6 +594,12 @@ pub trait ClipboardStoreApi: Send + Sync {
 
     /// Update item timestamp to now
     fn update_timestamp(&self, item_id: i64) -> Result<(), ClipKittyError>;
+
+    /// Add a tag to an item. Idempotent.
+    fn add_tag(&self, item_id: i64, tag: ItemTag) -> Result<(), ClipKittyError>;
+
+    /// Remove a tag from an item.
+    fn remove_tag(&self, item_id: i64, tag: ItemTag) -> Result<(), ClipKittyError>;
 
     // ─────────────────────────────────────────────────────────────────────────────
     // Delete Operations

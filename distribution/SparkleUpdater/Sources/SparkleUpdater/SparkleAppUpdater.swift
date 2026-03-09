@@ -12,11 +12,16 @@ public enum UpdateCheckState: Equatable, Sendable {
     case checkFailed
 }
 
+public enum UpdateChannel: String, Codable, Sendable {
+    case stable
+    case beta
+}
+
 // MARK: - Silent User Driver
 
 /// SPUUserDriver that auto-accepts every prompt so updates install without UI.
 @MainActor
-final class SilentUpdateDriver: NSObject, SPUUserDriver {
+final class SilentUpdateDriver: NSObject, SPUUserDriver, SPUUpdaterDelegate {
 
     /// When true, the next `showUpdateFound` will reply `.install` regardless of auto-install setting.
     var forceInstall = false
@@ -41,11 +46,33 @@ final class SilentUpdateDriver: NSObject, SPUUserDriver {
         set { UserDefaults.standard.set(newValue, forKey: "autoInstallUpdates") }
     }
 
+    var updateChannel: UpdateChannel {
+        get {
+            guard let rawValue = UserDefaults.standard.string(forKey: "updateChannel"),
+                  let channel = UpdateChannel(rawValue: rawValue) else {
+                return .stable
+            }
+            return channel
+        }
+        set {
+            UserDefaults.standard.set(newValue.rawValue, forKey: "updateChannel")
+        }
+    }
+
     // MARK: Permission
 
     func show(_ request: SPUUpdatePermissionRequest, reply: @escaping (SUUpdatePermissionResponse) -> Void) {
         log.info("Auto-granting update permission")
         reply(SUUpdatePermissionResponse(automaticUpdateChecks: true, sendSystemProfile: false))
+    }
+
+    func allowedChannels(for updater: SPUUpdater) -> Set<String> {
+        switch updateChannel {
+        case .stable:
+            return []
+        case .beta:
+            return ["beta"]
+        }
     }
 
     // MARK: Update found / not found
@@ -149,10 +176,15 @@ public final class SparkleAppUpdater {
         set { driver.autoInstallUpdates = newValue }
     }
 
+    public var updateChannel: UpdateChannel {
+        get { driver.updateChannel }
+        set { driver.updateChannel = newValue }
+    }
+
     /// Initialize the updater. Call `start(onStateChange:)` to begin.
     public init() {
         let bundle = Bundle.main
-        updater = SPUUpdater(hostBundle: bundle, applicationBundle: bundle, userDriver: driver, delegate: nil)
+        updater = SPUUpdater(hostBundle: bundle, applicationBundle: bundle, userDriver: driver, delegate: driver)
     }
 
     /// Start the updater and begin checking for updates.
@@ -177,7 +209,9 @@ public final class SparkleAppUpdater {
 
         do {
             try updater.start()
+            _ = updater.clearFeedURLFromUserDefaults()
             log.info("Sparkle updater started")
+            log.info("Update channel: \(self.updateChannel.rawValue, privacy: .public)")
             #if !DEBUG
             // Trigger a check shortly after launch to ensure updates are found promptly,
             // rather than waiting for the full scheduled interval on first launch.
@@ -205,5 +239,11 @@ public final class SparkleAppUpdater {
             driver.resetState()
             updater.resetUpdateCycle()
         }
+    }
+
+    public func setUpdateChannel(_ channel: UpdateChannel) {
+        driver.updateChannel = channel
+        driver.resetState()
+        updater.resetUpdateCycle()
     }
 }
