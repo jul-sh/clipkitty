@@ -154,8 +154,9 @@ final class BrowserViewModelTests: XCTestCase {
     }
 
     private func flushMainActor() async {
-        await Task.yield()
-        await Task.yield()
+        for _ in 0..<5 {
+            await Task.yield()
+        }
     }
 
     private func makeMatch(id: Int64, snippet: String) -> ItemMatch {
