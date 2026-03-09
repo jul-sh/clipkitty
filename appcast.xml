@@ -1,18 +1,17 @@
 <?xml version="1.0" encoding="utf-8"?>
-<rss version="2.0" xmlns:sparkle="http://www.andymatuschak.org/xml-namespaces/sparkle" xmlns:dc="http://purl.org/dc/elements/1.1/">
+<rss xmlns:sparkle="http://www.andymatuschak.org/xml-namespaces/sparkle" version="2.0">
   <channel>
     <title>ClipKitty Updates</title>
     <link>https://jul-sh.github.io/clipkitty/appcast.xml</link>
     <language>en</language>
     <item>
-      <title>ClipKitty 1.8.15</title>
-      <sparkle:version>1.8.15</sparkle:version>
-      <sparkle:shortVersionString>1.8.15</sparkle:shortVersionString>
+      <title>ClipKitty 1.8.16 Beta</title>
+      <sparkle:version>1.8.16</sparkle:version>
+      <sparkle:shortVersionString>1.8.16</sparkle:shortVersionString>
       <sparkle:minimumSystemVersion>14.0</sparkle:minimumSystemVersion>
-      <enclosure url="https://github.com/jul-sh/clipkitty/releases/download/v1.8.15/ClipKitty.dmg"
-                 type="application/octet-stream"
-                 sparkle:edSignature="8AgbK0/nYCL5Prq0UFFS9WqlnWTUzYsG/3Dik96+c7JZ9RAUWWfl18H/8bktGW628py1ARRDNvtd5loz+rqMDw=="
-                 length="11300296" />
+      <sparkle:channel>beta</sparkle:channel>
+      <pubDate>Mon, 09 Mar 2026 22:26:50 +0000</pubDate>
+      <enclosure url="https://github.com/jul-sh/clipkitty/releases/download/v1.8.16-beta/ClipKitty.dmg" type="application/octet-stream" sparkle:edSignature="U8YMdn9+/hpSm/+iBfGeAnxPgWvfNz+9FTPTzT45G6axpSj147XdieevMv8TmmmuNSUmWHicU/xOny+397whDg==" length="11478274"/>
     </item>
   </channel>
 </rss>
