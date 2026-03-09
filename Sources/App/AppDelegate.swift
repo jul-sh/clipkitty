@@ -1,9 +1,10 @@
 import AppKit
 import SwiftUI
-#if !APP_STORE
 import Combine
-#endif
 import ClipKittyRust
+#if !APP_STORE
+import SparkleUpdater
+#endif
 
 private enum LaunchMode {
     case production
@@ -33,9 +34,9 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate {
     private var settingsWindow: NSWindow?
     private var showHistoryMenuItem: NSMenuItem?
     private var statusMenu: NSMenu?
-    #if !APP_STORE
     private var cancellables = Set<AnyCancellable>()
-    private var updateController: UpdateController?
+    #if !APP_STORE
+    private var updater: SparkleAppUpdater?
     #endif
 
     /// Set activation policy before the app finishes launching.
@@ -79,11 +80,20 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate {
         setupMenuBar()
 
         #if !APP_STORE
-        updateController = UpdateController()
+        let sparkleUpdater = SparkleAppUpdater()
+        sparkleUpdater.start { state in
+            // Convert SparkleUpdater.UpdateCheckState to app's UpdateCheckState
+            switch state {
+            case .idle: AppSettings.shared.updateCheckState = .idle
+            case .available: AppSettings.shared.updateCheckState = .available
+            case .checkFailed: AppSettings.shared.updateCheckState = .checkFailed
+            }
+        }
+        updater = sparkleUpdater
         AppSettings.shared.$autoInstallUpdates
             .dropFirst()
-            .sink { [weak self] enabled in
-                self?.updateController?.setAutoInstall(enabled)
+            .sink { [weak sparkleUpdater] enabled in
+                sparkleUpdater?.setAutoInstall(enabled)
             }
             .store(in: &cancellables)
         #endif
@@ -202,7 +212,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate {
                     self?.updateMenuBarBehavior()
                 },
                 onInstallUpdate: { [weak self] in
-                    self?.updateController?.installUpdate()
+                    self?.updater?.installUpdate()
                 }
             )
             #else

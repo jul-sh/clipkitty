@@ -1,8 +1,16 @@
-#if !APP_STORE
+import Foundation
+import Combine
 import Sparkle
 import os.log
 
 private let log = Logger(subsystem: Bundle.main.bundleIdentifier ?? "ClipKitty", category: "Update")
+
+/// State of update checking
+public enum UpdateCheckState: Equatable, Sendable {
+    case idle
+    case available
+    case checkFailed
+}
 
 // MARK: - Silent User Driver
 
@@ -12,6 +20,26 @@ final class SilentUpdateDriver: NSObject, SPUUserDriver {
 
     /// When true, the next `showUpdateFound` will reply `.install` regardless of auto-install setting.
     var forceInstall = false
+
+    /// Callback to update state in the main app
+    var onStateChange: ((UpdateCheckState) -> Void)?
+
+    /// Current state
+    private(set) var updateCheckState: UpdateCheckState = .idle {
+        didSet { onStateChange?(updateCheckState) }
+    }
+
+    /// Records when consecutive update-check failures started
+    var updateCheckFailingSince: Date? {
+        get { UserDefaults.standard.object(forKey: "updateCheckFailingSince") as? Date }
+        set { UserDefaults.standard.set(newValue, forKey: "updateCheckFailingSince") }
+    }
+
+    /// Whether auto-install is enabled
+    var autoInstallUpdates: Bool {
+        get { UserDefaults.standard.object(forKey: "autoInstallUpdates") as? Bool ?? true }
+        set { UserDefaults.standard.set(newValue, forKey: "autoInstallUpdates") }
+    }
 
     // MARK: Permission
 
@@ -26,20 +54,19 @@ final class SilentUpdateDriver: NSObject, SPUUserDriver {
 
     func showUpdateFound(with appcastItem: SUAppcastItem, state: SPUUserUpdateState, reply: @escaping (SPUUserUpdateChoice) -> Void) {
         log.info("Update found: \(appcastItem.displayVersionString) (build \(appcastItem.versionString))")
-        let settings = AppSettings.shared
-        settings.updateCheckState = .idle
-        settings.updateCheckFailingSince = nil
+        updateCheckState = .idle
+        updateCheckFailingSince = nil
 
         if appcastItem.isInformationOnlyUpdate {
             log.info("Information-only update found — dismissing")
             reply(.dismiss)
-        } else if forceInstall || settings.autoInstallUpdates {
+        } else if forceInstall || autoInstallUpdates {
             log.info("Update found: \(appcastItem.displayVersionString) — installing")
             forceInstall = false
             reply(.install)
         } else {
             log.info("Update found: \(appcastItem.displayVersionString) — awaiting user action")
-            settings.updateCheckState = .available
+            updateCheckState = .available
             reply(.dismiss)
         }
     }
@@ -50,21 +77,19 @@ final class SilentUpdateDriver: NSObject, SPUUserDriver {
 
     func showUpdateNotFoundWithError(_ error: Error, acknowledgement: @escaping () -> Void) {
         log.debug("No update found")
-        let settings = AppSettings.shared
-        settings.updateCheckState = .idle
-        settings.updateCheckFailingSince = nil
+        updateCheckState = .idle
+        updateCheckFailingSince = nil
         acknowledgement()
     }
 
     func showUpdaterError(_ error: Error, acknowledgement: @escaping () -> Void) {
         log.error("Updater error: \(error.localizedDescription)")
-        let settings = AppSettings.shared
         forceInstall = false
-        if settings.updateCheckFailingSince == nil {
-            settings.updateCheckFailingSince = Date()
-        } else if let since = settings.updateCheckFailingSince,
+        if updateCheckFailingSince == nil {
+            updateCheckFailingSince = Date()
+        } else if let since = updateCheckFailingSince,
                   Date().timeIntervalSince(since) > 14 * 24 * 60 * 60 {
-            settings.updateCheckState = .checkFailed
+            updateCheckState = .checkFailed
         }
         acknowledgement()
     }
@@ -94,9 +119,8 @@ final class SilentUpdateDriver: NSObject, SPUUserDriver {
 
     func showUpdateInstalledAndRelaunched(_ relaunched: Bool, acknowledgement: @escaping () -> Void) {
         log.info("Update installed (relaunched: \(relaunched))")
-        let settings = AppSettings.shared
-        settings.updateCheckState = .idle
-        settings.updateCheckFailingSince = nil
+        updateCheckState = .idle
+        updateCheckFailingSince = nil
         acknowledgement()
     }
 
@@ -105,18 +129,37 @@ final class SilentUpdateDriver: NSObject, SPUUserDriver {
     func dismissUpdateInstallation() {
         // No-op: Sparkle calls this after a `.dismiss` reply — we need `updateCheckState` to persist.
     }
+
+    func resetState() {
+        updateCheckState = .idle
+    }
 }
 
-// MARK: - Update Controller
+// MARK: - Sparkle App Updater
 
+/// Sparkle-based implementation of AppUpdater.
+/// Call `start(onStateChange:)` after initialization to begin receiving state updates.
 @MainActor
-final class UpdateController {
+public final class SparkleAppUpdater {
     private let driver = SilentUpdateDriver()
     private let updater: SPUUpdater
 
-    init() {
+    public var autoInstallUpdates: Bool {
+        get { driver.autoInstallUpdates }
+        set { driver.autoInstallUpdates = newValue }
+    }
+
+    /// Initialize the updater. Call `start(onStateChange:)` to begin.
+    public init() {
         let bundle = Bundle.main
         updater = SPUUpdater(hostBundle: bundle, applicationBundle: bundle, userDriver: driver, delegate: nil)
+    }
+
+    /// Start the updater and begin checking for updates.
+    /// - Parameter onStateChange: Callback invoked when update state changes (idle, available, checkFailed)
+    public func start(onStateChange: @escaping (UpdateCheckState) -> Void) {
+        driver.onStateChange = onStateChange
+
         #if DEBUG
         // Disable auto-updates in debug builds to avoid interrupting development
         updater.automaticallyChecksForUpdates = false
@@ -124,10 +167,11 @@ final class UpdateController {
         log.info("Debug build — auto-updates disabled")
         #else
         updater.automaticallyChecksForUpdates = true
-        updater.automaticallyDownloadsUpdates = AppSettings.shared.autoInstallUpdates
+        updater.automaticallyDownloadsUpdates = driver.autoInstallUpdates
         #endif
         updater.updateCheckInterval = 14400 // 4 hours
 
+        let bundle = Bundle.main
         log.info("Feed URL: \(bundle.object(forInfoDictionaryKey: "SUFeedURL") as? String ?? "not set")")
         log.info("Version: \(bundle.object(forInfoDictionaryKey: "CFBundleShortVersionString") as? String ?? "unknown"), build: \(bundle.object(forInfoDictionaryKey: "CFBundleVersion") as? String ?? "unknown")")
 
@@ -148,20 +192,18 @@ final class UpdateController {
         }
     }
 
-    func checkForUpdates() { updater.checkForUpdates() }
-    var canCheckForUpdates: Bool { updater.canCheckForUpdates }
+    public func checkForUpdates() { updater.checkForUpdates() }
 
-    func installUpdate() {
+    public func installUpdate() {
         driver.forceInstall = true
         updater.checkForUpdates()
     }
 
-    func setAutoInstall(_ enabled: Bool) {
+    public func setAutoInstall(_ enabled: Bool) {
         updater.automaticallyDownloadsUpdates = enabled
         if enabled {
-            AppSettings.shared.updateCheckState = .idle
+            driver.resetState()
             updater.resetUpdateCycle()
         }
     }
 }
-#endif
