@@ -27,7 +27,7 @@ final class ClipboardRepository {
         await runRepositoryOperation("databaseSize", on: store) { $0.databaseSize() }
     }
 
-    func search(query: String, filter: ContentTypeFilter) async -> Result<SearchResult, ClipboardError> {
+    func search(query: String, filter: ItemQueryFilter) async -> Result<SearchResult, ClipboardError> {
         do {
             if filter == .all {
                 return .success(try await store.search(query: query))
@@ -143,6 +143,18 @@ final class ClipboardRepository {
     func updateTimestamp(itemId: Int64) async -> Result<Void, ClipboardError> {
         await runRepositoryOperation("updateTimestamp", on: store) { store in
             try store.updateTimestamp(itemId: itemId)
+        }
+    }
+
+    func addTag(itemId: Int64, tag: ItemTag) async -> Result<Void, ClipboardError> {
+        await runRepositoryOperation("addTag", on: store) { store in
+            try store.addTag(itemId: itemId, tag: tag)
+        }
+    }
+
+    func removeTag(itemId: Int64, tag: ItemTag) async -> Result<Void, ClipboardError> {
+        await runRepositoryOperation("removeTag", on: store) { store in
+            try store.removeTag(itemId: itemId, tag: tag)
         }
     }
 

@@ -3,7 +3,8 @@
 use crate::database::Database;
 use crate::indexer::Indexer;
 use crate::interface::{
-    ClipKittyError, ClipboardItem, ClipboardStoreApi, ContentTypeFilter, MatchData, SearchResult,
+    ClipKittyError, ClipboardItem, ClipboardStoreApi, ItemQueryFilter, ItemTag, MatchData,
+    SearchResult,
 };
 use crate::{save_service, search_service};
 use once_cell::sync::Lazy;
@@ -109,7 +110,7 @@ impl ClipboardStore {
     async fn execute_search(
         &self,
         query: String,
-        filter: Option<ContentTypeFilter>,
+        filter: ItemQueryFilter,
     ) -> Result<SearchResult, ClipKittyError> {
         let token = CancellationToken::new();
         let _guard = DropGuard::new(token.clone());
@@ -150,17 +151,6 @@ impl ClipboardStore {
         store.rebuild_index_if_needed()?;
         Ok(store)
     }
-
-    pub async fn search_filtered(
-        &self,
-        query: String,
-        filter: ContentTypeFilter,
-    ) -> Result<SearchResult, ClipKittyError> {
-        if filter == ContentTypeFilter::All {
-            return self.search(query).await;
-        }
-        self.execute_search(query, Some(filter)).await
-    }
 }
 
 #[uniffi::export]
@@ -186,15 +176,34 @@ impl ClipboardStoreApi for ClipboardStore {
     }
 
     async fn search(&self, query: String) -> Result<SearchResult, ClipKittyError> {
-        self.execute_search(query, None).await
+        self.execute_search(query, ItemQueryFilter::All).await
+    }
+
+    async fn search_filtered(
+        &self,
+        query: String,
+        filter: ItemQueryFilter,
+    ) -> Result<SearchResult, ClipKittyError> {
+        if filter == ItemQueryFilter::All {
+            return self.search(query).await;
+        }
+        self.execute_search(query, filter).await
     }
 
     fn fetch_by_ids(&self, item_ids: Vec<i64>) -> Result<Vec<ClipboardItem>, ClipKittyError> {
         let stored_items = self.db.fetch_items_by_ids(&item_ids)?;
-        Ok(stored_items
+        let mut items: Vec<ClipboardItem> = stored_items
             .into_iter()
             .map(|item| item.to_clipboard_item())
-            .collect())
+            .collect();
+        let tags_by_id = self.db.get_tags_for_ids(&item_ids)?;
+        for item in &mut items {
+            item.item_metadata.tags = tags_by_id
+                .get(&item.item_metadata.item_id)
+                .cloned()
+                .unwrap_or_default();
+        }
+        Ok(items)
     }
 
     fn compute_highlights(
@@ -299,6 +308,14 @@ impl ClipboardStoreApi for ClipboardStore {
         save_service::update_timestamp(&self.db, &self.indexer, item_id)
     }
 
+    fn add_tag(&self, item_id: i64, tag: ItemTag) -> Result<(), ClipKittyError> {
+        save_service::add_tag(&self.db, item_id, tag)
+    }
+
+    fn remove_tag(&self, item_id: i64, tag: ItemTag) -> Result<(), ClipKittyError> {
+        save_service::remove_tag(&self.db, item_id, tag)
+    }
+
     fn delete_item(&self, item_id: i64) -> Result<(), ClipKittyError> {
         save_service::delete_item(&self.db, &self.indexer, item_id)
     }
@@ -316,7 +333,8 @@ impl ClipboardStoreApi for ClipboardStore {
 mod tests {
     use super::*;
     use crate::interface::{
-        ClipboardContent, FileStatus, IconType, ItemIcon, LinkMetadataPayload, LinkMetadataState,
+        ClipboardContent, FileStatus, IconType, ItemIcon, ItemQueryFilter, LinkMetadataPayload,
+        LinkMetadataState,
     };
 
     fn runtime() -> tokio::runtime::Runtime {
@@ -347,7 +365,12 @@ mod tests {
         assert!(all.first_item.is_some());
 
         let links = store
-            .search_filtered("".to_string(), ContentTypeFilter::Links)
+            .search_filtered(
+                "".to_string(),
+                ItemQueryFilter::ContentType {
+                    content_type: crate::interface::ContentTypeFilter::Links,
+                },
+            )
             .await
             .unwrap();
         assert_eq!(links.matches.len(), 1);
@@ -414,8 +437,36 @@ mod tests {
             &token,
             &rt.handle().clone(),
             None,
+            None,
         );
         assert!(matches!(result, Err(ClipKittyError::Cancelled)));
+    }
+
+    #[tokio::test]
+    async fn test_tag_filter_roundtrip() {
+        let store = ClipboardStore::new_in_memory().unwrap();
+        let bookmarked_id = store.save_text("keep me".to_string(), None, None).unwrap();
+        let plain_id = store.save_text("leave me".to_string(), None, None).unwrap();
+        store.add_tag(bookmarked_id, ItemTag::Bookmark).unwrap();
+
+        let result = store
+            .search_filtered(
+                "".to_string(),
+                ItemQueryFilter::Tagged {
+                    tag: ItemTag::Bookmark,
+                },
+            )
+            .await
+            .unwrap();
+
+        let ids: Vec<i64> = result
+            .matches
+            .iter()
+            .map(|item| item.item_metadata.item_id)
+            .collect();
+        assert_eq!(ids, vec![bookmarked_id]);
+        assert!(!ids.contains(&plain_id));
+        assert_eq!(result.matches[0].item_metadata.tags, vec![ItemTag::Bookmark]);
     }
 
     #[test]
@@ -441,6 +492,7 @@ mod tests {
             &query,
             &token,
             &rt.handle().clone(),
+            None,
             None,
         );
         assert!(matches!(result, Err(ClipKittyError::Cancelled)));
