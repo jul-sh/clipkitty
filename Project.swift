@@ -83,11 +83,12 @@ let project = Project(
                 "LSApplicationCategoryType": "public.app-category.utilities",
                 "LSMinimumSystemVersion": "14.0",
                 "NSHumanReadableCopyright": "Copyright © 2025 ClipKitty. All rights reserved.",
-                "SUFeedURL": "https://jul-sh.github.io/clipkitty/appcast.xml",
-                "SUPublicEDKey": "9VqfSPPY2Gr8QTYDLa99yJXAFWnHw5aybSbKaYDyCq0=",
-                "SUEnableAutomaticChecks": true,
-                "SUAutomaticallyUpdate": true,
-                "SUEnableInstallerLauncherService": true,
+                // Sparkle keys use build settings so they're empty for AppStore
+                "SUFeedURL": "$(SPARKLE_FEED_URL)",
+                "SUPublicEDKey": "$(SPARKLE_PUBLIC_KEY)",
+                "SUEnableAutomaticChecks": "$(SPARKLE_AUTO_CHECK)",
+                "SUAutomaticallyUpdate": "$(SPARKLE_AUTO_UPDATE)",
+                "SUEnableInstallerLauncherService": "$(SPARKLE_INSTALLER_SERVICE)",
             ]),
             sources: ["Sources/App/**"],
             resources: [
@@ -101,15 +102,10 @@ let project = Project(
                 .post(
                     script: """
                     # Strip Sparkle frameworks from AppStore builds
+                    # (Info.plist keys are handled via empty build settings)
                     if [ "$CONFIGURATION" = "AppStore" ]; then
                         rm -rf "$BUILT_PRODUCTS_DIR/$FRAMEWORKS_FOLDER_PATH/Sparkle.framework"
                         rm -rf "$BUILT_PRODUCTS_DIR/$FRAMEWORKS_FOLDER_PATH/SparkleUpdater.framework"
-                        PLIST="$BUILT_PRODUCTS_DIR/$INFOPLIST_PATH"
-                        /usr/libexec/PlistBuddy -c "Delete :SUFeedURL" "$PLIST" 2>/dev/null || true
-                        /usr/libexec/PlistBuddy -c "Delete :SUPublicEDKey" "$PLIST" 2>/dev/null || true
-                        /usr/libexec/PlistBuddy -c "Delete :SUEnableAutomaticChecks" "$PLIST" 2>/dev/null || true
-                        /usr/libexec/PlistBuddy -c "Delete :SUAutomaticallyUpdate" "$PLIST" 2>/dev/null || true
-                        /usr/libexec/PlistBuddy -c "Delete :SUEnableInstallerLauncherService" "$PLIST" 2>/dev/null || true
                     fi
                     """,
                     name: "Strip Sparkle from AppStore builds",
@@ -128,6 +124,12 @@ let project = Project(
                     "LIBRARY_SEARCH_PATHS": .array(["$(inherited)", "$(PROJECT_DIR)/Sources/ClipKittyRust"]),
                     "SWIFT_EMIT_LOC_STRINGS": "YES",
                     "LOCALIZATION_PREFERS_STRING_CATALOGS": "YES",
+                    // Sparkle configuration (populated for Release, empty for AppStore)
+                    "SPARKLE_FEED_URL": "https://jul-sh.github.io/clipkitty/appcast.xml",
+                    "SPARKLE_PUBLIC_KEY": "9VqfSPPY2Gr8QTYDLa99yJXAFWnHw5aybSbKaYDyCq0=",
+                    "SPARKLE_AUTO_CHECK": "YES",
+                    "SPARKLE_AUTO_UPDATE": "YES",
+                    "SPARKLE_INSTALLER_SERVICE": "YES",
                 ],
                 configurations: [
                     .debug(name: "Debug", settings: [
@@ -139,6 +141,12 @@ let project = Project(
                     .release(name: .configuration("AppStore"), settings: [
                         "CODE_SIGN_ENTITLEMENTS": "Sources/App/ClipKitty.appstore.entitlements",
                         "SWIFT_ACTIVE_COMPILATION_CONDITIONS": "APP_STORE",
+                        // Clear Sparkle settings for App Store
+                        "SPARKLE_FEED_URL": "",
+                        "SPARKLE_PUBLIC_KEY": "",
+                        "SPARKLE_AUTO_CHECK": "",
+                        "SPARKLE_AUTO_UPDATE": "",
+                        "SPARKLE_INSTALLER_SERVICE": "",
                     ]),
                 ]
             )
