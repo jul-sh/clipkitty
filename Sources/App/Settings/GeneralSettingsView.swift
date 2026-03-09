@@ -71,6 +71,50 @@ struct GeneralSettingsView: View {
                 }
 
                 Toggle(String(localized: "Automatically install updates"), isOn: $settings.autoInstallUpdates)
+
+                Toggle(
+                    String(localized: "Get beta updates"),
+                    isOn: Binding(
+                        get: {
+                            switch settings.updateChannel {
+                            case .stable:
+                                return false
+                            case .beta:
+                                return true
+                            }
+                        },
+                        set: { isBetaEnabled in
+                            settings.updateChannel = isBetaEnabled ? .beta : .stable
+                        }
+                    )
+                )
+
+                Text(
+                    String(
+                        localized: "Beta releases ship to testers first. Turn this on to receive early builds from the release branch before they roll out to everyone."
+                    )
+                )
+                .font(.caption)
+                .foregroundStyle(.secondary)
+
+                switch settings.updateChannel {
+                case .stable:
+                    EmptyView()
+                case .beta:
+                    VStack(alignment: .leading, spacing: 8) {
+                        Text(
+                            String(
+                                localized: "If you hit a bug in a beta build, please report it on GitHub with what broke, steps to reproduce it, your ClipKitty version, and your macOS version."
+                            )
+                        )
+                        .font(.caption)
+                        .foregroundStyle(.secondary)
+
+                        Button(String(localized: "Report a Bug")) {
+                            NSWorkspace.shared.open(URL(string: "https://github.com/jul-sh/clipkitty/issues/new/choose")!)
+                        }
+                    }
+                }
             }
             #endif
 
