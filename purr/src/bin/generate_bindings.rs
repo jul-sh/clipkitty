@@ -63,19 +63,13 @@ fn main() {
         "private var initializationResult",
         "nonisolated(unsafe) private var initializationResult",
     );
-    swift_content = swift_content.replace(
-        "#if canImport(purrFFI)",
-        "#if canImport(ClipKittyRustFFI)",
-    );
+    swift_content =
+        swift_content.replace("#if canImport(purrFFI)", "#if canImport(ClipKittyRustFFI)");
     swift_content = swift_content.replace("import purrFFI", "import ClipKittyRustFFI");
     fs::write(wrapper_dest.join("purr.swift"), swift_content).expect("Write swift");
 
     // Copy header
-    fs::copy(
-        generated.join("purrFFI.h"),
-        swift_dest.join("purrFFI.h"),
-    )
-    .expect("Copy header");
+    fs::copy(generated.join("purrFFI.h"), swift_dest.join("purrFFI.h")).expect("Copy header");
 
     // Write modulemap
     println!("Writing modulemap...");

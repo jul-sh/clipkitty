@@ -25,12 +25,40 @@ pub const LARGE_DOC_THRESHOLD_BYTES: usize = 5 * 1024; // 5KB
 #[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord)]
 pub struct BucketScore {
     pub words_matched_weight: u16,
+    pub prefix_preference_score: u8,
     pub recency_score: u8,
     pub typo_score: u8,
     pub proximity_score: u16,
     pub exactness_score: u8,
     pub bm25_quantized: u16,
     pub recency: i64,
+}
+
+#[derive(Debug, Clone, Copy)]
+pub struct PrefixPreferenceQuery<'a> {
+    pub raw_query_lower: &'a str,
+    pub stripped_query_lower: &'a str,
+}
+
+/// Context for computing bucket scores on a candidate document.
+/// Groups the document-derived and query-derived parameters.
+pub struct ScoringContext<'a> {
+    /// Lowercased content of the document
+    pub content_lower: &'a str,
+    /// Pre-tokenized words from the document
+    pub doc_word_strs: &'a [&'a str],
+    /// Query words to match against
+    pub query_words: &'a [&'a str],
+    /// Whether the last query word is a prefix (user still typing)
+    pub last_word_is_prefix: bool,
+    /// Optional prefix preference for ranking
+    pub prefix_preference: Option<PrefixPreferenceQuery<'a>>,
+    /// Document timestamp (unix seconds)
+    pub timestamp: i64,
+    /// BM25 score from tantivy
+    pub bm25_score: f32,
+    /// Current time (unix seconds)
+    pub now: i64,
 }
 
 /// Per-query-word match result
@@ -52,35 +80,39 @@ struct WordMatch {
 ///
 /// For large documents (>5KB), uses fast matching mode which only supports exact
 /// and prefix matching, trading typo tolerance for performance.
-pub fn compute_bucket_score(
-    content_lower: &str,
-    doc_word_strs: &[&str],
-    query_words: &[&str],
-    last_word_is_prefix: bool,
-    timestamp: i64,
-    bm25_score: f32,
-    now: i64,
-) -> BucketScore {
-    if query_words.is_empty() {
+pub fn compute_bucket_score(ctx: &ScoringContext<'_>) -> BucketScore {
+    if ctx.query_words.is_empty() {
         return BucketScore {
             words_matched_weight: 0,
-            recency_score: compute_recency_score(timestamp, now),
+            prefix_preference_score: compute_prefix_preference_score(
+                ctx.content_lower,
+                ctx.prefix_preference,
+            ),
+            recency_score: compute_recency_score(ctx.timestamp, ctx.now),
             typo_score: 255,
             proximity_score: u16::MAX,
             exactness_score: 0,
-            bm25_quantized: quantize_bm25(bm25_score),
-            recency: timestamp,
+            bm25_quantized: quantize_bm25(ctx.bm25_score),
+            recency: ctx.timestamp,
         };
     }
 
     // Use fast matching for large documents to avoid expensive fuzzy matching
-    let fast_mode = content_lower.len() > LARGE_DOC_THRESHOLD_BYTES;
-    let word_matches = match_query_words(query_words, doc_word_strs, last_word_is_prefix, fast_mode);
+    let fast_mode = ctx.content_lower.len() > LARGE_DOC_THRESHOLD_BYTES;
+    let word_matches = match_query_words(
+        ctx.query_words,
+        ctx.doc_word_strs,
+        ctx.last_word_is_prefix,
+        fast_mode,
+    );
 
-    let words_matched_weight: u16 = word_matches.iter()
+    let words_matched_weight: u16 = word_matches
+        .iter()
         .filter(|m| m.matched)
         .map(|m| m.match_weight)
         .sum();
+    let prefix_preference_score =
+        compute_prefix_preference_score(ctx.content_lower, ctx.prefix_preference);
     let total_edit_dist: u8 = word_matches
         .iter()
         .filter(|m| m.matched)
@@ -89,18 +121,39 @@ pub fn compute_bucket_score(
     let typo_score = 255u8.saturating_sub(total_edit_dist);
 
     let proximity_score = compute_proximity(&word_matches);
-    let exactness_score = compute_exactness(content_lower, query_words, &word_matches);
-    let bm25_quantized = quantize_bm25(bm25_score);
-    let recency_score = compute_recency_score(timestamp, now);
+    let exactness_score = compute_exactness(ctx.content_lower, ctx.query_words, &word_matches);
+    let bm25_quantized = quantize_bm25(ctx.bm25_score);
+    let recency_score = compute_recency_score(ctx.timestamp, ctx.now);
 
     BucketScore {
         words_matched_weight,
+        prefix_preference_score,
         recency_score,
         typo_score,
         proximity_score,
         exactness_score,
         bm25_quantized,
-        recency: timestamp,
+        recency: ctx.timestamp,
+    }
+}
+
+fn compute_prefix_preference_score(
+    content_lower: &str,
+    prefix_preference: Option<PrefixPreferenceQuery<'_>>,
+) -> u8 {
+    match prefix_preference {
+        Some(PrefixPreferenceQuery {
+            raw_query_lower,
+            stripped_query_lower,
+        }) if content_lower.starts_with(raw_query_lower) => 3,
+        Some(PrefixPreferenceQuery {
+            raw_query_lower, ..
+        }) if content_lower.contains(raw_query_lower) => 2,
+        Some(PrefixPreferenceQuery {
+            stripped_query_lower,
+            ..
+        }) if content_lower.starts_with(stripped_query_lower) => 1,
+        _ => 0,
     }
 }
 
@@ -177,7 +230,7 @@ fn match_query_words(
                         };
                     }
                     WordMatchKind::Prefix => {
-                        if best.as_ref().map_or(true, |b| b.edit_dist > 0) {
+                        if best.as_ref().is_none_or(|b| b.edit_dist > 0) {
                             best = Some(WordMatch {
                                 matched: true,
                                 edit_dist: 0,
@@ -188,7 +241,7 @@ fn match_query_words(
                         }
                     }
                     WordMatchKind::Fuzzy(dist) => {
-                        let is_better = best.as_ref().map_or(true, |b| dist < b.edit_dist);
+                        let is_better = best.as_ref().is_none_or(|b| dist < b.edit_dist);
                         if is_better {
                             // Short fuzzy matches (<=3 chars) get reduced weight —
                             // they're low-confidence and shouldn't dominate scoring.
@@ -204,7 +257,7 @@ fn match_query_words(
                     }
                     WordMatchKind::Subsequence(gaps) => {
                         let dist = gaps.saturating_add(1);
-                        let is_better = best.as_ref().map_or(true, |b| dist < b.edit_dist);
+                        let is_better = best.as_ref().is_none_or(|b| dist < b.edit_dist);
                         if is_better {
                             let w = if qw.len() <= 3 { 1 } else { match_weight };
                             best = Some(WordMatch {
@@ -268,7 +321,11 @@ pub(crate) fn does_word_match(qw_lower: &str, dw_lower: &str, allow_prefix: bool
 /// Fast word matching for large documents (>5KB). Only exact and prefix matching,
 /// no fuzzy edit distance or subsequence matching. This is much faster as it avoids
 /// expensive DP table allocations for edit distance computation.
-pub(crate) fn does_word_match_fast(qw_lower: &str, dw_lower: &str, allow_prefix: bool) -> WordMatchKind {
+pub(crate) fn does_word_match_fast(
+    qw_lower: &str,
+    dw_lower: &str,
+    allow_prefix: bool,
+) -> WordMatchKind {
     if dw_lower == qw_lower {
         return WordMatchKind::Exact;
     }
@@ -392,7 +449,8 @@ fn compute_exactness(content_lower: &str, query_words: &[&str], word_matches: &[
     if all_matched && word_matches.len() > 1 {
         let first = &word_matches[0];
         if first.doc_word_pos == 0 && first.edit_dist == 0 {
-            let in_sequence = word_matches.windows(2)
+            let in_sequence = word_matches
+                .windows(2)
                 .all(|w| w[1].doc_word_pos > w[0].doc_word_pos);
             if in_sequence {
                 return 5;
@@ -443,17 +501,22 @@ pub fn edit_distance_bounded(a: &str, b: &str, max_dist: u8) -> Option<u8> {
 
     if m == 0 || n == 0 {
         let dist = m.max(n);
-        return if dist <= max_d { Some(dist as u8) } else { None };
+        return if dist <= max_d {
+            Some(dist as u8)
+        } else {
+            None
+        };
     }
 
     // First-character penalty: mismatch on position 0 costs +1 edit.
     // Exception: first-two-char transposition ("hte"→"the") is a common fast-typing error.
-    let is_first_char_transposed = m >= 2
-        && n >= 2
-        && a_chars[0] == b_chars[1]
-        && a_chars[1] == b_chars[0];
-    let first_char_penalty =
-        if a_chars[0] != b_chars[0] && !is_first_char_transposed { 1 } else { 0 };
+    let is_first_char_transposed =
+        m >= 2 && n >= 2 && a_chars[0] == b_chars[1] && a_chars[1] == b_chars[0];
+    let first_char_penalty = if a_chars[0] != b_chars[0] && !is_first_char_transposed {
+        1
+    } else {
+        0
+    };
 
     if m.abs_diff(n) + first_char_penalty > max_d {
         return None;
@@ -468,10 +531,12 @@ pub fn edit_distance_bounded(a: &str, b: &str, max_dist: u8) -> Option<u8> {
         let mut row_min = curr[0];
 
         for j in 1..=n {
-            let cost = if a_chars[i - 1] == b_chars[j - 1] { 0 } else { 1 };
-            curr[j] = (prev[j] + 1)
-                .min(curr[j - 1] + 1)
-                .min(prev[j - 1] + cost);
+            let cost = if a_chars[i - 1] == b_chars[j - 1] {
+                0
+            } else {
+                1
+            };
+            curr[j] = (prev[j] + 1).min(curr[j - 1] + 1).min(prev[j - 1] + cost);
 
             if i >= 2
                 && j >= 2
@@ -505,12 +570,32 @@ mod tests {
     use super::*;
 
     /// Helper: compute bucket score from raw content (handles lowercasing/tokenization).
-    fn score(content: &str, query_words: &[&str], last_word_is_prefix: bool, timestamp: i64, bm25: f32, now: i64) -> BucketScore {
+    fn score(
+        content: &str,
+        query_words: &[&str],
+        last_word_is_prefix: bool,
+        prefix_preference: Option<PrefixPreferenceQuery<'_>>,
+        timestamp: i64,
+        bm25: f32,
+        now: i64,
+    ) -> BucketScore {
         use crate::search::tokenize_words;
         let content_lower = content.to_lowercase();
         let doc_words = tokenize_words(&content_lower);
-        let doc_word_strs: Vec<&str> = doc_words.iter().map(|(_, _, w): &(usize, usize, String)| w.as_str()).collect();
-        compute_bucket_score(&content_lower, &doc_word_strs, query_words, last_word_is_prefix, timestamp, bm25, now)
+        let doc_word_strs: Vec<&str> = doc_words
+            .iter()
+            .map(|(_, _, w): &(usize, usize, String)| w.as_str())
+            .collect();
+        compute_bucket_score(&ScoringContext {
+            content_lower: &content_lower,
+            doc_word_strs: &doc_word_strs,
+            query_words,
+            last_word_is_prefix,
+            prefix_preference,
+            timestamp,
+            bm25_score: bm25,
+            now,
+        })
     }
 
     // ── edit_distance_bounded tests ──────────────────────────────
@@ -647,14 +732,23 @@ mod tests {
 
     #[test]
     fn test_does_word_match_exact() {
-        assert_eq!(does_word_match("hello", "hello", false), WordMatchKind::Exact);
+        assert_eq!(
+            does_word_match("hello", "hello", false),
+            WordMatchKind::Exact
+        );
     }
 
     #[test]
     fn test_does_word_match_prefix() {
-        assert_eq!(does_word_match("cl", "clipkitty", true), WordMatchKind::Prefix);
+        assert_eq!(
+            does_word_match("cl", "clipkitty", true),
+            WordMatchKind::Prefix
+        );
         // Not allowed when allow_prefix=false
-        assert_eq!(does_word_match("cl", "clipkitty", false), WordMatchKind::None);
+        assert_eq!(
+            does_word_match("cl", "clipkitty", false),
+            WordMatchKind::None
+        );
         // Single char prefix not allowed (< 2 chars)
         assert_eq!(does_word_match("c", "clipkitty", true), WordMatchKind::None);
     }
@@ -662,15 +756,33 @@ mod tests {
     #[test]
     fn test_does_word_match_fuzzy() {
         // "riversde" (8 chars) -> max_dist 1
-        assert_eq!(does_word_match("riversde", "riverside", false), WordMatchKind::Fuzzy(1));
+        assert_eq!(
+            does_word_match("riversde", "riverside", false),
+            WordMatchKind::Fuzzy(1)
+        );
         // "improt" (6 chars) -> max_dist 1, transposition counts as 1
-        assert_eq!(does_word_match("improt", "import", false), WordMatchKind::Fuzzy(1));
+        assert_eq!(
+            does_word_match("improt", "import", false),
+            WordMatchKind::Fuzzy(1)
+        );
         // Short word transpositions (3-4 chars)
-        assert_eq!(does_word_match("teh", "the", false), WordMatchKind::Fuzzy(1));
-        assert_eq!(does_word_match("form", "from", false), WordMatchKind::Fuzzy(1));
-        assert_eq!(does_word_match("adn", "and", false), WordMatchKind::Fuzzy(1));
+        assert_eq!(
+            does_word_match("teh", "the", false),
+            WordMatchKind::Fuzzy(1)
+        );
+        assert_eq!(
+            does_word_match("form", "from", false),
+            WordMatchKind::Fuzzy(1)
+        );
+        assert_eq!(
+            does_word_match("adn", "and", false),
+            WordMatchKind::Fuzzy(1)
+        );
         // Short word substitution — also matches (same edit distance)
-        assert_eq!(does_word_match("tha", "the", false), WordMatchKind::Fuzzy(1));
+        assert_eq!(
+            does_word_match("tha", "the", false),
+            WordMatchKind::Fuzzy(1)
+        );
         // First-char mismatch penalty prevents false positives
         assert_eq!(does_word_match("bat", "cat", false), WordMatchKind::None);
         assert_eq!(does_word_match("rat", "cat", false), WordMatchKind::None);
@@ -681,18 +793,30 @@ mod tests {
     #[test]
     fn test_does_word_match_subsequence() {
         // "helo" (4 chars) -> fuzzy wins: edit_distance("helo","hello")=1
-        assert_eq!(does_word_match("helo", "hello", false), WordMatchKind::Fuzzy(1));
+        assert_eq!(
+            does_word_match("helo", "hello", false),
+            WordMatchKind::Fuzzy(1)
+        );
         // "impt" (4 chars) -> len diff 2 exceeds max_dist 1, falls to subsequence
-        assert_eq!(does_word_match("impt", "import", false), WordMatchKind::Subsequence(1));
+        assert_eq!(
+            does_word_match("impt", "import", false),
+            WordMatchKind::Subsequence(1)
+        );
         // "cls" (3 chars) -> too short for both fuzzy and subsequence now
         assert_eq!(does_word_match("cls", "class", false), WordMatchKind::None);
         // Too short for subsequence (<= 3 chars)
         assert_eq!(does_word_match("ab", "abc", false), WordMatchKind::None);
         // Coverage too low: 3 chars vs 7 char target (43% < 50%)
-        assert_eq!(does_word_match("abc", "abcdefg", false), WordMatchKind::None);
+        assert_eq!(
+            does_word_match("abc", "abcdefg", false),
+            WordMatchKind::None
+        );
         // Fuzzy takes priority over subsequence when both could match
         // "imprt" (5 chars) has edit_distance 1 to "import", so fuzzy wins
-        assert_eq!(does_word_match("imprt", "import", false), WordMatchKind::Fuzzy(1));
+        assert_eq!(
+            does_word_match("imprt", "import", false),
+            WordMatchKind::Fuzzy(1)
+        );
     }
 
     // ── match_query_words tests ──────────────────────────────────
@@ -765,8 +889,20 @@ mod tests {
     #[test]
     fn test_proximity_adjacent() {
         let matches = vec![
-            WordMatch { matched: true, edit_dist: 0, doc_word_pos: 0, is_exact: true, match_weight: 25 },
-            WordMatch { matched: true, edit_dist: 0, doc_word_pos: 1, is_exact: true, match_weight: 25 },
+            WordMatch {
+                matched: true,
+                edit_dist: 0,
+                doc_word_pos: 0,
+                is_exact: true,
+                match_weight: 25,
+            },
+            WordMatch {
+                matched: true,
+                edit_dist: 0,
+                doc_word_pos: 1,
+                is_exact: true,
+                match_weight: 25,
+            },
         ];
         assert_eq!(compute_proximity(&matches), u16::MAX - 1);
     }
@@ -774,26 +910,60 @@ mod tests {
     #[test]
     fn test_proximity_gap() {
         let matches = vec![
-            WordMatch { matched: true, edit_dist: 0, doc_word_pos: 0, is_exact: true, match_weight: 25 },
-            WordMatch { matched: true, edit_dist: 0, doc_word_pos: 5, is_exact: true, match_weight: 25 },
+            WordMatch {
+                matched: true,
+                edit_dist: 0,
+                doc_word_pos: 0,
+                is_exact: true,
+                match_weight: 25,
+            },
+            WordMatch {
+                matched: true,
+                edit_dist: 0,
+                doc_word_pos: 5,
+                is_exact: true,
+                match_weight: 25,
+            },
         ];
         assert_eq!(compute_proximity(&matches), u16::MAX - 5);
     }
 
     #[test]
     fn test_proximity_single_word() {
-        let matches = vec![
-            WordMatch { matched: true, edit_dist: 0, doc_word_pos: 3, is_exact: true, match_weight: 25 },
-        ];
+        let matches = vec![WordMatch {
+            matched: true,
+            edit_dist: 0,
+            doc_word_pos: 3,
+            is_exact: true,
+            match_weight: 25,
+        }];
         assert_eq!(compute_proximity(&matches), u16::MAX);
     }
 
     #[test]
     fn test_proximity_unmatched_words_skipped() {
         let matches = vec![
-            WordMatch { matched: true, edit_dist: 0, doc_word_pos: 0, is_exact: true, match_weight: 25 },
-            WordMatch { matched: false, edit_dist: 0, doc_word_pos: 0, is_exact: false, match_weight: 25 },
-            WordMatch { matched: true, edit_dist: 0, doc_word_pos: 3, is_exact: true, match_weight: 25 },
+            WordMatch {
+                matched: true,
+                edit_dist: 0,
+                doc_word_pos: 0,
+                is_exact: true,
+                match_weight: 25,
+            },
+            WordMatch {
+                matched: false,
+                edit_dist: 0,
+                doc_word_pos: 0,
+                is_exact: false,
+                match_weight: 25,
+            },
+            WordMatch {
+                matched: true,
+                edit_dist: 0,
+                doc_word_pos: 3,
+                is_exact: true,
+                match_weight: 25,
+            },
         ];
         assert_eq!(compute_proximity(&matches), u16::MAX - 3);
     }
@@ -804,30 +974,75 @@ mod tests {
     fn test_exactness_full_substring() {
         // "hello world" starts with "hello world" → level 6
         let matches = vec![
-            WordMatch { matched: true, edit_dist: 0, doc_word_pos: 0, is_exact: true, match_weight: 25 },
-            WordMatch { matched: true, edit_dist: 0, doc_word_pos: 1, is_exact: true, match_weight: 25 },
+            WordMatch {
+                matched: true,
+                edit_dist: 0,
+                doc_word_pos: 0,
+                is_exact: true,
+                match_weight: 25,
+            },
+            WordMatch {
+                matched: true,
+                edit_dist: 0,
+                doc_word_pos: 1,
+                is_exact: true,
+                match_weight: 25,
+            },
         ];
-        assert_eq!(compute_exactness("hello world", &["hello", "world"], &matches), 6);
+        assert_eq!(
+            compute_exactness("hello world", &["hello", "world"], &matches),
+            6
+        );
     }
 
     #[test]
     fn test_exactness_all_exact_but_not_substring() {
         // first word at pos 0, forward sequence → level 5
         let matches = vec![
-            WordMatch { matched: true, edit_dist: 0, doc_word_pos: 0, is_exact: true, match_weight: 25 },
-            WordMatch { matched: true, edit_dist: 0, doc_word_pos: 2, is_exact: true, match_weight: 25 },
+            WordMatch {
+                matched: true,
+                edit_dist: 0,
+                doc_word_pos: 0,
+                is_exact: true,
+                match_weight: 25,
+            },
+            WordMatch {
+                matched: true,
+                edit_dist: 0,
+                doc_word_pos: 2,
+                is_exact: true,
+                match_weight: 25,
+            },
         ];
-        assert_eq!(compute_exactness("hello beautiful world", &["hello", "world"], &matches), 5);
+        assert_eq!(
+            compute_exactness("hello beautiful world", &["hello", "world"], &matches),
+            5
+        );
     }
 
     #[test]
     fn test_exactness_mix_exact_fuzzy() {
         // first word at pos 0 exact, second fuzzy in forward sequence → level 5
         let matches = vec![
-            WordMatch { matched: true, edit_dist: 0, doc_word_pos: 0, is_exact: true, match_weight: 25 },
-            WordMatch { matched: true, edit_dist: 1, doc_word_pos: 1, is_exact: false, match_weight: 25 },
+            WordMatch {
+                matched: true,
+                edit_dist: 0,
+                doc_word_pos: 0,
+                is_exact: true,
+                match_weight: 25,
+            },
+            WordMatch {
+                matched: true,
+                edit_dist: 1,
+                doc_word_pos: 1,
+                is_exact: false,
+                match_weight: 25,
+            },
         ];
-        assert_eq!(compute_exactness("hello wrld", &["hello", "world"], &matches), 5);
+        assert_eq!(
+            compute_exactness("hello wrld", &["hello", "world"], &matches),
+            5
+        );
     }
 
     #[test]
@@ -835,33 +1050,68 @@ mod tests {
         // Multi-word query where both match as prefix (edit_dist 0, is_exact false).
         // First word at pos 0 with edit_dist 0, forward sequence → level 5.
         let matches = vec![
-            WordMatch { matched: true, edit_dist: 0, doc_word_pos: 0, is_exact: false, match_weight: 25 },
-            WordMatch { matched: true, edit_dist: 0, doc_word_pos: 1, is_exact: false, match_weight: 25 },
+            WordMatch {
+                matched: true,
+                edit_dist: 0,
+                doc_word_pos: 0,
+                is_exact: false,
+                match_weight: 25,
+            },
+            WordMatch {
+                matched: true,
+                edit_dist: 0,
+                doc_word_pos: 1,
+                is_exact: false,
+                match_weight: 25,
+            },
         ];
-        assert_eq!(compute_exactness("hello world", &["hel", "wor"], &matches), 5);
+        assert_eq!(
+            compute_exactness("hello world", &["hel", "wor"], &matches),
+            5
+        );
     }
 
     #[test]
     fn test_exactness_prefix_beats_fuzzy() {
         // Prefix (level 2) should rank above all-fuzzy (level 0)
         let prefix = vec![
-            WordMatch { matched: true, edit_dist: 0, doc_word_pos: 0, is_exact: false, match_weight: 25 },
-            WordMatch { matched: true, edit_dist: 0, doc_word_pos: 1, is_exact: false, match_weight: 25 },
+            WordMatch {
+                matched: true,
+                edit_dist: 0,
+                doc_word_pos: 0,
+                is_exact: false,
+                match_weight: 25,
+            },
+            WordMatch {
+                matched: true,
+                edit_dist: 0,
+                doc_word_pos: 1,
+                is_exact: false,
+                match_weight: 25,
+            },
         ];
-        let fuzzy = vec![
-            WordMatch { matched: true, edit_dist: 1, doc_word_pos: 0, is_exact: false, match_weight: 25 },
-        ];
+        let fuzzy = vec![WordMatch {
+            matched: true,
+            edit_dist: 1,
+            doc_word_pos: 0,
+            is_exact: false,
+            match_weight: 25,
+        }];
         assert!(
             compute_exactness("hello world", &["hel", "wor"], &prefix)
-            > compute_exactness("hallo", &["hello"], &fuzzy)
+                > compute_exactness("hallo", &["hello"], &fuzzy)
         );
     }
 
     #[test]
     fn test_exactness_all_fuzzy() {
-        let matches = vec![
-            WordMatch { matched: true, edit_dist: 1, doc_word_pos: 0, is_exact: false, match_weight: 25 },
-        ];
+        let matches = vec![WordMatch {
+            matched: true,
+            edit_dist: 1,
+            doc_word_pos: 0,
+            is_exact: false,
+            match_weight: 25,
+        }];
         assert_eq!(compute_exactness("hallo", &["hello"], &matches), 0);
     }
 
@@ -880,11 +1130,28 @@ mod tests {
         let at_24h = compute_recency_score(now - 86400, now);
         let at_7d = compute_recency_score(now - 604800, now);
 
-        assert!((160..=180).contains(&(at_1h as u16)), "1h: expected ~169, got {}", at_1h);
-        assert!((70..=90).contains(&(at_24h as u16)), "24h: expected ~80, got {}", at_24h);
-        assert!((15..=35).contains(&(at_7d as u16)), "7d: expected ~25, got {}", at_7d);
+        assert!(
+            (160..=180).contains(&(at_1h as u16)),
+            "1h: expected ~169, got {}",
+            at_1h
+        );
+        assert!(
+            (70..=90).contains(&(at_24h as u16)),
+            "24h: expected ~80, got {}",
+            at_24h
+        );
+        assert!(
+            (15..=35).contains(&(at_7d as u16)),
+            "7d: expected ~25, got {}",
+            at_7d
+        );
         // 24h-7d gap should be clearly larger than 7d score itself
-        assert!(at_24h - at_7d > at_7d, "24h-7d gap ({}) should exceed 7d score ({})", at_24h - at_7d, at_7d);
+        assert!(
+            at_24h - at_7d > at_7d,
+            "24h-7d gap ({}) should exceed 7d score ({})",
+            at_24h - at_7d,
+            at_7d
+        );
     }
 
     #[test]
@@ -900,7 +1167,13 @@ mod tests {
         let mut prev = 255u8;
         for minutes in 1..=50000 {
             let score = compute_recency_score(now - minutes * 60, now);
-            assert!(score <= prev, "score should decrease: {} > {} at {}min", score, prev, minutes);
+            assert!(
+                score <= prev,
+                "score should decrease: {} > {} at {}min",
+                score,
+                prev,
+                minutes
+            );
             prev = score;
         }
     }
@@ -913,9 +1186,24 @@ mod tests {
         let at_15m = compute_recency_score(now - 900, now);
         let at_30m = compute_recency_score(now - 1800, now);
         let at_55m = compute_recency_score(now - 3300, now);
-        assert!(at_5m > at_15m, "5min ({}) should beat 15min ({})", at_5m, at_15m);
-        assert!(at_15m > at_30m, "15min ({}) should beat 30min ({})", at_15m, at_30m);
-        assert!(at_30m > at_55m, "30min ({}) should beat 55min ({})", at_30m, at_55m);
+        assert!(
+            at_5m > at_15m,
+            "5min ({}) should beat 15min ({})",
+            at_5m,
+            at_15m
+        );
+        assert!(
+            at_15m > at_30m,
+            "15min ({}) should beat 30min ({})",
+            at_15m,
+            at_30m
+        );
+        assert!(
+            at_30m > at_55m,
+            "30min ({}) should beat 55min ({})",
+            at_30m,
+            at_55m
+        );
     }
 
     // ── bucket score ordering tests ──────────────────────────────
@@ -924,10 +1212,22 @@ mod tests {
     fn test_words_matched_dominates() {
         let now = 1700000000i64;
         let score_3w = score(
-            "hello beautiful world", &["hello", "beautiful", "world"], false, now - 86400, 1.0, now,
+            "hello beautiful world",
+            &["hello", "beautiful", "world"],
+            false,
+            None,
+            now - 86400,
+            1.0,
+            now,
         );
         let score_2w = score(
-            "hello world xyz", &["hello", "beautiful", "world"], false, now, 10.0, now,
+            "hello world xyz",
+            &["hello", "beautiful", "world"],
+            false,
+            None,
+            now,
+            10.0,
+            now,
         );
         assert!(score_3w > score_2w, "3 words matched should beat 2 words");
     }
@@ -936,13 +1236,20 @@ mod tests {
     fn test_recency_dominates_typo() {
         let now = 1700000000i64;
         // Typo match from now vs exact match from 10 days ago
-        let typo_new = score(
-            "riversde park", &["riverside"], false, now, 1.0, now,
-        );
+        let typo_new = score("riversde park", &["riverside"], false, None, now, 1.0, now);
         let exact_old = score(
-            "riverside park", &["riverside"], false, now - 864000, 1.0, now,
+            "riverside park",
+            &["riverside"],
+            false,
+            None,
+            now - 864000,
+            1.0,
+            now,
         );
-        assert!(typo_new > exact_old, "Recent fuzzy match should beat old exact match");
+        assert!(
+            typo_new > exact_old,
+            "Recent fuzzy match should beat old exact match"
+        );
     }
 
     #[test]
@@ -950,12 +1257,27 @@ mod tests {
         let now = 1700000000i64;
         // Both items from the same time — typo should break the tie
         let exact = score(
-            "riverside park", &["riverside"], false, now - 3600, 1.0, now,
+            "riverside park",
+            &["riverside"],
+            false,
+            None,
+            now - 3600,
+            1.0,
+            now,
         );
         let typo = score(
-            "riversde park", &["riverside"], false, now - 3600, 1.0, now,
+            "riversde park",
+            &["riverside"],
+            false,
+            None,
+            now - 3600,
+            1.0,
+            now,
         );
-        assert!(exact > typo, "Exact match should beat fuzzy at equal recency");
+        assert!(
+            exact > typo,
+            "Exact match should beat fuzzy at equal recency"
+        );
     }
 
     #[test]
@@ -963,37 +1285,84 @@ mod tests {
         let now = 1700000000i64;
         // Same words, same typo, but different recency
         let recent = score(
-            "hello world and other things between", &["hello", "world"], false, now - 1800, 1.0, now,
+            "hello world and other things between",
+            &["hello", "world"],
+            false,
+            None,
+            now - 1800,
+            1.0,
+            now,
         );
         let old = score(
-            "hello world", &["hello", "world"], false, now - 864000, 1.0, now,
+            "hello world",
+            &["hello", "world"],
+            false,
+            None,
+            now - 864000,
+            1.0,
+            now,
         );
-        assert!(recent > old, "Recent item should dominate proximity when words/typo equal");
+        assert!(
+            recent > old,
+            "Recent item should dominate proximity when words/typo equal"
+        );
     }
 
     #[test]
     fn test_proximity_inversion_penalty() {
         // Forward order: distance = 2 - 0 = 2
         let forward = vec![
-            WordMatch { matched: true, edit_dist: 0, doc_word_pos: 0, is_exact: true, match_weight: 25 },
-            WordMatch { matched: true, edit_dist: 0, doc_word_pos: 2, is_exact: true, match_weight: 25 },
+            WordMatch {
+                matched: true,
+                edit_dist: 0,
+                doc_word_pos: 0,
+                is_exact: true,
+                match_weight: 25,
+            },
+            WordMatch {
+                matched: true,
+                edit_dist: 0,
+                doc_word_pos: 2,
+                is_exact: true,
+                match_weight: 25,
+            },
         ];
         // Reverse order: distance = (0 - 2) + 5 penalty = 7
         let reversed = vec![
-            WordMatch { matched: true, edit_dist: 0, doc_word_pos: 2, is_exact: true, match_weight: 25 },
-            WordMatch { matched: true, edit_dist: 0, doc_word_pos: 0, is_exact: true, match_weight: 25 },
+            WordMatch {
+                matched: true,
+                edit_dist: 0,
+                doc_word_pos: 2,
+                is_exact: true,
+                match_weight: 25,
+            },
+            WordMatch {
+                matched: true,
+                edit_dist: 0,
+                doc_word_pos: 0,
+                is_exact: true,
+                match_weight: 25,
+            },
         ];
         assert_eq!(compute_proximity(&forward), u16::MAX - 2);
         assert_eq!(compute_proximity(&reversed), u16::MAX - 7);
-        assert!(compute_proximity(&forward) > compute_proximity(&reversed),
-            "Forward order should score higher than reversed");
+        assert!(
+            compute_proximity(&forward) > compute_proximity(&reversed),
+            "Forward order should score higher than reversed"
+        );
     }
 
     #[test]
     fn test_full_bucket_score_integration() {
         let now = 1700000000i64;
         let s = score(
-            "hello world", &["hello", "world"], false, now, 5.0, now,
+            "hello world",
+            &["hello", "world"],
+            false,
+            None,
+            now,
+            5.0,
+            now,
         );
         assert_eq!(s.words_matched_weight, 50); // 5² + 5² = 50
         assert_eq!(s.recency_score, 255); // just now
@@ -1009,18 +1378,37 @@ mod tests {
     fn test_exactness_prefix_of_content() {
         // "hello wo" is a prefix of "hello world foo" → level 6
         let matches = vec![
-            WordMatch { matched: true, edit_dist: 0, doc_word_pos: 0, is_exact: true, match_weight: 25 },
-            WordMatch { matched: true, edit_dist: 0, doc_word_pos: 1, is_exact: false, match_weight: 25 },
+            WordMatch {
+                matched: true,
+                edit_dist: 0,
+                doc_word_pos: 0,
+                is_exact: true,
+                match_weight: 25,
+            },
+            WordMatch {
+                matched: true,
+                edit_dist: 0,
+                doc_word_pos: 1,
+                is_exact: false,
+                match_weight: 25,
+            },
         ];
-        assert_eq!(compute_exactness("hello world foo", &["hello", "wo"], &matches), 6);
+        assert_eq!(
+            compute_exactness("hello world foo", &["hello", "wo"], &matches),
+            6
+        );
     }
 
     #[test]
     fn test_exactness_prefix_of_content_single_word() {
         // "hel" is a prefix of "hello world" → level 6
-        let matches = vec![
-            WordMatch { matched: true, edit_dist: 0, doc_word_pos: 0, is_exact: false, match_weight: 25 },
-        ];
+        let matches = vec![WordMatch {
+            matched: true,
+            edit_dist: 0,
+            doc_word_pos: 0,
+            is_exact: false,
+            match_weight: 25,
+        }];
         assert_eq!(compute_exactness("hello world", &["hel"], &matches), 6);
     }
 
@@ -1028,33 +1416,88 @@ mod tests {
     fn test_exactness_first_word_anchored_sequence() {
         // first word exact at pos 0, second fuzzy at pos 1 → level 5
         let matches = vec![
-            WordMatch { matched: true, edit_dist: 0, doc_word_pos: 0, is_exact: true, match_weight: 25 },
-            WordMatch { matched: true, edit_dist: 1, doc_word_pos: 1, is_exact: false, match_weight: 25 },
+            WordMatch {
+                matched: true,
+                edit_dist: 0,
+                doc_word_pos: 0,
+                is_exact: true,
+                match_weight: 25,
+            },
+            WordMatch {
+                matched: true,
+                edit_dist: 1,
+                doc_word_pos: 1,
+                is_exact: false,
+                match_weight: 25,
+            },
         ];
-        assert_eq!(compute_exactness("hello wrold foo", &["hello", "world"], &matches), 5);
+        assert_eq!(
+            compute_exactness("hello wrold foo", &["hello", "world"], &matches),
+            5
+        );
     }
 
     #[test]
     fn test_exactness_first_word_not_at_start() {
         // first word matches but not at pos 0 → falls through to lower level
         let matches = vec![
-            WordMatch { matched: true, edit_dist: 0, doc_word_pos: 1, is_exact: true, match_weight: 25 },
-            WordMatch { matched: true, edit_dist: 0, doc_word_pos: 2, is_exact: true, match_weight: 25 },
+            WordMatch {
+                matched: true,
+                edit_dist: 0,
+                doc_word_pos: 1,
+                is_exact: true,
+                match_weight: 25,
+            },
+            WordMatch {
+                matched: true,
+                edit_dist: 0,
+                doc_word_pos: 2,
+                is_exact: true,
+                match_weight: 25,
+            },
         ];
         // "hello world" is not a substring of "say hello world" when query is ["hello", "world"]
         // Wait — it IS a substring. Use a query that won't be a substring.
-        assert_eq!(compute_exactness("say hello beautiful world", &["hello", "world"], &matches), 3);
+        assert_eq!(
+            compute_exactness("say hello beautiful world", &["hello", "world"], &matches),
+            3
+        );
     }
 
     #[test]
     fn test_exactness_anchored_but_wrong_order() {
         // first word at pos 0 but words out of order → falls through to level 3 (all exact)
         let matches = vec![
-            WordMatch { matched: true, edit_dist: 0, doc_word_pos: 0, is_exact: true, match_weight: 25 },
-            WordMatch { matched: true, edit_dist: 0, doc_word_pos: 2, is_exact: true, match_weight: 25 },
-            WordMatch { matched: true, edit_dist: 0, doc_word_pos: 1, is_exact: true, match_weight: 25 },
+            WordMatch {
+                matched: true,
+                edit_dist: 0,
+                doc_word_pos: 0,
+                is_exact: true,
+                match_weight: 25,
+            },
+            WordMatch {
+                matched: true,
+                edit_dist: 0,
+                doc_word_pos: 2,
+                is_exact: true,
+                match_weight: 25,
+            },
+            WordMatch {
+                matched: true,
+                edit_dist: 0,
+                doc_word_pos: 1,
+                is_exact: true,
+                match_weight: 25,
+            },
         ];
         // words go 0, 2, 1 — not strictly forward, and "hello beautiful world" is not a substring
-        assert_eq!(compute_exactness("hello world beautiful", &["hello", "beautiful", "world"], &matches), 3);
+        assert_eq!(
+            compute_exactness(
+                "hello world beautiful",
+                &["hello", "beautiful", "world"],
+                &matches
+            ),
+            3
+        );
     }
 }
