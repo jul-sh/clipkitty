@@ -175,6 +175,7 @@ let project = Project(
             bundleId: "com.clipkitty.UITests",
             deploymentTargets: .macOS("14.0"),
             sources: ["Tests/UITests/**"],
+            entitlements: .file(path: "Tests/UITests/ClipKittyUITests.entitlements"),
             dependencies: [
                 .target(name: "ClipKitty"),
             ],
@@ -198,7 +199,6 @@ let project = Project(
             ),
             environmentVariables: [
                 "CLIPKITTY_APP_PATH": "$(BUILT_PRODUCTS_DIR)/ClipKitty.app",
-                "PROJECT_ROOT": "$(SRCROOT)",
             ]
         ),
     ],
