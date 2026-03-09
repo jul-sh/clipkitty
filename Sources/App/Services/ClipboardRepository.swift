@@ -1,6 +1,43 @@
 import Foundation
 import ClipKittyRust
 
+enum RepositorySearchOutcome {
+    case success(SearchResult)
+    case cancelled
+    case failure(ClipboardError)
+}
+
+protocol ClipboardSearchOperation: AnyObject {
+    func cancel()
+    func awaitOutcome() async -> RepositorySearchOutcome
+}
+
+private final class RustClipboardSearchOperation: ClipboardSearchOperation {
+    private let operation: ClipKittyRust.SearchOperation
+
+    init(operation: ClipKittyRust.SearchOperation) {
+        self.operation = operation
+    }
+
+    func cancel() {
+        operation.cancel()
+    }
+
+    func awaitOutcome() async -> RepositorySearchOutcome {
+        do {
+            let outcome = try await operation.awaitResult()
+            switch outcome {
+            case .success(let result):
+                return .success(result)
+            case .cancelled:
+                return .cancelled
+            }
+        } catch {
+            return .failure(.databaseOperationFailed(operation: "search", underlying: error))
+        }
+    }
+}
+
 func runRepositoryOperation<T: Sendable>(
     _ operation: String,
     on store: ClipKittyRust.ClipboardStore,
@@ -27,15 +64,13 @@ final class ClipboardRepository {
         await runRepositoryOperation("databaseSize", on: store) { $0.databaseSize() }
     }
 
-    func search(query: String, filter: ItemQueryFilter) async -> Result<SearchResult, ClipboardError> {
-        do {
-            if filter == .all {
-                return .success(try await store.search(query: query))
-            }
-            return .success(try await store.searchFiltered(query: query, filter: filter))
-        } catch {
-            return .failure(.databaseOperationFailed(operation: "search", underlying: error))
-        }
+    func startSearch(query: String, filter: ItemQueryFilter) -> ClipboardSearchOperation {
+        let operation = store.startSearch(query: query, filter: filter)
+        return RustClipboardSearchOperation(operation: operation)
+    }
+
+    func search(query: String, filter: ItemQueryFilter) async -> RepositorySearchOutcome {
+        await startSearch(query: query, filter: filter).awaitOutcome()
     }
 
     func fetchItem(id: Int64) async -> ClipboardItem? {
