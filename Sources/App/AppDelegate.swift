@@ -96,6 +96,13 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate {
                 sparkleUpdater?.setAutoInstall(enabled)
             }
             .store(in: &cancellables)
+        sparkleUpdater.setUpdateChannel(AppSettings.shared.updateChannel)
+        AppSettings.shared.$updateChannel
+            .dropFirst()
+            .sink { [weak sparkleUpdater] channel in
+                sparkleUpdater?.setUpdateChannel(channel)
+            }
+            .store(in: &cancellables)
         #endif
 
         // When using simulated DB, show the panel immediately
@@ -293,4 +300,3 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate {
         true
     }
 }
-

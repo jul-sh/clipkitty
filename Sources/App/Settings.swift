@@ -2,6 +2,9 @@ import Foundation
 import Carbon
 import AppKit
 @preconcurrency import CoreGraphics
+#if SPARKLE_RELEASE
+import SparkleUpdater
+#endif
 
 struct HotKey: Codable, Equatable {
     var keyCode: UInt32
@@ -123,6 +126,9 @@ final class AppSettings: ObservableObject {
     @Published var autoInstallUpdates: Bool {
         didSet { save() }
     }
+    @Published var updateChannel: UpdateChannel {
+        didSet { save() }
+    }
     #endif
 
     let maxImageMegapixels: Double
@@ -172,6 +178,7 @@ final class AppSettings: ObservableObject {
     private let clickToOpenKey = "clickToOpenEnabled"
     #if SPARKLE_RELEASE
     private let autoInstallUpdatesKey = "autoInstallUpdates"
+    private let updateChannelKey = "updateChannel"
     #endif
 
     /// Flag to prevent save() calls during initialization (didSet triggers before init completes)
@@ -201,6 +208,8 @@ final class AppSettings: ObservableObject {
         clickToOpenEnabled = defaults.object(forKey: clickToOpenKey) as? Bool ?? true
         #if SPARKLE_RELEASE
         autoInstallUpdates = defaults.object(forKey: autoInstallUpdatesKey) as? Bool ?? true
+        let storedUpdateChannel = defaults.string(forKey: updateChannelKey)
+        updateChannel = storedUpdateChannel.flatMap(UpdateChannel.init(rawValue:)) ?? .stable
         #endif
 
         // Privacy settings - default to enabled for user protection
@@ -242,6 +251,7 @@ final class AppSettings: ObservableObject {
         defaults.set(clickToOpenEnabled, forKey: clickToOpenKey)
         #if SPARKLE_RELEASE
         defaults.set(autoInstallUpdates, forKey: autoInstallUpdatesKey)
+        defaults.set(updateChannel.rawValue, forKey: updateChannelKey)
         #endif
     }
 
