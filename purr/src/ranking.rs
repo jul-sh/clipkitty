@@ -1,9 +1,8 @@
 //! Milli-style bucket ranking for search results.
 //!
-//! Implements a lexicographic tuple where higher-priority signals always dominate
-//! lower ones. 3/3 words ALWAYS beats 2/3, 0 typos ALWAYS beats 1 typo, etc.
-//! Recency tiers sit above proximity/exactness/bm25 to strongly prefer recent items
-//! when word-match quality is equal.
+//! Implements a lexicographic tuple where multi-word phrase structure is evaluated
+//! before coarse coverage/recency tiebreaks. This lets dense, well-ordered matches
+//! outrank scattered full-coverage matches, while preserving deterministic ordering.
 
 use crate::search::is_word_token;
 
@@ -15,15 +14,17 @@ pub const LARGE_DOC_THRESHOLD_BYTES: usize = 5 * 1024; // 5KB
 /// All components: higher = better.
 ///
 /// Tuple order (most to least important):
-/// 1. words_matched_weight — sum of len² for each matched query word (IDF proxy)
-/// 2. recency_score — smooth exponential decay (255=now, 0=old), no cliff edges
-/// 3. typo_score — 255 - total_edit_distance (fewer typos = higher)
-/// 4. proximity_score — u16::MAX - sum_of_pair_distances
-/// 5. exactness_score — 0-6 level (prefix-of-content and anchored sequence rank highest)
-/// 6. bm25_quantized — BM25 scaled to integer
-/// 7. recency — raw unix timestamp (final tiebreaker)
+/// 1. structure_score — multi-word phrase density/order signal
+/// 2. words_matched_weight — sum of len² for each matched query word (IDF proxy)
+/// 3. recency_score — smooth exponential decay (255=now, 0=old), no cliff edges
+/// 4. typo_score — 255 - total_edit_distance (fewer typos = higher)
+/// 5. proximity_score — u16::MAX - sum_of_pair_distances
+/// 6. exactness_score — 0-6 level (prefix-of-content and anchored sequence rank highest)
+/// 7. bm25_quantized — BM25 scaled to integer
+/// 8. recency — raw unix timestamp (final tiebreaker)
 #[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord)]
 pub struct BucketScore {
+    pub structure_score: u64,
     pub words_matched_weight: u16,
     pub prefix_preference_score: u8,
     pub recency_score: u8,
@@ -83,6 +84,7 @@ struct WordMatch {
 pub fn compute_bucket_score(ctx: &ScoringContext<'_>) -> BucketScore {
     if ctx.query_words.is_empty() {
         return BucketScore {
+            structure_score: 0,
             words_matched_weight: 0,
             prefix_preference_score: compute_prefix_preference_score(
                 ctx.content_lower,
@@ -122,10 +124,17 @@ pub fn compute_bucket_score(ctx: &ScoringContext<'_>) -> BucketScore {
 
     let proximity_score = compute_proximity(&word_matches);
     let exactness_score = compute_exactness(ctx.content_lower, ctx.query_words, &word_matches);
+    let structure_score = compute_structure_score(
+        words_matched_weight,
+        proximity_score,
+        exactness_score,
+        &word_matches,
+    );
     let bm25_quantized = quantize_bm25(ctx.bm25_score);
     let recency_score = compute_recency_score(ctx.timestamp, ctx.now);
 
     BucketScore {
+        structure_score,
         words_matched_weight,
         prefix_preference_score,
         recency_score,
@@ -155,6 +164,31 @@ fn compute_prefix_preference_score(
         }) if content_lower.starts_with(stripped_query_lower) => 1,
         _ => 0,
     }
+}
+
+/// Compute a multi-word phrase-structure score.
+///
+/// Single-word queries return 0 so existing single-term recency/typo behavior
+/// remains unchanged. For multi-word queries, prefer dense spans first, then use
+/// proximity and exactness as tiebreakers within the same density band.
+fn compute_structure_score(
+    words_matched_weight: u16,
+    proximity_score: u16,
+    exactness_score: u8,
+    word_matches: &[WordMatch],
+) -> u64 {
+    let matched: Vec<&WordMatch> = word_matches.iter().filter(|m| m.matched).collect();
+    if matched.len() < 2 {
+        return 0;
+    }
+
+    let min_pos = matched.iter().map(|m| m.doc_word_pos).min().unwrap_or(0);
+    let max_pos = matched.iter().map(|m| m.doc_word_pos).max().unwrap_or(0);
+    let span = max_pos.saturating_sub(min_pos) + 1;
+    let density =
+        (((words_matched_weight as u32) * 1024) / span.max(1) as u32).min(u16::MAX as u32) as u16;
+
+    ((density as u64) << 24) | ((proximity_score as u64) << 8) | exactness_score as u64
 }
 
 /// Smooth recency score using logarithmic decay, quantized to u8 (0-255).
@@ -987,6 +1021,23 @@ mod tests {
         assert_eq!(compute_proximity(&matches), u16::MAX - 3);
     }
 
+    #[test]
+    fn test_structure_score_prefers_dense_matches() {
+        let dense = vec![
+            WordMatch { matched: true, edit_dist: 0, doc_word_pos: 0, is_exact: true, match_weight: 25 },
+            WordMatch { matched: true, edit_dist: 0, doc_word_pos: 1, is_exact: true, match_weight: 25 },
+        ];
+        let scattered = vec![
+            WordMatch { matched: true, edit_dist: 0, doc_word_pos: 0, is_exact: true, match_weight: 25 },
+            WordMatch { matched: true, edit_dist: 0, doc_word_pos: 8, is_exact: true, match_weight: 25 },
+            WordMatch { matched: true, edit_dist: 0, doc_word_pos: 16, is_exact: true, match_weight: 25 },
+        ];
+
+        let dense_score = compute_structure_score(50, compute_proximity(&dense), 6, &dense);
+        let scattered_score = compute_structure_score(75, compute_proximity(&scattered), 5, &scattered);
+        assert!(dense_score > scattered_score);
+    }
+
     // ── compute_exactness tests ──────────────────────────────────
 
     #[test]
@@ -1320,11 +1371,11 @@ mod tests {
     }
 
     #[test]
-    fn test_recency_dominates_proximity() {
+    fn test_recency_breaks_ties_when_structure_equal() {
         let now = 1700000000i64;
-        // Same words, same typo, but different recency
+        // Same structure and same word quality - recency should break the tie.
         let recent = score(
-            "hello world and other things between",
+            "hello world alpha",
             &["hello", "world"],
             false,
             None,
@@ -1333,7 +1384,7 @@ mod tests {
             now,
         );
         let old = score(
-            "hello world",
+            "hello world beta",
             &["hello", "world"],
             false,
             None,
@@ -1343,7 +1394,7 @@ mod tests {
         );
         assert!(
             recent > old,
-            "Recent item should dominate proximity when words/typo equal"
+            "Recent item should win when structure and words are equal"
         );
     }
 
@@ -1418,6 +1469,7 @@ mod tests {
             5.0,
             now,
         );
+        assert!(s.structure_score > 0);
         assert_eq!(s.words_matched_weight, 50); // 5² + 5² = 50
         assert_eq!(s.recency_score, 255); // just now
         assert_eq!(s.typo_score, 255);
