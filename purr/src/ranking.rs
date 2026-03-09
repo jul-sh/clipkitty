@@ -5,6 +5,7 @@
 //! outrank scattered full-coverage matches, while preserving deterministic ordering.
 
 use crate::search::is_word_token;
+use std::collections::HashSet;
 
 /// Documents larger than this threshold use fast matching (exact + prefix only).
 /// This trades typo tolerance for performance on large documents like code files.
@@ -63,6 +64,7 @@ pub struct ScoringContext<'a> {
 }
 
 /// Per-query-word match result
+#[derive(Debug, Clone, Copy)]
 struct WordMatch {
     matched: bool,
     edit_dist: u8,
@@ -232,90 +234,279 @@ fn match_query_words(
     last_word_is_prefix: bool,
     fast_mode: bool,
 ) -> Vec<WordMatch> {
-    query_words
+    let defaults: Vec<WordMatch> = query_words
+        .iter()
+        .map(|qw| WordMatch {
+            matched: false,
+            edit_dist: 0,
+            doc_word_pos: 0,
+            is_exact: false,
+            match_weight: base_match_weight(qw),
+        })
+        .collect();
+
+    let candidate_lists: Vec<Vec<WordMatch>> = query_words
         .iter()
         .enumerate()
         .map(|(qi, qw)| {
-            let qw_lower = qw.to_lowercase();
             let is_last = qi == query_words.len() - 1;
             let allow_prefix = is_last && last_word_is_prefix;
-            let match_weight = if is_word_token(qw) {
-                (qw.len() as u16).saturating_mul(qw.len() as u16)
-            } else {
-                0
-            };
-
-            let mut best: Option<WordMatch> = None;
-
-            for (dpos, dw) in doc_words.iter().enumerate() {
-                let wmk = if fast_mode {
-                    does_word_match_fast(&qw_lower, dw, allow_prefix)
-                } else {
-                    does_word_match(&qw_lower, dw, allow_prefix)
-                };
-                match wmk {
-                    WordMatchKind::Exact => {
-                        return WordMatch {
-                            matched: true,
-                            edit_dist: 0,
-                            doc_word_pos: dpos,
-                            is_exact: true,
-                            match_weight,
-                        };
-                    }
-                    WordMatchKind::Prefix => {
-                        if best.as_ref().is_none_or(|b| b.edit_dist > 0) {
-                            best = Some(WordMatch {
-                                matched: true,
-                                edit_dist: 0,
-                                doc_word_pos: dpos,
-                                is_exact: false,
-                                match_weight,
-                            });
-                        }
-                    }
-                    WordMatchKind::Fuzzy(dist) => {
-                        let is_better = best.as_ref().is_none_or(|b| dist < b.edit_dist);
-                        if is_better {
-                            // Short fuzzy matches (<=3 chars) get reduced weight —
-                            // they're low-confidence and shouldn't dominate scoring.
-                            let w = if qw.len() <= 3 { 1 } else { match_weight };
-                            best = Some(WordMatch {
-                                matched: true,
-                                edit_dist: dist,
-                                doc_word_pos: dpos,
-                                is_exact: false,
-                                match_weight: w,
-                            });
-                        }
-                    }
-                    WordMatchKind::Subsequence(gaps) => {
-                        let dist = gaps.saturating_add(1);
-                        let is_better = best.as_ref().is_none_or(|b| dist < b.edit_dist);
-                        if is_better {
-                            let w = if qw.len() <= 3 { 1 } else { match_weight };
-                            best = Some(WordMatch {
-                                matched: true,
-                                edit_dist: dist,
-                                doc_word_pos: dpos,
-                                is_exact: false,
-                                match_weight: w,
-                            });
-                        }
-                    }
-                    WordMatchKind::None => {}
-                }
-            }
-
-            best.unwrap_or(WordMatch {
-                matched: false,
-                edit_dist: 0,
-                doc_word_pos: 0,
-                is_exact: false,
-                match_weight,
-            })
+            collect_match_candidates(qw, doc_words, allow_prefix, fast_mode)
         })
-        .collect()
+        .collect();
+
+    choose_best_alignment(&candidate_lists, &defaults)
+}
+
+fn base_match_weight(qw: &str) -> u16 {
+    if is_word_token(qw) {
+        (qw.len() as u16).saturating_mul(qw.len() as u16)
+    } else {
+        0
+    }
+}
+
+fn collect_match_candidates(
+    query_word: &str,
+    doc_words: &[&str],
+    allow_prefix: bool,
+    fast_mode: bool,
+) -> Vec<WordMatch> {
+    let qw_lower = query_word.to_lowercase();
+    let match_weight = base_match_weight(query_word);
+
+    let candidates: Vec<WordMatch> = doc_words
+        .iter()
+        .enumerate()
+        .filter_map(|(dpos, dw)| {
+            let wmk = if fast_mode {
+                does_word_match_fast(&qw_lower, dw, allow_prefix)
+            } else {
+                does_word_match(&qw_lower, dw, allow_prefix)
+            };
+            match wmk {
+                WordMatchKind::Exact => Some(WordMatch {
+                    matched: true,
+                    edit_dist: 0,
+                    doc_word_pos: dpos,
+                    is_exact: true,
+                    match_weight,
+                }),
+                WordMatchKind::Prefix => Some(WordMatch {
+                    matched: true,
+                    edit_dist: 0,
+                    doc_word_pos: dpos,
+                    is_exact: false,
+                    match_weight,
+                }),
+                WordMatchKind::Fuzzy(dist) => Some(WordMatch {
+                    matched: true,
+                    edit_dist: dist,
+                    doc_word_pos: dpos,
+                    is_exact: false,
+                    match_weight: if query_word.len() <= 3 { 1 } else { match_weight },
+                }),
+                WordMatchKind::Subsequence(gaps) => Some(WordMatch {
+                    matched: true,
+                    edit_dist: gaps.saturating_add(1),
+                    doc_word_pos: dpos,
+                    is_exact: false,
+                    match_weight: if query_word.len() <= 3 { 1 } else { match_weight },
+                }),
+                WordMatchKind::None => None,
+            }
+        })
+        .collect();
+
+    trim_match_candidates(candidates)
+}
+
+fn trim_match_candidates(candidates: Vec<WordMatch>) -> Vec<WordMatch> {
+    const MAX_CANDIDATES_PER_QUERY_WORD: usize = 8;
+    if candidates.len() <= MAX_CANDIDATES_PER_QUERY_WORD {
+        return candidates;
+    }
+
+    let mut by_quality = candidates.clone();
+    by_quality.sort_by(candidate_quality_cmp);
+
+    let mut by_pos = candidates;
+    by_pos.sort_by_key(|c| c.doc_word_pos);
+
+    let mut chosen = Vec::new();
+    let mut seen_positions = HashSet::new();
+
+    for cand in by_quality.iter().take(4) {
+        if seen_positions.insert(cand.doc_word_pos) {
+            chosen.push(*cand);
+        }
+    }
+    for cand in by_pos.iter().take(2).chain(by_pos.iter().rev().take(2)) {
+        if seen_positions.insert(cand.doc_word_pos) {
+            chosen.push(*cand);
+        }
+    }
+    for cand in by_quality {
+        if chosen.len() >= MAX_CANDIDATES_PER_QUERY_WORD {
+            break;
+        }
+        if seen_positions.insert(cand.doc_word_pos) {
+            chosen.push(cand);
+        }
+    }
+
+    chosen
+}
+
+fn candidate_quality_cmp(a: &WordMatch, b: &WordMatch) -> std::cmp::Ordering {
+    candidate_quality_key(b).cmp(&candidate_quality_key(a))
+}
+
+fn candidate_quality_key(m: &WordMatch) -> (u8, u16, u8, std::cmp::Reverse<usize>) {
+    let kind_rank = if m.is_exact {
+        3
+    } else if m.edit_dist == 0 {
+        2
+    } else {
+        1
+    };
+    (kind_rank, m.match_weight, 255u8.saturating_sub(m.edit_dist), std::cmp::Reverse(m.doc_word_pos))
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord)]
+struct AlignmentScore {
+    structure_score: u64,
+    words_matched_weight: u16,
+    typo_score: u8,
+    proximity_score: u16,
+    matched_query_mask: u64,
+}
+
+fn choose_best_alignment(candidate_lists: &[Vec<WordMatch>], defaults: &[WordMatch]) -> Vec<WordMatch> {
+    let mut current = defaults.to_vec();
+    let mut best = defaults.to_vec();
+    let mut best_score = score_alignment(&best);
+    let mut used_positions = HashSet::new();
+
+    choose_best_alignment_recursive(
+        0,
+        candidate_lists,
+        defaults,
+        &mut used_positions,
+        &mut current,
+        &mut best,
+        &mut best_score,
+    );
+
+    best
+}
+
+fn choose_best_alignment_recursive(
+    qi: usize,
+    candidate_lists: &[Vec<WordMatch>],
+    defaults: &[WordMatch],
+    used_positions: &mut HashSet<usize>,
+    current: &mut [WordMatch],
+    best: &mut Vec<WordMatch>,
+    best_score: &mut AlignmentScore,
+) {
+    if qi == candidate_lists.len() {
+        let score = score_alignment(current);
+        if score > *best_score {
+            *best_score = score;
+            *best = current.to_vec();
+        }
+        return;
+    }
+
+    current[qi] = defaults[qi];
+    choose_best_alignment_recursive(
+        qi + 1,
+        candidate_lists,
+        defaults,
+        used_positions,
+        current,
+        best,
+        best_score,
+    );
+
+    for candidate in &candidate_lists[qi] {
+        if !used_positions.insert(candidate.doc_word_pos) {
+            continue;
+        }
+        current[qi] = *candidate;
+        choose_best_alignment_recursive(
+            qi + 1,
+            candidate_lists,
+            defaults,
+            used_positions,
+            current,
+            best,
+            best_score,
+        );
+        used_positions.remove(&candidate.doc_word_pos);
+    }
+}
+
+fn score_alignment(word_matches: &[WordMatch]) -> AlignmentScore {
+    let words_matched_weight: u16 = word_matches
+        .iter()
+        .filter(|m| m.matched)
+        .map(|m| m.match_weight)
+        .sum();
+    let typo_score = 255u8.saturating_sub(
+        word_matches
+            .iter()
+            .filter(|m| m.matched)
+            .map(|m| m.edit_dist)
+            .sum::<u8>(),
+    );
+    let proximity_score = compute_proximity(word_matches);
+    let structure_score = compute_structure_score(
+        words_matched_weight,
+        proximity_score,
+        alignment_exactness_hint(word_matches),
+        word_matches,
+    );
+
+    AlignmentScore {
+        structure_score,
+        words_matched_weight,
+        typo_score,
+        proximity_score,
+        matched_query_mask: alignment_matched_query_mask(word_matches),
+    }
+}
+
+fn alignment_matched_query_mask(word_matches: &[WordMatch]) -> u64 {
+    word_matches.iter().enumerate().fold(0u64, |mask, (i, wm)| {
+        if wm.matched {
+            mask | (1u64 << (63usize.saturating_sub(i)))
+        } else {
+            mask
+        }
+    })
+}
+
+fn alignment_exactness_hint(word_matches: &[WordMatch]) -> u8 {
+    let matched_count = word_matches.iter().filter(|m| m.matched).count();
+    if matched_count < 2 {
+        return 0;
+    }
+
+    let all_matched = word_matches.iter().all(|m| m.matched);
+    if all_matched {
+        let first = &word_matches[0];
+        let in_sequence = word_matches.windows(2).all(|w| w[1].doc_word_pos > w[0].doc_word_pos);
+        if first.doc_word_pos == 0 && first.edit_dist == 0 && in_sequence {
+            return 6;
+        }
+        if in_sequence {
+            return 5;
+        }
+    }
+
+    0
 }
 
 /// Result of matching a query word against a document word.
