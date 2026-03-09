@@ -640,6 +640,17 @@ final class ClipKittyUITests: XCTestCase {
 
     // MARK: - Settings Tests
 
+    /// Helper to find a settings tab by name. SwiftUI TabView tabs are exposed as radioButtons on macOS.
+    private func findSettingsTab(in window: XCUIElement, named name: String) -> XCUIElement {
+        // SwiftUI TabView tabs are exposed as radioButtons in a radioGroup
+        let radioButton = window.radioButtons[name]
+        if radioButton.exists {
+            return radioButton
+        }
+        // Fallback to buttons (some macOS versions may differ)
+        return window.buttons[name]
+    }
+
     /// Tests that the Settings window opens with tabs and Privacy tab is accessible
     func testSettingsHasPrivacyTab() throws {
         // Open settings with Cmd+,
@@ -648,8 +659,8 @@ final class ClipKittyUITests: XCTestCase {
         let settingsWindow = app.windows["ClipKitty Settings"]
         XCTAssertTrue(settingsWindow.waitForExistence(timeout: 5), "Settings window should appear")
 
-        // Check for tab bar with Privacy tab
-        let privacyTab = settingsWindow.buttons["Privacy"]
+        // Check for tab bar with Privacy tab (SwiftUI TabView exposes tabs as radioButtons)
+        let privacyTab = findSettingsTab(in: settingsWindow, named: "Privacy")
         XCTAssertTrue(privacyTab.waitForExistence(timeout: 3), "Privacy tab should exist in settings")
 
         // Click Privacy tab
@@ -669,7 +680,7 @@ final class ClipKittyUITests: XCTestCase {
         XCTAssertTrue(settingsWindow.waitForExistence(timeout: 5))
 
         // Navigate to Privacy tab
-        let privacyTab = settingsWindow.buttons["Privacy"]
+        let privacyTab = findSettingsTab(in: settingsWindow, named: "Privacy")
         XCTAssertTrue(privacyTab.waitForExistence(timeout: 3))
         privacyTab.click()
         Thread.sleep(forTimeInterval: 0.3)
@@ -686,7 +697,7 @@ final class ClipKittyUITests: XCTestCase {
         let settingsWindow = app.windows["ClipKitty Settings"]
         XCTAssertTrue(settingsWindow.waitForExistence(timeout: 5))
 
-        let privacyTab = settingsWindow.buttons["Privacy"]
+        let privacyTab = findSettingsTab(in: settingsWindow, named: "Privacy")
         XCTAssertTrue(privacyTab.waitForExistence(timeout: 3))
         privacyTab.click()
         Thread.sleep(forTimeInterval: 0.3)
@@ -700,22 +711,22 @@ final class ClipKittyUITests: XCTestCase {
         XCTAssertTrue(addButton.exists || settingsWindow.images["plus"].exists, "Add button should exist for ignored apps")
     }
 
-    /// Tests that the Shortcuts tab exists and contains hotkey settings
-    func testShortcutsTabExists() throws {
+    /// Tests that the Advanced tab exists
+    func testAdvancedTabExists() throws {
         app.typeKey(",", modifierFlags: .command)
 
         let settingsWindow = app.windows["ClipKitty Settings"]
         XCTAssertTrue(settingsWindow.waitForExistence(timeout: 5))
 
-        let shortcutsTab = settingsWindow.buttons["Shortcuts"]
-        XCTAssertTrue(shortcutsTab.waitForExistence(timeout: 3), "Shortcuts tab should exist")
+        let advancedTab = findSettingsTab(in: settingsWindow, named: "Advanced")
+        XCTAssertTrue(advancedTab.waitForExistence(timeout: 3), "Advanced tab should exist")
 
-        shortcutsTab.click()
+        advancedTab.click()
         Thread.sleep(forTimeInterval: 0.3)
 
-        // Verify hotkey content appears
-        let hotkeyLabel = settingsWindow.staticTexts["Open Clipboard History"]
-        XCTAssertTrue(hotkeyLabel.waitForExistence(timeout: 3), "Hotkey setting should exist in Shortcuts tab")
+        // Verify Advanced tab content appears (version info is in Advanced)
+        let versionLabel = settingsWindow.staticTexts.matching(NSPredicate(format: "label CONTAINS 'Version' OR label CONTAINS 'version'")).firstMatch
+        XCTAssertTrue(versionLabel.waitForExistence(timeout: 3), "Version info should exist in Advanced tab")
     }
 
     /// Tests the General tab has the menu bar click behavior toggle
@@ -726,7 +737,7 @@ final class ClipKittyUITests: XCTestCase {
         XCTAssertTrue(settingsWindow.waitForExistence(timeout: 5))
 
         // General tab should be selected by default
-        let generalTab = settingsWindow.buttons["General"]
+        let generalTab = findSettingsTab(in: settingsWindow, named: "General")
         XCTAssertTrue(generalTab.waitForExistence(timeout: 3))
 
         // Look for "Click to open" toggle
@@ -741,7 +752,7 @@ final class ClipKittyUITests: XCTestCase {
         var settingsWindow = app.windows["ClipKitty Settings"]
         XCTAssertTrue(settingsWindow.waitForExistence(timeout: 5))
 
-        let privacyTab = settingsWindow.buttons["Privacy"]
+        var privacyTab = findSettingsTab(in: settingsWindow, named: "Privacy")
         privacyTab.click()
         Thread.sleep(forTimeInterval: 0.3)
 
@@ -770,6 +781,7 @@ final class ClipKittyUITests: XCTestCase {
         settingsWindow = app.windows["ClipKitty Settings"]
         XCTAssertTrue(settingsWindow.waitForExistence(timeout: 5))
 
+        privacyTab = findSettingsTab(in: settingsWindow, named: "Privacy")
         privacyTab.click()
         Thread.sleep(forTimeInterval: 0.3)
 
@@ -793,21 +805,21 @@ final class ClipKittyUITests: XCTestCase {
         XCTAssertTrue(settingsWindow.waitForExistence(timeout: 5))
 
         // General tab
-        let generalTab = settingsWindow.buttons["General"]
+        let generalTab = findSettingsTab(in: settingsWindow, named: "General")
         XCTAssertTrue(generalTab.waitForExistence(timeout: 3), "General tab should exist")
         generalTab.click()
         Thread.sleep(forTimeInterval: 0.2)
 
         // Privacy tab
-        let privacyTab = settingsWindow.buttons["Privacy"]
+        let privacyTab = findSettingsTab(in: settingsWindow, named: "Privacy")
         XCTAssertTrue(privacyTab.waitForExistence(timeout: 3), "Privacy tab should exist")
         privacyTab.click()
         Thread.sleep(forTimeInterval: 0.2)
 
-        // Shortcuts tab
-        let shortcutsTab = settingsWindow.buttons["Shortcuts"]
-        XCTAssertTrue(shortcutsTab.waitForExistence(timeout: 3), "Shortcuts tab should exist")
-        shortcutsTab.click()
+        // Advanced tab (not Shortcuts - the app has General, Privacy, Advanced)
+        let advancedTab = findSettingsTab(in: settingsWindow, named: "Advanced")
+        XCTAssertTrue(advancedTab.waitForExistence(timeout: 3), "Advanced tab should exist")
+        advancedTab.click()
         Thread.sleep(forTimeInterval: 0.2)
 
         // Navigate back to General
@@ -1234,7 +1246,7 @@ final class ClipKittyUITests: XCTestCase {
         XCTAssertTrue(settingsWindow.waitForExistence(timeout: 5), "Settings window should appear")
 
         // Navigate to Advanced tab (where hotkey setting is)
-        let advancedTab = settingsWindow.buttons["Advanced"]
+        let advancedTab = findSettingsTab(in: settingsWindow, named: "Advanced")
         XCTAssertTrue(advancedTab.waitForExistence(timeout: 3), "Advanced tab should exist")
         advancedTab.click()
         Thread.sleep(forTimeInterval: 0.3)
