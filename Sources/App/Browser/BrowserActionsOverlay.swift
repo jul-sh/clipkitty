@@ -14,7 +14,7 @@ struct BrowserActionsOverlay: View {
     }
 
     private var actions: [ActionItem] {
-        var items: [ActionItem] = [.delete]
+        var items: [ActionItem] = []
         if let selectedItem = viewModel.selectedItem,
            selectedItem.itemMetadata.tags.contains(.bookmark) {
             items.append(.unbookmark)
@@ -24,12 +24,13 @@ struct BrowserActionsOverlay: View {
         if case .autoPaste = AppSettings.shared.pasteMode {
             items.append(.copyOnly)
         }
+        items.append(.delete)
         items.append(.defaultAction)
         return items
     }
 
-    private var defaultActionIndex: Int {
-        actions.firstIndex(of: .defaultAction) ?? max(actions.count - 1, 0)
+    private var firstActionIndex: Int {
+        0
     }
 
     private var isPresented: Binding<Bool> {
@@ -53,7 +54,7 @@ struct BrowserActionsOverlay: View {
             if case .actions = viewModel.session.overlays {
                 viewModel.closeOverlay()
             } else {
-                viewModel.openActionsOverlay(highlightedIndex: defaultActionIndex)
+                viewModel.openActionsOverlay(highlightedIndex: firstActionIndex)
                 focusActionsDropdown()
             }
         } label: {
@@ -102,7 +103,7 @@ struct BrowserActionsOverlay: View {
                     highlighted: highlightedIndex == 1,
                     destructive: false
                 ) {
-                    viewModel.openActionsOverlay(highlightedIndex: defaultActionIndex)
+                    viewModel.openActionsOverlay(highlightedIndex: firstActionIndex)
                 }
             }
         }
@@ -137,7 +138,7 @@ struct BrowserActionsOverlay: View {
                     viewModel.deleteSelectedItem()
                     viewModel.closeOverlay()
                 } else {
-                    viewModel.openActionsOverlay(highlightedIndex: defaultActionIndex)
+                    viewModel.openActionsOverlay(highlightedIndex: firstActionIndex)
                 }
             }
             return .handled
@@ -145,7 +146,7 @@ struct BrowserActionsOverlay: View {
         .onKeyPress(.escape) {
             switch overlayState {
             case .confirmDelete:
-                viewModel.openActionsOverlay(highlightedIndex: defaultActionIndex)
+                viewModel.openActionsOverlay(highlightedIndex: firstActionIndex)
             case .actions:
                 viewModel.closeOverlay()
                 focusSearchField()
@@ -159,7 +160,7 @@ struct BrowserActionsOverlay: View {
         }
         .onAppear {
             if case .actions = overlayState {
-                viewModel.updateActionsHighlight(defaultActionIndex)
+                viewModel.updateActionsHighlight(firstActionIndex)
             }
             focusActionsDropdown()
         }
@@ -258,7 +259,7 @@ struct BrowserActionsOverlay: View {
 
     private var overlayState: ActionsOverlayState {
         guard case .actions(let state) = viewModel.session.overlays else {
-            return .actions(highlightedIndex: defaultActionIndex)
+            return .actions(highlightedIndex: firstActionIndex)
         }
         return state
     }
