@@ -9,7 +9,7 @@ struct GeneralSettingsView: View {
     let store: ClipboardStore
     let onHotKeyChanged: (HotKey) -> Void
     let onMenuBarBehaviorChanged: () -> Void
-    #if !APP_STORE
+    #if SPARKLE_RELEASE
     var onInstallUpdate: (() -> Void)? = nil
     #endif
 
@@ -47,7 +47,7 @@ struct GeneralSettingsView: View {
                 }
             }
 
-            #if !APP_STORE
+            #if SPARKLE_RELEASE
             Section(String(localized: "Updates")) {
                 switch settings.updateCheckState {
                 case .checkFailed:

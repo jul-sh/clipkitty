@@ -2,7 +2,7 @@ import AppKit
 import SwiftUI
 import Combine
 import ClipKittyRust
-#if !APP_STORE
+#if SPARKLE_RELEASE
 import SparkleUpdater
 #endif
 
@@ -35,7 +35,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate {
     private var showHistoryMenuItem: NSMenuItem?
     private var statusMenu: NSMenu?
     private var cancellables = Set<AnyCancellable>()
-    #if !APP_STORE
+    #if SPARKLE_RELEASE
     private var updater: SparkleAppUpdater?
     #endif
 
@@ -79,7 +79,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate {
 
         setupMenuBar()
 
-        #if !APP_STORE
+        #if SPARKLE_RELEASE
         let sparkleUpdater = SparkleAppUpdater()
         sparkleUpdater.start { state in
             // Convert SparkleUpdater.UpdateCheckState to app's UpdateCheckState
@@ -201,7 +201,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate {
 
     @objc private func openSettings() {
         if settingsWindow == nil {
-            #if !APP_STORE
+            #if SPARKLE_RELEASE
             let settingsView = SettingsView(
                 store: store,
                 onHotKeyChanged: { [weak self] hotKey in

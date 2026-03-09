@@ -1,13 +1,15 @@
 import ProjectDescription
 
 // MARK: - Build Configurations
-// Debug:    for development
-// Release:  for DMG distribution
-// AppStore: for App Store (differs only in signing)
+// Debug:          for development (no Sparkle)
+// Release:        for DMG distribution without Sparkle (plain release build)
+// SparkleRelease: for DMG distribution with Sparkle auto-updates
+// AppStore:       for App Store (no Sparkle, different signing)
 
 let configurations: [Configuration] = [
     .debug(name: "Debug", settings: [:]),
     .release(name: "Release", settings: [:]),
+    .release(name: .configuration("SparkleRelease"), settings: [:]),
     .release(name: .configuration("AppStore"), settings: [:]),
 ]
 
@@ -101,14 +103,14 @@ let project = Project(
             scripts: [
                 .post(
                     script: """
-                    # Strip Sparkle frameworks from AppStore builds
+                    # Strip Sparkle frameworks from non-SparkleRelease builds
                     # (Info.plist keys are handled via empty build settings)
-                    if [ "$CONFIGURATION" = "AppStore" ]; then
+                    if [ "$CONFIGURATION" != "SparkleRelease" ]; then
                         rm -rf "$BUILT_PRODUCTS_DIR/$FRAMEWORKS_FOLDER_PATH/Sparkle.framework"
                         rm -rf "$BUILT_PRODUCTS_DIR/$FRAMEWORKS_FOLDER_PATH/SparkleUpdater.framework"
                     fi
                     """,
-                    name: "Strip Sparkle from AppStore builds",
+                    name: "Strip Sparkle from non-SparkleRelease builds",
                     basedOnDependencyAnalysis: false
                 ),
             ],
@@ -124,12 +126,6 @@ let project = Project(
                     "LIBRARY_SEARCH_PATHS": .array(["$(inherited)", "$(PROJECT_DIR)/Sources/ClipKittyRust"]),
                     "SWIFT_EMIT_LOC_STRINGS": "YES",
                     "LOCALIZATION_PREFERS_STRING_CATALOGS": "YES",
-                    // Sparkle configuration (populated for Release, empty for AppStore)
-                    "SPARKLE_FEED_URL": "https://jul-sh.github.io/clipkitty/appcast.xml",
-                    "SPARKLE_PUBLIC_KEY": "9VqfSPPY2Gr8QTYDLa99yJXAFWnHw5aybSbKaYDyCq0=",
-                    "SPARKLE_AUTO_CHECK": "YES",
-                    "SPARKLE_AUTO_UPDATE": "YES",
-                    "SPARKLE_INSTALLER_SERVICE": "YES",
                 ],
                 configurations: [
                     .debug(name: "Debug", settings: [
@@ -138,15 +134,18 @@ let project = Project(
                     .release(name: "Release", settings: [
                         "CODE_SIGN_ENTITLEMENTS": "Sources/App/ClipKitty.oss.entitlements",
                     ]),
+                    .release(name: .configuration("SparkleRelease"), settings: [
+                        "CODE_SIGN_ENTITLEMENTS": "Sources/App/ClipKitty.oss.entitlements",
+                        "SWIFT_ACTIVE_COMPILATION_CONDITIONS": "SPARKLE_RELEASE",
+                        // Sparkle configuration - only set for SparkleRelease
+                        "SPARKLE_FEED_URL": "https://jul-sh.github.io/clipkitty/appcast.xml",
+                        "SPARKLE_PUBLIC_KEY": "9VqfSPPY2Gr8QTYDLa99yJXAFWnHw5aybSbKaYDyCq0=",
+                        "SPARKLE_AUTO_CHECK": "YES",
+                        "SPARKLE_AUTO_UPDATE": "YES",
+                        "SPARKLE_INSTALLER_SERVICE": "YES",
+                    ]),
                     .release(name: .configuration("AppStore"), settings: [
                         "CODE_SIGN_ENTITLEMENTS": "Sources/App/ClipKitty.appstore.entitlements",
-                        "SWIFT_ACTIVE_COMPILATION_CONDITIONS": "APP_STORE",
-                        // Clear Sparkle settings for App Store
-                        "SPARKLE_FEED_URL": "",
-                        "SPARKLE_PUBLIC_KEY": "",
-                        "SPARKLE_AUTO_CHECK": "",
-                        "SPARKLE_AUTO_UPDATE": "",
-                        "SPARKLE_INSTALLER_SERVICE": "",
                     ]),
                 ]
             )
@@ -196,6 +195,11 @@ let project = Project(
                         "CODE_SIGN_IDENTITY": "-",
                     ]),
                     .release(name: "Release", settings: [
+                        "CODE_SIGN_STYLE": "Manual",
+                        "CODE_SIGN_IDENTITY": "Developer ID Application",
+                        "DEVELOPMENT_TEAM": "ANBBV7LQ2P",
+                    ]),
+                    .release(name: .configuration("SparkleRelease"), settings: [
                         "CODE_SIGN_STYLE": "Manual",
                         "CODE_SIGN_IDENTITY": "Developer ID Application",
                         "DEVELOPMENT_TEAM": "ANBBV7LQ2P",
