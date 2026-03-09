@@ -74,12 +74,14 @@ enum PasteMode {
     }
 }
 
+#if SPARKLE_RELEASE
 /// State of update checking
 enum UpdateCheckState: Equatable {
     case idle
     case available
     case checkFailed
 }
+#endif
 
 @MainActor
 final class AppSettings: ObservableObject {
@@ -116,14 +118,15 @@ final class AppSettings: ObservableObject {
     }
 
 
+    #if SPARKLE_RELEASE
     @Published var updateCheckState: UpdateCheckState = .idle
-
-    let maxImageMegapixels: Double
-    let imageCompressionQuality: Double
-
     @Published var autoInstallUpdates: Bool {
         didSet { save() }
     }
+    #endif
+
+    let maxImageMegapixels: Double
+    let imageCompressionQuality: Double
 
     @Published var launchAtLoginEnabled: Bool {
         didSet { save() }
@@ -167,7 +170,9 @@ final class AppSettings: ObservableObject {
     private let generateLinkPreviewsKey = "generateLinkPreviews"
     private let ignoredAppBundleIdsKey = "ignoredAppBundleIds"
     private let clickToOpenKey = "clickToOpenEnabled"
+    #if SPARKLE_RELEASE
     private let autoInstallUpdatesKey = "autoInstallUpdates"
+    #endif
 
     /// Flag to prevent save() calls during initialization (didSet triggers before init completes)
     private var isInitializing = true
@@ -194,7 +199,9 @@ final class AppSettings: ObservableObject {
         #endif
         autoPasteEnabled = defaults.object(forKey: autoPasteKey) as? Bool ?? true
         clickToOpenEnabled = defaults.object(forKey: clickToOpenKey) as? Bool ?? true
+        #if SPARKLE_RELEASE
         autoInstallUpdates = defaults.object(forKey: autoInstallUpdatesKey) as? Bool ?? true
+        #endif
 
         // Privacy settings - default to enabled for user protection
         ignoreConfidentialContent = defaults.object(forKey: ignoreConfidentialKey) as? Bool ?? true
@@ -233,7 +240,9 @@ final class AppSettings: ObservableObject {
         defaults.set(generateLinkPreviews, forKey: generateLinkPreviewsKey)
         defaults.set(Array(ignoredAppBundleIds).sorted(), forKey: ignoredAppBundleIdsKey)
         defaults.set(clickToOpenEnabled, forKey: clickToOpenKey)
+        #if SPARKLE_RELEASE
         defaults.set(autoInstallUpdates, forKey: autoInstallUpdatesKey)
+        #endif
     }
 
     // MARK: - Ignored Apps Management
