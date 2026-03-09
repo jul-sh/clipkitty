@@ -198,6 +198,7 @@ let project = Project(
             ),
             environmentVariables: [
                 "CLIPKITTY_APP_PATH": "$(BUILT_PRODUCTS_DIR)/ClipKitty.app",
+                "PROJECT_ROOT": "$(SRCROOT)",
             ]
         ),
     ],
