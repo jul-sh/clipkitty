@@ -3,12 +3,15 @@
 use crate::database::Database;
 use crate::indexer::Indexer;
 use crate::interface::{
-    ClipKittyError, ClipboardItem, ClipboardStoreApi, ContentTypeFilter, MatchData, SearchResult,
+    ClipKittyError, ClipboardItem, ClipboardStoreApi, ItemQueryFilter, ItemTag, MatchData,
+    SearchOutcome, SearchResult,
 };
 use crate::{save_service, search_service};
 use once_cell::sync::Lazy;
+use parking_lot::Mutex;
 use std::path::PathBuf;
 use std::sync::{Arc, Once};
+use tokio::sync::Notify;
 use tokio_util::sync::CancellationToken;
 
 /// Global fallback Tokio runtime for when async functions are called outside any runtime context.
@@ -39,26 +42,53 @@ fn init_rayon() {
     });
 }
 
-struct DropGuard {
-    token: CancellationToken,
-}
-
-impl DropGuard {
-    fn new(token: CancellationToken) -> Self {
-        Self { token }
-    }
-}
-
-impl Drop for DropGuard {
-    fn drop(&mut self) {
-        self.token.cancel();
-    }
-}
-
 #[derive(uniffi::Object)]
 pub struct ClipboardStore {
     db: Arc<Database>,
     indexer: Arc<Indexer>,
+    /// Token for the currently running search, if any. Starting a new search cancels
+    /// the previous one by calling cancel() on this token.
+    active_search_token: Arc<Mutex<Option<CancellationToken>>>,
+}
+
+struct SearchCompletionCell {
+    terminal: Mutex<Option<Result<SearchOutcome, ClipKittyError>>>,
+    notify: Notify,
+}
+
+impl SearchCompletionCell {
+    fn new() -> Self {
+        Self {
+            terminal: Mutex::new(None),
+            notify: Notify::new(),
+        }
+    }
+
+    fn finish(&self, terminal: Result<SearchOutcome, ClipKittyError>) {
+        *self.terminal.lock() = Some(terminal);
+        self.notify.notify_waiters();
+    }
+
+    async fn wait(&self) -> Result<SearchOutcome, ClipKittyError> {
+        loop {
+            if let Some(terminal) = self.terminal.lock().clone() {
+                return terminal;
+            }
+            self.notify.notified().await;
+        }
+    }
+}
+
+#[derive(uniffi::Object)]
+pub struct SearchOperation {
+    token: CancellationToken,
+    completion: Arc<SearchCompletionCell>,
+}
+
+impl Drop for SearchOperation {
+    fn drop(&mut self) {
+        self.token.cancel();
+    }
 }
 
 impl ClipboardStore {
@@ -71,6 +101,7 @@ impl ClipboardStore {
         Ok(Self {
             db: Arc::new(database),
             indexer: Arc::new(indexer),
+            active_search_token: Arc::new(Mutex::new(None)),
         })
     }
 
@@ -105,27 +136,6 @@ impl ClipboardStore {
 
         Ok(())
     }
-
-    async fn execute_search(
-        &self,
-        query: String,
-        filter: Option<ContentTypeFilter>,
-    ) -> Result<SearchResult, ClipKittyError> {
-        let token = CancellationToken::new();
-        let _guard = DropGuard::new(token.clone());
-
-        search_service::execute_search(
-            search_service::SearchContext {
-                db: Arc::clone(&self.db),
-                indexer: Arc::clone(&self.indexer),
-                runtime: self.runtime_handle(),
-                token,
-            },
-            query,
-            filter,
-        )
-        .await
-    }
 }
 
 #[uniffi::export]
@@ -146,20 +156,70 @@ impl ClipboardStore {
         let store = Self {
             db: Arc::new(db),
             indexer: Arc::new(indexer),
+            active_search_token: Arc::new(Mutex::new(None)),
         };
         store.rebuild_index_if_needed()?;
         Ok(store)
     }
 
-    pub async fn search_filtered(
+    fn begin_search_operation(
         &self,
         query: String,
-        filter: ContentTypeFilter,
-    ) -> Result<SearchResult, ClipKittyError> {
-        if filter == ContentTypeFilter::All {
-            return self.search(query).await;
+        filter: ItemQueryFilter,
+    ) -> Arc<SearchOperation> {
+        let token = CancellationToken::new();
+        let completion = Arc::new(SearchCompletionCell::new());
+        let operation = Arc::new(SearchOperation {
+            token: token.clone(),
+            completion: Arc::clone(&completion),
+        });
+
+        let previous_token = {
+            let mut active = self.active_search_token.lock();
+            active.replace(token.clone())
+        };
+        if let Some(previous_token) = previous_token {
+            previous_token.cancel();
         }
-        self.execute_search(query, Some(filter)).await
+
+        let runtime = self.runtime_handle();
+        let db = Arc::clone(&self.db);
+        let indexer = Arc::clone(&self.indexer);
+        runtime.clone().spawn(async move {
+            if token.is_cancelled() {
+                completion.finish(Ok(SearchOutcome::Cancelled));
+                return;
+            }
+
+            let result = search_service::execute_search(
+                search_service::SearchContext {
+                    db,
+                    indexer,
+                    runtime: runtime.clone(),
+                    token: token.clone(),
+                },
+                query,
+                filter,
+            )
+            .await;
+
+            let terminal = match result {
+                Ok(result) => Ok(SearchOutcome::Success { result }),
+                Err(ClipKittyError::Cancelled) => Ok(SearchOutcome::Cancelled),
+                Err(error) => Err(error),
+            };
+            completion.finish(terminal);
+        });
+
+        operation
+    }
+
+    pub fn start_search(
+        &self,
+        query: String,
+        filter: ItemQueryFilter,
+    ) -> Arc<SearchOperation> {
+        self.begin_search_operation(query, filter)
     }
 }
 
@@ -186,15 +246,48 @@ impl ClipboardStoreApi for ClipboardStore {
     }
 
     async fn search(&self, query: String) -> Result<SearchResult, ClipKittyError> {
-        self.execute_search(query, None).await
+        match self
+            .begin_search_operation(query, ItemQueryFilter::All)
+            .await_result()
+            .await?
+        {
+            SearchOutcome::Success { result } => Ok(result),
+            SearchOutcome::Cancelled => Err(ClipKittyError::Cancelled),
+        }
+    }
+
+    async fn search_filtered(
+        &self,
+        query: String,
+        filter: ItemQueryFilter,
+    ) -> Result<SearchResult, ClipKittyError> {
+        if filter == ItemQueryFilter::All {
+            return self.search(query).await;
+        }
+        match self
+            .begin_search_operation(query, filter)
+            .await_result()
+            .await?
+        {
+            SearchOutcome::Success { result } => Ok(result),
+            SearchOutcome::Cancelled => Err(ClipKittyError::Cancelled),
+        }
     }
 
     fn fetch_by_ids(&self, item_ids: Vec<i64>) -> Result<Vec<ClipboardItem>, ClipKittyError> {
         let stored_items = self.db.fetch_items_by_ids(&item_ids)?;
-        Ok(stored_items
+        let mut items: Vec<ClipboardItem> = stored_items
             .into_iter()
             .map(|item| item.to_clipboard_item())
-            .collect())
+            .collect();
+        let tags_by_id = self.db.get_tags_for_ids(&item_ids)?;
+        for item in &mut items {
+            item.item_metadata.tags = tags_by_id
+                .get(&item.item_metadata.item_id)
+                .cloned()
+                .unwrap_or_default();
+        }
+        Ok(items)
     }
 
     fn compute_highlights(
@@ -299,6 +392,14 @@ impl ClipboardStoreApi for ClipboardStore {
         save_service::update_timestamp(&self.db, &self.indexer, item_id)
     }
 
+    fn add_tag(&self, item_id: i64, tag: ItemTag) -> Result<(), ClipKittyError> {
+        save_service::add_tag(&self.db, item_id, tag)
+    }
+
+    fn remove_tag(&self, item_id: i64, tag: ItemTag) -> Result<(), ClipKittyError> {
+        save_service::remove_tag(&self.db, item_id, tag)
+    }
+
     fn delete_item(&self, item_id: i64) -> Result<(), ClipKittyError> {
         save_service::delete_item(&self.db, &self.indexer, item_id)
     }
@@ -312,12 +413,29 @@ impl ClipboardStoreApi for ClipboardStore {
     }
 }
 
+#[uniffi::export]
+impl SearchOperation {
+    pub fn cancel(&self) {
+        self.token.cancel();
+    }
+
+    pub async fn await_result(&self) -> Result<SearchOutcome, ClipKittyError> {
+        self.completion.wait().await
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
     use crate::interface::{
-        ClipboardContent, FileStatus, IconType, ItemIcon, LinkMetadataPayload, LinkMetadataState,
+        ClipboardContent, FileStatus, IconType, ItemIcon, ItemQueryFilter, LinkMetadataPayload,
+        LinkMetadataState,
     };
+    use once_cell::sync::Lazy;
+    use std::sync::atomic::{AtomicUsize, Ordering};
+    use std::sync::{Arc, Mutex as StdMutex, OnceLock};
+
+    static SEARCH_HOOK_TEST_LOCK: Lazy<StdMutex<()>> = Lazy::new(|| StdMutex::new(()));
 
     fn runtime() -> tokio::runtime::Runtime {
         tokio::runtime::Builder::new_current_thread()
@@ -347,7 +465,12 @@ mod tests {
         assert!(all.first_item.is_some());
 
         let links = store
-            .search_filtered("".to_string(), ContentTypeFilter::Links)
+            .search_filtered(
+                "".to_string(),
+                ItemQueryFilter::ContentType {
+                    content_type: crate::interface::ContentTypeFilter::Links,
+                },
+            )
             .await
             .unwrap();
         assert_eq!(links.matches.len(), 1);
@@ -414,8 +537,36 @@ mod tests {
             &token,
             &rt.handle().clone(),
             None,
+            None,
         );
         assert!(matches!(result, Err(ClipKittyError::Cancelled)));
+    }
+
+    #[tokio::test]
+    async fn test_tag_filter_roundtrip() {
+        let store = ClipboardStore::new_in_memory().unwrap();
+        let bookmarked_id = store.save_text("keep me".to_string(), None, None).unwrap();
+        let plain_id = store.save_text("leave me".to_string(), None, None).unwrap();
+        store.add_tag(bookmarked_id, ItemTag::Bookmark).unwrap();
+
+        let result = store
+            .search_filtered(
+                "".to_string(),
+                ItemQueryFilter::Tagged {
+                    tag: ItemTag::Bookmark,
+                },
+            )
+            .await
+            .unwrap();
+
+        let ids: Vec<i64> = result
+            .matches
+            .iter()
+            .map(|item| item.item_metadata.item_id)
+            .collect();
+        assert_eq!(ids, vec![bookmarked_id]);
+        assert!(!ids.contains(&plain_id));
+        assert_eq!(result.matches[0].item_metadata.tags, vec![ItemTag::Bookmark]);
     }
 
     #[test]
@@ -442,8 +593,160 @@ mod tests {
             &token,
             &rt.handle().clone(),
             None,
+            None,
         );
         assert!(matches!(result, Err(ClipKittyError::Cancelled)));
+    }
+
+    #[tokio::test]
+    async fn test_explicit_search_operation_cancelled() {
+        let store = ClipboardStore::new_in_memory().unwrap();
+        for i in 0..200 {
+            store
+                .save_text(format!("Item number {i} with repeated search text"), None, None)
+                .unwrap();
+        }
+
+        let operation = store.start_search("repeated".to_string(), None);
+        operation.cancel();
+
+        let outcome = operation.await_result().await.unwrap();
+        assert_eq!(outcome, SearchOutcome::Cancelled);
+    }
+
+    #[tokio::test]
+    async fn test_new_search_cancels_previous_running_operation() {
+        let store = ClipboardStore::new_in_memory().unwrap();
+        for i in 0..400 {
+            store
+                .save_text(format!("Item number {i} with repeated search text"), None, None)
+                .unwrap();
+        }
+
+        let first = store.start_search("repeated".to_string(), None);
+        let second = store.start_search("number 399".to_string(), None);
+
+        assert_eq!(first.await_result().await.unwrap(), SearchOutcome::Cancelled);
+        assert!(matches!(
+            second.await_result().await.unwrap(),
+            SearchOutcome::Success { .. }
+        ));
+    }
+
+    #[tokio::test]
+    async fn test_phase_two_cancellation_stops_work_early() {
+        let _lock = SEARCH_HOOK_TEST_LOCK.lock().unwrap();
+        let store = ClipboardStore::new_in_memory().unwrap();
+        for i in 0..1_000 {
+            store
+                .save_text(
+                    format!("Item number {i} with repeated search text and extra ranking words"),
+                    None,
+                    None,
+                )
+                .unwrap();
+        }
+
+        let processed = Arc::new(AtomicUsize::new(0));
+        let operation_slot: Arc<OnceLock<Arc<SearchOperation>>> = Arc::new(OnceLock::new());
+        let _hook_guard =
+            crate::indexer::test_support::install_search_hooks(crate::indexer::test_support::SearchTestHooks {
+                before_phase_two: None,
+                on_phase_two_candidate: Some(Arc::new({
+                    let processed = Arc::clone(&processed);
+                    let operation_slot = Arc::clone(&operation_slot);
+                    move |_| {
+                        let seen = processed.fetch_add(1, Ordering::SeqCst);
+                        if seen == 0 {
+                            if let Some(operation) = operation_slot.get() {
+                                operation.cancel();
+                            }
+                        }
+                    }
+                })),
+            });
+
+        let operation = store.start_search("repeated ranking".to_string(), None);
+        let _ = operation_slot.set(Arc::clone(&operation));
+
+        let outcome = operation.await_result().await.unwrap();
+        assert_eq!(outcome, SearchOutcome::Cancelled);
+        assert!(
+            processed.load(Ordering::SeqCst) < 128,
+            "phase-two work should stop early after cancellation"
+        );
+    }
+
+    #[tokio::test]
+    async fn test_eager_match_cancellation_stops_highlight_work_early() {
+        let _lock = SEARCH_HOOK_TEST_LOCK.lock().unwrap();
+        let store = ClipboardStore::new_in_memory().unwrap();
+        for i in 0..500 {
+            store
+                .save_text(
+                    format!("repeated search text item {i} with enough body for eager highlighting"),
+                    None,
+                    None,
+                )
+                .unwrap();
+        }
+
+        let processed = Arc::new(AtomicUsize::new(0));
+        let operation_slot: Arc<OnceLock<Arc<SearchOperation>>> = Arc::new(OnceLock::new());
+        let _hook_guard =
+            crate::search_service::test_support::install_search_hooks(crate::search_service::test_support::SearchTestHooks {
+                before_eager_matches: None,
+                on_eager_match: Some(Arc::new({
+                    let processed = Arc::clone(&processed);
+                    let operation_slot = Arc::clone(&operation_slot);
+                    move |_| {
+                        let seen = processed.fetch_add(1, Ordering::SeqCst);
+                        if seen == 0 {
+                            if let Some(operation) = operation_slot.get() {
+                                operation.cancel();
+                                std::thread::sleep(std::time::Duration::from_millis(10));
+                            }
+                        }
+                    }
+                })),
+            });
+
+        let operation = store.start_search("repeated search".to_string(), None);
+        let _ = operation_slot.set(Arc::clone(&operation));
+
+        let outcome = operation.await_result().await.unwrap();
+        assert_eq!(outcome, SearchOutcome::Cancelled);
+        assert!(
+            processed.load(Ordering::SeqCst) < 10,
+            "eager highlight work should stop shortly after cancellation"
+        );
+    }
+
+    #[tokio::test]
+    async fn test_rapid_typing_keeps_only_latest_search_running() {
+        let store = ClipboardStore::new_in_memory().unwrap();
+        for i in 0..500 {
+            store
+                .save_text(
+                    format!("Item number {i} with repeated search text and trailing content"),
+                    None,
+                    None,
+                )
+                .unwrap();
+        }
+
+        let first = store.start_search("repeated".to_string(), None);
+        let second = store.start_search("repeated s".to_string(), None);
+        let third = store.start_search("repeated se".to_string(), None);
+        let fourth = store.start_search("repeated sea".to_string(), None);
+
+        assert_eq!(first.await_result().await.unwrap(), SearchOutcome::Cancelled);
+        assert_eq!(second.await_result().await.unwrap(), SearchOutcome::Cancelled);
+        assert_eq!(third.await_result().await.unwrap(), SearchOutcome::Cancelled);
+        assert!(matches!(
+            fourth.await_result().await.unwrap(),
+            SearchOutcome::Success { .. }
+        ));
     }
 
     #[test]
@@ -588,11 +891,14 @@ mod tests {
     }
 
     #[test]
-    fn test_drop_guard_cancels_on_drop() {
+    fn test_search_operation_cancels_on_drop() {
         let token = CancellationToken::new();
-        let guard = DropGuard::new(token.clone());
+        let operation = SearchOperation {
+            token: token.clone(),
+            completion: Arc::new(SearchCompletionCell::new()),
+        };
         assert!(!token.is_cancelled());
-        drop(guard);
+        drop(operation);
         assert!(token.is_cancelled());
     }
 

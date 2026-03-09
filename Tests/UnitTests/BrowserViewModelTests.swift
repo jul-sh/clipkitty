@@ -167,7 +167,8 @@ final class BrowserViewModelTests: XCTestCase {
                 snippet: snippet,
                 sourceApp: nil,
                 sourceAppBundleId: nil,
-                timestampUnix: 0
+                timestampUnix: 0,
+                tags: []
             ),
             matchData: nil
         )
@@ -181,7 +182,8 @@ final class BrowserViewModelTests: XCTestCase {
                 snippet: text,
                 sourceApp: nil,
                 sourceAppBundleId: nil,
-                timestampUnix: 0
+                timestampUnix: 0,
+                tags: []
             ),
             content: .text(value: text)
         )
@@ -191,23 +193,37 @@ final class BrowserViewModelTests: XCTestCase {
 @MainActor
 private final class MockBrowserStoreClient: BrowserStoreClient {
     private var pendingSearchResponses: [BrowserSearchResponse] = []
-    private var searchContinuations: [CheckedContinuation<BrowserSearchResponse, Error>] = []
+    private var searchContinuations: [CheckedContinuation<BrowserSearchOutcome, Never>] = []
     var deleteResult: Result<Void, ClipboardError> = .success(())
     var clearResult: Result<Void, ClipboardError> = .success(())
-    private var fetchContinuations: [Int64: CheckedContinuation<ClipboardItem?, Never>] = [:]
+    private var fetchContinuations: [Int64: [CheckedContinuation<ClipboardItem?, Never>]] = [:]
 
-    func search(request: SearchRequest) async throws -> BrowserSearchResponse {
-        if !pendingSearchResponses.isEmpty {
-            return pendingSearchResponses.removeFirst()
+    func startSearch(request: SearchRequest) -> BrowserSearchOperation {
+        return MockBrowserSearchOperation(request: request) { [weak self] in
+            guard let self else { return .cancelled }
+            return await self.nextSearchOutcome()
         }
-        return try await withCheckedThrowingContinuation { continuation in
+    }
+
+    func nextSearchOutcome() async -> BrowserSearchOutcome {
+        if !pendingSearchResponses.isEmpty {
+            return .success(pendingSearchResponses.removeFirst())
+        }
+        return await withCheckedContinuation { continuation in
             searchContinuations.append(continuation)
         }
     }
 
     func fetchItem(id: Int64) async -> ClipboardItem? {
-        await withCheckedContinuation { continuation in
-            fetchContinuations[id] = continuation
+        await withTaskCancellationHandler {
+            await withCheckedContinuation { continuation in
+                fetchContinuations[id, default: []].append(continuation)
+            }
+        } onCancel: {
+            Task { @MainActor in
+                fetchContinuations[id]?.forEach { $0.resume(returning: nil) }
+                fetchContinuations.removeValue(forKey: id)
+            }
         }
     }
 
@@ -219,6 +235,14 @@ private final class MockBrowserStoreClient: BrowserStoreClient {
         nil
     }
 
+    func addTag(itemId: Int64, tag: ItemTag) async -> Result<Void, ClipboardError> {
+        .success(())
+    }
+
+    func removeTag(itemId: Int64, tag: ItemTag) async -> Result<Void, ClipboardError> {
+        .success(())
+    }
+
     func delete(itemId: Int64) async -> Result<Void, ClipboardError> {
         deleteResult
     }
@@ -228,7 +252,7 @@ private final class MockBrowserStoreClient: BrowserStoreClient {
     }
 
     func resumeFetch(id: Int64, with item: ClipboardItem?) {
-        fetchContinuations.removeValue(forKey: id)?.resume(returning: item)
+        fetchContinuations.removeValue(forKey: id)?.forEach { $0.resume(returning: item) }
     }
 
     func enqueueSearchResponse(_ response: BrowserSearchResponse) {
@@ -244,6 +268,46 @@ private final class MockBrowserStoreClient: BrowserStoreClient {
             pendingSearchResponses.append(response)
             return
         }
-        searchContinuations.removeFirst().resume(returning: response)
+        searchContinuations.removeFirst().resume(returning: .success(response))
+    }
+
+    func cancelNextSearch() {
+        guard !searchContinuations.isEmpty else { return }
+        searchContinuations.removeFirst().resume(returning: .cancelled)
+    }
+}
+
+private final class MockBrowserSearchOperation: BrowserSearchOperation {
+    let request: SearchRequest
+    private let loader: @Sendable () async -> BrowserSearchOutcome
+    private let lock = NSLock()
+    private var isCancelled = false
+
+    init(request: SearchRequest, loader: @escaping @Sendable () async -> BrowserSearchOutcome) {
+        self.request = request
+        self.loader = loader
+    }
+
+    func cancel() {
+        lock.lock()
+        isCancelled = true
+        lock.unlock()
+    }
+
+    func awaitOutcome() async -> BrowserSearchOutcome {
+        if cancelled {
+            return .cancelled
+        }
+        let outcome = await loader()
+        if cancelled {
+            return .cancelled
+        }
+        return outcome
+    }
+
+    private var cancelled: Bool {
+        lock.lock()
+        defer { lock.unlock() }
+        return isCancelled
     }
 }

@@ -18,6 +18,6 @@ mod search_service;
 mod store;
 
 pub use interface::*;
-pub use store::ClipboardStore;
+pub use store::{ClipboardStore, SearchOperation};
 
 uniffi::setup_scaffolding!("purr");
