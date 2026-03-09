@@ -1,12 +1,55 @@
 use crate::database::Database;
 use crate::indexer::Indexer;
 use crate::interface::{
-    ClipKittyError, ClipboardItem, ContentTypeFilter, ItemMatch, MatchData, SearchResult,
+    ClipKittyError, ClipboardItem, ContentTypeFilter, ItemMatch, ItemQueryFilter, ItemTag,
+    MatchData, SearchResult,
 };
 use crate::models::StoredItem;
 use crate::search::{self, MAX_RESULTS, MIN_TRIGRAM_QUERY_LEN};
 use std::sync::Arc;
 use tokio_util::sync::CancellationToken;
+
+#[cfg(test)]
+pub(crate) mod test_support {
+    use once_cell::sync::Lazy;
+    use parking_lot::Mutex;
+    use std::sync::Arc;
+
+    #[derive(Default, Clone)]
+    pub(crate) struct SearchTestHooks {
+        pub(crate) before_eager_matches: Option<Arc<dyn Fn() + Send + Sync>>,
+        pub(crate) on_eager_match: Option<Arc<dyn Fn(usize) + Send + Sync>>,
+    }
+
+    static HOOKS: Lazy<Mutex<SearchTestHooks>> = Lazy::new(|| Mutex::new(SearchTestHooks::default()));
+
+    pub(crate) struct SearchTestHookGuard;
+
+    impl Drop for SearchTestHookGuard {
+        fn drop(&mut self) {
+            *HOOKS.lock() = SearchTestHooks::default();
+        }
+    }
+
+    pub(crate) fn install_search_hooks(hooks: SearchTestHooks) -> SearchTestHookGuard {
+        *HOOKS.lock() = hooks;
+        SearchTestHookGuard
+    }
+
+    pub(crate) fn before_eager_matches() {
+        let callback = HOOKS.lock().before_eager_matches.clone();
+        if let Some(callback) = callback {
+            callback();
+        }
+    }
+
+    pub(crate) fn on_eager_match(index: usize) {
+        let callback = HOOKS.lock().on_eager_match.clone();
+        if let Some(callback) = callback {
+            callback(index);
+        }
+    }
+}
 
 /// Number of results to eagerly compute MatchData for (the rest are lazy).
 const EAGER_MATCH_DATA_COUNT: usize = 25;
@@ -25,7 +68,7 @@ pub(crate) struct SearchContext {
 pub(crate) async fn execute_search(
     context: SearchContext,
     query: String,
-    filter: Option<ContentTypeFilter>,
+    filter: ItemQueryFilter,
 ) -> Result<SearchResult, ClipKittyError> {
     let parsed_query = search::SearchQuery::parse(&query);
     if context.token.is_cancelled() {
@@ -33,7 +76,7 @@ pub(crate) async fn execute_search(
     }
 
     if parsed_query.raw_text().is_empty() {
-        return execute_empty_query(&context, filter.as_ref());
+        return execute_empty_query(&context, filter);
     }
 
     let SearchContext {
@@ -54,7 +97,7 @@ pub(crate) async fn execute_search(
             &db_for_closure,
             &indexer_for_closure,
             &parsed_query_owned,
-            filter_copy.as_ref(),
+            filter_copy,
             &token_for_closure,
             &runtime_for_closure,
         )
@@ -124,12 +167,13 @@ pub(crate) fn search_short_query_sync(
     token: &CancellationToken,
     runtime: &tokio::runtime::Handle,
     filter: Option<&ContentTypeFilter>,
+    tag: Option<ItemTag>,
 ) -> Result<Vec<ItemMatch>, ClipKittyError> {
     if token.is_cancelled() {
         return Err(ClipKittyError::Cancelled);
     }
 
-    let candidates = db.search_prefix_query(query, MAX_RESULTS, filter)?;
+    let candidates = db.search_prefix_query(query, MAX_RESULTS, filter, tag.as_ref())?;
     if candidates.is_empty() {
         return Ok(Vec::new());
     }
@@ -168,6 +212,7 @@ pub(crate) fn search_trigram_query_sync(
     token: &CancellationToken,
     runtime: &tokio::runtime::Handle,
     filter: Option<&ContentTypeFilter>,
+    tag: Option<ItemTag>,
 ) -> Result<Vec<ItemMatch>, ClipKittyError> {
     if token.is_cancelled() {
         return Err(ClipKittyError::Cancelled);
@@ -184,9 +229,23 @@ pub(crate) fn search_trigram_query_sync(
         return Err(ClipKittyError::Cancelled);
     }
 
+    let tagged_ids = if let Some(tag) = tag {
+        Some(
+            db.filter_ids_by_tag(&ids, tag)?
+                .into_iter()
+                .collect::<std::collections::HashSet<_>>(),
+        )
+    } else {
+        None
+    };
+
     let item_map: std::collections::HashMap<i64, StoredItem> = stored_items
         .into_iter()
         .filter_map(|item| item.id.map(|id| (id, item)))
+        .filter(|(id, _)| match &tagged_ids {
+            Some(tagged_ids) => tagged_ids.contains(id),
+            None => true,
+        })
         .filter(|(_, item)| match filter {
             Some(filter) => filter.matches_db_type(item.content.database_type()),
             None => true,
@@ -194,30 +253,43 @@ pub(crate) fn search_trigram_query_sync(
         .collect();
 
     let few_results = fuzzy_matches.len() <= EAGER_SHORT_RESULT_LIMIT;
-    let results = fuzzy_matches
-        .into_iter()
-        .enumerate()
-        .filter_map(|(index, fuzzy_match)| {
-            item_map.get(&fuzzy_match.id).map(|item| {
-                let content = item.content.text_content();
-                let is_short = content.len() <= SHORT_CONTENT_THRESHOLD;
-                if index < EAGER_MATCH_DATA_COUNT || (is_short && few_results) {
-                    search::create_item_match(item, query.raw_text())
-                } else {
-                    search::create_lazy_item_match(item)
-                }
-            })
-        })
-        .collect();
+    #[cfg(test)]
+    test_support::before_eager_matches();
+    let mut results = Vec::with_capacity(fuzzy_matches.len());
+    for (index, fuzzy_match) in fuzzy_matches.into_iter().enumerate() {
+        if token.is_cancelled() {
+            return Err(ClipKittyError::Cancelled);
+        }
+        let Some(item) = item_map.get(&fuzzy_match.id) else {
+            continue;
+        };
+        let content = item.content.text_content();
+        let is_short = content.len() <= SHORT_CONTENT_THRESHOLD;
+        let item_match = if index < EAGER_MATCH_DATA_COUNT || (is_short && few_results) {
+            #[cfg(test)]
+            test_support::on_eager_match(index);
+            search::create_item_match(item, query.raw_text())
+        } else {
+            search::create_lazy_item_match(item)
+        };
+        results.push(item_match);
+    }
 
     Ok(results)
 }
 
 fn execute_empty_query(
     context: &SearchContext,
-    filter: Option<&ContentTypeFilter>,
+    filter: ItemQueryFilter,
 ) -> Result<SearchResult, ClipKittyError> {
-    let (items, total_count) = context.db.fetch_item_metadata(None, 1000, filter)?;
+    let (content_type_filter, tag_filter) = split_filter(filter);
+    let (mut items, total_count) = context.db.fetch_item_metadata(
+        None,
+        1000,
+        content_type_filter.as_ref(),
+        tag_filter.as_ref(),
+    )?;
+    hydrate_item_metadata_tags(&context.db, &mut items)?;
     let first_item = fetch_first_item(
         &context.db,
         items.first().map(|item| item.item_id),
@@ -243,23 +315,44 @@ fn execute_search_sync(
     db: &Database,
     indexer: &Indexer,
     parsed_query: &search::SearchQuery,
-    filter: Option<&ContentTypeFilter>,
+    filter: ItemQueryFilter,
     token: &CancellationToken,
     runtime: &tokio::runtime::Handle,
 ) -> Result<(Vec<ItemMatch>, u64), ClipKittyError> {
+    let (content_type_filter, tag_filter) = split_filter(filter);
     let matches = if parsed_query.recall_text().len() < MIN_TRIGRAM_QUERY_LEN {
         match parsed_query {
-            search::SearchQuery::Plain { text } => {
-                search_short_query_sync(db, text, token, runtime, filter)?
-            }
-            search::SearchQuery::PreferPrefix { stripped_text, .. } => {
-                search_short_query_sync(db, stripped_text, token, runtime, filter)?
-            }
+            search::SearchQuery::Plain { text } => search_short_query_sync(
+                db,
+                text,
+                token,
+                runtime,
+                content_type_filter.as_ref(),
+                tag_filter,
+            )?,
+            search::SearchQuery::PreferPrefix { stripped_text, .. } => search_short_query_sync(
+                db,
+                stripped_text,
+                token,
+                runtime,
+                content_type_filter.as_ref(),
+                tag_filter,
+            )?,
         }
     } else {
-        search_trigram_query_sync(db, indexer, parsed_query, token, runtime, filter)?
+        search_trigram_query_sync(
+            db,
+            indexer,
+            parsed_query,
+            token,
+            runtime,
+            content_type_filter.as_ref(),
+            tag_filter,
+        )?
     };
     let total_count = matches.len() as u64;
+    let mut matches = matches;
+    hydrate_item_match_tags(db, &mut matches)?;
     Ok((matches, total_count))
 }
 
@@ -277,5 +370,56 @@ fn fetch_first_item(
         .into_iter()
         .next()
         .map(|item| item.to_clipboard_item());
+    let mut item = item;
+    if let Some(item) = item.as_mut() {
+        hydrate_clipboard_item_tags(db, item)?;
+    }
     Ok(item)
+}
+
+fn split_filter(filter: ItemQueryFilter) -> (Option<ContentTypeFilter>, Option<ItemTag>) {
+    match filter {
+        ItemQueryFilter::All => (None, None),
+        ItemQueryFilter::ContentType { content_type } => (Some(content_type), None),
+        ItemQueryFilter::Tagged { tag } => (None, Some(tag)),
+    }
+}
+
+fn hydrate_item_match_tags(db: &Database, matches: &mut [ItemMatch]) -> Result<(), ClipKittyError> {
+    let ids: Vec<i64> = matches
+        .iter()
+        .map(|item| item.item_metadata.item_id)
+        .collect();
+    let tags_by_id = db.get_tags_for_ids(&ids)?;
+    for item in matches {
+        item.item_metadata.tags = tags_by_id
+            .get(&item.item_metadata.item_id)
+            .cloned()
+            .unwrap_or_default();
+    }
+    Ok(())
+}
+
+fn hydrate_item_metadata_tags(
+    db: &Database,
+    items: &mut [crate::interface::ItemMetadata],
+) -> Result<(), ClipKittyError> {
+    let ids: Vec<i64> = items.iter().map(|item| item.item_id).collect();
+    let tags_by_id = db.get_tags_for_ids(&ids)?;
+    for item in items {
+        item.tags = tags_by_id.get(&item.item_id).cloned().unwrap_or_default();
+    }
+    Ok(())
+}
+
+fn hydrate_clipboard_item_tags(
+    db: &Database,
+    item: &mut ClipboardItem,
+) -> Result<(), ClipKittyError> {
+    let tags_by_id = db.get_tags_for_ids(&[item.item_metadata.item_id])?;
+    item.item_metadata.tags = tags_by_id
+        .get(&item.item_metadata.item_id)
+        .cloned()
+        .unwrap_or_default();
+    Ok(())
 }

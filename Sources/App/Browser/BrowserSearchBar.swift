@@ -3,8 +3,7 @@ import ClipKittyRust
 
 struct BrowserSearchBar<FilterPopoverContent: View>: View {
     @Binding var searchText: String
-    let filter: ContentTypeFilter
-    let filterOptions: [(ContentTypeFilter, String)]
+    let filterLabel: String
     let searchSpinnerVisible: Bool
     let selectedItemAvailable: Bool
     let isFilterPopoverPresented: Binding<Bool>
@@ -101,7 +100,4 @@ struct BrowserSearchBar<FilterPopoverContent: View>: View {
         .padding(.vertical, 13)
     }
 
-    private var filterLabel: String {
-        filterOptions.first(where: { $0.0 == filter })?.1 ?? String(localized: "All Types")
-    }
 }
