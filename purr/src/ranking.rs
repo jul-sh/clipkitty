@@ -884,6 +884,25 @@ mod tests {
         assert_eq!(matches[1].doc_word_pos, 2);
     }
 
+    #[test]
+    fn test_match_repeated_query_words_require_distinct_doc_occurrences() {
+        let doc_words = vec!["hello", "world"];
+        let matches = match_query_words(&["hello", "hello"], &doc_words, false, false);
+        assert!(matches[0].matched);
+        assert!(
+            !matches[1].matched,
+            "A repeated query token should not reuse the same document token"
+        );
+    }
+
+    #[test]
+    fn test_match_prefers_best_global_alignment_over_earliest_exact_occurrences() {
+        let doc_words = vec!["alpha", "noise", "noise", "noise", "beta", "alpha", "beta"];
+        let matches = match_query_words(&["alpha", "beta"], &doc_words, false, false);
+        assert_eq!(matches[0].doc_word_pos, 5, "Should use the tighter trailing cluster");
+        assert_eq!(matches[1].doc_word_pos, 6, "Should use the tighter trailing cluster");
+    }
+
     // ── compute_proximity tests ──────────────────────────────────
 
     #[test]
@@ -1233,6 +1252,26 @@ mod tests {
     }
 
     #[test]
+    fn test_exact_phrase_can_beat_scattered_full_coverage() {
+        let now = 1700000000i64;
+        let exact_phrase = score(
+            "hello world", &["hello", "world", "today"], false, now, 1.0, now,
+        );
+        let scattered_full = score(
+            "hello unrelated unrelated unrelated world unrelated unrelated unrelated today",
+            &["hello", "world", "today"],
+            false,
+            now,
+            1.0,
+            now,
+        );
+        assert!(
+            exact_phrase > scattered_full,
+            "A dense exact phrase should beat scattered full coverage"
+        );
+    }
+
+    #[test]
     fn test_recency_dominates_typo() {
         let now = 1700000000i64;
         // Typo match from now vs exact match from 10 days ago
@@ -1305,6 +1344,21 @@ mod tests {
         assert!(
             recent > old,
             "Recent item should dominate proximity when words/typo equal"
+        );
+    }
+
+    #[test]
+    fn test_phrase_quality_can_beat_small_recency_gap() {
+        let now = 1700000000i64;
+        let older_phrase = score(
+            "hello world", &["hello", "world"], false, now - 30, 1.0, now,
+        );
+        let newer_reversed = score(
+            "world hello", &["hello", "world"], false, now, 1.0, now,
+        );
+        assert!(
+            older_phrase > newer_reversed,
+            "A high-quality phrase should beat a slightly newer reversed match"
         );
     }
 
