@@ -7,6 +7,7 @@ use crate::candidate::SearchCandidate;
 use crate::ranking::{compute_bucket_score, PrefixPreferenceQuery, ScoringContext};
 use crate::search::SearchQuery;
 use chrono::Utc;
+use tokio_util::sync::CancellationToken;
 
 /// Index version - bump this when schema changes to trigger automatic rebuild.
 /// History: v3 = initial trigram, v4 = content_words WithFreqsAndPositions
@@ -101,6 +102,48 @@ pub struct Indexer {
     id_field: Field,
     content_field: Field,
     content_words_field: Field,
+}
+
+#[cfg(test)]
+pub(crate) mod test_support {
+    use once_cell::sync::Lazy;
+    use parking_lot::Mutex;
+    use std::sync::Arc;
+
+    #[derive(Default, Clone)]
+    pub(crate) struct SearchTestHooks {
+        pub(crate) before_phase_two: Option<Arc<dyn Fn() + Send + Sync>>,
+        pub(crate) on_phase_two_candidate: Option<Arc<dyn Fn(usize) + Send + Sync>>,
+    }
+
+    static HOOKS: Lazy<Mutex<SearchTestHooks>> = Lazy::new(|| Mutex::new(SearchTestHooks::default()));
+
+    pub(crate) struct SearchTestHookGuard;
+
+    impl Drop for SearchTestHookGuard {
+        fn drop(&mut self) {
+            *HOOKS.lock() = SearchTestHooks::default();
+        }
+    }
+
+    pub(crate) fn install_search_hooks(hooks: SearchTestHooks) -> SearchTestHookGuard {
+        *HOOKS.lock() = hooks;
+        SearchTestHookGuard
+    }
+
+    pub(crate) fn before_phase_two() {
+        let callback = HOOKS.lock().before_phase_two.clone();
+        if let Some(callback) = callback {
+            callback();
+        }
+    }
+
+    pub(crate) fn on_phase_two_candidate(index: usize) {
+        let callback = HOOKS.lock().on_phase_two_candidate.clone();
+        if let Some(callback) = callback {
+            callback(index);
+        }
+    }
 }
 
 impl Indexer {
@@ -279,13 +322,14 @@ impl Indexer {
     /// matches Phase 2's bucket order, so we skip re-ranking entirely.
     pub fn search(&self, query: &str, limit: usize) -> IndexerResult<Vec<SearchCandidate>> {
         let parsed = SearchQuery::parse(query);
-        self.search_parsed(&parsed, limit)
+        self.search_parsed(&parsed, limit, &CancellationToken::new())
     }
 
     pub(crate) fn search_parsed(
         &self,
         query: &SearchQuery,
         limit: usize,
+        token: &CancellationToken,
     ) -> IndexerResult<Vec<SearchCandidate>> {
         #[cfg(feature = "perf-log")]
         let t0 = std::time::Instant::now();
@@ -304,6 +348,13 @@ impl Indexer {
         }
 
         // Phase 2: Bucket re-ranking (parallelized — compute_bucket_score is a pure function)
+        if token.is_cancelled() {
+            return Err(IndexerError::Tantivy(tantivy::TantivyError::InternalError(
+                "search cancelled".into(),
+            )));
+        }
+        #[cfg(test)]
+        test_support::before_phase_two();
         let query_words_owned = crate::search::tokenize_words(recall_text);
         let query_words: Vec<&str> = query_words_owned
             .iter()
@@ -320,12 +371,27 @@ impl Indexer {
         let now = Utc::now().timestamp();
 
         use rayon::prelude::*;
-        let mut scored: Vec<(crate::ranking::BucketScore, usize)> =
-            candidates
-                .par_iter()
-                .enumerate()
-                .map(|(i, c)| {
-                    let content_lower = c.content().to_lowercase();
+        // Process candidates in chunks to allow periodic cancellation checks.
+        // Smaller chunks = more responsive cancellation but higher overhead.
+        const CANCELLATION_CHECK_CHUNK_SIZE: usize = 32;
+        let prefix_preference = prefix_preference
+            .as_ref()
+            .map(|(raw_query_lower, stripped_query_lower)| {
+                (raw_query_lower.clone(), stripped_query_lower.clone())
+            });
+        let mut scored: Vec<(crate::ranking::BucketScore, usize)> = candidates
+            .par_chunks(CANCELLATION_CHECK_CHUNK_SIZE)
+            .enumerate()
+            .map(|(chunk_index, chunk)| {
+                let mut chunk_scored = Vec::with_capacity(chunk.len());
+                for (offset, candidate) in chunk.iter().enumerate() {
+                    if token.is_cancelled() {
+                        break;
+                    }
+                    let global_index = chunk_index * CANCELLATION_CHECK_CHUNK_SIZE + offset;
+                    #[cfg(test)]
+                    test_support::on_phase_two_candidate(global_index);
+                    let content_lower = candidate.content().to_lowercase();
                     let doc_words = crate::search::tokenize_words(&content_lower);
                     let doc_word_strs: Vec<&str> =
                         doc_words.iter().map(|(_, _, w)| w.as_str()).collect();
@@ -341,17 +407,24 @@ impl Indexer {
                         query_words: &query_words,
                         last_word_is_prefix,
                         prefix_preference: prefix_preference_query,
-                        timestamp: c.timestamp,
-                        bm25_score: c.tantivy_score,
+                        timestamp: candidate.timestamp,
+                        bm25_score: candidate.tantivy_score,
                         now,
                     });
-                    (bucket, i)
-                })
-                // Filter candidates with no real word matches (only punctuation matched).
-                // This ensures highlighting will always produce visible highlights,
-                // allowing us to skip the post-highlight filter in search_trigram.
-                .filter(|(bucket, _)| bucket.words_matched_weight() > 0)
-                .collect();
+                    if bucket.words_matched_weight() > 0 {
+                        chunk_scored.push((bucket, global_index));
+                    }
+                }
+                chunk_scored
+            })
+            .flatten()
+            .collect();
+
+        if token.is_cancelled() {
+            return Err(IndexerError::Tantivy(tantivy::TantivyError::InternalError(
+                "search cancelled".into(),
+            )));
+        }
 
         scored.sort_unstable_by(|a, b| b.0.cmp(&a.0));
         scored.truncate(limit);

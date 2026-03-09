@@ -10,11 +10,35 @@ final class BrowserViewModel {
     private let onCopyOnly: (Int64, ClipboardContent) -> Void
     private let onDismiss: () -> Void
 
-    private var searchTask: Task<Void, Never>?
+    private enum SearchExecution {
+        case idle
+        case debouncing(request: SearchRequest, task: Task<Void, Never>)
+        case running(id: UUID, operation: BrowserSearchOperation, observer: Task<Void, Never>, spinner: Task<Void, Never>?)
+
+        var id: UUID? {
+            guard case .running(let id, _, _, _) = self else { return nil }
+            return id
+        }
+
+        mutating func cancel() {
+            switch self {
+            case .idle:
+                break
+            case .debouncing(_, let task):
+                task.cancel()
+            case .running(_, let operation, let observer, let spinner):
+                operation.cancel()
+                observer.cancel()
+                spinner?.cancel()
+            }
+            self = .idle
+        }
+    }
+
+    private var searchExecution: SearchExecution = .idle
     private var previewTask: Task<Void, Never>?
     private var metadataTask: Task<Void, Never>?
     private var matchDataTasks: [String: Task<Void, Never>] = [:]
-    private var searchGeneration = 0
     private var previewGeneration = 0
     private var metadataGeneration = 0
     private var hasAppliedInitialSearch = false
@@ -22,7 +46,6 @@ final class BrowserViewModel {
     private(set) var session: BrowserSession = .initial
     private(set) var hasUserNavigated = false
     private(set) var prefetchCache: [Int64: ClipboardItem] = [:]
-    private(set) var searchSpinnerVisible = false
     private(set) var previewSpinnerVisible = false
 
     init(
@@ -55,6 +78,10 @@ final class BrowserViewModel {
             return tag
         }
         return nil
+    }
+
+    var searchSpinnerVisible: Bool {
+        session.query.isSearchSpinnerVisible
     }
 
     var itemIds: [Int64] {
@@ -116,15 +143,13 @@ final class BrowserViewModel {
     }
 
     func handleDisplayReset(initialSearchQuery: String) {
-        searchTask?.cancel()
+        searchExecution.cancel()
         previewTask?.cancel()
         metadataTask?.cancel()
         matchDataTasks.values.forEach { $0.cancel() }
         matchDataTasks.removeAll()
-        searchGeneration += 1
         previewGeneration += 1
         metadataGeneration += 1
-        searchSpinnerVisible = false
         previewSpinnerVisible = false
         hasUserNavigated = false
         prefetchCache.removeAll()
@@ -348,50 +373,77 @@ final class BrowserViewModel {
             text: rawText.trimmingCharacters(in: .whitespacesAndNewlines),
             filter: filter
         )
-        searchGeneration += 1
-        let generation = searchGeneration
 
         hasUserNavigated = false
         prefetchCache.removeAll()
-        searchTask?.cancel()
+        searchExecution.cancel()
         let fallback = session.query.items
-        session.query = .searching(request: request, fallback: fallback)
-        scheduleSearchSpinner(for: request, generation: generation)
+        session.query = .pending(request: request, fallback: fallback, phase: .debouncing)
 
-        searchTask = Task { [weak self] in
+        if request.text.isEmpty {
+            beginSearch(request: request, fallback: fallback)
+            return
+        }
+
+        let debounceTask = Task { [weak self] in
+            try? await Task.sleep(for: .milliseconds(50))
+            guard !Task.isCancelled else { return }
+            await MainActor.run {
+                self?.beginSearch(request: request, fallback: fallback)
+            }
+        }
+        searchExecution = .debouncing(request: request, task: debounceTask)
+    }
+
+    private func beginSearch(request: SearchRequest, fallback: [ItemMatch]) {
+        let operation = client.startSearch(request: request)
+        let operationId = UUID()
+        session.query = .pending(request: request, fallback: fallback, phase: .running(spinnerVisible: false))
+
+        let observer = Task { [weak self] in
             guard let self else { return }
-            if !request.text.isEmpty {
-                try? await Task.sleep(for: .milliseconds(50))
-                guard !Task.isCancelled else { return }
+            let outcome = await operation.awaitOutcome()
+            await MainActor.run {
+                self.applySearchOutcome(outcome, operationId: operationId)
             }
+        }
 
-            do {
-                let response = try await self.client.search(request: request)
-                await MainActor.run {
-                    self.applySearchResponse(response, generation: generation)
-                }
-            } catch {
-                await MainActor.run {
-                    guard self.searchGeneration == generation,
-                          self.session.query.request == request else { return }
-                    self.searchSpinnerVisible = false
-                    self.session.query = .failed(
-                        request: request,
-                        message: error.localizedDescription
-                    )
-                }
+        let spinner = Task { [weak self] in
+            try? await Task.sleep(for: .milliseconds(150))
+            guard !Task.isCancelled else { return }
+            await MainActor.run {
+                self?.showSearchSpinnerIfNeeded(operationId: operationId, request: request)
             }
+        }
+
+        searchExecution = .running(id: operationId, operation: operation, observer: observer, spinner: spinner)
+    }
+
+    private func applySearchOutcome(_ outcome: BrowserSearchOutcome, operationId: UUID) {
+        guard searchExecution.id == operationId else { return }
+        searchExecution = .idle
+
+        switch outcome {
+        case .success(let response):
+            applySearchResponse(response)
+        case .cancelled:
+            break
+        case .failure(let error):
+            guard case .pending(let request, let fallback, _) = session.query else { return }
+            session.query = .failed(
+                request: request,
+                message: error.localizedDescription,
+                fallback: fallback
+            )
         }
     }
 
-    private func applySearchResponse(_ response: BrowserSearchResponse, generation: Int) {
-        guard searchGeneration == generation,
-              session.query.request == response.request else { return }
+    private func applySearchResponse(_ response: BrowserSearchResponse) {
+        guard session.query.request == response.request else { return }
 
         let previousOrder = itemIds
         let previousSelection = selectedItemId
 
-        searchSpinnerVisible = false
         session.query = .ready(response: response)
 
         let newOrder = response.items.map { $0.itemMetadata.itemId }
@@ -530,18 +582,15 @@ final class BrowserViewModel {
         }
     }
 
-    private func scheduleSearchSpinner(for request: SearchRequest, generation: Int) {
-        searchSpinnerVisible = false
-        Task { [weak self] in
-            try? await Task.sleep(for: .milliseconds(150))
-            await MainActor.run {
-                guard let self,
-                      self.searchGeneration == generation,
-                      case .searching(let currentRequest, _) = self.session.query,
-                      currentRequest == request else { return }
-                self.searchSpinnerVisible = true
-            }
-        }
+    private func showSearchSpinnerIfNeeded(operationId: UUID, request: SearchRequest) {
+        guard searchExecution.id == operationId,
+              case .pending(let currentRequest, let fallback, .running(spinnerVisible: false)) = session.query,
+              currentRequest == request else { return }
+        session.query = .pending(
+            request: currentRequest,
+            fallback: fallback,
+            phase: .running(spinnerVisible: true)
+        )
     }
 
     private func schedulePreviewSpinner(for generation: Int, itemId: Int64) {
