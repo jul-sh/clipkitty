@@ -7,8 +7,8 @@ struct BrowserActionsOverlay: View {
 
     private enum ActionItem: Equatable {
         case delete
-        case pin
-        case unpin
+        case bookmark
+        case unbookmark
         case copyOnly
         case defaultAction
     }
@@ -16,10 +16,10 @@ struct BrowserActionsOverlay: View {
     private var actions: [ActionItem] {
         var items: [ActionItem] = [.delete]
         if let selectedItem = viewModel.selectedItem,
-           selectedItem.itemMetadata.tags.contains(.pinned) {
-            items.append(.unpin)
+           selectedItem.itemMetadata.tags.contains(.bookmark) {
+            items.append(.unbookmark)
         } else {
-            items.append(.pin)
+            items.append(.bookmark)
         }
         if case .autoPaste = AppSettings.shared.pasteMode {
             items.append(.copyOnly)
@@ -215,12 +215,12 @@ struct BrowserActionsOverlay: View {
         case .copyOnly:
             viewModel.closeOverlay()
             viewModel.copyOnlySelection()
-        case .pin:
+        case .bookmark:
             viewModel.closeOverlay()
-            viewModel.addTagToSelectedItem(.pinned)
-        case .unpin:
+            viewModel.addTagToSelectedItem(.bookmark)
+        case .unbookmark:
             viewModel.closeOverlay()
-            viewModel.removeTagFromSelectedItem(.pinned)
+            viewModel.removeTagFromSelectedItem(.bookmark)
         case .delete:
             viewModel.openDeleteConfirmation(highlightedIndex: 0)
         }
@@ -232,10 +232,10 @@ struct BrowserActionsOverlay: View {
             return AppSettings.shared.pasteMode.buttonLabel
         case .copyOnly:
             return String(localized: "Copy")
-        case .pin:
-            return String(localized: "Pin")
-        case .unpin:
-            return String(localized: "Unpin")
+        case .bookmark:
+            return String(localized: "Bookmark")
+        case .unbookmark:
+            return String(localized: "Unbookmark")
         case .delete:
             return String(localized: "Delete")
         }
@@ -247,10 +247,10 @@ struct BrowserActionsOverlay: View {
             return AppSettings.shared.pasteMode.buttonLabel
         case .copyOnly:
             return "Copy"
-        case .pin:
-            return "Pin"
-        case .unpin:
-            return "Unpin"
+        case .bookmark:
+            return "Bookmark"
+        case .unbookmark:
+            return "Unbookmark"
         case .delete:
             return "Delete"
         }

@@ -91,19 +91,21 @@ impl ContentTypeFilter {
 /// Typed item tags stored in the database.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, uniffi::Enum)]
 pub enum ItemTag {
-    Pinned,
+    Bookmark,
 }
 
 impl ItemTag {
     pub fn database_str(&self) -> &'static str {
         match self {
-            ItemTag::Pinned => "pinned",
+            // Keep "pinned" for database backwards compatibility
+            ItemTag::Bookmark => "pinned",
         }
     }
 
     pub fn from_database_str(value: &str) -> Result<Self, String> {
         match value {
-            "pinned" => Ok(ItemTag::Pinned),
+            // Accept "pinned" from database for backwards compatibility
+            "pinned" => Ok(ItemTag::Bookmark),
             other => Err(format!("unknown item tag `{other}`")),
         }
     }

@@ -445,15 +445,15 @@ mod tests {
     #[tokio::test]
     async fn test_tag_filter_roundtrip() {
         let store = ClipboardStore::new_in_memory().unwrap();
-        let pinned_id = store.save_text("keep me".to_string(), None, None).unwrap();
+        let bookmarked_id = store.save_text("keep me".to_string(), None, None).unwrap();
         let plain_id = store.save_text("leave me".to_string(), None, None).unwrap();
-        store.add_tag(pinned_id, ItemTag::Pinned).unwrap();
+        store.add_tag(bookmarked_id, ItemTag::Bookmark).unwrap();
 
         let result = store
             .search_filtered(
                 "".to_string(),
                 ItemQueryFilter::Tagged {
-                    tag: ItemTag::Pinned,
+                    tag: ItemTag::Bookmark,
                 },
             )
             .await
@@ -464,9 +464,9 @@ mod tests {
             .iter()
             .map(|item| item.item_metadata.item_id)
             .collect();
-        assert_eq!(ids, vec![pinned_id]);
+        assert_eq!(ids, vec![bookmarked_id]);
         assert!(!ids.contains(&plain_id));
-        assert_eq!(result.matches[0].item_metadata.tags, vec![ItemTag::Pinned]);
+        assert_eq!(result.matches[0].item_metadata.tags, vec![ItemTag::Bookmark]);
     }
 
     #[test]

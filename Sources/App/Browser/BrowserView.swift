@@ -17,7 +17,7 @@ struct BrowserView: View {
     }
 
     private static let filterOptions: [(ContentTypeFilter, String)] = [
-        (.all, String(localized: "All Types")),
+        (.all, String(localized: "All")),
         (.text, String(localized: "Text")),
         (.images, String(localized: "Images")),
         (.links, String(localized: "Links")),
@@ -94,11 +94,11 @@ struct BrowserView: View {
     }
 
     private var filterLabel: String {
-        if viewModel.selectedTagFilter == .pinned {
-            return String(localized: "Pinned")
+        if viewModel.selectedTagFilter == .bookmark {
+            return String(localized: "Bookmarks")
         }
         return Self.filterOptions.first(where: { $0.0 == viewModel.contentTypeFilter })?.1
-            ?? String(localized: "All Types")
+            ?? String(localized: "All")
     }
 
     @ViewBuilder
@@ -129,10 +129,15 @@ struct BrowserView: View {
 
     private func openFilterOverlay() {
         let index: Int
-        if viewModel.selectedTagFilter == .pinned {
-            index = 0
+        if viewModel.selectedTagFilter == .bookmark {
+            index = 1 // Bookmarks is at index 1
+        } else if viewModel.contentTypeFilter == .all {
+            index = 0 // All is at index 0
         } else {
-            index = (Self.filterOptions.firstIndex(where: { $0.0 == viewModel.contentTypeFilter }) ?? 0) + 1
+            // Categories start at index 2 (All=0, Bookmarks=1, then categories)
+            // filterOptions[0] is All, filterOptions[1+] are categories
+            let categoryIndex = Self.filterOptions.dropFirst().firstIndex(where: { $0.0 == viewModel.contentTypeFilter })
+            index = (categoryIndex ?? 0) + 2
         }
         viewModel.openFilterOverlay(highlightedIndex: index)
         focusFilterDropdown()
