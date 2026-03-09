@@ -988,14 +988,14 @@ final class ClipKittyUITests: XCTestCase {
         searchField.typeKey(.delete, modifierFlags: [])
         Thread.sleep(forTimeInterval: 0.3)
         let filterButton = app.buttons["FilterDropdown"]
-        // First apply the Images filter
+        // Apply the Images filter by clicking it directly
         filterButton.click()
         Thread.sleep(forTimeInterval: 0.5)
-        app.typeKey(.downArrow, modifierFlags: [])
-        app.typeKey(.downArrow, modifierFlags: [])
-        app.typeKey(.return, modifierFlags: [])
+        let imagesOption = app.buttons["Images"]
+        XCTAssertTrue(imagesOption.waitForExistence(timeout: 3), "Images option should appear in dropdown")
+        imagesOption.click()
         Thread.sleep(forTimeInterval: 0.5)
-        // Re-open the dropdown so it's visible in the screenshot
+        // Re-open the dropdown - it will auto-highlight Images since that's the current filter
         filterButton.click()
         Thread.sleep(forTimeInterval: 0.5)
         saveScreenshot(name: "marketing_3_filter")
