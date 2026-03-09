@@ -1,11 +1,11 @@
 //! Milli-style bucket ranking for search results.
 //!
-//! Implements a lexicographic tuple where higher-priority signals always dominate
-//! lower ones. 3/3 words ALWAYS beats 2/3, 0 typos ALWAYS beats 1 typo, etc.
-//! Recency tiers sit above proximity/exactness/bm25 to strongly prefer recent items
-//! when word-match quality is equal.
+//! Implements a lexicographic tuple with a coarse quality / recency / quality-detail
+//! "sandwich". Only foundational quality differences outrank recency; finer coverage
+//! and phrase-quality differences break ties after recency.
 
 use crate::search::is_word_token;
+use std::collections::HashSet;
 
 /// Documents larger than this threshold use fast matching (exact + prefix only).
 /// This trades typo tolerance for performance on large documents like code files.
@@ -15,23 +15,28 @@ pub const LARGE_DOC_THRESHOLD_BYTES: usize = 5 * 1024; // 5KB
 /// All components: higher = better.
 ///
 /// Tuple order (most to least important):
-/// 1. words_matched_weight — sum of len² for each matched query word (IDF proxy)
-/// 2. recency_score — smooth exponential decay (255=now, 0=old), no cliff edges
-/// 3. typo_score — 255 - total_edit_distance (fewer typos = higher)
-/// 4. proximity_score — u16::MAX - sum_of_pair_distances
-/// 5. exactness_score — 0-6 level (prefix-of-content and anchored sequence rank highest)
-/// 6. bm25_quantized — BM25 scaled to integer
-/// 7. recency — raw unix timestamp (final tiebreaker)
+/// 1. quality_tier — extremely coarse foundational match quality
+/// 2. recency_score — smooth logarithmic decay (255=now, 0=old)
+/// 3. quality_detail — nuanced coverage/structure/typo detail within a tier
+/// 4. bm25_quantized — BM25 scaled to integer
+/// 5. recency — raw unix timestamp (final tiebreaker)
 #[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord)]
 pub struct BucketScore {
-    pub words_matched_weight: u16,
-    pub prefix_preference_score: u8,
+    pub quality_tier: u8,
     pub recency_score: u8,
-    pub typo_score: u8,
-    pub proximity_score: u16,
-    pub exactness_score: u8,
+    pub quality_detail: u64,
     pub bm25_quantized: u16,
     pub recency: i64,
+}
+
+const QUALITY_DETAIL_PREFIX_SHIFT: u64 = 56;
+const QUALITY_DETAIL_COVERAGE_SHIFT: u64 = 40;
+const QUALITY_DETAIL_STRUCTURE_SHIFT: u64 = 8;
+
+impl BucketScore {
+    pub fn words_matched_weight(&self) -> u16 {
+        quality_detail_words_matched_weight(self.quality_detail)
+    }
 }
 
 #[derive(Debug, Clone, Copy)]
@@ -62,12 +67,13 @@ pub struct ScoringContext<'a> {
 }
 
 /// Per-query-word match result
+#[derive(Debug, Clone, Copy)]
 struct WordMatch {
     matched: bool,
     edit_dist: u8,
     doc_word_pos: usize,
     is_exact: bool,
-    /// Weight toward the `words_matched_weight` bucket score.
+    /// Weight toward coarse coverage and tie-break detail.
     /// Punctuation tokens (like "://", ".") get 0 — they participate in
     /// proximity and highlighting only. Word tokens get len² (IDF proxy).
     match_weight: u16,
@@ -83,15 +89,9 @@ struct WordMatch {
 pub fn compute_bucket_score(ctx: &ScoringContext<'_>) -> BucketScore {
     if ctx.query_words.is_empty() {
         return BucketScore {
-            words_matched_weight: 0,
-            prefix_preference_score: compute_prefix_preference_score(
-                ctx.content_lower,
-                ctx.prefix_preference,
-            ),
+            quality_tier: 0,
             recency_score: compute_recency_score(ctx.timestamp, ctx.now),
-            typo_score: 255,
-            proximity_score: u16::MAX,
-            exactness_score: 0,
+            quality_detail: 0,
             bm25_quantized: quantize_bm25(ctx.bm25_score),
             recency: ctx.timestamp,
         };
@@ -111,6 +111,7 @@ pub fn compute_bucket_score(ctx: &ScoringContext<'_>) -> BucketScore {
         .filter(|m| m.matched)
         .map(|m| m.match_weight)
         .sum();
+    let total_query_weight = query_total_match_weight(ctx.query_words);
     let prefix_preference_score =
         compute_prefix_preference_score(ctx.content_lower, ctx.prefix_preference);
     let total_edit_dist: u8 = word_matches
@@ -122,16 +123,27 @@ pub fn compute_bucket_score(ctx: &ScoringContext<'_>) -> BucketScore {
 
     let proximity_score = compute_proximity(&word_matches);
     let exactness_score = compute_exactness(ctx.content_lower, ctx.query_words, &word_matches);
+    let quality_tier = compute_quality_tier(
+        total_query_weight,
+        words_matched_weight,
+        exactness_score,
+        &word_matches,
+    );
+    let quality_detail = compute_quality_detail(
+        prefix_preference_score,
+        words_matched_weight,
+        typo_score,
+        proximity_score,
+        exactness_score,
+        &word_matches,
+    );
     let bm25_quantized = quantize_bm25(ctx.bm25_score);
     let recency_score = compute_recency_score(ctx.timestamp, ctx.now);
 
     BucketScore {
-        words_matched_weight,
-        prefix_preference_score,
+        quality_tier,
         recency_score,
-        typo_score,
-        proximity_score,
-        exactness_score,
+        quality_detail,
         bm25_quantized,
         recency: ctx.timestamp,
     }
@@ -155,6 +167,150 @@ fn compute_prefix_preference_score(
         }) if content_lower.starts_with(stripped_query_lower) => 1,
         _ => 0,
     }
+}
+
+fn query_total_match_weight(query_words: &[&str]) -> u16 {
+    query_words.iter().map(|qw| base_match_weight(qw)).sum()
+}
+
+#[derive(Debug, Clone, Copy)]
+struct MatchSpanStats {
+    matched_count: usize,
+    all_matched: bool,
+    in_sequence: bool,
+    span: usize,
+}
+
+fn compute_match_span_stats(word_matches: &[WordMatch]) -> Option<MatchSpanStats> {
+    let matched: Vec<&WordMatch> = word_matches.iter().filter(|m| m.matched).collect();
+    if matched.is_empty() {
+        return None;
+    }
+
+    let min_pos = matched.iter().map(|m| m.doc_word_pos).min().unwrap_or(0);
+    let max_pos = matched.iter().map(|m| m.doc_word_pos).max().unwrap_or(0);
+    let span = max_pos.saturating_sub(min_pos) + 1;
+    let all_matched = word_matches.iter().all(|m| m.matched);
+
+    let mut prev_pos = None;
+    let mut in_sequence = true;
+    for wm in word_matches {
+        if !wm.matched {
+            continue;
+        }
+        if let Some(prev) = prev_pos {
+            if wm.doc_word_pos <= prev {
+                in_sequence = false;
+                break;
+            }
+        }
+        prev_pos = Some(wm.doc_word_pos);
+    }
+
+    Some(MatchSpanStats {
+        matched_count: matched.len(),
+        all_matched,
+        in_sequence,
+        span,
+    })
+}
+
+fn compute_quality_tier(
+    total_query_weight: u16,
+    words_matched_weight: u16,
+    exactness_score: u8,
+    word_matches: &[WordMatch],
+) -> u8 {
+    if words_matched_weight == 0 {
+        return 0;
+    }
+
+    if word_matches.len() < 2 {
+        return 1;
+    }
+
+    let Some(stats) = compute_match_span_stats(word_matches) else {
+        return 0;
+    };
+    let coverage_pct = if total_query_weight == 0 {
+        100
+    } else {
+        ((words_matched_weight as u32) * 100 / total_query_weight as u32) as u8
+    };
+    let dense_forward = stats.in_sequence && stats.span <= stats.matched_count + 1;
+    let compact_full_match =
+        stats.all_matched && stats.in_sequence && stats.span <= stats.matched_count * 2;
+
+    if stats.all_matched && exactness_score >= 6 {
+        return 3;
+    }
+    if (coverage_pct >= 60 && dense_forward) || (exactness_score >= 4 && compact_full_match) {
+        return 2;
+    }
+    if coverage_pct >= 60 || stats.all_matched {
+        return 1;
+    }
+    0
+}
+
+fn compute_structure_detail(
+    proximity_score: u16,
+    exactness_score: u8,
+    word_matches: &[WordMatch],
+) -> u32 {
+    let Some(stats) = compute_match_span_stats(word_matches) else {
+        return exactness_score as u32;
+    };
+    if stats.matched_count < 2 {
+        return exactness_score as u32;
+    }
+
+    let order_rank = if stats.in_sequence {
+        if stats.span == stats.matched_count {
+            2u8
+        } else {
+            1u8
+        }
+    } else {
+        0u8
+    };
+    let density = (((stats.matched_count as u32) * u8::MAX as u32) / stats.span.max(1) as u32)
+        .min(u8::MAX as u32) as u8;
+    let proximity_quantized = (proximity_score >> 8) as u8;
+
+    ((order_rank as u32) << 24)
+        | ((density as u32) << 16)
+        | ((proximity_quantized as u32) << 8)
+        | exactness_score as u32
+}
+
+fn compute_quality_detail(
+    prefix_preference_score: u8,
+    words_matched_weight: u16,
+    typo_score: u8,
+    proximity_score: u16,
+    exactness_score: u8,
+    word_matches: &[WordMatch],
+) -> u64 {
+    let structure_detail = compute_structure_detail(proximity_score, exactness_score, word_matches);
+    ((prefix_preference_score as u64) << QUALITY_DETAIL_PREFIX_SHIFT)
+        | ((words_matched_weight as u64) << QUALITY_DETAIL_COVERAGE_SHIFT)
+        | ((structure_detail as u64) << QUALITY_DETAIL_STRUCTURE_SHIFT)
+        | typo_score as u64
+}
+
+fn quality_detail_words_matched_weight(quality_detail: u64) -> u16 {
+    ((quality_detail >> QUALITY_DETAIL_COVERAGE_SHIFT) & 0xFFFF) as u16
+}
+
+#[cfg(test)]
+fn quality_detail_structure(quality_detail: u64) -> u32 {
+    ((quality_detail >> QUALITY_DETAIL_STRUCTURE_SHIFT) & 0xFFFF_FFFF) as u32
+}
+
+#[cfg(test)]
+fn quality_detail_typo_score(quality_detail: u64) -> u8 {
+    quality_detail as u8
 }
 
 /// Smooth recency score using logarithmic decay, quantized to u8 (0-255).
@@ -198,90 +354,305 @@ fn match_query_words(
     last_word_is_prefix: bool,
     fast_mode: bool,
 ) -> Vec<WordMatch> {
-    query_words
+    let defaults: Vec<WordMatch> = query_words
+        .iter()
+        .map(|qw| WordMatch {
+            matched: false,
+            edit_dist: 0,
+            doc_word_pos: 0,
+            is_exact: false,
+            match_weight: base_match_weight(qw),
+        })
+        .collect();
+
+    let candidate_lists: Vec<Vec<WordMatch>> = query_words
         .iter()
         .enumerate()
         .map(|(qi, qw)| {
-            let qw_lower = qw.to_lowercase();
             let is_last = qi == query_words.len() - 1;
             let allow_prefix = is_last && last_word_is_prefix;
-            let match_weight = if is_word_token(qw) {
-                (qw.len() as u16).saturating_mul(qw.len() as u16)
-            } else {
-                0
-            };
-
-            let mut best: Option<WordMatch> = None;
-
-            for (dpos, dw) in doc_words.iter().enumerate() {
-                let wmk = if fast_mode {
-                    does_word_match_fast(&qw_lower, dw, allow_prefix)
-                } else {
-                    does_word_match(&qw_lower, dw, allow_prefix)
-                };
-                match wmk {
-                    WordMatchKind::Exact => {
-                        return WordMatch {
-                            matched: true,
-                            edit_dist: 0,
-                            doc_word_pos: dpos,
-                            is_exact: true,
-                            match_weight,
-                        };
-                    }
-                    WordMatchKind::Prefix => {
-                        if best.as_ref().is_none_or(|b| b.edit_dist > 0) {
-                            best = Some(WordMatch {
-                                matched: true,
-                                edit_dist: 0,
-                                doc_word_pos: dpos,
-                                is_exact: false,
-                                match_weight,
-                            });
-                        }
-                    }
-                    WordMatchKind::Fuzzy(dist) => {
-                        let is_better = best.as_ref().is_none_or(|b| dist < b.edit_dist);
-                        if is_better {
-                            // Short fuzzy matches (<=3 chars) get reduced weight —
-                            // they're low-confidence and shouldn't dominate scoring.
-                            let w = if qw.len() <= 3 { 1 } else { match_weight };
-                            best = Some(WordMatch {
-                                matched: true,
-                                edit_dist: dist,
-                                doc_word_pos: dpos,
-                                is_exact: false,
-                                match_weight: w,
-                            });
-                        }
-                    }
-                    WordMatchKind::Subsequence(gaps) => {
-                        let dist = gaps.saturating_add(1);
-                        let is_better = best.as_ref().is_none_or(|b| dist < b.edit_dist);
-                        if is_better {
-                            let w = if qw.len() <= 3 { 1 } else { match_weight };
-                            best = Some(WordMatch {
-                                matched: true,
-                                edit_dist: dist,
-                                doc_word_pos: dpos,
-                                is_exact: false,
-                                match_weight: w,
-                            });
-                        }
-                    }
-                    WordMatchKind::None => {}
-                }
-            }
-
-            best.unwrap_or(WordMatch {
-                matched: false,
-                edit_dist: 0,
-                doc_word_pos: 0,
-                is_exact: false,
-                match_weight,
-            })
+            collect_match_candidates(qw, doc_words, allow_prefix, fast_mode)
         })
-        .collect()
+        .collect();
+
+    choose_best_alignment(&candidate_lists, &defaults)
+}
+
+fn base_match_weight(qw: &str) -> u16 {
+    if is_word_token(qw) {
+        (qw.len() as u16).saturating_mul(qw.len() as u16)
+    } else {
+        0
+    }
+}
+
+fn collect_match_candidates(
+    query_word: &str,
+    doc_words: &[&str],
+    allow_prefix: bool,
+    fast_mode: bool,
+) -> Vec<WordMatch> {
+    let qw_lower = query_word.to_lowercase();
+    let match_weight = base_match_weight(query_word);
+
+    let candidates: Vec<WordMatch> = doc_words
+        .iter()
+        .enumerate()
+        .filter_map(|(dpos, dw)| {
+            let wmk = if fast_mode {
+                does_word_match_fast(&qw_lower, dw, allow_prefix)
+            } else {
+                does_word_match(&qw_lower, dw, allow_prefix)
+            };
+            match wmk {
+                WordMatchKind::Exact => Some(WordMatch {
+                    matched: true,
+                    edit_dist: 0,
+                    doc_word_pos: dpos,
+                    is_exact: true,
+                    match_weight,
+                }),
+                WordMatchKind::Prefix => Some(WordMatch {
+                    matched: true,
+                    edit_dist: 0,
+                    doc_word_pos: dpos,
+                    is_exact: false,
+                    match_weight,
+                }),
+                WordMatchKind::Fuzzy(dist) => Some(WordMatch {
+                    matched: true,
+                    edit_dist: dist,
+                    doc_word_pos: dpos,
+                    is_exact: false,
+                    match_weight: if query_word.len() <= 3 {
+                        1
+                    } else {
+                        match_weight
+                    },
+                }),
+                WordMatchKind::Subsequence(gaps) => Some(WordMatch {
+                    matched: true,
+                    edit_dist: gaps.saturating_add(1),
+                    doc_word_pos: dpos,
+                    is_exact: false,
+                    match_weight: if query_word.len() <= 3 {
+                        1
+                    } else {
+                        match_weight
+                    },
+                }),
+                WordMatchKind::None => None,
+            }
+        })
+        .collect();
+
+    trim_match_candidates(candidates)
+}
+
+fn trim_match_candidates(candidates: Vec<WordMatch>) -> Vec<WordMatch> {
+    const MAX_CANDIDATES_PER_QUERY_WORD: usize = 8;
+    if candidates.len() <= MAX_CANDIDATES_PER_QUERY_WORD {
+        return candidates;
+    }
+
+    let mut by_quality = candidates.clone();
+    by_quality.sort_by(candidate_quality_cmp);
+
+    let mut by_pos = candidates;
+    by_pos.sort_by_key(|c| c.doc_word_pos);
+
+    let mut chosen = Vec::new();
+    let mut seen_positions = HashSet::new();
+
+    for cand in by_quality.iter().take(4) {
+        if seen_positions.insert(cand.doc_word_pos) {
+            chosen.push(*cand);
+        }
+    }
+    for cand in by_pos.iter().take(2).chain(by_pos.iter().rev().take(2)) {
+        if seen_positions.insert(cand.doc_word_pos) {
+            chosen.push(*cand);
+        }
+    }
+    for cand in by_quality {
+        if chosen.len() >= MAX_CANDIDATES_PER_QUERY_WORD {
+            break;
+        }
+        if seen_positions.insert(cand.doc_word_pos) {
+            chosen.push(cand);
+        }
+    }
+
+    chosen
+}
+
+fn candidate_quality_cmp(a: &WordMatch, b: &WordMatch) -> std::cmp::Ordering {
+    candidate_quality_key(b).cmp(&candidate_quality_key(a))
+}
+
+fn candidate_quality_key(m: &WordMatch) -> (u8, u16, u8, std::cmp::Reverse<usize>) {
+    let kind_rank = if m.is_exact {
+        3
+    } else if m.edit_dist == 0 {
+        2
+    } else {
+        1
+    };
+    (
+        kind_rank,
+        m.match_weight,
+        255u8.saturating_sub(m.edit_dist),
+        std::cmp::Reverse(m.doc_word_pos),
+    )
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord)]
+struct AlignmentScore {
+    quality_tier: u8,
+    quality_detail: u64,
+    matched_query_mask: u64,
+}
+
+fn choose_best_alignment(
+    candidate_lists: &[Vec<WordMatch>],
+    defaults: &[WordMatch],
+) -> Vec<WordMatch> {
+    let mut current = defaults.to_vec();
+    let mut best = defaults.to_vec();
+    let mut best_score = score_alignment(&best);
+    let mut used_positions = HashSet::new();
+
+    choose_best_alignment_recursive(
+        0,
+        candidate_lists,
+        defaults,
+        &mut used_positions,
+        &mut current,
+        &mut best,
+        &mut best_score,
+    );
+
+    best
+}
+
+fn choose_best_alignment_recursive(
+    qi: usize,
+    candidate_lists: &[Vec<WordMatch>],
+    defaults: &[WordMatch],
+    used_positions: &mut HashSet<usize>,
+    current: &mut [WordMatch],
+    best: &mut Vec<WordMatch>,
+    best_score: &mut AlignmentScore,
+) {
+    if qi == candidate_lists.len() {
+        let score = score_alignment(current);
+        if score > *best_score {
+            *best_score = score;
+            *best = current.to_vec();
+        }
+        return;
+    }
+
+    current[qi] = defaults[qi];
+    choose_best_alignment_recursive(
+        qi + 1,
+        candidate_lists,
+        defaults,
+        used_positions,
+        current,
+        best,
+        best_score,
+    );
+
+    for candidate in &candidate_lists[qi] {
+        if !used_positions.insert(candidate.doc_word_pos) {
+            continue;
+        }
+        current[qi] = *candidate;
+        choose_best_alignment_recursive(
+            qi + 1,
+            candidate_lists,
+            defaults,
+            used_positions,
+            current,
+            best,
+            best_score,
+        );
+        used_positions.remove(&candidate.doc_word_pos);
+    }
+}
+
+fn score_alignment(word_matches: &[WordMatch]) -> AlignmentScore {
+    let total_query_weight: u16 = word_matches.iter().map(|m| m.match_weight).sum();
+    let words_matched_weight: u16 = word_matches
+        .iter()
+        .filter(|m| m.matched)
+        .map(|m| m.match_weight)
+        .sum();
+    let typo_score = 255u8.saturating_sub(
+        word_matches
+            .iter()
+            .filter(|m| m.matched)
+            .map(|m| m.edit_dist)
+            .sum::<u8>(),
+    );
+    let proximity_score = compute_proximity(word_matches);
+    let exactness_hint = alignment_exactness_hint(word_matches);
+    let quality_tier = compute_quality_tier(
+        total_query_weight,
+        words_matched_weight,
+        exactness_hint,
+        word_matches,
+    );
+    let quality_detail = compute_quality_detail(
+        0,
+        words_matched_weight,
+        typo_score,
+        proximity_score,
+        exactness_hint,
+        word_matches,
+    );
+
+    AlignmentScore {
+        quality_tier,
+        quality_detail,
+        matched_query_mask: alignment_matched_query_mask(word_matches),
+    }
+}
+
+fn alignment_matched_query_mask(word_matches: &[WordMatch]) -> u64 {
+    word_matches.iter().enumerate().fold(0u64, |mask, (i, wm)| {
+        if wm.matched {
+            mask | (1u64 << (63usize.saturating_sub(i)))
+        } else {
+            mask
+        }
+    })
+}
+
+fn alignment_exactness_hint(word_matches: &[WordMatch]) -> u8 {
+    let matched_count = word_matches.iter().filter(|m| m.matched).count();
+    if matched_count < 2 {
+        return 0;
+    }
+
+    let all_matched = word_matches.iter().all(|m| m.matched);
+    if all_matched {
+        let in_sequence = word_matches
+            .windows(2)
+            .all(|w| w[1].doc_word_pos > w[0].doc_word_pos);
+        if in_sequence {
+            let contiguous = word_matches
+                .windows(2)
+                .all(|w| w[1].doc_word_pos == w[0].doc_word_pos + 1);
+            if contiguous {
+                return 4;
+            }
+            return 2;
+        }
+    }
+
+    0
 }
 
 /// Result of matching a query word against a document word.
@@ -884,6 +1255,31 @@ mod tests {
         assert_eq!(matches[1].doc_word_pos, 2);
     }
 
+    #[test]
+    fn test_match_repeated_query_words_require_distinct_doc_occurrences() {
+        let doc_words = vec!["hello", "world"];
+        let matches = match_query_words(&["hello", "hello"], &doc_words, false, false);
+        assert!(matches[0].matched);
+        assert!(
+            !matches[1].matched,
+            "A repeated query token should not reuse the same document token"
+        );
+    }
+
+    #[test]
+    fn test_match_prefers_best_global_alignment_over_earliest_exact_occurrences() {
+        let doc_words = vec!["alpha", "noise", "noise", "noise", "beta", "alpha", "beta"];
+        let matches = match_query_words(&["alpha", "beta"], &doc_words, false, false);
+        assert_eq!(
+            matches[0].doc_word_pos, 5,
+            "Should use the tighter trailing cluster"
+        );
+        assert_eq!(
+            matches[1].doc_word_pos, 6,
+            "Should use the tighter trailing cluster"
+        );
+    }
+
     // ── compute_proximity tests ──────────────────────────────────
 
     #[test]
@@ -966,6 +1362,53 @@ mod tests {
             },
         ];
         assert_eq!(compute_proximity(&matches), u16::MAX - 3);
+    }
+
+    #[test]
+    fn test_quality_tier_prefers_dense_matches() {
+        let dense = vec![
+            WordMatch {
+                matched: true,
+                edit_dist: 0,
+                doc_word_pos: 0,
+                is_exact: true,
+                match_weight: 25,
+            },
+            WordMatch {
+                matched: true,
+                edit_dist: 0,
+                doc_word_pos: 1,
+                is_exact: true,
+                match_weight: 25,
+            },
+        ];
+        let scattered = vec![
+            WordMatch {
+                matched: true,
+                edit_dist: 0,
+                doc_word_pos: 0,
+                is_exact: true,
+                match_weight: 25,
+            },
+            WordMatch {
+                matched: true,
+                edit_dist: 0,
+                doc_word_pos: 8,
+                is_exact: true,
+                match_weight: 25,
+            },
+            WordMatch {
+                matched: true,
+                edit_dist: 0,
+                doc_word_pos: 16,
+                is_exact: true,
+                match_weight: 25,
+            },
+        ];
+
+        let dense_tier = compute_quality_tier(75, 50, 3, &dense);
+        let scattered_tier = compute_quality_tier(75, 75, 3, &scattered);
+        assert!(dense_tier > scattered_tier);
     }
 
     // ── compute_exactness tests ──────────────────────────────────
@@ -1209,27 +1652,57 @@ mod tests {
     // ── bucket score ordering tests ──────────────────────────────
 
     #[test]
-    fn test_words_matched_dominates() {
+    fn test_long_important_term_can_beat_multiple_short_terms() {
         let now = 1700000000i64;
-        let score_3w = score(
-            "hello beautiful world",
-            &["hello", "beautiful", "world"],
+        let long_term = score(
+            "encyclopedia",
+            &["encyclopedia", "to", "be", "or"],
             false,
             None,
-            now - 86400,
+            now - 3600,
             1.0,
             now,
         );
-        let score_2w = score(
-            "hello world xyz",
-            &["hello", "beautiful", "world"],
+        let short_terms = score(
+            "to be or",
+            &["encyclopedia", "to", "be", "or"],
+            false,
+            None,
+            now - 3600,
+            1.0,
+            now,
+        );
+        assert!(
+            long_term > short_terms,
+            "A single long, important term should outrank several short terms"
+        );
+    }
+
+    #[test]
+    fn test_exact_phrase_can_beat_scattered_full_coverage() {
+        let now = 1700000000i64;
+        let exact_phrase = score(
+            "hello world",
+            &["hello", "world", "today"],
             false,
             None,
             now,
-            10.0,
+            1.0,
             now,
         );
-        assert!(score_3w > score_2w, "3 words matched should beat 2 words");
+        let scattered_full = score(
+            "hello unrelated unrelated unrelated world unrelated unrelated unrelated today",
+            &["hello", "world", "today"],
+            false,
+            None,
+            now,
+            1.0,
+            now,
+        );
+        assert!(
+            exact_phrase > scattered_full,
+            "A dense exact phrase should beat scattered full coverage"
+        );
     }
 
     #[test]
@@ -1246,6 +1719,7 @@ mod tests {
             1.0,
             now,
         );
+        assert_eq!(typo_new.quality_tier, exact_old.quality_tier);
         assert!(
             typo_new > exact_old,
             "Recent fuzzy match should beat old exact match"
@@ -1281,11 +1755,11 @@ mod tests {
     }
 
     #[test]
-    fn test_recency_dominates_proximity() {
+    fn test_recency_breaks_ties_when_structure_equal() {
         let now = 1700000000i64;
-        // Same words, same typo, but different recency
+        // Same structure and same word quality - recency should break the tie.
         let recent = score(
-            "hello world and other things between",
+            "hello world alpha",
             &["hello", "world"],
             false,
             None,
@@ -1294,7 +1768,7 @@ mod tests {
             now,
         );
         let old = score(
-            "hello world",
+            "hello world beta",
             &["hello", "world"],
             false,
             None,
@@ -1302,9 +1776,38 @@ mod tests {
             1.0,
             now,
         );
+        assert_eq!(recent.quality_tier, old.quality_tier);
         assert!(
             recent > old,
-            "Recent item should dominate proximity when words/typo equal"
+            "Recent item should win when structure and words are equal"
+        );
+    }
+
+    #[test]
+    fn test_phrase_quality_can_beat_small_recency_gap() {
+        let now = 1700000000i64;
+        let older_phrase = score(
+            "hello world",
+            &["hello", "world"],
+            false,
+            None,
+            now - 30,
+            1.0,
+            now,
+        );
+        let newer_reversed = score(
+            "world hello",
+            &["hello", "world"],
+            false,
+            None,
+            now,
+            1.0,
+            now,
+        );
+        assert!(older_phrase.quality_tier > newer_reversed.quality_tier);
+        assert!(
+            older_phrase > newer_reversed,
+            "A high-quality phrase should beat a slightly newer reversed match"
         );
     }
 
@@ -1364,11 +1867,11 @@ mod tests {
             5.0,
             now,
         );
-        assert_eq!(s.words_matched_weight, 50); // 5² + 5² = 50
+        assert_eq!(s.quality_tier, 3); // exact prefix of the content
+        assert_eq!(s.words_matched_weight(), 50); // 5² + 5² = 50
         assert_eq!(s.recency_score, 255); // just now
-        assert_eq!(s.typo_score, 255);
-        assert_eq!(s.proximity_score, u16::MAX - 1);
-        assert_eq!(s.exactness_score, 6); // "hello world" starts with "hello world"
+        assert_eq!(quality_detail_typo_score(s.quality_detail), 255);
+        assert!(quality_detail_structure(s.quality_detail) > 0);
         assert_eq!(s.bm25_quantized, 500); // 5.0 * 100
     }
 

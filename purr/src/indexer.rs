@@ -350,7 +350,7 @@ impl Indexer {
                 // Filter candidates with no real word matches (only punctuation matched).
                 // This ensures highlighting will always produce visible highlights,
                 // allowing us to skip the post-highlight filter in search_trigram.
-                .filter(|(bucket, _)| bucket.words_matched_weight > 0)
+                .filter(|(bucket, _)| bucket.words_matched_weight() > 0)
                 .collect();
 
         scored.sort_unstable_by(|a, b| b.0.cmp(&a.0));
