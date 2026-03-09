@@ -640,15 +640,41 @@ final class ClipKittyUITests: XCTestCase {
 
     // MARK: - Settings Tests
 
-    /// Helper to find a settings tab by name. SwiftUI TabView tabs are exposed as radioButtons on macOS.
+    /// Helper to find a settings tab by name. SwiftUI TabView tabs are exposed differently on different macOS versions.
     private func findSettingsTab(in window: XCUIElement, named name: String) -> XCUIElement {
-        // SwiftUI TabView tabs are exposed as radioButtons in a radioGroup
+        // Try radioButtons first (common on older macOS)
         let radioButton = window.radioButtons[name]
         if radioButton.exists {
             return radioButton
         }
-        // Fallback to buttons (some macOS versions may differ)
-        return window.buttons[name]
+
+        // Try buttons (common on some macOS versions)
+        let button = window.buttons[name]
+        if button.exists {
+            return button
+        }
+
+        // Try tabs in tabGroups
+        let tabGroup = window.tabGroups.firstMatch
+        if tabGroup.exists {
+            let tab = tabGroup.buttons[name]
+            if tab.exists {
+                return tab
+            }
+        }
+
+        // Try segmented control (macOS 15+ may use this for TabView)
+        for group in window.groups.allElementsBoundByIndex {
+            let tab = group.buttons[name]
+            if tab.exists {
+                return tab
+            }
+        }
+
+        // Last resort: search entire window for any clickable element with matching identifier
+        let predicate = NSPredicate(format: "identifier == %@ OR label == %@", name, name)
+        let anyElement = window.descendants(matching: .any).matching(predicate).firstMatch
+        return anyElement
     }
 
     /// Tests that the Settings window opens with tabs and Privacy tab is accessible
