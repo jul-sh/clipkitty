@@ -75,3 +75,6 @@ distribution/SyntheticData_*.sqlite
 
 # ASC CLI
 .asc/
+
+# Task tracking
+tasks/

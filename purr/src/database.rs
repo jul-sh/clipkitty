@@ -4,7 +4,7 @@
 //! Uses r2d2 connection pooling to allow concurrent reads without mutex blocking.
 
 use crate::interface::{
-    ClipboardContent, ContentTypeFilter, FileEntry, FileStatus, ItemMetadata, ItemIcon,
+    ClipboardContent, ContentTypeFilter, FileEntry, FileStatus, ItemIcon, ItemMetadata,
     LinkMetadataState,
 };
 use crate::models::StoredItem;
@@ -26,6 +26,10 @@ pub enum DatabaseError {
     Io(#[from] std::io::Error),
     #[error("Connection pool error: {0}")]
     Pool(#[from] r2d2::Error),
+    #[error("Operation interrupted")]
+    Interrupted,
+    #[error("Database inconsistency: {0}")]
+    InconsistentData(String),
 }
 
 pub type DatabaseResult<T> = Result<T, DatabaseError>;
@@ -49,21 +53,20 @@ pub struct Database {
 impl Database {
     /// Open or create a database at the given path with connection pooling
     pub fn open<P: AsRef<Path>>(path: P) -> DatabaseResult<Self> {
-        let manager = SqliteConnectionManager::file(path)
-            .with_init(|conn| {
-                conn.execute_batch("
+        let manager = SqliteConnectionManager::file(path).with_init(|conn| {
+            conn.execute_batch(
+                "
                     PRAGMA journal_mode=WAL;
                     PRAGMA synchronous=NORMAL;
                     PRAGMA foreign_keys=ON;
                     PRAGMA mmap_size=67108864;
                     PRAGMA cache_size=-32000;
-                ")?;
-                Ok(())
-            });
+                ",
+            )?;
+            Ok(())
+        });
 
-        let pool = Pool::builder()
-            .max_size(8)
-            .build(manager)?;
+        let pool = Pool::builder().max_size(8).build(manager)?;
 
         let db = Self { pool };
         db.setup_schema()?;
@@ -73,20 +76,19 @@ impl Database {
     /// Open an in-memory database (for testing)
     #[cfg(test)]
     pub fn open_in_memory() -> DatabaseResult<Self> {
-        let manager = SqliteConnectionManager::memory()
-            .with_init(|conn| {
-                conn.execute_batch("
+        let manager = SqliteConnectionManager::memory().with_init(|conn| {
+            conn.execute_batch(
+                "
                     PRAGMA journal_mode=WAL;
                     PRAGMA synchronous=NORMAL;
                     PRAGMA foreign_keys=ON;
-                ")?;
-                Ok(())
-            });
+                ",
+            )?;
+            Ok(())
+        });
 
         // In-memory needs single connection to maintain state
-        let pool = Pool::builder()
-            .max_size(1)
-            .build(manager)?;
+        let pool = Pool::builder().max_size(1).build(manager)?;
 
         let db = Self { pool };
         db.setup_schema()?;
@@ -102,7 +104,8 @@ impl Database {
     fn setup_schema(&self) -> DatabaseResult<()> {
         let conn = self.get_conn()?;
 
-        conn.execute_batch(r#"
+        conn.execute_batch(
+            r#"
             CREATE TABLE IF NOT EXISTS items (
                 id INTEGER PRIMARY KEY AUTOINCREMENT,
                 contentType TEXT NOT NULL,
@@ -150,7 +153,8 @@ impl Database {
             CREATE INDEX IF NOT EXISTS idx_items_timestamp ON items(timestamp);
             CREATE INDEX IF NOT EXISTS idx_items_content_prefix ON items(content COLLATE NOCASE);
             CREATE INDEX IF NOT EXISTS idx_file_items_item ON file_items(itemId);
-        "#)?;
+        "#,
+        )?;
 
         // Migration: Add is_animated column to existing image_items tables
         // This is idempotent - if the column already exists, the ALTER TABLE will fail silently
@@ -184,7 +188,10 @@ impl Database {
         let conn = self.get_conn()?;
         let tx = conn.unchecked_transaction()?;
 
-        let timestamp = Utc.timestamp_opt(item.timestamp_unix, 0).single().unwrap_or_else(Utc::now);
+        let timestamp = Utc
+            .timestamp_opt(item.timestamp_unix, 0)
+            .single()
+            .unwrap_or_else(Utc::now);
         let timestamp_str = timestamp.format("%Y-%m-%d %H:%M:%S%.f").to_string();
         let content_type = item.content.database_type();
         let content_text = item.content.text_content().to_string();
@@ -206,20 +213,26 @@ impl Database {
         let item_id = tx.last_insert_rowid();
 
         match &item.content {
-            ClipboardContent::Text { value }
-            | ClipboardContent::Color { value } => {
+            ClipboardContent::Text { value } | ClipboardContent::Color { value } => {
                 tx.execute(
                     "INSERT INTO text_items (itemId, value) VALUES (?1, ?2)",
                     params![item_id, value],
                 )?;
             }
-            ClipboardContent::Image { data, description, is_animated } => {
+            ClipboardContent::Image {
+                data,
+                description,
+                is_animated,
+            } => {
                 tx.execute(
                     "INSERT INTO image_items (itemId, data, description, is_animated) VALUES (?1, ?2, ?3, ?4)",
                     params![item_id, data, description, *is_animated as i32],
                 )?;
             }
-            ClipboardContent::Link { url, metadata_state } => {
+            ClipboardContent::Link {
+                url,
+                metadata_state,
+            } => {
                 let (title, description, image_data) = metadata_state.to_database_fields();
                 // Store link preview image as items.thumbnail
                 if image_data.is_some() {
@@ -263,7 +276,7 @@ impl Database {
         let result = conn.query_row(
             "SELECT id, contentType, contentHash, content, timestamp, sourceApp, sourceAppBundleId, thumbnail, colorRgba FROM items WHERE contentHash = ?1 LIMIT 1",
             [hash],
-            |row| Self::row_to_base_item(row),
+            Self::row_to_base_item,
         );
 
         match result {
@@ -416,7 +429,10 @@ impl Database {
             .filter_map(|item| item.id.map(|id| (id, item)))
             .collect();
 
-        Ok(ids.iter().filter_map(|id| id_to_item.get(id).cloned()).collect())
+        Ok(ids
+            .iter()
+            .filter_map(|id| id_to_item.get(id).cloned())
+            .collect())
     }
 
     /// Fetch items by IDs with SQLite C-level interrupt support.
@@ -451,13 +467,16 @@ impl Database {
         let mut stmt = conn.prepare(&sql)?;
         let params: Vec<rusqlite::types::Value> = ids.iter().map(|&id| id.into()).collect();
 
-        let mut items: Vec<StoredItem> = match stmt.query_map(rusqlite::params_from_iter(params), Self::row_to_base_item) {
-            Ok(rows) => rows.collect::<Result<Vec<_>, _>>()?,
-            Err(rusqlite::Error::SqliteFailure(err, _)) if err.code == rusqlite::ffi::ErrorCode::OperationInterrupted => {
-                return Ok(Vec::new());
-            }
-            Err(e) => return Err(e.into()),
-        };
+        let mut items: Vec<StoredItem> =
+            match stmt.query_map(rusqlite::params_from_iter(params), Self::row_to_base_item) {
+                Ok(rows) => rows.collect::<Result<Vec<_>, _>>()?,
+                Err(rusqlite::Error::SqliteFailure(err, _))
+                    if err.code == rusqlite::ffi::ErrorCode::OperationInterrupted =>
+                {
+                    return Err(DatabaseError::Interrupted);
+                }
+                Err(e) => return Err(e.into()),
+            };
 
         // Populate child content
         for item in &mut items {
@@ -472,7 +491,14 @@ impl Database {
             .filter_map(|item| item.id.map(|id| (id, item)))
             .collect();
 
-        Ok(ids.iter().filter_map(|id| id_to_item.get(id).cloned()).collect())
+        if token.is_cancelled() {
+            return Err(DatabaseError::Interrupted);
+        }
+
+        Ok(ids
+            .iter()
+            .filter_map(|id| id_to_item.get(id).cloned())
+            .collect())
     }
 
     /// Fetch all items (for index rebuilding)
@@ -514,7 +540,8 @@ impl Database {
             return Ok(Vec::new());
         }
         let target_size = (max_bytes as f64 * keep_ratio) as i64;
-        let items_to_delete = std::cmp::max(100, ((current_size - target_size) / avg_item_size) as usize);
+        let items_to_delete =
+            std::cmp::max(100, ((current_size - target_size) / avg_item_size) as usize);
 
         let mut stmt = conn.prepare("SELECT id FROM items ORDER BY timestamp ASC LIMIT ?1")?;
         let ids: Vec<i64> = stmt
@@ -581,7 +608,8 @@ impl Database {
             return Ok(0);
         }
         let target_size = (max_bytes as f64 * keep_ratio) as i64;
-        let items_to_delete = std::cmp::max(100, ((current_size - target_size) / avg_item_size) as usize);
+        let items_to_delete =
+            std::cmp::max(100, ((current_size - target_size) / avg_item_size) as usize);
 
         conn.execute(
             r#"DELETE FROM items WHERE id IN (
@@ -626,8 +654,14 @@ impl Database {
 
         // Placeholder content — will be replaced by populate_child_content
         let content = match content_type.as_str() {
-            "color" => ClipboardContent::Color { value: content_text },
-            "image" => ClipboardContent::Image { data: Vec::new(), description: content_text, is_animated: false },
+            "color" => ClipboardContent::Color {
+                value: content_text,
+            },
+            "image" => ClipboardContent::Image {
+                data: Vec::new(),
+                description: content_text,
+                is_animated: false,
+            },
             "link" => ClipboardContent::Link {
                 url: content_text,
                 metadata_state: LinkMetadataState::Pending,
@@ -636,7 +670,9 @@ impl Database {
                 display_name: content_text,
                 files: Vec::new(),
             },
-            _ => ClipboardContent::Text { value: content_text },
+            _ => ClipboardContent::Text {
+                value: content_text,
+            },
         };
 
         Ok(StoredItem {
@@ -653,20 +689,35 @@ impl Database {
 
     /// Populate the child table content for a StoredItem.
     /// Must be called after `row_to_base_item` to fill in type-specific data.
-    fn populate_child_content(conn: &rusqlite::Connection, item: &mut StoredItem, item_id: i64) -> DatabaseResult<()> {
+    fn populate_child_content(
+        conn: &rusqlite::Connection,
+        item: &mut StoredItem,
+        item_id: i64,
+    ) -> DatabaseResult<()> {
         match &item.content {
             ClipboardContent::Image { description, .. } => {
                 let description = description.clone();
-                let (data, is_animated): (Vec<u8>, bool) = conn.query_row(
-                    "SELECT data, is_animated FROM image_items WHERE itemId = ?1",
-                    [item_id],
-                    |row| {
-                        let data: Vec<u8> = row.get(0)?;
-                        let is_animated: i32 = row.get(1)?;
-                        Ok((data, is_animated != 0))
-                    },
-                ).unwrap_or_default();
-                item.content = ClipboardContent::Image { data, description, is_animated };
+                let (data, is_animated): (Vec<u8>, bool) = conn
+                    .query_row(
+                        "SELECT data, is_animated FROM image_items WHERE itemId = ?1",
+                        [item_id],
+                        |row| {
+                            let data: Vec<u8> = row.get(0)?;
+                            let is_animated: i32 = row.get(1)?;
+                            Ok((data, is_animated != 0))
+                        },
+                    )
+                    .map_err(|error| match error {
+                        rusqlite::Error::QueryReturnedNoRows => DatabaseError::InconsistentData(
+                            format!("image item {item_id} is missing its image_items child row"),
+                        ),
+                        other => DatabaseError::Sqlite(other),
+                    })?;
+                item.content = ClipboardContent::Image {
+                    data,
+                    description,
+                    is_animated,
+                };
             }
             ClipboardContent::Link { url, .. } => {
                 let url = url.clone();
@@ -680,17 +731,27 @@ impl Database {
                     },
                 );
                 let metadata_state = match result {
-                    Ok((title, desc)) => {
-                        // Reconstruct from link_items + items.thumbnail for image
-                        LinkMetadataState::from_database(
-                            title.as_deref(),
-                            desc.as_deref(),
-                            item.thumbnail.clone(),
-                        )
+                    Ok((title, desc)) => LinkMetadataState::from_database(
+                        title.as_deref(),
+                        desc.as_deref(),
+                        item.thumbnail.clone(),
+                    )
+                    .map_err(|message| {
+                        DatabaseError::InconsistentData(format!(
+                            "link item {item_id} has invalid metadata state: {message}"
+                        ))
+                    })?,
+                    Err(rusqlite::Error::QueryReturnedNoRows) => {
+                        return Err(DatabaseError::InconsistentData(format!(
+                            "link item {item_id} is missing its link_items child row"
+                        )));
                     }
-                    Err(_) => LinkMetadataState::Pending,
+                    Err(other) => return Err(DatabaseError::Sqlite(other)),
                 };
-                item.content = ClipboardContent::Link { url, metadata_state };
+                item.content = ClipboardContent::Link {
+                    url,
+                    metadata_state,
+                };
             }
             ClipboardContent::File { display_name, .. } => {
                 let display_name = display_name.clone();
@@ -717,7 +778,10 @@ impl Database {
                         })
                     })?
                     .collect::<Result<Vec<_>, _>>()?;
-                item.content = ClipboardContent::File { display_name, files };
+                item.content = ClipboardContent::File {
+                    display_name,
+                    files,
+                };
             }
             // Text, Color, Email, Phone — content_text from items is sufficient
             _ => {}
@@ -756,3 +820,70 @@ impl Database {
 // Database is now inherently thread-safe via r2d2 pool
 unsafe impl Send for Database {}
 unsafe impl Sync for Database {}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    fn seed_base_item(
+        db: &Database,
+        content_type: &str,
+        content: &str,
+        thumbnail: Option<Vec<u8>>,
+    ) -> i64 {
+        let conn = db.get_conn().unwrap();
+        conn.execute(
+            "INSERT INTO items (contentType, contentHash, content, timestamp, thumbnail) VALUES (?1, ?2, ?3, '2026-01-01 00:00:00', ?4)",
+            params![content_type, format!("hash-{content_type}-{content}"), content, thumbnail],
+        )
+        .unwrap();
+        conn.last_insert_rowid()
+    }
+
+    #[test]
+    fn test_missing_image_child_row_is_inconsistency() {
+        let db = Database::open_in_memory().unwrap();
+        let item_id = seed_base_item(&db, "image", "Image", None);
+
+        let result = db.fetch_items_by_ids(&[item_id]);
+        assert!(matches!(
+            result,
+            Err(DatabaseError::InconsistentData(message))
+            if message.contains("missing its image_items child row")
+        ));
+    }
+
+    #[test]
+    fn test_missing_link_child_row_is_inconsistency() {
+        let db = Database::open_in_memory().unwrap();
+        let item_id = seed_base_item(&db, "link", "https://example.com", None);
+
+        let result = db.fetch_items_by_ids(&[item_id]);
+        assert!(matches!(
+            result,
+            Err(DatabaseError::InconsistentData(message))
+            if message.contains("missing its link_items child row")
+        ));
+    }
+
+    #[test]
+    fn test_invalid_link_metadata_shape_is_inconsistency() {
+        let db = Database::open_in_memory().unwrap();
+        let item_id = seed_base_item(&db, "link", "https://example.com", None);
+        let conn = db.get_conn().unwrap();
+        conn.execute(
+            "INSERT INTO link_items (itemId, url, title, description) VALUES (?1, ?2, ?3, ?4)",
+            params![item_id, "https://example.com", "", "dangling"],
+        )
+        .unwrap();
+        drop(conn);
+
+        let result = db.fetch_items_by_ids(&[item_id]);
+        match result {
+            Err(DatabaseError::InconsistentData(message)) => {
+                assert!(message.contains("link item"));
+            }
+            other => panic!("expected inconsistency error, got {other:?}"),
+        }
+    }
+}

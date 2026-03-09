@@ -129,20 +129,87 @@ func handleError(_ error: Error) -> ErrorResponse {
 
 /// Lorem ipsum words for filler text
 const LOREM_WORDS: &[&str] = &[
-    "lorem", "ipsum", "dolor", "sit", "amet", "consectetur", "adipiscing", "elit",
-    "sed", "do", "eiusmod", "tempor", "incididunt", "ut", "labore", "et", "dolore",
-    "magna", "aliqua", "enim", "ad", "minim", "veniam", "quis", "nostrud",
-    "exercitation", "ullamco", "laboris", "nisi", "aliquip", "ex", "ea", "commodo",
-    "consequat", "duis", "aute", "irure", "in", "reprehenderit", "voluptate",
-    "velit", "esse", "cillum", "fugiat", "nulla", "pariatur", "excepteur", "sint",
-    "occaecat", "cupidatat", "non", "proident", "sunt", "culpa", "qui", "officia",
-    "deserunt", "mollit", "anim", "id", "est", "laborum",
+    "lorem",
+    "ipsum",
+    "dolor",
+    "sit",
+    "amet",
+    "consectetur",
+    "adipiscing",
+    "elit",
+    "sed",
+    "do",
+    "eiusmod",
+    "tempor",
+    "incididunt",
+    "ut",
+    "labore",
+    "et",
+    "dolore",
+    "magna",
+    "aliqua",
+    "enim",
+    "ad",
+    "minim",
+    "veniam",
+    "quis",
+    "nostrud",
+    "exercitation",
+    "ullamco",
+    "laboris",
+    "nisi",
+    "aliquip",
+    "ex",
+    "ea",
+    "commodo",
+    "consequat",
+    "duis",
+    "aute",
+    "irure",
+    "in",
+    "reprehenderit",
+    "voluptate",
+    "velit",
+    "esse",
+    "cillum",
+    "fugiat",
+    "nulla",
+    "pariatur",
+    "excepteur",
+    "sint",
+    "occaecat",
+    "cupidatat",
+    "non",
+    "proident",
+    "sunt",
+    "culpa",
+    "qui",
+    "officia",
+    "deserunt",
+    "mollit",
+    "anim",
+    "id",
+    "est",
+    "laborum",
 ];
 
 /// Searchable keywords to sprinkle in
 const KEYWORDS: &[&str] = &[
-    "function", "error", "return", "import", "class", "async", "await", "struct",
-    "enum", "interface", "protocol", "extension", "override", "private", "public",
+    "function",
+    "error",
+    "return",
+    "import",
+    "class",
+    "async",
+    "await",
+    "struct",
+    "enum",
+    "interface",
+    "protocol",
+    "extension",
+    "override",
+    "private",
+    "public",
 ];
 
 /// Source apps for variety
@@ -155,29 +222,29 @@ const SOURCE_APPS: &[(&str, &str)] = &[
 ];
 
 fn generate_text(target_size: usize) -> String {
-    let mut rng = rand::thread_rng();
+    let mut rng = rand::rng();
     let mut parts = Vec::new();
     let mut current_size = 0;
 
     // Start with some code snippets
-    let num_snippets = rng.gen_range(2..=5);
+    let num_snippets = rng.random_range(2..=5);
     for _ in 0..num_snippets {
-        let snippet = CODE_SNIPPETS[rng.gen_range(0..CODE_SNIPPETS.len())];
+        let snippet = CODE_SNIPPETS[rng.random_range(0..CODE_SNIPPETS.len())];
         parts.push(snippet.to_string());
         current_size += snippet.len();
     }
 
     // Fill with lorem-style text
     while current_size < target_size {
-        let paragraph_len = rng.gen_range(50..=200);
+        let paragraph_len = rng.random_range(50..=200);
         let mut words: Vec<&str> = (0..paragraph_len)
-            .map(|_| LOREM_WORDS[rng.gen_range(0..LOREM_WORDS.len())])
+            .map(|_| LOREM_WORDS[rng.random_range(0..LOREM_WORDS.len())])
             .collect();
 
         // Occasionally add searchable keywords
-        if rng.gen_bool(0.3) {
-            let insert_pos = rng.gen_range(0..words.len());
-            words.insert(insert_pos, KEYWORDS[rng.gen_range(0..KEYWORDS.len())]);
+        if rng.random_bool(0.3) {
+            let insert_pos = rng.random_range(0..words.len());
+            words.insert(insert_pos, KEYWORDS[rng.random_range(0..KEYWORDS.len())]);
         }
 
         let mut paragraph = words.join(" ");
@@ -226,23 +293,23 @@ fn main() {
     // Create database using native Rust code
     let db = Database::open(output_path.to_str().unwrap()).expect("Failed to create database");
 
-    let mut rng = rand::thread_rng();
+    let mut rng = rand::rng();
     let mut total_size = 0usize;
     let mut max_size = 0usize;
 
     for i in 0..NUM_ITEMS {
         // Determine text size (some items are extra large)
         let text_size = if i < LARGE_ITEM_COUNT {
-            rng.gen_range(50_000..=MAX_TEXT_SIZE)
+            rng.random_range(50_000..=MAX_TEXT_SIZE)
         } else {
-            rng.gen_range(MIN_TEXT_SIZE..=50_000)
+            rng.random_range(MIN_TEXT_SIZE..=50_000)
         };
 
         let text = generate_text(text_size);
         total_size += text.len();
         max_size = max_size.max(text.len());
 
-        let (app_name, bundle_id) = SOURCE_APPS[rng.gen_range(0..SOURCE_APPS.len())];
+        let (app_name, bundle_id) = SOURCE_APPS[rng.random_range(0..SOURCE_APPS.len())];
 
         let item = StoredItem::new_text(
             text,
@@ -265,7 +332,10 @@ fn main() {
     let _store = ClipboardStore::new(output_path.to_str().unwrap().to_string())
         .expect("Failed to open store for indexing");
 
-    let index_path = output_path.parent().unwrap().join(format!("tantivy_index_{}", purr::indexer::INDEX_VERSION));
+    let index_path = output_path
+        .parent()
+        .unwrap()
+        .join(format!("tantivy_index_{}", purr::indexer::INDEX_VERSION));
 
     println!();
     println!("Database created: {}", output_path.display());

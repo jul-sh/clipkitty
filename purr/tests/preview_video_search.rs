@@ -6,7 +6,7 @@
 //! - Scene 2 (0:08-0:14): Color swatches "#" -> "#f", then image "cat"
 //! - Scene 3 (0:14-0:20): Typo forgiveness "rivresid" finds "Riverside"
 
-use purr::{ClipboardStore, ClipboardStoreApi, ClipboardItem};
+use purr::{ClipboardItem, ClipboardStore, ClipboardStoreApi};
 use tempfile::TempDir;
 
 fn get_content_text(item: &ClipboardItem) -> String {
@@ -22,12 +22,20 @@ fn get_content_text(item: &ClipboardItem) -> String {
 /// Helper to create a store with specific items for ranking tests
 fn create_ranking_test_store(items: Vec<&str>) -> (ClipboardStore, TempDir) {
     let temp_dir = TempDir::new().unwrap();
-    let db_path = temp_dir.path().join("test.db").to_string_lossy().to_string();
+    let db_path = temp_dir
+        .path()
+        .join("test.db")
+        .to_string_lossy()
+        .to_string();
     let store = ClipboardStore::new(db_path).unwrap();
 
     for content in items {
         store
-            .save_text(content.to_string(), Some("Test".to_string()), Some("com.test".to_string()))
+            .save_text(
+                content.to_string(),
+                Some("Test".to_string()),
+                Some("com.test".to_string()),
+            )
             .unwrap();
         std::thread::sleep(std::time::Duration::from_millis(1100));
     }
@@ -38,9 +46,13 @@ fn create_ranking_test_store(items: Vec<&str>) -> (ClipboardStore, TempDir) {
 /// Get search result contents in order
 async fn search_contents(store: &ClipboardStore, query: &str) -> Vec<String> {
     let result = store.search(query.to_string()).await.unwrap();
-    let ids: Vec<i64> = result.matches.iter().map(|m| m.item_metadata.item_id).collect();
+    let ids: Vec<i64> = result
+        .matches
+        .iter()
+        .map(|m| m.item_metadata.item_id)
+        .collect();
     let items = store.fetch_by_ids(ids).unwrap();
-    items.iter().map(|i| get_content_text(i)).collect()
+    items.iter().map(get_content_text).collect()
 }
 
 #[tokio::test]
@@ -48,8 +60,8 @@ async fn ranking_contiguous_beats_scattered() {
     // Items added oldest to newest
     // Using "help low" which scatters "hello" as hel-lo vs contiguous "hello"
     let (store, _temp) = create_ranking_test_store(vec![
-        "help low cost items",   // "hel" + "lo" scattered, older
-        "hello world greeting",  // contiguous "hello", newer
+        "help low cost items",  // "hel" + "lo" scattered, older
+        "hello world greeting", // contiguous "hello", newer
     ]);
 
     let contents = search_contents(&store, "hello").await;
@@ -71,40 +83,72 @@ async fn ranking_recency_breaks_ties_for_equal_matches() {
     // IMPORTANT: Unix timestamps have 1-second resolution, so we need 1+ second gaps
     // between insertions for the timestamps to differ.
     let temp_dir = TempDir::new().unwrap();
-    let db_path = temp_dir.path().join("test.db").to_string_lossy().to_string();
+    let db_path = temp_dir
+        .path()
+        .join("test.db")
+        .to_string_lossy()
+        .to_string();
     let store = ClipboardStore::new(db_path).unwrap();
 
     // Insert items with 1.1 second gaps to ensure distinct timestamps
     let id1 = store
-        .save_text("hello world one".to_string(), Some("Test".to_string()), Some("com.test".to_string()))
+        .save_text(
+            "hello world one".to_string(),
+            Some("Test".to_string()),
+            Some("com.test".to_string()),
+        )
         .unwrap();
     std::thread::sleep(std::time::Duration::from_millis(1100));
 
     let id2 = store
-        .save_text("hello world two".to_string(), Some("Test".to_string()), Some("com.test".to_string()))
+        .save_text(
+            "hello world two".to_string(),
+            Some("Test".to_string()),
+            Some("com.test".to_string()),
+        )
         .unwrap();
     std::thread::sleep(std::time::Duration::from_millis(1100));
 
     let id3 = store
-        .save_text("hello world end".to_string(), Some("Test".to_string()), Some("com.test".to_string()))
+        .save_text(
+            "hello world end".to_string(),
+            Some("Test".to_string()),
+            Some("com.test".to_string()),
+        )
         .unwrap();
 
     // Verify all 3 were inserted (not deduplicated)
-    assert!(id1 > 0 && id2 > 0 && id3 > 0, "All items should be inserted");
+    assert!(
+        id1 > 0 && id2 > 0 && id3 > 0,
+        "All items should be inserted"
+    );
 
     // Search for "hello " - all 3 have equal quantized Tantivy scores
     let result = store.search("hello ".to_string()).await.unwrap();
-    let ids: Vec<i64> = result.matches.iter().map(|m| m.item_metadata.item_id).collect();
+    let ids: Vec<i64> = result
+        .matches
+        .iter()
+        .map(|m| m.item_metadata.item_id)
+        .collect();
     let items = store.fetch_by_ids(ids.clone()).unwrap();
-    let contents: Vec<String> = items.iter().map(|i| get_content_text(i)).collect();
+    let contents: Vec<String> = items.iter().map(get_content_text).collect();
 
     // All 3 items should be found
-    assert_eq!(contents.len(), 3, "Should find all 3 items, got: {:?}", contents);
+    assert_eq!(
+        contents.len(),
+        3,
+        "Should find all 3 items, got: {:?}",
+        contents
+    );
 
     // Verify deterministic ordering - with distinct timestamps, results should be stable
     for _ in 0..3 {
         let result2 = store.search("hello ".to_string()).await.unwrap();
-        let ids2: Vec<i64> = result2.matches.iter().map(|m| m.item_metadata.item_id).collect();
+        let ids2: Vec<i64> = result2
+            .matches
+            .iter()
+            .map(|m| m.item_metadata.item_id)
+            .collect();
         assert_eq!(ids, ids2, "Search ordering should be deterministic");
     }
 
@@ -130,8 +174,8 @@ async fn ranking_recency_breaks_ties_for_equal_matches() {
 #[tokio::test]
 async fn ranking_word_start_beats_mid_word() {
     let (store, _temp) = create_ranking_test_store(vec![
-        "the curl command line tool",  // url is mid-word in 'curl', older
-        "urlParser.parse(input)",       // url is at word start, newer
+        "the curl command line tool", // url is mid-word in 'curl', older
+        "urlParser.parse(input)",     // url is at word start, newer
     ]);
 
     let contents = search_contents(&store, "url").await;
@@ -150,8 +194,8 @@ async fn ranking_word_start_beats_mid_word() {
 async fn ranking_partial_match_excluded_when_atoms_missing() {
     // "hello cl" requires both "hello" and "cl" to match
     let (store, _temp) = create_ranking_test_store(vec![
-        "hello_world.py",     // has "hello" but NO 'c' at all
-        "Hello ClipKitty!",   // has both "hello" and "cl"
+        "hello_world.py",   // has "hello" but NO 'c' at all
+        "Hello ClipKitty!", // has both "hello" and "cl"
     ]);
 
     let contents = search_contents(&store, "hello cl").await;
@@ -179,8 +223,8 @@ async fn ranking_partial_match_excluded_when_atoms_missing() {
 async fn ranking_trailing_space_boosts_word_boundary() {
     // "hello " (with trailing space) should prefer content with "hello " (hello followed by space)
     let (store, _temp) = create_ranking_test_store(vec![
-        "def hello old text",          // older
-        "the hello new text",          // newer
+        "def hello old text", // older
+        "the hello new text", // newer
     ]);
 
     let contents = search_contents(&store, "hello ").await;
@@ -206,13 +250,17 @@ async fn ranking_repeated_word_should_not_boost() {
     // Without the fix, the older item can outrank the newer one because
     // the repeated "hello" inflates BM25 term-frequency and coverage boost.
     let (store, _temp) = create_ranking_test_store(vec![
-        "hello world says hello",  // older, "hello" appears twice
-        "hello world",             // newer, "hello" appears once
+        "hello world says hello", // older, "hello" appears twice
+        "hello world",            // newer, "hello" appears once
     ]);
 
     let contents = search_contents(&store, "hello").await;
 
-    assert!(contents.len() >= 2, "Should find both items, got: {:?}", contents);
+    assert!(
+        contents.len() >= 2,
+        "Should find both items, got: {:?}",
+        contents
+    );
 
     // The newer item ("hello world") should rank first because
     // recency should break the tie — repeated "hello" in the older
@@ -370,7 +418,10 @@ If you are using a standard tokenizer (split on whitespace), the `build_trigram_
     // has NO words that appear contiguously in the technical text.
 
     // Print what we got for debugging
-    println!("Search 'hello how are you doing today y' returned {} results", contents.len());
+    println!(
+        "Search 'hello how are you doing today y' returned {} results",
+        contents.len()
+    );
     for (i, c) in contents.iter().enumerate() {
         let preview: String = c.chars().take(80).collect();
         println!("  {}: {}...", i, preview.replace('\n', " "));
@@ -419,7 +470,10 @@ goodbye friend - this is the end of the document."#;
     let contents = search_contents(&store, "hello world goodbye friend").await;
 
     // Print for debugging
-    println!("Search 'hello world goodbye friend' returned {} results", contents.len());
+    println!(
+        "Search 'hello world goodbye friend' returned {} results",
+        contents.len()
+    );
     for (i, c) in contents.iter().enumerate() {
         let preview: String = c.chars().take(60).collect();
         println!("  {}: {}...", i, preview.replace('\n', " "));
@@ -521,9 +575,13 @@ tee: gateway_42235.log: Transport endpoint is not connected
     let (store, _temp) = create_ranking_test_store(vec![content]);
 
     let result = store.search(query.to_string()).await.unwrap();
-    let ids: Vec<i64> = result.matches.iter().map(|m| m.item_metadata.item_id).collect();
+    let ids: Vec<i64> = result
+        .matches
+        .iter()
+        .map(|m| m.item_metadata.item_id)
+        .collect();
     let items = store.fetch_by_ids(ids).unwrap();
-    let contents: Vec<String> = items.iter().map(|i| get_content_text(i)).collect();
+    let contents: Vec<String> = items.iter().map(get_content_text).collect();
 
     println!("\n=== DEBUG: Scattered Match Analysis ===");
     println!("Query: '{}'", query);
@@ -533,7 +591,10 @@ tee: gateway_42235.log: Transport endpoint is not connected
     if contents.is_empty() {
         println!("✓ GOOD: No match found (as expected for scattered content)");
     } else {
-        println!("✗ BAD: Found {} matches when none expected!", contents.len());
+        println!(
+            "✗ BAD: Found {} matches when none expected!",
+            contents.len()
+        );
         for (i, c) in contents.iter().enumerate() {
             let preview: String = c.chars().take(80).collect();
             println!("  Result {}: {}...", i, preview.replace('\n', " "));
