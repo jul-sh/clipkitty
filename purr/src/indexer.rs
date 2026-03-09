@@ -4,7 +4,8 @@
 //! For queries under 3 characters, returns empty (handled by search.rs streaming fallback).
 
 use crate::candidate::SearchCandidate;
-use crate::ranking::compute_bucket_score;
+use crate::ranking::{compute_bucket_score, PrefixPreferenceQuery, ScoringContext};
+use crate::search::SearchQuery;
 use chrono::Utc;
 
 /// Index version - bump this when schema changes to trigger automatic rebuild.
@@ -127,7 +128,10 @@ impl Indexer {
         Self::register_tokenizer(&index);
 
         let writer = index.writer(50_000_000)?;
-        let reader = index.reader_builder().reload_policy(ReloadPolicy::Manual).try_into()?;
+        let reader = index
+            .reader_builder()
+            .reload_policy(ReloadPolicy::Manual)
+            .try_into()?;
 
         Ok(Self::from_parts(index, writer, reader, schema))
     }
@@ -140,7 +144,10 @@ impl Indexer {
         Self::register_tokenizer(&index);
 
         let writer = index.writer(15_000_000)?;
-        let reader = index.reader_builder().reload_policy(ReloadPolicy::Manual).try_into()?;
+        let reader = index
+            .reader_builder()
+            .reload_policy(ReloadPolicy::Manual)
+            .try_into()?;
 
         Ok(Self::from_parts(index, writer, reader, schema))
     }
@@ -239,7 +246,11 @@ impl Indexer {
 
     /// Generate trigram terms from transposition variants of short words (3-4 chars).
     /// Returns only novel terms not already in `seen`.
-    fn transposition_trigrams(&self, words: &[&str], seen: &mut std::collections::HashSet<Term>) -> Vec<Term> {
+    fn transposition_trigrams(
+        &self,
+        words: &[&str],
+        seen: &mut std::collections::HashSet<Term>,
+    ) -> Vec<Term> {
         let mut extra = Vec::new();
         for word in words {
             if word.len() >= 3 && word.len() <= 4 {
@@ -267,48 +278,80 @@ impl Indexer {
     /// EXPERIMENT: Phase 2 disabled - Tantivy's additive recency scoring now
     /// matches Phase 2's bucket order, so we skip re-ranking entirely.
     pub fn search(&self, query: &str, limit: usize) -> IndexerResult<Vec<SearchCandidate>> {
+        let parsed = SearchQuery::parse(query);
+        self.search_parsed(&parsed, limit)
+    }
+
+    pub(crate) fn search_parsed(
+        &self,
+        query: &SearchQuery,
+        limit: usize,
+    ) -> IndexerResult<Vec<SearchCandidate>> {
         #[cfg(feature = "perf-log")]
         let t0 = std::time::Instant::now();
-        let candidates = self.trigram_recall(query, limit)?;
+        let recall_text = query.recall_text();
+        let candidates = self.trigram_recall(recall_text, limit)?;
         #[cfg(feature = "perf-log")]
         let t1 = std::time::Instant::now();
 
-        if candidates.is_empty() || query.split_whitespace().count() == 0 {
+        if candidates.is_empty() || recall_text.split_whitespace().count() == 0 {
             #[cfg(feature = "perf-log")]
-            eprintln!("[perf] phase1={:.1}ms candidates=0", (t1 - t0).as_secs_f64() * 1000.0);
+            eprintln!(
+                "[perf] phase1={:.1}ms candidates=0",
+                (t1 - t0).as_secs_f64() * 1000.0
+            );
             return Ok(candidates);
         }
 
         // Phase 2: Bucket re-ranking (parallelized — compute_bucket_score is a pure function)
-        let query_words_owned = crate::search::tokenize_words(query);
-        let query_words: Vec<&str> = query_words_owned.iter().map(|(_, _, w)| w.as_str()).collect();
-        let last_word_is_prefix = query.ends_with(|c: char| c.is_alphanumeric());
+        let query_words_owned = crate::search::tokenize_words(recall_text);
+        let query_words: Vec<&str> = query_words_owned
+            .iter()
+            .map(|(_, _, w)| w.as_str())
+            .collect();
+        let last_word_is_prefix = recall_text.ends_with(|c: char| c.is_alphanumeric());
+        let prefix_preference = match query {
+            SearchQuery::Plain { .. } => None,
+            SearchQuery::PreferPrefix {
+                raw_text,
+                stripped_text,
+            } => Some((raw_text.to_lowercase(), stripped_text.to_lowercase())),
+        };
         let now = Utc::now().timestamp();
 
         use rayon::prelude::*;
-        let mut scored: Vec<(crate::ranking::BucketScore, usize)> = candidates
-            .par_iter()
-            .enumerate()
-            .map(|(i, c)| {
-                let content_lower = c.content().to_lowercase();
-                let doc_words = crate::search::tokenize_words(&content_lower);
-                let doc_word_strs: Vec<&str> = doc_words.iter().map(|(_, _, w)| w.as_str()).collect();
-                let bucket = compute_bucket_score(
-                    &content_lower,
-                    &doc_word_strs,
-                    &query_words,
-                    last_word_is_prefix,
-                    c.timestamp,
-                    c.tantivy_score,
-                    now,
-                );
-                (bucket, i)
-            })
-            // Filter candidates with no real word matches (only punctuation matched).
-            // This ensures highlighting will always produce visible highlights,
-            // allowing us to skip the post-highlight filter in search_trigram.
-            .filter(|(bucket, _)| bucket.words_matched_weight > 0)
-            .collect();
+        let mut scored: Vec<(crate::ranking::BucketScore, usize)> =
+            candidates
+                .par_iter()
+                .enumerate()
+                .map(|(i, c)| {
+                    let content_lower = c.content().to_lowercase();
+                    let doc_words = crate::search::tokenize_words(&content_lower);
+                    let doc_word_strs: Vec<&str> =
+                        doc_words.iter().map(|(_, _, w)| w.as_str()).collect();
+                    let prefix_preference_query = prefix_preference.as_ref().map(
+                        |(raw_query_lower, stripped_query_lower)| PrefixPreferenceQuery {
+                            raw_query_lower,
+                            stripped_query_lower,
+                        },
+                    );
+                    let bucket = compute_bucket_score(&ScoringContext {
+                        content_lower: &content_lower,
+                        doc_word_strs: &doc_word_strs,
+                        query_words: &query_words,
+                        last_word_is_prefix,
+                        prefix_preference: prefix_preference_query,
+                        timestamp: c.timestamp,
+                        bm25_score: c.tantivy_score,
+                        now,
+                    });
+                    (bucket, i)
+                })
+                // Filter candidates with no real word matches (only punctuation matched).
+                // This ensures highlighting will always produce visible highlights,
+                // allowing us to skip the post-highlight filter in search_trigram.
+                .filter(|(bucket, _)| bucket.words_matched_weight() > 0)
+                .collect();
 
         scored.sort_unstable_by(|a, b| b.0.cmp(&a.0));
         scored.truncate(limit);
@@ -343,8 +386,8 @@ impl Indexer {
         let searcher = reader.searcher();
 
         // Query too short for trigrams — return empty vec (caller handles fallback)
-        let has_trigrams = query.split_whitespace().any(|w| w.len() >= 3)
-            || query.trim().len() >= 3;
+        let has_trigrams =
+            query.split_whitespace().any(|w| w.len() >= 3) || query.trim().len() >= 3;
         if !has_trigrams {
             return Ok(Vec::new());
         }
@@ -355,8 +398,8 @@ impl Indexer {
         let timestamp_field = self.schema.get_field("timestamp").unwrap();
         let now = Utc::now().timestamp();
 
-        let top_collector = TopDocs::with_limit(limit)
-            .tweak_score(move |segment_reader: &tantivy::SegmentReader| {
+        let top_collector = TopDocs::with_limit(limit).tweak_score(
+            move |segment_reader: &tantivy::SegmentReader| {
                 let ts_reader = segment_reader
                     .fast_fields()
                     .i64("timestamp")
@@ -394,7 +437,8 @@ impl Indexer {
                     // 3. base_remainder (BM25) * 1.0 = typically 0-50
                     recency_score * 10.0 + proximity_tier * 100.0 + base_remainder
                 }
-            });
+            },
+        );
 
         let top_docs = searcher.search(final_query.as_ref(), &top_collector)?;
 
@@ -417,7 +461,12 @@ impl Indexer {
                 .and_then(|v| v.as_i64())
                 .unwrap_or(0);
 
-            candidates.push(SearchCandidate::new(id, content, timestamp, blended_score as f32));
+            candidates.push(SearchCandidate::new(
+                id,
+                content,
+                timestamp,
+                blended_score as f32,
+            ));
         }
 
         Ok(candidates)
@@ -577,7 +626,7 @@ impl Indexer {
             } else if num_terms >= 7 {
                 (num_terms * 2 / 3).max(5)
             } else {
-                (num_terms + 1) / 2
+                num_terms.div_ceil(2)
             };
             recall_query.set_minimum_number_should_match(min_match);
         }
@@ -591,16 +640,24 @@ impl Indexer {
             // pathway is limited to 1-3 word queries, the threshold stays
             // tight enough to avoid scattered common-word matches.
             let n = fuzzy_clauses.len();
-            let fuzzy_min = (n + 1) / 2;
-            let fuzzy_subqueries: Vec<(Occur, Box<dyn tantivy::query::Query>)> =
-                fuzzy_clauses.into_iter().map(|q| (Occur::Should, q)).collect();
+            let fuzzy_min = n.div_ceil(2);
+            let fuzzy_subqueries: Vec<(Occur, Box<dyn tantivy::query::Query>)> = fuzzy_clauses
+                .into_iter()
+                .map(|q| (Occur::Should, q))
+                .collect();
             let mut fuzzy_bool = BooleanQuery::new(fuzzy_subqueries);
             fuzzy_bool.set_minimum_number_should_match(fuzzy_min);
 
             // OR: document passes if it matches EITHER trigrams OR fuzzy words
             let mut combined = BooleanQuery::new(vec![
-                (Occur::Should, Box::new(recall_query) as Box<dyn tantivy::query::Query>),
-                (Occur::Should, Box::new(fuzzy_bool) as Box<dyn tantivy::query::Query>),
+                (
+                    Occur::Should,
+                    Box::new(recall_query) as Box<dyn tantivy::query::Query>,
+                ),
+                (
+                    Occur::Should,
+                    Box::new(fuzzy_bool) as Box<dyn tantivy::query::Query>,
+                ),
             ]);
             combined.set_minimum_number_should_match(1);
             Box::new(combined)
@@ -634,8 +691,6 @@ impl Indexer {
     }
 }
 
-
-
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -654,7 +709,9 @@ mod tests {
         // but NOT doc 2 (has "hel" from "shell" but not contiguous "hello")
         let phrase_terms = indexer.trigram_terms("hello");
         let phrase_q = tantivy::query::PhraseQuery::new(phrase_terms);
-        let results = searcher.search(&phrase_q, &TopDocs::with_limit(10)).unwrap();
+        let results = searcher
+            .search(&phrase_q, &TopDocs::with_limit(10))
+            .unwrap();
         assert_eq!(results.len(), 1, "PhraseQuery should find exactly 1 doc");
     }
 
@@ -696,7 +753,9 @@ mod tests {
         let indexer = Indexer::new_in_memory().unwrap();
 
         for i in 0..10 {
-            indexer.add_document(i, &format!("Item {}", i), i * 1000).unwrap();
+            indexer
+                .add_document(i, &format!("Item {}", i), i * 1000)
+                .unwrap();
         }
         indexer.commit().unwrap();
         assert_eq!(indexer.num_docs(), 10);
@@ -709,13 +768,19 @@ mod tests {
     fn test_transposition_recall_single_short_word() {
         // "teh" (transposition of "the") should recall a doc containing "the"
         let indexer = Indexer::new_in_memory().unwrap();
-        indexer.add_document(1, "the quick brown fox", 1000).unwrap();
+        indexer
+            .add_document(1, "the quick brown fox", 1000)
+            .unwrap();
         indexer.add_document(2, "a slow red dog", 1000).unwrap();
         indexer.commit().unwrap();
 
         let results = indexer.search("teh", 10).unwrap();
         let ids: Vec<i64> = results.iter().map(|c| c.id).collect();
-        assert!(ids.contains(&1), "transposition 'teh' should recall doc with 'the', got {:?}", ids);
+        assert!(
+            ids.contains(&1),
+            "transposition 'teh' should recall doc with 'the', got {:?}",
+            ids
+        );
         assert!(!ids.contains(&2));
     }
 
@@ -723,27 +788,41 @@ mod tests {
     fn test_transposition_recall_multi_word() {
         // "form react" where "form" is a transposition of "from"
         let indexer = Indexer::new_in_memory().unwrap();
-        indexer.add_document(1, "import Button from react", 1000).unwrap();
-        indexer.add_document(2, "html form element submit", 1000).unwrap();
+        indexer
+            .add_document(1, "import Button from react", 1000)
+            .unwrap();
+        indexer
+            .add_document(2, "html form element submit", 1000)
+            .unwrap();
         indexer.commit().unwrap();
 
         let results = indexer.search("form react", 10).unwrap();
         let ids: Vec<i64> = results.iter().map(|c| c.id).collect();
         // Doc 1 should be recalled: "from" matches via transposition, "react" matches exact
-        assert!(ids.contains(&1), "'form react' should recall doc with 'from react', got {:?}", ids);
+        assert!(
+            ids.contains(&1),
+            "'form react' should recall doc with 'from react', got {:?}",
+            ids
+        );
     }
 
     #[test]
     fn test_transposition_trigrams_dedup() {
         // Variant trigrams that duplicate originals shouldn't cause issues
         let indexer = Indexer::new_in_memory().unwrap();
-        indexer.add_document(1, "and also other things", 1000).unwrap();
+        indexer
+            .add_document(1, "and also other things", 1000)
+            .unwrap();
         indexer.commit().unwrap();
 
         // "adn" transpositions: "dan", "and" — "and" trigram already exists in doc
         let results = indexer.search("adn", 10).unwrap();
         let ids: Vec<i64> = results.iter().map(|c| c.id).collect();
-        assert!(ids.contains(&1), "'adn' should recall doc with 'and', got {:?}", ids);
+        assert!(
+            ids.contains(&1),
+            "'adn' should recall doc with 'and', got {:?}",
+            ids
+        );
     }
 
     // ── Fuzzy word recall tests ─────────────────────────────────
@@ -759,7 +838,11 @@ mod tests {
 
         let results = indexer.search("tast", 10).unwrap();
         let ids: Vec<i64> = results.iter().map(|c| c.id).collect();
-        assert!(ids.contains(&1), "substitution 'tast' should recall doc with 'test', got {:?}", ids);
+        assert!(
+            ids.contains(&1),
+            "substitution 'tast' should recall doc with 'test', got {:?}",
+            ids
+        );
         assert!(!ids.contains(&2));
     }
 
@@ -773,7 +856,11 @@ mod tests {
 
         let results = indexer.search("tesst", 10).unwrap();
         let ids: Vec<i64> = results.iter().map(|c| c.id).collect();
-        assert!(ids.contains(&1), "insertion 'tesst' should recall doc with 'test', got {:?}", ids);
+        assert!(
+            ids.contains(&1),
+            "insertion 'tesst' should recall doc with 'test', got {:?}",
+            ids
+        );
         assert!(!ids.contains(&2));
     }
 
@@ -787,20 +874,32 @@ mod tests {
 
         let results = indexer.search("tst", 10).unwrap();
         let ids: Vec<i64> = results.iter().map(|c| c.id).collect();
-        assert!(ids.contains(&1), "deletion 'tst' should recall doc with 'test', got {:?}", ids);
+        assert!(
+            ids.contains(&1),
+            "deletion 'tst' should recall doc with 'test', got {:?}",
+            ids
+        );
     }
 
     #[test]
     fn test_fuzzy_word_multi_word_query() {
         // "quikc brown" — substitution typo in "quick"
         let indexer = Indexer::new_in_memory().unwrap();
-        indexer.add_document(1, "the quick brown fox jumps", 1000).unwrap();
-        indexer.add_document(2, "a slow red dog sleeps", 1000).unwrap();
+        indexer
+            .add_document(1, "the quick brown fox jumps", 1000)
+            .unwrap();
+        indexer
+            .add_document(2, "a slow red dog sleeps", 1000)
+            .unwrap();
         indexer.commit().unwrap();
 
         let results = indexer.search("quikc brown", 10).unwrap();
         let ids: Vec<i64> = results.iter().map(|c| c.id).collect();
-        assert!(ids.contains(&1), "'quikc brown' should recall doc with 'quick brown', got {:?}", ids);
+        assert!(
+            ids.contains(&1),
+            "'quikc brown' should recall doc with 'quick brown', got {:?}",
+            ids
+        );
         assert!(!ids.contains(&2));
     }
 
@@ -808,13 +907,21 @@ mod tests {
     fn test_existing_trigram_recall_unchanged() {
         // Exact match still works through the trigram pathway
         let indexer = Indexer::new_in_memory().unwrap();
-        indexer.add_document(1, "hello world greeting", 1000).unwrap();
-        indexer.add_document(2, "goodbye universe farewell", 1000).unwrap();
+        indexer
+            .add_document(1, "hello world greeting", 1000)
+            .unwrap();
+        indexer
+            .add_document(2, "goodbye universe farewell", 1000)
+            .unwrap();
         indexer.commit().unwrap();
 
         let results = indexer.search("hello", 10).unwrap();
         let ids: Vec<i64> = results.iter().map(|c| c.id).collect();
-        assert!(ids.contains(&1), "exact 'hello' should recall doc 1, got {:?}", ids);
+        assert!(
+            ids.contains(&1),
+            "exact 'hello' should recall doc 1, got {:?}",
+            ids
+        );
         assert!(!ids.contains(&2));
     }
 }

@@ -74,6 +74,15 @@ enum PasteMode {
     }
 }
 
+#if SPARKLE_RELEASE
+/// State of update checking
+enum UpdateCheckState: Equatable {
+    case idle
+    case available
+    case checkFailed
+}
+#endif
+
 @MainActor
 final class AppSettings: ObservableObject {
     static let shared = AppSettings()
@@ -109,30 +118,15 @@ final class AppSettings: ObservableObject {
     }
 
 
-    #if !APP_STORE
-    enum UpdateCheckState: Equatable {
-        case idle
-        case available
-        case checkFailed
-    }
-
+    #if SPARKLE_RELEASE
     @Published var updateCheckState: UpdateCheckState = .idle
-
-    /// Records when consecutive update-check failures started. Persisted to UserDefaults.
-    var updateCheckFailingSince: Date? {
-        get { defaults.object(forKey: updateCheckFailingSinceKey) as? Date }
-        set { defaults.set(newValue, forKey: updateCheckFailingSinceKey) }
+    @Published var autoInstallUpdates: Bool {
+        didSet { save() }
     }
     #endif
 
     let maxImageMegapixels: Double
     let imageCompressionQuality: Double
-
-    #if !APP_STORE
-    @Published var autoInstallUpdates: Bool {
-        didSet { save() }
-    }
-    #endif
 
     @Published var launchAtLoginEnabled: Bool {
         didSet { save() }
@@ -176,9 +170,8 @@ final class AppSettings: ObservableObject {
     private let generateLinkPreviewsKey = "generateLinkPreviews"
     private let ignoredAppBundleIdsKey = "ignoredAppBundleIds"
     private let clickToOpenKey = "clickToOpenEnabled"
-    #if !APP_STORE
+    #if SPARKLE_RELEASE
     private let autoInstallUpdatesKey = "autoInstallUpdates"
-    private let updateCheckFailingSinceKey = "updateCheckFailingSince"
     #endif
 
     /// Flag to prevent save() calls during initialization (didSet triggers before init completes)
@@ -206,7 +199,7 @@ final class AppSettings: ObservableObject {
         #endif
         autoPasteEnabled = defaults.object(forKey: autoPasteKey) as? Bool ?? true
         clickToOpenEnabled = defaults.object(forKey: clickToOpenKey) as? Bool ?? true
-        #if !APP_STORE
+        #if SPARKLE_RELEASE
         autoInstallUpdates = defaults.object(forKey: autoInstallUpdatesKey) as? Bool ?? true
         #endif
 
@@ -247,7 +240,7 @@ final class AppSettings: ObservableObject {
         defaults.set(generateLinkPreviews, forKey: generateLinkPreviewsKey)
         defaults.set(Array(ignoredAppBundleIds).sorted(), forKey: ignoredAppBundleIdsKey)
         defaults.set(clickToOpenEnabled, forKey: clickToOpenKey)
-        #if !APP_STORE
+        #if SPARKLE_RELEASE
         defaults.set(autoInstallUpdates, forKey: autoInstallUpdatesKey)
         #endif
     }

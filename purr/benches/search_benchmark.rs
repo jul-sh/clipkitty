@@ -1,8 +1,8 @@
 use criterion::{criterion_group, criterion_main, Criterion};
 use purr::ClipboardStore;
 use purr::ClipboardStoreApi;
-use rand::seq::SliceRandom;
 use rand::rngs::StdRng;
+use rand::seq::SliceRandom;
 use rand::SeedableRng;
 use std::collections::hash_map::DefaultHasher;
 use std::hash::{Hash, Hasher};
@@ -72,7 +72,10 @@ fn generate_bench_db(out_path: &std::path::Path) {
         drop(store);
     }
     // Clean up the tantivy index created as a side-effect; only the sqlite file is needed.
-    let tantivy_dir = out_path.parent().unwrap().join(format!("tantivy_index_{}", purr::indexer::INDEX_VERSION));
+    let tantivy_dir = out_path
+        .parent()
+        .unwrap()
+        .join(format!("tantivy_index_{}", purr::indexer::INDEX_VERSION));
     if tantivy_dir.exists() {
         std::fs::remove_dir_all(&tantivy_dir).ok();
     }
@@ -151,11 +154,7 @@ fn bench_search(c: &mut Criterion) {
 
     for (name, query) in queries {
         group.bench_function(name, |b| {
-            b.iter(|| {
-                rt.block_on(async {
-                    store.search(query.to_string()).await.unwrap()
-                })
-            });
+            b.iter(|| rt.block_on(async { store.search(query.to_string()).await.unwrap() }));
         });
     }
     group.finish();
@@ -183,7 +182,7 @@ fn bench_search_large_docs(c: &mut Criterion) {
         ("large_function", "function"),
         ("large_error", "error"),
         ("large_class", "class"),
-        ("large_fuzzy", "functoin"),  // typo - will use fuzzy matching
+        ("large_fuzzy", "functoin"), // typo - will use fuzzy matching
         ("large_multi", "error return"),
         ("large_lorem", "lorem ipsum"),
     ];
@@ -193,11 +192,7 @@ fn bench_search_large_docs(c: &mut Criterion) {
 
     for (name, query) in queries {
         group.bench_function(name, |b| {
-            b.iter(|| {
-                rt.block_on(async {
-                    store.search(query.to_string()).await.unwrap()
-                })
-            });
+            b.iter(|| rt.block_on(async { store.search(query.to_string()).await.unwrap() }));
         });
     }
     group.finish();

@@ -31,7 +31,8 @@ fn tokenize_words(content: &str) -> Vec<(usize, usize, String)> {
 
 /// Convert char index to UTF-16 code unit index
 fn char_to_utf16_index(content: &str, char_index: usize) -> usize {
-    content.chars()
+    content
+        .chars()
         .take(char_index)
         .map(|c| c.len_utf16())
         .sum()
@@ -46,23 +47,26 @@ fn test_char_vs_utf16_position_mismatch() {
     println!("Content UTF-16 length: {}", content.encode_utf16().count());
 
     // Find where emojis/special chars cause drift
-    let mut char_idx = 0usize;
     let mut utf16_idx = 0usize;
     let mut drift_points = Vec::new();
 
-    for ch in content.chars() {
+    for (char_idx, ch) in content.chars().enumerate() {
         let utf16_len = ch.len_utf16();
         if utf16_len != 1 {
             drift_points.push((char_idx, utf16_idx, ch, utf16_len));
         }
-        char_idx += 1;
         utf16_idx += utf16_len;
     }
 
-    println!("\nFound {} characters that cause position drift:", drift_points.len());
+    println!(
+        "\nFound {} characters that cause position drift:",
+        drift_points.len()
+    );
     for (ci, ui, ch, len) in drift_points.iter().take(20) {
-        println!("  Char {} / UTF16 {}: '{}' (U+{:04X}) takes {} UTF-16 units",
-                 ci, ui, ch, *ch as u32, len);
+        println!(
+            "  Char {} / UTF16 {}: '{}' (U+{:04X}) takes {} UTF-16 units",
+            ci, ui, ch, *ch as u32, len
+        );
     }
     if drift_points.len() > 20 {
         println!("  ... and {} more", drift_points.len() - 20);
@@ -91,15 +95,18 @@ fn test_char_vs_utf16_position_mismatch() {
             // For UTF-16, we need to use the original string
             let utf16_units: Vec<u16> = content.encode_utf16().collect();
             let from_utf16: String = if utf16_end <= utf16_units.len() {
-                String::from_utf16(&utf16_units[utf16_start..utf16_end]).unwrap_or("ERROR".to_string())
+                String::from_utf16(&utf16_units[utf16_start..utf16_end])
+                    .unwrap_or("ERROR".to_string())
             } else {
                 "OUT OF BOUNDS".to_string()
             };
 
             let drift = utf16_start as i64 - *char_start as i64;
 
-            println!("'files' at char {}-{} / UTF16 {}-{} (drift: {})",
-                     char_start, char_end, utf16_start, utf16_end, drift);
+            println!(
+                "'files' at char {}-{} / UTF16 {}-{} (drift: {})",
+                char_start, char_end, utf16_start, utf16_end, drift
+            );
             println!("  From char indices: '{}'", from_char_idx);
             println!("  From UTF16 indices: '{}'", from_utf16);
 
@@ -108,7 +115,8 @@ fn test_char_vs_utf16_position_mismatch() {
                 let utf16_len = utf16_units.len();
                 let wrong_end = (*char_end).min(utf16_len);
                 let wrong_text = if *char_start < utf16_len && wrong_end <= utf16_len {
-                    String::from_utf16(&utf16_units[*char_start..wrong_end]).unwrap_or("ERROR".to_string())
+                    String::from_utf16(&utf16_units[*char_start..wrong_end])
+                        .unwrap_or("ERROR".to_string())
                 } else {
                     "OUT OF BOUNDS".to_string()
                 };
@@ -141,8 +149,11 @@ fn test_find_iles_location() {
         }
 
         let context = &content[start..end];
-        println!("\nFound 'iles' at char {}: ...{}...",
-                 char_pos, context.replace('\n', "↵"));
+        println!(
+            "\nFound 'iles' at char {}: ...{}...",
+            char_pos,
+            context.replace('\n', "↵")
+        );
     }
 }
 
@@ -161,7 +172,10 @@ fn test_example3_files_position() {
         println!("  Byte index: {}", byte_idx);
         println!("  Char index: {}", char_idx);
         println!("  UTF-16 index: {}", utf16_idx);
-        println!("  Drift (UTF16 - Char): {}", utf16_idx as i64 - char_idx as i64);
+        println!(
+            "  Drift (UTF16 - Char): {}",
+            utf16_idx as i64 - char_idx as i64
+        );
 
         // Find "Files" within this line
         let files_offset = "### Example 3: Finding Large ".len();
@@ -180,12 +194,18 @@ fn test_example3_files_position() {
         let wrong_text = String::from_utf16(&utf16_units[files_char..files_char + files_len])
             .unwrap_or("ERROR".to_string());
 
-        println!("\n⚠️  If Swift uses Rust's char index ({}) on NSString:", files_char);
+        println!(
+            "\n⚠️  If Swift uses Rust's char index ({}) on NSString:",
+            files_char
+        );
         println!("   It would extract: '{}'", wrong_text);
 
         // What SHOULD it get using UTF-16 index?
         let correct_text = String::from_utf16(&utf16_units[files_utf16..files_utf16 + files_len])
             .unwrap_or("ERROR".to_string());
-        println!("   It SHOULD extract (using UTF-16 index {}): '{}'", files_utf16, correct_text);
+        println!(
+            "   It SHOULD extract (using UTF-16 index {}): '{}'",
+            files_utf16, correct_text
+        );
     }
 }

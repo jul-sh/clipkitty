@@ -42,7 +42,9 @@ impl FileStatus {
     /// Reconstruct from database string
     pub fn from_database_str(s: &str) -> Self {
         if let Some(path) = s.strip_prefix("moved:") {
-            FileStatus::Moved { new_path: path.to_string() }
+            FileStatus::Moved {
+                new_path: path.to_string(),
+            }
         } else {
             match s {
                 "trashed" => FileStatus::Trashed,
@@ -96,7 +98,9 @@ pub enum ItemIcon {
 
 impl Default for ItemIcon {
     fn default() -> Self {
-        ItemIcon::Symbol { icon_type: IconType::Text }
+        ItemIcon::Symbol {
+            icon_type: IconType::Text,
+        }
     }
 }
 
@@ -113,7 +117,9 @@ impl ItemIcon {
                 if let Some(rgba) = color_rgba {
                     ItemIcon::ColorSwatch { rgba }
                 } else {
-                    ItemIcon::Symbol { icon_type: IconType::Color }
+                    ItemIcon::Symbol {
+                        icon_type: IconType::Color,
+                    }
                 }
             }
             "image" | "link" | "file" => {
@@ -128,56 +134,129 @@ impl ItemIcon {
                     ItemIcon::Symbol { icon_type }
                 }
             }
-            _ => ItemIcon::Symbol { icon_type: IconType::Text },
+            _ => ItemIcon::Symbol {
+                icon_type: IconType::Text,
+            },
         }
     }
+}
+
+/// Legal payloads for a successful link metadata fetch.
+#[derive(Debug, Clone, PartialEq, Eq, uniffi::Enum)]
+pub enum LinkMetadataPayload {
+    TitleOnly {
+        title: String,
+        description: Option<String>,
+    },
+    ImageOnly {
+        image_data: Vec<u8>,
+        description: Option<String>,
+    },
+    TitleAndImage {
+        title: String,
+        image_data: Vec<u8>,
+        description: Option<String>,
+    },
 }
 
 /// Link metadata fetch state
 #[derive(Debug, Clone, PartialEq, Eq, uniffi::Enum)]
 pub enum LinkMetadataState {
     Pending,
-    Loaded {
-        title: Option<String>,
-        description: Option<String>,
-        image_data: Option<Vec<u8>>,
-    },
+    Loaded { payload: LinkMetadataPayload },
     Failed,
+}
+
+impl LinkMetadataPayload {
+    fn normalized_description(description: Option<&str>) -> Option<String> {
+        description
+            .map(str::trim)
+            .filter(|value| !value.is_empty())
+            .map(String::from)
+    }
 }
 
 impl LinkMetadataState {
     /// Convert to database fields (title, description, image_data)
-    /// NULL title = pending, empty title = failed, otherwise = loaded
+    /// NULL title = pending, empty title = failed, otherwise = loaded.
     pub fn to_database_fields(&self) -> (Option<String>, Option<String>, Option<Vec<u8>>) {
         match self {
             LinkMetadataState::Pending => (None, None, None),
             LinkMetadataState::Failed => (Some(String::new()), None, None),
-            LinkMetadataState::Loaded { title, description, image_data } => {
-                (
-                    Some(title.clone().unwrap_or_default()),
+            LinkMetadataState::Loaded { payload } => match payload {
+                LinkMetadataPayload::TitleOnly { title, description } => {
+                    (Some(title.clone()), description.clone(), None)
+                }
+                LinkMetadataPayload::ImageOnly {
+                    image_data,
+                    description,
+                } => (None, description.clone(), Some(image_data.clone())),
+                LinkMetadataPayload::TitleAndImage {
+                    title,
+                    image_data,
+                    description,
+                } => (
+                    Some(title.clone()),
                     description.clone(),
-                    image_data.clone(),
-                )
-            }
+                    Some(image_data.clone()),
+                ),
+            },
         }
     }
 
-    /// Reconstruct from database fields
-    pub fn from_database(title: Option<&str>, description: Option<&str>, image_data: Option<Vec<u8>>) -> Self {
-        match (title, &image_data) {
-            (None, None) => LinkMetadataState::Pending,
-            (Some(""), None) => LinkMetadataState::Failed,
-            (Some(t), img) => LinkMetadataState::Loaded {
-                title: if t.is_empty() { None } else { Some(t.to_string()) },
-                description: description.filter(|d| !d.is_empty()).map(String::from),
-                image_data: img.clone(),
-            },
-            // Has image but no title - still loaded (some sites only have images)
-            (None, Some(img)) => LinkMetadataState::Loaded {
-                title: None,
-                description: description.filter(|d| !d.is_empty()).map(String::from),
-                image_data: Some(img.clone()),
-            },
+    /// Reconstruct from database fields, surfacing invalid combinations instead of
+    /// silently coercing them into another state.
+    pub fn from_database(
+        title: Option<&str>,
+        description: Option<&str>,
+        image_data: Option<Vec<u8>>,
+    ) -> Result<Self, String> {
+        let normalized_title = title
+            .map(str::trim)
+            .filter(|value| !value.is_empty())
+            .map(String::from);
+        let normalized_description = LinkMetadataPayload::normalized_description(description);
+
+        match (title, normalized_title, normalized_description, image_data) {
+            (None, None, None, None) => Ok(LinkMetadataState::Pending),
+            (Some(""), None, None, None) => Ok(LinkMetadataState::Failed),
+            (Some(raw_title), None, _, Some(_)) if raw_title.trim().is_empty() => {
+                Err("failed link metadata row unexpectedly stored image data".to_string())
+            }
+            (Some(raw_title), None, Some(_), None) if raw_title.trim().is_empty() => {
+                Err("failed link metadata row unexpectedly stored description".to_string())
+            }
+            (Some(_), Some(title), description, None) => Ok(LinkMetadataState::Loaded {
+                payload: LinkMetadataPayload::TitleOnly { title, description },
+            }),
+            (None, None, description, Some(image_data)) => Ok(LinkMetadataState::Loaded {
+                payload: LinkMetadataPayload::ImageOnly {
+                    image_data,
+                    description,
+                },
+            }),
+            (Some(_), Some(title), description, Some(image_data)) => {
+                Ok(LinkMetadataState::Loaded {
+                    payload: LinkMetadataPayload::TitleAndImage {
+                        title,
+                        image_data,
+                        description,
+                    },
+                })
+            }
+            (None, None, Some(_), None) => {
+                Err("link metadata row stored a description without a title or image".to_string())
+            }
+            (None, Some(_), _, _) => Err(
+                "link metadata row normalized to a title without an underlying title column"
+                    .to_string(),
+            ),
+            (Some(raw_title), None, _, None) => Err(format!(
+                "link metadata row stored an invalid title value `{raw_title}`"
+            )),
+            (Some(raw_title), None, _, Some(_)) => Err(format!(
+                "link metadata row stored an invalid title value `{raw_title}`"
+            )),
         }
     }
 }
@@ -198,10 +277,21 @@ pub struct FileEntry {
 /// Type-safe clipboard content representation
 #[derive(Debug, Clone, PartialEq, uniffi::Enum)]
 pub enum ClipboardContent {
-    Text { value: String },
-    Color { value: String },
-    Link { url: String, metadata_state: LinkMetadataState },
-    Image { data: Vec<u8>, description: String, is_animated: bool },
+    Text {
+        value: String,
+    },
+    Color {
+        value: String,
+    },
+    Link {
+        url: String,
+        metadata_state: LinkMetadataState,
+    },
+    Image {
+        data: Vec<u8>,
+        description: String,
+        is_animated: bool,
+    },
     File {
         display_name: String,
         files: Vec<FileEntry>,
@@ -344,6 +434,8 @@ pub struct ClipboardItem {
 pub enum ClipKittyError {
     #[error("Database error: {0}")]
     DatabaseError(String),
+    #[error("Database inconsistency: {0}")]
+    DataInconsistency(String),
     #[error("Index error: {0}")]
     IndexError(String),
     #[error("Store not initialized")]
@@ -374,7 +466,11 @@ pub trait ClipboardStoreApi: Send + Sync {
     /// Called on-demand for visible items in the list view.
     /// Returns MatchData for each item in the same order as input IDs.
     /// Missing items are returned as MatchData with empty highlights.
-    fn compute_highlights(&self, item_ids: Vec<i64>, query: String) -> Result<Vec<MatchData>, ClipKittyError>;
+    fn compute_highlights(
+        &self,
+        item_ids: Vec<i64>,
+        query: String,
+    ) -> Result<Vec<MatchData>, ClipKittyError>;
 
     /// Fetch full items by IDs for preview pane
     fn fetch_by_ids(&self, item_ids: Vec<i64>) -> Result<Vec<ClipboardItem>, ClipKittyError>;
@@ -387,12 +483,25 @@ pub trait ClipboardStoreApi: Send + Sync {
     // ─────────────────────────────────────────────────────────────────────────────
 
     /// Save a text item. Returns new item ID, or 0 if duplicate.
-    fn save_text(&self, text: String, source_app: Option<String>, source_app_bundle_id: Option<String>) -> Result<i64, ClipKittyError>;
+    fn save_text(
+        &self,
+        text: String,
+        source_app: Option<String>,
+        source_app_bundle_id: Option<String>,
+    ) -> Result<i64, ClipKittyError>;
 
     /// Save an image item. Thumbnail should be generated by Swift (HEIC not supported by Rust).
-    fn save_image(&self, image_data: Vec<u8>, thumbnail: Option<Vec<u8>>, source_app: Option<String>, source_app_bundle_id: Option<String>, is_animated: bool) -> Result<i64, ClipKittyError>;
+    fn save_image(
+        &self,
+        image_data: Vec<u8>,
+        thumbnail: Option<Vec<u8>>,
+        source_app: Option<String>,
+        source_app_bundle_id: Option<String>,
+        is_animated: bool,
+    ) -> Result<i64, ClipKittyError>;
 
     /// Save a file item. Returns new item ID, or 0 if duplicate.
+    #[allow(clippy::too_many_arguments)]
     fn save_file(
         &self,
         path: String,
@@ -406,6 +515,7 @@ pub trait ClipboardStoreApi: Send + Sync {
     ) -> Result<i64, ClipKittyError>;
 
     /// Save multiple file items as a single grouped entry. Returns new item ID, or 0 if duplicate.
+    #[allow(clippy::too_many_arguments)]
     fn save_files(
         &self,
         paths: Vec<String>,
@@ -419,10 +529,20 @@ pub trait ClipboardStoreApi: Send + Sync {
     ) -> Result<i64, ClipKittyError>;
 
     /// Update link metadata (called from Swift after LPMetadataProvider fetch)
-    fn update_link_metadata(&self, item_id: i64, title: Option<String>, description: Option<String>, image_data: Option<Vec<u8>>) -> Result<(), ClipKittyError>;
+    fn update_link_metadata(
+        &self,
+        item_id: i64,
+        title: Option<String>,
+        description: Option<String>,
+        image_data: Option<Vec<u8>>,
+    ) -> Result<(), ClipKittyError>;
 
     /// Update image description and re-index
-    fn update_image_description(&self, item_id: i64, description: String) -> Result<(), ClipKittyError>;
+    fn update_image_description(
+        &self,
+        item_id: i64,
+        description: String,
+    ) -> Result<(), ClipKittyError>;
 
     /// Update item timestamp to now
     fn update_timestamp(&self, item_id: i64) -> Result<(), ClipKittyError>;
@@ -443,7 +563,13 @@ pub trait ClipboardStoreApi: Send + Sync {
 
 impl From<crate::database::DatabaseError> for ClipKittyError {
     fn from(e: crate::database::DatabaseError) -> Self {
-        ClipKittyError::DatabaseError(e.to_string())
+        match e {
+            crate::database::DatabaseError::Interrupted => ClipKittyError::Cancelled,
+            crate::database::DatabaseError::InconsistentData(message) => {
+                ClipKittyError::DataInconsistency(message)
+            }
+            other => ClipKittyError::DatabaseError(other.to_string()),
+        }
     }
 }
 
@@ -452,4 +578,3 @@ impl From<crate::indexer::IndexerError> for ClipKittyError {
         ClipKittyError::IndexError(e.to_string())
     }
 }
-

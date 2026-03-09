@@ -5,13 +5,17 @@ import PackageDescription
 import ProjectDescription
 
 let packageSettings = PackageSettings(
-    productTypes: ["Sparkle": .framework],
+    productTypes: [
+        "Sparkle": .framework,
+        "SparkleUpdater": .framework,
+    ],
     // Custom configurations must be declared so SPM dependencies build for all configs
-    // AppStore maps to Release base, so it gets Release-optimized builds
+    // SparkleRelease and AppStore map to Release base, so they get Release-optimized builds
     baseSettings: .settings(
         configurations: [
             .debug(name: "Debug"),
             .release(name: "Release"),
+            .release(name: .configuration("SparkleRelease")),
             .release(name: .configuration("AppStore")),
         ]
     )
@@ -23,7 +27,8 @@ let package = Package(
     dependencies: [
         // GRDB used for FTS integration tests
         .package(url: "https://github.com/groue/GRDB.swift.git", from: "7.0.0"),
-        .package(url: "https://github.com/sparkle-project/Sparkle.git", from: "2.9.0"),
         .package(url: "https://github.com/krzyzanowskim/STTextKitPlus.git", from: "0.3.0"),
+        // SparkleUpdater wraps Sparkle for auto-update functionality (Release builds only)
+        .package(path: "../distribution/SparkleUpdater"),
     ]
 )
