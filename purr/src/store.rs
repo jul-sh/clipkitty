@@ -3,7 +3,7 @@
 use crate::database::Database;
 use crate::indexer::Indexer;
 use crate::interface::{
-    ClipboardItem, ClipKittyError, ClipboardStoreApi, ContentTypeFilter, MatchData, SearchResult,
+    ClipKittyError, ClipboardItem, ClipboardStoreApi, ContentTypeFilter, MatchData, SearchResult,
 };
 use crate::{save_service, search_service};
 use once_cell::sync::Lazy;
@@ -75,8 +75,7 @@ impl ClipboardStore {
     }
 
     fn runtime_handle(&self) -> tokio::runtime::Handle {
-        tokio::runtime::Handle::try_current()
-            .unwrap_or_else(|_| FALLBACK_RUNTIME.handle().clone())
+        tokio::runtime::Handle::try_current().unwrap_or_else(|_| FALLBACK_RUNTIME.handle().clone())
     }
 
     fn rebuild_index_if_needed(&self) -> Result<(), ClipKittyError> {
@@ -97,7 +96,8 @@ impl ClipboardStore {
                 let index_text = item
                     .file_index_text()
                     .unwrap_or_else(|| item.text_content().to_string());
-                self.indexer.add_document(id, &index_text, item.timestamp_unix)?;
+                self.indexer
+                    .add_document(id, &index_text, item.timestamp_unix)?;
             }
             Ok::<(), ClipKittyError>(())
         })?;
@@ -197,7 +197,11 @@ impl ClipboardStoreApi for ClipboardStore {
             .collect())
     }
 
-    fn compute_highlights(&self, item_ids: Vec<i64>, query: String) -> Result<Vec<MatchData>, ClipKittyError> {
+    fn compute_highlights(
+        &self,
+        item_ids: Vec<i64>,
+        query: String,
+    ) -> Result<Vec<MatchData>, ClipKittyError> {
         search_service::compute_highlights(&self.db, item_ids, query)
     }
 
@@ -311,7 +315,9 @@ impl ClipboardStoreApi for ClipboardStore {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::interface::{ClipboardContent, FileStatus, IconType, ItemIcon, LinkMetadataPayload, LinkMetadataState};
+    use crate::interface::{
+        ClipboardContent, FileStatus, IconType, ItemIcon, LinkMetadataPayload, LinkMetadataState,
+    };
 
     fn runtime() -> tokio::runtime::Runtime {
         tokio::runtime::Builder::new_current_thread()
@@ -329,8 +335,12 @@ mod tests {
     #[tokio::test]
     async fn test_search_and_filter_roundtrip() {
         let store = ClipboardStore::new_in_memory().unwrap();
-        store.save_text("Hello World".to_string(), None, None).unwrap();
-        store.save_text("https://example.com".to_string(), None, None).unwrap();
+        store
+            .save_text("Hello World".to_string(), None, None)
+            .unwrap();
+        store
+            .save_text("https://example.com".to_string(), None, None)
+            .unwrap();
 
         let all = store.search("".to_string()).await.unwrap();
         assert_eq!(all.matches.len(), 2);
@@ -341,7 +351,53 @@ mod tests {
             .await
             .unwrap();
         assert_eq!(links.matches.len(), 1);
-        assert!(links.matches[0].item_metadata.snippet.contains("example.com"));
+        assert!(links.matches[0]
+            .item_metadata
+            .snippet
+            .contains("example.com"));
+    }
+
+    #[tokio::test]
+    async fn test_short_caret_query_uses_stripped_prefix_search() {
+        let store = ClipboardStore::new_in_memory().unwrap();
+        store
+            .save_text("sup ^hi how are you".to_string(), None, None)
+            .unwrap();
+        let prefix_id = store.save_text("hi j".to_string(), None, None).unwrap();
+        store.save_text("sup hi".to_string(), None, None).unwrap();
+
+        let result = store.search("^hi".to_string()).await.unwrap();
+        let ids: Vec<i64> = result
+            .matches
+            .iter()
+            .map(|item| item.item_metadata.item_id)
+            .collect();
+
+        assert_eq!(ids, vec![prefix_id]);
+    }
+
+    #[tokio::test]
+    async fn test_caret_query_ranks_literal_then_prefix_then_contains_for_trigram_queries() {
+        let store = ClipboardStore::new_in_memory().unwrap();
+        let literal_id = store
+            .save_text("sup ^hello there".to_string(), None, None)
+            .unwrap();
+        let prefix_id = store
+            .save_text("hello world".to_string(), None, None)
+            .unwrap();
+        let contains_id = store
+            .save_text("say hello there".to_string(), None, None)
+            .unwrap();
+
+        let result = store.search("^hello".to_string()).await.unwrap();
+        let ids: Vec<i64> = result
+            .matches
+            .iter()
+            .map(|item| item.item_metadata.item_id)
+            .take(3)
+            .collect();
+
+        assert_eq!(ids, vec![literal_id, prefix_id, contains_id]);
     }
 
     #[test]
@@ -368,16 +424,21 @@ mod tests {
         let store = ClipboardStore::new_in_memory().unwrap();
         for i in 0..200 {
             store
-                .save_text(format!("Item number {i} with repeated search text"), None, None)
+                .save_text(
+                    format!("Item number {i} with repeated search text"),
+                    None,
+                    None,
+                )
                 .unwrap();
         }
 
         let token = CancellationToken::new();
+        let query = crate::search::SearchQuery::parse("repeated");
         token.cancel();
         let result = search_service::search_trigram_query_sync(
             &store.db,
             &store.indexer,
-            "repeated",
+            &query,
             &token,
             &rt.handle().clone(),
             None,
@@ -389,7 +450,9 @@ mod tests {
     fn test_interruptible_fetch_propagates_interrupted_error() {
         let rt = runtime();
         let store = ClipboardStore::new_in_memory().unwrap();
-        let id = store.save_text("Test content".to_string(), None, None).unwrap();
+        let id = store
+            .save_text("Test content".to_string(), None, None)
+            .unwrap();
 
         let token = CancellationToken::new();
         let items = store
@@ -402,8 +465,12 @@ mod tests {
     #[test]
     fn test_text_duplicate_handling() {
         let store = ClipboardStore::new_in_memory().unwrap();
-        let id1 = store.save_text("Same content".to_string(), None, None).unwrap();
-        let id2 = store.save_text("Same content".to_string(), None, None).unwrap();
+        let id1 = store
+            .save_text("Same content".to_string(), None, None)
+            .unwrap();
+        let id2 = store
+            .save_text("Same content".to_string(), None, None)
+            .unwrap();
         assert!(id1 > 0);
         assert_eq!(id2, 0);
     }
@@ -495,15 +562,29 @@ mod tests {
     fn test_delete_and_clear() {
         let rt = runtime();
         let store = ClipboardStore::new_in_memory().unwrap();
-        let id = store.save_text("delete me".to_string(), None, None).unwrap();
+        let id = store
+            .save_text("delete me".to_string(), None, None)
+            .unwrap();
         store.delete_item(id).unwrap();
         assert!(store.fetch_by_ids(vec![id]).unwrap().is_empty());
 
         store.save_text("one".to_string(), None, None).unwrap();
         store.save_text("two".to_string(), None, None).unwrap();
-        assert_eq!(rt.block_on(store.search("".to_string())).unwrap().matches.len(), 2);
+        assert_eq!(
+            rt.block_on(store.search("".to_string()))
+                .unwrap()
+                .matches
+                .len(),
+            2
+        );
         store.clear().unwrap();
-        assert_eq!(rt.block_on(store.search("".to_string())).unwrap().matches.len(), 0);
+        assert_eq!(
+            rt.block_on(store.search("".to_string()))
+                .unwrap()
+                .matches
+                .len(),
+            0
+        );
     }
 
     #[test]
@@ -518,7 +599,9 @@ mod tests {
     #[test]
     fn test_search_without_external_runtime() {
         let store = ClipboardStore::new_in_memory().unwrap();
-        store.save_text("Hello World".to_string(), None, None).unwrap();
+        store
+            .save_text("Hello World".to_string(), None, None)
+            .unwrap();
         let result = futures::executor::block_on(store.search("Hello".to_string())).unwrap();
         assert_eq!(result.matches.len(), 1);
     }
