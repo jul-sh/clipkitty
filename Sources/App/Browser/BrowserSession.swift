@@ -19,7 +19,7 @@ struct BrowserSession {
 
 struct SearchRequest: Hashable {
     let text: String
-    let filter: ContentTypeFilter
+    let filter: ItemQueryFilter
 }
 
 struct BrowserSearchResponse {

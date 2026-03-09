@@ -646,7 +646,7 @@ struct ItemRow: View, Equatable {
         // 1. Wrap the content inside a Button
         Button(action: onTap) {
             HStack(spacing: 6) {
-            // Content type icon with source app badge overlay
+            // Content type icon with badge overlay
             ZStack(alignment: .bottomTrailing) {
                 // Main icon: image thumbnail, browser icon for links, color swatch, or SF symbol
                 Group {
@@ -690,9 +690,14 @@ struct ItemRow: View, Equatable {
                 .frame(width: 32, height: 32)
                 .clipShape(RoundedRectangle(cornerRadius: 4))
 
-                // Badge: Source app icon
-                // Show for symbols (except pure link icons) and thumbnails (images, links with images)
-                if let bundleID = metadata.sourceAppBundleId,
+                // Badge: Bookmark icon for bookmarked items, otherwise source app icon
+                if metadata.tags.contains(.bookmark) {
+                    Image("BookmarkIcon")
+                        .resizable()
+                        .frame(width: 18, height: 18)
+                        .shadow(color: .black.opacity(0.3), radius: 1, x: 0, y: 1)
+                        .offset(x: 4, y: 4)
+                } else if let bundleID = metadata.sourceAppBundleId,
                    let appURL = NSWorkspace.shared.urlForApplication(withBundleIdentifier: bundleID) {
                     // Skip badge for symbol links/files (app icon is already shown)
                     let showBadge: Bool = {
@@ -728,14 +733,17 @@ struct ItemRow: View, Equatable {
             }
 
             // Text content - SwiftUI Three-Part HStack with layout priorities
-            HighlightedTextView(
-                text: displayText,
-                highlights: displayHighlights,
-                accentSelected: accentSelected
-            )
+            HStack(spacing: 6) {
+                HighlightedTextView(
+                    text: displayText,
+                    highlights: displayHighlights,
+                    accentSelected: accentSelected
+                )
+                .frame(maxWidth: .infinity, alignment: .leading)
+                .allowsHitTesting(false)
+                .layoutPriority(1)
+            }
             .frame(maxWidth: .infinity, alignment: .leading)
-            .allowsHitTesting(false)
-            .layoutPriority(1)
 
 
         }

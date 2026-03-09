@@ -55,8 +55,8 @@ final class ClipboardStore {
         }
     }
 
-    /// Current content type filter (observable by views)
-    private(set) var contentTypeFilter: ContentTypeFilter = .all
+    /// Current browser filter for refreshes driven by this store facade.
+    private(set) var queryFilter: ItemQueryFilter = .all
 
     // MARK: - Private State
 
@@ -195,17 +195,17 @@ final class ClipboardStore {
 
     func resetForDisplay() {
         searchTask?.cancel()
-        contentTypeFilter = .all
+        queryFilter = .all
         displayVersion += 1
         refresh()
     }
 
-    func setContentTypeFilter(_ filter: ContentTypeFilter) {
-        contentTypeFilter = filter
+    func setQueryFilter(_ filter: ItemQueryFilter) {
+        queryFilter = filter
         refresh()
     }
 
-    func search(query: String, filter: ContentTypeFilter) async throws -> SearchResult {
+    func search(query: String, filter: ItemQueryFilter) async throws -> SearchResult {
         guard let repository else {
             throw ClipboardError.databaseOperationFailed(
                 operation: "search",
@@ -321,7 +321,7 @@ final class ClipboardStore {
             return
         }
 
-        let result = await repository.search(query: query, filter: contentTypeFilter)
+        let result = await repository.search(query: query, filter: queryFilter)
 
         switch result {
         case .success(let searchResult):
@@ -904,6 +904,26 @@ final class ClipboardStore {
             ))
         }
         return await repository.delete(itemId: itemId)
+    }
+
+    func addTag(itemId: Int64, tag: ItemTag) async -> Result<Void, ClipboardError> {
+        guard let repository else {
+            return .failure(.databaseOperationFailed(
+                operation: "addTag",
+                underlying: NSError(domain: "ClipKitty", code: 1, userInfo: [NSLocalizedDescriptionKey: "Database not available"])
+            ))
+        }
+        return await repository.addTag(itemId: itemId, tag: tag)
+    }
+
+    func removeTag(itemId: Int64, tag: ItemTag) async -> Result<Void, ClipboardError> {
+        guard let repository else {
+            return .failure(.databaseOperationFailed(
+                operation: "removeTag",
+                underlying: NSError(domain: "ClipKitty", code: 1, userInfo: [NSLocalizedDescriptionKey: "Database not available"])
+            ))
+        }
+        return await repository.removeTag(itemId: itemId, tag: tag)
     }
 
     func clear() {
