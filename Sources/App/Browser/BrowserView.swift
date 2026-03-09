@@ -136,8 +136,10 @@ struct BrowserView: View {
         } else {
             // Categories start at index 2 (All=0, Bookmarks=1, then categories)
             // filterOptions[0] is All, filterOptions[1+] are categories
-            let categoryIndex = Self.filterOptions.dropFirst().firstIndex(where: { $0.0 == viewModel.contentTypeFilter })
-            index = (categoryIndex ?? 0) + 2
+            // Use enumerated() to get offset within the slice, not the original array index
+            let categoryOffset = Self.filterOptions.dropFirst().enumerated()
+                .first(where: { $0.element.0 == viewModel.contentTypeFilter })?.offset
+            index = (categoryOffset ?? 0) + 2
         }
         viewModel.openFilterOverlay(highlightedIndex: index)
         focusFilterDropdown()
