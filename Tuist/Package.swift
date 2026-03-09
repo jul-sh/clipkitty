@@ -10,11 +10,12 @@ let packageSettings = PackageSettings(
         "SparkleUpdater": .framework,
     ],
     // Custom configurations must be declared so SPM dependencies build for all configs
-    // AppStore maps to Release base, so it gets Release-optimized builds
+    // SparkleRelease and AppStore map to Release base, so they get Release-optimized builds
     baseSettings: .settings(
         configurations: [
             .debug(name: "Debug"),
             .release(name: "Release"),
+            .release(name: .configuration("SparkleRelease")),
             .release(name: .configuration("AppStore")),
         ]
     )
