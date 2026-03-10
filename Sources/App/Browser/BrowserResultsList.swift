@@ -8,6 +8,7 @@ struct BrowserResultsList: View {
 
     private let matchDataPrefetchBuffer = 20
     @State private var lastItemsSignature: [Int64] = []
+    @State private var contextMenuItemId: Int64?
 
     var body: some View {
         ScrollViewReader { proxy in
@@ -17,10 +18,31 @@ struct BrowserResultsList: View {
                         metadata: row.metadata,
                         matchData: row.matchData,
                         isSelected: row.metadata.itemId == viewModel.selectedItemId,
+                        isContextMenuTargeted: row.metadata.itemId == contextMenuItemId,
                         hasUserNavigated: viewModel.hasUserNavigated,
                         onTap: {
                             viewModel.select(itemId: row.metadata.itemId, origin: .user)
                             focusSearchField()
+                        },
+                        contextMenuActions: BrowserActionItem.items(for: row.metadata.tags),
+                        onContextMenuAction: { action in
+                            viewModel.performAction(
+                                action,
+                                itemId: row.metadata.itemId,
+                                dismissOverlay: {}
+                            )
+                        },
+                        onContextMenuDelete: {
+                            viewModel.deleteItem(itemId: row.metadata.itemId)
+                        },
+                        onContextMenuShow: {
+                            contextMenuItemId = row.metadata.itemId
+                            viewModel.closeOverlay()
+                        },
+                        onContextMenuHide: {
+                            if contextMenuItemId == row.metadata.itemId {
+                                contextMenuItemId = nil
+                            }
                         }
                     )
                     .equatable()
@@ -87,4 +109,5 @@ struct BrowserResultsList: View {
         }
         viewModel.loadMatchDataForItems(idsToLoad)
     }
+
 }
