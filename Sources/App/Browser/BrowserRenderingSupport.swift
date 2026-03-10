@@ -53,6 +53,67 @@ private extension View {
     }
 }
 
+// MARK: - Subtle Hover Effect
+
+/// A view modifier that adds a subtle animated hover background effect.
+/// Use on button labels to provide visual feedback on hover.
+struct SubtleHoverEffect: ViewModifier {
+    let cornerRadius: CGFloat
+    let useCapsule: Bool
+    @State private var isHovered = false
+
+    init(cornerRadius: CGFloat = 9, useCapsule: Bool = false) {
+        self.cornerRadius = cornerRadius
+        self.useCapsule = useCapsule
+    }
+
+    func body(content: Content) -> some View {
+        content
+            .background {
+                if useCapsule {
+                    Capsule().fill(isHovered ? Color.primary.opacity(0.04) : Color.clear)
+                } else {
+                    RoundedRectangle(cornerRadius: cornerRadius)
+                        .fill(isHovered ? Color.primary.opacity(0.04) : Color.clear)
+                }
+            }
+            .contentShape(useCapsule ? AnyShape(Capsule()) : AnyShape(RoundedRectangle(cornerRadius: cornerRadius)))
+            .animation(.easeInOut(duration: 0.15), value: isHovered)
+            .onHover { isHovered = $0 }
+    }
+}
+
+/// A view modifier for capsule buttons with border that changes on hover.
+struct SubtleHoverCapsuleWithBorder: ViewModifier {
+    @State private var isHovered = false
+
+    func body(content: Content) -> some View {
+        content
+            .background(Capsule().fill(isHovered ? Color.primary.opacity(0.04) : Color.clear))
+            .overlay(Capsule().strokeBorder(Color.primary.opacity(isHovered ? 0.25 : 0.15)))
+            .contentShape(Capsule())
+            .animation(.easeInOut(duration: 0.15), value: isHovered)
+            .onHover { isHovered = $0 }
+    }
+}
+
+extension View {
+    /// Adds a subtle hover background effect with rounded corners.
+    func subtleHover(cornerRadius: CGFloat = 9) -> some View {
+        modifier(SubtleHoverEffect(cornerRadius: cornerRadius))
+    }
+
+    /// Adds a subtle hover background effect with capsule shape.
+    func subtleHoverCapsule() -> some View {
+        modifier(SubtleHoverEffect(useCapsule: true))
+    }
+
+    /// Adds a subtle hover effect with capsule shape and border.
+    func subtleHoverCapsuleWithBorder() -> some View {
+        modifier(SubtleHoverCapsuleWithBorder())
+    }
+}
+
 // MARK: - File Preview
 
 struct FilePreviewView: View {
@@ -608,8 +669,14 @@ struct ItemRow: View, Equatable {
     let metadata: ItemMetadata
     let matchData: MatchData?
     let isSelected: Bool
+    let isContextMenuTargeted: Bool
     let hasUserNavigated: Bool
     let onTap: () -> Void
+    let contextMenuActions: [BrowserActionItem]
+    let onContextMenuAction: (BrowserActionItem) -> Void
+    let onContextMenuDelete: () -> Void
+    let onContextMenuShow: () -> Void
+    let onContextMenuHide: () -> Void
 
     private var accentSelected: Bool { isSelected && hasUserNavigated }
 
@@ -637,6 +704,7 @@ struct ItemRow: View, Equatable {
     // Note: onTap closure is intentionally excluded from equality comparison
     nonisolated static func == (lhs: ItemRow, rhs: ItemRow) -> Bool {
         return lhs.isSelected == rhs.isSelected &&
+               lhs.isContextMenuTargeted == rhs.isContextMenuTargeted &&
                lhs.hasUserNavigated == rhs.hasUserNavigated &&
                lhs.metadata == rhs.metadata &&
                lhs.matchData == rhs.matchData
@@ -753,10 +821,18 @@ struct ItemRow: View, Equatable {
         .background {
             if accentSelected {
                 selectionBackground()
+            } else if isContextMenuTargeted && !isSelected {
+                Color.primary.opacity(0.11)
             } else if isSelected {
                 Color.primary.opacity(0.225)
             } else {
                 Color.clear
+            }
+        }
+        .overlay {
+            if isContextMenuTargeted {
+                RoundedRectangle(cornerRadius: 10, style: .continuous)
+                    .strokeBorder(Color.primary.opacity(0.22), lineWidth: 1)
             }
         }
         .clipShape(RoundedRectangle(cornerRadius: 10, style: .continuous))
@@ -764,6 +840,15 @@ struct ItemRow: View, Equatable {
         }
         // 2. Apply the plain style so it behaves like a standard row instead of a system button
         .buttonStyle(.plain)
+        .overlay {
+            RightClickPopoverOverlay(
+                actions: contextMenuActions,
+                onShow: onContextMenuShow,
+                onHide: onContextMenuHide,
+                onAction: onContextMenuAction,
+                onConfirmDelete: onContextMenuDelete
+            )
+        }
         .accessibilityElement(children: .combine)
         .accessibilityLabel(displayText)
         .accessibilityHint(AppSettings.shared.pasteMode == .autoPaste ? String(localized: "Double tap to paste") : String(localized: "Double tap to copy"))
@@ -771,6 +856,153 @@ struct ItemRow: View, Equatable {
         .accessibilityAddTraits(isSelected ? .isSelected : [])
     }
 
+}
+
+// MARK: - Right-Click Popover
+
+struct RightClickPopoverOverlay: NSViewRepresentable {
+    let actions: [BrowserActionItem]
+    let onShow: () -> Void
+    let onHide: () -> Void
+    let onAction: (BrowserActionItem) -> Void
+    let onConfirmDelete: () -> Void
+
+    func makeCoordinator() -> Coordinator {
+        Coordinator()
+    }
+
+    func makeNSView(context: Context) -> RightClickView {
+        let view = RightClickView()
+        view.coordinator = context.coordinator
+        context.coordinator.actions = actions
+        context.coordinator.onShow = onShow
+        context.coordinator.onHide = onHide
+        context.coordinator.onAction = onAction
+        context.coordinator.onConfirmDelete = onConfirmDelete
+        return view
+    }
+
+    func updateNSView(_ nsView: RightClickView, context: Context) {
+        context.coordinator.actions = actions
+        context.coordinator.onShow = onShow
+        context.coordinator.onHide = onHide
+        context.coordinator.onAction = onAction
+        context.coordinator.onConfirmDelete = onConfirmDelete
+    }
+
+    @MainActor
+    final class Coordinator {
+        var actions: [BrowserActionItem] = []
+        var onShow: (() -> Void)?
+        var onHide: (() -> Void)?
+        var onAction: ((BrowserActionItem) -> Void)?
+        var onConfirmDelete: (() -> Void)?
+        private var activeMenuHandler: MenuActionHandler?
+
+        deinit {
+            activeMenuHandler = nil
+        }
+
+        func makeMenu() -> NSMenu {
+            let menu = NSMenu()
+            menu.autoenablesItems = false
+
+            let handler = MenuActionHandler(
+                onAction: { [weak self] action in
+                    self?.onAction?(action)
+                },
+                onConfirmDelete: { [weak self] in
+                    self?.onConfirmDelete?()
+                }
+            )
+            activeMenuHandler = handler
+
+            for (index, action) in actions.enumerated() {
+                if BrowserActionItem.showsDivider(before: index, in: actions) {
+                    menu.addItem(.separator())
+                }
+
+                let item = NSMenuItem(
+                    title: action.label,
+                    action: #selector(MenuActionHandler.handleMenuItem(_:)),
+                    keyEquivalent: ""
+                )
+                item.target = handler
+                item.representedObject = action
+                item.image = NSImage(
+                    systemSymbolName: action.systemImageName,
+                    accessibilityDescription: action.label
+                )
+                menu.addItem(item)
+            }
+
+            return menu
+        }
+    }
+
+    final class RightClickView: NSView {
+        weak var coordinator: Coordinator?
+
+        override func hitTest(_ point: NSPoint) -> NSView? {
+            guard shouldHandleCurrentEvent else { return nil }
+            return super.hitTest(point)
+        }
+
+        override func mouseDown(with event: NSEvent) {
+            if event.modifierFlags.contains(.control) {
+                rightMouseDown(with: event)
+                return
+            }
+            super.mouseDown(with: event)
+        }
+
+        override func rightMouseDown(with event: NSEvent) {
+            guard let coordinator, !coordinator.actions.isEmpty else { return }
+
+            coordinator.onShow?()
+            let menu = coordinator.makeMenu()
+            let clickPoint = convert(event.locationInWindow, from: nil)
+            menu.popUp(positioning: nil, at: clickPoint, in: self)
+            coordinator.onHide?()
+        }
+
+        override func menu(for event: NSEvent) -> NSMenu? {
+            nil
+        }
+
+        private var shouldHandleCurrentEvent: Bool {
+            guard let event = NSApp.currentEvent else { return false }
+            switch event.type {
+            case .rightMouseDown, .rightMouseUp:
+                return true
+            case .leftMouseDown, .leftMouseUp:
+                return event.modifierFlags.contains(.control)
+            default:
+                return false
+            }
+        }
+    }
+
+    @MainActor
+    private final class MenuActionHandler: NSObject {
+        let onAction: (BrowserActionItem) -> Void
+        let onConfirmDelete: () -> Void
+
+        init(onAction: @escaping (BrowserActionItem) -> Void, onConfirmDelete: @escaping () -> Void) {
+            self.onAction = onAction
+            self.onConfirmDelete = onConfirmDelete
+        }
+
+        @objc
+        func handleMenuItem(_ sender: NSMenuItem) {
+            guard let action = sender.representedObject as? BrowserActionItem else { return }
+            if action.isDestructive {
+                onConfirmDelete()
+            } else {
+                onAction(action)
+            }
+        }
+    }
 }
 
 // MARK: - Three-Part HStack Highlighted Text
@@ -914,39 +1146,37 @@ private struct FilterOptionRow: View {
 
 // MARK: - Action Option Row
 
-private struct ActionOptionRow: View {
+struct ActionOptionRow: View {
     let label: String
     let actionID: String
+    let systemImageName: String
     var isHighlighted: Bool = false
     var isDestructive: Bool = false
+    var onHover: ((Bool) -> Void)?
     let action: () -> Void
-    @State private var isHovered = false
 
     var body: some View {
         Button(action: action) {
-            Text(label)
-                .font(.system(size: 13))
-                .foregroundStyle(foregroundColor)
-                .frame(maxWidth: .infinity, alignment: .leading)
-                .padding(.horizontal, 8)
-                .padding(.vertical, 5)
-                .background {
-                    if isHighlighted {
-                        if isDestructive {
-                            RoundedRectangle(cornerRadius: 9)
-                                .fill(Color.red.opacity(0.8))
-                        } else {
-                            selectionBackground()
-                                .clipShape(RoundedRectangle(cornerRadius: 9))
-                        }
-                    } else {
-                        RoundedRectangle(cornerRadius: 9)
-                            .fill(isHovered ? Color.primary.opacity(0.05) : Color.clear)
-                    }
-                }
+            HStack(spacing: 8) {
+                Image(systemName: systemImageName)
+                    .font(.system(size: 13, weight: .medium))
+                    .frame(width: 14, alignment: .center)
+
+                Text(label)
+                    .font(.system(size: 13))
+                    .frame(maxWidth: .infinity, alignment: .leading)
+            }
+            .foregroundStyle(foregroundColor)
+            .padding(.horizontal, 8)
+            .padding(.vertical, 5)
+            .background {
+                RoundedRectangle(cornerRadius: 9)
+                    .fill(backgroundColor)
+            }
+            .contentShape(RoundedRectangle(cornerRadius: 9))
         }
         .buttonStyle(.plain)
-        .onHover { isHovered = $0 }
+        .onHover { onHover?($0) }
         .accessibilityIdentifier("Action_\(actionID)")
     }
 
@@ -954,6 +1184,13 @@ private struct ActionOptionRow: View {
         if isHighlighted { return .white }
         if isDestructive { return .red }
         return .secondary
+    }
+
+    private var backgroundColor: Color {
+        if isHighlighted {
+            return isDestructive ? Color.red.opacity(0.8) : Color.accentColor
+        }
+        return Color.clear
     }
 }
 

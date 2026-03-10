@@ -39,6 +39,8 @@ final class BrowserViewModel {
     private var previewTask: Task<Void, Never>?
     private var metadataTask: Task<Void, Never>?
     private var matchDataTasks: [String: Task<Void, Never>] = [:]
+    private var pendingDeleteTask: Task<Void, Never>?
+    private var pendingTagSettleTask: Task<Void, Never>?
     private var previewGeneration = 0
     private var metadataGeneration = 0
     private var hasAppliedInitialSearch = false
@@ -148,6 +150,10 @@ final class BrowserViewModel {
         metadataTask?.cancel()
         matchDataTasks.values.forEach { $0.cancel() }
         matchDataTasks.removeAll()
+        pendingDeleteTask?.cancel()
+        pendingDeleteTask = nil
+        pendingTagSettleTask?.cancel()
+        pendingTagSettleTask = nil
         previewGeneration += 1
         metadataGeneration += 1
         previewSpinnerVisible = false
@@ -184,16 +190,12 @@ final class BrowserViewModel {
         submitSearch(text: searchText, filter: queryFilter)
     }
 
-    func openFilterOverlay(highlightedIndex: Int) {
-        session.overlays = .filter(FilterOverlayState(highlightedIndex: highlightedIndex))
+    func openFilterOverlay(highlight: FilterOverlayState) {
+        session.overlays = .filter(highlight)
     }
 
-    func openActionsOverlay(highlightedIndex: Int) {
-        session.overlays = .actions(.actions(highlightedIndex: highlightedIndex))
-    }
-
-    func openDeleteConfirmation(highlightedIndex: Int = 0) {
-        session.overlays = .actions(.confirmDelete(highlightedIndex: highlightedIndex))
+    func openActionsOverlay(highlight: MenuHighlightState) {
+        session.overlays = .actions(highlight)
     }
 
     func closeOverlay() {
@@ -205,19 +207,12 @@ final class BrowserViewModel {
         session.mutation = .idle
     }
 
-    func updateFilterHighlight(_ index: Int) {
-        guard case .filter = session.overlays else { return }
-        session.overlays = .filter(FilterOverlayState(highlightedIndex: index))
+    func setFilterOverlayState(_ highlight: FilterOverlayState) {
+        session.overlays = .filter(highlight)
     }
 
-    func updateActionsHighlight(_ index: Int) {
-        guard case .actions(let state) = session.overlays else { return }
-        switch state {
-        case .actions:
-            session.overlays = .actions(.actions(highlightedIndex: index))
-        case .confirmDelete:
-            session.overlays = .actions(.confirmDelete(highlightedIndex: index))
-        }
+    func setActionsOverlayState(_ highlight: MenuHighlightState) {
+        session.overlays = .actions(highlight)
     }
 
     func moveSelection(by offset: Int) {
@@ -243,9 +238,17 @@ final class BrowserViewModel {
         onSelect(item.itemMetadata.itemId, item.content)
     }
 
+    func confirmItem(itemId: Int64) {
+        performItemAction(itemId: itemId, handler: onSelect)
+    }
+
     func copyOnlySelection() {
         guard let item = selectedItem else { return }
         onCopyOnly(item.itemMetadata.itemId, item.content)
+    }
+
+    func copyOnlyItem(itemId: Int64) {
+        performItemAction(itemId: itemId, handler: onCopyOnly)
     }
 
     func loadMatchDataForItems(_ ids: [Int64]) {
@@ -299,30 +302,48 @@ final class BrowserViewModel {
 
     func deleteSelectedItem() {
         guard let itemId = selectedItemId else { return }
+        deleteItem(itemId: itemId)
+    }
+
+    func deleteItem(itemId: Int64) {
+        guard case .idle = session.mutation else { return }
+
         let snapshot = currentResponse
         let previewSnapshot = session.preview
         let selectionSnapshot = session.selection
-        session.mutation = .deleting(DeleteTransaction(
+        let transaction = DeleteTransaction(
             deletedItemId: itemId,
             snapshot: snapshot,
             preview: previewSnapshot,
             selection: selectionSnapshot
-        ))
+        )
+        session.mutation = .deleting(.pending(transaction))
 
         applyOptimisticDelete(itemId: itemId)
+        showDeleteUndoToast()
 
-        Task { [weak self] in
+        pendingDeleteTask?.cancel()
+        pendingDeleteTask = Task { [weak self] in
+            try? await Task.sleep(for: .seconds(3))
+            guard !Task.isCancelled else { return }
             guard let self else { return }
-            let result = await self.client.delete(itemId: itemId)
             await MainActor.run {
-                switch result {
-                case .success:
-                    self.session.mutation = .idle
-                case .failure(let error):
-                    self.restoreDeleteFailure(error: error)
-                }
+                self.commitPendingDelete()
             }
         }
+    }
+
+    func undoPendingDelete() {
+        guard case .deleting(.pending(let transaction)) = session.mutation else { return }
+        pendingDeleteTask?.cancel()
+        pendingDeleteTask = nil
+        ToastWindow.shared.dismiss()
+        restoreSnapshot(
+            snapshot: transaction.snapshot,
+            preview: transaction.preview,
+            selection: transaction.selection
+        )
+        session.mutation = .idle
     }
 
     func clearAll() {
@@ -361,11 +382,45 @@ final class BrowserViewModel {
     }
 
     func addTagToSelectedItem(_ tag: ItemTag) {
-        mutateSelectedItemTag(tag, shouldInclude: true)
+        guard let itemId = selectedItemId else { return }
+        mutateItemTag(itemId: itemId, tag: tag, shouldInclude: true)
     }
 
     func removeTagFromSelectedItem(_ tag: ItemTag) {
-        mutateSelectedItemTag(tag, shouldInclude: false)
+        guard let itemId = selectedItemId else { return }
+        mutateItemTag(itemId: itemId, tag: tag, shouldInclude: false)
+    }
+
+    func addTag(_ tag: ItemTag, toItem itemId: Int64) {
+        mutateItemTag(itemId: itemId, tag: tag, shouldInclude: true)
+    }
+
+    func removeTag(_ tag: ItemTag, fromItem itemId: Int64) {
+        mutateItemTag(itemId: itemId, tag: tag, shouldInclude: false)
+    }
+
+    func performAction(
+        _ action: BrowserActionItem,
+        itemId: Int64,
+        dismissOverlay: () -> Void
+    ) {
+        switch action {
+        case .defaultAction:
+            dismissOverlay()
+            confirmItem(itemId: itemId)
+        case .copyOnly:
+            dismissOverlay()
+            copyOnlyItem(itemId: itemId)
+        case .bookmark:
+            dismissOverlay()
+            addTag(.bookmark, toItem: itemId)
+        case .unbookmark:
+            dismissOverlay()
+            removeTag(.bookmark, fromItem: itemId)
+        case .delete:
+            dismissOverlay()
+            deleteItem(itemId: itemId)
+        }
     }
 
     private func submitSearch(text rawText: String, filter: ItemQueryFilter) {
@@ -440,6 +495,7 @@ final class BrowserViewModel {
 
     private func applySearchResponse(_ response: BrowserSearchResponse) {
         guard session.query.request == response.request else { return }
+        let response = responseApplyingPendingMutations(response)
 
         let previousOrder = itemIds
         let previousSelection = selectedItemId
@@ -470,6 +526,12 @@ final class BrowserViewModel {
                       previewSelection == nil {
                 session.preview = .loaded(makePreviewSelection(for: firstItem))
             }
+        }
+
+        if case .tagging(.settling) = session.mutation {
+            pendingTagSettleTask?.cancel()
+            pendingTagSettleTask = nil
+            session.mutation = .idle
         }
     }
 
@@ -649,7 +711,8 @@ final class BrowserViewModel {
     private func applyOptimisticDelete(itemId: Int64) {
         guard case .ready(let response) = session.query else { return }
         let filteredItems = response.items.filter { $0.itemMetadata.itemId != itemId }
-        let nextSelection = nextSelectionAfterDelete(deleting: itemId)
+        let deletedSelectedItem = selectedItemId == itemId
+        let nextSelection = deletedSelectedItem ? nextSelectionAfterDelete(deleting: itemId) : nil
         session.query = .ready(response: BrowserSearchResponse(
             request: response.request,
             items: filteredItems,
@@ -660,20 +723,61 @@ final class BrowserViewModel {
         if let nextSelection {
             session.selection = .selected(itemId: nextSelection, origin: .automatic)
             loadSelectedItem(itemId: nextSelection)
-        } else {
+        } else if deletedSelectedItem {
             session.selection = .none
             session.preview = .empty
         }
     }
 
+    private func commitPendingDelete() {
+        guard case .deleting(.pending(let transaction)) = session.mutation else { return }
+        pendingDeleteTask = nil
+        session.mutation = .deleting(.committing(transaction))
+
+        Task { [weak self] in
+            guard let self else { return }
+            let result = await self.client.delete(itemId: transaction.deletedItemId)
+            await MainActor.run {
+                switch result {
+                case .success:
+                    if case .deleting(.committing(let activeTransaction)) = self.session.mutation,
+                       activeTransaction.deletedItemId == transaction.deletedItemId {
+                        self.session.mutation = .idle
+                    }
+                case .failure(let error):
+                    self.restoreDeleteFailure(error: error)
+                }
+            }
+        }
+    }
+
     private func restoreDeleteFailure(error: ClipboardError) {
-        guard case .deleting(let transaction) = session.mutation else { return }
+        let transaction: DeleteTransaction
+        switch session.mutation {
+        case .deleting(.pending(let pendingTransaction)), .deleting(.committing(let pendingTransaction)):
+            transaction = pendingTransaction
+        default:
+            return
+        }
+        pendingDeleteTask?.cancel()
+        pendingDeleteTask = nil
         restoreSnapshot(
             snapshot: transaction.snapshot,
             preview: transaction.preview,
             selection: transaction.selection
         )
         session.mutation = .failed(ActionFailure(message: error.localizedDescription))
+    }
+
+    private func showDeleteUndoToast() {
+        ToastWindow.shared.show(
+            message: String(localized: "Deleted"),
+            iconSystemName: "trash",
+            iconColor: .secondaryLabelColor,
+            actionTitle: String(localized: "Undo")
+        ) { [weak self] in
+            self?.undoPendingDelete()
+        }
     }
 
     private func restoreClearFailure(error: ClipboardError) {
@@ -716,12 +820,49 @@ final class BrowserViewModel {
         return response
     }
 
-    private func mutateSelectedItemTag(_ tag: ItemTag, shouldInclude: Bool) {
-        guard let itemId = selectedItemId else { return }
+    private func responseApplyingPendingMutations(_ response: BrowserSearchResponse) -> BrowserSearchResponse {
+        switch session.mutation {
+        case .deleting(.pending(let transaction)), .deleting(.committing(let transaction)):
+            return responseHidingDeletedItem(response, deletedItemId: transaction.deletedItemId)
+        case .tagging(.pending(let mutation)), .tagging(.settling(let mutation)):
+            return responseApplyingTagMutation(
+                response,
+                itemId: mutation.itemId,
+                tag: mutation.tag,
+                shouldInclude: mutation.shouldInclude
+            )
+        case .idle, .clearing, .failed:
+            return response
+        }
+    }
+
+    private func responseHidingDeletedItem(_ response: BrowserSearchResponse, deletedItemId: Int64) -> BrowserSearchResponse {
+        guard response.items.contains(where: { $0.itemMetadata.itemId == deletedItemId }) else {
+            return response
+        }
+
+        let filteredItems = response.items.filter { $0.itemMetadata.itemId != deletedItemId }
+        let filteredFirstItem = response.firstItem?.itemMetadata.itemId == deletedItemId
+            ? nil
+            : response.firstItem
+
+        return BrowserSearchResponse(
+            request: response.request,
+            items: filteredItems,
+            firstItem: filteredFirstItem,
+            totalCount: max(0, response.totalCount - 1)
+        )
+    }
+
+    private func mutateItemTag(itemId: Int64, tag: ItemTag, shouldInclude: Bool) {
         let snapshot = currentResponse
         let previewSnapshot = session.preview
         let selectionSnapshot = session.selection
 
+        pendingTagSettleTask?.cancel()
+        pendingTagSettleTask = nil
+        let transaction = TagMutationTransaction(itemId: itemId, tag: tag, shouldInclude: shouldInclude)
+        session.mutation = .tagging(.pending(transaction))
         applyOptimisticTagMutation(itemId: itemId, tag: tag, shouldInclude: shouldInclude)
 
         Task { [weak self] in
@@ -736,8 +877,20 @@ final class BrowserViewModel {
             await MainActor.run {
                 switch result {
                 case .success:
-                    self.session.mutation = .idle
+                    if case .tagging(.pending(let mutation)) = self.session.mutation,
+                       mutation.itemId == itemId,
+                       mutation.tag == tag,
+                       mutation.shouldInclude == shouldInclude {
+                        self.session.mutation = .tagging(.settling(mutation))
+                        self.scheduleTagMutationSettleFallback(
+                            itemId: mutation.itemId,
+                            tag: mutation.tag,
+                            shouldInclude: mutation.shouldInclude
+                        )
+                    }
                 case .failure(let error):
+                    self.pendingTagSettleTask?.cancel()
+                    self.pendingTagSettleTask = nil
                     self.restoreSnapshot(
                         snapshot: snapshot,
                         preview: previewSnapshot,
@@ -751,8 +904,65 @@ final class BrowserViewModel {
 
     private func applyOptimisticTagMutation(itemId: Int64, tag: ItemTag, shouldInclude: Bool) {
         guard case .ready(let response) = session.query else { return }
-        session.mutation = .idle
+        let updatedResponse = responseApplyingTagMutation(
+            response,
+            itemId: itemId,
+            tag: tag,
+            shouldInclude: shouldInclude
+        )
+        session.query = .ready(response: updatedResponse)
 
+        if let selectedItem = selectedItem {
+            let updatedMetadata = selectedItem.itemMetadata.itemId == itemId
+                ? applyingTagMutation(to: selectedItem.itemMetadata, tag: tag, shouldInclude: shouldInclude)
+                : selectedItem.itemMetadata
+            if case .tagged(let activeTag) = response.request.filter,
+               activeTag == tag,
+               !updatedMetadata.tags.contains(tag) {
+                session.selection = .none
+                session.preview = .empty
+                if let firstItemId = updatedResponse.items.first?.itemMetadata.itemId {
+                    select(itemId: firstItemId, origin: .automatic)
+                }
+            } else if selectedItem.itemMetadata.itemId == itemId {
+                session.preview = .loaded(PreviewSelection(
+                    item: ClipboardItem(itemMetadata: updatedMetadata, content: selectedItem.content),
+                    matchData: previewSelection?.matchData
+                ))
+            }
+        }
+
+        // Update prefetch cache to reflect tag mutation
+        if let cachedItem = prefetchCache[itemId] {
+            let updatedMetadata = applyingTagMutation(to: cachedItem.itemMetadata, tag: tag, shouldInclude: shouldInclude)
+            prefetchCache[itemId] = ClipboardItem(itemMetadata: updatedMetadata, content: cachedItem.content)
+        }
+    }
+
+    private func scheduleTagMutationSettleFallback(itemId: Int64, tag: ItemTag, shouldInclude: Bool) {
+        pendingTagSettleTask?.cancel()
+        pendingTagSettleTask = Task { [weak self] in
+            try? await Task.sleep(for: .milliseconds(300))
+            guard !Task.isCancelled else { return }
+            await MainActor.run {
+                guard let self else { return }
+                if case .tagging(.settling(let mutation)) = self.session.mutation,
+                   mutation.itemId == itemId,
+                   mutation.tag == tag,
+                   mutation.shouldInclude == shouldInclude {
+                    self.session.mutation = .idle
+                }
+                self.pendingTagSettleTask = nil
+            }
+        }
+    }
+
+    private func responseApplyingTagMutation(
+        _ response: BrowserSearchResponse,
+        itemId: Int64,
+        tag: ItemTag,
+        shouldInclude: Bool
+    ) -> BrowserSearchResponse {
         let updatedItems = response.items.compactMap { itemMatch -> ItemMatch? in
             let isTarget = itemMatch.itemMetadata.itemId == itemId
             let updatedMetadata = isTarget
@@ -783,38 +993,12 @@ final class BrowserViewModel {
             return ClipboardItem(itemMetadata: updatedMetadata, content: firstItem.content)
         }
 
-        session.query = .ready(response: BrowserSearchResponse(
+        return BrowserSearchResponse(
             request: response.request,
             items: updatedItems,
             firstItem: updatedFirstItem,
             totalCount: updatedItems.count
-        ))
-
-        if let selectedItem = selectedItem {
-            let updatedMetadata = selectedItem.itemMetadata.itemId == itemId
-                ? applyingTagMutation(to: selectedItem.itemMetadata, tag: tag, shouldInclude: shouldInclude)
-                : selectedItem.itemMetadata
-            if case .tagged(let activeTag) = response.request.filter,
-               activeTag == tag,
-               !updatedMetadata.tags.contains(tag) {
-                session.selection = .none
-                session.preview = .empty
-                if let firstItemId = updatedItems.first?.itemMetadata.itemId {
-                    select(itemId: firstItemId, origin: .automatic)
-                }
-            } else if selectedItem.itemMetadata.itemId == itemId {
-                session.preview = .loaded(PreviewSelection(
-                    item: ClipboardItem(itemMetadata: updatedMetadata, content: selectedItem.content),
-                    matchData: previewSelection?.matchData
-                ))
-            }
-        }
-
-        // Update prefetch cache to reflect tag mutation
-        if let cachedItem = prefetchCache[itemId] {
-            let updatedMetadata = applyingTagMutation(to: cachedItem.itemMetadata, tag: tag, shouldInclude: shouldInclude)
-            prefetchCache[itemId] = ClipboardItem(itemMetadata: updatedMetadata, content: cachedItem.content)
-        }
+        )
     }
 
     private func applyingTagMutation(
@@ -851,5 +1035,28 @@ final class BrowserViewModel {
     private func itemIdentifier(at index: Int) -> Int64? {
         guard itemIds.indices.contains(index) else { return nil }
         return itemIds[index]
+    }
+
+    private func performItemAction(
+        itemId: Int64,
+        handler: @escaping (Int64, ClipboardContent) -> Void
+    ) {
+        if let selectedItem, selectedItem.itemMetadata.itemId == itemId {
+            handler(selectedItem.itemMetadata.itemId, selectedItem.content)
+            return
+        }
+
+        if let cachedItem = prefetchCache[itemId] {
+            handler(cachedItem.itemMetadata.itemId, cachedItem.content)
+            return
+        }
+
+        Task { [weak self] in
+            guard let self else { return }
+            guard let item = await self.client.fetchItem(id: itemId) else { return }
+            await MainActor.run {
+                handler(item.itemMetadata.itemId, item.content)
+            }
+        }
     }
 }

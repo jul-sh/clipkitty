@@ -121,30 +121,30 @@ enum PreviewSession {
 enum OverlaySession {
     case none
     case filter(FilterOverlayState)
-    case actions(ActionsOverlayState)
+    case actions(MenuHighlightState)
 }
 
-struct FilterOverlayState {
-    var highlightedIndex: Int
+enum FilterOverlayState {
+    case none
+    case index(Int)
 }
 
-enum ActionsOverlayState {
-    case actions(highlightedIndex: Int)
-    case confirmDelete(highlightedIndex: Int)
-
-    var highlightedIndex: Int {
-        switch self {
-        case .actions(let highlightedIndex), .confirmDelete(let highlightedIndex):
-            return highlightedIndex
-        }
-    }
+enum MenuHighlightState {
+    case none
+    case index(Int)
 }
 
 enum MutationSession {
     case idle
-    case deleting(DeleteTransaction)
+    case deleting(DeleteMutation)
+    case tagging(TagMutation)
     case clearing(ClearTransaction)
     case failed(ActionFailure)
+}
+
+enum DeleteMutation {
+    case pending(DeleteTransaction)
+    case committing(DeleteTransaction)
 }
 
 struct DeleteTransaction {
@@ -152,6 +152,17 @@ struct DeleteTransaction {
     let snapshot: BrowserSearchResponse?
     let preview: PreviewSession
     let selection: SelectionSession
+}
+
+enum TagMutation {
+    case pending(TagMutationTransaction)
+    case settling(TagMutationTransaction)
+}
+
+struct TagMutationTransaction {
+    let itemId: Int64
+    let tag: ItemTag
+    let shouldInclude: Bool
 }
 
 struct ClearTransaction {

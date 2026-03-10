@@ -197,8 +197,9 @@ let project = Project(
             settings: .settings(
                 configurations: [
                     .debug(name: "Debug", settings: [
-                        "CODE_SIGN_STYLE": "Automatic",
-                        "CODE_SIGN_IDENTITY": "-",
+                        "CODE_SIGN_STYLE": "Manual",
+                        "CODE_SIGN_IDENTITY": "Developer ID Application",
+                        "DEVELOPMENT_TEAM": "ANBBV7LQ2P",
                     ]),
                     .release(name: "Release", settings: [
                         "CODE_SIGN_STYLE": "Manual",

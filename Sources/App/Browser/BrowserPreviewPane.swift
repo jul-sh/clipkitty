@@ -146,12 +146,15 @@ struct BrowserPreviewPane: View {
 
             Spacer(minLength: 0)
 
-            Button("⏎ \(AppSettings.shared.pasteMode.buttonLabel)") {
+            Button {
                 viewModel.confirmSelection()
+            } label: {
+                Text("⏎ \(AppSettings.shared.pasteMode.buttonLabel)")
+                    .padding(.horizontal, 10)
+                    .padding(.vertical, 6)
+                    .subtleHover()
             }
             .buttonStyle(.plain)
-            .padding(.horizontal, 6)
-            .padding(.vertical, 2)
             .fixedSize()
         }
         .font(.system(size: 13))

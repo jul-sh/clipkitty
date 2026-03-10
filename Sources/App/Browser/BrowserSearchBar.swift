@@ -11,12 +11,11 @@ struct BrowserSearchBar<FilterPopoverContent: View>: View {
     let onMoveSelection: (Int) -> Void
     let onConfirm: () -> Void
     let onDismiss: () -> Void
-    let onOpenFilter: () -> Void
-    let onOpenActions: () -> Void
-    let onOpenDeleteConfirm: () -> Void
+    let onOpenFilter: (_ viaKeyboard: Bool) -> Void
+    let onOpenActions: (_ viaKeyboard: Bool) -> Void
+    let onDelete: () -> Void
     let onHandleNumberKey: (KeyPress) -> KeyPress.Result
     @ViewBuilder let filterPopoverContent: () -> FilterPopoverContent
-    @State private var isFilterHovered = false
 
     var body: some View {
         HStack(spacing: 8) {
@@ -47,7 +46,7 @@ struct BrowserSearchBar<FilterPopoverContent: View>: View {
                         return .ignored
                     }
                     if selectedItemAvailable {
-                        onOpenActions()
+                        onOpenActions(true)
                     }
                     return .handled
                 }
@@ -56,7 +55,7 @@ struct BrowserSearchBar<FilterPopoverContent: View>: View {
                     return .handled
                 }
                 .onKeyPress(.tab) {
-                    onOpenFilter()
+                    onOpenFilter(true)
                     return .handled
                 }
                 .onKeyPress(characters: .decimalDigits, phases: .down) { keyPress in
@@ -64,12 +63,12 @@ struct BrowserSearchBar<FilterPopoverContent: View>: View {
                 }
                 .onKeyPress(.delete) {
                     guard selectedItemAvailable else { return .ignored }
-                    onOpenDeleteConfirm()
+                    onDelete()
                     return .handled
                 }
                 .onKeyPress(.deleteForward) {
                     guard selectedItemAvailable else { return .ignored }
-                    onOpenDeleteConfirm()
+                    onDelete()
                     return .handled
                 }
 
@@ -79,7 +78,7 @@ struct BrowserSearchBar<FilterPopoverContent: View>: View {
                     .frame(width: 16, height: 16)
             }
 
-            Button(action: onOpenFilter) {
+            Button(action: { onOpenFilter(false) }) {
                 HStack(spacing: 4) {
                     Text(filterLabel)
                         .font(.system(size: 13))
@@ -89,12 +88,9 @@ struct BrowserSearchBar<FilterPopoverContent: View>: View {
                 .foregroundStyle(.secondary)
                 .padding(.horizontal, 12)
                 .padding(.vertical, 6)
-                .background(Capsule().fill(isFilterHovered ? Color.primary.opacity(0.06) : Color.clear))
-                .overlay(Capsule().strokeBorder(Color.primary.opacity(isFilterHovered ? 0.25 : 0.15)))
-                .contentShape(Capsule())
+                .subtleHoverCapsuleWithBorder()
             }
             .buttonStyle(.plain)
-            .onHover { isFilterHovered = $0 }
             .accessibilityIdentifier("FilterDropdown")
             .popover(isPresented: isFilterPopoverPresented, arrowEdge: .bottom) {
                 filterPopoverContent()

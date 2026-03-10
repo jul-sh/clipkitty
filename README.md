@@ -14,21 +14,21 @@ Unlimited history • Instant fuzzy search • Live preview • Private & offlin
 
 You copied that command last week. That code snippet yesterday. That address six months ago. Your clipboard manager either forgot it, slowed down searching for it, or cut off half the content.
 
-ClipKitty stores everything. Finds it in milliseconds—whether you have 100 items or 100 million. Shows the full text, never truncated. Built for people who copy lots of things and need to find them again.
+ClipKitty stores everything. Finds it in milliseconds; whether you have 100 items or 100,000. Built for people who copy lots of things and need to find them again.
 
 ## Why ClipKitty?
 
 | | ClipKitty |
 |---|---|
 | **vs Maccy** | Same simplicity, no limits. Maccy caps at 999 items and slows past 200. ClipKitty scales to millions with live preview instead of hover tooltips. |
-| **vs Raycast** | Same speed, no expiration. Raycast doesn't save long clips; it's free tier expires after 3 months ClipKitty preserves everything forever, strictly offline. |
+| **vs Raycast** | Same speed, better search, no expiration. Raycast doesn't save long clips; it's free tier expires after 3 months. ClipKitty preserves everything forever and finds it faster with smarter, typo tolerant search. |
 | **vs Paste** | Same utility, no subscription. Paste charges $30/year. ClipKitty is free on GitHub or pay once on the App Store. |
 
 ## Features
 
-* **Unlimited History**: No caps, no expiration. Text, images, links, colors—everything preserved in full, forever.
+* **Unlimited History**: No caps, no expiration. Text, images, links, colors; everything preserved in full, forever.
 * **Fuzzy Search That Scales**: Type "improt" and find "import". Type "dockr prodction" and find "docker push production". Powered by Tantivy, the same search engine used in production databases.
-* **Live Preview Pane**: See full content instantly as you navigate. Multi-line text, code blocks, images—no truncation, no waiting.
+* **Live Preview Pane**: See full content instantly as you navigate. Multi-line text, code blocks, images; no truncation, no waiting.
 * **OCR & Smart Search**: Search text inside images and screenshots. AI-powered descriptions make visual content searchable.
 * **Keyboard-First**: `⌥Space` to open, arrow keys to navigate, `Return` to paste. `⌘1-9` for quick access.
 * **Privacy-First**: 100% on-device and offline. No telemetry, no cloud sync, no accounts.
@@ -62,7 +62,6 @@ curl -sL "$(curl -s https://api.github.com/repos/jul-sh/clipkitty/releases/lates
 | **Return** | Paste selected item |
 | **⌘1–9** | Jump to item 1–9 |
 | **Tab** | Cycle content type filter |
-| **Delete** | Delete selected item |
 | **Escape** | Close |
 
 ## Building from Source
