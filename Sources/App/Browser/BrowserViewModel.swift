@@ -255,7 +255,7 @@ final class BrowserViewModel {
         let uniqueIds = Array(Set(ids)).sorted()
         guard !uniqueIds.isEmpty else { return }
         let request = session.query.request
-        guard !request.text.isEmpty else { return }
+        guard !request.isEffectivelyEmpty else { return }
         let key = "\(request.text)|\(uniqueIds.map(String.init).joined(separator: ","))"
         guard matchDataTasks[key] == nil else { return }
 
@@ -425,7 +425,7 @@ final class BrowserViewModel {
 
     private func submitSearch(text rawText: String, filter: ItemQueryFilter) {
         let request = SearchRequest(
-            text: rawText.trimmingCharacters(in: .whitespacesAndNewlines),
+            text: rawText,
             filter: filter
         )
 
@@ -435,7 +435,7 @@ final class BrowserViewModel {
         let fallback = session.query.items
         session.query = .pending(request: request, fallback: fallback, phase: .debouncing)
 
-        if request.text.isEmpty {
+        if request.isEffectivelyEmpty {
             beginSearch(request: request, fallback: fallback)
             return
         }

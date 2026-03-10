@@ -20,6 +20,14 @@ struct BrowserSession {
 struct SearchRequest: Hashable {
     let text: String
     let filter: ItemQueryFilter
+
+    var normalizedText: String {
+        text.trimmingCharacters(in: .whitespacesAndNewlines)
+    }
+
+    var isEffectivelyEmpty: Bool {
+        normalizedText.isEmpty
+    }
 }
 
 struct BrowserSearchResponse {
