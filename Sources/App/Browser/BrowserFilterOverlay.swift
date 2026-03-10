@@ -25,6 +25,7 @@ struct BrowserFilterOverlay: View {
             if let firstOption = options.first {
                 filterButton(
                     label: firstOption.1,
+                    systemImageName: iconName(for: firstOption.0),
                     index: 0,
                     action: {
                         viewModel.setTagFilter(nil)
@@ -39,6 +40,7 @@ struct BrowserFilterOverlay: View {
             // Second item: Bookmarks
             filterButton(
                 label: String(localized: "Bookmarks"),
+                systemImageName: "bookmark",
                 index: 1,
                 action: {
                     if viewModel.selectedTagFilter == .bookmark {
@@ -57,6 +59,7 @@ struct BrowserFilterOverlay: View {
                 let (option, label) = entry
                 filterButton(
                     label: label,
+                    systemImageName: iconName(for: option),
                     index: index + 2, // +2 because All=0, Bookmarks=1
                     action: {
                         viewModel.setTagFilter(nil)
@@ -145,6 +148,7 @@ struct BrowserFilterOverlay: View {
 
     private func filterButton(
         label: String,
+        systemImageName: String,
         index: Int,
         action: @escaping () -> Void,
         isSelected: Bool
@@ -158,6 +162,7 @@ struct BrowserFilterOverlay: View {
 
         return FilterRowButton(
             label: label,
+            systemImageName: systemImageName,
             isHighlighted: isHighlighted,
             isSelected: isSelected,
             onHover: { isHovered in
@@ -171,12 +176,24 @@ struct BrowserFilterOverlay: View {
             focusSearchField()
         }
     }
+
+    private func iconName(for filter: ContentTypeFilter) -> String {
+        switch filter {
+        case .all: return "list.bullet"
+        case .text: return "doc.text"
+        case .images: return "photo"
+        case .links: return "link"
+        case .colors: return "paintpalette"
+        case .files: return "doc"
+        }
+    }
 }
 
 /// Filter row button with hover state.
 /// Supports highlighted state for keyboard navigation.
 private struct FilterRowButton: View {
     let label: String
+    let systemImageName: String
     let isHighlighted: Bool
     let isSelected: Bool
     let onHover: (Bool) -> Void
@@ -185,6 +202,9 @@ private struct FilterRowButton: View {
     var body: some View {
         Button(action: action) {
             HStack(spacing: 6) {
+                Image(systemName: systemImageName)
+                    .font(.system(size: 12, weight: .medium))
+                    .frame(width: 16, alignment: .center)
                 Text(label)
                     .font(.system(size: 13))
                 Spacer(minLength: 0)
