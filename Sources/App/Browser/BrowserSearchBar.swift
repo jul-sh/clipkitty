@@ -11,8 +11,8 @@ struct BrowserSearchBar<FilterPopoverContent: View>: View {
     let onMoveSelection: (Int) -> Void
     let onConfirm: () -> Void
     let onDismiss: () -> Void
-    let onOpenFilter: () -> Void
-    let onOpenActions: () -> Void
+    let onOpenFilter: (_ viaKeyboard: Bool) -> Void
+    let onOpenActions: (_ viaKeyboard: Bool) -> Void
     let onDelete: () -> Void
     let onHandleNumberKey: (KeyPress) -> KeyPress.Result
     @ViewBuilder let filterPopoverContent: () -> FilterPopoverContent
@@ -46,7 +46,7 @@ struct BrowserSearchBar<FilterPopoverContent: View>: View {
                         return .ignored
                     }
                     if selectedItemAvailable {
-                        onOpenActions()
+                        onOpenActions(true)
                     }
                     return .handled
                 }
@@ -55,7 +55,7 @@ struct BrowserSearchBar<FilterPopoverContent: View>: View {
                     return .handled
                 }
                 .onKeyPress(.tab) {
-                    onOpenFilter()
+                    onOpenFilter(true)
                     return .handled
                 }
                 .onKeyPress(characters: .decimalDigits, phases: .down) { keyPress in
@@ -78,7 +78,7 @@ struct BrowserSearchBar<FilterPopoverContent: View>: View {
                     .frame(width: 16, height: 16)
             }
 
-            Button(action: onOpenFilter) {
+            Button(action: { onOpenFilter(false) }) {
                 HStack(spacing: 4) {
                     Text(filterLabel)
                         .font(.system(size: 13))

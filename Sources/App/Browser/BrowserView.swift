@@ -127,28 +127,42 @@ struct BrowserView: View {
         }
     }
 
-    private func openFilterOverlay() {
-        let index: Int
+    private var currentFilterIndex: Int {
         if viewModel.selectedTagFilter == .bookmark {
-            index = 1 // Bookmarks is at index 1
+            return 1 // Bookmarks is at index 1
         } else if viewModel.contentTypeFilter == .all {
-            index = 0 // All is at index 0
+            return 0 // All is at index 0
         } else {
             // Categories start at index 2 (All=0, Bookmarks=1, then categories)
             // filterOptions[0] is All, filterOptions[1+] are categories
             // Use enumerated() to get offset within the slice, not the original array index
             let categoryOffset = Self.filterOptions.dropFirst().enumerated()
                 .first(where: { $0.element.0 == viewModel.contentTypeFilter })?.offset
-            index = (categoryOffset ?? 0) + 2
+            return (categoryOffset ?? 0) + 2
         }
-        viewModel.openFilterOverlay(highlightedIndex: index)
-        focusFilterDropdown()
     }
 
-    private func openActionsOverlay() {
+    /// Opens filter overlay
+    /// - Parameter viaKeyboard: If true (keyboard trigger), highlights current selection for immediate arrow nav.
+    ///                          If false (mouse trigger), no initial highlight - hover will control it.
+    private func openFilterOverlay(viaKeyboard: Bool) {
+        let highlight: FilterOverlayState = viaKeyboard ? .index(currentFilterIndex) : .none
+        viewModel.openFilterOverlay(highlight: highlight)
+        if viaKeyboard {
+            focusFilterDropdown()
+        }
+    }
+
+    /// Opens actions overlay
+    /// - Parameter viaKeyboard: If true (keyboard trigger), highlights first item for immediate arrow nav.
+    ///                          If false (mouse trigger), no initial highlight - hover will control it.
+    private func openActionsOverlay(viaKeyboard: Bool) {
         guard viewModel.selectedItem != nil else { return }
-        viewModel.openActionsOverlay(highlightedIndex: 0)
-        focusActionsDropdown()
+        let highlight: MenuHighlightState = viaKeyboard ? .index(0) : .none
+        viewModel.openActionsOverlay(highlight: highlight)
+        if viaKeyboard {
+            focusActionsDropdown()
+        }
     }
 
     private func handleNumberKey(_ keyPress: KeyPress) -> KeyPress.Result {
@@ -241,9 +255,19 @@ struct BrowserView: View {
         }
         .padding(.horizontal, 14)
         .padding(.vertical, 10)
-        .background(.regularMaterial, in: Capsule())
+        .modifier(BannerBackgroundModifier())
         .shadow(color: .black.opacity(0.12), radius: 8, y: 4)
         .accessibilityIdentifier("MutationFailureBanner")
+    }
+}
+
+private struct BannerBackgroundModifier: ViewModifier {
+    func body(content: Content) -> some View {
+        if #available(macOS 26.0, *) {
+            content.glassEffect(.regular, in: .capsule)
+        } else {
+            content.background(.regularMaterial, in: Capsule())
+        }
     }
 }
 

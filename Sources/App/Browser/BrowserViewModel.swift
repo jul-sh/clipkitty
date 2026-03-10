@@ -190,12 +190,12 @@ final class BrowserViewModel {
         submitSearch(text: searchText, filter: queryFilter)
     }
 
-    func openFilterOverlay(highlightedIndex: Int) {
-        session.overlays = .filter(FilterOverlayState(highlightedIndex: highlightedIndex))
+    func openFilterOverlay(highlight: FilterOverlayState) {
+        session.overlays = .filter(highlight)
     }
 
-    func openActionsOverlay(highlightedIndex: Int) {
-        session.overlays = .actions(.index(highlightedIndex))
+    func openActionsOverlay(highlight: MenuHighlightState) {
+        session.overlays = .actions(highlight)
     }
 
     func closeOverlay() {
@@ -207,14 +207,8 @@ final class BrowserViewModel {
         session.mutation = .idle
     }
 
-    func updateFilterHighlight(_ index: Int) {
-        guard case .filter = session.overlays else { return }
-        session.overlays = .filter(FilterOverlayState(highlightedIndex: index))
-    }
-
-    func updateActionsHighlight(_ index: Int) {
-        guard case .actions = session.overlays else { return }
-        session.overlays = .actions(.index(index))
+    func setFilterOverlayState(_ highlight: FilterOverlayState) {
+        session.overlays = .filter(highlight)
     }
 
     func setActionsOverlayState(_ highlight: MenuHighlightState) {

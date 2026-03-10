@@ -124,8 +124,9 @@ enum OverlaySession {
     case actions(MenuHighlightState)
 }
 
-struct FilterOverlayState {
-    var highlightedIndex: Int
+enum FilterOverlayState {
+    case none
+    case index(Int)
 }
 
 enum MenuHighlightState {

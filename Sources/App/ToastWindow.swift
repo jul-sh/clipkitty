@@ -153,6 +153,7 @@ final class ToastWindow {
             let y = screenFrame.minY + 80
             toastWindow.setFrame(NSRect(x: x, y: y, width: fittingSize.width, height: fittingSize.height), display: true)
         }
+
         toastWindow.orderFront(nil)
     }
 
