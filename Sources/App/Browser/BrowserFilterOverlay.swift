@@ -34,7 +34,7 @@ struct BrowserFilterOverlay: View {
                 )
             }
 
-            Divider().padding(.horizontal, 4).padding(.vertical, 3)
+            Divider().padding(.horizontal, 4).padding(.vertical, 1)
 
             // Second item: Bookmarks
             filterButton(
@@ -50,7 +50,7 @@ struct BrowserFilterOverlay: View {
                 isSelected: viewModel.selectedTagFilter == .bookmark
             )
 
-            Divider().padding(.horizontal, 4).padding(.vertical, 3)
+            Divider().padding(.horizontal, 4).padding(.vertical, 1)
 
             // Remaining categories (skip first which is "All")
             ForEach(Array(options.dropFirst().enumerated()), id: \.offset) { index, entry in
@@ -66,7 +66,7 @@ struct BrowserFilterOverlay: View {
                 )
             }
         }
-        .padding(10)
+        .padding(8)
         .frame(width: 160)
         .focusable()
         .focused(focusTarget, equals: .filterDropdown)
@@ -196,12 +196,12 @@ private struct FilterRowButton: View {
             .foregroundStyle(isHighlighted ? .white : .secondary)
             .frame(maxWidth: .infinity, alignment: .leading)
             .padding(.horizontal, 8)
-            .padding(.vertical, 6)
+            .padding(.vertical, 4)
             .background {
-                RoundedRectangle(cornerRadius: 9)
+                RoundedRectangle(cornerRadius: 7)
                     .fill(isHighlighted ? Color.accentColor : Color.clear)
             }
-            .contentShape(RoundedRectangle(cornerRadius: 9))
+            .contentShape(RoundedRectangle(cornerRadius: 7))
         }
         .buttonStyle(.plain)
         .onHover { onHover($0) }
