@@ -1070,26 +1070,25 @@ final class ClipKittyUITests: XCTestCase {
         Thread.sleep(forTimeInterval: 0.5)
         saveScreenshot(name: "marketing_2_search")
 
-        // Screenshot 3: Images filter applied with dropdown open (keyboard-driven for proper highlighting)
+        // Screenshot 3: Images filter applied with dropdown open, Images row highlighted
         searchField.typeKey("a", modifierFlags: .command)
         searchField.typeKey(.delete, modifierFlags: [])
         Thread.sleep(forTimeInterval: 0.3)
-        // Tab opens filter dropdown via keyboard → highlights current selection ("All" at index 0)
-        searchField.typeKey(.tab, modifierFlags: [])
+        let filterButton = app.buttons["FilterDropdown"]
+        // Apply the Images filter
+        filterButton.click()
         Thread.sleep(forTimeInterval: 0.5)
         let imagesOption = app.buttons["Images"]
         XCTAssertTrue(imagesOption.waitForExistence(timeout: 3), "Images option should appear in dropdown")
-        // Arrow down 3 times: All(0) → Bookmarks(1) → Text(2) → Images(3)
-        app.typeKey(.downArrow, modifierFlags: [])
-        app.typeKey(.downArrow, modifierFlags: [])
-        app.typeKey(.downArrow, modifierFlags: [])
-        Thread.sleep(forTimeInterval: 0.2)
-        // Select Images
-        app.typeKey(.return, modifierFlags: [])
+        imagesOption.click()
         Thread.sleep(forTimeInterval: 0.5)
-        // Re-open via Tab → highlights "Images" since it's now the active filter
-        searchField.typeKey(.tab, modifierFlags: [])
+        // Re-open dropdown, then hover over Images to get highlight
+        filterButton.click()
         Thread.sleep(forTimeInterval: 0.5)
+        let imagesOptionAgain = app.buttons["Images"]
+        XCTAssertTrue(imagesOptionAgain.waitForExistence(timeout: 3), "Images option should appear in dropdown")
+        imagesOptionAgain.hover()
+        Thread.sleep(forTimeInterval: 0.3)
         saveScreenshot(name: "marketing_3_filter")
     }
 
