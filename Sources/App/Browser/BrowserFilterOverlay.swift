@@ -14,6 +14,11 @@ struct BrowserFilterOverlay: View {
         options.count + 1 // +1 for Bookmarks
     }
 
+    private var highlight: FilterOverlayState {
+        guard case .filter(let state) = viewModel.session.overlays else { return .none }
+        return state
+    }
+
     var body: some View {
         VStack(spacing: 2) {
             // First item: All (from options[0])
@@ -67,17 +72,15 @@ struct BrowserFilterOverlay: View {
         .focused(focusTarget, equals: .filterDropdown)
         .focusEffectDisabled()
         .onKeyPress(.upArrow) {
-            viewModel.updateFilterHighlight(max(highlightedIndex - 1, 0))
+            moveHighlight(by: -1)
             return .handled
         }
         .onKeyPress(.downArrow) {
-            viewModel.updateFilterHighlight(min(highlightedIndex + 1, totalItemCount - 1))
+            moveHighlight(by: 1)
             return .handled
         }
         .onKeyPress(.return, phases: .down) { _ in
-            selectHighlightedItem()
-            viewModel.closeOverlay()
-            focusSearchField()
+            activateHighlightedItem()
             return .handled
         }
         .onKeyPress(.escape) {
@@ -92,13 +95,31 @@ struct BrowserFilterOverlay: View {
         }
     }
 
-    private var highlightedIndex: Int {
-        guard case .filter(let state) = viewModel.session.overlays else { return 0 }
-        return state.highlightedIndex
+    private func moveHighlight(by offset: Int) {
+        let currentIndex: Int
+        switch highlight {
+        case .none:
+            currentIndex = offset >= 0 ? -1 : totalItemCount
+        case .index(let index):
+            currentIndex = index
+        }
+        let newIndex = max(0, min(totalItemCount - 1, currentIndex + offset))
+        viewModel.setFilterOverlayState(.index(newIndex))
     }
 
-    private func selectHighlightedItem() {
-        switch highlightedIndex {
+    private func activateHighlightedItem() {
+        guard case .index(let index) = highlight else {
+            viewModel.closeOverlay()
+            focusSearchField()
+            return
+        }
+        performAction(at: index)
+        viewModel.closeOverlay()
+        focusSearchField()
+    }
+
+    private func performAction(at index: Int) {
+        switch index {
         case 0:
             // All
             if let firstOption = options.first {
@@ -114,7 +135,7 @@ struct BrowserFilterOverlay: View {
             }
         default:
             // Categories (index 2+ maps to options[index-1])
-            let categoryIndex = highlightedIndex - 1
+            let categoryIndex = index - 1
             if options.indices.contains(categoryIndex) {
                 viewModel.setTagFilter(nil)
                 viewModel.setContentTypeFilter(options[categoryIndex].0)
@@ -128,10 +149,22 @@ struct BrowserFilterOverlay: View {
         action: @escaping () -> Void,
         isSelected: Bool
     ) -> some View {
-        FilterRowButton(
+        let isHighlighted: Bool
+        if case .index(let highlightedIndex) = highlight {
+            isHighlighted = highlightedIndex == index
+        } else {
+            isHighlighted = false
+        }
+
+        return FilterRowButton(
             label: label,
-            isHighlighted: highlightedIndex == index,
-            isSelected: isSelected
+            isHighlighted: isHighlighted,
+            isSelected: isSelected,
+            onHover: { isHovered in
+                if isHovered {
+                    viewModel.setFilterOverlayState(.index(index))
+                }
+            }
         ) {
             action()
             viewModel.closeOverlay()
@@ -146,8 +179,8 @@ private struct FilterRowButton: View {
     let label: String
     let isHighlighted: Bool
     let isSelected: Bool
+    let onHover: (Bool) -> Void
     let action: () -> Void
-    @State private var isHovered = false
 
     var body: some View {
         Button(action: action) {
@@ -166,17 +199,11 @@ private struct FilterRowButton: View {
             .padding(.vertical, 6)
             .background {
                 RoundedRectangle(cornerRadius: 9)
-                    .fill(backgroundColor)
+                    .fill(isHighlighted ? Color.accentColor : Color.clear)
             }
             .contentShape(RoundedRectangle(cornerRadius: 9))
-            .animation(.easeInOut(duration: 0.15), value: isHovered)
         }
         .buttonStyle(.plain)
-        .onHover { isHovered = $0 }
-    }
-
-    private var backgroundColor: Color {
-        if isHighlighted { return Color.accentColor }
-        return isHovered ? Color.primary.opacity(0.04) : Color.clear
+        .onHover { onHover($0) }
     }
 }

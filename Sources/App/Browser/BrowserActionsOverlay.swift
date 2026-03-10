@@ -5,8 +5,6 @@ struct BrowserActionsOverlay: View {
     let focusSearchField: () -> Void
     let focusActionsDropdown: () -> Void
 
-    private let firstActionIndex = 0
-
     private var actions: [BrowserActionItem] {
         BrowserActionItem.items(for: viewModel.selectedItem?.itemMetadata.tags ?? [])
     }
@@ -31,7 +29,7 @@ struct BrowserActionsOverlay: View {
         Binding(
             get: {
                 guard case .actions(let highlight) = viewModel.session.overlays else {
-                    return .index(firstActionIndex)
+                    return .none
                 }
                 return highlight
             },
@@ -46,8 +44,8 @@ struct BrowserActionsOverlay: View {
             if case .actions = viewModel.session.overlays {
                 viewModel.closeOverlay()
             } else {
-                viewModel.openActionsOverlay(highlightedIndex: firstActionIndex)
-                focusActionsDropdown()
+                // Mouse click opens with no highlight - hover will control it
+                viewModel.openActionsOverlay(highlight: .none)
             }
         } label: {
             Text("⌘K Actions")
@@ -63,11 +61,8 @@ struct BrowserActionsOverlay: View {
             BrowserActionMenu(
                 items: actions,
                 highlight: menuHighlight,
-                interaction: .keyboard(
-                    focusOnAppear: focusActionsDropdown,
-                    dismissToSearch: focusSearchField,
-                    tabToSearch: focusSearchField
-                ),
+                focusSearchField: focusSearchField,
+                focusActionsDropdown: focusActionsDropdown,
                 performAction: { action in
                     guard let itemId = viewModel.selectedItemId else { return }
                     viewModel.performAction(
