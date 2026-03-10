@@ -425,7 +425,7 @@ final class BrowserViewModel {
 
     private func submitSearch(text rawText: String, filter: ItemQueryFilter) {
         let request = SearchRequest(
-            text: rawText.trimmingCharacters(in: .whitespacesAndNewlines),
+            text: rawText,
             filter: filter
         )
 

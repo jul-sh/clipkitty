@@ -153,6 +153,44 @@ final class BrowserViewModelTests: XCTestCase {
         }
     }
 
+    func testUpdateSearchTextPreservesTrailingWhitespace() async {
+        let client = MockBrowserStoreClient()
+        let viewModel = BrowserViewModel(
+            client: client,
+            onSelect: { _, _ in },
+            onCopyOnly: { _, _ in },
+            onDismiss: {}
+        )
+
+        viewModel.updateSearchText("report ")
+
+        XCTAssertEqual(viewModel.searchText, "report ")
+
+        try? await Task.sleep(for: .milliseconds(75))
+        await flushMainActor()
+
+        XCTAssertEqual(client.startedSearchRequests.last?.text, "report ")
+    }
+
+    func testWhitespaceOnlySearchPreservesRawInput() async {
+        let client = MockBrowserStoreClient()
+        let viewModel = BrowserViewModel(
+            client: client,
+            onSelect: { _, _ in },
+            onCopyOnly: { _, _ in },
+            onDismiss: {}
+        )
+
+        viewModel.updateSearchText("   ")
+
+        XCTAssertEqual(viewModel.searchText, "   ")
+
+        try? await Task.sleep(for: .milliseconds(75))
+        await flushMainActor()
+
+        XCTAssertEqual(client.startedSearchRequests.last?.text, "   ")
+    }
+
     private func flushMainActor() async {
         for _ in 0..<5 {
             await Task.yield()
@@ -196,9 +234,11 @@ private final class MockBrowserStoreClient: BrowserStoreClient {
     private var searchContinuations: [CheckedContinuation<BrowserSearchOutcome, Never>] = []
     var deleteResult: Result<Void, ClipboardError> = .success(())
     var clearResult: Result<Void, ClipboardError> = .success(())
+    var startedSearchRequests: [SearchRequest] = []
     private var fetchContinuations: [Int64: [CheckedContinuation<ClipboardItem?, Never>]] = [:]
 
     func startSearch(request: SearchRequest) -> BrowserSearchOperation {
+        startedSearchRequests.append(request)
         return MockBrowserSearchOperation(request: request) { [weak self] in
             guard let self else { return .cancelled }
             return await self.nextSearchOutcome()
