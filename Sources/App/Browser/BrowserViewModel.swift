@@ -255,7 +255,7 @@ final class BrowserViewModel {
         let uniqueIds = Array(Set(ids)).sorted()
         guard !uniqueIds.isEmpty else { return }
         let request = session.query.request
-        guard !request.isEffectivelyEmpty else { return }
+        guard !request.text.isEmpty else { return }
         let key = "\(request.text)|\(uniqueIds.map(String.init).joined(separator: ","))"
         guard matchDataTasks[key] == nil else { return }
 
@@ -435,7 +435,7 @@ final class BrowserViewModel {
         let fallback = session.query.items
         session.query = .pending(request: request, fallback: fallback, phase: .debouncing)
 
-        if request.isEffectivelyEmpty {
+        if request.text.isEmpty {
             beginSearch(request: request, fallback: fallback)
             return
         }

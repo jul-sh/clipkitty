@@ -172,7 +172,7 @@ final class BrowserViewModelTests: XCTestCase {
         XCTAssertEqual(client.startedSearchRequests.last?.text, "report ")
     }
 
-    func testWhitespaceOnlySearchPreservesRawInputAndStartsImmediately() async {
+    func testWhitespaceOnlySearchPreservesRawInput() async {
         let client = MockBrowserStoreClient()
         let viewModel = BrowserViewModel(
             client: client,
@@ -184,6 +184,10 @@ final class BrowserViewModelTests: XCTestCase {
         viewModel.updateSearchText("   ")
 
         XCTAssertEqual(viewModel.searchText, "   ")
+
+        try? await Task.sleep(for: .milliseconds(75))
+        await flushMainActor()
+
         XCTAssertEqual(client.startedSearchRequests.last?.text, "   ")
     }
 

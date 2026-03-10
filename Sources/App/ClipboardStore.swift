@@ -196,7 +196,6 @@ final class ClipboardStore {
 
     func setSearchQuery(_ newQuery: String) {
         let query = newQuery
-        let normalizedQuery = newQuery.trimmingCharacters(in: .whitespacesAndNewlines)
 
         searchExecution.cancel()
         currentSearchQuery = query
@@ -216,7 +215,7 @@ final class ClipboardStore {
         state = .resultsLoading(query: query, fallback: fallback)
         CATransaction.commit()
 
-        if normalizedQuery.isEmpty {
+        if query.isEmpty {
             beginSearch(query: query)
             return
         }
