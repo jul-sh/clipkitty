@@ -120,6 +120,16 @@ jobs:
       - name: Build App (AppStore)
         run: make build CONFIGURATION=AppStore
 
+      - name: Run UI Tests
+        run: |
+          xcodebuild test \
+            -workspace ClipKitty.xcworkspace \
+            -scheme ClipKittyUITests \
+            -destination "platform=macOS" \
+            -derivedDataPath DerivedData \
+            -skip-testing:ClipKittyUITests/ClipKittyUITests/testRecordSearchDemo \
+            -skip-testing:ClipKittyUITests/ClipKittyUITests/testTakeMarketingScreenshots
+
       - name: Create Virtual Retina Display
         run: |
           xcrun clang -framework CoreGraphics -framework Foundation \

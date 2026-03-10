@@ -3,7 +3,7 @@ import SwiftUI
 struct BrowserActionsOverlay: View {
     @Bindable var viewModel: BrowserViewModel
     let focusSearchField: () -> Void
-    let focusActionsDropdown: () -> Void
+    let focusTarget: FocusState<BrowserView.FocusTarget?>.Binding
 
     private var actions: [BrowserActionItem] {
         BrowserActionItem.items(for: viewModel.selectedItem?.itemMetadata.tags ?? [])
@@ -62,7 +62,7 @@ struct BrowserActionsOverlay: View {
                 items: actions,
                 highlight: menuHighlight,
                 focusSearchField: focusSearchField,
-                focusActionsDropdown: focusActionsDropdown,
+                focusTarget: focusTarget,
                 performAction: { action in
                     guard let itemId = viewModel.selectedItemId else { return }
                     viewModel.performAction(
