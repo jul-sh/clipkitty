@@ -552,7 +552,7 @@ final class ClipKittyUITests: XCTestCase {
         XCTAssertTrue(cancelButton.waitForExistence(timeout: 3), "Cancel button should appear in confirmation")
     }
 
-    /// Tests the full delete flow: open actions, click delete, confirm deletion.
+    /// Tests the full delete flow: open delete confirmation, confirm via keyboard.
     func testDeleteItemViaKeyboard() throws {
         let searchField = app.textFields["SearchField"]
         XCTAssertTrue(searchField.waitForExistence(timeout: 5), "Search field not found")
@@ -561,46 +561,31 @@ final class ClipKittyUITests: XCTestCase {
         let initialCount = app.outlines.firstMatch.buttons.allElementsBoundByIndex.count
         XCTAssertGreaterThan(initialCount, 0, "Should have items to delete")
 
-        // Ensure focus is on the search field before sending keyboard shortcut
+        // Ensure focus is on the search field
         clickAndWait(searchField)
         Thread.sleep(forTimeInterval: ciTimeout)
 
-        // Press Cmd+K to open actions popover
-        searchField.typeKey("k", modifierFlags: .command)
+        // The search bar has .onKeyPress(.delete) which opens the delete
+        // confirmation popover directly (skipping the actions menu).
+        // Use Fn+Backspace to send the forward-delete key.
+        app.typeKey(.delete, modifierFlags: [])
 
-        let deleteAction = app.buttons["Action_Delete"]
-        XCTAssertTrue(deleteAction.waitForExistence(timeout: 5), "Actions popover should open")
-
-        // Click the Delete button to enter confirmation state
-        deleteAction.click()
-        Thread.sleep(forTimeInterval: 1.0)
-
-        // Verify we're in confirmation state by checking for the Cancel button
+        // Verify the confirmation popover appeared
         let cancelButton = app.buttons["Action_Cancel"]
-        XCTAssertTrue(cancelButton.waitForExistence(timeout: 5), "Should be in delete confirmation state")
+        XCTAssertTrue(cancelButton.waitForExistence(timeout: 5), "Delete confirmation should appear")
 
-        // Confirm deletion using the accessibility perform action.
-        // Direct click on SwiftUI .plain buttons in popovers is unreliable in CI
-        // due to button identity changes during state transitions.
-        // Instead, use the XCUIElement press API which is more reliable for
-        // SwiftUI buttons.
-        let confirmDeleteButton = app.buttons["Action_Delete"]
-        XCTAssertTrue(confirmDeleteButton.waitForExistence(timeout: 3), "Confirm delete button should exist")
-        confirmDeleteButton.press(forDuration: 0.1)
+        // The confirmation opens with Delete button highlighted (index 0).
+        // The popover's .onKeyPress(.return) handler confirms deletion when
+        // highlightedIndex == 0. Press Return to confirm.
+        // Small delay to let the popover focus settle.
+        Thread.sleep(forTimeInterval: 0.5)
+        app.typeKey(.return, modifierFlags: [])
 
         // Wait for deletion to process
         let deleted = waitForCondition(timeout: 5) {
             self.app.outlines.firstMatch.buttons.allElementsBoundByIndex.count == initialCount - 1
         }
-        if !deleted {
-            // Fallback: try coordinate-based click if press didn't work
-            let coord = confirmDeleteButton.coordinate(withNormalizedOffset: CGVector(dx: 0.5, dy: 0.5))
-            coord.press(forDuration: 0.1)
-            let deletedRetry = waitForCondition(timeout: 5) {
-                self.app.outlines.firstMatch.buttons.allElementsBoundByIndex.count == initialCount - 1
-            }
-            XCTAssertTrue(deletedRetry, "Item count should decrease by 1 after deletion")
-        }
+        XCTAssertTrue(deleted, "Item count should decrease by 1 after deletion")
 
         // Verify: window is still visible (not hidden)
         let window = app.dialogs.firstMatch
