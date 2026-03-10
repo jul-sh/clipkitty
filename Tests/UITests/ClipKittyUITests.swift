@@ -552,7 +552,7 @@ final class ClipKittyUITests: XCTestCase {
         XCTAssertTrue(cancelButton.waitForExistence(timeout: 3), "Cancel button should appear in confirmation")
     }
 
-    /// Tests the full delete-via-keyboard flow: open actions, navigate to delete, confirm inline.
+    /// Tests the full delete flow: open actions, click delete, confirm deletion.
     func testDeleteItemViaKeyboard() throws {
         let searchField = app.textFields["SearchField"]
         XCTAssertTrue(searchField.waitForExistence(timeout: 5), "Search field not found")
@@ -571,17 +571,24 @@ final class ClipKittyUITests: XCTestCase {
         let deleteAction = app.buttons["Action_Delete"]
         XCTAssertTrue(deleteAction.waitForExistence(timeout: 5), "Actions popover should open")
 
-        // Click the Delete button directly (keyboard navigation in popovers
-        // is unreliable in CI due to focus timing)
-        clickAndWait(deleteAction, timeout: ciTimeout)
+        // Click the Delete button to enter confirmation state
+        deleteAction.click()
+        Thread.sleep(forTimeInterval: 1.0)
 
-        // Inline confirmation should appear — the same button transforms to confirm
-        let confirmDelete = app.buttons["Action_Delete"]
-        XCTAssertTrue(confirmDelete.waitForExistence(timeout: 5), "Inline delete confirmation should appear")
-        Thread.sleep(forTimeInterval: ciTimeout)
+        // Verify we're in confirmation state by checking for the Cancel button
+        let cancelButton = app.buttons["Action_Cancel"]
+        XCTAssertTrue(cancelButton.waitForExistence(timeout: 5), "Should be in delete confirmation state")
 
-        // Click confirm to delete
-        clickAndWait(confirmDelete, timeout: ciTimeout)
+        // The confirmation replaces the popover content. Action_Delete now means
+        // "confirm deletion". Re-query to get a fresh element reference.
+        let confirmDeleteButton = app.buttons["Action_Delete"]
+        XCTAssertTrue(confirmDeleteButton.waitForExistence(timeout: 3), "Confirm delete button should exist")
+
+        // Click the confirmation Delete button — use coordinate-based click
+        // to avoid SwiftUI button identity issues
+        let coord = confirmDeleteButton.coordinate(withNormalizedOffset: CGVector(dx: 0.5, dy: 0.5))
+        coord.click()
+        Thread.sleep(forTimeInterval: 1.0)
 
         // Wait for deletion to process
         let deleted = waitForCondition(timeout: 5) {
