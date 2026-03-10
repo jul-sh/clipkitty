@@ -6,6 +6,7 @@ struct BrowserPreviewPane: View {
     @Bindable var viewModel: BrowserViewModel
     let focusSearchField: () -> Void
     let focusActionsDropdown: () -> Void
+    @State private var isMainActionHovered = false
 
     var body: some View {
         Group {
@@ -146,12 +147,17 @@ struct BrowserPreviewPane: View {
 
             Spacer(minLength: 0)
 
-            Button("⏎ \(AppSettings.shared.pasteMode.buttonLabel)") {
+            Button {
                 viewModel.confirmSelection()
+            } label: {
+                Text("⏎ \(AppSettings.shared.pasteMode.buttonLabel)")
+                    .padding(.horizontal, 10)
+                    .padding(.vertical, 6)
+                    .background(RoundedRectangle(cornerRadius: 6).fill(isMainActionHovered ? Color.primary.opacity(0.06) : Color.clear))
+                    .contentShape(RoundedRectangle(cornerRadius: 6))
             }
             .buttonStyle(.plain)
-            .padding(.horizontal, 6)
-            .padding(.vertical, 2)
+            .onHover { isMainActionHovered = $0 }
             .fixedSize()
         }
         .font(.system(size: 13))
