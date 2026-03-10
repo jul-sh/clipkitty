@@ -195,7 +195,7 @@ final class ClipboardStore {
     // MARK: - Public API
 
     func setSearchQuery(_ newQuery: String) {
-        let query = newQuery.trimmingCharacters(in: .whitespacesAndNewlines)
+        let query = newQuery
 
         searchExecution.cancel()
         currentSearchQuery = query
