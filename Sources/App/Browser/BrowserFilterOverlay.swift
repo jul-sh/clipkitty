@@ -140,7 +140,8 @@ struct BrowserFilterOverlay: View {
     }
 }
 
-/// Filter row button with hover state
+/// Filter row button with hover state.
+/// Supports highlighted state for keyboard navigation.
 private struct FilterRowButton: View {
     let label: String
     let isHighlighted: Bool
@@ -164,17 +165,18 @@ private struct FilterRowButton: View {
             .padding(.horizontal, 8)
             .padding(.vertical, 6)
             .background {
-                if isHighlighted {
-                    RoundedRectangle(cornerRadius: 9)
-                        .fill(Color.accentColor)
-                } else {
-                    RoundedRectangle(cornerRadius: 9)
-                        .fill(isHovered ? Color.primary.opacity(0.08) : Color.clear)
-                }
+                RoundedRectangle(cornerRadius: 9)
+                    .fill(backgroundColor)
             }
             .contentShape(RoundedRectangle(cornerRadius: 9))
+            .animation(.easeInOut(duration: 0.15), value: isHovered)
         }
         .buttonStyle(.plain)
         .onHover { isHovered = $0 }
+    }
+
+    private var backgroundColor: Color {
+        if isHighlighted { return Color.accentColor }
+        return isHovered ? Color.primary.opacity(0.04) : Color.clear
     }
 }
