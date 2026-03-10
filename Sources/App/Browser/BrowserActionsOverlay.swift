@@ -1,9 +1,50 @@
 import SwiftUI
 
+/// Reusable action button with hover state for popover menus
+private struct ActionButton: View {
+    let label: String
+    let actionID: String
+    var isHighlighted: Bool = false
+    var isDestructive: Bool = false
+    let action: () -> Void
+    @State private var isHovered = false
+
+    var body: some View {
+        Button(action: action) {
+            Text(label)
+                .font(.system(size: 13))
+                .foregroundStyle(foregroundColor)
+                .frame(maxWidth: .infinity, alignment: .leading)
+                .padding(.horizontal, 8)
+                .padding(.vertical, 6)
+                .background {
+                    if isHighlighted {
+                        RoundedRectangle(cornerRadius: 9)
+                            .fill(isDestructive ? Color.red.opacity(0.8) : Color.accentColor)
+                    } else {
+                        RoundedRectangle(cornerRadius: 9)
+                            .fill(isHovered ? Color.primary.opacity(0.08) : Color.clear)
+                    }
+                }
+                .contentShape(RoundedRectangle(cornerRadius: 9))
+        }
+        .buttonStyle(.plain)
+        .onHover { isHovered = $0 }
+        .accessibilityIdentifier("Action_\(actionID)")
+    }
+
+    private var foregroundColor: Color {
+        if isHighlighted { return .white }
+        if isDestructive { return .red }
+        return .secondary
+    }
+}
+
 struct BrowserActionsOverlay: View {
     @Bindable var viewModel: BrowserViewModel
     let focusSearchField: () -> Void
     let focusActionsDropdown: () -> Void
+    @State private var isButtonHovered = false
 
     private enum ActionItem: Equatable {
         case delete
@@ -61,10 +102,13 @@ struct BrowserActionsOverlay: View {
             Text("⌘K Actions")
                 .font(.system(size: 13))
                 .foregroundStyle(.secondary)
-                .padding(.horizontal, 6)
-                .padding(.vertical, 2)
+                .padding(.horizontal, 10)
+                .padding(.vertical, 6)
+                .background(RoundedRectangle(cornerRadius: 6).fill(isButtonHovered ? Color.primary.opacity(0.06) : Color.clear))
+                .contentShape(RoundedRectangle(cornerRadius: 6))
         }
         .buttonStyle(.plain)
+        .onHover { isButtonHovered = $0 }
         .accessibilityIdentifier("ActionsButton")
         .popover(isPresented: isPresented, arrowEdge: .top) {
             popoverContent
@@ -167,22 +211,13 @@ struct BrowserActionsOverlay: View {
     }
 
     private func actionButton(action: ActionItem, highlightedIndex: Int, index: Int) -> some View {
-        Button {
-            performAction(action)
-        } label: {
-            Text(label(for: action))
-                .font(.system(size: 13))
-                .foregroundStyle(highlightedIndex == index ? .white : action == .delete ? .red : .secondary)
-                .frame(maxWidth: .infinity, alignment: .leading)
-                .padding(.horizontal, 8)
-                .padding(.vertical, 5)
-                .background {
-                    RoundedRectangle(cornerRadius: 9)
-                        .fill(highlightedIndex == index ? (action == .delete ? Color.red.opacity(0.8) : Color.accentColor) : Color.clear)
-                }
-        }
-        .buttonStyle(.plain)
-        .accessibilityIdentifier("Action_\(identifier(for: action))")
+        ActionButton(
+            label: label(for: action),
+            actionID: identifier(for: action),
+            isHighlighted: highlightedIndex == index,
+            isDestructive: action == .delete,
+            action: { performAction(action) }
+        )
     }
 
     private func confirmButton(
@@ -192,20 +227,13 @@ struct BrowserActionsOverlay: View {
         destructive: Bool,
         action: @escaping () -> Void
     ) -> some View {
-        Button(action: action) {
-            Text(label)
-                .font(.system(size: 13))
-                .foregroundStyle(highlighted ? .white : destructive ? .red : .secondary)
-                .frame(maxWidth: .infinity, alignment: .leading)
-                .padding(.horizontal, 8)
-                .padding(.vertical, 5)
-                .background {
-                    RoundedRectangle(cornerRadius: 9)
-                        .fill(highlighted ? (destructive ? Color.red.opacity(0.8) : Color.accentColor) : Color.clear)
-                }
-        }
-        .buttonStyle(.plain)
-        .accessibilityIdentifier("Action_\(actionID)")
+        ActionButton(
+            label: label,
+            actionID: actionID,
+            isHighlighted: highlighted,
+            isDestructive: destructive,
+            action: action
+        )
     }
 
     private func performAction(_ action: ActionItem) {
