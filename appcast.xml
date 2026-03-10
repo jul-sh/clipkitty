@@ -10,8 +10,8 @@
       <sparkle:shortVersionString>1.9.2</sparkle:shortVersionString>
       <sparkle:minimumSystemVersion>14.0</sparkle:minimumSystemVersion>
       <sparkle:channel>beta</sparkle:channel>
-      <pubDate>Tue, 10 Mar 2026 22:16:27 +0000</pubDate>
-      <enclosure url="https://github.com/jul-sh/clipkitty/releases/download/v1.9.2-beta/ClipKitty.dmg" type="application/octet-stream" sparkle:edSignature="a09hb1Y4Sqrf3rycWy7Q/EeK+E84o7z01wHiff5Zu6W/o3yVev2OG7vXH80pzrT39RFO4KusA0aONe8IeyTeCA==" length="11559020"/>
+      <pubDate>Tue, 10 Mar 2026 22:27:37 +0000</pubDate>
+      <enclosure url="https://github.com/jul-sh/clipkitty/releases/download/v1.9.2-beta/ClipKitty.dmg" type="application/octet-stream" sparkle:edSignature="jy2llcFkxBjVFEkGwm6KKBlEUFz8+dz7utqtXLpy9mZdxI9Tpz/Jqq/5CMrX+kj4zZ9mXUrOc7XXhufQuIaHBw==" length="11553662"/>
     </item>
     <item>
       <title>ClipKitty 1.9.0</title>
