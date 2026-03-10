@@ -445,28 +445,50 @@ pub(crate) fn create_lazy_item_match(item: &StoredItem) -> ItemMatch {
     }
 }
 
-/// Compute trivial match data for prefix queries (< 3 chars).
-/// The highlight is always just the first `query.len()` chars of the content.
-pub(crate) fn compute_prefix_match_data(content: &str, query_char_len: usize) -> MatchData {
-    let max_len = SNIPPET_CONTEXT_CHARS * 2;
-    let highlight = if query_char_len > 0 && content.chars().count() >= query_char_len {
-        vec![HighlightRange {
-            start: 0,
-            end: query_char_len as u64,
-            kind: HighlightKind::Prefix,
-        }]
+/// Compute match data for an exact substring match in short-query fallback mode.
+pub(crate) fn compute_short_query_match_data(
+    content: &str,
+    query: &str,
+    prefer_prefix: bool,
+) -> MatchData {
+    let trimmed = query.trim();
+    if trimmed.is_empty() {
+        return MatchData::default();
+    }
+
+    let content_lower = content.to_lowercase();
+    let query_lower = trimmed.to_lowercase();
+    let query_char_len = trimmed.chars().count();
+
+    let start = if prefer_prefix && content_lower.starts_with(&query_lower) {
+        Some(0)
     } else {
-        Vec::new()
+        content_lower.find(&query_lower).map(|byte_idx| content_lower[..byte_idx].chars().count())
     };
 
+    let highlight = start
+        .map(|start| HighlightRange {
+            start: start as u64,
+            end: (start + query_char_len) as u64,
+            kind: if start == 0 && prefer_prefix {
+                HighlightKind::Prefix
+            } else {
+                HighlightKind::Exact
+            },
+        })
+        .into_iter()
+        .collect::<Vec<_>>();
+
+    let max_len = SNIPPET_CONTEXT_CHARS * 2;
     let (text, adjusted_highlights, line_number) = generate_snippet(content, &highlight, max_len);
+    let densest_highlight_start = highlight.first().map(|h| h.start).unwrap_or(0);
 
     MatchData {
         text,
         highlights: adjusted_highlights,
         line_number,
         full_content_highlights: highlight,
-        densest_highlight_start: 0,
+        densest_highlight_start,
     }
 }
 
@@ -485,6 +507,10 @@ pub(crate) fn compute_item_highlights(content: &str, query: &str) -> MatchData {
             full_content_highlights: Vec::new(),
             densest_highlight_start: 0,
         };
+    }
+
+    if trimmed.chars().count() < MIN_TRIGRAM_QUERY_LEN {
+        return compute_short_query_match_data(content, trimmed, true);
     }
 
     let query_words_owned = tokenize_words(trimmed);
@@ -849,6 +875,24 @@ mod tests {
             .map(|r| chars[r.start as usize..r.end as usize].iter().collect())
             .collect();
         assert_eq!(words, vec!["testing"]);
+    }
+
+    #[test]
+    fn test_short_query_match_data_prefers_prefix() {
+        let match_data = compute_short_query_match_data("Alpha beta", "al", true);
+        assert_eq!(match_data.full_content_highlights.len(), 1);
+        assert_eq!(match_data.full_content_highlights[0].start, 0);
+        assert_eq!(match_data.full_content_highlights[0].end, 2);
+        assert_eq!(match_data.full_content_highlights[0].kind, HighlightKind::Prefix);
+    }
+
+    #[test]
+    fn test_short_query_match_data_finds_anywhere_substring() {
+        let match_data = compute_short_query_match_data("zz Alpha beta", "ph", false);
+        assert_eq!(match_data.full_content_highlights.len(), 1);
+        assert_eq!(match_data.full_content_highlights[0].start, 5);
+        assert_eq!(match_data.full_content_highlights[0].end, 7);
+        assert_eq!(match_data.full_content_highlights[0].kind, HighlightKind::Exact);
     }
 
     #[test]

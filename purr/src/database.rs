@@ -630,6 +630,44 @@ impl Database {
         Ok(results)
     }
 
+    /// Fetch recent items for short-query fallback scanning.
+    /// Returns (id, content, timestamp) sorted by recency.
+    pub fn fetch_recent_items_for_short_query(
+        &self,
+        limit: usize,
+        filter: Option<&ContentTypeFilter>,
+        tag: Option<&ItemTag>,
+    ) -> DatabaseResult<Vec<(i64, String, i64)>> {
+        let conn = self.get_conn()?;
+        let type_filter_where = Self::content_type_where_clause(filter, "WHERE");
+        let tag_filter_where = Self::tag_where_clause(tag, false, "WHERE", "AND");
+        let sql = format!(
+            r#"SELECT id, content, CAST(strftime('%s', timestamp) AS INTEGER)
+               FROM items
+               {} {}
+               ORDER BY timestamp DESC
+               LIMIT ?"#,
+            type_filter_where, tag_filter_where
+        );
+        let mut stmt = conn.prepare(&sql)?;
+        let mut param_values: Vec<rusqlite::types::Value> = Vec::new();
+        if let Some(tag) = tag {
+            param_values.push(tag.database_str().to_string().into());
+        }
+        param_values.push((limit as i64).into());
+        let results: Vec<(i64, String, i64)> = stmt
+            .query_map(rusqlite::params_from_iter(param_values), |row| {
+                Ok((
+                    row.get::<_, i64>(0)?,
+                    row.get::<_, String>(1)?,
+                    row.get::<_, i64>(2)?,
+                ))
+            })?
+            .collect::<Result<Vec<_>, _>>()?;
+
+        Ok(results)
+    }
+
     /// Prune old items to stay under max size (CASCADE handles children)
     pub fn prune_to_size(&self, max_bytes: i64, keep_ratio: f64) -> DatabaseResult<usize> {
         let current_size = self.database_size()?;

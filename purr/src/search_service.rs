@@ -5,7 +5,7 @@ use crate::interface::{
     MatchData, SearchResult,
 };
 use crate::models::StoredItem;
-use crate::search::{self, MAX_RESULTS, MIN_TRIGRAM_QUERY_LEN};
+use crate::search::{self, MIN_TRIGRAM_QUERY_LEN};
 use std::sync::Arc;
 use tokio_util::sync::CancellationToken;
 
@@ -57,6 +57,9 @@ const EAGER_MATCH_DATA_COUNT: usize = 25;
 const SHORT_CONTENT_THRESHOLD: usize = 1024;
 /// Skip eager short-item highlights when results exceed this count.
 const EAGER_SHORT_RESULT_LIMIT: usize = 200;
+const SHORT_QUERY_MAX_RESULTS: usize = 50;
+const SHORT_QUERY_RECENT_WINDOW: usize = 5000;
+const SHORT_QUERY_CONTENT_CAP: usize = 512;
 
 pub(crate) struct SearchContext {
     pub(crate) db: Arc<Database>,
@@ -148,7 +151,7 @@ pub(crate) fn compute_highlights(
             if let Some(item) = item_map.get(id) {
                 let content = item.content.text_content();
                 if is_prefix_query {
-                    search::compute_prefix_match_data(content, trimmed.chars().count())
+                    search::compute_short_query_match_data(content, trimmed, true)
                 } else {
                     search::compute_item_highlights(content, &query)
                 }
@@ -173,8 +176,47 @@ pub(crate) fn search_short_query_sync(
         return Err(ClipKittyError::Cancelled);
     }
 
-    let candidates = db.search_prefix_query(query, MAX_RESULTS, filter, tag.as_ref())?;
-    if candidates.is_empty() {
+    let trimmed = query.trim();
+    if trimmed.is_empty() {
+        return Ok(Vec::new());
+    }
+
+    let query_lower = trimmed.to_lowercase();
+    let mut ordered_ids = Vec::with_capacity(SHORT_QUERY_MAX_RESULTS);
+    let mut prefix_ids = std::collections::HashSet::new();
+    let prefix_candidates =
+        db.search_prefix_query(trimmed, SHORT_QUERY_MAX_RESULTS, filter, tag.as_ref())?;
+
+    for (id, _, _) in prefix_candidates {
+        if prefix_ids.insert(id) {
+            ordered_ids.push(id);
+        }
+        if ordered_ids.len() >= SHORT_QUERY_MAX_RESULTS {
+            break;
+        }
+    }
+
+    if ordered_ids.len() < SHORT_QUERY_MAX_RESULTS {
+        let recent_candidates = db.fetch_recent_items_for_short_query(
+            SHORT_QUERY_RECENT_WINDOW,
+            filter,
+            tag.as_ref(),
+        )?;
+        for (id, content, _) in recent_candidates {
+            if prefix_ids.contains(&id) {
+                continue;
+            }
+            let content_prefix: String = content.chars().take(SHORT_QUERY_CONTENT_CAP).collect();
+            if content_prefix.to_lowercase().contains(&query_lower) {
+                ordered_ids.push(id);
+            }
+            if ordered_ids.len() >= SHORT_QUERY_MAX_RESULTS {
+                break;
+            }
+        }
+    }
+
+    if ordered_ids.is_empty() {
         return Ok(Vec::new());
     }
 
@@ -182,23 +224,27 @@ pub(crate) fn search_short_query_sync(
         return Err(ClipKittyError::Cancelled);
     }
 
-    let ids: Vec<i64> = candidates.iter().map(|(id, _, _)| *id).collect();
-    let stored_items = db.fetch_items_by_ids_interruptible(&ids, token, runtime)?;
-    let query_char_len = query.chars().count();
+    let stored_items = db.fetch_items_by_ids_interruptible(&ordered_ids, token, runtime)?;
+    let item_map: std::collections::HashMap<i64, StoredItem> = stored_items
+        .into_iter()
+        .filter_map(|item| item.id.map(|id| (id, item)))
+        .collect();
 
-    let results: Vec<ItemMatch> = ids
+    let results: Vec<ItemMatch> = ordered_ids
         .iter()
         .filter_map(|id| {
-            stored_items
-                .iter()
-                .find(|item| item.id == Some(*id))
-                .map(|item| ItemMatch {
+            item_map.get(id).map(|item| {
+                let content = item.content.text_content();
+                let is_prefix = content.to_lowercase().starts_with(&query_lower);
+                ItemMatch {
                     item_metadata: item.to_metadata(),
-                    match_data: Some(search::compute_prefix_match_data(
-                        item.content.text_content(),
-                        query_char_len,
+                    match_data: Some(search::compute_short_query_match_data(
+                        content,
+                        trimmed,
+                        is_prefix,
                     )),
-                })
+                }
+            })
         })
         .collect();
 
