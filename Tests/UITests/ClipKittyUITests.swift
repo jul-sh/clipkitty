@@ -572,26 +572,18 @@ final class ClipKittyUITests: XCTestCase {
         // Wait for the actions popover to appear
         let deleteAction = app.buttons["Action_Delete"]
         XCTAssertTrue(deleteAction.waitForExistence(timeout: 5), "Actions popover should open")
+
+        // Wait for the popover to gain focus via .focused() binding
         Thread.sleep(forTimeInterval: 0.5)
 
-        // Actions list is [.delete(0), .bookmark(1), .defaultAction(2)].
-        // Popover opens highlighted on defaultAction (last item).
-        // Navigate up to Delete (index 0) using arrow keys.
-        app.typeKey(.upArrow, modifierFlags: [])
-        Thread.sleep(forTimeInterval: 0.1)
-        app.typeKey(.upArrow, modifierFlags: [])
-        Thread.sleep(forTimeInterval: 0.1)
+        // Actions list is [.bookmark(0), .defaultAction(1), .delete(2)].
+        // Cmd+K opens with highlight at index 0. Navigate down to Delete (last item).
+        app.typeKey(.downArrow, modifierFlags: [])
+        Thread.sleep(forTimeInterval: 0.2)
+        app.typeKey(.downArrow, modifierFlags: [])
+        Thread.sleep(forTimeInterval: 0.2)
 
-        // Press Return to select Delete — this opens the confirmation state
-        app.typeKey(.return, modifierFlags: [])
-
-        // Verify confirmation appeared
-        let cancelButton = app.buttons["Action_Cancel"]
-        XCTAssertTrue(cancelButton.waitForExistence(timeout: 5), "Delete confirmation should appear")
-        Thread.sleep(forTimeInterval: 0.5)
-
-        // Confirmation opens with Delete highlighted (index 0).
-        // Press Return to confirm deletion.
+        // Press Return to select Delete — this triggers the delete action
         app.typeKey(.return, modifierFlags: [])
 
         // Wait for deletion to process

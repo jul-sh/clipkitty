@@ -91,7 +91,7 @@ struct BrowserActionMenu: View {
     let items: [BrowserActionItem]
     @Binding var highlight: MenuHighlightState
     let focusSearchField: () -> Void
-    let focusActionsDropdown: () -> Void
+    let focusTarget: FocusState<BrowserView.FocusTarget?>.Binding
     let performAction: (BrowserActionItem) -> Void
     let dismiss: () -> Void
 
@@ -123,6 +123,7 @@ struct BrowserActionMenu: View {
         .padding(10)
         .frame(width: 160)
         .focusable()
+        .focused(focusTarget, equals: .actionsDropdown)
         .focusEffectDisabled()
         .onKeyPress(.upArrow) {
             moveHighlight(by: -1)
@@ -146,7 +147,9 @@ struct BrowserActionMenu: View {
             focusSearchField()
             return .handled
         }
-        .onAppear(perform: focusActionsDropdown)
+        .onAppear {
+            focusTarget.wrappedValue = .actionsDropdown
+        }
     }
 
     private func moveHighlight(by offset: Int) {
