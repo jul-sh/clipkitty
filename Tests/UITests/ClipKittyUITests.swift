@@ -1085,8 +1085,11 @@ final class ClipKittyUITests: XCTestCase {
         // Re-open dropdown, then hover over Images to get highlight
         filterButton.click()
         Thread.sleep(forTimeInterval: 0.5)
-        let imagesOptionAgain = app.buttons["Images"]
-        XCTAssertTrue(imagesOptionAgain.waitForExistence(timeout: 3), "Images option should appear in dropdown")
+        // After applying Images filter, the filter button itself shows "Images" as label,
+        // so we need to find the menu option specifically (the second Images button)
+        let imagesButtons = app.buttons.matching(identifier: "Images").allElementsBoundByIndex
+        XCTAssertGreaterThanOrEqual(imagesButtons.count, 2, "Should have filter button and menu option")
+        let imagesOptionAgain = imagesButtons.count >= 2 ? imagesButtons[1] : imagesButtons[0]
         imagesOptionAgain.hover()
         Thread.sleep(forTimeInterval: 0.3)
         saveScreenshot(name: "marketing_3_filter")
