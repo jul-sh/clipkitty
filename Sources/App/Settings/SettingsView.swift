@@ -45,21 +45,19 @@ struct SettingsView: View {
     }
 
     private var generalSettingsView: GeneralSettingsView {
+        #if SPARKLE_RELEASE
+        GeneralSettingsView(
+            store: store,
+            onHotKeyChanged: onHotKeyChanged,
+            onMenuBarBehaviorChanged: onMenuBarBehaviorChanged,
+            onInstallUpdate: onInstallUpdate
+        )
+        #else
         GeneralSettingsView(
             store: store,
             onHotKeyChanged: onHotKeyChanged,
             onMenuBarBehaviorChanged: onMenuBarBehaviorChanged
         )
-    }
-
-    private var advancedSettingsView: AdvancedSettingsView {
-        #if SPARKLE_RELEASE
-        AdvancedSettingsView(
-            onHotKeyChanged: onHotKeyChanged,
-            onInstallUpdate: onInstallUpdate
-        )
-        #else
-        AdvancedSettingsView(onHotKeyChanged: onHotKeyChanged)
         #endif
     }
 

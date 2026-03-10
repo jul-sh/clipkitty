@@ -9,6 +9,9 @@ struct GeneralSettingsView: View {
     let store: ClipboardStore
     let onHotKeyChanged: (HotKey) -> Void
     let onMenuBarBehaviorChanged: () -> Void
+    #if SPARKLE_RELEASE
+    var onInstallUpdate: (() -> Void)? = nil
+    #endif
 
     private let minDatabaseSizeGB = 0.5
     private let maxDatabaseSizeGB = 64.0
