@@ -87,81 +87,66 @@ enum BrowserActionItem: Equatable {
     }
 }
 
-enum BrowserActionMenuInteraction {
-    case pointer
-    case keyboard(
-        focusOnAppear: () -> Void,
-        dismissToSearch: () -> Void,
-        tabToSearch: () -> Void
-    )
-}
-
 struct BrowserActionMenu: View {
     let items: [BrowserActionItem]
     @Binding var highlight: MenuHighlightState
-    let interaction: BrowserActionMenuInteraction
+    let focusSearchField: () -> Void
+    let focusActionsDropdown: () -> Void
     let performAction: (BrowserActionItem) -> Void
     let dismiss: () -> Void
 
     var body: some View {
-        let baseMenu = VStack(spacing: 2) {
-            actionsList(highlight: highlight)
+        VStack(spacing: 2) {
+            ForEach(Array(items.enumerated()), id: \.offset) { index, action in
+                if BrowserActionItem.showsDivider(before: index, in: items) {
+                    Divider()
+                        .padding(.horizontal, 4)
+                        .padding(.vertical, 3)
+                }
+
+                ActionOptionRow(
+                    label: action.label,
+                    actionID: action.identifier,
+                    systemImageName: action.systemImageName,
+                    isHighlighted: isHighlighted(index: index),
+                    isDestructive: action.isDestructive,
+                    onHover: { isHovered in
+                        if isHovered {
+                            highlight = .index(index)
+                        }
+                    }
+                ) {
+                    performAction(action)
+                }
+            }
         }
         .padding(10)
         .frame(width: 160)
-
-        switch interaction {
-        case .pointer:
-            baseMenu
-        case .keyboard(let focusOnAppear, let dismissToSearch, let tabToSearch):
-            baseMenu
-                .focusable()
-                .focusEffectDisabled()
-                .onKeyPress(.upArrow) {
-                    moveHighlight(by: -1)
-                    return .handled
-                }
-                .onKeyPress(.downArrow) {
-                    moveHighlight(by: 1)
-                    return .handled
-                }
-                .onKeyPress(.return, phases: .down) { _ in
-                    activateHighlightedAction()
-                    return .handled
-                }
-                .onKeyPress(.escape) {
-                    dismiss()
-                    dismissToSearch()
-                    return .handled
-                }
-                .onKeyPress(.tab) {
-                    dismiss()
-                    tabToSearch()
-                    return .handled
-                }
-                .onAppear(perform: focusOnAppear)
+        .focusable()
+        .focusEffectDisabled()
+        .onKeyPress(.upArrow) {
+            moveHighlight(by: -1)
+            return .handled
         }
-    }
-
-    @ViewBuilder
-    private func actionsList(highlight: MenuHighlightState) -> some View {
-        ForEach(Array(items.enumerated()), id: \.offset) { index, action in
-            if BrowserActionItem.showsDivider(before: index, in: items) {
-                Divider()
-                    .padding(.horizontal, 4)
-                    .padding(.vertical, 3)
-            }
-
-            ActionOptionRow(
-                label: action.label,
-                actionID: action.identifier,
-                systemImageName: action.systemImageName,
-                isHighlighted: isHighlighted(index: index, in: highlight),
-                isDestructive: action.isDestructive
-            ) {
-                performAction(action)
-            }
+        .onKeyPress(.downArrow) {
+            moveHighlight(by: 1)
+            return .handled
         }
+        .onKeyPress(.return, phases: .down) { _ in
+            activateHighlightedAction()
+            return .handled
+        }
+        .onKeyPress(.escape) {
+            dismiss()
+            focusSearchField()
+            return .handled
+        }
+        .onKeyPress(.tab) {
+            dismiss()
+            focusSearchField()
+            return .handled
+        }
+        .onAppear(perform: focusActionsDropdown)
     }
 
     private func moveHighlight(by offset: Int) {
@@ -170,13 +155,17 @@ struct BrowserActionMenu: View {
     }
 
     private func activateHighlightedAction() {
-        guard case .index(let highlightedIndex) = highlight else { return }
+        guard case .index(let highlightedIndex) = highlight else {
+            dismiss()
+            focusSearchField()
+            return
+        }
         guard items.indices.contains(highlightedIndex) else { return }
         let action = items[highlightedIndex]
         performAction(action)
     }
 
-    private func isHighlighted(index: Int, in highlight: MenuHighlightState) -> Bool {
+    private func isHighlighted(index: Int) -> Bool {
         if case .index(let highlightedIndex) = highlight {
             return highlightedIndex == index
         }

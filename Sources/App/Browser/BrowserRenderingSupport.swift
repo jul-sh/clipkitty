@@ -1152,8 +1152,8 @@ struct ActionOptionRow: View {
     let systemImageName: String
     var isHighlighted: Bool = false
     var isDestructive: Bool = false
+    var onHover: ((Bool) -> Void)?
     let action: () -> Void
-    @State private var isHovered = false
 
     var body: some View {
         Button(action: action) {
@@ -1170,22 +1170,13 @@ struct ActionOptionRow: View {
             .padding(.horizontal, 8)
             .padding(.vertical, 5)
             .background {
-                if isHighlighted {
-                    if isDestructive {
-                        RoundedRectangle(cornerRadius: 9)
-                            .fill(Color.red.opacity(0.8))
-                    } else {
-                        selectionBackground()
-                            .clipShape(RoundedRectangle(cornerRadius: 9))
-                    }
-                } else {
-                    RoundedRectangle(cornerRadius: 9)
-                        .fill(isHovered ? Color.primary.opacity(0.05) : Color.clear)
-                }
+                RoundedRectangle(cornerRadius: 9)
+                    .fill(backgroundColor)
             }
+            .contentShape(RoundedRectangle(cornerRadius: 9))
         }
         .buttonStyle(.plain)
-        .onHover { isHovered = $0 }
+        .onHover { onHover?($0) }
         .accessibilityIdentifier("Action_\(actionID)")
     }
 
@@ -1193,6 +1184,13 @@ struct ActionOptionRow: View {
         if isHighlighted { return .white }
         if isDestructive { return .red }
         return .secondary
+    }
+
+    private var backgroundColor: Color {
+        if isHighlighted {
+            return isDestructive ? Color.red.opacity(0.8) : Color.accentColor
+        }
+        return Color.clear
     }
 }
 
