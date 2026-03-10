@@ -54,7 +54,7 @@ struct BrowserView: View {
                 onDismiss: viewModel.dismiss,
                 onOpenFilter: openFilterOverlay,
                 onOpenActions: openActionsOverlay,
-                onOpenDeleteConfirm: { viewModel.openDeleteConfirmation() },
+                onDelete: viewModel.deleteSelectedItem,
                 onHandleNumberKey: handleNumberKey
             ) {
                 BrowserFilterOverlay(

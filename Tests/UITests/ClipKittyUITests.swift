@@ -551,6 +551,93 @@ final class ClipKittyUITests: XCTestCase {
         XCTAssertTrue(disappeared, "Toast should auto-dismiss")
     }
 
+    // MARK: - Right Click Tests
+
+    func testRightClickOpensActionsPopover() throws {
+        let firstItem = app.buttons["ItemRow_0"]
+        XCTAssertTrue(firstItem.waitForExistence(timeout: 5), "First item should exist")
+
+        firstItem.rightClick()
+        Thread.sleep(forTimeInterval: 0.5)
+
+        let deleteAction = app.buttons["Action_Delete"]
+        XCTAssertTrue(deleteAction.waitForExistence(timeout: 3), "Right-click should open the actions popover")
+    }
+
+    func testRightClickDeleteRemovesItem() throws {
+        let initialCount = app.outlines.firstMatch.buttons.allElementsBoundByIndex.count
+        XCTAssertGreaterThan(initialCount, 0, "Should have items to delete")
+
+        let firstItem = app.buttons["ItemRow_0"]
+        XCTAssertTrue(firstItem.waitForExistence(timeout: 5), "First item should exist")
+
+        firstItem.rightClick()
+        Thread.sleep(forTimeInterval: 0.5)
+
+        let deleteAction = app.buttons["Action_Delete"]
+        XCTAssertTrue(deleteAction.waitForExistence(timeout: 3), "Delete action should appear in the right-click popover")
+        deleteAction.click()
+        Thread.sleep(forTimeInterval: 0.3)
+
+        let confirmDelete = app.buttons["Action_Delete"]
+        XCTAssertTrue(confirmDelete.waitForExistence(timeout: 3), "Inline delete confirmation should appear")
+        confirmDelete.click()
+        Thread.sleep(forTimeInterval: 0.5)
+
+        let finalCount = app.outlines.firstMatch.buttons.allElementsBoundByIndex.count
+        XCTAssertEqual(finalCount, initialCount - 1, "Item count should decrease by 1 after deleting via right-click")
+    }
+
+    func testRightClickBorderScreenshot() throws {
+        let firstItem = app.buttons["ItemRow_0"]
+        XCTAssertTrue(firstItem.waitForExistence(timeout: 5), "First item should exist")
+
+        firstItem.rightClick()
+        Thread.sleep(forTimeInterval: 0.5)
+
+        let deleteAction = app.buttons["Action_Delete"]
+        XCTAssertTrue(deleteAction.waitForExistence(timeout: 3), "Right-click popover should be visible before capturing screenshot")
+
+        let window = app.dialogs.firstMatch
+        XCTAssertTrue(window.exists, "Window should exist")
+
+        let screenshot = XCUIScreen.main.screenshot()
+        let image = screenshot.image
+
+        guard let cgImage = image.cgImage(forProposedRect: nil, context: nil, hints: nil) else {
+            XCTFail("Could not get CGImage from screenshot")
+            return
+        }
+
+        let scaleFactor = NSScreen.main?.backingScaleFactor ?? 1.0
+        let frame = window.frame
+        let cropRect = CGRect(
+            x: frame.origin.x * scaleFactor,
+            y: frame.origin.y * scaleFactor,
+            width: frame.width * scaleFactor,
+            height: frame.height * scaleFactor
+        )
+
+        guard let cropped = cgImage.cropping(to: cropRect) else {
+            XCTFail("Could not crop screenshot to window frame")
+            return
+        }
+
+        let bitmapRep = NSBitmapImageRep(cgImage: cropped)
+        guard let png = bitmapRep.representation(using: .png, properties: [:]) else {
+            XCTFail("Could not create PNG data")
+            return
+        }
+
+        let url = URL(fileURLWithPath: "/tmp/clipkitty_rightclick_border.png")
+        try png.write(to: url)
+
+        let attachment = XCTAttachment(data: png, uniformTypeIdentifier: "public.png")
+        attachment.name = "rightclick_border"
+        attachment.lifetime = .keepAlways
+        add(attachment)
+    }
+
     // MARK: - Settings Tests
 
     /// Tests that the Settings window opens with tabs and Privacy tab is accessible
