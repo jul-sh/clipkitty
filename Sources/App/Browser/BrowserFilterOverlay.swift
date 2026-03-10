@@ -128,37 +128,53 @@ struct BrowserFilterOverlay: View {
         action: @escaping () -> Void,
         isSelected: Bool
     ) -> some View {
-        Button {
+        FilterRowButton(
+            label: label,
+            isHighlighted: highlightedIndex == index,
+            isSelected: isSelected
+        ) {
             action()
             viewModel.closeOverlay()
             focusSearchField()
-        } label: {
-            rowLabel(
-                label,
-                highlighted: highlightedIndex == index,
-                selected: isSelected
-            )
+        }
+    }
+}
+
+/// Filter row button with hover state
+private struct FilterRowButton: View {
+    let label: String
+    let isHighlighted: Bool
+    let isSelected: Bool
+    let action: () -> Void
+    @State private var isHovered = false
+
+    var body: some View {
+        Button(action: action) {
+            HStack(spacing: 6) {
+                Text(label)
+                    .font(.system(size: 13))
+                Spacer(minLength: 0)
+                if isSelected {
+                    Image(systemName: "checkmark")
+                        .font(.system(size: 11, weight: .semibold))
+                }
+            }
+            .foregroundStyle(isHighlighted ? .white : .secondary)
+            .frame(maxWidth: .infinity, alignment: .leading)
+            .padding(.horizontal, 8)
+            .padding(.vertical, 6)
+            .background {
+                if isHighlighted {
+                    RoundedRectangle(cornerRadius: 9)
+                        .fill(Color.accentColor)
+                } else {
+                    RoundedRectangle(cornerRadius: 9)
+                        .fill(isHovered ? Color.primary.opacity(0.08) : Color.clear)
+                }
+            }
+            .contentShape(RoundedRectangle(cornerRadius: 9))
         }
         .buttonStyle(.plain)
-    }
-
-    private func rowLabel(_ label: String, highlighted: Bool, selected: Bool) -> some View {
-        HStack(spacing: 6) {
-            Text(label)
-                .font(.system(size: 13))
-            Spacer(minLength: 0)
-            if selected {
-                Image(systemName: "checkmark")
-                    .font(.system(size: 11, weight: .semibold))
-            }
-        }
-        .foregroundStyle(highlighted ? .white : .secondary)
-        .frame(maxWidth: .infinity, alignment: .leading)
-        .padding(.horizontal, 8)
-        .padding(.vertical, 5)
-        .background {
-            RoundedRectangle(cornerRadius: 9)
-                .fill(highlighted ? Color.accentColor : Color.clear)
-        }
+        .onHover { isHovered = $0 }
     }
 }
