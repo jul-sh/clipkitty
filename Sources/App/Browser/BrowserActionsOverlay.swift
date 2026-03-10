@@ -1,6 +1,7 @@
 import SwiftUI
 
-/// Reusable action button with hover state for popover menus
+/// Reusable action button with hover state for popover menus.
+/// Supports highlighted and destructive states for keyboard navigation.
 private struct ActionButton: View {
     let label: String
     let actionID: String
@@ -18,15 +19,11 @@ private struct ActionButton: View {
                 .padding(.horizontal, 8)
                 .padding(.vertical, 6)
                 .background {
-                    if isHighlighted {
-                        RoundedRectangle(cornerRadius: 9)
-                            .fill(isDestructive ? Color.red.opacity(0.8) : Color.accentColor)
-                    } else {
-                        RoundedRectangle(cornerRadius: 9)
-                            .fill(isHovered ? Color.primary.opacity(0.08) : Color.clear)
-                    }
+                    RoundedRectangle(cornerRadius: 9)
+                        .fill(backgroundColor)
                 }
                 .contentShape(RoundedRectangle(cornerRadius: 9))
+                .animation(.easeInOut(duration: 0.15), value: isHovered)
         }
         .buttonStyle(.plain)
         .onHover { isHovered = $0 }
@@ -38,13 +35,19 @@ private struct ActionButton: View {
         if isDestructive { return .red }
         return .secondary
     }
+
+    private var backgroundColor: Color {
+        if isHighlighted {
+            return isDestructive ? Color.red.opacity(0.8) : Color.accentColor
+        }
+        return isHovered ? Color.primary.opacity(0.04) : Color.clear
+    }
 }
 
 struct BrowserActionsOverlay: View {
     @Bindable var viewModel: BrowserViewModel
     let focusSearchField: () -> Void
     let focusActionsDropdown: () -> Void
-    @State private var isButtonHovered = false
 
     private enum ActionItem: Equatable {
         case delete
@@ -104,11 +107,9 @@ struct BrowserActionsOverlay: View {
                 .foregroundStyle(.secondary)
                 .padding(.horizontal, 10)
                 .padding(.vertical, 6)
-                .background(RoundedRectangle(cornerRadius: 6).fill(isButtonHovered ? Color.primary.opacity(0.06) : Color.clear))
-                .contentShape(RoundedRectangle(cornerRadius: 6))
+                .subtleHover()
         }
         .buttonStyle(.plain)
-        .onHover { isButtonHovered = $0 }
         .accessibilityIdentifier("ActionsButton")
         .popover(isPresented: isPresented, arrowEdge: .top) {
             popoverContent
