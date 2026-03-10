@@ -14,7 +14,7 @@ Unlimited history • Instant fuzzy search • Live preview • Private & offlin
 
 You copied that command last week. That code snippet yesterday. That address six months ago. Your clipboard manager either forgot it, slowed down searching for it, or cut off half the content.
 
-ClipKitty stores everything. Finds it in milliseconds—whether you have 100 items or 100 million. Shows the full text, never truncated. Built for people who copy lots of things and need to find them again.
+ClipKitty stores everything. Finds it in milliseconds—whether you have 100 items or 100,000. Built for people who copy lots of things and need to find them again.
 
 ## Why ClipKitty?
 
