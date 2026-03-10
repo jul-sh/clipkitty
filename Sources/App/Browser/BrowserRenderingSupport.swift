@@ -1188,7 +1188,7 @@ struct ActionOptionRow: View {
 
     private var backgroundColor: Color {
         if isHighlighted {
-            return isDestructive ? Color.red.opacity(0.8) : Color.accentColor
+            return isDestructive ? Color.red.opacity(0.8) : Color(nsColor: .selectedContentBackgroundColor)
         }
         return Color.clear
     }
@@ -1196,13 +1196,10 @@ struct ActionOptionRow: View {
 
 // MARK: - Selection Background
 
-/// Shared selection highlight matching Spotlight's style (H220 S68 B71)
+/// Shared selection highlight matching the system-selected content tint.
 @ViewBuilder
 private func selectionBackground() -> some View {
-    Color.accentColor
-        .opacity(0.9)
-        .saturation(0.78)
-        .brightness(-0.06)
+    Color(nsColor: .selectedContentBackgroundColor)
 }
 
 // MARK: - Highlight Kind Color Mapping
