@@ -428,8 +428,8 @@ impl SearchOperation {
 mod tests {
     use super::*;
     use crate::interface::{
-        ClipboardContent, FileStatus, IconType, ItemIcon, ItemQueryFilter, LinkMetadataPayload,
-        LinkMetadataState,
+        ClipboardContent, FileStatus, HighlightKind, IconType, ItemIcon, ItemQueryFilter,
+        LinkMetadataPayload, LinkMetadataState,
     };
     use once_cell::sync::Lazy;
     use std::sync::atomic::{AtomicUsize, Ordering};
@@ -497,6 +497,36 @@ mod tests {
             .collect();
 
         assert_eq!(ids, vec![prefix_id]);
+    }
+
+    #[tokio::test]
+    async fn test_short_query_returns_prefix_matches_before_recent_anywhere_matches() {
+        let store = ClipboardStore::new_in_memory().unwrap();
+        let anywhere_oldest = store
+            .save_text("zz hi in the middle".to_string(), None, None)
+            .unwrap();
+        std::thread::sleep(std::time::Duration::from_millis(1100));
+        let prefix_newer = store.save_text("hi prefix".to_string(), None, None).unwrap();
+        std::thread::sleep(std::time::Duration::from_millis(1100));
+        let anywhere_newest = store
+            .save_text("say hi again".to_string(), None, None)
+            .unwrap();
+
+        let result = store.search("hi".to_string()).await.unwrap();
+        let ids: Vec<i64> = result
+            .matches
+            .iter()
+            .map(|item| item.item_metadata.item_id)
+            .collect();
+
+        assert_eq!(ids, vec![prefix_newer, anywhere_newest, anywhere_oldest]);
+
+        let prefix_match = result.matches[0].match_data.as_ref().unwrap();
+        assert_eq!(prefix_match.full_content_highlights[0].kind, HighlightKind::Prefix);
+
+        let anywhere_match = result.matches[1].match_data.as_ref().unwrap();
+        assert_eq!(anywhere_match.full_content_highlights[0].kind, HighlightKind::Exact);
+        assert_eq!(anywhere_match.full_content_highlights[0].start, 4);
     }
 
     #[tokio::test]
@@ -607,7 +637,7 @@ mod tests {
                 .unwrap();
         }
 
-        let operation = store.start_search("repeated".to_string(), None);
+        let operation = store.start_search("repeated".to_string(), ItemQueryFilter::All);
         operation.cancel();
 
         let outcome = operation.await_result().await.unwrap();
@@ -623,8 +653,8 @@ mod tests {
                 .unwrap();
         }
 
-        let first = store.start_search("repeated".to_string(), None);
-        let second = store.start_search("number 399".to_string(), None);
+        let first = store.start_search("repeated".to_string(), ItemQueryFilter::All);
+        let second = store.start_search("number 399".to_string(), ItemQueryFilter::All);
 
         assert_eq!(first.await_result().await.unwrap(), SearchOutcome::Cancelled);
         assert!(matches!(
@@ -666,7 +696,8 @@ mod tests {
                 })),
             });
 
-        let operation = store.start_search("repeated ranking".to_string(), None);
+        let operation =
+            store.start_search("repeated ranking".to_string(), ItemQueryFilter::All);
         let _ = operation_slot.set(Arc::clone(&operation));
 
         let outcome = operation.await_result().await.unwrap();
@@ -711,7 +742,7 @@ mod tests {
                 })),
             });
 
-        let operation = store.start_search("repeated search".to_string(), None);
+        let operation = store.start_search("repeated search".to_string(), ItemQueryFilter::All);
         let _ = operation_slot.set(Arc::clone(&operation));
 
         let outcome = operation.await_result().await.unwrap();
@@ -735,10 +766,10 @@ mod tests {
                 .unwrap();
         }
 
-        let first = store.start_search("repeated".to_string(), None);
-        let second = store.start_search("repeated s".to_string(), None);
-        let third = store.start_search("repeated se".to_string(), None);
-        let fourth = store.start_search("repeated sea".to_string(), None);
+        let first = store.start_search("repeated".to_string(), ItemQueryFilter::All);
+        let second = store.start_search("repeated s".to_string(), ItemQueryFilter::All);
+        let third = store.start_search("repeated se".to_string(), ItemQueryFilter::All);
+        let fourth = store.start_search("repeated sea".to_string(), ItemQueryFilter::All);
 
         assert_eq!(first.await_result().await.unwrap(), SearchOutcome::Cancelled);
         assert_eq!(second.await_result().await.unwrap(), SearchOutcome::Cancelled);
