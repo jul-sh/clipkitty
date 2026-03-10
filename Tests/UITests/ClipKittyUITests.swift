@@ -204,6 +204,37 @@ final class ClipKittyUITests: XCTestCase {
         return getSelectedIndex() == expected
     }
 
+    private func itemRows() -> [XCUIElement] {
+        app.buttons.matching(NSPredicate(format: "identifier BEGINSWITH %@", "ItemRow_")).allElementsBoundByIndex
+    }
+
+    private func itemRowLabels() -> [String] {
+        itemRows().map(\.label)
+    }
+
+    private func waitForItemCount(_ expected: Int, timeout: TimeInterval = 2) -> Bool {
+        let deadline = Date().addingTimeInterval(timeout)
+        while Date() < deadline {
+            if itemRows().count == expected {
+                return true
+            }
+            Thread.sleep(forTimeInterval: 0.05)
+        }
+        return itemRows().count == expected
+    }
+
+    private func waitForRowLabel(_ label: String, toExist expected: Bool, timeout: TimeInterval = 2) -> Bool {
+        let deadline = Date().addingTimeInterval(timeout)
+        while Date() < deadline {
+            let labels = itemRowLabels()
+            if labels.contains(label) == expected {
+                return true
+            }
+            Thread.sleep(forTimeInterval: 0.05)
+        }
+        return itemRowLabels().contains(label) == expected
+    }
+
     // MARK: - Tests
 
     /// Regression test: verify the synthetic database was correctly seeded.
@@ -469,8 +500,8 @@ final class ClipKittyUITests: XCTestCase {
         XCTAssertFalse(deleteAction.exists, "Popover should close after Escape")
     }
 
-    /// Tests that the Delete action in the popover shows inline confirmation.
-    func testDeleteActionShowsConfirmation() throws {
+    /// Tests that deleting from the actions popover immediately shows the undo toast.
+    func testDeleteActionShowsUndoToast() throws {
         let actionsButton = app.buttons["ActionsButton"]
         XCTAssertTrue(actionsButton.waitForExistence(timeout: 5))
 
@@ -481,55 +512,45 @@ final class ClipKittyUITests: XCTestCase {
         XCTAssertTrue(deleteAction.waitForExistence(timeout: 3))
 
         deleteAction.click()
-        Thread.sleep(forTimeInterval: 0.5)
-
-        // Inline confirmation should appear within the popover (not a system alert)
-        let confirmDelete = app.buttons["Action_Delete"]
-        XCTAssertTrue(confirmDelete.waitForExistence(timeout: 3), "Inline delete confirmation should appear")
-        let cancelButton = app.buttons["Action_Cancel"]
-        XCTAssertTrue(cancelButton.waitForExistence(timeout: 3), "Cancel button should appear in confirmation")
+        let toastWindow = app.windows["ToastWindow"]
+        XCTAssertTrue(toastWindow.waitForExistence(timeout: 3), "Undo toast should appear after deleting")
+        XCTAssertTrue(toastWindow.staticTexts["Deleted"].exists, "Toast should show deleted message")
+        XCTAssertTrue(toastWindow.buttons["Undo"].exists, "Toast should offer undo")
     }
 
-    /// Tests the full delete-via-keyboard flow: open actions, navigate to delete, confirm inline.
-    func testDeleteItemViaKeyboard() throws {
+    /// Regression test for the first-item keyboard delete path:
+    /// the deleted row should disappear immediately, stay gone during the undo window,
+    /// and return when Undo is pressed.
+    func testDeleteItemViaKeyboardStaysGoneUntilUndo() throws {
         let searchField = app.textFields["SearchField"]
         XCTAssertTrue(searchField.waitForExistence(timeout: 5), "Search field not found")
 
-        // Record initial item count
-        let initialCount = app.outlines.firstMatch.buttons.allElementsBoundByIndex.count
+        let initialLabels = itemRowLabels()
+        let initialCount = initialLabels.count
         XCTAssertGreaterThan(initialCount, 0, "Should have items to delete")
+        let deletedLabel = initialLabels[0]
 
-        // Press Cmd+K to open actions popover
         searchField.typeKey("k", modifierFlags: .command)
-        Thread.sleep(forTimeInterval: 0.5)
-
         let deleteAction = app.buttons["Action_Delete"]
         XCTAssertTrue(deleteAction.waitForExistence(timeout: 3), "Actions popover should open")
+        deleteAction.click()
 
-        // Navigate to Delete (it's the first item) with up arrow
-        app.typeKey(.upArrow, modifierFlags: [])
-        app.typeKey(.upArrow, modifierFlags: [])
-        Thread.sleep(forTimeInterval: 0.2)
+        XCTAssertTrue(waitForItemCount(initialCount - 1, timeout: 2), "Item count should decrease immediately after deletion")
+        XCTAssertTrue(waitForRowLabel(deletedLabel, toExist: false, timeout: 2), "Deleted first item should disappear immediately")
+        Thread.sleep(forTimeInterval: 1.0)
+        XCTAssertFalse(itemRowLabels().contains(deletedLabel), "Deleted first item should stay gone during the undo window")
 
-        // Press Return to select Delete
-        app.typeKey(.return, modifierFlags: [])
-        Thread.sleep(forTimeInterval: 0.5)
+        let toastWindow = app.windows["ToastWindow"]
+        XCTAssertTrue(toastWindow.waitForExistence(timeout: 3), "Undo toast should appear after deleting")
+        let undoButton = toastWindow.buttons["Undo"]
+        XCTAssertTrue(undoButton.waitForExistence(timeout: 3), "Undo button should be visible")
+        undoButton.click()
 
-        // Inline confirmation should appear
-        let confirmDelete = app.buttons["Action_Delete"]
-        XCTAssertTrue(confirmDelete.waitForExistence(timeout: 3), "Inline delete confirmation should appear")
+        XCTAssertTrue(waitForItemCount(initialCount, timeout: 2), "Undo should restore the deleted item count")
+        XCTAssertTrue(waitForRowLabel(deletedLabel, toExist: true, timeout: 2), "Undo should restore the deleted first item")
 
-        // Press Return to confirm deletion (Delete button should be highlighted)
-        app.typeKey(.return, modifierFlags: [])
-        Thread.sleep(forTimeInterval: 0.5)
-
-        // Verify: item count decreased
-        let finalCount = app.outlines.firstMatch.buttons.allElementsBoundByIndex.count
-        XCTAssertEqual(finalCount, initialCount - 1, "Item count should decrease by 1 after deletion")
-
-        // Verify: window is still visible (not hidden)
         let window = app.dialogs.firstMatch
-        XCTAssertTrue(window.exists, "Window should still be visible after deletion")
+        XCTAssertTrue(window.exists, "Window should still be visible after undo")
     }
 
     // MARK: - Toast Tests
@@ -565,7 +586,7 @@ final class ClipKittyUITests: XCTestCase {
     }
 
     func testRightClickDeleteRemovesItem() throws {
-        let initialCount = app.outlines.firstMatch.buttons.allElementsBoundByIndex.count
+        let initialCount = itemRows().count
         XCTAssertGreaterThan(initialCount, 0, "Should have items to delete")
 
         let firstItem = app.buttons["ItemRow_0"]
@@ -577,15 +598,10 @@ final class ClipKittyUITests: XCTestCase {
         let deleteAction = app.buttons["Action_Delete"]
         XCTAssertTrue(deleteAction.waitForExistence(timeout: 3), "Delete action should appear in the right-click popover")
         deleteAction.click()
-        Thread.sleep(forTimeInterval: 0.3)
 
-        let confirmDelete = app.buttons["Action_Delete"]
-        XCTAssertTrue(confirmDelete.waitForExistence(timeout: 3), "Inline delete confirmation should appear")
-        confirmDelete.click()
-        Thread.sleep(forTimeInterval: 0.5)
-
-        let finalCount = app.outlines.firstMatch.buttons.allElementsBoundByIndex.count
-        XCTAssertEqual(finalCount, initialCount - 1, "Item count should decrease by 1 after deleting via right-click")
+        XCTAssertTrue(waitForItemCount(initialCount - 1, timeout: 2), "Item count should decrease by 1 after deleting via right-click")
+        let toastWindow = app.windows["ToastWindow"]
+        XCTAssertTrue(toastWindow.waitForExistence(timeout: 3), "Undo toast should appear after deleting via right-click")
     }
 
     func testRightClickBorderScreenshot() throws {
