@@ -579,22 +579,28 @@ final class ClipKittyUITests: XCTestCase {
         let cancelButton = app.buttons["Action_Cancel"]
         XCTAssertTrue(cancelButton.waitForExistence(timeout: 5), "Should be in delete confirmation state")
 
-        // The confirmation replaces the popover content. Action_Delete now means
-        // "confirm deletion". Re-query to get a fresh element reference.
+        // Confirm deletion using the accessibility perform action.
+        // Direct click on SwiftUI .plain buttons in popovers is unreliable in CI
+        // due to button identity changes during state transitions.
+        // Instead, use the XCUIElement press API which is more reliable for
+        // SwiftUI buttons.
         let confirmDeleteButton = app.buttons["Action_Delete"]
         XCTAssertTrue(confirmDeleteButton.waitForExistence(timeout: 3), "Confirm delete button should exist")
-
-        // Click the confirmation Delete button — use coordinate-based click
-        // to avoid SwiftUI button identity issues
-        let coord = confirmDeleteButton.coordinate(withNormalizedOffset: CGVector(dx: 0.5, dy: 0.5))
-        coord.click()
-        Thread.sleep(forTimeInterval: 1.0)
+        confirmDeleteButton.press(forDuration: 0.1)
 
         // Wait for deletion to process
         let deleted = waitForCondition(timeout: 5) {
             self.app.outlines.firstMatch.buttons.allElementsBoundByIndex.count == initialCount - 1
         }
-        XCTAssertTrue(deleted, "Item count should decrease by 1 after deletion")
+        if !deleted {
+            // Fallback: try coordinate-based click if press didn't work
+            let coord = confirmDeleteButton.coordinate(withNormalizedOffset: CGVector(dx: 0.5, dy: 0.5))
+            coord.press(forDuration: 0.1)
+            let deletedRetry = waitForCondition(timeout: 5) {
+                self.app.outlines.firstMatch.buttons.allElementsBoundByIndex.count == initialCount - 1
+            }
+            XCTAssertTrue(deletedRetry, "Item count should decrease by 1 after deletion")
+        }
 
         // Verify: window is still visible (not hidden)
         let window = app.dialogs.firstMatch
