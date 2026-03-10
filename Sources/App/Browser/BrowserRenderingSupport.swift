@@ -669,8 +669,14 @@ struct ItemRow: View, Equatable {
     let metadata: ItemMetadata
     let matchData: MatchData?
     let isSelected: Bool
+    let isContextMenuTargeted: Bool
     let hasUserNavigated: Bool
     let onTap: () -> Void
+    let contextMenuActions: [BrowserActionItem]
+    let onContextMenuAction: (BrowserActionItem) -> Void
+    let onContextMenuDelete: () -> Void
+    let onContextMenuShow: () -> Void
+    let onContextMenuHide: () -> Void
 
     private var accentSelected: Bool { isSelected && hasUserNavigated }
 
@@ -698,6 +704,7 @@ struct ItemRow: View, Equatable {
     // Note: onTap closure is intentionally excluded from equality comparison
     nonisolated static func == (lhs: ItemRow, rhs: ItemRow) -> Bool {
         return lhs.isSelected == rhs.isSelected &&
+               lhs.isContextMenuTargeted == rhs.isContextMenuTargeted &&
                lhs.hasUserNavigated == rhs.hasUserNavigated &&
                lhs.metadata == rhs.metadata &&
                lhs.matchData == rhs.matchData
@@ -814,10 +821,18 @@ struct ItemRow: View, Equatable {
         .background {
             if accentSelected {
                 selectionBackground()
+            } else if isContextMenuTargeted && !isSelected {
+                Color.primary.opacity(0.11)
             } else if isSelected {
                 Color.primary.opacity(0.225)
             } else {
                 Color.clear
+            }
+        }
+        .overlay {
+            if isContextMenuTargeted {
+                RoundedRectangle(cornerRadius: 10, style: .continuous)
+                    .strokeBorder(Color.primary.opacity(0.22), lineWidth: 1)
             }
         }
         .clipShape(RoundedRectangle(cornerRadius: 10, style: .continuous))
@@ -825,6 +840,15 @@ struct ItemRow: View, Equatable {
         }
         // 2. Apply the plain style so it behaves like a standard row instead of a system button
         .buttonStyle(.plain)
+        .overlay {
+            RightClickPopoverOverlay(
+                actions: contextMenuActions,
+                onShow: onContextMenuShow,
+                onHide: onContextMenuHide,
+                onAction: onContextMenuAction,
+                onConfirmDelete: onContextMenuDelete
+            )
+        }
         .accessibilityElement(children: .combine)
         .accessibilityLabel(displayText)
         .accessibilityHint(AppSettings.shared.pasteMode == .autoPaste ? String(localized: "Double tap to paste") : String(localized: "Double tap to copy"))
@@ -832,6 +856,153 @@ struct ItemRow: View, Equatable {
         .accessibilityAddTraits(isSelected ? .isSelected : [])
     }
 
+}
+
+// MARK: - Right-Click Popover
+
+struct RightClickPopoverOverlay: NSViewRepresentable {
+    let actions: [BrowserActionItem]
+    let onShow: () -> Void
+    let onHide: () -> Void
+    let onAction: (BrowserActionItem) -> Void
+    let onConfirmDelete: () -> Void
+
+    func makeCoordinator() -> Coordinator {
+        Coordinator()
+    }
+
+    func makeNSView(context: Context) -> RightClickView {
+        let view = RightClickView()
+        view.coordinator = context.coordinator
+        context.coordinator.actions = actions
+        context.coordinator.onShow = onShow
+        context.coordinator.onHide = onHide
+        context.coordinator.onAction = onAction
+        context.coordinator.onConfirmDelete = onConfirmDelete
+        return view
+    }
+
+    func updateNSView(_ nsView: RightClickView, context: Context) {
+        context.coordinator.actions = actions
+        context.coordinator.onShow = onShow
+        context.coordinator.onHide = onHide
+        context.coordinator.onAction = onAction
+        context.coordinator.onConfirmDelete = onConfirmDelete
+    }
+
+    @MainActor
+    final class Coordinator {
+        var actions: [BrowserActionItem] = []
+        var onShow: (() -> Void)?
+        var onHide: (() -> Void)?
+        var onAction: ((BrowserActionItem) -> Void)?
+        var onConfirmDelete: (() -> Void)?
+        private var activeMenuHandler: MenuActionHandler?
+
+        deinit {
+            activeMenuHandler = nil
+        }
+
+        func makeMenu() -> NSMenu {
+            let menu = NSMenu()
+            menu.autoenablesItems = false
+
+            let handler = MenuActionHandler(
+                onAction: { [weak self] action in
+                    self?.onAction?(action)
+                },
+                onConfirmDelete: { [weak self] in
+                    self?.onConfirmDelete?()
+                }
+            )
+            activeMenuHandler = handler
+
+            for (index, action) in actions.enumerated() {
+                if BrowserActionItem.showsDivider(before: index, in: actions) {
+                    menu.addItem(.separator())
+                }
+
+                let item = NSMenuItem(
+                    title: action.label,
+                    action: #selector(MenuActionHandler.handleMenuItem(_:)),
+                    keyEquivalent: ""
+                )
+                item.target = handler
+                item.representedObject = action
+                item.image = NSImage(
+                    systemSymbolName: action.systemImageName,
+                    accessibilityDescription: action.label
+                )
+                menu.addItem(item)
+            }
+
+            return menu
+        }
+    }
+
+    final class RightClickView: NSView {
+        weak var coordinator: Coordinator?
+
+        override func hitTest(_ point: NSPoint) -> NSView? {
+            guard shouldHandleCurrentEvent else { return nil }
+            return super.hitTest(point)
+        }
+
+        override func mouseDown(with event: NSEvent) {
+            if event.modifierFlags.contains(.control) {
+                rightMouseDown(with: event)
+                return
+            }
+            super.mouseDown(with: event)
+        }
+
+        override func rightMouseDown(with event: NSEvent) {
+            guard let coordinator, !coordinator.actions.isEmpty else { return }
+
+            coordinator.onShow?()
+            let menu = coordinator.makeMenu()
+            let clickPoint = convert(event.locationInWindow, from: nil)
+            menu.popUp(positioning: nil, at: clickPoint, in: self)
+            coordinator.onHide?()
+        }
+
+        override func menu(for event: NSEvent) -> NSMenu? {
+            nil
+        }
+
+        private var shouldHandleCurrentEvent: Bool {
+            guard let event = NSApp.currentEvent else { return false }
+            switch event.type {
+            case .rightMouseDown, .rightMouseUp:
+                return true
+            case .leftMouseDown, .leftMouseUp:
+                return event.modifierFlags.contains(.control)
+            default:
+                return false
+            }
+        }
+    }
+
+    @MainActor
+    private final class MenuActionHandler: NSObject {
+        let onAction: (BrowserActionItem) -> Void
+        let onConfirmDelete: () -> Void
+
+        init(onAction: @escaping (BrowserActionItem) -> Void, onConfirmDelete: @escaping () -> Void) {
+            self.onAction = onAction
+            self.onConfirmDelete = onConfirmDelete
+        }
+
+        @objc
+        func handleMenuItem(_ sender: NSMenuItem) {
+            guard let action = sender.representedObject as? BrowserActionItem else { return }
+            if action.isDestructive {
+                onConfirmDelete()
+            } else {
+                onAction(action)
+            }
+        }
+    }
 }
 
 // MARK: - Three-Part HStack Highlighted Text
@@ -975,7 +1146,7 @@ private struct FilterOptionRow: View {
 
 // MARK: - Action Option Row
 
-private struct ActionOptionRow: View {
+struct ActionOptionRow: View {
     let label: String
     let actionID: String
     var isHighlighted: Bool = false

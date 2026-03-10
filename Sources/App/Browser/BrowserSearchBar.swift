@@ -13,7 +13,7 @@ struct BrowserSearchBar<FilterPopoverContent: View>: View {
     let onDismiss: () -> Void
     let onOpenFilter: () -> Void
     let onOpenActions: () -> Void
-    let onOpenDeleteConfirm: () -> Void
+    let onDelete: () -> Void
     let onHandleNumberKey: (KeyPress) -> KeyPress.Result
     @ViewBuilder let filterPopoverContent: () -> FilterPopoverContent
 
@@ -63,12 +63,12 @@ struct BrowserSearchBar<FilterPopoverContent: View>: View {
                 }
                 .onKeyPress(.delete) {
                     guard selectedItemAvailable else { return .ignored }
-                    onOpenDeleteConfirm()
+                    onDelete()
                     return .handled
                 }
                 .onKeyPress(.deleteForward) {
                     guard selectedItemAvailable else { return .ignored }
-                    onOpenDeleteConfirm()
+                    onDelete()
                     return .handled
                 }
 
