@@ -1149,6 +1149,7 @@ private struct FilterOptionRow: View {
 struct ActionOptionRow: View {
     let label: String
     let actionID: String
+    let systemImageName: String
     var isHighlighted: Bool = false
     var isDestructive: Bool = false
     let action: () -> Void
@@ -1156,26 +1157,32 @@ struct ActionOptionRow: View {
 
     var body: some View {
         Button(action: action) {
-            Text(label)
-                .font(.system(size: 13))
-                .foregroundStyle(foregroundColor)
-                .frame(maxWidth: .infinity, alignment: .leading)
-                .padding(.horizontal, 8)
-                .padding(.vertical, 5)
-                .background {
-                    if isHighlighted {
-                        if isDestructive {
-                            RoundedRectangle(cornerRadius: 9)
-                                .fill(Color.red.opacity(0.8))
-                        } else {
-                            selectionBackground()
-                                .clipShape(RoundedRectangle(cornerRadius: 9))
-                        }
-                    } else {
+            HStack(spacing: 8) {
+                Image(systemName: systemImageName)
+                    .font(.system(size: 13, weight: .medium))
+                    .frame(width: 14, alignment: .center)
+
+                Text(label)
+                    .font(.system(size: 13))
+                    .frame(maxWidth: .infinity, alignment: .leading)
+            }
+            .foregroundStyle(foregroundColor)
+            .padding(.horizontal, 8)
+            .padding(.vertical, 5)
+            .background {
+                if isHighlighted {
+                    if isDestructive {
                         RoundedRectangle(cornerRadius: 9)
-                            .fill(isHovered ? Color.primary.opacity(0.05) : Color.clear)
+                            .fill(Color.red.opacity(0.8))
+                    } else {
+                        selectionBackground()
+                            .clipShape(RoundedRectangle(cornerRadius: 9))
                     }
+                } else {
+                    RoundedRectangle(cornerRadius: 9)
+                        .fill(isHovered ? Color.primary.opacity(0.05) : Color.clear)
                 }
+            }
         }
         .buttonStyle(.plain)
         .onHover { isHovered = $0 }

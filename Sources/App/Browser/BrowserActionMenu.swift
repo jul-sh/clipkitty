@@ -155,6 +155,7 @@ struct BrowserActionMenu: View {
             ActionOptionRow(
                 label: action.label,
                 actionID: action.identifier,
+                systemImageName: action.systemImageName,
                 isHighlighted: isHighlighted(index: index, in: highlight),
                 isDestructive: action.isDestructive
             ) {
