@@ -101,7 +101,7 @@ struct BrowserActionMenu: View {
                 if BrowserActionItem.showsDivider(before: index, in: items) {
                     Divider()
                         .padding(.horizontal, 4)
-                        .padding(.vertical, 3)
+                        .padding(.vertical, 1)
                 }
 
                 ActionOptionRow(
@@ -120,7 +120,7 @@ struct BrowserActionMenu: View {
                 }
             }
         }
-        .padding(10)
+        .padding(8)
         .frame(width: 160)
         .focusable()
         .focusEffectDisabled()
