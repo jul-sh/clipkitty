@@ -552,7 +552,8 @@ final class ClipKittyUITests: XCTestCase {
         XCTAssertTrue(cancelButton.waitForExistence(timeout: 3), "Cancel button should appear in confirmation")
     }
 
-    /// Tests the full delete flow: open delete confirmation, confirm via keyboard.
+    /// Tests the full delete flow: open actions via Cmd+K, navigate to Delete,
+    /// confirm deletion — all via keyboard to avoid SwiftUI button click issues in CI.
     func testDeleteItemViaKeyboard() throws {
         let searchField = app.textFields["SearchField"]
         XCTAssertTrue(searchField.waitForExistence(timeout: 5), "Search field not found")
@@ -565,20 +566,32 @@ final class ClipKittyUITests: XCTestCase {
         clickAndWait(searchField)
         Thread.sleep(forTimeInterval: ciTimeout)
 
-        // The search bar has .onKeyPress(.delete) which opens the delete
-        // confirmation popover directly (skipping the actions menu).
-        // Use Fn+Backspace to send the forward-delete key.
-        app.typeKey(.delete, modifierFlags: [])
+        // Open actions popover with Cmd+K
+        searchField.typeKey("k", modifierFlags: .command)
 
-        // Verify the confirmation popover appeared
+        // Wait for the actions popover to appear
+        let deleteAction = app.buttons["Action_Delete"]
+        XCTAssertTrue(deleteAction.waitForExistence(timeout: 5), "Actions popover should open")
+        Thread.sleep(forTimeInterval: 0.5)
+
+        // Actions list is [.delete(0), .bookmark(1), .defaultAction(2)].
+        // Popover opens highlighted on defaultAction (last item).
+        // Navigate up to Delete (index 0) using arrow keys.
+        app.typeKey(.upArrow, modifierFlags: [])
+        Thread.sleep(forTimeInterval: 0.1)
+        app.typeKey(.upArrow, modifierFlags: [])
+        Thread.sleep(forTimeInterval: 0.1)
+
+        // Press Return to select Delete — this opens the confirmation state
+        app.typeKey(.return, modifierFlags: [])
+
+        // Verify confirmation appeared
         let cancelButton = app.buttons["Action_Cancel"]
         XCTAssertTrue(cancelButton.waitForExistence(timeout: 5), "Delete confirmation should appear")
-
-        // The confirmation opens with Delete button highlighted (index 0).
-        // The popover's .onKeyPress(.return) handler confirms deletion when
-        // highlightedIndex == 0. Press Return to confirm.
-        // Small delay to let the popover focus settle.
         Thread.sleep(forTimeInterval: 0.5)
+
+        // Confirmation opens with Delete highlighted (index 0).
+        // Press Return to confirm deletion.
         app.typeKey(.return, modifierFlags: [])
 
         // Wait for deletion to process
