@@ -62,7 +62,6 @@ curl -sL "$(curl -s https://api.github.com/repos/jul-sh/clipkitty/releases/lates
 | **Return** | Paste selected item |
 | **⌘1–9** | Jump to item 1–9 |
 | **Tab** | Cycle content type filter |
-| **Delete** | Delete selected item |
 | **Escape** | Close |
 
 ## Building from Source
