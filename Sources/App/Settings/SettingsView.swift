@@ -62,4 +62,8 @@ struct SettingsView: View {
         AdvancedSettingsView(onHotKeyChanged: onHotKeyChanged)
         #endif
     }
+
+    private var advancedSettingsView: AdvancedSettingsView {
+        AdvancedSettingsView(onHotKeyChanged: onHotKeyChanged)
+    }
 }

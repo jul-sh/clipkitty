@@ -13,6 +13,14 @@ struct GeneralSettingsView: View {
     private let minDatabaseSizeGB = 0.5
     private let maxDatabaseSizeGB = 64.0
 
+    private var appVersion: String {
+        Bundle.main.object(forInfoDictionaryKey: "CFBundleShortVersionString") as? String ?? "Unknown"
+    }
+
+    private var buildNumber: String {
+        Bundle.main.object(forInfoDictionaryKey: "CFBundleVersion") as? String ?? ""
+    }
+
     var body: some View {
         Form {
             Section(String(localized: "Startup")) {
@@ -88,6 +96,82 @@ struct GeneralSettingsView: View {
                     Text(String(localized: "Are you sure you want to delete all clipboard history? This cannot be undone."))
                 }
             }
+
+            #if SPARKLE_RELEASE
+            Section(String(localized: "Updates")) {
+                switch settings.updateCheckState {
+                case .checkFailed:
+                    HStack {
+                        Label(String(localized: "Unable to check for updates."), systemImage: "exclamationmark.triangle")
+                        Spacer()
+                        Button(String(localized: "Download")) {
+                            NSWorkspace.shared.open(URL(string: "https://github.com/jul-sh/clipkitty/releases/latest")!)
+                        }
+                    }
+                case .available:
+                    HStack {
+                        Label(String(localized: "A new version of ClipKitty is available."), systemImage: "arrow.down.circle")
+                        Spacer()
+                        Button(String(localized: "Install")) {
+                            onInstallUpdate?()
+                        }
+                    }
+                case .idle:
+                    EmptyView()
+                }
+
+                LabeledContent(String(localized: "Version")) {
+                    Text("\(appVersion) (\(buildNumber))")
+                        .foregroundStyle(.secondary)
+                }
+
+                Toggle(String(localized: "Automatically install updates"), isOn: $settings.autoInstallUpdates)
+
+                Toggle(
+                    String(localized: "Get beta updates"),
+                    isOn: Binding(
+                        get: {
+                            switch settings.updateChannel {
+                            case .stable:
+                                return false
+                            case .beta:
+                                return true
+                            }
+                        },
+                        set: { isBetaEnabled in
+                            settings.updateChannel = isBetaEnabled ? .beta : .stable
+                        }
+                    )
+                )
+
+                Text(
+                    String(
+                        localized: "Beta releases ship to testers first. Turn this on to receive early builds from the release branch before they roll out to everyone."
+                    )
+                )
+                .font(.caption)
+                .foregroundStyle(.secondary)
+
+                switch settings.updateChannel {
+                case .stable:
+                    EmptyView()
+                case .beta:
+                    VStack(alignment: .leading, spacing: 8) {
+                        Text(
+                            String(
+                                localized: "If you hit a bug in a beta build, please report it on GitHub with what broke, steps to reproduce it, your ClipKitty version, and your macOS version."
+                            )
+                        )
+                        .font(.caption)
+                        .foregroundStyle(.secondary)
+
+                        Button(String(localized: "Report a Bug")) {
+                            NSWorkspace.shared.open(URL(string: "https://github.com/jul-sh/clipkitty/issues/new/choose")!)
+                        }
+                    }
+                }
+            }
+            #endif
         }
         .formStyle(.grouped)
         .onAppear {

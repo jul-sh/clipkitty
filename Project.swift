@@ -19,7 +19,7 @@ let project = Project(
     name: "ClipKitty",
     settings: .settings(
         base: [
-            "MARKETING_VERSION": "1.8.15",
+            "MARKETING_VERSION": "1.8.16",
             "CURRENT_PROJECT_VERSION": "1",
         ],
         configurations: configurations,
@@ -104,7 +104,7 @@ let project = Project(
                 .post(
                     script: """
                     # Strip Sparkle frameworks from non-SparkleRelease builds
-                    # (Info.plist keys are handled via empty build settings)
+                    # The binary uses weak linking so it runs without them
                     if [ "$CONFIGURATION" != "SparkleRelease" ]; then
                         rm -rf "$BUILT_PRODUCTS_DIR/$FRAMEWORKS_FOLDER_PATH/Sparkle.framework"
                         rm -rf "$BUILT_PRODUCTS_DIR/$FRAMEWORKS_FOLDER_PATH/SparkleUpdater.framework"
@@ -130,9 +130,13 @@ let project = Project(
                 configurations: [
                     .debug(name: "Debug", settings: [
                         "CODE_SIGN_ENTITLEMENTS": "Sources/App/ClipKitty.oss.entitlements",
+                        // Weak-link Sparkle frameworks so app runs without them
+                        "OTHER_LDFLAGS": .array(["$(inherited)", "-lpurr", "-weak_framework", "SparkleUpdater", "-weak_framework", "Sparkle"]),
                     ]),
                     .release(name: "Release", settings: [
                         "CODE_SIGN_ENTITLEMENTS": "Sources/App/ClipKitty.oss.entitlements",
+                        // Weak-link Sparkle frameworks so app runs without them
+                        "OTHER_LDFLAGS": .array(["$(inherited)", "-lpurr", "-weak_framework", "SparkleUpdater", "-weak_framework", "Sparkle"]),
                     ]),
                     .release(name: .configuration("SparkleRelease"), settings: [
                         "CODE_SIGN_ENTITLEMENTS": "Sources/App/ClipKitty.oss.entitlements",
@@ -146,6 +150,8 @@ let project = Project(
                     ]),
                     .release(name: .configuration("AppStore"), settings: [
                         "CODE_SIGN_ENTITLEMENTS": "Sources/App/ClipKitty.appstore.entitlements",
+                        // Weak-link Sparkle frameworks so app runs without them
+                        "OTHER_LDFLAGS": .array(["$(inherited)", "-lpurr", "-weak_framework", "SparkleUpdater", "-weak_framework", "Sparkle"]),
                     ]),
                 ]
             )

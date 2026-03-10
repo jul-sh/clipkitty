@@ -1,9 +1,50 @@
 import SwiftUI
 
+/// Reusable action button with hover state for popover menus
+private struct ActionButton: View {
+    let label: String
+    let actionID: String
+    var isHighlighted: Bool = false
+    var isDestructive: Bool = false
+    let action: () -> Void
+    @State private var isHovered = false
+
+    var body: some View {
+        Button(action: action) {
+            Text(label)
+                .font(.system(size: 13))
+                .foregroundStyle(foregroundColor)
+                .frame(maxWidth: .infinity, alignment: .leading)
+                .padding(.horizontal, 8)
+                .padding(.vertical, 6)
+                .background {
+                    if isHighlighted {
+                        RoundedRectangle(cornerRadius: 9)
+                            .fill(isDestructive ? Color.red.opacity(0.8) : Color.accentColor)
+                    } else {
+                        RoundedRectangle(cornerRadius: 9)
+                            .fill(isHovered ? Color.primary.opacity(0.08) : Color.clear)
+                    }
+                }
+                .contentShape(RoundedRectangle(cornerRadius: 9))
+        }
+        .buttonStyle(.plain)
+        .onHover { isHovered = $0 }
+        .accessibilityIdentifier("Action_\(actionID)")
+    }
+
+    private var foregroundColor: Color {
+        if isHighlighted { return .white }
+        if isDestructive { return .red }
+        return .secondary
+    }
+}
+
 struct BrowserActionsOverlay: View {
     @Bindable var viewModel: BrowserViewModel
     let focusSearchField: () -> Void
     let focusActionsDropdown: () -> Void
+    @State private var isButtonHovered = false
 
     private enum ActionItem: Equatable {
         case delete
@@ -14,7 +55,7 @@ struct BrowserActionsOverlay: View {
     }
 
     private var actions: [ActionItem] {
-        var items: [ActionItem] = [.delete]
+        var items: [ActionItem] = []
         if let selectedItem = viewModel.selectedItem,
            selectedItem.itemMetadata.tags.contains(.bookmark) {
             items.append(.unbookmark)
@@ -24,12 +65,13 @@ struct BrowserActionsOverlay: View {
         if case .autoPaste = AppSettings.shared.pasteMode {
             items.append(.copyOnly)
         }
+        items.append(.delete)
         items.append(.defaultAction)
         return items
     }
 
-    private var defaultActionIndex: Int {
-        actions.firstIndex(of: .defaultAction) ?? max(actions.count - 1, 0)
+    private var firstActionIndex: Int {
+        0
     }
 
     private var isPresented: Binding<Bool> {
@@ -53,17 +95,20 @@ struct BrowserActionsOverlay: View {
             if case .actions = viewModel.session.overlays {
                 viewModel.closeOverlay()
             } else {
-                viewModel.openActionsOverlay(highlightedIndex: defaultActionIndex)
+                viewModel.openActionsOverlay(highlightedIndex: firstActionIndex)
                 focusActionsDropdown()
             }
         } label: {
             Text("⌘K Actions")
                 .font(.system(size: 13))
                 .foregroundStyle(.secondary)
-                .padding(.horizontal, 6)
-                .padding(.vertical, 2)
+                .padding(.horizontal, 10)
+                .padding(.vertical, 6)
+                .background(RoundedRectangle(cornerRadius: 6).fill(isButtonHovered ? Color.primary.opacity(0.06) : Color.clear))
+                .contentShape(RoundedRectangle(cornerRadius: 6))
         }
         .buttonStyle(.plain)
+        .onHover { isButtonHovered = $0 }
         .accessibilityIdentifier("ActionsButton")
         .popover(isPresented: isPresented, arrowEdge: .top) {
             popoverContent
@@ -102,7 +147,7 @@ struct BrowserActionsOverlay: View {
                     highlighted: highlightedIndex == 1,
                     destructive: false
                 ) {
-                    viewModel.openActionsOverlay(highlightedIndex: defaultActionIndex)
+                    viewModel.openActionsOverlay(highlightedIndex: firstActionIndex)
                 }
             }
         }
@@ -137,7 +182,7 @@ struct BrowserActionsOverlay: View {
                     viewModel.deleteSelectedItem()
                     viewModel.closeOverlay()
                 } else {
-                    viewModel.openActionsOverlay(highlightedIndex: defaultActionIndex)
+                    viewModel.openActionsOverlay(highlightedIndex: firstActionIndex)
                 }
             }
             return .handled
@@ -145,7 +190,7 @@ struct BrowserActionsOverlay: View {
         .onKeyPress(.escape) {
             switch overlayState {
             case .confirmDelete:
-                viewModel.openActionsOverlay(highlightedIndex: defaultActionIndex)
+                viewModel.openActionsOverlay(highlightedIndex: firstActionIndex)
             case .actions:
                 viewModel.closeOverlay()
                 focusSearchField()
@@ -159,29 +204,20 @@ struct BrowserActionsOverlay: View {
         }
         .onAppear {
             if case .actions = overlayState {
-                viewModel.updateActionsHighlight(defaultActionIndex)
+                viewModel.updateActionsHighlight(firstActionIndex)
             }
             focusActionsDropdown()
         }
     }
 
     private func actionButton(action: ActionItem, highlightedIndex: Int, index: Int) -> some View {
-        Button {
-            performAction(action)
-        } label: {
-            Text(label(for: action))
-                .font(.system(size: 13))
-                .foregroundStyle(highlightedIndex == index ? .white : action == .delete ? .red : .secondary)
-                .frame(maxWidth: .infinity, alignment: .leading)
-                .padding(.horizontal, 8)
-                .padding(.vertical, 5)
-                .background {
-                    RoundedRectangle(cornerRadius: 9)
-                        .fill(highlightedIndex == index ? (action == .delete ? Color.red.opacity(0.8) : Color.accentColor) : Color.clear)
-                }
-        }
-        .buttonStyle(.plain)
-        .accessibilityIdentifier("Action_\(identifier(for: action))")
+        ActionButton(
+            label: label(for: action),
+            actionID: identifier(for: action),
+            isHighlighted: highlightedIndex == index,
+            isDestructive: action == .delete,
+            action: { performAction(action) }
+        )
     }
 
     private func confirmButton(
@@ -191,20 +227,13 @@ struct BrowserActionsOverlay: View {
         destructive: Bool,
         action: @escaping () -> Void
     ) -> some View {
-        Button(action: action) {
-            Text(label)
-                .font(.system(size: 13))
-                .foregroundStyle(highlighted ? .white : destructive ? .red : .secondary)
-                .frame(maxWidth: .infinity, alignment: .leading)
-                .padding(.horizontal, 8)
-                .padding(.vertical, 5)
-                .background {
-                    RoundedRectangle(cornerRadius: 9)
-                        .fill(highlighted ? (destructive ? Color.red.opacity(0.8) : Color.accentColor) : Color.clear)
-                }
-        }
-        .buttonStyle(.plain)
-        .accessibilityIdentifier("Action_\(actionID)")
+        ActionButton(
+            label: label,
+            actionID: actionID,
+            isHighlighted: highlighted,
+            isDestructive: destructive,
+            action: action
+        )
     }
 
     private func performAction(_ action: ActionItem) {
@@ -258,7 +287,7 @@ struct BrowserActionsOverlay: View {
 
     private var overlayState: ActionsOverlayState {
         guard case .actions(let state) = viewModel.session.overlays else {
-            return .actions(highlightedIndex: defaultActionIndex)
+            return .actions(highlightedIndex: firstActionIndex)
         }
         return state
     }
