@@ -9,24 +9,14 @@ enum DetectedPasteboardContent {
 
 @MainActor
 final class PasteboardMonitor {
-    enum SuspensionReason: Equatable {
-        case sleeping
-    }
-
     enum PollingMode: Equatable {
         case active
         case idle
         case deepIdle
-        case suspended(SuspensionReason)
 
         static func mode(
-            forIdleDuration idleDuration: Duration,
-            isSuspended: Bool
+            forIdleDuration idleDuration: Duration
         ) -> PollingMode {
-            if isSuspended {
-                return .suspended(.sleeping)
-            }
-
             switch idleDuration {
             case ..<.seconds(30):
                 return .active
@@ -45,8 +35,6 @@ final class PasteboardMonitor {
                 return 750
             case .deepIdle:
                 return 2_000
-            case .suspended:
-                return 2_000
             }
         }
 
@@ -56,7 +44,7 @@ final class PasteboardMonitor {
                 return .idle
             case .idle:
                 return .deepIdle
-            case .deepIdle, .suspended:
+            case .deepIdle:
                 return self
             }
         }
@@ -181,14 +169,10 @@ final class PasteboardMonitor {
     static func pollingMode(
         now: ContinuousClock.Instant,
         lastDetectionTime: ContinuousClock.Instant,
-        isSuspended: Bool,
         isLowPowerModeEnabled: Bool
     ) -> PollingMode {
         let idleDuration = lastDetectionTime.duration(to: now)
-        let baseMode = PollingMode.mode(
-            forIdleDuration: idleDuration,
-            isSuspended: isSuspended
-        )
+        let baseMode = PollingMode.mode(forIdleDuration: idleDuration)
 
         if isLowPowerModeEnabled {
             return baseMode.adjustedForLowPowerMode()
@@ -200,7 +184,6 @@ final class PasteboardMonitor {
         Self.pollingMode(
             now: ContinuousClock.now,
             lastDetectionTime: lastDetectionTime,
-            isSuspended: sleepMonitoring.isAsleep,
             isLowPowerModeEnabled: ProcessInfo.processInfo.isLowPowerModeEnabled
         )
     }

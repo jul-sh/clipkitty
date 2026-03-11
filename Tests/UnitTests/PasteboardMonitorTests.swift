@@ -9,7 +9,6 @@ final class PasteboardMonitorTests: XCTestCase {
         let mode = PasteboardMonitor.pollingMode(
             now: now,
             lastDetectionTime: now - .seconds(1),
-            isSuspended: false,
             isLowPowerModeEnabled: false
         )
 
@@ -22,7 +21,6 @@ final class PasteboardMonitorTests: XCTestCase {
         let mode = PasteboardMonitor.pollingMode(
             now: now,
             lastDetectionTime: now - .seconds(900),
-            isSuspended: false,
             isLowPowerModeEnabled: false
         )
 
@@ -35,7 +33,6 @@ final class PasteboardMonitorTests: XCTestCase {
         let mode = PasteboardMonitor.pollingMode(
             now: now,
             lastDetectionTime: now - .seconds(1),
-            isSuspended: false,
             isLowPowerModeEnabled: true
         )
 
