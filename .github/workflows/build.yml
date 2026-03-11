@@ -2,9 +2,9 @@ name: Build and Release
 
 on:
   push:
-    branches: [main, release, release-stable]
+    branches: [main, release]
   pull_request:
-    branches: [main, release, release-stable]
+    branches: [main, release]
   workflow_dispatch:
 
 permissions:
@@ -49,13 +49,14 @@ jobs:
 
       - name: Resolve Release Version
         id: resolve-version
-        if: github.ref == 'refs/heads/release' || github.ref == 'refs/heads/release-stable' || (github.event_name == 'pull_request' && (github.base_ref == 'release' || github.base_ref == 'release-stable'))
+        if: github.ref == 'refs/heads/main' || github.ref == 'refs/heads/release' || (github.event_name == 'pull_request' && (github.base_ref == 'main' || github.base_ref == 'release'))
         run: |
           TARGET_BRANCH="${GITHUB_BASE_REF:-${GITHUB_REF#refs/heads/}}"
           VERSION=$(grep 'MARKETING_VERSION' Project.swift | head -1 | sed 's/.*"\(.*\)".*/\1/')
           echo "Base version from Project.swift: $VERSION"
 
-          if [ "$TARGET_BRANCH" = "release" ]; then
+          if [ "$TARGET_BRANCH" = "main" ]; then
+            # Beta releases from main
             while gh release view "v$VERSION" &>/dev/null || gh release view "v$VERSION-beta" &>/dev/null; do
               IFS='.' read -r major minor patch <<< "$VERSION"
               patch=$((patch + 1))
@@ -68,6 +69,7 @@ jobs:
             RELEASE_TITLE="ClipKitty v${VERSION} Beta"
             RELEASE_URL="https://github.com/${{ github.repository }}/releases/download/v${VERSION}-beta/ClipKitty.dmg"
           else
+            # Stable releases from release branch
             CHANNEL="stable"
             RELEASE_TAG="v${VERSION}"
             RELEASE_TITLE="ClipKitty v${VERSION}"
@@ -219,7 +221,7 @@ jobs:
           exit 1
 
       - name: Install Sparkle CLI Tools
-        if: github.event_name == 'push' && (github.ref == 'refs/heads/release' || github.ref == 'refs/heads/release-stable')
+        if: github.event_name == 'push' && (github.ref == 'refs/heads/main' || github.ref == 'refs/heads/release')
         run: |
           SPARKLE_VERSION="2.9.0"
           curl -sL "https://github.com/sparkle-project/Sparkle/releases/download/${SPARKLE_VERSION}/Sparkle-${SPARKLE_VERSION}.tar.xz" -o /tmp/sparkle.tar.xz
@@ -228,7 +230,7 @@ jobs:
           echo "/tmp/sparkle/bin" >> "$GITHUB_PATH"
 
       - name: Sign DMG with EdDSA
-        if: github.event_name == 'push' && (github.ref == 'refs/heads/release' || github.ref == 'refs/heads/release-stable')
+        if: github.event_name == 'push' && (github.ref == 'refs/heads/main' || github.ref == 'refs/heads/release')
         id: eddsa-sign
         run: |
           SIGNATURE=$(echo "$SPARKLE_EDDSA_KEY" | sign_update ClipKitty.dmg --ed-key-file -)
@@ -241,7 +243,7 @@ jobs:
           SPARKLE_EDDSA_KEY: ${{ steps.secrets.outputs.SPARKLE_EDDSA_KEY }}
 
       - name: Create Channel Release
-        if: github.event_name == 'push' && (github.ref == 'refs/heads/release' || github.ref == 'refs/heads/release-stable')
+        if: github.event_name == 'push' && (github.ref == 'refs/heads/main' || github.ref == 'refs/heads/release')
         run: |
           gh release delete "${{ steps.resolve-version.outputs.release_tag }}" --yes --cleanup-tag 2>/dev/null || true
 
@@ -276,7 +278,7 @@ jobs:
             marketing/*/screenshot_*.png
 
       - name: Deploy to gh-pages
-        if: github.event_name == 'push' && (github.ref == 'refs/heads/main' || github.ref == 'refs/heads/release' || github.ref == 'refs/heads/release-stable')
+        if: github.event_name == 'push' && (github.ref == 'refs/heads/main' || github.ref == 'refs/heads/release')
         run: |
           git config --global user.name "github-actions[bot]"
           git config --global user.email "github-actions[bot]@users.noreply.github.com"
@@ -299,7 +301,7 @@ jobs:
           cp "$GITHUB_WORKSPACE/marketing/en/screenshot_2.png" marketing_2.png
           cp "$GITHUB_WORKSPACE/marketing/en/screenshot_3.png" marketing_3.png
 
-          if [ "$GITHUB_REF_NAME" = "release" ] || [ "$GITHUB_REF_NAME" = "release-stable" ]; then
+          if [ "$GITHUB_REF_NAME" = "main" ] || [ "$GITHUB_REF_NAME" = "release" ]; then
             [ -f appcast-state.json ] || printf '{}\n' > appcast-state.json
 
             python3 "$GITHUB_WORKSPACE/distribution/update_appcast_state.py" \
@@ -337,40 +339,6 @@ jobs:
           echo "Marketing 1: https://raw.githubusercontent.com/$REPO/gh-pages/marketing_1.png"
           echo "Marketing 2: https://raw.githubusercontent.com/$REPO/gh-pages/marketing_2.png"
           echo "Marketing 3: https://raw.githubusercontent.com/$REPO/gh-pages/marketing_3.png"
-
-      # Create automatic pre-release on push to main (for development builds)
-      - name: Create Development Release
-        if: github.event_name == 'push' && github.ref == 'refs/heads/main'
-        run: |
-          gh release create "commit-${GITHUB_SHA}" \
-            --title "ClipKitty ${GITHUB_SHA}" \
-            --prerelease \
-            ClipKitty.dmg \
-            icon.png \
-            marketing/en/screenshot_*.png
-        env:
-          GH_TOKEN: ${{ github.token }}
-
-      - name: Sync Version to Main
-        if: github.ref == 'refs/heads/release'
-        run: |
-          CURRENT=$(grep 'MARKETING_VERSION' Project.swift | head -1 | sed 's/.*"\(.*\)".*/\1/')
-          if [ "$CURRENT" != "$VERSION" ]; then
-            git config user.name "github-actions[bot]"
-            git config user.email "github-actions[bot]@users.noreply.github.com"
-            git config --unset-all http.https://github.com/.extraheader || true
-            git remote set-url origin "https://x-access-token:${ADMIN_TOKEN}@github.com/${{ github.repository }}.git"
-            git fetch origin main
-            git checkout -f main
-            sed -i '' "s/\"MARKETING_VERSION\": \"$CURRENT\"/\"MARKETING_VERSION\": \"$VERSION\"/" Project.swift
-            git add Project.swift
-            if ! git diff --cached --quiet; then
-              git commit -m "bump version to $VERSION"
-              git push origin main
-            fi
-          fi
-        env:
-          ADMIN_TOKEN: ${{ steps.secrets.outputs.ADMIN_TOKEN }}
 
   # Upload to App Store Connect via ASC CLI
   appstore:

@@ -1,0 +1,65 @@
+name: Sync Release Branch
+
+on:
+  schedule:
+    # Run at 2 PM UTC on the 1st and 15th of each month (bi-weekly)
+    - cron: "0 14 1,15 * *"
+  workflow_dispatch:
+
+permissions:
+  contents: write
+
+jobs:
+  sync:
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      - name: Find target commit and sync release
+        run: |
+          git config user.name "github-actions[bot]"
+          git config user.email "github-actions[bot]@users.noreply.github.com"
+          git remote set-url origin "https://x-access-token:${GH_TOKEN}@github.com/${{ github.repository }}.git"
+
+          # Find the commit in main from 14 days ago
+          CUTOFF_DATE=$(date -d "14 days ago" --iso-8601=seconds 2>/dev/null || date -v-14d +%Y-%m-%dT%H:%M:%S%z)
+          TARGET_COMMIT=$(git rev-list -n 1 --before="$CUTOFF_DATE" origin/main)
+
+          if [ -z "$TARGET_COMMIT" ]; then
+            echo "No commit found in main older than 14 days"
+            exit 0
+          fi
+
+          echo "Target commit from main (14 days ago): $TARGET_COMMIT"
+          echo "Commit date: $(git show -s --format=%ci "$TARGET_COMMIT")"
+          echo "Commit message: $(git show -s --format=%s "$TARGET_COMMIT")"
+
+          # Check if release already contains this commit
+          git fetch origin release || git checkout -b release "$TARGET_COMMIT"
+
+          if git merge-base --is-ancestor "$TARGET_COMMIT" origin/release 2>/dev/null; then
+            echo "Release branch already contains this commit. Nothing to do."
+            exit 0
+          fi
+
+          # Checkout release branch
+          git checkout release
+
+          # Merge target commit, preferring main's changes on conflicts
+          if git merge -X theirs "$TARGET_COMMIT" -m "Sync from main ($(git show -s --format=%h "$TARGET_COMMIT"))"; then
+            echo "Merge successful"
+          else
+            # If merge still fails (shouldn't happen with -X theirs), force tree to match
+            echo "Merge had issues, forcing tree to match main"
+            git checkout --theirs .
+            git add -A
+            git commit -m "Sync from main ($(git show -s --format=%h "$TARGET_COMMIT"))"
+          fi
+
+          git push origin release
+        env:
+          GH_TOKEN: ${{ github.token }}
