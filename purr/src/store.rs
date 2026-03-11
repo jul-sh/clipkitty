@@ -388,6 +388,10 @@ impl ClipboardStoreApi for ClipboardStore {
         save_service::update_image_description(&self.db, &self.indexer, item_id, description)
     }
 
+    fn update_text_item(&self, item_id: i64, text: String) -> Result<(), ClipKittyError> {
+        save_service::update_text_item(&self.db, &self.indexer, item_id, text)
+    }
+
     fn update_timestamp(&self, item_id: i64) -> Result<(), ClipKittyError> {
         save_service::update_timestamp(&self.db, &self.indexer, item_id)
     }

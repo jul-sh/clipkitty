@@ -1052,4 +1052,271 @@ final class ClipKittyUITests: XCTestCase {
         // Toast should auto-dismiss
         XCTAssertTrue(toastWindow.waitForNonExistence(timeout: 5), "Toast should auto-dismiss")
     }
+
+    // MARK: - Edit Mode Tests
+
+    /// Tests that typing in the preview creates a pending edit.
+    /// Verifies that the footer shows Save/Discard buttons.
+    func testTypingInPreviewShowsPendingEditIndicators() throws {
+        let searchField = app.textFields["SearchField"]
+        XCTAssertTrue(searchField.waitForExistence(timeout: 5), "Search field not found")
+
+        // Ensure first item selected and preview loaded
+        XCTAssertTrue(waitForSelectedIndex(0, timeout: 3), "First item should be selected")
+        Thread.sleep(forTimeInterval: ciTimeout)
+
+        // Find and click the preview text view to focus it
+        let hasTextViews = waitForCondition(timeout: 5) {
+            self.app.textViews.allElementsBoundByIndex.count > 0
+        }
+        guard hasTextViews else {
+            XCTFail("No text views found")
+            return
+        }
+
+        let previewTextView = app.textViews.allElementsBoundByIndex.first!
+        clickAndWait(previewTextView, timeout: ciTimeout)
+
+        // Type some text to create an edit
+        previewTextView.typeText(" edited")
+        Thread.sleep(forTimeInterval: ciTimeout)
+
+        // Verify Save/Discard buttons appear in footer by checking for any element containing "Save"
+        // SwiftUI buttons may appear as buttons, staticTexts, or other element types
+        let saveExists = waitForCondition(timeout: 3) {
+            // Check buttons
+            let saveButtons = self.app.buttons.matching(NSPredicate(format: "label CONTAINS 'Save'")).allElementsBoundByIndex
+            if !saveButtons.isEmpty { return true }
+            // Check static texts
+            let saveTexts = self.app.staticTexts.matching(NSPredicate(format: "label CONTAINS 'Save'")).allElementsBoundByIndex
+            return !saveTexts.isEmpty
+        }
+        XCTAssertTrue(saveExists, "Save button/text should appear when item has pending edit")
+
+        // Verify Discard appears
+        let discardExists = waitForCondition(timeout: 3) {
+            let discardButtons = self.app.buttons.matching(NSPredicate(format: "label CONTAINS 'Discard'")).allElementsBoundByIndex
+            if !discardButtons.isEmpty { return true }
+            let discardTexts = self.app.staticTexts.matching(NSPredicate(format: "label CONTAINS 'Discard'")).allElementsBoundByIndex
+            return !discardTexts.isEmpty
+        }
+        XCTAssertTrue(discardExists, "Discard button/text should appear when item has pending edit")
+    }
+
+    /// Helper to check if Save UI element exists
+    private func saveUIExists() -> Bool {
+        let saveButtons = self.app.buttons.matching(NSPredicate(format: "label CONTAINS 'Save'")).allElementsBoundByIndex
+        if !saveButtons.isEmpty { return true }
+        let saveTexts = self.app.staticTexts.matching(NSPredicate(format: "label CONTAINS 'Save'")).allElementsBoundByIndex
+        return !saveTexts.isEmpty
+    }
+
+    /// Tests that pressing Escape discards the pending edit.
+    func testEscapeDiscardsEdit() throws {
+        let searchField = app.textFields["SearchField"]
+        XCTAssertTrue(searchField.waitForExistence(timeout: 5), "Search field not found")
+
+        // Ensure first item selected and preview loaded
+        XCTAssertTrue(waitForSelectedIndex(0, timeout: 3), "First item should be selected")
+        Thread.sleep(forTimeInterval: ciTimeout)
+
+        let hasTextViews = waitForCondition(timeout: 5) {
+            self.app.textViews.allElementsBoundByIndex.count > 0
+        }
+        guard hasTextViews else {
+            XCTFail("No text views found")
+            return
+        }
+
+        let previewTextView = app.textViews.allElementsBoundByIndex.first!
+        let originalText = previewTextView.value as? String ?? ""
+
+        // Click and edit
+        clickAndWait(previewTextView, timeout: ciTimeout)
+        previewTextView.typeText(" TEMP_EDIT")
+        Thread.sleep(forTimeInterval: ciTimeout)
+
+        // Verify Save button appears (confirming edit was registered)
+        let saveExists = waitForCondition(timeout: 3) { self.saveUIExists() }
+        XCTAssertTrue(saveExists, "Save button should appear for edit")
+
+        // Press Escape to discard
+        app.typeKey(.escape, modifierFlags: [])
+        Thread.sleep(forTimeInterval: ciTimeout)
+
+        // Save button should disappear
+        let saveDisappeared = waitForCondition(timeout: 3) { !self.saveUIExists() }
+        XCTAssertTrue(saveDisappeared, "Save button should disappear after discarding edit")
+
+        // Text should revert to original
+        let currentText = previewTextView.value as? String ?? ""
+        XCTAssertEqual(currentText, originalText,
+            "Preview text should revert to original after Escape")
+    }
+
+    /// Tests that Cmd+S saves the edit (replaces the original item).
+    func testCmdSSavesEdit() throws {
+        let searchField = app.textFields["SearchField"]
+        XCTAssertTrue(searchField.waitForExistence(timeout: 5), "Search field not found")
+
+        // Record initial item count
+        let initialCount = app.outlines.firstMatch.buttons.allElementsBoundByIndex.count
+        XCTAssertGreaterThan(initialCount, 0, "Should have items")
+
+        // Ensure first item selected
+        XCTAssertTrue(waitForSelectedIndex(0, timeout: 3), "First item should be selected")
+        Thread.sleep(forTimeInterval: ciTimeout)
+
+        let hasTextViews = waitForCondition(timeout: 5) {
+            self.app.textViews.allElementsBoundByIndex.count > 0
+        }
+        guard hasTextViews else {
+            XCTFail("No text views found")
+            return
+        }
+
+        let previewTextView = app.textViews.allElementsBoundByIndex.first!
+
+        // Click and edit with unique text to avoid duplicate detection
+        clickAndWait(previewTextView, timeout: ciTimeout)
+        let uniqueEdit = " UNIQUE_\(Int.random(in: 1000...9999))"
+        typeTextSlowly(previewTextView, text: uniqueEdit)
+        Thread.sleep(forTimeInterval: ciTimeout)
+
+        // Verify Save button appears
+        let saveExists = waitForCondition(timeout: 3) { self.saveUIExists() }
+        XCTAssertTrue(saveExists, "Save button should appear for edit")
+
+        // Press Cmd+S to save
+        app.typeKey("s", modifierFlags: .command)
+
+        // Toast should appear confirming save
+        let toastWindow = app.windows["ToastWindow"]
+        XCTAssertTrue(toastWindow.waitForExistence(timeout: 5),
+            "Toast should appear after saving edit")
+
+        // Wait for the list to update
+        Thread.sleep(forTimeInterval: ciTimeout)
+
+        // Save button should disappear (edit committed)
+        let saveDisappeared = waitForCondition(timeout: 3) { !self.saveUIExists() }
+        XCTAssertTrue(saveDisappeared, "Save button should disappear after saving")
+
+        // Item count should stay the same (original deleted, new one created)
+        let countStable = waitForCondition(timeout: 5) {
+            self.app.outlines.firstMatch.buttons.allElementsBoundByIndex.count == initialCount
+        }
+        XCTAssertTrue(countStable,
+            "Item count should stay the same after edit (delete + save). Expected \(initialCount)")
+    }
+
+    /// Tests that Cmd+Return saves the edit and copies/pastes the new item.
+    func testCmdReturnSavesAndPastes() throws {
+        let searchField = app.textFields["SearchField"]
+        XCTAssertTrue(searchField.waitForExistence(timeout: 5), "Search field not found")
+
+        // Ensure first item selected
+        XCTAssertTrue(waitForSelectedIndex(0, timeout: 3), "First item should be selected")
+        Thread.sleep(forTimeInterval: ciTimeout)
+
+        let hasTextViews = waitForCondition(timeout: 5) {
+            self.app.textViews.allElementsBoundByIndex.count > 0
+        }
+        guard hasTextViews else {
+            XCTFail("No text views found")
+            return
+        }
+
+        let previewTextView = app.textViews.allElementsBoundByIndex.first!
+
+        // Click and edit with unique text
+        clickAndWait(previewTextView, timeout: ciTimeout)
+        let uniqueEdit = " CMD_RETURN_\(Int.random(in: 1000...9999))"
+        typeTextSlowly(previewTextView, text: uniqueEdit)
+        Thread.sleep(forTimeInterval: ciTimeout)
+
+        // Press Cmd+Return to save and paste
+        app.typeKey(.return, modifierFlags: .command)
+
+        // Toast should appear (may say "Copied" or "Saved")
+        let toastWindow = app.windows["ToastWindow"]
+        XCTAssertTrue(toastWindow.waitForExistence(timeout: 5),
+            "Toast should appear after Cmd+Return")
+    }
+
+    /// Tests that navigating away from an edited item preserves the pending edit.
+    func testNavigatingAwayPreservesPendingEdit() throws {
+        let searchField = app.textFields["SearchField"]
+        XCTAssertTrue(searchField.waitForExistence(timeout: 5), "Search field not found")
+
+        // Ensure we have multiple items
+        let itemCount = app.outlines.firstMatch.buttons.allElementsBoundByIndex.count
+        XCTAssertGreaterThan(itemCount, 1, "Need at least 2 items")
+
+        // Select first item and edit
+        XCTAssertTrue(waitForSelectedIndex(0, timeout: 3), "First item should be selected")
+        Thread.sleep(forTimeInterval: ciTimeout)
+
+        let hasTextViews = waitForCondition(timeout: 5) {
+            self.app.textViews.allElementsBoundByIndex.count > 0
+        }
+        guard hasTextViews else {
+            XCTFail("No text views found")
+            return
+        }
+
+        let previewTextView = app.textViews.allElementsBoundByIndex.first!
+
+        // Click and edit
+        clickAndWait(previewTextView, timeout: ciTimeout)
+        let editText = " NAV_TEST"
+        typeTextSlowly(previewTextView, text: editText)
+        Thread.sleep(forTimeInterval: ciTimeout)
+
+        // Navigate to second item
+        clickAndWait(searchField)
+        app.typeKey(.downArrow, modifierFlags: [])
+        XCTAssertTrue(waitForSelectedIndex(1, timeout: 3), "Should select second item")
+        Thread.sleep(forTimeInterval: ciTimeout)
+
+        // Navigate back to first item
+        app.typeKey(.upArrow, modifierFlags: [])
+        XCTAssertTrue(waitForSelectedIndex(0, timeout: 3), "Should select first item again")
+        Thread.sleep(forTimeInterval: ciTimeout)
+
+        // The pending edit should be preserved - Save button should still be visible
+        let saveExists = waitForCondition(timeout: 3) { self.saveUIExists() }
+        XCTAssertTrue(saveExists,
+            "Save button should still appear when returning to edited item")
+    }
+
+    /// Tests that the Return button label shows Cmd+Return when in edit mode.
+    func testReturnButtonShowsCmdPrefixWhenEditing() throws {
+        let searchField = app.textFields["SearchField"]
+        XCTAssertTrue(searchField.waitForExistence(timeout: 5), "Search field not found")
+
+        // Ensure first item selected
+        XCTAssertTrue(waitForSelectedIndex(0, timeout: 3), "First item should be selected")
+        Thread.sleep(forTimeInterval: ciTimeout)
+
+        let hasTextViews = waitForCondition(timeout: 5) {
+            self.app.textViews.allElementsBoundByIndex.count > 0
+        }
+        guard hasTextViews else {
+            XCTFail("No text views found")
+            return
+        }
+
+        let previewTextView = app.textViews.allElementsBoundByIndex.first!
+
+        // Click and edit
+        clickAndWait(previewTextView, timeout: ciTimeout)
+        previewTextView.typeText(" test")
+        Thread.sleep(forTimeInterval: ciTimeout)
+
+        // The confirm button should show "⌘↩" prefix when in edit mode
+        let cmdReturnButton = app.staticTexts.matching(NSPredicate(format: "label CONTAINS '⌘↩'")).firstMatch
+        XCTAssertTrue(cmdReturnButton.waitForExistence(timeout: 3),
+            "Confirm button should show ⌘↩ prefix when editing")
+    }
 }

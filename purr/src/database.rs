@@ -346,6 +346,22 @@ impl Database {
         Ok(())
     }
 
+    /// Update text item content in-place
+    pub fn update_text_item(&self, id: i64, text: &str, content_hash: &str) -> DatabaseResult<()> {
+        let conn = self.get_conn()?;
+        // Update the denormalized content in items table and the hash
+        conn.execute(
+            "UPDATE items SET content = ?1, contentHash = ?2 WHERE id = ?3 AND contentType = 'text'",
+            params![text, content_hash, id],
+        )?;
+        // Update the child table
+        conn.execute(
+            "UPDATE text_items SET value = ?1 WHERE itemId = ?2",
+            params![text, id],
+        )?;
+        Ok(())
+    }
+
     /// Delete an item by ID (CASCADE handles child tables)
     pub fn delete_item(&self, id: i64) -> DatabaseResult<()> {
         let conn = self.get_conn()?;

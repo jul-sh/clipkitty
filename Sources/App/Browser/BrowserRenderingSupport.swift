@@ -185,12 +185,62 @@ struct FilePreviewView: View {
 
 // MARK: - Text Preview (AppKit)
 
+/// NSTextView subclass with custom key handling for the preview pane
+private final class PreviewTextView: NSTextView {
+    var onCmdReturn: (() -> Void)?
+    var onSave: (() -> Void)?
+    var onEscape: (() -> Void)?
+    var onFocusChange: ((Bool) -> Void)?
+
+    override func keyDown(with event: NSEvent) {
+        if event.modifierFlags.contains(.command) {
+            switch event.keyCode {
+            case 36: // Cmd+Return
+                onCmdReturn?()
+                return
+            case 1: // Cmd+S
+                onSave?()
+                return
+            default:
+                break
+            }
+        }
+        if event.keyCode == 53 { // Escape
+            window?.makeFirstResponder(nil)
+            onEscape?()
+            return
+        }
+        super.keyDown(with: event)
+    }
+
+    override func becomeFirstResponder() -> Bool {
+        let result = super.becomeFirstResponder()
+        if result { onFocusChange?(true) }
+        return result
+    }
+
+    override func resignFirstResponder() -> Bool {
+        let result = super.resignFirstResponder()
+        if result { onFocusChange?(false) }
+        return result
+    }
+}
+
 struct TextPreviewView: NSViewRepresentable {
     let text: String
     let fontName: String
     let fontSize: CGFloat
     var highlights: [HighlightRange] = []
     var densestHighlightStart: UInt64 = 0
+
+    // Edit callbacks
+    var itemId: Int64 = 0
+    var originalText: String = ""
+    var onTextChange: ((String) -> Void)?
+    var onEditingStateChange: ((Bool) -> Void)?
+    var onCmdReturn: (() -> Void)?
+    var onSave: (() -> Void)?
+    var onEscape: (() -> Void)?
 
     private enum ScrollTarget {
         case top
@@ -202,12 +252,14 @@ struct TextPreviewView: NSViewRepresentable {
         scrollView.hasVerticalScroller = true
         scrollView.drawsBackground = false
 
+        // Use PreviewTextView for custom key handling (Cmd+Return, Cmd+S, Escape)
         // NSTextView() defaults to TextKit 2 on macOS 12+.
         // IMPORTANT: never access .layoutManager — that silently downgrades to TextKit 1.
-        let textView = NSTextView()
-        textView.isEditable = false
+        let textView = PreviewTextView()
+        textView.isEditable = true
         textView.isSelectable = true
-        textView.isRichText = true
+        textView.isRichText = false  // Plain text for editing
+        textView.allowsUndo = true
         textView.drawsBackground = false
         textView.isVerticallyResizable = true
         textView.isHorizontallyResizable = false
@@ -219,6 +271,14 @@ struct TextPreviewView: NSViewRepresentable {
         textView.textContainer?.containerSize = NSSize(width: scrollView.contentSize.width, height: .greatestFiniteMagnitude)
         textView.frame = NSRect(x: 0, y: 0, width: scrollView.contentSize.width, height: 0)
         textView.setAccessibilityIdentifier("PreviewTextView")
+
+        // Setup delegate for text changes
+        textView.delegate = context.coordinator
+        textView.onCmdReturn = onCmdReturn
+        textView.onSave = onSave
+        textView.onEscape = onEscape
+        textView.onFocusChange = onEditingStateChange
+        context.coordinator.onTextChange = onTextChange
 
         scrollView.documentView = textView
         return scrollView
@@ -252,7 +312,22 @@ struct TextPreviewView: NSViewRepresentable {
     }
 
     func updateNSView(_ nsView: NSScrollView, context: Context) {
-        guard let textView = nsView.documentView as? NSTextView else { return }
+        guard let textView = nsView.documentView as? PreviewTextView else { return }
+
+        // Update callbacks
+        let coordinator = context.coordinator
+        coordinator.onTextChange = onTextChange
+        textView.onCmdReturn = onCmdReturn
+        textView.onSave = onSave
+        textView.onEscape = onEscape
+        textView.onFocusChange = onEditingStateChange
+
+        // Check if item changed
+        let itemChanged = coordinator.currentItemId != itemId
+        if itemChanged {
+            coordinator.currentItemId = itemId
+            coordinator.isEditing = false
+        }
 
         // Use live container width if available, otherwise fall back to persisted value
         let containerWidth = nsView.contentSize.width > 0
@@ -274,7 +349,15 @@ struct TextPreviewView: NSViewRepresentable {
         )
         textView.frame = NSRect(x: 0, y: 0, width: containerWidth, height: textView.frame.height)
 
-        let coordinator = context.coordinator
+        // Set typing attributes for consistent font during editing
+        let paragraphStyle = NSMutableParagraphStyle()
+        paragraphStyle.lineBreakMode = .byWordWrapping
+        textView.typingAttributes = [
+            .font: font,
+            .foregroundColor: NSColor.labelColor,
+            .paragraphStyle: paragraphStyle
+        ]
+
         let textChanged = textView.string != text
         let highlightsChanged = coordinator.lastHighlights != highlights
         let contentWidthChanged = abs(coordinator.lastContentWidth - containerWidth) > 0.5
@@ -285,7 +368,9 @@ struct TextPreviewView: NSViewRepresentable {
             coordinator.needsGeometrySync = true
         }
 
-        if textChanged {
+        // Only update text if item changed or we're not editing
+        let shouldUpdateText = itemChanged || (!coordinator.isEditing && textChanged)
+        if shouldUpdateText {
             // Text content changed — replace storage attributes (font, color, paragraph style only).
             // Highlights are applied as rendering attributes, not storage attributes.
             //
@@ -589,13 +674,31 @@ struct TextPreviewView: NSViewRepresentable {
         }
     }
 
-    class Coordinator {
+    class Coordinator: NSObject, NSTextViewDelegate {
         var lastHighlights: [HighlightRange] = []
         /// Current match ranges for diffing on next update.
         var currentMatchRanges: [MatchRange] = []
         var scrollGeneration: Int = 0
         var lastContentWidth: CGFloat = 0
         var needsGeometrySync: Bool = false
+
+        // Edit tracking
+        var currentItemId: Int64 = 0
+        var isEditing = false
+        var onTextChange: ((String) -> Void)?
+
+        func textDidBeginEditing(_ notification: Notification) {
+            isEditing = true
+        }
+
+        func textDidEndEditing(_ notification: Notification) {
+            isEditing = false
+        }
+
+        func textDidChange(_ notification: Notification) {
+            guard let onTextChange, let textView = notification.object as? NSTextView else { return }
+            onTextChange(textView.string)
+        }
     }
 }
 
@@ -671,6 +774,7 @@ struct ItemRow: View, Equatable {
     let isSelected: Bool
     let isContextMenuTargeted: Bool
     let hasUserNavigated: Bool
+    let hasPendingEdit: Bool
     let onTap: () -> Void
     let contextMenuActions: [BrowserActionItem]
     let onContextMenuAction: (BrowserActionItem) -> Void
@@ -678,7 +782,7 @@ struct ItemRow: View, Equatable {
     let onContextMenuShow: () -> Void
     let onContextMenuHide: () -> Void
 
-    private var accentSelected: Bool { isSelected && hasUserNavigated }
+    private var accentSelected: Bool { isSelected && hasUserNavigated && !hasPendingEdit }
 
     // Fixed height for exactly 1 line of text at font size 15
     private let rowHeight: CGFloat = 32
@@ -706,6 +810,7 @@ struct ItemRow: View, Equatable {
         return lhs.isSelected == rhs.isSelected &&
                lhs.isContextMenuTargeted == rhs.isContextMenuTargeted &&
                lhs.hasUserNavigated == rhs.hasUserNavigated &&
+               lhs.hasPendingEdit == rhs.hasPendingEdit &&
                lhs.metadata == rhs.metadata &&
                lhs.matchData == rhs.matchData
     }
@@ -714,76 +819,85 @@ struct ItemRow: View, Equatable {
         // 1. Wrap the content inside a Button
         Button(action: onTap) {
             HStack(spacing: 6) {
-            // Content type icon with badge overlay
-            ZStack(alignment: .bottomTrailing) {
-                // Main icon: image thumbnail, browser icon for links, color swatch, or SF symbol
-                Group {
-                    switch metadata.icon {
-                    case .thumbnail(let bytes):
-                        if let nsImage = NSImage(data: Data(bytes)) {
-                            Image(nsImage: nsImage)
-                                .resizable()
-                                .aspectRatio(contentMode: .fill)
-                        } else {
-                            Image(systemName: "photo")
-                                .resizable()
-                        }
-                    case .colorSwatch(let rgba):
-                        RoundedRectangle(cornerRadius: 6)
-                            .fill(Color(nsColor: NSColor(
-                                red: CGFloat((rgba >> 24) & 0xFF) / 255.0,
-                                green: CGFloat((rgba >> 16) & 0xFF) / 255.0,
-                                blue: CGFloat((rgba >> 8) & 0xFF) / 255.0,
-                                alpha: CGFloat(rgba & 0xFF) / 255.0
-                            )))
-                            .overlay(
+            // Content type icon with badge overlay (or pencil when editing)
+            Group {
+                if hasPendingEdit {
+                    // Show pencil emoji when item has pending edit
+                    Text("✏️")
+                        .font(.system(size: 24))
+                        .frame(width: 32, height: 32)
+                } else {
+                    ZStack(alignment: .bottomTrailing) {
+                        // Main icon: image thumbnail, browser icon for links, color swatch, or SF symbol
+                        Group {
+                            switch metadata.icon {
+                            case .thumbnail(let bytes):
+                                if let nsImage = NSImage(data: Data(bytes)) {
+                                    Image(nsImage: nsImage)
+                                        .resizable()
+                                        .aspectRatio(contentMode: .fill)
+                                } else {
+                                    Image(systemName: "photo")
+                                        .resizable()
+                                }
+                            case .colorSwatch(let rgba):
                                 RoundedRectangle(cornerRadius: 6)
-                                    .strokeBorder(Color.primary.opacity(0.15), lineWidth: 1)
-                            )
-                    case .symbol(let iconType):
-                        if case .link = iconType,
-                           let browserURL = NSWorkspace.shared.urlForApplication(toOpen: URL(string: "https://")!) {
-                            Image(nsImage: NSWorkspace.shared.icon(forFile: browserURL.path))
-                                .resizable()
-                        } else if case .file = iconType,
-                                  let finderURL = NSWorkspace.shared.urlForApplication(withBundleIdentifier: "com.apple.finder") {
-                            Image(nsImage: NSWorkspace.shared.icon(forFile: finderURL.path))
-                                .resizable()
-                        } else {
-                            Image(nsImage: NSWorkspace.shared.icon(for: iconType.utType))
-                                .resizable()
+                                    .fill(Color(nsColor: NSColor(
+                                        red: CGFloat((rgba >> 24) & 0xFF) / 255.0,
+                                        green: CGFloat((rgba >> 16) & 0xFF) / 255.0,
+                                        blue: CGFloat((rgba >> 8) & 0xFF) / 255.0,
+                                        alpha: CGFloat(rgba & 0xFF) / 255.0
+                                    )))
+                                    .overlay(
+                                        RoundedRectangle(cornerRadius: 6)
+                                            .strokeBorder(Color.primary.opacity(0.15), lineWidth: 1)
+                                    )
+                            case .symbol(let iconType):
+                                if case .link = iconType,
+                                   let browserURL = NSWorkspace.shared.urlForApplication(toOpen: URL(string: "https://")!) {
+                                    Image(nsImage: NSWorkspace.shared.icon(forFile: browserURL.path))
+                                        .resizable()
+                                } else if case .file = iconType,
+                                          let finderURL = NSWorkspace.shared.urlForApplication(withBundleIdentifier: "com.apple.finder") {
+                                    Image(nsImage: NSWorkspace.shared.icon(forFile: finderURL.path))
+                                        .resizable()
+                                } else {
+                                    Image(nsImage: NSWorkspace.shared.icon(for: iconType.utType))
+                                        .resizable()
+                                }
+                            }
                         }
-                    }
-                }
-                .frame(width: 32, height: 32)
-                .clipShape(RoundedRectangle(cornerRadius: 4))
+                        .frame(width: 32, height: 32)
+                        .clipShape(RoundedRectangle(cornerRadius: 4))
 
-                // Badge: Bookmark icon for bookmarked items, otherwise source app icon
-                if metadata.tags.contains(.bookmark) {
-                    Image("BookmarkIcon")
-                        .resizable()
-                        .frame(width: 18, height: 18)
-                        .shadow(color: .black.opacity(0.3), radius: 1, x: 0, y: 1)
-                        .offset(x: 4, y: 4)
-                } else if let bundleID = metadata.sourceAppBundleId,
-                   let appURL = NSWorkspace.shared.urlForApplication(withBundleIdentifier: bundleID) {
-                    // Skip badge for symbol links/files (app icon is already shown)
-                    let showBadge: Bool = {
-                        switch metadata.icon {
-                        case .symbol(let iconType):
-                            return iconType != .link && iconType != .file
-                        case .thumbnail, .colorSwatch:
-                            return true
+                        // Badge: Bookmark icon for bookmarked items, otherwise source app icon
+                        if metadata.tags.contains(.bookmark) {
+                            Image("BookmarkIcon")
+                                .resizable()
+                                .frame(width: 18, height: 18)
+                                .shadow(color: .black.opacity(0.3), radius: 1, x: 0, y: 1)
+                                .offset(x: 4, y: 4)
+                        } else if let bundleID = metadata.sourceAppBundleId,
+                           let appURL = NSWorkspace.shared.urlForApplication(withBundleIdentifier: bundleID) {
+                            // Skip badge for symbol links/files (app icon is already shown)
+                            let showBadge: Bool = {
+                                switch metadata.icon {
+                                case .symbol(let iconType):
+                                    return iconType != .link && iconType != .file
+                                case .thumbnail, .colorSwatch:
+                                    return true
+                                }
+                            }()
+
+                            if showBadge {
+                                Image(nsImage: NSWorkspace.shared.icon(forFile: appURL.path))
+                                    .resizable()
+                                    .frame(width: 22, height: 22)
+                                    .clipShape(RoundedRectangle(cornerRadius: 3))
+                                    .shadow(color: .black.opacity(0.3), radius: 1, x: 0, y: 1)
+                                    .offset(x: 4, y: 4)
+                            }
                         }
-                    }()
-
-                    if showBadge {
-                        Image(nsImage: NSWorkspace.shared.icon(forFile: appURL.path))
-                            .resizable()
-                            .frame(width: 22, height: 22)
-                            .clipShape(RoundedRectangle(cornerRadius: 3))
-                            .shadow(color: .black.opacity(0.3), radius: 1, x: 0, y: 1)
-                            .offset(x: 4, y: 4)
                     }
                 }
             }
@@ -819,7 +933,10 @@ struct ItemRow: View, Equatable {
         .padding(.horizontal, 4)
         .padding(.vertical, 4)
         .background {
-            if accentSelected {
+            if isSelected && hasUserNavigated && hasPendingEdit {
+                // Editing state: darker grey background
+                Color.primary.opacity(0.35)
+            } else if accentSelected {
                 selectionBackground()
             } else if isContextMenuTargeted && !isSelected {
                 Color.primary.opacity(0.11)
