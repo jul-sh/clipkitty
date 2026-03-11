@@ -17,12 +17,11 @@ final class PasteboardMonitor {
         static func mode(
             forIdleTimeSeconds idleTimeSeconds: Duration
         ) -> PollingMode {
-            switch idleTimeSeconds {
-            case ..<.seconds(30):
+            if idleTimeSeconds < .seconds(30) {
                 return .active
-            case ..<.seconds(300):
+            } else if idleTimeSeconds < .seconds(300) {
                 return .idle
-            default:
+            } else {
                 return .deepIdle
             }
         }
