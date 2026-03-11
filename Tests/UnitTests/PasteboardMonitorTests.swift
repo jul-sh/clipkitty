@@ -68,9 +68,10 @@ final class PasteboardMonitorTests: XCTestCase {
     func testConcealedTypeIsIgnoredWithoutReadingPayloadData() async {
         let pasteboard = MockPasteboard()
         let workspace = MockWorkspace()
+        var detectionCount = 0
 
         let monitor = PasteboardMonitor(pasteboard: pasteboard, workspace: workspace) { _ in
-            XCTFail("Concealed pasteboard content should be ignored")
+            detectionCount += 1
         }
 
         monitor.start()
@@ -78,11 +79,14 @@ final class PasteboardMonitorTests: XCTestCase {
 
         _ = pasteboard.setData(Data([0x1]), forType: NSPasteboard.PasteboardType("org.nspasteboard.ConcealedType"))
 
-        try? await Task.sleep(for: .milliseconds(250))
+        // Wait for at least one poll cycle to process the change
+        while pasteboard.typesReadCount < 1 {
+            try? await Task.sleep(for: .milliseconds(10))
+        }
 
+        XCTAssertEqual(detectionCount, 0, "Concealed pasteboard content should be ignored")
         XCTAssertEqual(pasteboard.fileURLReadCount, 0)
         XCTAssertTrue(pasteboard.dataReadTypes.isEmpty)
         XCTAssertTrue(pasteboard.stringReadTypes.isEmpty)
-        XCTAssertGreaterThanOrEqual(pasteboard.typesReadCount, 1)
     }
 }

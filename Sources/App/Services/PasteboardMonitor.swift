@@ -15,11 +15,11 @@ final class PasteboardMonitor {
         case deepIdle
 
         static func mode(
-            forIdleTimeSeconds idleTimeSeconds: Duration
+            forIdleDuration idleDuration: Duration
         ) -> PollingMode {
-            if idleTimeSeconds < .seconds(30) {
+            if idleDuration < .seconds(30) {
                 return .active
-            } else if idleTimeSeconds < .seconds(300) {
+            } else if idleDuration < .seconds(300) {
                 return .idle
             } else {
                 return .deepIdle
@@ -33,7 +33,7 @@ final class PasteboardMonitor {
             case .idle:
                 return 750
             case .deepIdle:
-                return 2_000
+                return 1_500
             }
         }
 
@@ -80,6 +80,7 @@ final class PasteboardMonitor {
     private var pollingTask: Task<Void, Never>?
     private var lastDetectionTime: ContinuousClock.Instant
     private var sleepMonitoring: SystemSleepMonitoring = .notMonitoring
+    private var wakeContinuation: AsyncStream<Void>.Continuation?
 
     private static let concealedType = NSPasteboard.PasteboardType("org.nspasteboard.ConcealedType")
     private static let transientType = NSPasteboard.PasteboardType("org.nspasteboard.TransientType")
@@ -102,12 +103,17 @@ final class PasteboardMonitor {
         pollingTask?.cancel()
         setupSystemObservers()
 
+        let (wakeStream, wakeContinuation) = AsyncStream.makeStream(of: Void.self)
+        self.wakeContinuation = wakeContinuation
+
         pollingTask = Task { @MainActor [weak self] in
+            var wakeIterator = wakeStream.makeAsyncIterator()
+
             while !Task.isCancelled {
                 guard let self else { return }
 
                 if self.sleepMonitoring.isAsleep {
-                    try? await Task.sleep(for: .milliseconds(500))
+                    _ = await wakeIterator.next()
                     continue
                 }
 
@@ -120,6 +126,8 @@ final class PasteboardMonitor {
     func stop() {
         pollingTask?.cancel()
         pollingTask = nil
+        wakeContinuation?.finish()
+        wakeContinuation = nil
         removeSystemObservers()
     }
 
@@ -148,6 +156,7 @@ final class PasteboardMonitor {
             Task { @MainActor in
                 self?.sleepMonitoring.setAsleep(false)
                 self?.lastDetectionTime = ContinuousClock.now
+                self?.wakeContinuation?.yield()
             }
         }
 
@@ -170,8 +179,8 @@ final class PasteboardMonitor {
         lastDetectionTime: ContinuousClock.Instant,
         isLowPowerModeEnabled: Bool
     ) -> PollingMode {
-        let idleTimeSeconds = lastDetectionTime.duration(to: now)
-        let baseMode = PollingMode.mode(forIdleTimeSeconds: idleTimeSeconds)
+        let idleDuration = lastDetectionTime.duration(to: now)
+        let baseMode = PollingMode.mode(forIdleDuration: idleDuration)
 
         if isLowPowerModeEnabled {
             return baseMode.adjustedForLowPowerMode()
