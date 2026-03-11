@@ -122,6 +122,11 @@ jobs:
       - name: Build App (AppStore)
         run: make build CONFIGURATION=AppStore
 
+      - name: Create AppStore Archive
+        run: |
+          cd DerivedData/Build/Products/AppStore
+          zip -r "$GITHUB_WORKSPACE/ClipKitty-AppStore.zip" ClipKitty.app
+
       - name: Run UI Tests
         run: |
           xcodebuild test \
@@ -269,6 +274,12 @@ jobs:
           name: ClipKitty-Builds
           path: ClipKitty.dmg
 
+      - name: Upload AppStore Build
+        uses: actions/upload-artifact@v4
+        with:
+          name: ClipKitty-AppStore
+          path: ClipKitty-AppStore.zip
+
       - name: Upload Screenshot Artifacts
         uses: actions/upload-artifact@v4
         with:
@@ -344,7 +355,7 @@ jobs:
   appstore:
     runs-on: macos-26
     needs: build
-    if: github.event_name == 'push' && github.ref_name == 'release'
+    if: github.event_name == 'push' && (github.ref_name == 'main' || github.ref_name == 'release')
 
     steps:
       - name: Checkout
