@@ -53,6 +53,7 @@ protocol BrowserStoreClient: AnyObject {
     func removeTag(itemId: Int64, tag: ItemTag) async -> Result<Void, ClipboardError>
     func delete(itemId: Int64) async -> Result<Void, ClipboardError>
     func clear() async -> Result<Void, ClipboardError>
+    func updateTextItem(itemId: Int64, text: String) async -> Result<Void, ClipboardError>
 }
 
 @MainActor
@@ -96,5 +97,9 @@ final class ClipboardStoreBrowserClient: BrowserStoreClient {
 
     func clear() async -> Result<Void, ClipboardError> {
         await store.clearAll()
+    }
+
+    func updateTextItem(itemId: Int64, text: String) async -> Result<Void, ClipboardError> {
+        await store.updateTextItem(itemId: itemId, text: text)
     }
 }

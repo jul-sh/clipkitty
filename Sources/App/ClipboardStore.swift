@@ -469,20 +469,16 @@ final class ClipboardStore {
     }
 
     /// Save text that was edited in the preview pane.
-    /// Uses "ClipKitty" as source app since the edit happened within the app.
-    /// Returns new item ID, or 0 if duplicate (timestamp updated).
-    func saveEditedText(text: String) async -> Int64 {
-        guard let repository else { return 0 }
-
-        let result = await repository.saveEditedText(text: text)
-
-        switch result {
-        case .success(let itemId):
-            return itemId
-        case .failure(let error):
-            ErrorReporter.report(error, showToast: false)
-            return 0
+    /// Update a text item's content in-place.
+    func updateTextItem(itemId: Int64, text: String) async -> Result<Void, ClipboardError> {
+        guard let repository else {
+            return .failure(.databaseOperationFailed(
+                operation: "updateTextItem",
+                underlying: NSError(domain: "ClipKitty", code: 1, userInfo: [NSLocalizedDescriptionKey: "Repository not initialized"])
+            ))
         }
+
+        return await repository.updateTextItem(itemId: itemId, text: text)
     }
 
     private func saveImageItem(
