@@ -98,6 +98,7 @@ final class AppSettings: ObservableObject {
         didSet { save() }
     }
 
+    #if !APP_STORE
     /// Check if the app can post synthetic keyboard events (e.g. Cmd+V for direct paste)
     var hasPostEventPermission: Bool {
         return CGPreflightPostEventAccess()
@@ -119,6 +120,9 @@ final class AppSettings: ObservableObject {
         guard hasPostEventPermission else { return .noPermission }
         return autoPasteEnabled ? .autoPaste : .copyOnly
     }
+    #else
+    var pasteMode: PasteMode { .copyOnly }
+    #endif
 
 
     #if SPARKLE_RELEASE
@@ -170,7 +174,9 @@ final class AppSettings: ObservableObject {
     private let hotKeyKey = "hotKey"
     private let maxDbSizeKey = "maxDatabaseSizeGB"
     private let launchAtLoginKey = "launchAtLogin"
+    #if !APP_STORE
     private let autoPasteKey = "autoPasteEnabled"
+    #endif
     private let ignoreConfidentialKey = "ignoreConfidentialContent"
     private let ignoreTransientKey = "ignoreTransientContent"
     private let generateLinkPreviewsKey = "generateLinkPreviews"
@@ -203,8 +209,8 @@ final class AppSettings: ObservableObject {
         launchAtLoginEnabled = defaults.object(forKey: launchAtLoginKey) as? Bool ?? false
         #else
         launchAtLoginEnabled = defaults.object(forKey: launchAtLoginKey) as? Bool ?? true
-        #endif
         autoPasteEnabled = defaults.object(forKey: autoPasteKey) as? Bool ?? true
+        #endif
         clickToOpenEnabled = defaults.object(forKey: clickToOpenKey) as? Bool ?? true
         #if SPARKLE_RELEASE
         autoInstallUpdates = defaults.object(forKey: autoInstallUpdatesKey) as? Bool ?? true
@@ -243,7 +249,9 @@ final class AppSettings: ObservableObject {
         }
         defaults.set(maxDatabaseSizeGB, forKey: maxDbSizeKey)
         defaults.set(launchAtLoginEnabled, forKey: launchAtLoginKey)
+        #if !APP_STORE
         defaults.set(autoPasteEnabled, forKey: autoPasteKey)
+        #endif
         defaults.set(ignoreConfidentialContent, forKey: ignoreConfidentialKey)
         defaults.set(ignoreTransientContent, forKey: ignoreTransientKey)
         defaults.set(generateLinkPreviews, forKey: generateLinkPreviewsKey)

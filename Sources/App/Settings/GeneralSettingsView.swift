@@ -99,6 +99,7 @@ struct GeneralSettingsView: View {
                 }
             }
 
+            #if !APP_STORE
             Section(String(localized: "Paste Behavior")) {
                 if settings.hasPostEventPermission {
                     Toggle(String(localized: "Paste directly into apps"), isOn: $settings.autoPasteEnabled)
@@ -119,6 +120,7 @@ struct GeneralSettingsView: View {
                     .font(.caption)
                 }
             }
+            #endif
 
             Section(String(localized: "Database")) {
                 LabeledContent(String(localized: "Current Size")) {

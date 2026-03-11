@@ -17,6 +17,7 @@ final class AppActivationService {
         app.activate()
     }
 
+    #if !APP_STORE
     func simulatePaste(to targetApp: NSRunningApplication?) {
         guard let targetApp, !targetApp.isTerminated else {
             return
@@ -50,4 +51,5 @@ final class AppActivationService {
             }
         }
     }
+    #endif
 }
