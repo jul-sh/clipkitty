@@ -5,7 +5,7 @@ import ClipKittyRust
 struct BrowserPreviewPane: View {
     @Bindable var viewModel: BrowserViewModel
     let focusSearchField: () -> Void
-    let focusActionsDropdown: () -> Void
+    let focusTarget: FocusState<BrowserView.FocusTarget?>.Binding
 
     var body: some View {
         Group {
@@ -140,7 +140,7 @@ struct BrowserPreviewPane: View {
             BrowserActionsOverlay(
                 viewModel: viewModel,
                 focusSearchField: focusSearchField,
-                focusActionsDropdown: focusActionsDropdown
+                focusTarget: focusTarget
             )
             .fixedSize()
 

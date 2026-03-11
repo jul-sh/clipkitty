@@ -120,7 +120,7 @@ struct BrowserView: View {
                 BrowserPreviewPane(
                     viewModel: viewModel,
                     focusSearchField: focusSearchField,
-                    focusActionsDropdown: focusActionsDropdown
+                    focusTarget: $focusTarget
                 )
                 .frame(maxWidth: .infinity)
             }

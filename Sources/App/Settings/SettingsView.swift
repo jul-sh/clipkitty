@@ -28,18 +28,21 @@ struct SettingsView: View {
                     Label(String(localized: "General"), systemImage: "gearshape")
                 }
                 .tag(SettingsTab.general)
+                .accessibilityIdentifier("SettingsTab_General")
 
             PrivacySettingsView()
                 .tabItem {
                     Label(String(localized: "Privacy"), systemImage: "hand.raised")
                 }
                 .tag(SettingsTab.privacy)
+                .accessibilityIdentifier("SettingsTab_Privacy")
 
             advancedSettingsView
                 .tabItem {
                     Label(String(localized: "Advanced"), systemImage: "gearshape.2")
                 }
                 .tag(SettingsTab.advanced)
+                .accessibilityIdentifier("SettingsTab_Advanced")
         }
         .frame(width: 480, height: 420)
     }
