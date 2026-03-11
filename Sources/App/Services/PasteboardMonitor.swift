@@ -15,9 +15,9 @@ final class PasteboardMonitor {
         case deepIdle
 
         static func mode(
-            forIdleDuration idleDuration: Duration
+            forIdleTimeSeconds idleTimeSeconds: Duration
         ) -> PollingMode {
-            switch idleDuration {
+            switch idleTimeSeconds {
             case ..<.seconds(30):
                 return .active
             case ..<.seconds(300):
@@ -171,8 +171,8 @@ final class PasteboardMonitor {
         lastDetectionTime: ContinuousClock.Instant,
         isLowPowerModeEnabled: Bool
     ) -> PollingMode {
-        let idleDuration = lastDetectionTime.duration(to: now)
-        let baseMode = PollingMode.mode(forIdleDuration: idleDuration)
+        let idleTimeSeconds = lastDetectionTime.duration(to: now)
+        let baseMode = PollingMode.mode(forIdleTimeSeconds: idleTimeSeconds)
 
         if isLowPowerModeEnabled {
             return baseMode.adjustedForLowPowerMode()
