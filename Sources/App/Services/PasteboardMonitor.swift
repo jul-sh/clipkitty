@@ -9,6 +9,59 @@ enum DetectedPasteboardContent {
 
 @MainActor
 final class PasteboardMonitor {
+    enum SuspensionReason: Equatable {
+        case sleeping
+    }
+
+    enum PollingMode: Equatable {
+        case active
+        case idle
+        case deepIdle
+        case suspended(SuspensionReason)
+
+        static func mode(
+            forIdleDuration idleDuration: Duration,
+            isSuspended: Bool
+        ) -> PollingMode {
+            if isSuspended {
+                return .suspended(.sleeping)
+            }
+
+            switch idleDuration {
+            case ..<.seconds(30):
+                return .active
+            case ..<.seconds(300):
+                return .idle
+            default:
+                return .deepIdle
+            }
+        }
+
+        var intervalMilliseconds: Int {
+            switch self {
+            case .active:
+                return 200
+            case .idle:
+                return 750
+            case .deepIdle:
+                return 2_000
+            case .suspended:
+                return 2_000
+            }
+        }
+
+        func adjustedForLowPowerMode() -> PollingMode {
+            switch self {
+            case .active:
+                return .idle
+            case .idle:
+                return .deepIdle
+            case .deepIdle, .suspended:
+                return self
+            }
+        }
+    }
+
     private enum SystemSleepMonitoring {
         case notMonitoring
         case monitoring(sleepObserver: NSObjectProtocol, wakeObserver: NSObjectProtocol, isAsleep: Bool)
@@ -38,8 +91,13 @@ final class PasteboardMonitor {
 
     private var lastChangeCount: Int
     private var pollingTask: Task<Void, Never>?
-    private var lastActivityTime = Date()
+    private var lastDetectionTime: ContinuousClock.Instant
     private var sleepMonitoring: SystemSleepMonitoring = .notMonitoring
+
+    private static let concealedType = NSPasteboard.PasteboardType("org.nspasteboard.ConcealedType")
+    private static let transientType = NSPasteboard.PasteboardType("org.nspasteboard.TransientType")
+    private static let gifType = NSPasteboard.PasteboardType("com.compuserve.gif")
+    private static let legacyFileNamesType = NSPasteboard.PasteboardType("NSFilenamesPboardType")
 
     init(
         pasteboard: PasteboardProtocol,
@@ -50,6 +108,7 @@ final class PasteboardMonitor {
         self.workspace = workspace
         self.onDetection = onDetection
         self.lastChangeCount = pasteboard.changeCount
+        self.lastDetectionTime = ContinuousClock.now - .seconds(30)
     }
 
     func start() {
@@ -66,7 +125,7 @@ final class PasteboardMonitor {
                 }
 
                 self.checkForChanges()
-                try? await Task.sleep(for: .milliseconds(self.adaptivePollingInterval()))
+                try? await Task.sleep(for: .milliseconds(self.currentPollingMode().intervalMilliseconds))
             }
         }
     }
@@ -101,7 +160,7 @@ final class PasteboardMonitor {
         ) { [weak self] _ in
             Task { @MainActor in
                 self?.sleepMonitoring.setAsleep(false)
-                self?.lastActivityTime = Date()
+                self?.lastDetectionTime = ContinuousClock.now
             }
         }
 
@@ -119,23 +178,31 @@ final class PasteboardMonitor {
         sleepMonitoring = .notMonitoring
     }
 
-    private func adaptivePollingInterval() -> Int {
-        let idleTime = Date().timeIntervalSince(lastActivityTime)
+    static func pollingMode(
+        now: ContinuousClock.Instant,
+        lastDetectionTime: ContinuousClock.Instant,
+        isSuspended: Bool,
+        isLowPowerModeEnabled: Bool
+    ) -> PollingMode {
+        let idleDuration = lastDetectionTime.duration(to: now)
+        let baseMode = PollingMode.mode(
+            forIdleDuration: idleDuration,
+            isSuspended: isSuspended
+        )
 
-        if ProcessInfo.processInfo.isLowPowerModeEnabled {
-            return 2000
+        if isLowPowerModeEnabled {
+            return baseMode.adjustedForLowPowerMode()
         }
+        return baseMode
+    }
 
-        switch idleTime {
-        case ..<5:
-            return 250
-        case ..<30:
-            return 500
-        case ..<120:
-            return 1000
-        default:
-            return 1500
-        }
+    private func currentPollingMode() -> PollingMode {
+        Self.pollingMode(
+            now: ContinuousClock.now,
+            lastDetectionTime: lastDetectionTime,
+            isSuspended: sleepMonitoring.isAsleep,
+            isLowPowerModeEnabled: ProcessInfo.processInfo.isLowPowerModeEnabled
+        )
     }
 
     private func checkForChanges() {
@@ -143,50 +210,51 @@ final class PasteboardMonitor {
         guard currentCount != lastChangeCount else { return }
 
         lastChangeCount = currentCount
-        lastActivityTime = Date()
+        lastDetectionTime = ContinuousClock.now
 
         let settings = AppSettings.shared
-        let sourceAppBundleID = workspace.frontmostApplication?.bundleIdentifier
+        let availableTypes = Set(pasteboard.types() ?? [])
+        guard !availableTypes.isEmpty else { return }
+
+        let sourceApplication = workspace.frontmostApplication
+        let sourceAppBundleID = sourceApplication?.bundleIdentifier
 
         if settings.isAppIgnored(bundleId: sourceAppBundleID) {
             return
         }
 
-        if settings.ignoreConfidentialContent {
-            let concealedType = NSPasteboard.PasteboardType("org.nspasteboard.ConcealedType")
-            if pasteboard.data(forType: concealedType) != nil {
-                return
-            }
-        }
-
-        if settings.ignoreTransientContent {
-            let transientType = NSPasteboard.PasteboardType("org.nspasteboard.TransientType")
-            if pasteboard.data(forType: transientType) != nil {
-                return
-            }
-        }
-
-        let sourceApp = workspace.frontmostApplication?.localizedName
-
-        let fileURLs = pasteboard.readFileURLs()
-        if !fileURLs.isEmpty {
-            onDetection(.files(urls: fileURLs, sourceApp: sourceApp, sourceAppBundleId: sourceAppBundleID))
+        if settings.ignoreConfidentialContent, availableTypes.contains(Self.concealedType) {
             return
         }
 
-        let gifType = NSPasteboard.PasteboardType("com.compuserve.gif")
-        if let gifData = pasteboard.data(forType: gifType) {
+        if settings.ignoreTransientContent, availableTypes.contains(Self.transientType) {
+            return
+        }
+
+        let sourceApp = sourceApplication?.localizedName
+
+        if availableTypes.contains(.fileURL) || availableTypes.contains(Self.legacyFileNamesType) {
+            let fileURLs = pasteboard.readFileURLs()
+            if !fileURLs.isEmpty {
+                onDetection(.files(urls: fileURLs, sourceApp: sourceApp, sourceAppBundleId: sourceAppBundleID))
+                return
+            }
+        }
+
+        if availableTypes.contains(Self.gifType), let gifData = pasteboard.data(forType: Self.gifType) {
             onDetection(.image(data: gifData, isAnimated: true, sourceApp: sourceApp, sourceAppBundleId: sourceAppBundleID))
             return
         }
 
         for type in [NSPasteboard.PasteboardType.tiff, .png] {
+            guard availableTypes.contains(type) else { continue }
             if let rawData = pasteboard.data(forType: type) {
                 onDetection(.image(data: rawData, isAnimated: false, sourceApp: sourceApp, sourceAppBundleId: sourceAppBundleID))
                 return
             }
         }
 
+        guard availableTypes.contains(.string) else { return }
         guard let text = pasteboard.string(forType: .string), !text.isEmpty else { return }
         onDetection(.text(text: text, sourceApp: sourceApp, sourceAppBundleId: sourceAppBundleID))
     }
