@@ -62,11 +62,32 @@ struct BrowserPreviewPane: View {
         switch item.content {
         case .text, .color:
             TextPreviewView(
-                text: item.content.textContent,
+                text: viewModel.pendingEdits[item.itemMetadata.itemId] ?? item.content.textContent,
                 fontName: FontManager.mono,
                 fontSize: 15,
                 highlights: matchData?.fullContentHighlights ?? [],
-                densestHighlightStart: matchData?.densestHighlightStart ?? 0
+                densestHighlightStart: matchData?.densestHighlightStart ?? 0,
+                itemId: item.itemMetadata.itemId,
+                originalText: item.content.textContent,
+                onTextChange: { newText in
+                    viewModel.onTextEdit(newText, for: item.itemMetadata.itemId, originalText: item.content.textContent)
+                },
+                onEditingStateChange: { editing in
+                    viewModel.onEditingStateChange(editing, for: item.itemMetadata.itemId)
+                },
+                onCmdReturn: {
+                    viewModel.confirmSelection()
+                },
+                onSave: {
+                    viewModel.commitCurrentEdit()
+                    focusSearchField()
+                },
+                onEscape: {
+                    if viewModel.hasPendingEdit(for: item.itemMetadata.itemId) {
+                        viewModel.discardCurrentEdit()
+                    }
+                    focusSearchField()
+                }
             )
             .frame(maxWidth: .infinity, maxHeight: .infinity)
         case .image(let data, let description, _):
@@ -109,53 +130,102 @@ struct BrowserPreviewPane: View {
     }
 
     private func metadataFooter(for item: ClipboardItem) -> some View {
-        HStack(spacing: 12) {
-            Label(item.timeAgo, systemImage: "clock")
-                .lineLimit(1)
+        let itemId = item.itemMetadata.itemId
+        let hasPendingEdit = viewModel.hasPendingEdit(for: itemId)
+        let isFocused = viewModel.editFocus == .focused(itemId: itemId)
 
-            // Show bookmark icon and "Bookmark" for bookmarked items, otherwise show source app
-            if item.itemMetadata.tags.contains(.bookmark) {
-                HStack(spacing: 4) {
-                    Image("BookmarkIcon")
-                        .resizable()
-                        .frame(width: 14, height: 14)
-                    Text("Bookmark")
-                        .lineLimit(1)
+        return HStack(spacing: 12) {
+            if hasPendingEdit {
+                // Edit mode: show Discard and Save buttons
+                Button {
+                    viewModel.discardCurrentEdit()
+                    focusSearchField()
+                } label: {
+                    Text("Esc Discard")
+                        .padding(.horizontal, 8)
+                        .padding(.vertical, 4)
+                        .subtleHover()
                 }
-            } else if let app = item.itemMetadata.sourceApp {
-                HStack(spacing: 4) {
-                    if let bundleID = item.itemMetadata.sourceAppBundleId,
-                       let appURL = NSWorkspace.shared.urlForApplication(withBundleIdentifier: bundleID) {
-                        Image(nsImage: NSWorkspace.shared.icon(forFile: appURL.path))
+                .buttonStyle(.plain)
+                .fixedSize()
+
+                Button {
+                    viewModel.commitCurrentEdit()
+                    focusSearchField()
+                } label: {
+                    Text("⌘S Save")
+                        .padding(.horizontal, 8)
+                        .padding(.vertical, 4)
+                        .overlay(
+                            RoundedRectangle(cornerRadius: 6)
+                                .strokeBorder(Color.primary.opacity(0.4), lineWidth: 1)
+                        )
+                        .subtleHover()
+                }
+                .buttonStyle(.plain)
+                .fixedSize()
+
+                Spacer(minLength: 0)
+
+                Button {
+                    viewModel.confirmSelection()
+                } label: {
+                    Text("\(isFocused ? "⌘" : "")↩ \(AppSettings.shared.pasteMode.editConfirmLabel)")
+                        .padding(.horizontal, 10)
+                        .padding(.vertical, 6)
+                        .subtleHover()
+                }
+                .buttonStyle(.plain)
+                .fixedSize()
+            } else {
+                // Normal mode: show metadata and paste button
+                Label(item.timeAgo, systemImage: "clock")
+                    .lineLimit(1)
+
+                // Show bookmark icon and "Bookmark" for bookmarked items, otherwise show source app
+                if item.itemMetadata.tags.contains(.bookmark) {
+                    HStack(spacing: 4) {
+                        Image("BookmarkIcon")
                             .resizable()
                             .frame(width: 14, height: 14)
-                    } else {
-                        Image(systemName: "app")
+                        Text("Bookmark")
+                            .lineLimit(1)
                     }
-                    Text(app)
-                        .lineLimit(1)
+                } else if let app = item.itemMetadata.sourceApp {
+                    HStack(spacing: 4) {
+                        if let bundleID = item.itemMetadata.sourceAppBundleId,
+                           let appURL = NSWorkspace.shared.urlForApplication(withBundleIdentifier: bundleID) {
+                            Image(nsImage: NSWorkspace.shared.icon(forFile: appURL.path))
+                                .resizable()
+                                .frame(width: 14, height: 14)
+                        } else {
+                            Image(systemName: "app")
+                        }
+                        Text(app)
+                            .lineLimit(1)
+                    }
                 }
+
+                BrowserActionsOverlay(
+                    viewModel: viewModel,
+                    focusSearchField: focusSearchField,
+                    focusTarget: focusTarget
+                )
+                .fixedSize()
+
+                Spacer(minLength: 0)
+
+                Button {
+                    viewModel.confirmSelection()
+                } label: {
+                    Text("⏎ \(AppSettings.shared.pasteMode.buttonLabel)")
+                        .padding(.horizontal, 10)
+                        .padding(.vertical, 6)
+                        .subtleHover()
+                }
+                .buttonStyle(.plain)
+                .fixedSize()
             }
-
-            BrowserActionsOverlay(
-                viewModel: viewModel,
-                focusSearchField: focusSearchField,
-                focusTarget: focusTarget
-            )
-            .fixedSize()
-
-            Spacer(minLength: 0)
-
-            Button {
-                viewModel.confirmSelection()
-            } label: {
-                Text("⏎ \(AppSettings.shared.pasteMode.buttonLabel)")
-                    .padding(.horizontal, 10)
-                    .padding(.vertical, 6)
-                    .subtleHover()
-            }
-            .buttonStyle(.plain)
-            .fixedSize()
         }
         .font(.system(size: 13))
         .foregroundStyle(.secondary)

@@ -20,6 +20,7 @@ struct BrowserResultsList: View {
                         isSelected: row.metadata.itemId == viewModel.selectedItemId,
                         isContextMenuTargeted: row.metadata.itemId == contextMenuItemId,
                         hasUserNavigated: viewModel.hasUserNavigated,
+                        hasPendingEdit: viewModel.hasPendingEdit(for: row.metadata.itemId),
                         onTap: {
                             viewModel.select(itemId: row.metadata.itemId, origin: .user)
                             focusSearchField()

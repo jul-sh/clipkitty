@@ -143,6 +143,21 @@ pub(crate) fn update_image_description(
     Ok(())
 }
 
+pub(crate) fn update_text_item(
+    db: &Database,
+    indexer: &Indexer,
+    item_id: i64,
+    text: String,
+) -> Result<(), ClipKittyError> {
+    let content_hash = StoredItem::hash_string(&text);
+    db.update_text_item(item_id, &text, &content_hash)?;
+    if let Some(item) = get_stored_item(db, item_id)? {
+        indexer.add_document(item_id, &text, item.timestamp_unix)?;
+        indexer.commit()?;
+    }
+    Ok(())
+}
+
 pub(crate) fn update_timestamp(
     db: &Database,
     indexer: &Indexer,

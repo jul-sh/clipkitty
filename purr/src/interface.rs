@@ -592,6 +592,9 @@ pub trait ClipboardStoreApi: Send + Sync {
         description: String,
     ) -> Result<(), ClipKittyError>;
 
+    /// Update text item content in-place and re-index
+    fn update_text_item(&self, item_id: i64, text: String) -> Result<(), ClipKittyError>;
+
     /// Update item timestamp to now
     fn update_timestamp(&self, item_id: i64) -> Result<(), ClipKittyError>;
 

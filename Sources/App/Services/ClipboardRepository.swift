@@ -143,13 +143,9 @@ final class ClipboardRepository {
         }
     }
 
-    func saveEditedText(text: String) async -> Result<Int64, ClipboardError> {
-        await runRepositoryOperation("saveEditedText", on: store) { store in
-            try store.saveText(
-                text: text,
-                sourceApp: "ClipKitty",
-                sourceAppBundleId: Bundle.main.bundleIdentifier
-            )
+    func updateTextItem(itemId: Int64, text: String) async -> Result<Void, ClipboardError> {
+        await runRepositoryOperation("updateTextItem", on: store) { store in
+            try store.updateTextItem(itemId: itemId, text: text)
         }
     }
 

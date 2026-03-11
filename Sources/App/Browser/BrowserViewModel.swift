@@ -50,6 +50,19 @@ final class BrowserViewModel {
     private(set) var prefetchCache: [Int64: ClipboardItem] = [:]
     private(set) var previewSpinnerVisible = false
 
+    // MARK: - Edit State
+
+    /// Which item's text editor currently has keyboard focus
+    enum EditFocusState: Equatable {
+        case idle
+        case focused(itemId: Int64)
+    }
+
+    private(set) var editFocus: EditFocusState = .idle
+
+    /// Per-item cache of unsaved edited text
+    private(set) var pendingEdits: [Int64: String] = [:]
+
     init(
         client: BrowserStoreClient,
         onSelect: @escaping (Int64, ClipboardContent) -> Void,
@@ -163,6 +176,8 @@ final class BrowserViewModel {
         session.mutation = .idle
         session.selection = .none
         session.preview = .empty
+        editFocus = .idle
+        pendingEdits.removeAll()
         hasAppliedInitialSearch = false
         onAppear(initialSearchQuery: initialSearchQuery)
     }
@@ -229,13 +244,19 @@ final class BrowserViewModel {
     }
 
     func select(itemId: Int64, origin: SelectionOrigin) {
+        // Clear edit focus when changing selection
+        if case .focused(let focusedId) = editFocus, focusedId != itemId {
+            editFocus = .idle
+        }
         session.selection = .selected(itemId: itemId, origin: origin)
         loadSelectedItem(itemId: itemId)
     }
 
     func confirmSelection() {
         guard let item = selectedItem else { return }
-        onSelect(item.itemMetadata.itemId, item.content)
+        let content = effectiveContent(for: item)
+        commitCurrentEdit()
+        onSelect(item.itemMetadata.itemId, content)
     }
 
     func confirmItem(itemId: Int64) {
@@ -244,7 +265,9 @@ final class BrowserViewModel {
 
     func copyOnlySelection() {
         guard let item = selectedItem else { return }
-        onCopyOnly(item.itemMetadata.itemId, item.content)
+        let content = effectiveContent(for: item)
+        commitCurrentEdit()
+        onCopyOnly(item.itemMetadata.itemId, content)
     }
 
     func copyOnlyItem(itemId: Int64) {
@@ -397,6 +420,119 @@ final class BrowserViewModel {
 
     func removeTag(_ tag: ItemTag, fromItem itemId: Int64) {
         mutateItemTag(itemId: itemId, tag: tag, shouldInclude: false)
+    }
+
+    // MARK: - Editing
+
+    /// Returns the effective content for an item, accounting for pending edits
+    func effectiveContent(for item: ClipboardItem) -> ClipboardContent {
+        if let editedText = pendingEdits[item.itemMetadata.itemId] {
+            return .text(value: editedText)
+        }
+        return item.content
+    }
+
+    /// Called on each text change in the preview pane
+    func onTextEdit(_ newText: String, for itemId: Int64, originalText: String) {
+        if newText == originalText {
+            pendingEdits.removeValue(forKey: itemId)
+        } else {
+            pendingEdits[itemId] = newText
+        }
+    }
+
+    /// Called when editing focus state changes
+    func onEditingStateChange(_ isEditing: Bool, for itemId: Int64) {
+        if isEditing {
+            editFocus = .focused(itemId: itemId)
+        } else if case .focused(let id) = editFocus, id == itemId {
+            editFocus = .idle
+        }
+    }
+
+    /// Discards the currently selected item's pending edit
+    func discardCurrentEdit() {
+        if let id = selectedItemId {
+            pendingEdits.removeValue(forKey: id)
+        }
+        editFocus = .idle
+    }
+
+    /// Commits the currently selected item's edit by replacing the original item
+    func commitCurrentEdit() {
+        guard let id = selectedItemId,
+              let editedText = pendingEdits.removeValue(forKey: id),
+              !editedText.isEmpty else {
+            editFocus = .idle
+            return
+        }
+        editFocus = .idle
+
+        // Optimistically update the preview to show the edited text without refreshing the list
+        if let currentItem = selectedItem {
+            let updatedContent = ClipboardContent.text(value: editedText)
+            let updatedSnippet = String(editedText.prefix(200))
+            let updatedMetadata = ItemMetadata(
+                itemId: currentItem.itemMetadata.itemId,
+                icon: currentItem.itemMetadata.icon,
+                snippet: updatedSnippet,
+                sourceApp: currentItem.itemMetadata.sourceApp,
+                sourceAppBundleId: currentItem.itemMetadata.sourceAppBundleId,
+                timestampUnix: currentItem.itemMetadata.timestampUnix,
+                tags: currentItem.itemMetadata.tags
+            )
+            let updatedItem = ClipboardItem(itemMetadata: updatedMetadata, content: updatedContent)
+            session.preview = .loaded(PreviewSelection(item: updatedItem, matchData: previewSelection?.matchData))
+
+            // Also update the snippet in the list so it reflects the edit
+            if case .ready(let response) = session.query {
+                let updatedItems = response.items.map { itemMatch in
+                    guard itemMatch.itemMetadata.itemId == id else { return itemMatch }
+                    return ItemMatch(
+                        itemMetadata: updatedMetadata,
+                        matchData: itemMatch.matchData
+                    )
+                }
+                let updatedFirstItem: ClipboardItem? = {
+                    guard let firstItem = response.firstItem,
+                          firstItem.itemMetadata.itemId == id else {
+                        return response.firstItem
+                    }
+                    return updatedItem
+                }()
+                session.query = .ready(response: BrowserSearchResponse(
+                    request: response.request,
+                    items: updatedItems,
+                    firstItem: updatedFirstItem,
+                    totalCount: response.totalCount
+                ))
+            }
+        }
+
+        ToastWindow.shared.show(message: String(localized: "Saved"))
+
+        // Persist the edit in-place (item keeps its ID and position)
+        Task { [weak self] in
+            guard let self else { return }
+            _ = await self.client.updateTextItem(itemId: id, text: editedText)
+        }
+    }
+
+    /// Whether the selected item has a pending edit
+    var selectedItemHasPendingEdit: Bool {
+        guard let id = selectedItemId else { return false }
+        return pendingEdits[id] != nil
+    }
+
+    /// Whether the preview is currently being edited
+    var isEditingPreview: Bool {
+        guard let id = selectedItemId else { return false }
+        return editFocus == .focused(itemId: id) || pendingEdits[id] != nil
+    }
+
+    /// Check if a specific item has a pending edit
+    func hasPendingEdit(for itemId: Int64) -> Bool {
+        pendingEdits[itemId] != nil
     }
 
     func performAction(
