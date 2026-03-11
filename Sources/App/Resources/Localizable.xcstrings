@@ -4289,66 +4289,66 @@
         }
       }
     },
-    "Beta releases ship to testers first. Turn this on to receive early builds from the release branch before they roll out to everyone.": {
+    "Beta releases are for testing new features early. Turn this on to try the latest improvements before they roll out to everyone.": {
       "localizations": {
         "en": {
           "stringUnit": {
             "state": "translated",
-            "value": "Beta releases ship to testers first. Turn this on to receive early builds from the release branch before they roll out to everyone."
+            "value": "Beta releases are for testing new features early. Turn this on to try the latest improvements before they roll out to everyone."
           }
         },
         "es": {
           "stringUnit": {
             "state": "translated",
-            "value": "Las versiones beta llegan primero a los testers. Activa esto para recibir compilaciones tempranas de la rama release antes de que se publiquen para todos."
+            "value": "Las versiones beta son para probar nuevas funciones antes. Activa esto para probar las últimas mejoras antes de que se publiquen para todos."
           }
         },
         "zh-Hans": {
           "stringUnit": {
             "state": "translated",
-            "value": "Beta 版本会先推送给测试者。启用此选项后，你会先收到 release 分支的早期构建，再向所有人发布。"
+            "value": "Beta 版本用于提前测试新功能。启用此选项可在正式发布前体验最新改进。"
           }
         },
         "zh-Hant": {
           "stringUnit": {
             "state": "translated",
-            "value": "Beta 版本會先提供給測試者。啟用此選項後，你會先收到 release 分支的早期版本，再向所有人推出。"
+            "value": "Beta 版本用於提前測試新功能。啟用此選項可在正式發布前體驗最新改進。"
           }
         },
         "ja": {
           "stringUnit": {
             "state": "translated",
-            "value": "ベータ版はまずテスターに配信されます。これをオンにすると、release ブランチの早期ビルドを一般公開前に受け取れます。"
+            "value": "ベータ版は新機能を早期にテストするためのものです。これをオンにすると、一般公開前に最新の改善を試すことができます。"
           }
         },
         "ko": {
           "stringUnit": {
             "state": "translated",
-            "value": "베타 릴리스는 먼저 테스터에게 배포됩니다. 이 옵션을 켜면 모든 사용자에게 배포되기 전에 release 브랜치의 초기 빌드를 받을 수 있습니다."
+            "value": "베타 릴리스는 새로운 기능을 미리 테스트하기 위한 것입니다. 이 옵션을 켜면 모든 사용자에게 배포되기 전에 최신 개선 사항을 먼저 경험할 수 있습니다."
           }
         },
         "fr": {
           "stringUnit": {
             "state": "translated",
-            "value": "Les versions beta sont d'abord diffusees aux testeurs. Activez ceci pour recevoir les builds anticipees de la branche release avant leur deploiement general."
+            "value": "Les versions beta permettent de tester les nouvelles fonctionnalités en avant-première. Activez ceci pour essayer les dernières améliorations avant leur déploiement général."
           }
         },
         "pt-BR": {
           "stringUnit": {
             "state": "translated",
-            "value": "As versoes beta chegam primeiro aos testadores. Ative isto para receber builds iniciais da branch release antes do lancamento para todos."
+            "value": "As versões beta são para testar novos recursos antecipadamente. Ative isto para experimentar as últimas melhorias antes do lançamento para todos."
           }
         },
         "ru": {
           "stringUnit": {
             "state": "translated",
-            "value": "Бета-версии сначала получают тестировщики. Включите это, чтобы получать ранние сборки из ветки release до их публикации для всех."
+            "value": "Бета-версии предназначены для раннего тестирования новых функций. Включите это, чтобы попробовать последние улучшения до их публикации для всех."
           }
         },
         "de": {
           "stringUnit": {
             "state": "translated",
-            "value": "Beta-Versionen gehen zuerst an Tester. Aktivieren Sie dies, um fruhe Builds aus dem Release-Branch zu erhalten, bevor sie fur alle ausgerollt werden."
+            "value": "Beta-Versionen dienen zum frühen Testen neuer Funktionen. Aktivieren Sie dies, um die neuesten Verbesserungen auszuprobieren, bevor sie für alle ausgerollt werden."
           }
         }
       }
