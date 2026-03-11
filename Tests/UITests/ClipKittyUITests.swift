@@ -1315,8 +1315,15 @@ final class ClipKittyUITests: XCTestCase {
         Thread.sleep(forTimeInterval: ciTimeout)
 
         // The confirm button should show "⌘↩" prefix when in edit mode
-        let cmdReturnButton = app.staticTexts.matching(NSPredicate(format: "label CONTAINS '⌘↩'")).firstMatch
-        XCTAssertTrue(cmdReturnButton.waitForExistence(timeout: 3),
-            "Confirm button should show ⌘↩ prefix when editing")
+        // SwiftUI buttons may appear as buttons, staticTexts, or other element types
+        let cmdReturnExists = waitForCondition(timeout: 3) {
+            // Check buttons
+            let buttons = self.app.buttons.matching(NSPredicate(format: "label CONTAINS '⌘↩'")).allElementsBoundByIndex
+            if !buttons.isEmpty { return true }
+            // Check static texts
+            let texts = self.app.staticTexts.matching(NSPredicate(format: "label CONTAINS '⌘↩'")).allElementsBoundByIndex
+            return !texts.isEmpty
+        }
+        XCTAssertTrue(cmdReturnExists, "Confirm button should show ⌘↩ prefix when editing")
     }
 }
