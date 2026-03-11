@@ -150,6 +150,7 @@ let project = Project(
                     ]),
                     .release(name: .configuration("AppStore"), settings: [
                         "CODE_SIGN_ENTITLEMENTS": "Sources/App/ClipKitty.appstore.entitlements",
+                        "SWIFT_ACTIVE_COMPILATION_CONDITIONS": "APP_STORE",
                         // Weak-link Sparkle frameworks so app runs without them
                         "OTHER_LDFLAGS": .array(["$(inherited)", "-lpurr", "-weak_framework", "SparkleUpdater", "-weak_framework", "Sparkle"]),
                     ]),
