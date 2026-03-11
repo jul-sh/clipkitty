@@ -1235,6 +1235,9 @@ final class ClipKittyUITests: XCTestCase {
         typeTextSlowly(previewTextView, text: uniqueEdit)
         Thread.sleep(forTimeInterval: ciTimeout)
 
+        // Click text view again to ensure focus before Cmd+Return
+        clickAndWait(previewTextView, timeout: ciTimeout)
+
         // Press Cmd+Return to save and paste
         app.typeKey(.return, modifierFlags: .command)
 
