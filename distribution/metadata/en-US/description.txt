@@ -1,4 +1,4 @@
-Most clipboard managers delete your history after a few days or only keep a short history. ClipKitty stores everything and let's you find it instantly.
+Most clipboard managers delete your history after a few days or only keep a short history. ClipKitty stores everything and lets you find it instantly.
 
 UNLIMITED HISTORY
 No 999-item caps. No 3-month expiration. ClipKitty remembers everything from day one: text, code, URLs, hex colors, images; all preserved in full, forever.
