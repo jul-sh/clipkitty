@@ -5,6 +5,7 @@ struct GeneralSettingsView: View {
     @ObservedObject private var settings = AppSettings.shared
     @ObservedObject private var launchAtLogin = LaunchAtLogin.shared
     @State private var showClearConfirmation = false
+    @State private var hotKeyState: HotKeyEditState = .idle
 
     let store: ClipboardStore
     let onHotKeyChanged: (HotKey) -> Void
@@ -47,21 +48,85 @@ struct GeneralSettingsView: View {
             Section(String(localized: "Menu Bar")) {
                 Toggle(isOn: clickToOpenBinding) {
                     VStack(alignment: .leading, spacing: 2) {
-                        Text(String(localized: "Click to open"))
-                        Text(String(localized: "Click opens ClipKitty, right-click shows menu."))
+                        Text(String(localized: "Click opens window"))
+                        Text(String(localized: "Right-click shows menu instead."))
                             .font(.caption)
                             .foregroundStyle(.secondary)
                     }
                 }
             }
 
-            Section(String(localized: "Storage")) {
+            Section(String(localized: "Keyboard Shortcut")) {
+                HStack {
+                    Text(String(localized: "Open ClipKitty"))
+                    Spacer()
+                    Button(action: { hotKeyState = .recording }) {
+                        let state = hotKeyState
+                        let labelAndBackground: (String, Color) = {
+                            switch state {
+                            case .recording:
+                                return (String(localized: "Press keys..."), Color.accentColor.opacity(0.2))
+                            case .idle:
+                                return (settings.hotKey.displayString, Color.secondary.opacity(0.1))
+                            }
+                        }()
+
+                        Text(labelAndBackground.0)
+                            .frame(minWidth: 100)
+                            .padding(.horizontal, 8)
+                            .padding(.vertical, 4)
+                            .background(labelAndBackground.1)
+                            .cornerRadius(6)
+                    }
+                    .buttonStyle(.plain)
+                }
+                .background(
+                    HotKeyRecorder(
+                        state: $hotKeyState,
+                        onHotKeyRecorded: { hotKey in
+                            settings.hotKey = hotKey
+                            onHotKeyChanged(hotKey)
+                        }
+                    )
+                )
+
+                if settings.hotKey != .default {
+                    Button(String(localized: "Reset to Default (⌥Space)")) {
+                        settings.hotKey = .default
+                        onHotKeyChanged(.default)
+                    }
+                    .font(.caption)
+                }
+            }
+
+            Section(String(localized: "Paste Behavior")) {
+                if settings.hasPostEventPermission {
+                    Toggle(String(localized: "Paste directly into apps"), isOn: $settings.autoPasteEnabled)
+                    Text(settings.autoPasteEnabled
+                        ? String(localized: "Items paste directly into the active app.")
+                        : String(localized: "Items copy to clipboard only."))
+                        .font(.caption)
+                        .foregroundStyle(.secondary)
+                } else {
+                    Toggle(String(localized: "Paste directly into apps"), isOn: .constant(false))
+                        .disabled(true)
+                    Text(String(localized: "Requires Accessibility permission. Restart after granting."))
+                        .font(.caption)
+                        .foregroundStyle(.secondary)
+                    Button(String(localized: "Open System Settings")) {
+                        NSWorkspace.shared.open(URL(string: "x-apple.systempreferences:com.apple.preference.security?Privacy_Accessibility")!)
+                    }
+                    .font(.caption)
+                }
+            }
+
+            Section(String(localized: "Database")) {
                 LabeledContent(String(localized: "Current Size")) {
                     Text(Utilities.formatBytes(store.databaseSizeBytes))
                         .foregroundStyle(.secondary)
                 }
 
-                LabeledContent(String(localized: "Max Database Size")) {
+                LabeledContent(String(localized: "Storage Limit")) {
                     HStack(spacing: 8) {
                         Slider(value: databaseSizeSlider, in: 0...1)
                             .frame(maxWidth: .infinity)
@@ -72,31 +137,29 @@ struct GeneralSettingsView: View {
                     .frame(maxWidth: .infinity)
                 }
 
-                Text(String(localized: "Oldest clipboard items will be automatically deleted when the database exceeds this size."))
+                Text(String(localized: "Oldest items removed when limit is reached."))
                     .font(.caption)
                     .foregroundStyle(.secondary)
-            }
 
-            Section(String(localized: "Data")) {
                 Button(role: .destructive) {
                     showClearConfirmation = true
                 } label: {
                     HStack {
                         Image(systemName: "trash")
-                        Text(String(localized: "Clear Clipboard History"))
+                        Text(String(localized: "Clear History"))
                     }
                 }
                 .confirmationDialog(
-                    String(localized: "Clear Clipboard History"),
+                    String(localized: "Clear History"),
                     isPresented: $showClearConfirmation,
                     titleVisibility: .visible
                 ) {
-                    Button(String(localized: "Clear All History"), role: .destructive) {
+                    Button(String(localized: "Clear All"), role: .destructive) {
                         store.clear()
                     }
                     Button(String(localized: "Cancel"), role: .cancel) {}
                 } message: {
-                    Text(String(localized: "Are you sure you want to delete all clipboard history? This cannot be undone."))
+                    Text(String(localized: "Delete all clipboard history? This cannot be undone."))
                 }
             }
 
@@ -147,26 +210,15 @@ struct GeneralSettingsView: View {
                     )
                 )
 
-                Text(
-                    String(
-                        localized: "Beta releases ship to testers first. Turn this on to receive early builds from the release branch before they roll out to everyone."
-                    )
-                )
-                .font(.caption)
-                .foregroundStyle(.secondary)
+                Text(String(localized: "Test new features before release."))
+                    .font(.caption)
+                    .foregroundStyle(.secondary)
 
-                switch settings.updateChannel {
-                case .stable:
-                    EmptyView()
-                case .beta:
+                if case .beta = settings.updateChannel {
                     VStack(alignment: .leading, spacing: 8) {
-                        Text(
-                            String(
-                                localized: "If you hit a bug in a beta build, please report it on GitHub with what broke, steps to reproduce it, your ClipKitty version, and your macOS version."
-                            )
-                        )
-                        .font(.caption)
-                        .foregroundStyle(.secondary)
+                        Text(String(localized: "Found a bug? Report it on GitHub with steps to reproduce."))
+                            .font(.caption)
+                            .foregroundStyle(.secondary)
 
                         Button(String(localized: "Report a Bug")) {
                             NSWorkspace.shared.open(URL(string: "https://github.com/jul-sh/clipkitty/issues/new/choose")!)
