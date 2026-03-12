@@ -167,6 +167,7 @@ pub(crate) fn compute_highlights(
 pub(crate) fn search_short_query_sync(
     db: &Database,
     query: &str,
+    prefix_only: bool,
     token: &CancellationToken,
     runtime: &tokio::runtime::Handle,
     filter: Option<&ContentTypeFilter>,
@@ -196,7 +197,7 @@ pub(crate) fn search_short_query_sync(
         }
     }
 
-    if ordered_ids.len() < SHORT_QUERY_MAX_RESULTS {
+    if !prefix_only && ordered_ids.len() < SHORT_QUERY_MAX_RESULTS {
         let recent_candidates = db.fetch_recent_items_for_short_query(
             SHORT_QUERY_RECENT_WINDOW,
             filter,
@@ -371,6 +372,7 @@ fn execute_search_sync(
             search::SearchQuery::Plain { text } => search_short_query_sync(
                 db,
                 text,
+                false,
                 token,
                 runtime,
                 content_type_filter.as_ref(),
@@ -379,6 +381,7 @@ fn execute_search_sync(
             search::SearchQuery::PreferPrefix { stripped_text, .. } => search_short_query_sync(
                 db,
                 stripped_text,
+                true,
                 token,
                 runtime,
                 content_type_filter.as_ref(),
