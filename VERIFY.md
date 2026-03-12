@@ -4,11 +4,11 @@ How do you know the app you're running was actually built from this public sourc
 
 ## The Problem
 
-Open source lets you read the code. But the built app you download? Without attestation, there's no way to prove it was built from that code.
+Open source lets you read the code. But the binary you download? There's no guarantee it was built from that code. The developer could publish clean source code while shipping a binary built from something completely different.
 
 ## The Solution
 
-ClipKitty is built entirely on GitHub's infrastructure—not on a developer's laptop. For every build, GitHub cryptographically signs an attestation: showing that this exact binary came from this exact commit.
+ClipKitty is built entirely on GitHub's infrastructure; not on a developer's laptop. For every build, GitHub cryptographically signs an attestation: showing that this exact binary came from this exact commit.
 
 You can verify this yourself.
 
