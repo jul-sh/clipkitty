@@ -154,7 +154,27 @@ final class ToastWindow {
             toastWindow.setFrame(NSRect(x: x, y: y, width: fittingSize.width, height: fittingSize.height), display: true)
         }
 
+        // Animate in: fade + slide up
+        let isNewWindow = toastWindow.alphaValue == 0 || !toastWindow.isVisible
+        if isNewWindow {
+            var startFrame = toastWindow.frame
+            startFrame.origin.y -= 20
+            toastWindow.setFrame(startFrame, display: false)
+            toastWindow.alphaValue = 0
+        }
+
         toastWindow.orderFront(nil)
+
+        if isNewWindow {
+            NSAnimationContext.runAnimationGroup { context in
+                context.duration = 0.25
+                context.timingFunction = CAMediaTimingFunction(name: .easeOut)
+                var endFrame = toastWindow.frame
+                endFrame.origin.y += 20
+                toastWindow.animator().setFrame(endFrame, display: true)
+                toastWindow.animator().alphaValue = 1
+            }
+        }
     }
 
     private func currentToastView() -> ToastView {
@@ -206,7 +226,20 @@ final class ToastWindow {
         dismissTask?.cancel()
         dismissTask = nil
         state = .idle
-        window?.orderOut(nil)
-        window = nil
+
+        guard let window = self.window else { return }
+        self.window = nil
+
+        // Animate out: fade + slide down
+        NSAnimationContext.runAnimationGroup { context in
+            context.duration = 0.2
+            context.timingFunction = CAMediaTimingFunction(name: .easeIn)
+            var endFrame = window.frame
+            endFrame.origin.y -= 20
+            window.animator().setFrame(endFrame, display: true)
+            window.animator().alphaValue = 0
+        } completionHandler: {
+            window.orderOut(nil)
+        }
     }
 }
