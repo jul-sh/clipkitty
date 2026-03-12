@@ -21,7 +21,8 @@ pub(crate) mod test_support {
         pub(crate) on_eager_match: Option<Arc<dyn Fn(usize) + Send + Sync>>,
     }
 
-    static HOOKS: Lazy<Mutex<SearchTestHooks>> = Lazy::new(|| Mutex::new(SearchTestHooks::default()));
+    static HOOKS: Lazy<Mutex<SearchTestHooks>> =
+        Lazy::new(|| Mutex::new(SearchTestHooks::default()));
 
     pub(crate) struct SearchTestHookGuard;
 
@@ -198,11 +199,8 @@ pub(crate) fn search_short_query_sync(
     }
 
     if !prefix_only && ordered_ids.len() < SHORT_QUERY_MAX_RESULTS {
-        let recent_candidates = db.fetch_recent_items_for_short_query(
-            SHORT_QUERY_RECENT_WINDOW,
-            filter,
-            tag.as_ref(),
-        )?;
+        let recent_candidates =
+            db.fetch_recent_items_for_short_query(SHORT_QUERY_RECENT_WINDOW, filter, tag.as_ref())?;
         for (id, content, _) in recent_candidates {
             if prefix_ids.contains(&id) {
                 continue;
@@ -240,9 +238,7 @@ pub(crate) fn search_short_query_sync(
                 ItemMatch {
                     item_metadata: item.to_metadata(),
                     match_data: Some(search::compute_short_query_match_data(
-                        content,
-                        trimmed,
-                        is_prefix,
+                        content, trimmed, is_prefix,
                     )),
                 }
             })
