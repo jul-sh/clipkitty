@@ -290,8 +290,11 @@ pub(super) fn alignment_exactness_signals(word_matches: &[WordMatch]) -> Exactne
         .iter()
         .filter(|m| !matches!(m.state, WordMatchState::Unmatched))
         .count();
-    if matched_count < 2 {
+    if matched_count == 0 {
         return ExactnessSignals::default();
+    }
+    if matched_count < 2 {
+        return alignment_zero_cost_signals(word_matches);
     }
 
     let all_matched = word_matches

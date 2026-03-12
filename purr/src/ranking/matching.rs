@@ -63,6 +63,34 @@ pub(crate) fn does_word_match_fast(
     WordMatchKind::None
 }
 
+/// Fast matching against a raw token slice. ASCII-heavy content stays allocation-free;
+/// non-ASCII tokens fall back to lowercasing the token once for comparison.
+pub(crate) fn does_word_match_fast_raw(
+    qw_lower: &str,
+    dw_raw: &str,
+    allow_prefix: bool,
+) -> WordMatchKind {
+    if qw_lower.is_ascii() && dw_raw.is_ascii() {
+        if dw_raw.eq_ignore_ascii_case(qw_lower) {
+            return WordMatchKind::Exact;
+        }
+        if allow_prefix
+            && qw_lower.len() >= 2
+            && ascii_starts_with_ignore_case(dw_raw.as_bytes(), qw_lower.as_bytes())
+        {
+            return WordMatchKind::Prefix;
+        }
+        return WordMatchKind::None;
+    }
+
+    does_word_match_fast(qw_lower, &dw_raw.to_lowercase(), allow_prefix)
+}
+
+fn ascii_starts_with_ignore_case(haystack: &[u8], needle_lower: &[u8]) -> bool {
+    haystack.len() >= needle_lower.len()
+        && haystack[..needle_lower.len()].eq_ignore_ascii_case(needle_lower)
+}
+
 fn classify_contained_match(qw_lower: &str, dw_lower: &str, dw_raw: &str) -> Option<WordMatchKind> {
     let query_chars: Vec<char> = qw_lower.chars().collect();
     let doc_lower_chars: Vec<char> = dw_lower.chars().collect();

@@ -6,9 +6,11 @@
 use crate::candidate::SearchCandidate;
 #[cfg(not(feature = "perf-log"))]
 use crate::ranking::compute_bucket_score;
-use crate::ranking::{PrefixPreferenceQuery, ScoringContext};
 #[cfg(feature = "perf-log")]
-use crate::ranking::{compute_bucket_score_with_perf, RankingPerfBreakdown, LARGE_DOC_THRESHOLD_BYTES};
+use crate::ranking::{
+    compute_bucket_score_with_perf, RankingPerfBreakdown, LARGE_DOC_THRESHOLD_BYTES,
+};
+use crate::ranking::{prepare_document_for_ranking, PrefixPreferenceQuery, ScoringContext};
 use crate::search::SearchQuery;
 use chrono::Utc;
 use tokio_util::sync::CancellationToken;
@@ -115,8 +117,19 @@ impl OwnedPrefixPreferenceQuery {
 #[derive(Debug, Clone, Copy)]
 struct PhaseTwoQuery<'a> {
     query_words: &'a [&'a str],
+    query_words_lower: &'a [&'a str],
+    joined_query_lower: Option<&'a str>,
     last_word_is_prefix: bool,
     prefix_preference: Option<PrefixPreferenceQuery<'a>>,
+}
+
+#[derive(Debug, Clone)]
+struct OwnedPhaseTwoQuery {
+    query_words: Vec<String>,
+    query_words_lower: Vec<String>,
+    joined_query_lower: Option<String>,
+    last_word_is_prefix: bool,
+    prefix_preference: Option<OwnedPrefixPreferenceQuery>,
 }
 
 #[cfg(feature = "perf-log")]
@@ -124,7 +137,6 @@ struct PhaseTwoQuery<'a> {
 struct PhaseTwoCandidatePerf {
     doc_bytes: usize,
     prep_ns: u64,
-    large_doc: bool,
     ranking: RankingPerfBreakdown,
 }
 
@@ -152,7 +164,7 @@ impl PhaseTwoPerfTotals {
     fn record(&mut self, perf: PhaseTwoCandidatePerf, matched: bool) {
         self.candidates_seen += 1;
         self.matched_candidates += usize::from(matched);
-        self.large_doc_candidates += usize::from(perf.large_doc);
+        self.large_doc_candidates += usize::from(perf.doc_bytes > LARGE_DOC_THRESHOLD_BYTES);
         self.total_doc_bytes += perf.doc_bytes;
         self.total_doc_words += perf.ranking.doc_word_count;
         self.total_query_words += perf.ranking.query_word_count;
@@ -184,14 +196,14 @@ impl PhaseTwoPerfTotals {
     }
 }
 
-fn prepare_phase_two_query(
-    query: &SearchQuery,
-    recall_text: &str,
-) -> (Vec<String>, bool, Option<OwnedPrefixPreferenceQuery>) {
+fn prepare_phase_two_query(query: &SearchQuery, recall_text: &str) -> OwnedPhaseTwoQuery {
     let query_words = crate::search::tokenize_words(recall_text)
         .into_iter()
         .map(|(_, _, word)| word)
-        .collect();
+        .collect::<Vec<_>>();
+    let query_words_lower = query_words.iter().map(|word| word.to_lowercase()).collect();
+    let joined_query_lower =
+        (!query_words.is_empty()).then(|| query_words.join(" ").to_lowercase());
     let last_word_is_prefix = recall_text.ends_with(|c: char| c.is_alphanumeric());
     let prefix_preference = match query {
         SearchQuery::Plain { .. } => None,
@@ -204,7 +216,13 @@ fn prepare_phase_two_query(
         }),
     };
 
-    (query_words, last_word_is_prefix, prefix_preference)
+    OwnedPhaseTwoQuery {
+        query_words,
+        query_words_lower,
+        joined_query_lower,
+        last_word_is_prefix,
+        prefix_preference,
+    }
 }
 
 #[cfg(not(feature = "perf-log"))]
@@ -214,17 +232,13 @@ fn score_phase_two_candidate(
     now: i64,
 ) -> Option<crate::ranking::BucketScore> {
     let content = candidate.content();
-    let content_lower = content.to_lowercase();
-    let doc_words = crate::search::tokenize_words(content);
-    let doc_word_strs: Vec<&str> = doc_words.iter().map(|(_, _, w)| w.as_str()).collect();
-    let doc_words_lower = crate::search::tokenize_words(&content_lower);
-    let doc_word_lower_strs: Vec<&str> = doc_words_lower.iter().map(|(_, _, w)| w.as_str()).collect();
+    let document = prepare_document_for_ranking(content);
 
     let bucket = compute_bucket_score(&ScoringContext {
-        content_lower: &content_lower,
-        doc_word_strs: &doc_word_strs,
-        doc_word_lower_strs: &doc_word_lower_strs,
+        document: &document,
         query_words: phase_two_query.query_words,
+        query_words_lower: phase_two_query.query_words_lower,
+        joined_query_lower: phase_two_query.joined_query_lower,
         last_word_is_prefix: phase_two_query.last_word_is_prefix,
         prefix_preference: phase_two_query.prefix_preference,
         timestamp: candidate.timestamp,
@@ -243,19 +257,14 @@ fn score_phase_two_candidate(
 ) -> (Option<crate::ranking::BucketScore>, PhaseTwoCandidatePerf) {
     let prep_start = std::time::Instant::now();
     let content = candidate.content();
-    let content_lower = content.to_lowercase();
-    let doc_words = crate::search::tokenize_words(content);
-    let doc_word_strs: Vec<&str> = doc_words.iter().map(|(_, _, w)| w.as_str()).collect();
-    let doc_words_lower = crate::search::tokenize_words(&content_lower);
-    let doc_word_lower_strs: Vec<&str> = doc_words_lower.iter().map(|(_, _, w)| w.as_str()).collect();
+    let document = prepare_document_for_ranking(content);
     let prep_ns = prep_start.elapsed().as_nanos() as u64;
-    let large_doc = content_lower.len() > LARGE_DOC_THRESHOLD_BYTES;
 
     let (bucket, ranking) = compute_bucket_score_with_perf(&ScoringContext {
-        content_lower: &content_lower,
-        doc_word_strs: &doc_word_strs,
-        doc_word_lower_strs: &doc_word_lower_strs,
+        document: &document,
         query_words: phase_two_query.query_words,
+        query_words_lower: phase_two_query.query_words_lower,
+        joined_query_lower: phase_two_query.joined_query_lower,
         last_word_is_prefix: phase_two_query.last_word_is_prefix,
         prefix_preference: phase_two_query.prefix_preference,
         timestamp: candidate.timestamp,
@@ -268,7 +277,6 @@ fn score_phase_two_candidate(
         PhaseTwoCandidatePerf {
             doc_bytes: content.len(),
             prep_ns,
-            large_doc,
             ranking,
         },
     )
@@ -536,13 +544,24 @@ impl Indexer {
         }
         #[cfg(test)]
         test_support::before_phase_two();
-        let (query_words_owned, last_word_is_prefix, prefix_preference) =
-            prepare_phase_two_query(query, recall_text);
-        let query_words: Vec<&str> = query_words_owned.iter().map(String::as_str).collect();
+        let phase_two_query_owned = prepare_phase_two_query(query, recall_text);
+        let query_words: Vec<&str> = phase_two_query_owned
+            .query_words
+            .iter()
+            .map(String::as_str)
+            .collect();
+        let query_words_lower: Vec<&str> = phase_two_query_owned
+            .query_words_lower
+            .iter()
+            .map(String::as_str)
+            .collect();
         let phase_two_query = PhaseTwoQuery {
             query_words: &query_words,
-            last_word_is_prefix,
-            prefix_preference: prefix_preference
+            query_words_lower: &query_words_lower,
+            joined_query_lower: phase_two_query_owned.joined_query_lower.as_deref(),
+            last_word_is_prefix: phase_two_query_owned.last_word_is_prefix,
+            prefix_preference: phase_two_query_owned
+                .prefix_preference
                 .as_ref()
                 .map(OwnedPrefixPreferenceQuery::as_borrowed),
         };
@@ -554,31 +573,33 @@ impl Indexer {
         const CANCELLATION_CHECK_CHUNK_SIZE: usize = 32;
         #[cfg(feature = "perf-log")]
         let (mut scored, phase_two_perf) = {
-            let chunk_results: Vec<(Vec<(crate::ranking::BucketScore, usize)>, PhaseTwoPerfTotals)> =
-                candidates
-                    .par_chunks(CANCELLATION_CHECK_CHUNK_SIZE)
-                    .enumerate()
-                    .map(|(chunk_index, chunk)| {
-                        let mut chunk_scored = Vec::with_capacity(chunk.len());
-                        let mut chunk_perf = PhaseTwoPerfTotals::default();
-                        for (offset, candidate) in chunk.iter().enumerate() {
-                            if token.is_cancelled() {
-                                break;
-                            }
-                            let global_index = chunk_index * CANCELLATION_CHECK_CHUNK_SIZE + offset;
-                            #[cfg(test)]
-                            test_support::on_phase_two_candidate(global_index);
-                            let (bucket, perf) =
-                                score_phase_two_candidate(candidate, phase_two_query, now);
-                            let matched = bucket.is_some();
-                            chunk_perf.record(perf, matched);
-                            if let Some(bucket) = bucket {
-                                chunk_scored.push((bucket, global_index));
-                            }
+            let chunk_results: Vec<(
+                Vec<(crate::ranking::BucketScore, usize)>,
+                PhaseTwoPerfTotals,
+            )> = candidates
+                .par_chunks(CANCELLATION_CHECK_CHUNK_SIZE)
+                .enumerate()
+                .map(|(chunk_index, chunk)| {
+                    let mut chunk_scored = Vec::with_capacity(chunk.len());
+                    let mut chunk_perf = PhaseTwoPerfTotals::default();
+                    for (offset, candidate) in chunk.iter().enumerate() {
+                        if token.is_cancelled() {
+                            break;
                         }
-                        (chunk_scored, chunk_perf)
-                    })
-                    .collect();
+                        let global_index = chunk_index * CANCELLATION_CHECK_CHUNK_SIZE + offset;
+                        #[cfg(test)]
+                        test_support::on_phase_two_candidate(global_index);
+                        let (bucket, perf) =
+                            score_phase_two_candidate(candidate, phase_two_query, now);
+                        let matched = bucket.is_some();
+                        chunk_perf.record(perf, matched);
+                        if let Some(bucket) = bucket {
+                            chunk_scored.push((bucket, global_index));
+                        }
+                    }
+                    (chunk_scored, chunk_perf)
+                })
+                .collect();
 
             let mut scored = Vec::new();
             let mut totals = PhaseTwoPerfTotals::default();
