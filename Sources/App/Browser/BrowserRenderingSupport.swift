@@ -937,7 +937,7 @@ struct ItemRow: View, Equatable {
                 // Editing state: darker grey background
                 Color.primary.opacity(0.35)
             } else if accentSelected {
-                selectionBackground()
+                Color.selectionBackground
             } else if isContextMenuTargeted && !isSelected {
                 Color.primary.opacity(0.11)
             } else if isSelected {
@@ -1248,7 +1248,7 @@ private struct FilterOptionRow: View {
                 .padding(.vertical, 5)
                 .background {
                     if isHighlighted {
-                        selectionBackground()
+                        Color.selectionBackground
                             .clipShape(RoundedRectangle(cornerRadius: 9))
                     } else {
                         RoundedRectangle(cornerRadius: 9)
@@ -1305,7 +1305,7 @@ struct ActionOptionRow: View {
 
     private var backgroundColor: Color {
         if isHighlighted {
-            return isDestructive ? Color.red.opacity(0.8) : Color(nsColor: .selectedContentBackgroundColor)
+            return isDestructive ? Color.red.opacity(0.8) : .selectionBackground
         }
         return Color.clear
     }
@@ -1313,10 +1313,11 @@ struct ActionOptionRow: View {
 
 // MARK: - Selection Background
 
-/// Shared selection highlight matching the system-selected content tint, slightly desaturated.
-@ViewBuilder
-private func selectionBackground() -> some View {
-    Color(nsColor: .selectedContentBackgroundColor.desaturated(by: 0.08))
+extension Color {
+    /// Selection background matching system tint, slightly desaturated for a subtler look.
+    static var selectionBackground: Color {
+        Color(nsColor: .selectedContentBackgroundColor.desaturated(by: 0.10))
+    }
 }
 
 private extension NSColor {
@@ -1328,6 +1329,7 @@ private extension NSColor {
         let newSaturation = max(0, s - amount)
         return NSColor(hue: h, saturation: newSaturation, brightness: b, alpha: a)
     }
+
 }
 
 // MARK: - Highlight Kind Color Mapping
