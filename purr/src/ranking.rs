@@ -16,6 +16,8 @@ mod matching;
 mod policy;
 
 use crate::search::is_word_token;
+#[cfg(feature = "perf-log")]
+use std::time::Instant;
 
 use self::alignment::{alignment_exactness_signals, choose_best_alignment, trim_match_candidates};
 pub use self::matching::edit_distance_bounded;
@@ -61,6 +63,20 @@ pub struct ScoringContext<'a> {
     pub bm25_score: f32,
     /// Current time (unix seconds)
     pub now: i64,
+}
+
+#[cfg(feature = "perf-log")]
+#[derive(Debug, Default, Clone, Copy)]
+pub(crate) struct RankingPerfBreakdown {
+    pub doc_word_count: usize,
+    pub query_word_count: usize,
+    pub raw_candidate_count: usize,
+    pub trimmed_candidate_count: usize,
+    pub match_query_words_ns: u64,
+    pub collect_candidates_ns: u64,
+    pub alignment_ns: u64,
+    pub quality_signals_ns: u64,
+    pub exactness_ns: u64,
 }
 
 /// Per-query-word match result
@@ -423,6 +439,43 @@ fn build_ranking_breakdown(ctx: &ScoringContext<'_>) -> RankingBreakdown {
     }
 }
 
+#[cfg(feature = "perf-log")]
+fn build_ranking_breakdown_with_perf(
+    ctx: &ScoringContext<'_>,
+) -> (RankingBreakdown, RankingPerfBreakdown) {
+    let fast_mode = ctx.content_lower.len() > LARGE_DOC_THRESHOLD_BYTES;
+
+    let match_start = Instant::now();
+    let (word_matches, mut perf) = match_query_words_with_perf(
+        ctx.query_words,
+        ctx.doc_word_strs,
+        ctx.doc_word_lower_strs,
+        ctx.last_word_is_prefix,
+        fast_mode,
+    );
+    perf.match_query_words_ns = match_start.elapsed().as_nanos() as u64;
+
+    let quality_start = Instant::now();
+    let (quality_signals, exactness_ns) = compute_document_quality_signals_with_perf(
+        ctx.content_lower,
+        ctx.query_words,
+        ctx.prefix_preference,
+        &word_matches,
+    );
+    perf.quality_signals_ns = quality_start.elapsed().as_nanos() as u64;
+    perf.exactness_ns = exactness_ns;
+
+    (
+        RankingBreakdown {
+            quality_signals,
+            recency_bucket: compute_recency_bucket(ctx.timestamp, ctx.now),
+            recency_score: compute_recency_score(ctx.timestamp, ctx.now),
+            bm25_quantized: quantize_bm25(ctx.bm25_score),
+        },
+        perf,
+    )
+}
+
 /// Compute the bucket score for a candidate document.
 ///
 /// `content_lower` and `doc_word_strs` should be pre-computed from the candidate's
@@ -443,6 +496,28 @@ pub fn compute_bucket_score(ctx: &ScoringContext<'_>) -> BucketScore {
     }
 
     build_ranking_breakdown(ctx).into_bucket_score(ctx.timestamp)
+}
+
+#[cfg(feature = "perf-log")]
+pub(crate) fn compute_bucket_score_with_perf(
+    ctx: &ScoringContext<'_>,
+) -> (BucketScore, RankingPerfBreakdown) {
+    if ctx.query_words.is_empty() {
+        return (
+            BucketScore {
+                quality_tier: QualityTier::NoMatch,
+                recency_bucket: compute_recency_bucket(ctx.timestamp, ctx.now),
+                quality_detail: QualityDetail::default(),
+                recency_score: compute_recency_score(ctx.timestamp, ctx.now),
+                bm25_quantized: quantize_bm25(ctx.bm25_score),
+                recency: ctx.timestamp,
+            },
+            RankingPerfBreakdown::default(),
+        );
+    }
+
+    let (breakdown, perf) = build_ranking_breakdown_with_perf(ctx);
+    (breakdown.into_bucket_score(ctx.timestamp), perf)
 }
 
 fn query_total_match_weight(query_words: &[&str]) -> u16 {
@@ -531,6 +606,41 @@ fn compute_document_quality_signals(
     }
 }
 
+#[cfg(feature = "perf-log")]
+fn compute_document_quality_signals_with_perf(
+    content_lower: &str,
+    query_words: &[&str],
+    prefix_preference: Option<PrefixPreferenceQuery<'_>>,
+    word_matches: &[WordMatch],
+) -> (QualitySignals, u64) {
+    let words_matched_weight: u16 = word_matches.iter().map(|m| m.matched_weight()).sum();
+    let total_query_weight = query_total_match_weight(query_words);
+    let prefix_preference_score = compute_prefix_preference_score(content_lower, prefix_preference);
+
+    let exactness_start = Instant::now();
+    let exactness = compute_exactness_signals(content_lower, query_words, word_matches);
+    let exactness_ns = exactness_start.elapsed().as_nanos() as u64;
+
+    let proximity_score = compute_proximity(word_matches);
+    let typo_score = compute_typo_score(word_matches);
+    let match_class_score = compute_match_class_score(word_matches);
+
+    (
+        QualitySignals {
+            query_word_count: query_words.len(),
+            total_query_weight,
+            words_matched_weight,
+            prefix_preference_score,
+            exactness,
+            proximity_score,
+            match_class_score,
+            typo_score,
+            span_stats: compute_match_span_stats(word_matches),
+        },
+        exactness_ns,
+    )
+}
+
 fn compute_alignment_quality_signals(
     word_matches: &[WordMatch],
     total_query_weight: u16,
@@ -617,6 +727,60 @@ fn match_query_words(
     choose_best_alignment(&candidate_lists, &defaults)
 }
 
+#[cfg(feature = "perf-log")]
+fn match_query_words_with_perf(
+    query_words: &[&str],
+    doc_words: &[&str],
+    doc_words_lower: &[&str],
+    last_word_is_prefix: bool,
+    fast_mode: bool,
+) -> (Vec<WordMatch>, RankingPerfBreakdown) {
+    let defaults: Vec<WordMatch> = query_words
+        .iter()
+        .map(|qw| WordMatch::unmatched(qw))
+        .collect();
+
+    let collect_start = Instant::now();
+    let mut raw_candidate_count = 0usize;
+    let mut trimmed_candidate_count = 0usize;
+    let candidate_lists: Vec<Vec<WordMatch>> = query_words
+        .iter()
+        .enumerate()
+        .map(|(qi, qw)| {
+            let is_last = qi == query_words.len() - 1;
+            let allow_prefix = is_last && last_word_is_prefix;
+            let (candidates, raw_count) = collect_match_candidates_with_perf(
+                qw,
+                doc_words,
+                doc_words_lower,
+                allow_prefix,
+                fast_mode,
+            );
+            raw_candidate_count += raw_count;
+            trimmed_candidate_count += candidates.len();
+            candidates
+        })
+        .collect();
+    let collect_candidates_ns = collect_start.elapsed().as_nanos() as u64;
+
+    let alignment_start = Instant::now();
+    let word_matches = choose_best_alignment(&candidate_lists, &defaults);
+    let alignment_ns = alignment_start.elapsed().as_nanos() as u64;
+
+    (
+        word_matches,
+        RankingPerfBreakdown {
+            doc_word_count: doc_words.len(),
+            query_word_count: query_words.len(),
+            raw_candidate_count,
+            trimmed_candidate_count,
+            collect_candidates_ns,
+            alignment_ns,
+            ..RankingPerfBreakdown::default()
+        },
+    )
+}
+
 fn base_match_weight(qw: &str) -> u16 {
     if is_word_token(qw) {
         (qw.len() as u16).saturating_mul(qw.len() as u16)
@@ -632,6 +796,27 @@ fn collect_match_candidates(
     allow_prefix: bool,
     fast_mode: bool,
 ) -> Vec<WordMatch> {
+    collect_match_candidates_impl(query_word, doc_words, doc_words_lower, allow_prefix, fast_mode).0
+}
+
+#[cfg(feature = "perf-log")]
+fn collect_match_candidates_with_perf(
+    query_word: &str,
+    doc_words: &[&str],
+    doc_words_lower: &[&str],
+    allow_prefix: bool,
+    fast_mode: bool,
+) -> (Vec<WordMatch>, usize) {
+    collect_match_candidates_impl(query_word, doc_words, doc_words_lower, allow_prefix, fast_mode)
+}
+
+fn collect_match_candidates_impl(
+    query_word: &str,
+    doc_words: &[&str],
+    doc_words_lower: &[&str],
+    allow_prefix: bool,
+    fast_mode: bool,
+) -> (Vec<WordMatch>, usize) {
     let qw_lower = query_word.to_lowercase();
 
     let candidates: Vec<WordMatch> = doc_words
@@ -663,7 +848,8 @@ fn collect_match_candidates(
         })
         .collect();
 
-    trim_match_candidates(candidates)
+    let raw_candidate_count = candidates.len();
+    (trim_match_candidates(candidates), raw_candidate_count)
 }
 
 fn classify_fuzzy_typo(query: &str, target: &str, dist: u8) -> TypoClass {

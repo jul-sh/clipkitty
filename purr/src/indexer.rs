@@ -4,7 +4,11 @@
 //! For queries under 3 characters, returns empty (handled by search.rs streaming fallback).
 
 use crate::candidate::SearchCandidate;
-use crate::ranking::{compute_bucket_score, PrefixPreferenceQuery, ScoringContext};
+#[cfg(not(feature = "perf-log"))]
+use crate::ranking::compute_bucket_score;
+use crate::ranking::{PrefixPreferenceQuery, ScoringContext};
+#[cfg(feature = "perf-log")]
+use crate::ranking::{compute_bucket_score_with_perf, RankingPerfBreakdown, LARGE_DOC_THRESHOLD_BYTES};
 use crate::search::SearchQuery;
 use chrono::Utc;
 use tokio_util::sync::CancellationToken;
@@ -115,6 +119,71 @@ struct PhaseTwoQuery<'a> {
     prefix_preference: Option<PrefixPreferenceQuery<'a>>,
 }
 
+#[cfg(feature = "perf-log")]
+#[derive(Debug, Default, Clone, Copy)]
+struct PhaseTwoCandidatePerf {
+    doc_bytes: usize,
+    prep_ns: u64,
+    large_doc: bool,
+    ranking: RankingPerfBreakdown,
+}
+
+#[cfg(feature = "perf-log")]
+#[derive(Debug, Default, Clone, Copy)]
+struct PhaseTwoPerfTotals {
+    candidates_seen: usize,
+    matched_candidates: usize,
+    large_doc_candidates: usize,
+    total_doc_bytes: usize,
+    total_doc_words: usize,
+    total_query_words: usize,
+    total_raw_candidate_count: usize,
+    total_trimmed_candidate_count: usize,
+    prep_ns: u64,
+    match_query_words_ns: u64,
+    collect_candidates_ns: u64,
+    alignment_ns: u64,
+    quality_signals_ns: u64,
+    exactness_ns: u64,
+}
+
+#[cfg(feature = "perf-log")]
+impl PhaseTwoPerfTotals {
+    fn record(&mut self, perf: PhaseTwoCandidatePerf, matched: bool) {
+        self.candidates_seen += 1;
+        self.matched_candidates += usize::from(matched);
+        self.large_doc_candidates += usize::from(perf.large_doc);
+        self.total_doc_bytes += perf.doc_bytes;
+        self.total_doc_words += perf.ranking.doc_word_count;
+        self.total_query_words += perf.ranking.query_word_count;
+        self.total_raw_candidate_count += perf.ranking.raw_candidate_count;
+        self.total_trimmed_candidate_count += perf.ranking.trimmed_candidate_count;
+        self.prep_ns += perf.prep_ns;
+        self.match_query_words_ns += perf.ranking.match_query_words_ns;
+        self.collect_candidates_ns += perf.ranking.collect_candidates_ns;
+        self.alignment_ns += perf.ranking.alignment_ns;
+        self.quality_signals_ns += perf.ranking.quality_signals_ns;
+        self.exactness_ns += perf.ranking.exactness_ns;
+    }
+
+    fn merge(&mut self, other: Self) {
+        self.candidates_seen += other.candidates_seen;
+        self.matched_candidates += other.matched_candidates;
+        self.large_doc_candidates += other.large_doc_candidates;
+        self.total_doc_bytes += other.total_doc_bytes;
+        self.total_doc_words += other.total_doc_words;
+        self.total_query_words += other.total_query_words;
+        self.total_raw_candidate_count += other.total_raw_candidate_count;
+        self.total_trimmed_candidate_count += other.total_trimmed_candidate_count;
+        self.prep_ns += other.prep_ns;
+        self.match_query_words_ns += other.match_query_words_ns;
+        self.collect_candidates_ns += other.collect_candidates_ns;
+        self.alignment_ns += other.alignment_ns;
+        self.quality_signals_ns += other.quality_signals_ns;
+        self.exactness_ns += other.exactness_ns;
+    }
+}
+
 fn prepare_phase_two_query(
     query: &SearchQuery,
     recall_text: &str,
@@ -138,6 +207,7 @@ fn prepare_phase_two_query(
     (query_words, last_word_is_prefix, prefix_preference)
 }
 
+#[cfg(not(feature = "perf-log"))]
 fn score_phase_two_candidate(
     candidate: &SearchCandidate,
     phase_two_query: PhaseTwoQuery<'_>,
@@ -163,6 +233,45 @@ fn score_phase_two_candidate(
     });
 
     (bucket.words_matched_weight() > 0).then_some(bucket)
+}
+
+#[cfg(feature = "perf-log")]
+fn score_phase_two_candidate(
+    candidate: &SearchCandidate,
+    phase_two_query: PhaseTwoQuery<'_>,
+    now: i64,
+) -> (Option<crate::ranking::BucketScore>, PhaseTwoCandidatePerf) {
+    let prep_start = std::time::Instant::now();
+    let content = candidate.content();
+    let content_lower = content.to_lowercase();
+    let doc_words = crate::search::tokenize_words(content);
+    let doc_word_strs: Vec<&str> = doc_words.iter().map(|(_, _, w)| w.as_str()).collect();
+    let doc_words_lower = crate::search::tokenize_words(&content_lower);
+    let doc_word_lower_strs: Vec<&str> = doc_words_lower.iter().map(|(_, _, w)| w.as_str()).collect();
+    let prep_ns = prep_start.elapsed().as_nanos() as u64;
+    let large_doc = content_lower.len() > LARGE_DOC_THRESHOLD_BYTES;
+
+    let (bucket, ranking) = compute_bucket_score_with_perf(&ScoringContext {
+        content_lower: &content_lower,
+        doc_word_strs: &doc_word_strs,
+        doc_word_lower_strs: &doc_word_lower_strs,
+        query_words: phase_two_query.query_words,
+        last_word_is_prefix: phase_two_query.last_word_is_prefix,
+        prefix_preference: phase_two_query.prefix_preference,
+        timestamp: candidate.timestamp,
+        bm25_score: candidate.tantivy_score,
+        now,
+    });
+
+    (
+        (bucket.words_matched_weight() > 0).then_some(bucket),
+        PhaseTwoCandidatePerf {
+            doc_bytes: content.len(),
+            prep_ns,
+            large_doc,
+            ranking,
+        },
+    )
 }
 
 /// Tantivy-based indexer with trigram tokenization
@@ -443,6 +552,43 @@ impl Indexer {
         // Process candidates in chunks to allow periodic cancellation checks.
         // Smaller chunks = more responsive cancellation but higher overhead.
         const CANCELLATION_CHECK_CHUNK_SIZE: usize = 32;
+        #[cfg(feature = "perf-log")]
+        let (mut scored, phase_two_perf) = {
+            let chunk_results: Vec<(Vec<(crate::ranking::BucketScore, usize)>, PhaseTwoPerfTotals)> =
+                candidates
+                    .par_chunks(CANCELLATION_CHECK_CHUNK_SIZE)
+                    .enumerate()
+                    .map(|(chunk_index, chunk)| {
+                        let mut chunk_scored = Vec::with_capacity(chunk.len());
+                        let mut chunk_perf = PhaseTwoPerfTotals::default();
+                        for (offset, candidate) in chunk.iter().enumerate() {
+                            if token.is_cancelled() {
+                                break;
+                            }
+                            let global_index = chunk_index * CANCELLATION_CHECK_CHUNK_SIZE + offset;
+                            #[cfg(test)]
+                            test_support::on_phase_two_candidate(global_index);
+                            let (bucket, perf) =
+                                score_phase_two_candidate(candidate, phase_two_query, now);
+                            let matched = bucket.is_some();
+                            chunk_perf.record(perf, matched);
+                            if let Some(bucket) = bucket {
+                                chunk_scored.push((bucket, global_index));
+                            }
+                        }
+                        (chunk_scored, chunk_perf)
+                    })
+                    .collect();
+
+            let mut scored = Vec::new();
+            let mut totals = PhaseTwoPerfTotals::default();
+            for (mut chunk_scored, chunk_perf) in chunk_results {
+                scored.append(&mut chunk_scored);
+                totals.merge(chunk_perf);
+            }
+            (scored, totals)
+        };
+        #[cfg(not(feature = "perf-log"))]
         let mut scored: Vec<(crate::ranking::BucketScore, usize)> = candidates
             .par_chunks(CANCELLATION_CHECK_CHUNK_SIZE)
             .enumerate()
@@ -483,6 +629,26 @@ impl Indexer {
                 (t2 - t1).as_secs_f64() * 1000.0,
                 scored.len(),
             );
+            if phase_two_perf.candidates_seen > 0 {
+                let candidates_seen = phase_two_perf.candidates_seen as f64;
+                let query_words_total = phase_two_perf.total_query_words.max(1) as f64;
+                eprintln!(
+                    "[perf] phase2_breakdown seen={} matched={} large_docs={} avg_doc_bytes={:.0} avg_doc_words={:.1} prep_sum={:.1}ms match_sum={:.1}ms collect_sum={:.1}ms align_sum={:.1}ms quality_sum={:.1}ms exactness_sum={:.1}ms raw_matches_per_query_word={:.2} trimmed_matches_per_query_word={:.2}",
+                    phase_two_perf.candidates_seen,
+                    phase_two_perf.matched_candidates,
+                    phase_two_perf.large_doc_candidates,
+                    phase_two_perf.total_doc_bytes as f64 / candidates_seen,
+                    phase_two_perf.total_doc_words as f64 / candidates_seen,
+                    phase_two_perf.prep_ns as f64 / 1_000_000.0,
+                    phase_two_perf.match_query_words_ns as f64 / 1_000_000.0,
+                    phase_two_perf.collect_candidates_ns as f64 / 1_000_000.0,
+                    phase_two_perf.alignment_ns as f64 / 1_000_000.0,
+                    phase_two_perf.quality_signals_ns as f64 / 1_000_000.0,
+                    phase_two_perf.exactness_ns as f64 / 1_000_000.0,
+                    phase_two_perf.total_raw_candidate_count as f64 / query_words_total,
+                    phase_two_perf.total_trimmed_candidate_count as f64 / query_words_total,
+                );
+            }
         }
 
         let mut candidate_slots: Vec<Option<SearchCandidate>> =
