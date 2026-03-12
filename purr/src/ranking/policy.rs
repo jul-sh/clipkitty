@@ -136,26 +136,6 @@ const RECENCY_BUCKET_LAST_WEEK_MIN_AGE_SECS: i64 = RECENCY_BUCKET_LAST_DAY_MAX_A
 const RECENCY_BUCKET_LAST_MONTH_MIN_AGE_SECS: i64 = RECENCY_BUCKET_LAST_WEEK_MAX_AGE_SECS + 1;
 const RECENCY_BUCKET_LAST_QUARTER_MIN_AGE_SECS: i64 = RECENCY_BUCKET_LAST_MONTH_MAX_AGE_SECS + 1;
 
-pub(super) fn compute_prefix_preference_score(
-    content_lower: &str,
-    prefix_preference: Option<PrefixPreferenceQuery<'_>>,
-) -> u8 {
-    match prefix_preference {
-        Some(PrefixPreferenceQuery {
-            raw_query_lower,
-            stripped_query_lower,
-        }) if content_lower.starts_with(raw_query_lower) => 3,
-        Some(PrefixPreferenceQuery {
-            raw_query_lower, ..
-        }) if content_lower.contains(raw_query_lower) => 2,
-        Some(PrefixPreferenceQuery {
-            stripped_query_lower,
-            ..
-        }) if content_lower.starts_with(stripped_query_lower) => 1,
-        _ => 0,
-    }
-}
-
 pub(super) fn compute_quality_tier(
     query_word_count: usize,
     total_query_weight: u16,

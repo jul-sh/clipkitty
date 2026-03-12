@@ -21,38 +21,38 @@ use std::time::Instant;
 
 use self::alignment::{alignment_exactness_signals, choose_best_alignment, trim_match_candidates};
 pub use self::matching::edit_distance_bounded;
-pub(crate) use self::matching::{
-    does_word_match, does_word_match_fast, max_edit_distance, WordMatchKind,
-};
 #[cfg(test)]
 use self::matching::subsequence_match;
+pub(crate) use self::matching::{
+    does_word_match, does_word_match_fast, does_word_match_fast_raw, max_edit_distance,
+    WordMatchKind,
+};
+use self::policy::{
+    compute_quality_detail, compute_quality_tier, compute_recency_bucket, compute_recency_score,
+    compute_structure_detail, quantize_bm25,
+};
+#[cfg(test)]
+use self::policy::{
+    quality_detail_structure, quality_detail_typo_score, recency_bucket_last_day_max_age_secs,
+    recency_bucket_last_hour_max_age_secs, recency_bucket_last_month_max_age_secs,
+    recency_bucket_last_quarter_max_age_secs, recency_bucket_last_week_max_age_secs,
+};
 pub use self::policy::{
     BucketScore, PrefixPreferenceQuery, QualityDetail, QualityTier, RecencyBucket, StructureDetail,
     LARGE_DOC_THRESHOLD_BYTES,
-};
-use self::policy::{
-    compute_prefix_preference_score, compute_quality_detail, compute_quality_tier,
-    compute_recency_bucket, compute_recency_score, compute_structure_detail, quantize_bm25,
-};
-#[cfg(test)]
-use self::policy::{
-    quality_detail_structure, quality_detail_typo_score,
-    recency_bucket_last_day_max_age_secs, recency_bucket_last_hour_max_age_secs,
-    recency_bucket_last_month_max_age_secs, recency_bucket_last_quarter_max_age_secs,
-    recency_bucket_last_week_max_age_secs,
 };
 
 /// Context for computing bucket scores on a candidate document.
 /// Groups the document-derived and query-derived parameters.
 pub struct ScoringContext<'a> {
-    /// Lowercased content of the document
-    pub content_lower: &'a str,
-    /// Pre-tokenized original words from the document
-    pub doc_word_strs: &'a [&'a str],
-    /// Lowercased view of `doc_word_strs`
-    pub doc_word_lower_strs: &'a [&'a str],
+    /// Pre-tokenized, mode-specific document representation
+    pub document: &'a PreparedDocument<'a>,
     /// Query words to match against
     pub query_words: &'a [&'a str],
+    /// Lowercased query words, precomputed once per search
+    pub query_words_lower: &'a [&'a str],
+    /// Lowercased full query with spaces preserved between query tokens
+    pub joined_query_lower: Option<&'a str>,
     /// Whether the last query word is a prefix (user still typing)
     pub last_word_is_prefix: bool,
     /// Optional prefix preference for ranking
@@ -63,6 +63,137 @@ pub struct ScoringContext<'a> {
     pub bm25_score: f32,
     /// Current time (unix seconds)
     pub now: i64,
+}
+
+#[derive(Debug, Clone, Copy)]
+pub(crate) struct TokenSpan {
+    start: usize,
+    end: usize,
+}
+
+#[derive(Debug)]
+pub struct SmallPreparedDocument<'a> {
+    content: &'a str,
+    content_lower: String,
+    token_spans: Vec<TokenSpan>,
+    lower_tokens: Vec<String>,
+}
+
+#[derive(Debug)]
+enum LargeFastCaseMode {
+    Ascii,
+    Unicode,
+}
+
+#[derive(Debug)]
+pub struct LargeFastPreparedDocument<'a> {
+    content: &'a str,
+    token_spans: Vec<TokenSpan>,
+    case_mode: LargeFastCaseMode,
+}
+
+#[derive(Debug)]
+pub enum PreparedDocument<'a> {
+    Small(SmallPreparedDocument<'a>),
+    LargeFast(LargeFastPreparedDocument<'a>),
+}
+
+impl<'a> PreparedDocument<'a> {
+    fn token_count(&self) -> usize {
+        match self {
+            Self::Small(doc) => doc.token_spans.len(),
+            Self::LargeFast(doc) => doc.token_spans.len(),
+        }
+    }
+
+    fn for_each_fast_token(&self, mut visit: impl FnMut(usize, &'a str) -> bool) {
+        match self {
+            Self::LargeFast(doc) => {
+                for_each_prepared_token(doc.content, &doc.token_spans, &mut visit)
+            }
+            Self::Small(_) => {}
+        }
+    }
+
+    fn starts_with_case_insensitive(&self, needle_lower: &str) -> bool {
+        match self {
+            Self::Small(doc) => doc.content_lower.starts_with(needle_lower),
+            Self::LargeFast(doc) => match doc.case_mode {
+                LargeFastCaseMode::Ascii => {
+                    starts_with_ignore_ascii_case(doc.content, needle_lower)
+                }
+                LargeFastCaseMode::Unicode => doc.content.to_lowercase().starts_with(needle_lower),
+            },
+        }
+    }
+
+    fn contains_case_insensitive(&self, needle_lower: &str) -> bool {
+        match self {
+            Self::Small(doc) => doc.content_lower.contains(needle_lower),
+            Self::LargeFast(doc) => match doc.case_mode {
+                LargeFastCaseMode::Ascii => contains_ignore_ascii_case(doc.content, needle_lower),
+                LargeFastCaseMode::Unicode => doc.content.to_lowercase().contains(needle_lower),
+            },
+        }
+    }
+
+    fn is_fast_mode(&self) -> bool {
+        matches!(self, Self::LargeFast(_))
+    }
+}
+
+impl<'a> SmallPreparedDocument<'a> {
+    fn raw_token(&self, index: usize) -> &'a str {
+        raw_token_from(self.content, self.token_spans[index])
+    }
+
+    fn lower_token(&self, index: usize) -> &str {
+        self.lower_tokens[index].as_str()
+    }
+}
+
+fn raw_token_from(content: &str, span: TokenSpan) -> &str {
+    &content[span.start..span.end]
+}
+
+fn for_each_prepared_token<'a>(
+    content: &'a str,
+    token_spans: &[TokenSpan],
+    visit: &mut impl FnMut(usize, &'a str) -> bool,
+) {
+    for (dpos, span) in token_spans.iter().copied().enumerate() {
+        if !visit(dpos, raw_token_from(content, span)) {
+            break;
+        }
+    }
+}
+
+pub(crate) fn prepare_document_for_ranking(content: &str) -> PreparedDocument<'_> {
+    let token_spans = tokenize_for_ranking(content);
+
+    if content.len() > LARGE_DOC_THRESHOLD_BYTES {
+        PreparedDocument::LargeFast(LargeFastPreparedDocument {
+            content,
+            token_spans,
+            case_mode: if content.is_ascii() {
+                LargeFastCaseMode::Ascii
+            } else {
+                LargeFastCaseMode::Unicode
+            },
+        })
+    } else {
+        let content_lower = content.to_lowercase();
+        let lower_tokens = token_spans
+            .iter()
+            .map(|span| content[span.start..span.end].to_lowercase())
+            .collect();
+        PreparedDocument::Small(SmallPreparedDocument {
+            content,
+            content_lower,
+            token_spans,
+            lower_tokens,
+        })
+    }
 }
 
 #[cfg(feature = "perf-log")]
@@ -77,6 +208,65 @@ pub(crate) struct RankingPerfBreakdown {
     pub alignment_ns: u64,
     pub quality_signals_ns: u64,
     pub exactness_ns: u64,
+}
+
+fn tokenize_for_ranking(content: &str) -> Vec<TokenSpan> {
+    if content.is_ascii() {
+        tokenize_for_ranking_ascii(content.as_bytes())
+    } else {
+        tokenize_for_ranking_unicode(content)
+    }
+}
+
+fn tokenize_for_ranking_ascii(bytes: &[u8]) -> Vec<TokenSpan> {
+    let mut tokens = Vec::new();
+    let mut i = 0usize;
+    while i < bytes.len() {
+        if bytes[i].is_ascii_whitespace() {
+            i += 1;
+            continue;
+        }
+
+        let start = i;
+        let is_word = bytes[i].is_ascii_alphanumeric();
+        i += 1;
+
+        while i < bytes.len()
+            && !bytes[i].is_ascii_whitespace()
+            && bytes[i].is_ascii_alphanumeric() == is_word
+        {
+            i += 1;
+        }
+
+        tokens.push(TokenSpan { start, end: i });
+    }
+    tokens
+}
+
+fn tokenize_for_ranking_unicode(content: &str) -> Vec<TokenSpan> {
+    let mut tokens = Vec::new();
+    let mut chars = content.char_indices().peekable();
+
+    while let Some((start, ch)) = chars.next() {
+        if ch.is_whitespace() {
+            continue;
+        }
+
+        let is_word = ch.is_alphanumeric();
+        let mut end = start + ch.len_utf8();
+
+        while let Some(&(next_start, next_ch)) = chars.peek() {
+            if next_ch.is_whitespace() || next_ch.is_alphanumeric() != is_word {
+                break;
+            }
+            end = next_start + next_ch.len_utf8();
+            chars.next();
+        }
+
+        tokens.push(TokenSpan { start, end });
+    }
+
+    tokens
 }
 
 /// Per-query-word match result
@@ -416,17 +606,15 @@ impl RankingBreakdown {
 }
 
 fn build_ranking_breakdown(ctx: &ScoringContext<'_>) -> RankingBreakdown {
-    let fast_mode = ctx.content_lower.len() > LARGE_DOC_THRESHOLD_BYTES;
     let word_matches = match_query_words(
+        ctx.document,
         ctx.query_words,
-        ctx.doc_word_strs,
-        ctx.doc_word_lower_strs,
+        ctx.query_words_lower,
         ctx.last_word_is_prefix,
-        fast_mode,
     );
     let quality_signals = compute_document_quality_signals(
-        ctx.content_lower,
-        ctx.query_words,
+        ctx.document,
+        ctx.joined_query_lower,
         ctx.prefix_preference,
         &word_matches,
     );
@@ -443,22 +631,19 @@ fn build_ranking_breakdown(ctx: &ScoringContext<'_>) -> RankingBreakdown {
 fn build_ranking_breakdown_with_perf(
     ctx: &ScoringContext<'_>,
 ) -> (RankingBreakdown, RankingPerfBreakdown) {
-    let fast_mode = ctx.content_lower.len() > LARGE_DOC_THRESHOLD_BYTES;
-
     let match_start = Instant::now();
     let (word_matches, mut perf) = match_query_words_with_perf(
+        ctx.document,
         ctx.query_words,
-        ctx.doc_word_strs,
-        ctx.doc_word_lower_strs,
+        ctx.query_words_lower,
         ctx.last_word_is_prefix,
-        fast_mode,
     );
     perf.match_query_words_ns = match_start.elapsed().as_nanos() as u64;
 
     let quality_start = Instant::now();
     let (quality_signals, exactness_ns) = compute_document_quality_signals_with_perf(
-        ctx.content_lower,
-        ctx.query_words,
+        ctx.document,
+        ctx.joined_query_lower,
         ctx.prefix_preference,
         &word_matches,
     );
@@ -478,11 +663,9 @@ fn build_ranking_breakdown_with_perf(
 
 /// Compute the bucket score for a candidate document.
 ///
-/// `content_lower` and `doc_word_strs` should be pre-computed from the candidate's
-/// content to avoid redundant work when the same tokens are needed for highlighting.
-///
-/// For large documents (>5KB), uses fast matching mode which only supports exact
-/// and prefix matching, trading typo tolerance for performance.
+/// The prepared document in `ctx` should be built once per candidate and reused across
+/// matching and quality scoring. Large documents automatically take a cheaper fast path
+/// that avoids the full small-document fuzzy pipeline.
 pub fn compute_bucket_score(ctx: &ScoringContext<'_>) -> BucketScore {
     if ctx.query_words.is_empty() {
         return BucketScore {
@@ -518,10 +701,6 @@ pub(crate) fn compute_bucket_score_with_perf(
 
     let (breakdown, perf) = build_ranking_breakdown_with_perf(ctx);
     (breakdown.into_bucket_score(ctx.timestamp), perf)
-}
-
-fn query_total_match_weight(query_words: &[&str]) -> u16 {
-    query_words.iter().map(|qw| base_match_weight(qw)).sum()
 }
 
 #[derive(Debug, Clone, Copy)]
@@ -579,64 +758,109 @@ fn compute_match_span_stats(word_matches: &[WordMatch]) -> Option<MatchSpanStats
     })
 }
 
-fn compute_document_quality_signals(
-    content_lower: &str,
-    query_words: &[&str],
-    prefix_preference: Option<PrefixPreferenceQuery<'_>>,
-    word_matches: &[WordMatch],
-) -> QualitySignals {
-    let words_matched_weight: u16 = word_matches.iter().map(|m| m.matched_weight()).sum();
-    let total_query_weight = query_total_match_weight(query_words);
-    let prefix_preference_score = compute_prefix_preference_score(content_lower, prefix_preference);
-    let exactness = compute_exactness_signals(content_lower, query_words, word_matches);
-    let proximity_score = compute_proximity(word_matches);
-    let typo_score = compute_typo_score(word_matches);
-    let match_class_score = compute_match_class_score(word_matches);
+fn total_query_weight(word_matches: &[WordMatch]) -> u16 {
+    word_matches.iter().map(|m| m.query_weight).sum()
+}
 
+fn words_matched_weight(word_matches: &[WordMatch]) -> u16 {
+    word_matches.iter().map(|m| m.matched_weight()).sum()
+}
+
+fn build_quality_signals(
+    word_matches: &[WordMatch],
+    total_query_weight: u16,
+    prefix_preference_score: u8,
+    exactness: ExactnessSignals,
+) -> QualitySignals {
     QualitySignals {
-        query_word_count: query_words.len(),
+        query_word_count: word_matches.len(),
         total_query_weight,
-        words_matched_weight,
+        words_matched_weight: words_matched_weight(word_matches),
         prefix_preference_score,
         exactness,
-        proximity_score,
-        match_class_score,
-        typo_score,
+        proximity_score: compute_proximity(word_matches),
+        match_class_score: compute_match_class_score(word_matches),
+        typo_score: compute_typo_score(word_matches),
         span_stats: compute_match_span_stats(word_matches),
     }
 }
 
+fn has_single_word_content_prefix(word_matches: &[WordMatch]) -> bool {
+    let [word_match] = word_matches else {
+        return false;
+    };
+
+    matches!(
+        word_match.state,
+        WordMatchState::Exact { doc_word_pos: 0 } | WordMatchState::Prefix { doc_word_pos: 0 }
+    )
+}
+
+fn compute_fast_quality_signals(
+    prefix_preference_score: u8,
+    word_matches: &[WordMatch],
+) -> QualitySignals {
+    let mut exactness = alignment_exactness_signals(word_matches);
+    exactness.content_prefix |= has_single_word_content_prefix(word_matches);
+
+    build_quality_signals(
+        word_matches,
+        total_query_weight(word_matches),
+        prefix_preference_score,
+        exactness,
+    )
+}
+
+fn compute_document_quality_signals(
+    document: &PreparedDocument<'_>,
+    joined_query_lower: Option<&str>,
+    prefix_preference: Option<PrefixPreferenceQuery<'_>>,
+    word_matches: &[WordMatch],
+) -> QualitySignals {
+    let prefix_preference_score =
+        compute_prefix_preference_score_case_insensitive(document, prefix_preference);
+
+    if document.is_fast_mode() {
+        return compute_fast_quality_signals(prefix_preference_score, word_matches);
+    }
+
+    let exactness = compute_exactness_signals(document, joined_query_lower, word_matches);
+    build_quality_signals(
+        word_matches,
+        total_query_weight(word_matches),
+        prefix_preference_score,
+        exactness,
+    )
+}
+
 #[cfg(feature = "perf-log")]
 fn compute_document_quality_signals_with_perf(
-    content_lower: &str,
-    query_words: &[&str],
+    document: &PreparedDocument<'_>,
+    joined_query_lower: Option<&str>,
     prefix_preference: Option<PrefixPreferenceQuery<'_>>,
     word_matches: &[WordMatch],
 ) -> (QualitySignals, u64) {
-    let words_matched_weight: u16 = word_matches.iter().map(|m| m.matched_weight()).sum();
-    let total_query_weight = query_total_match_weight(query_words);
-    let prefix_preference_score = compute_prefix_preference_score(content_lower, prefix_preference);
+    let prefix_preference_score =
+        compute_prefix_preference_score_case_insensitive(document, prefix_preference);
+
+    if document.is_fast_mode() {
+        return (
+            compute_fast_quality_signals(prefix_preference_score, word_matches),
+            0,
+        );
+    }
 
     let exactness_start = Instant::now();
-    let exactness = compute_exactness_signals(content_lower, query_words, word_matches);
+    let exactness = compute_exactness_signals(document, joined_query_lower, word_matches);
     let exactness_ns = exactness_start.elapsed().as_nanos() as u64;
 
-    let proximity_score = compute_proximity(word_matches);
-    let typo_score = compute_typo_score(word_matches);
-    let match_class_score = compute_match_class_score(word_matches);
-
     (
-        QualitySignals {
-            query_word_count: query_words.len(),
-            total_query_weight,
-            words_matched_weight,
+        build_quality_signals(
+            word_matches,
+            total_query_weight(word_matches),
             prefix_preference_score,
             exactness,
-            proximity_score,
-            match_class_score,
-            typo_score,
-            span_stats: compute_match_span_stats(word_matches),
-        },
+        ),
         exactness_ns,
     )
 }
@@ -645,19 +869,12 @@ fn compute_alignment_quality_signals(
     word_matches: &[WordMatch],
     total_query_weight: u16,
 ) -> QualitySignals {
-    let words_matched_weight: u16 = word_matches.iter().map(|m| m.matched_weight()).sum();
-
-    QualitySignals {
-        query_word_count: word_matches.len(),
+    build_quality_signals(
+        word_matches,
         total_query_weight,
-        words_matched_weight,
-        prefix_preference_score: 0,
-        exactness: alignment_exactness_signals(word_matches),
-        proximity_score: compute_proximity(word_matches),
-        match_class_score: compute_match_class_score(word_matches),
-        typo_score: compute_typo_score(word_matches),
-        span_stats: compute_match_span_stats(word_matches),
-    }
+        0,
+        alignment_exactness_signals(word_matches),
+    )
 }
 
 fn compute_typo_score(word_matches: &[WordMatch]) -> u8 {
@@ -703,12 +920,20 @@ fn compute_match_class_score(word_matches: &[WordMatch]) -> u8 {
 /// When `fast_mode` is true (for large documents), only exact and prefix matching
 /// is used, skipping expensive fuzzy edit distance and subsequence matching.
 fn match_query_words(
+    document: &PreparedDocument<'_>,
     query_words: &[&str],
-    doc_words: &[&str],
-    doc_words_lower: &[&str],
+    query_words_lower: &[&str],
     last_word_is_prefix: bool,
-    fast_mode: bool,
 ) -> Vec<WordMatch> {
+    if document.is_fast_mode() && query_words.len() == 1 {
+        return vec![match_single_query_word_fast(
+            document,
+            query_words[0],
+            query_words_lower[0],
+            last_word_is_prefix,
+        )];
+    }
+
     let defaults: Vec<WordMatch> = query_words
         .iter()
         .map(|qw| WordMatch::unmatched(qw))
@@ -720,7 +945,7 @@ fn match_query_words(
         .map(|(qi, qw)| {
             let is_last = qi == query_words.len() - 1;
             let allow_prefix = is_last && last_word_is_prefix;
-            collect_match_candidates(qw, doc_words, doc_words_lower, allow_prefix, fast_mode)
+            collect_match_candidates(qw, query_words_lower[qi], document, allow_prefix)
         })
         .collect();
 
@@ -729,12 +954,36 @@ fn match_query_words(
 
 #[cfg(feature = "perf-log")]
 fn match_query_words_with_perf(
+    document: &PreparedDocument<'_>,
     query_words: &[&str],
-    doc_words: &[&str],
-    doc_words_lower: &[&str],
+    query_words_lower: &[&str],
     last_word_is_prefix: bool,
-    fast_mode: bool,
 ) -> (Vec<WordMatch>, RankingPerfBreakdown) {
+    if document.is_fast_mode() && query_words.len() == 1 {
+        let collect_start = Instant::now();
+        let (word_match, raw_candidate_count) = match_single_query_word_fast_with_count(
+            document,
+            query_words[0],
+            query_words_lower[0],
+            last_word_is_prefix,
+        );
+        let collect_candidates_ns = collect_start.elapsed().as_nanos() as u64;
+        let trimmed_candidate_count =
+            usize::from(!matches!(word_match.state, WordMatchState::Unmatched));
+        return (
+            vec![word_match],
+            RankingPerfBreakdown {
+                doc_word_count: document.token_count(),
+                query_word_count: 1,
+                raw_candidate_count,
+                trimmed_candidate_count,
+                collect_candidates_ns,
+                alignment_ns: 0,
+                ..RankingPerfBreakdown::default()
+            },
+        );
+    }
+
     let defaults: Vec<WordMatch> = query_words
         .iter()
         .map(|qw| WordMatch::unmatched(qw))
@@ -751,10 +1000,9 @@ fn match_query_words_with_perf(
             let allow_prefix = is_last && last_word_is_prefix;
             let (candidates, raw_count) = collect_match_candidates_with_perf(
                 qw,
-                doc_words,
-                doc_words_lower,
+                query_words_lower[qi],
+                document,
                 allow_prefix,
-                fast_mode,
             );
             raw_candidate_count += raw_count;
             trimmed_candidate_count += candidates.len();
@@ -770,7 +1018,7 @@ fn match_query_words_with_perf(
     (
         word_matches,
         RankingPerfBreakdown {
-            doc_word_count: doc_words.len(),
+            doc_word_count: document.token_count(),
             query_word_count: query_words.len(),
             raw_candidate_count,
             trimmed_candidate_count,
@@ -789,67 +1037,159 @@ fn base_match_weight(qw: &str) -> u16 {
     }
 }
 
+fn match_single_query_word_fast(
+    document: &PreparedDocument<'_>,
+    query_word: &str,
+    query_word_lower: &str,
+    allow_prefix: bool,
+) -> WordMatch {
+    match_single_query_word_fast_with_count(document, query_word, query_word_lower, allow_prefix).0
+}
+
+fn match_single_query_word_fast_with_count(
+    document: &PreparedDocument<'_>,
+    query_word: &str,
+    query_word_lower: &str,
+    allow_prefix: bool,
+) -> (WordMatch, usize) {
+    if !document.is_fast_mode() {
+        return (WordMatch::unmatched(query_word), 0);
+    }
+
+    let mut raw_candidate_count = 0usize;
+    let mut best_exact = None;
+    let mut best_prefix = None;
+
+    document.for_each_fast_token(|dpos, doc_token| {
+        let Some(candidate) = classify_fast_match_candidate(
+            query_word,
+            query_word_lower,
+            doc_token,
+            dpos,
+            allow_prefix,
+        ) else {
+            return true;
+        };
+
+        raw_candidate_count += 1;
+        match candidate.state {
+            WordMatchState::Exact { .. } => {
+                best_exact = Some(candidate);
+                false
+            }
+            WordMatchState::Prefix { .. } => {
+                best_prefix.get_or_insert(candidate);
+                true
+            }
+            WordMatchState::Unmatched
+            | WordMatchState::SubwordPrefix { .. }
+            | WordMatchState::InfixSubstring { .. }
+            | WordMatchState::Fuzzy { .. }
+            | WordMatchState::Subsequence { .. } => true,
+        }
+    });
+
+    if let Some(best_exact) = best_exact {
+        return (best_exact, raw_candidate_count);
+    }
+
+    (
+        best_prefix.unwrap_or_else(|| WordMatch::unmatched(query_word)),
+        raw_candidate_count,
+    )
+}
+
 fn collect_match_candidates(
     query_word: &str,
-    doc_words: &[&str],
-    doc_words_lower: &[&str],
+    query_word_lower: &str,
+    document: &PreparedDocument<'_>,
     allow_prefix: bool,
-    fast_mode: bool,
 ) -> Vec<WordMatch> {
-    collect_match_candidates_impl(query_word, doc_words, doc_words_lower, allow_prefix, fast_mode).0
+    collect_match_candidates_impl(query_word, query_word_lower, document, allow_prefix).0
 }
 
 #[cfg(feature = "perf-log")]
 fn collect_match_candidates_with_perf(
     query_word: &str,
-    doc_words: &[&str],
-    doc_words_lower: &[&str],
+    query_word_lower: &str,
+    document: &PreparedDocument<'_>,
     allow_prefix: bool,
-    fast_mode: bool,
 ) -> (Vec<WordMatch>, usize) {
-    collect_match_candidates_impl(query_word, doc_words, doc_words_lower, allow_prefix, fast_mode)
+    collect_match_candidates_impl(query_word, query_word_lower, document, allow_prefix)
 }
 
 fn collect_match_candidates_impl(
     query_word: &str,
-    doc_words: &[&str],
-    doc_words_lower: &[&str],
+    query_word_lower: &str,
+    document: &PreparedDocument<'_>,
     allow_prefix: bool,
-    fast_mode: bool,
 ) -> (Vec<WordMatch>, usize) {
-    let qw_lower = query_word.to_lowercase();
-
-    let candidates: Vec<WordMatch> = doc_words
-        .iter()
-        .zip(doc_words_lower.iter())
-        .enumerate()
-        .filter_map(|(dpos, (dw_raw, dw_lower))| {
-            let wmk = if fast_mode {
-                does_word_match_fast(&qw_lower, dw_lower, allow_prefix)
-            } else {
-                does_word_match(&qw_lower, dw_lower, dw_raw, allow_prefix)
-            };
-            match wmk {
-                WordMatchKind::Exact => Some(WordMatch::exact(query_word, dpos)),
-                WordMatchKind::Prefix => Some(WordMatch::prefix(query_word, dpos)),
-                WordMatchKind::SubwordPrefix => Some(WordMatch::subword_prefix(query_word, dpos)),
-                WordMatchKind::InfixSubstring => Some(WordMatch::infix_substring(query_word, dpos)),
-                WordMatchKind::Fuzzy(dist) => Some(WordMatch::fuzzy(
-                    query_word,
-                    dpos,
-                    dist,
-                    classify_fuzzy_typo(&qw_lower, dw_lower, dist),
-                )),
-                WordMatchKind::Subsequence(gaps) => {
-                    Some(WordMatch::subsequence(query_word, dpos, gaps))
+    let candidates: Vec<WordMatch> = match document {
+        PreparedDocument::Small(doc) => (0..doc.token_spans.len())
+            .filter_map(|dpos| {
+                let dw_raw = doc.raw_token(dpos);
+                let dw_lower = doc.lower_token(dpos);
+                let wmk = does_word_match(query_word_lower, dw_lower, dw_raw, allow_prefix);
+                match wmk {
+                    WordMatchKind::Exact => Some(WordMatch::exact(query_word, dpos)),
+                    WordMatchKind::Prefix => Some(WordMatch::prefix(query_word, dpos)),
+                    WordMatchKind::SubwordPrefix => {
+                        Some(WordMatch::subword_prefix(query_word, dpos))
+                    }
+                    WordMatchKind::InfixSubstring => {
+                        Some(WordMatch::infix_substring(query_word, dpos))
+                    }
+                    WordMatchKind::Fuzzy(dist) => Some(WordMatch::fuzzy(
+                        query_word,
+                        dpos,
+                        dist,
+                        classify_fuzzy_typo(query_word_lower, dw_lower, dist),
+                    )),
+                    WordMatchKind::Subsequence(gaps) => {
+                        Some(WordMatch::subsequence(query_word, dpos, gaps))
+                    }
+                    WordMatchKind::None => None,
                 }
-                WordMatchKind::None => None,
-            }
-        })
-        .collect();
+            })
+            .collect(),
+        PreparedDocument::LargeFast(_) => {
+            let mut candidates = Vec::new();
+            document.for_each_fast_token(|dpos, doc_token| {
+                if let Some(candidate) = classify_fast_match_candidate(
+                    query_word,
+                    query_word_lower,
+                    doc_token,
+                    dpos,
+                    allow_prefix,
+                ) {
+                    candidates.push(candidate);
+                }
+                true
+            });
+            candidates
+        }
+    };
 
     let raw_candidate_count = candidates.len();
     (trim_match_candidates(candidates), raw_candidate_count)
+}
+
+fn classify_fast_match_candidate(
+    query_word: &str,
+    query_word_lower: &str,
+    document_token: &str,
+    doc_word_pos: usize,
+    allow_prefix: bool,
+) -> Option<WordMatch> {
+    match does_word_match_fast_raw(query_word_lower, document_token, allow_prefix) {
+        WordMatchKind::Exact => Some(WordMatch::exact(query_word, doc_word_pos)),
+        WordMatchKind::Prefix => Some(WordMatch::prefix(query_word, doc_word_pos)),
+        WordMatchKind::None => None,
+        WordMatchKind::SubwordPrefix
+        | WordMatchKind::InfixSubstring
+        | WordMatchKind::Fuzzy(_)
+        | WordMatchKind::Subsequence(_) => None,
+    }
 }
 
 fn classify_fuzzy_typo(query: &str, target: &str, dist: u8) -> TypoClass {
@@ -978,10 +1318,69 @@ fn compute_proximity(word_matches: &[WordMatch]) -> u16 {
     u16::MAX.saturating_sub(total_distance.min(u16::MAX as u32) as u16)
 }
 
+fn compute_prefix_preference_score_case_insensitive(
+    document: &PreparedDocument<'_>,
+    prefix_preference: Option<PrefixPreferenceQuery<'_>>,
+) -> u8 {
+    match prefix_preference {
+        Some(PrefixPreferenceQuery {
+            raw_query_lower, ..
+        }) if document.starts_with_case_insensitive(raw_query_lower) => 3,
+        Some(PrefixPreferenceQuery {
+            raw_query_lower, ..
+        }) if document.contains_case_insensitive(raw_query_lower) => 2,
+        Some(PrefixPreferenceQuery {
+            stripped_query_lower,
+            ..
+        }) if document.starts_with_case_insensitive(stripped_query_lower) => 1,
+        _ => 0,
+    }
+}
+
+fn starts_with_ignore_ascii_case(content: &str, needle_lower: &str) -> bool {
+    if !needle_lower.is_ascii() {
+        return false;
+    }
+
+    let bytes = content.as_bytes();
+    let needle = needle_lower.as_bytes();
+    bytes.len() >= needle.len() && bytes[..needle.len()].eq_ignore_ascii_case(needle)
+}
+
+fn contains_ignore_ascii_case(content: &str, needle_lower: &str) -> bool {
+    if needle_lower.is_empty() {
+        return true;
+    }
+    if !needle_lower.is_ascii() {
+        return false;
+    }
+
+    let haystack = content.as_bytes();
+    let needle = needle_lower.as_bytes();
+    if needle.len() > haystack.len() {
+        return false;
+    }
+
+    let first_lower = needle[0];
+    let first_upper = first_lower.to_ascii_uppercase();
+    let last_start = haystack.len() - needle.len();
+
+    for start in 0..=last_start {
+        let first = haystack[start];
+        if (first == first_lower || first == first_upper)
+            && haystack[start..start + needle.len()].eq_ignore_ascii_case(needle)
+        {
+            return true;
+        }
+    }
+
+    false
+}
+
 /// Compute explicit exactness signals for the matched query terms.
 fn compute_exactness_signals(
-    content_lower: &str,
-    query_words: &[&str],
+    document: &PreparedDocument<'_>,
+    full_query_lower: Option<&str>,
     word_matches: &[WordMatch],
 ) -> ExactnessSignals {
     let matched: Vec<&WordMatch> = word_matches
@@ -992,17 +1391,14 @@ fn compute_exactness_signals(
         return ExactnessSignals::default();
     }
 
-    let full_query = if !query_words.is_empty() {
-        query_words.join(" ").to_lowercase()
-    } else {
-        String::new()
-    };
+    let full_query = full_query_lower.unwrap_or("");
 
     let all_matched = word_matches
         .iter()
         .all(|m| !matches!(m.state, WordMatchState::Unmatched));
-    let content_prefix = !full_query.is_empty() && content_lower.starts_with(&full_query);
-    let query_substring = !full_query.is_empty() && content_lower.contains(&full_query);
+    let content_prefix =
+        !full_query.is_empty() && document.starts_with_case_insensitive(full_query);
+    let query_substring = !full_query.is_empty() && document.contains_case_insensitive(full_query);
     let all_exact = matched
         .iter()
         .all(|m| matches!(m.state, WordMatchState::Exact { .. }));
@@ -1039,8 +1435,10 @@ fn compute_exactness_signals(
 
 /// Compute exactness score (0-6 scale) from explicit exactness signals.
 #[cfg(test)]
-fn compute_exactness(content_lower: &str, query_words: &[&str], word_matches: &[WordMatch]) -> u8 {
-    compute_exactness_signals(content_lower, query_words, word_matches)
+fn compute_exactness(content: &str, query_words: &[&str], word_matches: &[WordMatch]) -> u8 {
+    let document = prepare_document_for_ranking(content);
+    let full_query_lower = (!query_words.is_empty()).then(|| query_words.join(" ").to_lowercase());
+    compute_exactness_signals(&document, full_query_lower.as_deref(), word_matches)
         .band()
         .score()
 }
@@ -1059,23 +1457,19 @@ mod tests {
         bm25: f32,
         now: i64,
     ) -> BucketScore {
-        use crate::search::tokenize_words;
-        let content_lower = content.to_lowercase();
-        let doc_words = tokenize_words(content);
-        let doc_word_strs: Vec<&str> = doc_words
-            .iter()
-            .map(|(_, _, w): &(usize, usize, String)| w.as_str())
-            .collect();
-        let doc_words_lower = tokenize_words(&content_lower);
-        let doc_word_lower_strs: Vec<&str> = doc_words_lower
-            .iter()
-            .map(|(_, _, w): &(usize, usize, String)| w.as_str())
-            .collect();
+        let document = prepare_document_for_ranking(content);
+        let query_words_lower_owned: Vec<String> =
+            query_words.iter().map(|word| word.to_lowercase()).collect();
+        let query_words_lower: Vec<&str> =
+            query_words_lower_owned.iter().map(String::as_str).collect();
+        let joined_query_lower =
+            (!query_words.is_empty()).then(|| query_words.join(" ").to_lowercase());
+
         compute_bucket_score(&ScoringContext {
-            content_lower: &content_lower,
-            doc_word_strs: &doc_word_strs,
-            doc_word_lower_strs: &doc_word_lower_strs,
+            document: &document,
             query_words,
+            query_words_lower: &query_words_lower,
+            joined_query_lower: joined_query_lower.as_deref(),
             last_word_is_prefix,
             prefix_preference,
             timestamp,
@@ -1098,16 +1492,17 @@ mod tests {
         doc_words: &[&str],
         last_word_is_prefix: bool,
     ) -> Vec<WordMatch> {
-        let doc_words_lower: Vec<String> =
-            doc_words.iter().map(|word| word.to_lowercase()).collect();
-        let doc_word_lower_refs: Vec<&str> =
-            doc_words_lower.iter().map(|word| word.as_str()).collect();
+        let content = doc_words.join(" ");
+        let document = prepare_document_for_ranking(&content);
+        let query_words_lower_owned: Vec<String> =
+            query_words.iter().map(|word| word.to_lowercase()).collect();
+        let query_words_lower: Vec<&str> =
+            query_words_lower_owned.iter().map(String::as_str).collect();
         match_query_words(
+            &document,
             query_words,
-            doc_words,
-            &doc_word_lower_refs,
+            &query_words_lower,
             last_word_is_prefix,
-            false,
         )
     }
 
@@ -1451,6 +1846,44 @@ mod tests {
             matches[1].doc_word_pos(),
             Some(6),
             "Should use the tighter trailing cluster"
+        );
+    }
+
+    #[test]
+    fn test_large_fast_single_word_prefers_exact_over_prefix() {
+        let filler = "noise ".repeat((LARGE_DOC_THRESHOLD_BYTES / 6) + 32);
+        let content = format!("{filler} errorlog {filler} error");
+        let document = prepare_document_for_ranking(&content);
+        assert!(document.is_fast_mode());
+
+        let matches = match_query_words(&document, &["error"], &["error"], true);
+        assert!(matches!(matches[0].state, WordMatchState::Exact { .. }));
+    }
+
+    #[test]
+    fn test_large_fast_single_word_content_prefix_beats_later_exact_match() {
+        let now = 1700000000i64;
+        let filler = "noise ".repeat((LARGE_DOC_THRESHOLD_BYTES / 6) + 64);
+        let content_prefix = format!("error {filler}");
+        let later_exact = format!("{filler}error");
+
+        assert!(prepare_document_for_ranking(&content_prefix).is_fast_mode());
+        assert!(prepare_document_for_ranking(&later_exact).is_fast_mode());
+
+        let prefix_score = score(
+            &content_prefix,
+            &["error"],
+            false,
+            None,
+            now - 3600,
+            1.0,
+            now,
+        );
+        let later_score = score(&later_exact, &["error"], false, None, now - 3600, 1.0, now);
+
+        assert!(
+            prefix_score > later_score,
+            "Large-doc fast mode should still reward a single-word content-prefix hit"
         );
     }
 
