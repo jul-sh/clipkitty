@@ -23,6 +23,7 @@ jobs:
         uses: actions/checkout@v4
         with:
           lfs: true
+          fetch-depth: 0  # Full history for commit count versioning
 
       - name: Configure macOS scrollbar behavior
         run: |
@@ -54,18 +55,16 @@ jobs:
         if: github.ref == 'refs/heads/main' || github.ref == 'refs/heads/release' || (github.event_name == 'pull_request' && (github.base_ref == 'main' || github.base_ref == 'release'))
         run: |
           TARGET_BRANCH="${GITHUB_BASE_REF:-${GITHUB_REF#refs/heads/}}"
-          VERSION=$(grep 'MARKETING_VERSION' Project.swift | head -1 | sed 's/.*"\(.*\)".*/\1/')
-          echo "Base version from Project.swift: $VERSION"
+          BASE_VERSION=$(grep 'MARKETING_VERSION' Project.swift | head -1 | sed 's/.*"\(.*\)".*/\1/')
+          echo "Base version from Project.swift: $BASE_VERSION"
+
+          # Extract major.minor from Project.swift, use commit count as patch
+          IFS='.' read -r major minor _patch <<< "$BASE_VERSION"
+          COMMIT_COUNT=$(git rev-list --count HEAD)
+          VERSION="${major}.${minor}.${COMMIT_COUNT}"
+          echo "Using commit count for patch: $VERSION"
 
           if [ "$TARGET_BRANCH" = "main" ]; then
-            # Beta releases from main
-            while gh release view "v$VERSION" &>/dev/null || gh release view "v$VERSION-beta" &>/dev/null; do
-              IFS='.' read -r major minor patch <<< "$VERSION"
-              patch=$((patch + 1))
-              VERSION="$major.$minor.$patch"
-              echo "Version exists, bumped to: $VERSION"
-            done
-
             CHANNEL="beta"
             RELEASE_TAG="v${VERSION}-beta"
             RELEASE_TITLE="ClipKitty v${VERSION} Beta"
@@ -85,8 +84,6 @@ jobs:
           echo "release_title=$RELEASE_TITLE" >> "$GITHUB_OUTPUT"
           echo "release_url=$RELEASE_URL" >> "$GITHUB_OUTPUT"
           echo "Final release version: $VERSION"
-        env:
-          GH_TOKEN: ${{ github.token }}
 
       - name: Setup Swift
         uses: swift-actions/setup-swift@v2
