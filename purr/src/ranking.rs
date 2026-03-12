@@ -16,22 +16,25 @@ pub const LARGE_DOC_THRESHOLD_BYTES: usize = 5 * 1024; // 5KB
 ///
 /// Tuple order (most to least important):
 /// 1. quality_tier — extremely coarse foundational match quality
-/// 2. recency_score — smooth logarithmic decay (255=now, 0=old)
-/// 3. quality_detail — nuanced coverage/structure/typo detail within a tier
-/// 4. bm25_quantized — BM25 scaled to integer
-/// 5. recency — raw unix timestamp (final tiebreaker)
+/// 2. recency_bucket — coarse human-scale age bands
+/// 3. quality_detail — nuanced coverage/structure/typo detail within a recency bucket
+/// 4. recency_score — smooth logarithmic decay (255=now, 0=old)
+/// 5. bm25_quantized — BM25 scaled to integer
+/// 6. recency — raw unix timestamp (final tiebreaker)
 #[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord)]
 pub struct BucketScore {
     pub quality_tier: u8,
-    pub recency_score: u8,
+    pub recency_bucket: u8,
     pub quality_detail: u64,
+    pub recency_score: u8,
     pub bm25_quantized: u16,
     pub recency: i64,
 }
 
 const QUALITY_DETAIL_PREFIX_SHIFT: u64 = 56;
 const QUALITY_DETAIL_COVERAGE_SHIFT: u64 = 40;
-const QUALITY_DETAIL_STRUCTURE_SHIFT: u64 = 8;
+const QUALITY_DETAIL_STRUCTURE_SHIFT: u64 = 16;
+const QUALITY_DETAIL_TYPO_CLASS_SHIFT: u64 = 8;
 
 impl BucketScore {
     pub fn words_matched_weight(&self) -> u16 {
@@ -73,10 +76,71 @@ struct WordMatch {
     edit_dist: u8,
     doc_word_pos: usize,
     is_exact: bool,
+    typo_class: TypoClass,
     /// Weight toward coarse coverage and tie-break detail.
     /// Punctuation tokens (like "://", ".") get 0 — they participate in
     /// proximity and highlighting only. Word tokens get len² (IDF proxy).
     match_weight: u16,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord)]
+enum TypoClass {
+    None,
+    CommonTransposition,
+    RepeatedCharEdit,
+    InsertionOrDeletion,
+    Substitution,
+    MultiEdit,
+    Subsequence,
+}
+
+impl TypoClass {
+    fn score(self) -> u8 {
+        match self {
+            Self::None => u8::MAX,
+            Self::CommonTransposition => 240,
+            Self::RepeatedCharEdit => 224,
+            Self::InsertionOrDeletion => 208,
+            Self::Substitution => 192,
+            Self::MultiEdit => 160,
+            Self::Subsequence => 96,
+        }
+    }
+}
+
+#[derive(Debug, Clone, Copy)]
+struct QualitySignals {
+    query_word_count: usize,
+    total_query_weight: u16,
+    words_matched_weight: u16,
+    prefix_preference_score: u8,
+    exactness_score: u8,
+    proximity_score: u16,
+    typo_class_score: u8,
+    typo_score: u8,
+    span_stats: Option<MatchSpanStats>,
+}
+
+impl QualitySignals {
+    fn quality_tier(self) -> u8 {
+        compute_quality_tier(
+            self.query_word_count,
+            self.total_query_weight,
+            self.words_matched_weight,
+            self.exactness_score,
+            self.span_stats,
+        )
+    }
+
+    fn quality_detail(self) -> u64 {
+        compute_quality_detail(
+            self.prefix_preference_score,
+            self.words_matched_weight,
+            self.typo_class_score,
+            self.typo_score,
+            compute_structure_detail(self.proximity_score, self.exactness_score, self.span_stats),
+        )
+    }
 }
 
 /// Compute the bucket score for a candidate document.
@@ -90,8 +154,9 @@ pub fn compute_bucket_score(ctx: &ScoringContext<'_>) -> BucketScore {
     if ctx.query_words.is_empty() {
         return BucketScore {
             quality_tier: 0,
-            recency_score: compute_recency_score(ctx.timestamp, ctx.now),
+            recency_bucket: compute_recency_bucket(ctx.timestamp, ctx.now),
             quality_detail: 0,
+            recency_score: compute_recency_score(ctx.timestamp, ctx.now),
             bm25_quantized: quantize_bm25(ctx.bm25_score),
             recency: ctx.timestamp,
         };
@@ -105,45 +170,21 @@ pub fn compute_bucket_score(ctx: &ScoringContext<'_>) -> BucketScore {
         ctx.last_word_is_prefix,
         fast_mode,
     );
-
-    let words_matched_weight: u16 = word_matches
-        .iter()
-        .filter(|m| m.matched)
-        .map(|m| m.match_weight)
-        .sum();
-    let total_query_weight = query_total_match_weight(ctx.query_words);
-    let prefix_preference_score =
-        compute_prefix_preference_score(ctx.content_lower, ctx.prefix_preference);
-    let total_edit_dist: u8 = word_matches
-        .iter()
-        .filter(|m| m.matched)
-        .map(|m| m.edit_dist)
-        .sum();
-    let typo_score = 255u8.saturating_sub(total_edit_dist);
-
-    let proximity_score = compute_proximity(&word_matches);
-    let exactness_score = compute_exactness(ctx.content_lower, ctx.query_words, &word_matches);
-    let quality_tier = compute_quality_tier(
-        total_query_weight,
-        words_matched_weight,
-        exactness_score,
-        &word_matches,
-    );
-    let quality_detail = compute_quality_detail(
-        prefix_preference_score,
-        words_matched_weight,
-        typo_score,
-        proximity_score,
-        exactness_score,
+    let signals = compute_bucket_quality_signals(
+        ctx.content_lower,
+        ctx.query_words,
+        ctx.prefix_preference,
         &word_matches,
     );
     let bm25_quantized = quantize_bm25(ctx.bm25_score);
+    let recency_bucket = compute_recency_bucket(ctx.timestamp, ctx.now);
     let recency_score = compute_recency_score(ctx.timestamp, ctx.now);
 
     BucketScore {
-        quality_tier,
+        quality_tier: signals.quality_tier(),
+        recency_bucket,
+        quality_detail: signals.quality_detail(),
         recency_score,
-        quality_detail,
         bm25_quantized,
         recency: ctx.timestamp,
     }
@@ -215,21 +256,76 @@ fn compute_match_span_stats(word_matches: &[WordMatch]) -> Option<MatchSpanStats
     })
 }
 
+fn compute_bucket_quality_signals(
+    content_lower: &str,
+    query_words: &[&str],
+    prefix_preference: Option<PrefixPreferenceQuery<'_>>,
+    word_matches: &[WordMatch],
+) -> QualitySignals {
+    let words_matched_weight: u16 = word_matches
+        .iter()
+        .filter(|m| m.matched)
+        .map(|m| m.match_weight)
+        .sum();
+    let total_query_weight = query_total_match_weight(query_words);
+    let prefix_preference_score = compute_prefix_preference_score(content_lower, prefix_preference);
+    let exactness_score = compute_exactness(content_lower, query_words, word_matches);
+    let proximity_score = compute_proximity(word_matches);
+    let typo_score = compute_typo_score(word_matches);
+    let typo_class_score = compute_typo_class_score(word_matches);
+
+    QualitySignals {
+        query_word_count: query_words.len(),
+        total_query_weight,
+        words_matched_weight,
+        prefix_preference_score,
+        exactness_score,
+        proximity_score,
+        typo_class_score,
+        typo_score,
+        span_stats: compute_match_span_stats(word_matches),
+    }
+}
+
+fn compute_alignment_quality_signals(
+    word_matches: &[WordMatch],
+    total_query_weight: u16,
+) -> QualitySignals {
+    let words_matched_weight: u16 = word_matches
+        .iter()
+        .filter(|m| m.matched)
+        .map(|m| m.match_weight)
+        .sum();
+
+    QualitySignals {
+        query_word_count: word_matches.len(),
+        total_query_weight,
+        words_matched_weight,
+        prefix_preference_score: 0,
+        exactness_score: alignment_exactness_hint(word_matches),
+        proximity_score: compute_proximity(word_matches),
+        typo_class_score: compute_typo_class_score(word_matches),
+        typo_score: compute_typo_score(word_matches),
+        span_stats: compute_match_span_stats(word_matches),
+    }
+}
+
 fn compute_quality_tier(
+    query_word_count: usize,
     total_query_weight: u16,
     words_matched_weight: u16,
     exactness_score: u8,
-    word_matches: &[WordMatch],
+    span_stats: Option<MatchSpanStats>,
 ) -> u8 {
     if words_matched_weight == 0 {
         return 0;
     }
 
-    if word_matches.len() < 2 {
+    if query_word_count < 2 {
         return 1;
     }
 
-    let Some(stats) = compute_match_span_stats(word_matches) else {
+    let Some(stats) = span_stats else {
         return 0;
     };
     let coverage_pct = if total_query_weight == 0 {
@@ -256,9 +352,9 @@ fn compute_quality_tier(
 fn compute_structure_detail(
     proximity_score: u16,
     exactness_score: u8,
-    word_matches: &[WordMatch],
+    span_stats: Option<MatchSpanStats>,
 ) -> u32 {
-    let Some(stats) = compute_match_span_stats(word_matches) else {
+    let Some(stats) = span_stats else {
         return exactness_score as u32;
     };
     if stats.matched_count < 2 {
@@ -278,24 +374,23 @@ fn compute_structure_detail(
         .min(u8::MAX as u32) as u8;
     let proximity_quantized = (proximity_score >> 8) as u8;
 
-    ((order_rank as u32) << 24)
-        | ((density as u32) << 16)
-        | ((proximity_quantized as u32) << 8)
+    ((order_rank as u32) << 19)
+        | ((density as u32) << 11)
+        | ((proximity_quantized as u32) << 3)
         | exactness_score as u32
 }
 
 fn compute_quality_detail(
     prefix_preference_score: u8,
     words_matched_weight: u16,
+    typo_class_score: u8,
     typo_score: u8,
-    proximity_score: u16,
-    exactness_score: u8,
-    word_matches: &[WordMatch],
+    structure_detail: u32,
 ) -> u64 {
-    let structure_detail = compute_structure_detail(proximity_score, exactness_score, word_matches);
     ((prefix_preference_score as u64) << QUALITY_DETAIL_PREFIX_SHIFT)
         | ((words_matched_weight as u64) << QUALITY_DETAIL_COVERAGE_SHIFT)
         | ((structure_detail as u64) << QUALITY_DETAIL_STRUCTURE_SHIFT)
+        | ((typo_class_score as u64) << QUALITY_DETAIL_TYPO_CLASS_SHIFT)
         | typo_score as u64
 }
 
@@ -305,12 +400,51 @@ fn quality_detail_words_matched_weight(quality_detail: u64) -> u16 {
 
 #[cfg(test)]
 fn quality_detail_structure(quality_detail: u64) -> u32 {
-    ((quality_detail >> QUALITY_DETAIL_STRUCTURE_SHIFT) & 0xFFFF_FFFF) as u32
+    ((quality_detail >> QUALITY_DETAIL_STRUCTURE_SHIFT) & 0xFF_FFFF) as u32
 }
 
 #[cfg(test)]
 fn quality_detail_typo_score(quality_detail: u64) -> u8 {
     quality_detail as u8
+}
+
+fn compute_typo_score(word_matches: &[WordMatch]) -> u8 {
+    let total_edit_dist: u8 = word_matches
+        .iter()
+        .filter(|m| m.matched)
+        .map(|m| m.edit_dist)
+        .sum();
+    255u8.saturating_sub(total_edit_dist)
+}
+
+fn compute_typo_class_score(word_matches: &[WordMatch]) -> u8 {
+    word_matches
+        .iter()
+        .filter(|m| m.matched)
+        .map(|m| m.typo_class.score())
+        .min()
+        .unwrap_or(0)
+}
+
+/// Coarse human-scale recency bands.
+///
+/// This sits before `quality_detail` in the tuple so quality can win within a
+/// modest age band, while genuinely old-vs-recent gaps still defer to recency.
+fn compute_recency_bucket(timestamp: i64, now: i64) -> u8 {
+    let age_secs = (now - timestamp).max(0);
+    const ONE_HOUR: i64 = 3600;
+    const ONE_DAY: i64 = 86_400;
+    const ONE_WEEK: i64 = 7 * ONE_DAY;
+    const THIRTY_DAYS: i64 = 30 * ONE_DAY;
+    const NINETY_DAYS: i64 = 90 * ONE_DAY;
+    match age_secs {
+        0..=ONE_HOUR => 5,
+        3601..=ONE_DAY => 4,
+        86_401..=ONE_WEEK => 3,
+        604_801..=THIRTY_DAYS => 2,
+        2_592_001..=NINETY_DAYS => 1,
+        _ => 0,
+    }
 }
 
 /// Smooth recency score using logarithmic decay, quantized to u8 (0-255).
@@ -361,6 +495,7 @@ fn match_query_words(
             edit_dist: 0,
             doc_word_pos: 0,
             is_exact: false,
+            typo_class: TypoClass::None,
             match_weight: base_match_weight(qw),
         })
         .collect();
@@ -410,6 +545,7 @@ fn collect_match_candidates(
                     edit_dist: 0,
                     doc_word_pos: dpos,
                     is_exact: true,
+                    typo_class: TypoClass::None,
                     match_weight,
                 }),
                 WordMatchKind::Prefix => Some(WordMatch {
@@ -417,6 +553,7 @@ fn collect_match_candidates(
                     edit_dist: 0,
                     doc_word_pos: dpos,
                     is_exact: false,
+                    typo_class: TypoClass::None,
                     match_weight,
                 }),
                 WordMatchKind::Fuzzy(dist) => Some(WordMatch {
@@ -424,6 +561,7 @@ fn collect_match_candidates(
                     edit_dist: dist,
                     doc_word_pos: dpos,
                     is_exact: false,
+                    typo_class: classify_fuzzy_typo(&qw_lower, dw, dist),
                     match_weight: if query_word.len() <= 3 {
                         1
                     } else {
@@ -435,6 +573,7 @@ fn collect_match_candidates(
                     edit_dist: gaps.saturating_add(1),
                     doc_word_pos: dpos,
                     is_exact: false,
+                    typo_class: TypoClass::Subsequence,
                     match_weight: if query_word.len() <= 3 {
                         1
                     } else {
@@ -490,7 +629,7 @@ fn candidate_quality_cmp(a: &WordMatch, b: &WordMatch) -> std::cmp::Ordering {
     candidate_quality_key(b).cmp(&candidate_quality_key(a))
 }
 
-fn candidate_quality_key(m: &WordMatch) -> (u8, u16, u8, std::cmp::Reverse<usize>) {
+fn candidate_quality_key(m: &WordMatch) -> (u8, u16, u8, u8, std::cmp::Reverse<usize>) {
     let kind_rank = if m.is_exact {
         3
     } else if m.edit_dist == 0 {
@@ -501,6 +640,7 @@ fn candidate_quality_key(m: &WordMatch) -> (u8, u16, u8, std::cmp::Reverse<usize
     (
         kind_rank,
         m.match_weight,
+        m.typo_class.score(),
         255u8.saturating_sub(m.edit_dist),
         std::cmp::Reverse(m.doc_word_pos),
     )
@@ -517,15 +657,17 @@ fn choose_best_alignment(
     candidate_lists: &[Vec<WordMatch>],
     defaults: &[WordMatch],
 ) -> Vec<WordMatch> {
+    let total_query_weight: u16 = defaults.iter().map(|m| m.match_weight).sum();
     let mut current = defaults.to_vec();
     let mut best = defaults.to_vec();
-    let mut best_score = score_alignment(&best);
+    let mut best_score = score_alignment(&best, total_query_weight);
     let mut used_positions = HashSet::new();
 
     choose_best_alignment_recursive(
         0,
         candidate_lists,
         defaults,
+        total_query_weight,
         &mut used_positions,
         &mut current,
         &mut best,
@@ -539,13 +681,14 @@ fn choose_best_alignment_recursive(
     qi: usize,
     candidate_lists: &[Vec<WordMatch>],
     defaults: &[WordMatch],
+    total_query_weight: u16,
     used_positions: &mut HashSet<usize>,
     current: &mut [WordMatch],
     best: &mut Vec<WordMatch>,
     best_score: &mut AlignmentScore,
 ) {
     if qi == candidate_lists.len() {
-        let score = score_alignment(current);
+        let score = score_alignment(current, total_query_weight);
         if score > *best_score {
             *best_score = score;
             *best = current.to_vec();
@@ -558,6 +701,7 @@ fn choose_best_alignment_recursive(
         qi + 1,
         candidate_lists,
         defaults,
+        total_query_weight,
         used_positions,
         current,
         best,
@@ -573,6 +717,7 @@ fn choose_best_alignment_recursive(
             qi + 1,
             candidate_lists,
             defaults,
+            total_query_weight,
             used_positions,
             current,
             best,
@@ -582,40 +727,12 @@ fn choose_best_alignment_recursive(
     }
 }
 
-fn score_alignment(word_matches: &[WordMatch]) -> AlignmentScore {
-    let total_query_weight: u16 = word_matches.iter().map(|m| m.match_weight).sum();
-    let words_matched_weight: u16 = word_matches
-        .iter()
-        .filter(|m| m.matched)
-        .map(|m| m.match_weight)
-        .sum();
-    let typo_score = 255u8.saturating_sub(
-        word_matches
-            .iter()
-            .filter(|m| m.matched)
-            .map(|m| m.edit_dist)
-            .sum::<u8>(),
-    );
-    let proximity_score = compute_proximity(word_matches);
-    let exactness_hint = alignment_exactness_hint(word_matches);
-    let quality_tier = compute_quality_tier(
-        total_query_weight,
-        words_matched_weight,
-        exactness_hint,
-        word_matches,
-    );
-    let quality_detail = compute_quality_detail(
-        0,
-        words_matched_weight,
-        typo_score,
-        proximity_score,
-        exactness_hint,
-        word_matches,
-    );
+fn score_alignment(word_matches: &[WordMatch], total_query_weight: u16) -> AlignmentScore {
+    let signals = compute_alignment_quality_signals(word_matches, total_query_weight);
 
     AlignmentScore {
-        quality_tier,
-        quality_detail,
+        quality_tier: signals.quality_tier(),
+        quality_detail: signals.quality_detail(),
         matched_query_mask: alignment_matched_query_mask(word_matches),
     }
 }
@@ -762,6 +879,103 @@ pub(crate) fn max_edit_distance(word_len: usize) -> u8 {
     } else {
         2
     }
+}
+
+fn classify_fuzzy_typo(query: &str, target: &str, dist: u8) -> TypoClass {
+    if is_adjacent_transposition(query, target) {
+        return TypoClass::CommonTransposition;
+    }
+
+    if dist == 1 {
+        if let Some(is_repeated_char) = classify_single_insert_delete(query, target) {
+            return if is_repeated_char {
+                TypoClass::RepeatedCharEdit
+            } else {
+                TypoClass::InsertionOrDeletion
+            };
+        }
+        return TypoClass::Substitution;
+    }
+
+    TypoClass::MultiEdit
+}
+
+fn is_adjacent_transposition(a: &str, b: &str) -> bool {
+    let a_chars: Vec<char> = a.chars().collect();
+    let b_chars: Vec<char> = b.chars().collect();
+    if a_chars.len() != b_chars.len() || a_chars.len() < 2 {
+        return false;
+    }
+
+    let mut first_diff = None;
+    for i in 0..a_chars.len() {
+        if a_chars[i] != b_chars[i] {
+            first_diff = Some(i);
+            break;
+        }
+    }
+    let Some(i) = first_diff else {
+        return false;
+    };
+    if i + 1 >= a_chars.len() {
+        return false;
+    }
+
+    if a_chars[i] != b_chars[i + 1] || a_chars[i + 1] != b_chars[i] {
+        return false;
+    }
+
+    for j in (i + 2)..a_chars.len() {
+        if a_chars[j] != b_chars[j] {
+            return false;
+        }
+    }
+
+    true
+}
+
+/// Returns whether the edit is a repeated-char insertion/deletion when the strings
+/// differ by a single inserted or deleted character. `None` means it is not a
+/// one-char insertion/deletion relationship.
+fn classify_single_insert_delete(shorter: &str, longer: &str) -> Option<bool> {
+    let shorter_chars: Vec<char> = shorter.chars().collect();
+    let longer_chars: Vec<char> = longer.chars().collect();
+    let (shorter_chars, longer_chars) = if shorter_chars.len() <= longer_chars.len() {
+        (shorter_chars, longer_chars)
+    } else {
+        (longer_chars, shorter_chars)
+    };
+
+    if longer_chars.len() != shorter_chars.len() + 1 {
+        return None;
+    }
+
+    let mut si = 0usize;
+    let mut li = 0usize;
+    let mut skipped_idx = None;
+
+    while si < shorter_chars.len() && li < longer_chars.len() {
+        if shorter_chars[si] == longer_chars[li] {
+            si += 1;
+            li += 1;
+            continue;
+        }
+
+        if skipped_idx.is_some() {
+            return None;
+        }
+
+        skipped_idx = Some(li);
+        li += 1;
+    }
+
+    let skipped_idx = skipped_idx.unwrap_or(longer_chars.len() - 1);
+    let skipped_char = longer_chars[skipped_idx];
+    let repeated_prev = skipped_idx > 0 && longer_chars[skipped_idx - 1] == skipped_char;
+    let repeated_next =
+        skipped_idx + 1 < longer_chars.len() && longer_chars[skipped_idx + 1] == skipped_char;
+
+    Some(repeated_prev || repeated_next)
 }
 
 /// Compute proximity score from matched word positions.
@@ -1290,6 +1504,7 @@ mod tests {
                 edit_dist: 0,
                 doc_word_pos: 0,
                 is_exact: true,
+                typo_class: TypoClass::None,
                 match_weight: 25,
             },
             WordMatch {
@@ -1297,6 +1512,7 @@ mod tests {
                 edit_dist: 0,
                 doc_word_pos: 1,
                 is_exact: true,
+                typo_class: TypoClass::None,
                 match_weight: 25,
             },
         ];
@@ -1311,6 +1527,7 @@ mod tests {
                 edit_dist: 0,
                 doc_word_pos: 0,
                 is_exact: true,
+                typo_class: TypoClass::None,
                 match_weight: 25,
             },
             WordMatch {
@@ -1318,6 +1535,7 @@ mod tests {
                 edit_dist: 0,
                 doc_word_pos: 5,
                 is_exact: true,
+                typo_class: TypoClass::None,
                 match_weight: 25,
             },
         ];
@@ -1331,6 +1549,7 @@ mod tests {
             edit_dist: 0,
             doc_word_pos: 3,
             is_exact: true,
+            typo_class: TypoClass::None,
             match_weight: 25,
         }];
         assert_eq!(compute_proximity(&matches), u16::MAX);
@@ -1344,6 +1563,7 @@ mod tests {
                 edit_dist: 0,
                 doc_word_pos: 0,
                 is_exact: true,
+                typo_class: TypoClass::None,
                 match_weight: 25,
             },
             WordMatch {
@@ -1351,6 +1571,7 @@ mod tests {
                 edit_dist: 0,
                 doc_word_pos: 0,
                 is_exact: false,
+                typo_class: TypoClass::None,
                 match_weight: 25,
             },
             WordMatch {
@@ -1358,6 +1579,7 @@ mod tests {
                 edit_dist: 0,
                 doc_word_pos: 3,
                 is_exact: true,
+                typo_class: TypoClass::None,
                 match_weight: 25,
             },
         ];
@@ -1372,6 +1594,7 @@ mod tests {
                 edit_dist: 0,
                 doc_word_pos: 0,
                 is_exact: true,
+                typo_class: TypoClass::None,
                 match_weight: 25,
             },
             WordMatch {
@@ -1379,6 +1602,7 @@ mod tests {
                 edit_dist: 0,
                 doc_word_pos: 1,
                 is_exact: true,
+                typo_class: TypoClass::None,
                 match_weight: 25,
             },
         ];
@@ -1388,6 +1612,7 @@ mod tests {
                 edit_dist: 0,
                 doc_word_pos: 0,
                 is_exact: true,
+                typo_class: TypoClass::None,
                 match_weight: 25,
             },
             WordMatch {
@@ -1395,6 +1620,7 @@ mod tests {
                 edit_dist: 0,
                 doc_word_pos: 8,
                 is_exact: true,
+                typo_class: TypoClass::None,
                 match_weight: 25,
             },
             WordMatch {
@@ -1402,12 +1628,14 @@ mod tests {
                 edit_dist: 0,
                 doc_word_pos: 16,
                 is_exact: true,
+                typo_class: TypoClass::None,
                 match_weight: 25,
             },
         ];
 
-        let dense_tier = compute_quality_tier(75, 50, 3, &dense);
-        let scattered_tier = compute_quality_tier(75, 75, 3, &scattered);
+        let dense_tier = compute_quality_tier(2, 75, 50, 3, compute_match_span_stats(&dense));
+        let scattered_tier =
+            compute_quality_tier(3, 75, 75, 3, compute_match_span_stats(&scattered));
         assert!(dense_tier > scattered_tier);
     }
 
@@ -1422,6 +1650,7 @@ mod tests {
                 edit_dist: 0,
                 doc_word_pos: 0,
                 is_exact: true,
+                typo_class: TypoClass::None,
                 match_weight: 25,
             },
             WordMatch {
@@ -1429,6 +1658,7 @@ mod tests {
                 edit_dist: 0,
                 doc_word_pos: 1,
                 is_exact: true,
+                typo_class: TypoClass::None,
                 match_weight: 25,
             },
         ];
@@ -1447,6 +1677,7 @@ mod tests {
                 edit_dist: 0,
                 doc_word_pos: 0,
                 is_exact: true,
+                typo_class: TypoClass::None,
                 match_weight: 25,
             },
             WordMatch {
@@ -1454,6 +1685,7 @@ mod tests {
                 edit_dist: 0,
                 doc_word_pos: 2,
                 is_exact: true,
+                typo_class: TypoClass::None,
                 match_weight: 25,
             },
         ];
@@ -1472,6 +1704,7 @@ mod tests {
                 edit_dist: 0,
                 doc_word_pos: 0,
                 is_exact: true,
+                typo_class: TypoClass::None,
                 match_weight: 25,
             },
             WordMatch {
@@ -1479,6 +1712,7 @@ mod tests {
                 edit_dist: 1,
                 doc_word_pos: 1,
                 is_exact: false,
+                typo_class: TypoClass::None,
                 match_weight: 25,
             },
         ];
@@ -1498,6 +1732,7 @@ mod tests {
                 edit_dist: 0,
                 doc_word_pos: 0,
                 is_exact: false,
+                typo_class: TypoClass::None,
                 match_weight: 25,
             },
             WordMatch {
@@ -1505,6 +1740,7 @@ mod tests {
                 edit_dist: 0,
                 doc_word_pos: 1,
                 is_exact: false,
+                typo_class: TypoClass::None,
                 match_weight: 25,
             },
         ];
@@ -1523,6 +1759,7 @@ mod tests {
                 edit_dist: 0,
                 doc_word_pos: 0,
                 is_exact: false,
+                typo_class: TypoClass::None,
                 match_weight: 25,
             },
             WordMatch {
@@ -1530,6 +1767,7 @@ mod tests {
                 edit_dist: 0,
                 doc_word_pos: 1,
                 is_exact: false,
+                typo_class: TypoClass::None,
                 match_weight: 25,
             },
         ];
@@ -1538,6 +1776,7 @@ mod tests {
             edit_dist: 1,
             doc_word_pos: 0,
             is_exact: false,
+            typo_class: TypoClass::None,
             match_weight: 25,
         }];
         assert!(
@@ -1553,6 +1792,7 @@ mod tests {
             edit_dist: 1,
             doc_word_pos: 0,
             is_exact: false,
+            typo_class: TypoClass::None,
             match_weight: 25,
         }];
         assert_eq!(compute_exactness("hallo", &["hello"], &matches), 0);
@@ -1899,6 +2139,7 @@ mod tests {
                 edit_dist: 0,
                 doc_word_pos: 0,
                 is_exact: true,
+                typo_class: TypoClass::None,
                 match_weight: 25,
             },
             WordMatch {
@@ -1906,6 +2147,7 @@ mod tests {
                 edit_dist: 0,
                 doc_word_pos: 2,
                 is_exact: true,
+                typo_class: TypoClass::None,
                 match_weight: 25,
             },
         ];
@@ -1916,6 +2158,7 @@ mod tests {
                 edit_dist: 0,
                 doc_word_pos: 2,
                 is_exact: true,
+                typo_class: TypoClass::None,
                 match_weight: 25,
             },
             WordMatch {
@@ -1923,6 +2166,7 @@ mod tests {
                 edit_dist: 0,
                 doc_word_pos: 0,
                 is_exact: true,
+                typo_class: TypoClass::None,
                 match_weight: 25,
             },
         ];
@@ -1965,6 +2209,7 @@ mod tests {
                 edit_dist: 0,
                 doc_word_pos: 0,
                 is_exact: true,
+                typo_class: TypoClass::None,
                 match_weight: 25,
             },
             WordMatch {
@@ -1972,6 +2217,7 @@ mod tests {
                 edit_dist: 0,
                 doc_word_pos: 1,
                 is_exact: false,
+                typo_class: TypoClass::None,
                 match_weight: 25,
             },
         ];
@@ -1989,6 +2235,7 @@ mod tests {
             edit_dist: 0,
             doc_word_pos: 0,
             is_exact: false,
+            typo_class: TypoClass::None,
             match_weight: 25,
         }];
         assert_eq!(compute_exactness("hello world", &["hel"], &matches), 6);
@@ -2003,6 +2250,7 @@ mod tests {
                 edit_dist: 0,
                 doc_word_pos: 0,
                 is_exact: true,
+                typo_class: TypoClass::None,
                 match_weight: 25,
             },
             WordMatch {
@@ -2010,6 +2258,7 @@ mod tests {
                 edit_dist: 1,
                 doc_word_pos: 1,
                 is_exact: false,
+                typo_class: TypoClass::None,
                 match_weight: 25,
             },
         ];
@@ -2028,6 +2277,7 @@ mod tests {
                 edit_dist: 0,
                 doc_word_pos: 1,
                 is_exact: true,
+                typo_class: TypoClass::None,
                 match_weight: 25,
             },
             WordMatch {
@@ -2035,6 +2285,7 @@ mod tests {
                 edit_dist: 0,
                 doc_word_pos: 2,
                 is_exact: true,
+                typo_class: TypoClass::None,
                 match_weight: 25,
             },
         ];
@@ -2055,6 +2306,7 @@ mod tests {
                 edit_dist: 0,
                 doc_word_pos: 0,
                 is_exact: true,
+                typo_class: TypoClass::None,
                 match_weight: 25,
             },
             WordMatch {
@@ -2062,6 +2314,7 @@ mod tests {
                 edit_dist: 0,
                 doc_word_pos: 2,
                 is_exact: true,
+                typo_class: TypoClass::None,
                 match_weight: 25,
             },
             WordMatch {
@@ -2069,6 +2322,7 @@ mod tests {
                 edit_dist: 0,
                 doc_word_pos: 1,
                 is_exact: true,
+                typo_class: TypoClass::None,
                 match_weight: 25,
             },
         ];

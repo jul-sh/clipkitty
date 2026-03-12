@@ -568,6 +568,7 @@ mod tests {
         let result = search_service::search_short_query_sync(
             &store.db,
             "He",
+            false,
             &token,
             &rt.handle().clone(),
             None,
