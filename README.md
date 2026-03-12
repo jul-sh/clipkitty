@@ -32,8 +32,7 @@ ClipKitty stores everything. Finds it in milliseconds; whether you have 100 item
 * **OCR & Smart Search**: Search text inside images and screenshots. AI-powered descriptions make visual content searchable.
 * **Keyboard-First**: `⌥Space` to open, arrow keys to navigate, `Return` to paste. `⌘1-9` for quick access.
 * **Privacy-First**: 100% on-device and offline. No telemetry, no cloud sync, no accounts.
-* **Transparent & Open Source**: Don't take my word for it. Source code is fully open source and auditable. Builds are
-  [attested](VERIFY.md)—you can verify the app on your Mac came from this repo.
+* **Secure & Attested**: Don't take my word for it. Source code is fully open source and auditable. Builds are attested: you can [verify](VERIFY.md) the app on your Mac was built from the public source code.
 
 ## Installation
 
