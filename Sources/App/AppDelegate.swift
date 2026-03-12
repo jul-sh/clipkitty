@@ -146,41 +146,30 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate {
         menu.addItem(NSMenuItem(title: NSLocalizedString("Quit", comment: "Menu bar item to quit the app"), action: #selector(quit), keyEquivalent: "q"))
 
         statusMenu = menu
-        updateMenuBarBehavior()
+        configureMenuBarBehavior()
     }
 
-    /// Update menu bar click behavior based on settings
-    func updateMenuBarBehavior() {
-        if AppSettings.shared.clickToOpenEnabled {
-            // Click opens panel, right-click shows menu
-            statusItem?.menu = nil
-        } else {
-            // Default: click shows menu
-            statusItem?.menu = statusMenu
-        }
+    /// Configure menu bar: click opens panel, right-click shows menu
+    private func configureMenuBarBehavior() {
+        // No menu attached - we handle clicks manually
+        statusItem?.menu = nil
     }
 
     @objc private func statusItemClicked(_ sender: NSStatusBarButton) {
         guard let event = NSApp.currentEvent else { return }
 
-        if AppSettings.shared.clickToOpenEnabled {
-            if event.type == .rightMouseUp {
-                // Right-click shows the menu
-                if let menu = statusMenu {
-                    statusItem?.menu = menu
-                    statusItem?.button?.performClick(nil)
-                    // Remove menu asynchronously to let the menu system handle it
-                    DispatchQueue.main.async { [weak self] in
-                        self?.statusItem?.menu = nil
-                    }
+        if event.type == .rightMouseUp {
+            // Right-click shows the menu
+            if let menu = statusMenu {
+                statusItem?.menu = menu
+                statusItem?.button?.performClick(nil)
+                // Remove menu asynchronously to let the menu system handle it
+                DispatchQueue.main.async { [weak self] in
+                    self?.statusItem?.menu = nil
                 }
-            } else {
-                // Left-click toggles the panel (show if hidden, hide if visible)
-                panelController.toggle()
             }
         } else {
-            // Default behavior: menu is always attached, this shouldn't be called
-            // but just in case, toggle the panel
+            // Left-click toggles the panel
             panelController.toggle()
         }
     }
@@ -215,9 +204,6 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate {
                     self?.hotKeyManager.register(hotKey: hotKey)
                     self?.updateMenuHotKey()
                 },
-                onMenuBarBehaviorChanged: { [weak self] in
-                    self?.updateMenuBarBehavior()
-                },
                 onInstallUpdate: { [weak self] in
                     self?.updater?.installUpdate()
                 }
@@ -228,9 +214,6 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate {
                 onHotKeyChanged: { [weak self] hotKey in
                     self?.hotKeyManager.register(hotKey: hotKey)
                     self?.updateMenuHotKey()
-                },
-                onMenuBarBehaviorChanged: { [weak self] in
-                    self?.updateMenuBarBehavior()
                 }
             )
             #endif

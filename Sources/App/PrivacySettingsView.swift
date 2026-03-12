@@ -38,7 +38,7 @@ struct PrivacySettingsView: View {
                     VStack(alignment: .leading, spacing: 2) {
                         Text(String(localized: "Don't save passwords"))
                         Text(String(localized: "Excludes passwords and sensitive data."))
-                            .font(.caption)
+                            .font(.subheadline)
                             .foregroundStyle(.secondary)
                     }
                 }
@@ -47,7 +47,7 @@ struct PrivacySettingsView: View {
                     VStack(alignment: .leading, spacing: 2) {
                         Text(String(localized: "Don't save temporary data"))
                         Text(String(localized: "Excludes transient content from other apps."))
-                            .font(.caption)
+                            .font(.subheadline)
                             .foregroundStyle(.secondary)
                     }
                 }
@@ -55,7 +55,7 @@ struct PrivacySettingsView: View {
                 VStack(alignment: .leading, spacing: 4) {
                     Text(String(localized: "Excluded Apps"))
                     Text(String(localized: "Content from these apps won't be saved."))
-                        .font(.caption)
+                        .font(.subheadline)
                         .foregroundStyle(.secondary)
                 }
                 .padding(.bottom, 4)
@@ -68,7 +68,7 @@ struct PrivacySettingsView: View {
                     VStack(alignment: .leading, spacing: 2) {
                         Text(String(localized: "Show link previews"))
                         Text(String(localized: "Downloads web content. May trigger tracking links."))
-                            .font(.caption)
+                            .font(.subheadline)
                             .foregroundStyle(.secondary)
                     }
                 }

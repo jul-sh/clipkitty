@@ -90,6 +90,11 @@ enum UpdateCheckState: Equatable {
 final class AppSettings: ObservableObject {
     static let shared = AppSettings()
 
+    #if !APP_STORE
+    /// Shared permission monitor for reactive UI updates
+    let accessibilityPermissionMonitor = AccessibilityPermissionMonitor()
+    #endif
+
     @Published var hotKey: HotKey {
         didSet { save() }
     }
@@ -100,8 +105,9 @@ final class AppSettings: ObservableObject {
 
     #if !APP_STORE
     /// Check if the app can post synthetic keyboard events (e.g. Cmd+V for direct paste)
+    /// Uses the permission monitor for reactive updates.
     var hasPostEventPermission: Bool {
-        return CGPreflightPostEventAccess()
+        return accessibilityPermissionMonitor.isGranted
     }
 
     /// Request permission to post synthetic keyboard events.
@@ -109,16 +115,23 @@ final class AppSettings: ObservableObject {
     /// Returns true if permissions are already granted.
     @discardableResult
     func requestPostEventPermission() -> Bool {
-        return CGRequestPostEventAccess()
+        return accessibilityPermissionMonitor.requestPermission()
     }
 
+    /// User's selection for paste behavior: true = paste to active app, false = copy to clipboard
+    /// This persists the user's *intent* regardless of permission state.
     @Published var autoPasteEnabled: Bool {
         didSet { save() }
     }
 
+    /// The effective paste mode based on user preference AND permission state.
+    /// - Returns `.autoPaste` only when user has enabled it AND permission is granted
+    /// - Returns `.copyOnly` when user explicitly chose copy-only mode
+    /// - Returns `.noPermission` when user wants autoPaste but permission is not granted
     var pasteMode: PasteMode {
+        guard autoPasteEnabled else { return .copyOnly }
         guard hasPostEventPermission else { return .noPermission }
-        return autoPasteEnabled ? .autoPaste : .copyOnly
+        return .autoPaste
     }
     #else
     var pasteMode: PasteMode { .copyOnly }
@@ -139,12 +152,6 @@ final class AppSettings: ObservableObject {
     let imageCompressionQuality: Double
 
     @Published var launchAtLoginEnabled: Bool {
-        didSet { save() }
-    }
-
-    /// When enabled, clicking menu bar icon opens ClipKitty directly, right-click shows menu
-    /// When disabled (default), clicking shows the menu
-    @Published var clickToOpenEnabled: Bool {
         didSet { save() }
     }
 
@@ -181,7 +188,6 @@ final class AppSettings: ObservableObject {
     private let ignoreTransientKey = "ignoreTransientContent"
     private let generateLinkPreviewsKey = "generateLinkPreviews"
     private let ignoredAppBundleIdsKey = "ignoredAppBundleIds"
-    private let clickToOpenKey = "clickToOpenEnabled"
     #if SPARKLE_RELEASE
     private let autoInstallUpdatesKey = "autoInstallUpdates"
     private let updateChannelKey = "updateChannel"
@@ -211,7 +217,6 @@ final class AppSettings: ObservableObject {
         launchAtLoginEnabled = defaults.object(forKey: launchAtLoginKey) as? Bool ?? true
         autoPasteEnabled = defaults.object(forKey: autoPasteKey) as? Bool ?? true
         #endif
-        clickToOpenEnabled = defaults.object(forKey: clickToOpenKey) as? Bool ?? true
         #if SPARKLE_RELEASE
         autoInstallUpdates = defaults.object(forKey: autoInstallUpdatesKey) as? Bool ?? true
         let storedUpdateChannel = defaults.string(forKey: updateChannelKey)
@@ -256,7 +261,6 @@ final class AppSettings: ObservableObject {
         defaults.set(ignoreTransientContent, forKey: ignoreTransientKey)
         defaults.set(generateLinkPreviews, forKey: generateLinkPreviewsKey)
         defaults.set(Array(ignoredAppBundleIds).sorted(), forKey: ignoredAppBundleIdsKey)
-        defaults.set(clickToOpenEnabled, forKey: clickToOpenKey)
         #if SPARKLE_RELEASE
         defaults.set(autoInstallUpdates, forKey: autoInstallUpdatesKey)
         defaults.set(updateChannel.rawValue, forKey: updateChannelKey)
