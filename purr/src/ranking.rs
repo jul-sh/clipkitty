@@ -1755,6 +1755,85 @@ mod tests {
     }
 
     #[test]
+    fn test_single_word_prefix_beats_slightly_newer_fuzzy_match() {
+        let now = 1700000000i64;
+        let older_prefix = score("claude", &["cla"], true, None, now - 60, 1.0, now);
+        let newer_fuzzy = score("cli", &["cla"], true, None, now, 1.0, now);
+        assert!(
+            older_prefix > newer_fuzzy,
+            "A strong single-word prefix should beat a slightly newer fuzzy near-match"
+        );
+    }
+
+    #[test]
+    fn test_content_prefix_beats_moderately_newer_word_prefix() {
+        let now = 1700000000i64;
+        let older_content_prefix = score("claude notes", &["cla"], true, None, now - 600, 1.0, now);
+        let newer_word_prefix = score("say claude notes", &["cla"], true, None, now - 180, 1.0, now);
+        assert!(
+            older_content_prefix > newer_word_prefix,
+            "Across a moderate age gap, content-prefix should beat a newer non-initial word-prefix match"
+        );
+    }
+
+    #[test]
+    fn test_recent_word_prefix_beats_ancient_content_prefix() {
+        let now = 1700000000i64;
+        let ancient_content_prefix =
+            score("claude notes", &["cla"], true, None, now - 60 * 86400, 1.0, now);
+        let recent_word_prefix =
+            score("say claude notes", &["cla"], true, None, now - 600, 1.0, now);
+        assert!(
+            recent_word_prefix > ancient_content_prefix,
+            "Across a massive age gap, recency should beat the stronger content-prefix match"
+        );
+    }
+
+    #[test]
+    fn test_exact_short_typo_beats_slightly_newer_common_transposition() {
+        let now = 1700000000i64;
+        let older_exact = score("teh", &["teh"], true, None, now - 60, 1.0, now);
+        let newer_transposition = score("the", &["teh"], true, None, now, 1.0, now);
+        assert!(
+            older_exact > newer_transposition,
+            "Within roughly the same recency, the literal query should beat a recent transposition match"
+        );
+    }
+
+    #[test]
+    fn test_exact_match_beats_moderately_newer_typo_match() {
+        let now = 1700000000i64;
+        let older_exact = score("the", &["the"], false, None, now - 600, 1.0, now);
+        let newer_typo = score("teh", &["the"], false, None, now - 180, 1.0, now);
+        assert!(
+            older_exact > newer_typo,
+            "Across a moderate age gap, exact match quality should beat a newer typo match"
+        );
+    }
+
+    #[test]
+    fn test_recent_common_transposition_beats_ancient_exact_typo() {
+        let now = 1700000000i64;
+        let ancient_exact = score("teh", &["teh"], true, None, now - 864000, 1.0, now);
+        let recent_transposition = score("the", &["teh"], true, None, now, 1.0, now);
+        assert!(
+            recent_transposition > ancient_exact,
+            "A recent common transposition should still beat an ancient literal typo"
+        );
+    }
+
+    #[test]
+    fn test_recent_typo_beats_ancient_exact_match() {
+        let now = 1700000000i64;
+        let ancient_exact = score("the", &["the"], false, None, now - 90 * 86400, 1.0, now);
+        let recent_typo = score("teh", &["the"], false, None, now - 180, 1.0, now);
+        assert!(
+            recent_typo > ancient_exact,
+            "Across a massive age gap, recency should beat the stronger exact match"
+        );
+    }
+
+    #[test]
     fn test_recency_breaks_ties_when_structure_equal() {
         let now = 1700000000i64;
         // Same structure and same word quality - recency should break the tie.
