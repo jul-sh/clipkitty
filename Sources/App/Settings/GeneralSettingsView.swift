@@ -5,6 +5,7 @@ struct GeneralSettingsView: View {
     @ObservedObject private var settings = AppSettings.shared
     @ObservedObject private var launchAtLogin = LaunchAtLogin.shared
     @State private var showClearConfirmation = false
+    @State private var attestationURL: URL?
 
     let store: ClipboardStore
     #if SPARKLE_RELEASE
@@ -20,6 +21,11 @@ struct GeneralSettingsView: View {
 
     private var buildNumber: String {
         Bundle.main.object(forInfoDictionaryKey: "CFBundleVersion") as? String ?? ""
+    }
+
+    private var binaryHash: String? {
+        guard let executableURL = Bundle.main.executableURL else { return nil }
+        return Utilities.sha256(of: executableURL)
     }
 
     var body: some View {
@@ -109,11 +115,6 @@ struct GeneralSettingsView: View {
                     EmptyView()
                 }
 
-                LabeledContent(String(localized: "Version")) {
-                    Text("\(appVersion) (\(buildNumber))")
-                        .foregroundStyle(.secondary)
-                }
-
                 Toggle(String(localized: "Automatically install updates"), isOn: $settings.autoInstallUpdates)
 
                 Toggle(
@@ -150,6 +151,24 @@ struct GeneralSettingsView: View {
                 }
             }
             #endif
+
+            Section(String(localized: "About")) {
+                LabeledContent(String(localized: "Version")) {
+                    Text("\(appVersion) (\(buildNumber))")
+                        .foregroundStyle(.secondary)
+                }
+
+                if let url = attestationURL {
+                    LabeledContent(String(localized: "Build Attestation")) {
+                        Link(destination: url) {
+                            Label(String(localized: "Verify"), systemImage: "checkmark.seal")
+                        }
+                    }
+                }
+            }
+            .task {
+                await checkAttestation()
+            }
         }
         .formStyle(.grouped)
         .onAppear {
@@ -202,5 +221,27 @@ struct GeneralSettingsView: View {
             rounded = (value * 10).rounded() / 10
         }
         return min(max(rounded, minDatabaseSizeGB), maxDatabaseSizeGB)
+    }
+
+    private func checkAttestation() async {
+        guard let hash = binaryHash else { return }
+        let rekorURL = URL(string: "https://rekor.sigstore.dev/api/v1/index/retrieve")!
+
+        var request = URLRequest(url: rekorURL)
+        request.httpMethod = "POST"
+        request.setValue("application/json", forHTTPHeaderField: "Content-Type")
+        request.httpBody = "{\"hash\":\"sha256:\(hash)\"}".data(using: .utf8)
+
+        do {
+            let (data, response) = try await URLSession.shared.data(for: request)
+            guard let httpResponse = response as? HTTPURLResponse, httpResponse.statusCode == 200 else { return }
+
+            let entries = try JSONDecoder().decode([String].self, from: data)
+            if !entries.isEmpty {
+                attestationURL = URL(string: "https://search.sigstore.dev/?hash=sha256:\(hash)")
+            }
+        } catch {
+            // No attestation available
+        }
     }
 }
