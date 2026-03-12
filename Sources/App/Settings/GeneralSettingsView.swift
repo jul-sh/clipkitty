@@ -60,7 +60,7 @@ struct GeneralSettingsView: View {
                     .frame(maxWidth: .infinity)
                 }
 
-                Text("Currently using \(Utilities.formatBytes(store.databaseSizeBytes)). Oldest items removed when limit is reached.")
+                Text(String(localized: "Currently using \(Utilities.formatBytes(store.databaseSizeBytes)). Oldest items removed when limit is reached."))
                     .font(.subheadline)
                     .foregroundStyle(.secondary)
 

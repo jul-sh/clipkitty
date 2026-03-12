@@ -268,7 +268,7 @@ private struct CopiedToastIllustration: View {
             Image(systemName: "checkmark.circle.fill")
                 .font(.system(size: 8))
                 .foregroundStyle(.green)
-            Text("Copied")
+            Text(String(localized: "Copied"))
                 .font(.system(size: 7, weight: .medium))
                 .foregroundStyle(.primary)
                 .fixedSize()
