@@ -8,6 +8,7 @@ enum HotKeyEditState: Equatable {
 enum SettingsTab: String, CaseIterable {
     case general = "General"
     case privacy = "Privacy"
+    case shortcuts = "Shortcuts"
 }
 
 struct SettingsView: View {
@@ -15,7 +16,6 @@ struct SettingsView: View {
 
     let store: ClipboardStore
     let onHotKeyChanged: (HotKey) -> Void
-    let onMenuBarBehaviorChanged: () -> Void
     #if SPARKLE_RELEASE
     var onInstallUpdate: (() -> Void)? = nil
     #endif
@@ -35,23 +35,26 @@ struct SettingsView: View {
                 }
                 .tag(SettingsTab.privacy)
                 .accessibilityIdentifier("SettingsTab_Privacy")
+
+            ShortcutsSettingsView(onHotKeyChanged: onHotKeyChanged)
+                .tabItem {
+                    Label(String(localized: "Shortcuts"), systemImage: "keyboard")
+                }
+                .tag(SettingsTab.shortcuts)
+                .accessibilityIdentifier("SettingsTab_Shortcuts")
         }
-        .frame(width: 480, height: 460)
+        .frame(width: 560, height: 520)
     }
 
     private var generalSettingsView: GeneralSettingsView {
         #if SPARKLE_RELEASE
         GeneralSettingsView(
             store: store,
-            onHotKeyChanged: onHotKeyChanged,
-            onMenuBarBehaviorChanged: onMenuBarBehaviorChanged,
             onInstallUpdate: onInstallUpdate
         )
         #else
         GeneralSettingsView(
-            store: store,
-            onHotKeyChanged: onHotKeyChanged,
-            onMenuBarBehaviorChanged: onMenuBarBehaviorChanged
+            store: store
         )
         #endif
     }

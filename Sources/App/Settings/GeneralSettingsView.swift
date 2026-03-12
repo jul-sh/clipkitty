@@ -5,11 +5,8 @@ struct GeneralSettingsView: View {
     @ObservedObject private var settings = AppSettings.shared
     @ObservedObject private var launchAtLogin = LaunchAtLogin.shared
     @State private var showClearConfirmation = false
-    @State private var hotKeyState: HotKeyEditState = .idle
 
     let store: ClipboardStore
-    let onHotKeyChanged: (HotKey) -> Void
-    let onMenuBarBehaviorChanged: () -> Void
     #if SPARKLE_RELEASE
     var onInstallUpdate: (() -> Void)? = nil
     #endif
@@ -33,101 +30,25 @@ struct GeneralSettingsView: View {
 
                 if let message = launchAtLogin.state.displayMessage {
                     Text(message)
-                        .font(.caption)
+                        .font(.subheadline)
                         .foregroundStyle(launchAtLogin.state.hasFailureNotice ? AnyShapeStyle(.red) : AnyShapeStyle(.secondary))
 
                     if launchAtLogin.state.hasFailureNotice {
                         Button(String(localized: "Open Login Items Settings")) {
                             NSWorkspace.shared.open(URL(string: "x-apple.systempreferences:com.apple.LoginItems-Settings.extension")!)
                         }
-                        .font(.caption)
+                        .font(.subheadline)
                     }
-                }
-            }
-
-            Section(String(localized: "Menu Bar")) {
-                Toggle(isOn: clickToOpenBinding) {
-                    VStack(alignment: .leading, spacing: 2) {
-                        Text(String(localized: "Click opens window"))
-                        Text(String(localized: "Right-click shows menu instead."))
-                            .font(.caption)
-                            .foregroundStyle(.secondary)
-                    }
-                }
-            }
-
-            Section(String(localized: "Keyboard Shortcut")) {
-                HStack {
-                    Text(String(localized: "Open ClipKitty"))
-                    Spacer()
-                    Button(action: { hotKeyState = .recording }) {
-                        let state = hotKeyState
-                        let labelAndBackground: (String, Color) = {
-                            switch state {
-                            case .recording:
-                                return (String(localized: "Press keys..."), Color.accentColor.opacity(0.2))
-                            case .idle:
-                                return (settings.hotKey.displayString, Color.secondary.opacity(0.1))
-                            }
-                        }()
-
-                        Text(labelAndBackground.0)
-                            .frame(minWidth: 100)
-                            .padding(.horizontal, 8)
-                            .padding(.vertical, 4)
-                            .background(labelAndBackground.1)
-                            .cornerRadius(6)
-                    }
-                    .buttonStyle(.plain)
-                }
-                .background(
-                    HotKeyRecorder(
-                        state: $hotKeyState,
-                        onHotKeyRecorded: { hotKey in
-                            settings.hotKey = hotKey
-                            onHotKeyChanged(hotKey)
-                        }
-                    )
-                )
-
-                if settings.hotKey != .default {
-                    Button(String(localized: "Reset to Default (⌥Space)")) {
-                        settings.hotKey = .default
-                        onHotKeyChanged(.default)
-                    }
-                    .font(.caption)
                 }
             }
 
             #if !APP_STORE
-            Section(String(localized: "Paste Behavior")) {
-                if settings.hasPostEventPermission {
-                    Toggle(String(localized: "Paste directly into apps"), isOn: $settings.autoPasteEnabled)
-                    Text(settings.autoPasteEnabled
-                        ? String(localized: "Items paste directly into the active app.")
-                        : String(localized: "Items copy to clipboard only."))
-                        .font(.caption)
-                        .foregroundStyle(.secondary)
-                } else {
-                    Toggle(String(localized: "Paste directly into apps"), isOn: .constant(false))
-                        .disabled(true)
-                    Text(String(localized: "Requires Accessibility permission. Restart after granting."))
-                        .font(.caption)
-                        .foregroundStyle(.secondary)
-                    Button(String(localized: "Open System Settings")) {
-                        NSWorkspace.shared.open(URL(string: "x-apple.systempreferences:com.apple.preference.security?Privacy_Accessibility")!)
-                    }
-                    .font(.caption)
-                }
+            Section(String(localized: "Paste Items")) {
+                PasteItemsSettingView()
             }
             #endif
 
-            Section(String(localized: "Database")) {
-                LabeledContent(String(localized: "Current Size")) {
-                    Text(Utilities.formatBytes(store.databaseSizeBytes))
-                        .foregroundStyle(.secondary)
-                }
-
+            Section(String(localized: "History")) {
                 LabeledContent(String(localized: "Storage Limit")) {
                     HStack(spacing: 8) {
                         Slider(value: databaseSizeSlider, in: 0...1)
@@ -139,8 +60,8 @@ struct GeneralSettingsView: View {
                     .frame(maxWidth: .infinity)
                 }
 
-                Text(String(localized: "Oldest items removed when limit is reached."))
-                    .font(.caption)
+                Text(String(localized: "Currently using \(Utilities.formatBytes(store.databaseSizeBytes)). Oldest items removed when limit is reached."))
+                    .font(.subheadline)
                     .foregroundStyle(.secondary)
 
                 Button(role: .destructive) {
@@ -213,13 +134,13 @@ struct GeneralSettingsView: View {
                 )
 
                 Text(String(localized: "Test new features before release."))
-                    .font(.caption)
+                    .font(.subheadline)
                     .foregroundStyle(.secondary)
 
                 if case .beta = settings.updateChannel {
                     VStack(alignment: .leading, spacing: 8) {
                         Text(String(localized: "Found a bug? Report it on GitHub with steps to reproduce."))
-                            .font(.caption)
+                            .font(.subheadline)
                             .foregroundStyle(.secondary)
 
                         Button(String(localized: "Report a Bug")) {
@@ -246,16 +167,6 @@ struct GeneralSettingsView: View {
                 if launchAtLogin.setEnabled(newValue) {
                     settings.launchAtLoginEnabled = newValue
                 }
-            }
-        )
-    }
-
-    private var clickToOpenBinding: Binding<Bool> {
-        Binding(
-            get: { settings.clickToOpenEnabled },
-            set: { newValue in
-                settings.clickToOpenEnabled = newValue
-                onMenuBarBehaviorChanged()
             }
         )
     }
