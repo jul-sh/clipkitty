@@ -156,8 +156,6 @@ struct IgnoredAppsListView: View {
                 .frame(minHeight: 80, maxHeight: 160)
             }
 
-            Divider()
-
             // Add/Remove buttons
             HStack(spacing: 0) {
                 Button(action: addApp) {
