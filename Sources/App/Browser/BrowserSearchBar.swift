@@ -2,6 +2,7 @@ import SwiftUI
 import ClipKittyRust
 
 struct BrowserSearchBar<FilterPopoverContent: View>: View {
+    @Environment(\.colorScheme) private var colorScheme
     @Binding var searchText: String
     let filterLabel: String
     let searchSpinnerVisible: Bool
@@ -26,8 +27,9 @@ struct BrowserSearchBar<FilterPopoverContent: View>: View {
             TextField("Clipboard History Search", text: $searchText)
                 .textFieldStyle(.plain)
                 .font(.custom(FontManager.sansSerif, size: 17))
-                .tint(.secondary)
+                .tint(.primary)
                 .focused(focusTarget, equals: .search)
+                .id(colorScheme)
                 .accessibilityIdentifier("SearchField")
                 .onKeyPress(.upArrow) {
                     onMoveSelection(-1)
