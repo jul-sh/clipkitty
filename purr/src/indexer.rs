@@ -393,10 +393,14 @@ impl Indexer {
                     let global_index = chunk_index * CANCELLATION_CHECK_CHUNK_SIZE + offset;
                     #[cfg(test)]
                     test_support::on_phase_two_candidate(global_index);
+                    let content = candidate.content();
                     let content_lower = candidate.content().to_lowercase();
-                    let doc_words = crate::search::tokenize_words(&content_lower);
+                    let doc_words = crate::search::tokenize_words(content);
                     let doc_word_strs: Vec<&str> =
                         doc_words.iter().map(|(_, _, w)| w.as_str()).collect();
+                    let doc_words_lower = crate::search::tokenize_words(&content_lower);
+                    let doc_word_lower_strs: Vec<&str> =
+                        doc_words_lower.iter().map(|(_, _, w)| w.as_str()).collect();
                     let prefix_preference_query = prefix_preference.as_ref().map(
                         |(raw_query_lower, stripped_query_lower)| PrefixPreferenceQuery {
                             raw_query_lower,
@@ -406,6 +410,7 @@ impl Indexer {
                     let bucket = compute_bucket_score(&ScoringContext {
                         content_lower: &content_lower,
                         doc_word_strs: &doc_word_strs,
+                        doc_word_lower_strs: &doc_word_lower_strs,
                         query_words: &query_words,
                         last_word_is_prefix,
                         prefix_preference: prefix_preference_query,

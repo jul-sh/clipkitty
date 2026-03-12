@@ -3,7 +3,7 @@
 //! Tantivy handles retrieval via trigram indexing with per-word PhraseQuery boosts.
 //! Phase 2 bucket re-ranking (in indexer.rs) provides Milli-style lexicographic
 //! ranking. Highlighting uses `does_word_match` from the ranking module to ensure
-//! what's highlighted matches what's ranked (exact, prefix, fuzzy edit-distance).
+//! what's highlighted matches what's ranked (exact, prefix, substring, fuzzy edit-distance).
 //! Short queries (< 3 chars) use a streaming fallback.
 
 use crate::indexer::Indexer;
@@ -123,6 +123,8 @@ fn word_match_to_highlight_kind(wmk: WordMatchKind) -> HighlightKind {
     match wmk {
         WordMatchKind::Exact => HighlightKind::Exact,
         WordMatchKind::Prefix => HighlightKind::Prefix,
+        WordMatchKind::SubwordPrefix => HighlightKind::SubwordPrefix,
+        WordMatchKind::InfixSubstring => HighlightKind::Substring,
         WordMatchKind::Fuzzy(_) => HighlightKind::Fuzzy,
         WordMatchKind::Subsequence(_) => HighlightKind::Subsequence,
         WordMatchKind::None => HighlightKind::Exact, // unreachable in practice
@@ -139,7 +141,7 @@ pub(crate) struct HighlightContext<'a> {
 }
 
 /// Highlight a candidate using the same word-matching criteria as ranking
-/// (exact, prefix, fuzzy edit-distance) via `does_word_match`. This ensures
+/// (exact, prefix, substring, fuzzy edit-distance) via `does_word_match`. This ensures
 /// what's highlighted matches what was ranked in Phase 2 bucket scoring.
 ///
 /// `content_lower` and `doc_words` are pre-computed in Phase 2 to avoid
@@ -164,7 +166,7 @@ pub(crate) fn highlight_candidate(ctx: &HighlightContext<'_>) -> FuzzyMatch {
             let wmk = if is_large_doc {
                 does_word_match_fast(qw, &doc_word_lower, allow_prefix)
             } else {
-                does_word_match(qw, &doc_word_lower, allow_prefix)
+                does_word_match(qw, &doc_word_lower, doc_word, allow_prefix)
             };
             if wmk != WordMatchKind::None {
                 matched_query_words[qi] = true;
@@ -1151,6 +1153,20 @@ error: Build failed due to failed dependency";
         let fm = hc(1, "Run testing suite now", 1000, 1.0, &["test"], true);
         assert_eq!(fm.highlight_ranges.len(), 1);
         assert_eq!(fm.highlight_ranges[0].kind, HighlightKind::Prefix);
+    }
+
+    #[test]
+    fn test_highlight_match_kind_subword_prefix() {
+        let fm = hc(1, "responseCode", 1000, 1.0, &["code"], false);
+        assert_eq!(fm.highlight_ranges.len(), 1);
+        assert_eq!(fm.highlight_ranges[0].kind, HighlightKind::SubwordPrefix);
+    }
+
+    #[test]
+    fn test_highlight_match_kind_substring() {
+        let fm = hc(1, "import data", 1000, 1.0, &["port"], false);
+        assert_eq!(fm.highlight_ranges.len(), 1);
+        assert_eq!(fm.highlight_ranges[0].kind, HighlightKind::Substring);
     }
 
     #[test]
