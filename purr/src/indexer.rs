@@ -93,6 +93,78 @@ pub enum IndexerError {
 
 pub type IndexerResult<T> = Result<T, IndexerError>;
 
+#[derive(Debug, Clone)]
+struct OwnedPrefixPreferenceQuery {
+    raw_query_lower: String,
+    stripped_query_lower: String,
+}
+
+impl OwnedPrefixPreferenceQuery {
+    fn as_borrowed(&self) -> PrefixPreferenceQuery<'_> {
+        PrefixPreferenceQuery {
+            raw_query_lower: &self.raw_query_lower,
+            stripped_query_lower: &self.stripped_query_lower,
+        }
+    }
+}
+
+#[derive(Debug, Clone, Copy)]
+struct PhaseTwoQuery<'a> {
+    query_words: &'a [&'a str],
+    last_word_is_prefix: bool,
+    prefix_preference: Option<PrefixPreferenceQuery<'a>>,
+}
+
+fn prepare_phase_two_query(
+    query: &SearchQuery,
+    recall_text: &str,
+) -> (Vec<String>, bool, Option<OwnedPrefixPreferenceQuery>) {
+    let query_words = crate::search::tokenize_words(recall_text)
+        .into_iter()
+        .map(|(_, _, word)| word)
+        .collect();
+    let last_word_is_prefix = recall_text.ends_with(|c: char| c.is_alphanumeric());
+    let prefix_preference = match query {
+        SearchQuery::Plain { .. } => None,
+        SearchQuery::PreferPrefix {
+            raw_text,
+            stripped_text,
+        } => Some(OwnedPrefixPreferenceQuery {
+            raw_query_lower: raw_text.to_lowercase(),
+            stripped_query_lower: stripped_text.to_lowercase(),
+        }),
+    };
+
+    (query_words, last_word_is_prefix, prefix_preference)
+}
+
+fn score_phase_two_candidate(
+    candidate: &SearchCandidate,
+    phase_two_query: PhaseTwoQuery<'_>,
+    now: i64,
+) -> Option<crate::ranking::BucketScore> {
+    let content = candidate.content();
+    let content_lower = content.to_lowercase();
+    let doc_words = crate::search::tokenize_words(content);
+    let doc_word_strs: Vec<&str> = doc_words.iter().map(|(_, _, w)| w.as_str()).collect();
+    let doc_words_lower = crate::search::tokenize_words(&content_lower);
+    let doc_word_lower_strs: Vec<&str> = doc_words_lower.iter().map(|(_, _, w)| w.as_str()).collect();
+
+    let bucket = compute_bucket_score(&ScoringContext {
+        content_lower: &content_lower,
+        doc_word_strs: &doc_word_strs,
+        doc_word_lower_strs: &doc_word_lower_strs,
+        query_words: phase_two_query.query_words,
+        last_word_is_prefix: phase_two_query.last_word_is_prefix,
+        prefix_preference: phase_two_query.prefix_preference,
+        timestamp: candidate.timestamp,
+        bm25_score: candidate.tantivy_score,
+        now,
+    });
+
+    (bucket.words_matched_weight() > 0).then_some(bucket)
+}
+
 /// Tantivy-based indexer with trigram tokenization
 pub struct Indexer {
     index: Index,
@@ -318,9 +390,8 @@ impl Indexer {
     }
 
     /// Two-phase search: trigram recall (Phase 1) + bucket re-ranking (Phase 2).
-    ///
-    /// EXPERIMENT: Phase 2 disabled - Tantivy's additive recency scoring now
-    /// matches Phase 2's bucket order, so we skip re-ranking entirely.
+    /// Phase 1 gets a broad candidate set from Tantivy; Phase 2 applies the
+    /// stricter bucket-ranking policy used by the rest of the search stack.
     pub fn search(&self, query: &str, limit: usize) -> IndexerResult<Vec<SearchCandidate>> {
         let parsed = SearchQuery::parse(query);
         self.search_parsed(&parsed, limit, &CancellationToken::new())
@@ -356,18 +427,15 @@ impl Indexer {
         }
         #[cfg(test)]
         test_support::before_phase_two();
-        let query_words_owned = crate::search::tokenize_words(recall_text);
-        let query_words: Vec<&str> = query_words_owned
-            .iter()
-            .map(|(_, _, w)| w.as_str())
-            .collect();
-        let last_word_is_prefix = recall_text.ends_with(|c: char| c.is_alphanumeric());
-        let prefix_preference = match query {
-            SearchQuery::Plain { .. } => None,
-            SearchQuery::PreferPrefix {
-                raw_text,
-                stripped_text,
-            } => Some((raw_text.to_lowercase(), stripped_text.to_lowercase())),
+        let (query_words_owned, last_word_is_prefix, prefix_preference) =
+            prepare_phase_two_query(query, recall_text);
+        let query_words: Vec<&str> = query_words_owned.iter().map(String::as_str).collect();
+        let phase_two_query = PhaseTwoQuery {
+            query_words: &query_words,
+            last_word_is_prefix,
+            prefix_preference: prefix_preference
+                .as_ref()
+                .map(OwnedPrefixPreferenceQuery::as_borrowed),
         };
         let now = Utc::now().timestamp();
 
@@ -375,12 +443,6 @@ impl Indexer {
         // Process candidates in chunks to allow periodic cancellation checks.
         // Smaller chunks = more responsive cancellation but higher overhead.
         const CANCELLATION_CHECK_CHUNK_SIZE: usize = 32;
-        let prefix_preference =
-            prefix_preference
-                .as_ref()
-                .map(|(raw_query_lower, stripped_query_lower)| {
-                    (raw_query_lower.clone(), stripped_query_lower.clone())
-                });
         let mut scored: Vec<(crate::ranking::BucketScore, usize)> = candidates
             .par_chunks(CANCELLATION_CHECK_CHUNK_SIZE)
             .enumerate()
@@ -393,32 +455,8 @@ impl Indexer {
                     let global_index = chunk_index * CANCELLATION_CHECK_CHUNK_SIZE + offset;
                     #[cfg(test)]
                     test_support::on_phase_two_candidate(global_index);
-                    let content = candidate.content();
-                    let content_lower = candidate.content().to_lowercase();
-                    let doc_words = crate::search::tokenize_words(content);
-                    let doc_word_strs: Vec<&str> =
-                        doc_words.iter().map(|(_, _, w)| w.as_str()).collect();
-                    let doc_words_lower = crate::search::tokenize_words(&content_lower);
-                    let doc_word_lower_strs: Vec<&str> =
-                        doc_words_lower.iter().map(|(_, _, w)| w.as_str()).collect();
-                    let prefix_preference_query = prefix_preference.as_ref().map(
-                        |(raw_query_lower, stripped_query_lower)| PrefixPreferenceQuery {
-                            raw_query_lower,
-                            stripped_query_lower,
-                        },
-                    );
-                    let bucket = compute_bucket_score(&ScoringContext {
-                        content_lower: &content_lower,
-                        doc_word_strs: &doc_word_strs,
-                        doc_word_lower_strs: &doc_word_lower_strs,
-                        query_words: &query_words,
-                        last_word_is_prefix,
-                        prefix_preference: prefix_preference_query,
-                        timestamp: candidate.timestamp,
-                        bm25_score: candidate.tantivy_score,
-                        now,
-                    });
-                    if bucket.words_matched_weight() > 0 {
+                    if let Some(bucket) = score_phase_two_candidate(candidate, phase_two_query, now)
+                    {
                         chunk_scored.push((bucket, global_index));
                     }
                 }

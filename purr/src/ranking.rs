@@ -1,81 +1,44 @@
 //! Milli-style bucket ranking for search results.
 //!
-//! Implements a lexicographic tuple with a coarse quality / recency / quality-detail
-//! "sandwich". Only foundational quality differences outrank recency; finer coverage
-//! and phrase-quality differences break ties after recency.
+//! Read this module as a pipeline:
+//! 1. Match each query token against document tokens.
+//! 2. Choose the best non-overlapping alignment across those token matches.
+//! 3. Turn that alignment into quality signals.
+//! 4. Combine quality, recency, and BM25 into a lexicographic bucket score.
+//!
+//! The implementation is split by stage:
+//! - [`matching`] holds low-level word matching and edit distance logic.
+//! - [`alignment`] solves the "best non-overlapping token assignment" problem.
+//! - [`policy`] defines the ordered score types and tuning rules.
+
+mod alignment;
+mod matching;
+mod policy;
 
 use crate::search::is_word_token;
-use std::collections::HashSet;
 
-/// Documents larger than this threshold use fast matching (exact + prefix only).
-/// This trades typo tolerance for performance on large documents like code files.
-pub const LARGE_DOC_THRESHOLD_BYTES: usize = 5 * 1024; // 5KB
-
-/// Bucket score tuple — derived Ord gives lexicographic comparison.
-/// All components: higher = better.
-///
-/// Tuple order (most to least important):
-/// 1. quality_tier — extremely coarse foundational match quality
-/// 2. recency_bucket — coarse human-scale age bands
-/// 3. quality_detail — nuanced coverage/structure/typo detail within a recency bucket
-/// 4. recency_score — smooth logarithmic decay (255=now, 0=old)
-/// 5. bm25_quantized — BM25 scaled to integer
-/// 6. recency — raw unix timestamp (final tiebreaker)
-#[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord)]
-pub struct BucketScore {
-    pub quality_tier: u8,
-    pub recency_bucket: u8,
-    pub quality_detail: QualityDetail,
-    pub recency_score: u8,
-    pub bm25_quantized: u16,
-    pub recency: i64,
-}
-
-/// Fine-grained ranking detail used only after `quality_tier` and `recency_bucket`.
-///
-/// Rust derives lexicographic ordering for structs in field declaration order, so
-/// the field order here is the ranking policy:
-/// 1. prefix preference
-/// 2. match class
-/// 3. coverage weight
-/// 4. structure / phrase quality
-/// 5. typo score
-#[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Default)]
-pub struct QualityDetail {
-    pub prefix_preference_score: u8,
-    pub match_class_score: u8,
-    pub words_matched_weight: u16,
-    pub structure_detail: u32,
-    pub typo_score: u8,
-}
-
-const RECENCY_BUCKET_LAST_HOUR_MAX_AGE_SECS: i64 = 3600;
-const RECENCY_BUCKET_LAST_DAY_MAX_AGE_SECS: i64 = 86_400;
-const RECENCY_BUCKET_LAST_WEEK_MAX_AGE_SECS: i64 = 7 * RECENCY_BUCKET_LAST_DAY_MAX_AGE_SECS;
-const RECENCY_BUCKET_LAST_MONTH_MAX_AGE_SECS: i64 = 30 * RECENCY_BUCKET_LAST_DAY_MAX_AGE_SECS;
-const RECENCY_BUCKET_LAST_QUARTER_MAX_AGE_SECS: i64 = 90 * RECENCY_BUCKET_LAST_DAY_MAX_AGE_SECS;
-const RECENCY_BUCKET_LAST_DAY_MIN_AGE_SECS: i64 = RECENCY_BUCKET_LAST_HOUR_MAX_AGE_SECS + 1;
-const RECENCY_BUCKET_LAST_WEEK_MIN_AGE_SECS: i64 = RECENCY_BUCKET_LAST_DAY_MAX_AGE_SECS + 1;
-const RECENCY_BUCKET_LAST_MONTH_MIN_AGE_SECS: i64 = RECENCY_BUCKET_LAST_WEEK_MAX_AGE_SECS + 1;
-const RECENCY_BUCKET_LAST_QUARTER_MIN_AGE_SECS: i64 = RECENCY_BUCKET_LAST_MONTH_MAX_AGE_SECS + 1;
-const RECENCY_BUCKET_LAST_HOUR: u8 = 5;
-const RECENCY_BUCKET_LAST_DAY: u8 = 4;
-const RECENCY_BUCKET_LAST_WEEK: u8 = 3;
-const RECENCY_BUCKET_LAST_MONTH: u8 = 2;
-const RECENCY_BUCKET_LAST_QUARTER: u8 = 1;
-const RECENCY_BUCKET_STALE: u8 = 0;
-
-impl BucketScore {
-    pub fn words_matched_weight(&self) -> u16 {
-        self.quality_detail.words_matched_weight
-    }
-}
-
-#[derive(Debug, Clone, Copy)]
-pub struct PrefixPreferenceQuery<'a> {
-    pub raw_query_lower: &'a str,
-    pub stripped_query_lower: &'a str,
-}
+use self::alignment::{alignment_exactness_signals, choose_best_alignment, trim_match_candidates};
+pub use self::matching::edit_distance_bounded;
+pub(crate) use self::matching::{
+    does_word_match, does_word_match_fast, max_edit_distance, WordMatchKind,
+};
+#[cfg(test)]
+use self::matching::subsequence_match;
+pub use self::policy::{
+    BucketScore, PrefixPreferenceQuery, QualityDetail, QualityTier, RecencyBucket, StructureDetail,
+    LARGE_DOC_THRESHOLD_BYTES,
+};
+use self::policy::{
+    compute_prefix_preference_score, compute_quality_detail, compute_quality_tier,
+    compute_recency_bucket, compute_recency_score, compute_structure_detail, quantize_bm25,
+};
+#[cfg(test)]
+use self::policy::{
+    quality_detail_structure, quality_detail_typo_score,
+    recency_bucket_last_day_max_age_secs, recency_bucket_last_hour_max_age_secs,
+    recency_bucket_last_month_max_age_secs, recency_bucket_last_quarter_max_age_secs,
+    recency_bucket_last_week_max_age_secs,
+};
 
 /// Context for computing bucket scores on a candidate document.
 /// Groups the document-derived and query-derived parameters.
@@ -370,23 +333,6 @@ fn scaled_match_weight(base_weight: u16, multiplier: u16) -> u16 {
         .max(1) as u16
 }
 
-#[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord)]
-enum ExactnessBand {
-    FuzzyOnly = 0,
-    MixedZeroCost = 1,
-    AllZeroCost = 2,
-    AllExact = 3,
-    QuerySubstring = 4,
-    AnchoredSequence = 5,
-    ContentPrefix = 6,
-}
-
-impl ExactnessBand {
-    fn score(self) -> u8 {
-        self as u8
-    }
-}
-
 #[derive(Debug, Clone, Copy, Default)]
 struct ExactnessSignals {
     content_prefix: bool,
@@ -395,26 +341,6 @@ struct ExactnessSignals {
     all_exact: bool,
     all_zero_cost: bool,
     any_zero_cost: bool,
-}
-
-impl ExactnessSignals {
-    fn band(self) -> ExactnessBand {
-        if self.content_prefix {
-            ExactnessBand::ContentPrefix
-        } else if self.anchored_sequence {
-            ExactnessBand::AnchoredSequence
-        } else if self.query_substring {
-            ExactnessBand::QuerySubstring
-        } else if self.all_exact {
-            ExactnessBand::AllExact
-        } else if self.all_zero_cost {
-            ExactnessBand::AllZeroCost
-        } else if self.any_zero_cost {
-            ExactnessBand::MixedZeroCost
-        } else {
-            ExactnessBand::FuzzyOnly
-        }
-    }
 }
 
 #[derive(Debug, Clone, Copy)]
@@ -431,7 +357,7 @@ struct QualitySignals {
 }
 
 impl QualitySignals {
-    fn quality_tier(self) -> u8 {
+    fn quality_tier(self) -> QualityTier {
         compute_quality_tier(
             self.query_word_count,
             self.total_query_weight,
@@ -452,6 +378,51 @@ impl QualitySignals {
     }
 }
 
+#[derive(Debug)]
+struct RankingBreakdown {
+    quality_signals: QualitySignals,
+    recency_bucket: RecencyBucket,
+    recency_score: u8,
+    bm25_quantized: u16,
+}
+
+impl RankingBreakdown {
+    fn into_bucket_score(self, timestamp: i64) -> BucketScore {
+        BucketScore {
+            quality_tier: self.quality_signals.quality_tier(),
+            recency_bucket: self.recency_bucket,
+            quality_detail: self.quality_signals.quality_detail(),
+            recency_score: self.recency_score,
+            bm25_quantized: self.bm25_quantized,
+            recency: timestamp,
+        }
+    }
+}
+
+fn build_ranking_breakdown(ctx: &ScoringContext<'_>) -> RankingBreakdown {
+    let fast_mode = ctx.content_lower.len() > LARGE_DOC_THRESHOLD_BYTES;
+    let word_matches = match_query_words(
+        ctx.query_words,
+        ctx.doc_word_strs,
+        ctx.doc_word_lower_strs,
+        ctx.last_word_is_prefix,
+        fast_mode,
+    );
+    let quality_signals = compute_document_quality_signals(
+        ctx.content_lower,
+        ctx.query_words,
+        ctx.prefix_preference,
+        &word_matches,
+    );
+
+    RankingBreakdown {
+        quality_signals,
+        recency_bucket: compute_recency_bucket(ctx.timestamp, ctx.now),
+        recency_score: compute_recency_score(ctx.timestamp, ctx.now),
+        bm25_quantized: quantize_bm25(ctx.bm25_score),
+    }
+}
+
 /// Compute the bucket score for a candidate document.
 ///
 /// `content_lower` and `doc_word_strs` should be pre-computed from the candidate's
@@ -462,7 +433,7 @@ impl QualitySignals {
 pub fn compute_bucket_score(ctx: &ScoringContext<'_>) -> BucketScore {
     if ctx.query_words.is_empty() {
         return BucketScore {
-            quality_tier: 0,
+            quality_tier: QualityTier::NoMatch,
             recency_bucket: compute_recency_bucket(ctx.timestamp, ctx.now),
             quality_detail: QualityDetail::default(),
             recency_score: compute_recency_score(ctx.timestamp, ctx.now),
@@ -471,53 +442,7 @@ pub fn compute_bucket_score(ctx: &ScoringContext<'_>) -> BucketScore {
         };
     }
 
-    // Use fast matching for large documents to avoid expensive fuzzy matching
-    let fast_mode = ctx.content_lower.len() > LARGE_DOC_THRESHOLD_BYTES;
-    let word_matches = match_query_words(
-        ctx.query_words,
-        ctx.doc_word_strs,
-        ctx.doc_word_lower_strs,
-        ctx.last_word_is_prefix,
-        fast_mode,
-    );
-    let signals = compute_bucket_quality_signals(
-        ctx.content_lower,
-        ctx.query_words,
-        ctx.prefix_preference,
-        &word_matches,
-    );
-    let bm25_quantized = quantize_bm25(ctx.bm25_score);
-    let recency_bucket = compute_recency_bucket(ctx.timestamp, ctx.now);
-    let recency_score = compute_recency_score(ctx.timestamp, ctx.now);
-
-    BucketScore {
-        quality_tier: signals.quality_tier(),
-        recency_bucket,
-        quality_detail: signals.quality_detail(),
-        recency_score,
-        bm25_quantized,
-        recency: ctx.timestamp,
-    }
-}
-
-fn compute_prefix_preference_score(
-    content_lower: &str,
-    prefix_preference: Option<PrefixPreferenceQuery<'_>>,
-) -> u8 {
-    match prefix_preference {
-        Some(PrefixPreferenceQuery {
-            raw_query_lower,
-            stripped_query_lower,
-        }) if content_lower.starts_with(raw_query_lower) => 3,
-        Some(PrefixPreferenceQuery {
-            raw_query_lower, ..
-        }) if content_lower.contains(raw_query_lower) => 2,
-        Some(PrefixPreferenceQuery {
-            stripped_query_lower,
-            ..
-        }) if content_lower.starts_with(stripped_query_lower) => 1,
-        _ => 0,
-    }
+    build_ranking_breakdown(ctx).into_bucket_score(ctx.timestamp)
 }
 
 fn query_total_match_weight(query_words: &[&str]) -> u16 {
@@ -579,7 +504,7 @@ fn compute_match_span_stats(word_matches: &[WordMatch]) -> Option<MatchSpanStats
     })
 }
 
-fn compute_bucket_quality_signals(
+fn compute_document_quality_signals(
     content_lower: &str,
     query_words: &[&str],
     prefix_preference: Option<PrefixPreferenceQuery<'_>>,
@@ -625,105 +550,6 @@ fn compute_alignment_quality_signals(
     }
 }
 
-fn compute_quality_tier(
-    query_word_count: usize,
-    total_query_weight: u16,
-    words_matched_weight: u16,
-    exactness: ExactnessSignals,
-    span_stats: Option<MatchSpanStats>,
-) -> u8 {
-    if words_matched_weight == 0 {
-        return 0;
-    }
-
-    if query_word_count < 2 {
-        return 1;
-    }
-
-    let Some(stats) = span_stats else {
-        return 0;
-    };
-    let coverage_pct = if total_query_weight == 0 {
-        100
-    } else {
-        ((words_matched_weight as u32) * 100 / total_query_weight as u32) as u8
-    };
-    let dense_forward = stats.in_sequence && stats.span <= stats.matched_count + 1;
-    let compact_full_match =
-        stats.all_matched && stats.in_sequence && stats.span <= stats.matched_count * 2;
-
-    if stats.all_matched && exactness.content_prefix {
-        return 3;
-    }
-    if (coverage_pct >= 60 && dense_forward)
-        || (exactness.band() >= ExactnessBand::QuerySubstring && compact_full_match)
-    {
-        return 2;
-    }
-    if coverage_pct >= 60 || stats.all_matched {
-        return 1;
-    }
-    0
-}
-
-fn compute_structure_detail(
-    proximity_score: u16,
-    exactness: ExactnessSignals,
-    span_stats: Option<MatchSpanStats>,
-) -> u32 {
-    let exactness_score = exactness.band().score();
-    let Some(stats) = span_stats else {
-        return exactness_score as u32;
-    };
-    if stats.matched_count < 2 {
-        return exactness_score as u32;
-    }
-
-    let order_rank = if stats.in_sequence {
-        if stats.span == stats.matched_count {
-            2u8
-        } else {
-            1u8
-        }
-    } else {
-        0u8
-    };
-    let density = (((stats.matched_count as u32) * u8::MAX as u32) / stats.span.max(1) as u32)
-        .min(u8::MAX as u32) as u8;
-    let proximity_quantized = (proximity_score >> 8) as u8;
-
-    ((order_rank as u32) << 19)
-        | ((density as u32) << 11)
-        | ((proximity_quantized as u32) << 3)
-        | exactness_score as u32
-}
-
-fn compute_quality_detail(
-    prefix_preference_score: u8,
-    match_class_score: u8,
-    words_matched_weight: u16,
-    typo_score: u8,
-    structure_detail: u32,
-) -> QualityDetail {
-    QualityDetail {
-        prefix_preference_score,
-        match_class_score,
-        words_matched_weight,
-        structure_detail,
-        typo_score,
-    }
-}
-
-#[cfg(test)]
-fn quality_detail_structure(quality_detail: QualityDetail) -> u32 {
-    quality_detail.structure_detail
-}
-
-#[cfg(test)]
-fn quality_detail_typo_score(quality_detail: QualityDetail) -> u8 {
-    quality_detail.typo_score
-}
-
 fn compute_typo_score(word_matches: &[WordMatch]) -> u8 {
     let total_edit_dist: u8 = word_matches
         .iter()
@@ -761,62 +587,6 @@ fn compute_match_class_score(word_matches: &[WordMatch]) -> u8 {
         (weighted_sum / total_weight) as u8
     };
     weighted_avg.min(worst_score.saturating_add(MATCH_CLASS_WORST_CASE_SLACK))
-}
-
-/// Coarse human-scale recency bands.
-///
-/// This sits before `quality_detail` in the tuple so quality can win within a
-/// modest age band, while genuinely old-vs-recent gaps still defer to recency.
-fn compute_recency_bucket(timestamp: i64, now: i64) -> u8 {
-    let age_secs = (now - timestamp).max(0);
-    match age_secs {
-        0..=RECENCY_BUCKET_LAST_HOUR_MAX_AGE_SECS => RECENCY_BUCKET_LAST_HOUR,
-        RECENCY_BUCKET_LAST_DAY_MIN_AGE_SECS..=RECENCY_BUCKET_LAST_DAY_MAX_AGE_SECS => {
-            RECENCY_BUCKET_LAST_DAY
-        }
-        RECENCY_BUCKET_LAST_WEEK_MIN_AGE_SECS..=RECENCY_BUCKET_LAST_WEEK_MAX_AGE_SECS => {
-            RECENCY_BUCKET_LAST_WEEK
-        }
-        RECENCY_BUCKET_LAST_MONTH_MIN_AGE_SECS..=RECENCY_BUCKET_LAST_MONTH_MAX_AGE_SECS => {
-            RECENCY_BUCKET_LAST_MONTH
-        }
-        RECENCY_BUCKET_LAST_QUARTER_MIN_AGE_SECS..=RECENCY_BUCKET_LAST_QUARTER_MAX_AGE_SECS => {
-            RECENCY_BUCKET_LAST_QUARTER
-        }
-        _ => RECENCY_BUCKET_STALE,
-    }
-}
-
-/// Smooth recency score using logarithmic decay, quantized to u8 (0-255).
-/// Logarithmic scale distributes resolution across human-meaningful time ranges
-/// (minutes, hours, days, weeks) — unlike exponential decay which concentrates
-/// resolution around a single half-life.
-///
-/// Approximate values at notable ages:
-///   now       → 255
-///   5 min     → 227
-///   30 min    → 187
-///   1 hour    → 169
-///   6 hours   → 119
-///   24 hours  →  80
-///   7 days    →  25
-///   17 days   →   0
-fn compute_recency_score(timestamp: i64, now: i64) -> u8 {
-    let age_secs = (now - timestamp).max(0) as f64;
-    let age_hours = age_secs / 3600.0;
-    // k: time scaling — higher values increase sensitivity to small age differences.
-    // max_hours: age at which score reaches 0.
-    let k: f64 = 20.0;
-    let max_hours: f64 = 400.0;
-    let denom = (1.0 + k * max_hours).ln();
-    let score = 255.0 * (1.0 - (1.0 + k * age_hours).ln() / denom);
-    score.round().clamp(0.0, 255.0) as u8
-}
-
-/// Quantize BM25 score to u16 for the tiebreaker bucket.
-/// Scaled by 100× to preserve decimal precision while fitting in u16.
-fn quantize_bm25(score: f32) -> u16 {
-    (score * 100.0).max(0.0).min(u16::MAX as f32) as u16
 }
 
 /// For each query word, find the best-matching document word.
@@ -894,510 +664,6 @@ fn collect_match_candidates(
         .collect();
 
     trim_match_candidates(candidates)
-}
-
-fn trim_match_candidates(candidates: Vec<WordMatch>) -> Vec<WordMatch> {
-    const MAX_CANDIDATES_PER_QUERY_WORD: usize = 8;
-    if candidates.len() <= MAX_CANDIDATES_PER_QUERY_WORD {
-        return candidates;
-    }
-
-    let mut by_quality = candidates.clone();
-    by_quality.sort_by(candidate_quality_cmp);
-
-    let mut by_pos = candidates;
-    by_pos.sort_by_key(|c| c.doc_word_pos().unwrap_or(usize::MAX));
-
-    let mut chosen = Vec::new();
-    let mut seen_positions = HashSet::new();
-
-    for cand in by_quality.iter().take(4) {
-        if let Some(doc_word_pos) = cand.doc_word_pos() {
-            if seen_positions.insert(doc_word_pos) {
-                chosen.push(*cand);
-            }
-        }
-    }
-    for cand in by_pos.iter().take(2).chain(by_pos.iter().rev().take(2)) {
-        if let Some(doc_word_pos) = cand.doc_word_pos() {
-            if seen_positions.insert(doc_word_pos) {
-                chosen.push(*cand);
-            }
-        }
-    }
-    for cand in by_quality {
-        if chosen.len() >= MAX_CANDIDATES_PER_QUERY_WORD {
-            break;
-        }
-        if let Some(doc_word_pos) = cand.doc_word_pos() {
-            if seen_positions.insert(doc_word_pos) {
-                chosen.push(cand);
-            }
-        }
-    }
-
-    chosen
-}
-
-#[derive(Debug, Clone, Copy)]
-struct IndexedCandidate {
-    position_mask: u64,
-    word_match: WordMatch,
-}
-
-fn build_indexed_candidate_lists(
-    candidate_lists: &[Vec<WordMatch>],
-) -> Option<Vec<Vec<IndexedCandidate>>> {
-    let mut unique_positions = Vec::new();
-    for candidate in candidate_lists.iter().flatten() {
-        let Some(doc_word_pos) = candidate.doc_word_pos() else {
-            continue;
-        };
-        if !unique_positions.contains(&doc_word_pos) {
-            unique_positions.push(doc_word_pos);
-        }
-    }
-
-    if unique_positions.len() > u64::BITS as usize {
-        return None;
-    }
-
-    Some(
-        candidate_lists
-            .iter()
-            .map(|candidates| {
-                candidates
-                    .iter()
-                    .filter_map(|candidate| {
-                        let doc_word_pos = candidate.doc_word_pos()?;
-                        let bit_idx = unique_positions
-                            .iter()
-                            .position(|pos| *pos == doc_word_pos)?;
-                        Some(IndexedCandidate {
-                            position_mask: 1u64 << bit_idx,
-                            word_match: *candidate,
-                        })
-                    })
-                    .collect()
-            })
-            .collect(),
-    )
-}
-
-fn choose_best_alignment(
-    candidate_lists: &[Vec<WordMatch>],
-    defaults: &[WordMatch],
-) -> Vec<WordMatch> {
-    let total_query_weight: u16 = defaults.iter().map(|m| m.query_weight).sum();
-    let mut current = defaults.to_vec();
-    let mut best = defaults.to_vec();
-    let mut best_score = score_alignment(&best, total_query_weight);
-
-    if let Some(indexed_candidate_lists) = build_indexed_candidate_lists(candidate_lists) {
-        choose_best_alignment_recursive_indexed(
-            0,
-            &indexed_candidate_lists,
-            defaults,
-            total_query_weight,
-            0,
-            &mut current,
-            &mut best,
-            &mut best_score,
-        );
-        return best;
-    }
-
-    let mut used_positions = HashSet::new();
-    choose_best_alignment_recursive_fallback(
-        0,
-        candidate_lists,
-        defaults,
-        total_query_weight,
-        &mut used_positions,
-        &mut current,
-        &mut best,
-        &mut best_score,
-    );
-
-    best
-}
-
-fn choose_best_alignment_recursive_indexed(
-    qi: usize,
-    candidate_lists: &[Vec<IndexedCandidate>],
-    defaults: &[WordMatch],
-    total_query_weight: u16,
-    used_positions_mask: u64,
-    current: &mut [WordMatch],
-    best: &mut Vec<WordMatch>,
-    best_score: &mut AlignmentScore,
-) {
-    if qi == candidate_lists.len() {
-        let score = score_alignment(current, total_query_weight);
-        if score > *best_score {
-            *best_score = score;
-            *best = current.to_vec();
-        }
-        return;
-    }
-
-    current[qi] = defaults[qi];
-    choose_best_alignment_recursive_indexed(
-        qi + 1,
-        candidate_lists,
-        defaults,
-        total_query_weight,
-        used_positions_mask,
-        current,
-        best,
-        best_score,
-    );
-
-    for candidate in &candidate_lists[qi] {
-        if used_positions_mask & candidate.position_mask != 0 {
-            continue;
-        }
-        current[qi] = candidate.word_match;
-        choose_best_alignment_recursive_indexed(
-            qi + 1,
-            candidate_lists,
-            defaults,
-            total_query_weight,
-            used_positions_mask | candidate.position_mask,
-            current,
-            best,
-            best_score,
-        );
-    }
-}
-
-fn choose_best_alignment_recursive_fallback(
-    qi: usize,
-    candidate_lists: &[Vec<WordMatch>],
-    defaults: &[WordMatch],
-    total_query_weight: u16,
-    used_positions: &mut HashSet<usize>,
-    current: &mut [WordMatch],
-    best: &mut Vec<WordMatch>,
-    best_score: &mut AlignmentScore,
-) {
-    if qi == candidate_lists.len() {
-        let score = score_alignment(current, total_query_weight);
-        if score > *best_score {
-            *best_score = score;
-            *best = current.to_vec();
-        }
-        return;
-    }
-
-    current[qi] = defaults[qi];
-    choose_best_alignment_recursive_fallback(
-        qi + 1,
-        candidate_lists,
-        defaults,
-        total_query_weight,
-        used_positions,
-        current,
-        best,
-        best_score,
-    );
-
-    for candidate in &candidate_lists[qi] {
-        let Some(doc_word_pos) = candidate.doc_word_pos() else {
-            continue;
-        };
-        if !used_positions.insert(doc_word_pos) {
-            continue;
-        }
-        current[qi] = *candidate;
-        choose_best_alignment_recursive_fallback(
-            qi + 1,
-            candidate_lists,
-            defaults,
-            total_query_weight,
-            used_positions,
-            current,
-            best,
-            best_score,
-        );
-        used_positions.remove(&doc_word_pos);
-    }
-}
-
-fn candidate_quality_cmp(a: &WordMatch, b: &WordMatch) -> std::cmp::Ordering {
-    candidate_quality_key(b).cmp(&candidate_quality_key(a))
-}
-
-fn candidate_quality_key(m: &WordMatch) -> (u8, u8, u16, u8, std::cmp::Reverse<usize>) {
-    let kind_rank = match m.state {
-        WordMatchState::Exact { .. } => 6,
-        WordMatchState::Prefix { .. } => 5,
-        WordMatchState::SubwordPrefix { .. } => 4,
-        WordMatchState::InfixSubstring { .. } => 3,
-        WordMatchState::Fuzzy { .. } => 2,
-        WordMatchState::Subsequence { .. } => 1,
-        WordMatchState::Unmatched => 0,
-    };
-    (
-        kind_rank,
-        m.match_class_score(),
-        m.matched_weight(),
-        255u8.saturating_sub(m.edit_distance()),
-        std::cmp::Reverse(m.doc_word_pos().unwrap_or(usize::MAX)),
-    )
-}
-
-#[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord)]
-struct AlignmentScore {
-    quality_tier: u8,
-    quality_detail: QualityDetail,
-    matched_query_mask: u64,
-}
-
-fn score_alignment(word_matches: &[WordMatch], total_query_weight: u16) -> AlignmentScore {
-    let signals = compute_alignment_quality_signals(word_matches, total_query_weight);
-
-    AlignmentScore {
-        quality_tier: signals.quality_tier(),
-        quality_detail: signals.quality_detail(),
-        matched_query_mask: alignment_matched_query_mask(word_matches),
-    }
-}
-
-fn alignment_matched_query_mask(word_matches: &[WordMatch]) -> u64 {
-    word_matches.iter().enumerate().fold(0u64, |mask, (i, wm)| {
-        if !matches!(wm.state, WordMatchState::Unmatched) {
-            mask | (1u64 << (63usize.saturating_sub(i)))
-        } else {
-            mask
-        }
-    })
-}
-
-fn alignment_exactness_signals(word_matches: &[WordMatch]) -> ExactnessSignals {
-    let matched_count = word_matches
-        .iter()
-        .filter(|m| !matches!(m.state, WordMatchState::Unmatched))
-        .count();
-    if matched_count < 2 {
-        return ExactnessSignals::default();
-    }
-
-    let all_matched = word_matches
-        .iter()
-        .all(|m| !matches!(m.state, WordMatchState::Unmatched));
-    if all_matched {
-        let in_sequence =
-            word_matches
-                .windows(2)
-                .all(|w| match (w[0].doc_word_pos(), w[1].doc_word_pos()) {
-                    (Some(left), Some(right)) => right > left,
-                    _ => false,
-                });
-        if in_sequence {
-            let contiguous =
-                word_matches
-                    .windows(2)
-                    .all(|w| match (w[0].doc_word_pos(), w[1].doc_word_pos()) {
-                        (Some(left), Some(right)) => right == left + 1,
-                        _ => false,
-                    });
-            if contiguous {
-                return ExactnessSignals {
-                    query_substring: true,
-                    ..alignment_zero_cost_signals(word_matches)
-                };
-            }
-            return ExactnessSignals {
-                all_zero_cost: word_matches.iter().all(|m| m.edit_distance() == 0),
-                any_zero_cost: word_matches.iter().any(|m| m.edit_distance() == 0),
-                all_exact: word_matches
-                    .iter()
-                    .all(|m| matches!(m.state, WordMatchState::Exact { .. })),
-                ..ExactnessSignals::default()
-            };
-        }
-    }
-
-    alignment_zero_cost_signals(word_matches)
-}
-
-fn alignment_zero_cost_signals(word_matches: &[WordMatch]) -> ExactnessSignals {
-    ExactnessSignals {
-        all_exact: word_matches
-            .iter()
-            .filter(|m| !matches!(m.state, WordMatchState::Unmatched))
-            .all(|m| matches!(m.state, WordMatchState::Exact { .. })),
-        all_zero_cost: word_matches
-            .iter()
-            .filter(|m| !matches!(m.state, WordMatchState::Unmatched))
-            .all(|m| m.edit_distance() == 0),
-        any_zero_cost: word_matches
-            .iter()
-            .filter(|m| !matches!(m.state, WordMatchState::Unmatched))
-            .any(|m| m.edit_distance() == 0),
-        ..ExactnessSignals::default()
-    }
-}
-
-/// Result of matching a query word against a document word.
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub(crate) enum WordMatchKind {
-    None,
-    Exact,
-    Prefix,
-    SubwordPrefix,
-    InfixSubstring,
-    Fuzzy(u8),
-    Subsequence(u8),
-}
-
-/// Check if a query word matches a document word using the same criteria
-/// as ranking: exact -> prefix -> subword-prefix -> infix substring -> fuzzy
-/// -> subsequence. `qw_lower` and `dw_lower` must already be lowercased; `dw_raw`
-/// preserves original casing for camelCase/digit boundary detection.
-pub(crate) fn does_word_match(
-    qw_lower: &str,
-    dw_lower: &str,
-    dw_raw: &str,
-    allow_prefix: bool,
-) -> WordMatchKind {
-    if dw_lower == qw_lower {
-        return WordMatchKind::Exact;
-    }
-    if allow_prefix && qw_lower.len() >= 2 && dw_lower.starts_with(qw_lower) {
-        return WordMatchKind::Prefix;
-    }
-    if let Some(contained_match) = classify_contained_match(qw_lower, dw_lower, dw_raw) {
-        return contained_match;
-    }
-    let max_typo = max_edit_distance(qw_lower.chars().count());
-    if max_typo > 0 {
-        if let Some(dist) = edit_distance_bounded(qw_lower, dw_lower, max_typo) {
-            if dist > 0 {
-                return WordMatchKind::Fuzzy(dist);
-            }
-        }
-    }
-    if let Some(gaps) = subsequence_match(qw_lower, dw_lower) {
-        return WordMatchKind::Subsequence(gaps);
-    }
-    WordMatchKind::None
-}
-
-/// Fast word matching for large documents (>5KB). Only exact and prefix matching,
-/// no fuzzy edit distance or subsequence matching. This is much faster as it avoids
-/// expensive DP table allocations for edit distance computation.
-pub(crate) fn does_word_match_fast(
-    qw_lower: &str,
-    dw_lower: &str,
-    allow_prefix: bool,
-) -> WordMatchKind {
-    if dw_lower == qw_lower {
-        return WordMatchKind::Exact;
-    }
-    if allow_prefix && qw_lower.len() >= 2 && dw_lower.starts_with(qw_lower) {
-        return WordMatchKind::Prefix;
-    }
-    WordMatchKind::None
-}
-
-fn classify_contained_match(qw_lower: &str, dw_lower: &str, dw_raw: &str) -> Option<WordMatchKind> {
-    let query_chars: Vec<char> = qw_lower.chars().collect();
-    let doc_lower_chars: Vec<char> = dw_lower.chars().collect();
-    if query_chars.len() < 4 || query_chars.len() >= doc_lower_chars.len() {
-        return None;
-    }
-
-    let doc_raw_chars: Vec<char> = dw_raw.chars().collect();
-    if doc_raw_chars.len() != doc_lower_chars.len() {
-        return None;
-    }
-
-    for start in 1..=(doc_lower_chars.len() - query_chars.len()) {
-        if doc_lower_chars[start..start + query_chars.len()] == query_chars[..] {
-            return Some(if is_subword_boundary(&doc_raw_chars, start) {
-                WordMatchKind::SubwordPrefix
-            } else {
-                WordMatchKind::InfixSubstring
-            });
-        }
-    }
-
-    None
-}
-
-fn is_subword_boundary(doc_raw_chars: &[char], start: usize) -> bool {
-    if start == 0 || start >= doc_raw_chars.len() {
-        return false;
-    }
-
-    let prev = doc_raw_chars[start - 1];
-    let curr = doc_raw_chars[start];
-    let next = doc_raw_chars.get(start + 1).copied();
-
-    (prev.is_lowercase() && curr.is_uppercase())
-        || (prev.is_alphabetic() && curr.is_numeric())
-        || (prev.is_numeric() && curr.is_alphabetic())
-        || (prev.is_uppercase() && curr.is_uppercase() && next.is_some_and(|ch| ch.is_lowercase()))
-}
-
-/// Check if all characters in `query` appear in order in `target`.
-/// Returns the number of gaps (non-contiguous segments - 1) if matched, None otherwise.
-fn subsequence_match(query: &str, target: &str) -> Option<u8> {
-    let q_chars: Vec<char> = query.chars().collect();
-    let t_chars: Vec<char> = target.chars().collect();
-
-    // Min 4 chars to avoid spurious matches (<=3 too short for meaningful subsequence)
-    if q_chars.len() <= 3 {
-        return None;
-    }
-    // Must be shorter than target (equal/longer is exact territory)
-    if q_chars.len() >= t_chars.len() {
-        return None;
-    }
-    // Query must cover at least 50% of target length
-    if q_chars.len() * 2 < t_chars.len() {
-        return None;
-    }
-    // First character must match (abbreviations preserve the initial letter)
-    if q_chars[0] != t_chars[0] {
-        return None;
-    }
-
-    let mut qi = 0;
-    let mut gaps = 0u8;
-    let mut prev_matched = false;
-
-    for &tc in &t_chars {
-        if qi < q_chars.len() && tc == q_chars[qi] {
-            if !prev_matched && qi > 0 {
-                gaps = gaps.saturating_add(1);
-            }
-            qi += 1;
-            prev_matched = true;
-        } else {
-            prev_matched = false;
-        }
-    }
-
-    if qi == q_chars.len() {
-        Some(gaps)
-    } else {
-        None
-    }
-}
-
-/// Maximum allowed edit distance based on word length (Milli's graduation).
-/// 1-2 char words get no fuzzy tolerance. 3+ chars allow 1 edit (catches transpositions).
-pub(crate) fn max_edit_distance(word_len: usize) -> u8 {
-    if word_len < 3 {
-        0
-    } else if word_len <= 8 {
-        1
-    } else {
-        2
-    }
 }
 
 fn classify_fuzzy_typo(query: &str, target: &str, dist: u8) -> TypoClass {
@@ -1586,92 +852,11 @@ fn compute_exactness_signals(
 }
 
 /// Compute exactness score (0-6 scale) from explicit exactness signals.
+#[cfg(test)]
 fn compute_exactness(content_lower: &str, query_words: &[&str], word_matches: &[WordMatch]) -> u8 {
     compute_exactness_signals(content_lower, query_words, word_matches)
         .band()
         .score()
-}
-
-/// Damerau-Levenshtein edit distance (optimal string alignment) with threshold pruning.
-/// Counts insertions, deletions, substitutions, and adjacent transpositions each as 1 edit.
-/// Returns `Some(distance)` if distance <= max_dist, `None` otherwise.
-///
-/// Applies the "first-character rule": ~98% of real typos preserve the first letter,
-/// so a first-character mismatch incurs an extra +1 penalty. This prevents false
-/// positives like "cat"→"bat" (distance 1 + penalty 1 = 2, exceeds max_dist=1).
-/// Exception: transpositions of the first two characters (e.g., "hte"→"the") are
-/// exempt since they're common fast-typing errors.
-pub fn edit_distance_bounded(a: &str, b: &str, max_dist: u8) -> Option<u8> {
-    let a_chars: Vec<char> = a.chars().collect();
-    let b_chars: Vec<char> = b.chars().collect();
-    let m = a_chars.len();
-    let n = b_chars.len();
-    let max_d = max_dist as usize;
-
-    if m == 0 || n == 0 {
-        let dist = m.max(n);
-        return if dist <= max_d {
-            Some(dist as u8)
-        } else {
-            None
-        };
-    }
-
-    // First-character penalty: mismatch on position 0 costs +1 edit.
-    // Exception: first-two-char transposition ("hte"→"the") is a common fast-typing error.
-    let is_first_char_transposed =
-        m >= 2 && n >= 2 && a_chars[0] == b_chars[1] && a_chars[1] == b_chars[0];
-    let first_char_penalty = if a_chars[0] != b_chars[0] && !is_first_char_transposed {
-        1
-    } else {
-        0
-    };
-
-    if m.abs_diff(n) + first_char_penalty > max_d {
-        return None;
-    }
-
-    let mut prev2 = vec![0usize; n + 1];
-    let mut prev: Vec<usize> = (0..=n).collect();
-    let mut curr = vec![0usize; n + 1];
-
-    for i in 1..=m {
-        curr[0] = i;
-        let mut row_min = curr[0];
-
-        for j in 1..=n {
-            let cost = if a_chars[i - 1] == b_chars[j - 1] {
-                0
-            } else {
-                1
-            };
-            curr[j] = (prev[j] + 1).min(curr[j - 1] + 1).min(prev[j - 1] + cost);
-
-            if i >= 2
-                && j >= 2
-                && a_chars[i - 1] == b_chars[j - 2]
-                && a_chars[i - 2] == b_chars[j - 1]
-            {
-                curr[j] = curr[j].min(prev2[j - 2] + 1);
-            }
-
-            row_min = row_min.min(curr[j]);
-        }
-
-        if row_min + first_char_penalty > max_d {
-            return None;
-        }
-
-        std::mem::swap(&mut prev2, &mut prev);
-        std::mem::swap(&mut prev, &mut curr);
-    }
-
-    let result = prev[n] + first_char_penalty;
-    if result <= max_d {
-        Some(result as u8)
-    } else {
-        None
-    }
 }
 
 #[cfg(test)]
@@ -2297,47 +1482,52 @@ mod tests {
     #[test]
     fn test_recency_bucket_boundaries() {
         let now = 1700000000i64;
+        let last_hour = recency_bucket_last_hour_max_age_secs();
+        let last_day = recency_bucket_last_day_max_age_secs();
+        let last_week = recency_bucket_last_week_max_age_secs();
+        let last_month = recency_bucket_last_month_max_age_secs();
+        let last_quarter = recency_bucket_last_quarter_max_age_secs();
 
-        assert_eq!(compute_recency_bucket(now, now), RECENCY_BUCKET_LAST_HOUR);
+        assert_eq!(compute_recency_bucket(now, now), RecencyBucket::LastHour);
         assert_eq!(
-            compute_recency_bucket(now - RECENCY_BUCKET_LAST_HOUR_MAX_AGE_SECS, now),
-            RECENCY_BUCKET_LAST_HOUR
+            compute_recency_bucket(now - last_hour, now),
+            RecencyBucket::LastHour
         );
         assert_eq!(
-            compute_recency_bucket(now - (RECENCY_BUCKET_LAST_HOUR_MAX_AGE_SECS + 1), now),
-            RECENCY_BUCKET_LAST_DAY
+            compute_recency_bucket(now - (last_hour + 1), now),
+            RecencyBucket::LastDay
         );
         assert_eq!(
-            compute_recency_bucket(now - RECENCY_BUCKET_LAST_DAY_MAX_AGE_SECS, now),
-            RECENCY_BUCKET_LAST_DAY
+            compute_recency_bucket(now - last_day, now),
+            RecencyBucket::LastDay
         );
         assert_eq!(
-            compute_recency_bucket(now - (RECENCY_BUCKET_LAST_DAY_MAX_AGE_SECS + 1), now),
-            RECENCY_BUCKET_LAST_WEEK
+            compute_recency_bucket(now - (last_day + 1), now),
+            RecencyBucket::LastWeek
         );
         assert_eq!(
-            compute_recency_bucket(now - RECENCY_BUCKET_LAST_WEEK_MAX_AGE_SECS, now),
-            RECENCY_BUCKET_LAST_WEEK
+            compute_recency_bucket(now - last_week, now),
+            RecencyBucket::LastWeek
         );
         assert_eq!(
-            compute_recency_bucket(now - (RECENCY_BUCKET_LAST_WEEK_MAX_AGE_SECS + 1), now),
-            RECENCY_BUCKET_LAST_MONTH
+            compute_recency_bucket(now - (last_week + 1), now),
+            RecencyBucket::LastMonth
         );
         assert_eq!(
-            compute_recency_bucket(now - RECENCY_BUCKET_LAST_MONTH_MAX_AGE_SECS, now),
-            RECENCY_BUCKET_LAST_MONTH
+            compute_recency_bucket(now - last_month, now),
+            RecencyBucket::LastMonth
         );
         assert_eq!(
-            compute_recency_bucket(now - (RECENCY_BUCKET_LAST_MONTH_MAX_AGE_SECS + 1), now),
-            RECENCY_BUCKET_LAST_QUARTER
+            compute_recency_bucket(now - (last_month + 1), now),
+            RecencyBucket::LastQuarter
         );
         assert_eq!(
-            compute_recency_bucket(now - RECENCY_BUCKET_LAST_QUARTER_MAX_AGE_SECS, now),
-            RECENCY_BUCKET_LAST_QUARTER
+            compute_recency_bucket(now - last_quarter, now),
+            RecencyBucket::LastQuarter
         );
         assert_eq!(
-            compute_recency_bucket(now - (RECENCY_BUCKET_LAST_QUARTER_MAX_AGE_SECS + 1), now),
-            RECENCY_BUCKET_STALE
+            compute_recency_bucket(now - (last_quarter + 1), now),
+            RecencyBucket::Stale
         );
     }
 
@@ -2737,11 +1927,11 @@ mod tests {
             5.0,
             now,
         );
-        assert_eq!(s.quality_tier, 3); // exact prefix of the content
+        assert_eq!(s.quality_tier, QualityTier::ContentPrefix);
         assert_eq!(s.words_matched_weight(), 50); // 5² + 5² = 50
         assert_eq!(s.recency_score, 255); // just now
         assert_eq!(quality_detail_typo_score(s.quality_detail), 255);
-        assert!(quality_detail_structure(s.quality_detail) > 0);
+        assert!(quality_detail_structure(s.quality_detail) > StructureDetail::default());
         assert_eq!(s.bm25_quantized, 500); // 5.0 * 100
     }
 
