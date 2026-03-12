@@ -1313,10 +1313,21 @@ struct ActionOptionRow: View {
 
 // MARK: - Selection Background
 
-/// Shared selection highlight matching the system-selected content tint.
+/// Shared selection highlight matching the system-selected content tint, slightly desaturated.
 @ViewBuilder
 private func selectionBackground() -> some View {
-    Color(nsColor: .selectedContentBackgroundColor)
+    Color(nsColor: .selectedContentBackgroundColor.desaturated(by: 0.08))
+}
+
+private extension NSColor {
+    /// Returns a new color with saturation reduced by the given fraction (0.0–1.0).
+    func desaturated(by amount: CGFloat) -> NSColor {
+        guard let hsb = usingColorSpace(.sRGB) else { return self }
+        var h: CGFloat = 0, s: CGFloat = 0, b: CGFloat = 0, a: CGFloat = 0
+        hsb.getHue(&h, saturation: &s, brightness: &b, alpha: &a)
+        let newSaturation = max(0, s - amount)
+        return NSColor(hue: h, saturation: newSaturation, brightness: b, alpha: a)
+    }
 }
 
 // MARK: - Highlight Kind Color Mapping
