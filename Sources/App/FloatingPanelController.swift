@@ -144,6 +144,9 @@ final class FloatingPanelController: NSObject, NSWindowDelegate {
 
         let previousApp = activationService.frontmostApplication()
 
+        // Refresh data and reset UI state for clean display
+        store.resetForDisplay()
+
         // Update content to apply any initial search query
         if initialSearchQuery != nil {
             updatePanelContent()
