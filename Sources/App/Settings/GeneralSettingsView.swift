@@ -48,12 +48,7 @@ struct GeneralSettingsView: View {
             }
             #endif
 
-            Section(String(localized: "Database")) {
-                LabeledContent(String(localized: "Current Size")) {
-                    Text(Utilities.formatBytes(store.databaseSizeBytes))
-                        .foregroundStyle(.secondary)
-                }
-
+            Section(String(localized: "History")) {
                 LabeledContent(String(localized: "Storage Limit")) {
                     HStack(spacing: 8) {
                         Slider(value: databaseSizeSlider, in: 0...1)
@@ -65,7 +60,7 @@ struct GeneralSettingsView: View {
                     .frame(maxWidth: .infinity)
                 }
 
-                Text(String(localized: "Oldest items removed when limit is reached."))
+                Text("Currently using \(Utilities.formatBytes(store.databaseSizeBytes)). Oldest items removed when limit is reached.")
                     .font(.subheadline)
                     .foregroundStyle(.secondary)
 
