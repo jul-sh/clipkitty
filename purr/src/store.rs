@@ -214,11 +214,7 @@ impl ClipboardStore {
         operation
     }
 
-    pub fn start_search(
-        &self,
-        query: String,
-        filter: ItemQueryFilter,
-    ) -> Arc<SearchOperation> {
+    pub fn start_search(&self, query: String, filter: ItemQueryFilter) -> Arc<SearchOperation> {
         self.begin_search_operation(query, filter)
     }
 }
@@ -510,7 +506,9 @@ mod tests {
             .save_text("zz hi in the middle".to_string(), None, None)
             .unwrap();
         std::thread::sleep(std::time::Duration::from_millis(1100));
-        let prefix_newer = store.save_text("hi prefix".to_string(), None, None).unwrap();
+        let prefix_newer = store
+            .save_text("hi prefix".to_string(), None, None)
+            .unwrap();
         std::thread::sleep(std::time::Duration::from_millis(1100));
         let anywhere_newest = store
             .save_text("say hi again".to_string(), None, None)
@@ -526,10 +524,16 @@ mod tests {
         assert_eq!(ids, vec![prefix_newer, anywhere_newest, anywhere_oldest]);
 
         let prefix_match = result.matches[0].match_data.as_ref().unwrap();
-        assert_eq!(prefix_match.full_content_highlights[0].kind, HighlightKind::Prefix);
+        assert_eq!(
+            prefix_match.full_content_highlights[0].kind,
+            HighlightKind::Prefix
+        );
 
         let anywhere_match = result.matches[1].match_data.as_ref().unwrap();
-        assert_eq!(anywhere_match.full_content_highlights[0].kind, HighlightKind::Exact);
+        assert_eq!(
+            anywhere_match.full_content_highlights[0].kind,
+            HighlightKind::Exact
+        );
         assert_eq!(anywhere_match.full_content_highlights[0].start, 4);
     }
 
@@ -601,7 +605,10 @@ mod tests {
             .collect();
         assert_eq!(ids, vec![bookmarked_id]);
         assert!(!ids.contains(&plain_id));
-        assert_eq!(result.matches[0].item_metadata.tags, vec![ItemTag::Bookmark]);
+        assert_eq!(
+            result.matches[0].item_metadata.tags,
+            vec![ItemTag::Bookmark]
+        );
     }
 
     #[test]
@@ -638,7 +645,11 @@ mod tests {
         let store = ClipboardStore::new_in_memory().unwrap();
         for i in 0..200 {
             store
-                .save_text(format!("Item number {i} with repeated search text"), None, None)
+                .save_text(
+                    format!("Item number {i} with repeated search text"),
+                    None,
+                    None,
+                )
                 .unwrap();
         }
 
@@ -654,14 +665,21 @@ mod tests {
         let store = ClipboardStore::new_in_memory().unwrap();
         for i in 0..400 {
             store
-                .save_text(format!("Item number {i} with repeated search text"), None, None)
+                .save_text(
+                    format!("Item number {i} with repeated search text"),
+                    None,
+                    None,
+                )
                 .unwrap();
         }
 
         let first = store.start_search("repeated".to_string(), ItemQueryFilter::All);
         let second = store.start_search("number 399".to_string(), ItemQueryFilter::All);
 
-        assert_eq!(first.await_result().await.unwrap(), SearchOutcome::Cancelled);
+        assert_eq!(
+            first.await_result().await.unwrap(),
+            SearchOutcome::Cancelled
+        );
         assert!(matches!(
             second.await_result().await.unwrap(),
             SearchOutcome::Success { .. }
@@ -684,8 +702,8 @@ mod tests {
 
         let processed = Arc::new(AtomicUsize::new(0));
         let operation_slot: Arc<OnceLock<Arc<SearchOperation>>> = Arc::new(OnceLock::new());
-        let _hook_guard =
-            crate::indexer::test_support::install_search_hooks(crate::indexer::test_support::SearchTestHooks {
+        let _hook_guard = crate::indexer::test_support::install_search_hooks(
+            crate::indexer::test_support::SearchTestHooks {
                 before_phase_two: None,
                 on_phase_two_candidate: Some(Arc::new({
                     let processed = Arc::clone(&processed);
@@ -699,10 +717,10 @@ mod tests {
                         }
                     }
                 })),
-            });
+            },
+        );
 
-        let operation =
-            store.start_search("repeated ranking".to_string(), ItemQueryFilter::All);
+        let operation = store.start_search("repeated ranking".to_string(), ItemQueryFilter::All);
         let _ = operation_slot.set(Arc::clone(&operation));
 
         let outcome = operation.await_result().await.unwrap();
@@ -720,7 +738,9 @@ mod tests {
         for i in 0..500 {
             store
                 .save_text(
-                    format!("repeated search text item {i} with enough body for eager highlighting"),
+                    format!(
+                        "repeated search text item {i} with enough body for eager highlighting"
+                    ),
                     None,
                     None,
                 )
@@ -729,8 +749,8 @@ mod tests {
 
         let processed = Arc::new(AtomicUsize::new(0));
         let operation_slot: Arc<OnceLock<Arc<SearchOperation>>> = Arc::new(OnceLock::new());
-        let _hook_guard =
-            crate::search_service::test_support::install_search_hooks(crate::search_service::test_support::SearchTestHooks {
+        let _hook_guard = crate::search_service::test_support::install_search_hooks(
+            crate::search_service::test_support::SearchTestHooks {
                 before_eager_matches: None,
                 on_eager_match: Some(Arc::new({
                     let processed = Arc::clone(&processed);
@@ -745,7 +765,8 @@ mod tests {
                         }
                     }
                 })),
-            });
+            },
+        );
 
         let operation = store.start_search("repeated search".to_string(), ItemQueryFilter::All);
         let _ = operation_slot.set(Arc::clone(&operation));
@@ -776,9 +797,18 @@ mod tests {
         let third = store.start_search("repeated se".to_string(), ItemQueryFilter::All);
         let fourth = store.start_search("repeated sea".to_string(), ItemQueryFilter::All);
 
-        assert_eq!(first.await_result().await.unwrap(), SearchOutcome::Cancelled);
-        assert_eq!(second.await_result().await.unwrap(), SearchOutcome::Cancelled);
-        assert_eq!(third.await_result().await.unwrap(), SearchOutcome::Cancelled);
+        assert_eq!(
+            first.await_result().await.unwrap(),
+            SearchOutcome::Cancelled
+        );
+        assert_eq!(
+            second.await_result().await.unwrap(),
+            SearchOutcome::Cancelled
+        );
+        assert_eq!(
+            third.await_result().await.unwrap(),
+            SearchOutcome::Cancelled
+        );
         assert!(matches!(
             fourth.await_result().await.unwrap(),
             SearchOutcome::Success { .. }

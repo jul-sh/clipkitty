@@ -116,7 +116,8 @@ pub(crate) mod test_support {
         pub(crate) on_phase_two_candidate: Option<Arc<dyn Fn(usize) + Send + Sync>>,
     }
 
-    static HOOKS: Lazy<Mutex<SearchTestHooks>> = Lazy::new(|| Mutex::new(SearchTestHooks::default()));
+    static HOOKS: Lazy<Mutex<SearchTestHooks>> =
+        Lazy::new(|| Mutex::new(SearchTestHooks::default()));
 
     pub(crate) struct SearchTestHookGuard;
 
@@ -374,11 +375,12 @@ impl Indexer {
         // Process candidates in chunks to allow periodic cancellation checks.
         // Smaller chunks = more responsive cancellation but higher overhead.
         const CANCELLATION_CHECK_CHUNK_SIZE: usize = 32;
-        let prefix_preference = prefix_preference
-            .as_ref()
-            .map(|(raw_query_lower, stripped_query_lower)| {
-                (raw_query_lower.clone(), stripped_query_lower.clone())
-            });
+        let prefix_preference =
+            prefix_preference
+                .as_ref()
+                .map(|(raw_query_lower, stripped_query_lower)| {
+                    (raw_query_lower.clone(), stripped_query_lower.clone())
+                });
         let mut scored: Vec<(crate::ranking::BucketScore, usize)> = candidates
             .par_chunks(CANCELLATION_CHECK_CHUNK_SIZE)
             .enumerate()

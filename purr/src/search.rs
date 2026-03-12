@@ -463,7 +463,9 @@ pub(crate) fn compute_short_query_match_data(
     let start = if prefer_prefix && content_lower.starts_with(&query_lower) {
         Some(0)
     } else {
-        content_lower.find(&query_lower).map(|byte_idx| content_lower[..byte_idx].chars().count())
+        content_lower
+            .find(&query_lower)
+            .map(|byte_idx| content_lower[..byte_idx].chars().count())
     };
 
     let highlight = start
@@ -883,7 +885,10 @@ mod tests {
         assert_eq!(match_data.full_content_highlights.len(), 1);
         assert_eq!(match_data.full_content_highlights[0].start, 0);
         assert_eq!(match_data.full_content_highlights[0].end, 2);
-        assert_eq!(match_data.full_content_highlights[0].kind, HighlightKind::Prefix);
+        assert_eq!(
+            match_data.full_content_highlights[0].kind,
+            HighlightKind::Prefix
+        );
     }
 
     #[test]
@@ -892,7 +897,10 @@ mod tests {
         assert_eq!(match_data.full_content_highlights.len(), 1);
         assert_eq!(match_data.full_content_highlights[0].start, 5);
         assert_eq!(match_data.full_content_highlights[0].end, 7);
-        assert_eq!(match_data.full_content_highlights[0].kind, HighlightKind::Exact);
+        assert_eq!(
+            match_data.full_content_highlights[0].kind,
+            HighlightKind::Exact
+        );
     }
 
     #[test]
