@@ -9,6 +9,8 @@ on:
 
 permissions:
   contents: write
+  id-token: write
+  attestations: write
 
 jobs:
   build:
@@ -247,6 +249,13 @@ jobs:
         env:
           SPARKLE_EDDSA_KEY: ${{ steps.secrets.outputs.SPARKLE_EDDSA_KEY }}
 
+      - name: Attest Build Provenance
+        uses: actions/attest-build-provenance@v2
+        with:
+          subject-path: |
+            ClipKitty.dmg
+            DerivedData/Build/Products/SparkleRelease/ClipKitty.app/Contents/MacOS/ClipKitty
+
       - name: Create Channel Release
         if: github.event_name == 'push' && (github.ref == 'refs/heads/main' || github.ref == 'refs/heads/release')
         run: |
@@ -480,6 +489,13 @@ jobs:
             BUILD_NUMBER="$(git rev-list --count HEAD)"
         env:
           AGE_SECRET_KEY: ${{ secrets.AGE_SECRET_KEY }}
+
+      - name: Attest App Store Build Provenance
+        uses: actions/attest-build-provenance@v2
+        with:
+          subject-path: |
+            ClipKitty.pkg
+            DerivedData/Build/Products/AppStore/ClipKitty.app/Contents/MacOS/ClipKitty
 
       - name: Cleanup
         if: always()
