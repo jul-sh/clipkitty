@@ -26,7 +26,7 @@ struct BrowserSearchBar<FilterPopoverContent: View>: View {
             TextField("Clipboard History Search", text: $searchText)
                 .textFieldStyle(.plain)
                 .font(.custom(FontManager.sansSerif, size: 17))
-                .tint(.primary)
+                .tint(.accentColor)
                 .focused(focusTarget, equals: .search)
                 .accessibilityIdentifier("SearchField")
                 .onKeyPress(.upArrow) {
