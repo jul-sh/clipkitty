@@ -43,7 +43,7 @@ struct SettingsView: View {
                 .tag(SettingsTab.shortcuts)
                 .accessibilityIdentifier("SettingsTab_Shortcuts")
         }
-        .frame(width: 520, height: 500)
+        .frame(width: 560, height: 520)
     }
 
     private var generalSettingsView: GeneralSettingsView {
