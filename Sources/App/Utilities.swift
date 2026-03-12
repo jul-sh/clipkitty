@@ -1,3 +1,4 @@
+import CryptoKit
 import Foundation
 
 /// Shared utility functions used across ClipKitty
@@ -20,5 +21,14 @@ enum Utilities {
         } else {
             return String(localized: "\(absBytes) bytes")
         }
+    }
+
+    /// Compute SHA-256 hash of a file
+    /// - Parameter url: File URL to hash
+    /// - Returns: Lowercase hex string of the hash, or nil if file cannot be read
+    static func sha256(of url: URL) -> String? {
+        guard let data = try? Data(contentsOf: url) else { return nil }
+        let digest = SHA256.hash(data: data)
+        return digest.map { String(format: "%02x", $0) }.joined()
     }
 }

@@ -1,10 +1,6 @@
-# Verifying ClipKitty
+# Verifying ClipKitty Builds
 
-How do you know the app you're running was actually built from this public source code?
-
-## The Problem
-
-Open source lets you read the code. But the binary you download? There's no guarantee it was built from that code. The developer could publish clean source code while shipping a binary built from something completely different.
+Open source lets you read the code. But the app you download? How can you verify it was built from that code?
 
 ## The Solution
 
@@ -12,28 +8,21 @@ ClipKitty is built entirely on GitHub's infrastructure; not on a developer's lap
 
 You can verify this yourself.
 
-## Verify Your Installed App
+## Verify the Installed App
 
 ```bash
-gh attestation verify /Applications/ClipKitty.app/Contents/MacOS/ClipKitty --owner jul-sh
+HASH=$(shasum -a 256 /Applications/ClipKitty.app/Contents/MacOS/ClipKitty | cut -d' ' -f1)
+echo "https://github.com/jul-sh/clipkitty/attestations/sha256:$HASH"
 ```
 
-If valid, you'll see which commit built your binary:
+## Verify a Downloaded DMG
 
-```
-✓ Verification succeeded!
-
-sha256:a1b2c3d4e5f6...
-
-Repo:   jul-sh/clipkitty
-Commit: 5c75461...
+```bash
+HASH=$(shasum -a 256 ~/Downloads/ClipKitty.dmg | cut -d' ' -f1)
+echo "https://github.com/jul-sh/clipkitty/attestations/sha256:$HASH"
 ```
 
-That commit hash links directly to the source code that produced the app on your machine.
-
-## Requirements
-
-[Install the GitHub CLI](https://cli.github.com)
+Open the URL. If an attestation exists, you'll see the exact commit that produced your binary. From there you can browse the exact source code used for that build.
 
 ## Further Reading
 
