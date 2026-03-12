@@ -432,10 +432,26 @@ mod tests {
         LinkMetadataPayload, LinkMetadataState,
     };
     use once_cell::sync::Lazy;
+    use parking_lot::Mutex as TestMutex;
     use std::sync::atomic::{AtomicUsize, Ordering};
-    use std::sync::{Arc, Mutex as StdMutex, OnceLock};
+    use std::sync::{Arc, OnceLock};
 
-    static SEARCH_HOOK_TEST_LOCK: Lazy<StdMutex<()>> = Lazy::new(|| StdMutex::new(()));
+    static SEARCH_HOOK_TEST_LOCK: Lazy<TestMutex<()>> = Lazy::new(|| TestMutex::new(()));
+
+    fn wait_for_operation_registration(operation_slot: &Arc<OnceLock<Arc<SearchOperation>>>) {
+        for attempt in 0..100 {
+            if operation_slot.get().is_some() {
+                return;
+            }
+            if attempt % 10 == 0 {
+                std::thread::sleep(std::time::Duration::from_millis(1));
+            } else {
+                std::thread::yield_now();
+            }
+        }
+
+        panic!("search operation should be registered before test hook work begins");
+    }
 
     fn runtime() -> tokio::runtime::Runtime {
         tokio::runtime::Builder::new_current_thread()
@@ -748,7 +764,7 @@ mod tests {
 
     #[tokio::test]
     async fn test_phase_two_cancellation_stops_work_early() {
-        let _lock = SEARCH_HOOK_TEST_LOCK.lock().unwrap();
+        let _lock = SEARCH_HOOK_TEST_LOCK.lock();
         let store = ClipboardStore::new_in_memory().unwrap();
         for i in 0..1_000 {
             store
@@ -764,7 +780,10 @@ mod tests {
         let operation_slot: Arc<OnceLock<Arc<SearchOperation>>> = Arc::new(OnceLock::new());
         let _hook_guard = crate::indexer::test_support::install_search_hooks(
             crate::indexer::test_support::SearchTestHooks {
-                before_phase_two: None,
+                before_phase_two: Some(Arc::new({
+                    let operation_slot = Arc::clone(&operation_slot);
+                    move || wait_for_operation_registration(&operation_slot)
+                })),
                 on_phase_two_candidate: Some(Arc::new({
                     let processed = Arc::clone(&processed);
                     let operation_slot = Arc::clone(&operation_slot);
@@ -793,7 +812,7 @@ mod tests {
 
     #[tokio::test]
     async fn test_eager_match_cancellation_stops_highlight_work_early() {
-        let _lock = SEARCH_HOOK_TEST_LOCK.lock().unwrap();
+        let _lock = SEARCH_HOOK_TEST_LOCK.lock();
         let store = ClipboardStore::new_in_memory().unwrap();
         for i in 0..500 {
             store
@@ -811,7 +830,10 @@ mod tests {
         let operation_slot: Arc<OnceLock<Arc<SearchOperation>>> = Arc::new(OnceLock::new());
         let _hook_guard = crate::search_service::test_support::install_search_hooks(
             crate::search_service::test_support::SearchTestHooks {
-                before_eager_matches: None,
+                before_eager_matches: Some(Arc::new({
+                    let operation_slot = Arc::clone(&operation_slot);
+                    move || wait_for_operation_registration(&operation_slot)
+                })),
                 on_eager_match: Some(Arc::new({
                     let processed = Arc::clone(&processed);
                     let operation_slot = Arc::clone(&operation_slot);
