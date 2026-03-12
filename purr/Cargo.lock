@@ -1644,12 +1644,14 @@ dependencies = [
  "serde",
  "serde_json",
  "sha2",
+ "strsim",
  "tantivy",
  "tempfile",
  "thiserror",
  "thread-priority",
  "tokio",
  "tokio-util",
+ "triple_accel",
  "uniffi",
  "url",
  "validator",
@@ -2487,6 +2489,12 @@ name = "toml_writer"
 version = "1.0.6+spec-1.1.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "ab16f14aed21ee8bfd8ec22513f7287cd4a91aa92e44edfe2c17ddd004e92607"
+
+[[package]]
+name = "triple_accel"
+version = "0.4.0"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "22048bc95dfb2ffd05b1ff9a756290a009224b60b2f0e7525faeee7603851e63"
 
 [[package]]
 name = "typenum"

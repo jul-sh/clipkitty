@@ -1,3 +1,6 @@
+use strsim::osa_distance;
+use triple_accel::levenshtein::{levenshtein_simd_k_with_opts, RDAMERAU_COSTS};
+
 /// Result of matching a query word against a document word.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub(crate) enum WordMatchKind {
@@ -168,87 +171,66 @@ pub(crate) fn max_edit_distance(word_len: usize) -> u8 {
 /// Exception: transpositions of the first two characters (e.g., "hte"->"the") are
 /// exempt since they're common fast-typing errors.
 pub fn edit_distance_bounded(a: &str, b: &str, max_dist: u8) -> Option<u8> {
-    let a_chars: Vec<char> = a.chars().collect();
-    let b_chars: Vec<char> = b.chars().collect();
-    let m = a_chars.len();
-    let n = b_chars.len();
-    let max_d = max_dist as usize;
-
-    if m == 0 || n == 0 {
-        let dist = m.max(n);
-        return if dist <= max_d {
-            Some(dist as u8)
-        } else {
-            None
-        };
+    if a.is_ascii() && b.is_ascii() {
+        return edit_distance_bounded_ascii(a, b, max_dist);
     }
 
-    // First-character penalty: mismatch on position 0 costs +1 edit.
-    // Exception: first-two-char transposition ("hte"->"the") is a common fast-typing error.
-    let is_first_char_transposed =
-        m >= 2 && n >= 2 && a_chars[0] == b_chars[1] && a_chars[1] == b_chars[0];
-    let first_char_penalty = if a_chars[0] != b_chars[0] && !is_first_char_transposed {
-        1
-    } else {
-        0
-    };
-    if m.abs_diff(n) + first_char_penalty > max_d {
+    edit_distance_bounded_unicode(a, b, max_dist)
+}
+
+fn edit_distance_bounded_ascii(a: &str, b: &str, max_dist: u8) -> Option<u8> {
+    let a_bytes = a.as_bytes();
+    let b_bytes = b.as_bytes();
+    let max_d = max_dist as usize;
+
+    if a_bytes.is_empty() || b_bytes.is_empty() {
+        let dist = a_bytes.len().max(b_bytes.len());
+        return (dist <= max_d).then_some(dist as u8);
+    }
+
+    let is_first_char_transposed = a_bytes.len() >= 2
+        && b_bytes.len() >= 2
+        && a_bytes[0] == b_bytes[1]
+        && a_bytes[1] == b_bytes[0];
+    let first_char_penalty = usize::from(a_bytes[0] != b_bytes[0] && !is_first_char_transposed);
+    if a_bytes.len().abs_diff(b_bytes.len()) + first_char_penalty > max_d {
         return None;
     }
 
-    let inf = max_d + 1;
-    let mut prev2 = vec![inf; n + 1];
-    let mut prev = vec![0usize; n + 1];
-    let mut curr = vec![0usize; n + 1];
+    let remaining_budget = max_d.saturating_sub(first_char_penalty);
+    let (dist, _) = levenshtein_simd_k_with_opts(
+        a_bytes,
+        b_bytes,
+        remaining_budget as u32,
+        false,
+        RDAMERAU_COSTS,
+    )?;
+    let total_dist = dist as usize + first_char_penalty;
 
-    for (j, cell) in prev.iter_mut().enumerate() {
-        *cell = j;
+    (total_dist <= max_d).then_some(total_dist as u8)
+}
+
+fn edit_distance_bounded_unicode(a: &str, b: &str, max_dist: u8) -> Option<u8> {
+    let a_chars: Vec<char> = a.chars().collect();
+    let b_chars: Vec<char> = b.chars().collect();
+    let max_d = max_dist as usize;
+
+    if a_chars.is_empty() || b_chars.is_empty() {
+        let dist = a_chars.len().max(b_chars.len());
+        return (dist <= max_d).then_some(dist as u8);
     }
 
-    for i in 1..=m {
-        curr[0] = i;
-        let mut row_min = curr[0];
-
-        let start = i.saturating_sub(max_d);
-        let end = (i + max_d).min(n);
-        for j in 1..start {
-            curr[j] = inf;
-        }
-
-        for j in start.max(1)..=end {
-            let substitution_cost = usize::from(a_chars[i - 1] != b_chars[j - 1]);
-            let mut best = (prev[j] + 1)
-                .min(curr[j - 1] + 1)
-                .min(prev[j - 1] + substitution_cost);
-
-            if i > 1
-                && j > 1
-                && a_chars[i - 1] == b_chars[j - 2]
-                && a_chars[i - 2] == b_chars[j - 1]
-            {
-                best = best.min(prev2[j - 2] + 1);
-            }
-
-            curr[j] = best;
-            row_min = row_min.min(best);
-        }
-
-        for j in (end + 1)..=n {
-            curr[j] = inf;
-        }
-
-        if row_min > max_d {
-            return None;
-        }
-
-        std::mem::swap(&mut prev2, &mut prev);
-        std::mem::swap(&mut prev, &mut curr);
+    // Preserve the current "first-character rule" while delegating the edit-distance
+    // algorithm itself to `strsim`.
+    let is_first_char_transposed = a_chars.len() >= 2
+        && b_chars.len() >= 2
+        && a_chars[0] == b_chars[1]
+        && a_chars[1] == b_chars[0];
+    let first_char_penalty = usize::from(a_chars[0] != b_chars[0] && !is_first_char_transposed);
+    if a_chars.len().abs_diff(b_chars.len()) + first_char_penalty > max_d {
+        return None;
     }
 
-    let dist = prev[n] + first_char_penalty;
-    if dist <= max_d {
-        Some(dist as u8)
-    } else {
-        None
-    }
+    let dist = osa_distance(a, b) + first_char_penalty;
+    (dist <= max_d).then_some(dist as u8)
 }
