@@ -561,6 +561,66 @@ mod tests {
         assert_eq!(ids, vec![literal_id, prefix_id, contains_id]);
     }
 
+    #[tokio::test]
+    async fn test_trigram_query_surfaces_prefix_before_infix_substring() {
+        let store = ClipboardStore::new_in_memory().unwrap();
+        let prefix_id = store
+            .save_text("port forwarding".to_string(), None, None)
+            .unwrap();
+        let infix_id = store
+            .save_text("import config".to_string(), None, None)
+            .unwrap();
+
+        let result = store.search("port".to_string()).await.unwrap();
+        let ids: Vec<i64> = result
+            .matches
+            .iter()
+            .map(|item| item.item_metadata.item_id)
+            .take(2)
+            .collect();
+
+        assert_eq!(ids, vec![prefix_id, infix_id]);
+        assert_eq!(
+            result.matches[1]
+                .match_data
+                .as_ref()
+                .unwrap()
+                .full_content_highlights[0]
+                .kind,
+            HighlightKind::Substring
+        );
+    }
+
+    #[tokio::test]
+    async fn test_trigram_query_surfaces_prefix_before_subword_prefix() {
+        let store = ClipboardStore::new_in_memory().unwrap();
+        let prefix_id = store
+            .save_text("code review".to_string(), None, None)
+            .unwrap();
+        let subword_id = store
+            .save_text("responseCode".to_string(), None, None)
+            .unwrap();
+
+        let result = store.search("code".to_string()).await.unwrap();
+        let ids: Vec<i64> = result
+            .matches
+            .iter()
+            .map(|item| item.item_metadata.item_id)
+            .take(2)
+            .collect();
+
+        assert_eq!(ids, vec![prefix_id, subword_id]);
+        assert_eq!(
+            result.matches[1]
+                .match_data
+                .as_ref()
+                .unwrap()
+                .full_content_highlights[0]
+                .kind,
+            HighlightKind::SubwordPrefix
+        );
+    }
+
     #[test]
     fn test_short_query_sync_cancelled() {
         let rt = runtime();

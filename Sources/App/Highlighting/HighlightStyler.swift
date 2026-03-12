@@ -22,6 +22,18 @@ enum HighlightStyler {
                 swiftBackgroundColor: Color.yellow.opacity(0.4),
                 underlineStyle: nil
             )
+        case .subwordPrefix:
+            Appearance(
+                nsBackgroundColor: NSColor.yellow.withAlphaComponent(0.28),
+                swiftBackgroundColor: Color.yellow.opacity(0.28),
+                underlineStyle: nil
+            )
+        case .substring:
+            Appearance(
+                nsBackgroundColor: NSColor.orange.withAlphaComponent(0.2),
+                swiftBackgroundColor: Color.orange.opacity(0.2),
+                underlineStyle: nil
+            )
         case .fuzzy:
             Appearance(
                 nsBackgroundColor: NSColor.orange.withAlphaComponent(0.3),
