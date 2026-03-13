@@ -3,8 +3,35 @@ import ClipKittyRust
 import Observation
 import SwiftUI
 
+private enum BrowserToolbarMetrics {
+    static let width: CGFloat = 744
+    static let height: CGFloat = 50
+}
+
+private let browserFilterOptions: [(ContentTypeFilter, String)] = [
+    (.all, String(localized: "All")),
+    (.text, String(localized: "Text")),
+    (.images, String(localized: "Images")),
+    (.links, String(localized: "Links")),
+    (.colors, String(localized: "Colors")),
+    (.files, String(localized: "Files")),
+]
+
+@MainActor
+@Observable
+final class BrowserFocusBridge {
+    var requestID = 0
+    var target: BrowserView.FocusTarget = .search
+
+    func request(_ target: BrowserView.FocusTarget) {
+        self.target = target
+        requestID &+= 1
+    }
+}
+
 struct BrowserView: View {
     @Bindable var viewModel: BrowserViewModel
+    @Bindable var focusBridge: BrowserFocusBridge
     let displayVersion: Int
 
     @State private var commandNumberEventMonitor: Any?
@@ -16,63 +43,11 @@ struct BrowserView: View {
         case actionsDropdown
     }
 
-    private static let filterOptions: [(ContentTypeFilter, String)] = [
-        (.all, String(localized: "All")),
-        (.text, String(localized: "Text")),
-        (.images, String(localized: "Images")),
-        (.links, String(localized: "Links")),
-        (.colors, String(localized: "Colors")),
-        (.files, String(localized: "Files")),
-    ]
-
     var body: some View {
         VStack(spacing: 0) {
-            BrowserSearchBar(
-                searchText: Binding(
-                    get: { viewModel.searchText },
-                    set: { viewModel.updateSearchText($0) }
-                ),
-                filterLabel: filterLabel,
-                searchSpinnerVisible: viewModel.searchSpinnerVisible,
-                selectedItemAvailable: viewModel.selectedItem != nil,
-                hasPendingEdit: viewModel.selectedItemHasPendingEdit,
-                isFilterPopoverPresented: Binding(
-                    get: {
-                        if case .filter = viewModel.session.overlays {
-                            return true
-                        }
-                        return false
-                    },
-                    set: { isPresented in
-                        if !isPresented {
-                            viewModel.closeOverlay()
-                        }
-                    }
-                ),
-                focusTarget: $focusTarget,
-                onMoveSelection: viewModel.moveSelection(by:),
-                onConfirm: viewModel.confirmSelection,
-                onDismiss: viewModel.dismiss,
-                onOpenFilter: openFilterOverlay,
-                onOpenActions: openActionsOverlay,
-                onDelete: viewModel.deleteSelectedItem,
-                onDiscardEdit: viewModel.discardCurrentEdit,
-                onSaveEdit: {
-                    viewModel.commitCurrentEdit()
-                    focusSearchField()
-                },
-                onHandleNumberKey: handleNumberKey
-            ) {
-                BrowserFilterOverlay(
-                    viewModel: viewModel,
-                    options: Self.filterOptions,
-                    focusTarget: $focusTarget,
-                    focusSearchField: focusSearchField
-                )
-            }
-
+            Color.clear
+                .frame(height: BrowserToolbarMetrics.height)
             Divider()
-
             content
         }
         .accessibilityElement(children: .contain)
@@ -92,19 +67,14 @@ struct BrowserView: View {
         .ignoresSafeArea(edges: .top)
         .onAppear {
             installCommandNumberEventMonitor()
-            focusSearchField()
         }
         .onDisappear {
             removeCommandNumberEventMonitor()
         }
-    }
-
-    private var filterLabel: String {
-        if viewModel.selectedTagFilter == .bookmark {
-            return String(localized: "Bookmarks")
+        .onChange(of: focusBridge.requestID) { _, _ in
+            guard focusBridge.target == .actionsDropdown else { return }
+            focusActionsDropdown()
         }
-        return Self.filterOptions.first(where: { $0.0 == viewModel.contentTypeFilter })?.1
-            ?? String(localized: "All")
     }
 
     @ViewBuilder
@@ -117,7 +87,7 @@ struct BrowserView: View {
                 BrowserResultsList(
                     viewModel: viewModel,
                     displayVersion: displayVersion,
-                    focusSearchField: focusSearchField
+                    focusSearchField: requestSearchFocus
                 )
                 .frame(width: 324)
 
@@ -125,49 +95,11 @@ struct BrowserView: View {
 
                 BrowserPreviewPane(
                     viewModel: viewModel,
-                    focusSearchField: focusSearchField,
+                    focusSearchField: requestSearchFocus,
                     focusTarget: $focusTarget
                 )
                 .frame(maxWidth: .infinity)
             }
-        }
-    }
-
-    private var currentFilterIndex: Int {
-        if viewModel.selectedTagFilter == .bookmark {
-            return 1 // Bookmarks is at index 1
-        } else if viewModel.contentTypeFilter == .all {
-            return 0 // All is at index 0
-        } else {
-            // Categories start at index 2 (All=0, Bookmarks=1, then categories)
-            // filterOptions[0] is All, filterOptions[1+] are categories
-            // Use enumerated() to get offset within the slice, not the original array index
-            let categoryOffset = Self.filterOptions.dropFirst().enumerated()
-                .first(where: { $0.element.0 == viewModel.contentTypeFilter })?.offset
-            return (categoryOffset ?? 0) + 2
-        }
-    }
-
-    /// Opens filter overlay
-    /// - Parameter viaKeyboard: If true (keyboard trigger), highlights current selection for immediate arrow nav.
-    ///                          If false (mouse trigger), no initial highlight - hover will control it.
-    private func openFilterOverlay(viaKeyboard: Bool) {
-        let highlight: FilterOverlayState = viaKeyboard ? .index(currentFilterIndex) : .none
-        viewModel.openFilterOverlay(highlight: highlight)
-        if viaKeyboard {
-            focusFilterDropdown()
-        }
-    }
-
-    /// Opens actions overlay
-    /// - Parameter viaKeyboard: If true (keyboard trigger), highlights first item for immediate arrow nav.
-    ///                          If false (mouse trigger), no initial highlight - hover will control it.
-    private func openActionsOverlay(viaKeyboard: Bool) {
-        guard viewModel.selectedItem != nil else { return }
-        let highlight: MenuHighlightState = viaKeyboard ? .index(0) : .none
-        viewModel.openActionsOverlay(highlight: highlight)
-        if viaKeyboard {
-            focusActionsDropdown()
         }
     }
 
@@ -191,15 +123,15 @@ struct BrowserView: View {
         return true
     }
 
+    private func requestSearchFocus() {
+        focusBridge.request(.search)
+    }
+
     private func setFocus(to target: FocusTarget, delay: Duration = .milliseconds(1)) {
         Task { @MainActor in
             try? await Task.sleep(for: delay)
             focusTarget = target
         }
-    }
-
-    private func focusSearchField() {
-        setFocus(to: .search)
     }
 
     private func focusFilterDropdown() {
@@ -265,6 +197,145 @@ struct BrowserView: View {
         .modifier(BannerBackgroundModifier())
         .shadow(color: .black.opacity(0.12), radius: 8, y: 4)
         .accessibilityIdentifier("MutationFailureBanner")
+    }
+}
+
+struct BrowserToolbarSearchView: View {
+    @Bindable var viewModel: BrowserViewModel
+    @Bindable var focusBridge: BrowserFocusBridge
+
+    @FocusState private var focusTarget: BrowserView.FocusTarget?
+
+    var body: some View {
+        BrowserSearchBar(
+            searchText: Binding(
+                get: { viewModel.searchText },
+                set: { viewModel.updateSearchText($0) }
+            ),
+            filterLabel: filterLabel,
+            searchSpinnerVisible: viewModel.searchSpinnerVisible,
+            selectedItemAvailable: viewModel.selectedItem != nil,
+            hasPendingEdit: viewModel.selectedItemHasPendingEdit,
+            isFilterPopoverPresented: Binding(
+                get: {
+                    if case .filter = viewModel.session.overlays {
+                        return true
+                    }
+                    return false
+                },
+                set: { isPresented in
+                    if !isPresented {
+                        viewModel.closeOverlay()
+                    }
+                }
+            ),
+            focusTarget: $focusTarget,
+            onMoveSelection: viewModel.moveSelection(by:),
+            onConfirm: viewModel.confirmSelection,
+            onDismiss: viewModel.dismiss,
+            onOpenFilter: openFilterOverlay,
+            onOpenActions: openActionsOverlay,
+            onDelete: viewModel.deleteSelectedItem,
+            onDiscardEdit: viewModel.discardCurrentEdit,
+            onSaveEdit: {
+                viewModel.commitCurrentEdit()
+                focusSearchField()
+            },
+            onHandleNumberKey: handleNumberKey
+        ) {
+            BrowserFilterOverlay(
+                viewModel: viewModel,
+                options: browserFilterOptions,
+                focusTarget: $focusTarget,
+                focusSearchField: focusSearchField
+            )
+        }
+        .frame(width: BrowserToolbarMetrics.width, height: BrowserToolbarMetrics.height)
+        .onAppear {
+            focusSearchField()
+        }
+        .onChange(of: focusBridge.requestID) { _, _ in
+            switch focusBridge.target {
+            case .search:
+                focusSearchField()
+            case .filterDropdown:
+                focusFilterDropdown()
+            case .actionsDropdown:
+                break
+            }
+        }
+    }
+
+    private var filterLabel: String {
+        if viewModel.selectedTagFilter == .bookmark {
+            return String(localized: "Bookmarks")
+        }
+        return browserFilterOptions.first(where: { $0.0 == viewModel.contentTypeFilter })?.1
+            ?? String(localized: "All")
+    }
+
+    private var currentFilterIndex: Int {
+        if viewModel.selectedTagFilter == .bookmark {
+            return 1
+        } else if viewModel.contentTypeFilter == .all {
+            return 0
+        } else {
+            let categoryOffset = browserFilterOptions.dropFirst().enumerated()
+                .first(where: { $0.element.0 == viewModel.contentTypeFilter })?.offset
+            return (categoryOffset ?? 0) + 2
+        }
+    }
+
+    private func openFilterOverlay(viaKeyboard: Bool) {
+        let highlight: FilterOverlayState = viaKeyboard ? .index(currentFilterIndex) : .none
+        viewModel.openFilterOverlay(highlight: highlight)
+        if viaKeyboard {
+            focusFilterDropdown()
+        }
+    }
+
+    private func openActionsOverlay(viaKeyboard: Bool) {
+        guard viewModel.selectedItem != nil else { return }
+        let highlight: MenuHighlightState = viaKeyboard ? .index(0) : .none
+        viewModel.openActionsOverlay(highlight: highlight)
+        if viaKeyboard {
+            focusBridge.request(.actionsDropdown)
+        }
+    }
+
+    private func handleNumberKey(_ keyPress: KeyPress) -> KeyPress.Result {
+        guard let number = Int(keyPress.characters),
+              number >= 1 && number <= 9,
+              keyPress.modifiers.contains(.command),
+              handleCommandNumberShortcut(number)
+        else {
+            return .ignored
+        }
+        return .handled
+    }
+
+    private func handleCommandNumberShortcut(_ number: Int) -> Bool {
+        let index = number - 1
+        guard viewModel.itemIds.indices.contains(index) else { return false }
+        let itemId = viewModel.itemIds[index]
+        viewModel.select(itemId: itemId, origin: .user)
+        viewModel.confirmSelection()
+        return true
+    }
+
+    private func setFocus(to target: BrowserView.FocusTarget, delay: Duration = .milliseconds(1)) {
+        Task { @MainActor in
+            try? await Task.sleep(for: delay)
+            focusTarget = target
+        }
+    }
+
+    private func focusSearchField() {
+        setFocus(to: .search)
+    }
+
+    private func focusFilterDropdown() {
+        setFocus(to: .filterDropdown, delay: .milliseconds(50))
     }
 }
 

@@ -7,6 +7,11 @@ enum PanelMode {
     case testing
 }
 
+private enum PanelToolbarIdentifiers {
+    static let toolbar = NSToolbar.Identifier("ClipKitty.FloatingPanel.Toolbar")
+    static let searchItem = NSToolbarItem.Identifier("ClipKitty.FloatingPanel.Toolbar.Search")
+}
+
 private enum PanelState: Equatable {
     case hidden
     case visible(previousApp: NSRunningApplication?)
@@ -21,11 +26,12 @@ private enum PanelState: Equatable {
 }
 
 @MainActor
-final class FloatingPanelController: NSObject, NSWindowDelegate {
+final class FloatingPanelController: NSObject, NSWindowDelegate, NSToolbarDelegate {
     private var panel: NSPanel!
     private let store: ClipboardStore
     private let mode: PanelMode
     private let activationService: AppActivationService
+    private var browserViewContext: BrowserViewContext!
     private var panelState: PanelState = .hidden
 
     /// Debounce interval to prevent rapid toggle race conditions
@@ -44,6 +50,18 @@ final class FloatingPanelController: NSObject, NSWindowDelegate {
         self.mode = mode
         self.activationService = activationService ?? AppActivationService()
         super.init()
+        browserViewContext = BrowserViewContext(
+            store: store,
+            onSelect: { [weak self] itemId, content in
+                self?.selectItem(itemId: itemId, content: content)
+            },
+            onCopyOnly: { [weak self] itemId, content in
+                self?.copyOnlyItem(itemId: itemId, content: content)
+            },
+            onDismiss: { [weak self] in
+                self?.hide()
+            }
+        )
         setupPanel()
     }
 
@@ -58,6 +76,10 @@ final class FloatingPanelController: NSObject, NSWindowDelegate {
         // other windows during test screenshots, since .floating level may not suffice
         // without .nonactivatingPanel.
         // Safeguard: UI tests verify panel visibility and z-ordering in screenshots.
+        //
+        // activation: In production, keep the app non-activating so the panel overlays
+        // the frontmost app like Spotlight. In testing, keep app activation so XCUITest
+        // can reliably drive the window.
         let styleMask: NSWindow.StyleMask
         let windowLevel: NSWindow.Level
         switch mode {
@@ -90,21 +112,29 @@ final class FloatingPanelController: NSObject, NSWindowDelegate {
         panel.delegate = self
         panel.becomesKeyOnlyIfNeeded = false
 
+        let targetFrame = panel.frame
+        configureToolbar()
+        panel.setFrame(targetFrame, display: false)
+
         updatePanelContent()
+    }
+
+    private func configureToolbar() {
+        let toolbar = NSToolbar(identifier: PanelToolbarIdentifiers.toolbar)
+        toolbar.delegate = self
+        toolbar.allowsUserCustomization = false
+        toolbar.autosavesConfiguration = false
+        toolbar.displayMode = .iconOnly
+        toolbar.showsBaselineSeparator = false
+        toolbar.centeredItemIdentifier = PanelToolbarIdentifiers.searchItem
+        panel.toolbarStyle = .unifiedCompact
+        panel.toolbar = toolbar
     }
 
     private func updatePanelContent() {
         let contentView = ContentView(
             store: store,
-            onSelect: { [weak self] itemId, content in
-                self?.selectItem(itemId: itemId, content: content)
-            },
-            onCopyOnly: { [weak self] itemId, content in
-                self?.copyOnlyItem(itemId: itemId, content: content)
-            },
-            onDismiss: { [weak self] in
-                self?.hide()
-            },
+            context: browserViewContext,
             initialSearchQuery: initialSearchQuery ?? ""
         )
         panel.contentView = NSHostingView(rootView: contentView)
@@ -154,8 +184,14 @@ final class FloatingPanelController: NSObject, NSWindowDelegate {
         }
         centerPanel()
         panel.makeKeyAndOrderFront(nil)
-        NSApp.activate(ignoringOtherApps: true)
+        switch mode {
+        case .production:
+            break
+        case .testing:
+            NSApp.activate(ignoringOtherApps: true)
+        }
         panelState = .visible(previousApp: previousApp)
+        browserViewContext.focusBridge.request(.search)
     }
 
     @discardableResult
@@ -207,5 +243,31 @@ final class FloatingPanelController: NSObject, NSWindowDelegate {
         store.paste(itemId: itemId, content: content)
         hide()
         ToastWindow.shared.show(message: String(localized: "Copied"))
+    }
+
+    nonisolated func toolbarAllowedItemIdentifiers(_: NSToolbar) -> [NSToolbarItem.Identifier] {
+        [PanelToolbarIdentifiers.searchItem]
+    }
+
+    nonisolated func toolbarDefaultItemIdentifiers(_: NSToolbar) -> [NSToolbarItem.Identifier] {
+        [PanelToolbarIdentifiers.searchItem]
+    }
+
+    nonisolated func toolbar(
+        _: NSToolbar,
+        itemForItemIdentifier itemIdentifier: NSToolbarItem.Identifier,
+        willBeInsertedIntoToolbar _: Bool
+    ) -> NSToolbarItem? {
+        guard itemIdentifier == PanelToolbarIdentifiers.searchItem else { return nil }
+        return MainActor.assumeIsolated {
+            let item = NSToolbarItem(itemIdentifier: itemIdentifier)
+            let hostingView = NSHostingView(rootView: BrowserToolbarSearchView(
+                viewModel: browserViewContext.viewModel,
+                focusBridge: browserViewContext.focusBridge
+            ))
+            hostingView.setFrameSize(hostingView.fittingSize)
+            item.view = hostingView
+            return item
+        }
     }
 }

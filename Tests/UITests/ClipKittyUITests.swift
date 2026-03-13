@@ -242,6 +242,15 @@ final class ClipKittyUITests: XCTestCase {
         return getSelectedIndex() == expected
     }
 
+    /// Toolbar-backed panels can surface as either dialogs or windows in XCUI.
+    private func panelElement() -> XCUIElement {
+        let dialog = app.dialogs.containing(.textField, identifier: "SearchField").firstMatch
+        if dialog.exists {
+            return dialog
+        }
+        return app.windows.containing(.textField, identifier: "SearchField").firstMatch
+    }
+
     // MARK: - Tests
 
     /// Regression test: verify the synthetic database was correctly seeded.
@@ -266,7 +275,7 @@ final class ClipKittyUITests: XCTestCase {
     /// KNOWN ISSUE: First item shows in list but NOT in preview pane.
     /// The EditableTextPreview's NSTextView is not rendering/accessible.
     func testFirstItemPreviewVisible() throws {
-        let panel = app.dialogs.firstMatch
+        let panel = panelElement()
         XCTAssertTrue(panel.exists, "Panel should be visible initially")
 
         // Wait for first item to be selected
@@ -319,7 +328,7 @@ final class ClipKittyUITests: XCTestCase {
     /// Tests that selection resets to first when the selected item's position changes in the list.
     /// Selection should only reset when items are reordered, not on every search text change.
     func testSelectionResetsWhenItemPositionChanges() throws {
-        let searchField = app.textFields.firstMatch
+        let searchField = app.textFields["SearchField"]
         XCTAssertTrue(searchField.waitForExistence(timeout: 5), "Search field not found")
 
         // Initial state: first item should be selected
@@ -347,7 +356,7 @@ final class ClipKittyUITests: XCTestCase {
     /// Tests that the panel hides when focus moves to another application.
     /// This is Spotlight-like behavior - the panel should auto-dismiss on focus loss.
     func testPanelHidesOnFocusLoss() throws {
-        let window = app.dialogs.firstMatch
+        let window = panelElement()
         XCTAssertTrue(window.exists, "Window should be visible initially")
 
         // Click somewhere outside the app to lose focus
@@ -406,7 +415,7 @@ final class ClipKittyUITests: XCTestCase {
     /// Tests that clicking on the preview text area allows text selection
     /// instead of dragging the window.
     func testPreviewTextIsSelectable() throws {
-        let window = app.dialogs.firstMatch
+        let window = panelElement()
         XCTAssertTrue(window.exists, "Window should be visible")
 
         // Record initial window position
@@ -572,7 +581,7 @@ final class ClipKittyUITests: XCTestCase {
         XCTAssertTrue(deleted, "Item count should decrease by 1 after deletion")
 
         // Verify: window is still visible (not hidden)
-        let window = app.dialogs.firstMatch
+        let window = panelElement()
         XCTAssertTrue(window.exists, "Window should still be visible after deletion")
     }
 
@@ -602,7 +611,7 @@ final class ClipKittyUITests: XCTestCase {
     /// The neutral desktop background (set by `prepare-screenshot-environment.sh`)
     /// fills the padding area around the window.
     private func saveScreenshot(name: String) {
-        let window = app.dialogs.firstMatch
+        let window = panelElement()
         if !window.exists {
             return
         }
@@ -698,11 +707,11 @@ final class ClipKittyUITests: XCTestCase {
     /// Scene 3 (0:14-0:20): Typo forgiveness "rivresid" finds "Riverside", loop back to empty
     ///   - Matches: Apartment walkthrough...437 Riverside Dr...
     func testRecordSearchDemo() throws {
-        let searchField = app.textFields.firstMatch
+        let searchField = app.textFields["SearchField"]
         XCTAssertTrue(searchField.waitForExistence(timeout: 5), "Search field not found")
 
         // Save window bounds to temp file for video cropping
-        let window = app.dialogs.firstMatch
+        let window = panelElement()
         if window.exists {
             let frame = window.frame
             // XCUIElement.frame is in points, but screen recording is in pixels
@@ -827,14 +836,14 @@ final class ClipKittyUITests: XCTestCase {
     /// Run with: make marketing-screenshots
     /// NOTE: Relies entirely on demo items in SyntheticData.sqlite (generated with --demo flag)
     func testTakeMarketingScreenshots() throws {
-        let searchField = app.textFields.firstMatch
+        let searchField = app.textFields["SearchField"]
         XCTAssertTrue(searchField.waitForExistence(timeout: 5), "Search field not found")
 
         // Cycle the panel: hide then re-show to ensure clean visual state
         app.typeKey(.escape, modifierFlags: [])
         Thread.sleep(forTimeInterval: 0.5)
         app.typeKey(" ", modifierFlags: .option)
-        let panel = app.dialogs.firstMatch
+        let panel = panelElement()
         XCTAssertTrue(panel.waitForExistence(timeout: 5), "Panel should reappear after hotkey toggle")
         Thread.sleep(forTimeInterval: 0.5)
 
@@ -901,7 +910,7 @@ final class ClipKittyUITests: XCTestCase {
         XCTAssertFalse(value.isEmpty, "Preview text view should display content from selected item")
 
         // Verify the text view is selectable (click should not drag the window)
-        let window = app.dialogs.firstMatch
+        let window = panelElement()
         let initialFrame = window.frame
         clickAndWait(previewTextView, timeout: ciTimeout)
         XCTAssertEqual(window.frame.origin.x, initialFrame.origin.x, accuracy: 2,
