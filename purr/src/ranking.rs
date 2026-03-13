@@ -99,7 +99,7 @@ pub enum PreparedDocument<'a> {
 }
 
 impl<'a> PreparedDocument<'a> {
-    #[cfg_attr(not(feature = "perf-log"), allow(dead_code))]
+    #[cfg(feature = "perf-log")]
     fn token_count(&self) -> usize {
         match self {
             Self::Small(doc) => doc.token_spans.len(),
@@ -946,12 +946,15 @@ fn compute_match_class_score(word_matches: &[WordMatch]) -> u8 {
 enum MatchQueryPlan {
     SingleFast {
         word_match: WordMatch,
+        #[cfg(feature = "perf-log")]
         raw_candidate_count: usize,
     },
     Aligned {
         defaults: Vec<WordMatch>,
         candidate_lists: Vec<Vec<WordMatch>>,
+        #[cfg(feature = "perf-log")]
         raw_candidate_count: usize,
+        #[cfg(feature = "perf-log")]
         trimmed_candidate_count: usize,
     },
 }
@@ -969,8 +972,11 @@ fn build_match_query_plan(
             query_words_lower[0],
             last_word_is_prefix,
         );
+        #[cfg(not(feature = "perf-log"))]
+        let _ = raw_candidate_count;
         return MatchQueryPlan::SingleFast {
             word_match,
+            #[cfg(feature = "perf-log")]
             raw_candidate_count,
         };
     }
@@ -999,7 +1005,9 @@ fn build_match_query_plan(
     MatchQueryPlan::Aligned {
         defaults,
         candidate_lists,
+        #[cfg(feature = "perf-log")]
         raw_candidate_count,
+        #[cfg(feature = "perf-log")]
         trimmed_candidate_count,
     }
 }
