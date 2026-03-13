@@ -1,11 +1,10 @@
 import AppKit
-import SwiftUI
 import ClipKittyRust
+import SwiftUI
 
 /// Shared highlighting logic for both preview pane (NSTextView) and item rows (SwiftUI Text).
 /// All index calculations use Unicode scalars to match Rust's `.chars()` counting.
 enum HighlightStyler {
-
     struct Appearance {
         let nsBackgroundColor: NSColor
         let swiftBackgroundColor: Color
@@ -72,7 +71,7 @@ enum HighlightStyler {
     static func attributes(for kind: HighlightKind) -> [NSAttributedString.Key: Any] {
         let appearance = appearance(for: kind)
         var attrs: [NSAttributedString.Key: Any] = [
-            .backgroundColor: appearance.nsBackgroundColor
+            .backgroundColor: appearance.nsBackgroundColor,
         ]
         if let underlineStyle = appearance.underlineStyle {
             attrs[.underlineStyle] = underlineStyle.rawValue
@@ -109,9 +108,9 @@ enum HighlightStyler {
         let scalarStart = scalars.index(scalars.startIndex, offsetBy: safeStart)
         let scalarEnd = scalars.index(scalars.startIndex, offsetBy: safeEnd)
 
-        let prefix = String(scalars[scalars.startIndex..<scalarStart])
-        let match = String(scalars[scalarStart..<scalarEnd])
-        let suffix = String(scalars[scalarEnd..<scalars.endIndex])
+        let prefix = String(scalars[scalars.startIndex ..< scalarStart])
+        let match = String(scalars[scalarStart ..< scalarEnd])
+        let suffix = String(scalars[scalarEnd ..< scalars.endIndex])
 
         return (prefix, match, suffix)
     }
@@ -202,14 +201,15 @@ enum HighlightStyler {
             let scalarEnd = scalars.index(scalars.startIndex, offsetBy: safeEnd)
 
             guard let attrStart = AttributedString.Index(scalarStart, within: attributed),
-                  let attrEnd = AttributedString.Index(scalarEnd, within: attributed) else {
+                  let attrEnd = AttributedString.Index(scalarEnd, within: attributed)
+            else {
                 continue
             }
 
             let appearance = appearance(for: highlight.kind)
-            attributed[attrStart..<attrEnd].backgroundColor = appearance.swiftBackgroundColor
+            attributed[attrStart ..< attrEnd].backgroundColor = appearance.swiftBackgroundColor
             if appearance.underlineStyle != nil {
-                attributed[attrStart..<attrEnd].underlineStyle = .single
+                attributed[attrStart ..< attrEnd].underlineStyle = .single
             }
         }
     }
@@ -221,7 +221,8 @@ enum HighlightStyler {
     ) -> HighlightRange? {
         guard let stringRange = Range(nsRange, in: text),
               let scalarStart = stringRange.lowerBound.samePosition(in: text.unicodeScalars),
-              let scalarEnd = stringRange.upperBound.samePosition(in: text.unicodeScalars) else {
+              let scalarEnd = stringRange.upperBound.samePosition(in: text.unicodeScalars)
+        else {
             return nil
         }
 

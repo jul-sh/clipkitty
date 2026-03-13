@@ -1,6 +1,6 @@
-import Foundation
-import CoreText
 import AppKit
+import CoreText
+import Foundation
 
 enum FontManager {
     // Preferred custom fonts with system fallbacks.
@@ -9,6 +9,7 @@ enum FontManager {
         let name = "IosevkaCharon-Regular"
         return fontAvailable(name) ? name : NSFont.systemFont(ofSize: 0).fontName
     }
+
     static var mono: String {
         let name = "IosevkaCharonMono-Regular"
         return fontAvailable(name) ? name : NSFont.monospacedSystemFont(ofSize: 0, weight: .regular).fontName
@@ -29,7 +30,8 @@ enum FontManager {
             at: fontsURL,
             includingPropertiesForKeys: nil
         ).filter({ $0.pathExtension == "ttf" || $0.pathExtension == "otf" }),
-              !fontFiles.isEmpty else {
+            !fontFiles.isEmpty
+        else {
             return
         }
 

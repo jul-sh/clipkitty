@@ -1,5 +1,5 @@
-import Foundation
 import ApplicationServices
+import Foundation
 
 /// Monitors accessibility permission state and notifies when it changes.
 /// Polls at regular intervals since macOS doesn't provide permission change notifications.
@@ -18,7 +18,7 @@ final class AccessibilityPermissionMonitor {
     private let pollingIntervalMs: Int = 500
 
     init() {
-        self.isGranted = AXIsProcessTrusted()
+        isGranted = AXIsProcessTrusted()
     }
 
     /// Start monitoring for permission changes.

@@ -1,5 +1,5 @@
-import Carbon
 import AppKit
+import Carbon
 
 // MARK: - HotKey Registration State
 
@@ -23,10 +23,10 @@ final class HotKeyManager {
 
     func register(hotKey: HotKey = .default) {
         // If already registered, just update the hotkey (reuse event handler)
-        if case .registered(let oldHotKeyRef, let existingEventHandler) = state {
+        if case let .registered(oldHotKeyRef, existingEventHandler) = state {
             UnregisterEventHotKey(oldHotKeyRef)
 
-            let hotKeyID = EventHotKeyID(signature: OSType(0x434C4950), id: 1) // "CLIP"
+            let hotKeyID = EventHotKeyID(signature: OSType(0x434C_4950), id: 1) // "CLIP"
             var gMyHotKeyRef: EventHotKeyRef?
             let status = RegisterEventHotKey(
                 hotKey.keyCode,
@@ -48,7 +48,7 @@ final class HotKeyManager {
         }
 
         // First time registration - need to install event handler
-        let hotKeyID = EventHotKeyID(signature: OSType(0x434C4950), id: 1) // "CLIP"
+        let hotKeyID = EventHotKeyID(signature: OSType(0x434C_4950), id: 1) // "CLIP"
 
         var gMyHotKeyRef: EventHotKeyRef?
 
@@ -81,7 +81,7 @@ final class HotKeyManager {
         // Capture callback for use in the C function pointer
         let callback = self.callback
 
-        let handler: EventHandlerUPP = { _, event, userData -> OSStatus in
+        let handler: EventHandlerUPP = { _, _, userData -> OSStatus in
             guard userData != nil else { return OSStatus(eventNotHandledErr) }
             // Carbon callbacks run on main thread, so we can safely call MainActor code
             MainActor.assumeIsolated {
@@ -107,7 +107,7 @@ final class HotKeyManager {
     }
 
     func unregister() {
-        if case .registered(let hotKey, let eventHandler) = state {
+        if case let .registered(hotKey, eventHandler) = state {
             UnregisterEventHotKey(hotKey)
             RemoveEventHandler(eventHandler)
             state = .unregistered
@@ -118,7 +118,7 @@ final class HotKeyManager {
         // deinit runs on whatever thread deallocates, but Carbon APIs need main thread.
         // Since this class is @MainActor, it should typically be deallocated on main.
         // The state will be cleaned up by the OS when the process exits anyway.
-        if case .registered(let hotKey, let eventHandler) = state {
+        if case let .registered(hotKey, eventHandler) = state {
             UnregisterEventHotKey(hotKey)
             RemoveEventHandler(eventHandler)
         }

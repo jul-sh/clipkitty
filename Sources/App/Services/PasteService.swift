@@ -1,5 +1,5 @@
-import Foundation
 import AppKit
+import Foundation
 
 @MainActor
 final class PasteService {

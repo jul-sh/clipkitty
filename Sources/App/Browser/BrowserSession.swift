@@ -1,5 +1,5 @@
-import Foundation
 import ClipKittyRust
+import Foundation
 
 struct BrowserSession {
     var query: QuerySession
@@ -42,9 +42,9 @@ enum QuerySession {
 
     var request: SearchRequest {
         switch self {
-        case .idle(let request), .pending(let request, _, _), .failed(let request, _, _):
+        case let .idle(request), let .pending(request, _, _), let .failed(request, _, _):
             return request
-        case .ready(let response):
+        case let .ready(response):
             return response.request
         }
     }
@@ -53,16 +53,16 @@ enum QuerySession {
         switch self {
         case .idle:
             return []
-        case .pending(_, let fallback, _), .failed(_, _, let fallback):
+        case let .pending(_, fallback, _), let .failed(_, _, fallback):
             return fallback
-        case .ready(let response):
+        case let .ready(response):
             return response.items
         }
     }
 
     var firstItem: ClipboardItem? {
         switch self {
-        case .ready(let response):
+        case let .ready(response):
             return response.firstItem
         case .idle, .pending, .failed:
             return nil
@@ -70,7 +70,7 @@ enum QuerySession {
     }
 
     var isSearchSpinnerVisible: Bool {
-        guard case .pending(_, _, .running(let spinnerVisible)) = self else { return false }
+        guard case let .pending(_, _, .running(spinnerVisible)) = self else { return false }
         return spinnerVisible
     }
 }
@@ -85,12 +85,12 @@ enum SelectionSession {
     case selected(itemId: Int64, origin: SelectionOrigin)
 
     var itemId: Int64? {
-        guard case .selected(let itemId, _) = self else { return nil }
+        guard case let .selected(itemId, _) = self else { return nil }
         return itemId
     }
 
     var origin: SelectionOrigin? {
-        guard case .selected(_, let origin) = self else { return nil }
+        guard case let .selected(_, origin) = self else { return nil }
         return origin
     }
 }
@@ -108,9 +108,9 @@ enum PreviewSession {
 
     var currentSelection: PreviewSelection? {
         switch self {
-        case .loaded(let selection):
+        case let .loaded(selection):
             return selection
-        case .loading(_, let stale), .failed(_, let stale):
+        case let .loading(_, stale), let .failed(_, stale):
             return stale
         case .empty:
             return nil

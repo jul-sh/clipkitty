@@ -1,5 +1,5 @@
-import SwiftUI
 import ClipKittyRust
+import SwiftUI
 
 struct BrowserFilterOverlay: View {
     @Bindable var viewModel: BrowserViewModel
@@ -15,7 +15,7 @@ struct BrowserFilterOverlay: View {
     }
 
     private var highlight: FilterOverlayState {
-        guard case .filter(let state) = viewModel.session.overlays else { return .none }
+        guard case let .filter(state) = viewModel.session.overlays else { return .none }
         return state
     }
 
@@ -103,7 +103,7 @@ struct BrowserFilterOverlay: View {
         switch highlight {
         case .none:
             currentIndex = offset >= 0 ? -1 : totalItemCount
-        case .index(let index):
+        case let .index(index):
             currentIndex = index
         }
         let newIndex = max(0, min(totalItemCount - 1, currentIndex + offset))
@@ -111,7 +111,7 @@ struct BrowserFilterOverlay: View {
     }
 
     private func activateHighlightedItem() {
-        guard case .index(let index) = highlight else {
+        guard case let .index(index) = highlight else {
             viewModel.closeOverlay()
             focusSearchField()
             return
@@ -154,7 +154,7 @@ struct BrowserFilterOverlay: View {
         isSelected: Bool
     ) -> some View {
         let isHighlighted: Bool
-        if case .index(let highlightedIndex) = highlight {
+        if case let .index(highlightedIndex) = highlight {
             isHighlighted = highlightedIndex == index
         } else {
             isHighlighted = false

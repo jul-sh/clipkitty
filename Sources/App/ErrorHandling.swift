@@ -16,15 +16,15 @@ enum ClipboardError: LocalizedError {
         switch self {
         case .databaseInitFailed:
             return String(localized: "Failed to initialize clipboard database")
-        case .databaseOperationFailed(let operation, _):
+        case let .databaseOperationFailed(operation, _):
             return String(localized: "Database operation failed: \(operation)")
         case .imageCompressionFailed:
             return String(localized: "Failed to compress image")
         case .pasteboardAccessFailed:
             return String(localized: "Failed to access clipboard")
-        case .fileAccessFailed(let path):
+        case let .fileAccessFailed(path):
             return String(localized: "Failed to access file: \(path)")
-        case .linkMetadataFetchFailed(let url):
+        case let .linkMetadataFetchFailed(url):
             return String(localized: "Failed to fetch link preview: \(url)")
         }
     }
@@ -56,13 +56,13 @@ extension Result where Failure == Error {
         _ logger: Logger,
         operation: String,
         file: String = #file,
-        function: String = #function,
+        function _: String = #function,
         line: Int = #line
     ) -> Success? {
         switch self {
-        case .success(let value):
+        case let .success(value):
             return value
-        case .failure(let error):
+        case let .failure(error):
             logger.error("[\(operation)] \(error.localizedDescription) at \(file):\(line)")
             return nil
         }
@@ -81,7 +81,7 @@ enum ErrorReporter {
         _ error: Error,
         showToast: Bool = false,
         file: String = #file,
-        function: String = #function,
+        function _: String = #function,
         line: Int = #line
     ) {
         // Always log
@@ -141,7 +141,7 @@ func withResult<T>(
     body: () throws -> T
 ) -> Result<T, ClipboardError> {
     do {
-        return .success(try body())
+        return try .success(body())
     } catch {
         return .failure(.databaseOperationFailed(operation: operation, underlying: error))
     }

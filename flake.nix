@@ -26,6 +26,7 @@
           buildInputs = [
             rustToolchain
             pkgs.swiftlint
+            pkgs.swiftformat
           ];
 
           shellHook = ''

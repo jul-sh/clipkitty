@@ -1,5 +1,5 @@
-import Foundation
 import ClipKittyRust
+import Foundation
 
 enum RepositorySearchOutcome {
     case success(SearchResult)
@@ -27,7 +27,7 @@ private final class RustClipboardSearchOperation: ClipboardSearchOperation {
         do {
             let outcome = try await operation.awaitResult()
             switch outcome {
-            case .success(let result):
+            case let .success(result):
                 return .success(result)
             case .cancelled:
                 return .cancelled
@@ -77,7 +77,7 @@ final class ClipboardRepository {
         let result = await runRepositoryOperation("fetchItem", on: store) { store in
             try store.fetchByIds(itemIds: [id])
         }
-        if case .success(let items) = result {
+        if case let .success(items) = result {
             return items.first
         }
         return nil

@@ -79,7 +79,7 @@ final class LinkMetadataFetcher {
             return .titleOnly(title: t, description: description)
         case (nil, let img?):
             return .imageOnly(imageData: img, description: description)
-        case (let t?, let img?):
+        case let (t?, img?):
             return .titleAndImage(title: t, imageData: img, description: description)
         }
     }
@@ -90,7 +90,7 @@ final class LinkMetadataFetcher {
               let rep = image.representations.first else { return nil }
         let w = CGFloat(rep.pixelsWide)
         let h = CGFloat(rep.pixelsHigh)
-        guard w > 0 && h > 0 else { return nil }
+        guard w > 0, h > 0 else { return nil }
 
         let minRatio: CGFloat = 3.0 / 2.0
         let ratio = w / h
@@ -115,7 +115,7 @@ enum FetchedLinkMetadata: Sendable, Equatable {
 
     var title: String? {
         switch self {
-        case .titleOnly(let title, _), .titleAndImage(let title, _, _):
+        case let .titleOnly(title, _), let .titleAndImage(title, _, _):
             return title
         case .imageOnly:
             return nil
@@ -124,14 +124,14 @@ enum FetchedLinkMetadata: Sendable, Equatable {
 
     var description: String? {
         switch self {
-        case .titleOnly(_, let desc), .imageOnly(_, let desc), .titleAndImage(_, _, let desc):
+        case let .titleOnly(_, desc), let .imageOnly(_, desc), let .titleAndImage(_, _, desc):
             return desc
         }
     }
 
     var imageData: Data? {
         switch self {
-        case .imageOnly(let data, _), .titleAndImage(_, let data, _):
+        case let .imageOnly(data, _), let .titleAndImage(_, data, _):
             return data
         case .titleOnly:
             return nil

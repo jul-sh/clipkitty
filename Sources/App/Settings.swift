@@ -1,9 +1,9 @@
-import Foundation
-import Carbon
 import AppKit
+import Carbon
 @preconcurrency import CoreGraphics
+import Foundation
 #if SPARKLE_RELEASE
-import SparkleUpdater
+    import SparkleUpdater
 #endif
 
 struct HotKey: Codable, Equatable {
@@ -18,12 +18,12 @@ struct HotKey: Codable, Equatable {
         16: "Y", 17: "T", 31: "O", 32: "U", 34: "I", 35: "P", 37: "L",
         38: "J", 40: "K", 45: "N", 46: "M",
         49: "Space", 36: "Return", 48: "Tab", 51: "Delete",
-        53: "Escape", 123: "←", 124: "→", 125: "↓", 126: "↑"
+        53: "Escape", 123: "←", 124: "→", 125: "↓", 126: "↑",
     ]
 
     /// Menu key equivalent strings (lowercase single char, or special char)
     private static let keyCodeEquivalents: [UInt32: String] = [
-        49: " ", 36: "\r", 48: "\t"
+        49: " ", 36: "\r", 48: "\t",
     ]
 
     var displayString: String {
@@ -78,12 +78,12 @@ enum PasteMode {
 }
 
 #if SPARKLE_RELEASE
-/// State of update checking
-enum UpdateCheckState: Equatable {
-    case idle
-    case available
-    case checkFailed
-}
+    /// State of update checking
+    enum UpdateCheckState: Equatable {
+        case idle
+        case available
+        case checkFailed
+    }
 #endif
 
 @MainActor
@@ -91,8 +91,8 @@ final class AppSettings: ObservableObject {
     static let shared = AppSettings()
 
     #if !APP_STORE
-    /// Shared permission monitor for reactive UI updates
-    let accessibilityPermissionMonitor = AccessibilityPermissionMonitor()
+        /// Shared permission monitor for reactive UI updates
+        let accessibilityPermissionMonitor = AccessibilityPermissionMonitor()
     #endif
 
     @Published var hotKey: HotKey {
@@ -104,48 +104,48 @@ final class AppSettings: ObservableObject {
     }
 
     #if !APP_STORE
-    /// Check if the app can post synthetic keyboard events (e.g. Cmd+V for direct paste)
-    /// Uses the permission monitor for reactive updates.
-    var hasPostEventPermission: Bool {
-        return accessibilityPermissionMonitor.isGranted
-    }
+        /// Check if the app can post synthetic keyboard events (e.g. Cmd+V for direct paste)
+        /// Uses the permission monitor for reactive updates.
+        var hasPostEventPermission: Bool {
+            return accessibilityPermissionMonitor.isGranted
+        }
 
-    /// Request permission to post synthetic keyboard events.
-    /// Opens System Settings if not yet granted.
-    /// Returns true if permissions are already granted.
-    @discardableResult
-    func requestPostEventPermission() -> Bool {
-        return accessibilityPermissionMonitor.requestPermission()
-    }
+        /// Request permission to post synthetic keyboard events.
+        /// Opens System Settings if not yet granted.
+        /// Returns true if permissions are already granted.
+        @discardableResult
+        func requestPostEventPermission() -> Bool {
+            return accessibilityPermissionMonitor.requestPermission()
+        }
 
-    /// User's selection for paste behavior: true = paste to active app, false = copy to clipboard
-    /// This persists the user's *intent* regardless of permission state.
-    @Published var autoPasteEnabled: Bool {
-        didSet { save() }
-    }
+        /// User's selection for paste behavior: true = paste to active app, false = copy to clipboard
+        /// This persists the user's *intent* regardless of permission state.
+        @Published var autoPasteEnabled: Bool {
+            didSet { save() }
+        }
 
-    /// The effective paste mode based on user preference AND permission state.
-    /// - Returns `.autoPaste` only when user has enabled it AND permission is granted
-    /// - Returns `.copyOnly` when user explicitly chose copy-only mode
-    /// - Returns `.noPermission` when user wants autoPaste but permission is not granted
-    var pasteMode: PasteMode {
-        guard autoPasteEnabled else { return .copyOnly }
-        guard hasPostEventPermission else { return .noPermission }
-        return .autoPaste
-    }
+        /// The effective paste mode based on user preference AND permission state.
+        /// - Returns `.autoPaste` only when user has enabled it AND permission is granted
+        /// - Returns `.copyOnly` when user explicitly chose copy-only mode
+        /// - Returns `.noPermission` when user wants autoPaste but permission is not granted
+        var pasteMode: PasteMode {
+            guard autoPasteEnabled else { return .copyOnly }
+            guard hasPostEventPermission else { return .noPermission }
+            return .autoPaste
+        }
     #else
-    var pasteMode: PasteMode { .copyOnly }
+        var pasteMode: PasteMode { .copyOnly }
     #endif
 
-
     #if SPARKLE_RELEASE
-    @Published var updateCheckState: UpdateCheckState = .idle
-    @Published var autoInstallUpdates: Bool {
-        didSet { save() }
-    }
-    @Published var updateChannel: UpdateChannel {
-        didSet { save() }
-    }
+        @Published var updateCheckState: UpdateCheckState = .idle
+        @Published var autoInstallUpdates: Bool {
+            didSet { save() }
+        }
+
+        @Published var updateChannel: UpdateChannel {
+            didSet { save() }
+        }
     #endif
 
     let maxImageMegapixels: Double
@@ -182,15 +182,15 @@ final class AppSettings: ObservableObject {
     private let maxDbSizeKey = "maxDatabaseSizeGB"
     private let launchAtLoginKey = "launchAtLogin"
     #if !APP_STORE
-    private let autoPasteKey = "autoPasteEnabled"
+        private let autoPasteKey = "autoPasteEnabled"
     #endif
     private let ignoreConfidentialKey = "ignoreConfidentialContent"
     private let ignoreTransientKey = "ignoreTransientContent"
     private let generateLinkPreviewsKey = "generateLinkPreviews"
     private let ignoredAppBundleIdsKey = "ignoredAppBundleIds"
     #if SPARKLE_RELEASE
-    private let autoInstallUpdatesKey = "autoInstallUpdates"
-    private let updateChannelKey = "updateChannel"
+        private let autoInstallUpdatesKey = "autoInstallUpdates"
+        private let updateChannelKey = "updateChannel"
     #endif
 
     /// Flag to prevent save() calls during initialization (didSet triggers before init completes)
@@ -199,7 +199,8 @@ final class AppSettings: ObservableObject {
     private init() {
         // Initialize all stored properties first
         if let data = defaults.data(forKey: hotKeyKey),
-           let decoded = try? JSONDecoder().decode(HotKey.self, from: data) {
+           let decoded = try? JSONDecoder().decode(HotKey.self, from: data)
+        {
             hotKey = decoded
         } else {
             hotKey = .default
@@ -212,15 +213,15 @@ final class AppSettings: ObservableObject {
         }
 
         #if APP_STORE
-        launchAtLoginEnabled = defaults.object(forKey: launchAtLoginKey) as? Bool ?? false
+            launchAtLoginEnabled = defaults.object(forKey: launchAtLoginKey) as? Bool ?? false
         #else
-        launchAtLoginEnabled = defaults.object(forKey: launchAtLoginKey) as? Bool ?? true
-        autoPasteEnabled = defaults.object(forKey: autoPasteKey) as? Bool ?? true
+            launchAtLoginEnabled = defaults.object(forKey: launchAtLoginKey) as? Bool ?? true
+            autoPasteEnabled = defaults.object(forKey: autoPasteKey) as? Bool ?? true
         #endif
         #if SPARKLE_RELEASE
-        autoInstallUpdates = defaults.object(forKey: autoInstallUpdatesKey) as? Bool ?? true
-        let storedUpdateChannel = defaults.string(forKey: updateChannelKey)
-        updateChannel = storedUpdateChannel.flatMap(UpdateChannel.init(rawValue:)) ?? .stable
+            autoInstallUpdates = defaults.object(forKey: autoInstallUpdatesKey) as? Bool ?? true
+            let storedUpdateChannel = defaults.string(forKey: updateChannelKey)
+            updateChannel = storedUpdateChannel.flatMap(UpdateChannel.init(rawValue:)) ?? .stable
         #endif
 
         // Privacy settings - default to enabled for user protection
@@ -235,7 +236,7 @@ final class AppSettings: ObservableObject {
             // Default ignored apps: Keychain Access and Passwords
             ignoredAppBundleIds = [
                 "com.apple.keychainaccess",
-                "com.apple.Passwords"
+                "com.apple.Passwords",
             ]
         }
 
@@ -255,15 +256,15 @@ final class AppSettings: ObservableObject {
         defaults.set(maxDatabaseSizeGB, forKey: maxDbSizeKey)
         defaults.set(launchAtLoginEnabled, forKey: launchAtLoginKey)
         #if !APP_STORE
-        defaults.set(autoPasteEnabled, forKey: autoPasteKey)
+            defaults.set(autoPasteEnabled, forKey: autoPasteKey)
         #endif
         defaults.set(ignoreConfidentialContent, forKey: ignoreConfidentialKey)
         defaults.set(ignoreTransientContent, forKey: ignoreTransientKey)
         defaults.set(generateLinkPreviews, forKey: generateLinkPreviewsKey)
         defaults.set(Array(ignoredAppBundleIds).sorted(), forKey: ignoredAppBundleIdsKey)
         #if SPARKLE_RELEASE
-        defaults.set(autoInstallUpdates, forKey: autoInstallUpdatesKey)
-        defaults.set(updateChannel.rawValue, forKey: updateChannelKey)
+            defaults.set(autoInstallUpdates, forKey: autoInstallUpdatesKey)
+            defaults.set(updateChannel.rawValue, forKey: updateChannelKey)
         #endif
     }
 
