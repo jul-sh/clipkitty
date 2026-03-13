@@ -99,6 +99,7 @@ pub enum PreparedDocument<'a> {
 }
 
 impl<'a> PreparedDocument<'a> {
+    #[cfg_attr(not(feature = "perf-log"), allow(dead_code))]
     fn token_count(&self) -> usize {
         match self {
             Self::Small(doc) => doc.token_spans.len(),
@@ -941,6 +942,7 @@ fn compute_match_class_score(word_matches: &[WordMatch]) -> u8 {
 /// For each query word, find the best-matching document word.
 /// When `fast_mode` is true (for large documents), only exact and prefix matching
 /// is used, skipping expensive fuzzy edit distance and subsequence matching.
+#[cfg_attr(not(feature = "perf-log"), allow(dead_code))]
 enum MatchQueryPlan {
     SingleFast {
         word_match: WordMatch,
