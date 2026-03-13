@@ -9,14 +9,15 @@ struct GeneralSettingsView: View {
 
     let store: ClipboardStore
     #if SPARKLE_RELEASE
-    var onInstallUpdate: (() -> Void)? = nil
+        var onInstallUpdate: (() -> Void)? = nil
     #endif
 
     private let minDatabaseSizeGB = 0.5
     private let maxDatabaseSizeGB = 64.0
 
     private var appVersion: String {
-        Bundle.main.object(forInfoDictionaryKey: "CFBundleShortVersionString") as? String ?? "Unknown"
+        Bundle.main.object(forInfoDictionaryKey: "CFBundleShortVersionString") as? String
+            ?? "Unknown"
     }
 
     private var buildNumber: String {
@@ -37,11 +38,17 @@ struct GeneralSettingsView: View {
                 if let message = launchAtLogin.state.displayMessage {
                     Text(message)
                         .font(.subheadline)
-                        .foregroundStyle(launchAtLogin.state.hasFailureNotice ? AnyShapeStyle(.red) : AnyShapeStyle(.secondary))
+                        .foregroundStyle(
+                            launchAtLogin.state.hasFailureNotice
+                                ? AnyShapeStyle(.red) : AnyShapeStyle(.secondary))
 
                     if launchAtLogin.state.hasFailureNotice {
                         Button(String(localized: "Open Login Items Settings")) {
-                            NSWorkspace.shared.open(URL(string: "x-apple.systempreferences:com.apple.LoginItems-Settings.extension")!)
+                            NSWorkspace.shared.open(
+                                URL(
+                                    string:
+                                        "x-apple.systempreferences:com.apple.LoginItems-Settings.extension"
+                                )!)
                         }
                         .font(.subheadline)
                     }
@@ -49,9 +56,9 @@ struct GeneralSettingsView: View {
             }
 
             #if !APP_STORE
-            Section(String(localized: "Paste Items")) {
-                PasteItemsSettingView()
-            }
+                Section(String(localized: "Paste Items")) {
+                    PasteItemsSettingView()
+                }
             #endif
 
             Section(String(localized: "History")) {
@@ -66,9 +73,14 @@ struct GeneralSettingsView: View {
                     .frame(maxWidth: .infinity)
                 }
 
-                Text(String(localized: "Currently using \(Utilities.formatBytes(store.databaseSizeBytes)). Oldest items removed when limit is reached."))
-                    .font(.subheadline)
-                    .foregroundStyle(.secondary)
+                Text(
+                    String(
+                        localized:
+                            "Currently using \(Utilities.formatBytes(store.databaseSizeBytes)). Oldest items removed when limit is reached."
+                    )
+                )
+                .font(.subheadline)
+                .foregroundStyle(.secondary)
 
                 Button(role: .destructive) {
                     showClearConfirmation = true
@@ -93,63 +105,82 @@ struct GeneralSettingsView: View {
             }
 
             #if SPARKLE_RELEASE
-            Section(String(localized: "Updates")) {
-                switch settings.updateCheckState {
-                case .checkFailed:
-                    HStack {
-                        Label(String(localized: "Unable to check for updates."), systemImage: "exclamationmark.triangle")
-                        Spacer()
-                        Button(String(localized: "Download")) {
-                            NSWorkspace.shared.open(URL(string: "https://github.com/jul-sh/clipkitty/releases/latest")!)
-                        }
-                    }
-                case .available:
-                    HStack {
-                        Label(String(localized: "A new version of ClipKitty is available."), systemImage: "arrow.down.circle")
-                        Spacer()
-                        Button(String(localized: "Install")) {
-                            onInstallUpdate?()
-                        }
-                    }
-                case .idle:
-                    EmptyView()
-                }
-
-                Toggle(String(localized: "Automatically install updates"), isOn: $settings.autoInstallUpdates)
-
-                Toggle(
-                    String(localized: "Get beta updates"),
-                    isOn: Binding(
-                        get: {
-                            switch settings.updateChannel {
-                            case .stable:
-                                return false
-                            case .beta:
-                                return true
+                Section(String(localized: "Updates")) {
+                    switch settings.updateCheckState {
+                    case .checkFailed:
+                        HStack {
+                            Label(
+                                String(localized: "Unable to check for updates."),
+                                systemImage: "exclamationmark.triangle")
+                            Spacer()
+                            Button(String(localized: "Download")) {
+                                NSWorkspace.shared.open(
+                                    URL(
+                                        string:
+                                            "https://github.com/jul-sh/clipkitty/releases/latest")!)
                             }
-                        },
-                        set: { isBetaEnabled in
-                            settings.updateChannel = isBetaEnabled ? .beta : .stable
                         }
-                    )
-                )
+                    case .available:
+                        HStack {
+                            Label(
+                                String(localized: "A new version of ClipKitty is available."),
+                                systemImage: "arrow.down.circle")
+                            Spacer()
+                            Button(String(localized: "Install")) {
+                                onInstallUpdate?()
+                            }
+                        }
+                    case .idle:
+                        EmptyView()
+                    }
 
-                Text(String(localized: "Test new features before release."))
-                    .font(.subheadline)
-                    .foregroundStyle(.secondary)
+                    Toggle(
+                        String(localized: "Automatically install updates"),
+                        isOn: $settings.autoInstallUpdates)
 
-                if case .beta = settings.updateChannel {
                     VStack(alignment: .leading, spacing: 8) {
-                        Text(String(localized: "Found a bug? Report it on GitHub with steps to reproduce."))
+                        Toggle(
+                            String(localized: "Get beta updates"),
+                            isOn: Binding(
+                                get: {
+                                    switch settings.updateChannel {
+                                    case .stable:
+                                        return false
+                                    case .beta:
+                                        return true
+                                    }
+                                },
+                                set: { isBetaEnabled in
+                                    settings.updateChannel = isBetaEnabled ? .beta : .stable
+                                }
+                            )
+                        )
+
+                        Text(String(localized: "Test new features before release."))
+                            .font(.subheadline)
+                            .foregroundStyle(.secondary)
+                    }
+
+                    if case .beta = settings.updateChannel {
+                        VStack(alignment: .leading, spacing: 8) {
+                            Text(
+                                String(
+                                    localized:
+                                        "Found a bug? Report it on GitHub with steps to reproduce.")
+                            )
                             .font(.subheadline)
                             .foregroundStyle(.secondary)
 
-                        Button(String(localized: "Report a Bug")) {
-                            NSWorkspace.shared.open(URL(string: "https://github.com/jul-sh/clipkitty/issues/new/choose")!)
+                            Button(String(localized: "Report a Bug")) {
+                                NSWorkspace.shared.open(
+                                    URL(
+                                        string:
+                                            "https://github.com/jul-sh/clipkitty/issues/new/choose")!
+                                )
+                            }
                         }
                     }
                 }
-            }
             #endif
 
             Section(String(localized: "About")) {
@@ -234,7 +265,8 @@ struct GeneralSettingsView: View {
 
         do {
             let (data, response) = try await URLSession.shared.data(for: request)
-            guard let httpResponse = response as? HTTPURLResponse, httpResponse.statusCode == 200 else { return }
+            guard let httpResponse = response as? HTTPURLResponse, httpResponse.statusCode == 200
+            else { return }
 
             let entries = try JSONDecoder().decode([String].self, from: data)
             if !entries.isEmpty {
