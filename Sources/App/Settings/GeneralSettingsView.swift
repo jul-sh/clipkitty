@@ -62,7 +62,12 @@ struct GeneralSettingsView: View {
             #endif
 
             Section(String(localized: "History")) {
-                LabeledContent(String(localized: "Storage Limit")) {
+                SettingRow(
+                    title: "Storage Limit",
+                    description: LocalizedStringKey(
+                        "Currently using \(Utilities.formatBytes(store.databaseSizeBytes)). Oldest items removed when limit is reached."
+                    )
+                ) {
                     HStack(spacing: 8) {
                         Slider(value: databaseSizeSlider, in: 0 ... 1)
                             .frame(maxWidth: .infinity)
@@ -70,18 +75,8 @@ struct GeneralSettingsView: View {
                             .foregroundStyle(.secondary)
                             .frame(width: 80, alignment: .trailing)
                     }
-                    .frame(maxWidth: .infinity)
+                    .frame(width: 320)
                 }
-
-                Text(
-                    String(
-                        localized:
-                        "Currently using \(Utilities.formatBytes(store.databaseSizeBytes)). Oldest items removed when limit is reached."
-                    )
-                )
-                .font(.subheadline)
-                .foregroundStyle(.secondary)
-
                 Button(role: .destructive) {
                     showClearConfirmation = true
                 } label: {
@@ -141,9 +136,12 @@ struct GeneralSettingsView: View {
                         isOn: $settings.autoInstallUpdates
                     )
 
-                    VStack(alignment: .leading, spacing: 8) {
+                    SettingRow(
+                        title: "Get beta updates",
+                        description: "Test new features before release."
+                    ) {
                         Toggle(
-                            String(localized: "Get beta updates"),
+                            "",
                             isOn: Binding(
                                 get: {
                                     switch settings.updateChannel {
@@ -158,10 +156,7 @@ struct GeneralSettingsView: View {
                                 }
                             )
                         )
-
-                        Text(String(localized: "Test new features before release."))
-                            .font(.subheadline)
-                            .foregroundStyle(.secondary)
+                        .labelsHidden()
                     }
 
                     if case .beta = settings.updateChannel {

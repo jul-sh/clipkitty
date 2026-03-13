@@ -53,15 +53,16 @@ struct PrivacySettingsView: View {
                     }
                 }
 
-                VStack(alignment: .leading, spacing: 4) {
-                    Text(String(localized: "Excluded Apps"))
-                    Text(String(localized: "Content from these apps won't be saved."))
-                        .font(.subheadline)
-                        .foregroundStyle(.secondary)
-                }
-                .padding(.bottom, 4)
+                VStack(alignment: .leading, spacing: 10) {
+                    VStack(alignment: .leading, spacing: 4) {
+                        Text(String(localized: "Excluded Apps"))
+                        Text(String(localized: "Content from these apps won't be saved."))
+                            .font(.subheadline)
+                            .foregroundStyle(.secondary)
+                    }
 
-                IgnoredAppsListView()
+                    IgnoredAppsListView()
+                }
             }
 
             Section(String(localized: "Network")) {
@@ -76,6 +77,28 @@ struct PrivacySettingsView: View {
             }
         }
         .formStyle(.grouped)
+    }
+}
+
+struct SettingRow<Content: View>: View {
+    let title: LocalizedStringKey
+    let description: LocalizedStringKey?
+    @ViewBuilder let control: () -> Content
+
+    var body: some View {
+        VStack(alignment: .leading, spacing: 10) {
+            HStack(alignment: .firstTextBaseline, spacing: 16) {
+                Text(title)
+                Spacer(minLength: 16)
+                control()
+            }
+
+            if let description {
+                Text(description)
+                    .font(.subheadline)
+                    .foregroundStyle(.secondary)
+            }
+        }
     }
 }
 
