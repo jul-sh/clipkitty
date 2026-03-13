@@ -576,6 +576,25 @@ final class ClipKittyUITests: XCTestCase {
         XCTAssertTrue(window.exists, "Window should still be visible after deletion")
     }
 
+    /// Tests that Cmd+Delete deletes the currently selected item directly.
+    func testCommandDeleteDeletesSelectedItem() throws {
+        let searchField = app.textFields["SearchField"]
+        XCTAssertTrue(searchField.waitForExistence(timeout: 5), "Search field not found")
+
+        let initialCount = app.outlines.firstMatch.buttons.allElementsBoundByIndex.count
+        XCTAssertGreaterThan(initialCount, 0, "Should have items to delete")
+
+        clickAndWait(searchField)
+        Thread.sleep(forTimeInterval: ciTimeout)
+
+        searchField.typeKey(.delete, modifierFlags: .command)
+
+        let deleted = waitForCondition(timeout: 5) {
+            self.app.outlines.firstMatch.buttons.allElementsBoundByIndex.count == initialCount - 1
+        }
+        XCTAssertTrue(deleted, "Cmd+Delete should delete the selected item")
+    }
+
     // MARK: - Toast Tests
 
     /// Tests that a toast notification appears when copying an item
