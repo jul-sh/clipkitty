@@ -811,26 +811,51 @@ fn compute_fast_quality_signals(
     )
 }
 
+enum DocumentQualityPlan {
+    Fast(QualitySignals),
+    Detailed { prefix_preference_score: u8 },
+}
+
+fn plan_document_quality_signals(
+    document: &PreparedDocument<'_>,
+    prefix_preference: Option<PrefixPreferenceQuery<'_>>,
+    word_matches: &[WordMatch],
+) -> DocumentQualityPlan {
+    let prefix_preference_score =
+        compute_prefix_preference_score_case_insensitive(document, prefix_preference);
+
+    if document.is_fast_mode() {
+        return DocumentQualityPlan::Fast(compute_fast_quality_signals(
+            prefix_preference_score,
+            word_matches,
+        ));
+    }
+
+    DocumentQualityPlan::Detailed {
+        prefix_preference_score,
+    }
+}
+
 fn compute_document_quality_signals(
     document: &PreparedDocument<'_>,
     joined_query_lower: Option<&str>,
     prefix_preference: Option<PrefixPreferenceQuery<'_>>,
     word_matches: &[WordMatch],
 ) -> QualitySignals {
-    let prefix_preference_score =
-        compute_prefix_preference_score_case_insensitive(document, prefix_preference);
-
-    if document.is_fast_mode() {
-        return compute_fast_quality_signals(prefix_preference_score, word_matches);
+    match plan_document_quality_signals(document, prefix_preference, word_matches) {
+        DocumentQualityPlan::Fast(signals) => signals,
+        DocumentQualityPlan::Detailed {
+            prefix_preference_score,
+        } => {
+            let exactness = compute_exactness_signals(document, joined_query_lower, word_matches);
+            build_quality_signals(
+                word_matches,
+                total_query_weight(word_matches),
+                prefix_preference_score,
+                exactness,
+            )
+        }
     }
-
-    let exactness = compute_exactness_signals(document, joined_query_lower, word_matches);
-    build_quality_signals(
-        word_matches,
-        total_query_weight(word_matches),
-        prefix_preference_score,
-        exactness,
-    )
 }
 
 #[cfg(feature = "perf-log")]
@@ -840,29 +865,26 @@ fn compute_document_quality_signals_with_perf(
     prefix_preference: Option<PrefixPreferenceQuery<'_>>,
     word_matches: &[WordMatch],
 ) -> (QualitySignals, u64) {
-    let prefix_preference_score =
-        compute_prefix_preference_score_case_insensitive(document, prefix_preference);
-
-    if document.is_fast_mode() {
-        return (
-            compute_fast_quality_signals(prefix_preference_score, word_matches),
-            0,
-        );
-    }
-
-    let exactness_start = Instant::now();
-    let exactness = compute_exactness_signals(document, joined_query_lower, word_matches);
-    let exactness_ns = exactness_start.elapsed().as_nanos() as u64;
-
-    (
-        build_quality_signals(
-            word_matches,
-            total_query_weight(word_matches),
+    match plan_document_quality_signals(document, prefix_preference, word_matches) {
+        DocumentQualityPlan::Fast(signals) => (signals, 0),
+        DocumentQualityPlan::Detailed {
             prefix_preference_score,
-            exactness,
-        ),
-        exactness_ns,
-    )
+        } => {
+            let exactness_start = Instant::now();
+            let exactness = compute_exactness_signals(document, joined_query_lower, word_matches);
+            let exactness_ns = exactness_start.elapsed().as_nanos() as u64;
+
+            (
+                build_quality_signals(
+                    word_matches,
+                    total_query_weight(word_matches),
+                    prefix_preference_score,
+                    exactness,
+                ),
+                exactness_ns,
+            )
+        }
+    }
 }
 
 fn compute_alignment_quality_signals(
@@ -919,19 +941,36 @@ fn compute_match_class_score(word_matches: &[WordMatch]) -> u8 {
 /// For each query word, find the best-matching document word.
 /// When `fast_mode` is true (for large documents), only exact and prefix matching
 /// is used, skipping expensive fuzzy edit distance and subsequence matching.
-fn match_query_words(
+enum MatchQueryPlan {
+    SingleFast {
+        word_match: WordMatch,
+        raw_candidate_count: usize,
+    },
+    Aligned {
+        defaults: Vec<WordMatch>,
+        candidate_lists: Vec<Vec<WordMatch>>,
+        raw_candidate_count: usize,
+        trimmed_candidate_count: usize,
+    },
+}
+
+fn build_match_query_plan(
     document: &PreparedDocument<'_>,
     query_words: &[&str],
     query_words_lower: &[&str],
     last_word_is_prefix: bool,
-) -> Vec<WordMatch> {
+) -> MatchQueryPlan {
     if document.is_fast_mode() && query_words.len() == 1 {
-        return vec![match_single_query_word_fast(
+        let (word_match, raw_candidate_count) = match_single_query_word_fast_with_count(
             document,
             query_words[0],
             query_words_lower[0],
             last_word_is_prefix,
-        )];
+        );
+        return MatchQueryPlan::SingleFast {
+            word_match,
+            raw_candidate_count,
+        };
     }
 
     let defaults: Vec<WordMatch> = query_words
@@ -939,17 +978,49 @@ fn match_query_words(
         .map(|qw| WordMatch::unmatched(qw))
         .collect();
 
+    let mut raw_candidate_count = 0usize;
+    let mut trimmed_candidate_count = 0usize;
     let candidate_lists: Vec<Vec<WordMatch>> = query_words
         .iter()
         .enumerate()
         .map(|(qi, qw)| {
             let is_last = qi == query_words.len() - 1;
             let allow_prefix = is_last && last_word_is_prefix;
-            collect_match_candidates(qw, query_words_lower[qi], document, allow_prefix)
+            let (candidates, raw_count) =
+                collect_match_candidates(qw, query_words_lower[qi], document, allow_prefix);
+            raw_candidate_count += raw_count;
+            trimmed_candidate_count += candidates.len();
+            candidates
         })
         .collect();
 
-    choose_best_alignment(&candidate_lists, &defaults)
+    MatchQueryPlan::Aligned {
+        defaults,
+        candidate_lists,
+        raw_candidate_count,
+        trimmed_candidate_count,
+    }
+}
+
+fn match_query_words(
+    document: &PreparedDocument<'_>,
+    query_words: &[&str],
+    query_words_lower: &[&str],
+    last_word_is_prefix: bool,
+) -> Vec<WordMatch> {
+    match build_match_query_plan(
+        document,
+        query_words,
+        query_words_lower,
+        last_word_is_prefix,
+    ) {
+        MatchQueryPlan::SingleFast { word_match, .. } => vec![word_match],
+        MatchQueryPlan::Aligned {
+            defaults,
+            candidate_lists,
+            ..
+        } => choose_best_alignment(&candidate_lists, &defaults),
+    }
 }
 
 #[cfg(feature = "perf-log")]
@@ -959,74 +1030,58 @@ fn match_query_words_with_perf(
     query_words_lower: &[&str],
     last_word_is_prefix: bool,
 ) -> (Vec<WordMatch>, RankingPerfBreakdown) {
-    if document.is_fast_mode() && query_words.len() == 1 {
-        let collect_start = Instant::now();
-        let (word_match, raw_candidate_count) = match_single_query_word_fast_with_count(
-            document,
-            query_words[0],
-            query_words_lower[0],
-            last_word_is_prefix,
-        );
-        let collect_candidates_ns = collect_start.elapsed().as_nanos() as u64;
-        let trimmed_candidate_count =
-            usize::from(!matches!(word_match.state, WordMatchState::Unmatched));
-        return (
+    let collect_start = Instant::now();
+    let plan = build_match_query_plan(
+        document,
+        query_words,
+        query_words_lower,
+        last_word_is_prefix,
+    );
+    let collect_candidates_ns = collect_start.elapsed().as_nanos() as u64;
+
+    match plan {
+        MatchQueryPlan::SingleFast {
+            word_match,
+            raw_candidate_count,
+        } => (
             vec![word_match],
             RankingPerfBreakdown {
                 doc_word_count: document.token_count(),
                 query_word_count: 1,
                 raw_candidate_count,
-                trimmed_candidate_count,
+                trimmed_candidate_count: usize::from(!matches!(
+                    word_match.state,
+                    WordMatchState::Unmatched
+                )),
                 collect_candidates_ns,
                 alignment_ns: 0,
                 ..RankingPerfBreakdown::default()
             },
-        );
-    }
-
-    let defaults: Vec<WordMatch> = query_words
-        .iter()
-        .map(|qw| WordMatch::unmatched(qw))
-        .collect();
-
-    let collect_start = Instant::now();
-    let mut raw_candidate_count = 0usize;
-    let mut trimmed_candidate_count = 0usize;
-    let candidate_lists: Vec<Vec<WordMatch>> = query_words
-        .iter()
-        .enumerate()
-        .map(|(qi, qw)| {
-            let is_last = qi == query_words.len() - 1;
-            let allow_prefix = is_last && last_word_is_prefix;
-            let (candidates, raw_count) = collect_match_candidates_with_perf(
-                qw,
-                query_words_lower[qi],
-                document,
-                allow_prefix,
-            );
-            raw_candidate_count += raw_count;
-            trimmed_candidate_count += candidates.len();
-            candidates
-        })
-        .collect();
-    let collect_candidates_ns = collect_start.elapsed().as_nanos() as u64;
-
-    let alignment_start = Instant::now();
-    let word_matches = choose_best_alignment(&candidate_lists, &defaults);
-    let alignment_ns = alignment_start.elapsed().as_nanos() as u64;
-
-    (
-        word_matches,
-        RankingPerfBreakdown {
-            doc_word_count: document.token_count(),
-            query_word_count: query_words.len(),
+        ),
+        MatchQueryPlan::Aligned {
+            defaults,
+            candidate_lists,
             raw_candidate_count,
             trimmed_candidate_count,
-            collect_candidates_ns,
-            alignment_ns,
-            ..RankingPerfBreakdown::default()
-        },
-    )
+        } => {
+            let alignment_start = Instant::now();
+            let word_matches = choose_best_alignment(&candidate_lists, &defaults);
+            let alignment_ns = alignment_start.elapsed().as_nanos() as u64;
+
+            (
+                word_matches,
+                RankingPerfBreakdown {
+                    doc_word_count: document.token_count(),
+                    query_word_count: query_words.len(),
+                    raw_candidate_count,
+                    trimmed_candidate_count,
+                    collect_candidates_ns,
+                    alignment_ns,
+                    ..RankingPerfBreakdown::default()
+                },
+            )
+        }
+    }
 }
 
 fn base_match_weight(qw: &str) -> u16 {
@@ -1035,15 +1090,6 @@ fn base_match_weight(qw: &str) -> u16 {
     } else {
         0
     }
-}
-
-fn match_single_query_word_fast(
-    document: &PreparedDocument<'_>,
-    query_word: &str,
-    query_word_lower: &str,
-    allow_prefix: bool,
-) -> WordMatch {
-    match_single_query_word_fast_with_count(document, query_word, query_word_lower, allow_prefix).0
 }
 
 fn match_single_query_word_fast_with_count(
@@ -1100,16 +1146,6 @@ fn match_single_query_word_fast_with_count(
 }
 
 fn collect_match_candidates(
-    query_word: &str,
-    query_word_lower: &str,
-    document: &PreparedDocument<'_>,
-    allow_prefix: bool,
-) -> Vec<WordMatch> {
-    collect_match_candidates_impl(query_word, query_word_lower, document, allow_prefix).0
-}
-
-#[cfg(feature = "perf-log")]
-fn collect_match_candidates_with_perf(
     query_word: &str,
     query_word_lower: &str,
     document: &PreparedDocument<'_>,
