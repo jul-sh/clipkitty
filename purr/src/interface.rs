@@ -375,6 +375,7 @@ impl ClipboardContent {
 pub enum HighlightKind {
     Exact,
     Prefix,
+    PrefixTail,
     SubwordPrefix,
     Substring,
     Fuzzy,

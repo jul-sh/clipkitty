@@ -146,6 +146,42 @@ fn highlight_end_for_match(
     }
 }
 
+fn append_word_highlight(
+    highlights: &mut Vec<(usize, usize, HighlightKind)>,
+    char_start: usize,
+    char_end: usize,
+    query_word: &str,
+    word_match_kind: WordMatchKind,
+) {
+    let highlight_end = highlight_end_for_match(char_start, char_end, query_word, word_match_kind);
+    highlights.push((
+        char_start,
+        highlight_end,
+        word_match_to_highlight_kind(word_match_kind),
+    ));
+
+    if matches!(word_match_kind, WordMatchKind::Prefix) && highlight_end < char_end {
+        highlights.push((highlight_end, char_end, HighlightKind::PrefixTail));
+    }
+}
+
+fn should_bridge_highlights(
+    previous_kind: HighlightKind,
+    next_kind: HighlightKind,
+    gap_chars: &[char],
+) -> bool {
+    if matches!(previous_kind, HighlightKind::PrefixTail)
+        || matches!(next_kind, HighlightKind::PrefixTail)
+    {
+        return false;
+    }
+
+    gap_chars.is_empty()
+        || gap_chars
+            .iter()
+            .all(|c| !c.is_alphanumeric() && !c.is_whitespace())
+}
+
 /// Context for highlighting a candidate document.
 pub(crate) struct HighlightContext<'a> {
     pub id: i64,
@@ -189,12 +225,7 @@ pub(crate) fn highlight_candidate(ctx: &HighlightContext<'_>) -> FuzzyMatch {
                 // are included via the bridging pass when they fall between word highlights,
                 // preventing random punctuation elsewhere from being highlighted.
                 if is_word_token(qw) {
-                    let highlight_end = highlight_end_for_match(*char_start, *char_end, qw, wmk);
-                    word_highlights.push((
-                        *char_start,
-                        highlight_end,
-                        word_match_to_highlight_kind(wmk),
-                    ));
+                    append_word_highlight(&mut word_highlights, *char_start, *char_end, qw, wmk);
                 }
                 break; // Don't double-highlight from multiple query words
             }
@@ -215,10 +246,7 @@ pub(crate) fn highlight_candidate(ctx: &HighlightContext<'_>) -> FuzzyMatch {
             let gap_end = wh.0;
             if gap_start <= gap_end
                 && gap_end <= content_chars.len()
-                && (gap_start == gap_end
-                    || content_chars[gap_start..gap_end]
-                        .iter()
-                        .all(|c| !c.is_alphanumeric() && !c.is_whitespace()))
+                && should_bridge_highlights(last.2, wh.2, &content_chars[gap_start..gap_end])
             {
                 // Merge into previous range, inheriting its kind
                 last.1 = wh.1;
@@ -293,11 +321,19 @@ pub(crate) fn find_densest_highlight(
     if highlights.is_empty() {
         return None;
     }
-    if highlights.len() == 1 {
+
+    let mut indexed: Vec<(usize, &HighlightRange)> = highlights
+        .iter()
+        .enumerate()
+        .filter(|(_, h)| !matches!(h.kind, HighlightKind::PrefixTail))
+        .collect();
+
+    if indexed.is_empty() {
         return Some(0);
     }
-
-    let mut indexed: Vec<(usize, &HighlightRange)> = highlights.iter().enumerate().collect();
+    if indexed.len() == 1 {
+        return Some(indexed[0].0);
+    }
     indexed.sort_by_key(|(_, h)| h.start);
 
     let mut left = 0;
@@ -338,6 +374,7 @@ fn highlight_match_score(kind: HighlightKind) -> u64 {
     match kind {
         HighlightKind::Exact => 6,
         HighlightKind::Prefix => 5,
+        HighlightKind::PrefixTail => 0,
         HighlightKind::SubwordPrefix => 4,
         HighlightKind::Substring => 3,
         HighlightKind::Fuzzy => 2,
@@ -946,7 +983,9 @@ mod tests {
             .iter()
             .map(|r| chars[r.start as usize..r.end as usize].iter().collect())
             .collect();
-        assert_eq!(words, vec!["test"]);
+        assert_eq!(words, vec!["test", "ing"]);
+        assert_eq!(fm.highlight_ranges[0].kind, HighlightKind::Prefix);
+        assert_eq!(fm.highlight_ranges[1].kind, HighlightKind::PrefixTail);
     }
 
     #[test]
@@ -1089,6 +1128,29 @@ mod tests {
         let highlights = vec![hr(0, 4), hr(1000, 1003), hr(1004, 1007)];
         let idx = super::find_densest_highlight(&highlights, 50).unwrap();
         assert_eq!(highlights[idx].start, 0);
+    }
+
+    #[test]
+    fn test_find_densest_highlight_ignores_prefix_tail() {
+        let highlights = vec![
+            HighlightRange {
+                start: 0,
+                end: 4,
+                kind: HighlightKind::Prefix,
+            },
+            HighlightRange {
+                start: 4,
+                end: 8,
+                kind: HighlightKind::PrefixTail,
+            },
+            HighlightRange {
+                start: 100,
+                end: 105,
+                kind: HighlightKind::Exact,
+            },
+        ];
+        let idx = super::find_densest_highlight(&highlights, 50).unwrap();
+        assert_eq!(idx, 0);
     }
 
     #[test]
@@ -1236,6 +1298,15 @@ error: Build failed due to failed dependency";
         assert_eq!(second.kind, HighlightKind::Prefix);
         assert_eq!(second_highlighted, "func");
 
+        let third = &match_data.full_content_highlights[2];
+        let third_highlighted: String = content
+            .chars()
+            .skip(third.start as usize)
+            .take((third.end - third.start) as usize)
+            .collect();
+        assert_eq!(third.kind, HighlightKind::PrefixTail);
+        assert_eq!(third_highlighted, "tion");
+
         assert_eq!(match_data.densest_highlight_start, 0);
         assert!(match_data.text.contains("func top level"));
     }
@@ -1252,8 +1323,9 @@ error: Build failed due to failed dependency";
     #[test]
     fn test_highlight_match_kind_prefix() {
         let fm = hc(1, "Run testing suite now", 1000, 1.0, &["test"], true);
-        assert_eq!(fm.highlight_ranges.len(), 1);
+        assert_eq!(fm.highlight_ranges.len(), 2);
         assert_eq!(fm.highlight_ranges[0].kind, HighlightKind::Prefix);
+        assert_eq!(fm.highlight_ranges[1].kind, HighlightKind::PrefixTail);
     }
 
     #[test]
