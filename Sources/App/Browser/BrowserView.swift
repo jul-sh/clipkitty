@@ -278,13 +278,29 @@ private struct BannerBackgroundModifier: ViewModifier {
     }
 }
 
+/// Window corner radius for known macOS versions to match Spotlight's appearance.
+/// No public API exposes this, so we cap to known versions and fall back to native rounding.
+var systemWindowCornerRadius: CGFloat? {
+    let v = ProcessInfo.processInfo.operatingSystemVersion.majorVersion
+    return (26...27).contains(v) ? 26 : nil
+}
+
 private extension View {
     @ViewBuilder
     func browserGlassBackground() -> some View {
+        let radius = systemWindowCornerRadius
         if #available(macOS 26.0, *) {
-            self.glassEffect(.regular.interactive(), in: .rect)
+            if let radius {
+                self.glassEffect(.regular.interactive(), in: .rect(cornerRadius: radius, style: .continuous))
+            } else {
+                self.glassEffect(.regular.interactive(), in: .rect)
+            }
         } else {
-            background(.regularMaterial)
+            if let radius {
+                background(.regularMaterial, in: RoundedRectangle(cornerRadius: radius, style: .continuous))
+            } else {
+                background(.regularMaterial)
+            }
         }
     }
 }
