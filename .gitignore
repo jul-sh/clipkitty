@@ -5,6 +5,7 @@
 *.xcodeproj/
 *.xcworkspace/
 DerivedData/
+DerivedDataTests/
 *.xcresult/
 
 # Tuist

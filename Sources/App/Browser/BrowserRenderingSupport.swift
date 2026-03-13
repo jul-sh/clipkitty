@@ -2,7 +2,6 @@ import SwiftUI
 import AppKit
 import ClipKittyRust
 import STTextKitPlus
-import os.log
 import UniformTypeIdentifiers
 
 /// Max time to show stale content before clearing to spinner during slow loads.
@@ -232,6 +231,7 @@ struct TextPreviewView: NSViewRepresentable {
     let fontSize: CGFloat
     var highlights: [HighlightRange] = []
     var densestHighlightStart: UInt64 = 0
+    var shouldAutoScroll = true
 
     // Edit callbacks
     var itemId: Int64 = 0
@@ -242,9 +242,9 @@ struct TextPreviewView: NSViewRepresentable {
     var onSave: (() -> Void)?
     var onEscape: (() -> Void)?
 
-    private enum ScrollTarget {
+    fileprivate enum ScrollTarget {
         case top
-        case highlight(NSRange)
+        case highlight(scalarStart: UInt64, scalarEnd: UInt64)
     }
 
     func makeNSView(context: Context) -> NSScrollView {
@@ -316,11 +316,25 @@ struct TextPreviewView: NSViewRepresentable {
 
         // Update callbacks
         let coordinator = context.coordinator
+        coordinator.observeUsageBounds(of: textView)
         coordinator.onTextChange = onTextChange
         textView.onCmdReturn = onCmdReturn
         textView.onSave = onSave
         textView.onEscape = onEscape
         textView.onFocusChange = onEditingStateChange
+        coordinator.onUsageBoundsChange = { [weak coordinator] observedTextView in
+            guard let coordinator,
+                  shouldAutoScroll,
+                  let target = coordinator.activeUsageBoundsTarget() else { return }
+            coordinator.needsGeometrySync = true
+            self.performScrollAttempt(
+                textView: observedTextView,
+                target: target,
+                generation: coordinator.scrollGeneration,
+                coordinator: coordinator,
+                attempt: 0
+            )
+        }
 
         // Check if item changed
         let itemChanged = coordinator.currentItemId != itemId
@@ -361,10 +375,11 @@ struct TextPreviewView: NSViewRepresentable {
         let textChanged = textView.string != text
         let highlightsChanged = coordinator.lastHighlights != highlights
         let contentWidthChanged = abs(coordinator.lastContentWidth - containerWidth) > 0.5
+        let gainedHighlights = !highlights.isEmpty && coordinator.lastHighlights.isEmpty
         coordinator.lastContentWidth = containerWidth
 
-        guard textChanged || highlightsChanged || contentWidthChanged else { return }
-        if textChanged || contentWidthChanged {
+        guard itemChanged || textChanged || highlightsChanged || contentWidthChanged else { return }
+        if itemChanged || textChanged || contentWidthChanged || gainedHighlights {
             coordinator.needsGeometrySync = true
         }
 
@@ -391,7 +406,7 @@ struct TextPreviewView: NSViewRepresentable {
         }
 
         let tlm = textView.textLayoutManager
-        if textChanged || highlightsChanged {
+        if itemChanged || textChanged || highlightsChanged {
             // Convert highlights to NSTextRanges for the layout manager
             let newMatchRanges = resolveTextRanges(highlights: highlights, text: text, layoutManager: tlm)
             let oldMatchRanges = coordinator.currentMatchRanges
@@ -433,14 +448,24 @@ struct TextPreviewView: NSViewRepresentable {
             scrollTarget = .top
         } else {
             let targetHighlight = highlights.first { $0.start == densestHighlightStart } ?? highlights[0]
-            scrollTarget = .highlight(targetHighlight.nsRange(in: text))
+            scrollTarget = .highlight(
+                scalarStart: targetHighlight.start,
+                scalarEnd: targetHighlight.end
+            )
         }
 
-        scroll(
-            textView: textView,
-            target: scrollTarget,
-            coordinator: coordinator
-        )
+        if shouldAutoScroll {
+            scroll(
+                textView: textView,
+                target: scrollTarget,
+                coordinator: coordinator
+            )
+        } else if coordinator.needsGeometrySync {
+            coordinator.clearUsageBoundsRecentering()
+            _ = syncTextViewGeometry(textView: textView, containerWidth: containerWidth)
+            coordinator.needsGeometrySync = false
+            coordinator.scrollGeneration += 1
+        }
     }
 
     // MARK: - Highlight Resolution
@@ -476,6 +501,12 @@ struct TextPreviewView: NSViewRepresentable {
     ) {
         coordinator.scrollGeneration += 1
         let generation = coordinator.scrollGeneration
+        switch target {
+        case .top:
+            coordinator.clearUsageBoundsRecentering()
+        case .highlight:
+            coordinator.armUsageBoundsRecentering(target: target, duration: 0.75)
+        }
 
         performScrollAttempt(
             textView: textView,
@@ -530,7 +561,22 @@ struct TextPreviewView: NSViewRepresentable {
             }
 
             if coordinator.needsGeometrySync {
-                self.syncTextViewGeometry(textView: textView, containerWidth: scrollView.contentSize.width)
+                let geometryReady = self.syncTextViewGeometry(
+                    textView: textView,
+                    containerWidth: scrollView.contentSize.width
+                )
+                if !geometryReady {
+                    if attempt < maxAttempts - 1 {
+                        self.performScrollAttempt(
+                            textView: textView,
+                            target: target,
+                            generation: generation,
+                            coordinator: coordinator,
+                            attempt: attempt + 1
+                        )
+                    }
+                    return
+                }
                 coordinator.needsGeometrySync = false
             }
 
@@ -545,27 +591,36 @@ struct TextPreviewView: NSViewRepresentable {
                 scrollView.contentView.scroll(to: newOrigin)
                 scrollView.reflectScrolledClipView(scrollView.contentView)
                 CATransaction.commit()
+                self.flushPendingDisplay(textView: textView, scrollView: scrollView)
                 return
             case .highlight:
                 break
             }
 
-            guard let tlm = textView.textLayoutManager,
-                  let tcm = tlm.textContentManager else { return }
-            guard case .highlight(let targetNSRange) = target else { return }
+            guard let tlm = textView.textLayoutManager else { return }
+            guard case .highlight(let scalarStart, let scalarEnd) = target else { return }
+            guard let targetMatchRange = coordinator.currentMatchRanges.first(where: {
+                $0.scalarStart == scalarStart && $0.scalarEnd == scalarEnd
+            }) else {
+                if attempt < maxAttempts - 1 {
+                    self.performScrollAttempt(
+                        textView: textView,
+                        target: target,
+                        generation: generation,
+                        coordinator: coordinator,
+                        attempt: attempt + 1
+                    )
+                }
+                return
+            }
+            let targetTextRange = targetMatchRange.range
 
-            // Convert NSRange to NSTextRange
-            guard let start = tcm.location(tcm.documentRange.location, offsetBy: targetNSRange.location),
-                  let end = tcm.location(start, offsetBy: targetNSRange.length),
-                  let targetTextRange = NSTextRange(location: start, end: end) else { return }
-
-            // Ensure layout for just this range
+            // Ensure layout for just this range.
             tlm.ensureLayout(for: targetTextRange)
 
-            // Get the frame of the highlight using STTextKitPlus
-            // TextKit 2 may return nil if layout isn't fully computed yet
+            // Get the frame of the highlight using STTextKitPlus.
+            // With document geometry stabilized first, this gives a reliable target rect.
             guard let rect = tlm.textSegmentFrame(in: targetTextRange, type: .highlight) else {
-                // Layout not ready - retry with exponential backoff
                 if attempt < maxAttempts - 1 {
                     self.performScrollAttempt(
                         textView: textView,
@@ -578,34 +633,36 @@ struct TextPreviewView: NSViewRepresentable {
                 return
             }
 
-            // Convert rect to scroll view coordinates.
-            let highlightRect = rect.offsetBy(dx: textView.textContainerInset.width, dy: textView.textContainerInset.height)
-            var documentHeight: CGFloat = 0
-            tlm.enumerateTextLayoutFragments(from: tlm.documentRange.endLocation,
-                                              options: [.reverse, .ensuresLayout]) { fragment in
-                documentHeight = fragment.layoutFragmentFrame.maxY
-                return false  // stop after first (last) fragment
+            let highlightRect = rect
+            let visibleHeight = scrollView.documentVisibleRect.height
+            let currentOrigin = scrollView.contentView.bounds.origin
+            let currentVisibleMinY = currentOrigin.y
+            let currentVisibleMaxY = currentOrigin.y + visibleHeight
+            let desiredAnchorY = currentOrigin.y + (visibleHeight / 3)
+            let currentAnchorDelta = highlightRect.midY - desiredAnchorY
+            let isCurrentlyVisible =
+                highlightRect.minY >= currentVisibleMinY &&
+                highlightRect.maxY <= currentVisibleMaxY
+
+            if isCurrentlyVisible && abs(currentAnchorDelta) <= 48 {
+                coordinator.clearUsageBoundsRecentering()
+                return
             }
 
-            let visibleHeight = scrollView.documentVisibleRect.height
             let targetOffsetY = highlightRect.midY - (visibleHeight / 3)
-            let contentHeight = max(
-                textView.bounds.height,
-                documentHeight + textView.textContainerInset.height * 2
-            )
+            let contentHeight = max(textView.bounds.height, scrollView.contentSize.height)
             let maxScrollY = max(0, contentHeight - visibleHeight)
             let clampedY = min(max(0, targetOffsetY), maxScrollY)
 
-            let currentOrigin = scrollView.contentView.bounds.origin
             let newOrigin = NSPoint(x: currentOrigin.x, y: clampedY)
             guard abs(currentOrigin.y - newOrigin.y) >= 1 else { return }
 
-            // Perform scroll with animations explicitly disabled
             CATransaction.begin()
             CATransaction.setDisableActions(true)
             scrollView.contentView.scroll(to: newOrigin)
             scrollView.reflectScrolledClipView(scrollView.contentView)
             CATransaction.commit()
+            self.flushPendingDisplay(textView: textView, scrollView: scrollView)
         }
 
         if delayMs == 0 {
@@ -615,22 +672,44 @@ struct TextPreviewView: NSViewRepresentable {
         }
     }
 
-    private func syncTextViewGeometry(textView: NSTextView, containerWidth: CGFloat) {
+    private func syncTextViewGeometry(textView: NSTextView, containerWidth: CGFloat) -> Bool {
         textView.textContainer?.containerSize = NSSize(
             width: containerWidth,
             height: .greatestFiniteMagnitude
         )
         textView.frame = NSRect(x: 0, y: 0, width: containerWidth, height: textView.frame.height)
+        textView.layoutSubtreeIfNeeded()
 
-        guard let scrollView = textView.enclosingScrollView else {
-            return
+        guard let scrollView = textView.enclosingScrollView,
+              let tlm = textView.textLayoutManager else {
+            return false
         }
 
-        let targetHeight = max(
-            scrollView.contentSize.height,
-            documentHeight(for: textView) + textView.textContainerInset.height * 2
-        )
-        textView.frame = NSRect(x: 0, y: 0, width: containerWidth, height: targetHeight)
+        scrollView.layoutSubtreeIfNeeded()
+        tlm.textViewportLayoutController.layoutViewport()
+        textView.layoutSubtreeIfNeeded()
+        scrollView.layoutSubtreeIfNeeded()
+
+        let autoSizedHeight = textView.frame.height
+        if !textView.string.isEmpty && autoSizedHeight <= 0 {
+            return false
+        }
+
+        let targetHeight = max(scrollView.contentSize.height, autoSizedHeight)
+        if abs(textView.frame.height - targetHeight) > 0.5 {
+            textView.frame = NSRect(x: 0, y: 0, width: containerWidth, height: targetHeight)
+        }
+        flushPendingDisplay(textView: textView, scrollView: scrollView)
+        return true
+    }
+
+    private func flushPendingDisplay(textView: NSTextView, scrollView: NSScrollView) {
+        scrollView.contentView.layoutSubtreeIfNeeded()
+        textView.layoutSubtreeIfNeeded()
+        textView.setNeedsDisplay(textView.visibleRect)
+        scrollView.contentView.setNeedsDisplay(scrollView.contentView.bounds)
+        scrollView.displayIfNeeded()
+        textView.displayIfNeeded()
     }
 
     private func documentHeight(for textView: NSTextView) -> CGFloat {
@@ -638,11 +717,12 @@ struct TextPreviewView: NSViewRepresentable {
 
         var documentHeight: CGFloat = 0
         tlm.enumerateTextLayoutFragments(
-            from: tlm.documentRange.endLocation,
-            options: [.reverse, .ensuresLayout]
+            from: tlm.documentRange.location,
+            options: [.ensuresLayout]
         ) { fragment in
-            documentHeight = fragment.layoutFragmentFrame.maxY
-            return false
+            guard !fragment.isExtraLineFragment else { return true }
+            documentHeight = max(documentHeight, fragment.layoutFragmentFrame.maxY)
+            return true
         }
         return documentHeight
     }
@@ -680,12 +760,71 @@ struct TextPreviewView: NSViewRepresentable {
         var currentMatchRanges: [MatchRange] = []
         var scrollGeneration: Int = 0
         var lastContentWidth: CGFloat = 0
+        var lastUsageBounds: CGRect = .zero
         var needsGeometrySync: Bool = false
+        private var pendingScrollTarget: ScrollTarget?
+        private var pendingAutoScrollExpiration: Date = .distantPast
+        fileprivate var onUsageBoundsChange: ((PreviewTextView) -> Void)?
+        private var usageBoundsObservation: NSKeyValueObservation?
+        fileprivate weak var observedTextView: PreviewTextView?
 
         // Edit tracking
         var currentItemId: Int64 = 0
         var isEditing = false
         var onTextChange: ((String) -> Void)?
+
+        deinit {
+            usageBoundsObservation?.invalidate()
+        }
+
+        fileprivate func observeUsageBounds(of textView: PreviewTextView) {
+            guard observedTextView !== textView || usageBoundsObservation == nil else { return }
+
+            usageBoundsObservation?.invalidate()
+            observedTextView = textView
+            lastUsageBounds = textView.textLayoutManager?.usageBoundsForTextContainer ?? .zero
+
+            guard let textLayoutManager = textView.textLayoutManager else { return }
+            usageBoundsObservation = textLayoutManager.observe(
+                \.usageBoundsForTextContainer,
+                options: [.new]
+            ) { [weak self, weak textView] textLayoutManager, _ in
+                guard let self, let textView else { return }
+                let usageBounds = textLayoutManager.usageBoundsForTextContainer
+                let changed =
+                    abs(usageBounds.origin.y - self.lastUsageBounds.origin.y) > 0.5 ||
+                    abs(usageBounds.size.height - self.lastUsageBounds.size.height) > 0.5
+                guard changed else { return }
+                self.lastUsageBounds = usageBounds
+
+                DispatchQueue.main.async { [weak self, weak textView] in
+                    guard let self, let textView else { return }
+                    self.onUsageBoundsChange?(textView)
+                }
+            }
+        }
+
+        fileprivate func armUsageBoundsRecentering(
+            target: ScrollTarget?,
+            duration: TimeInterval
+        ) {
+            pendingScrollTarget = target
+            pendingAutoScrollExpiration = target == nil ? .distantPast : Date().addingTimeInterval(duration)
+        }
+
+        fileprivate func activeUsageBoundsTarget() -> ScrollTarget? {
+            guard Date() < pendingAutoScrollExpiration else {
+                pendingScrollTarget = nil
+                pendingAutoScrollExpiration = .distantPast
+                return nil
+            }
+            return pendingScrollTarget
+        }
+
+        fileprivate func clearUsageBoundsRecentering() {
+            pendingScrollTarget = nil
+            pendingAutoScrollExpiration = .distantPast
+        }
 
         func textDidBeginEditing(_ notification: Notification) {
             isEditing = true

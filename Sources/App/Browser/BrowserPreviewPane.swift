@@ -67,6 +67,7 @@ struct BrowserPreviewPane: View {
                 fontSize: 15,
                 highlights: matchData?.fullContentHighlights ?? [],
                 densestHighlightStart: matchData?.densestHighlightStart ?? 0,
+                shouldAutoScroll: matchData != nil || viewModel.searchText.isEmpty,
                 itemId: item.itemMetadata.itemId,
                 originalText: item.content.textContent,
                 onTextChange: { newText in
@@ -89,6 +90,7 @@ struct BrowserPreviewPane: View {
                     focusSearchField()
                 }
             )
+            .id(previewIdentity(itemId: item.itemMetadata.itemId, matchData: matchData))
             .frame(maxWidth: .infinity, maxHeight: .infinity)
         case .image(let data, let description, _):
             ScrollView(.vertical, showsIndicators: true) {
@@ -127,6 +129,12 @@ struct BrowserPreviewPane: View {
         case .file(_, let files):
             FilePreviewView(files: files, searchQuery: viewModel.searchText)
         }
+    }
+
+    private func previewIdentity(itemId: Int64, matchData: MatchData?) -> String {
+        let densest = matchData?.densestHighlightStart ?? UInt64.max
+        let highlightCount = matchData?.fullContentHighlights.count ?? -1
+        return "\(itemId)-\(densest)-\(highlightCount)"
     }
 
     private func metadataFooter(for item: ClipboardItem) -> some View {
