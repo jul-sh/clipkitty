@@ -35,6 +35,7 @@ struct BrowserView: View {
                 filterLabel: filterLabel,
                 searchSpinnerVisible: viewModel.searchSpinnerVisible,
                 selectedItemAvailable: viewModel.selectedItem != nil,
+                hasPendingEdit: viewModel.selectedItemHasPendingEdit,
                 isFilterPopoverPresented: Binding(
                     get: {
                         if case .filter = viewModel.session.overlays {
@@ -55,6 +56,11 @@ struct BrowserView: View {
                 onOpenFilter: openFilterOverlay,
                 onOpenActions: openActionsOverlay,
                 onDelete: viewModel.deleteSelectedItem,
+                onDiscardEdit: viewModel.discardCurrentEdit,
+                onSaveEdit: {
+                    viewModel.commitCurrentEdit()
+                    focusSearchField()
+                },
                 onHandleNumberKey: handleNumberKey
             ) {
                 BrowserFilterOverlay(
