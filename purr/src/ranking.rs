@@ -1887,6 +1887,28 @@ mod tests {
         );
     }
 
+    #[test]
+    fn test_large_fast_unicode_exact_match() {
+        let filler = "данные ".repeat((LARGE_DOC_THRESHOLD_BYTES / "данные ".len()) + 32);
+        let content = format!("{filler} ошибка {filler}");
+        let document = prepare_document_for_ranking(&content);
+        assert!(document.is_fast_mode());
+
+        let matches = match_query_words(&document, &["ошибка"], &["ошибка"], false);
+        assert!(matches!(matches[0].state, WordMatchState::Exact { .. }));
+    }
+
+    #[test]
+    fn test_large_fast_unicode_last_word_prefix_match() {
+        let filler = "данные ".repeat((LARGE_DOC_THRESHOLD_BYTES / "данные ".len()) + 32);
+        let content = format!("{filler} ошибках {filler}");
+        let document = prepare_document_for_ranking(&content);
+        assert!(document.is_fast_mode());
+
+        let matches = match_query_words(&document, &["ошиб"], &["ошиб"], true);
+        assert!(matches!(matches[0].state, WordMatchState::Prefix { .. }));
+    }
+
     // ── compute_proximity tests ──────────────────────────────────
 
     #[test]

@@ -54,13 +54,7 @@ pub(crate) fn does_word_match_fast(
     dw_lower: &str,
     allow_prefix: bool,
 ) -> WordMatchKind {
-    if dw_lower == qw_lower {
-        return WordMatchKind::Exact;
-    }
-    if allow_prefix && qw_lower.len() >= 2 && dw_lower.starts_with(qw_lower) {
-        return WordMatchKind::Prefix;
-    }
-    WordMatchKind::None
+    match_fast_lowered(qw_lower, dw_lower, allow_prefix)
 }
 
 /// Fast matching against a raw token slice. ASCII-heavy content stays allocation-free;
@@ -83,12 +77,22 @@ pub(crate) fn does_word_match_fast_raw(
         return WordMatchKind::None;
     }
 
-    does_word_match_fast(qw_lower, &dw_raw.to_lowercase(), allow_prefix)
+    match_fast_lowered(qw_lower, &dw_raw.to_lowercase(), allow_prefix)
 }
 
 fn ascii_starts_with_ignore_case(haystack: &[u8], needle_lower: &[u8]) -> bool {
     haystack.len() >= needle_lower.len()
         && haystack[..needle_lower.len()].eq_ignore_ascii_case(needle_lower)
+}
+
+fn match_fast_lowered(qw_lower: &str, dw_lower: &str, allow_prefix: bool) -> WordMatchKind {
+    if dw_lower == qw_lower {
+        return WordMatchKind::Exact;
+    }
+    if allow_prefix && qw_lower.len() >= 2 && dw_lower.starts_with(qw_lower) {
+        return WordMatchKind::Prefix;
+    }
+    WordMatchKind::None
 }
 
 fn classify_contained_match(qw_lower: &str, dw_lower: &str, dw_raw: &str) -> Option<WordMatchKind> {
