@@ -1,6 +1,6 @@
+import ClipKittyRust
 import Foundation
 import Observation
-import ClipKittyRust
 
 @MainActor
 @Observable
@@ -16,7 +16,7 @@ final class BrowserViewModel {
         case running(id: UUID, operation: BrowserSearchOperation, observer: Task<Void, Never>, spinner: Task<Void, Never>?)
 
         var id: UUID? {
-            guard case .running(let id, _, _, _) = self else { return nil }
+            guard case let .running(id, _, _, _) = self else { return nil }
             return id
         }
 
@@ -24,9 +24,9 @@ final class BrowserViewModel {
             switch self {
             case .idle:
                 break
-            case .debouncing(_, let task):
+            case let .debouncing(_, task):
                 task.cancel()
-            case .running(_, let operation, let observer, let spinner):
+            case let .running(_, operation, observer, spinner):
                 operation.cancel()
                 observer.cancel()
                 spinner?.cancel()
@@ -81,7 +81,7 @@ final class BrowserViewModel {
 
     var contentTypeFilter: ContentTypeFilter {
         switch session.query.request.filter {
-        case .contentType(let contentType):
+        case let .contentType(contentType):
             return contentType
         case .all, .tagged:
             return .all
@@ -89,7 +89,7 @@ final class BrowserViewModel {
     }
 
     var selectedTagFilter: ItemTag? {
-        if case .tagged(let tag) = session.query.request.filter {
+        if case let .tagged(tag) = session.query.request.filter {
             return tag
         }
         return nil
@@ -109,9 +109,9 @@ final class BrowserViewModel {
 
     var selectedItem: ClipboardItem? {
         switch session.preview {
-        case .loaded(let selection):
+        case let .loaded(selection):
             return selection.item
-        case .loading(_, let stale), .failed(_, let stale):
+        case let .loading(_, stale), let .failed(_, stale):
             return stale?.item
         case .empty:
             return nil
@@ -128,15 +128,15 @@ final class BrowserViewModel {
     }
 
     var mutationFailureMessage: String? {
-        guard case .failed(let failure) = session.mutation else { return nil }
+        guard case let .failed(failure) = session.mutation else { return nil }
         return failure.message
     }
 
     var previewSelection: PreviewSelection? {
         switch session.preview {
-        case .loaded(let selection):
+        case let .loaded(selection):
             return selection
-        case .loading(_, let stale), .failed(_, let stale):
+        case let .loading(_, stale), let .failed(_, stale):
             return stale
         case .empty:
             return nil
@@ -245,7 +245,7 @@ final class BrowserViewModel {
 
     func select(itemId: Int64, origin: SelectionOrigin) {
         // Clear edit focus when changing selection
-        if case .focused(let focusedId) = editFocus, focusedId != itemId {
+        if case let .focused(focusedId) = editFocus, focusedId != itemId {
             editFocus = .idle
         }
         session.selection = .selected(itemId: itemId, origin: origin)
@@ -290,7 +290,7 @@ final class BrowserViewModel {
             let matchData = await self.client.loadMatchData(itemIds: itemIdsNeedingData, query: request.text)
             await MainActor.run {
                 defer { self.matchDataTasks[key] = nil }
-                guard case .ready(let response) = self.session.query,
+                guard case let .ready(response) = self.session.query,
                       response.request == request else { return }
 
                 var idToData: [Int64: MatchData] = [:]
@@ -300,7 +300,8 @@ final class BrowserViewModel {
 
                 let updatedItems = response.items.map { itemMatch in
                     guard itemMatch.matchData == nil,
-                          let newMatchData = idToData[itemMatch.itemMetadata.itemId] else {
+                          let newMatchData = idToData[itemMatch.itemMetadata.itemId]
+                    else {
                         return itemMatch
                     }
                     return ItemMatch(itemMetadata: itemMatch.itemMetadata, matchData: newMatchData)
@@ -316,7 +317,8 @@ final class BrowserViewModel {
                 if let selectedItemId = self.selectedItemId,
                    let loadedItem = self.selectedItem,
                    selectedItemId == loadedItem.itemMetadata.itemId,
-                   let updatedMatchData = idToData[selectedItemId] {
+                   let updatedMatchData = idToData[selectedItemId]
+                {
                     self.session.preview = .loaded(PreviewSelection(item: loadedItem, matchData: updatedMatchData))
                 }
             }
@@ -357,7 +359,7 @@ final class BrowserViewModel {
     }
 
     func undoPendingDelete() {
-        guard case .deleting(.pending(let transaction)) = session.mutation else { return }
+        guard case let .deleting(.pending(transaction)) = session.mutation else { return }
         pendingDeleteTask?.cancel()
         pendingDeleteTask = nil
         ToastWindow.shared.dismiss()
@@ -397,7 +399,7 @@ final class BrowserViewModel {
                 switch result {
                 case .success:
                     self.session.mutation = .idle
-                case .failure(let error):
+                case let .failure(error):
                     self.restoreClearFailure(error: error)
                 }
             }
@@ -445,7 +447,7 @@ final class BrowserViewModel {
     func onEditingStateChange(_ isEditing: Bool, for itemId: Int64) {
         if isEditing {
             editFocus = .focused(itemId: itemId)
-        } else if case .focused(let id) = editFocus, id == itemId {
+        } else if case let .focused(id) = editFocus, id == itemId {
             editFocus = .idle
         }
     }
@@ -462,7 +464,8 @@ final class BrowserViewModel {
     func commitCurrentEdit() {
         guard let id = selectedItemId,
               let editedText = pendingEdits.removeValue(forKey: id),
-              !editedText.isEmpty else {
+              !editedText.isEmpty
+        else {
             editFocus = .idle
             return
         }
@@ -485,7 +488,7 @@ final class BrowserViewModel {
             session.preview = .loaded(PreviewSelection(item: updatedItem, matchData: previewSelection?.matchData))
 
             // Also update the snippet in the list so it reflects the edit
-            if case .ready(let response) = session.query {
+            if case let .ready(response) = session.query {
                 let updatedItems = response.items.map { itemMatch in
                     guard itemMatch.itemMetadata.itemId == id else { return itemMatch }
                     return ItemMatch(
@@ -495,7 +498,8 @@ final class BrowserViewModel {
                 }
                 let updatedFirstItem: ClipboardItem? = {
                     guard let firstItem = response.firstItem,
-                          firstItem.itemMetadata.itemId == id else {
+                          firstItem.itemMetadata.itemId == id
+                    else {
                         return response.firstItem
                     }
                     return updatedItem
@@ -615,12 +619,12 @@ final class BrowserViewModel {
         searchExecution = .idle
 
         switch outcome {
-        case .success(let response):
+        case let .success(response):
             applySearchResponse(response)
         case .cancelled:
             break
-        case .failure(let error):
-            guard case .pending(let request, let fallback, _) = session.query else { return }
+        case let .failure(error):
+            guard case let .pending(request, fallback, _) = session.query else { return }
             session.query = .failed(
                 request: request,
                 message: error.localizedDescription,
@@ -647,9 +651,10 @@ final class BrowserViewModel {
                 session.selection = .none
                 session.preview = .empty
             }
-        case .some(let selectedItemId):
+        case let .some(selectedItemId):
             if !newOrder.contains(selectedItemId) ||
-                previousOrder.firstIndex(of: selectedItemId) != newOrder.firstIndex(of: selectedItemId) {
+                previousOrder.firstIndex(of: selectedItemId) != newOrder.firstIndex(of: selectedItemId)
+            {
                 if let firstItemId = newOrder.first {
                     session.selection = .selected(itemId: firstItemId, origin: .automatic)
                     loadSelectedItem(itemId: firstItemId)
@@ -659,7 +664,8 @@ final class BrowserViewModel {
                 }
             } else if let firstItem = response.firstItem,
                       firstItem.itemMetadata.itemId == selectedItemId,
-                      previewSelection == nil {
+                      previewSelection == nil
+            {
                 session.preview = .loaded(makePreviewSelection(for: firstItem))
             }
         }
@@ -679,7 +685,8 @@ final class BrowserViewModel {
         let stale = previewSelection
 
         if let firstItem = stateFirstItem,
-           firstItem.itemMetadata.itemId == itemId {
+           firstItem.itemMetadata.itemId == itemId
+        {
             session.preview = .loaded(makePreviewSelection(for: firstItem))
             loadMatchDataForItems([itemId])
             prefetchAdjacentItems(around: itemId)
@@ -719,9 +726,10 @@ final class BrowserViewModel {
     }
 
     private func maybeRefreshLinkMetadata(for item: ClipboardItem, generation: Int) {
-        guard case .link(let url, let metadataState) = item.content,
+        guard case let .link(url, metadataState) = item.content,
               case .pending = metadataState,
-              AppSettings.shared.generateLinkPreviews else {
+              AppSettings.shared.generateLinkPreviews
+        else {
             return
         }
 
@@ -751,7 +759,7 @@ final class BrowserViewModel {
                 )
                 let mergedPreviewItem = ClipboardItem(itemMetadata: mergedPreviewMetadata, content: updatedItem.content)
                 self.session.preview = .loaded(self.makePreviewSelection(for: mergedPreviewItem))
-                if case .ready(let response) = self.session.query {
+                if case let .ready(response) = self.session.query {
                     let updatedItems = response.items.map { itemMatch in
                         if itemMatch.itemMetadata.itemId == updatedItem.itemMetadata.itemId {
                             // Preserve optimistic tag mutations by merging with current tags
@@ -774,7 +782,8 @@ final class BrowserViewModel {
                     // Preserve tags for firstItem as well
                     let updatedFirstItem: ClipboardItem? = {
                         guard let firstItem = response.firstItem,
-                              firstItem.itemMetadata.itemId == updatedItem.itemMetadata.itemId else {
+                              firstItem.itemMetadata.itemId == updatedItem.itemMetadata.itemId
+                        else {
                             return response.firstItem
                         }
                         let mergedMetadata = ItemMetadata(
@@ -848,7 +857,7 @@ final class BrowserViewModel {
     }
 
     private func applyOptimisticDelete(itemId: Int64) {
-        guard case .ready(let response) = session.query else { return }
+        guard case let .ready(response) = session.query else { return }
         let filteredItems = response.items.filter { $0.itemMetadata.itemId != itemId }
         let deletedSelectedItem = selectedItemId == itemId
         let nextSelection = deletedSelectedItem ? nextSelectionAfterDelete(deleting: itemId) : nil
@@ -869,7 +878,7 @@ final class BrowserViewModel {
     }
 
     private func commitPendingDelete() {
-        guard case .deleting(.pending(let transaction)) = session.mutation else { return }
+        guard case let .deleting(.pending(transaction)) = session.mutation else { return }
         pendingDeleteTask = nil
         session.mutation = .deleting(.committing(transaction))
 
@@ -879,11 +888,12 @@ final class BrowserViewModel {
             await MainActor.run {
                 switch result {
                 case .success:
-                    if case .deleting(.committing(let activeTransaction)) = self.session.mutation,
-                       activeTransaction.deletedItemId == transaction.deletedItemId {
+                    if case let .deleting(.committing(activeTransaction)) = self.session.mutation,
+                       activeTransaction.deletedItemId == transaction.deletedItemId
+                    {
                         self.session.mutation = .idle
                     }
-                case .failure(let error):
+                case let .failure(error):
                     self.restoreDeleteFailure(error: error)
                 }
             }
@@ -893,7 +903,7 @@ final class BrowserViewModel {
     private func restoreDeleteFailure(error: ClipboardError) {
         let transaction: DeleteTransaction
         switch session.mutation {
-        case .deleting(.pending(let pendingTransaction)), .deleting(.committing(let pendingTransaction)):
+        case let .deleting(.pending(pendingTransaction)), let .deleting(.committing(pendingTransaction)):
             transaction = pendingTransaction
         default:
             return
@@ -920,7 +930,7 @@ final class BrowserViewModel {
     }
 
     private func restoreClearFailure(error: ClipboardError) {
-        guard case .clearing(let transaction) = session.mutation else { return }
+        guard case let .clearing(transaction) = session.mutation else { return }
         restoreSnapshot(
             snapshot: transaction.snapshot,
             preview: transaction.preview,
@@ -955,15 +965,15 @@ final class BrowserViewModel {
     }
 
     private var currentResponse: BrowserSearchResponse? {
-        guard case .ready(let response) = session.query else { return nil }
+        guard case let .ready(response) = session.query else { return nil }
         return response
     }
 
     private func responseApplyingPendingMutations(_ response: BrowserSearchResponse) -> BrowserSearchResponse {
         switch session.mutation {
-        case .deleting(.pending(let transaction)), .deleting(.committing(let transaction)):
+        case let .deleting(.pending(transaction)), let .deleting(.committing(transaction)):
             return responseHidingDeletedItem(response, deletedItemId: transaction.deletedItemId)
-        case .tagging(.pending(let mutation)), .tagging(.settling(let mutation)):
+        case let .tagging(.pending(mutation)), let .tagging(.settling(mutation)):
             return responseApplyingTagMutation(
                 response,
                 itemId: mutation.itemId,
@@ -1016,10 +1026,11 @@ final class BrowserViewModel {
             await MainActor.run {
                 switch result {
                 case .success:
-                    if case .tagging(.pending(let mutation)) = self.session.mutation,
+                    if case let .tagging(.pending(mutation)) = self.session.mutation,
                        mutation.itemId == itemId,
                        mutation.tag == tag,
-                       mutation.shouldInclude == shouldInclude {
+                       mutation.shouldInclude == shouldInclude
+                    {
                         self.session.mutation = .tagging(.settling(mutation))
                         self.scheduleTagMutationSettleFallback(
                             itemId: mutation.itemId,
@@ -1027,7 +1038,7 @@ final class BrowserViewModel {
                             shouldInclude: mutation.shouldInclude
                         )
                     }
-                case .failure(let error):
+                case let .failure(error):
                     self.pendingTagSettleTask?.cancel()
                     self.pendingTagSettleTask = nil
                     self.restoreSnapshot(
@@ -1042,7 +1053,7 @@ final class BrowserViewModel {
     }
 
     private func applyOptimisticTagMutation(itemId: Int64, tag: ItemTag, shouldInclude: Bool) {
-        guard case .ready(let response) = session.query else { return }
+        guard case let .ready(response) = session.query else { return }
         let updatedResponse = responseApplyingTagMutation(
             response,
             itemId: itemId,
@@ -1055,9 +1066,10 @@ final class BrowserViewModel {
             let updatedMetadata = selectedItem.itemMetadata.itemId == itemId
                 ? applyingTagMutation(to: selectedItem.itemMetadata, tag: tag, shouldInclude: shouldInclude)
                 : selectedItem.itemMetadata
-            if case .tagged(let activeTag) = response.request.filter,
+            if case let .tagged(activeTag) = response.request.filter,
                activeTag == tag,
-               !updatedMetadata.tags.contains(tag) {
+               !updatedMetadata.tags.contains(tag)
+            {
                 session.selection = .none
                 session.preview = .empty
                 if let firstItemId = updatedResponse.items.first?.itemMetadata.itemId {
@@ -1085,10 +1097,11 @@ final class BrowserViewModel {
             guard !Task.isCancelled else { return }
             await MainActor.run {
                 guard let self else { return }
-                if case .tagging(.settling(let mutation)) = self.session.mutation,
+                if case let .tagging(.settling(mutation)) = self.session.mutation,
                    mutation.itemId == itemId,
                    mutation.tag == tag,
-                   mutation.shouldInclude == shouldInclude {
+                   mutation.shouldInclude == shouldInclude
+                {
                     self.session.mutation = .idle
                 }
                 self.pendingTagSettleTask = nil
@@ -1108,9 +1121,10 @@ final class BrowserViewModel {
                 ? applyingTagMutation(to: itemMatch.itemMetadata, tag: tag, shouldInclude: shouldInclude)
                 : itemMatch.itemMetadata
 
-            if case .tagged(let activeTag) = response.request.filter,
+            if case let .tagged(activeTag) = response.request.filter,
                activeTag == tag,
-               !updatedMetadata.tags.contains(tag) {
+               !updatedMetadata.tags.contains(tag)
+            {
                 return nil
             }
 
@@ -1124,9 +1138,10 @@ final class BrowserViewModel {
                 tag: tag,
                 shouldInclude: shouldInclude
             )
-            if case .tagged(let activeTag) = response.request.filter,
+            if case let .tagged(activeTag) = response.request.filter,
                activeTag == tag,
-               !updatedMetadata.tags.contains(tag) {
+               !updatedMetadata.tags.contains(tag)
+            {
                 return nil
             }
             return ClipboardItem(itemMetadata: updatedMetadata, content: firstItem.content)

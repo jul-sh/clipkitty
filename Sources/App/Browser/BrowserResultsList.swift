@@ -1,5 +1,5 @@
-import SwiftUI
 import ClipKittyRust
+import SwiftUI
 
 struct BrowserResultsList: View {
     @Bindable var viewModel: BrowserViewModel
@@ -105,10 +105,9 @@ struct BrowserResultsList: View {
         let startIndex = max(0, index - matchDataPrefetchBuffer)
         let endIndex = min(viewModel.itemCount - 1, index + matchDataPrefetchBuffer)
         guard startIndex <= endIndex else { return }
-        let idsToLoad = (startIndex...endIndex).compactMap { idx in
+        let idsToLoad = (startIndex ... endIndex).compactMap { idx in
             viewModel.itemIds.indices.contains(idx) ? viewModel.itemIds[idx] : nil
         }
         viewModel.loadMatchDataForItems(idsToLoad)
     }
-
 }

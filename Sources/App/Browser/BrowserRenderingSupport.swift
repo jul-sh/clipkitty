@@ -1,8 +1,8 @@
-import SwiftUI
 import AppKit
 import ClipKittyRust
-import STTextKitPlus
 import ObjectiveC.runtime
+import STTextKitPlus
+import SwiftUI
 import UniformTypeIdentifiers
 
 /// Max time to show stale content before clearing to spinner during slow loads.
@@ -24,7 +24,7 @@ private enum SpinnerState: Equatable {
     }
 
     mutating func cancel() {
-        if case .debouncing(let task) = self {
+        if case let .debouncing(task) = self {
             task.cancel()
         }
         self = .idle
@@ -48,7 +48,7 @@ private extension View {
         if #available(macOS 26.0, *) {
             self.glassEffect(.regular.interactive(), in: .rect)
         } else {
-            self.background(.regularMaterial)
+            background(.regularMaterial)
         }
     }
 }
@@ -180,7 +180,6 @@ struct FilePreviewView: View {
             .font(font)
             .foregroundColor(color)
     }
-
 }
 
 // MARK: - Text Preview (AppKit)
@@ -285,7 +284,7 @@ struct TextPreviewView: NSViewRepresentable {
         let textView = PreviewTextView()
         textView.isEditable = true
         textView.isSelectable = true
-        textView.isRichText = false  // Plain text for editing
+        textView.isRichText = false // Plain text for editing
         textView.allowsUndo = true
         textView.drawsBackground = false
         textView.isVerticallyResizable = true
@@ -360,7 +359,8 @@ struct TextPreviewView: NSViewRepresentable {
             // bounds or a nil viewport range, then do one post-layout scroll attempt once the
             // viewport state is coherent.
             if textViewportLayoutController.viewportBounds.isEmpty ||
-                textViewportLayoutController.viewportRange == nil {
+                textViewportLayoutController.viewportRange == nil
+            {
                 guard coordinator.scheduleViewportRetry(for: generation) else { return }
                 DispatchQueue.main.async { [weak coordinator, weak observedTextView] in
                     guard let coordinator,
@@ -436,7 +436,7 @@ struct TextPreviewView: NSViewRepresentable {
         textView.typingAttributes = [
             .font: font,
             .foregroundColor: NSColor.labelColor,
-            .paragraphStyle: paragraphStyle
+            .paragraphStyle: paragraphStyle,
         ]
 
         let textChanged = textView.string != text
@@ -466,7 +466,7 @@ struct TextPreviewView: NSViewRepresentable {
             let attributed = NSMutableAttributedString(string: text, attributes: [
                 .font: font,
                 .foregroundColor: NSColor.labelColor,
-                .paragraphStyle: paragraphStyle
+                .paragraphStyle: paragraphStyle,
             ])
 
             textView.textStorage?.setAttributedString(attributed)
@@ -666,7 +666,7 @@ struct TextPreviewView: NSViewRepresentable {
             }
 
             guard let tlm = textView.textLayoutManager else { return }
-            guard case .highlight(let scalarStart, let scalarEnd) = target else { return }
+            guard case let .highlight(scalarStart, scalarEnd) = target else { return }
             guard let targetMatchRange = coordinator.currentMatchRanges.first(where: {
                 $0.scalarStart == scalarStart && $0.scalarEnd == scalarEnd
             }) else {
@@ -712,7 +712,7 @@ struct TextPreviewView: NSViewRepresentable {
                 highlightRect.minY >= currentVisibleMinY &&
                 highlightRect.maxY <= currentVisibleMaxY
 
-            if isCurrentlyVisible && abs(currentAnchorDelta) <= 48 {
+            if isCurrentlyVisible, abs(currentAnchorDelta) <= 48 {
                 coordinator.clearUsageBoundsRecentering()
                 return
             }
@@ -749,7 +749,8 @@ struct TextPreviewView: NSViewRepresentable {
         textView.layoutSubtreeIfNeeded()
 
         guard let scrollView = textView.enclosingScrollView,
-              let tlm = textView.textLayoutManager else {
+              let tlm = textView.textLayoutManager
+        else {
             return false
         }
 
@@ -816,9 +817,9 @@ struct TextPreviewView: NSViewRepresentable {
         let kind: HighlightKind
 
         init(_ match: MatchRange) {
-            self.scalarStart = match.scalarStart
-            self.scalarEnd = match.scalarEnd
-            self.kind = match.kind
+            scalarStart = match.scalarStart
+            scalarEnd = match.scalarEnd
+            kind = match.kind
         }
     }
 
@@ -907,11 +908,11 @@ struct TextPreviewView: NSViewRepresentable {
             pendingViewportRetryGeneration = nil
         }
 
-        func textDidBeginEditing(_ notification: Notification) {
+        func textDidBeginEditing(_: Notification) {
             isEditing = true
         }
 
-        func textDidEndEditing(_ notification: Notification) {
+        func textDidEndEditing(_: Notification) {
             isEditing = false
         }
 
@@ -931,7 +932,7 @@ struct LinkPreviewView: NSViewRepresentable {
     let url: String
     let metadataState: LinkMetadataState
 
-    func makeNSView(context: Context) -> LPLinkView {
+    func makeNSView(context _: Context) -> LPLinkView {
         let linkView = LPLinkView()
         if let metadata = buildMetadata() {
             linkView.metadata = metadata
@@ -941,7 +942,8 @@ struct LinkPreviewView: NSViewRepresentable {
 
     func updateNSView(_ linkView: LPLinkView, context: Context) {
         guard context.coordinator.lastURL != url ||
-              context.coordinator.lastMetadataState != metadataState else {
+            context.coordinator.lastMetadataState != metadataState
+        else {
             return
         }
         context.coordinator.lastURL = url
@@ -958,15 +960,15 @@ struct LinkPreviewView: NSViewRepresentable {
         metadata.originalURL = urlObj
         metadata.url = urlObj
 
-        if case .loaded(let payload) = metadataState {
+        if case let .loaded(payload) = metadataState {
             switch payload {
-            case .titleOnly(let title, _):
+            case let .titleOnly(title, _):
                 metadata.title = title
-            case .imageOnly(let imageData, _):
+            case let .imageOnly(imageData, _):
                 if let nsImage = NSImage(data: imageData) {
                     metadata.imageProvider = NSItemProvider(object: nsImage)
                 }
-            case .titleAndImage(let title, let imageData, _):
+            case let .titleAndImage(title, imageData, _):
                 metadata.title = title
                 if let nsImage = NSImage(data: imageData) {
                     metadata.imageProvider = NSItemProvider(object: nsImage)
@@ -1023,157 +1025,157 @@ struct ItemRow: View, Equatable {
         matchData?.highlights ?? []
     }
 
-
     // Define exactly what constitutes a "change" for SwiftUI diffing
     // Note: onTap closure is intentionally excluded from equality comparison
     nonisolated static func == (lhs: ItemRow, rhs: ItemRow) -> Bool {
         return lhs.isSelected == rhs.isSelected &&
-               lhs.isContextMenuTargeted == rhs.isContextMenuTargeted &&
-               lhs.hasUserNavigated == rhs.hasUserNavigated &&
-               lhs.hasPendingEdit == rhs.hasPendingEdit &&
-               lhs.metadata == rhs.metadata &&
-               lhs.matchData == rhs.matchData
+            lhs.isContextMenuTargeted == rhs.isContextMenuTargeted &&
+            lhs.hasUserNavigated == rhs.hasUserNavigated &&
+            lhs.hasPendingEdit == rhs.hasPendingEdit &&
+            lhs.metadata == rhs.metadata &&
+            lhs.matchData == rhs.matchData
     }
 
     var body: some View {
         // 1. Wrap the content inside a Button
         Button(action: onTap) {
             HStack(spacing: 6) {
-            // Content type icon with badge overlay (or pencil when editing)
-            Group {
-                if hasPendingEdit {
-                    // Show pencil emoji when item has pending edit
-                    Text("✏️")
-                        .font(.system(size: 24))
-                        .frame(width: 32, height: 32)
-                } else {
-                    ZStack(alignment: .bottomTrailing) {
-                        // Main icon: image thumbnail, browser icon for links, color swatch, or SF symbol
-                        Group {
-                            switch metadata.icon {
-                            case .thumbnail(let bytes):
-                                if let nsImage = NSImage(data: Data(bytes)) {
-                                    Image(nsImage: nsImage)
-                                        .resizable()
-                                        .aspectRatio(contentMode: .fill)
-                                } else {
-                                    Image(systemName: "photo")
-                                        .resizable()
-                                }
-                            case .colorSwatch(let rgba):
-                                RoundedRectangle(cornerRadius: 6)
-                                    .fill(Color(nsColor: NSColor(
-                                        red: CGFloat((rgba >> 24) & 0xFF) / 255.0,
-                                        green: CGFloat((rgba >> 16) & 0xFF) / 255.0,
-                                        blue: CGFloat((rgba >> 8) & 0xFF) / 255.0,
-                                        alpha: CGFloat(rgba & 0xFF) / 255.0
-                                    )))
-                                    .overlay(
-                                        RoundedRectangle(cornerRadius: 6)
-                                            .strokeBorder(Color.primary.opacity(0.15), lineWidth: 1)
-                                    )
-                            case .symbol(let iconType):
-                                if case .link = iconType,
-                                   let browserURL = NSWorkspace.shared.urlForApplication(toOpen: URL(string: "https://")!) {
-                                    Image(nsImage: NSWorkspace.shared.icon(forFile: browserURL.path))
-                                        .resizable()
-                                } else if case .file = iconType,
-                                          let finderURL = NSWorkspace.shared.urlForApplication(withBundleIdentifier: "com.apple.finder") {
-                                    Image(nsImage: NSWorkspace.shared.icon(forFile: finderURL.path))
-                                        .resizable()
-                                } else {
-                                    Image(nsImage: NSWorkspace.shared.icon(for: iconType.utType))
-                                        .resizable()
+                // Content type icon with badge overlay (or pencil when editing)
+                Group {
+                    if hasPendingEdit {
+                        // Show pencil emoji when item has pending edit
+                        Text("✏️")
+                            .font(.system(size: 24))
+                            .frame(width: 32, height: 32)
+                    } else {
+                        ZStack(alignment: .bottomTrailing) {
+                            // Main icon: image thumbnail, browser icon for links, color swatch, or SF symbol
+                            Group {
+                                switch metadata.icon {
+                                case let .thumbnail(bytes):
+                                    if let nsImage = NSImage(data: Data(bytes)) {
+                                        Image(nsImage: nsImage)
+                                            .resizable()
+                                            .aspectRatio(contentMode: .fill)
+                                    } else {
+                                        Image(systemName: "photo")
+                                            .resizable()
+                                    }
+                                case let .colorSwatch(rgba):
+                                    RoundedRectangle(cornerRadius: 6)
+                                        .fill(Color(nsColor: NSColor(
+                                            red: CGFloat((rgba >> 24) & 0xFF) / 255.0,
+                                            green: CGFloat((rgba >> 16) & 0xFF) / 255.0,
+                                            blue: CGFloat((rgba >> 8) & 0xFF) / 255.0,
+                                            alpha: CGFloat(rgba & 0xFF) / 255.0
+                                        )))
+                                        .overlay(
+                                            RoundedRectangle(cornerRadius: 6)
+                                                .strokeBorder(Color.primary.opacity(0.15), lineWidth: 1)
+                                        )
+                                case let .symbol(iconType):
+                                    if case .link = iconType,
+                                       let browserURL = NSWorkspace.shared.urlForApplication(toOpen: URL(string: "https://")!)
+                                    {
+                                        Image(nsImage: NSWorkspace.shared.icon(forFile: browserURL.path))
+                                            .resizable()
+                                    } else if case .file = iconType,
+                                              let finderURL = NSWorkspace.shared.urlForApplication(withBundleIdentifier: "com.apple.finder")
+                                    {
+                                        Image(nsImage: NSWorkspace.shared.icon(forFile: finderURL.path))
+                                            .resizable()
+                                    } else {
+                                        Image(nsImage: NSWorkspace.shared.icon(for: iconType.utType))
+                                            .resizable()
+                                    }
                                 }
                             }
-                        }
-                        .frame(width: 32, height: 32)
-                        .clipShape(RoundedRectangle(cornerRadius: 4))
+                            .frame(width: 32, height: 32)
+                            .clipShape(RoundedRectangle(cornerRadius: 4))
 
-                        // Badge: Bookmark icon for bookmarked items, otherwise source app icon
-                        if metadata.tags.contains(.bookmark) {
-                            Image("BookmarkIcon")
-                                .resizable()
-                                .frame(width: 18, height: 18)
-                                .shadow(color: .black.opacity(0.3), radius: 1, x: 0, y: 1)
-                                .offset(x: 4, y: 4)
-                        } else if let bundleID = metadata.sourceAppBundleId,
-                           let appURL = NSWorkspace.shared.urlForApplication(withBundleIdentifier: bundleID) {
-                            // Skip badge for symbol links/files (app icon is already shown)
-                            let showBadge: Bool = {
-                                switch metadata.icon {
-                                case .symbol(let iconType):
-                                    return iconType != .link && iconType != .file
-                                case .thumbnail, .colorSwatch:
-                                    return true
-                                }
-                            }()
-
-                            if showBadge {
-                                Image(nsImage: NSWorkspace.shared.icon(forFile: appURL.path))
+                            // Badge: Bookmark icon for bookmarked items, otherwise source app icon
+                            if metadata.tags.contains(.bookmark) {
+                                Image("BookmarkIcon")
                                     .resizable()
-                                    .frame(width: 22, height: 22)
-                                    .clipShape(RoundedRectangle(cornerRadius: 3))
+                                    .frame(width: 18, height: 18)
                                     .shadow(color: .black.opacity(0.3), radius: 1, x: 0, y: 1)
                                     .offset(x: 4, y: 4)
+                            } else if let bundleID = metadata.sourceAppBundleId,
+                                      let appURL = NSWorkspace.shared.urlForApplication(withBundleIdentifier: bundleID)
+                            {
+                                // Skip badge for symbol links/files (app icon is already shown)
+                                let showBadge: Bool = {
+                                    switch metadata.icon {
+                                    case let .symbol(iconType):
+                                        return iconType != .link && iconType != .file
+                                    case .thumbnail, .colorSwatch:
+                                        return true
+                                    }
+                                }()
+
+                                if showBadge {
+                                    Image(nsImage: NSWorkspace.shared.icon(forFile: appURL.path))
+                                        .resizable()
+                                        .frame(width: 22, height: 22)
+                                        .clipShape(RoundedRectangle(cornerRadius: 3))
+                                        .shadow(color: .black.opacity(0.3), radius: 1, x: 0, y: 1)
+                                        .offset(x: 4, y: 4)
+                                }
                             }
                         }
                     }
                 }
-            }
-            .frame(width: 38, height: 38)
-            .allowsHitTesting(false)
-
-            // Line number (shown in search mode when line > 1)
-            if let lineNumber = matchData?.lineNumber, lineNumber > 1 {
-                Text("L\(lineNumber):")
-                    .font(.custom(FontManager.mono, size: 13))
-                    .foregroundColor(accentSelected ? .white.opacity(0.7) : .secondary)
-                    .lineLimit(1)
-                    .fixedSize()
-                    .allowsHitTesting(false)
-            }
-
-            // Text content - SwiftUI Three-Part HStack with layout priorities
-            HStack(spacing: 6) {
-                HighlightedTextView(
-                    text: displayText,
-                    highlights: displayHighlights,
-                    accentSelected: accentSelected
-                )
-                .frame(maxWidth: .infinity, alignment: .leading)
+                .frame(width: 38, height: 38)
                 .allowsHitTesting(false)
-                .layoutPriority(1)
-            }
-            .frame(maxWidth: .infinity, alignment: .leading)
 
+                // Line number (shown in search mode when line > 1)
+                if let lineNumber = matchData?.lineNumber, lineNumber > 1 {
+                    Text("L\(lineNumber):")
+                        .font(.custom(FontManager.mono, size: 13))
+                        .foregroundColor(accentSelected ? .white.opacity(0.7) : .secondary)
+                        .lineLimit(1)
+                        .fixedSize()
+                        .allowsHitTesting(false)
+                }
 
-        }
-        .frame(maxWidth: .infinity, minHeight: rowHeight, maxHeight: rowHeight, alignment: .leading)
-        .padding(.horizontal, 4)
-        .padding(.vertical, 4)
-        .background {
-            if isSelected && hasUserNavigated && hasPendingEdit {
-                // Editing state: darker grey background
-                Color.primary.opacity(0.35)
-            } else if accentSelected {
-                Color.selectionBackground
-            } else if isContextMenuTargeted && !isSelected {
-                Color.primary.opacity(0.11)
-            } else if isSelected {
-                Color.primary.opacity(0.225)
-            } else {
-                Color.clear
+                // Text content - SwiftUI Three-Part HStack with layout priorities
+                HStack(spacing: 6) {
+                    HighlightedTextView(
+                        text: displayText,
+                        highlights: displayHighlights,
+                        accentSelected: accentSelected
+                    )
+                    .frame(maxWidth: .infinity, alignment: .leading)
+                    .allowsHitTesting(false)
+                    .layoutPriority(1)
+                }
+                .frame(maxWidth: .infinity, alignment: .leading)
             }
-        }
-        .overlay {
-            if isContextMenuTargeted {
-                RoundedRectangle(cornerRadius: 10, style: .continuous)
-                    .strokeBorder(Color.primary.opacity(0.22), lineWidth: 1)
+            .frame(maxWidth: .infinity, minHeight: rowHeight, maxHeight: rowHeight, alignment: .leading)
+            .padding(.horizontal, 4)
+            .padding(.vertical, 4)
+            .background {
+                if isSelected && hasUserNavigated && hasPendingEdit {
+                    // Editing state: darker grey background
+                    Color.primary.opacity(0.35)
+                } else if accentSelected {
+                    Color.selectionBackground
+                } else if isContextMenuTargeted && !isSelected {
+                    Color.primary.opacity(0.11)
+                } else if isSelected {
+                    Color.primary.opacity(0.225)
+                } else {
+                    Color.clear
+                }
             }
-        }
-        .clipShape(RoundedRectangle(cornerRadius: 10, style: .continuous))
-        .contentShape(Rectangle())
+            .overlay {
+                if isContextMenuTargeted {
+                    RoundedRectangle(cornerRadius: 10, style: .continuous)
+                        .strokeBorder(Color.primary.opacity(0.22), lineWidth: 1)
+                }
+            }
+            .clipShape(RoundedRectangle(cornerRadius: 10, style: .continuous))
+            .contentShape(Rectangle())
         }
         // 2. Apply the plain style so it behaves like a standard row instead of a system button
         .buttonStyle(.plain)
@@ -1192,7 +1194,6 @@ struct ItemRow: View, Equatable {
         .accessibilityAddTraits(.isButton)
         .accessibilityAddTraits(isSelected ? .isSelected : [])
     }
-
 }
 
 // MARK: - Right-Click Popover
@@ -1219,7 +1220,7 @@ struct RightClickPopoverOverlay: NSViewRepresentable {
         return view
     }
 
-    func updateNSView(_ nsView: RightClickView, context: Context) {
+    func updateNSView(_: RightClickView, context: Context) {
         context.coordinator.actions = actions
         context.coordinator.onShow = onShow
         context.coordinator.onHide = onHide
@@ -1303,7 +1304,7 @@ struct RightClickPopoverOverlay: NSViewRepresentable {
             coordinator.onHide?()
         }
 
-        override func menu(for event: NSEvent) -> NSMenu? {
+        override func menu(for _: NSEvent) -> NSMenu? {
             nil
         }
 
@@ -1549,7 +1550,6 @@ private extension NSColor {
         let newSaturation = max(0, s - amount)
         return NSColor(hue: h, saturation: newSaturation, brightness: b, alpha: a)
     }
-
 }
 
 // MARK: - Highlight Kind Color Mapping

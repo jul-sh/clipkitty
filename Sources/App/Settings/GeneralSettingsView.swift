@@ -47,7 +47,7 @@ struct GeneralSettingsView: View {
                             NSWorkspace.shared.open(
                                 URL(
                                     string:
-                                        "x-apple.systempreferences:com.apple.LoginItems-Settings.extension"
+                                    "x-apple.systempreferences:com.apple.LoginItems-Settings.extension"
                                 )!)
                         }
                         .font(.subheadline)
@@ -64,7 +64,7 @@ struct GeneralSettingsView: View {
             Section(String(localized: "History")) {
                 LabeledContent(String(localized: "Storage Limit")) {
                     HStack(spacing: 8) {
-                        Slider(value: databaseSizeSlider, in: 0...1)
+                        Slider(value: databaseSizeSlider, in: 0 ... 1)
                             .frame(maxWidth: .infinity)
                         Text(databaseSizeLabel)
                             .foregroundStyle(.secondary)
@@ -76,7 +76,7 @@ struct GeneralSettingsView: View {
                 Text(
                     String(
                         localized:
-                            "Currently using \(Utilities.formatBytes(store.databaseSizeBytes)). Oldest items removed when limit is reached."
+                        "Currently using \(Utilities.formatBytes(store.databaseSizeBytes)). Oldest items removed when limit is reached."
                     )
                 )
                 .font(.subheadline)
@@ -111,20 +111,22 @@ struct GeneralSettingsView: View {
                         HStack {
                             Label(
                                 String(localized: "Unable to check for updates."),
-                                systemImage: "exclamationmark.triangle")
+                                systemImage: "exclamationmark.triangle"
+                            )
                             Spacer()
                             Button(String(localized: "Download")) {
                                 NSWorkspace.shared.open(
                                     URL(
                                         string:
-                                            "https://github.com/jul-sh/clipkitty/releases/latest")!)
+                                        "https://github.com/jul-sh/clipkitty/releases/latest")!)
                             }
                         }
                     case .available:
                         HStack {
                             Label(
                                 String(localized: "A new version of ClipKitty is available."),
-                                systemImage: "arrow.down.circle")
+                                systemImage: "arrow.down.circle"
+                            )
                             Spacer()
                             Button(String(localized: "Install")) {
                                 onInstallUpdate?()
@@ -136,7 +138,8 @@ struct GeneralSettingsView: View {
 
                     Toggle(
                         String(localized: "Automatically install updates"),
-                        isOn: $settings.autoInstallUpdates)
+                        isOn: $settings.autoInstallUpdates
+                    )
 
                     VStack(alignment: .leading, spacing: 8) {
                         Toggle(
@@ -166,7 +169,7 @@ struct GeneralSettingsView: View {
                             Text(
                                 String(
                                     localized:
-                                        "Found a bug? Report it on GitHub with steps to reproduce.")
+                                    "Found a bug? Report it on GitHub with steps to reproduce.")
                             )
                             .font(.subheadline)
                             .foregroundStyle(.secondary)
@@ -175,7 +178,7 @@ struct GeneralSettingsView: View {
                                 NSWorkspace.shared.open(
                                     URL(
                                         string:
-                                            "https://github.com/jul-sh/clipkitty/issues/new/choose")!
+                                        "https://github.com/jul-sh/clipkitty/issues/new/choose")!
                                 )
                             }
                         }

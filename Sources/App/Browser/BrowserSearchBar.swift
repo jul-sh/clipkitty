@@ -1,5 +1,5 @@
-import SwiftUI
 import ClipKittyRust
+import SwiftUI
 
 struct BrowserSearchBar<FilterPopoverContent: View>: View {
     @Environment(\.colorScheme) private var colorScheme
@@ -115,5 +115,4 @@ struct BrowserSearchBar<FilterPopoverContent: View>: View {
         .padding(.horizontal, 17)
         .padding(.vertical, 13)
     }
-
 }

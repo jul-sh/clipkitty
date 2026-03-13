@@ -1,5 +1,5 @@
-import SwiftUI
 import ClipKittyRust
+import SwiftUI
 
 @MainActor
 enum BrowserActionItem: Equatable {
@@ -158,7 +158,7 @@ struct BrowserActionMenu: View {
     }
 
     private func activateHighlightedAction() {
-        guard case .index(let highlightedIndex) = highlight else {
+        guard case let .index(highlightedIndex) = highlight else {
             dismiss()
             focusSearchField()
             return
@@ -169,7 +169,7 @@ struct BrowserActionMenu: View {
     }
 
     private func isHighlighted(index: Int) -> Bool {
-        if case .index(let highlightedIndex) = highlight {
+        if case let .index(highlightedIndex) = highlight {
             return highlightedIndex == index
         }
         return false
@@ -180,7 +180,7 @@ struct BrowserActionMenu: View {
         switch highlight {
         case .none:
             startingIndex = offset >= 0 ? -1 : upperBound + 1
-        case .index(let index):
+        case let .index(index):
             startingIndex = index
         }
         return max(0, min(upperBound, startingIndex + offset))

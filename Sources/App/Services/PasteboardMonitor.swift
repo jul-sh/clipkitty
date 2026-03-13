@@ -33,7 +33,7 @@ final class PasteboardMonitor {
             case .idle:
                 return 750
             case .deepIdle:
-                return 1_500
+                return 1500
             }
         }
 
@@ -54,7 +54,7 @@ final class PasteboardMonitor {
         case monitoring(sleepObserver: NSObjectProtocol, wakeObserver: NSObjectProtocol, isAsleep: Bool)
 
         mutating func setAsleep(_ asleep: Bool) {
-            guard case .monitoring(let sleepObserver, let wakeObserver, _) = self else { return }
+            guard case let .monitoring(sleepObserver, wakeObserver, _) = self else { return }
             self = .monitoring(
                 sleepObserver: sleepObserver,
                 wakeObserver: wakeObserver,
@@ -66,7 +66,7 @@ final class PasteboardMonitor {
             switch self {
             case .notMonitoring:
                 return false
-            case .monitoring(_, _, let isAsleep):
+            case let .monitoring(_, _, isAsleep):
                 return isAsleep
             }
         }
@@ -95,8 +95,8 @@ final class PasteboardMonitor {
         self.pasteboard = pasteboard
         self.workspace = workspace
         self.onDetection = onDetection
-        self.lastChangeCount = pasteboard.changeCount
-        self.lastDetectionTime = ContinuousClock.now - .seconds(30)
+        lastChangeCount = pasteboard.changeCount
+        lastDetectionTime = ContinuousClock.now - .seconds(30)
     }
 
     func start() {
@@ -168,7 +168,7 @@ final class PasteboardMonitor {
     }
 
     private func removeSystemObservers() {
-        guard case .monitoring(let sleepObserver, let wakeObserver, _) = sleepMonitoring else { return }
+        guard case let .monitoring(sleepObserver, wakeObserver, _) = sleepMonitoring else { return }
         workspace.notificationCenter.removeObserver(sleepObserver)
         workspace.notificationCenter.removeObserver(wakeObserver)
         sleepMonitoring = .notMonitoring

@@ -49,7 +49,7 @@ final class ToastWindow {
         }
 
         // If at max capacity, reset and start fresh
-        if case .passive(let messages, _, _) = state, messages.count >= Self.maxMessages {
+        if case let .passive(messages, _, _) = state, messages.count >= Self.maxMessages {
             state = .idle
             dismissTask?.cancel()
             window?.orderOut(nil)
@@ -57,7 +57,7 @@ final class ToastWindow {
         }
 
         // If window already exists, combine messages and extend timer
-        if window != nil, case .passive(let existingMessages, let existingIconSystemName, let existingIconColor) = state {
+        if window != nil, case let .passive(existingMessages, existingIconSystemName, existingIconColor) = state {
             // Skip duplicate messages
             guard !existingMessages.contains(message) else { return }
             state = .passive(
@@ -87,7 +87,7 @@ final class ToastWindow {
         switch state {
         case .idle:
             return ""
-        case .passive(let messages, _, _):
+        case let .passive(messages, _, _):
             guard !messages.isEmpty else { return "" }
             if messages.count == 1 {
                 return messages[0]
@@ -95,7 +95,7 @@ final class ToastWindow {
             let first = messages[0]
             let rest = messages.dropFirst().map { $0.lowercased() }
             return ([first] + rest).joined(separator: " & ")
-        case .actionable(let message, _, _, _, _):
+        case let .actionable(message, _, _, _, _):
             return message
         }
     }
@@ -119,7 +119,7 @@ final class ToastWindow {
         hostingView.frame = NSRect(origin: .zero, size: fittingSize)
 
         let toastWindow: NSWindow
-        if let existingWindow = self.window {
+        if let existingWindow = window {
             toastWindow = existingWindow
             toastWindow.contentView = hostingView
         } else {
@@ -136,7 +136,7 @@ final class ToastWindow {
             newWindow.collectionBehavior = [.canJoinAllSpaces, .fullScreenAuxiliary, .stationary]
             newWindow.identifier = NSUserInterfaceItemIdentifier("ToastWindow")
             newWindow.contentView = hostingView
-            self.window = newWindow
+            window = newWindow
             toastWindow = newWindow
         }
 
@@ -183,7 +183,7 @@ final class ToastWindow {
             let iconSystemName: String
             let iconColor: Color
             switch state {
-            case .passive(_, let stateIconSystemName, let stateIconColor):
+            case let .passive(_, stateIconSystemName, stateIconColor):
                 iconSystemName = stateIconSystemName
                 iconColor = Color(nsColor: stateIconColor)
             case .idle:
@@ -199,7 +199,7 @@ final class ToastWindow {
                 actionTitle: nil,
                 action: nil
             )
-        case .actionable(let message, let iconSystemName, let iconColor, let actionTitle, let action):
+        case let .actionable(message, iconSystemName, iconColor, actionTitle, action):
             return ToastView(
                 message: message,
                 iconSystemName: iconSystemName,
@@ -227,7 +227,7 @@ final class ToastWindow {
         dismissTask = nil
         state = .idle
 
-        guard let window = self.window else { return }
+        guard let window = window else { return }
         self.window = nil
 
         // Animate out: fade + slide down

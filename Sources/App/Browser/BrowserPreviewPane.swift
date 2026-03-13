@@ -1,6 +1,6 @@
-import SwiftUI
 import AppKit
 import ClipKittyRust
+import SwiftUI
 
 struct BrowserPreviewPane: View {
     @Bindable var viewModel: BrowserViewModel
@@ -10,13 +10,13 @@ struct BrowserPreviewPane: View {
     var body: some View {
         Group {
             switch viewModel.session.preview {
-            case .loaded(let selection):
+            case let .loaded(selection):
                 VStack(spacing: 0) {
                     previewContent(for: selection.item, matchData: selection.matchData)
                     Divider()
                     metadataFooter(for: selection.item)
                 }
-            case .loading(_, let stale):
+            case let .loading(_, stale):
                 ZStack {
                     if let stale {
                         previewContent(for: stale.item, matchData: stale.matchData)
@@ -92,7 +92,7 @@ struct BrowserPreviewPane: View {
             )
             .id(previewIdentity(itemId: item.itemMetadata.itemId, matchData: matchData))
             .frame(maxWidth: .infinity, maxHeight: .infinity)
-        case .image(let data, let description, _):
+        case let .image(data, description, _):
             ScrollView(.vertical, showsIndicators: true) {
                 if let image = NSImage(data: data) {
                     VStack(spacing: 8) {
@@ -110,7 +110,7 @@ struct BrowserPreviewPane: View {
                     .padding(16)
                 }
             }
-        case .link(let url, let metadataState):
+        case let .link(url, metadataState):
             ScrollView(.vertical, showsIndicators: true) {
                 VStack(alignment: .leading, spacing: 16) {
                     LinkPreviewView(url: url, metadataState: metadataState)
@@ -126,7 +126,7 @@ struct BrowserPreviewPane: View {
                 }
                 .padding(16)
             }
-        case .file(_, let files):
+        case let .file(_, files):
             FilePreviewView(files: files, searchQuery: viewModel.searchText)
         }
     }
@@ -202,7 +202,8 @@ struct BrowserPreviewPane: View {
                 } else if let app = item.itemMetadata.sourceApp {
                     HStack(spacing: 4) {
                         if let bundleID = item.itemMetadata.sourceAppBundleId,
-                           let appURL = NSWorkspace.shared.urlForApplication(withBundleIdentifier: bundleID) {
+                           let appURL = NSWorkspace.shared.urlForApplication(withBundleIdentifier: bundleID)
+                        {
                             Image(nsImage: NSWorkspace.shared.icon(forFile: appURL.path))
                                 .resizable()
                                 .frame(width: 14, height: 14)
@@ -257,7 +258,8 @@ struct BrowserPreviewPane: View {
     private var emptyStateMessage: String {
         if viewModel.searchText.isEmpty,
            viewModel.contentTypeFilter == .all,
-           viewModel.selectedTagFilter == nil {
+           viewModel.selectedTagFilter == nil
+        {
             return String(localized: "No clipboard history")
         }
         return String(localized: "No results")

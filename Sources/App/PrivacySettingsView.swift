@@ -1,5 +1,5 @@
-import SwiftUI
 import AppKit
+import SwiftUI
 
 /// Represents an app that can be ignored
 struct IgnoredApp: Identifiable, Hashable {
@@ -8,7 +8,7 @@ struct IgnoredApp: Identifiable, Hashable {
     let icon: NSImage?
 
     init(bundleId: String, name: String, icon: NSImage?) {
-        self.id = bundleId
+        id = bundleId
         self.name = name
         self.icon = icon
     }
@@ -16,7 +16,8 @@ struct IgnoredApp: Identifiable, Hashable {
     /// Create from a bundle ID by looking up app info
     static func fromBundleId(_ bundleId: String) -> IgnoredApp {
         if let appURL = NSWorkspace.shared.urlForApplication(withBundleIdentifier: bundleId),
-           let bundle = Bundle(url: appURL) {
+           let bundle = Bundle(url: appURL)
+        {
             let name = bundle.object(forInfoDictionaryKey: "CFBundleName") as? String
                 ?? bundle.object(forInfoDictionaryKey: "CFBundleDisplayName") as? String
                 ?? appURL.deletingPathExtension().lastPathComponent
@@ -89,14 +90,14 @@ struct IgnoredAppsListView: View {
         var apps: [IgnoredApp] {
             switch self {
             case .empty: return []
-            case .populated(let apps, _): return apps
+            case let .populated(apps, _): return apps
             }
         }
 
         var selectedId: String? {
             switch self {
             case .empty: return nil
-            case .populated(_, let id): return id
+            case let .populated(_, id): return id
             }
         }
 
@@ -112,7 +113,7 @@ struct IgnoredAppsListView: View {
         }
 
         mutating func select(_ id: String?) {
-            guard case .populated(let apps, _) = self else { return }
+            guard case let .populated(apps, _) = self else { return }
             self = .populated(apps: apps, selectedId: id)
         }
     }
@@ -132,7 +133,7 @@ struct IgnoredAppsListView: View {
                 Text(String(localized: "No apps excluded"))
                     .foregroundStyle(.secondary)
                     .frame(maxWidth: .infinity, minHeight: 60)
-            case .populated(let apps, _):
+            case let .populated(apps, _):
                 List(selection: selectedIdBinding) {
                     ForEach(apps) { app in
                         HStack(spacing: 10) {
@@ -220,14 +221,15 @@ struct IgnoredAppsListView: View {
 
         for url in panel.urls {
             if let bundle = Bundle(url: url),
-               let bundleId = bundle.bundleIdentifier {
+               let bundleId = bundle.bundleIdentifier
+            {
                 settings.addIgnoredApp(bundleId: bundleId)
             }
         }
     }
 
     private func removeSelectedApp() {
-        guard case .populated(_, let selectedId?) = listState else { return }
+        guard case let .populated(_, selectedId?) = listState else { return }
         settings.removeIgnoredApp(bundleId: selectedId)
         listState.select(nil)
     }

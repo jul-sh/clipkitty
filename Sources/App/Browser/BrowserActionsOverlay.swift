@@ -28,7 +28,7 @@ struct BrowserActionsOverlay: View {
     private var menuHighlight: Binding<MenuHighlightState> {
         Binding(
             get: {
-                guard case .actions(let highlight) = viewModel.session.overlays else {
+                guard case let .actions(highlight) = viewModel.session.overlays else {
                     return .none
                 }
                 return highlight
