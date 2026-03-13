@@ -2,6 +2,7 @@ import SwiftUI
 import AppKit
 import ClipKittyRust
 import STTextKitPlus
+import ObjectiveC.runtime
 import UniformTypeIdentifiers
 
 /// Max time to show stale content before clearing to spinner during slow loads.
@@ -186,10 +187,20 @@ struct FilePreviewView: View {
 
 /// NSTextView subclass with custom key handling for the preview pane
 private final class PreviewTextView: NSTextView {
+    // NSTextView keeps itself as the viewport layout delegate. We expose the same optional
+    // selector on our subclass and forward to NSTextView's original implementation so we can
+    // observe post-layout state without replacing AppKit's delegate plumbing.
+    private static let didLayoutSelector = NSSelectorFromString("textViewportLayoutControllerDidLayout:")
+    private static let superDidLayoutImplementation: IMP? = {
+        guard let method = class_getInstanceMethod(NSTextView.self, didLayoutSelector) else { return nil }
+        return method_getImplementation(method)
+    }()
+
     var onCmdReturn: (() -> Void)?
     var onSave: (() -> Void)?
     var onEscape: (() -> Void)?
     var onFocusChange: ((Bool) -> Void)?
+    var onViewportLayoutDidLayout: ((PreviewTextView, NSTextViewportLayoutController) -> Void)?
 
     override func keyDown(with event: NSEvent) {
         if event.modifierFlags.contains(.command) {
@@ -222,6 +233,22 @@ private final class PreviewTextView: NSTextView {
         let result = super.resignFirstResponder()
         if result { onFocusChange?(false) }
         return result
+    }
+
+    @objc(textViewportLayoutControllerDidLayout:)
+    func clipKitty_textViewportLayoutControllerDidLayout(
+        _ textViewportLayoutController: NSTextViewportLayoutController
+    ) {
+        if let implementation = Self.superDidLayoutImplementation {
+            typealias DidLayoutFunction =
+                @convention(c) (AnyObject, Selector, NSTextViewportLayoutController) -> Void
+            unsafeBitCast(implementation, to: DidLayoutFunction.self)(
+                self,
+                Self.didLayoutSelector,
+                textViewportLayoutController
+            )
+        }
+        onViewportLayoutDidLayout?(self, textViewportLayoutController)
     }
 }
 
@@ -322,6 +349,46 @@ struct TextPreviewView: NSViewRepresentable {
         textView.onSave = onSave
         textView.onEscape = onEscape
         textView.onFocusChange = onEditingStateChange
+        textView.onViewportLayoutDidLayout = { [weak coordinator] observedTextView, textViewportLayoutController in
+            guard let coordinator,
+                  shouldAutoScroll,
+                  let target = coordinator.activeUsageBoundsTarget() else { return }
+
+            let generation = coordinator.scrollGeneration
+            // TextKit 2 can report a transiently invalid viewport immediately after a layout pass.
+            // Retry layoutViewport once on the next run loop instead of centering against empty
+            // bounds or a nil viewport range, then do one post-layout scroll attempt once the
+            // viewport state is coherent.
+            if textViewportLayoutController.viewportBounds.isEmpty ||
+                textViewportLayoutController.viewportRange == nil {
+                guard coordinator.scheduleViewportRetry(for: generation) else { return }
+                DispatchQueue.main.async { [weak coordinator, weak observedTextView] in
+                    guard let coordinator,
+                          let observedTextView,
+                          coordinator.scrollGeneration == generation else { return }
+                    observedTextView.textLayoutManager?.textViewportLayoutController.layoutViewport()
+                }
+                return
+            }
+
+            coordinator.clearViewportRetry()
+            coordinator.needsGeometrySync = true
+            DispatchQueue.main.async { [weak coordinator, weak observedTextView] in
+                guard let coordinator,
+                      let observedTextView,
+                      coordinator.scrollGeneration == generation else { return }
+                if let scrollView = observedTextView.enclosingScrollView {
+                    self.flushPendingDisplay(textView: observedTextView, scrollView: scrollView)
+                }
+                self.performScrollAttempt(
+                    textView: observedTextView,
+                    target: target,
+                    generation: generation,
+                    coordinator: coordinator,
+                    attempt: 0
+                )
+            }
+        }
         coordinator.onUsageBoundsChange = { [weak coordinator] observedTextView in
             guard let coordinator,
                   shouldAutoScroll,
@@ -501,6 +568,7 @@ struct TextPreviewView: NSViewRepresentable {
     ) {
         coordinator.scrollGeneration += 1
         let generation = coordinator.scrollGeneration
+        coordinator.clearViewportRetry()
         switch target {
         case .top:
             coordinator.clearUsageBoundsRecentering()
@@ -764,6 +832,7 @@ struct TextPreviewView: NSViewRepresentable {
         var needsGeometrySync: Bool = false
         private var pendingScrollTarget: ScrollTarget?
         private var pendingAutoScrollExpiration: Date = .distantPast
+        private var pendingViewportRetryGeneration: Int?
         fileprivate var onUsageBoundsChange: ((PreviewTextView) -> Void)?
         private var usageBoundsObservation: NSKeyValueObservation?
         fileprivate weak var observedTextView: PreviewTextView?
@@ -810,6 +879,7 @@ struct TextPreviewView: NSViewRepresentable {
         ) {
             pendingScrollTarget = target
             pendingAutoScrollExpiration = target == nil ? .distantPast : Date().addingTimeInterval(duration)
+            pendingViewportRetryGeneration = nil
         }
 
         fileprivate func activeUsageBoundsTarget() -> ScrollTarget? {
@@ -824,6 +894,17 @@ struct TextPreviewView: NSViewRepresentable {
         fileprivate func clearUsageBoundsRecentering() {
             pendingScrollTarget = nil
             pendingAutoScrollExpiration = .distantPast
+            pendingViewportRetryGeneration = nil
+        }
+
+        fileprivate func scheduleViewportRetry(for generation: Int) -> Bool {
+            guard pendingViewportRetryGeneration != generation else { return false }
+            pendingViewportRetryGeneration = generation
+            return true
+        }
+
+        fileprivate func clearViewportRetry() {
+            pendingViewportRetryGeneration = nil
         }
 
         func textDidBeginEditing(_ notification: Notification) {
