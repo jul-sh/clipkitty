@@ -327,15 +327,23 @@ fn main() {
     // Close database handle before opening store
     drop(db);
 
-    // Build the Tantivy index by opening via ClipboardStore
-    println!("Building search index...");
-    let _store = ClipboardStore::new(output_path.to_str().unwrap().to_string())
-        .expect("Failed to open store for indexing");
-
     let index_path = output_path
         .parent()
         .unwrap()
         .join(format!("tantivy_index_{}", purr::indexer::INDEX_VERSION));
+
+    if index_path.exists() {
+        // The perf DB is regenerated in place. If an old index directory survives and still
+        // has the same document count, ClipboardStore's startup check will currently treat it
+        // as valid even when the underlying item contents changed. Removing it here guarantees
+        // the freshly generated DB gets a matching fresh Tantivy index.
+        std::fs::remove_dir_all(&index_path).expect("Failed to remove existing perf index");
+    }
+
+    // Build the Tantivy index by opening via ClipboardStore
+    println!("Building search index...");
+    let _store = ClipboardStore::new(output_path.to_str().unwrap().to_string())
+        .expect("Failed to open store for indexing");
 
     println!();
     println!("Database created: {}", output_path.display());
