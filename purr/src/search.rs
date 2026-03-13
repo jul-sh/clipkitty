@@ -131,6 +131,21 @@ fn word_match_to_highlight_kind(wmk: WordMatchKind) -> HighlightKind {
     }
 }
 
+fn highlight_end_for_match(
+    char_start: usize,
+    char_end: usize,
+    query_word: &str,
+    word_match_kind: WordMatchKind,
+) -> usize {
+    match word_match_kind {
+        WordMatchKind::Prefix => {
+            let prefix_len = query_word.chars().count();
+            (char_start + prefix_len).min(char_end)
+        }
+        _ => char_end,
+    }
+}
+
 /// Context for highlighting a candidate document.
 pub(crate) struct HighlightContext<'a> {
     pub id: i64,
@@ -174,9 +189,10 @@ pub(crate) fn highlight_candidate(ctx: &HighlightContext<'_>) -> FuzzyMatch {
                 // are included via the bridging pass when they fall between word highlights,
                 // preventing random punctuation elsewhere from being highlighted.
                 if is_word_token(qw) {
+                    let highlight_end = highlight_end_for_match(*char_start, *char_end, qw, wmk);
                     word_highlights.push((
                         *char_start,
-                        *char_end,
+                        highlight_end,
                         word_match_to_highlight_kind(wmk),
                     ));
                 }
@@ -267,6 +283,9 @@ fn indices_to_ranges(indices: &[u32]) -> Vec<HighlightRange> {
 }
 
 /// Find the highlight in the densest cluster of highlights using a sliding window.
+const EARLIER_CLUSTER_COVERAGE_TOLERANCE: u64 = 2;
+const EARLIER_CLUSTER_MATCH_SCORE_TOLERANCE: u64 = 1;
+
 pub(crate) fn find_densest_highlight(
     highlights: &[HighlightRange],
     window_size: u64,
@@ -284,6 +303,7 @@ pub(crate) fn find_densest_highlight(
     let mut left = 0;
     let mut best_left = 0;
     let mut best_coverage = 0u64;
+    let mut best_anchor_score = 0u64;
     let mut current_coverage = 0u64;
 
     for right in 0..indexed.len() {
@@ -293,13 +313,61 @@ pub(crate) fn find_densest_highlight(
         }
         current_coverage += indexed[right].1.end - indexed[right].1.start;
 
-        if current_coverage > best_coverage {
+        let current_start = indexed[left].1.start;
+        let current_anchor_score = highlight_match_score(indexed[left].1.kind);
+        let best_start = indexed[best_left].1.start;
+
+        if cluster_beats_best(
+            current_coverage,
+            current_anchor_score,
+            current_start,
+            best_coverage,
+            best_anchor_score,
+            best_start,
+        ) {
             best_coverage = current_coverage;
+            best_anchor_score = current_anchor_score;
             best_left = left;
         }
     }
 
     Some(indexed[best_left].0)
+}
+
+fn highlight_match_score(kind: HighlightKind) -> u64 {
+    match kind {
+        HighlightKind::Exact => 6,
+        HighlightKind::Prefix => 5,
+        HighlightKind::SubwordPrefix => 4,
+        HighlightKind::Substring => 3,
+        HighlightKind::Fuzzy => 2,
+        HighlightKind::Subsequence => 1,
+    }
+}
+
+fn cluster_beats_best(
+    current_coverage: u64,
+    current_anchor_score: u64,
+    current_start: u64,
+    best_coverage: u64,
+    best_anchor_score: u64,
+    best_start: u64,
+) -> bool {
+    if current_coverage > best_coverage + EARLIER_CLUSTER_COVERAGE_TOLERANCE {
+        return true;
+    }
+    if current_coverage + EARLIER_CLUSTER_COVERAGE_TOLERANCE < best_coverage {
+        return false;
+    }
+
+    if current_anchor_score > best_anchor_score + EARLIER_CLUSTER_MATCH_SCORE_TOLERANCE {
+        return true;
+    }
+    if current_anchor_score + EARLIER_CLUSTER_MATCH_SCORE_TOLERANCE < best_anchor_score {
+        return false;
+    }
+
+    current_start < best_start
 }
 
 /// Generate a generous text snippet around the densest cluster of highlights.
@@ -878,7 +946,7 @@ mod tests {
             .iter()
             .map(|r| chars[r.start as usize..r.end as usize].iter().collect())
             .collect();
-        assert_eq!(words, vec!["testing"]);
+        assert_eq!(words, vec!["test"]);
     }
 
     #[test]
@@ -1017,6 +1085,13 @@ mod tests {
     }
 
     #[test]
+    fn test_find_densest_highlight_biases_earlier_when_clusters_are_close() {
+        let highlights = vec![hr(0, 4), hr(1000, 1003), hr(1004, 1007)];
+        let idx = super::find_densest_highlight(&highlights, 50).unwrap();
+        assert_eq!(highlights[idx].start, 0);
+    }
+
+    #[test]
     fn test_snippet_centers_on_densest_cluster() {
         let mut content = "a".repeat(10);
         content.push_str("LONE");
@@ -1137,6 +1212,32 @@ error: Build failed due to failed dependency";
             "Snippet should center on the near-exact match line, got: {}",
             snippet
         );
+    }
+
+    #[test]
+    fn test_prefix_highlight_does_not_outrank_earlier_exact_match() {
+        let content = "func top level\n\nlet x = 1;\n\nfunction later match";
+        let match_data = compute_item_highlights(content, "func");
+
+        assert!(match_data.full_content_highlights.len() >= 2);
+
+        let first = &match_data.full_content_highlights[0];
+        let second = &match_data.full_content_highlights[1];
+
+        assert_eq!(first.start, 0);
+        assert_eq!(first.end, 4);
+        assert_eq!(first.kind, HighlightKind::Exact);
+
+        let second_highlighted: String = content
+            .chars()
+            .skip(second.start as usize)
+            .take((second.end - second.start) as usize)
+            .collect();
+        assert_eq!(second.kind, HighlightKind::Prefix);
+        assert_eq!(second_highlighted, "func");
+
+        assert_eq!(match_data.densest_highlight_start, 0);
+        assert!(match_data.text.contains("func top level"));
     }
 
     // ── HighlightKind verification tests ──────────────────────────
