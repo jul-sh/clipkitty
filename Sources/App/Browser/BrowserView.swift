@@ -1,7 +1,7 @@
-import SwiftUI
 import AppKit
-import Observation
 import ClipKittyRust
+import Observation
+import SwiftUI
 
 struct BrowserView: View {
     @Bindable var viewModel: BrowserViewModel
@@ -35,6 +35,7 @@ struct BrowserView: View {
                 filterLabel: filterLabel,
                 searchSpinnerVisible: viewModel.searchSpinnerVisible,
                 selectedItemAvailable: viewModel.selectedItem != nil,
+                hasPendingEdit: viewModel.selectedItemHasPendingEdit,
                 isFilterPopoverPresented: Binding(
                     get: {
                         if case .filter = viewModel.session.overlays {
@@ -55,6 +56,11 @@ struct BrowserView: View {
                 onOpenFilter: openFilterOverlay,
                 onOpenActions: openActionsOverlay,
                 onDelete: viewModel.deleteSelectedItem,
+                onDiscardEdit: viewModel.discardCurrentEdit,
+                onSaveEdit: {
+                    viewModel.commitCurrentEdit()
+                    focusSearchField()
+                },
                 onHandleNumberKey: handleNumberKey
             ) {
                 BrowserFilterOverlay(
@@ -104,7 +110,7 @@ struct BrowserView: View {
     @ViewBuilder
     private var content: some View {
         switch viewModel.session.query {
-        case .failed(_, let message, _):
+        case let .failed(_, message, _):
             BrowserPreviewPane.error(message)
         case .idle, .pending, .ready:
             HStack(spacing: 0) {
@@ -169,7 +175,8 @@ struct BrowserView: View {
         guard let number = Int(keyPress.characters),
               number >= 1 && number <= 9,
               keyPress.modifiers.contains(.command),
-              handleCommandNumberShortcut(number) else {
+              handleCommandNumberShortcut(number)
+        else {
             return .ignored
         }
         return .handled
@@ -277,7 +284,7 @@ private extension View {
         if #available(macOS 26.0, *) {
             self.glassEffect(.regular.interactive(), in: .rect)
         } else {
-            self.background(.regularMaterial)
+            background(.regularMaterial)
         }
     }
 }

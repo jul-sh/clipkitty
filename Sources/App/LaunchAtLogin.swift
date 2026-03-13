@@ -111,7 +111,7 @@ final class LaunchAtLogin: ObservableObject {
         self.service = service
         self.bundle = bundle
         self.fileManager = fileManager
-        self.state = .available(status: .disabled, notice: nil)
+        state = .available(status: .disabled, notice: nil)
         refreshState()
     }
 

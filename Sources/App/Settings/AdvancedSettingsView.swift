@@ -1,13 +1,13 @@
 import AppKit
-import SwiftUI
 import Carbon
+import SwiftUI
 
 /// Records a keyboard shortcut when activated
 struct HotKeyRecorder: NSViewRepresentable {
     @Binding var state: HotKeyEditState
     let onHotKeyRecorded: (HotKey) -> Void
 
-    func makeNSView(context: Context) -> HotKeyRecorderView {
+    func makeNSView(context _: Context) -> HotKeyRecorderView {
         let view = HotKeyRecorderView()
         view.onHotKeyRecorded = { hotKey in
             onHotKeyRecorded(hotKey)
@@ -19,7 +19,7 @@ struct HotKeyRecorder: NSViewRepresentable {
         return view
     }
 
-    func updateNSView(_ nsView: HotKeyRecorderView, context: Context) {
+    func updateNSView(_ nsView: HotKeyRecorderView, context _: Context) {
         if case .recording = state {
             nsView.window?.makeFirstResponder(nsView)
         }
@@ -50,5 +50,5 @@ final class HotKeyRecorderView: NSView {
         onHotKeyRecorded?(hotKey)
     }
 
-    override func flagsChanged(with event: NSEvent) {}
+    override func flagsChanged(with _: NSEvent) {}
 }

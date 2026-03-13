@@ -1,6 +1,6 @@
 import AppKit
-import SwiftUI
 import ClipKittyRust
+import SwiftUI
 
 enum PanelMode {
     case production
@@ -15,7 +15,7 @@ private enum PanelState: Equatable {
     var previousApp: NSRunningApplication? {
         switch self {
         case .hidden: return nil
-        case .visible(let app): return app
+        case let .visible(app): return app
         }
     }
 }
@@ -110,7 +110,7 @@ final class FloatingPanelController: NSObject, NSWindowDelegate {
         panel.contentView = NSHostingView(rootView: contentView)
     }
 
-    nonisolated func windowDidResignKey(_ notification: Notification) {
+    nonisolated func windowDidResignKey(_: Notification) {
         MainActor.assumeIsolated {
             // shouldDismissOnResignKey: In production, panel hides when it loses focus
             // (user clicked elsewhere). In testing, panel must stay visible so XCUITest
@@ -126,7 +126,8 @@ final class FloatingPanelController: NSObject, NSWindowDelegate {
         // Debounce rapid toggles to prevent race conditions
         let now = Date()
         if let lastToggle = lastToggleTime,
-           now.timeIntervalSince(lastToggle) < toggleDebounceInterval {
+           now.timeIntervalSince(lastToggle) < toggleDebounceInterval
+        {
             return
         }
         lastToggleTime = now
@@ -163,7 +164,7 @@ final class FloatingPanelController: NSObject, NSWindowDelegate {
         switch panelState {
         case .hidden:
             return nil
-        case .visible(let app):
+        case let .visible(app):
             previousApp = app
         }
 
@@ -189,16 +190,16 @@ final class FloatingPanelController: NSObject, NSWindowDelegate {
     private func selectItem(itemId: Int64, content: ClipboardContent) {
         store.paste(itemId: itemId, content: content)
         #if !APP_STORE
-        let targetApp = hide()
-        if case .autoPaste = AppSettings.shared.pasteMode {
-            activationService.simulatePaste(to: targetApp)
-        } else {
-            // Show toast when copying without auto-paste
-            ToastWindow.shared.show(message: String(localized: "Copied"))
-        }
+            let targetApp = hide()
+            if case .autoPaste = AppSettings.shared.pasteMode {
+                activationService.simulatePaste(to: targetApp)
+            } else {
+                // Show toast when copying without auto-paste
+                ToastWindow.shared.show(message: String(localized: "Copied"))
+            }
         #else
-        hide()
-        ToastWindow.shared.show(message: String(localized: "Copied"))
+            hide()
+            ToastWindow.shared.show(message: String(localized: "Copied"))
         #endif
     }
 

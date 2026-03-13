@@ -1,5 +1,5 @@
-import Foundation
 import ClipKittyRust
+import Foundation
 
 enum BrowserSearchOutcome {
     case success(BrowserSearchResponse)
@@ -28,7 +28,7 @@ private final class ClipboardStoreBrowserSearchOperation: BrowserSearchOperation
 
     func awaitOutcome() async -> BrowserSearchOutcome {
         switch await operation.awaitOutcome() {
-        case .success(let result):
+        case let .success(result):
             return .success(BrowserSearchResponse(
                 request: request,
                 items: result.matches,
@@ -37,7 +37,7 @@ private final class ClipboardStoreBrowserSearchOperation: BrowserSearchOperation
             ))
         case .cancelled:
             return .cancelled
-        case .failure(let error):
+        case let .failure(error):
             return .failure(error)
         }
     }
