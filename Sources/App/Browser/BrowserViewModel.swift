@@ -681,6 +681,7 @@ final class BrowserViewModel {
         if let firstItem = stateFirstItem,
            firstItem.itemMetadata.itemId == itemId {
             session.preview = .loaded(makePreviewSelection(for: firstItem))
+            loadMatchDataForItems([itemId])
             prefetchAdjacentItems(around: itemId)
             maybeRefreshLinkMetadata(for: firstItem, generation: generation)
             return
@@ -688,6 +689,7 @@ final class BrowserViewModel {
 
         if let cachedItem = prefetchCache[itemId] {
             session.preview = .loaded(makePreviewSelection(for: cachedItem))
+            loadMatchDataForItems([itemId])
             prefetchAdjacentItems(around: itemId)
             maybeRefreshLinkMetadata(for: cachedItem, generation: generation)
             return
@@ -706,6 +708,7 @@ final class BrowserViewModel {
                 self.previewSpinnerVisible = false
                 if let item {
                     self.session.preview = .loaded(self.makePreviewSelection(for: item))
+                    self.loadMatchDataForItems([itemId])
                     self.prefetchAdjacentItems(around: itemId)
                     self.maybeRefreshLinkMetadata(for: item, generation: generation)
                 } else {
