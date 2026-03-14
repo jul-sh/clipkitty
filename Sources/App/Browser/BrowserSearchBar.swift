@@ -21,10 +21,6 @@ struct BrowserSearchBar<FilterPopoverContent: View>: View {
     let onHandleNumberKey: (KeyPress) -> KeyPress.Result
     @ViewBuilder let filterPopoverContent: () -> FilterPopoverContent
 
-    private func shouldTriggerDelete(_ keyPress: KeyPress) -> Bool {
-        keyPress.modifiers.isEmpty || keyPress.modifiers == .command
-    }
-
     var body: some View {
         HStack(spacing: 8) {
             Image(systemName: "magnifyingglass")
@@ -81,13 +77,13 @@ struct BrowserSearchBar<FilterPopoverContent: View>: View {
                 .onKeyPress(characters: .decimalDigits, phases: .down) { keyPress in
                     onHandleNumberKey(keyPress)
                 }
-                .onKeyPress(.delete, phases: .down) { keyPress in
-                    guard selectedItemAvailable, shouldTriggerDelete(keyPress) else { return .ignored }
+                .onKeyPress(.delete) {
+                    guard selectedItemAvailable else { return .ignored }
                     onDelete()
                     return .handled
                 }
-                .onKeyPress(.deleteForward, phases: .down) { keyPress in
-                    guard selectedItemAvailable, shouldTriggerDelete(keyPress) else { return .ignored }
+                .onKeyPress(.deleteForward) {
+                    guard selectedItemAvailable else { return .ignored }
                     onDelete()
                     return .handled
                 }

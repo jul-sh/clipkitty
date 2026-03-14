@@ -83,6 +83,7 @@ struct BrowserView: View {
                 .browserGlassBackground()
                 .ignoresSafeArea(.all)
         )
+        .modifier(WindowCornerClip())
         .overlay(alignment: .bottom) {
             if let message = viewModel.mutationFailureMessage {
                 mutationFailureBanner(message: message)
@@ -278,13 +279,51 @@ private struct BannerBackgroundModifier: ViewModifier {
     }
 }
 
+/// Explicit window corner radius for macOS versions where we need to override native rounding
+/// to match Spotlight's appearance. Returns nil when native rounding is sufficient.
+/// No public API exposes this, so we track it manually and cap to known versions.
+private var systemWindowCornerRadius: CGFloat? {
+    let version = ProcessInfo.processInfo.operatingSystemVersion.majorVersion
+    if version >= 26 && version <= 27 {
+        return 26
+    } else {
+        return nil
+    }
+}
+
+/// Clips to the system window corner radius when known; no-ops on unknown future versions
+/// so the native titled-window rounding takes over.
+private struct WindowCornerClip: ViewModifier {
+    func body(content: Content) -> some View {
+        if let radius = systemWindowCornerRadius {
+            content.clipShape(RoundedRectangle(cornerRadius: radius, style: .continuous))
+        } else {
+            content
+        }
+    }
+}
+
 private extension View {
     @ViewBuilder
     func browserGlassBackground() -> some View {
         if #available(macOS 26.0, *) {
-            self.glassEffect(.regular.interactive(), in: .rect)
+            if let radius = systemWindowCornerRadius {
+                self.glassEffect(
+                    .regular.interactive(),
+                    in: .rect(cornerRadius: radius, style: .continuous)
+                )
+            } else {
+                self.glassEffect(.regular.interactive(), in: .rect)
+            }
         } else {
-            background(.regularMaterial)
+            if let radius = systemWindowCornerRadius {
+                background(
+                    .regularMaterial,
+                    in: RoundedRectangle(cornerRadius: radius, style: .continuous)
+                )
+            } else {
+                background(.regularMaterial)
+            }
         }
     }
 }
