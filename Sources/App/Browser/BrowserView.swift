@@ -306,6 +306,7 @@ private struct WindowCornerClip: ViewModifier {
 private extension View {
     @ViewBuilder
     func browserGlassBackground() -> some View {
+        let radius = systemWindowCornerRadius
         if #available(macOS 26.0, *) {
             if let radius = systemWindowCornerRadius {
                 self.glassEffect(
