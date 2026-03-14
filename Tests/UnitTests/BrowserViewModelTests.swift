@@ -77,6 +77,57 @@ final class BrowserViewModelTests: XCTestCase {
         XCTAssertEqual(viewModel.selectedItem?.itemMetadata.itemId, 2)
     }
 
+    func testSelectedPreviewHighlightsRefreshWhenQueryChangesWithoutNavigation() async {
+        let client = MockBrowserStoreClient()
+        let item = makeItem(id: 1, text: "alpha beta")
+        let firstMatchData = makeMatchData(text: "alpha beta", highlightStart: 0, highlightEnd: 1)
+        let refinedMatchData = makeMatchData(text: "alpha beta", highlightStart: 0, highlightEnd: 2)
+        client.matchDataByQuery = [
+            "a": [1: firstMatchData],
+            "al": [1: refinedMatchData],
+        ]
+
+        let viewModel = BrowserViewModel(
+            client: client,
+            onSelect: { _, _ in },
+            onCopyOnly: { _, _ in },
+            onDismiss: {}
+        )
+
+        viewModel.updateSearchText("a")
+        try? await Task.sleep(for: .milliseconds(75))
+        await flushMainActor()
+
+        client.resumeSearch(with: BrowserSearchResponse(
+            request: SearchRequest(text: "a", filter: .all),
+            items: [makeMatch(id: 1, snippet: "alpha beta")],
+            firstItem: item,
+            totalCount: 1
+        ))
+        await flushMainActor()
+        await flushMainActor()
+
+        XCTAssertEqual(viewModel.selectedItemId, 1)
+        XCTAssertEqual(viewModel.previewSelection?.matchData, firstMatchData)
+
+        viewModel.updateSearchText("al")
+        try? await Task.sleep(for: .milliseconds(75))
+        await flushMainActor()
+
+        client.resumeSearch(with: BrowserSearchResponse(
+            request: SearchRequest(text: "al", filter: .all),
+            items: [makeMatch(id: 1, snippet: "alpha beta")],
+            firstItem: item,
+            totalCount: 1
+        ))
+        await flushMainActor()
+        await flushMainActor()
+
+        XCTAssertEqual(viewModel.selectedItemId, 1)
+        XCTAssertEqual(viewModel.previewSelection?.matchData, refinedMatchData)
+        XCTAssertEqual(client.loadMatchDataRequests.map(\.query), ["a", "al"])
+    }
+
     func testDeleteFailureRollsBackSearchAndSelection() async {
         let client = MockBrowserStoreClient()
         client.enqueueSearchResponse(BrowserSearchResponse(
@@ -226,15 +277,37 @@ final class BrowserViewModelTests: XCTestCase {
             content: .text(value: text)
         )
     }
+
+    private func makeMatchData(
+        text: String,
+        highlightStart: UInt64,
+        highlightEnd: UInt64
+    ) -> MatchData {
+        let highlight = HighlightRange(start: highlightStart, end: highlightEnd, kind: .exact)
+        return MatchData(
+            text: text,
+            highlights: [highlight],
+            lineNumber: 1,
+            fullContentHighlights: [highlight],
+            densestHighlightStart: highlightStart
+        )
+    }
 }
 
 @MainActor
 private final class MockBrowserStoreClient: BrowserStoreClient {
+    struct MatchDataRequest: Equatable {
+        let itemIds: [Int64]
+        let query: String
+    }
+
     private var pendingSearchResponses: [BrowserSearchResponse] = []
     private var searchContinuations: [CheckedContinuation<BrowserSearchOutcome, Never>] = []
     var deleteResult: Result<Void, ClipboardError> = .success(())
     var clearResult: Result<Void, ClipboardError> = .success(())
     var startedSearchRequests: [SearchRequest] = []
+    var loadMatchDataRequests: [MatchDataRequest] = []
+    var matchDataByQuery: [String: [Int64: MatchData]] = [:]
     private var fetchContinuations: [Int64: [CheckedContinuation<ClipboardItem?, Never>]] = [:]
 
     func startSearch(request: SearchRequest) -> BrowserSearchOperation {
@@ -268,7 +341,9 @@ private final class MockBrowserStoreClient: BrowserStoreClient {
     }
 
     func loadMatchData(itemIds: [Int64], query: String) async -> [MatchData] {
-        []
+        loadMatchDataRequests.append(MatchDataRequest(itemIds: itemIds, query: query))
+        let matchDataByItemId = matchDataByQuery[query] ?? [:]
+        return itemIds.compactMap { matchDataByItemId[$0] }
     }
 
     func fetchLinkMetadata(url: String, itemId: Int64) async -> ClipboardItem? {
@@ -289,6 +364,10 @@ private final class MockBrowserStoreClient: BrowserStoreClient {
 
     func clear() async -> Result<Void, ClipboardError> {
         clearResult
+    }
+
+    func updateTextItem(itemId _: Int64, text _: String) async -> Result<Void, ClipboardError> {
+        .success(())
     }
 
     func resumeFetch(id: Int64, with item: ClipboardItem?) {
