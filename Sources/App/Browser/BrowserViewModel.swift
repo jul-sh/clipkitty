@@ -639,6 +639,7 @@ final class BrowserViewModel {
 
         let previousOrder = itemIds
         let previousSelection = selectedItemId
+        let previousPreviewItem = previewSelection?.item
 
         session.query = .ready(response: response)
 
@@ -662,11 +663,12 @@ final class BrowserViewModel {
                     session.selection = .none
                     session.preview = .empty
                 }
-            } else if let firstItem = response.firstItem,
-                      firstItem.itemMetadata.itemId == selectedItemId,
-                      previewSelection == nil
-            {
-                session.preview = .loaded(makePreviewSelection(for: firstItem))
+            } else {
+                refreshPreviewSelection(
+                    itemId: selectedItemId,
+                    response: response,
+                    previousPreviewItem: previousPreviewItem
+                )
             }
         }
 
@@ -674,6 +676,38 @@ final class BrowserViewModel {
             pendingTagSettleTask?.cancel()
             pendingTagSettleTask = nil
             session.mutation = .idle
+        }
+    }
+
+    private func refreshPreviewSelection(
+        itemId: Int64,
+        response: BrowserSearchResponse,
+        previousPreviewItem: ClipboardItem?
+    ) {
+        if let firstItem = response.firstItem,
+           firstItem.itemMetadata.itemId == itemId
+        {
+            session.preview = .loaded(makePreviewSelection(for: firstItem))
+            loadMatchDataForItems([itemId])
+            return
+        }
+
+        if let previousPreviewItem,
+           previousPreviewItem.itemMetadata.itemId == itemId
+        {
+            session.preview = .loaded(makePreviewSelection(for: previousPreviewItem))
+            loadMatchDataForItems([itemId])
+            return
+        }
+
+        if let cachedItem = prefetchCache[itemId] {
+            session.preview = .loaded(makePreviewSelection(for: cachedItem))
+            loadMatchDataForItems([itemId])
+            return
+        }
+
+        if previewSelection == nil {
+            loadSelectedItem(itemId: itemId)
         }
     }
 
