@@ -311,10 +311,16 @@ pub(crate) fn search_trigram_query_sync(
         let item_match = if index < EAGER_MATCH_DATA_COUNT || (is_short && few_results) {
             #[cfg(test)]
             test_support::on_eager_match(index);
+            if token.is_cancelled() {
+                return Err(ClipKittyError::Cancelled);
+            }
             search::create_item_match(item, query.raw_text())
         } else {
             search::create_lazy_item_match(item)
         };
+        if token.is_cancelled() {
+            return Err(ClipKittyError::Cancelled);
+        }
         results.push(item_match);
     }
 
