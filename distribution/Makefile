@@ -29,7 +29,7 @@ PROVISIONING_PROFILE ?=
 # All supported screenshot locales (App Store top 10)
 SCREENSHOT_LOCALES := en es zh-Hans zh-Hant ja ko fr de pt-BR ru
 
-.PHONY: dmg appstore appstore-publish publish icon-png \
+.PHONY: dmg appstore appstore-local appstore-publish publish icon-png \
         synthetic-data run-synthetic marketing marketing-screenshots \
         marketing-screenshots-capture marketing-screenshots-localized \
         preview-video screenshot
@@ -81,6 +81,38 @@ appstore:
 		--sign "$(INSTALLER_IDENTITY)" \
 		"$(PROJECT_ROOT)/$(APP_NAME).pkg"
 	@echo "Installer package created: $(PROJECT_ROOT)/$(APP_NAME).pkg"
+
+# Build + sign + package for App Store locally (no upload)
+# Auto-resolves version from Project.swift + git commit count (same as CI).
+# Usage: make -C distribution appstore-local [VERSION=x.y.z]
+appstore-local:
+	@AGE_SECRET_KEY=$$($(DIST_DIR)/get-age-key.sh) || exit 1; \
+	export AGE_SECRET_KEY; \
+	$(DIST_DIR)/setup-signing.sh; \
+	PROV="$(PROVISIONING_PROFILE)"; \
+	if [ -z "$$PROV" ] && [ -n "$$AGE_SECRET_KEY" ]; then \
+		echo "Decrypting provisioning profile from secrets..."; \
+		printf '%s' "$$AGE_SECRET_KEY" > /tmp/_ck_age.txt; \
+		age -d -i /tmp/_ck_age.txt "$(PROJECT_ROOT)/secrets/PROVISION_PROFILE_BASE64.age" \
+			| base64 --decode > "$(PROJECT_ROOT)/ClipKitty.provisionprofile"; \
+		rm -f /tmp/_ck_age.txt; \
+		PROV="$(PROJECT_ROOT)/ClipKitty.provisionprofile"; \
+	fi; \
+	if [ -z "$(VERSION)" ]; then \
+		BASE=$$(grep 'MARKETING_VERSION' "$(PROJECT_ROOT)/Project.swift" | head -1 | sed 's/.*"\(.*\)".*/\1/'); \
+		AUTO_VERSION="$$BASE"; \
+		echo "Auto-resolved version: $$AUTO_VERSION"; \
+	fi; \
+	AUTO_BUILD=$$(git -C "$(PROJECT_ROOT)" rev-list --count HEAD); \
+	echo "Build number: $$AUTO_BUILD"; \
+	$(MAKE) appstore \
+		$${PROV:+PROVISIONING_PROFILE=$$PROV} \
+		VERSION=$${AUTO_VERSION:-$(VERSION)} \
+		BUILD_NUMBER=$${AUTO_BUILD}; \
+	STATUS=$$?; \
+	$(DIST_DIR)/setup-signing.sh --cleanup; \
+	rm -f "$(PROJECT_ROOT)/ClipKitty.provisionprofile"; \
+	exit $$STATUS
 
 # Validate the installer package against App Store Connect requirements
 # Must match the provisioning profile, bundle ID, and team info exactly

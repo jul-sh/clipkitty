@@ -24,6 +24,18 @@ struct GeneralSettingsView: View {
         Bundle.main.object(forInfoDictionaryKey: "CFBundleVersion") as? String ?? ""
     }
 
+    private var buildChannel: String {
+        #if APP_STORE
+            return "AppStore"
+        #elseif SPARKLE_RELEASE
+            return "Sparkle"
+        #elseif DEBUG
+            return "Debug"
+        #else
+            return "Release"
+        #endif
+    }
+
     private var binaryHash: String? {
         guard let executableURL = Bundle.main.executableURL else { return nil }
         return Utilities.sha256(of: executableURL)
@@ -188,7 +200,7 @@ struct GeneralSettingsView: View {
 
             Section(String(localized: "About")) {
                 LabeledContent(String(localized: "Version")) {
-                    Text("\(appVersion) (\(buildNumber))")
+                    Text("\(appVersion) (\(buildNumber)) \(buildChannel)")
                         .foregroundStyle(.secondary)
                 }
 

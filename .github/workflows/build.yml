@@ -411,6 +411,8 @@ jobs:
     steps:
       - name: Checkout
         uses: actions/checkout@v4
+        with:
+          fetch-depth: 0  # Full history for commit count versioning
 
       - name: Decrypt secrets
         id: secrets
@@ -495,8 +497,9 @@ jobs:
 
       - name: Build and Publish to App Store Connect
         run: |
+          BASE_VERSION=$(grep 'MARKETING_VERSION' Project.swift | head -1 | sed 's/.*"\(.*\)".*/\1/')
           make -C distribution appstore-publish \
-            VERSION="${{ needs.build.outputs.version }}" \
+            VERSION="${BASE_VERSION}" \
             BUILD_NUMBER="$(git rev-list --count HEAD)"
         env:
           AGE_SECRET_KEY: ${{ secrets.AGE_SECRET_KEY }}
