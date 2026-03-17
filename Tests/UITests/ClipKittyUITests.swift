@@ -616,7 +616,7 @@ final class ClipKittyUITests: XCTestCase {
         let scaleFactor = NSScreen.main?.backingScaleFactor ?? 1.0
 
         // Start with window frame + minimum padding on all sides
-        let minPadding: CGFloat = 16
+        let minPadding: CGFloat = 12
         var cropWidth = frame.width + minPadding * 2
         var cropHeight = frame.height + minPadding * 2
 
