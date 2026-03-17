@@ -36,6 +36,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate {
     private var showHistoryMenuItem: NSMenuItem?
     private var statusMenu: NSMenu?
     private var cancellables = Set<AnyCancellable>()
+    private let launchAtLoginCoordinator = LaunchAtLoginPromptCoordinator()
     #if SPARKLE_RELEASE
         private var updater: SparkleAppUpdater?
     #endif
@@ -55,7 +56,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate {
     func applicationDidFinishLaunching(_: Notification) {
         FontManager.registerFonts()
 
-        syncLaunchAtLogin()
+        launchAtLoginCoordinator.syncWithSystem()
 
         if case .simulatedDatabase = launchMode {
             populateTestDatabase()
@@ -65,10 +66,10 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate {
         case .production:
             store = ClipboardStore(screenshotMode: false)
             store.startMonitoring()
-            panelController = FloatingPanelController(store: store, mode: .production)
+            panelController = FloatingPanelController(store: store, mode: .production, launchAtLoginCoordinator: launchAtLoginCoordinator)
         case .simulatedDatabase:
             store = ClipboardStore(screenshotMode: true)
-            panelController = FloatingPanelController(store: store, mode: .testing)
+            panelController = FloatingPanelController(store: store, mode: .testing, launchAtLoginCoordinator: launchAtLoginCoordinator)
         }
 
         hotKeyManager = HotKeyManager { [weak self] in
@@ -247,18 +248,6 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate {
 
     @objc private func quit() {
         NSApp.terminate(nil)
-    }
-
-    /// If launch at login was enabled but the system lost the registration
-    /// (e.g. after an app update or move), reset the preference so the
-    /// prompt re-appears to let the user re-enable it.
-    private func syncLaunchAtLogin() {
-        let settings = AppSettings.shared
-
-        if settings.launchAtLoginEnabled, !LaunchAtLogin.shared.isEnabled {
-            settings.launchAtLoginEnabled = false
-            settings.launchAtLoginPromptDismissed = false
-        }
     }
 
     func applicationWillTerminate(_: Notification) {

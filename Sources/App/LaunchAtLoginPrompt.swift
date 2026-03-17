@@ -58,32 +58,18 @@ private struct LaunchAtLoginPromptView: View {
 @MainActor
 final class LaunchAtLoginPrompt {
     private var window: NSWindow?
-
-    /// Minimum time since first launch before showing the prompt (1 hour)
-    static let minimumUseDuration: TimeInterval = 3600
+    var onEnable: (() -> Void)?
+    var onDismiss: (() -> Void)?
 
     func show(relativeTo panelFrame: NSRect) {
-        let settings = AppSettings.shared
-        let launchAtLogin = LaunchAtLogin.shared
-
-        // Don't show if already dismissed or already enabled
-        guard !settings.launchAtLoginPromptDismissed,
-              !launchAtLogin.isEnabled
-        else { return }
-
-        // App Store: don't show until the user has used the app for at least 1 hour
-        // Non-App Store: show immediately (replaces the old auto-enable default)
-        #if APP_STORE
-            let elapsed = Date().timeIntervalSince(settings.firstLaunchDate)
-            guard elapsed >= Self.minimumUseDuration else { return }
-        #endif
-
         let view = LaunchAtLoginPromptView(
             onEnable: { [weak self] in
-                self?.enable()
+                self?.onEnable?()
+                self?.hide()
             },
             onDismiss: { [weak self] in
-                self?.dismiss()
+                self?.onDismiss?()
+                self?.hide()
             }
         )
 
@@ -147,19 +133,6 @@ final class LaunchAtLoginPrompt {
         } completionHandler: {
             window.orderOut(nil)
         }
-    }
-
-    private func enable() {
-        AppSettings.shared.launchAtLoginPromptDismissed = true
-        AppSettings.shared.launchAtLoginEnabled = true
-        LaunchAtLogin.shared.enable()
-        dismiss()
-        ToastWindow.shared.show(message: String(localized: "Launch at login enabled"))
-    }
-
-    private func dismiss() {
-        AppSettings.shared.launchAtLoginPromptDismissed = true
-        hide()
     }
 
     private func positionWindow(_ window: NSWindow, size: NSSize, relativeTo panelFrame: NSRect) {
