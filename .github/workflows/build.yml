@@ -498,9 +498,12 @@ jobs:
       - name: Build and Publish to App Store Connect
         run: |
           BASE_VERSION=$(grep 'MARKETING_VERSION' Project.swift | head -1 | sed 's/.*"\(.*\)".*/\1/')
+          IFS='.' read -r major minor _patch <<< "$BASE_VERSION"
+          COMMIT_COUNT=$(git rev-list --count HEAD)
+          VERSION="${major}.${minor}.${COMMIT_COUNT}"
           make -C distribution appstore-publish \
-            VERSION="${BASE_VERSION}" \
-            BUILD_NUMBER="$(git rev-list --count HEAD)"
+            VERSION="${VERSION}" \
+            BUILD_NUMBER="${COMMIT_COUNT}"
         env:
           AGE_SECRET_KEY: ${{ secrets.AGE_SECRET_KEY }}
 
