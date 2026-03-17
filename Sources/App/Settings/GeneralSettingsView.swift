@@ -67,11 +67,9 @@ struct GeneralSettingsView: View {
                 }
             }
 
-            #if !APP_STORE
-                Section(String(localized: "Paste Items")) {
-                    PasteItemsSettingView()
-                }
-            #endif
+            Section(String(localized: "Paste Items")) {
+                PasteItemsSettingView()
+            }
 
             Section(String(localized: "History")) {
                 LabeledContent(String(localized: "Storage Limit")) {
