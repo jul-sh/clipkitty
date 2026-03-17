@@ -66,11 +66,6 @@ final class LaunchAtLoginPrompt {
         let settings = AppSettings.shared
         let launchAtLogin = LaunchAtLogin.shared
 
-        // In test mode, only show when explicitly opted in
-        if CommandLine.arguments.contains("--use-simulated-db") {
-            guard CommandLine.arguments.contains("--show-launch-prompt") else { return }
-        }
-
         // Don't show if already dismissed or already enabled
         guard !settings.launchAtLoginPromptDismissed,
               !launchAtLogin.isEnabled
@@ -116,7 +111,6 @@ final class LaunchAtLoginPrompt {
         promptWindow.collectionBehavior = [.canJoinAllSpaces, .fullScreenAuxiliary]
         promptWindow.contentView = hostingView
         promptWindow.ignoresMouseEvents = false
-        promptWindow.identifier = NSUserInterfaceItemIdentifier("LaunchAtLoginPrompt")
 
         positionWindow(promptWindow, size: fittingSize, relativeTo: panelFrame)
 

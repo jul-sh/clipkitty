@@ -214,7 +214,7 @@ final class AppSettings: ObservableObject {
             maxDatabaseSizeGB = 7.0
         }
 
-        launchAtLoginEnabled = defaults.object(forKey: launchAtLoginKey) as? Bool ?? false
+        launchAtLoginEnabled = defaults.bool(forKey: launchAtLoginKey)
         autoPasteEnabled = defaults.object(forKey: autoPasteKey) as? Bool ?? true
         #if SPARKLE_RELEASE
             autoInstallUpdates = defaults.object(forKey: autoInstallUpdatesKey) as? Bool ?? true
@@ -222,7 +222,7 @@ final class AppSettings: ObservableObject {
             updateChannel = storedUpdateChannel.flatMap(UpdateChannel.init(rawValue:)) ?? .stable
         #endif
 
-        launchAtLoginPromptDismissed = defaults.object(forKey: launchAtLoginPromptDismissedKey) as? Bool ?? false
+        launchAtLoginPromptDismissed = defaults.bool(forKey: launchAtLoginPromptDismissedKey)
 
         if let stored = defaults.object(forKey: firstLaunchDateKey) as? Date {
             firstLaunchDate = stored
