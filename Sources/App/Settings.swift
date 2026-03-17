@@ -90,10 +90,8 @@ enum PasteMode {
 final class AppSettings: ObservableObject {
     static let shared = AppSettings()
 
-    #if !APP_STORE
-        /// Shared permission monitor for reactive UI updates
-        let accessibilityPermissionMonitor = AccessibilityPermissionMonitor()
-    #endif
+    /// Shared permission monitor for reactive UI updates
+    let accessibilityPermissionMonitor = AccessibilityPermissionMonitor()
 
     @Published var hotKey: HotKey {
         didSet { save() }
@@ -103,39 +101,35 @@ final class AppSettings: ObservableObject {
         didSet { save() }
     }
 
-    #if !APP_STORE
-        /// Check if the app can post synthetic keyboard events (e.g. Cmd+V for direct paste)
-        /// Uses the permission monitor for reactive updates.
-        var hasPostEventPermission: Bool {
-            return accessibilityPermissionMonitor.isGranted
-        }
+    /// Check if the app can post synthetic keyboard events (e.g. Cmd+V for direct paste)
+    /// Uses the permission monitor for reactive updates.
+    var hasPostEventPermission: Bool {
+        return accessibilityPermissionMonitor.isGranted
+    }
 
-        /// Request permission to post synthetic keyboard events.
-        /// Opens System Settings if not yet granted.
-        /// Returns true if permissions are already granted.
-        @discardableResult
-        func requestPostEventPermission() -> Bool {
-            return accessibilityPermissionMonitor.requestPermission()
-        }
+    /// Request permission to post synthetic keyboard events.
+    /// Opens System Settings if not yet granted.
+    /// Returns true if permissions are already granted.
+    @discardableResult
+    func requestPostEventPermission() -> Bool {
+        return accessibilityPermissionMonitor.requestPermission()
+    }
 
-        /// User's selection for paste behavior: true = paste to active app, false = copy to clipboard
-        /// This persists the user's *intent* regardless of permission state.
-        @Published var autoPasteEnabled: Bool {
-            didSet { save() }
-        }
+    /// User's selection for paste behavior: true = paste to active app, false = copy to clipboard
+    /// This persists the user's *intent* regardless of permission state.
+    @Published var autoPasteEnabled: Bool {
+        didSet { save() }
+    }
 
-        /// The effective paste mode based on user preference AND permission state.
-        /// - Returns `.autoPaste` only when user has enabled it AND permission is granted
-        /// - Returns `.copyOnly` when user explicitly chose copy-only mode
-        /// - Returns `.noPermission` when user wants autoPaste but permission is not granted
-        var pasteMode: PasteMode {
-            guard autoPasteEnabled else { return .copyOnly }
-            guard hasPostEventPermission else { return .noPermission }
-            return .autoPaste
-        }
-    #else
-        var pasteMode: PasteMode { .copyOnly }
-    #endif
+    /// The effective paste mode based on user preference AND permission state.
+    /// - Returns `.autoPaste` only when user has enabled it AND permission is granted
+    /// - Returns `.copyOnly` when user explicitly chose copy-only mode
+    /// - Returns `.noPermission` when user wants autoPaste but permission is not granted
+    var pasteMode: PasteMode {
+        guard autoPasteEnabled else { return .copyOnly }
+        guard hasPostEventPermission else { return .noPermission }
+        return .autoPaste
+    }
 
     #if SPARKLE_RELEASE
         @Published var updateCheckState: UpdateCheckState = .idle
@@ -181,9 +175,7 @@ final class AppSettings: ObservableObject {
     private let hotKeyKey = "hotKey"
     private let maxDbSizeKey = "maxDatabaseSizeGB"
     private let launchAtLoginKey = "launchAtLogin"
-    #if !APP_STORE
-        private let autoPasteKey = "autoPasteEnabled"
-    #endif
+    private let autoPasteKey = "autoPasteEnabled"
     private let ignoreConfidentialKey = "ignoreConfidentialContent"
     private let ignoreTransientKey = "ignoreTransientContent"
     private let generateLinkPreviewsKey = "generateLinkPreviews"
@@ -216,8 +208,8 @@ final class AppSettings: ObservableObject {
             launchAtLoginEnabled = defaults.object(forKey: launchAtLoginKey) as? Bool ?? false
         #else
             launchAtLoginEnabled = defaults.object(forKey: launchAtLoginKey) as? Bool ?? true
-            autoPasteEnabled = defaults.object(forKey: autoPasteKey) as? Bool ?? true
         #endif
+        autoPasteEnabled = defaults.object(forKey: autoPasteKey) as? Bool ?? true
         #if SPARKLE_RELEASE
             autoInstallUpdates = defaults.object(forKey: autoInstallUpdatesKey) as? Bool ?? true
             let storedUpdateChannel = defaults.string(forKey: updateChannelKey)
@@ -255,9 +247,7 @@ final class AppSettings: ObservableObject {
         }
         defaults.set(maxDatabaseSizeGB, forKey: maxDbSizeKey)
         defaults.set(launchAtLoginEnabled, forKey: launchAtLoginKey)
-        #if !APP_STORE
-            defaults.set(autoPasteEnabled, forKey: autoPasteKey)
-        #endif
+        defaults.set(autoPasteEnabled, forKey: autoPasteKey)
         defaults.set(ignoreConfidentialContent, forKey: ignoreConfidentialKey)
         defaults.set(ignoreTransientContent, forKey: ignoreTransientKey)
         defaults.set(generateLinkPreviews, forKey: generateLinkPreviewsKey)
