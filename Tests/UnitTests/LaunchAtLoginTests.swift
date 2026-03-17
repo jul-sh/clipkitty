@@ -4,30 +4,10 @@ import ServiceManagement
 
 @MainActor
 final class LaunchAtLoginTests: XCTestCase {
-    func testUnavailableStateSeparatesLocationFromFailureNotice() {
-        let launchAtLogin = makeSubject(
-            status: .enabled,
-            bundlePath: "/tmp/ClipKitty.app"
-        )
-
-        XCTAssertEqual(
-            launchAtLogin.state,
-            .unavailable(reason: .notInApplicationsDirectory, notice: nil)
-        )
-
-        launchAtLogin.setDisabledDueToLocationError()
-
-        XCTAssertEqual(
-            launchAtLogin.state,
-            .unavailable(reason: .notInApplicationsDirectory, notice: .disabledDueToLocation)
-        )
-        XCTAssertFalse(launchAtLogin.state.canToggle)
-    }
-
     func testRegistrationFailureKeepsToggleActionable() {
         let service = MockLaunchAtLoginService(status: .notRegistered)
         service.registerError = NSError(domain: "Test", code: 1)
-        let launchAtLogin = makeSubject(service: service)
+        let launchAtLogin = LaunchAtLogin(service: service)
 
         XCTAssertFalse(launchAtLogin.enable())
         XCTAssertEqual(
@@ -40,7 +20,7 @@ final class LaunchAtLoginTests: XCTestCase {
     func testSuccessfulRetryClearsFailureNotice() {
         let service = MockLaunchAtLoginService(status: .notRegistered)
         service.registerError = NSError(domain: "Test", code: 1)
-        let launchAtLogin = makeSubject(service: service)
+        let launchAtLogin = LaunchAtLogin(service: service)
 
         XCTAssertFalse(launchAtLogin.enable())
 
@@ -51,19 +31,6 @@ final class LaunchAtLoginTests: XCTestCase {
         XCTAssertEqual(
             launchAtLogin.state,
             .available(status: .enabled, notice: nil)
-        )
-    }
-
-    private func makeSubject(
-        service: MockLaunchAtLoginService = MockLaunchAtLoginService(status: .notRegistered),
-        status: SMAppService.Status = .notRegistered,
-        bundlePath: String = "/Applications/ClipKitty.app"
-    ) -> LaunchAtLogin {
-        service.status = status
-        return LaunchAtLogin(
-            service: service,
-            bundle: MockBundleInfo(bundlePath: bundlePath),
-            fileManager: MockFileManager()
         )
     }
 }
@@ -88,9 +55,4 @@ private final class MockLaunchAtLoginService: LaunchAtLoginServiceProtocol {
             throw unregisterError
         }
     }
-}
-
-private struct MockBundleInfo: BundleInfoProtocol {
-    var bundleIdentifier: String? = "com.example.clipkitty"
-    var bundlePath: String
 }

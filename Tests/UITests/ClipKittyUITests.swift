@@ -1327,4 +1327,105 @@ final class ClipKittyUITests: XCTestCase {
         }
         XCTAssertTrue(cmdReturnExists, "Confirm button should show ⌘↩ prefix when editing")
     }
+
+    // MARK: - Launch at Login Prompt Tests
+
+    /// Helper to relaunch the app with launch-at-login prompt enabled for testing
+    private func relaunchWithPrompt(dismissed: Bool = false) {
+        app.terminate()
+        Thread.sleep(forTimeInterval: 0.5)
+
+        app.launchArguments = [
+            "--use-simulated-db",
+            "--show-launch-prompt",
+            "-launchAtLoginPromptDismissed", dismissed ? "YES" : "NO",
+            "-launchAtLogin", "NO",
+        ]
+        app.launch()
+
+        let searchField = app.textFields["SearchField"]
+        XCTAssertTrue(searchField.waitForExistence(timeout: 15), "App UI did not appear after relaunch")
+        Thread.sleep(forTimeInterval: 0.5)
+    }
+
+    /// Tests that the launch-at-login prompt appears when not dismissed
+    func testLaunchAtLoginPromptAppears() throws {
+        relaunchWithPrompt(dismissed: false)
+
+        let prompt = app.windows["LaunchAtLoginPrompt"]
+        XCTAssertTrue(
+            prompt.waitForExistence(timeout: 5),
+            "Launch at login prompt should appear when not dismissed"
+        )
+
+        // Verify the prompt contains expected elements
+        let enableButton = prompt.buttons["Enable"]
+        XCTAssertTrue(enableButton.exists, "Prompt should have an Enable button")
+
+        let label = prompt.staticTexts["Launch at Login"]
+        XCTAssertTrue(label.exists, "Prompt should show 'Launch at Login' text")
+    }
+
+    /// Tests that the dismiss button hides the prompt and it doesn't reappear
+    func testLaunchAtLoginPromptDismiss() throws {
+        relaunchWithPrompt(dismissed: false)
+
+        let prompt = app.windows["LaunchAtLoginPrompt"]
+        XCTAssertTrue(
+            prompt.waitForExistence(timeout: 5),
+            "Prompt should appear initially"
+        )
+
+        // Click the dismiss (x) button
+        let dismissButton = prompt.buttons.element(boundBy: 1)
+        XCTAssertTrue(dismissButton.exists, "Dismiss button should exist")
+        dismissButton.click()
+
+        // Prompt should disappear
+        XCTAssertTrue(
+            prompt.waitForNonExistence(timeout: 3),
+            "Prompt should disappear after clicking dismiss"
+        )
+    }
+
+    /// Tests that clicking Enable dismisses the prompt and shows a toast
+    func testLaunchAtLoginPromptEnable() throws {
+        relaunchWithPrompt(dismissed: false)
+
+        let prompt = app.windows["LaunchAtLoginPrompt"]
+        XCTAssertTrue(
+            prompt.waitForExistence(timeout: 5),
+            "Prompt should appear initially"
+        )
+
+        // Click Enable
+        let enableButton = prompt.buttons["Enable"]
+        enableButton.click()
+
+        // Prompt should disappear
+        XCTAssertTrue(
+            prompt.waitForNonExistence(timeout: 3),
+            "Prompt should disappear after clicking Enable"
+        )
+
+        // Toast should confirm the action
+        let toastWindow = app.windows["ToastWindow"]
+        XCTAssertTrue(
+            toastWindow.waitForExistence(timeout: 5),
+            "Toast should appear confirming launch at login enabled"
+        )
+    }
+
+    /// Tests that the prompt does not appear when already dismissed
+    func testLaunchAtLoginPromptDoesNotAppearWhenDismissed() throws {
+        relaunchWithPrompt(dismissed: true)
+
+        let prompt = app.windows["LaunchAtLoginPrompt"]
+        // Give it time to potentially appear (it shouldn't)
+        Thread.sleep(forTimeInterval: 1.0)
+        XCTAssertFalse(
+            prompt.exists,
+            "Prompt should NOT appear when already dismissed"
+        )
+    }
 }

@@ -28,6 +28,7 @@ final class FloatingPanelController: NSObject, NSWindowDelegate {
     private let activationService: AppActivationService
     private var panelState: PanelState = .hidden
     private var animatedLayer: CALayer? { panel.contentView?.layer }
+    private let launchAtLoginPrompt = LaunchAtLoginPrompt()
 
     /// Debounce interval to prevent rapid toggle race conditions
     private var lastToggleTime: Date?
@@ -216,10 +217,16 @@ final class FloatingPanelController: NSObject, NSWindowDelegate {
         layer.transform = CATransform3DIdentity
         panel.alphaValue = 1
         panelState = .visible(previousApp: previousApp)
+
+        let m = Self.animationMargin
+        let contentFrame = panel.frame.insetBy(dx: m, dy: m)
+        launchAtLoginPrompt.show(relativeTo: contentFrame)
     }
 
     @discardableResult
     func hide() -> NSRunningApplication? {
+        launchAtLoginPrompt.hide()
+
         let previousApp: NSRunningApplication?
         switch panelState {
         case .hidden: return nil

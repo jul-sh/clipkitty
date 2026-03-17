@@ -250,27 +250,14 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate {
     }
 
     /// Synchronize launch at login state with user preference on startup.
-    /// This handles cases where:
-    /// - The app was moved to/from Applications directory
-    /// - The system state differs from user preference
-    /// - First launch: auto-enable if in Applications
+    /// Re-registers if the user wants it enabled but the system state disagrees
+    /// (e.g. after an app update or move).
     private func syncLaunchAtLogin() {
         let launchAtLogin = LaunchAtLogin.shared
         let settings = AppSettings.shared
 
-        // If user wants launch at login enabled and we're in Applications
-        if settings.launchAtLoginEnabled, launchAtLogin.isInApplicationsDirectory {
-            if !launchAtLogin.isEnabled {
-                // Re-register (handles app being moved/updated)
-                launchAtLogin.enable()
-            }
-        } else if settings.launchAtLoginEnabled, !launchAtLogin.isInApplicationsDirectory {
-            // User wants it enabled but app is not in Applications - disable the preference
-            settings.launchAtLoginEnabled = false
-            launchAtLogin.setDisabledDueToLocationError()
-            if launchAtLogin.isEnabled {
-                launchAtLogin.disable()
-            }
+        if settings.launchAtLoginEnabled, !launchAtLogin.isEnabled {
+            launchAtLogin.enable()
         }
     }
 
