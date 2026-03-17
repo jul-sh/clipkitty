@@ -249,15 +249,15 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate {
         NSApp.terminate(nil)
     }
 
-    /// Synchronize launch at login state with user preference on startup.
-    /// Re-registers if the user wants it enabled but the system state disagrees
-    /// (e.g. after an app update or move).
+    /// If launch at login was enabled but the system lost the registration
+    /// (e.g. after an app update or move), reset the preference so the
+    /// prompt re-appears to let the user re-enable it.
     private func syncLaunchAtLogin() {
-        let launchAtLogin = LaunchAtLogin.shared
         let settings = AppSettings.shared
 
-        if settings.launchAtLoginEnabled, !launchAtLogin.isEnabled {
-            launchAtLogin.enable()
+        if settings.launchAtLoginEnabled, !LaunchAtLogin.shared.isEnabled {
+            settings.launchAtLoginEnabled = false
+            settings.launchAtLoginPromptDismissed = false
         }
     }
 
