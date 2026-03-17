@@ -39,29 +39,18 @@ final class LaunchAtLoginTests: XCTestCase {
 
 @MainActor
 final class LaunchAtLoginPromptStateMachineTests: XCTestCase {
-    func testFreshInstallNonAppStore() {
+    func testFreshInstallAboveTimeGate() {
         let env = MockPromptEnvironment()
         XCTAssertEqual(evaluatePromptState(env), .shouldPrompt)
     }
 
-    func testFreshInstallAppStoreBelowTimeGate() {
+    func testFreshInstallBelowTimeGate() {
         let now = Date()
         let env = MockPromptEnvironment(
             firstLaunchDate: now.addingTimeInterval(-1800), // 30 min ago
-            now: now,
-            isAppStore: true
+            now: now
         )
         XCTAssertEqual(evaluatePromptState(env), .suppressed(.timeGated))
-    }
-
-    func testFreshInstallAppStoreAboveTimeGate() {
-        let now = Date()
-        let env = MockPromptEnvironment(
-            firstLaunchDate: now.addingTimeInterval(-7200), // 2 hours ago
-            now: now,
-            isAppStore: true
-        )
-        XCTAssertEqual(evaluatePromptState(env), .shouldPrompt)
     }
 
     func testAlreadyEnabled() {
@@ -83,8 +72,7 @@ final class LaunchAtLoginPromptStateMachineTests: XCTestCase {
         let now = Date()
         let env = MockPromptEnvironment(
             firstLaunchDate: now.addingTimeInterval(-3600), // exactly 1 hour
-            now: now,
-            isAppStore: true
+            now: now
         )
         XCTAssertEqual(evaluatePromptState(env), .shouldPrompt)
     }
@@ -93,8 +81,7 @@ final class LaunchAtLoginPromptStateMachineTests: XCTestCase {
         let now = Date()
         let env = MockPromptEnvironment(
             firstLaunchDate: now.addingTimeInterval(-3599),
-            now: now,
-            isAppStore: true
+            now: now
         )
         XCTAssertEqual(evaluatePromptState(env), .suppressed(.timeGated))
     }
@@ -108,7 +95,6 @@ private struct MockPromptEnvironment: PromptEnvironment {
     var firstLaunchDate: Date = Date.distantPast
     var now: Date = Date()
     var minimumUseDuration: TimeInterval = 3600
-    var isAppStore: Bool = false
 }
 
 private final class MockLaunchAtLoginService: LaunchAtLoginServiceProtocol {

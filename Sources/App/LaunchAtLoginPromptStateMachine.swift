@@ -21,7 +21,6 @@ protocol PromptEnvironment {
     var firstLaunchDate: Date { get }
     var now: Date { get }
     var minimumUseDuration: TimeInterval { get }
-    var isAppStore: Bool { get }
 }
 
 // MARK: - Pure decision function
@@ -29,10 +28,8 @@ protocol PromptEnvironment {
 func evaluatePromptState(_ env: PromptEnvironment) -> PromptDecision {
     if env.isSystemEnabled { return .suppressed(.alreadyEnabled) }
     if env.isDismissed { return .suppressed(.dismissed) }
-    if env.isAppStore {
-        let elapsed = env.now.timeIntervalSince(env.firstLaunchDate)
-        if elapsed < env.minimumUseDuration { return .suppressed(.timeGated) }
-    }
+    let elapsed = env.now.timeIntervalSince(env.firstLaunchDate)
+    if elapsed < env.minimumUseDuration { return .suppressed(.timeGated) }
     return .shouldPrompt
 }
 
@@ -45,14 +42,6 @@ struct LivePromptEnvironment: PromptEnvironment {
     var firstLaunchDate: Date { AppSettings.shared.firstLaunchDate }
     var now: Date { Date() }
     var minimumUseDuration: TimeInterval { 3600 }
-
-    var isAppStore: Bool {
-        #if APP_STORE
-            return true
-        #else
-            return false
-        #endif
-    }
 }
 
 // MARK: - Coordinator
