@@ -161,42 +161,46 @@ def main():
         versions = data.get("data", data) if isinstance(data, dict) else data
         version_id = None
 
-        need_create = False
-        if not versions:
-            need_create = True
-        elif args.version:
+        if versions and args.version:
             existing_version = versions[0].get("attributes", {}).get("versionString", "")
+            version_id = versions[0]["id"]
             if existing_version != args.version:
-                print(f"Existing PREPARE_FOR_SUBMISSION version is {existing_version}, but requested {args.version}.")
-                need_create = True
-            else:
-                version_id = versions[0]["id"]
-
-        if need_create:
-            if args.version:
-                print(f"Creating new App Store version {args.version}...")
+                print(f"Existing PREPARE_FOR_SUBMISSION version is {existing_version}, updating to {args.version}...")
                 r = run(
-                    ["asc", "versions", "create",
-                     "--app", APP_ID, "--platform", "MAC_OS",
-                     "--version", args.version, "--release-type", "MANUAL"],
+                    ["asc", "versions", "update",
+                     "--version-id", version_id,
+                     "--version", args.version],
                     capture=True, check=False,
                 )
-                if r.returncode == 0:
-                    create_data = json.loads(r.stdout)
-                    version_id = create_data.get("data", create_data).get("id") if isinstance(create_data, dict) else create_data.get("id")
-                    print(f"Created version {args.version} (ID: {version_id})")
+                if r.returncode != 0:
+                    print(f"Warning: Could not update version string: {r.stderr.strip()}")
                 else:
-                    print(f"Warning: Could not create version {args.version}: {r.stderr.strip()}")
-                    print("Skipping metadata and screenshot upload (binary was uploaded successfully).")
-                    return
+                    print(f"Updated version string to {args.version}")
             else:
-                if versions:
-                    version_id = versions[0]["id"]
-                else:
-                    print("Warning: No App Store version in PREPARE_FOR_SUBMISSION state.")
-                    print("Skipping metadata and screenshot upload (binary was uploaded successfully).")
-                    print("Hint: Pass --version to auto-create a new version, or create one manually in App Store Connect.")
-                    return
+                print(f"Existing version {existing_version} matches requested version.")
+        elif versions:
+            version_id = versions[0]["id"]
+        elif args.version:
+            print(f"No version in PREPARE_FOR_SUBMISSION state. Creating {args.version}...")
+            r = run(
+                ["asc", "versions", "create",
+                 "--app", APP_ID, "--platform", "MAC_OS",
+                 "--version", args.version, "--release-type", "MANUAL"],
+                capture=True, check=False,
+            )
+            if r.returncode == 0:
+                create_data = json.loads(r.stdout)
+                version_id = create_data.get("data", create_data).get("id") if isinstance(create_data, dict) else create_data.get("id")
+                print(f"Created version {args.version} (ID: {version_id})")
+            else:
+                print(f"Warning: Could not create version {args.version}: {r.stderr.strip()}")
+                print("Skipping metadata and screenshot upload (binary was uploaded successfully).")
+                return
+        else:
+            print("Warning: No App Store version in PREPARE_FOR_SUBMISSION state.")
+            print("Skipping metadata and screenshot upload (binary was uploaded successfully).")
+            print("Hint: Pass --version to auto-create a new version, or create one manually in App Store Connect.")
+            return
 
         print(f"Target version ID: {version_id}")
 
