@@ -250,6 +250,12 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate {
         NSApp.terminate(nil)
     }
 
+    func applicationShouldHandleReopen(_: NSApplication, hasVisibleWindows _: Bool) -> Bool {
+        // Prevent macOS from switching to .regular activation policy when the
+        // user double-clicks the app icon while it's already running.
+        false
+    }
+
     func applicationWillTerminate(_: Notification) {
         store.stopMonitoring()
         hotKeyManager.unregister()
