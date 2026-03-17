@@ -161,9 +161,20 @@ def main():
         versions = data.get("data", data) if isinstance(data, dict) else data
         version_id = None
 
+        need_create = False
         if not versions:
+            need_create = True
+        elif args.version:
+            existing_version = versions[0].get("attributes", {}).get("versionString", "")
+            if existing_version != args.version:
+                print(f"Existing PREPARE_FOR_SUBMISSION version is {existing_version}, but requested {args.version}.")
+                need_create = True
+            else:
+                version_id = versions[0]["id"]
+
+        if need_create:
             if args.version:
-                print(f"No version in PREPARE_FOR_SUBMISSION state. Attempting to create {args.version}...")
+                print(f"Creating new App Store version {args.version}...")
                 r = run(
                     ["asc", "versions", "create",
                      "--app", APP_ID, "--platform", "MAC_OS",
@@ -179,12 +190,13 @@ def main():
                     print("Skipping metadata and screenshot upload (binary was uploaded successfully).")
                     return
             else:
-                print("Warning: No App Store version in PREPARE_FOR_SUBMISSION state.")
-                print("Skipping metadata and screenshot upload (binary was uploaded successfully).")
-                print("Hint: Pass --version to auto-create a new version, or create one manually in App Store Connect.")
-                return
-        else:
-            version_id = versions[0]["id"]
+                if versions:
+                    version_id = versions[0]["id"]
+                else:
+                    print("Warning: No App Store version in PREPARE_FOR_SUBMISSION state.")
+                    print("Skipping metadata and screenshot upload (binary was uploaded successfully).")
+                    print("Hint: Pass --version to auto-create a new version, or create one manually in App Store Connect.")
+                    return
 
         print(f"Target version ID: {version_id}")
 
