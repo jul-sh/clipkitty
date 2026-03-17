@@ -272,18 +272,13 @@ final class FloatingPanelController: NSObject, NSWindowDelegate {
 
     private func selectItem(itemId: Int64, content: ClipboardContent) {
         store.paste(itemId: itemId, content: content)
-        #if !APP_STORE
-            let targetApp = hide()
-            if case .autoPaste = AppSettings.shared.pasteMode {
-                activationService.simulatePaste(to: targetApp)
-            } else {
-                // Show toast when copying without auto-paste
-                ToastWindow.shared.show(message: String(localized: "Copied"))
-            }
-        #else
-            hide()
+        let targetApp = hide()
+        if case .autoPaste = AppSettings.shared.pasteMode {
+            activationService.simulatePaste(to: targetApp)
+        } else {
+            // Show toast when copying without auto-paste
             ToastWindow.shared.show(message: String(localized: "Copied"))
-        #endif
+        }
     }
 
     private func copyOnlyItem(itemId: Int64, content: ClipboardContent) {
