@@ -28,6 +28,8 @@ final class FloatingPanelController: NSObject, NSWindowDelegate {
     private let activationService: AppActivationService
     private var panelState: PanelState = .hidden
     private var animatedLayer: CALayer? { panel.contentView?.layer }
+    private let launchAtLoginPrompt = LaunchAtLoginPrompt()
+    private let launchAtLoginCoordinator: LaunchAtLoginPromptCoordinator
 
     /// Debounce interval to prevent rapid toggle race conditions
     private var lastToggleTime: Date?
@@ -39,12 +41,22 @@ final class FloatingPanelController: NSObject, NSWindowDelegate {
     init(
         store: ClipboardStore,
         mode: PanelMode = .production,
-        activationService: AppActivationService? = nil
+        activationService: AppActivationService? = nil,
+        launchAtLoginCoordinator: LaunchAtLoginPromptCoordinator? = nil
     ) {
         self.store = store
         self.mode = mode
         self.activationService = activationService ?? AppActivationService()
+        self.launchAtLoginCoordinator = launchAtLoginCoordinator ?? LaunchAtLoginPromptCoordinator()
         super.init()
+
+        launchAtLoginPrompt.onEnable = { [weak self] in
+            self?.launchAtLoginCoordinator.handleEnable()
+        }
+        launchAtLoginPrompt.onDismiss = { [weak self] in
+            self?.launchAtLoginCoordinator.handleDismiss()
+        }
+
         setupPanel()
     }
 
@@ -216,10 +228,18 @@ final class FloatingPanelController: NSObject, NSWindowDelegate {
         layer.transform = CATransform3DIdentity
         panel.alphaValue = 1
         panelState = .visible(previousApp: previousApp)
+
+        if launchAtLoginCoordinator.evaluate() == .shouldPrompt {
+            let m = Self.animationMargin
+            let contentFrame = panel.frame.insetBy(dx: m, dy: m)
+            launchAtLoginPrompt.show(relativeTo: contentFrame)
+        }
     }
 
     @discardableResult
     func hide() -> NSRunningApplication? {
+        launchAtLoginPrompt.hide()
+
         let previousApp: NSRunningApplication?
         switch panelState {
         case .hidden: return nil

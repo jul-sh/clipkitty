@@ -1327,4 +1327,5 @@ final class ClipKittyUITests: XCTestCase {
         }
         XCTAssertTrue(cmdReturnExists, "Confirm button should show ⌘↩ prefix when editing")
     }
+
 }
