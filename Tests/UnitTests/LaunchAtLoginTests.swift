@@ -4,30 +4,10 @@ import ServiceManagement
 
 @MainActor
 final class LaunchAtLoginTests: XCTestCase {
-    func testUnavailableStateSeparatesLocationFromFailureNotice() {
-        let launchAtLogin = makeSubject(
-            status: .enabled,
-            bundlePath: "/tmp/ClipKitty.app"
-        )
-
-        XCTAssertEqual(
-            launchAtLogin.state,
-            .unavailable(reason: .notInApplicationsDirectory, notice: nil)
-        )
-
-        launchAtLogin.setDisabledDueToLocationError()
-
-        XCTAssertEqual(
-            launchAtLogin.state,
-            .unavailable(reason: .notInApplicationsDirectory, notice: .disabledDueToLocation)
-        )
-        XCTAssertFalse(launchAtLogin.state.canToggle)
-    }
-
     func testRegistrationFailureKeepsToggleActionable() {
         let service = MockLaunchAtLoginService(status: .notRegistered)
         service.registerError = NSError(domain: "Test", code: 1)
-        let launchAtLogin = makeSubject(service: service)
+        let launchAtLogin = LaunchAtLogin(service: service)
 
         XCTAssertFalse(launchAtLogin.enable())
         XCTAssertEqual(
@@ -40,7 +20,7 @@ final class LaunchAtLoginTests: XCTestCase {
     func testSuccessfulRetryClearsFailureNotice() {
         let service = MockLaunchAtLoginService(status: .notRegistered)
         service.registerError = NSError(domain: "Test", code: 1)
-        let launchAtLogin = makeSubject(service: service)
+        let launchAtLogin = LaunchAtLogin(service: service)
 
         XCTAssertFalse(launchAtLogin.enable())
 
@@ -53,19 +33,68 @@ final class LaunchAtLoginTests: XCTestCase {
             .available(status: .enabled, notice: nil)
         )
     }
+}
 
-    private func makeSubject(
-        service: MockLaunchAtLoginService = MockLaunchAtLoginService(status: .notRegistered),
-        status: SMAppService.Status = .notRegistered,
-        bundlePath: String = "/Applications/ClipKitty.app"
-    ) -> LaunchAtLogin {
-        service.status = status
-        return LaunchAtLogin(
-            service: service,
-            bundle: MockBundleInfo(bundlePath: bundlePath),
-            fileManager: MockFileManager()
-        )
+// MARK: - Prompt State Machine Tests
+
+@MainActor
+final class LaunchAtLoginPromptStateMachineTests: XCTestCase {
+    func testFreshInstallAboveTimeGate() {
+        let env = MockPromptEnvironment()
+        XCTAssertEqual(evaluatePromptState(env), .shouldPrompt)
     }
+
+    func testFreshInstallBelowTimeGate() {
+        let now = Date()
+        let env = MockPromptEnvironment(
+            firstLaunchDate: now.addingTimeInterval(-1800), // 30 min ago
+            now: now
+        )
+        XCTAssertEqual(evaluatePromptState(env), .suppressed(.timeGated))
+    }
+
+    func testAlreadyEnabled() {
+        let env = MockPromptEnvironment(isSystemEnabled: true)
+        XCTAssertEqual(evaluatePromptState(env), .suppressed(.alreadyEnabled))
+    }
+
+    func testPreviouslyDismissed() {
+        let env = MockPromptEnvironment(isDismissed: true)
+        XCTAssertEqual(evaluatePromptState(env), .suppressed(.dismissed))
+    }
+
+    func testAlreadyEnabledTakesPrecedenceOverDismissed() {
+        let env = MockPromptEnvironment(isSystemEnabled: true, isDismissed: true)
+        XCTAssertEqual(evaluatePromptState(env), .suppressed(.alreadyEnabled))
+    }
+
+    func testTimeGateExactBoundary() {
+        let now = Date()
+        let env = MockPromptEnvironment(
+            firstLaunchDate: now.addingTimeInterval(-3600), // exactly 1 hour
+            now: now
+        )
+        XCTAssertEqual(evaluatePromptState(env), .shouldPrompt)
+    }
+
+    func testTimeGateJustUnder() {
+        let now = Date()
+        let env = MockPromptEnvironment(
+            firstLaunchDate: now.addingTimeInterval(-3599),
+            now: now
+        )
+        XCTAssertEqual(evaluatePromptState(env), .suppressed(.timeGated))
+    }
+}
+
+// MARK: - Mock types
+
+private struct MockPromptEnvironment: PromptEnvironment {
+    var isSystemEnabled: Bool = false
+    var isDismissed: Bool = false
+    var firstLaunchDate: Date = Date.distantPast
+    var now: Date = Date()
+    var minimumUseDuration: TimeInterval = 3600
 }
 
 private final class MockLaunchAtLoginService: LaunchAtLoginServiceProtocol {
@@ -88,9 +117,4 @@ private final class MockLaunchAtLoginService: LaunchAtLoginServiceProtocol {
             throw unregisterError
         }
     }
-}
-
-private struct MockBundleInfo: BundleInfoProtocol {
-    var bundleIdentifier: String? = "com.example.clipkitty"
-    var bundlePath: String
 }

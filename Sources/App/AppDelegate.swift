@@ -36,6 +36,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate {
     private var showHistoryMenuItem: NSMenuItem?
     private var statusMenu: NSMenu?
     private var cancellables = Set<AnyCancellable>()
+    private let launchAtLoginCoordinator = LaunchAtLoginPromptCoordinator()
     #if SPARKLE_RELEASE
         private var updater: SparkleAppUpdater?
     #endif
@@ -55,7 +56,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate {
     func applicationDidFinishLaunching(_: Notification) {
         FontManager.registerFonts()
 
-        syncLaunchAtLogin()
+        launchAtLoginCoordinator.syncWithSystem()
 
         if case .simulatedDatabase = launchMode {
             populateTestDatabase()
@@ -65,10 +66,10 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate {
         case .production:
             store = ClipboardStore(screenshotMode: false)
             store.startMonitoring()
-            panelController = FloatingPanelController(store: store, mode: .production)
+            panelController = FloatingPanelController(store: store, mode: .production, launchAtLoginCoordinator: launchAtLoginCoordinator)
         case .simulatedDatabase:
             store = ClipboardStore(screenshotMode: true)
-            panelController = FloatingPanelController(store: store, mode: .testing)
+            panelController = FloatingPanelController(store: store, mode: .testing, launchAtLoginCoordinator: launchAtLoginCoordinator)
         }
 
         hotKeyManager = HotKeyManager { [weak self] in
@@ -247,31 +248,6 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate {
 
     @objc private func quit() {
         NSApp.terminate(nil)
-    }
-
-    /// Synchronize launch at login state with user preference on startup.
-    /// This handles cases where:
-    /// - The app was moved to/from Applications directory
-    /// - The system state differs from user preference
-    /// - First launch: auto-enable if in Applications
-    private func syncLaunchAtLogin() {
-        let launchAtLogin = LaunchAtLogin.shared
-        let settings = AppSettings.shared
-
-        // If user wants launch at login enabled and we're in Applications
-        if settings.launchAtLoginEnabled, launchAtLogin.isInApplicationsDirectory {
-            if !launchAtLogin.isEnabled {
-                // Re-register (handles app being moved/updated)
-                launchAtLogin.enable()
-            }
-        } else if settings.launchAtLoginEnabled, !launchAtLogin.isInApplicationsDirectory {
-            // User wants it enabled but app is not in Applications - disable the preference
-            settings.launchAtLoginEnabled = false
-            launchAtLogin.setDisabledDueToLocationError()
-            if launchAtLogin.isEnabled {
-                launchAtLogin.disable()
-            }
-        }
     }
 
     func applicationWillTerminate(_: Notification) {
