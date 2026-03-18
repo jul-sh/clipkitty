@@ -50,6 +50,17 @@ struct ShortcutsSettingsView: View {
                     }
                     .font(.subheadline)
                 }
+
+                HStack {
+                    Text(String(localized: "Delete Item"))
+                    Spacer()
+                    Text("⌘⌫")
+                        .frame(minWidth: 100)
+                        .padding(.horizontal, 8)
+                        .padding(.vertical, 4)
+                        .background(Color.secondary.opacity(0.1))
+                        .cornerRadius(6)
+                }
             }
         }
         .formStyle(.grouped)
