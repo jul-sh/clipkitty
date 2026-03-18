@@ -38,7 +38,7 @@ ClipKitty stores everything. Finds it in milliseconds; whether you have 100 item
 
 ### Quick Install 
 
-<a href="https://apps.apple.com/us/app/clipkitty-clipboard-manager/id6759137247?mt=12"><img src="distribution/MacAppStore.png" alt="Download on the Mac App Store" width="150"></a>
+<a href="https://apps.apple.com/us/app/clipkitty-clipboard-manager/id6759137247?mt=12"><img src="distribution/MacAppStore.png" alt="Download on the Mac App Store" width="200"></a>
 
 ### Manual Download
 
