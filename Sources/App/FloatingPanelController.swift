@@ -221,6 +221,11 @@ final class FloatingPanelController: NSObject, NSWindowDelegate {
         fade.timingFunction = CAMediaTimingFunction(name: .easeIn)
 
         CATransaction.begin()
+        CATransaction.setCompletionBlock { [weak layer] in
+            // Remove animations after they settle so CA doesn't walk the full
+            // layer tree (200+ layers) on every frame during active use.
+            layer?.removeAllAnimations()
+        }
         layer.add(spring, forKey: "transform")
         layer.add(fade, forKey: "opacity")
         CATransaction.commit()

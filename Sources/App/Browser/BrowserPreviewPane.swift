@@ -67,7 +67,10 @@ struct BrowserPreviewPane: View {
                 fontSize: 15,
                 highlights: matchData?.fullContentHighlights ?? [],
                 densestHighlightStart: matchData?.densestHighlightStart ?? 0,
-                shouldAutoScroll: matchData != nil || viewModel.searchText.isEmpty,
+                scrollBehavior: {
+                    guard matchData != nil || viewModel.searchText.isEmpty else { return .manual }
+                    return viewModel.session.selection.origin == .user ? .trackHighlight : .autoScroll
+                }(),
                 itemId: item.itemMetadata.itemId,
                 originalText: item.content.textContent,
                 onTextChange: { newText in
