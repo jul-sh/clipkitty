@@ -7,7 +7,7 @@ struct BrowserView: View {
     @Bindable var viewModel: BrowserViewModel
     let displayVersion: Int
 
-    @State private var commandNumberEventMonitor: Any?
+    @State private var commandKeyEventMonitor: Any?
     @FocusState private var focusTarget: FocusTarget?
 
     enum FocusTarget: Hashable {
@@ -91,11 +91,11 @@ struct BrowserView: View {
         }
         .ignoresSafeArea(edges: .top)
         .onAppear {
-            installCommandNumberEventMonitor()
+            installCommandKeyEventMonitor()
             focusSearchField()
         }
         .onDisappear {
-            removeCommandNumberEventMonitor()
+            removeCommandKeyEventMonitor()
         }
     }
 
@@ -211,21 +211,31 @@ struct BrowserView: View {
     }
 
     @MainActor
-    private func installCommandNumberEventMonitor() {
-        guard commandNumberEventMonitor == nil else { return }
-        commandNumberEventMonitor = NSEvent.addLocalMonitorForEvents(matching: .keyDown) { event in
-            guard let number = commandNumber(from: event) else {
-                return event
+    private func installCommandKeyEventMonitor() {
+        guard commandKeyEventMonitor == nil else { return }
+        commandKeyEventMonitor = NSEvent.addLocalMonitorForEvents(matching: .keyDown) { event in
+            if let number = commandNumber(from: event) {
+                return handleCommandNumberShortcut(number) ? nil : event
             }
-            return handleCommandNumberShortcut(number) ? nil : event
+
+            // ⌘⌫ — delete selected item
+            let modifiers = event.modifierFlags.intersection(.deviceIndependentFlagsMask)
+            if modifiers == .command, event.keyCode == 51 {
+                if viewModel.selectedItem != nil {
+                    viewModel.deleteSelectedItem()
+                    return nil
+                }
+            }
+
+            return event
         }
     }
 
     @MainActor
-    private func removeCommandNumberEventMonitor() {
-        guard let commandNumberEventMonitor else { return }
-        NSEvent.removeMonitor(commandNumberEventMonitor)
-        self.commandNumberEventMonitor = nil
+    private func removeCommandKeyEventMonitor() {
+        guard let commandKeyEventMonitor else { return }
+        NSEvent.removeMonitor(commandKeyEventMonitor)
+        self.commandKeyEventMonitor = nil
     }
 
     private func commandNumber(from event: NSEvent) -> Int? {
@@ -282,7 +292,7 @@ private struct BannerBackgroundModifier: ViewModifier {
 /// No public API exposes this, so we cap to known versions and fall back to native rounding.
 var systemWindowCornerRadius: CGFloat? {
     let v = ProcessInfo.processInfo.operatingSystemVersion.majorVersion
-    return (26...27).contains(v) ? 26 : nil
+    return (26 ... 27).contains(v) ? 26 : nil
 }
 
 private extension View {
