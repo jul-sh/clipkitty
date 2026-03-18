@@ -250,6 +250,20 @@ private final class PreviewTextView: NSTextView {
         onViewportLayoutDidLayout?(self, textViewportLayoutController)
     }
 }
+/// How the preview pane should scroll when its content changes.
+enum PreviewScrollBehavior {
+    /// No auto-scrolling — content stays at current position.
+    /// Used when match data hasn't loaded yet during an active search.
+    case manual
+
+    /// Scroll to content (top or first highlight) once, without KVO recentering.
+    /// Used for search-driven changes where results are churning.
+    case autoScroll
+
+    /// Scroll to highlight with KVO-based recentering for robust positioning.
+    /// Used for user-initiated navigation (arrow keys, clicking in the list).
+    case trackHighlight
+}
 
 struct TextPreviewView: NSViewRepresentable {
     let text: String
@@ -257,7 +271,13 @@ struct TextPreviewView: NSViewRepresentable {
     let fontSize: CGFloat
     var highlights: [HighlightRange] = []
     var densestHighlightStart: UInt64 = 0
-    var shouldAutoScroll = true
+    /// Controls how the preview pane scrolls when content changes.
+    ///
+    /// The three states represent the valid scroll behaviors:
+    /// - `.manual`: No auto-scrolling (e.g., match data not yet loaded during search)
+    /// - `.autoScroll`: Scroll to content once, no KVO recentering (search-driven changes)
+    /// - `.trackHighlight`: Scroll to highlight with KVO recentering (user navigation)
+    var scrollBehavior: PreviewScrollBehavior = .autoScroll
 
     // Edit callbacks
     var itemId: Int64 = 0
@@ -350,7 +370,7 @@ struct TextPreviewView: NSViewRepresentable {
         textView.onFocusChange = onEditingStateChange
         textView.onViewportLayoutDidLayout = { [weak coordinator] observedTextView, textViewportLayoutController in
             guard let coordinator,
-                  shouldAutoScroll,
+                  scrollBehavior != .manual,
                   let target = coordinator.activeUsageBoundsTarget() else { return }
 
             let generation = coordinator.scrollGeneration
@@ -372,14 +392,15 @@ struct TextPreviewView: NSViewRepresentable {
             }
 
             coordinator.clearViewportRetry()
-            coordinator.needsGeometrySync = true
+            // PERF FIX: Do NOT set needsGeometrySync here. The layout pass that triggered
+            // this callback already stabilized geometry. Re-syncing would create a feedback
+            // loop: layout → viewport callback → geometry sync → layout → callback → ...
             DispatchQueue.main.async { [weak coordinator, weak observedTextView] in
                 guard let coordinator,
                       let observedTextView,
                       coordinator.scrollGeneration == generation else { return }
-                if let scrollView = observedTextView.enclosingScrollView {
-                    self.flushPendingDisplay(textView: observedTextView, scrollView: scrollView)
-                }
+                // Skip flushPendingDisplay — the viewport controller just completed layout.
+                // Flushing here triggers additional layout passes that feed back into KVO.
                 self.performScrollAttempt(
                     textView: observedTextView,
                     target: target,
@@ -391,9 +412,13 @@ struct TextPreviewView: NSViewRepresentable {
         }
         coordinator.onUsageBoundsChange = { [weak coordinator] observedTextView in
             guard let coordinator,
-                  shouldAutoScroll,
+                  scrollBehavior != .manual,
                   let target = coordinator.activeUsageBoundsTarget() else { return }
-            coordinator.needsGeometrySync = true
+            // PERF FIX: Do NOT set needsGeometrySync here. The layout pass that changed
+            // usageBounds already handled geometry. Re-syncing creates a feedback loop:
+            // geometry sync → layoutViewport → usageBounds KVO → geometry sync → ...
+            // Also limit KVO-driven re-scroll attempts to prevent runaway iteration.
+            guard coordinator.consumeKvoReScrollAttempt() else { return }
             self.performScrollAttempt(
                 textView: observedTextView,
                 target: target,
@@ -521,7 +546,7 @@ struct TextPreviewView: NSViewRepresentable {
             )
         }
 
-        if shouldAutoScroll {
+        if scrollBehavior != .manual {
             scroll(
                 textView: textView,
                 target: scrollTarget,
@@ -569,11 +594,19 @@ struct TextPreviewView: NSViewRepresentable {
         coordinator.scrollGeneration += 1
         let generation = coordinator.scrollGeneration
         coordinator.clearViewportRetry()
+        coordinator.resetKvoReScrollCount()
         switch target {
         case .top:
             coordinator.clearUsageBoundsRecentering()
         case .highlight:
-            coordinator.armUsageBoundsRecentering(target: target, duration: 0.75)
+            // Only arm KVO-based recentering for user navigation (arrow keys, clicks).
+            // During search-driven changes, results churn rapidly and the recentering
+            // window (previously 750ms) never expires, creating a layout feedback loop.
+            if scrollBehavior == .trackHighlight {
+                coordinator.armUsageBoundsRecentering(target: target, duration: 0.25)
+            } else {
+                coordinator.clearUsageBoundsRecentering()
+            }
         }
 
         performScrollAttempt(
@@ -838,6 +871,11 @@ struct TextPreviewView: NSViewRepresentable {
         private var usageBoundsObservation: NSKeyValueObservation?
         fileprivate weak var observedTextView: PreviewTextView?
 
+        /// Limits how many KVO-driven re-scroll attempts can fire per scroll() call.
+        /// Prevents the layout feedback loop where KVO → scroll → layout → KVO → ...
+        private var kvoReScrollCount = 0
+        private static let maxKvoReScrollAttempts = 2
+
         // Edit tracking
         var currentItemId: Int64 = 0
         var isEditing = false
@@ -896,6 +934,17 @@ struct TextPreviewView: NSViewRepresentable {
             pendingScrollTarget = nil
             pendingAutoScrollExpiration = .distantPast
             pendingViewportRetryGeneration = nil
+        }
+
+        fileprivate func resetKvoReScrollCount() {
+            kvoReScrollCount = 0
+        }
+
+        /// Returns true if a KVO re-scroll attempt is allowed, false if the limit is reached.
+        fileprivate func consumeKvoReScrollAttempt() -> Bool {
+            guard kvoReScrollCount < Self.maxKvoReScrollAttempts else { return false }
+            kvoReScrollCount += 1
+            return true
         }
 
         fileprivate func scheduleViewportRetry(for generation: Int) -> Bool {
