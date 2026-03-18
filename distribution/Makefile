@@ -47,7 +47,8 @@ dmg:
 
 # Export app icon as PNG (for README, gh-pages, etc.)
 icon-png:
-	@sips -s format png "$(PROJECT_ROOT)/AppIcon.icns" --out $(PROJECT_ROOT)/icon.png
+	@$(MAKE) -C $(PROJECT_ROOT) build CONFIGURATION=$(CONFIGURATION)
+	@sips -s format png "$(APP_PATH)/Contents/Resources/AppIcon.icns" --out "$(PROJECT_ROOT)/icon.png"
 
 # ============================================================================
 # App Store Submission (build only — validate & upload happen in CI)

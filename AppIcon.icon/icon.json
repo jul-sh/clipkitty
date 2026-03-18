@@ -11,8 +11,46 @@
   ],
   "groups" : [
     {
+      "hidden" : false,
+      "layers" : [
+        {
+          "glass" : false,
+          "image-name" : "cat 2.png",
+          "name" : "cat 2",
+          "position" : {
+            "scale" : 0.63,
+            "translation-in-points" : [
+              126.0864832748507,
+              -23.126258366227262
+            ]
+          }
+        },
+        {
+          "glass" : false,
+          "image-name" : "board.png",
+          "name" : "board",
+          "position" : {
+            "scale" : 0.63,
+            "translation-in-points" : [
+              0,
+              166.34375915944793
+            ]
+          }
+        }
+      ],
+      "shadow" : {
+        "kind" : "neutral",
+        "opacity" : 0.5
+      },
+      "translucency" : {
+        "enabled" : true,
+        "value" : 0.5
+      }
+    },
+    {
       "blend-mode" : "normal",
       "blur-material" : null,
+      "hidden" : true,
       "layers" : [
         {
           "hidden" : false,
@@ -25,23 +63,7 @@
               -39.64316106500246
             ]
           }
-        }
-      ],
-      "lighting" : "individual",
-      "shadow" : {
-        "kind" : "layer-color",
-        "opacity" : 0.5
-      },
-      "specular" : true,
-      "translucency" : {
-        "enabled" : false,
-        "value" : 0.5
-      }
-    },
-    {
-      "blur-material" : 1,
-      "hidden" : false,
-      "layers" : [
+        },
         {
           "hidden" : false,
           "image-name" : "clip.png",
@@ -55,15 +77,15 @@
           }
         }
       ],
-      "lighting" : "combined",
+      "lighting" : "individual",
       "shadow" : {
-        "kind" : "neutral",
+        "kind" : "layer-color",
         "opacity" : 0.5
       },
       "specular" : true,
       "translucency" : {
-        "enabled" : true,
-        "value" : 0.2
+        "enabled" : false,
+        "value" : 0.5
       }
     }
   ],
