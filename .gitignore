@@ -6,6 +6,7 @@
 *.xcworkspace/
 DerivedData/
 DerivedDataTests/
+perf_traces/
 *.xcresult/
 
 # Tuist
