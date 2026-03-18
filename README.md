@@ -2,6 +2,8 @@
 
 <img src="https://raw.githubusercontent.com/jul-sh/clipkitty/gh-pages/icon.png" alt="ClipKitty icon" width="60">
 
+<a href="https://apps.apple.com/us/app/clipkitty-clipboard-manager/id6759137247?mt=12"><img src="distribution/MacAppStore.png" alt="Download on the Mac App Store" width="200"></a>
+
 **Never lose what you copied.**
 
 Unlimited history • Instant fuzzy search • Live preview • Private & offline
