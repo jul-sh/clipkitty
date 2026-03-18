@@ -171,6 +171,11 @@ final class AppSettings: ObservableObject {
         didSet { save() }
     }
 
+    /// Whether the user has completed the first-launch onboarding
+    @Published var hasCompletedOnboarding: Bool {
+        didSet { save() }
+    }
+
     /// The date the app was first launched (for time-gating the launch-at-login prompt)
     let firstLaunchDate: Date
 
@@ -188,6 +193,7 @@ final class AppSettings: ObservableObject {
     private let ignoreTransientKey = "ignoreTransientContent"
     private let generateLinkPreviewsKey = "generateLinkPreviews"
     private let launchAtLoginPromptDismissedKey = "launchAtLoginPromptDismissed"
+    private let hasCompletedOnboardingKey = "hasCompletedOnboarding"
     private let firstLaunchDateKey = "firstLaunchDate"
     private let ignoredAppBundleIdsKey = "ignoredAppBundleIds"
     #if SPARKLE_RELEASE
@@ -223,6 +229,7 @@ final class AppSettings: ObservableObject {
         #endif
 
         launchAtLoginPromptDismissed = defaults.bool(forKey: launchAtLoginPromptDismissedKey)
+        hasCompletedOnboarding = defaults.bool(forKey: hasCompletedOnboardingKey)
 
         if let stored = defaults.object(forKey: firstLaunchDateKey) as? Date {
             firstLaunchDate = stored
@@ -264,6 +271,7 @@ final class AppSettings: ObservableObject {
         defaults.set(launchAtLoginEnabled, forKey: launchAtLoginKey)
         defaults.set(autoPasteEnabled, forKey: autoPasteKey)
         defaults.set(launchAtLoginPromptDismissed, forKey: launchAtLoginPromptDismissedKey)
+        defaults.set(hasCompletedOnboarding, forKey: hasCompletedOnboardingKey)
         defaults.set(ignoreConfidentialContent, forKey: ignoreConfidentialKey)
         defaults.set(ignoreTransientContent, forKey: ignoreTransientKey)
         defaults.set(generateLinkPreviews, forKey: generateLinkPreviewsKey)

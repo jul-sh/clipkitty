@@ -33,6 +33,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate {
     private var store: ClipboardStore!
     private var statusItem: NSStatusItem?
     private var settingsWindow: NSWindow?
+    private var welcomeWindowController: WelcomeWindowController?
     private var showHistoryMenuItem: NSMenuItem?
     private var statusMenu: NSMenu?
     private var cancellables = Set<AnyCancellable>()
@@ -106,6 +107,11 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate {
                 }
                 .store(in: &cancellables)
         #endif
+
+        // Show welcome screen on first launch
+        if !AppSettings.shared.hasCompletedOnboarding, case .production = launchMode {
+            showWelcome()
+        }
 
         // When using simulated DB, show the panel immediately
         if case let .simulatedDatabase(initialSearchQuery) = launchMode {
@@ -238,11 +244,40 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate {
         NSApp.activate(ignoringOtherApps: true)
     }
 
-    nonisolated func windowWillClose(_: Notification) {
-        Task { @MainActor in
+    private func showWelcome() {
+        let controller = WelcomeWindowController()
+        controller.onComplete = { [weak self] in
+            AppSettings.shared.hasCompletedOnboarding = true
+            // Also dismiss the launch-at-login prompt since onboarding covers it
+            AppSettings.shared.launchAtLoginPromptDismissed = true
+            self?.welcomeWindowController = nil
             NSApp.setActivationPolicy(.accessory)
-            // Nullify window reference when closed to refresh content on next open
-            self.settingsWindow = nil
+        }
+        controller.onHotKeyChanged = { [weak self] hotKey in
+            self?.hotKeyManager.register(hotKey: hotKey)
+            self?.updateMenuHotKey()
+        }
+        controller.windowDelegate = self
+        welcomeWindowController = controller
+
+        NSApp.setActivationPolicy(.regular)
+        controller.showWindow()
+    }
+
+    nonisolated func windowWillClose(_ notification: Notification) {
+        Task { @MainActor in
+            if let closedWindow = notification.object as? NSWindow,
+               closedWindow == self.welcomeWindowController?.window
+            {
+                // Welcome window closed via X button
+                AppSettings.shared.hasCompletedOnboarding = true
+                AppSettings.shared.launchAtLoginPromptDismissed = true
+                self.welcomeWindowController = nil
+            } else {
+                // Settings window closed
+                self.settingsWindow = nil
+            }
+            NSApp.setActivationPolicy(.accessory)
         }
     }
 

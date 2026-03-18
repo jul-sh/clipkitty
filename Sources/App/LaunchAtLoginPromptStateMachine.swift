@@ -41,7 +41,7 @@ struct LivePromptEnvironment: PromptEnvironment {
     var isDismissed: Bool { AppSettings.shared.launchAtLoginPromptDismissed }
     var firstLaunchDate: Date { AppSettings.shared.firstLaunchDate }
     var now: Date { Date() }
-    var minimumUseDuration: TimeInterval { 3600 }
+    var minimumUseDuration: TimeInterval { 24 * 60 * 60 }
 }
 
 // MARK: - Coordinator
