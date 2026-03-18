@@ -135,9 +135,11 @@ struct BrowserPreviewPane: View {
     }
 
     private func previewIdentity(itemId: Int64, matchData: MatchData?) -> String {
-        let densest = matchData?.densestHighlightStart ?? UInt64.max
-        let highlightCount = matchData?.fullContentHighlights.count ?? -1
-        return "\(itemId)-\(densest)-\(highlightCount)"
+        // Only tie the view identity to the item itself. If we include matchData properties,
+        // SwiftUI will completely destroy and recreate the heavy NSTextView and TextKit 2
+        // hierarchy on every keystroke. This bypasses the optimized highlight diffing logic
+        // in `updateNSView` and causes 100% CPU hangs during rapid typing.
+        return String(itemId)
     }
 
     private func metadataFooter(for item: ClipboardItem) -> some View {
