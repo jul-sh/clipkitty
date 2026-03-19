@@ -125,14 +125,17 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate {
             showWelcome()
         }
 
-        // When using simulated DB, show the panel immediately
+        // When using simulated DB, wait for bootstrap then show the panel
         if case let .simulatedDatabase(initialSearchQuery) = launchMode {
             if let searchQuery = initialSearchQuery {
                 panelController.initialSearchQuery = searchQuery
             }
 
-            panelController.show()
-            NSApp.activate(ignoringOtherApps: true)
+            Task {
+                await store.awaitReady()
+                panelController.show()
+                NSApp.activate(ignoringOtherApps: true)
+            }
         }
     }
 
