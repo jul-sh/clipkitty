@@ -93,12 +93,12 @@ final class ClipboardRepository {
         return []
     }
 
-    func computePreviewDecoration(itemId: Int64, query: String) async -> PreviewDecoration? {
-        let result = await runRepositoryOperation("computePreviewDecoration", on: store) { store in
-            try store.computePreviewDecoration(itemId: itemId, query: query)
+    func loadPreviewPayload(itemId: Int64, query: String) async -> PreviewPayload? {
+        let result = await runRepositoryOperation("loadPreviewPayload", on: store) { store in
+            try store.loadPreviewPayload(itemId: itemId, query: query)
         }
-        if case let .success(decoration) = result {
-            return decoration
+        if case let .success(payload) = result {
+            return payload
         }
         return nil
     }

@@ -439,6 +439,13 @@ pub struct PreviewDecoration {
     pub initial_scroll_highlight_index: Option<u64>,
 }
 
+/// Atomic preview payload for rendering a selected item.
+#[derive(Debug, Clone, PartialEq, uniffi::Record)]
+pub struct PreviewPayload {
+    pub item: ClipboardItem,
+    pub decoration: Option<PreviewDecoration>,
+}
+
 /// Lightweight item metadata for list display
 #[derive(Debug, Clone, PartialEq, uniffi::Record)]
 pub struct ItemMetadata {
@@ -464,8 +471,8 @@ pub struct ItemMatch {
 pub struct SearchResult {
     pub matches: Vec<ItemMatch>,
     pub total_count: u64,
-    /// The first item's full content (avoids separate fetch for preview pane)
-    pub first_item: Option<ClipboardItem>,
+    /// The first item's preview payload (avoids separate preview loading for the initial selection)
+    pub first_preview_payload: Option<PreviewPayload>,
 }
 
 /// Terminal outcome for an explicit search operation.
@@ -530,12 +537,12 @@ pub trait ClipboardStoreApi: Send + Sync {
         query: String,
     ) -> Result<Vec<RowDecorationResult>, ClipKittyError>;
 
-    /// Compute preview highlights for a single item given the search query.
-    fn compute_preview_decoration(
+    /// Load the preview payload for a single item given the search query.
+    fn load_preview_payload(
         &self,
         item_id: i64,
         query: String,
-    ) -> Result<Option<PreviewDecoration>, ClipKittyError>;
+    ) -> Result<Option<PreviewPayload>, ClipKittyError>;
 
     /// Fetch full items by IDs for preview pane
     fn fetch_by_ids(&self, item_ids: Vec<i64>) -> Result<Vec<ClipboardItem>, ClipKittyError>;
