@@ -82,9 +82,9 @@ final class BrowserViewModelTests: XCTestCase {
         let item = makeItem(id: 1, text: "alpha beta")
         let firstDecoration = makePreviewDecoration(highlightStart: 0, highlightEnd: 1)
         let refinedDecoration = makePreviewDecoration(highlightStart: 0, highlightEnd: 2)
-        client.previewDecorationsByQuery = [
-            "a": [1: firstDecoration],
-            "al": [1: refinedDecoration],
+        client.previewPayloadsByQuery = [
+            "a": [1: makePreviewPayload(item: item, decoration: firstDecoration)],
+            "al": [1: makePreviewPayload(item: item, decoration: refinedDecoration)],
         ]
 
         let viewModel = BrowserViewModel(
@@ -128,6 +128,134 @@ final class BrowserViewModelTests: XCTestCase {
         XCTAssertEqual(client.loadPreviewDecorationRequests.map(\.query), ["a", "al"])
     }
 
+    func testActiveTextQueryKeepsSelectionLoadingUntilPreviewPayloadArrives() async {
+        let client = MockBrowserStoreClient()
+        let item = makeItem(id: 1, text: "alpha beta")
+        let decoration = makePreviewDecoration(highlightStart: 0, highlightEnd: 1)
+
+        let viewModel = BrowserViewModel(
+            client: client,
+            onSelect: { _, _ in },
+            onCopyOnly: { _, _ in },
+            onDismiss: {}
+        )
+
+        viewModel.updateSearchText("a")
+        try? await Task.sleep(for: .milliseconds(75))
+        await flushMainActor()
+
+        client.resumeSearch(with: BrowserSearchResponse(
+            request: SearchRequest(text: "a", filter: .all),
+            items: [makeMatch(id: 1, snippet: "alpha beta")],
+            firstItem: item,
+            totalCount: 1
+        ))
+        await flushMainActor()
+
+        guard case let .loading(itemId, _) = viewModel.selection else {
+            return XCTFail("Expected loading selection before preview payload arrives")
+        }
+        XCTAssertEqual(itemId, 1)
+        XCTAssertNil(viewModel.selectedItem)
+        XCTAssertNil(viewModel.previewDecoration)
+
+        client.resumePreviewPayload(
+            itemId: 1,
+            query: "a",
+            with: makePreviewPayload(item: item, decoration: decoration)
+        )
+        await flushMainActor()
+        await flushMainActor()
+
+        XCTAssertEqual(viewModel.selectedItem?.itemMetadata.itemId, 1)
+        XCTAssertEqual(viewModel.previewDecoration, decoration)
+    }
+
+    func testDecoratedFirstPreviewPayloadAvoidsFollowupPreviewLoad() async {
+        let client = MockBrowserStoreClient()
+        let item = makeItem(id: 1, text: "alpha beta")
+        let decoration = makePreviewDecoration(highlightStart: 0, highlightEnd: 2)
+
+        let viewModel = BrowserViewModel(
+            client: client,
+            onSelect: { _, _ in },
+            onCopyOnly: { _, _ in },
+            onDismiss: {}
+        )
+
+        viewModel.updateSearchText("al")
+        try? await Task.sleep(for: .milliseconds(75))
+        await flushMainActor()
+
+        client.resumeSearch(with: BrowserSearchResponse(
+            request: SearchRequest(text: "al", filter: .all),
+            items: [makeMatch(id: 1, snippet: "alpha beta")],
+            firstPreviewPayload: makePreviewPayload(item: item, decoration: decoration),
+            totalCount: 1
+        ))
+        await flushMainActor()
+        await flushMainActor()
+
+        XCTAssertEqual(viewModel.selectedItem?.itemMetadata.itemId, 1)
+        XCTAssertEqual(viewModel.previewDecoration, decoration)
+        XCTAssertTrue(client.loadPreviewDecorationRequests.isEmpty)
+    }
+
+    func testQueryChangeDoesNotReuseUndecoratedBrowsePreviewForHighlightedText() async {
+        let client = MockBrowserStoreClient()
+        let item = makeItem(id: 1, text: "alpha beta")
+        let decoration = makePreviewDecoration(highlightStart: 0, highlightEnd: 2)
+        client.enqueueSearchResponse(BrowserSearchResponse(
+            request: SearchRequest(text: "", filter: .all),
+            items: [makeMatch(id: 1, snippet: "alpha beta")],
+            firstItem: item,
+            totalCount: 1
+        ))
+
+        let viewModel = BrowserViewModel(
+            client: client,
+            onSelect: { _, _ in },
+            onCopyOnly: { _, _ in },
+            onDismiss: {}
+        )
+
+        viewModel.onAppear(initialSearchQuery: "")
+        await flushMainActor()
+        XCTAssertEqual(viewModel.selectedItem?.itemMetadata.itemId, 1)
+        XCTAssertNil(viewModel.previewDecoration)
+
+        viewModel.updateSearchText("al")
+        try? await Task.sleep(for: .milliseconds(75))
+        await flushMainActor()
+
+        client.resumeSearch(with: BrowserSearchResponse(
+            request: SearchRequest(text: "al", filter: .all),
+            items: [makeMatch(id: 1, snippet: "alpha beta")],
+            firstItem: item,
+            totalCount: 1
+        ))
+        await flushMainActor()
+
+        guard case let .loading(itemId, _) = viewModel.selection else {
+            return XCTFail("Expected loading selection while highlighted preview payload is pending")
+        }
+        XCTAssertEqual(itemId, 1)
+        XCTAssertNil(viewModel.selectedItem)
+        XCTAssertNil(viewModel.previewDecoration)
+        XCTAssertEqual(client.loadPreviewDecorationRequests.map(\.query), ["al"])
+
+        client.resumePreviewPayload(
+            itemId: 1,
+            query: "al",
+            with: makePreviewPayload(item: item, decoration: decoration)
+        )
+        await flushMainActor()
+        await flushMainActor()
+
+        XCTAssertEqual(viewModel.selectedItem?.itemMetadata.itemId, 1)
+        XCTAssertEqual(viewModel.previewDecoration, decoration)
+    }
+
     func testStalePreviewDecorationCompletionDoesNotOverwriteNewQuery() async {
         let client = MockBrowserStoreClient()
         let item = makeItem(id: 1, text: "alpha beta")
@@ -163,11 +291,19 @@ final class BrowserViewModelTests: XCTestCase {
         ))
         await flushMainActor()
 
-        client.resumePreviewDecoration(itemId: 1, query: "a", with: staleDecoration)
+        client.resumePreviewPayload(
+            itemId: 1,
+            query: "a",
+            with: makePreviewPayload(item: item, decoration: staleDecoration)
+        )
         await flushMainActor()
         XCTAssertNil(viewModel.previewDecoration)
 
-        client.resumePreviewDecoration(itemId: 1, query: "be", with: freshDecoration)
+        client.resumePreviewPayload(
+            itemId: 1,
+            query: "be",
+            with: makePreviewPayload(item: item, decoration: freshDecoration)
+        )
         await flushMainActor()
         await flushMainActor()
 
@@ -177,8 +313,11 @@ final class BrowserViewModelTests: XCTestCase {
     func testStaleRowDecorationCompletionDoesNotMutateCurrentQueryOrPreview() async {
         let client = MockBrowserStoreClient()
         let item = makeItem(id: 1, text: "alpha beta")
-        client.previewDecorationsByQuery = [
-            "al": [1: makePreviewDecoration(highlightStart: 0, highlightEnd: 2)],
+        client.previewPayloadsByQuery = [
+            "al": [1: makePreviewPayload(
+                item: item,
+                decoration: makePreviewDecoration(highlightStart: 0, highlightEnd: 2)
+            )],
         ]
 
         let viewModel = BrowserViewModel(
@@ -947,6 +1086,29 @@ final class BrowserViewModelTests: XCTestCase {
             initialScrollHighlightIndex: 0
         )
     }
+
+    private func makePreviewPayload(
+        item: ClipboardItem,
+        decoration: PreviewDecoration? = nil
+    ) -> PreviewPayload {
+        PreviewPayload(item: item, decoration: decoration)
+    }
+}
+
+private extension BrowserSearchResponse {
+    init(
+        request: SearchRequest,
+        items: [ItemMatch],
+        firstItem: ClipboardItem?,
+        totalCount: Int
+    ) {
+        self.init(
+            request: request,
+            items: items,
+            firstPreviewPayload: firstItem.map { PreviewPayload(item: $0, decoration: nil) },
+            totalCount: totalCount
+        )
+    }
 }
 
 @MainActor
@@ -973,10 +1135,10 @@ private final class MockBrowserStoreClient: BrowserStoreClient {
     var loadRowDecorationRequests: [RowDecorationRequest] = []
     var loadPreviewDecorationRequests: [PreviewDecorationRequest] = []
     var rowDecorationsByQuery: [String: [Int64: RowDecoration]] = [:]
-    var previewDecorationsByQuery: [String: [Int64: PreviewDecoration]] = [:]
+    var previewPayloadsByQuery: [String: [Int64: PreviewPayload]] = [:]
     private var fetchContinuations: [Int64: [CheckedContinuation<ClipboardItem?, Never>]] = [:]
     private var rowDecorationContinuations: [RowDecorationRequest: [CheckedContinuation<[RowDecorationResult], Never>]] = [:]
-    private var previewDecorationContinuations: [PreviewDecorationRequest: [CheckedContinuation<PreviewDecoration?, Never>]] = [:]
+    private var previewPayloadContinuations: [PreviewDecorationRequest: [CheckedContinuation<PreviewPayload?, Never>]] = [:]
 
     func startSearch(request: SearchRequest) -> BrowserSearchOperation {
         startedSearchRequests.append(request)
@@ -1023,16 +1185,22 @@ private final class MockBrowserStoreClient: BrowserStoreClient {
         }
     }
 
-    func loadPreviewDecoration(itemId: Int64, query: String) async -> PreviewDecoration? {
+    func loadPreviewPayload(itemId: Int64, query: String) async -> PreviewPayload? {
         let request = PreviewDecorationRequest(itemId: itemId, query: query)
         loadPreviewDecorationRequests.append(request)
 
-        if let decorationsByItemId = previewDecorationsByQuery[query] {
-            return decorationsByItemId[itemId]
+        if let payloadsByItemId = previewPayloadsByQuery[query] {
+            return payloadsByItemId[itemId]
+        }
+
+        if query.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty,
+           let item = await fetchItem(id: itemId)
+        {
+            return PreviewPayload(item: item, decoration: nil)
         }
 
         return await withCheckedContinuation { continuation in
-            previewDecorationContinuations[request, default: []].append(continuation)
+            previewPayloadContinuations[request, default: []].append(continuation)
         }
     }
 
@@ -1070,9 +1238,9 @@ private final class MockBrowserStoreClient: BrowserStoreClient {
         rowDecorationContinuations.removeValue(forKey: request)?.forEach { $0.resume(returning: results) }
     }
 
-    func resumePreviewDecoration(itemId: Int64, query: String, with decoration: PreviewDecoration?) {
+    func resumePreviewPayload(itemId: Int64, query: String, with payload: PreviewPayload?) {
         let request = PreviewDecorationRequest(itemId: itemId, query: query)
-        previewDecorationContinuations.removeValue(forKey: request)?.forEach { $0.resume(returning: decoration) }
+        previewPayloadContinuations.removeValue(forKey: request)?.forEach { $0.resume(returning: payload) }
     }
 
     func enqueueSearchResponse(_ response: BrowserSearchResponse) {
