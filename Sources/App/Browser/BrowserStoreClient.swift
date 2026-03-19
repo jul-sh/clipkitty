@@ -47,7 +47,8 @@ private final class ClipboardStoreBrowserSearchOperation: BrowserSearchOperation
 protocol BrowserStoreClient: AnyObject {
     func startSearch(request: SearchRequest) -> BrowserSearchOperation
     func fetchItem(id: Int64) async -> ClipboardItem?
-    func loadMatchData(itemIds: [Int64], query: String) async -> [MatchData]
+    func loadRowDecorations(itemIds: [Int64], query: String) async -> [RowDecorationResult]
+    func loadPreviewDecoration(itemId: Int64, query: String) async -> PreviewDecoration?
     func fetchLinkMetadata(url: String, itemId: Int64) async -> ClipboardItem?
     func addTag(itemId: Int64, tag: ItemTag) async -> Result<Void, ClipboardError>
     func removeTag(itemId: Int64, tag: ItemTag) async -> Result<Void, ClipboardError>
@@ -75,8 +76,12 @@ final class ClipboardStoreBrowserClient: BrowserStoreClient {
         await store.fetchItem(id: id)
     }
 
-    func loadMatchData(itemIds: [Int64], query: String) async -> [MatchData] {
-        await store.loadMatchData(itemIds: itemIds, query: query)
+    func loadRowDecorations(itemIds: [Int64], query: String) async -> [RowDecorationResult] {
+        await store.loadRowDecorations(itemIds: itemIds, query: query)
+    }
+
+    func loadPreviewDecoration(itemId: Int64, query: String) async -> PreviewDecoration? {
+        await store.loadPreviewDecoration(itemId: itemId, query: query)
     }
 
     func fetchLinkMetadata(url: String, itemId: Int64) async -> ClipboardItem? {

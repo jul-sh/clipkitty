@@ -269,8 +269,8 @@ struct TextPreviewView: NSViewRepresentable {
     let text: String
     let fontName: String
     let fontSize: CGFloat
-    var highlights: [HighlightRange] = []
-    var densestHighlightStart: UInt64 = 0
+    var highlights: [Utf16HighlightRange] = []
+    var initialScrollHighlightIndex: UInt64?
     /// Controls how the preview pane scrolls when content changes.
     ///
     /// The three states represent the valid scroll behaviors:
@@ -290,7 +290,7 @@ struct TextPreviewView: NSViewRepresentable {
 
     fileprivate enum ScrollTarget {
         case top
-        case highlight(scalarStart: UInt64, scalarEnd: UInt64)
+        case highlight(utf16Start: UInt64, utf16End: UInt64)
     }
 
     func makeNSView(context: Context) -> NSScrollView {
@@ -539,10 +539,20 @@ struct TextPreviewView: NSViewRepresentable {
         if highlights.isEmpty {
             scrollTarget = .top
         } else {
-            let targetHighlight = highlights.first { $0.start == densestHighlightStart } ?? highlights[0]
+            let targetHighlight: Utf16HighlightRange
+            if let initialScrollHighlightIndex {
+                let index = Int(initialScrollHighlightIndex)
+                if highlights.indices.contains(index) {
+                    targetHighlight = highlights[index]
+                } else {
+                    targetHighlight = highlights[0]
+                }
+            } else {
+                targetHighlight = highlights[0]
+            }
             scrollTarget = .highlight(
-                scalarStart: targetHighlight.start,
-                scalarEnd: targetHighlight.end
+                utf16Start: targetHighlight.utf16Start,
+                utf16End: targetHighlight.utf16End
             )
         }
 
@@ -562,25 +572,28 @@ struct TextPreviewView: NSViewRepresentable {
 
     // MARK: - Highlight Resolution
 
-    /// Convert [HighlightRange] to [(NSTextRange, HighlightKind)] using the text layout manager.
+    /// Convert UTF-16 highlight ranges to TextKit 2 ranges using the text layout manager.
     private func resolveTextRanges(
-        highlights: [HighlightRange],
-        text: String,
+        highlights: [Utf16HighlightRange],
+        text _: String,
         layoutManager: NSTextLayoutManager?
     ) -> [MatchRange] {
         guard let tlm = layoutManager,
               let tcm = tlm.textContentManager else { return [] }
 
         return highlights.compactMap { highlight in
-            let nsRange = highlight.nsRange(in: text)
-            guard nsRange.location != NSNotFound else { return nil }
+            let nsRange = highlight.nsRange
 
             guard let start = tcm.location(tcm.documentRange.location, offsetBy: nsRange.location),
                   let end = tcm.location(start, offsetBy: nsRange.length) else { return nil }
 
             guard let textRange = NSTextRange(location: start, end: end) else { return nil }
-            return MatchRange(range: textRange, kind: highlight.kind,
-                              scalarStart: highlight.start, scalarEnd: highlight.end)
+            return MatchRange(
+                range: textRange,
+                kind: highlight.kind,
+                utf16Start: highlight.utf16Start,
+                utf16End: highlight.utf16End
+            )
         }
     }
 
@@ -699,9 +712,9 @@ struct TextPreviewView: NSViewRepresentable {
             }
 
             guard let tlm = textView.textLayoutManager else { return }
-            guard case let .highlight(scalarStart, scalarEnd) = target else { return }
+            guard case let .highlight(utf16Start, utf16End) = target else { return }
             guard let targetMatchRange = coordinator.currentMatchRanges.first(where: {
-                $0.scalarStart == scalarStart && $0.scalarEnd == scalarEnd
+                $0.utf16Start == utf16Start && $0.utf16End == utf16End
             }) else {
                 if attempt < maxAttempts - 1 {
                     self.performScrollAttempt(
@@ -835,29 +848,29 @@ struct TextPreviewView: NSViewRepresentable {
 
     // MARK: - Supporting Types
 
-    /// A resolved match: the original scalar indices (for identity) plus the TextKit 2 range (for operations).
+    /// A resolved match: the original UTF-16 indices (for identity) plus the TextKit 2 range (for operations).
     struct MatchRange {
         let range: NSTextRange
         let kind: HighlightKind
-        let scalarStart: UInt64
-        let scalarEnd: UInt64
+        let utf16Start: UInt64
+        let utf16End: UInt64
     }
 
     /// Hashable key for efficient Set-based diffing of match ranges.
     private struct MatchRangeKey: Hashable {
-        let scalarStart: UInt64
-        let scalarEnd: UInt64
+        let utf16Start: UInt64
+        let utf16End: UInt64
         let kind: HighlightKind
 
         init(_ match: MatchRange) {
-            scalarStart = match.scalarStart
-            scalarEnd = match.scalarEnd
+            utf16Start = match.utf16Start
+            utf16End = match.utf16End
             kind = match.kind
         }
     }
 
     class Coordinator: NSObject, NSTextViewDelegate {
-        var lastHighlights: [HighlightRange] = []
+        var lastHighlights: [Utf16HighlightRange] = []
         /// Current match ranges for diffing on next update.
         var currentMatchRanges: [MatchRange] = []
         var scrollGeneration: Int = 0
@@ -1041,7 +1054,7 @@ struct LinkPreviewView: NSViewRepresentable {
 
 struct ItemRow: View, Equatable {
     let metadata: ItemMetadata
-    let matchData: MatchData?
+    let rowDecoration: RowDecoration?
     let isSelected: Bool
     let isContextMenuTargeted: Bool
     let hasUserNavigated: Bool
@@ -1063,15 +1076,15 @@ struct ItemRow: View, Equatable {
     /// Text to display - uses matchData.text if in search mode, otherwise metadata.snippet
     /// SwiftUI's Three-Part HStack handles truncation with proper ellipsis via layout priorities
     private var displayText: String {
-        if let matchText = matchData?.text, !matchText.isEmpty {
-            return matchText
+        if let rowText = rowDecoration?.text, !rowText.isEmpty {
+            return rowText
         }
         return metadata.snippet
     }
 
     /// Highlights for display - passed directly from Rust (already adjusted for normalization)
-    private var displayHighlights: [HighlightRange] {
-        matchData?.highlights ?? []
+    private var displayHighlights: [Utf16HighlightRange] {
+        rowDecoration?.highlights ?? []
     }
 
     // Define exactly what constitutes a "change" for SwiftUI diffing
@@ -1082,7 +1095,7 @@ struct ItemRow: View, Equatable {
             lhs.hasUserNavigated == rhs.hasUserNavigated &&
             lhs.hasPendingEdit == rhs.hasPendingEdit &&
             lhs.metadata == rhs.metadata &&
-            lhs.matchData == rhs.matchData
+            lhs.rowDecoration == rhs.rowDecoration
     }
 
     var body: some View {
@@ -1178,7 +1191,7 @@ struct ItemRow: View, Equatable {
                 .allowsHitTesting(false)
 
                 // Line number (shown in search mode when line > 1)
-                if let lineNumber = matchData?.lineNumber, lineNumber > 1 {
+                if let lineNumber = rowDecoration?.lineNumber, lineNumber > 1 {
                     Text("L\(lineNumber):")
                         .font(.custom(FontManager.mono, size: 13))
                         .foregroundColor(accentSelected ? .white.opacity(0.7) : .secondary)
@@ -1403,7 +1416,7 @@ struct RightClickPopoverOverlay: NSViewRepresentable {
 /// Uses HighlightStyler for all index calculations with proper Unicode scalar handling.
 struct HighlightedTextView: View, Equatable {
     let text: String
-    let highlights: [HighlightRange]
+    let highlights: [Utf16HighlightRange]
     let accentSelected: Bool
 
     // Define equality for SwiftUI diffing
@@ -1423,9 +1436,9 @@ struct HighlightedTextView: View, Equatable {
         // Use firstTextBaseline so text aligns perfectly even with different weights
         HStack(alignment: .firstTextBaseline, spacing: 0) {
             if let firstHighlight = highlights.first {
-                // Use HighlightStyler for correct Unicode scalar handling
+                // Use HighlightStyler so the row renderer stays on UTF-16 offsets end to end.
                 let (prefix, match, suffix) = HighlightStyler.splitText(text, highlight: firstHighlight)
-                let suffixStartScalarIndex = Int(firstHighlight.end)
+                let suffixStartUtf16Offset = Int(firstHighlight.utf16End)
 
                 // 1. PREFIX: Truncates on the left ("...text")
                 if !prefix.isEmpty {
@@ -1442,7 +1455,7 @@ struct HighlightedTextView: View, Equatable {
                 // 3. SUFFIX: Truncates on the right ("text...")
                 // Apply any additional highlights that fall within suffix
                 if !suffix.isEmpty {
-                    suffixView(suffix: suffix, suffixStartScalarIndex: suffixStartScalarIndex)
+                    suffixView(suffix: suffix, suffixStartUtf16Offset: suffixStartUtf16Offset)
                         .font(font)
                         .foregroundColor(textColor)
                         .lineLimit(1)
@@ -1482,19 +1495,25 @@ struct HighlightedTextView: View, Equatable {
 
     /// Build suffix view with any additional highlights
     @ViewBuilder
-    private func suffixView(suffix: String, suffixStartScalarIndex: Int) -> some View {
+    private func suffixView(suffix: String, suffixStartUtf16Offset: Int) -> some View {
         // Check for additional highlights in the suffix (beyond the first one)
-        // Use Unicode scalar count for correct bounds checking
-        let suffixScalarCount = suffix.unicodeScalars.count
+        let suffixUtf16Count = suffix.utf16.count
         let additionalHighlights = highlights.dropFirst().filter { h in
-            HighlightStyler.highlightInSuffix(h, suffixStartScalarIndex: suffixStartScalarIndex, suffixScalarCount: suffixScalarCount)
+            HighlightStyler.highlightInSuffix(
+                h,
+                suffixStartUtf16Offset: suffixStartUtf16Offset,
+                suffixUtf16Count: suffixUtf16Count
+            )
         }
 
         if additionalHighlights.isEmpty {
             Text(suffix)
         } else {
-            // Use HighlightStyler for correct Unicode scalar handling
-            Text(HighlightStyler.attributedSuffix(suffix, suffixStartScalarIndex: suffixStartScalarIndex, highlights: Array(additionalHighlights)))
+            Text(HighlightStyler.attributedSuffix(
+                suffix,
+                suffixStartUtf16Offset: suffixStartUtf16Offset,
+                highlights: Array(additionalHighlights)
+            ))
         }
     }
 }
