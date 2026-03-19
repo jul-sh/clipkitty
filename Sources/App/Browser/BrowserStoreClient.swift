@@ -32,7 +32,7 @@ private final class ClipboardStoreBrowserSearchOperation: BrowserSearchOperation
             return .success(BrowserSearchResponse(
                 request: request,
                 items: result.matches,
-                firstItem: result.firstItem,
+                firstPreviewPayload: result.firstPreviewPayload,
                 totalCount: Int(result.totalCount)
             ))
         case .cancelled:
@@ -48,7 +48,7 @@ protocol BrowserStoreClient: AnyObject {
     func startSearch(request: SearchRequest) -> BrowserSearchOperation
     func fetchItem(id: Int64) async -> ClipboardItem?
     func loadRowDecorations(itemIds: [Int64], query: String) async -> [RowDecorationResult]
-    func loadPreviewDecoration(itemId: Int64, query: String) async -> PreviewDecoration?
+    func loadPreviewPayload(itemId: Int64, query: String) async -> PreviewPayload?
     func fetchLinkMetadata(url: String, itemId: Int64) async -> ClipboardItem?
     func addTag(itemId: Int64, tag: ItemTag) async -> Result<Void, ClipboardError>
     func removeTag(itemId: Int64, tag: ItemTag) async -> Result<Void, ClipboardError>
@@ -80,8 +80,8 @@ final class ClipboardStoreBrowserClient: BrowserStoreClient {
         await store.loadRowDecorations(itemIds: itemIds, query: query)
     }
 
-    func loadPreviewDecoration(itemId: Int64, query: String) async -> PreviewDecoration? {
-        await store.loadPreviewDecoration(itemId: itemId, query: query)
+    func loadPreviewPayload(itemId: Int64, query: String) async -> PreviewPayload? {
+        await store.loadPreviewPayload(itemId: itemId, query: query)
     }
 
     func fetchLinkMetadata(url: String, itemId: Int64) async -> ClipboardItem? {

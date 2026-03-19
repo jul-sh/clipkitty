@@ -37,7 +37,6 @@ final class BrowserViewModel {
 
     private var searchExecution: SearchExecution = .idle
     private var previewTask: Task<Void, Never>?
-    private var previewDecorationTask: Task<Void, Never>?
     private var metadataTask: Task<Void, Never>?
     private var rowDecorationTasks: [String: Task<Void, Never>] = [:]
     private var pendingDeleteTask: Task<Void, Never>?
@@ -52,6 +51,7 @@ final class BrowserViewModel {
     private(set) var mutationState: MutationState = .idle
     private(set) var editState: EditState = .init()
     private(set) var rowDecorationsByItemId: [Int64: RowDecoration] = [:]
+    private var previewPayloadsByItemId: [Int64: PreviewPayload] = [:]
     private(set) var hasUserNavigated = false
     private(set) var prefetchCache: [Int64: ClipboardItem] = [:]
     private(set) var previewSpinnerVisible = false
@@ -114,7 +114,7 @@ final class BrowserViewModel {
 
     var previewDecoration: PreviewDecoration? {
         guard let selectedItemState else { return nil }
-        guard case let .loaded(decoration) = selectedItemState.decorationState else { return nil }
+        guard case let .highlighted(decoration) = selectedItemState.previewState else { return nil }
         return decoration
     }
 
@@ -150,8 +150,6 @@ final class BrowserViewModel {
         searchExecution.cancel()
         previewTask?.cancel()
         previewTask = nil
-        previewDecorationTask?.cancel()
-        previewDecorationTask = nil
         metadataTask?.cancel()
         metadataTask = nil
         rowDecorationTasks.values.forEach { $0.cancel() }
@@ -166,6 +164,7 @@ final class BrowserViewModel {
         previewSpinnerVisible = false
         hasUserNavigated = false
         prefetchCache.removeAll()
+        previewPayloadsByItemId.removeAll()
         rowDecorationsByItemId.removeAll()
         overlayState = .none
         mutationState = .idle
@@ -345,12 +344,13 @@ final class BrowserViewModel {
             response: BrowserSearchResponse(
                 request: request,
                 items: [],
-                firstItem: nil,
+                firstPreviewPayload: nil,
                 totalCount: 0
             ),
             selection: .none
         ))
         rowDecorationsByItemId.removeAll()
+        previewPayloadsByItemId.removeAll()
         prefetchCache.removeAll()
 
         Task { [weak self] in
@@ -443,11 +443,13 @@ final class BrowserViewModel {
             tags: currentItem.itemMetadata.tags
         )
         let updatedItem = ClipboardItem(itemMetadata: updatedMetadata, content: updatedContent)
+        let updatedPreviewState: SelectedPreviewState = .none
+        previewPayloadsByItemId[id] = PreviewPayload(item: updatedItem, decoration: nil)
 
         setDisplayedSelection(.selected(SelectedItemState(
             item: updatedItem,
             origin: selectedItemState.origin,
-            decorationState: selectedItemState.decorationState
+            previewState: updatedPreviewState
         )))
         updateDisplayedResponseForItem(
             itemId: id,
@@ -507,14 +509,13 @@ final class BrowserViewModel {
         queryGeneration += 1
         hasUserNavigated = false
         prefetchCache.removeAll()
+        previewPayloadsByItemId.removeAll()
         rowDecorationsByItemId.removeAll()
         searchExecution.cancel()
-        previewDecorationTask?.cancel()
-        previewDecorationTask = nil
         rowDecorationTasks.values.forEach { $0.cancel() }
         rowDecorationTasks.removeAll()
 
-        let previous = displayedContent.map { resetDecoration(in: $0, for: request.text) }
+        let previous = displayedContent.map { resetSelection(in: $0, for: request.text) }
         contentState = .loading(request: request, previous: previous, phase: .debouncing)
 
         if request.text.isEmpty {
@@ -578,6 +579,7 @@ final class BrowserViewModel {
     private func applySearchResponse(_ response: BrowserSearchResponse) {
         guard contentState.request == response.request else { return }
         let response = responseApplyingPendingMutations(response)
+        cachePreviewPayload(response.firstPreviewPayload)
 
         let previousOrder = itemIds
         let previousSelection = selection
@@ -628,25 +630,38 @@ final class BrowserViewModel {
         response: BrowserSearchResponse,
         previousSelectedItem: ClipboardItem?
     ) {
-        if let firstItem = response.firstItem,
-           firstItem.itemMetadata.itemId == itemId
+        if let firstPreviewPayload = response.firstPreviewPayload,
+           firstPreviewPayload.item.itemMetadata.itemId == itemId,
+           isPreviewPayloadReady(firstPreviewPayload, for: response.request)
         {
-            setDisplayedSelection(.selected(makeSelectedItemState(for: firstItem, origin: origin, request: response.request)))
-            loadPreviewDecorationIfNeeded(itemId: itemId, request: response.request)
+            cachePreviewPayload(firstPreviewPayload)
+            setDisplayedSelection(.selected(makeSelectedItemState(for: firstPreviewPayload, origin: origin)))
+            return
+        }
+
+        if let cachedPreviewPayload = previewPayloadsByItemId[itemId],
+           isPreviewPayloadReady(cachedPreviewPayload, for: response.request)
+        {
+            setDisplayedSelection(.selected(makeSelectedItemState(for: cachedPreviewPayload, origin: origin)))
             return
         }
 
         if let previousSelectedItem,
-           previousSelectedItem.itemMetadata.itemId == itemId
+           previousSelectedItem.itemMetadata.itemId == itemId,
+           !requiresAtomicPreviewLoad(for: previousSelectedItem, request: response.request)
         {
-            setDisplayedSelection(.selected(makeSelectedItemState(for: previousSelectedItem, origin: origin, request: response.request)))
-            loadPreviewDecorationIfNeeded(itemId: itemId, request: response.request)
+            let payload = PreviewPayload(item: previousSelectedItem, decoration: nil)
+            cachePreviewPayload(payload)
+            setDisplayedSelection(.selected(makeSelectedItemState(for: payload, origin: origin)))
             return
         }
 
-        if let cachedItem = prefetchCache[itemId] {
-            setDisplayedSelection(.selected(makeSelectedItemState(for: cachedItem, origin: origin, request: response.request)))
-            loadPreviewDecorationIfNeeded(itemId: itemId, request: response.request)
+        if let cachedItem = prefetchCache[itemId],
+           !requiresAtomicPreviewLoad(for: cachedItem, request: response.request)
+        {
+            let payload = PreviewPayload(item: cachedItem, decoration: nil)
+            cachePreviewPayload(payload)
+            setDisplayedSelection(.selected(makeSelectedItemState(for: payload, origin: origin)))
             return
         }
 
@@ -656,25 +671,37 @@ final class BrowserViewModel {
 
     private func loadSelectedItem(itemId: Int64, origin: SelectionOrigin) {
         previewTask?.cancel()
-        previewDecorationTask?.cancel()
         metadataTask?.cancel()
         previewGeneration += 1
         let generation = previewGeneration
         let request = contentState.request
 
-        if let firstItem = contentState.firstItem,
-           firstItem.itemMetadata.itemId == itemId
+        if let firstPreviewPayload = contentState.firstPreviewPayload,
+           firstPreviewPayload.item.itemMetadata.itemId == itemId,
+           isPreviewPayloadReady(firstPreviewPayload, for: request)
         {
-            setDisplayedSelection(.selected(makeSelectedItemState(for: firstItem, origin: origin, request: request)))
-            loadPreviewDecorationIfNeeded(itemId: itemId, request: request)
+            cachePreviewPayload(firstPreviewPayload)
+            setDisplayedSelection(.selected(makeSelectedItemState(for: firstPreviewPayload, origin: origin)))
             prefetchAdjacentItems(around: itemId)
-            maybeRefreshLinkMetadata(for: firstItem, generation: generation)
+            maybeRefreshLinkMetadata(for: firstPreviewPayload.item, generation: generation)
             return
         }
 
-        if let cachedItem = prefetchCache[itemId] {
-            setDisplayedSelection(.selected(makeSelectedItemState(for: cachedItem, origin: origin, request: request)))
-            loadPreviewDecorationIfNeeded(itemId: itemId, request: request)
+        if let cachedPreviewPayload = previewPayloadsByItemId[itemId],
+           isPreviewPayloadReady(cachedPreviewPayload, for: request)
+        {
+            setDisplayedSelection(.selected(makeSelectedItemState(for: cachedPreviewPayload, origin: origin)))
+            prefetchAdjacentItems(around: itemId)
+            maybeRefreshLinkMetadata(for: cachedPreviewPayload.item, generation: generation)
+            return
+        }
+
+        if let cachedItem = prefetchCache[itemId],
+           !requiresAtomicPreviewLoad(for: cachedItem, request: request)
+        {
+            let payload = PreviewPayload(item: cachedItem, decoration: nil)
+            cachePreviewPayload(payload)
+            setDisplayedSelection(.selected(makeSelectedItemState(for: payload, origin: origin)))
             prefetchAdjacentItems(around: itemId)
             maybeRefreshLinkMetadata(for: cachedItem, generation: generation)
             return
@@ -685,47 +712,25 @@ final class BrowserViewModel {
 
         previewTask = Task { [weak self] in
             guard let self else { return }
-            let item = await self.client.fetchItem(id: itemId)
+            let payload = await self.client.loadPreviewPayload(itemId: itemId, query: request.text)
+            guard !Task.isCancelled else { return }
             await MainActor.run {
                 guard self.previewGeneration == generation,
+                      self.contentState.request == request,
                       self.selectedItemId == itemId
                 else {
                     return
                 }
 
                 self.previewSpinnerVisible = false
-                if let item {
-                    self.setDisplayedSelection(.selected(self.makeSelectedItemState(for: item, origin: origin, request: self.contentState.request)))
-                    self.loadPreviewDecorationIfNeeded(itemId: itemId, request: self.contentState.request)
+                if let payload {
+                    self.cachePreviewPayload(payload)
+                    self.setDisplayedSelection(.selected(self.makeSelectedItemState(for: payload, origin: origin)))
                     self.prefetchAdjacentItems(around: itemId)
-                    self.maybeRefreshLinkMetadata(for: item, generation: generation)
+                    self.maybeRefreshLinkMetadata(for: payload.item, generation: generation)
                 } else {
                     self.setDisplayedSelection(.failed(itemId: itemId, origin: origin))
                 }
-            }
-        }
-    }
-
-    private func loadPreviewDecorationIfNeeded(itemId: Int64, request: SearchRequest) {
-        previewDecorationTask?.cancel()
-        let decorationState = previewDecorationState(for: request.text)
-        updateSelectedDecorationState(decorationState, for: itemId)
-
-        guard case .loading = decorationState else { return }
-        let generation = queryGeneration
-        previewDecorationTask = Task { [weak self] in
-            guard let self else { return }
-            let decoration = await self.client.loadPreviewDecoration(itemId: itemId, query: request.text)
-            guard !Task.isCancelled else { return }
-            await MainActor.run {
-                guard self.queryGeneration == generation,
-                      self.contentState.request == request,
-                      self.selectedItemId == itemId,
-                      let decoration
-                else {
-                    return
-                }
-                self.updateSelectedDecorationState(.loaded(decoration), for: itemId)
             }
         }
     }
@@ -766,11 +771,16 @@ final class BrowserViewModel {
                     tags: currentTags
                 )
                 let mergedPreviewItem = ClipboardItem(itemMetadata: mergedPreviewMetadata, content: updatedItem.content)
+                let updatedPreviewPayload = PreviewPayload(
+                    item: mergedPreviewItem,
+                    decoration: self.previewDecoration
+                )
+                self.cachePreviewPayload(updatedPreviewPayload)
 
                 self.setDisplayedSelection(.selected(SelectedItemState(
                     item: mergedPreviewItem,
                     origin: selectedItemState.origin,
-                    decorationState: selectedItemState.decorationState
+                    previewState: selectedItemState.previewState
                 )))
                 self.updateDisplayedResponseForItem(
                     itemId: updatedItem.itemMetadata.itemId,
@@ -839,12 +849,16 @@ final class BrowserViewModel {
         guard let response = currentResponse else { return }
         let filteredItems = response.items.filter { $0.itemMetadata.itemId != itemId }
         rowDecorationsByItemId.removeValue(forKey: itemId)
+        previewPayloadsByItemId.removeValue(forKey: itemId)
+        prefetchCache.removeValue(forKey: itemId)
         let deletedSelectedItem = selectedItemId == itemId
         let nextSelection = deletedSelectedItem ? nextSelectionAfterDelete(deleting: itemId) : nil
         updateDisplayedResponse(BrowserSearchResponse(
             request: response.request,
             items: filteredItems,
-            firstItem: response.firstItem?.itemMetadata.itemId == itemId ? nil : response.firstItem,
+            firstPreviewPayload: response.firstPreviewPayload?.item.itemMetadata.itemId == itemId
+                ? nil
+                : response.firstPreviewPayload,
             totalCount: max(0, response.totalCount - 1)
         ))
 
@@ -913,6 +927,7 @@ final class BrowserViewModel {
 
     private func restoreSnapshot(_ snapshot: BrowserContentState) {
         contentState = snapshot
+        syncPreviewPayloadCacheToDisplayedState()
         clearInactiveEdits()
     }
 
@@ -957,14 +972,14 @@ final class BrowserViewModel {
         }
 
         let filteredItems = response.items.filter { $0.itemMetadata.itemId != deletedItemId }
-        let filteredFirstItem = response.firstItem?.itemMetadata.itemId == deletedItemId
+        let filteredFirstPreviewPayload = response.firstPreviewPayload?.item.itemMetadata.itemId == deletedItemId
             ? nil
-            : response.firstItem
+            : response.firstPreviewPayload
 
         return BrowserSearchResponse(
             request: response.request,
             items: filteredItems,
-            firstItem: filteredFirstItem,
+            firstPreviewPayload: filteredFirstPreviewPayload,
             totalCount: max(0, response.totalCount - 1)
         )
     }
@@ -1033,10 +1048,15 @@ final class BrowserViewModel {
                     select(itemId: firstItemId, origin: .automatic)
                 }
             } else if selectedItemState.item.itemMetadata.itemId == itemId {
+                let updatedItem = ClipboardItem(itemMetadata: updatedMetadata, content: selectedItemState.item.content)
+                previewPayloadsByItemId[itemId] = PreviewPayload(
+                    item: updatedItem,
+                    decoration: previewDecoration
+                )
                 setDisplayedSelection(.selected(SelectedItemState(
-                    item: ClipboardItem(itemMetadata: updatedMetadata, content: selectedItemState.item.content),
+                    item: updatedItem,
                     origin: selectedItemState.origin,
-                    decorationState: selectedItemState.decorationState
+                    previewState: selectedItemState.previewState
                 )))
             }
         }
@@ -1084,16 +1104,18 @@ final class BrowserViewModel {
                !updatedMetadata.tags.contains(tag)
             {
                 rowDecorationsByItemId.removeValue(forKey: itemMatch.itemMetadata.itemId)
+                previewPayloadsByItemId.removeValue(forKey: itemMatch.itemMetadata.itemId)
+                prefetchCache.removeValue(forKey: itemMatch.itemMetadata.itemId)
                 return nil
             }
 
             return ItemMatch(itemMetadata: updatedMetadata, rowDecoration: itemMatch.rowDecoration)
         }
 
-        let updatedFirstItem = response.firstItem.flatMap { firstItem -> ClipboardItem? in
-            guard firstItem.itemMetadata.itemId == itemId else { return firstItem }
+        let updatedFirstPreviewPayload = response.firstPreviewPayload.flatMap { payload -> PreviewPayload? in
+            guard payload.item.itemMetadata.itemId == itemId else { return payload }
             let updatedMetadata = applyingTagMutation(
-                to: firstItem.itemMetadata,
+                to: payload.item.itemMetadata,
                 tag: tag,
                 shouldInclude: shouldInclude
             )
@@ -1103,13 +1125,16 @@ final class BrowserViewModel {
             {
                 return nil
             }
-            return ClipboardItem(itemMetadata: updatedMetadata, content: firstItem.content)
+            let updatedItem = ClipboardItem(itemMetadata: updatedMetadata, content: payload.item.content)
+            let updatedPayload = PreviewPayload(item: updatedItem, decoration: payload.decoration)
+            previewPayloadsByItemId[itemId] = updatedPayload
+            return updatedPayload
         }
 
         return BrowserSearchResponse(
             request: response.request,
             items: updatedItems,
-            firstItem: updatedFirstItem,
+            firstPreviewPayload: updatedFirstPreviewPayload,
             totalCount: updatedItems.count
         )
     }
@@ -1145,45 +1170,67 @@ final class BrowserViewModel {
     }
 
     private func makeSelectedItemState(
-        for item: ClipboardItem,
-        origin: SelectionOrigin,
-        request: SearchRequest
+        for payload: PreviewPayload,
+        origin: SelectionOrigin
     ) -> SelectedItemState {
         SelectedItemState(
-            item: item,
+            item: payload.item,
             origin: origin,
-            decorationState: previewDecorationState(for: request.text)
+            previewState: payload.decoration.map(SelectedPreviewState.highlighted) ?? .none
         )
     }
 
-    private func previewDecorationState(for query: String) -> PreviewDecorationState {
-        query.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty ? .none : .loading(query: query)
-    }
-
-    private func resetDecoration(in content: LoadedBrowserContent, for query: String) -> LoadedBrowserContent {
-        guard let selectedItem = content.selection.selectedItem else { return content }
-        return LoadedBrowserContent(
-            response: content.response,
-            selection: .selected(SelectedItemState(
-                item: selectedItem.item,
-                origin: selectedItem.origin,
-                decorationState: previewDecorationState(for: query)
-            ))
-        )
-    }
-
-    private func updateSelectedDecorationState(_ decorationState: PreviewDecorationState, for itemId: Int64) {
-        guard let selectedItemState,
-              selectedItemState.item.itemMetadata.itemId == itemId
-        else {
-            return
+    private func requiresAtomicPreviewLoad(for item: ClipboardItem, request: SearchRequest) -> Bool {
+        guard !request.text.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty else {
+            return false
         }
 
-        setDisplayedSelection(.selected(SelectedItemState(
-            item: selectedItemState.item,
-            origin: selectedItemState.origin,
-            decorationState: decorationState
-        )))
+        switch item.content {
+        case .text, .color:
+            return true
+        case .image, .link, .file:
+            return false
+        }
+    }
+
+    private func resetSelection(in content: LoadedBrowserContent, for query: String) -> LoadedBrowserContent {
+        guard let selectedItem = content.selection.selectedItem else { return content }
+        let request = SearchRequest(text: query, filter: content.response.request.filter)
+        let selection: SelectionState
+        if requiresAtomicPreviewLoad(for: selectedItem.item, request: request) {
+            selection = .loading(itemId: selectedItem.item.itemMetadata.itemId, origin: selectedItem.origin)
+        } else {
+            selection = .selected(selectedItem)
+        }
+
+        return LoadedBrowserContent(response: content.response, selection: selection)
+    }
+
+    private func cachePreviewPayload(_ payload: PreviewPayload?) {
+        guard let payload else { return }
+        let itemId = payload.item.itemMetadata.itemId
+        previewPayloadsByItemId[itemId] = payload
+        prefetchCache[itemId] = payload.item
+    }
+
+    private func isPreviewPayloadReady(_ payload: PreviewPayload, for request: SearchRequest) -> Bool {
+        !requiresAtomicPreviewLoad(for: payload.item, request: request) || payload.decoration != nil
+    }
+
+    private func syncPreviewPayloadCacheToDisplayedState() {
+        previewPayloadsByItemId.removeAll()
+
+        if let firstPreviewPayload = contentState.firstPreviewPayload {
+            cachePreviewPayload(firstPreviewPayload)
+        }
+
+        if let selectedItemState {
+            let payload = PreviewPayload(
+                item: selectedItemState.item,
+                decoration: previewDecoration
+            )
+            cachePreviewPayload(payload)
+        }
     }
 
     private func itemIdentifier(at index: Int) -> Int64? {
@@ -1239,18 +1286,23 @@ final class BrowserViewModel {
                 rowDecoration: itemMatch.rowDecoration
             )
         }
-        let firstItem: ClipboardItem? = {
-            guard let currentFirstItem = response.firstItem,
-                  currentFirstItem.itemMetadata.itemId == itemId
+        let firstPreviewPayload: PreviewPayload? = {
+            guard let currentFirstPreviewPayload = response.firstPreviewPayload,
+                  currentFirstPreviewPayload.item.itemMetadata.itemId == itemId
             else {
-                return response.firstItem
+                return response.firstPreviewPayload
             }
-            return updatedFirstItem
+            let updatedPayload = PreviewPayload(
+                item: updatedFirstItem,
+                decoration: currentFirstPreviewPayload.decoration
+            )
+            previewPayloadsByItemId[itemId] = updatedPayload
+            return updatedPayload
         }()
         updateDisplayedResponse(BrowserSearchResponse(
             request: response.request,
             items: updatedItems,
-            firstItem: firstItem,
+            firstPreviewPayload: firstPreviewPayload,
             totalCount: response.totalCount
         ))
     }

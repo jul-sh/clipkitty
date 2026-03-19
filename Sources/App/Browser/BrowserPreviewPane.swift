@@ -57,7 +57,7 @@ struct BrowserPreviewPane: View {
         switch item.content {
         case .text, .color:
             let previewDecoration: PreviewDecoration? = {
-                if case let .loaded(decoration) = content.decorationState {
+                if case let .highlighted(decoration) = content.previewState {
                     return decoration
                 }
                 return nil
@@ -69,12 +69,10 @@ struct BrowserPreviewPane: View {
                 highlights: previewDecoration?.highlights ?? [],
                 initialScrollHighlightIndex: previewDecoration?.initialScrollHighlightIndex,
                 scrollBehavior: {
-                    switch content.decorationState {
+                    switch content.previewState {
                     case .none:
                         return .autoScroll
-                    case .loading:
-                        return .manual
-                    case .loaded:
+                    case .highlighted:
                         return content.origin == .user ? .trackHighlight : .autoScroll
                     }
                 }(),

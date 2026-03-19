@@ -4,7 +4,7 @@ use crate::database::Database;
 use crate::indexer::Indexer;
 use crate::interface::{
     ClipKittyError, ClipboardItem, ClipboardStoreApi, ItemQueryFilter, ItemTag,
-    PreviewDecoration, RowDecorationResult, SearchOutcome, SearchResult,
+    PreviewPayload, RowDecorationResult, SearchOutcome, SearchResult,
 };
 use crate::{save_service, search_service};
 use once_cell::sync::Lazy;
@@ -46,6 +46,7 @@ fn init_rayon() {
 pub struct ClipboardStore {
     db: Arc<Database>,
     indexer: Arc<Indexer>,
+    analysis_cache: Arc<search_service::HighlightAnalysisCache>,
     /// Token for the currently running search, if any. Starting a new search cancels
     /// the previous one by calling cancel() on this token.
     active_search_token: Arc<Mutex<Option<CancellationToken>>>,
@@ -100,6 +101,7 @@ impl ClipboardStore {
         Ok(Self {
             db: Arc::new(database),
             indexer: Arc::new(indexer),
+            analysis_cache: Arc::new(search_service::HighlightAnalysisCache::default()),
             active_search_token: Arc::new(Mutex::new(None)),
         })
     }
@@ -155,6 +157,7 @@ impl ClipboardStore {
         let store = Self {
             db: Arc::new(db),
             indexer: Arc::new(indexer),
+            analysis_cache: Arc::new(search_service::HighlightAnalysisCache::default()),
             active_search_token: Arc::new(Mutex::new(None)),
         };
         store.rebuild_index_if_needed()?;
@@ -184,6 +187,7 @@ impl ClipboardStore {
         let runtime = self.runtime_handle();
         let db = Arc::clone(&self.db);
         let indexer = Arc::clone(&self.indexer);
+        let cache = Arc::clone(&self.analysis_cache);
         runtime.clone().spawn(async move {
             if token.is_cancelled() {
                 completion.finish(Ok(SearchOutcome::Cancelled));
@@ -194,6 +198,7 @@ impl ClipboardStore {
                 search_service::SearchContext {
                     db,
                     indexer,
+                    cache,
                     runtime: runtime.clone(),
                     token: token.clone(),
                 },
@@ -290,15 +295,15 @@ impl ClipboardStoreApi for ClipboardStore {
         item_ids: Vec<i64>,
         query: String,
     ) -> Result<Vec<RowDecorationResult>, ClipKittyError> {
-        search_service::compute_row_decorations(&self.db, item_ids, query)
+        search_service::compute_row_decorations(&self.db, &self.analysis_cache, item_ids, query)
     }
 
-    fn compute_preview_decoration(
+    fn load_preview_payload(
         &self,
         item_id: i64,
         query: String,
-    ) -> Result<Option<PreviewDecoration>, ClipKittyError> {
-        search_service::compute_preview_decoration(&self.db, item_id, query)
+    ) -> Result<Option<PreviewPayload>, ClipKittyError> {
+        search_service::load_preview_payload(&self.db, &self.analysis_cache, item_id, query)
     }
 
     fn save_files(
@@ -485,7 +490,7 @@ mod tests {
 
         let all = store.search("".to_string()).await.unwrap();
         assert_eq!(all.matches.len(), 2);
-        assert!(all.first_item.is_some());
+        assert!(all.first_preview_payload.is_some());
 
         let links = store
             .search_filtered(
@@ -654,6 +659,7 @@ mod tests {
         token.cancel();
         let result = search_service::search_short_query_sync(
             &store.db,
+            &store.analysis_cache,
             "He",
             false,
             &token,
@@ -714,6 +720,7 @@ mod tests {
         let result = search_service::search_trigram_query_sync(
             &store.db,
             &store.indexer,
+            &store.analysis_cache,
             &query,
             &token,
             &rt.handle().clone(),
@@ -854,6 +861,7 @@ mod tests {
                         }
                     }
                 })),
+                ..Default::default()
             },
         );
 
@@ -902,6 +910,204 @@ mod tests {
             fourth.await_result().await.unwrap(),
             SearchOutcome::Success { .. }
         ));
+    }
+
+    #[test]
+    fn test_preview_payload_reuses_cached_analysis_from_row_decoration() {
+        let _lock = SEARCH_HOOK_TEST_LOCK.lock();
+        let store = ClipboardStore::new_in_memory().unwrap();
+        let item_id = store
+            .save_text("alpha beta gamma".to_string(), None, None)
+            .unwrap();
+
+        let computed = Arc::new(AtomicUsize::new(0));
+        let cache_hits = Arc::new(AtomicUsize::new(0));
+        let _hook_guard = crate::search_service::test_support::install_search_hooks(
+            crate::search_service::test_support::SearchTestHooks {
+                on_analysis_computed: Some(Arc::new({
+                    let computed = Arc::clone(&computed);
+                    move |hook_item_id, hook_query| {
+                        if hook_item_id == item_id && hook_query == "alpha" {
+                            computed.fetch_add(1, Ordering::SeqCst);
+                        }
+                    }
+                })),
+                on_analysis_cache_hit: Some(Arc::new({
+                    let cache_hits = Arc::clone(&cache_hits);
+                    move |hook_item_id, hook_query| {
+                        if hook_item_id == item_id && hook_query == "alpha" {
+                            cache_hits.fetch_add(1, Ordering::SeqCst);
+                        }
+                    }
+                })),
+                ..Default::default()
+            },
+        );
+
+        let row_results = search_service::compute_row_decorations(
+            &store.db,
+            &store.analysis_cache,
+            vec![item_id],
+            "alpha".to_string(),
+        )
+        .unwrap();
+        assert_eq!(row_results.len(), 1);
+        assert!(row_results[0].decoration.is_some());
+
+        let payload = search_service::load_preview_payload(
+            &store.db,
+            &store.analysis_cache,
+            item_id,
+            "alpha".to_string(),
+        )
+        .unwrap()
+        .expect("preview payload should exist");
+        assert!(payload.decoration.is_some());
+
+        assert_eq!(
+            computed.load(Ordering::SeqCst),
+            1,
+            "shared analysis should be computed once"
+        );
+        assert_eq!(
+            cache_hits.load(Ordering::SeqCst),
+            1,
+            "preview payload should reuse the cached analysis"
+        );
+    }
+
+    #[test]
+    fn test_preview_payload_cache_invalidates_when_item_text_changes() {
+        let _lock = SEARCH_HOOK_TEST_LOCK.lock();
+        let store = ClipboardStore::new_in_memory().unwrap();
+        let item_id = store
+            .save_text("alpha beta gamma".to_string(), None, None)
+            .unwrap();
+
+        let computed = Arc::new(AtomicUsize::new(0));
+        let cache_hits = Arc::new(AtomicUsize::new(0));
+        let _hook_guard = crate::search_service::test_support::install_search_hooks(
+            crate::search_service::test_support::SearchTestHooks {
+                on_analysis_computed: Some(Arc::new({
+                    let computed = Arc::clone(&computed);
+                    move |hook_item_id, hook_query| {
+                        if hook_item_id == item_id && hook_query == "alpha" {
+                            computed.fetch_add(1, Ordering::SeqCst);
+                        }
+                    }
+                })),
+                on_analysis_cache_hit: Some(Arc::new({
+                    let cache_hits = Arc::clone(&cache_hits);
+                    move |hook_item_id, hook_query| {
+                        if hook_item_id == item_id && hook_query == "alpha" {
+                            cache_hits.fetch_add(1, Ordering::SeqCst);
+                        }
+                    }
+                })),
+                ..Default::default()
+            },
+        );
+
+        let _ = search_service::compute_row_decorations(
+            &store.db,
+            &store.analysis_cache,
+            vec![item_id],
+            "alpha".to_string(),
+        )
+        .unwrap();
+        let _ = search_service::load_preview_payload(
+            &store.db,
+            &store.analysis_cache,
+            item_id,
+            "alpha".to_string(),
+        )
+        .unwrap()
+        .expect("initial preview payload should exist");
+
+        store
+            .update_text_item(item_id, "alpha updated delta".to_string())
+            .unwrap();
+
+        let payload = search_service::load_preview_payload(
+            &store.db,
+            &store.analysis_cache,
+            item_id,
+            "alpha".to_string(),
+        )
+        .unwrap()
+        .expect("updated preview payload should exist");
+
+        match &payload.item.content {
+            ClipboardContent::Text { value } => assert_eq!(value, "alpha updated delta"),
+            other => panic!("expected text payload, got {other:?}"),
+        }
+        assert_eq!(
+            computed.load(Ordering::SeqCst),
+            2,
+            "content hash change should force recomputation"
+        );
+        assert_eq!(
+            cache_hits.load(Ordering::SeqCst),
+            1,
+            "only the unchanged intermediate read should hit the cache"
+        );
+    }
+
+    #[test]
+    fn test_analysis_cache_is_scoped_by_query() {
+        let _lock = SEARCH_HOOK_TEST_LOCK.lock();
+        let store = ClipboardStore::new_in_memory().unwrap();
+        let item_id = store
+            .save_text("alpha beta gamma".to_string(), None, None)
+            .unwrap();
+
+        let computed = Arc::new(AtomicUsize::new(0));
+        let cache_hits = Arc::new(AtomicUsize::new(0));
+        let _hook_guard = crate::search_service::test_support::install_search_hooks(
+            crate::search_service::test_support::SearchTestHooks {
+                on_analysis_computed: Some(Arc::new({
+                    let computed = Arc::clone(&computed);
+                    move |hook_item_id, _| {
+                        if hook_item_id == item_id {
+                            computed.fetch_add(1, Ordering::SeqCst);
+                        }
+                    }
+                })),
+                on_analysis_cache_hit: Some(Arc::new({
+                    let cache_hits = Arc::clone(&cache_hits);
+                    move |hook_item_id, _| {
+                        if hook_item_id == item_id {
+                            cache_hits.fetch_add(1, Ordering::SeqCst);
+                        }
+                    }
+                })),
+                ..Default::default()
+            },
+        );
+
+        let _ = search_service::load_preview_payload(
+            &store.db,
+            &store.analysis_cache,
+            item_id,
+            "alpha".to_string(),
+        )
+        .unwrap()
+        .expect("alpha preview payload should exist");
+        let _ = search_service::load_preview_payload(
+            &store.db,
+            &store.analysis_cache,
+            item_id,
+            "beta".to_string(),
+        )
+        .unwrap()
+        .expect("beta preview payload should exist");
+
+        assert_eq!(
+            computed.load(Ordering::SeqCst),
+            2,
+            "different queries should not share cached analysis"
+        );
+        assert_eq!(cache_hits.load(Ordering::SeqCst), 0);
     }
 
     #[test]
