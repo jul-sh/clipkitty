@@ -9,7 +9,7 @@ struct BrowserPreviewPane: View {
 
     var body: some View {
         Group {
-            switch viewModel.session.preview {
+            switch viewModel.preview {
             case let .loaded(selection):
                 VStack(spacing: 0) {
                     previewContent(for: selection.item, matchData: selection.matchData)

@@ -4,14 +4,12 @@ import Foundation
 struct BrowserSession {
     var query: QuerySession
     var selection: SelectionSession
-    var preview: PreviewSession
     var overlays: OverlaySession
     var mutation: MutationSession
 
     static let initial = BrowserSession(
         query: .idle(request: SearchRequest(text: "", filter: .all)),
         selection: .none,
-        preview: .empty,
         overlays: .none,
         mutation: .idle
     )

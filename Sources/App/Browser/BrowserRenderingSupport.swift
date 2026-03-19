@@ -563,6 +563,7 @@ struct TextPreviewView: NSViewRepresentable {
     // MARK: - Highlight Resolution
 
     /// Convert [HighlightRange] to [(NSTextRange, HighlightKind)] using the text layout manager.
+    /// Uses pre-computed UTF-16 offsets from Rust, so each highlight converts in O(1).
     private func resolveTextRanges(
         highlights: [HighlightRange],
         text: String,
@@ -572,11 +573,12 @@ struct TextPreviewView: NSViewRepresentable {
               let tcm = tlm.textContentManager else { return [] }
 
         return highlights.compactMap { highlight in
-            let nsRange = highlight.nsRange(in: text)
-            guard nsRange.location != NSNotFound else { return nil }
+            let utf16Start = Int(highlight.utf16Start)
+            let utf16Length = Int(highlight.utf16End) - utf16Start
+            guard utf16Length >= 0 else { return nil }
 
-            guard let start = tcm.location(tcm.documentRange.location, offsetBy: nsRange.location),
-                  let end = tcm.location(start, offsetBy: nsRange.length) else { return nil }
+            guard let start = tcm.location(tcm.documentRange.location, offsetBy: utf16Start),
+                  let end = tcm.location(start, offsetBy: utf16Length) else { return nil }
 
             guard let textRange = NSTextRange(location: start, end: end) else { return nil }
             return MatchRange(range: textRange, kind: highlight.kind,

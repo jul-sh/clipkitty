@@ -283,7 +283,7 @@ final class BrowserViewModelTests: XCTestCase {
         highlightStart: UInt64,
         highlightEnd: UInt64
     ) -> MatchData {
-        let highlight = HighlightRange(start: highlightStart, end: highlightEnd, kind: .exact)
+        let highlight = HighlightRange(start: highlightStart, end: highlightEnd, utf16Start: 0, utf16End: 0, kind: .exact)
         return MatchData(
             text: text,
             highlights: [highlight],

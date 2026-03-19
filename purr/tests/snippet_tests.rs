@@ -26,6 +26,8 @@ fn hr(start: u64, end: u64) -> HighlightRange {
     HighlightRange {
         start,
         end,
+        utf16_start: 0,
+        utf16_end: 0,
         kind: HighlightKind::Exact,
     }
 }

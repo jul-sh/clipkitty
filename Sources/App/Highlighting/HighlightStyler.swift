@@ -228,7 +228,7 @@ enum HighlightStyler {
 
         let start = text.unicodeScalars.distance(from: text.unicodeScalars.startIndex, to: scalarStart)
         let end = text.unicodeScalars.distance(from: text.unicodeScalars.startIndex, to: scalarEnd)
-        return HighlightRange(start: UInt64(start), end: UInt64(end), kind: kind)
+        return HighlightRange(start: UInt64(start), end: UInt64(end), utf16Start: 0, utf16End: 0, kind: kind)
     }
 
     private static func mergeOverlapping(_ highlights: [HighlightRange]) -> [HighlightRange] {
@@ -250,6 +250,8 @@ enum HighlightStyler {
                 merged[merged.count - 1] = HighlightRange(
                     start: last.start,
                     end: max(last.end, highlight.end),
+                    utf16Start: 0,
+                    utf16End: 0,
                     kind: last.kind
                 )
             } else {

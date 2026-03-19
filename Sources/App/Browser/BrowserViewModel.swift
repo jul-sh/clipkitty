@@ -46,6 +46,7 @@ final class BrowserViewModel {
     private var hasAppliedInitialSearch = false
 
     private(set) var session: BrowserSession = .initial
+    private(set) var preview: PreviewSession = .empty
     private(set) var hasUserNavigated = false
     private(set) var prefetchCache: [Int64: ClipboardItem] = [:]
     private(set) var previewSpinnerVisible = false
@@ -108,7 +109,7 @@ final class BrowserViewModel {
     }
 
     var selectedItem: ClipboardItem? {
-        switch session.preview {
+        switch preview {
         case let .loaded(selection):
             return selection.item
         case let .loading(_, stale), let .failed(_, stale):
@@ -133,7 +134,7 @@ final class BrowserViewModel {
     }
 
     var previewSelection: PreviewSelection? {
-        switch session.preview {
+        switch preview {
         case let .loaded(selection):
             return selection
         case let .loading(_, stale), let .failed(_, stale):
@@ -175,7 +176,7 @@ final class BrowserViewModel {
         session.overlays = .none
         session.mutation = .idle
         session.selection = .none
-        session.preview = .empty
+        preview = .empty
         editFocus = .idle
         pendingEdits.removeAll()
         hasAppliedInitialSearch = false
@@ -319,7 +320,7 @@ final class BrowserViewModel {
                    selectedItemId == loadedItem.itemMetadata.itemId,
                    let updatedMatchData = idToData[selectedItemId]
                 {
-                    self.session.preview = .loaded(PreviewSelection(item: loadedItem, matchData: updatedMatchData))
+                    self.preview = .loaded(PreviewSelection(item: loadedItem, matchData: updatedMatchData))
                 }
             }
         }
@@ -334,7 +335,7 @@ final class BrowserViewModel {
         guard case .idle = session.mutation else { return }
 
         let snapshot = currentResponse
-        let previewSnapshot = session.preview
+        let previewSnapshot = preview
         let selectionSnapshot = session.selection
         let transaction = DeleteTransaction(
             deletedItemId: itemId,
@@ -373,7 +374,7 @@ final class BrowserViewModel {
 
     func clearAll() {
         let snapshot = currentResponse
-        let previewSnapshot = session.preview
+        let previewSnapshot = preview
         let selectionSnapshot = session.selection
         session.mutation = .clearing(ClearTransaction(
             snapshot: snapshot,
@@ -389,7 +390,7 @@ final class BrowserViewModel {
             totalCount: 0
         ))
         session.selection = .none
-        session.preview = .empty
+        preview = .empty
         prefetchCache.removeAll()
 
         Task { [weak self] in
@@ -485,7 +486,7 @@ final class BrowserViewModel {
                 tags: currentItem.itemMetadata.tags
             )
             let updatedItem = ClipboardItem(itemMetadata: updatedMetadata, content: updatedContent)
-            session.preview = .loaded(PreviewSelection(item: updatedItem, matchData: previewSelection?.matchData))
+            preview = .loaded(PreviewSelection(item: updatedItem, matchData: previewSelection?.matchData))
 
             // Also update the snippet in the list so it reflects the edit
             if case let .ready(response) = session.query {
@@ -650,7 +651,7 @@ final class BrowserViewModel {
                 select(itemId: firstItemId, origin: .automatic)
             } else {
                 session.selection = .none
-                session.preview = .empty
+                preview = .empty
             }
         case let .some(selectedItemId):
             if !newOrder.contains(selectedItemId) ||
@@ -661,7 +662,7 @@ final class BrowserViewModel {
                     loadSelectedItem(itemId: firstItemId)
                 } else {
                     session.selection = .none
-                    session.preview = .empty
+                    preview = .empty
                 }
             } else {
                 refreshPreviewSelection(
@@ -687,7 +688,7 @@ final class BrowserViewModel {
         if let firstItem = response.firstItem,
            firstItem.itemMetadata.itemId == itemId
         {
-            session.preview = .loaded(makePreviewSelection(for: firstItem))
+            preview = .loaded(makePreviewSelection(for: firstItem))
             loadMatchDataForItems([itemId])
             return
         }
@@ -695,13 +696,13 @@ final class BrowserViewModel {
         if let previousPreviewItem,
            previousPreviewItem.itemMetadata.itemId == itemId
         {
-            session.preview = .loaded(makePreviewSelection(for: previousPreviewItem))
+            preview = .loaded(makePreviewSelection(for: previousPreviewItem))
             loadMatchDataForItems([itemId])
             return
         }
 
         if let cachedItem = prefetchCache[itemId] {
-            session.preview = .loaded(makePreviewSelection(for: cachedItem))
+            preview = .loaded(makePreviewSelection(for: cachedItem))
             loadMatchDataForItems([itemId])
             return
         }
@@ -721,7 +722,7 @@ final class BrowserViewModel {
         if let firstItem = stateFirstItem,
            firstItem.itemMetadata.itemId == itemId
         {
-            session.preview = .loaded(makePreviewSelection(for: firstItem))
+            preview = .loaded(makePreviewSelection(for: firstItem))
             loadMatchDataForItems([itemId])
             prefetchAdjacentItems(around: itemId)
             maybeRefreshLinkMetadata(for: firstItem, generation: generation)
@@ -729,14 +730,14 @@ final class BrowserViewModel {
         }
 
         if let cachedItem = prefetchCache[itemId] {
-            session.preview = .loaded(makePreviewSelection(for: cachedItem))
+            preview = .loaded(makePreviewSelection(for: cachedItem))
             loadMatchDataForItems([itemId])
             prefetchAdjacentItems(around: itemId)
             maybeRefreshLinkMetadata(for: cachedItem, generation: generation)
             return
         }
 
-        session.preview = .loading(itemId: itemId, stale: stale)
+        preview = .loading(itemId: itemId, stale: stale)
         schedulePreviewSpinner(for: generation, itemId: itemId)
 
         previewTask = Task { [weak self] in
@@ -748,12 +749,12 @@ final class BrowserViewModel {
 
                 self.previewSpinnerVisible = false
                 if let item {
-                    self.session.preview = .loaded(self.makePreviewSelection(for: item))
+                    self.preview = .loaded(self.makePreviewSelection(for: item))
                     self.loadMatchDataForItems([itemId])
                     self.prefetchAdjacentItems(around: itemId)
                     self.maybeRefreshLinkMetadata(for: item, generation: generation)
                 } else {
-                    self.session.preview = .failed(itemId: itemId, stale: stale)
+                    self.preview = .failed(itemId: itemId, stale: stale)
                 }
             }
         }
@@ -792,7 +793,7 @@ final class BrowserViewModel {
                     tags: currentTags
                 )
                 let mergedPreviewItem = ClipboardItem(itemMetadata: mergedPreviewMetadata, content: updatedItem.content)
-                self.session.preview = .loaded(self.makePreviewSelection(for: mergedPreviewItem))
+                self.preview = .loaded(self.makePreviewSelection(for: mergedPreviewItem))
                 if case let .ready(response) = self.session.query {
                     let updatedItems = response.items.map { itemMatch in
                         if itemMatch.itemMetadata.itemId == updatedItem.itemMetadata.itemId {
@@ -884,7 +885,7 @@ final class BrowserViewModel {
                 guard let self,
                       self.previewGeneration == generation,
                       self.selectedItemId == itemId,
-                      case .loading = self.session.preview else { return }
+                      case .loading = self.preview else { return }
                 self.previewSpinnerVisible = true
             }
         }
@@ -907,7 +908,7 @@ final class BrowserViewModel {
             loadSelectedItem(itemId: nextSelection)
         } else if deletedSelectedItem {
             session.selection = .none
-            session.preview = .empty
+            preview = .empty
         }
     }
 
@@ -983,7 +984,7 @@ final class BrowserViewModel {
         } else {
             session.query = .idle(request: session.query.request)
         }
-        session.preview = preview
+        self.preview = preview
         session.selection = selection
     }
 
@@ -1039,7 +1040,7 @@ final class BrowserViewModel {
 
     private func mutateItemTag(itemId: Int64, tag: ItemTag, shouldInclude: Bool) {
         let snapshot = currentResponse
-        let previewSnapshot = session.preview
+        let previewSnapshot = preview
         let selectionSnapshot = session.selection
 
         pendingTagSettleTask?.cancel()
@@ -1105,12 +1106,12 @@ final class BrowserViewModel {
                !updatedMetadata.tags.contains(tag)
             {
                 session.selection = .none
-                session.preview = .empty
+                preview = .empty
                 if let firstItemId = updatedResponse.items.first?.itemMetadata.itemId {
                     select(itemId: firstItemId, origin: .automatic)
                 }
             } else if selectedItem.itemMetadata.itemId == itemId {
-                session.preview = .loaded(PreviewSelection(
+                preview = .loaded(PreviewSelection(
                     item: ClipboardItem(itemMetadata: updatedMetadata, content: selectedItem.content),
                     matchData: previewSelection?.matchData
                 ))

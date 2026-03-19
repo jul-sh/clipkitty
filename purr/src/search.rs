@@ -23,6 +23,33 @@ pub(crate) const MIN_TRIGRAM_QUERY_LEN: usize = 3;
 /// Context chars to include before/after match in snippet
 pub(crate) const SNIPPET_CONTEXT_CHARS: usize = 200;
 
+/// Build a prefix-sum table mapping Unicode scalar index → UTF-16 code unit offset.
+/// `table[i]` is the UTF-16 offset of scalar `i`; `table[len]` is the total UTF-16 length.
+fn utf16_offset_table(text: &str) -> Vec<u64> {
+    let mut table = Vec::with_capacity(text.chars().count() + 1);
+    let mut pos: u64 = 0;
+    for ch in text.chars() {
+        table.push(pos);
+        pos += ch.len_utf16() as u64;
+    }
+    table.push(pos);
+    table
+}
+
+/// Fill in `utf16_start`/`utf16_end` on each highlight using a prefix-sum table for `text`.
+fn fill_utf16_offsets(text: &str, highlights: &mut [HighlightRange]) {
+    if highlights.is_empty() {
+        return;
+    }
+    let table = utf16_offset_table(text);
+    for h in highlights.iter_mut() {
+        let s = h.start as usize;
+        let e = h.end as usize;
+        h.utf16_start = if s < table.len() { table[s] } else { *table.last().unwrap_or(&0) };
+        h.utf16_end = if e < table.len() { table[e] } else { *table.last().unwrap_or(&0) };
+    }
+}
+
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub(crate) enum SearchQuery {
     Plain {
@@ -262,6 +289,8 @@ pub(crate) fn highlight_candidate(ctx: &HighlightContext<'_>) -> FuzzyMatch {
         .map(|&(s, e, k)| HighlightRange {
             start: s as u64,
             end: e as u64,
+            utf16_start: 0,
+            utf16_end: 0,
             kind: k,
         })
         .collect();
@@ -299,6 +328,8 @@ fn indices_to_ranges_with_kind(indices: &[u32], kind: HighlightKind) -> Vec<High
         .map(|(start, end)| HighlightRange {
             start: start as u64,
             end: end as u64,
+            utf16_start: 0,
+            utf16_end: 0,
             kind,
         })
         .collect()
@@ -503,6 +534,8 @@ pub fn generate_snippet(
                 Some(HighlightRange {
                     start: (norm_start + prefix_offset) as u64,
                     end: (norm_end.min(normalized_snippet.len()) + prefix_offset) as u64,
+                    utf16_start: 0,
+                    utf16_end: 0,
                     kind: h.kind,
                 })
             } else {
@@ -516,10 +549,12 @@ pub fn generate_snippet(
 
 /// Create MatchData from a FuzzyMatch with pre-computed highlights
 pub(crate) fn create_match_data(fuzzy_match: &FuzzyMatch) -> MatchData {
-    let full_content_highlights = fuzzy_match.highlight_ranges.clone();
+    let mut full_content_highlights = fuzzy_match.highlight_ranges.clone();
+    fill_utf16_offsets(&fuzzy_match.content, &mut full_content_highlights);
     let max_len = SNIPPET_CONTEXT_CHARS * 2;
-    let (text, adjusted_highlights, line_number) =
+    let (text, mut adjusted_highlights, line_number) =
         generate_snippet(&fuzzy_match.content, &full_content_highlights, max_len);
+    fill_utf16_offsets(&text, &mut adjusted_highlights);
 
     let densest_highlight_start =
         find_densest_highlight(&full_content_highlights, SNIPPET_CONTEXT_CHARS as u64)
@@ -579,6 +614,8 @@ pub(crate) fn compute_short_query_match_data(
         .map(|start| HighlightRange {
             start: start as u64,
             end: (start + query_char_len) as u64,
+            utf16_start: 0,
+            utf16_end: 0,
             kind: if start == 0 && prefer_prefix {
                 HighlightKind::Prefix
             } else {
@@ -588,8 +625,12 @@ pub(crate) fn compute_short_query_match_data(
         .into_iter()
         .collect::<Vec<_>>();
 
+    let mut highlight = highlight;
+    fill_utf16_offsets(content, &mut highlight);
     let max_len = SNIPPET_CONTEXT_CHARS * 2;
-    let (text, adjusted_highlights, line_number) = generate_snippet(content, &highlight, max_len);
+    let (text, mut adjusted_highlights, line_number) =
+        generate_snippet(content, &highlight, max_len);
+    fill_utf16_offsets(&text, &mut adjusted_highlights);
     let densest_highlight_start = highlight.first().map(|h| h.start).unwrap_or(0);
 
     MatchData {
@@ -757,6 +798,8 @@ mod tests {
             HighlightRange {
                 start: 0,
                 end: 3,
+                utf16_start: 0,
+                utf16_end: 0,
                 kind: HighlightKind::Exact
             }
         );
@@ -765,6 +808,8 @@ mod tests {
             HighlightRange {
                 start: 5,
                 end: 7,
+                utf16_start: 0,
+                utf16_end: 0,
                 kind: HighlightKind::Exact
             }
         );
@@ -773,6 +818,8 @@ mod tests {
             HighlightRange {
                 start: 10,
                 end: 11,
+                utf16_start: 0,
+                utf16_end: 0,
                 kind: HighlightKind::Exact
             }
         );
@@ -783,6 +830,8 @@ mod tests {
         HighlightRange {
             start,
             end,
+            utf16_start: 0,
+            utf16_end: 0,
             kind: HighlightKind::Exact,
         }
     }
@@ -1136,16 +1185,22 @@ mod tests {
             HighlightRange {
                 start: 0,
                 end: 4,
+                utf16_start: 0,
+                utf16_end: 0,
                 kind: HighlightKind::Prefix,
             },
             HighlightRange {
                 start: 4,
                 end: 8,
+                utf16_start: 0,
+                utf16_end: 0,
                 kind: HighlightKind::PrefixTail,
             },
             HighlightRange {
                 start: 100,
                 end: 105,
+                utf16_start: 0,
+                utf16_end: 0,
                 kind: HighlightKind::Exact,
             },
         ];
@@ -1363,5 +1418,77 @@ error: Build failed due to failed dependency";
         let fm = hc(1, "import data", 1000, 1.0, &["impt"], false);
         assert_eq!(fm.highlight_ranges.len(), 1);
         assert_eq!(fm.highlight_ranges[0].kind, HighlightKind::Subsequence);
+    }
+
+    // ── UTF-16 offset tests ────────────────────────────────────────────
+
+    #[test]
+    fn test_utf16_offset_table_ascii() {
+        let table = super::utf16_offset_table("hello");
+        assert_eq!(table, vec![0, 1, 2, 3, 4, 5]);
+    }
+
+    #[test]
+    fn test_utf16_offset_table_emoji() {
+        // 😀 is U+1F600, which is 1 scalar but 2 UTF-16 code units (surrogate pair)
+        let table = super::utf16_offset_table("a😀b");
+        // scalar 0='a' at UTF-16 0, scalar 1='😀' at UTF-16 1, scalar 2='b' at UTF-16 3, end at 4
+        assert_eq!(table, vec![0, 1, 3, 4]);
+    }
+
+    #[test]
+    fn test_utf16_offset_table_combining() {
+        // é as NFD: 'e' (U+0065) + combining acute (U+0301), both 1 UTF-16 code unit each
+        let text = "e\u{0301}x";
+        let table = super::utf16_offset_table(text);
+        // scalar 0='e' at 0, scalar 1='\u{0301}' at 1, scalar 2='x' at 2, end at 3
+        assert_eq!(table, vec![0, 1, 2, 3]);
+    }
+
+    #[test]
+    fn test_utf16_offset_table_empty() {
+        let table = super::utf16_offset_table("");
+        assert_eq!(table, vec![0]);
+    }
+
+    #[test]
+    fn test_fill_utf16_offsets_basic() {
+        let text = "a😀bc";
+        let mut highlights = vec![hr(1, 2)]; // the emoji
+        super::fill_utf16_offsets(text, &mut highlights);
+        assert_eq!(highlights[0].utf16_start, 1);
+        assert_eq!(highlights[0].utf16_end, 3);
+    }
+
+    #[test]
+    fn test_fill_utf16_offsets_ascii_identity() {
+        let text = "hello world";
+        let mut highlights = vec![hr(6, 11)]; // "world"
+        super::fill_utf16_offsets(text, &mut highlights);
+        assert_eq!(highlights[0].utf16_start, 6);
+        assert_eq!(highlights[0].utf16_end, 11);
+    }
+
+    #[test]
+    fn test_fill_utf16_offsets_multiple_emoji() {
+        // "🇺🇸test" — flag emoji is 2 scalars (U+1F1FA, U+1F1F8), each 2 UTF-16 code units
+        let text = "🇺🇸test";
+        let mut highlights = vec![hr(2, 6)]; // "test" starts at scalar 2
+        super::fill_utf16_offsets(text, &mut highlights);
+        assert_eq!(highlights[0].utf16_start, 4);
+        assert_eq!(highlights[0].utf16_end, 8);
+    }
+
+    #[test]
+    fn test_create_match_data_fills_utf16() {
+        let fm = FuzzyMatch {
+            id: 1,
+            highlight_ranges: vec![hr(1, 3)],
+            content: "a😀😀d".to_string(),
+        };
+        let md = super::create_match_data(&fm);
+        // full_content_highlights should have UTF-16 offsets filled
+        assert_eq!(md.full_content_highlights[0].utf16_start, 1);
+        assert_eq!(md.full_content_highlights[0].utf16_end, 5); // 1 + 2 + 2
     }
 }

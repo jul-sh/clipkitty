@@ -16,7 +16,7 @@ final class PerformanceTests: XCTestCase {
         }
         emojiText += "FindThisWord"
 
-        let range = HighlightRange(start: UInt64(emojiText.unicodeScalars.count - 12), end: UInt64(emojiText.unicodeScalars.count), kind: .exact)
+        let range = HighlightRange(start: UInt64(emojiText.unicodeScalars.count - 12), end: UInt64(emojiText.unicodeScalars.count), utf16Start: 0, utf16End: 0, kind: .exact)
 
         measure {
             for _ in 0..<1000 {
@@ -28,7 +28,7 @@ final class PerformanceTests: XCTestCase {
     /// Benchmark: nsRange conversion with ASCII text (baseline)
     func testNsRangeAsciiPerformance() {
         let asciiText = String(repeating: "a", count: 1000) + "FindThisWord"
-        let range = HighlightRange(start: 1000, end: 1012, kind: .exact)
+        let range = HighlightRange(start: 1000, end: 1012, utf16Start: 0, utf16End: 0, kind: .exact)
 
         measure {
             for _ in 0..<1000 {

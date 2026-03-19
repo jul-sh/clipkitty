@@ -25,7 +25,7 @@ final class HighlightRangeTests: XCTestCase {
     func testNsRangeAsciiText() {
         // Create a highlight range for "world" in "hello world"
         // Char indices: 6-11
-        let range = HighlightRange(start: 6, end: 11, kind: .exact)
+        let range = HighlightRange(start: 6, end: 11, utf16Start: 0, utf16End: 0, kind: .exact)
         let text = "hello world"
 
         let nsRange = range.nsRange(in: text)
@@ -47,7 +47,7 @@ final class HighlightRangeTests: XCTestCase {
         //
         // "World" is at char indices 8-13, but UTF-16 indices 9-14
         let text = "Hello 👋 World"
-        let range = HighlightRange(start: 8, end: 13, kind: .exact)
+        let range = HighlightRange(start: 8, end: 13, utf16Start: 0, utf16End: 0, kind: .exact)
 
         let nsRange = range.nsRange(in: text)
 
@@ -69,7 +69,7 @@ final class HighlightRangeTests: XCTestCase {
         //
         // "Gift" is at char indices 4-8, but UTF-16 indices 7-11
         let text = "🎉🎊🎁 Gift"
-        let range = HighlightRange(start: 4, end: 8, kind: .exact)
+        let range = HighlightRange(start: 4, end: 8, utf16Start: 0, utf16End: 0, kind: .exact)
 
         let nsRange = range.nsRange(in: text)
 
@@ -84,7 +84,7 @@ final class HighlightRangeTests: XCTestCase {
     /// Test edge case: highlight at the beginning
     func testNsRangeAtBeginning() {
         let text = "Hello 👋 World"
-        let range = HighlightRange(start: 0, end: 5, kind: .exact)
+        let range = HighlightRange(start: 0, end: 5, utf16Start: 0, utf16End: 0, kind: .exact)
 
         let nsRange = range.nsRange(in: text)
 
@@ -100,7 +100,7 @@ final class HighlightRangeTests: XCTestCase {
     func testNsRangeOfEmoji() {
         let text = "Hello 👋 World"
         // 👋 is at char index 6
-        let range = HighlightRange(start: 6, end: 7, kind: .exact)
+        let range = HighlightRange(start: 6, end: 7, utf16Start: 0, utf16End: 0, kind: .exact)
 
         let nsRange = range.nsRange(in: text)
 
@@ -115,7 +115,7 @@ final class HighlightRangeTests: XCTestCase {
     /// Test bounds checking returns NSNotFound for invalid ranges
     func testNsRangeInvalidRange() {
         let text = "short"
-        let range = HighlightRange(start: 10, end: 15, kind: .exact)
+        let range = HighlightRange(start: 10, end: 15, utf16Start: 0, utf16End: 0, kind: .exact)
 
         let nsRange = range.nsRange(in: text)
 
@@ -239,7 +239,7 @@ final class HighlightRangeTests: XCTestCase {
         XCTAssertEqual(text.count, 23, "NFD text should have 23 grapheme clusters")
 
         // Rust would report "hello" at scalar indices 15-20 (after "café résumé " = 15 scalars)
-        let range = HighlightRange(start: 15, end: 20, kind: .exact)
+        let range = HighlightRange(start: 15, end: 20, utf16Start: 0, utf16End: 0, kind: .exact)
         let nsRange = range.nsRange(in: text)
 
         let nsString = text as NSString

@@ -387,6 +387,8 @@ pub enum HighlightKind {
 pub struct HighlightRange {
     pub start: u64,
     pub end: u64,
+    pub utf16_start: u64,
+    pub utf16_end: u64,
     pub kind: HighlightKind,
 }
 
