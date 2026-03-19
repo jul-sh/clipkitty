@@ -7,6 +7,8 @@ struct BrowserPreviewPane: View {
     let focusSearchField: () -> Void
     let focusTarget: FocusState<BrowserView.FocusTarget?>.Binding
 
+    private let isUITestPreviewDebugEnabled = CommandLine.arguments.contains("--use-simulated-db")
+
     var body: some View {
         Group {
             switch viewModel.selection {
@@ -63,6 +65,7 @@ struct BrowserPreviewPane: View {
         let item = content.item
         switch item.content {
         case .text, .color:
+            let previewText = viewModel.pendingEdits[item.itemMetadata.itemId] ?? item.content.textContent
             let previewDecoration: PreviewDecoration? = {
                 switch content.previewState {
                 case .plain, .loading(.missing):
@@ -72,7 +75,7 @@ struct BrowserPreviewPane: View {
                 }
             }()
             TextPreviewView(
-                text: viewModel.pendingEdits[item.itemMetadata.itemId] ?? item.content.textContent,
+                text: previewText,
                 fontName: FontManager.mono,
                 fontSize: 15,
                 highlights: previewDecoration?.highlights ?? [],
@@ -111,6 +114,20 @@ struct BrowserPreviewPane: View {
             )
             .id(previewIdentity(itemId: item.itemMetadata.itemId))
             .frame(maxWidth: .infinity, maxHeight: .infinity)
+            .overlay(alignment: .topLeading) {
+                if isUITestPreviewDebugEnabled {
+                    Color.clear
+                    .frame(width: 1, height: 1)
+                    .allowsHitTesting(false)
+                    .accessibilityElement(children: .ignore)
+                    .accessibilityLabel(previewHighlightDebugLabel(
+                        text: previewText,
+                        itemId: item.itemMetadata.itemId,
+                        previewState: content.previewState
+                    ))
+                    .accessibilityIdentifier("PreviewHighlightDebug")
+                }
+            }
         case let .image(data, description, _):
             ScrollView(.vertical, showsIndicators: true) {
                 if let image = NSImage(data: data) {
@@ -156,6 +173,33 @@ struct BrowserPreviewPane: View {
         // hierarchy on every keystroke. This bypasses the optimized highlight diffing logic
         // in `updateNSView` and causes 100% CPU hangs during rapid typing.
         return String(itemId)
+    }
+
+    private func previewHighlightDebugLabel(
+        text: String,
+        itemId: Int64,
+        previewState: SelectedPreviewState
+    ) -> String {
+        let state: String
+        let fragments: [String]
+
+        switch previewState {
+        case .plain:
+            state = "plain"
+            fragments = []
+        case .loading(.missing):
+            state = "loading-missing"
+            fragments = []
+        case let .loading(.stale(decoration)):
+            state = "loading-stale"
+            fragments = HighlightStyler.fragments(in: text, highlights: decoration.highlights)
+        case let .highlighted(decoration):
+            state = "highlighted"
+            fragments = HighlightStyler.fragments(in: text, highlights: decoration.highlights)
+        }
+
+        let joinedFragments = fragments.isEmpty ? "none" : fragments.joined(separator: "|")
+        return "item=\(itemId);state=\(state);highlights=\(joinedFragments)"
     }
 
     private func metadataFooter(for item: ClipboardItem) -> some View {

@@ -138,6 +138,22 @@ enum HighlightStyler {
         return attributed
     }
 
+    static func fragments(
+        in text: String,
+        highlights: [Utf16HighlightRange]
+    ) -> [String] {
+        highlights.compactMap { highlight in
+            guard let range = stringRange(
+                utf16Start: Int(highlight.utf16Start),
+                utf16End: Int(highlight.utf16End),
+                in: text
+            ) else {
+                return nil
+            }
+            return String(text[range])
+        }
+    }
+
     static func exactHighlights(
         in text: String,
         queryWords: [String]

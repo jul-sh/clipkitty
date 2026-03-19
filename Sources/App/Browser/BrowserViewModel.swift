@@ -1199,7 +1199,7 @@ final class BrowserViewModel {
         for payload: PreviewPayload,
         origin: SelectionOrigin
     ) -> SelectedItemState {
-        SelectedItemState(
+        return SelectedItemState(
             item: payload.item,
             origin: origin,
             previewState: payload.decoration.map(SelectedPreviewState.highlighted) ?? .plain
