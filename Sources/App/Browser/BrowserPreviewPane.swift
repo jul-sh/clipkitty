@@ -12,7 +12,14 @@ struct BrowserPreviewPane: View {
             switch viewModel.selection {
             case let .selected(content):
                 VStack(spacing: 0) {
-                    previewContent(for: content)
+                    ZStack {
+                        previewContent(for: content)
+                        if case .loading = content.previewState,
+                           viewModel.previewSpinnerVisible
+                        {
+                            ProgressView()
+                        }
+                    }
                     Divider()
                     metadataFooter(for: content.item)
                 }
@@ -57,10 +64,12 @@ struct BrowserPreviewPane: View {
         switch item.content {
         case .text, .color:
             let previewDecoration: PreviewDecoration? = {
-                if case let .highlighted(decoration) = content.previewState {
+                switch content.previewState {
+                case .plain, .loading(.missing):
+                    return nil
+                case let .loading(.stale(decoration)), let .highlighted(decoration):
                     return decoration
                 }
-                return nil
             }()
             TextPreviewView(
                 text: viewModel.pendingEdits[item.itemMetadata.itemId] ?? item.content.textContent,
@@ -70,8 +79,10 @@ struct BrowserPreviewPane: View {
                 initialScrollHighlightIndex: previewDecoration?.initialScrollHighlightIndex,
                 scrollBehavior: {
                     switch content.previewState {
-                    case .none:
+                    case .plain:
                         return .autoScroll
+                    case .loading:
+                        return .manual
                     case .highlighted:
                         return content.origin == .user ? .trackHighlight : .autoScroll
                     }

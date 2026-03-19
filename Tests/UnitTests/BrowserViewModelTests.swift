@@ -84,7 +84,6 @@ final class BrowserViewModelTests: XCTestCase {
         let refinedDecoration = makePreviewDecoration(highlightStart: 0, highlightEnd: 2)
         client.previewPayloadsByQuery = [
             "a": [1: makePreviewPayload(item: item, decoration: firstDecoration)],
-            "al": [1: makePreviewPayload(item: item, decoration: refinedDecoration)],
         ]
 
         let viewModel = BrowserViewModel(
@@ -120,6 +119,24 @@ final class BrowserViewModelTests: XCTestCase {
             firstItem: item,
             totalCount: 1
         ))
+        await flushMainActor()
+        await flushMainActor()
+
+        guard case let .selected(selectedItemState) = viewModel.selection else {
+            return XCTFail("Expected selected item to stay visible while fresh highlights load")
+        }
+        XCTAssertEqual(selectedItemState.item.itemMetadata.itemId, 1)
+        guard case let .loading(.stale(staleDecoration)) = selectedItemState.previewState else {
+            return XCTFail("Expected stale highlights while updated preview payload is pending")
+        }
+        XCTAssertEqual(staleDecoration, firstDecoration)
+        XCTAssertEqual(viewModel.previewDecoration, firstDecoration)
+
+        client.resumePreviewPayload(
+            itemId: 1,
+            query: "al",
+            with: makePreviewPayload(item: item, decoration: refinedDecoration)
+        )
         await flushMainActor()
         await flushMainActor()
 
