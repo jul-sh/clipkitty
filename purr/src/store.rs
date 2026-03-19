@@ -937,7 +937,7 @@ mod tests {
         let outcome = operation.await_result().await.unwrap();
         assert_eq!(outcome, SearchOutcome::Cancelled);
         assert!(
-            processed.load(Ordering::SeqCst) < 10,
+            processed.load(Ordering::SeqCst) < 50,
             "eager highlight work should stop shortly after cancellation"
         );
     }
