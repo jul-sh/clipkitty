@@ -181,23 +181,54 @@ final class ClipboardStore {
     private func startBootstrap() {
         guard let dbPath = resolveDatabasePath() else { return }
 
-        bootstrapTask = Task.detached(priority: .userInitiated) {
-            let plan = try inspectStoreBootstrap(dbPath: dbPath)
+        // Inspect the bootstrap plan synchronously so we can open the store
+        // without an async hop when no rebuild is needed (the common case).
+        let plan: StoreBootstrapPlan
+        do {
+            plan = try inspectStoreBootstrap(dbPath: dbPath)
+        } catch {
+            let dbError = ClipboardError.databaseInitFailed(underlying: error)
+            ErrorReporter.reportCritical(dbError)
+            lifecycle = .failed(dbError.localizedDescription)
+            state = .error(dbError.localizedDescription)
+            return
+        }
 
-            if case let .rebuildIndex(expectation) = plan,
-               expectation == .overFiveSeconds
-            {
-                await MainActor.run { [weak self] in
-                    self?.lifecycle = .rebuildingIndex
-                }
+        switch plan {
+        case .ready:
+            openSynchronously(dbPath: dbPath)
+
+        case let .rebuildIndex(expectation):
+            if expectation == .overFiveSeconds {
+                lifecycle = .rebuildingIndex
             }
+            openWithRebuild(dbPath: dbPath)
+        }
+    }
 
+    /// Fast path: no rebuild needed — open store synchronously, just like the old code.
+    private func openSynchronously(dbPath: String) {
+        do {
             let rustStore = try ClipKittyRust.ClipboardStore(dbPath: dbPath)
+            let repository = ClipboardRepository(store: rustStore)
+            self.repository = repository
+            previewLoader = PreviewLoader(repository: repository)
+            lifecycle = .ready
+            refresh()
+            pruneIfNeeded()
+        } catch {
+            let dbError = ClipboardError.databaseInitFailed(underlying: error)
+            ErrorReporter.reportCritical(dbError)
+            lifecycle = .failed(dbError.localizedDescription)
+            state = .error(dbError.localizedDescription)
+        }
+    }
 
-            if case .rebuildIndex = plan {
-                try rustStore.rebuildIndex()
-            }
-
+    /// Slow path: rebuild index on a background thread.
+    private func openWithRebuild(dbPath: String) {
+        bootstrapTask = Task.detached(priority: .userInitiated) {
+            let rustStore = try ClipKittyRust.ClipboardStore(dbPath: dbPath)
+            try rustStore.rebuildIndex()
             let repository = ClipboardRepository(store: rustStore)
             return StoreRuntime(store: rustStore, repository: repository)
         }

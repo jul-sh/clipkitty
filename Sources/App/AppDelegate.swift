@@ -78,9 +78,11 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate {
             panelController = FloatingPanelController(store: store, mode: .testing, snackbarCoordinator: snackbarCoordinator)
         }
 
+        // Start monitoring after bootstrap completes. When no rebuild is needed
+        // the store is already ready synchronously, so this fires immediately.
         Task {
             await store.awaitReady()
-            store.startMonitoring()
+            self.store.startMonitoring()
         }
 
         hotKeyManager = HotKeyManager { [weak self] in
