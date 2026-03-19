@@ -27,7 +27,7 @@ SIGNING_IDENTITY ?= $(shell security find-identity -v -p codesigning 2>/dev/null
 RUST_MARKER := .make/rust.marker
 RUST_LIB := Sources/ClipKittyRust/libpurr.a
 
-.PHONY: all clean rust rust-force generate build sign list-identities run run-perf test unittest uitest rust-test perf-test perf-db preview-highlight-screenshot
+.PHONY: all clean rust rust-force generate build sign list-identities run run-perf test unittest uitest rust-test perf-test perf-db
 
 all: rust generate build
 
@@ -126,9 +126,6 @@ uitest: all
 			-derivedDataPath $(DERIVED_DATA) \
 			2>&1 | grep -E "(Test Case|passed|failed|error:)" || true; \
 	fi
-
-preview-highlight-screenshot:
-	@$(MAKE) -C distribution preview-highlight-screenshot
 
 # Run all tests (Rust + Swift unit + UI)
 test: rust-test unittest uitest
