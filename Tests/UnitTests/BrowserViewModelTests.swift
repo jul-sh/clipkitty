@@ -368,7 +368,7 @@ final class BrowserViewModelTests: XCTestCase {
         viewModel.addTagToSelectedItem(.bookmark)
 
         XCTAssertTrue(viewModel.selectedItem?.itemMetadata.tags.contains(.bookmark) == true)
-        XCTAssertTrue(viewModel.session.query.items.first?.itemMetadata.tags.contains(.bookmark) == true)
+        XCTAssertTrue(viewModel.contentState.items.first?.itemMetadata.tags.contains(.bookmark) == true)
     }
 
     func testTagMutationFailureRollsBackState() async {
@@ -400,9 +400,9 @@ final class BrowserViewModelTests: XCTestCase {
         await flushMainActor()
 
         XCTAssertFalse(viewModel.selectedItem?.itemMetadata.tags.contains(.bookmark) ?? true)
-        XCTAssertFalse(viewModel.session.query.items.first?.itemMetadata.tags.contains(.bookmark) ?? true)
+        XCTAssertFalse(viewModel.contentState.items.first?.itemMetadata.tags.contains(.bookmark) ?? true)
 
-        guard case .failed = viewModel.session.mutation else {
+        guard case .failed = viewModel.mutationState else {
             return XCTFail("Expected failed mutation after tag rollback")
         }
     }
@@ -470,7 +470,7 @@ final class BrowserViewModelTests: XCTestCase {
         XCTAssertEqual(viewModel.itemIds, [2, 3])
         XCTAssertEqual(viewModel.selectedItemId, 2)
 
-        guard case .deleting(.pending(_)) = viewModel.session.mutation else {
+        guard case .deleting(.pending(_)) = viewModel.mutationState else {
             return XCTFail("Expected pending delete mutation")
         }
     }
@@ -506,7 +506,7 @@ final class BrowserViewModelTests: XCTestCase {
         XCTAssertEqual(viewModel.selectedItemId, 1)
         XCTAssertEqual(viewModel.selectedItem?.itemMetadata.itemId, 1)
 
-        guard case .idle = viewModel.session.mutation else {
+        guard case .idle = viewModel.mutationState else {
             return XCTFail("Expected idle mutation after undo")
         }
     }
@@ -538,8 +538,8 @@ final class BrowserViewModelTests: XCTestCase {
         XCTAssertTrue(viewModel.itemIds.isEmpty)
         XCTAssertNil(viewModel.selectedItemId)
 
-        guard case .empty = viewModel.session.preview else {
-            return XCTFail("Expected empty preview after deleting final item")
+        guard case .none = viewModel.selection else {
+            return XCTFail("Expected no selection after deleting final item")
         }
     }
 
@@ -572,7 +572,7 @@ final class BrowserViewModelTests: XCTestCase {
             return XCTFail("Expected selected item text content")
         }
         XCTAssertEqual(value, "edited text")
-        XCTAssertTrue(viewModel.session.query.items.first?.itemMetadata.snippet.contains("edited") == true)
+        XCTAssertTrue(viewModel.contentState.items.first?.itemMetadata.snippet.contains("edited") == true)
         XCTAssertEqual(client.updatedTexts.count, 1)
         XCTAssertEqual(client.updatedTexts.first?.itemId, 1)
         XCTAssertEqual(client.updatedTexts.first?.text, "edited text")
@@ -692,10 +692,10 @@ final class BrowserViewModelTests: XCTestCase {
         XCTAssertTrue(viewModel.itemIds.isEmpty)
         XCTAssertNil(viewModel.selectedItemId)
 
-        guard case .empty = viewModel.session.preview else {
-            return XCTFail("Expected empty preview after clear")
+        guard case .none = viewModel.selection else {
+            return XCTFail("Expected no selection after clear")
         }
-        guard case .idle = viewModel.session.mutation else {
+        guard case .idle = viewModel.mutationState else {
             return XCTFail("Expected idle mutation after clear success")
         }
     }
@@ -852,7 +852,7 @@ final class BrowserViewModelTests: XCTestCase {
         XCTAssertEqual(viewModel.itemIds, [2])
         XCTAssertTrue(viewModel.itemIds.contains(2))
 
-        guard case let .deleting(.pending(transaction)) = viewModel.session.mutation else {
+        guard case let .deleting(.pending(transaction)) = viewModel.mutationState else {
             return XCTFail("Expected original delete to remain pending")
         }
         XCTAssertEqual(transaction.deletedItemId, 1)
@@ -892,7 +892,7 @@ final class BrowserViewModelTests: XCTestCase {
         viewModel.dismissMutationFailure()
 
         XCTAssertNil(viewModel.mutationFailureMessage)
-        guard case .idle = viewModel.session.mutation else {
+        guard case .idle = viewModel.mutationState else {
             return XCTFail("Expected idle mutation after dismissing failure")
         }
     }
