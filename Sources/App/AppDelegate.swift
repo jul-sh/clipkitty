@@ -37,7 +37,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate {
     private var showHistoryMenuItem: NSMenuItem?
     private var statusMenu: NSMenu?
     private var cancellables = Set<AnyCancellable>()
-    private let snackbarCoordinator = SnackbarCoordinator()
+    private var snackbarCoordinator: SnackbarCoordinator!
     #if SPARKLE_RELEASE
         private var updater: SparkleAppUpdater?
     #endif
@@ -57,8 +57,6 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate {
     func applicationDidFinishLaunching(_: Notification) {
         FontManager.registerFonts()
 
-        snackbarCoordinator.syncWithSystem()
-
         if case .simulatedDatabase = launchMode {
             populateTestDatabase()
         }
@@ -66,11 +64,25 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate {
         switch launchMode {
         case .production:
             store = ClipboardStore(screenshotMode: false)
-            store.startMonitoring()
-            panelController = FloatingPanelController(store: store, mode: .production, snackbarCoordinator: snackbarCoordinator)
         case .simulatedDatabase:
             store = ClipboardStore(screenshotMode: true)
+        }
+
+        snackbarCoordinator = SnackbarCoordinator(store: store)
+        snackbarCoordinator.syncWithSystem()
+
+        switch launchMode {
+        case .production:
+            panelController = FloatingPanelController(store: store, mode: .production, snackbarCoordinator: snackbarCoordinator)
+        case .simulatedDatabase:
             panelController = FloatingPanelController(store: store, mode: .testing, snackbarCoordinator: snackbarCoordinator)
+        }
+
+        // Start monitoring after bootstrap completes. When no rebuild is needed
+        // the store is already ready synchronously, so this fires immediately.
+        Task {
+            await store.awaitReady()
+            self.store.startMonitoring()
         }
 
         hotKeyManager = HotKeyManager { [weak self] in
@@ -113,14 +125,17 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate {
             showWelcome()
         }
 
-        // When using simulated DB, show the panel immediately
+        // When using simulated DB, wait for bootstrap then show the panel
         if case let .simulatedDatabase(initialSearchQuery) = launchMode {
             if let searchQuery = initialSearchQuery {
                 panelController.initialSearchQuery = searchQuery
             }
 
-            panelController.show()
-            NSApp.activate(ignoringOtherApps: true)
+            Task {
+                await store.awaitReady()
+                panelController.show()
+                NSApp.activate(ignoringOtherApps: true)
+            }
         }
     }
 

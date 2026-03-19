@@ -2,6 +2,7 @@
 
 use purr::search::generate_preview;
 use purr::{ClipboardStore, ClipboardStoreApi, HighlightKind, RowDecoration};
+use tempfile::TempDir;
 
 fn utf16_slice(text: &str, start: u64, end: u64) -> String {
     let code_units: Vec<u16> = text.encode_utf16().collect();
@@ -9,7 +10,9 @@ fn utf16_slice(text: &str, start: u64, end: u64) -> String {
 }
 
 async fn row_decoration_for(content: &str, query: &str) -> RowDecoration {
-    let store = ClipboardStore::new_in_memory().unwrap();
+    let dir = TempDir::new().unwrap();
+    let db_path = dir.path().join("test.db");
+    let store = ClipboardStore::new(db_path.to_str().unwrap().to_string()).unwrap();
     store.save_text(content.to_string(), None, None).unwrap();
 
     let result = store.search(query.to_string()).await.unwrap();
