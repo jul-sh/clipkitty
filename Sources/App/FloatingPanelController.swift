@@ -31,6 +31,8 @@ final class FloatingPanelController: NSObject, NSWindowDelegate {
     private let snackbarWindow: SnackbarWindow
     private let snackbarCoordinator: SnackbarCoordinator
 
+    private var snackbarObservationTask: Task<Void, Never>?
+
     /// Debounce interval to prevent rapid toggle race conditions
     private var lastToggleTime: Date?
     private let toggleDebounceInterval: TimeInterval = 0.15
@@ -232,10 +234,27 @@ final class FloatingPanelController: NSObject, NSWindowDelegate {
         let m = Self.animationMargin
         let contentFrame = panel.frame.insetBy(dx: m, dy: m)
         snackbarWindow.showIfNeeded(relativeTo: contentFrame)
+        startSnackbarObservation()
+    }
+
+    private func startSnackbarObservation() {
+        snackbarObservationTask?.cancel()
+        snackbarObservationTask = Task { [weak self] in
+            guard let self else { return }
+            while !Task.isCancelled {
+                try? await Task.sleep(for: .seconds(1))
+                guard !Task.isCancelled, case .visible = self.panelState else { break }
+                let m = Self.animationMargin
+                let contentFrame = self.panel.frame.insetBy(dx: m, dy: m)
+                self.snackbarWindow.showIfNeeded(relativeTo: contentFrame)
+            }
+        }
     }
 
     @discardableResult
     func hide() -> NSRunningApplication? {
+        snackbarObservationTask?.cancel()
+        snackbarObservationTask = nil
         snackbarWindow.hide()
 
         let previousApp: NSRunningApplication?

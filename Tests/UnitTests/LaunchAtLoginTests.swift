@@ -92,13 +92,13 @@ final class SnackbarSchedulerTests: XCTestCase {
     // MARK: - Info priority tests
 
     func testInfoTrumpsNudge() {
-        let env = MockSnackbarEnvironment(isRebuildingIndex: true, rebuildProgress: 0.5)
-        XCTAssertEqual(evaluateSnackbar(env), .show(.info(.rebuildingIndex(progress: 0.5))))
+        let env = MockSnackbarEnvironment(isRebuildingIndex: true)
+        XCTAssertEqual(evaluateSnackbar(env), .show(.info(.rebuildingIndex)))
     }
 
-    func testInfoWithProgress() {
-        let env = MockSnackbarEnvironment(isRebuildingIndex: true, rebuildProgress: 0.75)
-        XCTAssertEqual(evaluateSnackbar(env), .show(.info(.rebuildingIndex(progress: 0.75))))
+    func testInfoShownDuringRebuild() {
+        let env = MockSnackbarEnvironment(isRebuildingIndex: true)
+        XCTAssertEqual(evaluateSnackbar(env), .show(.info(.rebuildingIndex)))
     }
 
     // MARK: - Cooldown tests
@@ -149,18 +149,17 @@ final class SnackbarSchedulerTests: XCTestCase {
 
 private struct MockSnackbarEnvironment: SnackbarEnvironment {
     var isRebuildingIndex: Bool = false
-    var rebuildProgress: Double = 0
 
     var lastInfoDismissDate: Date? = nil
     var lastNudgeInteractionDate: Date? = nil
     var cooldownAfterInfo: TimeInterval = 3600
     var cooldownAfterNudgeInteraction: TimeInterval = 7 * 24 * 60 * 60
-    var now: Date = Date()
 
     var isLaunchAtLoginSystemEnabled: Bool = false
     var isLaunchAtLoginDismissed: Bool = false
     var firstLaunchDate: Date = Date.distantPast
     var minimumUseDuration: TimeInterval = 3600
+    var now: Date = Date()
 }
 
 private final class MockLaunchAtLoginService: LaunchAtLoginServiceProtocol {

@@ -12,7 +12,6 @@ enum SnackbarDecision: Equatable {
 protocol SnackbarEnvironment {
     // Info conditions
     var isRebuildingIndex: Bool { get }
-    var rebuildProgress: Double { get }
 
     // Cooldowns
     var lastInfoDismissDate: Date? { get }
@@ -33,7 +32,7 @@ protocol SnackbarEnvironment {
 func evaluateSnackbar(_ env: SnackbarEnvironment) -> SnackbarDecision {
     // 1. Info conditions take priority
     if env.isRebuildingIndex {
-        return .show(.info(.rebuildingIndex(progress: env.rebuildProgress)))
+        return .show(.info(.rebuildingIndex))
     }
 
     // 2. Cooldown after info dismissed
@@ -72,8 +71,13 @@ private func evaluateLaunchAtLoginNudge(_ env: SnackbarEnvironment) -> Bool {
 
 @MainActor
 struct LiveSnackbarEnvironment: SnackbarEnvironment {
-    var isRebuildingIndex: Bool { false }
-    var rebuildProgress: Double { 0 }
+    private weak var store: ClipboardStore?
+
+    init(store: ClipboardStore? = nil) {
+        self.store = store
+    }
+
+    var isRebuildingIndex: Bool { store?.lifecycle == .rebuildingIndex }
 
     var lastInfoDismissDate: Date? { AppSettings.shared.lastInfoDismissDate }
     var lastNudgeInteractionDate: Date? { AppSettings.shared.lastNudgeInteractionDate }
