@@ -2,10 +2,13 @@ use crate::database::Database;
 use crate::indexer::Indexer;
 use crate::interface::{
     ClipKittyError, ClipboardItem, ContentTypeFilter, ItemMatch, ItemQueryFilter, ItemTag,
-    PreviewDecoration, RowDecorationResult, SearchResult,
+    PreviewPayload, RowDecoration, RowDecorationResult, SearchResult,
 };
 use crate::models::StoredItem;
 use crate::search::{self, MIN_TRIGRAM_QUERY_LEN};
+use parking_lot::Mutex;
+use std::collections::{HashMap, HashSet, VecDeque};
+use std::hash::{DefaultHasher, Hash, Hasher};
 use std::sync::Arc;
 use tokio_util::sync::CancellationToken;
 
@@ -19,6 +22,8 @@ pub(crate) mod test_support {
     pub(crate) struct SearchTestHooks {
         pub(crate) before_eager_matches: Option<Arc<dyn Fn() + Send + Sync>>,
         pub(crate) on_eager_match: Option<Arc<dyn Fn(usize) + Send + Sync>>,
+        pub(crate) on_analysis_cache_hit: Option<Arc<dyn Fn(i64, String) + Send + Sync>>,
+        pub(crate) on_analysis_computed: Option<Arc<dyn Fn(i64, String) + Send + Sync>>,
     }
 
     static HOOKS: Lazy<Mutex<SearchTestHooks>> =
@@ -50,6 +55,20 @@ pub(crate) mod test_support {
             callback(index);
         }
     }
+
+    pub(crate) fn on_analysis_cache_hit(item_id: i64, query: &str) {
+        let callback = HOOKS.lock().on_analysis_cache_hit.clone();
+        if let Some(callback) = callback {
+            callback(item_id, query.to_string());
+        }
+    }
+
+    pub(crate) fn on_analysis_computed(item_id: i64, query: &str) {
+        let callback = HOOKS.lock().on_analysis_computed.clone();
+        if let Some(callback) = callback {
+            callback(item_id, query.to_string());
+        }
+    }
 }
 
 /// Number of results to eagerly compute row decoration for (the rest are lazy).
@@ -61,10 +80,105 @@ const EAGER_SHORT_RESULT_LIMIT: usize = 200;
 const SHORT_QUERY_MAX_RESULTS: usize = 50;
 const SHORT_QUERY_RECENT_WINDOW: usize = 5000;
 const SHORT_QUERY_CONTENT_CAP: usize = 512;
+const MAX_CACHED_QUERIES: usize = 4;
+const MAX_CACHED_ITEMS_PER_QUERY: usize = 256;
+
+#[derive(Clone)]
+struct CachedHighlightAnalysis {
+    content_hash: u64,
+    analysis: Arc<search::HighlightAnalysis>,
+}
+
+#[derive(Default)]
+struct HighlightAnalysisCacheState {
+    query_order: VecDeque<String>,
+    entries_by_query: HashMap<String, HashMap<i64, CachedHighlightAnalysis>>,
+}
+
+#[derive(Default)]
+pub(crate) struct HighlightAnalysisCache {
+    state: Mutex<HighlightAnalysisCacheState>,
+}
+
+impl HighlightAnalysisCache {
+    fn normalized_query(query: &str) -> Option<String> {
+        let trimmed = query.trim();
+        if trimmed.is_empty() {
+            return None;
+        }
+        Some(trimmed.to_string())
+    }
+
+    fn content_hash(content: &str) -> u64 {
+        let mut hasher = DefaultHasher::new();
+        content.hash(&mut hasher);
+        hasher.finish()
+    }
+
+    fn touch_query(state: &mut HighlightAnalysisCacheState, query_key: &str) {
+        if let Some(position) = state.query_order.iter().position(|entry| entry == query_key) {
+            state.query_order.remove(position);
+        }
+        state.query_order.push_back(query_key.to_string());
+        while state.query_order.len() > MAX_CACHED_QUERIES {
+            if let Some(oldest) = state.query_order.pop_front() {
+                state.entries_by_query.remove(&oldest);
+            }
+        }
+    }
+
+    fn get(&self, query: &str, item_id: i64, content: &str) -> Option<Arc<search::HighlightAnalysis>> {
+        let query_key = Self::normalized_query(query)?;
+        let content_hash = Self::content_hash(content);
+        let mut state = self.state.lock();
+        let cached = state
+            .entries_by_query
+            .get_mut(&query_key)
+            .and_then(|entries| match entries.get(&item_id) {
+                Some(entry) if entry.content_hash == content_hash => Some(Arc::clone(&entry.analysis)),
+                Some(_) => {
+                    entries.remove(&item_id);
+                    None
+                }
+                None => None,
+            });
+        if cached.is_some() {
+            Self::touch_query(&mut state, &query_key);
+        }
+        cached
+    }
+
+    fn insert(
+        &self,
+        query: &str,
+        item_id: i64,
+        content: &str,
+        analysis: Arc<search::HighlightAnalysis>,
+    ) {
+        let Some(query_key) = Self::normalized_query(query) else {
+            return;
+        };
+        let content_hash = Self::content_hash(content);
+        let mut state = self.state.lock();
+        Self::touch_query(&mut state, &query_key);
+        let entries = state.entries_by_query.entry(query_key).or_default();
+        if !entries.contains_key(&item_id) && entries.len() >= MAX_CACHED_ITEMS_PER_QUERY {
+            return;
+        }
+        entries.insert(
+            item_id,
+            CachedHighlightAnalysis {
+                content_hash,
+                analysis,
+            },
+        );
+    }
+}
 
 pub(crate) struct SearchContext {
     pub(crate) db: Arc<Database>,
     pub(crate) indexer: Arc<Indexer>,
+    pub(crate) cache: Arc<HighlightAnalysisCache>,
     pub(crate) runtime: tokio::runtime::Handle,
     pub(crate) token: CancellationToken,
 }
@@ -86,6 +200,7 @@ pub(crate) async fn execute_search(
     let SearchContext {
         db,
         indexer,
+        cache,
         runtime,
         token,
     } = context;
@@ -94,12 +209,14 @@ pub(crate) async fn execute_search(
     let runtime_for_closure = runtime.clone();
     let db_for_closure = Arc::clone(&db);
     let indexer_for_closure = Arc::clone(&indexer);
+    let cache_for_closure = Arc::clone(&cache);
     let token_for_closure = token.clone();
 
     let handle = runtime.spawn_blocking(move || {
         execute_search_sync(
             &db_for_closure,
             &indexer_for_closure,
+            &cache_for_closure,
             &parsed_query_owned,
             filter_copy,
             &token_for_closure,
@@ -113,9 +230,11 @@ pub(crate) async fn execute_search(
         Err(_join_error) => return Err(ClipKittyError::Cancelled),
     };
 
-    let first_item = fetch_first_item(
+    let first_preview_payload = fetch_preview_payload(
         &db,
+        &cache,
         matches.first().map(|item| item.item_metadata.item_id),
+        parsed_query.raw_text(),
         &token,
         &runtime,
     )?;
@@ -123,12 +242,13 @@ pub(crate) async fn execute_search(
     Ok(SearchResult {
         matches,
         total_count,
-        first_item,
+        first_preview_payload,
     })
 }
 
 pub(crate) fn compute_row_decorations(
     db: &Database,
+    cache: &HighlightAnalysisCache,
     item_ids: Vec<i64>,
     query: String,
 ) -> Result<Vec<RowDecorationResult>, ClipKittyError> {
@@ -137,13 +257,10 @@ pub(crate) fn compute_row_decorations(
     }
 
     let items = db.fetch_items_by_ids(&item_ids)?;
-    let item_map: std::collections::HashMap<i64, StoredItem> = items
+    let item_map: HashMap<i64, StoredItem> = items
         .into_iter()
         .filter_map(|item| item.id.map(|id| (id, item)))
         .collect();
-
-    let trimmed = query.trim();
-    let is_prefix_query = trimmed.len() < search::MIN_TRIGRAM_QUERY_LEN;
 
     use rayon::prelude::*;
     let results: Vec<RowDecorationResult> = item_ids
@@ -151,11 +268,7 @@ pub(crate) fn compute_row_decorations(
         .map(|id| {
             let decoration = item_map.get(id).map(|item| {
                 let content = item.content.text_content();
-                if is_prefix_query {
-                    search::compute_row_decoration(content, trimmed)
-                } else {
-                    search::compute_row_decoration(content, &query)
-                }
+                row_decoration_for_item(cache, *id, content, &query)
             });
             RowDecorationResult {
                 item_id: *id,
@@ -167,23 +280,23 @@ pub(crate) fn compute_row_decorations(
     Ok(results)
 }
 
-pub(crate) fn compute_preview_decoration(
+pub(crate) fn load_preview_payload(
     db: &Database,
+    cache: &HighlightAnalysisCache,
     item_id: i64,
     query: String,
-) -> Result<Option<PreviewDecoration>, ClipKittyError> {
+) -> Result<Option<PreviewPayload>, ClipKittyError> {
     let Some(item) = db.fetch_items_by_ids(&[item_id])?.into_iter().next() else {
         return Ok(None);
     };
-
-    Ok(search::compute_preview_decoration(
-        item.content.text_content(),
-        &query,
-    ))
+    let mut item = item.to_clipboard_item();
+    hydrate_clipboard_item_tags(db, &mut item)?;
+    Ok(Some(preview_payload_from_item(cache, item_id, item, &query)))
 }
 
 pub(crate) fn search_short_query_sync(
     db: &Database,
+    cache: &HighlightAnalysisCache,
     query: &str,
     prefix_only: bool,
     token: &CancellationToken,
@@ -241,7 +354,7 @@ pub(crate) fn search_short_query_sync(
     }
 
     let stored_items = db.fetch_items_by_ids_interruptible(&ordered_ids, token, runtime)?;
-    let item_map: std::collections::HashMap<i64, StoredItem> = stored_items
+    let item_map: HashMap<i64, StoredItem> = stored_items
         .into_iter()
         .filter_map(|item| item.id.map(|id| (id, item)))
         .collect();
@@ -253,7 +366,7 @@ pub(crate) fn search_short_query_sync(
                 let content = item.content.text_content();
                 ItemMatch {
                     item_metadata: item.to_metadata(),
-                    row_decoration: Some(search::compute_row_decoration(content, trimmed)),
+                    row_decoration: Some(row_decoration_for_item(cache, *id, content, trimmed)),
                 }
             })
         })
@@ -265,6 +378,7 @@ pub(crate) fn search_short_query_sync(
 pub(crate) fn search_trigram_query_sync(
     db: &Database,
     indexer: &Indexer,
+    cache: &HighlightAnalysisCache,
     query: &search::SearchQuery,
     token: &CancellationToken,
     runtime: &tokio::runtime::Handle,
@@ -287,16 +401,12 @@ pub(crate) fn search_trigram_query_sync(
     }
 
     let tagged_ids = if let Some(tag) = tag {
-        Some(
-            db.filter_ids_by_tag(&ids, tag)?
-                .into_iter()
-                .collect::<std::collections::HashSet<_>>(),
-        )
+        Some(db.filter_ids_by_tag(&ids, tag)?.into_iter().collect::<HashSet<_>>())
     } else {
         None
     };
 
-    let item_map: std::collections::HashMap<i64, StoredItem> = stored_items
+    let item_map: HashMap<i64, StoredItem> = stored_items
         .into_iter()
         .filter_map(|item| item.id.map(|id| (id, item)))
         .filter(|(id, _)| match &tagged_ids {
@@ -328,7 +438,15 @@ pub(crate) fn search_trigram_query_sync(
             if token.is_cancelled() {
                 return Err(ClipKittyError::Cancelled);
             }
-            search::create_item_match(item, query.raw_text())
+            ItemMatch {
+                item_metadata: item.to_metadata(),
+                row_decoration: Some(row_decoration_for_item(
+                    cache,
+                    fuzzy_match.id,
+                    content,
+                    query.raw_text(),
+                )),
+            }
         } else {
             search::create_lazy_item_match(item)
         };
@@ -353,9 +471,11 @@ fn execute_empty_query(
         tag_filter.as_ref(),
     )?;
     hydrate_item_metadata_tags(&context.db, &mut items)?;
-    let first_item = fetch_first_item(
+    let first_preview_payload = fetch_preview_payload(
         &context.db,
+        &context.cache,
         items.first().map(|item| item.item_id),
+        "",
         &context.token,
         &context.runtime,
     )?;
@@ -370,13 +490,14 @@ fn execute_empty_query(
     Ok(SearchResult {
         matches,
         total_count,
-        first_item,
+        first_preview_payload,
     })
 }
 
 fn execute_search_sync(
     db: &Database,
     indexer: &Indexer,
+    cache: &HighlightAnalysisCache,
     parsed_query: &search::SearchQuery,
     filter: ItemQueryFilter,
     token: &CancellationToken,
@@ -387,6 +508,7 @@ fn execute_search_sync(
         match parsed_query {
             search::SearchQuery::Plain { text } => search_short_query_sync(
                 db,
+                cache,
                 text,
                 false,
                 token,
@@ -396,6 +518,7 @@ fn execute_search_sync(
             )?,
             search::SearchQuery::PreferPrefix { stripped_text, .. } => search_short_query_sync(
                 db,
+                cache,
                 stripped_text,
                 true,
                 token,
@@ -408,6 +531,7 @@ fn execute_search_sync(
         search_trigram_query_sync(
             db,
             indexer,
+            cache,
             parsed_query,
             token,
             runtime,
@@ -421,25 +545,32 @@ fn execute_search_sync(
     Ok((matches, total_count))
 }
 
-fn fetch_first_item(
+fn fetch_preview_payload(
     db: &Database,
+    cache: &HighlightAnalysisCache,
     first_item_id: Option<i64>,
+    query: &str,
     token: &CancellationToken,
     runtime: &tokio::runtime::Handle,
-) -> Result<Option<ClipboardItem>, ClipKittyError> {
+) -> Result<Option<PreviewPayload>, ClipKittyError> {
     let Some(first_item_id) = first_item_id else {
         return Ok(None);
     };
     let item = db
         .fetch_items_by_ids_interruptible(&[first_item_id], token, runtime)?
         .into_iter()
-        .next()
-        .map(|item| item.to_clipboard_item());
-    let mut item = item;
-    if let Some(item) = item.as_mut() {
-        hydrate_clipboard_item_tags(db, item)?;
-    }
-    Ok(item)
+        .next();
+    let Some(item) = item else {
+        return Ok(None);
+    };
+    let mut item = item.to_clipboard_item();
+    hydrate_clipboard_item_tags(db, &mut item)?;
+    Ok(Some(preview_payload_from_item(
+        cache,
+        first_item_id,
+        item,
+        query,
+    )))
 }
 
 fn split_filter(filter: ItemQueryFilter) -> (Option<ContentTypeFilter>, Option<ItemTag>) {
@@ -487,4 +618,49 @@ fn hydrate_clipboard_item_tags(
         .cloned()
         .unwrap_or_default();
     Ok(())
+}
+
+fn analysis_for_item(
+    cache: &HighlightAnalysisCache,
+    item_id: i64,
+    content: &str,
+    query: &str,
+) -> Option<Arc<search::HighlightAnalysis>> {
+    if let Some(cached) = cache.get(query, item_id, content) {
+        #[cfg(test)]
+        test_support::on_analysis_cache_hit(item_id, query);
+        return Some(cached);
+    }
+
+    let analysis = search::analyze_content_for_query(content, query)?;
+    #[cfg(test)]
+    test_support::on_analysis_computed(item_id, query);
+    let analysis = Arc::new(analysis);
+    cache.insert(query, item_id, content, Arc::clone(&analysis));
+    Some(analysis)
+}
+
+fn row_decoration_for_item(
+    cache: &HighlightAnalysisCache,
+    item_id: i64,
+    content: &str,
+    query: &str,
+) -> RowDecoration {
+    if let Some(analysis) = analysis_for_item(cache, item_id, content, query) {
+        search::create_row_decoration(content, &analysis.highlights)
+    } else {
+        search::compute_row_decoration(content, query)
+    }
+}
+
+fn preview_payload_from_item(
+    cache: &HighlightAnalysisCache,
+    item_id: i64,
+    item: ClipboardItem,
+    query: &str,
+) -> PreviewPayload {
+    let decoration = analysis_for_item(cache, item_id, item.content.text_content(), query)
+        .map(|analysis| search::create_preview_decoration(item.content.text_content(), &analysis));
+
+    PreviewPayload { item, decoration }
 }

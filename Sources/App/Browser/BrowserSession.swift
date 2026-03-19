@@ -9,8 +9,12 @@ struct SearchRequest: Hashable {
 struct BrowserSearchResponse {
     let request: SearchRequest
     let items: [ItemMatch]
-    let firstItem: ClipboardItem?
+    let firstPreviewPayload: PreviewPayload?
     let totalCount: Int
+
+    var firstItem: ClipboardItem? {
+        firstPreviewPayload?.item
+    }
 }
 
 enum QueryLoadPhase {
@@ -59,12 +63,12 @@ enum BrowserContentState {
         }
     }
 
-    var firstItem: ClipboardItem? {
+    var firstPreviewPayload: PreviewPayload? {
         switch self {
         case let .loaded(content):
-            return content.response.firstItem
+            return content.response.firstPreviewPayload
         case let .loading(_, previous, _), let .failed(_, _, previous):
-            return previous?.response.firstItem
+            return previous?.response.firstPreviewPayload
         case .idle:
             return nil
         }
@@ -90,16 +94,15 @@ enum SelectionOrigin {
     case user
 }
 
-enum PreviewDecorationState: Equatable {
+enum SelectedPreviewState: Equatable {
     case none
-    case loading(query: String)
-    case loaded(PreviewDecoration)
+    case highlighted(PreviewDecoration)
 }
 
 struct SelectedItemState: Equatable {
     let item: ClipboardItem
     let origin: SelectionOrigin
-    let decorationState: PreviewDecorationState
+    let previewState: SelectedPreviewState
 }
 
 enum SelectionState {

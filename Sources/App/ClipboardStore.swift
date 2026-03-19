@@ -267,9 +267,9 @@ final class ClipboardStore {
         return await repository.computeRowDecorations(itemIds: itemIds, query: query)
     }
 
-    func loadPreviewDecoration(itemId: Int64, query: String) async -> PreviewDecoration? {
+    func loadPreviewPayload(itemId: Int64, query: String) async -> PreviewPayload? {
         guard let repository else { return nil }
-        return await repository.computePreviewDecoration(itemId: itemId, query: query)
+        return await repository.loadPreviewPayload(itemId: itemId, query: query)
     }
 
     /// Fetch link metadata using LinkPresentation and persist to database
@@ -310,7 +310,11 @@ final class ClipboardStore {
             let oldState = state
             CATransaction.begin()
             CATransaction.setDisableActions(true)
-            state = .results(query: query, items: searchResult.matches, firstItem: searchResult.firstItem)
+            state = .results(
+                query: query,
+                items: searchResult.matches,
+                firstItem: searchResult.firstPreviewPayload?.item
+            )
             CATransaction.commit()
 
             Task.detached(priority: .background) {

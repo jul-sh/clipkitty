@@ -73,7 +73,6 @@ impl SearchQuery {
 pub(crate) struct FuzzyMatch {
     pub(crate) id: i64,
     pub(crate) highlight_ranges: Vec<HighlightRange>,
-    pub(crate) content: String,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -81,6 +80,12 @@ pub(crate) struct HighlightRange {
     pub(crate) start: u64,
     pub(crate) end: u64,
     pub(crate) kind: HighlightKind,
+}
+
+#[derive(Debug, Clone)]
+pub(crate) struct HighlightAnalysis {
+    pub(crate) highlights: Vec<HighlightRange>,
+    pub(crate) initial_scroll_highlight_index: Option<u64>,
 }
 
 fn utf16_offset_table(text: &str) -> Vec<u64> {
@@ -152,7 +157,6 @@ pub(crate) fn search_trigram_lazy(
         .map(|c| FuzzyMatch {
             id: c.id,
             highlight_ranges: Vec::new(), // Lazy: no highlights
-            content: c.content().to_string(),
         })
         .collect();
 
@@ -310,7 +314,6 @@ pub(crate) fn highlight_candidate(ctx: &HighlightContext<'_>) -> FuzzyMatch {
     FuzzyMatch {
         id: ctx.id,
         highlight_ranges,
-        content: ctx.content.to_string(),
     }
 }
 
@@ -555,11 +558,11 @@ pub(crate) fn generate_snippet(
     (final_snippet, adjusted_highlights, line_number)
 }
 
-/// Create row decoration from a FuzzyMatch with pre-computed highlights.
-pub(crate) fn create_row_decoration(fuzzy_match: &FuzzyMatch) -> RowDecoration {
+/// Create row decoration from full-content scalar highlights.
+pub(crate) fn create_row_decoration(content: &str, highlights: &[HighlightRange]) -> RowDecoration {
     let max_len = SNIPPET_CONTEXT_CHARS * 2;
     let (text, adjusted_highlights, line_number) =
-        generate_snippet(&fuzzy_match.content, &fuzzy_match.highlight_ranges, max_len);
+        generate_snippet(content, highlights, max_len);
     let highlights = scalar_highlights_to_utf16(&text, &adjusted_highlights);
 
     RowDecoration {
@@ -572,23 +575,11 @@ pub(crate) fn create_row_decoration(fuzzy_match: &FuzzyMatch) -> RowDecoration {
 /// Create preview decoration from scalar full-content highlights.
 pub(crate) fn create_preview_decoration(
     content: &str,
-    highlights: &[HighlightRange],
+    analysis: &HighlightAnalysis,
 ) -> PreviewDecoration {
-    let initial_scroll_highlight_index =
-        find_densest_highlight(highlights, SNIPPET_CONTEXT_CHARS as u64).map(|idx| idx as u64);
-
     PreviewDecoration {
-        highlights: scalar_highlights_to_utf16(content, highlights),
-        initial_scroll_highlight_index,
-    }
-}
-
-/// Create ItemMatch with eager row decoration.
-pub(crate) fn create_item_match(item: &StoredItem, query: &str) -> ItemMatch {
-    let content = item.content.text_content();
-    ItemMatch {
-        item_metadata: item.to_metadata(),
-        row_decoration: Some(compute_row_decoration(content, query)),
+        highlights: scalar_highlights_to_utf16(content, &analysis.highlights),
+        initial_scroll_highlight_index: analysis.initial_scroll_highlight_index,
     }
 }
 
@@ -667,6 +658,22 @@ fn compute_scalar_highlights(content: &str, query: &str) -> Vec<HighlightRange> 
     fm.highlight_ranges
 }
 
+pub(crate) fn analyze_content_for_query(content: &str, query: &str) -> Option<HighlightAnalysis> {
+    let trimmed = query.trim();
+    if trimmed.is_empty() {
+        return None;
+    }
+
+    let highlights = compute_scalar_highlights(content, trimmed);
+    let initial_scroll_highlight_index =
+        find_densest_highlight(&highlights, SNIPPET_CONTEXT_CHARS as u64).map(|idx| idx as u64);
+
+    Some(HighlightAnalysis {
+        highlights,
+        initial_scroll_highlight_index,
+    })
+}
+
 /// Compute row decoration for an item given a query.
 pub(crate) fn compute_row_decoration(content: &str, query: &str) -> RowDecoration {
     let trimmed = query.trim();
@@ -680,23 +687,8 @@ pub(crate) fn compute_row_decoration(content: &str, query: &str) -> RowDecoratio
         };
     }
 
-    let highlights = compute_scalar_highlights(content, trimmed);
-    create_row_decoration(&FuzzyMatch {
-        id: 0,
-        highlight_ranges: highlights,
-        content: content.to_string(),
-    })
-}
-
-/// Compute preview decoration for an item given a query.
-pub(crate) fn compute_preview_decoration(content: &str, query: &str) -> Option<PreviewDecoration> {
-    let trimmed = query.trim();
-    if trimmed.is_empty() {
-        return None;
-    }
-
-    let highlights = compute_scalar_highlights(content, trimmed);
-    Some(create_preview_decoration(content, &highlights))
+    let analysis = analyze_content_for_query(content, trimmed).expect("non-empty query should analyze");
+    create_row_decoration(content, &analysis.highlights)
 }
 
 /// Tokenize text into tokens with char offsets.
@@ -1357,7 +1349,13 @@ error: Build failed due to failed dependency";
         assert_eq!(third.kind, HighlightKind::PrefixTail);
         assert_eq!(third_highlighted, "tion");
 
-        let preview = create_preview_decoration(content, &highlights);
+        let preview = create_preview_decoration(
+            content,
+            &HighlightAnalysis {
+                initial_scroll_highlight_index: Some(0),
+                highlights: highlights.clone(),
+            },
+        );
         assert_eq!(preview.initial_scroll_highlight_index, Some(0));
 
         let row = compute_row_decoration(content, "func");

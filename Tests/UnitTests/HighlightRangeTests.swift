@@ -52,8 +52,10 @@ final class HighlightRangeTests: XCTestCase {
             return XCTFail("Expected search result")
         }
 
-        guard let decoration = try store.computePreviewDecoration(itemId: itemId, query: "Files") else {
-            return XCTFail("Expected preview decoration")
+        guard let payload = try store.loadPreviewPayload(itemId: itemId, query: "Files"),
+              let decoration = payload.decoration
+        else {
+            return XCTFail("Expected preview payload with decoration")
         }
 
         XCTAssertTrue(decoration.highlights.contains { extractedText(from: $0, in: text) == "Files" })
@@ -74,8 +76,10 @@ final class HighlightRangeTests: XCTestCase {
             return XCTFail("Expected search result")
         }
 
-        guard let decoration = try store.computePreviewDecoration(itemId: itemId, query: "Files") else {
-            return XCTFail("Expected preview decoration")
+        guard let payload = try store.loadPreviewPayload(itemId: itemId, query: "Files"),
+              let decoration = payload.decoration
+        else {
+            return XCTFail("Expected preview payload with decoration")
         }
 
         XCTAssertFalse(decoration.highlights.isEmpty)
@@ -94,8 +98,10 @@ final class HighlightRangeTests: XCTestCase {
             return XCTFail("Expected search result")
         }
 
-        guard let decoration = try store.computePreviewDecoration(itemId: itemId, query: "hello") else {
-            return XCTFail("Expected preview decoration")
+        guard let payload = try store.loadPreviewPayload(itemId: itemId, query: "hello"),
+              let decoration = payload.decoration
+        else {
+            return XCTFail("Expected preview payload with decoration")
         }
 
         XCTAssertTrue(decoration.highlights.contains { extractedText(from: $0, in: text) == "hello" })
@@ -111,8 +117,10 @@ final class HighlightRangeTests: XCTestCase {
             return XCTFail("Expected search result")
         }
 
-        guard let decoration = try store.computePreviewDecoration(itemId: itemId, query: "beta") else {
-            return XCTFail("Expected preview decoration")
+        guard let payload = try store.loadPreviewPayload(itemId: itemId, query: "beta"),
+              let decoration = payload.decoration
+        else {
+            return XCTFail("Expected preview payload with decoration")
         }
 
         XCTAssertFalse(decoration.highlights.isEmpty)
