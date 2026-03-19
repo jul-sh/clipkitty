@@ -1699,11 +1699,13 @@ dependencies = [
  "serde",
  "serde_json",
  "sha2",
+ "strsim",
  "tantivy",
  "thiserror",
  "thread-priority",
  "tokio",
  "tokio-util",
+ "triple_accel",
  "uniffi",
  "url",
  "validator",
@@ -2849,6 +2851,12 @@ checksum = "db97caf9d906fbde555dd62fa95ddba9eecfd14cb388e4f491a66d74cd5fb79a"
 dependencies = [
  "once_cell",
 ]
+
+[[package]]
+name = "triple_accel"
+version = "0.4.0"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "22048bc95dfb2ffd05b1ff9a756290a009224b60b2f0e7525faeee7603851e63"
 
 [[package]]
 name = "try-lock"

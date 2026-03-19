@@ -86,16 +86,12 @@ appstore:
 # Auto-resolves version from Project.swift + git commit count (same as CI).
 # Usage: make -C distribution appstore-local [VERSION=x.y.z]
 appstore-local:
-	@AGE_SECRET_KEY=$$($(DIST_DIR)/get-age-key.sh) || exit 1; \
-	export AGE_SECRET_KEY; \
-	$(DIST_DIR)/setup-signing.sh; \
+	@$(DIST_DIR)/setup-signing.sh; \
 	PROV="$(PROVISIONING_PROFILE)"; \
-	if [ -z "$$PROV" ] && [ -n "$$AGE_SECRET_KEY" ]; then \
+	if [ -z "$$PROV" ]; then \
 		echo "Decrypting provisioning profile from secrets..."; \
-		printf '%s' "$$AGE_SECRET_KEY" > /tmp/_ck_age.txt; \
-		age -d -i /tmp/_ck_age.txt "$(PROJECT_ROOT)/secrets/PROVISION_PROFILE_BASE64.age" \
+		"$(DIST_DIR)/read-secret.sh" PROVISION_PROFILE_BASE64 \
 			| base64 --decode > "$(PROJECT_ROOT)/ClipKitty.provisionprofile"; \
-		rm -f /tmp/_ck_age.txt; \
 		PROV="$(PROJECT_ROOT)/ClipKitty.provisionprofile"; \
 	fi; \
 	if [ -z "$(VERSION)" ]; then \
@@ -135,35 +131,30 @@ publish:
 # Combined: Build + Publish to App Store Connect
 # ============================================================================
 # Usage (local):
-#   AGE_SECRET_KEY=... make -C distribution appstore-publish VERSION=1.2.3
+#   make -C distribution appstore-publish VERSION=1.2.3
 #
 # Usage (with explicit provisioning profile):
-#   AGE_SECRET_KEY=... make -C distribution appstore-publish \
+#   make -C distribution appstore-publish \
 #     PROVISIONING_PROFILE=path/to/profile VERSION=1.2.3
 #
-# If PROVISIONING_PROFILE is not set but AGE_SECRET_KEY is available,
-# the provisioning profile is auto-decrypted from secrets/.
+# If PROVISIONING_PROFILE is not set, the provisioning profile is
+# auto-decrypted from secrets/ using the local age key or CI env.
 # ============================================================================
 
 appstore-publish:
-	@AGE_SECRET_KEY=$$($(DIST_DIR)/get-age-key.sh) || exit 1; \
-	export AGE_SECRET_KEY; \
-	$(DIST_DIR)/setup-signing.sh; \
+	@$(DIST_DIR)/setup-signing.sh; \
 	PROV="$(PROVISIONING_PROFILE)"; \
-	if [ -z "$$PROV" ] && [ -n "$$AGE_SECRET_KEY" ]; then \
+	if [ -z "$$PROV" ]; then \
 		echo "Decrypting provisioning profile from secrets..."; \
-		printf '%s' "$$AGE_SECRET_KEY" > /tmp/_ck_age.txt; \
-		age -d -i /tmp/_ck_age.txt "$(PROJECT_ROOT)/secrets/PROVISION_PROFILE_BASE64.age" \
+		"$(DIST_DIR)/read-secret.sh" PROVISION_PROFILE_BASE64 \
 			| base64 --decode > "$(PROJECT_ROOT)/ClipKitty.provisionprofile"; \
-		rm -f /tmp/_ck_age.txt; \
 		PROV="$(PROJECT_ROOT)/ClipKitty.provisionprofile"; \
 	fi; \
-	AGE_SECRET_KEY_SAVE=$$AGE_SECRET_KEY; unset AGE_SECRET_KEY; \
 	$(MAKE) appstore \
 		$${PROV:+PROVISIONING_PROFILE=$$PROV} \
 		$(if $(VERSION),VERSION=$(VERSION),) \
 		$(if $(BUILD_NUMBER),BUILD_NUMBER=$(BUILD_NUMBER),) && \
-	AGE_SECRET_KEY=$$AGE_SECRET_KEY_SAVE $(MAKE) publish $(if $(PUBLISH_FLAGS),PUBLISH_FLAGS=$(PUBLISH_FLAGS),); \
+	$(MAKE) publish $(if $(PUBLISH_FLAGS),PUBLISH_FLAGS=$(PUBLISH_FLAGS),); \
 	STATUS=$$?; \
 	$(DIST_DIR)/setup-signing.sh --cleanup; \
 	exit $$STATUS
