@@ -13,7 +13,8 @@ use crate::interface::{
 };
 use crate::models::StoredItem;
 use crate::ranking::{
-    does_word_match, does_word_match_fast, WordMatchKind, LARGE_DOC_THRESHOLD_BYTES,
+    does_word_match, does_word_match_fast, prefix_match_for_query_word, WordMatchKind,
+    LARGE_DOC_THRESHOLD_BYTES,
 };
 use tokio_util::sync::CancellationToken;
 
@@ -250,19 +251,18 @@ pub(crate) fn highlight_candidate(ctx: &HighlightContext<'_>) -> FuzzyMatch {
     let mut matched_query_words = vec![false; ctx.query_words.len()];
 
     let query_lower: Vec<String> = ctx.query_words.iter().map(|w| w.to_lowercase()).collect();
-    let last_qi = query_lower.len().saturating_sub(1);
-
     // Use fast matching for large documents
     let is_large_doc = ctx.content.len() > LARGE_DOC_THRESHOLD_BYTES;
 
     for (char_start, char_end, doc_word) in ctx.doc_words {
         let doc_word_lower = doc_word.to_lowercase();
         for (qi, qw) in query_lower.iter().enumerate() {
-            let allow_prefix = qi == last_qi && ctx.last_word_is_prefix;
+            let prefix_match =
+                prefix_match_for_query_word(query_lower.len(), qi, ctx.last_word_is_prefix);
             let wmk = if is_large_doc {
-                does_word_match_fast(qw, &doc_word_lower, allow_prefix)
+                does_word_match_fast(qw, &doc_word_lower, prefix_match)
             } else {
-                does_word_match(qw, &doc_word_lower, doc_word, allow_prefix)
+                does_word_match(qw, &doc_word_lower, doc_word, prefix_match)
             };
             if wmk != WordMatchKind::None {
                 matched_query_words[qi] = true;
@@ -561,8 +561,7 @@ pub(crate) fn generate_snippet(
 /// Create row decoration from full-content scalar highlights.
 pub(crate) fn create_row_decoration(content: &str, highlights: &[HighlightRange]) -> RowDecoration {
     let max_len = SNIPPET_CONTEXT_CHARS * 2;
-    let (text, adjusted_highlights, line_number) =
-        generate_snippet(content, highlights, max_len);
+    let (text, adjusted_highlights, line_number) = generate_snippet(content, highlights, max_len);
     let highlights = scalar_highlights_to_utf16(&text, &adjusted_highlights);
 
     RowDecoration {
@@ -591,11 +590,7 @@ pub(crate) fn create_lazy_item_match(item: &StoredItem) -> ItemMatch {
     }
 }
 
-fn short_query_highlights(
-    content: &str,
-    query: &str,
-    prefer_prefix: bool,
-) -> Vec<HighlightRange> {
+fn short_query_highlights(content: &str, query: &str, prefer_prefix: bool) -> Vec<HighlightRange> {
     let trimmed = query.trim();
     if trimmed.is_empty() {
         return Vec::new();
@@ -687,7 +682,8 @@ pub(crate) fn compute_row_decoration(content: &str, query: &str) -> RowDecoratio
         };
     }
 
-    let analysis = analyze_content_for_query(content, trimmed).expect("non-empty query should analyze");
+    let analysis =
+        analyze_content_for_query(content, trimmed).expect("non-empty query should analyze");
     create_row_decoration(content, &analysis.highlights)
 }
 
@@ -1034,6 +1030,26 @@ mod tests {
         assert_eq!(words, vec!["test", "ing"]);
         assert_eq!(fm.highlight_ranges[0].kind, HighlightKind::Prefix);
         assert_eq!(fm.highlight_ranges[1].kind, HighlightKind::PrefixTail);
+    }
+
+    #[test]
+    fn test_highlight_single_char_prefix_match_for_multi_word_query() {
+        let fm = hc(
+            1,
+            "recent changes to highlighting landed",
+            1000,
+            1.0,
+            &["recent", "changes", "to", "h"],
+            true,
+        );
+
+        assert!(fm.highlight_ranges.iter().any(|range| {
+            range.kind == HighlightKind::Prefix && range.start == 18 && range.end == 19
+        }));
+        assert!(fm
+            .highlight_ranges
+            .iter()
+            .any(|range| range.kind == HighlightKind::PrefixTail));
     }
 
     #[test]
