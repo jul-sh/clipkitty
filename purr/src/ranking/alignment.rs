@@ -261,17 +261,20 @@ fn candidate_quality_key(m: &WordMatch) -> (u8, u8, u16, u8, std::cmp::Reverse<u
 #[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord)]
 struct AlignmentScore {
     quality_tier: QualityTier,
-    quality_detail: QualityDetail,
+    words_matched_weight: u16,
     matched_query_mask: u64,
+    quality_detail: QualityDetail,
 }
 
 fn score_alignment(word_matches: &[WordMatch], total_query_weight: u16) -> AlignmentScore {
     let signals = compute_alignment_quality_signals(word_matches, total_query_weight);
+    let quality_detail = signals.quality_detail();
 
     AlignmentScore {
         quality_tier: signals.quality_tier(),
-        quality_detail: signals.quality_detail(),
+        words_matched_weight: quality_detail.words_matched_weight,
         matched_query_mask: alignment_matched_query_mask(word_matches),
+        quality_detail,
     }
 }
 

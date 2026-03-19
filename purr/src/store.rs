@@ -3,8 +3,8 @@
 use crate::database::Database;
 use crate::indexer::Indexer;
 use crate::interface::{
-    ClipKittyError, ClipboardItem, ClipboardStoreApi, ItemQueryFilter, ItemTag,
-    PreviewPayload, RowDecorationResult, SearchOutcome, SearchResult,
+    ClipKittyError, ClipboardItem, ClipboardStoreApi, ItemQueryFilter, ItemTag, PreviewPayload,
+    RowDecorationResult, SearchOutcome, SearchResult,
 };
 use crate::{save_service, search_service};
 use once_cell::sync::Lazy;
@@ -552,16 +552,10 @@ mod tests {
         assert_eq!(ids, vec![prefix_newer, anywhere_newest, anywhere_oldest]);
 
         let prefix_match = result.matches[0].row_decoration.as_ref().unwrap();
-        assert_eq!(
-            prefix_match.highlights[0].kind,
-            HighlightKind::Prefix
-        );
+        assert_eq!(prefix_match.highlights[0].kind, HighlightKind::Prefix);
 
         let anywhere_match = result.matches[1].row_decoration.as_ref().unwrap();
-        assert_eq!(
-            anywhere_match.highlights[0].kind,
-            HighlightKind::Exact
-        );
+        assert_eq!(anywhere_match.highlights[0].kind, HighlightKind::Exact);
         assert_eq!(anywhere_match.highlights[0].utf16_start, 4);
     }
 
@@ -647,6 +641,37 @@ mod tests {
                 .kind,
             HighlightKind::SubwordPrefix
         );
+    }
+
+    #[tokio::test]
+    async fn test_trigram_query_uses_single_char_trailing_prefix_immediately() {
+        let store = ClipboardStore::new_in_memory().unwrap();
+        let non_prefix_id = store
+            .save_text("recent changes to renderer".to_string(), None, None)
+            .unwrap();
+        let prefix_id = store
+            .save_text("recent changes to highlighting".to_string(), None, None)
+            .unwrap();
+
+        let result = store
+            .search("recent changes to h".to_string())
+            .await
+            .unwrap();
+        let ids: Vec<i64> = result
+            .matches
+            .iter()
+            .map(|item| item.item_metadata.item_id)
+            .take(2)
+            .collect();
+
+        assert_eq!(ids, vec![prefix_id, non_prefix_id]);
+        assert!(result.matches[0]
+            .row_decoration
+            .as_ref()
+            .unwrap()
+            .highlights
+            .iter()
+            .any(|highlight| highlight.kind == HighlightKind::Prefix));
     }
 
     #[test]

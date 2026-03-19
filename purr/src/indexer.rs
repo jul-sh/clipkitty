@@ -27,7 +27,9 @@ use parking_lot::RwLock;
 use std::path::Path;
 use tantivy::collector::TopDocs;
 use tantivy::directory::MmapDirectory;
-use tantivy::query::{BooleanQuery, BoostQuery, FuzzyTermQuery, Occur, PhraseQuery, TermQuery};
+use tantivy::query::{
+    BooleanQuery, BoostQuery, FuzzyTermQuery, Occur, PhrasePrefixQuery, PhraseQuery, TermQuery,
+};
 use tantivy::schema::*;
 use tantivy::tokenizer::{NgramTokenizer, TextAnalyzer, TokenFilter, TokenStream, Tokenizer};
 use tantivy::{DocId, Index, IndexReader, IndexWriter, ReloadPolicy, Score, Term};
@@ -812,6 +814,21 @@ impl Indexer {
         clauses
     }
 
+    fn build_trailing_prefix_query(&self, query: &str) -> Option<PhrasePrefixQuery> {
+        let words: Vec<&str> = query.split_whitespace().collect();
+        let last_word_is_prefix = query.ends_with(|c: char| c.is_alphanumeric());
+        if !last_word_is_prefix || words.len() < 2 {
+            return None;
+        }
+
+        let terms = words
+            .into_iter()
+            .map(|word| Term::from_field_text(self.content_words_field, &word.to_lowercase()))
+            .collect();
+
+        Some(PhrasePrefixQuery::new(terms))
+    }
+
     /// Build word-level boost clauses for exact word matching and proximity.
     ///
     /// Uses exact word TermQuery boosts + proximity PhraseQuery boosts.
@@ -858,6 +875,14 @@ impl Indexer {
                     Box::new(BoostQuery::new(Box::new(phrase_q), PROXIMITY_BOOST_SCALE));
                 boosts.push((Occur::Should, boosted));
             }
+        }
+
+        if let Some(prefix_query) = self.build_trailing_prefix_query(query) {
+            let boosted: Box<dyn tantivy::query::Query> = Box::new(BoostQuery::new(
+                Box::new(prefix_query),
+                PROXIMITY_BOOST_SCALE,
+            ));
+            boosts.push((Occur::Should, boosted));
         }
 
         boosts
@@ -937,32 +962,43 @@ impl Indexer {
 
         // Build the recall part: trigram OR fuzzy-word pathways
         let fuzzy_clauses = self.build_fuzzy_word_clauses(query);
-        let recall: Box<dyn tantivy::query::Query> = if fuzzy_clauses.is_empty() {
+        let trailing_prefix_recall = self
+            .build_trailing_prefix_query(query)
+            .map(|query| Box::new(query) as Box<dyn tantivy::query::Query>);
+        let recall: Box<dyn tantivy::query::Query> = if fuzzy_clauses.is_empty()
+            && trailing_prefix_recall.is_none()
+        {
             Box::new(recall_query)
         } else {
-            // Require at least half the fuzzy clauses to match. Since this
-            // pathway is limited to 1-3 word queries, the threshold stays
-            // tight enough to avoid scattered common-word matches.
-            let n = fuzzy_clauses.len();
-            let fuzzy_min = n.div_ceil(2);
-            let fuzzy_subqueries: Vec<(Occur, Box<dyn tantivy::query::Query>)> = fuzzy_clauses
-                .into_iter()
-                .map(|q| (Occur::Should, q))
-                .collect();
-            let mut fuzzy_bool = BooleanQuery::new(fuzzy_subqueries);
-            fuzzy_bool.set_minimum_number_should_match(fuzzy_min);
+            let mut recall_paths = vec![(
+                Occur::Should,
+                Box::new(recall_query) as Box<dyn tantivy::query::Query>,
+            )];
 
-            // OR: document passes if it matches EITHER trigrams OR fuzzy words
-            let mut combined = BooleanQuery::new(vec![
-                (
-                    Occur::Should,
-                    Box::new(recall_query) as Box<dyn tantivy::query::Query>,
-                ),
-                (
+            if !fuzzy_clauses.is_empty() {
+                // Require at least half the fuzzy clauses to match. Since this
+                // pathway is limited to 1-3 word queries, the threshold stays
+                // tight enough to avoid scattered common-word matches.
+                let n = fuzzy_clauses.len();
+                let fuzzy_min = n.div_ceil(2);
+                let fuzzy_subqueries: Vec<(Occur, Box<dyn tantivy::query::Query>)> = fuzzy_clauses
+                    .into_iter()
+                    .map(|q| (Occur::Should, q))
+                    .collect();
+                let mut fuzzy_bool = BooleanQuery::new(fuzzy_subqueries);
+                fuzzy_bool.set_minimum_number_should_match(fuzzy_min);
+                recall_paths.push((
                     Occur::Should,
                     Box::new(fuzzy_bool) as Box<dyn tantivy::query::Query>,
-                ),
-            ]);
+                ));
+            }
+
+            if let Some(prefix_recall) = trailing_prefix_recall {
+                recall_paths.push((Occur::Should, prefix_recall));
+            }
+
+            // OR: document passes if it matches any recall pathway.
+            let mut combined = BooleanQuery::new(recall_paths);
             combined.set_minimum_number_should_match(1);
             Box::new(combined)
         };
