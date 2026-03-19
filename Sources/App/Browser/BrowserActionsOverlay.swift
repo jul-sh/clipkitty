@@ -12,7 +12,7 @@ struct BrowserActionsOverlay: View {
     private var isPresented: Binding<Bool> {
         Binding(
             get: {
-                if case .actions = viewModel.session.overlays {
+                if case .actions = viewModel.overlayState {
                     return true
                 }
                 return false
@@ -28,7 +28,7 @@ struct BrowserActionsOverlay: View {
     private var menuHighlight: Binding<MenuHighlightState> {
         Binding(
             get: {
-                guard case let .actions(highlight) = viewModel.session.overlays else {
+                guard case let .actions(highlight) = viewModel.overlayState else {
                     return .none
                 }
                 return highlight
@@ -41,7 +41,7 @@ struct BrowserActionsOverlay: View {
 
     var body: some View {
         Button {
-            if case .actions = viewModel.session.overlays {
+            if case .actions = viewModel.overlayState {
                 viewModel.closeOverlay()
             } else {
                 // Mouse click opens with no highlight - hover will control it

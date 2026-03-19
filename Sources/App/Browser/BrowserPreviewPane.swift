@@ -9,29 +9,23 @@ struct BrowserPreviewPane: View {
 
     var body: some View {
         Group {
-            switch viewModel.session.preview {
-            case let .loaded(selection):
+            switch viewModel.selection {
+            case let .selected(content):
                 VStack(spacing: 0) {
-                    previewContent(for: selection.item, matchData: selection.matchData)
+                    previewContent(for: content)
                     Divider()
-                    metadataFooter(for: selection.item)
+                    metadataFooter(for: content.item)
                 }
-            case let .loading(_, stale):
+            case .loading:
                 ZStack {
-                    if let stale {
-                        previewContent(for: stale.item, matchData: stale.matchData)
-                            .allowsHitTesting(false)
-                    } else {
-                        Color.clear.frame(maxWidth: .infinity, maxHeight: .infinity)
-                    }
-
+                    Color.clear.frame(maxWidth: .infinity, maxHeight: .infinity)
                     if viewModel.previewSpinnerVisible {
                         ProgressView()
                     }
                 }
             case .failed:
                 Self.error(String(localized: "Unable to load preview"))
-            case .empty:
+            case .none:
                 if viewModel.itemIds.isEmpty {
                     emptyState
                 } else {
@@ -58,18 +52,31 @@ struct BrowserPreviewPane: View {
     }
 
     @ViewBuilder
-    private func previewContent(for item: ClipboardItem, matchData: MatchData?) -> some View {
+    private func previewContent(for content: SelectedItemState) -> some View {
+        let item = content.item
         switch item.content {
         case .text, .color:
+            let previewDecoration: PreviewDecoration? = {
+                if case let .loaded(decoration) = content.decorationState {
+                    return decoration
+                }
+                return nil
+            }()
             TextPreviewView(
                 text: viewModel.pendingEdits[item.itemMetadata.itemId] ?? item.content.textContent,
                 fontName: FontManager.mono,
                 fontSize: 15,
-                highlights: matchData?.fullContentHighlights ?? [],
-                densestHighlightStart: matchData?.densestHighlightStart ?? 0,
+                highlights: previewDecoration?.highlights ?? [],
+                initialScrollHighlightIndex: previewDecoration?.initialScrollHighlightIndex,
                 scrollBehavior: {
-                    guard matchData != nil || viewModel.searchText.isEmpty else { return .manual }
-                    return viewModel.session.selection.origin == .user ? .trackHighlight : .autoScroll
+                    switch content.decorationState {
+                    case .none:
+                        return .autoScroll
+                    case .loading:
+                        return .manual
+                    case .loaded:
+                        return content.origin == .user ? .trackHighlight : .autoScroll
+                    }
                 }(),
                 itemId: item.itemMetadata.itemId,
                 originalText: item.content.textContent,
@@ -93,7 +100,7 @@ struct BrowserPreviewPane: View {
                     focusSearchField()
                 }
             )
-            .id(previewIdentity(itemId: item.itemMetadata.itemId, matchData: matchData))
+            .id(previewIdentity(itemId: item.itemMetadata.itemId))
             .frame(maxWidth: .infinity, maxHeight: .infinity)
         case let .image(data, description, _):
             ScrollView(.vertical, showsIndicators: true) {
@@ -134,7 +141,7 @@ struct BrowserPreviewPane: View {
         }
     }
 
-    private func previewIdentity(itemId: Int64, matchData: MatchData?) -> String {
+    private func previewIdentity(itemId: Int64) -> String {
         // Only tie the view identity to the item itself. If we include matchData properties,
         // SwiftUI will completely destroy and recreate the heavy NSTextView and TextKit 2
         // hierarchy on every keystroke. This bypasses the optimized highlight diffing logic

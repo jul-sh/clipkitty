@@ -3,8 +3,8 @@
 use crate::database::Database;
 use crate::indexer::Indexer;
 use crate::interface::{
-    ClipKittyError, ClipboardItem, ClipboardStoreApi, ItemQueryFilter, ItemTag, MatchData,
-    SearchOutcome, SearchResult,
+    ClipKittyError, ClipboardItem, ClipboardStoreApi, ItemQueryFilter, ItemTag,
+    PreviewDecoration, RowDecorationResult, SearchOutcome, SearchResult,
 };
 use crate::{save_service, search_service};
 use once_cell::sync::Lazy;
@@ -92,8 +92,7 @@ impl Drop for SearchOperation {
 }
 
 impl ClipboardStore {
-    #[cfg(test)]
-    pub(crate) fn new_in_memory() -> Result<Self, ClipKittyError> {
+    pub fn new_in_memory() -> Result<Self, ClipKittyError> {
         init_rayon();
         let database = Database::open_in_memory().map_err(ClipKittyError::from)?;
         let indexer = Indexer::new_in_memory()?;
@@ -286,12 +285,20 @@ impl ClipboardStoreApi for ClipboardStore {
         Ok(items)
     }
 
-    fn compute_highlights(
+    fn compute_row_decorations(
         &self,
         item_ids: Vec<i64>,
         query: String,
-    ) -> Result<Vec<MatchData>, ClipKittyError> {
-        search_service::compute_highlights(&self.db, item_ids, query)
+    ) -> Result<Vec<RowDecorationResult>, ClipKittyError> {
+        search_service::compute_row_decorations(&self.db, item_ids, query)
+    }
+
+    fn compute_preview_decoration(
+        &self,
+        item_id: i64,
+        query: String,
+    ) -> Result<Option<PreviewDecoration>, ClipKittyError> {
+        search_service::compute_preview_decoration(&self.db, item_id, query)
     }
 
     fn save_files(
@@ -539,18 +546,18 @@ mod tests {
 
         assert_eq!(ids, vec![prefix_newer, anywhere_newest, anywhere_oldest]);
 
-        let prefix_match = result.matches[0].match_data.as_ref().unwrap();
+        let prefix_match = result.matches[0].row_decoration.as_ref().unwrap();
         assert_eq!(
-            prefix_match.full_content_highlights[0].kind,
+            prefix_match.highlights[0].kind,
             HighlightKind::Prefix
         );
 
-        let anywhere_match = result.matches[1].match_data.as_ref().unwrap();
+        let anywhere_match = result.matches[1].row_decoration.as_ref().unwrap();
         assert_eq!(
-            anywhere_match.full_content_highlights[0].kind,
+            anywhere_match.highlights[0].kind,
             HighlightKind::Exact
         );
-        assert_eq!(anywhere_match.full_content_highlights[0].start, 4);
+        assert_eq!(anywhere_match.highlights[0].utf16_start, 4);
     }
 
     #[tokio::test]
@@ -598,10 +605,10 @@ mod tests {
         assert_eq!(ids, vec![prefix_id, infix_id]);
         assert_eq!(
             result.matches[1]
-                .match_data
+                .row_decoration
                 .as_ref()
                 .unwrap()
-                .full_content_highlights[0]
+                .highlights[0]
                 .kind,
             HighlightKind::Substring
         );
@@ -628,10 +635,10 @@ mod tests {
         assert_eq!(ids, vec![prefix_id, subword_id]);
         assert_eq!(
             result.matches[1]
-                .match_data
+                .row_decoration
                 .as_ref()
                 .unwrap()
-                .full_content_highlights[0]
+                .highlights[0]
                 .kind,
             HighlightKind::SubwordPrefix
         );

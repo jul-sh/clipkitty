@@ -100,8 +100,6 @@ final class ClipboardStore {
     private var searchExecution: SearchExecution = .idle
     /// Current search query
     private var currentSearchQuery: String = ""
-    /// Query-scoped lazy match-data loads currently in flight.
-    private var inFlightMatchDataLoads: Set<MatchDataLoadRequest> = []
 
     /// Increments each time the display is reset - views observe this to reset local state
     /// Uses Int which will overflow after ~2 billion increments, but this is acceptable
@@ -115,11 +113,6 @@ final class ClipboardStore {
     private let fileManager: FileManagerProtocol
     private var previewLoader: PreviewLoader?
     @ObservationIgnored private var pasteboardMonitor: PasteboardMonitor!
-
-    private struct MatchDataLoadRequest: Hashable {
-        let itemId: Int64
-        let query: String
-    }
 
     // MARK: - Initialization
 
@@ -269,78 +262,14 @@ final class ClipboardStore {
         return await previewLoader.fetchItem(id: id)
     }
 
-    /// Compute highlights for visible items (called on-demand as rows become visible)
-    /// Returns MatchData array in same order as input IDs, or empty array on error
-    func computeHighlights(itemIds: [Int64], query: String) -> [MatchData] {
+    func loadRowDecorations(itemIds: [Int64], query: String) async -> [RowDecorationResult] {
         guard let repository else { return [] }
-        return repository.computeHighlights(itemIds: itemIds, query: query)
+        return await repository.computeRowDecorations(itemIds: itemIds, query: query)
     }
 
-    func loadMatchData(itemIds: [Int64], query: String) async -> [MatchData] {
-        guard let repository else { return [] }
-        return repository.computeHighlights(itemIds: itemIds, query: query)
-    }
-
-    /// Compute and merge match data for items that do not have it yet.
-    /// Results are merged in place so the list does not need a full search refresh.
-    func loadMatchDataForItems(itemIds: [Int64]) {
-        guard case let .results(query, items, _) = state,
-              !query.isEmpty,
-              !itemIds.isEmpty,
-              let repository else { return }
-
-        var seenIds: Set<Int64> = []
-        let uniqueItemIds = itemIds.filter { seenIds.insert($0).inserted }
-        let requests = uniqueItemIds.map { MatchDataLoadRequest(itemId: $0, query: query) }
-
-        let idsNeedingData = requests.compactMap { request -> Int64? in
-            guard !inFlightMatchDataLoads.contains(request),
-                  items.first(where: { $0.itemMetadata.itemId == request.itemId })?.matchData == nil
-            else {
-                return nil
-            }
-            return request.itemId
-        }
-        guard !idsNeedingData.isEmpty else { return }
-
-        let activeRequests = Set(idsNeedingData.map { MatchDataLoadRequest(itemId: $0, query: query) })
-        inFlightMatchDataLoads.formUnion(activeRequests)
-
-        Task { [weak self] in
-            guard let self else { return }
-
-            let matchDataResults = repository.computeHighlights(itemIds: idsNeedingData, query: query)
-
-            self.inFlightMatchDataLoads.subtract(activeRequests)
-
-            guard matchDataResults.count == idsNeedingData.count else { return }
-            guard case .results(let currentQuery, var currentItems, let firstItem) = self.state,
-                  currentQuery == query else { return }
-
-            var idToMatchData: [Int64: MatchData] = [:]
-            for (index, itemId) in idsNeedingData.enumerated() {
-                idToMatchData[itemId] = matchDataResults[index]
-            }
-
-            var didChange = false
-            for index in currentItems.indices {
-                let itemId = currentItems[index].itemMetadata.itemId
-                guard currentItems[index].matchData == nil,
-                      let matchData = idToMatchData[itemId] else { continue }
-                currentItems[index] = ItemMatch(
-                    itemMetadata: currentItems[index].itemMetadata,
-                    matchData: matchData
-                )
-                didChange = true
-            }
-
-            guard didChange else { return }
-
-            CATransaction.begin()
-            CATransaction.setDisableActions(true)
-            self.state = .results(query: currentQuery, items: currentItems, firstItem: firstItem)
-            CATransaction.commit()
-        }
+    func loadPreviewDecoration(itemId: Int64, query: String) async -> PreviewDecoration? {
+        guard let repository else { return nil }
+        return await repository.computePreviewDecoration(itemId: itemId, query: query)
     }
 
     /// Fetch link metadata using LinkPresentation and persist to database

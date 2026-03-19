@@ -83,8 +83,24 @@ final class ClipboardRepository {
         return nil
     }
 
-    func computeHighlights(itemIds: [Int64], query: String) -> [MatchData] {
-        (try? store.computeHighlights(itemIds: itemIds, query: query)) ?? []
+    func computeRowDecorations(itemIds: [Int64], query: String) async -> [RowDecorationResult] {
+        let result = await runRepositoryOperation("computeRowDecorations", on: store) { store in
+            try store.computeRowDecorations(itemIds: itemIds, query: query)
+        }
+        if case let .success(decorations) = result {
+            return decorations
+        }
+        return []
+    }
+
+    func computePreviewDecoration(itemId: Int64, query: String) async -> PreviewDecoration? {
+        let result = await runRepositoryOperation("computePreviewDecoration", on: store) { store in
+            try store.computePreviewDecoration(itemId: itemId, query: query)
+        }
+        if case let .success(decoration) = result {
+            return decoration
+        }
+        return nil
     }
 
     func saveText(
