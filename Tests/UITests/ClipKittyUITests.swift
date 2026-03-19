@@ -108,6 +108,7 @@ final class ClipKittyUITests: XCTestCase {
         }
 
         app.launch()
+        app.activate()
 
         // Wait for the search field — it's always present regardless of how
         // the accessibility system classifies the NSPanel (window vs dialog).
@@ -351,65 +352,69 @@ final class ClipKittyUITests: XCTestCase {
     func testPreviewHighlightsRefreshWhenRefiningQueryForSameItem() throws {
         let searchField = app.textFields["SearchField"]
         XCTAssertTrue(searchField.waitForExistence(timeout: 5), "Search field not found")
-
         let previewTextView = app.textViews["PreviewTextView"]
-        XCTAssertTrue(previewTextView.waitForExistence(timeout: 5), "Preview text view should exist")
-
         let previewHighlightDebug = app.descendants(matching: .any)["PreviewHighlightDebug"]
 
-        clearSearchField(searchField)
-        typeTextSlowly(searchField, text: "clipkitty")
-
-        let singleResultLoaded = waitForCondition(timeout: 5) {
-            self.app.outlines.firstMatch.buttons.allElementsBoundByIndex.count == 1
+        let databaseLoaded = waitForCondition(timeout: 5) {
+            self.app.outlines.firstMatch.buttons.allElementsBoundByIndex.count > 0
         }
-        XCTAssertTrue(singleResultLoaded, "clipkitty query should narrow to a single seeded item")
+        XCTAssertTrue(databaseLoaded, "Synthetic database should be loaded before running the preview highlight regression")
 
-        let initialPreviewLoaded = waitForCondition(timeout: 5) {
+        clearSearchField(searchField)
+        typeTextSlowly(searchField, text: "Copy it")
+
+        let targetPreviewLoaded = waitForCondition(timeout: 5) {
             let value = previewTextView.value as? String ?? ""
-            return value.localizedCaseInsensitiveContains("clipkitty")
+            return previewTextView.exists
+                && value.localizedCaseInsensitiveContains("copy it once")
                 && value.localizedCaseInsensitiveContains("preview before pasting")
         }
-        XCTAssertTrue(initialPreviewLoaded, "Preview should show the seeded ClipKitty item")
+        XCTAssertTrue(targetPreviewLoaded, "Preview should show the stock ClipKitty SyntheticData item")
 
         let initialHighlightReady = waitForCondition(timeout: 5) {
             guard previewHighlightDebug.exists else { return false }
             let label = previewHighlightDebug.label
-            return label.localizedCaseInsensitiveContains("clipkitty")
-                && !label.localizedCaseInsensitiveContains("preview")
+            return label.localizedCaseInsensitiveContains("copy")
+                && label.localizedCaseInsensitiveContains("it")
+                && !label.localizedCaseInsensitiveContains("once")
         }
-        XCTAssertTrue(
-            initialHighlightReady,
-            "Initial preview highlights should reflect only the initial query. Got: \(previewHighlightDebug.exists ? previewHighlightDebug.label : "missing")"
-        )
 
         saveScreenshot(name: "preview_highlight_refresh_initial")
 
-        typeTextSlowly(searchField, text: " preview")
+        typeTextSlowly(searchField, text: " once")
 
-        let sameSingleResultRemainsSelected = waitForCondition(timeout: 5) {
-            self.app.outlines.firstMatch.buttons.allElementsBoundByIndex.count == 1
+        let sameItemRemainsSelected = waitForCondition(timeout: 5) {
+            let value = previewTextView.value as? String ?? ""
+            return previewTextView.exists
+                && value.localizedCaseInsensitiveContains("copy it once")
+                && value.localizedCaseInsensitiveContains("preview before pasting")
         }
-        XCTAssertTrue(sameSingleResultRemainsSelected, "Refined query should keep the same seeded item selected")
 
         let previewStayedVisible = waitForCondition(timeout: 2) {
             let value = previewTextView.value as? String ?? ""
             return previewTextView.exists && !value.isEmpty
         }
-        XCTAssertTrue(previewStayedVisible, "Preview should stay visible while refreshed highlights load")
 
         let refinedHighlightReady = waitForCondition(timeout: 5) {
             guard previewHighlightDebug.exists else { return false }
             let label = previewHighlightDebug.label
-            return label.localizedCaseInsensitiveContains("clipkitty")
-                && label.localizedCaseInsensitiveContains("preview")
+            return label.localizedCaseInsensitiveContains("copy")
+                && label.localizedCaseInsensitiveContains("it")
+                && label.localizedCaseInsensitiveContains("once")
         }
+
+        saveScreenshot(name: "preview_highlight_refresh_refined")
+
+        XCTAssertTrue(
+            initialHighlightReady,
+            "Initial preview highlights should reflect only the initial query. Got: \(previewHighlightDebug.exists ? previewHighlightDebug.label : "missing")"
+        )
+        XCTAssertTrue(sameItemRemainsSelected, "Refined query should keep the same stock item selected")
+        XCTAssertTrue(previewStayedVisible, "Preview should stay visible while refreshed highlights load")
         XCTAssertTrue(
             refinedHighlightReady,
             "Preview highlights should refresh when the query is refined without changing the selected item. Got: \(previewHighlightDebug.exists ? previewHighlightDebug.label : "missing")"
         )
-
-        saveScreenshot(name: "preview_highlight_refresh_refined")
     }
 
 
@@ -672,7 +677,8 @@ final class ClipKittyUITests: XCTestCase {
     /// The neutral desktop background (set by `prepare-screenshot-environment.sh`)
     /// fills the padding area around the window.
     private func saveScreenshot(name: String) {
-        let window = app.dialogs.firstMatch
+        let dialog = app.dialogs.firstMatch
+        let window = dialog.exists ? dialog : app.windows.firstMatch
         if !window.exists {
             return
         }

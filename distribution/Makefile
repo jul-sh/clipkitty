@@ -220,27 +220,36 @@ marketing-screenshots: marketing-screenshots-capture
 screenshot: marketing-screenshots-capture
 
 preview-highlight-screenshot:
-	@$(DIST_DIR)/patch-demo-items.sh
+	@echo "Ensuring Git LFS files are pulled..."
+	@git -C $(PROJECT_ROOT) lfs pull 2>/dev/null || echo "Warning: git lfs pull failed (LFS not installed?)"
 	@$(MAKE) -C $(PROJECT_ROOT) all CONFIGURATION=AppStore
 	@codesign --force --options runtime \
 		--sign "$(SIGNING_IDENTITY)" \
 		--entitlements $(PROJECT_ROOT)/Sources/App/ClipKitty.appstore.entitlements \
 		"$(DERIVED_DATA)/Build/Products/AppStore/$(APP_NAME).app"
 	@echo "Running preview highlight refresh regression UI test..."
-	@$(DIST_DIR)/prepare-screenshot-environment.sh \
-		"bash -lc 'set -o pipefail; cd $(PROJECT_ROOT) && xcodebuild test \
-			-scheme ClipKittyUITests \
-			-configuration AppStore \
-			-destination \"platform=macOS\" \
-			-derivedDataPath DerivedData \
-			-only-testing:ClipKittyUITests/ClipKittyUITests/testPreviewHighlightsRefreshWhenRefiningQueryForSameItem \
-			2>&1 | grep -E \"(Test Case|passed|failed|error:)\"'"
-	@mkdir -p $(PROJECT_ROOT)/marketing/debug
-	@cp /tmp/clipkitty_preview_highlight_refresh_initial.png \
-		$(PROJECT_ROOT)/marketing/debug/preview_highlight_refresh_initial.png
-	@cp /tmp/clipkitty_preview_highlight_refresh_refined.png \
-		$(PROJECT_ROOT)/marketing/debug/preview_highlight_refresh_refined.png
-	@echo "Screenshots saved to marketing/debug/"
+	@STATUS=0; \
+	bash -c 'set -o pipefail; cd "$(PROJECT_ROOT)" && xcodebuild test \
+		-scheme ClipKittyUITests \
+		-configuration AppStore \
+		-destination "platform=macOS" \
+		-derivedDataPath DerivedData \
+		-only-testing:ClipKittyUITests/ClipKittyUITests/testPreviewHighlightsRefreshWhenRefiningQueryForSameItem \
+		2>&1 | grep -E "(Test Case|passed|failed|error:)"' || STATUS=$$?; \
+	mkdir -p "$(PROJECT_ROOT)/marketing/debug"; \
+	if [ -f /tmp/clipkitty_preview_highlight_refresh_initial.png ]; then \
+		cp /tmp/clipkitty_preview_highlight_refresh_initial.png \
+			"$(PROJECT_ROOT)/marketing/debug/preview_highlight_refresh_initial.png"; \
+	fi; \
+	if [ -f /tmp/clipkitty_preview_highlight_refresh_refined.png ]; then \
+		cp /tmp/clipkitty_preview_highlight_refresh_refined.png \
+			"$(PROJECT_ROOT)/marketing/debug/preview_highlight_refresh_refined.png"; \
+	fi; \
+	if [ -f "$(PROJECT_ROOT)/marketing/debug/preview_highlight_refresh_initial.png" ] || \
+	   [ -f "$(PROJECT_ROOT)/marketing/debug/preview_highlight_refresh_refined.png" ]; then \
+		echo "Screenshots saved to marketing/debug/"; \
+	fi; \
+	exit $$STATUS
 
 # Capture localized screenshots for all supported locales.
 # Each locale's screenshots are saved to marketing/{locale}/screenshot_*.png.
