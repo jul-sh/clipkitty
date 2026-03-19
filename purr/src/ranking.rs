@@ -25,7 +25,7 @@ pub use self::matching::edit_distance_bounded;
 use self::matching::subsequence_match;
 pub(crate) use self::matching::{
     does_word_match, does_word_match_fast, does_word_match_fast_raw, max_edit_distance,
-    WordMatchKind,
+    prefix_match_for_query_word, PrefixMatch, WordMatchKind,
 };
 use self::policy::{
     compute_quality_detail, compute_quality_tier, compute_recency_bucket, compute_recency_score,
@@ -970,7 +970,7 @@ fn build_match_query_plan(
             document,
             query_words[0],
             query_words_lower[0],
-            last_word_is_prefix,
+            prefix_match_for_query_word(query_words.len(), 0, last_word_is_prefix),
         );
         #[cfg(not(feature = "perf-log"))]
         let _ = raw_candidate_count;
@@ -992,10 +992,10 @@ fn build_match_query_plan(
         .iter()
         .enumerate()
         .map(|(qi, qw)| {
-            let is_last = qi == query_words.len() - 1;
-            let allow_prefix = is_last && last_word_is_prefix;
+            let prefix_match =
+                prefix_match_for_query_word(query_words.len(), qi, last_word_is_prefix);
             let (candidates, raw_count) =
-                collect_match_candidates(qw, query_words_lower[qi], document, allow_prefix);
+                collect_match_candidates(qw, query_words_lower[qi], document, prefix_match);
             raw_candidate_count += raw_count;
             trimmed_candidate_count += candidates.len();
             candidates
@@ -1106,7 +1106,7 @@ fn match_single_query_word_fast_with_count(
     document: &PreparedDocument<'_>,
     query_word: &str,
     query_word_lower: &str,
-    allow_prefix: bool,
+    prefix_match: PrefixMatch,
 ) -> (WordMatch, usize) {
     if !document.is_fast_mode() {
         return (WordMatch::unmatched(query_word), 0);
@@ -1122,7 +1122,7 @@ fn match_single_query_word_fast_with_count(
             query_word_lower,
             doc_token,
             dpos,
-            allow_prefix,
+            prefix_match,
         ) else {
             return true;
         };
@@ -1159,23 +1159,23 @@ fn collect_match_candidates(
     query_word: &str,
     query_word_lower: &str,
     document: &PreparedDocument<'_>,
-    allow_prefix: bool,
+    prefix_match: PrefixMatch,
 ) -> (Vec<WordMatch>, usize) {
-    collect_match_candidates_impl(query_word, query_word_lower, document, allow_prefix)
+    collect_match_candidates_impl(query_word, query_word_lower, document, prefix_match)
 }
 
 fn collect_match_candidates_impl(
     query_word: &str,
     query_word_lower: &str,
     document: &PreparedDocument<'_>,
-    allow_prefix: bool,
+    prefix_match: PrefixMatch,
 ) -> (Vec<WordMatch>, usize) {
     let candidates: Vec<WordMatch> = match document {
         PreparedDocument::Small(doc) => (0..doc.token_spans.len())
             .filter_map(|dpos| {
                 let dw_raw = doc.raw_token(dpos);
                 let dw_lower = doc.lower_token(dpos);
-                let wmk = does_word_match(query_word_lower, dw_lower, dw_raw, allow_prefix);
+                let wmk = does_word_match(query_word_lower, dw_lower, dw_raw, prefix_match);
                 match wmk {
                     WordMatchKind::Exact => Some(WordMatch::exact(query_word, dpos)),
                     WordMatchKind::Prefix => Some(WordMatch::prefix(query_word, dpos)),
@@ -1206,7 +1206,7 @@ fn collect_match_candidates_impl(
                     query_word_lower,
                     doc_token,
                     dpos,
-                    allow_prefix,
+                    prefix_match,
                 ) {
                     candidates.push(candidate);
                 }
@@ -1225,9 +1225,9 @@ fn classify_fast_match_candidate(
     query_word_lower: &str,
     document_token: &str,
     doc_word_pos: usize,
-    allow_prefix: bool,
+    prefix_match: PrefixMatch,
 ) -> Option<WordMatch> {
-    match does_word_match_fast_raw(query_word_lower, document_token, allow_prefix) {
+    match does_word_match_fast_raw(query_word_lower, document_token, prefix_match) {
         WordMatchKind::Exact => Some(WordMatch::exact(query_word, doc_word_pos)),
         WordMatchKind::Prefix => Some(WordMatch::prefix(query_word, doc_word_pos)),
         WordMatchKind::None => None,
@@ -1524,13 +1524,17 @@ mod tests {
         })
     }
 
-    fn dwm(query_word: &str, doc_word: &str, allow_prefix: bool) -> WordMatchKind {
+    fn dwm(query_word: &str, doc_word: &str, prefix_match: PrefixMatch) -> WordMatchKind {
         does_word_match(
             &query_word.to_lowercase(),
             &doc_word.to_lowercase(),
             doc_word,
-            allow_prefix,
+            prefix_match,
         )
+    }
+
+    fn prefix_match(min_query_chars: usize) -> PrefixMatch {
+        PrefixMatch::Enabled { min_query_chars }
     }
 
     fn match_words(
@@ -1719,70 +1723,131 @@ mod tests {
 
     #[test]
     fn test_does_word_match_exact() {
-        assert_eq!(dwm("hello", "hello", false), WordMatchKind::Exact);
+        assert_eq!(
+            dwm("hello", "hello", PrefixMatch::Disabled),
+            WordMatchKind::Exact
+        );
     }
 
     #[test]
     fn test_does_word_match_prefix() {
-        assert_eq!(dwm("cl", "clipkitty", true), WordMatchKind::Prefix);
-        // Not allowed when allow_prefix=false
-        assert_eq!(dwm("cl", "clipkitty", false), WordMatchKind::None);
+        assert_eq!(
+            dwm("cl", "clipkitty", prefix_match(2)),
+            WordMatchKind::Prefix
+        );
+        assert_eq!(
+            dwm("cl", "clipkitty", PrefixMatch::Disabled),
+            WordMatchKind::None
+        );
         // Single char prefix not allowed (< 2 chars)
-        assert_eq!(dwm("c", "clipkitty", true), WordMatchKind::None);
+        assert_eq!(dwm("c", "clipkitty", prefix_match(2)), WordMatchKind::None);
+    }
+
+    #[test]
+    fn test_does_word_match_prefix_allows_single_char_when_requested() {
+        assert_eq!(
+            dwm("c", "clipkitty", prefix_match(1)),
+            WordMatchKind::Prefix
+        );
     }
 
     #[test]
     fn test_does_word_match_subword_prefix() {
         assert_eq!(
-            dwm("code", "responseCode", false),
+            dwm("code", "responseCode", PrefixMatch::Disabled),
             WordMatchKind::SubwordPrefix
         );
         assert_eq!(
-            dwm("server", "HTTPServer", false),
+            dwm("server", "HTTPServer", PrefixMatch::Disabled),
             WordMatchKind::SubwordPrefix
         );
     }
 
     #[test]
     fn test_does_word_match_infix_substring() {
-        assert_eq!(dwm("port", "import", false), WordMatchKind::InfixSubstring);
-        assert_eq!(dwm("auth", "oauth", false), WordMatchKind::InfixSubstring);
+        assert_eq!(
+            dwm("port", "import", PrefixMatch::Disabled),
+            WordMatchKind::InfixSubstring
+        );
+        assert_eq!(
+            dwm("auth", "oauth", PrefixMatch::Disabled),
+            WordMatchKind::InfixSubstring
+        );
     }
 
     #[test]
     fn test_does_word_match_fuzzy() {
         // "riversde" (8 chars) -> max_dist 1
-        assert_eq!(dwm("riversde", "riverside", false), WordMatchKind::Fuzzy(1));
+        assert_eq!(
+            dwm("riversde", "riverside", PrefixMatch::Disabled),
+            WordMatchKind::Fuzzy(1)
+        );
         // "improt" (6 chars) -> max_dist 1, transposition counts as 1
-        assert_eq!(dwm("improt", "import", false), WordMatchKind::Fuzzy(1));
+        assert_eq!(
+            dwm("improt", "import", PrefixMatch::Disabled),
+            WordMatchKind::Fuzzy(1)
+        );
         // Short word transpositions (3-4 chars)
-        assert_eq!(dwm("teh", "the", false), WordMatchKind::Fuzzy(1));
-        assert_eq!(dwm("form", "from", false), WordMatchKind::Fuzzy(1));
-        assert_eq!(dwm("adn", "and", false), WordMatchKind::Fuzzy(1));
+        assert_eq!(
+            dwm("teh", "the", PrefixMatch::Disabled),
+            WordMatchKind::Fuzzy(1)
+        );
+        assert_eq!(
+            dwm("form", "from", PrefixMatch::Disabled),
+            WordMatchKind::Fuzzy(1)
+        );
+        assert_eq!(
+            dwm("adn", "and", PrefixMatch::Disabled),
+            WordMatchKind::Fuzzy(1)
+        );
         // Short word substitution — also matches (same edit distance)
-        assert_eq!(dwm("tha", "the", false), WordMatchKind::Fuzzy(1));
+        assert_eq!(
+            dwm("tha", "the", PrefixMatch::Disabled),
+            WordMatchKind::Fuzzy(1)
+        );
         // First-char mismatch penalty prevents false positives
-        assert_eq!(dwm("bat", "cat", false), WordMatchKind::None);
-        assert_eq!(dwm("rat", "cat", false), WordMatchKind::None);
+        assert_eq!(
+            dwm("bat", "cat", PrefixMatch::Disabled),
+            WordMatchKind::None
+        );
+        assert_eq!(
+            dwm("rat", "cat", PrefixMatch::Disabled),
+            WordMatchKind::None
+        );
         // 2-char words still get no fuzzy
-        assert_eq!(dwm("te", "the", false), WordMatchKind::None);
+        assert_eq!(dwm("te", "the", PrefixMatch::Disabled), WordMatchKind::None);
     }
 
     #[test]
     fn test_does_word_match_subsequence() {
         // "helo" (4 chars) -> fuzzy wins: edit_distance("helo","hello")=1
-        assert_eq!(dwm("helo", "hello", false), WordMatchKind::Fuzzy(1));
+        assert_eq!(
+            dwm("helo", "hello", PrefixMatch::Disabled),
+            WordMatchKind::Fuzzy(1)
+        );
         // "impt" (4 chars) -> len diff 2 exceeds max_dist 1, falls to subsequence
-        assert_eq!(dwm("impt", "import", false), WordMatchKind::Subsequence(1));
+        assert_eq!(
+            dwm("impt", "import", PrefixMatch::Disabled),
+            WordMatchKind::Subsequence(1)
+        );
         // "cls" (3 chars) -> too short for both fuzzy and subsequence now
-        assert_eq!(dwm("cls", "class", false), WordMatchKind::None);
+        assert_eq!(
+            dwm("cls", "class", PrefixMatch::Disabled),
+            WordMatchKind::None
+        );
         // Too short for subsequence (<= 3 chars)
-        assert_eq!(dwm("ab", "abc", false), WordMatchKind::None);
+        assert_eq!(dwm("ab", "abc", PrefixMatch::Disabled), WordMatchKind::None);
         // Coverage too low: 3 chars vs 7 char target (43% < 50%)
-        assert_eq!(dwm("abc", "abcdefg", false), WordMatchKind::None);
+        assert_eq!(
+            dwm("abc", "abcdefg", PrefixMatch::Disabled),
+            WordMatchKind::None
+        );
         // Fuzzy takes priority over subsequence when both could match
         // "imprt" (5 chars) has edit_distance 1 to "import", so fuzzy wins
-        assert_eq!(dwm("imprt", "import", false), WordMatchKind::Fuzzy(1));
+        assert_eq!(
+            dwm("imprt", "import", PrefixMatch::Disabled),
+            WordMatchKind::Fuzzy(1)
+        );
     }
 
     // ── match_query_words tests ──────────────────────────────────
@@ -1803,6 +1868,16 @@ mod tests {
         assert_eq!(matches.len(), 1);
         assert!(matches!(matches[0].state, WordMatchState::Prefix { .. }));
         assert_eq!(matches[0].edit_distance(), 0);
+    }
+
+    #[test]
+    fn test_match_single_char_prefix_last_word_when_query_has_prior_words() {
+        let doc_words = vec!["recent", "changes", "to", "highlighting"];
+        let matches = match_words(&["recent", "changes", "to", "h"], &doc_words, true);
+
+        assert_eq!(matches.len(), 4);
+        assert!(matches!(matches[3].state, WordMatchState::Prefix { .. }));
+        assert_eq!(matches[3].edit_distance(), 0);
     }
 
     #[test]

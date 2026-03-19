@@ -13,6 +13,26 @@ pub(crate) enum WordMatchKind {
     Subsequence(u8),
 }
 
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub(crate) enum PrefixMatch {
+    Disabled,
+    Enabled { min_query_chars: usize },
+}
+
+pub(crate) fn prefix_match_for_query_word(
+    query_word_count: usize,
+    query_word_index: usize,
+    last_word_is_prefix: bool,
+) -> PrefixMatch {
+    if !last_word_is_prefix || query_word_index + 1 != query_word_count {
+        return PrefixMatch::Disabled;
+    }
+
+    PrefixMatch::Enabled {
+        min_query_chars: if query_word_count > 1 { 1 } else { 2 },
+    }
+}
+
 /// Check if a query word matches a document word using the same criteria
 /// as ranking: exact -> prefix -> subword-prefix -> infix substring -> fuzzy
 /// -> subsequence. `qw_lower` and `dw_lower` must already be lowercased; `dw_raw`
@@ -21,12 +41,12 @@ pub(crate) fn does_word_match(
     qw_lower: &str,
     dw_lower: &str,
     dw_raw: &str,
-    allow_prefix: bool,
+    prefix_match: PrefixMatch,
 ) -> WordMatchKind {
     if dw_lower == qw_lower {
         return WordMatchKind::Exact;
     }
-    if allow_prefix && qw_lower.len() >= 2 && dw_lower.starts_with(qw_lower) {
+    if matches_prefix(qw_lower, dw_lower, prefix_match) {
         return WordMatchKind::Prefix;
     }
     if let Some(contained_match) = classify_contained_match(qw_lower, dw_lower, dw_raw) {
@@ -52,9 +72,9 @@ pub(crate) fn does_word_match(
 pub(crate) fn does_word_match_fast(
     qw_lower: &str,
     dw_lower: &str,
-    allow_prefix: bool,
+    prefix_match: PrefixMatch,
 ) -> WordMatchKind {
-    match_fast_lowered(qw_lower, dw_lower, allow_prefix)
+    match_fast_lowered(qw_lower, dw_lower, prefix_match)
 }
 
 /// Fast matching against a raw token slice. ASCII-heavy content stays allocation-free;
@@ -62,22 +82,24 @@ pub(crate) fn does_word_match_fast(
 pub(crate) fn does_word_match_fast_raw(
     qw_lower: &str,
     dw_raw: &str,
-    allow_prefix: bool,
+    prefix_match: PrefixMatch,
 ) -> WordMatchKind {
     if qw_lower.is_ascii() && dw_raw.is_ascii() {
         if dw_raw.eq_ignore_ascii_case(qw_lower) {
             return WordMatchKind::Exact;
         }
-        if allow_prefix
-            && qw_lower.len() >= 2
-            && ascii_starts_with_ignore_case(dw_raw.as_bytes(), qw_lower.as_bytes())
+        if matches!(
+            prefix_match,
+            PrefixMatch::Enabled { min_query_chars }
+                if qw_lower.chars().count() >= min_query_chars
+        ) && ascii_starts_with_ignore_case(dw_raw.as_bytes(), qw_lower.as_bytes())
         {
             return WordMatchKind::Prefix;
         }
         return WordMatchKind::None;
     }
 
-    match_fast_lowered(qw_lower, &dw_raw.to_lowercase(), allow_prefix)
+    match_fast_lowered(qw_lower, &dw_raw.to_lowercase(), prefix_match)
 }
 
 fn ascii_starts_with_ignore_case(haystack: &[u8], needle_lower: &[u8]) -> bool {
@@ -85,14 +107,23 @@ fn ascii_starts_with_ignore_case(haystack: &[u8], needle_lower: &[u8]) -> bool {
         && haystack[..needle_lower.len()].eq_ignore_ascii_case(needle_lower)
 }
 
-fn match_fast_lowered(qw_lower: &str, dw_lower: &str, allow_prefix: bool) -> WordMatchKind {
+fn match_fast_lowered(qw_lower: &str, dw_lower: &str, prefix_match: PrefixMatch) -> WordMatchKind {
     if dw_lower == qw_lower {
         return WordMatchKind::Exact;
     }
-    if allow_prefix && qw_lower.len() >= 2 && dw_lower.starts_with(qw_lower) {
+    if matches_prefix(qw_lower, dw_lower, prefix_match) {
         return WordMatchKind::Prefix;
     }
     WordMatchKind::None
+}
+
+fn matches_prefix(qw_lower: &str, dw_lower: &str, prefix_match: PrefixMatch) -> bool {
+    match prefix_match {
+        PrefixMatch::Disabled => false,
+        PrefixMatch::Enabled { min_query_chars } => {
+            qw_lower.chars().count() >= min_query_chars && dw_lower.starts_with(qw_lower)
+        }
+    }
 }
 
 fn classify_contained_match(qw_lower: &str, dw_lower: &str, dw_raw: &str) -> Option<WordMatchKind> {
