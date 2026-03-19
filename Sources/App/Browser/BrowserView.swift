@@ -38,7 +38,7 @@ struct BrowserView: View {
                 hasPendingEdit: viewModel.selectedItemHasPendingEdit,
                 isFilterPopoverPresented: Binding(
                     get: {
-                        if case .filter = viewModel.session.overlays {
+                        if case .filter = viewModel.overlayState {
                             return true
                         }
                         return false
@@ -109,10 +109,10 @@ struct BrowserView: View {
 
     @ViewBuilder
     private var content: some View {
-        switch viewModel.session.query {
+        switch viewModel.contentState {
         case let .failed(_, message, _):
             BrowserPreviewPane.error(message)
-        case .idle, .pending, .ready:
+        case .idle, .loading, .loaded:
             HStack(spacing: 0) {
                 BrowserResultsList(
                     viewModel: viewModel,

@@ -16,7 +16,7 @@ struct BrowserResultsList: View {
                 ForEach(Array(displayRows.enumerated()), id: \.element.metadata.itemId) { index, row in
                     ItemRow(
                         metadata: row.metadata,
-                        matchData: row.matchData,
+                        rowDecoration: row.rowDecoration,
                         isSelected: row.metadata.itemId == viewModel.selectedItemId,
                         isContextMenuTargeted: row.metadata.itemId == contextMenuItemId,
                         hasUserNavigated: viewModel.hasUserNavigated,
@@ -92,8 +92,8 @@ struct BrowserResultsList: View {
         }
     }
 
-    private var displayRows: [(metadata: ItemMetadata, matchData: MatchData?)] {
-        viewModel.session.query.items.map { ($0.itemMetadata, $0.matchData) }
+    private var displayRows: [(metadata: ItemMetadata, rowDecoration: RowDecoration?)] {
+        viewModel.contentState.items.map { ($0.itemMetadata, viewModel.rowDecoration(for: $0.itemMetadata.itemId)) }
     }
 
     private func indexForItem(_ itemId: Int64?) -> Int? {
@@ -108,6 +108,6 @@ struct BrowserResultsList: View {
         let idsToLoad = (startIndex ... endIndex).compactMap { idx in
             viewModel.itemIds.indices.contains(idx) ? viewModel.itemIds[idx] : nil
         }
-        viewModel.loadMatchDataForItems(idsToLoad)
+        viewModel.loadRowDecorationsForItems(idsToLoad)
     }
 }

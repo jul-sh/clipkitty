@@ -2,7 +2,7 @@ use crate::database::Database;
 use crate::indexer::Indexer;
 use crate::interface::{
     ClipKittyError, ClipboardItem, ContentTypeFilter, ItemMatch, ItemQueryFilter, ItemTag,
-    MatchData, SearchResult,
+    PreviewDecoration, RowDecorationResult, SearchResult,
 };
 use crate::models::StoredItem;
 use crate::search::{self, MIN_TRIGRAM_QUERY_LEN};
@@ -52,11 +52,11 @@ pub(crate) mod test_support {
     }
 }
 
-/// Number of results to eagerly compute MatchData for (the rest are lazy).
+/// Number of results to eagerly compute row decoration for (the rest are lazy).
 const EAGER_MATCH_DATA_COUNT: usize = 25;
-/// Content length threshold for "short" items that get eager highlights.
+/// Content length threshold for "short" items that get eager row decoration.
 const SHORT_CONTENT_THRESHOLD: usize = 1024;
-/// Skip eager short-item highlights when results exceed this count.
+/// Skip eager short-item decoration when results exceed this count.
 const EAGER_SHORT_RESULT_LIMIT: usize = 200;
 const SHORT_QUERY_MAX_RESULTS: usize = 50;
 const SHORT_QUERY_RECENT_WINDOW: usize = 5000;
@@ -127,11 +127,11 @@ pub(crate) async fn execute_search(
     })
 }
 
-pub(crate) fn compute_highlights(
+pub(crate) fn compute_row_decorations(
     db: &Database,
     item_ids: Vec<i64>,
     query: String,
-) -> Result<Vec<MatchData>, ClipKittyError> {
+) -> Result<Vec<RowDecorationResult>, ClipKittyError> {
     if item_ids.is_empty() {
         return Ok(Vec::new());
     }
@@ -146,23 +146,40 @@ pub(crate) fn compute_highlights(
     let is_prefix_query = trimmed.len() < search::MIN_TRIGRAM_QUERY_LEN;
 
     use rayon::prelude::*;
-    let results: Vec<MatchData> = item_ids
+    let results: Vec<RowDecorationResult> = item_ids
         .par_iter()
         .map(|id| {
-            if let Some(item) = item_map.get(id) {
+            let decoration = item_map.get(id).map(|item| {
                 let content = item.content.text_content();
                 if is_prefix_query {
-                    search::compute_short_query_match_data(content, trimmed, true)
+                    search::compute_row_decoration(content, trimmed)
                 } else {
-                    search::compute_item_highlights(content, &query)
+                    search::compute_row_decoration(content, &query)
                 }
-            } else {
-                MatchData::default()
+            });
+            RowDecorationResult {
+                item_id: *id,
+                decoration,
             }
         })
         .collect();
 
     Ok(results)
+}
+
+pub(crate) fn compute_preview_decoration(
+    db: &Database,
+    item_id: i64,
+    query: String,
+) -> Result<Option<PreviewDecoration>, ClipKittyError> {
+    let Some(item) = db.fetch_items_by_ids(&[item_id])?.into_iter().next() else {
+        return Ok(None);
+    };
+
+    Ok(search::compute_preview_decoration(
+        item.content.text_content(),
+        &query,
+    ))
 }
 
 pub(crate) fn search_short_query_sync(
@@ -234,12 +251,9 @@ pub(crate) fn search_short_query_sync(
         .filter_map(|id| {
             item_map.get(id).map(|item| {
                 let content = item.content.text_content();
-                let is_prefix = content.to_lowercase().starts_with(&query_lower);
                 ItemMatch {
                     item_metadata: item.to_metadata(),
-                    match_data: Some(search::compute_short_query_match_data(
-                        content, trimmed, is_prefix,
-                    )),
+                    row_decoration: Some(search::compute_row_decoration(content, trimmed)),
                 }
             })
         })
@@ -349,7 +363,7 @@ fn execute_empty_query(
         .into_iter()
         .map(|item_metadata| ItemMatch {
             item_metadata,
-            match_data: None,
+            row_decoration: None,
         })
         .collect();
 

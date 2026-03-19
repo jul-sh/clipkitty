@@ -1,22 +1,6 @@
 import ClipKittyRust
 import Foundation
 
-struct BrowserSession {
-    var query: QuerySession
-    var selection: SelectionSession
-    var preview: PreviewSession
-    var overlays: OverlaySession
-    var mutation: MutationSession
-
-    static let initial = BrowserSession(
-        query: .idle(request: SearchRequest(text: "", filter: .all)),
-        selection: .none,
-        preview: .empty,
-        overlays: .none,
-        mutation: .idle
-    )
-}
-
 struct SearchRequest: Hashable {
     let text: String
     let filter: ItemQueryFilter
@@ -34,45 +18,71 @@ enum QueryLoadPhase {
     case running(spinnerVisible: Bool)
 }
 
-enum QuerySession {
+enum BrowserContentState {
     case idle(request: SearchRequest)
-    case pending(request: SearchRequest, fallback: [ItemMatch], phase: QueryLoadPhase)
-    case ready(response: BrowserSearchResponse)
-    case failed(request: SearchRequest, message: String, fallback: [ItemMatch])
+    case loading(request: SearchRequest, previous: LoadedBrowserContent?, phase: QueryLoadPhase)
+    case loaded(LoadedBrowserContent)
+    case failed(request: SearchRequest, message: String, previous: LoadedBrowserContent?)
 
     var request: SearchRequest {
         switch self {
-        case let .idle(request), let .pending(request, _, _), let .failed(request, _, _):
+        case let .idle(request), let .loading(request, _, _), let .failed(request, _, _):
             return request
-        case let .ready(response):
-            return response.request
+        case let .loaded(content):
+            return content.response.request
         }
+    }
+
+    var displayedContent: LoadedBrowserContent? {
+        switch self {
+        case let .loaded(content):
+            return content
+        case let .loading(_, previous, _), let .failed(_, _, previous):
+            return previous
+        case .idle:
+            return nil
+        }
+    }
+
+    var response: BrowserSearchResponse? {
+        displayedContent?.response
     }
 
     var items: [ItemMatch] {
         switch self {
+        case let .loaded(content):
+            return content.response.items
+        case let .loading(_, previous, _), let .failed(_, _, previous):
+            return previous?.response.items ?? []
         case .idle:
             return []
-        case let .pending(_, fallback, _), let .failed(_, _, fallback):
-            return fallback
-        case let .ready(response):
-            return response.items
         }
     }
 
     var firstItem: ClipboardItem? {
         switch self {
-        case let .ready(response):
-            return response.firstItem
-        case .idle, .pending, .failed:
+        case let .loaded(content):
+            return content.response.firstItem
+        case let .loading(_, previous, _), let .failed(_, _, previous):
+            return previous?.response.firstItem
+        case .idle:
             return nil
         }
     }
 
+    var selection: SelectionState {
+        displayedContent?.selection ?? .none
+    }
+
     var isSearchSpinnerVisible: Bool {
-        guard case let .pending(_, _, .running(spinnerVisible)) = self else { return false }
+        guard case let .loading(_, _, .running(spinnerVisible)) = self else { return false }
         return spinnerVisible
     }
+}
+
+struct LoadedBrowserContent {
+    let response: BrowserSearchResponse
+    let selection: SelectionState
 }
 
 enum SelectionOrigin {
@@ -80,45 +90,53 @@ enum SelectionOrigin {
     case user
 }
 
-enum SelectionSession {
+enum PreviewDecorationState: Equatable {
     case none
-    case selected(itemId: Int64, origin: SelectionOrigin)
+    case loading(query: String)
+    case loaded(PreviewDecoration)
+}
+
+struct SelectedItemState: Equatable {
+    let item: ClipboardItem
+    let origin: SelectionOrigin
+    let decorationState: PreviewDecorationState
+}
+
+enum SelectionState {
+    case none
+    case loading(itemId: Int64, origin: SelectionOrigin)
+    case selected(SelectedItemState)
+    case failed(itemId: Int64, origin: SelectionOrigin)
 
     var itemId: Int64? {
-        guard case let .selected(itemId, _) = self else { return nil }
-        return itemId
+        switch self {
+        case .none:
+            return nil
+        case let .loading(itemId, _), let .failed(itemId, _):
+            return itemId
+        case let .selected(selectedItem):
+            return selectedItem.item.itemMetadata.itemId
+        }
     }
 
     var origin: SelectionOrigin? {
-        guard case let .selected(_, origin) = self else { return nil }
-        return origin
-    }
-}
-
-struct PreviewSelection {
-    let item: ClipboardItem
-    let matchData: MatchData?
-}
-
-enum PreviewSession {
-    case empty
-    case loading(itemId: Int64, stale: PreviewSelection?)
-    case loaded(PreviewSelection)
-    case failed(itemId: Int64, stale: PreviewSelection?)
-
-    var currentSelection: PreviewSelection? {
         switch self {
-        case let .loaded(selection):
-            return selection
-        case let .loading(_, stale), let .failed(_, stale):
-            return stale
-        case .empty:
+        case .none:
             return nil
+        case let .loading(_, origin), let .failed(_, origin):
+            return origin
+        case let .selected(selectedItem):
+            return selectedItem.origin
         }
     }
+
+    var selectedItem: SelectedItemState? {
+        guard case let .selected(selectedItem) = self else { return nil }
+        return selectedItem
+    }
 }
 
-enum OverlaySession {
+enum OverlayState {
     case none
     case filter(FilterOverlayState)
     case actions(MenuHighlightState)
@@ -134,7 +152,7 @@ enum MenuHighlightState {
     case index(Int)
 }
 
-enum MutationSession {
+enum MutationState {
     case idle
     case deleting(DeleteMutation)
     case tagging(TagMutation)
@@ -149,9 +167,7 @@ enum DeleteMutation {
 
 struct DeleteTransaction {
     let deletedItemId: Int64
-    let snapshot: BrowserSearchResponse?
-    let preview: PreviewSession
-    let selection: SelectionSession
+    let snapshot: BrowserContentState
 }
 
 enum TagMutation {
@@ -166,11 +182,19 @@ struct TagMutationTransaction {
 }
 
 struct ClearTransaction {
-    let snapshot: BrowserSearchResponse?
-    let preview: PreviewSession
-    let selection: SelectionSession
+    let snapshot: BrowserContentState
 }
 
 struct ActionFailure {
     let message: String
+}
+
+struct EditState {
+    enum Focus: Equatable {
+        case idle
+        case focused(itemId: Int64)
+    }
+
+    var focus: Focus = .idle
+    var pendingEdits: [Int64: String] = [:]
 }
