@@ -116,16 +116,15 @@ struct BrowserPreviewPane: View {
             .frame(maxWidth: .infinity, maxHeight: .infinity)
             .overlay(alignment: .topLeading) {
                 if isUITestPreviewDebugEnabled {
-                    Text(previewHighlightDebugLabel(
+                    Color.clear
+                    .frame(width: 1, height: 1)
+                    .allowsHitTesting(false)
+                    .accessibilityElement(children: .ignore)
+                    .accessibilityLabel(previewHighlightDebugLabel(
                         text: previewText,
                         itemId: item.itemMetadata.itemId,
                         previewState: content.previewState
                     ))
-                    .font(.system(size: 1))
-                    .foregroundStyle(.clear)
-                    .frame(width: 1, height: 1)
-                    .clipped()
-                    .allowsHitTesting(false)
                     .accessibilityIdentifier("PreviewHighlightDebug")
                 }
             }
