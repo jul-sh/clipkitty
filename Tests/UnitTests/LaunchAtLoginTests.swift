@@ -35,65 +35,131 @@ final class LaunchAtLoginTests: XCTestCase {
     }
 }
 
-// MARK: - Prompt State Machine Tests
+// MARK: - Snackbar Scheduler Tests
 
 @MainActor
-final class LaunchAtLoginPromptStateMachineTests: XCTestCase {
+final class SnackbarSchedulerTests: XCTestCase {
+
+    // MARK: - Nudge tests (migrated from LaunchAtLoginPromptStateMachineTests)
+
     func testFreshInstallAboveTimeGate() {
-        let env = MockPromptEnvironment()
-        XCTAssertEqual(evaluatePromptState(env), .shouldPrompt)
+        let env = MockSnackbarEnvironment()
+        XCTAssertEqual(evaluateSnackbar(env), .show(.nudge(.launchAtLogin)))
     }
 
     func testFreshInstallBelowTimeGate() {
         let now = Date()
-        let env = MockPromptEnvironment(
+        let env = MockSnackbarEnvironment(
             firstLaunchDate: now.addingTimeInterval(-1800), // 30 min ago
             now: now
         )
-        XCTAssertEqual(evaluatePromptState(env), .suppressed(.timeGated))
+        XCTAssertEqual(evaluateSnackbar(env), .showNothing)
     }
 
     func testAlreadyEnabled() {
-        let env = MockPromptEnvironment(isSystemEnabled: true)
-        XCTAssertEqual(evaluatePromptState(env), .suppressed(.alreadyEnabled))
+        let env = MockSnackbarEnvironment(isLaunchAtLoginSystemEnabled: true)
+        XCTAssertEqual(evaluateSnackbar(env), .showNothing)
     }
 
     func testPreviouslyDismissed() {
-        let env = MockPromptEnvironment(isDismissed: true)
-        XCTAssertEqual(evaluatePromptState(env), .suppressed(.dismissed))
+        let env = MockSnackbarEnvironment(isLaunchAtLoginDismissed: true)
+        XCTAssertEqual(evaluateSnackbar(env), .showNothing)
     }
 
     func testAlreadyEnabledTakesPrecedenceOverDismissed() {
-        let env = MockPromptEnvironment(isSystemEnabled: true, isDismissed: true)
-        XCTAssertEqual(evaluatePromptState(env), .suppressed(.alreadyEnabled))
+        let env = MockSnackbarEnvironment(isLaunchAtLoginSystemEnabled: true, isLaunchAtLoginDismissed: true)
+        XCTAssertEqual(evaluateSnackbar(env), .showNothing)
     }
 
     func testTimeGateExactBoundary() {
         let now = Date()
-        let env = MockPromptEnvironment(
+        let env = MockSnackbarEnvironment(
             firstLaunchDate: now.addingTimeInterval(-3600), // exactly 1 hour
             now: now
         )
-        XCTAssertEqual(evaluatePromptState(env), .shouldPrompt)
+        XCTAssertEqual(evaluateSnackbar(env), .show(.nudge(.launchAtLogin)))
     }
 
     func testTimeGateJustUnder() {
         let now = Date()
-        let env = MockPromptEnvironment(
+        let env = MockSnackbarEnvironment(
             firstLaunchDate: now.addingTimeInterval(-3599),
             now: now
         )
-        XCTAssertEqual(evaluatePromptState(env), .suppressed(.timeGated))
+        XCTAssertEqual(evaluateSnackbar(env), .showNothing)
+    }
+
+    // MARK: - Info priority tests
+
+    func testInfoTrumpsNudge() {
+        let env = MockSnackbarEnvironment(isRebuildingIndex: true, rebuildProgress: 0.5)
+        XCTAssertEqual(evaluateSnackbar(env), .show(.info(.rebuildingIndex(progress: 0.5))))
+    }
+
+    func testInfoWithProgress() {
+        let env = MockSnackbarEnvironment(isRebuildingIndex: true, rebuildProgress: 0.75)
+        XCTAssertEqual(evaluateSnackbar(env), .show(.info(.rebuildingIndex(progress: 0.75))))
+    }
+
+    // MARK: - Cooldown tests
+
+    func testCooldownAfterInfoBlocksNudge() {
+        let now = Date()
+        let env = MockSnackbarEnvironment(
+            lastInfoDismissDate: now.addingTimeInterval(-60), // 1 min ago
+            now: now
+        )
+        XCTAssertEqual(evaluateSnackbar(env), .showNothing)
+    }
+
+    func testCooldownAfterInfoExpired() {
+        let now = Date()
+        let env = MockSnackbarEnvironment(
+            lastInfoDismissDate: now.addingTimeInterval(-3601), // over 1 hour ago
+            now: now
+        )
+        XCTAssertEqual(evaluateSnackbar(env), .show(.nudge(.launchAtLogin)))
+    }
+
+    func testCooldownAfterNudgeInteraction() {
+        let now = Date()
+        let env = MockSnackbarEnvironment(
+            lastNudgeInteractionDate: now.addingTimeInterval(-3600), // 1 hour ago, well within 7 days
+            now: now
+        )
+        XCTAssertEqual(evaluateSnackbar(env), .showNothing)
+    }
+
+    func testCooldownAfterNudgeExpired() {
+        let now = Date()
+        let env = MockSnackbarEnvironment(
+            lastNudgeInteractionDate: now.addingTimeInterval(-8 * 24 * 60 * 60), // 8 days ago
+            now: now
+        )
+        XCTAssertEqual(evaluateSnackbar(env), .show(.nudge(.launchAtLogin)))
+    }
+
+    func testNothingActiveShowsNothing() {
+        let env = MockSnackbarEnvironment(isLaunchAtLoginSystemEnabled: true)
+        XCTAssertEqual(evaluateSnackbar(env), .showNothing)
     }
 }
 
 // MARK: - Mock types
 
-private struct MockPromptEnvironment: PromptEnvironment {
-    var isSystemEnabled: Bool = false
-    var isDismissed: Bool = false
-    var firstLaunchDate: Date = Date.distantPast
+private struct MockSnackbarEnvironment: SnackbarEnvironment {
+    var isRebuildingIndex: Bool = false
+    var rebuildProgress: Double = 0
+
+    var lastInfoDismissDate: Date? = nil
+    var lastNudgeInteractionDate: Date? = nil
+    var cooldownAfterInfo: TimeInterval = 3600
+    var cooldownAfterNudgeInteraction: TimeInterval = 7 * 24 * 60 * 60
     var now: Date = Date()
+
+    var isLaunchAtLoginSystemEnabled: Bool = false
+    var isLaunchAtLoginDismissed: Bool = false
+    var firstLaunchDate: Date = Date.distantPast
     var minimumUseDuration: TimeInterval = 3600
 }
 

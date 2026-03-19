@@ -37,7 +37,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate {
     private var showHistoryMenuItem: NSMenuItem?
     private var statusMenu: NSMenu?
     private var cancellables = Set<AnyCancellable>()
-    private let launchAtLoginCoordinator = LaunchAtLoginPromptCoordinator()
+    private let snackbarCoordinator = SnackbarCoordinator()
     #if SPARKLE_RELEASE
         private var updater: SparkleAppUpdater?
     #endif
@@ -57,7 +57,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate {
     func applicationDidFinishLaunching(_: Notification) {
         FontManager.registerFonts()
 
-        launchAtLoginCoordinator.syncWithSystem()
+        snackbarCoordinator.syncWithSystem()
 
         if case .simulatedDatabase = launchMode {
             populateTestDatabase()
@@ -67,10 +67,10 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate {
         case .production:
             store = ClipboardStore(screenshotMode: false)
             store.startMonitoring()
-            panelController = FloatingPanelController(store: store, mode: .production, launchAtLoginCoordinator: launchAtLoginCoordinator)
+            panelController = FloatingPanelController(store: store, mode: .production, snackbarCoordinator: snackbarCoordinator)
         case .simulatedDatabase:
             store = ClipboardStore(screenshotMode: true)
-            panelController = FloatingPanelController(store: store, mode: .testing, launchAtLoginCoordinator: launchAtLoginCoordinator)
+            panelController = FloatingPanelController(store: store, mode: .testing, snackbarCoordinator: snackbarCoordinator)
         }
 
         hotKeyManager = HotKeyManager { [weak self] in

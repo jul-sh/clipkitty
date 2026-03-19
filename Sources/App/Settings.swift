@@ -171,6 +171,16 @@ final class AppSettings: ObservableObject {
         didSet { save() }
     }
 
+    /// When the last info snackbar was dismissed (cooldown before showing nudges)
+    @Published var lastInfoDismissDate: Date? {
+        didSet { save() }
+    }
+
+    /// When the user last interacted with a nudge snackbar (cooldown before next nudge)
+    @Published var lastNudgeInteractionDate: Date? {
+        didSet { save() }
+    }
+
     /// Whether the user has completed the first-launch onboarding
     @Published var hasCompletedOnboarding: Bool {
         didSet { save() }
@@ -195,6 +205,8 @@ final class AppSettings: ObservableObject {
     private let launchAtLoginPromptDismissedKey = "launchAtLoginPromptDismissed"
     private let hasCompletedOnboardingKey = "hasCompletedOnboarding"
     private let firstLaunchDateKey = "firstLaunchDate"
+    private let lastInfoDismissDateKey = "lastInfoDismissDate"
+    private let lastNudgeInteractionDateKey = "lastNudgeInteractionDate"
     private let ignoredAppBundleIdsKey = "ignoredAppBundleIds"
     #if SPARKLE_RELEASE
         private let autoInstallUpdatesKey = "autoInstallUpdates"
@@ -229,6 +241,8 @@ final class AppSettings: ObservableObject {
         #endif
 
         launchAtLoginPromptDismissed = defaults.bool(forKey: launchAtLoginPromptDismissedKey)
+        lastInfoDismissDate = defaults.object(forKey: lastInfoDismissDateKey) as? Date
+        lastNudgeInteractionDate = defaults.object(forKey: lastNudgeInteractionDateKey) as? Date
         hasCompletedOnboarding = defaults.bool(forKey: hasCompletedOnboardingKey)
 
         if let stored = defaults.object(forKey: firstLaunchDateKey) as? Date {
@@ -271,6 +285,8 @@ final class AppSettings: ObservableObject {
         defaults.set(launchAtLoginEnabled, forKey: launchAtLoginKey)
         defaults.set(autoPasteEnabled, forKey: autoPasteKey)
         defaults.set(launchAtLoginPromptDismissed, forKey: launchAtLoginPromptDismissedKey)
+        defaults.set(lastInfoDismissDate, forKey: lastInfoDismissDateKey)
+        defaults.set(lastNudgeInteractionDate, forKey: lastNudgeInteractionDateKey)
         defaults.set(hasCompletedOnboarding, forKey: hasCompletedOnboardingKey)
         defaults.set(ignoreConfidentialContent, forKey: ignoreConfidentialKey)
         defaults.set(ignoreTransientContent, forKey: ignoreTransientKey)

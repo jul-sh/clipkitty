@@ -1,0 +1,47 @@
+import Foundation
+
+@MainActor
+final class SnackbarCoordinator {
+    private let makeEnvironment: @MainActor () -> SnackbarEnvironment
+
+    init(makeEnvironment: @escaping @MainActor () -> SnackbarEnvironment = { LiveSnackbarEnvironment() }) {
+        self.makeEnvironment = makeEnvironment
+    }
+
+    func evaluate() -> SnackbarDecision {
+        evaluateSnackbar(makeEnvironment())
+    }
+
+    func handleNudgeAction(_ kind: NudgeKind) {
+        AppSettings.shared.lastNudgeInteractionDate = Date()
+
+        switch kind {
+        case .launchAtLogin:
+            AppSettings.shared.launchAtLoginPromptDismissed = true
+            AppSettings.shared.launchAtLoginEnabled = true
+            LaunchAtLogin.shared.enable()
+            ToastWindow.shared.show(message: String(localized: "Launch at login enabled"))
+        }
+    }
+
+    func handleNudgeDismiss(_ kind: NudgeKind) {
+        AppSettings.shared.lastNudgeInteractionDate = Date()
+
+        switch kind {
+        case .launchAtLogin:
+            AppSettings.shared.launchAtLoginPromptDismissed = true
+        }
+    }
+
+    func handleInfoDismiss() {
+        AppSettings.shared.lastInfoDismissDate = Date()
+    }
+
+    func syncWithSystem() {
+        let settings = AppSettings.shared
+        if settings.launchAtLoginEnabled, !LaunchAtLogin.shared.isEnabled {
+            settings.launchAtLoginEnabled = false
+            settings.launchAtLoginPromptDismissed = false
+        }
+    }
+}
