@@ -1,15 +1,16 @@
 //! ClipboardStore - Thin UniFFI-facing facade over search/save services.
 
 use crate::database::Database;
-use crate::indexer::Indexer;
+use crate::indexer::{IndexInspection, Indexer};
 use crate::interface::{
     ClipKittyError, ClipboardItem, ClipboardStoreApi, ItemQueryFilter, ItemTag, PreviewPayload,
-    RowDecorationResult, SearchOutcome, SearchResult,
+    RebuildDurationExpectation, RowDecorationResult, SearchOutcome, SearchResult,
+    StoreBootstrapPlan,
 };
 use crate::{save_service, search_service};
 use once_cell::sync::Lazy;
 use parking_lot::Mutex;
-use std::path::PathBuf;
+use std::path::{Path, PathBuf};
 use std::sync::{Arc, Once};
 use tokio::sync::Notify;
 use tokio_util::sync::CancellationToken;
@@ -23,6 +24,7 @@ static FALLBACK_RUNTIME: Lazy<tokio::runtime::Runtime> = Lazy::new(|| {
 });
 
 static RAYON_INIT: Once = Once::new();
+const LONG_REBUILD_BYTE_THRESHOLD: i64 = 50_000_000; // 50 MB
 
 fn init_rayon() {
     RAYON_INIT.call_once(|| {
@@ -93,7 +95,8 @@ impl Drop for SearchOperation {
 }
 
 impl ClipboardStore {
-    pub fn new_in_memory() -> Result<Self, ClipKittyError> {
+    #[cfg(test)]
+    pub(crate) fn new_in_memory() -> Result<Self, ClipKittyError> {
         init_rayon();
         let database = Database::open_in_memory().map_err(ClipKittyError::from)?;
         let indexer = Indexer::new_in_memory()?;
@@ -110,17 +113,55 @@ impl ClipboardStore {
         tokio::runtime::Handle::try_current().unwrap_or_else(|_| FALLBACK_RUNTIME.handle().clone())
     }
 
-    fn rebuild_index_if_needed(&self) -> Result<(), ClipKittyError> {
-        let db_count = self.db.count_items()?;
-        let index_count = self.indexer.num_docs();
-        if db_count == index_count {
-            return Ok(());
+    fn index_path_for_database(path: &Path) -> PathBuf {
+        let index_dir = format!("tantivy_index_{}", crate::indexer::INDEX_VERSION);
+        path.parent()
+            .map(|parent| parent.join(&index_dir))
+            .unwrap_or_else(|| PathBuf::from(&index_dir))
+    }
+
+    fn open_at_path(path: &Path) -> Result<Self, ClipKittyError> {
+        let db = Database::open(path).map_err(ClipKittyError::from)?;
+        let indexer = Indexer::new(&Self::index_path_for_database(path))?;
+
+        Ok(Self {
+            db: Arc::new(db),
+            indexer: Arc::new(indexer),
+            analysis_cache: Arc::new(search_service::HighlightAnalysisCache::default()),
+            active_search_token: Arc::new(Mutex::new(None)),
+        })
+    }
+
+    fn rebuild_duration_expectation(db_size_bytes: i64) -> RebuildDurationExpectation {
+        if db_size_bytes >= LONG_REBUILD_BYTE_THRESHOLD {
+            RebuildDurationExpectation::OverFiveSeconds
+        } else {
+            RebuildDurationExpectation::UnderFiveSeconds
+        }
+    }
+
+    fn inspect_bootstrap(path: &Path) -> Result<StoreBootstrapPlan, ClipKittyError> {
+        let db = Database::open(path).map_err(ClipKittyError::from)?;
+        let db_count = db.count_items()?;
+        let needs_rebuild = match Indexer::inspect(&Self::index_path_for_database(path))? {
+            IndexInspection::Missing => db_count > 0,
+            IndexInspection::RebuildRequired => true,
+            IndexInspection::Ready { doc_count } => doc_count != db_count,
+        };
+
+        if needs_rebuild {
+            let db_size = db.database_size().unwrap_or(0);
+            return Ok(StoreBootstrapPlan::RebuildIndex {
+                expectation: Self::rebuild_duration_expectation(db_size),
+            });
         }
 
+        Ok(StoreBootstrapPlan::Ready)
+    }
+
+    fn rebuild_index_contents(&self) -> Result<(), ClipKittyError> {
         let items = self.db.fetch_all_items()?;
-        if items.is_empty() {
-            return Ok(());
-        }
+        self.indexer.clear()?;
 
         use rayon::prelude::*;
         items.into_par_iter().try_for_each(|item| {
@@ -144,24 +185,11 @@ impl ClipboardStore {
     #[uniffi::constructor]
     pub fn new(db_path: String) -> Result<Self, ClipKittyError> {
         init_rayon();
-        let path = PathBuf::from(db_path);
-        let db = Database::open(&path).map_err(ClipKittyError::from)?;
+        Self::open_at_path(&PathBuf::from(db_path))
+    }
 
-        let index_dir = format!("tantivy_index_{}", crate::indexer::INDEX_VERSION);
-        let index_path = path
-            .parent()
-            .map(|parent| parent.join(&index_dir))
-            .unwrap_or_else(|| PathBuf::from(&index_dir));
-        let indexer = Indexer::new(&index_path)?;
-
-        let store = Self {
-            db: Arc::new(db),
-            indexer: Arc::new(indexer),
-            analysis_cache: Arc::new(search_service::HighlightAnalysisCache::default()),
-            active_search_token: Arc::new(Mutex::new(None)),
-        };
-        store.rebuild_index_if_needed()?;
-        Ok(store)
+    pub fn rebuild_index(&self) -> Result<(), ClipKittyError> {
+        self.rebuild_index_contents()
     }
 
     fn begin_search_operation(
@@ -221,6 +249,12 @@ impl ClipboardStore {
     pub fn start_search(&self, query: String, filter: ItemQueryFilter) -> Arc<SearchOperation> {
         self.begin_search_operation(query, filter)
     }
+}
+
+#[uniffi::export]
+pub fn inspect_store_bootstrap(db_path: String) -> Result<StoreBootstrapPlan, ClipKittyError> {
+    init_rayon();
+    ClipboardStore::inspect_bootstrap(&PathBuf::from(db_path))
 }
 
 #[uniffi::export]
@@ -441,12 +475,13 @@ mod tests {
     use super::*;
     use crate::interface::{
         ClipboardContent, FileStatus, HighlightKind, IconType, ItemIcon, ItemQueryFilter,
-        LinkMetadataPayload, LinkMetadataState,
+        LinkMetadataPayload, LinkMetadataState, RebuildDurationExpectation, StoreBootstrapPlan,
     };
     use once_cell::sync::Lazy;
     use parking_lot::Mutex as TestMutex;
     use std::sync::atomic::{AtomicUsize, Ordering};
     use std::sync::{Arc, OnceLock};
+    use tempfile::tempdir;
 
     static SEARCH_HOOK_TEST_LOCK: Lazy<TestMutex<()>> = Lazy::new(|| TestMutex::new(()));
 
@@ -470,6 +505,12 @@ mod tests {
             .enable_all()
             .build()
             .unwrap()
+    }
+
+    fn temp_db_path() -> (tempfile::TempDir, String) {
+        let dir = tempdir().unwrap();
+        let db_path = dir.path().join("clipboard.sqlite");
+        (dir, db_path.to_string_lossy().to_string())
     }
 
     #[test]
@@ -1296,5 +1337,81 @@ mod tests {
             .unwrap();
         let result = futures::executor::block_on(store.search("Hello".to_string())).unwrap();
         assert_eq!(result.matches.len(), 1);
+    }
+
+    #[test]
+    fn test_bootstrap_inspection_ready_when_index_matches() {
+        let (_dir, db_path) = temp_db_path();
+        let store = ClipboardStore::new(db_path.clone()).unwrap();
+        store
+            .save_text("hello world".to_string(), None, None)
+            .unwrap();
+
+        let plan = inspect_store_bootstrap(db_path).unwrap();
+        assert_eq!(plan, StoreBootstrapPlan::Ready);
+    }
+
+    #[test]
+    fn test_bootstrap_inspection_requires_rebuild_when_index_missing() {
+        let (dir, db_path) = temp_db_path();
+        let store = ClipboardStore::new(db_path.clone()).unwrap();
+        store
+            .save_text("hello world".to_string(), None, None)
+            .unwrap();
+        drop(store);
+
+        let index_path = dir
+            .path()
+            .join(format!("tantivy_index_{}", crate::indexer::INDEX_VERSION));
+        std::fs::remove_dir_all(index_path).unwrap();
+
+        let plan = inspect_store_bootstrap(db_path).unwrap();
+        assert_eq!(
+            plan,
+            StoreBootstrapPlan::RebuildIndex {
+                expectation: RebuildDurationExpectation::UnderFiveSeconds,
+            }
+        );
+    }
+
+    #[test]
+    fn test_rebuild_duration_expectation_marks_threshold_as_long_running() {
+        assert_eq!(
+            ClipboardStore::rebuild_duration_expectation(LONG_REBUILD_BYTE_THRESHOLD),
+            RebuildDurationExpectation::OverFiveSeconds
+        );
+        assert_eq!(
+            ClipboardStore::rebuild_duration_expectation(LONG_REBUILD_BYTE_THRESHOLD - 1),
+            RebuildDurationExpectation::UnderFiveSeconds
+        );
+    }
+
+    #[tokio::test]
+    async fn test_explicit_rebuild_restores_search_results_after_missing_index() {
+        let (dir, db_path) = temp_db_path();
+        let store = ClipboardStore::new(db_path.clone()).unwrap();
+        let item_id = store
+            .save_text("needle in haystack".to_string(), None, None)
+            .unwrap();
+        drop(store);
+
+        let index_path = dir
+            .path()
+            .join(format!("tantivy_index_{}", crate::indexer::INDEX_VERSION));
+        std::fs::remove_dir_all(index_path).unwrap();
+
+        let store = ClipboardStore::new(db_path.clone()).unwrap();
+        let before = store.search("needle".to_string()).await.unwrap();
+        assert!(before.matches.is_empty());
+
+        store.rebuild_index().unwrap();
+
+        let after = store.search("needle".to_string()).await.unwrap();
+        let ids: Vec<i64> = after
+            .matches
+            .iter()
+            .map(|item| item.item_metadata.item_id)
+            .collect();
+        assert_eq!(ids, vec![item_id]);
     }
 }

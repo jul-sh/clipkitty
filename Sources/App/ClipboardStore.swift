@@ -28,6 +28,20 @@ private final class MissingRepositorySearchOperation: ClipboardSearchOperation {
     }
 }
 
+/// Wraps the Rust store and repository created during bootstrap.
+struct StoreRuntime {
+    let store: ClipKittyRust.ClipboardStore
+    let repository: ClipboardRepository
+}
+
+/// Observable lifecycle state for the clipboard store.
+enum StoreLifecycle: Equatable {
+    case initializing
+    case rebuildingIndex
+    case ready
+    case failed(String)
+}
+
 /// Display state for the clipboard list
 /// Search with empty query returns all items (what was previously called "browse mode")
 enum DisplayState: Equatable {
@@ -73,10 +87,15 @@ final class ClipboardStore {
     /// Current browser filter for refreshes driven by this store facade.
     private(set) var queryFilter: ItemQueryFilter = .all
 
+    // MARK: - Lifecycle
+
+    private(set) var lifecycle: StoreLifecycle = .initializing
+
     // MARK: - Private State
 
-    /// Rust-backed repository facade
+    /// Rust-backed repository facade (available after bootstrap completes)
     private var repository: ClipboardRepository?
+    private var bootstrapTask: Task<StoreRuntime, Error>?
 
     private enum SearchExecution {
         case idle
@@ -135,9 +154,7 @@ final class ClipboardStore {
         ) { [weak self] detectedContent in
             self?.handleDetectedPasteboardContent(detectedContent)
         }
-        setupDatabase()
-        refresh()
-        pruneIfNeeded()
+        startBootstrap()
     }
 
     /// Current database size in bytes (cached, updated async)
@@ -161,28 +178,69 @@ final class ClipboardStore {
         screenshotMode ? "clipboard-screenshot.sqlite" : "clipboard.sqlite"
     }
 
-    private func setupDatabase() {
+    private func startBootstrap() {
+        guard let dbPath = resolveDatabasePath() else { return }
+
+        bootstrapTask = Task.detached(priority: .userInitiated) {
+            let plan = try inspectStoreBootstrap(dbPath: dbPath)
+
+            if case let .rebuildIndex(expectation) = plan,
+               expectation == .overFiveSeconds
+            {
+                await MainActor.run { [weak self] in
+                    self?.lifecycle = .rebuildingIndex
+                }
+            }
+
+            let rustStore = try ClipKittyRust.ClipboardStore(dbPath: dbPath)
+
+            if case .rebuildIndex = plan {
+                try rustStore.rebuildIndex()
+            }
+
+            let repository = ClipboardRepository(store: rustStore)
+            return StoreRuntime(store: rustStore, repository: repository)
+        }
+
+        Task {
+            do {
+                let runtime = try await bootstrapTask!.value
+                self.repository = runtime.repository
+                self.previewLoader = PreviewLoader(repository: runtime.repository)
+                self.lifecycle = .ready
+                self.refresh()
+                self.pruneIfNeeded()
+            } catch {
+                let dbError = ClipboardError.databaseInitFailed(underlying: error)
+                ErrorReporter.reportCritical(dbError)
+                self.lifecycle = .failed(dbError.localizedDescription)
+                self.state = .error(dbError.localizedDescription)
+            }
+        }
+    }
+
+    private func resolveDatabasePath() -> String? {
         do {
             guard let appSupport = fileManager.urls(for: .applicationSupportDirectory, in: .userDomainMask).first else {
                 let error = ClipboardError.databaseInitFailed(underlying: NSError(domain: "ClipKitty", code: 1, userInfo: [NSLocalizedDescriptionKey: "Failed to locate application support directory"]))
                 ErrorReporter.reportCritical(error)
                 state = .error(error.localizedDescription)
-                return
+                return nil
             }
             let appDir = appSupport.appendingPathComponent("ClipKitty", isDirectory: true)
             try fileManager.createDirectory(at: appDir, withIntermediateDirectories: true, attributes: nil)
-
-            let dbPath = appDir.appendingPathComponent(Self.databaseFilename(screenshotMode: isScreenshotMode)).path
-
-            let store = try ClipKittyRust.ClipboardStore(dbPath: dbPath)
-            let repository = ClipboardRepository(store: store)
-            self.repository = repository
-            previewLoader = PreviewLoader(repository: repository)
+            return appDir.appendingPathComponent(Self.databaseFilename(screenshotMode: isScreenshotMode)).path
         } catch {
             let dbError = ClipboardError.databaseInitFailed(underlying: error)
             ErrorReporter.reportCritical(dbError)
             state = .error(dbError.localizedDescription)
+            return nil
         }
+    }
+
+    func awaitReady() async {
+        guard let task = bootstrapTask else { return }
+        _ = try? await task.value
     }
 
     // MARK: - Public API

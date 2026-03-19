@@ -24,7 +24,7 @@ enum NudgeKind: Equatable {
 }
 
 enum InfoKind: Equatable {
-    case rebuildingIndex(progress: Double)
+    case rebuildingIndex
 }
 
 enum SnackbarItem: Equatable {
@@ -43,8 +43,8 @@ struct SnackbarView: View {
         switch item {
         case .nudge(.launchAtLogin):
             LaunchAtLoginNudgeView(onEnable: onAction, onDismiss: onDismiss)
-        case let .info(.rebuildingIndex(progress)):
-            RebuildingIndexInfoView(progress: progress)
+        case .info(.rebuildingIndex):
+            RebuildingIndexInfoView()
         }
     }
 }
@@ -89,14 +89,12 @@ private struct LaunchAtLoginNudgeView: View {
 }
 
 private struct RebuildingIndexInfoView: View {
-    let progress: Double
-
     var body: some View {
         HStack(spacing: 8) {
             ProgressView()
                 .controlSize(.small)
 
-            Text("Rebuilding index\(progress < 1.0 ? " \(Int(progress * 100))%" : "…")")
+            Text("Rebuilding index…", comment: "Snackbar message shown during index rebuild")
                 .font(.system(size: 13, weight: .medium))
                 .foregroundStyle(.primary)
         }

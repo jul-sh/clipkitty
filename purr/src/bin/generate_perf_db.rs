@@ -342,8 +342,9 @@ fn main() {
 
     // Build the Tantivy index by opening via ClipboardStore
     println!("Building search index...");
-    let _store = ClipboardStore::new(output_path.to_str().unwrap().to_string())
+    let store = ClipboardStore::new(output_path.to_str().unwrap().to_string())
         .expect("Failed to open store for indexing");
+    store.rebuild_index().expect("Failed to rebuild search index");
 
     println!();
     println!("Database created: {}", output_path.display());

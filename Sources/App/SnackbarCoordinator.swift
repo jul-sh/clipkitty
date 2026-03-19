@@ -4,8 +4,16 @@ import Foundation
 final class SnackbarCoordinator {
     private let makeEnvironment: @MainActor () -> SnackbarEnvironment
 
-    init(makeEnvironment: @escaping @MainActor () -> SnackbarEnvironment = { LiveSnackbarEnvironment() }) {
-        self.makeEnvironment = makeEnvironment
+    init(
+        store: ClipboardStore? = nil,
+        makeEnvironment: (@MainActor () -> SnackbarEnvironment)? = nil
+    ) {
+        if let makeEnvironment {
+            self.makeEnvironment = makeEnvironment
+        } else {
+            weak var weakStore = store
+            self.makeEnvironment = { LiveSnackbarEnvironment(store: weakStore) }
+        }
     }
 
     func evaluate() -> SnackbarDecision {

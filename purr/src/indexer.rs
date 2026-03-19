@@ -338,25 +338,47 @@ pub(crate) mod test_support {
     }
 }
 
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub(crate) enum IndexInspection {
+    Missing,
+    RebuildRequired,
+    Ready { doc_count: u64 },
+}
+
 impl Indexer {
+    pub(crate) fn inspect(path: &Path) -> IndexerResult<IndexInspection> {
+        if !path.exists() {
+            return Ok(IndexInspection::Missing);
+        }
+
+        let dir = MmapDirectory::open(path)?;
+        let index = match Index::open(dir) {
+            Ok(index) => index,
+            Err(_) => return Ok(IndexInspection::RebuildRequired),
+        };
+
+        if index.schema() != Self::build_schema() {
+            return Ok(IndexInspection::RebuildRequired);
+        }
+
+        let reader = index
+            .reader_builder()
+            .reload_policy(ReloadPolicy::Manual)
+            .try_into()?;
+
+        Ok(IndexInspection::Ready {
+            doc_count: reader.searcher().num_docs(),
+        })
+    }
+
     /// Create a new indexer at the given path.
     /// Automatically detects schema mismatches and rebuilds the index if needed.
     pub fn new(path: &Path) -> IndexerResult<Self> {
-        let schema = Self::build_schema();
-
-        // Check for existing index with incompatible schema
-        if path.exists() {
-            if let Ok(dir) = MmapDirectory::open(path) {
-                if let Ok(existing_index) = Index::open(dir) {
-                    if existing_index.schema() != schema {
-                        // Schema mismatch - delete and rebuild
-                        drop(existing_index);
-                        std::fs::remove_dir_all(path)?;
-                    }
-                }
-            }
+        if matches!(Self::inspect(path)?, IndexInspection::RebuildRequired) {
+            std::fs::remove_dir_all(path)?;
         }
 
+        let schema = Self::build_schema();
         std::fs::create_dir_all(path)?;
         let dir = MmapDirectory::open(path)?;
         let index = Index::open_or_create(dir, schema.clone())?;
@@ -372,6 +394,7 @@ impl Indexer {
     }
 
     /// Create an in-memory indexer (for testing)
+    #[cfg(test)]
     pub fn new_in_memory() -> IndexerResult<Self> {
         let schema = Self::build_schema();
         let index = Index::create_in_ram(schema.clone());
