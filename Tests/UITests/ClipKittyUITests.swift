@@ -242,6 +242,12 @@ final class ClipKittyUITests: XCTestCase {
         return getSelectedIndex() == expected
     }
 
+    private func clearSearchField(_ element: XCUIElement) {
+        clickAndWait(element)
+        element.typeKey("a", modifierFlags: .command)
+        element.typeKey(.delete, modifierFlags: [])
+    }
+
     // MARK: - Tests
 
     /// Regression test: verify the synthetic database was correctly seeded.
@@ -340,6 +346,70 @@ final class ClipKittyUITests: XCTestCase {
 
         // Selection should reset because the item order changed
         XCTAssertTrue(waitForSelectedIndex(0, timeout: 2), "Selection should reset when item positions change")
+    }
+
+    func testPreviewHighlightsRefreshWhenRefiningQueryForSameItem() throws {
+        let searchField = app.textFields["SearchField"]
+        XCTAssertTrue(searchField.waitForExistence(timeout: 5), "Search field not found")
+
+        let previewTextView = app.textViews["PreviewTextView"]
+        XCTAssertTrue(previewTextView.waitForExistence(timeout: 5), "Preview text view should exist")
+
+        let previewHighlightDebug = app.descendants(matching: .any)["PreviewHighlightDebug"]
+
+        clearSearchField(searchField)
+        typeTextSlowly(searchField, text: "clipkitty")
+
+        let singleResultLoaded = waitForCondition(timeout: 5) {
+            self.app.outlines.firstMatch.buttons.allElementsBoundByIndex.count == 1
+        }
+        XCTAssertTrue(singleResultLoaded, "clipkitty query should narrow to a single seeded item")
+
+        let initialPreviewLoaded = waitForCondition(timeout: 5) {
+            let value = previewTextView.value as? String ?? ""
+            return value.localizedCaseInsensitiveContains("clipkitty")
+                && value.localizedCaseInsensitiveContains("preview before pasting")
+        }
+        XCTAssertTrue(initialPreviewLoaded, "Preview should show the seeded ClipKitty item")
+
+        let initialHighlightReady = waitForCondition(timeout: 5) {
+            guard previewHighlightDebug.exists else { return false }
+            let label = previewHighlightDebug.label
+            return label.localizedCaseInsensitiveContains("clipkitty")
+                && !label.localizedCaseInsensitiveContains("preview")
+        }
+        XCTAssertTrue(
+            initialHighlightReady,
+            "Initial preview highlights should reflect only the initial query. Got: \(previewHighlightDebug.exists ? previewHighlightDebug.label : "missing")"
+        )
+
+        saveScreenshot(name: "preview_highlight_refresh_initial")
+
+        typeTextSlowly(searchField, text: " preview")
+
+        let sameSingleResultRemainsSelected = waitForCondition(timeout: 5) {
+            self.app.outlines.firstMatch.buttons.allElementsBoundByIndex.count == 1
+        }
+        XCTAssertTrue(sameSingleResultRemainsSelected, "Refined query should keep the same seeded item selected")
+
+        let previewStayedVisible = waitForCondition(timeout: 2) {
+            let value = previewTextView.value as? String ?? ""
+            return previewTextView.exists && !value.isEmpty
+        }
+        XCTAssertTrue(previewStayedVisible, "Preview should stay visible while refreshed highlights load")
+
+        let refinedHighlightReady = waitForCondition(timeout: 5) {
+            guard previewHighlightDebug.exists else { return false }
+            let label = previewHighlightDebug.label
+            return label.localizedCaseInsensitiveContains("clipkitty")
+                && label.localizedCaseInsensitiveContains("preview")
+        }
+        XCTAssertTrue(
+            refinedHighlightReady,
+            "Preview highlights should refresh when the query is refined without changing the selected item. Got: \(previewHighlightDebug.exists ? previewHighlightDebug.label : "missing")"
+        )
+
+        saveScreenshot(name: "preview_highlight_refresh_refined")
     }
 
 

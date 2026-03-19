@@ -6,69 +6,72 @@
 #   ./distribution/setup-signing.sh           # Create keychain & import certs
 #   ./distribution/setup-signing.sh --cleanup  # Remove temporary keychain
 #
-# Requires AGE_SECRET_KEY environment variable (or reads from macOS Keychain via get-age-key.sh).
+# Reads encrypted cert secrets from secrets/*.age using the age key from
+# the login keychain (or AGE_SECRET_KEY in CI).
 
-set -e
+set -euo pipefail
 
 SCRIPT_DIR="$(cd "$(dirname "$0")" && pwd)"
-PROJECT_ROOT="$(cd "$SCRIPT_DIR/.." && pwd)"
 KEYCHAIN_NAME="clipkitty_signing.keychain-db"
 KEYCHAIN_PATH="$HOME/Library/Keychains/$KEYCHAIN_NAME"
 
-if [ "$1" = "--cleanup" ]; then
-    security delete-keychain "$KEYCHAIN_PATH" 2>/dev/null || true
+source "$SCRIPT_DIR/signing-common.sh"
+
+if [ "${1:-}" = "--cleanup" ]; then
+    delete_temp_keychain "$KEYCHAIN_PATH"
     exit 0
 fi
 
-# Check if signing identities are already usable (CI case)
-if security find-identity -v -p codesigning 2>/dev/null | grep -q "3rd Party Mac Developer Application" && \
-   security find-identity -v 2>/dev/null | grep -q "3rd Party Mac Developer Installer"; then
-    # Test that productbuild can actually access the key (non-interactive)
-    # by checking if the keychain is a temp one (not login)
-    if security list-keychains -d user 2>/dev/null | grep -q "signing_temp\|clipkitty_signing"; then
-        echo "Signing certificates already available"
-        exit 0
-    fi
+# Repo-managed temp keychains are disposable. Never try to unlock a stale one.
+delete_temp_keychain "$KEYCHAIN_PATH"
+
+if all_codesigning_identities_available \
+    "3rd Party Mac Developer Application" \
+    "3rd Party Mac Developer Installer"; then
+    echo "Signing certificates already available"
+    exit 0
 fi
 
-# Resolve AGE_SECRET_KEY
-AGE_SECRET_KEY=$("$SCRIPT_DIR/get-age-key.sh") || exit 1
+AGE_SECRET_KEY=$("$SCRIPT_DIR/get-age-key.sh")
+export AGE_SECRET_KEY
 
-# Decrypt secrets
-printf '%s' "$AGE_SECRET_KEY" > /tmp/_ck_age.txt
-P12_PASS=$(age -d -i /tmp/_ck_age.txt "$PROJECT_ROOT/secrets/P12_PASSWORD.age")
-age -d -i /tmp/_ck_age.txt "$PROJECT_ROOT/secrets/APPSTORE_APP_CERT_BASE64.age" \
-    | base64 --decode > /tmp/_ck_app.p12
-age -d -i /tmp/_ck_age.txt "$PROJECT_ROOT/secrets/APPSTORE_CERT_BASE64.age" \
-    | base64 --decode > /tmp/_ck_inst.p12
-rm -f /tmp/_ck_age.txt
+P12_PASS=$("$SCRIPT_DIR/read-secret.sh" P12_PASSWORD)
+APP_P12_PATH=$(mktemp "${TMPDIR:-/tmp}/clipkitty-app-cert.XXXXXX.p12")
+INST_P12_PATH=$(mktemp "${TMPDIR:-/tmp}/clipkitty-inst-cert.XXXXXX.p12")
+WWDR_CERT=""
 
-# Create temporary keychain with known password
+cleanup() {
+    rm -f "$APP_P12_PATH" "$INST_P12_PATH"
+    if [ -n "$WWDR_CERT" ]; then
+        rm -f "$WWDR_CERT"
+    fi
+}
+
+trap cleanup EXIT
+
+"$SCRIPT_DIR/read-secret.sh" APPSTORE_APP_CERT_BASE64 | base64 --decode > "$APP_P12_PATH"
+"$SCRIPT_DIR/read-secret.sh" APPSTORE_CERT_BASE64 | base64 --decode > "$INST_P12_PATH"
+
+# Create temporary keychain with a fresh per-run password.
 KEYCHAIN_PASSWORD=$(openssl rand -hex 16)
-security delete-keychain "$KEYCHAIN_PATH" 2>/dev/null || true
-security create-keychain -p "$KEYCHAIN_PASSWORD" "$KEYCHAIN_PATH"
-security set-keychain-settings -t 3600 "$KEYCHAIN_PATH"
-security unlock-keychain -p "$KEYCHAIN_PASSWORD" "$KEYCHAIN_PATH"
+create_unlocked_temp_keychain "$KEYCHAIN_PATH" "$KEYCHAIN_PASSWORD"
 
 # Install Apple WWDR intermediate certificate (needed for cert chain validation)
-WWDR_CERT="/tmp/_ck_wwdr.cer"
 if ! security find-certificate -c "Apple Worldwide Developer Relations Certification Authority" /Library/Keychains/System.keychain >/dev/null 2>&1; then
+    WWDR_CERT=$(mktemp "${TMPDIR:-/tmp}/clipkitty-wwdr.XXXXXX.cer")
     curl -sLo "$WWDR_CERT" https://www.apple.com/certificateauthority/AppleWWDRCAG3.cer
     sudo security add-trusted-cert -d -r unspecified -k /Library/Keychains/System.keychain "$WWDR_CERT"
-    rm -f "$WWDR_CERT"
 fi
 
 # Import certificates
-security import /tmp/_ck_app.p12 -k "$KEYCHAIN_PATH" -P "$P12_PASS" \
+security import "$APP_P12_PATH" -k "$KEYCHAIN_PATH" -P "$P12_PASS" \
     -T /usr/bin/codesign -T /usr/bin/productbuild
-security import /tmp/_ck_inst.p12 -k "$KEYCHAIN_PATH" -P "$P12_PASS" \
+security import "$INST_P12_PATH" -k "$KEYCHAIN_PATH" -P "$P12_PASS" \
     -T /usr/bin/codesign -T /usr/bin/productbuild
-rm -f /tmp/_ck_app.p12 /tmp/_ck_inst.p12
 
 # Remove duplicate Application cert (installer P12 bundles an extra one)
 HASHES=$(security find-certificate -a -c "3rd Party Mac Developer Application" -Z \
     "$KEYCHAIN_PATH" 2>/dev/null | grep "SHA-1" | awk '{print $NF}')
-FIRST=$(echo "$HASHES" | head -1)
 echo "$HASHES" | tail -n +2 | while read -r HASH; do
     security delete-certificate -Z "$HASH" "$KEYCHAIN_PATH" 2>/dev/null || true
 done
@@ -78,8 +81,6 @@ security set-key-partition-list \
     -S apple-tool:,apple:,codesign:,productbuild: \
     -s -k "$KEYCHAIN_PASSWORD" "$KEYCHAIN_PATH" >/dev/null
 
-# Add to keychain search list (prepend so our certs are found first)
-EXISTING=$(security list-keychains -d user | tr -d '" ' | tr '\n' ' ')
-security list-keychains -d user -s "$KEYCHAIN_PATH" $EXISTING
+prepend_keychain_to_search_list "$KEYCHAIN_PATH"
 
 echo "Signing keychain ready: $KEYCHAIN_NAME"
