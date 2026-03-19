@@ -74,7 +74,6 @@ impl Database {
     }
 
     /// Open an in-memory database (for testing)
-    #[cfg(test)]
     pub fn open_in_memory() -> DatabaseResult<Self> {
         let manager = SqliteConnectionManager::memory().with_init(|conn| {
             conn.execute_batch(

@@ -15,7 +15,7 @@ struct BrowserFilterOverlay: View {
     }
 
     private var highlight: FilterOverlayState {
-        guard case let .filter(state) = viewModel.session.overlays else { return .none }
+        guard case let .filter(state) = viewModel.overlayState else { return .none }
         return state
     }
 
