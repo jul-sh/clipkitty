@@ -219,7 +219,7 @@ private struct FilterRowButton: View {
             .padding(.vertical, 4)
             .background {
                 RoundedRectangle(cornerRadius: 7)
-                    .fill(isHighlighted ? Color.accentColor : Color.clear)
+                    .fill(isHighlighted ? Color.selectionBackground : Color.clear)
             }
             .contentShape(RoundedRectangle(cornerRadius: 7))
         }
