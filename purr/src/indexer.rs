@@ -4,7 +4,13 @@
 //! For queries under 3 characters, returns empty (handled by search.rs streaming fallback).
 
 use crate::candidate::SearchCandidate;
-use crate::ranking::{compute_bucket_score, PrefixPreferenceQuery, ScoringContext};
+#[cfg(not(feature = "perf-log"))]
+use crate::ranking::compute_bucket_score;
+#[cfg(feature = "perf-log")]
+use crate::ranking::{
+    compute_bucket_score_with_perf, RankingPerfBreakdown, LARGE_DOC_THRESHOLD_BYTES,
+};
+use crate::ranking::{prepare_document_for_ranking, PrefixPreferenceQuery, ScoringContext};
 use crate::search::SearchQuery;
 use chrono::Utc;
 use tokio_util::sync::CancellationToken;
@@ -21,7 +27,9 @@ use parking_lot::RwLock;
 use std::path::Path;
 use tantivy::collector::TopDocs;
 use tantivy::directory::MmapDirectory;
-use tantivy::query::{BooleanQuery, BoostQuery, FuzzyTermQuery, Occur, PhraseQuery, TermQuery};
+use tantivy::query::{
+    BooleanQuery, BoostQuery, FuzzyTermQuery, Occur, PhrasePrefixQuery, PhraseQuery, TermQuery,
+};
 use tantivy::schema::*;
 use tantivy::tokenizer::{NgramTokenizer, TextAnalyzer, TokenFilter, TokenStream, Tokenizer};
 use tantivy::{DocId, Index, IndexReader, IndexWriter, ReloadPolicy, Score, Term};
@@ -93,6 +101,189 @@ pub enum IndexerError {
 
 pub type IndexerResult<T> = Result<T, IndexerError>;
 
+#[derive(Debug, Clone)]
+struct OwnedPrefixPreferenceQuery {
+    raw_query_lower: String,
+    stripped_query_lower: String,
+}
+
+impl OwnedPrefixPreferenceQuery {
+    fn as_borrowed(&self) -> PrefixPreferenceQuery<'_> {
+        PrefixPreferenceQuery {
+            raw_query_lower: &self.raw_query_lower,
+            stripped_query_lower: &self.stripped_query_lower,
+        }
+    }
+}
+
+#[derive(Debug, Clone, Copy)]
+struct PhaseTwoQuery<'a> {
+    query_words: &'a [&'a str],
+    query_words_lower: &'a [&'a str],
+    joined_query_lower: Option<&'a str>,
+    last_word_is_prefix: bool,
+    prefix_preference: Option<PrefixPreferenceQuery<'a>>,
+}
+
+#[derive(Debug, Clone)]
+struct OwnedPhaseTwoQuery {
+    query_words: Vec<String>,
+    query_words_lower: Vec<String>,
+    joined_query_lower: Option<String>,
+    last_word_is_prefix: bool,
+    prefix_preference: Option<OwnedPrefixPreferenceQuery>,
+}
+
+#[cfg(feature = "perf-log")]
+#[derive(Debug, Default, Clone, Copy)]
+struct PhaseTwoCandidatePerf {
+    doc_bytes: usize,
+    prep_ns: u64,
+    ranking: RankingPerfBreakdown,
+}
+
+#[cfg(feature = "perf-log")]
+#[derive(Debug, Default, Clone, Copy)]
+struct PhaseTwoPerfTotals {
+    candidates_seen: usize,
+    matched_candidates: usize,
+    large_doc_candidates: usize,
+    total_doc_bytes: usize,
+    total_doc_words: usize,
+    total_query_words: usize,
+    total_raw_candidate_count: usize,
+    total_trimmed_candidate_count: usize,
+    prep_ns: u64,
+    match_query_words_ns: u64,
+    collect_candidates_ns: u64,
+    alignment_ns: u64,
+    quality_signals_ns: u64,
+    exactness_ns: u64,
+}
+
+#[cfg(feature = "perf-log")]
+impl PhaseTwoPerfTotals {
+    fn record(&mut self, perf: PhaseTwoCandidatePerf, matched: bool) {
+        self.candidates_seen += 1;
+        self.matched_candidates += usize::from(matched);
+        self.large_doc_candidates += usize::from(perf.doc_bytes > LARGE_DOC_THRESHOLD_BYTES);
+        self.total_doc_bytes += perf.doc_bytes;
+        self.total_doc_words += perf.ranking.doc_word_count;
+        self.total_query_words += perf.ranking.query_word_count;
+        self.total_raw_candidate_count += perf.ranking.raw_candidate_count;
+        self.total_trimmed_candidate_count += perf.ranking.trimmed_candidate_count;
+        self.prep_ns += perf.prep_ns;
+        self.match_query_words_ns += perf.ranking.match_query_words_ns;
+        self.collect_candidates_ns += perf.ranking.collect_candidates_ns;
+        self.alignment_ns += perf.ranking.alignment_ns;
+        self.quality_signals_ns += perf.ranking.quality_signals_ns;
+        self.exactness_ns += perf.ranking.exactness_ns;
+    }
+
+    fn merge(&mut self, other: Self) {
+        self.candidates_seen += other.candidates_seen;
+        self.matched_candidates += other.matched_candidates;
+        self.large_doc_candidates += other.large_doc_candidates;
+        self.total_doc_bytes += other.total_doc_bytes;
+        self.total_doc_words += other.total_doc_words;
+        self.total_query_words += other.total_query_words;
+        self.total_raw_candidate_count += other.total_raw_candidate_count;
+        self.total_trimmed_candidate_count += other.total_trimmed_candidate_count;
+        self.prep_ns += other.prep_ns;
+        self.match_query_words_ns += other.match_query_words_ns;
+        self.collect_candidates_ns += other.collect_candidates_ns;
+        self.alignment_ns += other.alignment_ns;
+        self.quality_signals_ns += other.quality_signals_ns;
+        self.exactness_ns += other.exactness_ns;
+    }
+}
+
+fn prepare_phase_two_query(query: &SearchQuery, recall_text: &str) -> OwnedPhaseTwoQuery {
+    let query_words = crate::search::tokenize_words(recall_text)
+        .into_iter()
+        .map(|(_, _, word)| word)
+        .collect::<Vec<_>>();
+    let query_words_lower = query_words.iter().map(|word| word.to_lowercase()).collect();
+    let joined_query_lower =
+        (!query_words.is_empty()).then(|| query_words.join(" ").to_lowercase());
+    let last_word_is_prefix = recall_text.ends_with(|c: char| c.is_alphanumeric());
+    let prefix_preference = match query {
+        SearchQuery::Plain { .. } => None,
+        SearchQuery::PreferPrefix {
+            raw_text,
+            stripped_text,
+        } => Some(OwnedPrefixPreferenceQuery {
+            raw_query_lower: raw_text.to_lowercase(),
+            stripped_query_lower: stripped_text.to_lowercase(),
+        }),
+    };
+
+    OwnedPhaseTwoQuery {
+        query_words,
+        query_words_lower,
+        joined_query_lower,
+        last_word_is_prefix,
+        prefix_preference,
+    }
+}
+
+#[cfg(not(feature = "perf-log"))]
+fn score_phase_two_candidate(
+    candidate: &SearchCandidate,
+    phase_two_query: PhaseTwoQuery<'_>,
+    now: i64,
+) -> Option<crate::ranking::BucketScore> {
+    let content = candidate.content();
+    let document = prepare_document_for_ranking(content);
+
+    let bucket = compute_bucket_score(&ScoringContext {
+        document: &document,
+        query_words: phase_two_query.query_words,
+        query_words_lower: phase_two_query.query_words_lower,
+        joined_query_lower: phase_two_query.joined_query_lower,
+        last_word_is_prefix: phase_two_query.last_word_is_prefix,
+        prefix_preference: phase_two_query.prefix_preference,
+        timestamp: candidate.timestamp,
+        bm25_score: candidate.tantivy_score,
+        now,
+    });
+
+    (bucket.words_matched_weight() > 0).then_some(bucket)
+}
+
+#[cfg(feature = "perf-log")]
+fn score_phase_two_candidate(
+    candidate: &SearchCandidate,
+    phase_two_query: PhaseTwoQuery<'_>,
+    now: i64,
+) -> (Option<crate::ranking::BucketScore>, PhaseTwoCandidatePerf) {
+    let prep_start = std::time::Instant::now();
+    let content = candidate.content();
+    let document = prepare_document_for_ranking(content);
+    let prep_ns = prep_start.elapsed().as_nanos() as u64;
+
+    let (bucket, ranking) = compute_bucket_score_with_perf(&ScoringContext {
+        document: &document,
+        query_words: phase_two_query.query_words,
+        query_words_lower: phase_two_query.query_words_lower,
+        joined_query_lower: phase_two_query.joined_query_lower,
+        last_word_is_prefix: phase_two_query.last_word_is_prefix,
+        prefix_preference: phase_two_query.prefix_preference,
+        timestamp: candidate.timestamp,
+        bm25_score: candidate.tantivy_score,
+        now,
+    });
+
+    (
+        (bucket.words_matched_weight() > 0).then_some(bucket),
+        PhaseTwoCandidatePerf {
+            doc_bytes: content.len(),
+            prep_ns,
+            ranking,
+        },
+    )
+}
+
 /// Tantivy-based indexer with trigram tokenization
 pub struct Indexer {
     index: Index,
@@ -116,7 +307,8 @@ pub(crate) mod test_support {
         pub(crate) on_phase_two_candidate: Option<Arc<dyn Fn(usize) + Send + Sync>>,
     }
 
-    static HOOKS: Lazy<Mutex<SearchTestHooks>> = Lazy::new(|| Mutex::new(SearchTestHooks::default()));
+    static HOOKS: Lazy<Mutex<SearchTestHooks>> =
+        Lazy::new(|| Mutex::new(SearchTestHooks::default()));
 
     pub(crate) struct SearchTestHookGuard;
 
@@ -146,25 +338,47 @@ pub(crate) mod test_support {
     }
 }
 
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub(crate) enum IndexInspection {
+    Missing,
+    RebuildRequired,
+    Ready { doc_count: u64 },
+}
+
 impl Indexer {
+    pub(crate) fn inspect(path: &Path) -> IndexerResult<IndexInspection> {
+        if !path.exists() {
+            return Ok(IndexInspection::Missing);
+        }
+
+        let dir = MmapDirectory::open(path)?;
+        let index = match Index::open(dir) {
+            Ok(index) => index,
+            Err(_) => return Ok(IndexInspection::RebuildRequired),
+        };
+
+        if index.schema() != Self::build_schema() {
+            return Ok(IndexInspection::RebuildRequired);
+        }
+
+        let reader = index
+            .reader_builder()
+            .reload_policy(ReloadPolicy::Manual)
+            .try_into()?;
+
+        Ok(IndexInspection::Ready {
+            doc_count: reader.searcher().num_docs(),
+        })
+    }
+
     /// Create a new indexer at the given path.
     /// Automatically detects schema mismatches and rebuilds the index if needed.
     pub fn new(path: &Path) -> IndexerResult<Self> {
-        let schema = Self::build_schema();
-
-        // Check for existing index with incompatible schema
-        if path.exists() {
-            if let Ok(dir) = MmapDirectory::open(path) {
-                if let Ok(existing_index) = Index::open(dir) {
-                    if existing_index.schema() != schema {
-                        // Schema mismatch - delete and rebuild
-                        drop(existing_index);
-                        std::fs::remove_dir_all(path)?;
-                    }
-                }
-            }
+        if matches!(Self::inspect(path)?, IndexInspection::RebuildRequired) {
+            std::fs::remove_dir_all(path)?;
         }
 
+        let schema = Self::build_schema();
         std::fs::create_dir_all(path)?;
         let dir = MmapDirectory::open(path)?;
         let index = Index::open_or_create(dir, schema.clone())?;
@@ -317,9 +531,8 @@ impl Indexer {
     }
 
     /// Two-phase search: trigram recall (Phase 1) + bucket re-ranking (Phase 2).
-    ///
-    /// EXPERIMENT: Phase 2 disabled - Tantivy's additive recency scoring now
-    /// matches Phase 2's bucket order, so we skip re-ranking entirely.
+    /// Phase 1 gets a broad candidate set from Tantivy; Phase 2 applies the
+    /// stricter bucket-ranking policy used by the rest of the search stack.
     pub fn search(&self, query: &str, limit: usize) -> IndexerResult<Vec<SearchCandidate>> {
         let parsed = SearchQuery::parse(query);
         self.search_parsed(&parsed, limit, &CancellationToken::new())
@@ -355,18 +568,26 @@ impl Indexer {
         }
         #[cfg(test)]
         test_support::before_phase_two();
-        let query_words_owned = crate::search::tokenize_words(recall_text);
-        let query_words: Vec<&str> = query_words_owned
+        let phase_two_query_owned = prepare_phase_two_query(query, recall_text);
+        let query_words: Vec<&str> = phase_two_query_owned
+            .query_words
             .iter()
-            .map(|(_, _, w)| w.as_str())
+            .map(String::as_str)
             .collect();
-        let last_word_is_prefix = recall_text.ends_with(|c: char| c.is_alphanumeric());
-        let prefix_preference = match query {
-            SearchQuery::Plain { .. } => None,
-            SearchQuery::PreferPrefix {
-                raw_text,
-                stripped_text,
-            } => Some((raw_text.to_lowercase(), stripped_text.to_lowercase())),
+        let query_words_lower: Vec<&str> = phase_two_query_owned
+            .query_words_lower
+            .iter()
+            .map(String::as_str)
+            .collect();
+        let phase_two_query = PhaseTwoQuery {
+            query_words: &query_words,
+            query_words_lower: &query_words_lower,
+            joined_query_lower: phase_two_query_owned.joined_query_lower.as_deref(),
+            last_word_is_prefix: phase_two_query_owned.last_word_is_prefix,
+            prefix_preference: phase_two_query_owned
+                .prefix_preference
+                .as_ref()
+                .map(OwnedPrefixPreferenceQuery::as_borrowed),
         };
         let now = Utc::now().timestamp();
 
@@ -374,11 +595,45 @@ impl Indexer {
         // Process candidates in chunks to allow periodic cancellation checks.
         // Smaller chunks = more responsive cancellation but higher overhead.
         const CANCELLATION_CHECK_CHUNK_SIZE: usize = 32;
-        let prefix_preference = prefix_preference
-            .as_ref()
-            .map(|(raw_query_lower, stripped_query_lower)| {
-                (raw_query_lower.clone(), stripped_query_lower.clone())
-            });
+        #[cfg(feature = "perf-log")]
+        let (mut scored, phase_two_perf) = {
+            let chunk_results: Vec<(
+                Vec<(crate::ranking::BucketScore, usize)>,
+                PhaseTwoPerfTotals,
+            )> = candidates
+                .par_chunks(CANCELLATION_CHECK_CHUNK_SIZE)
+                .enumerate()
+                .map(|(chunk_index, chunk)| {
+                    let mut chunk_scored = Vec::with_capacity(chunk.len());
+                    let mut chunk_perf = PhaseTwoPerfTotals::default();
+                    for (offset, candidate) in chunk.iter().enumerate() {
+                        if token.is_cancelled() {
+                            break;
+                        }
+                        let global_index = chunk_index * CANCELLATION_CHECK_CHUNK_SIZE + offset;
+                        #[cfg(test)]
+                        test_support::on_phase_two_candidate(global_index);
+                        let (bucket, perf) =
+                            score_phase_two_candidate(candidate, phase_two_query, now);
+                        let matched = bucket.is_some();
+                        chunk_perf.record(perf, matched);
+                        if let Some(bucket) = bucket {
+                            chunk_scored.push((bucket, global_index));
+                        }
+                    }
+                    (chunk_scored, chunk_perf)
+                })
+                .collect();
+
+            let mut scored = Vec::new();
+            let mut totals = PhaseTwoPerfTotals::default();
+            for (mut chunk_scored, chunk_perf) in chunk_results {
+                scored.append(&mut chunk_scored);
+                totals.merge(chunk_perf);
+            }
+            (scored, totals)
+        };
+        #[cfg(not(feature = "perf-log"))]
         let mut scored: Vec<(crate::ranking::BucketScore, usize)> = candidates
             .par_chunks(CANCELLATION_CHECK_CHUNK_SIZE)
             .enumerate()
@@ -391,27 +646,8 @@ impl Indexer {
                     let global_index = chunk_index * CANCELLATION_CHECK_CHUNK_SIZE + offset;
                     #[cfg(test)]
                     test_support::on_phase_two_candidate(global_index);
-                    let content_lower = candidate.content().to_lowercase();
-                    let doc_words = crate::search::tokenize_words(&content_lower);
-                    let doc_word_strs: Vec<&str> =
-                        doc_words.iter().map(|(_, _, w)| w.as_str()).collect();
-                    let prefix_preference_query = prefix_preference.as_ref().map(
-                        |(raw_query_lower, stripped_query_lower)| PrefixPreferenceQuery {
-                            raw_query_lower,
-                            stripped_query_lower,
-                        },
-                    );
-                    let bucket = compute_bucket_score(&ScoringContext {
-                        content_lower: &content_lower,
-                        doc_word_strs: &doc_word_strs,
-                        query_words: &query_words,
-                        last_word_is_prefix,
-                        prefix_preference: prefix_preference_query,
-                        timestamp: candidate.timestamp,
-                        bm25_score: candidate.tantivy_score,
-                        now,
-                    });
-                    if bucket.words_matched_weight() > 0 {
+                    if let Some(bucket) = score_phase_two_candidate(candidate, phase_two_query, now)
+                    {
                         chunk_scored.push((bucket, global_index));
                     }
                 }
@@ -438,6 +674,26 @@ impl Indexer {
                 (t2 - t1).as_secs_f64() * 1000.0,
                 scored.len(),
             );
+            if phase_two_perf.candidates_seen > 0 {
+                let candidates_seen = phase_two_perf.candidates_seen as f64;
+                let query_words_total = phase_two_perf.total_query_words.max(1) as f64;
+                eprintln!(
+                    "[perf] phase2_breakdown seen={} matched={} large_docs={} avg_doc_bytes={:.0} avg_doc_words={:.1} prep_sum={:.1}ms match_sum={:.1}ms collect_sum={:.1}ms align_sum={:.1}ms quality_sum={:.1}ms exactness_sum={:.1}ms raw_matches_per_query_word={:.2} trimmed_matches_per_query_word={:.2}",
+                    phase_two_perf.candidates_seen,
+                    phase_two_perf.matched_candidates,
+                    phase_two_perf.large_doc_candidates,
+                    phase_two_perf.total_doc_bytes as f64 / candidates_seen,
+                    phase_two_perf.total_doc_words as f64 / candidates_seen,
+                    phase_two_perf.prep_ns as f64 / 1_000_000.0,
+                    phase_two_perf.match_query_words_ns as f64 / 1_000_000.0,
+                    phase_two_perf.collect_candidates_ns as f64 / 1_000_000.0,
+                    phase_two_perf.alignment_ns as f64 / 1_000_000.0,
+                    phase_two_perf.quality_signals_ns as f64 / 1_000_000.0,
+                    phase_two_perf.exactness_ns as f64 / 1_000_000.0,
+                    phase_two_perf.total_raw_candidate_count as f64 / query_words_total,
+                    phase_two_perf.total_trimmed_candidate_count as f64 / query_words_total,
+                );
+            }
         }
 
         let mut candidate_slots: Vec<Option<SearchCandidate>> =
@@ -581,6 +837,21 @@ impl Indexer {
         clauses
     }
 
+    fn build_trailing_prefix_query(&self, query: &str) -> Option<PhrasePrefixQuery> {
+        let words: Vec<&str> = query.split_whitespace().collect();
+        let last_word_is_prefix = query.ends_with(|c: char| c.is_alphanumeric());
+        if !last_word_is_prefix || words.len() < 2 {
+            return None;
+        }
+
+        let terms = words
+            .into_iter()
+            .map(|word| Term::from_field_text(self.content_words_field, &word.to_lowercase()))
+            .collect();
+
+        Some(PhrasePrefixQuery::new(terms))
+    }
+
     /// Build word-level boost clauses for exact word matching and proximity.
     ///
     /// Uses exact word TermQuery boosts + proximity PhraseQuery boosts.
@@ -627,6 +898,14 @@ impl Indexer {
                     Box::new(BoostQuery::new(Box::new(phrase_q), PROXIMITY_BOOST_SCALE));
                 boosts.push((Occur::Should, boosted));
             }
+        }
+
+        if let Some(prefix_query) = self.build_trailing_prefix_query(query) {
+            let boosted: Box<dyn tantivy::query::Query> = Box::new(BoostQuery::new(
+                Box::new(prefix_query),
+                PROXIMITY_BOOST_SCALE,
+            ));
+            boosts.push((Occur::Should, boosted));
         }
 
         boosts
@@ -706,32 +985,43 @@ impl Indexer {
 
         // Build the recall part: trigram OR fuzzy-word pathways
         let fuzzy_clauses = self.build_fuzzy_word_clauses(query);
-        let recall: Box<dyn tantivy::query::Query> = if fuzzy_clauses.is_empty() {
+        let trailing_prefix_recall = self
+            .build_trailing_prefix_query(query)
+            .map(|query| Box::new(query) as Box<dyn tantivy::query::Query>);
+        let recall: Box<dyn tantivy::query::Query> = if fuzzy_clauses.is_empty()
+            && trailing_prefix_recall.is_none()
+        {
             Box::new(recall_query)
         } else {
-            // Require at least half the fuzzy clauses to match. Since this
-            // pathway is limited to 1-3 word queries, the threshold stays
-            // tight enough to avoid scattered common-word matches.
-            let n = fuzzy_clauses.len();
-            let fuzzy_min = n.div_ceil(2);
-            let fuzzy_subqueries: Vec<(Occur, Box<dyn tantivy::query::Query>)> = fuzzy_clauses
-                .into_iter()
-                .map(|q| (Occur::Should, q))
-                .collect();
-            let mut fuzzy_bool = BooleanQuery::new(fuzzy_subqueries);
-            fuzzy_bool.set_minimum_number_should_match(fuzzy_min);
+            let mut recall_paths = vec![(
+                Occur::Should,
+                Box::new(recall_query) as Box<dyn tantivy::query::Query>,
+            )];
 
-            // OR: document passes if it matches EITHER trigrams OR fuzzy words
-            let mut combined = BooleanQuery::new(vec![
-                (
-                    Occur::Should,
-                    Box::new(recall_query) as Box<dyn tantivy::query::Query>,
-                ),
-                (
+            if !fuzzy_clauses.is_empty() {
+                // Require at least half the fuzzy clauses to match. Since this
+                // pathway is limited to 1-3 word queries, the threshold stays
+                // tight enough to avoid scattered common-word matches.
+                let n = fuzzy_clauses.len();
+                let fuzzy_min = n.div_ceil(2);
+                let fuzzy_subqueries: Vec<(Occur, Box<dyn tantivy::query::Query>)> = fuzzy_clauses
+                    .into_iter()
+                    .map(|q| (Occur::Should, q))
+                    .collect();
+                let mut fuzzy_bool = BooleanQuery::new(fuzzy_subqueries);
+                fuzzy_bool.set_minimum_number_should_match(fuzzy_min);
+                recall_paths.push((
                     Occur::Should,
                     Box::new(fuzzy_bool) as Box<dyn tantivy::query::Query>,
-                ),
-            ]);
+                ));
+            }
+
+            if let Some(prefix_recall) = trailing_prefix_recall {
+                recall_paths.push((Occur::Should, prefix_recall));
+            }
+
+            // OR: document passes if it matches any recall pathway.
+            let mut combined = BooleanQuery::new(recall_paths);
             combined.set_minimum_number_should_match(1);
             Box::new(combined)
         };

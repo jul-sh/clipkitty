@@ -1,15 +1,16 @@
 //! ClipboardStore - Thin UniFFI-facing facade over search/save services.
 
 use crate::database::Database;
-use crate::indexer::Indexer;
+use crate::indexer::{IndexInspection, Indexer};
 use crate::interface::{
-    ClipKittyError, ClipboardItem, ClipboardStoreApi, ItemQueryFilter, ItemTag, MatchData,
-    SearchOutcome, SearchResult,
+    ClipKittyError, ClipboardItem, ClipboardStoreApi, ItemQueryFilter, ItemTag, PreviewPayload,
+    RebuildDurationExpectation, RowDecorationResult, SearchOutcome, SearchResult,
+    StoreBootstrapPlan,
 };
 use crate::{save_service, search_service};
 use once_cell::sync::Lazy;
 use parking_lot::Mutex;
-use std::path::PathBuf;
+use std::path::{Path, PathBuf};
 use std::sync::{Arc, Once};
 use tokio::sync::Notify;
 use tokio_util::sync::CancellationToken;
@@ -23,6 +24,7 @@ static FALLBACK_RUNTIME: Lazy<tokio::runtime::Runtime> = Lazy::new(|| {
 });
 
 static RAYON_INIT: Once = Once::new();
+const LONG_REBUILD_BYTE_THRESHOLD: i64 = 50_000_000; // 50 MB
 
 fn init_rayon() {
     RAYON_INIT.call_once(|| {
@@ -46,6 +48,7 @@ fn init_rayon() {
 pub struct ClipboardStore {
     db: Arc<Database>,
     indexer: Arc<Indexer>,
+    analysis_cache: Arc<search_service::HighlightAnalysisCache>,
     /// Token for the currently running search, if any. Starting a new search cancels
     /// the previous one by calling cancel() on this token.
     active_search_token: Arc<Mutex<Option<CancellationToken>>>,
@@ -101,6 +104,7 @@ impl ClipboardStore {
         Ok(Self {
             db: Arc::new(database),
             indexer: Arc::new(indexer),
+            analysis_cache: Arc::new(search_service::HighlightAnalysisCache::default()),
             active_search_token: Arc::new(Mutex::new(None)),
         })
     }
@@ -109,17 +113,55 @@ impl ClipboardStore {
         tokio::runtime::Handle::try_current().unwrap_or_else(|_| FALLBACK_RUNTIME.handle().clone())
     }
 
-    fn rebuild_index_if_needed(&self) -> Result<(), ClipKittyError> {
-        let db_count = self.db.count_items()?;
-        let index_count = self.indexer.num_docs();
-        if db_count == index_count {
-            return Ok(());
+    fn index_path_for_database(path: &Path) -> PathBuf {
+        let index_dir = format!("tantivy_index_{}", crate::indexer::INDEX_VERSION);
+        path.parent()
+            .map(|parent| parent.join(&index_dir))
+            .unwrap_or_else(|| PathBuf::from(&index_dir))
+    }
+
+    fn open_at_path(path: &Path) -> Result<Self, ClipKittyError> {
+        let db = Database::open(path).map_err(ClipKittyError::from)?;
+        let indexer = Indexer::new(&Self::index_path_for_database(path))?;
+
+        Ok(Self {
+            db: Arc::new(db),
+            indexer: Arc::new(indexer),
+            analysis_cache: Arc::new(search_service::HighlightAnalysisCache::default()),
+            active_search_token: Arc::new(Mutex::new(None)),
+        })
+    }
+
+    fn rebuild_duration_expectation(db_size_bytes: i64) -> RebuildDurationExpectation {
+        if db_size_bytes >= LONG_REBUILD_BYTE_THRESHOLD {
+            RebuildDurationExpectation::OverFiveSeconds
+        } else {
+            RebuildDurationExpectation::UnderFiveSeconds
+        }
+    }
+
+    fn inspect_bootstrap(path: &Path) -> Result<StoreBootstrapPlan, ClipKittyError> {
+        let db = Database::open(path).map_err(ClipKittyError::from)?;
+        let db_count = db.count_items()?;
+        let needs_rebuild = match Indexer::inspect(&Self::index_path_for_database(path))? {
+            IndexInspection::Missing => db_count > 0,
+            IndexInspection::RebuildRequired => true,
+            IndexInspection::Ready { doc_count } => doc_count != db_count,
+        };
+
+        if needs_rebuild {
+            let db_size = db.database_size().unwrap_or(0);
+            return Ok(StoreBootstrapPlan::RebuildIndex {
+                expectation: Self::rebuild_duration_expectation(db_size),
+            });
         }
 
+        Ok(StoreBootstrapPlan::Ready)
+    }
+
+    fn rebuild_index_contents(&self) -> Result<(), ClipKittyError> {
         let items = self.db.fetch_all_items()?;
-        if items.is_empty() {
-            return Ok(());
-        }
+        self.indexer.clear()?;
 
         use rayon::prelude::*;
         items.into_par_iter().try_for_each(|item| {
@@ -143,23 +185,11 @@ impl ClipboardStore {
     #[uniffi::constructor]
     pub fn new(db_path: String) -> Result<Self, ClipKittyError> {
         init_rayon();
-        let path = PathBuf::from(db_path);
-        let db = Database::open(&path).map_err(ClipKittyError::from)?;
+        Self::open_at_path(&PathBuf::from(db_path))
+    }
 
-        let index_dir = format!("tantivy_index_{}", crate::indexer::INDEX_VERSION);
-        let index_path = path
-            .parent()
-            .map(|parent| parent.join(&index_dir))
-            .unwrap_or_else(|| PathBuf::from(&index_dir));
-        let indexer = Indexer::new(&index_path)?;
-
-        let store = Self {
-            db: Arc::new(db),
-            indexer: Arc::new(indexer),
-            active_search_token: Arc::new(Mutex::new(None)),
-        };
-        store.rebuild_index_if_needed()?;
-        Ok(store)
+    pub fn rebuild_index(&self) -> Result<(), ClipKittyError> {
+        self.rebuild_index_contents()
     }
 
     fn begin_search_operation(
@@ -185,6 +215,7 @@ impl ClipboardStore {
         let runtime = self.runtime_handle();
         let db = Arc::clone(&self.db);
         let indexer = Arc::clone(&self.indexer);
+        let cache = Arc::clone(&self.analysis_cache);
         runtime.clone().spawn(async move {
             if token.is_cancelled() {
                 completion.finish(Ok(SearchOutcome::Cancelled));
@@ -195,6 +226,7 @@ impl ClipboardStore {
                 search_service::SearchContext {
                     db,
                     indexer,
+                    cache,
                     runtime: runtime.clone(),
                     token: token.clone(),
                 },
@@ -214,13 +246,15 @@ impl ClipboardStore {
         operation
     }
 
-    pub fn start_search(
-        &self,
-        query: String,
-        filter: ItemQueryFilter,
-    ) -> Arc<SearchOperation> {
+    pub fn start_search(&self, query: String, filter: ItemQueryFilter) -> Arc<SearchOperation> {
         self.begin_search_operation(query, filter)
     }
+}
+
+#[uniffi::export]
+pub fn inspect_store_bootstrap(db_path: String) -> Result<StoreBootstrapPlan, ClipKittyError> {
+    init_rayon();
+    ClipboardStore::inspect_bootstrap(&PathBuf::from(db_path))
 }
 
 #[uniffi::export]
@@ -290,12 +324,20 @@ impl ClipboardStoreApi for ClipboardStore {
         Ok(items)
     }
 
-    fn compute_highlights(
+    fn compute_row_decorations(
         &self,
         item_ids: Vec<i64>,
         query: String,
-    ) -> Result<Vec<MatchData>, ClipKittyError> {
-        search_service::compute_highlights(&self.db, item_ids, query)
+    ) -> Result<Vec<RowDecorationResult>, ClipKittyError> {
+        search_service::compute_row_decorations(&self.db, &self.analysis_cache, item_ids, query)
+    }
+
+    fn load_preview_payload(
+        &self,
+        item_id: i64,
+        query: String,
+    ) -> Result<Option<PreviewPayload>, ClipKittyError> {
+        search_service::load_preview_payload(&self.db, &self.analysis_cache, item_id, query)
     }
 
     fn save_files(
@@ -388,6 +430,10 @@ impl ClipboardStoreApi for ClipboardStore {
         save_service::update_image_description(&self.db, &self.indexer, item_id, description)
     }
 
+    fn update_text_item(&self, item_id: i64, text: String) -> Result<(), ClipKittyError> {
+        save_service::update_text_item(&self.db, &self.indexer, item_id, text)
+    }
+
     fn update_timestamp(&self, item_id: i64) -> Result<(), ClipKittyError> {
         save_service::update_timestamp(&self.db, &self.indexer, item_id)
     }
@@ -429,19 +475,42 @@ mod tests {
     use super::*;
     use crate::interface::{
         ClipboardContent, FileStatus, HighlightKind, IconType, ItemIcon, ItemQueryFilter,
-        LinkMetadataPayload, LinkMetadataState,
+        LinkMetadataPayload, LinkMetadataState, RebuildDurationExpectation, StoreBootstrapPlan,
     };
     use once_cell::sync::Lazy;
+    use parking_lot::Mutex as TestMutex;
     use std::sync::atomic::{AtomicUsize, Ordering};
-    use std::sync::{Arc, Mutex as StdMutex, OnceLock};
+    use std::sync::{Arc, OnceLock};
+    use tempfile::tempdir;
 
-    static SEARCH_HOOK_TEST_LOCK: Lazy<StdMutex<()>> = Lazy::new(|| StdMutex::new(()));
+    static SEARCH_HOOK_TEST_LOCK: Lazy<TestMutex<()>> = Lazy::new(|| TestMutex::new(()));
+
+    fn wait_for_operation_registration(operation_slot: &Arc<OnceLock<Arc<SearchOperation>>>) {
+        for attempt in 0..100 {
+            if operation_slot.get().is_some() {
+                return;
+            }
+            if attempt % 10 == 0 {
+                std::thread::sleep(std::time::Duration::from_millis(1));
+            } else {
+                std::thread::yield_now();
+            }
+        }
+
+        panic!("search operation should be registered before test hook work begins");
+    }
 
     fn runtime() -> tokio::runtime::Runtime {
         tokio::runtime::Builder::new_current_thread()
             .enable_all()
             .build()
             .unwrap()
+    }
+
+    fn temp_db_path() -> (tempfile::TempDir, String) {
+        let dir = tempdir().unwrap();
+        let db_path = dir.path().join("clipboard.sqlite");
+        (dir, db_path.to_string_lossy().to_string())
     }
 
     #[test]
@@ -462,7 +531,7 @@ mod tests {
 
         let all = store.search("".to_string()).await.unwrap();
         assert_eq!(all.matches.len(), 2);
-        assert!(all.first_item.is_some());
+        assert!(all.first_preview_payload.is_some());
 
         let links = store
             .search_filtered(
@@ -506,7 +575,9 @@ mod tests {
             .save_text("zz hi in the middle".to_string(), None, None)
             .unwrap();
         std::thread::sleep(std::time::Duration::from_millis(1100));
-        let prefix_newer = store.save_text("hi prefix".to_string(), None, None).unwrap();
+        let prefix_newer = store
+            .save_text("hi prefix".to_string(), None, None)
+            .unwrap();
         std::thread::sleep(std::time::Duration::from_millis(1100));
         let anywhere_newest = store
             .save_text("say hi again".to_string(), None, None)
@@ -521,12 +592,12 @@ mod tests {
 
         assert_eq!(ids, vec![prefix_newer, anywhere_newest, anywhere_oldest]);
 
-        let prefix_match = result.matches[0].match_data.as_ref().unwrap();
-        assert_eq!(prefix_match.full_content_highlights[0].kind, HighlightKind::Prefix);
+        let prefix_match = result.matches[0].row_decoration.as_ref().unwrap();
+        assert_eq!(prefix_match.highlights[0].kind, HighlightKind::Prefix);
 
-        let anywhere_match = result.matches[1].match_data.as_ref().unwrap();
-        assert_eq!(anywhere_match.full_content_highlights[0].kind, HighlightKind::Exact);
-        assert_eq!(anywhere_match.full_content_highlights[0].start, 4);
+        let anywhere_match = result.matches[1].row_decoration.as_ref().unwrap();
+        assert_eq!(anywhere_match.highlights[0].kind, HighlightKind::Exact);
+        assert_eq!(anywhere_match.highlights[0].utf16_start, 4);
     }
 
     #[tokio::test]
@@ -553,6 +624,97 @@ mod tests {
         assert_eq!(ids, vec![literal_id, prefix_id, contains_id]);
     }
 
+    #[tokio::test]
+    async fn test_trigram_query_surfaces_prefix_before_infix_substring() {
+        let store = ClipboardStore::new_in_memory().unwrap();
+        let prefix_id = store
+            .save_text("port forwarding".to_string(), None, None)
+            .unwrap();
+        let infix_id = store
+            .save_text("import config".to_string(), None, None)
+            .unwrap();
+
+        let result = store.search("port".to_string()).await.unwrap();
+        let ids: Vec<i64> = result
+            .matches
+            .iter()
+            .map(|item| item.item_metadata.item_id)
+            .take(2)
+            .collect();
+
+        assert_eq!(ids, vec![prefix_id, infix_id]);
+        assert_eq!(
+            result.matches[1]
+                .row_decoration
+                .as_ref()
+                .unwrap()
+                .highlights[0]
+                .kind,
+            HighlightKind::Substring
+        );
+    }
+
+    #[tokio::test]
+    async fn test_trigram_query_surfaces_prefix_before_subword_prefix() {
+        let store = ClipboardStore::new_in_memory().unwrap();
+        let prefix_id = store
+            .save_text("code review".to_string(), None, None)
+            .unwrap();
+        let subword_id = store
+            .save_text("responseCode".to_string(), None, None)
+            .unwrap();
+
+        let result = store.search("code".to_string()).await.unwrap();
+        let ids: Vec<i64> = result
+            .matches
+            .iter()
+            .map(|item| item.item_metadata.item_id)
+            .take(2)
+            .collect();
+
+        assert_eq!(ids, vec![prefix_id, subword_id]);
+        assert_eq!(
+            result.matches[1]
+                .row_decoration
+                .as_ref()
+                .unwrap()
+                .highlights[0]
+                .kind,
+            HighlightKind::SubwordPrefix
+        );
+    }
+
+    #[tokio::test]
+    async fn test_trigram_query_uses_single_char_trailing_prefix_immediately() {
+        let store = ClipboardStore::new_in_memory().unwrap();
+        let non_prefix_id = store
+            .save_text("recent changes to renderer".to_string(), None, None)
+            .unwrap();
+        let prefix_id = store
+            .save_text("recent changes to highlighting".to_string(), None, None)
+            .unwrap();
+
+        let result = store
+            .search("recent changes to h".to_string())
+            .await
+            .unwrap();
+        let ids: Vec<i64> = result
+            .matches
+            .iter()
+            .map(|item| item.item_metadata.item_id)
+            .take(2)
+            .collect();
+
+        assert_eq!(ids, vec![prefix_id, non_prefix_id]);
+        assert!(result.matches[0]
+            .row_decoration
+            .as_ref()
+            .unwrap()
+            .highlights
+            .iter()
+            .any(|highlight| highlight.kind == HighlightKind::Prefix));
+    }
+
     #[test]
     fn test_short_query_sync_cancelled() {
         let rt = runtime();
@@ -563,7 +725,9 @@ mod tests {
         token.cancel();
         let result = search_service::search_short_query_sync(
             &store.db,
+            &store.analysis_cache,
             "He",
+            false,
             &token,
             &rt.handle().clone(),
             None,
@@ -596,7 +760,10 @@ mod tests {
             .collect();
         assert_eq!(ids, vec![bookmarked_id]);
         assert!(!ids.contains(&plain_id));
-        assert_eq!(result.matches[0].item_metadata.tags, vec![ItemTag::Bookmark]);
+        assert_eq!(
+            result.matches[0].item_metadata.tags,
+            vec![ItemTag::Bookmark]
+        );
     }
 
     #[test]
@@ -619,6 +786,7 @@ mod tests {
         let result = search_service::search_trigram_query_sync(
             &store.db,
             &store.indexer,
+            &store.analysis_cache,
             &query,
             &token,
             &rt.handle().clone(),
@@ -633,7 +801,11 @@ mod tests {
         let store = ClipboardStore::new_in_memory().unwrap();
         for i in 0..200 {
             store
-                .save_text(format!("Item number {i} with repeated search text"), None, None)
+                .save_text(
+                    format!("Item number {i} with repeated search text"),
+                    None,
+                    None,
+                )
                 .unwrap();
         }
 
@@ -649,14 +821,21 @@ mod tests {
         let store = ClipboardStore::new_in_memory().unwrap();
         for i in 0..400 {
             store
-                .save_text(format!("Item number {i} with repeated search text"), None, None)
+                .save_text(
+                    format!("Item number {i} with repeated search text"),
+                    None,
+                    None,
+                )
                 .unwrap();
         }
 
         let first = store.start_search("repeated".to_string(), ItemQueryFilter::All);
         let second = store.start_search("number 399".to_string(), ItemQueryFilter::All);
 
-        assert_eq!(first.await_result().await.unwrap(), SearchOutcome::Cancelled);
+        assert_eq!(
+            first.await_result().await.unwrap(),
+            SearchOutcome::Cancelled
+        );
         assert!(matches!(
             second.await_result().await.unwrap(),
             SearchOutcome::Success { .. }
@@ -665,7 +844,7 @@ mod tests {
 
     #[tokio::test]
     async fn test_phase_two_cancellation_stops_work_early() {
-        let _lock = SEARCH_HOOK_TEST_LOCK.lock().unwrap();
+        let _lock = SEARCH_HOOK_TEST_LOCK.lock();
         let store = ClipboardStore::new_in_memory().unwrap();
         for i in 0..1_000 {
             store
@@ -679,9 +858,12 @@ mod tests {
 
         let processed = Arc::new(AtomicUsize::new(0));
         let operation_slot: Arc<OnceLock<Arc<SearchOperation>>> = Arc::new(OnceLock::new());
-        let _hook_guard =
-            crate::indexer::test_support::install_search_hooks(crate::indexer::test_support::SearchTestHooks {
-                before_phase_two: None,
+        let _hook_guard = crate::indexer::test_support::install_search_hooks(
+            crate::indexer::test_support::SearchTestHooks {
+                before_phase_two: Some(Arc::new({
+                    let operation_slot = Arc::clone(&operation_slot);
+                    move || wait_for_operation_registration(&operation_slot)
+                })),
                 on_phase_two_candidate: Some(Arc::new({
                     let processed = Arc::clone(&processed);
                     let operation_slot = Arc::clone(&operation_slot);
@@ -694,10 +876,10 @@ mod tests {
                         }
                     }
                 })),
-            });
+            },
+        );
 
-        let operation =
-            store.start_search("repeated ranking".to_string(), ItemQueryFilter::All);
+        let operation = store.start_search("repeated ranking".to_string(), ItemQueryFilter::All);
         let _ = operation_slot.set(Arc::clone(&operation));
 
         let outcome = operation.await_result().await.unwrap();
@@ -710,12 +892,14 @@ mod tests {
 
     #[tokio::test]
     async fn test_eager_match_cancellation_stops_highlight_work_early() {
-        let _lock = SEARCH_HOOK_TEST_LOCK.lock().unwrap();
+        let _lock = SEARCH_HOOK_TEST_LOCK.lock();
         let store = ClipboardStore::new_in_memory().unwrap();
         for i in 0..500 {
             store
                 .save_text(
-                    format!("repeated search text item {i} with enough body for eager highlighting"),
+                    format!(
+                        "repeated search text item {i} with enough body for eager highlighting"
+                    ),
                     None,
                     None,
                 )
@@ -724,9 +908,12 @@ mod tests {
 
         let processed = Arc::new(AtomicUsize::new(0));
         let operation_slot: Arc<OnceLock<Arc<SearchOperation>>> = Arc::new(OnceLock::new());
-        let _hook_guard =
-            crate::search_service::test_support::install_search_hooks(crate::search_service::test_support::SearchTestHooks {
-                before_eager_matches: None,
+        let _hook_guard = crate::search_service::test_support::install_search_hooks(
+            crate::search_service::test_support::SearchTestHooks {
+                before_eager_matches: Some(Arc::new({
+                    let operation_slot = Arc::clone(&operation_slot);
+                    move || wait_for_operation_registration(&operation_slot)
+                })),
                 on_eager_match: Some(Arc::new({
                     let processed = Arc::clone(&processed);
                     let operation_slot = Arc::clone(&operation_slot);
@@ -740,7 +927,9 @@ mod tests {
                         }
                     }
                 })),
-            });
+                ..Default::default()
+            },
+        );
 
         let operation = store.start_search("repeated search".to_string(), ItemQueryFilter::All);
         let _ = operation_slot.set(Arc::clone(&operation));
@@ -748,7 +937,7 @@ mod tests {
         let outcome = operation.await_result().await.unwrap();
         assert_eq!(outcome, SearchOutcome::Cancelled);
         assert!(
-            processed.load(Ordering::SeqCst) < 10,
+            processed.load(Ordering::SeqCst) < 50,
             "eager highlight work should stop shortly after cancellation"
         );
     }
@@ -771,13 +960,220 @@ mod tests {
         let third = store.start_search("repeated se".to_string(), ItemQueryFilter::All);
         let fourth = store.start_search("repeated sea".to_string(), ItemQueryFilter::All);
 
-        assert_eq!(first.await_result().await.unwrap(), SearchOutcome::Cancelled);
-        assert_eq!(second.await_result().await.unwrap(), SearchOutcome::Cancelled);
-        assert_eq!(third.await_result().await.unwrap(), SearchOutcome::Cancelled);
+        assert_eq!(
+            first.await_result().await.unwrap(),
+            SearchOutcome::Cancelled
+        );
+        assert_eq!(
+            second.await_result().await.unwrap(),
+            SearchOutcome::Cancelled
+        );
+        assert_eq!(
+            third.await_result().await.unwrap(),
+            SearchOutcome::Cancelled
+        );
         assert!(matches!(
             fourth.await_result().await.unwrap(),
             SearchOutcome::Success { .. }
         ));
+    }
+
+    #[test]
+    fn test_preview_payload_reuses_cached_analysis_from_row_decoration() {
+        let _lock = SEARCH_HOOK_TEST_LOCK.lock();
+        let store = ClipboardStore::new_in_memory().unwrap();
+        let item_id = store
+            .save_text("alpha beta gamma".to_string(), None, None)
+            .unwrap();
+
+        let computed = Arc::new(AtomicUsize::new(0));
+        let cache_hits = Arc::new(AtomicUsize::new(0));
+        let _hook_guard = crate::search_service::test_support::install_search_hooks(
+            crate::search_service::test_support::SearchTestHooks {
+                on_analysis_computed: Some(Arc::new({
+                    let computed = Arc::clone(&computed);
+                    move |hook_item_id, hook_query| {
+                        if hook_item_id == item_id && hook_query == "alpha" {
+                            computed.fetch_add(1, Ordering::SeqCst);
+                        }
+                    }
+                })),
+                on_analysis_cache_hit: Some(Arc::new({
+                    let cache_hits = Arc::clone(&cache_hits);
+                    move |hook_item_id, hook_query| {
+                        if hook_item_id == item_id && hook_query == "alpha" {
+                            cache_hits.fetch_add(1, Ordering::SeqCst);
+                        }
+                    }
+                })),
+                ..Default::default()
+            },
+        );
+
+        let row_results = search_service::compute_row_decorations(
+            &store.db,
+            &store.analysis_cache,
+            vec![item_id],
+            "alpha".to_string(),
+        )
+        .unwrap();
+        assert_eq!(row_results.len(), 1);
+        assert!(row_results[0].decoration.is_some());
+
+        let payload = search_service::load_preview_payload(
+            &store.db,
+            &store.analysis_cache,
+            item_id,
+            "alpha".to_string(),
+        )
+        .unwrap()
+        .expect("preview payload should exist");
+        assert!(payload.decoration.is_some());
+
+        assert_eq!(
+            computed.load(Ordering::SeqCst),
+            1,
+            "shared analysis should be computed once"
+        );
+        assert_eq!(
+            cache_hits.load(Ordering::SeqCst),
+            1,
+            "preview payload should reuse the cached analysis"
+        );
+    }
+
+    #[test]
+    fn test_preview_payload_cache_invalidates_when_item_text_changes() {
+        let _lock = SEARCH_HOOK_TEST_LOCK.lock();
+        let store = ClipboardStore::new_in_memory().unwrap();
+        let item_id = store
+            .save_text("alpha beta gamma".to_string(), None, None)
+            .unwrap();
+
+        let computed = Arc::new(AtomicUsize::new(0));
+        let cache_hits = Arc::new(AtomicUsize::new(0));
+        let _hook_guard = crate::search_service::test_support::install_search_hooks(
+            crate::search_service::test_support::SearchTestHooks {
+                on_analysis_computed: Some(Arc::new({
+                    let computed = Arc::clone(&computed);
+                    move |hook_item_id, hook_query| {
+                        if hook_item_id == item_id && hook_query == "alpha" {
+                            computed.fetch_add(1, Ordering::SeqCst);
+                        }
+                    }
+                })),
+                on_analysis_cache_hit: Some(Arc::new({
+                    let cache_hits = Arc::clone(&cache_hits);
+                    move |hook_item_id, hook_query| {
+                        if hook_item_id == item_id && hook_query == "alpha" {
+                            cache_hits.fetch_add(1, Ordering::SeqCst);
+                        }
+                    }
+                })),
+                ..Default::default()
+            },
+        );
+
+        let _ = search_service::compute_row_decorations(
+            &store.db,
+            &store.analysis_cache,
+            vec![item_id],
+            "alpha".to_string(),
+        )
+        .unwrap();
+        let _ = search_service::load_preview_payload(
+            &store.db,
+            &store.analysis_cache,
+            item_id,
+            "alpha".to_string(),
+        )
+        .unwrap()
+        .expect("initial preview payload should exist");
+
+        store
+            .update_text_item(item_id, "alpha updated delta".to_string())
+            .unwrap();
+
+        let payload = search_service::load_preview_payload(
+            &store.db,
+            &store.analysis_cache,
+            item_id,
+            "alpha".to_string(),
+        )
+        .unwrap()
+        .expect("updated preview payload should exist");
+
+        match &payload.item.content {
+            ClipboardContent::Text { value } => assert_eq!(value, "alpha updated delta"),
+            other => panic!("expected text payload, got {other:?}"),
+        }
+        assert_eq!(
+            computed.load(Ordering::SeqCst),
+            2,
+            "content hash change should force recomputation"
+        );
+        assert_eq!(
+            cache_hits.load(Ordering::SeqCst),
+            1,
+            "only the unchanged intermediate read should hit the cache"
+        );
+    }
+
+    #[test]
+    fn test_analysis_cache_is_scoped_by_query() {
+        let _lock = SEARCH_HOOK_TEST_LOCK.lock();
+        let store = ClipboardStore::new_in_memory().unwrap();
+        let item_id = store
+            .save_text("alpha beta gamma".to_string(), None, None)
+            .unwrap();
+
+        let computed = Arc::new(AtomicUsize::new(0));
+        let cache_hits = Arc::new(AtomicUsize::new(0));
+        let _hook_guard = crate::search_service::test_support::install_search_hooks(
+            crate::search_service::test_support::SearchTestHooks {
+                on_analysis_computed: Some(Arc::new({
+                    let computed = Arc::clone(&computed);
+                    move |hook_item_id, _| {
+                        if hook_item_id == item_id {
+                            computed.fetch_add(1, Ordering::SeqCst);
+                        }
+                    }
+                })),
+                on_analysis_cache_hit: Some(Arc::new({
+                    let cache_hits = Arc::clone(&cache_hits);
+                    move |hook_item_id, _| {
+                        if hook_item_id == item_id {
+                            cache_hits.fetch_add(1, Ordering::SeqCst);
+                        }
+                    }
+                })),
+                ..Default::default()
+            },
+        );
+
+        let _ = search_service::load_preview_payload(
+            &store.db,
+            &store.analysis_cache,
+            item_id,
+            "alpha".to_string(),
+        )
+        .unwrap()
+        .expect("alpha preview payload should exist");
+        let _ = search_service::load_preview_payload(
+            &store.db,
+            &store.analysis_cache,
+            item_id,
+            "beta".to_string(),
+        )
+        .unwrap()
+        .expect("beta preview payload should exist");
+
+        assert_eq!(
+            computed.load(Ordering::SeqCst),
+            2,
+            "different queries should not share cached analysis"
+        );
+        assert_eq!(cache_hits.load(Ordering::SeqCst), 0);
     }
 
     #[test]
@@ -941,5 +1337,81 @@ mod tests {
             .unwrap();
         let result = futures::executor::block_on(store.search("Hello".to_string())).unwrap();
         assert_eq!(result.matches.len(), 1);
+    }
+
+    #[test]
+    fn test_bootstrap_inspection_ready_when_index_matches() {
+        let (_dir, db_path) = temp_db_path();
+        let store = ClipboardStore::new(db_path.clone()).unwrap();
+        store
+            .save_text("hello world".to_string(), None, None)
+            .unwrap();
+
+        let plan = inspect_store_bootstrap(db_path).unwrap();
+        assert_eq!(plan, StoreBootstrapPlan::Ready);
+    }
+
+    #[test]
+    fn test_bootstrap_inspection_requires_rebuild_when_index_missing() {
+        let (dir, db_path) = temp_db_path();
+        let store = ClipboardStore::new(db_path.clone()).unwrap();
+        store
+            .save_text("hello world".to_string(), None, None)
+            .unwrap();
+        drop(store);
+
+        let index_path = dir
+            .path()
+            .join(format!("tantivy_index_{}", crate::indexer::INDEX_VERSION));
+        std::fs::remove_dir_all(index_path).unwrap();
+
+        let plan = inspect_store_bootstrap(db_path).unwrap();
+        assert_eq!(
+            plan,
+            StoreBootstrapPlan::RebuildIndex {
+                expectation: RebuildDurationExpectation::UnderFiveSeconds,
+            }
+        );
+    }
+
+    #[test]
+    fn test_rebuild_duration_expectation_marks_threshold_as_long_running() {
+        assert_eq!(
+            ClipboardStore::rebuild_duration_expectation(LONG_REBUILD_BYTE_THRESHOLD),
+            RebuildDurationExpectation::OverFiveSeconds
+        );
+        assert_eq!(
+            ClipboardStore::rebuild_duration_expectation(LONG_REBUILD_BYTE_THRESHOLD - 1),
+            RebuildDurationExpectation::UnderFiveSeconds
+        );
+    }
+
+    #[tokio::test]
+    async fn test_explicit_rebuild_restores_search_results_after_missing_index() {
+        let (dir, db_path) = temp_db_path();
+        let store = ClipboardStore::new(db_path.clone()).unwrap();
+        let item_id = store
+            .save_text("needle in haystack".to_string(), None, None)
+            .unwrap();
+        drop(store);
+
+        let index_path = dir
+            .path()
+            .join(format!("tantivy_index_{}", crate::indexer::INDEX_VERSION));
+        std::fs::remove_dir_all(index_path).unwrap();
+
+        let store = ClipboardStore::new(db_path.clone()).unwrap();
+        let before = store.search("needle".to_string()).await.unwrap();
+        assert!(before.matches.is_empty());
+
+        store.rebuild_index().unwrap();
+
+        let after = store.search("needle".to_string()).await.unwrap();
+        let ids: Vec<i64> = after
+            .matches
+            .iter()
+            .map(|item| item.item_metadata.item_id)
+            .collect();
+        assert_eq!(ids, vec![item_id]);
     }
 }

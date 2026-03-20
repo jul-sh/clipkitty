@@ -9,6 +9,10 @@ final class MockPasteboard: PasteboardProtocol {
     private(set) var changeCount: Int = 0
     private var storage: [NSPasteboard.PasteboardType: Any] = [:]
     private var declaredTypes: [NSPasteboard.PasteboardType] = []
+    private(set) var dataReadTypes: [NSPasteboard.PasteboardType] = []
+    private(set) var stringReadTypes: [NSPasteboard.PasteboardType] = []
+    private(set) var typesReadCount: Int = 0
+    private(set) var fileURLReadCount: Int = 0
 
     @discardableResult
     func clearContents() -> Int {
@@ -50,14 +54,17 @@ final class MockPasteboard: PasteboardProtocol {
     }
 
     func string(forType type: NSPasteboard.PasteboardType) -> String? {
+        stringReadTypes.append(type)
         return storage[type] as? String
     }
 
     func data(forType type: NSPasteboard.PasteboardType) -> Data? {
+        dataReadTypes.append(type)
         return storage[type] as? Data
     }
 
     func types() -> [NSPasteboard.PasteboardType]? {
+        typesReadCount += 1
         return declaredTypes.isEmpty ? Array(storage.keys) : declaredTypes
     }
 
@@ -66,6 +73,7 @@ final class MockPasteboard: PasteboardProtocol {
     }
 
     func readFileURLs() -> [URL] {
+        fileURLReadCount += 1
         guard let fileURL = storage[.fileURL] as? String,
               let url = URL(string: fileURL) else {
             return []
@@ -86,6 +94,10 @@ final class MockPasteboard: PasteboardProtocol {
         storage.removeAll()
         declaredTypes.removeAll()
         changeCount = 0
+        dataReadTypes = []
+        stringReadTypes = []
+        typesReadCount = 0
+        fileURLReadCount = 0
     }
 }
 

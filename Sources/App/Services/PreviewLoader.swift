@@ -1,5 +1,5 @@
-import Foundation
 import ClipKittyRust
+import Foundation
 
 @MainActor
 final class PreviewLoader {

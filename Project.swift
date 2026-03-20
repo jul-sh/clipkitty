@@ -19,7 +19,7 @@ let project = Project(
     name: "ClipKitty",
     settings: .settings(
         base: [
-            "MARKETING_VERSION": "1.9.0",
+            "MARKETING_VERSION": "1.11.0",
             "CURRENT_PROJECT_VERSION": "1",
         ],
         configurations: configurations,
@@ -81,6 +81,7 @@ let project = Project(
                 "CFBundleDevelopmentRegion": "en",
                 "CFBundleShortVersionString": "$(MARKETING_VERSION)",
                 "CFBundleVersion": "$(CURRENT_PROJECT_VERSION)",
+                "CKBuildChannel": "$(CK_BUILD_CHANNEL)",
                 "ITSAppUsesNonExemptEncryption": false,
                 "LSApplicationCategoryType": "public.app-category.utilities",
                 "LSMinimumSystemVersion": "14.0",
@@ -130,16 +131,19 @@ let project = Project(
                 configurations: [
                     .debug(name: "Debug", settings: [
                         "CODE_SIGN_ENTITLEMENTS": "Sources/App/ClipKitty.oss.entitlements",
+                        "CK_BUILD_CHANNEL": "Debug",
                         // Weak-link Sparkle frameworks so app runs without them
                         "OTHER_LDFLAGS": .array(["$(inherited)", "-lpurr", "-weak_framework", "SparkleUpdater", "-weak_framework", "Sparkle"]),
                     ]),
                     .release(name: "Release", settings: [
                         "CODE_SIGN_ENTITLEMENTS": "Sources/App/ClipKitty.oss.entitlements",
+                        "CK_BUILD_CHANNEL": "Release",
                         // Weak-link Sparkle frameworks so app runs without them
                         "OTHER_LDFLAGS": .array(["$(inherited)", "-lpurr", "-weak_framework", "SparkleUpdater", "-weak_framework", "Sparkle"]),
                     ]),
                     .release(name: .configuration("SparkleRelease"), settings: [
                         "CODE_SIGN_ENTITLEMENTS": "Sources/App/ClipKitty.oss.entitlements",
+                        "CK_BUILD_CHANNEL": "Sparkle",
                         "SWIFT_ACTIVE_COMPILATION_CONDITIONS": "SPARKLE_RELEASE",
                         // Sparkle configuration - only set for SparkleRelease
                         "SPARKLE_FEED_URL": "https://jul-sh.github.io/clipkitty/appcast.xml",
@@ -150,6 +154,8 @@ let project = Project(
                     ]),
                     .release(name: .configuration("AppStore"), settings: [
                         "CODE_SIGN_ENTITLEMENTS": "Sources/App/ClipKitty.appstore.entitlements",
+                        "CK_BUILD_CHANNEL": "AppStore",
+                        "SWIFT_ACTIVE_COMPILATION_CONDITIONS": "APP_STORE",
                         // Weak-link Sparkle frameworks so app runs without them
                         "OTHER_LDFLAGS": .array(["$(inherited)", "-lpurr", "-weak_framework", "SparkleUpdater", "-weak_framework", "Sparkle"]),
                     ]),

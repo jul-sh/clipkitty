@@ -5,23 +5,40 @@ struct GeneralSettingsView: View {
     @ObservedObject private var settings = AppSettings.shared
     @ObservedObject private var launchAtLogin = LaunchAtLogin.shared
     @State private var showClearConfirmation = false
+    @State private var attestationURL: URL?
 
     let store: ClipboardStore
-    let onHotKeyChanged: (HotKey) -> Void
-    let onMenuBarBehaviorChanged: () -> Void
     #if SPARKLE_RELEASE
-    var onInstallUpdate: (() -> Void)? = nil
+        var onInstallUpdate: (() -> Void)? = nil
     #endif
 
     private let minDatabaseSizeGB = 0.5
     private let maxDatabaseSizeGB = 64.0
 
     private var appVersion: String {
-        Bundle.main.object(forInfoDictionaryKey: "CFBundleShortVersionString") as? String ?? "Unknown"
+        Bundle.main.object(forInfoDictionaryKey: "CFBundleShortVersionString") as? String
+            ?? "Unknown"
     }
 
     private var buildNumber: String {
         Bundle.main.object(forInfoDictionaryKey: "CFBundleVersion") as? String ?? ""
+    }
+
+    private var buildChannel: String {
+        #if APP_STORE
+            return "AppStore"
+        #elseif SPARKLE_RELEASE
+            return "Sparkle"
+        #elseif DEBUG
+            return "Debug"
+        #else
+            return "Release"
+        #endif
+    }
+
+    private var binaryHash: String? {
+        guard let executableURL = Bundle.main.executableURL else { return nil }
+        return Utilities.sha256(of: executableURL)
     }
 
     var body: some View {
@@ -32,38 +49,32 @@ struct GeneralSettingsView: View {
 
                 if let message = launchAtLogin.state.displayMessage {
                     Text(message)
-                        .font(.caption)
-                        .foregroundStyle(launchAtLogin.state.hasFailureNotice ? AnyShapeStyle(.red) : AnyShapeStyle(.secondary))
+                        .font(.subheadline)
+                        .foregroundStyle(
+                            launchAtLogin.state.hasFailureNotice
+                                ? AnyShapeStyle(.red) : AnyShapeStyle(.secondary))
 
                     if launchAtLogin.state.hasFailureNotice {
                         Button(String(localized: "Open Login Items Settings")) {
-                            NSWorkspace.shared.open(URL(string: "x-apple.systempreferences:com.apple.LoginItems-Settings.extension")!)
+                            NSWorkspace.shared.open(
+                                URL(
+                                    string:
+                                    "x-apple.systempreferences:com.apple.LoginItems-Settings.extension"
+                                )!)
                         }
-                        .font(.caption)
+                        .font(.subheadline)
                     }
                 }
             }
 
-            Section(String(localized: "Menu Bar")) {
-                Toggle(isOn: clickToOpenBinding) {
-                    VStack(alignment: .leading, spacing: 2) {
-                        Text(String(localized: "Click to open"))
-                        Text(String(localized: "Click opens ClipKitty, right-click shows menu."))
-                            .font(.caption)
-                            .foregroundStyle(.secondary)
-                    }
-                }
+            Section(String(localized: "Paste Items")) {
+                PasteItemsSettingView()
             }
 
-            Section(String(localized: "Storage")) {
-                LabeledContent(String(localized: "Current Size")) {
-                    Text(Utilities.formatBytes(store.databaseSizeBytes))
-                        .foregroundStyle(.secondary)
-                }
-
-                LabeledContent(String(localized: "Max Database Size")) {
+            Section(String(localized: "History")) {
+                LabeledContent(String(localized: "Storage Limit")) {
                     HStack(spacing: 8) {
-                        Slider(value: databaseSizeSlider, in: 0...1)
+                        Slider(value: databaseSizeSlider, in: 0 ... 1)
                             .frame(maxWidth: .infinity)
                         Text(databaseSizeLabel)
                             .foregroundStyle(.secondary)
@@ -72,109 +83,136 @@ struct GeneralSettingsView: View {
                     .frame(maxWidth: .infinity)
                 }
 
-                Text(String(localized: "Oldest clipboard items will be automatically deleted when the database exceeds this size."))
-                    .font(.caption)
-                    .foregroundStyle(.secondary)
-            }
+                Text(
+                    String(
+                        localized:
+                        "Currently using \(Utilities.formatBytes(store.databaseSizeBytes)). Oldest items removed when limit is reached."
+                    )
+                )
+                .font(.subheadline)
+                .foregroundStyle(.secondary)
 
-            Section(String(localized: "Data")) {
                 Button(role: .destructive) {
                     showClearConfirmation = true
                 } label: {
                     HStack {
                         Image(systemName: "trash")
-                        Text(String(localized: "Clear Clipboard History"))
+                        Text(String(localized: "Clear History"))
                     }
                 }
                 .confirmationDialog(
-                    String(localized: "Clear Clipboard History"),
+                    String(localized: "Clear History"),
                     isPresented: $showClearConfirmation,
                     titleVisibility: .visible
                 ) {
-                    Button(String(localized: "Clear All History"), role: .destructive) {
+                    Button(String(localized: "Clear All"), role: .destructive) {
                         store.clear()
                     }
                     Button(String(localized: "Cancel"), role: .cancel) {}
                 } message: {
-                    Text(String(localized: "Are you sure you want to delete all clipboard history? This cannot be undone."))
+                    Text(String(localized: "Delete all clipboard history? This cannot be undone."))
                 }
             }
 
             #if SPARKLE_RELEASE
-            Section(String(localized: "Updates")) {
-                switch settings.updateCheckState {
-                case .checkFailed:
-                    HStack {
-                        Label(String(localized: "Unable to check for updates."), systemImage: "exclamationmark.triangle")
-                        Spacer()
-                        Button(String(localized: "Download")) {
-                            NSWorkspace.shared.open(URL(string: "https://github.com/jul-sh/clipkitty/releases/latest")!)
-                        }
-                    }
-                case .available:
-                    HStack {
-                        Label(String(localized: "A new version of ClipKitty is available."), systemImage: "arrow.down.circle")
-                        Spacer()
-                        Button(String(localized: "Install")) {
-                            onInstallUpdate?()
-                        }
-                    }
-                case .idle:
-                    EmptyView()
-                }
-
-                LabeledContent(String(localized: "Version")) {
-                    Text("\(appVersion) (\(buildNumber))")
-                        .foregroundStyle(.secondary)
-                }
-
-                Toggle(String(localized: "Automatically install updates"), isOn: $settings.autoInstallUpdates)
-
-                Toggle(
-                    String(localized: "Get beta updates"),
-                    isOn: Binding(
-                        get: {
-                            switch settings.updateChannel {
-                            case .stable:
-                                return false
-                            case .beta:
-                                return true
+                Section(String(localized: "Updates")) {
+                    switch settings.updateCheckState {
+                    case .checkFailed:
+                        HStack {
+                            Label(
+                                String(localized: "Unable to check for updates."),
+                                systemImage: "exclamationmark.triangle"
+                            )
+                            Spacer()
+                            Button(String(localized: "Download")) {
+                                NSWorkspace.shared.open(
+                                    URL(
+                                        string:
+                                        "https://github.com/jul-sh/clipkitty/releases/latest")!)
                             }
-                        },
-                        set: { isBetaEnabled in
-                            settings.updateChannel = isBetaEnabled ? .beta : .stable
                         }
-                    )
-                )
+                    case .available:
+                        HStack {
+                            Label(
+                                String(localized: "A new version of ClipKitty is available."),
+                                systemImage: "arrow.down.circle"
+                            )
+                            Spacer()
+                            Button(String(localized: "Install")) {
+                                onInstallUpdate?()
+                            }
+                        }
+                    case .idle:
+                        EmptyView()
+                    }
 
-                Text(
-                    String(
-                        localized: "Beta releases ship to testers first. Turn this on to receive early builds from the release branch before they roll out to everyone."
+                    Toggle(
+                        String(localized: "Automatically install updates"),
+                        isOn: $settings.autoInstallUpdates
                     )
-                )
-                .font(.caption)
-                .foregroundStyle(.secondary)
 
-                switch settings.updateChannel {
-                case .stable:
-                    EmptyView()
-                case .beta:
                     VStack(alignment: .leading, spacing: 8) {
-                        Text(
-                            String(
-                                localized: "If you hit a bug in a beta build, please report it on GitHub with what broke, steps to reproduce it, your ClipKitty version, and your macOS version."
+                        Toggle(
+                            String(localized: "Get beta updates"),
+                            isOn: Binding(
+                                get: {
+                                    switch settings.updateChannel {
+                                    case .stable:
+                                        return false
+                                    case .beta:
+                                        return true
+                                    }
+                                },
+                                set: { isBetaEnabled in
+                                    settings.updateChannel = isBetaEnabled ? .beta : .stable
+                                }
                             )
                         )
-                        .font(.caption)
-                        .foregroundStyle(.secondary)
 
-                        Button(String(localized: "Report a Bug")) {
-                            NSWorkspace.shared.open(URL(string: "https://github.com/jul-sh/clipkitty/issues/new/choose")!)
+                        Text(String(localized: "Test new features before release."))
+                            .font(.subheadline)
+                            .foregroundStyle(.secondary)
+                    }
+
+                    if case .beta = settings.updateChannel {
+                        VStack(alignment: .leading, spacing: 8) {
+                            Text(
+                                String(
+                                    localized:
+                                    "Found a bug? Report it on GitHub with steps to reproduce.")
+                            )
+                            .font(.subheadline)
+                            .foregroundStyle(.secondary)
+
+                            Button(String(localized: "Report a Bug")) {
+                                NSWorkspace.shared.open(
+                                    URL(
+                                        string:
+                                        "https://github.com/jul-sh/clipkitty/issues/new/choose")!
+                                )
+                            }
+                        }
+                    }
+                }
+            #endif
+
+            Section(String(localized: "About")) {
+                LabeledContent(String(localized: "Version")) {
+                    Text("\(appVersion) (\(buildNumber)) \(buildChannel)")
+                        .foregroundStyle(.secondary)
+                }
+
+                if let url = attestationURL {
+                    LabeledContent(String(localized: "Build Attestation")) {
+                        Link(destination: url) {
+                            Label(String(localized: "Verify"), systemImage: "checkmark.seal")
                         }
                     }
                 }
             }
-            #endif
+            .task {
+                await checkAttestation()
+            }
         }
         .formStyle(.grouped)
         .onAppear {
@@ -192,16 +230,6 @@ struct GeneralSettingsView: View {
                 if launchAtLogin.setEnabled(newValue) {
                     settings.launchAtLoginEnabled = newValue
                 }
-            }
-        )
-    }
-
-    private var clickToOpenBinding: Binding<Bool> {
-        Binding(
-            get: { settings.clickToOpenEnabled },
-            set: { newValue in
-                settings.clickToOpenEnabled = newValue
-                onMenuBarBehaviorChanged()
             }
         )
     }
@@ -237,5 +265,28 @@ struct GeneralSettingsView: View {
             rounded = (value * 10).rounded() / 10
         }
         return min(max(rounded, minDatabaseSizeGB), maxDatabaseSizeGB)
+    }
+
+    private func checkAttestation() async {
+        guard let hash = binaryHash else { return }
+        let rekorURL = URL(string: "https://rekor.sigstore.dev/api/v1/index/retrieve")!
+
+        var request = URLRequest(url: rekorURL)
+        request.httpMethod = "POST"
+        request.setValue("application/json", forHTTPHeaderField: "Content-Type")
+        request.httpBody = "{\"hash\":\"sha256:\(hash)\"}".data(using: .utf8)
+
+        do {
+            let (data, response) = try await URLSession.shared.data(for: request)
+            guard let httpResponse = response as? HTTPURLResponse, httpResponse.statusCode == 200
+            else { return }
+
+            let entries = try JSONDecoder().decode([String].self, from: data)
+            if !entries.isEmpty {
+                attestationURL = URL(string: "https://search.sigstore.dev/?hash=sha256:\(hash)")
+            }
+        } catch {
+            // No attestation available
+        }
     }
 }

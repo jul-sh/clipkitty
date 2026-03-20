@@ -1,1 +1,1 @@
-clipboard,history,manager,copy,paste,search,snippets,productivity,utility,tool,text,organize,cache
+clipboard,history,copy,paste,manager,search,unlimited,OCR,image,screenshot,keyboard,snippets,text

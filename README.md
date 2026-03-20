@@ -12,7 +12,7 @@ Unlimited history • Instant fuzzy search • Live preview • Private & offlin
 
 ## Why it exists
 
-You copied that command last week. That code snippet yesterday. That address six months ago. Your clipboard manager either forgot it, slowed down searching for it, or cut off half the content.
+You copied that command last week. That code snippet yesterday. That address six months ago. Your clipboard manager either forgot it, couldn't find it, or cut off half the content.
 
 ClipKitty stores everything. Finds it in milliseconds; whether you have 100 items or 100,000. Built for people who copy lots of things and need to find them again.
 
@@ -20,27 +20,25 @@ ClipKitty stores everything. Finds it in milliseconds; whether you have 100 item
 
 | | ClipKitty |
 |---|---|
-| **vs Maccy** | Same simplicity, no limits. Maccy caps at 999 items and slows past 200. ClipKitty scales to millions with live preview instead of hover tooltips. |
+| **vs Maccy** | Same simplicity, no limits. Maccy caps at 999 items and slows past 200. ClipKitty scales to millions. And with live preview you never have to wait for tooltips to see what you're pasting. |
 | **vs Raycast** | Same speed, better search, no expiration. Raycast doesn't save long clips; it's free tier expires after 3 months. ClipKitty preserves everything forever and finds it faster with smarter, typo tolerant search. |
 | **vs Paste** | Same utility, no subscription. Paste charges $30/year. ClipKitty is free on GitHub or pay once on the App Store. |
 
 ## Features
 
-* **Unlimited History**: No caps, no expiration. Text, images, links, colors; everything preserved in full, forever.
-* **Fuzzy Search That Scales**: Type "improt" and find "import". Type "dockr prodction" and find "docker push production". Powered by Tantivy, the same search engine used in production databases.
-* **Live Preview Pane**: See full content instantly as you navigate. Multi-line text, code blocks, images; no truncation, no waiting.
+* **Unlimited History**: No caps, no expiration. Text, images, files, colors; everything preserved in full, forever.
+* **Fuzzy Search That Scales**: Type "improt" and find "import". Type "dockr prodction" and find "docker push production". All under 50ms; even with millions of items.
+* **Live Preview Pane**: See full content instantly as you navigate. Multi-line text, code blocks, images; no truncation, no waiting on tooltips.
 * **OCR & Smart Search**: Search text inside images and screenshots. AI-powered descriptions make visual content searchable.
 * **Keyboard-First**: `⌥Space` to open, arrow keys to navigate, `Return` to paste. `⌘1-9` for quick access.
 * **Privacy-First**: 100% on-device and offline. No telemetry, no cloud sync, no accounts.
-* **Free & Open Source**: GPL-3.0 licensed. Install free from GitHub or support development on the App Store.
+* **Secure & Attested**: Don't take my word for it. Source code is fully open source and auditable. Builds are attested: you can [verify](VERIFY.md) the app was built from the public source code.
 
 ## Installation
 
-### Quick Install (Recommended)
+### Quick Install 
 
-```bash
-curl -sL "$(curl -s https://api.github.com/repos/jul-sh/clipkitty/releases/latest | grep -o 'https://[^"]*\.dmg')" -o /tmp/ck.dmg && hdiutil attach /tmp/ck.dmg -quiet && rm -rf /Applications/ClipKitty.app && cp -R /Volumes/ClipKitty/ClipKitty.app /Applications/ && hdiutil detach /Volumes/ClipKitty -quiet && rm /tmp/ck.dmg
-```
+<a href="https://apps.apple.com/us/app/clipkitty-clipboard-manager/id6759137247?mt=12"><img src="https://github.com/jul-sh/clipkitty/raw/main/distribution/MacAppStore.png" alt="Download on the Mac App Store" width="200"></a>
 
 ### Manual Download
 

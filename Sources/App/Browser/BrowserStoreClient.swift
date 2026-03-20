@@ -1,5 +1,5 @@
-import Foundation
 import ClipKittyRust
+import Foundation
 
 enum BrowserSearchOutcome {
     case success(BrowserSearchResponse)
@@ -28,16 +28,16 @@ private final class ClipboardStoreBrowserSearchOperation: BrowserSearchOperation
 
     func awaitOutcome() async -> BrowserSearchOutcome {
         switch await operation.awaitOutcome() {
-        case .success(let result):
+        case let .success(result):
             return .success(BrowserSearchResponse(
                 request: request,
                 items: result.matches,
-                firstItem: result.firstItem,
+                firstPreviewPayload: result.firstPreviewPayload,
                 totalCount: Int(result.totalCount)
             ))
         case .cancelled:
             return .cancelled
-        case .failure(let error):
+        case let .failure(error):
             return .failure(error)
         }
     }
@@ -47,12 +47,14 @@ private final class ClipboardStoreBrowserSearchOperation: BrowserSearchOperation
 protocol BrowserStoreClient: AnyObject {
     func startSearch(request: SearchRequest) -> BrowserSearchOperation
     func fetchItem(id: Int64) async -> ClipboardItem?
-    func loadMatchData(itemIds: [Int64], query: String) async -> [MatchData]
+    func loadRowDecorations(itemIds: [Int64], query: String) async -> [RowDecorationResult]
+    func loadPreviewPayload(itemId: Int64, query: String) async -> PreviewPayload?
     func fetchLinkMetadata(url: String, itemId: Int64) async -> ClipboardItem?
     func addTag(itemId: Int64, tag: ItemTag) async -> Result<Void, ClipboardError>
     func removeTag(itemId: Int64, tag: ItemTag) async -> Result<Void, ClipboardError>
     func delete(itemId: Int64) async -> Result<Void, ClipboardError>
     func clear() async -> Result<Void, ClipboardError>
+    func updateTextItem(itemId: Int64, text: String) async -> Result<Void, ClipboardError>
 }
 
 @MainActor
@@ -74,8 +76,12 @@ final class ClipboardStoreBrowserClient: BrowserStoreClient {
         await store.fetchItem(id: id)
     }
 
-    func loadMatchData(itemIds: [Int64], query: String) async -> [MatchData] {
-        await store.loadMatchData(itemIds: itemIds, query: query)
+    func loadRowDecorations(itemIds: [Int64], query: String) async -> [RowDecorationResult] {
+        await store.loadRowDecorations(itemIds: itemIds, query: query)
+    }
+
+    func loadPreviewPayload(itemId: Int64, query: String) async -> PreviewPayload? {
+        await store.loadPreviewPayload(itemId: itemId, query: query)
     }
 
     func fetchLinkMetadata(url: String, itemId: Int64) async -> ClipboardItem? {
@@ -96,5 +102,9 @@ final class ClipboardStoreBrowserClient: BrowserStoreClient {
 
     func clear() async -> Result<Void, ClipboardError> {
         await store.clearAll()
+    }
+
+    func updateTextItem(itemId: Int64, text: String) async -> Result<Void, ClipboardError> {
+        await store.updateTextItem(itemId: itemId, text: text)
     }
 }

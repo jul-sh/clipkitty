@@ -50,6 +50,14 @@ security create-keychain -p "$KEYCHAIN_PASSWORD" "$KEYCHAIN_PATH"
 security set-keychain-settings -t 3600 "$KEYCHAIN_PATH"
 security unlock-keychain -p "$KEYCHAIN_PASSWORD" "$KEYCHAIN_PATH"
 
+# Install Apple WWDR intermediate certificate (needed for cert chain validation)
+WWDR_CERT="/tmp/_ck_wwdr.cer"
+if ! security find-certificate -c "Apple Worldwide Developer Relations Certification Authority" /Library/Keychains/System.keychain >/dev/null 2>&1; then
+    curl -sLo "$WWDR_CERT" https://www.apple.com/certificateauthority/AppleWWDRCAG3.cer
+    sudo security add-trusted-cert -d -r unspecified -k /Library/Keychains/System.keychain "$WWDR_CERT"
+    rm -f "$WWDR_CERT"
+fi
+
 # Import certificates
 security import /tmp/_ck_app.p12 -k "$KEYCHAIN_PATH" -P "$P12_PASS" \
     -T /usr/bin/codesign -T /usr/bin/productbuild

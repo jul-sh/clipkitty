@@ -1,9 +1,9 @@
 import AppKit
-import SwiftUI
-import Combine
 import ClipKittyRust
+import Combine
+import SwiftUI
 #if SPARKLE_RELEASE
-import SparkleUpdater
+    import SparkleUpdater
 #endif
 
 private enum LaunchMode {
@@ -17,7 +17,8 @@ private enum LaunchMode {
 
         var searchQuery: String? = nil
         if let searchIndex = CommandLine.arguments.firstIndex(of: "--search"),
-           searchIndex + 1 < CommandLine.arguments.count {
+           searchIndex + 1 < CommandLine.arguments.count
+        {
             searchQuery = CommandLine.arguments[searchIndex + 1]
         }
         return .simulatedDatabase(initialSearchQuery: searchQuery)
@@ -32,17 +33,19 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate {
     private var store: ClipboardStore!
     private var statusItem: NSStatusItem?
     private var settingsWindow: NSWindow?
+    private var welcomeWindowController: WelcomeWindowController?
     private var showHistoryMenuItem: NSMenuItem?
     private var statusMenu: NSMenu?
     private var cancellables = Set<AnyCancellable>()
+    private var snackbarCoordinator: SnackbarCoordinator!
     #if SPARKLE_RELEASE
-    private var updater: SparkleAppUpdater?
+        private var updater: SparkleAppUpdater?
     #endif
 
     /// Set activation policy before the app finishes launching.
     /// Without LSUIElement in Info.plist, we must set the policy at runtime.
     /// This fires early enough for XCUITest to see the app as non-"Disabled".
-    func applicationWillFinishLaunching(_ notification: Notification) {
+    func applicationWillFinishLaunching(_: Notification) {
         switch launchMode {
         case .production:
             NSApp.setActivationPolicy(.accessory)
@@ -51,10 +54,8 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate {
         }
     }
 
-    func applicationDidFinishLaunching(_ notification: Notification) {
+    func applicationDidFinishLaunching(_: Notification) {
         FontManager.registerFonts()
-
-        syncLaunchAtLogin()
 
         if case .simulatedDatabase = launchMode {
             populateTestDatabase()
@@ -63,11 +64,25 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate {
         switch launchMode {
         case .production:
             store = ClipboardStore(screenshotMode: false)
-            store.startMonitoring()
-            panelController = FloatingPanelController(store: store, mode: .production)
         case .simulatedDatabase:
             store = ClipboardStore(screenshotMode: true)
-            panelController = FloatingPanelController(store: store, mode: .testing)
+        }
+
+        snackbarCoordinator = SnackbarCoordinator(store: store)
+        snackbarCoordinator.syncWithSystem()
+
+        switch launchMode {
+        case .production:
+            panelController = FloatingPanelController(store: store, mode: .production, snackbarCoordinator: snackbarCoordinator)
+        case .simulatedDatabase:
+            panelController = FloatingPanelController(store: store, mode: .testing, snackbarCoordinator: snackbarCoordinator)
+        }
+
+        // Start monitoring after bootstrap completes. When no rebuild is needed
+        // the store is already ready synchronously, so this fires immediately.
+        Task {
+            await store.awaitReady()
+            self.store.startMonitoring()
         }
 
         hotKeyManager = HotKeyManager { [weak self] in
@@ -80,39 +95,47 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate {
         setupMenuBar()
 
         #if SPARKLE_RELEASE
-        let sparkleUpdater = SparkleAppUpdater()
-        sparkleUpdater.start { state in
-            // Convert SparkleUpdater.UpdateCheckState to app's UpdateCheckState
-            switch state {
-            case .idle: AppSettings.shared.updateCheckState = .idle
-            case .available: AppSettings.shared.updateCheckState = .available
-            case .checkFailed: AppSettings.shared.updateCheckState = .checkFailed
+            let sparkleUpdater = SparkleAppUpdater()
+            sparkleUpdater.start { state in
+                // Convert SparkleUpdater.UpdateCheckState to app's UpdateCheckState
+                switch state {
+                case .idle: AppSettings.shared.updateCheckState = .idle
+                case .available: AppSettings.shared.updateCheckState = .available
+                case .checkFailed: AppSettings.shared.updateCheckState = .checkFailed
+                }
             }
-        }
-        updater = sparkleUpdater
-        AppSettings.shared.$autoInstallUpdates
-            .dropFirst()
-            .sink { [weak sparkleUpdater] enabled in
-                sparkleUpdater?.setAutoInstall(enabled)
-            }
-            .store(in: &cancellables)
-        sparkleUpdater.setUpdateChannel(AppSettings.shared.updateChannel)
-        AppSettings.shared.$updateChannel
-            .dropFirst()
-            .sink { [weak sparkleUpdater] channel in
-                sparkleUpdater?.setUpdateChannel(channel)
-            }
-            .store(in: &cancellables)
+            updater = sparkleUpdater
+            AppSettings.shared.$autoInstallUpdates
+                .dropFirst()
+                .sink { [weak sparkleUpdater] enabled in
+                    sparkleUpdater?.setAutoInstall(enabled)
+                }
+                .store(in: &cancellables)
+            sparkleUpdater.setUpdateChannel(AppSettings.shared.updateChannel)
+            AppSettings.shared.$updateChannel
+                .dropFirst()
+                .sink { [weak sparkleUpdater] channel in
+                    sparkleUpdater?.setUpdateChannel(channel)
+                }
+                .store(in: &cancellables)
         #endif
 
-        // When using simulated DB, show the panel immediately
-        if case .simulatedDatabase(let initialSearchQuery) = launchMode {
+        // Show welcome screen on first launch
+        if !AppSettings.shared.hasCompletedOnboarding, case .production = launchMode {
+            showWelcome()
+        }
+
+        // When using simulated DB, wait for bootstrap then show the panel
+        if case let .simulatedDatabase(initialSearchQuery) = launchMode {
             if let searchQuery = initialSearchQuery {
                 panelController.initialSearchQuery = searchQuery
             }
 
-            panelController.show()
-            NSApp.activate(ignoringOtherApps: true)
+            Task {
+                await store.awaitReady()
+                panelController.show()
+                NSApp.activate(ignoringOtherApps: true)
+            }
         }
     }
 
@@ -123,7 +146,6 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate {
         }
         let appDir = appSupport.appendingPathComponent("ClipKitty", isDirectory: true)
         try? FileManager.default.createDirectory(at: appDir, withIntermediateDirectories: true)
-
     }
 
     private func setupMenuBar() {
@@ -146,41 +168,30 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate {
         menu.addItem(NSMenuItem(title: NSLocalizedString("Quit", comment: "Menu bar item to quit the app"), action: #selector(quit), keyEquivalent: "q"))
 
         statusMenu = menu
-        updateMenuBarBehavior()
+        configureMenuBarBehavior()
     }
 
-    /// Update menu bar click behavior based on settings
-    func updateMenuBarBehavior() {
-        if AppSettings.shared.clickToOpenEnabled {
-            // Click opens panel, right-click shows menu
-            statusItem?.menu = nil
-        } else {
-            // Default: click shows menu
-            statusItem?.menu = statusMenu
-        }
+    /// Configure menu bar: click opens panel, right-click shows menu
+    private func configureMenuBarBehavior() {
+        // No menu attached - we handle clicks manually
+        statusItem?.menu = nil
     }
 
-    @objc private func statusItemClicked(_ sender: NSStatusBarButton) {
+    @objc private func statusItemClicked(_: NSStatusBarButton) {
         guard let event = NSApp.currentEvent else { return }
 
-        if AppSettings.shared.clickToOpenEnabled {
-            if event.type == .rightMouseUp {
-                // Right-click shows the menu
-                if let menu = statusMenu {
-                    statusItem?.menu = menu
-                    statusItem?.button?.performClick(nil)
-                    // Remove menu asynchronously to let the menu system handle it
-                    DispatchQueue.main.async { [weak self] in
-                        self?.statusItem?.menu = nil
-                    }
+        if event.type == .rightMouseUp {
+            // Right-click shows the menu
+            if let menu = statusMenu {
+                statusItem?.menu = menu
+                statusItem?.button?.performClick(nil)
+                // Remove menu asynchronously to let the menu system handle it
+                DispatchQueue.main.async { [weak self] in
+                    self?.statusItem?.menu = nil
                 }
-            } else {
-                // Left-click toggles the panel (show if hidden, hide if visible)
-                panelController.toggle()
             }
         } else {
-            // Default behavior: menu is always attached, this shouldn't be called
-            // but just in case, toggle the panel
+            // Left-click toggles the panel
             panelController.toggle()
         }
     }
@@ -193,7 +204,8 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate {
 
     private func makeStatusItemImage() -> NSImage? {
         guard let url = Bundle.module.url(forResource: "menu-bar", withExtension: "svg"),
-              let image = NSImage(contentsOf: url) else {
+              let image = NSImage(contentsOf: url)
+        else {
             return nil
         }
         image.isTemplate = true
@@ -205,34 +217,27 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate {
         panelController.show()
     }
 
-
     @objc private func openSettings() {
         if settingsWindow == nil {
             #if SPARKLE_RELEASE
-            let settingsView = SettingsView(
-                store: store,
-                onHotKeyChanged: { [weak self] hotKey in
-                    self?.hotKeyManager.register(hotKey: hotKey)
-                    self?.updateMenuHotKey()
-                },
-                onMenuBarBehaviorChanged: { [weak self] in
-                    self?.updateMenuBarBehavior()
-                },
-                onInstallUpdate: { [weak self] in
-                    self?.updater?.installUpdate()
-                }
-            )
+                let settingsView = SettingsView(
+                    store: store,
+                    onHotKeyChanged: { [weak self] hotKey in
+                        self?.hotKeyManager.register(hotKey: hotKey)
+                        self?.updateMenuHotKey()
+                    },
+                    onInstallUpdate: { [weak self] in
+                        self?.updater?.installUpdate()
+                    }
+                )
             #else
-            let settingsView = SettingsView(
-                store: store,
-                onHotKeyChanged: { [weak self] hotKey in
-                    self?.hotKeyManager.register(hotKey: hotKey)
-                    self?.updateMenuHotKey()
-                },
-                onMenuBarBehaviorChanged: { [weak self] in
-                    self?.updateMenuBarBehavior()
-                }
-            )
+                let settingsView = SettingsView(
+                    store: store,
+                    onHotKeyChanged: { [weak self] hotKey in
+                        self?.hotKeyManager.register(hotKey: hotKey)
+                        self?.updateMenuHotKey()
+                    }
+                )
             #endif
 
             let window = NSWindow(
@@ -254,11 +259,40 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate {
         NSApp.activate(ignoringOtherApps: true)
     }
 
+    private func showWelcome() {
+        let controller = WelcomeWindowController()
+        controller.onComplete = { [weak self] in
+            AppSettings.shared.hasCompletedOnboarding = true
+            // Also dismiss the launch-at-login prompt since onboarding covers it
+            AppSettings.shared.launchAtLoginPromptDismissed = true
+            self?.welcomeWindowController = nil
+            NSApp.setActivationPolicy(.accessory)
+        }
+        controller.onHotKeyChanged = { [weak self] hotKey in
+            self?.hotKeyManager.register(hotKey: hotKey)
+            self?.updateMenuHotKey()
+        }
+        controller.windowDelegate = self
+        welcomeWindowController = controller
+
+        NSApp.setActivationPolicy(.regular)
+        controller.showWindow()
+    }
+
     nonisolated func windowWillClose(_ notification: Notification) {
         Task { @MainActor in
+            if let closedWindow = notification.object as? NSWindow,
+               closedWindow == self.welcomeWindowController?.window
+            {
+                // Welcome window closed via X button
+                AppSettings.shared.hasCompletedOnboarding = true
+                AppSettings.shared.launchAtLoginPromptDismissed = true
+                self.welcomeWindowController = nil
+            } else {
+                // Settings window closed
+                self.settingsWindow = nil
+            }
             NSApp.setActivationPolicy(.accessory)
-            // Nullify window reference when closed to refresh content on next open
-            self.settingsWindow = nil
         }
     }
 
@@ -266,37 +300,18 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate {
         NSApp.terminate(nil)
     }
 
-    /// Synchronize launch at login state with user preference on startup.
-    /// This handles cases where:
-    /// - The app was moved to/from Applications directory
-    /// - The system state differs from user preference
-    /// - First launch: auto-enable if in Applications
-    private func syncLaunchAtLogin() {
-        let launchAtLogin = LaunchAtLogin.shared
-        let settings = AppSettings.shared
-
-        // If user wants launch at login enabled and we're in Applications
-        if settings.launchAtLoginEnabled && launchAtLogin.isInApplicationsDirectory {
-            if !launchAtLogin.isEnabled {
-                // Re-register (handles app being moved/updated)
-                launchAtLogin.enable()
-            }
-        } else if settings.launchAtLoginEnabled && !launchAtLogin.isInApplicationsDirectory {
-            // User wants it enabled but app is not in Applications - disable the preference
-            settings.launchAtLoginEnabled = false
-            launchAtLogin.setDisabledDueToLocationError()
-            if launchAtLogin.isEnabled {
-                launchAtLogin.disable()
-            }
-        }
+    func applicationShouldHandleReopen(_: NSApplication, hasVisibleWindows _: Bool) -> Bool {
+        // Prevent macOS from switching to .regular activation policy when the
+        // user double-clicks the app icon while it's already running.
+        false
     }
 
-    func applicationWillTerminate(_ notification: Notification) {
+    func applicationWillTerminate(_: Notification) {
         store.stopMonitoring()
         hotKeyManager.unregister()
     }
 
-    func applicationSupportsSecureRestorableState(_ app: NSApplication) -> Bool {
+    func applicationSupportsSecureRestorableState(_: NSApplication) -> Bool {
         true
     }
 }

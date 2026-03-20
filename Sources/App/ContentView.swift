@@ -1,5 +1,5 @@
-import SwiftUI
 import ClipKittyRust
+import SwiftUI
 
 struct ContentView: View {
     let store: ClipboardStore

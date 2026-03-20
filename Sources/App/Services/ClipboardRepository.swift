@@ -1,5 +1,5 @@
-import Foundation
 import ClipKittyRust
+import Foundation
 
 enum RepositorySearchOutcome {
     case success(SearchResult)
@@ -27,7 +27,7 @@ private final class RustClipboardSearchOperation: ClipboardSearchOperation {
         do {
             let outcome = try await operation.awaitResult()
             switch outcome {
-            case .success(let result):
+            case let .success(result):
                 return .success(result)
             case .cancelled:
                 return .cancelled
@@ -77,14 +77,30 @@ final class ClipboardRepository {
         let result = await runRepositoryOperation("fetchItem", on: store) { store in
             try store.fetchByIds(itemIds: [id])
         }
-        if case .success(let items) = result {
+        if case let .success(items) = result {
             return items.first
         }
         return nil
     }
 
-    func computeHighlights(itemIds: [Int64], query: String) -> [MatchData] {
-        (try? store.computeHighlights(itemIds: itemIds, query: query)) ?? []
+    func computeRowDecorations(itemIds: [Int64], query: String) async -> [RowDecorationResult] {
+        let result = await runRepositoryOperation("computeRowDecorations", on: store) { store in
+            try store.computeRowDecorations(itemIds: itemIds, query: query)
+        }
+        if case let .success(decorations) = result {
+            return decorations
+        }
+        return []
+    }
+
+    func loadPreviewPayload(itemId: Int64, query: String) async -> PreviewPayload? {
+        let result = await runRepositoryOperation("loadPreviewPayload", on: store) { store in
+            try store.loadPreviewPayload(itemId: itemId, query: query)
+        }
+        if case let .success(payload) = result {
+            return payload
+        }
+        return nil
     }
 
     func saveText(
@@ -143,13 +159,9 @@ final class ClipboardRepository {
         }
     }
 
-    func saveEditedText(text: String) async -> Result<Int64, ClipboardError> {
-        await runRepositoryOperation("saveEditedText", on: store) { store in
-            try store.saveText(
-                text: text,
-                sourceApp: "ClipKitty",
-                sourceAppBundleId: Bundle.main.bundleIdentifier
-            )
+    func updateTextItem(itemId: Int64, text: String) async -> Result<Void, ClipboardError> {
+        await runRepositoryOperation("updateTextItem", on: store) { store in
+            try store.updateTextItem(itemId: itemId, text: text)
         }
     }
 

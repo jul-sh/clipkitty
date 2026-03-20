@@ -375,19 +375,22 @@ impl ClipboardContent {
 pub enum HighlightKind {
     Exact,
     Prefix,
+    PrefixTail,
+    SubwordPrefix,
+    Substring,
     Fuzzy,
     Subsequence,
 }
 
-/// A highlight range (start, end) for search matches
+/// A UTF-16 highlight range for UI rendering.
 #[derive(Debug, Clone, PartialEq, Eq, uniffi::Record)]
-pub struct HighlightRange {
-    pub start: u64,
-    pub end: u64,
+pub struct Utf16HighlightRange {
+    pub utf16_start: u64,
+    pub utf16_end: u64,
     pub kind: HighlightKind,
 }
 
-/// Match context data for search results
+/// Snippet decoration data for list rows.
 ///
 /// # Display Contract: Two-layer truncation with ellipsis
 ///
@@ -412,19 +415,35 @@ pub struct HighlightRange {
 /// Swift highlights: adjusted for window, +1 for Swift's prefix ellipsis
 /// ```
 #[derive(Debug, Clone, PartialEq, Default, uniffi::Record)]
-pub struct MatchData {
+pub struct RowDecoration {
     /// Snippet text with whitespace normalized, "…" prefix if Rust truncated from start, "…" suffix if Rust truncated from end
     pub text: String,
     /// Highlight ranges into `text`, adjusted for normalization and Rust's leading ellipsis prefix.
-    pub highlights: Vec<HighlightRange>,
+    pub highlights: Vec<Utf16HighlightRange>,
     /// 1-indexed line number where the match occurs in the original content
     pub line_number: u64,
-    /// Full-content highlights (not snippet-adjusted).
-    /// Used for preview pane to ensure consistent highlighting.
-    pub full_content_highlights: Vec<HighlightRange>,
-    /// Character offset (in full content) of the first highlight in the densest cluster.
-    /// Used by Swift for preview pane auto-scrolling — same algorithm as snippet centering.
-    pub densest_highlight_start: u64,
+}
+
+/// Decoration payload for a single row-decoration request result.
+#[derive(Debug, Clone, PartialEq, uniffi::Record)]
+pub struct RowDecorationResult {
+    pub item_id: i64,
+    pub decoration: Option<RowDecoration>,
+}
+
+/// Preview-only highlight decoration for the full item content.
+#[derive(Debug, Clone, PartialEq, Default, uniffi::Record)]
+pub struct PreviewDecoration {
+    pub highlights: Vec<Utf16HighlightRange>,
+    /// Index into `highlights` used as the initial scroll target.
+    pub initial_scroll_highlight_index: Option<u64>,
+}
+
+/// Atomic preview payload for rendering a selected item.
+#[derive(Debug, Clone, PartialEq, uniffi::Record)]
+pub struct PreviewPayload {
+    pub item: ClipboardItem,
+    pub decoration: Option<PreviewDecoration>,
 }
 
 /// Lightweight item metadata for list display
@@ -443,8 +462,8 @@ pub struct ItemMetadata {
 #[derive(Debug, Clone, PartialEq, uniffi::Record)]
 pub struct ItemMatch {
     pub item_metadata: ItemMetadata,
-    /// Match context data. None for lazy results - call compute_highlights to populate.
-    pub match_data: Option<MatchData>,
+    /// Row decoration data. None for lazy results - call compute_row_decorations to populate.
+    pub row_decoration: Option<RowDecoration>,
 }
 
 /// Search result container
@@ -452,8 +471,8 @@ pub struct ItemMatch {
 pub struct SearchResult {
     pub matches: Vec<ItemMatch>,
     pub total_count: u64,
-    /// The first item's full content (avoids separate fetch for preview pane)
-    pub first_item: Option<ClipboardItem>,
+    /// The first item's preview payload (avoids separate preview loading for the initial selection)
+    pub first_preview_payload: Option<PreviewPayload>,
 }
 
 /// Terminal outcome for an explicit search operation.
@@ -461,6 +480,22 @@ pub struct SearchResult {
 pub enum SearchOutcome {
     Success { result: SearchResult },
     Cancelled,
+}
+
+/// Heuristic classification for how long an index rebuild is expected to take.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, uniffi::Enum)]
+pub enum RebuildDurationExpectation {
+    UnderFiveSeconds,
+    OverFiveSeconds,
+}
+
+/// Explicit bootstrap plan for opening the store.
+#[derive(Debug, Clone, PartialEq, Eq, uniffi::Enum)]
+pub enum StoreBootstrapPlan {
+    Ready,
+    RebuildIndex {
+        expectation: RebuildDurationExpectation,
+    },
 }
 
 /// Full clipboard item for preview pane
@@ -510,15 +545,20 @@ pub trait ClipboardStoreApi: Send + Sync {
         filter: ItemQueryFilter,
     ) -> Result<SearchResult, ClipKittyError>;
 
-    /// Compute highlights for multiple items given the search query.
+    /// Compute row decorations for multiple items given the search query.
     /// Called on-demand for visible items in the list view.
-    /// Returns MatchData for each item in the same order as input IDs.
-    /// Missing items are returned as MatchData with empty highlights.
-    fn compute_highlights(
+    fn compute_row_decorations(
         &self,
         item_ids: Vec<i64>,
         query: String,
-    ) -> Result<Vec<MatchData>, ClipKittyError>;
+    ) -> Result<Vec<RowDecorationResult>, ClipKittyError>;
+
+    /// Load the preview payload for a single item given the search query.
+    fn load_preview_payload(
+        &self,
+        item_id: i64,
+        query: String,
+    ) -> Result<Option<PreviewPayload>, ClipKittyError>;
 
     /// Fetch full items by IDs for preview pane
     fn fetch_by_ids(&self, item_ids: Vec<i64>) -> Result<Vec<ClipboardItem>, ClipKittyError>;
@@ -591,6 +631,9 @@ pub trait ClipboardStoreApi: Send + Sync {
         item_id: i64,
         description: String,
     ) -> Result<(), ClipKittyError>;
+
+    /// Update text item content in-place and re-index
+    fn update_text_item(&self, item_id: i64, text: String) -> Result<(), ClipKittyError>;
 
     /// Update item timestamp to now
     fn update_timestamp(&self, item_id: i64) -> Result<(), ClipKittyError>;

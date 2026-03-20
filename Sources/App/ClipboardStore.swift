@@ -1,10 +1,10 @@
-import Foundation
 import AppKit
-import Observation
 import ClipKittyRust
-import QuartzCore
-import os
+import Foundation
 import ImageIO
+import Observation
+import os
+import QuartzCore
 import UniformTypeIdentifiers
 
 // MARK: - Logging
@@ -26,6 +26,20 @@ private final class MissingRepositorySearchOperation: ClipboardSearchOperation {
             )
         ))
     }
+}
+
+/// Wraps the Rust store and repository created during bootstrap.
+struct StoreRuntime {
+    let store: ClipKittyRust.ClipboardStore
+    let repository: ClipboardRepository
+}
+
+/// Observable lifecycle state for the clipboard store.
+enum StoreLifecycle: Equatable {
+    case initializing
+    case rebuildingIndex
+    case ready
+    case failed(String)
 }
 
 /// Display state for the clipboard list
@@ -63,7 +77,7 @@ final class ClipboardStore {
     /// Current query (empty string if showing all items)
     var currentQuery: String {
         switch state {
-        case .results(let query, _, _), .resultsLoading(let query, _):
+        case let .results(query, _, _), let .resultsLoading(query, _):
             return query
         case .loading, .error:
             return ""
@@ -73,10 +87,15 @@ final class ClipboardStore {
     /// Current browser filter for refreshes driven by this store facade.
     private(set) var queryFilter: ItemQueryFilter = .all
 
+    // MARK: - Lifecycle
+
+    private(set) var lifecycle: StoreLifecycle = .initializing
+
     // MARK: - Private State
 
-    /// Rust-backed repository facade
+    /// Rust-backed repository facade (available after bootstrap completes)
     private var repository: ClipboardRepository?
+    private var bootstrapTask: Task<StoreRuntime, Error>?
 
     private enum SearchExecution {
         case idle
@@ -87,9 +106,9 @@ final class ClipboardStore {
             switch self {
             case .idle:
                 break
-            case .debouncing(_, let task):
+            case let .debouncing(_, task):
                 task.cancel()
-            case .running(_, let operation, let observer):
+            case let .running(_, operation, observer):
                 operation.cancel()
                 observer.cancel()
             }
@@ -100,8 +119,6 @@ final class ClipboardStore {
     private var searchExecution: SearchExecution = .idle
     /// Current search query
     private var currentSearchQuery: String = ""
-    /// Query-scoped lazy match-data loads currently in flight.
-    private var inFlightMatchDataLoads: Set<MatchDataLoadRequest> = []
 
     /// Increments each time the display is reset - views observe this to reset local state
     /// Uses Int which will overflow after ~2 billion increments, but this is acceptable
@@ -116,11 +133,6 @@ final class ClipboardStore {
     private var previewLoader: PreviewLoader?
     @ObservationIgnored private var pasteboardMonitor: PasteboardMonitor!
 
-    private struct MatchDataLoadRequest: Hashable {
-        let itemId: Int64
-        let query: String
-    }
-
     // MARK: - Initialization
 
     private let isScreenshotMode: Bool
@@ -131,20 +143,18 @@ final class ClipboardStore {
         workspace: WorkspaceProtocol = NSWorkspace.shared,
         fileManager: FileManagerProtocol = FileManager.default
     ) {
-        self.isScreenshotMode = screenshotMode
+        isScreenshotMode = screenshotMode
         self.pasteboard = pasteboard
-        self.pasteService = PasteService(pasteboard: pasteboard)
+        pasteService = PasteService(pasteboard: pasteboard)
         self.workspace = workspace
         self.fileManager = fileManager
-        self.pasteboardMonitor = PasteboardMonitor(
+        pasteboardMonitor = PasteboardMonitor(
             pasteboard: pasteboard,
             workspace: workspace
         ) { [weak self] detectedContent in
             self?.handleDetectedPasteboardContent(detectedContent)
         }
-        setupDatabase()
-        refresh()
-        pruneIfNeeded()
+        startBootstrap()
     }
 
     /// Current database size in bytes (cached, updated async)
@@ -155,7 +165,7 @@ final class ClipboardStore {
         guard let repository else { return }
         Task {
             let result = await repository.databaseSize()
-            if case .success(let size) = result {
+            if case let .success(size) = result {
                 self.databaseSizeBytes = size
             }
         }
@@ -168,28 +178,100 @@ final class ClipboardStore {
         screenshotMode ? "clipboard-screenshot.sqlite" : "clipboard.sqlite"
     }
 
-    private func setupDatabase() {
+    private func startBootstrap() {
+        guard let dbPath = resolveDatabasePath() else { return }
+
+        // Inspect the bootstrap plan synchronously so we can open the store
+        // without an async hop when no rebuild is needed (the common case).
+        let plan: StoreBootstrapPlan
+        do {
+            plan = try inspectStoreBootstrap(dbPath: dbPath)
+        } catch {
+            let dbError = ClipboardError.databaseInitFailed(underlying: error)
+            ErrorReporter.reportCritical(dbError)
+            lifecycle = .failed(dbError.localizedDescription)
+            state = .error(dbError.localizedDescription)
+            return
+        }
+
+        switch plan {
+        case .ready:
+            openSynchronously(dbPath: dbPath)
+
+        case let .rebuildIndex(expectation):
+            if expectation == .overFiveSeconds {
+                lifecycle = .rebuildingIndex
+            }
+            openWithRebuild(dbPath: dbPath)
+        }
+    }
+
+    /// Fast path: no rebuild needed — open store synchronously, just like the old code.
+    private func openSynchronously(dbPath: String) {
+        do {
+            let rustStore = try ClipKittyRust.ClipboardStore(dbPath: dbPath)
+            let repository = ClipboardRepository(store: rustStore)
+            self.repository = repository
+            previewLoader = PreviewLoader(repository: repository)
+            lifecycle = .ready
+            refresh()
+            pruneIfNeeded()
+        } catch {
+            let dbError = ClipboardError.databaseInitFailed(underlying: error)
+            ErrorReporter.reportCritical(dbError)
+            lifecycle = .failed(dbError.localizedDescription)
+            state = .error(dbError.localizedDescription)
+        }
+    }
+
+    /// Slow path: rebuild index on a background thread.
+    private func openWithRebuild(dbPath: String) {
+        bootstrapTask = Task.detached(priority: .userInitiated) {
+            let rustStore = try ClipKittyRust.ClipboardStore(dbPath: dbPath)
+            try rustStore.rebuildIndex()
+            let repository = ClipboardRepository(store: rustStore)
+            return StoreRuntime(store: rustStore, repository: repository)
+        }
+
+        Task {
+            do {
+                let runtime = try await bootstrapTask!.value
+                self.repository = runtime.repository
+                self.previewLoader = PreviewLoader(repository: runtime.repository)
+                self.lifecycle = .ready
+                self.refresh()
+                self.pruneIfNeeded()
+            } catch {
+                let dbError = ClipboardError.databaseInitFailed(underlying: error)
+                ErrorReporter.reportCritical(dbError)
+                self.lifecycle = .failed(dbError.localizedDescription)
+                self.state = .error(dbError.localizedDescription)
+            }
+        }
+    }
+
+    private func resolveDatabasePath() -> String? {
         do {
             guard let appSupport = fileManager.urls(for: .applicationSupportDirectory, in: .userDomainMask).first else {
                 let error = ClipboardError.databaseInitFailed(underlying: NSError(domain: "ClipKitty", code: 1, userInfo: [NSLocalizedDescriptionKey: "Failed to locate application support directory"]))
                 ErrorReporter.reportCritical(error)
                 state = .error(error.localizedDescription)
-                return
+                return nil
             }
             let appDir = appSupport.appendingPathComponent("ClipKitty", isDirectory: true)
             try fileManager.createDirectory(at: appDir, withIntermediateDirectories: true, attributes: nil)
-
-            let dbPath = appDir.appendingPathComponent(Self.databaseFilename(screenshotMode: isScreenshotMode)).path
-
-            let store = try ClipKittyRust.ClipboardStore(dbPath: dbPath)
-            let repository = ClipboardRepository(store: store)
-            self.repository = repository
-            self.previewLoader = PreviewLoader(repository: repository)
+            return appDir.appendingPathComponent(Self.databaseFilename(screenshotMode: isScreenshotMode)).path
         } catch {
             let dbError = ClipboardError.databaseInitFailed(underlying: error)
             ErrorReporter.reportCritical(dbError)
             state = .error(dbError.localizedDescription)
+            return nil
         }
+    }
+
+    func awaitReady() async {
+        guard let task = bootstrapTask else { return }
+        _ = try? await task.value
     }
 
     // MARK: - Public API
@@ -203,7 +285,7 @@ final class ClipboardStore {
         // Capture fallback results from current state (preserves match text to prevent flash)
         let fallback: [ItemMatch] = {
             switch state {
-            case .results(_, let items, _), .resultsLoading(_, let items):
+            case let .results(_, items, _), let .resultsLoading(_, items):
                 return items
             case .loading, .error:
                 return []
@@ -251,14 +333,14 @@ final class ClipboardStore {
 
     func search(query: String, filter: ItemQueryFilter) async throws -> SearchResult {
         switch await startSearch(query: query, filter: filter).awaitOutcome() {
-        case .success(let searchResult):
+        case let .success(searchResult):
             return searchResult
         case .cancelled:
             throw ClipboardError.databaseOperationFailed(
                 operation: "search",
                 underlying: ClipKittyError.Cancelled
             )
-        case .failure(let error):
+        case let .failure(error):
             throw error
         }
     }
@@ -269,77 +351,14 @@ final class ClipboardStore {
         return await previewLoader.fetchItem(id: id)
     }
 
-    /// Compute highlights for visible items (called on-demand as rows become visible)
-    /// Returns MatchData array in same order as input IDs, or empty array on error
-    func computeHighlights(itemIds: [Int64], query: String) -> [MatchData] {
+    func loadRowDecorations(itemIds: [Int64], query: String) async -> [RowDecorationResult] {
         guard let repository else { return [] }
-        return repository.computeHighlights(itemIds: itemIds, query: query)
+        return await repository.computeRowDecorations(itemIds: itemIds, query: query)
     }
 
-    func loadMatchData(itemIds: [Int64], query: String) async -> [MatchData] {
-        guard let repository else { return [] }
-        return repository.computeHighlights(itemIds: itemIds, query: query)
-    }
-
-    /// Compute and merge match data for items that do not have it yet.
-    /// Results are merged in place so the list does not need a full search refresh.
-    func loadMatchDataForItems(itemIds: [Int64]) {
-        guard case .results(let query, let items, _) = state,
-              !query.isEmpty,
-              !itemIds.isEmpty,
-              let repository else { return }
-
-        var seenIds: Set<Int64> = []
-        let uniqueItemIds = itemIds.filter { seenIds.insert($0).inserted }
-        let requests = uniqueItemIds.map { MatchDataLoadRequest(itemId: $0, query: query) }
-
-        let idsNeedingData = requests.compactMap { request -> Int64? in
-            guard !inFlightMatchDataLoads.contains(request),
-                  items.first(where: { $0.itemMetadata.itemId == request.itemId })?.matchData == nil else {
-                return nil
-            }
-            return request.itemId
-        }
-        guard !idsNeedingData.isEmpty else { return }
-
-        let activeRequests = Set(idsNeedingData.map { MatchDataLoadRequest(itemId: $0, query: query) })
-        inFlightMatchDataLoads.formUnion(activeRequests)
-
-        Task { [weak self] in
-            guard let self else { return }
-
-            let matchDataResults = repository.computeHighlights(itemIds: idsNeedingData, query: query)
-
-            self.inFlightMatchDataLoads.subtract(activeRequests)
-
-            guard matchDataResults.count == idsNeedingData.count else { return }
-            guard case .results(let currentQuery, var currentItems, let firstItem) = self.state,
-                  currentQuery == query else { return }
-
-            var idToMatchData: [Int64: MatchData] = [:]
-            for (index, itemId) in idsNeedingData.enumerated() {
-                idToMatchData[itemId] = matchDataResults[index]
-            }
-
-            var didChange = false
-            for index in currentItems.indices {
-                let itemId = currentItems[index].itemMetadata.itemId
-                guard currentItems[index].matchData == nil,
-                      let matchData = idToMatchData[itemId] else { continue }
-                currentItems[index] = ItemMatch(
-                    itemMetadata: currentItems[index].itemMetadata,
-                    matchData: matchData
-                )
-                didChange = true
-            }
-
-            guard didChange else { return }
-
-            CATransaction.begin()
-            CATransaction.setDisableActions(true)
-            self.state = .results(query: currentQuery, items: currentItems, firstItem: firstItem)
-            CATransaction.commit()
-        }
+    func loadPreviewPayload(itemId: Int64, query: String) async -> PreviewPayload? {
+        guard let repository else { return nil }
+        return await repository.loadPreviewPayload(itemId: itemId, query: query)
     }
 
     /// Fetch link metadata using LinkPresentation and persist to database
@@ -373,14 +392,18 @@ final class ClipboardStore {
     }
 
     private func applySearchOutcome(_ outcome: RepositorySearchOutcome, query: String) {
-        guard case .resultsLoading(let currentQuery, _) = state, currentQuery == query else { return }
+        guard case let .resultsLoading(currentQuery, _) = state, currentQuery == query else { return }
 
         switch outcome {
-        case .success(let searchResult):
+        case let .success(searchResult):
             let oldState = state
             CATransaction.begin()
             CATransaction.setDisableActions(true)
-            state = .results(query: query, items: searchResult.matches, firstItem: searchResult.firstItem)
+            state = .results(
+                query: query,
+                items: searchResult.matches,
+                firstItem: searchResult.firstPreviewPayload?.item
+            )
             CATransaction.commit()
 
             Task.detached(priority: .background) {
@@ -388,12 +411,12 @@ final class ClipboardStore {
             }
         case .cancelled:
             break
-        case .failure(let error):
+        case let .failure(error):
             ErrorReporter.report(error, showToast: false)
             state = .error(error.localizedDescription)
         }
 
-        if case .running(let runningQuery, _, _) = searchExecution, runningQuery == query {
+        if case let .running(runningQuery, _, _) = searchExecution, runningQuery == query {
             searchExecution = .idle
         }
     }
@@ -410,16 +433,16 @@ final class ClipboardStore {
 
     private func handleDetectedPasteboardContent(_ detectedContent: DetectedPasteboardContent) {
         switch detectedContent {
-        case .text(let text, let sourceApp, let sourceAppBundleId):
+        case let .text(text, sourceApp, sourceAppBundleId):
             saveTextItem(text: text, sourceApp: sourceApp, sourceAppBundleId: sourceAppBundleId)
-        case .image(let data, let isAnimated, let sourceApp, let sourceAppBundleId):
+        case let .image(data, isAnimated, sourceApp, sourceAppBundleId):
             saveImageItem(
                 rawImageData: data,
                 isAnimated: isAnimated,
                 sourceApp: sourceApp,
                 sourceAppBundleID: sourceAppBundleId
             )
-        case .files(let urls, let sourceApp, let sourceAppBundleId):
+        case let .files(urls, sourceApp, sourceAppBundleId):
             saveFileItems(urls: urls, sourceApp: sourceApp, sourceAppBundleID: sourceAppBundleId)
         }
     }
@@ -431,7 +454,7 @@ final class ClipboardStore {
             let result = await repository.saveText(text: text, sourceApp: sourceApp, sourceAppBundleId: sourceAppBundleId)
 
             switch result {
-            case .success(let itemId):
+            case let .success(itemId):
                 if self.hasResults {
                     self.refresh()
                 }
@@ -444,12 +467,11 @@ final class ClipboardStore {
                     }
                 }
 
-            case .failure(let error):
+            case let .failure(error):
                 ErrorReporter.report(error, showToast: false)
             }
         }
     }
-
 
     private func generateAndUpdateImageDescription(itemId: Int64, imageData: Data) async {
         guard let description = await ImageDescriptionGenerator.generateDescription(from: imageData) else { return }
@@ -459,30 +481,26 @@ final class ClipboardStore {
         guard let repository else { return }
         let result = await repository.updateImageDescription(itemId: itemId, description: trimmed)
 
-        if case .failure(let error) = result {
+        if case let .failure(error) = result {
             ErrorReporter.report(error, showToast: false)
         }
 
-        if self.hasResults {
-            self.refresh()
+        if hasResults {
+            refresh()
         }
     }
 
     /// Save text that was edited in the preview pane.
-    /// Uses "ClipKitty" as source app since the edit happened within the app.
-    /// Returns new item ID, or 0 if duplicate (timestamp updated).
-    func saveEditedText(text: String) async -> Int64 {
-        guard let repository else { return 0 }
-
-        let result = await repository.saveEditedText(text: text)
-
-        switch result {
-        case .success(let itemId):
-            return itemId
-        case .failure(let error):
-            ErrorReporter.report(error, showToast: false)
-            return 0
+    /// Update a text item's content in-place.
+    func updateTextItem(itemId: Int64, text: String) async -> Result<Void, ClipboardError> {
+        guard let repository else {
+            return .failure(.databaseOperationFailed(
+                operation: "updateTextItem",
+                underlying: NSError(domain: "ClipKitty", code: 1, userInfo: [NSLocalizedDescriptionKey: "Repository not initialized"])
+            ))
         }
+
+        return await repository.updateTextItem(itemId: itemId, text: text)
     }
 
     private func saveImageItem(
@@ -525,7 +543,7 @@ final class ClipboardStore {
             )
 
             switch result {
-            case .success(let itemId):
+            case let .success(itemId):
                 if self.hasResults {
                     self.refresh()
                 }
@@ -535,7 +553,7 @@ final class ClipboardStore {
                     await self.generateAndUpdateImageDescription(itemId: itemId, imageData: processedImage.compressedData)
                 }
 
-            case .failure(let error):
+            case let .failure(error):
                 ErrorReporter.report(error, showToast: false)
             }
         }
@@ -606,7 +624,7 @@ final class ClipboardStore {
 
         // Calculate total duration and frame delays
         var frameDelays: [Double] = []
-        for i in 0..<frameCount {
+        for i in 0 ..< frameCount {
             let delay = gifFrameDelay(source: imageSource, index: i)
             frameDelays.append(delay)
         }
@@ -623,7 +641,7 @@ final class ClipboardStore {
 
             var indices: [Int] = []
             let step = Double(frameCount - 1) / Double(actualTargetCount - 1)
-            for i in 0..<actualTargetCount {
+            for i in 0 ..< actualTargetCount {
                 indices.append(min(Int(Double(i) * step), frameCount - 1))
             }
             framesToKeep = indices
@@ -632,7 +650,7 @@ final class ClipboardStore {
             let durationScale = min(1.0, maxAnimatedDuration / totalDuration)
             adjustedDelays = framesToKeep.map { frameDelays[$0] * durationScale }
         } else {
-            framesToKeep = Array(0..<frameCount)
+            framesToKeep = Array(0 ..< frameCount)
             adjustedDelays = frameDelays
         }
 
@@ -669,12 +687,12 @@ final class ClipboardStore {
 
             let frameProperties: [CFString: Any] = [
                 kCGImagePropertyHEICSLoopCount: 0, // Loop forever
-                kCGImagePropertyHEICSDelayTime: adjustedDelays[idx]
+                kCGImagePropertyHEICSDelayTime: adjustedDelays[idx],
             ]
 
             CGImageDestinationAddImage(destination, finalImage, [
                 kCGImageDestinationLossyCompressionQuality: quality,
-                kCGImagePropertyHEICSDictionary: frameProperties
+                kCGImagePropertyHEICSDictionary: frameProperties,
             ] as CFDictionary)
         }
 
@@ -685,7 +703,8 @@ final class ClipboardStore {
     /// Extract frame delay from GIF properties (default 0.1s if not specified)
     private nonisolated static func gifFrameDelay(source: CGImageSource, index: Int) -> Double {
         guard let properties = CGImageSourceCopyPropertiesAtIndex(source, index, nil) as? [CFString: Any],
-              let gifProps = properties[kCGImagePropertyGIFDictionary] as? [CFString: Any] else {
+              let gifProps = properties[kCGImagePropertyGIFDictionary] as? [CFString: Any]
+        else {
             return 0.1
         }
 
@@ -767,7 +786,7 @@ final class ClipboardStore {
                 if self.hasResults {
                     self.refresh()
                 }
-            case .failure(let error):
+            case let .failure(error):
                 ErrorReporter.report(error, showToast: false)
             }
         }
@@ -777,12 +796,12 @@ final class ClipboardStore {
 
     func paste(itemId: Int64, content: ClipboardContent) {
         // Handle images differently - convert off main thread
-        if case .image(let data, _, let isAnimated) = content {
+        if case let .image(data, _, isAnimated) = content {
             pasteImage(data: Data(data), isAnimated: isAnimated, itemId: itemId)
             return
         }
 
-        if case .file(_, let files) = content {
+        if case let .file(_, files) = content {
             pasteFiles(files: files, itemId: itemId)
             return
         }
@@ -818,7 +837,8 @@ final class ClipboardStore {
                 let tiffData: Data? = await withCheckedContinuation { continuation in
                     Task.detached(priority: .userInitiated) {
                         guard let image = NSImage(data: data),
-                              let tiff = image.tiffRepresentation else {
+                              let tiff = image.tiffRepresentation
+                        else {
                             continuation.resume(returning: nil)
                             return
                         }
@@ -858,27 +878,28 @@ final class ClipboardStore {
         // Set GIF properties for looping
         let gifProperties: [CFString: Any] = [
             kCGImagePropertyGIFDictionary: [
-                kCGImagePropertyGIFLoopCount: 0 // Loop forever
-            ]
+                kCGImagePropertyGIFLoopCount: 0, // Loop forever
+            ],
         ]
         CGImageDestinationSetProperties(destination, gifProperties as CFDictionary)
 
         // Copy each frame with its delay
-        for i in 0..<frameCount {
+        for i in 0 ..< frameCount {
             guard let cgImage = CGImageSourceCreateImageAtIndex(imageSource, i, nil) else { continue }
 
             // Get frame delay from HEICS properties
-            var delay: Double = 0.1
+            var delay = 0.1
             if let properties = CGImageSourceCopyPropertiesAtIndex(imageSource, i, nil) as? [CFString: Any],
                let heicsProps = properties[kCGImagePropertyHEICSDictionary] as? [CFString: Any],
-               let frameDelay = heicsProps[kCGImagePropertyHEICSDelayTime] as? Double {
+               let frameDelay = heicsProps[kCGImagePropertyHEICSDelayTime] as? Double
+            {
                 delay = frameDelay
             }
 
             let frameProperties: [CFString: Any] = [
                 kCGImagePropertyGIFDictionary: [
-                    kCGImagePropertyGIFDelayTime: delay
-                ]
+                    kCGImagePropertyGIFDelayTime: delay,
+                ],
             ]
             CGImageDestinationAddImage(destination, cgImage, frameProperties as CFDictionary)
         }
@@ -911,7 +932,7 @@ final class ClipboardStore {
         let result = await repository.updateTimestamp(itemId: id)
 
         // Log any errors but don't show toast (timestamp update is non-critical)
-        if case .failure(let error) = result {
+        if case let .failure(error) = result {
             ErrorReporter.report(error, showToast: false)
         }
 
@@ -924,11 +945,11 @@ final class ClipboardStore {
     func delete(itemId: Int64) {
         // Update UI immediately
         switch state {
-        case .results(let query, let items, let firstItem):
+        case let .results(query, items, firstItem):
             let filteredItems = items.filter { $0.itemMetadata.itemId != itemId }
             let newFirstItem = firstItem?.itemMetadata.itemId == itemId ? nil : firstItem
             state = .results(query: query, items: filteredItems, firstItem: newFirstItem)
-        case .resultsLoading(let query, let fallback):
+        case let .resultsLoading(query, fallback):
             state = .resultsLoading(
                 query: query,
                 fallback: fallback.filter { $0.itemMetadata.itemId != itemId }
@@ -939,7 +960,7 @@ final class ClipboardStore {
 
         guard let repository else { return }
         Task {
-            if case .failure(let error) = await repository.delete(itemId: itemId) {
+            if case let .failure(error) = await repository.delete(itemId: itemId) {
                 ErrorReporter.report(error, showToast: true)
             }
         }
@@ -981,7 +1002,7 @@ final class ClipboardStore {
 
         guard let repository else { return }
         Task {
-            if case .failure(let error) = await repository.clear() {
+            if case let .failure(error) = await repository.clear() {
                 ErrorReporter.report(error, showToast: true)
             }
         }
@@ -1006,7 +1027,7 @@ final class ClipboardStore {
         let maxBytes = Int64(maxSizeGB * 1024 * 1024 * 1024)
 
         Task {
-            if case .failure(let error) = await repository.pruneToSize(maxBytes: maxBytes, keepRatio: 0.8) {
+            if case let .failure(error) = await repository.pruneToSize(maxBytes: maxBytes, keepRatio: 0.8) {
                 ErrorReporter.report(error, showToast: false)
             }
         }

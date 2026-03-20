@@ -74,7 +74,6 @@ impl Database {
     }
 
     /// Open an in-memory database (for testing)
-    #[cfg(test)]
     pub fn open_in_memory() -> DatabaseResult<Self> {
         let manager = SqliteConnectionManager::memory().with_init(|conn| {
             conn.execute_batch(
@@ -342,6 +341,22 @@ impl Database {
         conn.execute(
             "UPDATE image_items SET description = ?1 WHERE itemId = ?2",
             params![description, id],
+        )?;
+        Ok(())
+    }
+
+    /// Update text item content in-place
+    pub fn update_text_item(&self, id: i64, text: &str, content_hash: &str) -> DatabaseResult<()> {
+        let conn = self.get_conn()?;
+        // Update the denormalized content in items table and the hash
+        conn.execute(
+            "UPDATE items SET content = ?1, contentHash = ?2 WHERE id = ?3 AND contentType = 'text'",
+            params![text, content_hash, id],
+        )?;
+        // Update the child table
+        conn.execute(
+            "UPDATE text_items SET value = ?1 WHERE itemId = ?2",
+            params![text, id],
         )?;
         Ok(())
     }

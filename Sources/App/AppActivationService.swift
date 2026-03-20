@@ -23,7 +23,7 @@ final class AppActivationService {
         }
 
         Task {
-            for _ in 0..<50 {
+            for _ in 0 ..< 50 {
                 guard !targetApp.isTerminated else { return }
                 if workspace.frontmostApplication == targetApp {
                     break

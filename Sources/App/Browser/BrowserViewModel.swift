@@ -1,6 +1,6 @@
+import ClipKittyRust
 import Foundation
 import Observation
-import ClipKittyRust
 
 @MainActor
 @Observable
@@ -16,7 +16,7 @@ final class BrowserViewModel {
         case running(id: UUID, operation: BrowserSearchOperation, observer: Task<Void, Never>, spinner: Task<Void, Never>?)
 
         var id: UUID? {
-            guard case .running(let id, _, _, _) = self else { return nil }
+            guard case let .running(id, _, _, _) = self else { return nil }
             return id
         }
 
@@ -24,9 +24,9 @@ final class BrowserViewModel {
             switch self {
             case .idle:
                 break
-            case .debouncing(_, let task):
+            case let .debouncing(_, task):
                 task.cancel()
-            case .running(_, let operation, let observer, let spinner):
+            case let .running(_, operation, observer, spinner):
                 operation.cancel()
                 observer.cancel()
                 spinner?.cancel()
@@ -38,14 +38,20 @@ final class BrowserViewModel {
     private var searchExecution: SearchExecution = .idle
     private var previewTask: Task<Void, Never>?
     private var metadataTask: Task<Void, Never>?
-    private var matchDataTasks: [String: Task<Void, Never>] = [:]
+    private var rowDecorationTasks: [String: Task<Void, Never>] = [:]
     private var pendingDeleteTask: Task<Void, Never>?
     private var pendingTagSettleTask: Task<Void, Never>?
+    private var queryGeneration = 0
     private var previewGeneration = 0
     private var metadataGeneration = 0
     private var hasAppliedInitialSearch = false
 
-    private(set) var session: BrowserSession = .initial
+    private(set) var contentState: BrowserContentState = .idle(request: SearchRequest(text: "", filter: .all))
+    private(set) var overlayState: OverlayState = .none
+    private(set) var mutationState: MutationState = .idle
+    private(set) var editState: EditState = .init()
+    private(set) var rowDecorationsByItemId: [Int64: RowDecoration] = [:]
+    private var previewPayloadsByItemId: [Int64: PreviewPayload] = [:]
     private(set) var hasUserNavigated = false
     private(set) var prefetchCache: [Int64: ClipboardItem] = [:]
     private(set) var previewSpinnerVisible = false
@@ -63,12 +69,12 @@ final class BrowserViewModel {
     }
 
     var searchText: String {
-        session.query.request.text
+        contentState.request.text
     }
 
     var contentTypeFilter: ContentTypeFilter {
-        switch session.query.request.filter {
-        case .contentType(let contentType):
+        switch contentState.request.filter {
+        case let .contentType(contentType):
             return contentType
         case .all, .tagged:
             return .all
@@ -76,32 +82,43 @@ final class BrowserViewModel {
     }
 
     var selectedTagFilter: ItemTag? {
-        if case .tagged(let tag) = session.query.request.filter {
+        if case let .tagged(tag) = contentState.request.filter {
             return tag
         }
         return nil
     }
 
     var searchSpinnerVisible: Bool {
-        session.query.isSearchSpinnerVisible
+        contentState.isSearchSpinnerVisible
     }
 
     var itemIds: [Int64] {
-        session.query.items.map { $0.itemMetadata.itemId }
+        contentState.items.map { $0.itemMetadata.itemId }
+    }
+
+    var selection: SelectionState {
+        contentState.selection
     }
 
     var selectedItemId: Int64? {
-        session.selection.itemId
+        selection.itemId
+    }
+
+    var selectedItemState: SelectedItemState? {
+        selection.selectedItem
     }
 
     var selectedItem: ClipboardItem? {
-        switch session.preview {
-        case .loaded(let selection):
-            return selection.item
-        case .loading(_, let stale), .failed(_, let stale):
-            return stale?.item
-        case .empty:
+        selectedItemState?.item
+    }
+
+    var previewDecoration: PreviewDecoration? {
+        guard let selectedItemState else { return nil }
+        switch selectedItemState.previewState {
+        case .plain, .loading(.missing):
             return nil
+        case let .loading(.stale(decoration)), let .highlighted(decoration):
+            return decoration
         }
     }
 
@@ -115,54 +132,48 @@ final class BrowserViewModel {
     }
 
     var mutationFailureMessage: String? {
-        guard case .failed(let failure) = session.mutation else { return nil }
+        guard case let .failed(failure) = mutationState else { return nil }
         return failure.message
     }
 
-    var previewSelection: PreviewSelection? {
-        switch session.preview {
-        case .loaded(let selection):
-            return selection
-        case .loading(_, let stale), .failed(_, let stale):
-            return stale
-        case .empty:
-            return nil
-        }
+    var editFocus: EditState.Focus {
+        editState.focus
     }
 
-    var stateFirstItem: ClipboardItem? {
-        session.query.firstItem
+    var pendingEdits: [Int64: String] {
+        editState.pendingEdits
     }
 
     func onAppear(initialSearchQuery: String) {
         guard !hasAppliedInitialSearch else { return }
         hasAppliedInitialSearch = true
-        if initialSearchQuery.isEmpty {
-            submitSearch(text: "", filter: .all)
-        } else {
-            submitSearch(text: initialSearchQuery, filter: .all)
-        }
+        submitSearch(text: initialSearchQuery, filter: .all)
     }
 
     func handleDisplayReset(initialSearchQuery: String) {
         searchExecution.cancel()
         previewTask?.cancel()
+        previewTask = nil
         metadataTask?.cancel()
-        matchDataTasks.values.forEach { $0.cancel() }
-        matchDataTasks.removeAll()
+        metadataTask = nil
+        rowDecorationTasks.values.forEach { $0.cancel() }
+        rowDecorationTasks.removeAll()
         pendingDeleteTask?.cancel()
         pendingDeleteTask = nil
         pendingTagSettleTask?.cancel()
         pendingTagSettleTask = nil
+        queryGeneration += 1
         previewGeneration += 1
         metadataGeneration += 1
         previewSpinnerVisible = false
         hasUserNavigated = false
         prefetchCache.removeAll()
-        session.overlays = .none
-        session.mutation = .idle
-        session.selection = .none
-        session.preview = .empty
+        previewPayloadsByItemId.removeAll()
+        rowDecorationsByItemId.removeAll()
+        overlayState = .none
+        mutationState = .idle
+        editState = .init()
+        contentState = .idle(request: SearchRequest(text: "", filter: .all))
         hasAppliedInitialSearch = false
         onAppear(initialSearchQuery: initialSearchQuery)
     }
@@ -172,7 +183,7 @@ final class BrowserViewModel {
     }
 
     func updateSearchText(_ value: String) {
-        submitSearch(text: value, filter: session.query.request.filter)
+        submitSearch(text: value, filter: contentState.request.filter)
     }
 
     func setContentTypeFilter(_ filter: ContentTypeFilter) {
@@ -181,38 +192,33 @@ final class BrowserViewModel {
     }
 
     func setTagFilter(_ tag: ItemTag?) {
-        let queryFilter: ItemQueryFilter
-        if let tag {
-            queryFilter = .tagged(tag: tag)
-        } else {
-            queryFilter = .all
-        }
+        let queryFilter: ItemQueryFilter = tag.map { .tagged(tag: $0) } ?? .all
         submitSearch(text: searchText, filter: queryFilter)
     }
 
     func openFilterOverlay(highlight: FilterOverlayState) {
-        session.overlays = .filter(highlight)
+        overlayState = .filter(highlight)
     }
 
     func openActionsOverlay(highlight: MenuHighlightState) {
-        session.overlays = .actions(highlight)
+        overlayState = .actions(highlight)
     }
 
     func closeOverlay() {
-        session.overlays = .none
+        overlayState = .none
     }
 
     func dismissMutationFailure() {
-        guard case .failed = session.mutation else { return }
-        session.mutation = .idle
+        guard case .failed = mutationState else { return }
+        mutationState = .idle
     }
 
     func setFilterOverlayState(_ highlight: FilterOverlayState) {
-        session.overlays = .filter(highlight)
+        overlayState = .filter(highlight)
     }
 
     func setActionsOverlayState(_ highlight: MenuHighlightState) {
-        session.overlays = .actions(highlight)
+        overlayState = .actions(highlight)
     }
 
     func moveSelection(by offset: Int) {
@@ -229,13 +235,18 @@ final class BrowserViewModel {
     }
 
     func select(itemId: Int64, origin: SelectionOrigin) {
-        session.selection = .selected(itemId: itemId, origin: origin)
-        loadSelectedItem(itemId: itemId)
+        if case let .focused(focusedId) = editState.focus, focusedId != itemId {
+            editState.focus = .idle
+        }
+        setDisplayedSelection(.loading(itemId: itemId, origin: origin))
+        loadSelectedItem(itemId: itemId, origin: origin)
     }
 
     func confirmSelection() {
         guard let item = selectedItem else { return }
-        onSelect(item.itemMetadata.itemId, item.content)
+        let content = effectiveContent(for: item)
+        commitCurrentEdit()
+        onSelect(item.itemMetadata.itemId, content)
     }
 
     func confirmItem(itemId: Int64) {
@@ -244,58 +255,51 @@ final class BrowserViewModel {
 
     func copyOnlySelection() {
         guard let item = selectedItem else { return }
-        onCopyOnly(item.itemMetadata.itemId, item.content)
+        let content = effectiveContent(for: item)
+        commitCurrentEdit()
+        onCopyOnly(item.itemMetadata.itemId, content)
     }
 
     func copyOnlyItem(itemId: Int64) {
         performItemAction(itemId: itemId, handler: onCopyOnly)
     }
 
-    func loadMatchDataForItems(_ ids: [Int64]) {
+    func loadRowDecorationsForItems(_ ids: [Int64]) {
+        guard displayedContent != nil else { return }
+        let request = contentState.request
+        guard !request.text.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty else { return }
+
         let uniqueIds = Array(Set(ids)).sorted()
         guard !uniqueIds.isEmpty else { return }
-        let request = session.query.request
-        guard !request.text.isEmpty else { return }
-        let key = "\(request.text)|\(uniqueIds.map(String.init).joined(separator: ","))"
-        guard matchDataTasks[key] == nil else { return }
 
-        let itemIdsNeedingData = uniqueIds.filter { matchData(for: $0) == nil }
-        guard !itemIdsNeedingData.isEmpty else { return }
+        let itemIdsNeedingDecoration = uniqueIds.filter { rowDecoration(for: $0) == nil }
+        guard !itemIdsNeedingDecoration.isEmpty else { return }
 
-        matchDataTasks[key] = Task { [weak self] in
+        let generation = queryGeneration
+        let key = "\(generation)|\(request.text)|\(itemIdsNeedingDecoration.map(String.init).joined(separator: ","))"
+        guard rowDecorationTasks[key] == nil else { return }
+
+        rowDecorationTasks[key] = Task { [weak self] in
             guard let self else { return }
-            let matchData = await self.client.loadMatchData(itemIds: itemIdsNeedingData, query: request.text)
+            let results = await self.client.loadRowDecorations(itemIds: itemIdsNeedingDecoration, query: request.text)
             await MainActor.run {
-                defer { self.matchDataTasks[key] = nil }
-                guard case .ready(let response) = self.session.query,
-                      response.request == request else { return }
-
-                var idToData: [Int64: MatchData] = [:]
-                for (index, itemId) in itemIdsNeedingData.enumerated() where index < matchData.count {
-                    idToData[itemId] = matchData[index]
+                defer { self.rowDecorationTasks[key] = nil }
+                guard self.queryGeneration == generation,
+                      self.contentState.request == request
+                else {
+                    return
                 }
 
-                let updatedItems = response.items.map { itemMatch in
-                    guard itemMatch.matchData == nil,
-                          let newMatchData = idToData[itemMatch.itemMetadata.itemId] else {
-                        return itemMatch
-                    }
-                    return ItemMatch(itemMetadata: itemMatch.itemMetadata, matchData: newMatchData)
+                var updates: [Int64: RowDecoration] = [:]
+                for result in results {
+                    guard let decoration = result.decoration else { continue }
+                    guard self.itemIds.contains(result.itemId) else { continue }
+                    guard self.rowDecoration(for: result.itemId) == nil else { continue }
+                    updates[result.itemId] = decoration
                 }
 
-                self.session.query = .ready(response: BrowserSearchResponse(
-                    request: response.request,
-                    items: updatedItems,
-                    firstItem: response.firstItem,
-                    totalCount: response.totalCount
-                ))
-
-                if let selectedItemId = self.selectedItemId,
-                   let loadedItem = self.selectedItem,
-                   selectedItemId == loadedItem.itemMetadata.itemId,
-                   let updatedMatchData = idToData[selectedItemId] {
-                    self.session.preview = .loaded(PreviewSelection(item: loadedItem, matchData: updatedMatchData))
-                }
+                guard !updates.isEmpty else { return }
+                self.rowDecorationsByItemId.merge(updates) { existing, _ in existing }
             }
         }
     }
@@ -306,18 +310,13 @@ final class BrowserViewModel {
     }
 
     func deleteItem(itemId: Int64) {
-        guard case .idle = session.mutation else { return }
+        guard case .idle = mutationState else { return }
 
-        let snapshot = currentResponse
-        let previewSnapshot = session.preview
-        let selectionSnapshot = session.selection
         let transaction = DeleteTransaction(
             deletedItemId: itemId,
-            snapshot: snapshot,
-            preview: previewSnapshot,
-            selection: selectionSnapshot
+            snapshot: contentState
         )
-        session.mutation = .deleting(.pending(transaction))
+        mutationState = .deleting(.pending(transaction))
 
         applyOptimisticDelete(itemId: itemId)
         showDeleteUndoToast()
@@ -326,45 +325,36 @@ final class BrowserViewModel {
         pendingDeleteTask = Task { [weak self] in
             try? await Task.sleep(for: .seconds(3))
             guard !Task.isCancelled else { return }
-            guard let self else { return }
             await MainActor.run {
-                self.commitPendingDelete()
+                self?.commitPendingDelete()
             }
         }
     }
 
     func undoPendingDelete() {
-        guard case .deleting(.pending(let transaction)) = session.mutation else { return }
+        guard case let .deleting(.pending(transaction)) = mutationState else { return }
         pendingDeleteTask?.cancel()
         pendingDeleteTask = nil
         ToastWindow.shared.dismiss()
-        restoreSnapshot(
-            snapshot: transaction.snapshot,
-            preview: transaction.preview,
-            selection: transaction.selection
-        )
-        session.mutation = .idle
+        restoreSnapshot(transaction.snapshot)
+        mutationState = .idle
     }
 
     func clearAll() {
-        let snapshot = currentResponse
-        let previewSnapshot = session.preview
-        let selectionSnapshot = session.selection
-        session.mutation = .clearing(ClearTransaction(
-            snapshot: snapshot,
-            preview: previewSnapshot,
-            selection: selectionSnapshot
-        ))
+        mutationState = .clearing(ClearTransaction(snapshot: contentState))
 
-        let request = session.query.request
-        session.query = .ready(response: BrowserSearchResponse(
-            request: request,
-            items: [],
-            firstItem: nil,
-            totalCount: 0
+        let request = contentState.request
+        contentState = .loaded(LoadedBrowserContent(
+            response: BrowserSearchResponse(
+                request: request,
+                items: [],
+                firstPreviewPayload: nil,
+                totalCount: 0
+            ),
+            selection: .none
         ))
-        session.selection = .none
-        session.preview = .empty
+        rowDecorationsByItemId.removeAll()
+        previewPayloadsByItemId.removeAll()
         prefetchCache.removeAll()
 
         Task { [weak self] in
@@ -373,8 +363,8 @@ final class BrowserViewModel {
             await MainActor.run {
                 switch result {
                 case .success:
-                    self.session.mutation = .idle
-                case .failure(let error):
+                    self.mutationState = .idle
+                case let .failure(error):
                     self.restoreClearFailure(error: error)
                 }
             }
@@ -397,6 +387,100 @@ final class BrowserViewModel {
 
     func removeTag(_ tag: ItemTag, fromItem itemId: Int64) {
         mutateItemTag(itemId: itemId, tag: tag, shouldInclude: false)
+    }
+
+    func effectiveContent(for item: ClipboardItem) -> ClipboardContent {
+        if let editedText = editState.pendingEdits[item.itemMetadata.itemId] {
+            return .text(value: editedText)
+        }
+        return item.content
+    }
+
+    func onTextEdit(_ newText: String, for itemId: Int64, originalText: String) {
+        if newText == originalText {
+            editState.pendingEdits.removeValue(forKey: itemId)
+        } else {
+            editState.pendingEdits[itemId] = newText
+        }
+    }
+
+    func onEditingStateChange(_ isEditing: Bool, for itemId: Int64) {
+        if isEditing {
+            editState.focus = .focused(itemId: itemId)
+        } else if case let .focused(id) = editState.focus, id == itemId {
+            editState.focus = .idle
+        }
+    }
+
+    func discardCurrentEdit() {
+        if let id = selectedItemId {
+            editState.pendingEdits.removeValue(forKey: id)
+        }
+        editState.focus = .idle
+    }
+
+    func commitCurrentEdit() {
+        guard let id = selectedItemId,
+              let editedText = editState.pendingEdits.removeValue(forKey: id),
+              !editedText.isEmpty
+        else {
+            editState.focus = .idle
+            return
+        }
+        editState.focus = .idle
+
+        guard let selectedItemState else {
+            ToastWindow.shared.show(message: String(localized: "Saved"))
+            return
+        }
+
+        let currentItem = selectedItemState.item
+        let updatedContent = ClipboardContent.text(value: editedText)
+        let updatedSnippet = String(editedText.prefix(200))
+        let updatedMetadata = ItemMetadata(
+            itemId: currentItem.itemMetadata.itemId,
+            icon: currentItem.itemMetadata.icon,
+            snippet: updatedSnippet,
+            sourceApp: currentItem.itemMetadata.sourceApp,
+            sourceAppBundleId: currentItem.itemMetadata.sourceAppBundleId,
+            timestampUnix: currentItem.itemMetadata.timestampUnix,
+            tags: currentItem.itemMetadata.tags
+        )
+        let updatedItem = ClipboardItem(itemMetadata: updatedMetadata, content: updatedContent)
+        let updatedPreviewState: SelectedPreviewState = .plain
+        previewPayloadsByItemId[id] = PreviewPayload(item: updatedItem, decoration: nil)
+
+        setDisplayedSelection(.selected(SelectedItemState(
+            item: updatedItem,
+            origin: selectedItemState.origin,
+            previewState: updatedPreviewState
+        )))
+        updateDisplayedResponseForItem(
+            itemId: id,
+            updatedMetadata: updatedMetadata,
+            updatedFirstItem: updatedItem
+        )
+
+        ToastWindow.shared.show(message: String(localized: "Saved"))
+
+        Task { [weak self] in
+            guard let self else { return }
+            _ = await self.client.updateTextItem(itemId: id, text: editedText)
+        }
+    }
+
+    var selectedItemHasPendingEdit: Bool {
+        guard let id = selectedItemId else { return false }
+        return editState.pendingEdits[id] != nil
+    }
+
+    var isEditingPreview: Bool {
+        guard let id = selectedItemId else { return false }
+        return editState.focus == .focused(itemId: id) || editState.pendingEdits[id] != nil
+    }
+
+    func hasPendingEdit(for itemId: Int64) -> Bool {
+        editState.pendingEdits[itemId] != nil
     }
 
     func performAction(
@@ -424,19 +508,22 @@ final class BrowserViewModel {
     }
 
     private func submitSearch(text rawText: String, filter: ItemQueryFilter) {
-        let request = SearchRequest(
-            text: rawText,
-            filter: filter
-        )
+        let request = SearchRequest(text: rawText, filter: filter)
 
+        queryGeneration += 1
         hasUserNavigated = false
         prefetchCache.removeAll()
+        previewPayloadsByItemId.removeAll()
+        rowDecorationsByItemId.removeAll()
         searchExecution.cancel()
-        let fallback = session.query.items
-        session.query = .pending(request: request, fallback: fallback, phase: .debouncing)
+        rowDecorationTasks.values.forEach { $0.cancel() }
+        rowDecorationTasks.removeAll()
+
+        let previous = displayedContent.map { resetSelection(in: $0, for: request.text) }
+        contentState = .loading(request: request, previous: previous, phase: .debouncing)
 
         if request.text.isEmpty {
-            beginSearch(request: request, fallback: fallback)
+            beginSearch(request: request)
             return
         }
 
@@ -444,16 +531,16 @@ final class BrowserViewModel {
             try? await Task.sleep(for: .milliseconds(50))
             guard !Task.isCancelled else { return }
             await MainActor.run {
-                self?.beginSearch(request: request, fallback: fallback)
+                self?.beginSearch(request: request)
             }
         }
         searchExecution = .debouncing(request: request, task: debounceTask)
     }
 
-    private func beginSearch(request: SearchRequest, fallback: [ItemMatch]) {
+    private func beginSearch(request: SearchRequest) {
         let operation = client.startSearch(request: request)
         let operationId = UUID()
-        session.query = .pending(request: request, fallback: fallback, phase: .running(spinnerVisible: false))
+        contentState = .loading(request: request, previous: displayedContent, phase: .running(spinnerVisible: false))
 
         let observer = Task { [weak self] in
             guard let self else { return }
@@ -479,110 +566,206 @@ final class BrowserViewModel {
         searchExecution = .idle
 
         switch outcome {
-        case .success(let response):
+        case let .success(response):
             applySearchResponse(response)
         case .cancelled:
             break
-        case .failure(let error):
-            guard case .pending(let request, let fallback, _) = session.query else { return }
-            session.query = .failed(
+        case let .failure(error):
+            guard case let .loading(request, previous, _) = contentState else { return }
+            contentState = .failed(
                 request: request,
                 message: error.localizedDescription,
-                fallback: fallback
+                previous: previous
             )
         }
     }
 
     private func applySearchResponse(_ response: BrowserSearchResponse) {
-        guard session.query.request == response.request else { return }
+        guard contentState.request == response.request else { return }
         let response = responseApplyingPendingMutations(response)
+        cachePreviewPayload(response.firstPreviewPayload)
 
         let previousOrder = itemIds
-        let previousSelection = selectedItemId
+        let previousSelection = selection
+        let previousSelectedItemState = selectedItemState
 
-        session.query = .ready(response: response)
+        contentState = .loaded(LoadedBrowserContent(response: response, selection: .none))
 
         let newOrder = response.items.map { $0.itemMetadata.itemId }
-        switch previousSelection {
-        case nil:
-            if let firstItemId = newOrder.first {
-                select(itemId: firstItemId, origin: .automatic)
-            } else {
-                session.selection = .none
-                session.preview = .empty
-            }
-        case .some(let selectedItemId):
-            if !newOrder.contains(selectedItemId) ||
-                previousOrder.firstIndex(of: selectedItemId) != newOrder.firstIndex(of: selectedItemId) {
-                if let firstItemId = newOrder.first {
-                    session.selection = .selected(itemId: firstItemId, origin: .automatic)
-                    loadSelectedItem(itemId: firstItemId)
-                } else {
-                    session.selection = .none
-                    session.preview = .empty
-                }
-            } else if let firstItem = response.firstItem,
-                      firstItem.itemMetadata.itemId == selectedItemId,
-                      previewSelection == nil {
-                session.preview = .loaded(makePreviewSelection(for: firstItem))
-            }
+        guard !newOrder.isEmpty else {
+            setDisplayedSelection(.none)
+            clearInactiveEdits()
+            finishTagMutationSettleIfNeeded()
+            return
         }
 
-        if case .tagging(.settling) = session.mutation {
-            pendingTagSettleTask?.cancel()
-            pendingTagSettleTask = nil
-            session.mutation = .idle
+        guard let previousSelectedItemId = previousSelection.itemId,
+              let previousOrigin = previousSelection.origin
+        else {
+            select(itemId: newOrder[0], origin: .automatic)
+            finishTagMutationSettleIfNeeded()
+            return
         }
+
+        if !newOrder.contains(previousSelectedItemId) ||
+            previousOrder.firstIndex(of: previousSelectedItemId) != newOrder.firstIndex(of: previousSelectedItemId)
+        {
+            let nextItemId = newOrder[0]
+            setDisplayedSelection(.loading(itemId: nextItemId, origin: .automatic))
+            loadSelectedItem(itemId: nextItemId, origin: .automatic)
+            clearInactiveEdits()
+            finishTagMutationSettleIfNeeded()
+            return
+        }
+
+        refreshSelection(
+            itemId: previousSelectedItemId,
+            origin: previousOrigin,
+            response: response,
+            previousSelectedItemState: previousSelectedItemState
+        )
+        clearInactiveEdits()
+        finishTagMutationSettleIfNeeded()
     }
 
-    private func loadSelectedItem(itemId: Int64) {
+    private func refreshSelection(
+        itemId: Int64,
+        origin: SelectionOrigin,
+        response: BrowserSearchResponse,
+        previousSelectedItemState: SelectedItemState?
+    ) {
+        if let firstPreviewPayload = response.firstPreviewPayload,
+           firstPreviewPayload.item.itemMetadata.itemId == itemId,
+           isPreviewPayloadReady(firstPreviewPayload, for: response.request)
+        {
+            cachePreviewPayload(firstPreviewPayload)
+            setDisplayedSelection(.selected(makeSelectedItemState(for: firstPreviewPayload, origin: origin)))
+            return
+        }
+
+        if let cachedPreviewPayload = previewPayloadsByItemId[itemId],
+           isPreviewPayloadReady(cachedPreviewPayload, for: response.request)
+        {
+            setDisplayedSelection(.selected(makeSelectedItemState(for: cachedPreviewPayload, origin: origin)))
+            return
+        }
+
+        if let previousSelectedItemState,
+           previousSelectedItemState.item.itemMetadata.itemId == itemId
+        {
+            if requiresAtomicPreviewLoad(for: previousSelectedItemState.item, request: response.request) {
+                if let staleSelectedItemState = makeStaleLoadingSelectedItemState(
+                    from: previousSelectedItemState,
+                    origin: origin
+                ) {
+                    setDisplayedSelection(.selected(staleSelectedItemState))
+                    loadSelectedItem(itemId: itemId, origin: origin)
+                    return
+                }
+            } else {
+                let payload = PreviewPayload(item: previousSelectedItemState.item, decoration: nil)
+                cachePreviewPayload(payload)
+                setDisplayedSelection(.selected(makeSelectedItemState(for: payload, origin: origin)))
+                return
+            }
+        }
+
+        if let cachedItem = prefetchCache[itemId],
+           !requiresAtomicPreviewLoad(for: cachedItem, request: response.request)
+        {
+            let payload = PreviewPayload(item: cachedItem, decoration: nil)
+            cachePreviewPayload(payload)
+            setDisplayedSelection(.selected(makeSelectedItemState(for: payload, origin: origin)))
+            return
+        }
+
+        setDisplayedSelection(.loading(itemId: itemId, origin: origin))
+        loadSelectedItem(itemId: itemId, origin: origin)
+    }
+
+    private func loadSelectedItem(itemId: Int64, origin: SelectionOrigin) {
         previewTask?.cancel()
         metadataTask?.cancel()
         previewGeneration += 1
         let generation = previewGeneration
-        let stale = previewSelection
+        let request = contentState.request
 
-        if let firstItem = stateFirstItem,
-           firstItem.itemMetadata.itemId == itemId {
-            session.preview = .loaded(makePreviewSelection(for: firstItem))
+        if let firstPreviewPayload = contentState.firstPreviewPayload,
+           firstPreviewPayload.item.itemMetadata.itemId == itemId,
+           isPreviewPayloadReady(firstPreviewPayload, for: request)
+        {
+            cachePreviewPayload(firstPreviewPayload)
+            setDisplayedSelection(.selected(makeSelectedItemState(for: firstPreviewPayload, origin: origin)))
             prefetchAdjacentItems(around: itemId)
-            maybeRefreshLinkMetadata(for: firstItem, generation: generation)
+            maybeRefreshLinkMetadata(for: firstPreviewPayload.item, generation: generation)
             return
         }
 
-        if let cachedItem = prefetchCache[itemId] {
-            session.preview = .loaded(makePreviewSelection(for: cachedItem))
+        if let cachedPreviewPayload = previewPayloadsByItemId[itemId],
+           isPreviewPayloadReady(cachedPreviewPayload, for: request)
+        {
+            setDisplayedSelection(.selected(makeSelectedItemState(for: cachedPreviewPayload, origin: origin)))
+            prefetchAdjacentItems(around: itemId)
+            maybeRefreshLinkMetadata(for: cachedPreviewPayload.item, generation: generation)
+            return
+        }
+
+        if let cachedItem = prefetchCache[itemId],
+           !requiresAtomicPreviewLoad(for: cachedItem, request: request)
+        {
+            let payload = PreviewPayload(item: cachedItem, decoration: nil)
+            cachePreviewPayload(payload)
+            setDisplayedSelection(.selected(makeSelectedItemState(for: payload, origin: origin)))
             prefetchAdjacentItems(around: itemId)
             maybeRefreshLinkMetadata(for: cachedItem, generation: generation)
             return
         }
 
-        session.preview = .loading(itemId: itemId, stale: stale)
+        let retainsStalePreview: Bool
+        if let selectedItemState,
+           selectedItemState.item.itemMetadata.itemId == itemId,
+           case .loading(.stale) = selectedItemState.previewState
+        {
+            retainsStalePreview = true
+        } else {
+            retainsStalePreview = false
+        }
+
+        if !retainsStalePreview {
+            setDisplayedSelection(.loading(itemId: itemId, origin: origin))
+        }
         schedulePreviewSpinner(for: generation, itemId: itemId)
 
         previewTask = Task { [weak self] in
             guard let self else { return }
-            let item = await self.client.fetchItem(id: itemId)
+            let payload = await self.client.loadPreviewPayload(itemId: itemId, query: request.text)
+            guard !Task.isCancelled else { return }
             await MainActor.run {
                 guard self.previewGeneration == generation,
-                      self.selectedItemId == itemId else { return }
+                      self.contentState.request == request,
+                      self.selectedItemId == itemId
+                else {
+                    return
+                }
 
                 self.previewSpinnerVisible = false
-                if let item {
-                    self.session.preview = .loaded(self.makePreviewSelection(for: item))
+                if let payload {
+                    self.cachePreviewPayload(payload)
+                    self.setDisplayedSelection(.selected(self.makeSelectedItemState(for: payload, origin: origin)))
                     self.prefetchAdjacentItems(around: itemId)
-                    self.maybeRefreshLinkMetadata(for: item, generation: generation)
+                    self.maybeRefreshLinkMetadata(for: payload.item, generation: generation)
                 } else {
-                    self.session.preview = .failed(itemId: itemId, stale: stale)
+                    self.setDisplayedSelection(.failed(itemId: itemId, origin: origin))
                 }
             }
         }
     }
 
     private func maybeRefreshLinkMetadata(for item: ClipboardItem, generation: Int) {
-        guard case .link(let url, let metadataState) = item.content,
+        guard case let .link(url, metadataState) = item.content,
               case .pending = metadataState,
-              AppSettings.shared.generateLinkPreviews else {
+              AppSettings.shared.generateLinkPreviews
+        else {
             return
         }
 
@@ -597,10 +780,13 @@ final class BrowserViewModel {
                 guard self.previewGeneration == generation,
                       self.metadataGeneration == metadataRequest,
                       self.selectedItemId == item.itemMetadata.itemId,
-                      let updatedItem else { return }
+                      let updatedItem,
+                      let selectedItemState = self.selectedItemState
+                else {
+                    return
+                }
 
-                // Preserve optimistic tags from current preview
-                let currentTags = self.previewSelection?.item.itemMetadata.tags ?? updatedItem.itemMetadata.tags
+                let currentTags = self.selectedItem?.itemMetadata.tags ?? updatedItem.itemMetadata.tags
                 let mergedPreviewMetadata = ItemMetadata(
                     itemId: updatedItem.itemMetadata.itemId,
                     icon: updatedItem.itemMetadata.icon,
@@ -611,51 +797,22 @@ final class BrowserViewModel {
                     tags: currentTags
                 )
                 let mergedPreviewItem = ClipboardItem(itemMetadata: mergedPreviewMetadata, content: updatedItem.content)
-                self.session.preview = .loaded(self.makePreviewSelection(for: mergedPreviewItem))
-                if case .ready(let response) = self.session.query {
-                    let updatedItems = response.items.map { itemMatch in
-                        if itemMatch.itemMetadata.itemId == updatedItem.itemMetadata.itemId {
-                            // Preserve optimistic tag mutations by merging with current tags
-                            let mergedMetadata = ItemMetadata(
-                                itemId: updatedItem.itemMetadata.itemId,
-                                icon: updatedItem.itemMetadata.icon,
-                                snippet: updatedItem.itemMetadata.snippet,
-                                sourceApp: updatedItem.itemMetadata.sourceApp,
-                                sourceAppBundleId: updatedItem.itemMetadata.sourceAppBundleId,
-                                timestampUnix: updatedItem.itemMetadata.timestampUnix,
-                                tags: itemMatch.itemMetadata.tags
-                            )
-                            return ItemMatch(
-                                itemMetadata: mergedMetadata,
-                                matchData: itemMatch.matchData
-                            )
-                        }
-                        return itemMatch
-                    }
-                    // Preserve tags for firstItem as well
-                    let updatedFirstItem: ClipboardItem? = {
-                        guard let firstItem = response.firstItem,
-                              firstItem.itemMetadata.itemId == updatedItem.itemMetadata.itemId else {
-                            return response.firstItem
-                        }
-                        let mergedMetadata = ItemMetadata(
-                            itemId: updatedItem.itemMetadata.itemId,
-                            icon: updatedItem.itemMetadata.icon,
-                            snippet: updatedItem.itemMetadata.snippet,
-                            sourceApp: updatedItem.itemMetadata.sourceApp,
-                            sourceAppBundleId: updatedItem.itemMetadata.sourceAppBundleId,
-                            timestampUnix: updatedItem.itemMetadata.timestampUnix,
-                            tags: firstItem.itemMetadata.tags
-                        )
-                        return ClipboardItem(itemMetadata: mergedMetadata, content: updatedItem.content)
-                    }()
-                    self.session.query = .ready(response: BrowserSearchResponse(
-                        request: response.request,
-                        items: updatedItems,
-                        firstItem: updatedFirstItem,
-                        totalCount: response.totalCount
-                    ))
-                }
+                let updatedPreviewPayload = PreviewPayload(
+                    item: mergedPreviewItem,
+                    decoration: self.previewDecoration
+                )
+                self.cachePreviewPayload(updatedPreviewPayload)
+
+                self.setDisplayedSelection(.selected(SelectedItemState(
+                    item: mergedPreviewItem,
+                    origin: selectedItemState.origin,
+                    previewState: selectedItemState.previewState
+                )))
+                self.updateDisplayedResponseForItem(
+                    itemId: updatedItem.itemMetadata.itemId,
+                    updatedMetadata: mergedPreviewMetadata,
+                    updatedFirstItem: mergedPreviewItem
+                )
             }
         }
     }
@@ -685,11 +842,14 @@ final class BrowserViewModel {
 
     private func showSearchSpinnerIfNeeded(operationId: UUID, request: SearchRequest) {
         guard searchExecution.id == operationId,
-              case .pending(let currentRequest, let fallback, .running(spinnerVisible: false)) = session.query,
-              currentRequest == request else { return }
-        session.query = .pending(
+              case let .loading(currentRequest, previous, .running(spinnerVisible: false)) = contentState,
+              currentRequest == request
+        else {
+            return
+        }
+        contentState = .loading(
             request: currentRequest,
-            fallback: fallback,
+            previous: previous,
             phase: .running(spinnerVisible: true)
         )
     }
@@ -702,37 +862,45 @@ final class BrowserViewModel {
                 guard let self,
                       self.previewGeneration == generation,
                       self.selectedItemId == itemId,
-                      case .loading = self.session.preview else { return }
+                      self.isPreviewAwaitingPayload(for: itemId)
+                else {
+                    return
+                }
                 self.previewSpinnerVisible = true
             }
         }
     }
 
     private func applyOptimisticDelete(itemId: Int64) {
-        guard case .ready(let response) = session.query else { return }
+        guard let response = currentResponse else { return }
         let filteredItems = response.items.filter { $0.itemMetadata.itemId != itemId }
+        rowDecorationsByItemId.removeValue(forKey: itemId)
+        previewPayloadsByItemId.removeValue(forKey: itemId)
+        prefetchCache.removeValue(forKey: itemId)
         let deletedSelectedItem = selectedItemId == itemId
         let nextSelection = deletedSelectedItem ? nextSelectionAfterDelete(deleting: itemId) : nil
-        session.query = .ready(response: BrowserSearchResponse(
+        updateDisplayedResponse(BrowserSearchResponse(
             request: response.request,
             items: filteredItems,
-            firstItem: response.firstItem?.itemMetadata.itemId == itemId ? nil : response.firstItem,
+            firstPreviewPayload: response.firstPreviewPayload?.item.itemMetadata.itemId == itemId
+                ? nil
+                : response.firstPreviewPayload,
             totalCount: max(0, response.totalCount - 1)
         ))
 
         if let nextSelection {
-            session.selection = .selected(itemId: nextSelection, origin: .automatic)
-            loadSelectedItem(itemId: nextSelection)
+            setDisplayedSelection(.loading(itemId: nextSelection, origin: .automatic))
+            loadSelectedItem(itemId: nextSelection, origin: .automatic)
         } else if deletedSelectedItem {
-            session.selection = .none
-            session.preview = .empty
+            setDisplayedSelection(.none)
         }
+        clearInactiveEdits()
     }
 
     private func commitPendingDelete() {
-        guard case .deleting(.pending(let transaction)) = session.mutation else { return }
+        guard case let .deleting(.pending(transaction)) = mutationState else { return }
         pendingDeleteTask = nil
-        session.mutation = .deleting(.committing(transaction))
+        mutationState = .deleting(.committing(transaction))
 
         Task { [weak self] in
             guard let self else { return }
@@ -740,11 +908,12 @@ final class BrowserViewModel {
             await MainActor.run {
                 switch result {
                 case .success:
-                    if case .deleting(.committing(let activeTransaction)) = self.session.mutation,
-                       activeTransaction.deletedItemId == transaction.deletedItemId {
-                        self.session.mutation = .idle
+                    if case let .deleting(.committing(activeTransaction)) = self.mutationState,
+                       activeTransaction.deletedItemId == transaction.deletedItemId
+                    {
+                        self.mutationState = .idle
                     }
-                case .failure(let error):
+                case let .failure(error):
                     self.restoreDeleteFailure(error: error)
                 }
             }
@@ -753,20 +922,16 @@ final class BrowserViewModel {
 
     private func restoreDeleteFailure(error: ClipboardError) {
         let transaction: DeleteTransaction
-        switch session.mutation {
-        case .deleting(.pending(let pendingTransaction)), .deleting(.committing(let pendingTransaction)):
+        switch mutationState {
+        case let .deleting(.pending(pendingTransaction)), let .deleting(.committing(pendingTransaction)):
             transaction = pendingTransaction
         default:
             return
         }
         pendingDeleteTask?.cancel()
         pendingDeleteTask = nil
-        restoreSnapshot(
-            snapshot: transaction.snapshot,
-            preview: transaction.preview,
-            selection: transaction.selection
-        )
-        session.mutation = .failed(ActionFailure(message: error.localizedDescription))
+        restoreSnapshot(transaction.snapshot)
+        mutationState = .failed(ActionFailure(message: error.localizedDescription))
     }
 
     private func showDeleteUndoToast() {
@@ -781,27 +946,15 @@ final class BrowserViewModel {
     }
 
     private func restoreClearFailure(error: ClipboardError) {
-        guard case .clearing(let transaction) = session.mutation else { return }
-        restoreSnapshot(
-            snapshot: transaction.snapshot,
-            preview: transaction.preview,
-            selection: transaction.selection
-        )
-        session.mutation = .failed(ActionFailure(message: error.localizedDescription))
+        guard case let .clearing(transaction) = mutationState else { return }
+        restoreSnapshot(transaction.snapshot)
+        mutationState = .failed(ActionFailure(message: error.localizedDescription))
     }
 
-    private func restoreSnapshot(
-        snapshot: BrowserSearchResponse?,
-        preview: PreviewSession,
-        selection: SelectionSession
-    ) {
-        if let snapshot {
-            session.query = .ready(response: snapshot)
-        } else {
-            session.query = .idle(request: session.query.request)
-        }
-        session.preview = preview
-        session.selection = selection
+    private func restoreSnapshot(_ snapshot: BrowserContentState) {
+        contentState = snapshot
+        syncPreviewPayloadCacheToDisplayedState()
+        clearInactiveEdits()
     }
 
     private func nextSelectionAfterDelete(deleting _: Int64) -> Int64? {
@@ -815,16 +968,19 @@ final class BrowserViewModel {
         return nil
     }
 
+    private var displayedContent: LoadedBrowserContent? {
+        contentState.displayedContent
+    }
+
     private var currentResponse: BrowserSearchResponse? {
-        guard case .ready(let response) = session.query else { return nil }
-        return response
+        displayedContent?.response
     }
 
     private func responseApplyingPendingMutations(_ response: BrowserSearchResponse) -> BrowserSearchResponse {
-        switch session.mutation {
-        case .deleting(.pending(let transaction)), .deleting(.committing(let transaction)):
+        switch mutationState {
+        case let .deleting(.pending(transaction)), let .deleting(.committing(transaction)):
             return responseHidingDeletedItem(response, deletedItemId: transaction.deletedItemId)
-        case .tagging(.pending(let mutation)), .tagging(.settling(let mutation)):
+        case let .tagging(.pending(mutation)), let .tagging(.settling(mutation)):
             return responseApplyingTagMutation(
                 response,
                 itemId: mutation.itemId,
@@ -842,101 +998,100 @@ final class BrowserViewModel {
         }
 
         let filteredItems = response.items.filter { $0.itemMetadata.itemId != deletedItemId }
-        let filteredFirstItem = response.firstItem?.itemMetadata.itemId == deletedItemId
+        let filteredFirstPreviewPayload = response.firstPreviewPayload?.item.itemMetadata.itemId == deletedItemId
             ? nil
-            : response.firstItem
+            : response.firstPreviewPayload
 
         return BrowserSearchResponse(
             request: response.request,
             items: filteredItems,
-            firstItem: filteredFirstItem,
+            firstPreviewPayload: filteredFirstPreviewPayload,
             totalCount: max(0, response.totalCount - 1)
         )
     }
 
     private func mutateItemTag(itemId: Int64, tag: ItemTag, shouldInclude: Bool) {
-        let snapshot = currentResponse
-        let previewSnapshot = session.preview
-        let selectionSnapshot = session.selection
+        let snapshot = contentState
 
         pendingTagSettleTask?.cancel()
         pendingTagSettleTask = nil
         let transaction = TagMutationTransaction(itemId: itemId, tag: tag, shouldInclude: shouldInclude)
-        session.mutation = .tagging(.pending(transaction))
+        mutationState = .tagging(.pending(transaction))
         applyOptimisticTagMutation(itemId: itemId, tag: tag, shouldInclude: shouldInclude)
 
         Task { [weak self] in
             guard let self else { return }
-            let result: Result<Void, ClipboardError>
-            if shouldInclude {
-                result = await self.client.addTag(itemId: itemId, tag: tag)
-            } else {
-                result = await self.client.removeTag(itemId: itemId, tag: tag)
-            }
+            let result: Result<Void, ClipboardError> = shouldInclude
+                ? await self.client.addTag(itemId: itemId, tag: tag)
+                : await self.client.removeTag(itemId: itemId, tag: tag)
 
             await MainActor.run {
                 switch result {
                 case .success:
-                    if case .tagging(.pending(let mutation)) = self.session.mutation,
+                    if case let .tagging(.pending(mutation)) = self.mutationState,
                        mutation.itemId == itemId,
                        mutation.tag == tag,
-                       mutation.shouldInclude == shouldInclude {
-                        self.session.mutation = .tagging(.settling(mutation))
+                       mutation.shouldInclude == shouldInclude
+                    {
+                        self.mutationState = .tagging(.settling(mutation))
                         self.scheduleTagMutationSettleFallback(
                             itemId: mutation.itemId,
                             tag: mutation.tag,
                             shouldInclude: mutation.shouldInclude
                         )
                     }
-                case .failure(let error):
+                case let .failure(error):
                     self.pendingTagSettleTask?.cancel()
                     self.pendingTagSettleTask = nil
-                    self.restoreSnapshot(
-                        snapshot: snapshot,
-                        preview: previewSnapshot,
-                        selection: selectionSnapshot
-                    )
-                    self.session.mutation = .failed(ActionFailure(message: error.localizedDescription))
+                    self.restoreSnapshot(snapshot)
+                    self.mutationState = .failed(ActionFailure(message: error.localizedDescription))
                 }
             }
         }
     }
 
     private func applyOptimisticTagMutation(itemId: Int64, tag: ItemTag, shouldInclude: Bool) {
-        guard case .ready(let response) = session.query else { return }
+        guard let response = currentResponse else { return }
         let updatedResponse = responseApplyingTagMutation(
             response,
             itemId: itemId,
             tag: tag,
             shouldInclude: shouldInclude
         )
-        session.query = .ready(response: updatedResponse)
+        updateDisplayedResponse(updatedResponse)
 
-        if let selectedItem = selectedItem {
-            let updatedMetadata = selectedItem.itemMetadata.itemId == itemId
-                ? applyingTagMutation(to: selectedItem.itemMetadata, tag: tag, shouldInclude: shouldInclude)
-                : selectedItem.itemMetadata
-            if case .tagged(let activeTag) = response.request.filter,
+        if let selectedItemState {
+            let updatedMetadata = selectedItemState.item.itemMetadata.itemId == itemId
+                ? applyingTagMutation(to: selectedItemState.item.itemMetadata, tag: tag, shouldInclude: shouldInclude)
+                : selectedItemState.item.itemMetadata
+
+            if case let .tagged(activeTag) = response.request.filter,
                activeTag == tag,
-               !updatedMetadata.tags.contains(tag) {
-                session.selection = .none
-                session.preview = .empty
+               !updatedMetadata.tags.contains(tag)
+            {
+                setDisplayedSelection(.none)
                 if let firstItemId = updatedResponse.items.first?.itemMetadata.itemId {
                     select(itemId: firstItemId, origin: .automatic)
                 }
-            } else if selectedItem.itemMetadata.itemId == itemId {
-                session.preview = .loaded(PreviewSelection(
-                    item: ClipboardItem(itemMetadata: updatedMetadata, content: selectedItem.content),
-                    matchData: previewSelection?.matchData
-                ))
+            } else if selectedItemState.item.itemMetadata.itemId == itemId {
+                let updatedItem = ClipboardItem(itemMetadata: updatedMetadata, content: selectedItemState.item.content)
+                previewPayloadsByItemId[itemId] = PreviewPayload(
+                    item: updatedItem,
+                    decoration: previewDecoration
+                )
+                setDisplayedSelection(.selected(SelectedItemState(
+                    item: updatedItem,
+                    origin: selectedItemState.origin,
+                    previewState: selectedItemState.previewState
+                )))
             }
         }
 
-        // Update prefetch cache to reflect tag mutation
         if let cachedItem = prefetchCache[itemId] {
             let updatedMetadata = applyingTagMutation(to: cachedItem.itemMetadata, tag: tag, shouldInclude: shouldInclude)
             prefetchCache[itemId] = ClipboardItem(itemMetadata: updatedMetadata, content: cachedItem.content)
         }
+        clearInactiveEdits()
     }
 
     private func scheduleTagMutationSettleFallback(itemId: Int64, tag: ItemTag, shouldInclude: Bool) {
@@ -946,11 +1101,12 @@ final class BrowserViewModel {
             guard !Task.isCancelled else { return }
             await MainActor.run {
                 guard let self else { return }
-                if case .tagging(.settling(let mutation)) = self.session.mutation,
+                if case let .tagging(.settling(mutation)) = self.mutationState,
                    mutation.itemId == itemId,
                    mutation.tag == tag,
-                   mutation.shouldInclude == shouldInclude {
-                    self.session.mutation = .idle
+                   mutation.shouldInclude == shouldInclude
+                {
+                    self.mutationState = .idle
                 }
                 self.pendingTagSettleTask = nil
             }
@@ -969,34 +1125,42 @@ final class BrowserViewModel {
                 ? applyingTagMutation(to: itemMatch.itemMetadata, tag: tag, shouldInclude: shouldInclude)
                 : itemMatch.itemMetadata
 
-            if case .tagged(let activeTag) = response.request.filter,
+            if case let .tagged(activeTag) = response.request.filter,
                activeTag == tag,
-               !updatedMetadata.tags.contains(tag) {
+               !updatedMetadata.tags.contains(tag)
+            {
+                rowDecorationsByItemId.removeValue(forKey: itemMatch.itemMetadata.itemId)
+                previewPayloadsByItemId.removeValue(forKey: itemMatch.itemMetadata.itemId)
+                prefetchCache.removeValue(forKey: itemMatch.itemMetadata.itemId)
                 return nil
             }
 
-            return ItemMatch(itemMetadata: updatedMetadata, matchData: itemMatch.matchData)
+            return ItemMatch(itemMetadata: updatedMetadata, rowDecoration: itemMatch.rowDecoration)
         }
 
-        let updatedFirstItem = response.firstItem.flatMap { firstItem -> ClipboardItem? in
-            guard firstItem.itemMetadata.itemId == itemId else { return firstItem }
+        let updatedFirstPreviewPayload = response.firstPreviewPayload.flatMap { payload -> PreviewPayload? in
+            guard payload.item.itemMetadata.itemId == itemId else { return payload }
             let updatedMetadata = applyingTagMutation(
-                to: firstItem.itemMetadata,
+                to: payload.item.itemMetadata,
                 tag: tag,
                 shouldInclude: shouldInclude
             )
-            if case .tagged(let activeTag) = response.request.filter,
+            if case let .tagged(activeTag) = response.request.filter,
                activeTag == tag,
-               !updatedMetadata.tags.contains(tag) {
+               !updatedMetadata.tags.contains(tag)
+            {
                 return nil
             }
-            return ClipboardItem(itemMetadata: updatedMetadata, content: firstItem.content)
+            let updatedItem = ClipboardItem(itemMetadata: updatedMetadata, content: payload.item.content)
+            let updatedPayload = PreviewPayload(item: updatedItem, decoration: payload.decoration)
+            previewPayloadsByItemId[itemId] = updatedPayload
+            return updatedPayload
         }
 
         return BrowserSearchResponse(
             request: response.request,
             items: updatedItems,
-            firstItem: updatedFirstItem,
+            firstPreviewPayload: updatedFirstPreviewPayload,
             totalCount: updatedItems.count
         )
     }
@@ -1024,12 +1188,115 @@ final class BrowserViewModel {
         )
     }
 
-    func matchData(for itemId: Int64) -> MatchData? {
-        session.query.items.first { $0.itemMetadata.itemId == itemId }?.matchData
+    func rowDecoration(for itemId: Int64) -> RowDecoration? {
+        if let decoration = rowDecorationsByItemId[itemId] {
+            return decoration
+        }
+        return contentState.items.first { $0.itemMetadata.itemId == itemId }?.rowDecoration
     }
 
-    func makePreviewSelection(for item: ClipboardItem) -> PreviewSelection {
-        PreviewSelection(item: item, matchData: matchData(for: item.itemMetadata.itemId))
+    private func makeSelectedItemState(
+        for payload: PreviewPayload,
+        origin: SelectionOrigin
+    ) -> SelectedItemState {
+        SelectedItemState(
+            item: payload.item,
+            origin: origin,
+            previewState: payload.decoration.map(SelectedPreviewState.highlighted) ?? .plain
+        )
+    }
+
+    private func makeStaleLoadingSelectedItemState(
+        from selectedItemState: SelectedItemState,
+        origin: SelectionOrigin
+    ) -> SelectedItemState? {
+        let loadingState: LoadingPreviewState
+        switch selectedItemState.previewState {
+        case let .highlighted(decoration):
+            loadingState = .stale(decoration)
+        case let .loading(.stale(decoration)):
+            loadingState = .stale(decoration)
+        case .plain, .loading(.missing):
+            return nil
+        }
+
+        return SelectedItemState(
+            item: selectedItemState.item,
+            origin: origin,
+            previewState: .loading(loadingState)
+        )
+    }
+
+    private func requiresAtomicPreviewLoad(for item: ClipboardItem, request: SearchRequest) -> Bool {
+        guard !request.text.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty else {
+            return false
+        }
+
+        switch item.content {
+        case .text, .color:
+            return true
+        case .image, .link, .file:
+            return false
+        }
+    }
+
+    private func resetSelection(in content: LoadedBrowserContent, for query: String) -> LoadedBrowserContent {
+        guard let selectedItem = content.selection.selectedItem else { return content }
+        let request = SearchRequest(text: query, filter: content.response.request.filter)
+        let selection: SelectionState
+        if requiresAtomicPreviewLoad(for: selectedItem.item, request: request) {
+            if let staleSelectedItem = makeStaleLoadingSelectedItemState(from: selectedItem, origin: selectedItem.origin) {
+                selection = .selected(staleSelectedItem)
+            } else {
+                selection = .loading(itemId: selectedItem.item.itemMetadata.itemId, origin: selectedItem.origin)
+            }
+        } else {
+            selection = .selected(selectedItem)
+        }
+
+        return LoadedBrowserContent(response: content.response, selection: selection)
+    }
+
+    private func cachePreviewPayload(_ payload: PreviewPayload?) {
+        guard let payload else { return }
+        let itemId = payload.item.itemMetadata.itemId
+        previewPayloadsByItemId[itemId] = payload
+        prefetchCache[itemId] = payload.item
+    }
+
+    private func isPreviewPayloadReady(_ payload: PreviewPayload, for request: SearchRequest) -> Bool {
+        !requiresAtomicPreviewLoad(for: payload.item, request: request) || payload.decoration != nil
+    }
+
+    private func isPreviewAwaitingPayload(for itemId: Int64) -> Bool {
+        switch selection {
+        case let .loading(loadingItemId, _):
+            return loadingItemId == itemId
+        case let .selected(selectedItemState):
+            guard selectedItemState.item.itemMetadata.itemId == itemId else { return false }
+            if case .loading = selectedItemState.previewState {
+                return true
+            }
+            return false
+        case .failed, .none:
+            return false
+        }
+    }
+
+    private func syncPreviewPayloadCacheToDisplayedState() {
+        previewPayloadsByItemId.removeAll()
+
+        if let firstPreviewPayload = contentState.firstPreviewPayload {
+            cachePreviewPayload(firstPreviewPayload)
+        }
+
+        if let selectedItemState {
+            let payload = PreviewPayload(
+                item: selectedItemState.item,
+                decoration: previewDecoration
+            )
+            cachePreviewPayload(payload)
+        }
     }
 
     private func itemIdentifier(at index: Int) -> Int64? {
@@ -1057,6 +1324,88 @@ final class BrowserViewModel {
             await MainActor.run {
                 handler(item.itemMetadata.itemId, item.content)
             }
+        }
+    }
+
+    private func setDisplayedSelection(_ selection: SelectionState) {
+        updateDisplayedContent { content in
+            LoadedBrowserContent(response: content.response, selection: selection)
+        }
+    }
+
+    private func updateDisplayedResponse(_ response: BrowserSearchResponse) {
+        updateDisplayedContent { content in
+            LoadedBrowserContent(response: response, selection: content.selection)
+        }
+    }
+
+    private func updateDisplayedResponseForItem(
+        itemId: Int64,
+        updatedMetadata: ItemMetadata,
+        updatedFirstItem: ClipboardItem
+    ) {
+        guard let response = currentResponse else { return }
+        let updatedItems = response.items.map { itemMatch in
+            guard itemMatch.itemMetadata.itemId == itemId else { return itemMatch }
+            return ItemMatch(
+                itemMetadata: updatedMetadata,
+                rowDecoration: itemMatch.rowDecoration
+            )
+        }
+        let firstPreviewPayload: PreviewPayload? = {
+            guard let currentFirstPreviewPayload = response.firstPreviewPayload,
+                  currentFirstPreviewPayload.item.itemMetadata.itemId == itemId
+            else {
+                return response.firstPreviewPayload
+            }
+            let updatedPayload = PreviewPayload(
+                item: updatedFirstItem,
+                decoration: currentFirstPreviewPayload.decoration
+            )
+            previewPayloadsByItemId[itemId] = updatedPayload
+            return updatedPayload
+        }()
+        updateDisplayedResponse(BrowserSearchResponse(
+            request: response.request,
+            items: updatedItems,
+            firstPreviewPayload: firstPreviewPayload,
+            totalCount: response.totalCount
+        ))
+    }
+
+    private func updateDisplayedContent(_ transform: (LoadedBrowserContent) -> LoadedBrowserContent) {
+        switch contentState {
+        case .idle:
+            break
+        case let .loaded(content):
+            contentState = .loaded(transform(content))
+        case let .loading(request, previous, phase):
+            guard let previous else { return }
+            contentState = .loading(request: request, previous: transform(previous), phase: phase)
+        case let .failed(request, message, previous):
+            guard let previous else { return }
+            contentState = .failed(request: request, message: message, previous: transform(previous))
+        }
+    }
+
+    private func clearInactiveEdits() {
+        guard let selectedItemId else {
+            editState.pendingEdits.removeAll()
+            editState.focus = .idle
+            return
+        }
+
+        editState.pendingEdits = editState.pendingEdits.filter { $0.key == selectedItemId }
+        if case let .focused(focusedId) = editState.focus, focusedId != selectedItemId {
+            editState.focus = .idle
+        }
+    }
+
+    private func finishTagMutationSettleIfNeeded() {
+        if case .tagging(.settling) = mutationState {
+            pendingTagSettleTask?.cancel()
+            pendingTagSettleTask = nil
+            mutationState = .idle
         }
     }
 }

@@ -1,8 +1,8 @@
-import SwiftUI
 import AppKit
 import ClipKittyRust
+import ObjectiveC.runtime
 import STTextKitPlus
-import os.log
+import SwiftUI
 import UniformTypeIdentifiers
 
 /// Max time to show stale content before clearing to spinner during slow loads.
@@ -24,7 +24,7 @@ private enum SpinnerState: Equatable {
     }
 
     mutating func cancel() {
-        if case .debouncing(let task) = self {
+        if case let .debouncing(task) = self {
             task.cancel()
         }
         self = .idle
@@ -48,7 +48,7 @@ private extension View {
         if #available(macOS 26.0, *) {
             self.glassEffect(.regular.interactive(), in: .rect)
         } else {
-            self.background(.regularMaterial)
+            background(.regularMaterial)
         }
     }
 }
@@ -180,21 +180,117 @@ struct FilePreviewView: View {
             .font(font)
             .foregroundColor(color)
     }
-
 }
 
 // MARK: - Text Preview (AppKit)
+
+/// NSTextView subclass with custom key handling for the preview pane
+private final class PreviewTextView: NSTextView {
+    // NSTextView keeps itself as the viewport layout delegate. We expose the same optional
+    // selector on our subclass and forward to NSTextView's original implementation so we can
+    // observe post-layout state without replacing AppKit's delegate plumbing.
+    private static let didLayoutSelector = NSSelectorFromString("textViewportLayoutControllerDidLayout:")
+    private static let superDidLayoutImplementation: IMP? = {
+        guard let method = class_getInstanceMethod(NSTextView.self, didLayoutSelector) else { return nil }
+        return method_getImplementation(method)
+    }()
+
+    var onCmdReturn: (() -> Void)?
+    var onSave: (() -> Void)?
+    var onEscape: (() -> Void)?
+    var onFocusChange: ((Bool) -> Void)?
+    var onViewportLayoutDidLayout: ((PreviewTextView, NSTextViewportLayoutController) -> Void)?
+
+    override func keyDown(with event: NSEvent) {
+        if event.modifierFlags.contains(.command) {
+            switch event.keyCode {
+            case 36: // Cmd+Return
+                onCmdReturn?()
+                return
+            case 1: // Cmd+S
+                onSave?()
+                return
+            default:
+                break
+            }
+        }
+        if event.keyCode == 53 { // Escape
+            window?.makeFirstResponder(nil)
+            onEscape?()
+            return
+        }
+        super.keyDown(with: event)
+    }
+
+    override func becomeFirstResponder() -> Bool {
+        let result = super.becomeFirstResponder()
+        if result { onFocusChange?(true) }
+        return result
+    }
+
+    override func resignFirstResponder() -> Bool {
+        let result = super.resignFirstResponder()
+        if result { onFocusChange?(false) }
+        return result
+    }
+
+    @objc(textViewportLayoutControllerDidLayout:)
+    func clipKitty_textViewportLayoutControllerDidLayout(
+        _ textViewportLayoutController: NSTextViewportLayoutController
+    ) {
+        if let implementation = Self.superDidLayoutImplementation {
+            typealias DidLayoutFunction =
+                @convention(c) (AnyObject, Selector, NSTextViewportLayoutController) -> Void
+            unsafeBitCast(implementation, to: DidLayoutFunction.self)(
+                self,
+                Self.didLayoutSelector,
+                textViewportLayoutController
+            )
+        }
+        onViewportLayoutDidLayout?(self, textViewportLayoutController)
+    }
+}
+/// How the preview pane should scroll when its content changes.
+enum PreviewScrollBehavior {
+    /// No auto-scrolling — content stays at current position.
+    /// Used when match data hasn't loaded yet during an active search.
+    case manual
+
+    /// Scroll to content (top or first highlight) once, without KVO recentering.
+    /// Used for search-driven changes where results are churning.
+    case autoScroll
+
+    /// Scroll to highlight with KVO-based recentering for robust positioning.
+    /// Used for user-initiated navigation (arrow keys, clicking in the list).
+    case trackHighlight
+}
 
 struct TextPreviewView: NSViewRepresentable {
     let text: String
     let fontName: String
     let fontSize: CGFloat
-    var highlights: [HighlightRange] = []
-    var densestHighlightStart: UInt64 = 0
+    var highlights: [Utf16HighlightRange] = []
+    var initialScrollHighlightIndex: UInt64?
+    /// Controls how the preview pane scrolls when content changes.
+    ///
+    /// The three states represent the valid scroll behaviors:
+    /// - `.manual`: No auto-scrolling (e.g., match data not yet loaded during search)
+    /// - `.autoScroll`: Scroll to content once, no KVO recentering (search-driven changes)
+    /// - `.trackHighlight`: Scroll to highlight with KVO recentering (user navigation)
+    var scrollBehavior: PreviewScrollBehavior = .autoScroll
 
-    private enum ScrollTarget {
+    // Edit callbacks
+    var itemId: Int64 = 0
+    var originalText: String = ""
+    var onTextChange: ((String) -> Void)?
+    var onEditingStateChange: ((Bool) -> Void)?
+    var onCmdReturn: (() -> Void)?
+    var onSave: (() -> Void)?
+    var onEscape: (() -> Void)?
+
+    fileprivate enum ScrollTarget {
         case top
-        case highlight(NSRange)
+        case highlight(utf16Start: UInt64, utf16End: UInt64)
     }
 
     func makeNSView(context: Context) -> NSScrollView {
@@ -202,12 +298,14 @@ struct TextPreviewView: NSViewRepresentable {
         scrollView.hasVerticalScroller = true
         scrollView.drawsBackground = false
 
+        // Use PreviewTextView for custom key handling (Cmd+Return, Cmd+S, Escape)
         // NSTextView() defaults to TextKit 2 on macOS 12+.
         // IMPORTANT: never access .layoutManager — that silently downgrades to TextKit 1.
-        let textView = NSTextView()
-        textView.isEditable = false
+        let textView = PreviewTextView()
+        textView.isEditable = true
         textView.isSelectable = true
-        textView.isRichText = true
+        textView.isRichText = false // Plain text for editing
+        textView.allowsUndo = true
         textView.drawsBackground = false
         textView.isVerticallyResizable = true
         textView.isHorizontallyResizable = false
@@ -219,6 +317,14 @@ struct TextPreviewView: NSViewRepresentable {
         textView.textContainer?.containerSize = NSSize(width: scrollView.contentSize.width, height: .greatestFiniteMagnitude)
         textView.frame = NSRect(x: 0, y: 0, width: scrollView.contentSize.width, height: 0)
         textView.setAccessibilityIdentifier("PreviewTextView")
+
+        // Setup delegate for text changes
+        textView.delegate = context.coordinator
+        textView.onCmdReturn = onCmdReturn
+        textView.onSave = onSave
+        textView.onEscape = onEscape
+        textView.onFocusChange = onEditingStateChange
+        context.coordinator.onTextChange = onTextChange
 
         scrollView.documentView = textView
         return scrollView
@@ -252,7 +358,82 @@ struct TextPreviewView: NSViewRepresentable {
     }
 
     func updateNSView(_ nsView: NSScrollView, context: Context) {
-        guard let textView = nsView.documentView as? NSTextView else { return }
+        guard let textView = nsView.documentView as? PreviewTextView else { return }
+
+        // Update callbacks
+        let coordinator = context.coordinator
+        coordinator.observeUsageBounds(of: textView)
+        coordinator.onTextChange = onTextChange
+        textView.onCmdReturn = onCmdReturn
+        textView.onSave = onSave
+        textView.onEscape = onEscape
+        textView.onFocusChange = onEditingStateChange
+        textView.onViewportLayoutDidLayout = { [weak coordinator] observedTextView, textViewportLayoutController in
+            guard let coordinator,
+                  scrollBehavior != .manual,
+                  let target = coordinator.activeUsageBoundsTarget() else { return }
+
+            let generation = coordinator.scrollGeneration
+            // TextKit 2 can report a transiently invalid viewport immediately after a layout pass.
+            // Retry layoutViewport once on the next run loop instead of centering against empty
+            // bounds or a nil viewport range, then do one post-layout scroll attempt once the
+            // viewport state is coherent.
+            if textViewportLayoutController.viewportBounds.isEmpty ||
+                textViewportLayoutController.viewportRange == nil
+            {
+                guard coordinator.scheduleViewportRetry(for: generation) else { return }
+                DispatchQueue.main.async { [weak coordinator, weak observedTextView] in
+                    guard let coordinator,
+                          let observedTextView,
+                          coordinator.scrollGeneration == generation else { return }
+                    observedTextView.textLayoutManager?.textViewportLayoutController.layoutViewport()
+                }
+                return
+            }
+
+            coordinator.clearViewportRetry()
+            // PERF FIX: Do NOT set needsGeometrySync here. The layout pass that triggered
+            // this callback already stabilized geometry. Re-syncing would create a feedback
+            // loop: layout → viewport callback → geometry sync → layout → callback → ...
+            DispatchQueue.main.async { [weak coordinator, weak observedTextView] in
+                guard let coordinator,
+                      let observedTextView,
+                      coordinator.scrollGeneration == generation else { return }
+                // Skip flushPendingDisplay — the viewport controller just completed layout.
+                // Flushing here triggers additional layout passes that feed back into KVO.
+                self.performScrollAttempt(
+                    textView: observedTextView,
+                    target: target,
+                    generation: generation,
+                    coordinator: coordinator,
+                    attempt: 0
+                )
+            }
+        }
+        coordinator.onUsageBoundsChange = { [weak coordinator] observedTextView in
+            guard let coordinator,
+                  scrollBehavior != .manual,
+                  let target = coordinator.activeUsageBoundsTarget() else { return }
+            // PERF FIX: Do NOT set needsGeometrySync here. The layout pass that changed
+            // usageBounds already handled geometry. Re-syncing creates a feedback loop:
+            // geometry sync → layoutViewport → usageBounds KVO → geometry sync → ...
+            // Also limit KVO-driven re-scroll attempts to prevent runaway iteration.
+            guard coordinator.consumeKvoReScrollAttempt() else { return }
+            self.performScrollAttempt(
+                textView: observedTextView,
+                target: target,
+                generation: coordinator.scrollGeneration,
+                coordinator: coordinator,
+                attempt: 0
+            )
+        }
+
+        // Check if item changed
+        let itemChanged = coordinator.currentItemId != itemId
+        if itemChanged {
+            coordinator.currentItemId = itemId
+            coordinator.isEditing = false
+        }
 
         // Use live container width if available, otherwise fall back to persisted value
         let containerWidth = nsView.contentSize.width > 0
@@ -274,18 +455,29 @@ struct TextPreviewView: NSViewRepresentable {
         )
         textView.frame = NSRect(x: 0, y: 0, width: containerWidth, height: textView.frame.height)
 
-        let coordinator = context.coordinator
+        // Set typing attributes for consistent font during editing
+        let paragraphStyle = NSMutableParagraphStyle()
+        paragraphStyle.lineBreakMode = .byWordWrapping
+        textView.typingAttributes = [
+            .font: font,
+            .foregroundColor: NSColor.labelColor,
+            .paragraphStyle: paragraphStyle,
+        ]
+
         let textChanged = textView.string != text
         let highlightsChanged = coordinator.lastHighlights != highlights
         let contentWidthChanged = abs(coordinator.lastContentWidth - containerWidth) > 0.5
+        let gainedHighlights = !highlights.isEmpty && coordinator.lastHighlights.isEmpty
         coordinator.lastContentWidth = containerWidth
 
-        guard textChanged || highlightsChanged || contentWidthChanged else { return }
-        if textChanged || contentWidthChanged {
+        guard itemChanged || textChanged || highlightsChanged || contentWidthChanged else { return }
+        if itemChanged || textChanged || contentWidthChanged || gainedHighlights {
             coordinator.needsGeometrySync = true
         }
 
-        if textChanged {
+        // Only update text if item changed or we're not editing
+        let shouldUpdateText = itemChanged || (!coordinator.isEditing && textChanged)
+        if shouldUpdateText {
             // Text content changed — replace storage attributes (font, color, paragraph style only).
             // Highlights are applied as rendering attributes, not storage attributes.
             //
@@ -299,14 +491,14 @@ struct TextPreviewView: NSViewRepresentable {
             let attributed = NSMutableAttributedString(string: text, attributes: [
                 .font: font,
                 .foregroundColor: NSColor.labelColor,
-                .paragraphStyle: paragraphStyle
+                .paragraphStyle: paragraphStyle,
             ])
 
             textView.textStorage?.setAttributedString(attributed)
         }
 
         let tlm = textView.textLayoutManager
-        if textChanged || highlightsChanged {
+        if itemChanged || textChanged || highlightsChanged {
             // Convert highlights to NSTextRanges for the layout manager
             let newMatchRanges = resolveTextRanges(highlights: highlights, text: text, layoutManager: tlm)
             let oldMatchRanges = coordinator.currentMatchRanges
@@ -347,38 +539,61 @@ struct TextPreviewView: NSViewRepresentable {
         if highlights.isEmpty {
             scrollTarget = .top
         } else {
-            let targetHighlight = highlights.first { $0.start == densestHighlightStart } ?? highlights[0]
-            scrollTarget = .highlight(targetHighlight.nsRange(in: text))
+            let targetHighlight: Utf16HighlightRange
+            if let initialScrollHighlightIndex {
+                let index = Int(initialScrollHighlightIndex)
+                if highlights.indices.contains(index) {
+                    targetHighlight = highlights[index]
+                } else {
+                    targetHighlight = highlights[0]
+                }
+            } else {
+                targetHighlight = highlights[0]
+            }
+            scrollTarget = .highlight(
+                utf16Start: targetHighlight.utf16Start,
+                utf16End: targetHighlight.utf16End
+            )
         }
 
-        scroll(
-            textView: textView,
-            target: scrollTarget,
-            coordinator: coordinator
-        )
+        if scrollBehavior != .manual {
+            scroll(
+                textView: textView,
+                target: scrollTarget,
+                coordinator: coordinator
+            )
+        } else if coordinator.needsGeometrySync {
+            coordinator.clearUsageBoundsRecentering()
+            _ = syncTextViewGeometry(textView: textView, containerWidth: containerWidth)
+            coordinator.needsGeometrySync = false
+            coordinator.scrollGeneration += 1
+        }
     }
 
     // MARK: - Highlight Resolution
 
-    /// Convert [HighlightRange] to [(NSTextRange, HighlightKind)] using the text layout manager.
+    /// Convert UTF-16 highlight ranges to TextKit 2 ranges using the text layout manager.
     private func resolveTextRanges(
-        highlights: [HighlightRange],
-        text: String,
+        highlights: [Utf16HighlightRange],
+        text _: String,
         layoutManager: NSTextLayoutManager?
     ) -> [MatchRange] {
         guard let tlm = layoutManager,
               let tcm = tlm.textContentManager else { return [] }
 
         return highlights.compactMap { highlight in
-            let nsRange = highlight.nsRange(in: text)
-            guard nsRange.location != NSNotFound else { return nil }
+            let nsRange = highlight.nsRange
 
             guard let start = tcm.location(tcm.documentRange.location, offsetBy: nsRange.location),
                   let end = tcm.location(start, offsetBy: nsRange.length) else { return nil }
 
             guard let textRange = NSTextRange(location: start, end: end) else { return nil }
-            return MatchRange(range: textRange, kind: highlight.kind,
-                              scalarStart: highlight.start, scalarEnd: highlight.end)
+            return MatchRange(
+                range: textRange,
+                kind: highlight.kind,
+                utf16Start: highlight.utf16Start,
+                utf16End: highlight.utf16End
+            )
         }
     }
 
@@ -391,6 +606,21 @@ struct TextPreviewView: NSViewRepresentable {
     ) {
         coordinator.scrollGeneration += 1
         let generation = coordinator.scrollGeneration
+        coordinator.clearViewportRetry()
+        coordinator.resetKvoReScrollCount()
+        switch target {
+        case .top:
+            coordinator.clearUsageBoundsRecentering()
+        case .highlight:
+            // Only arm KVO-based recentering for user navigation (arrow keys, clicks).
+            // During search-driven changes, results churn rapidly and the recentering
+            // window (previously 750ms) never expires, creating a layout feedback loop.
+            if scrollBehavior == .trackHighlight {
+                coordinator.armUsageBoundsRecentering(target: target, duration: 0.25)
+            } else {
+                coordinator.clearUsageBoundsRecentering()
+            }
+        }
 
         performScrollAttempt(
             textView: textView,
@@ -445,7 +675,22 @@ struct TextPreviewView: NSViewRepresentable {
             }
 
             if coordinator.needsGeometrySync {
-                self.syncTextViewGeometry(textView: textView, containerWidth: scrollView.contentSize.width)
+                let geometryReady = self.syncTextViewGeometry(
+                    textView: textView,
+                    containerWidth: scrollView.contentSize.width
+                )
+                if !geometryReady {
+                    if attempt < maxAttempts - 1 {
+                        self.performScrollAttempt(
+                            textView: textView,
+                            target: target,
+                            generation: generation,
+                            coordinator: coordinator,
+                            attempt: attempt + 1
+                        )
+                    }
+                    return
+                }
                 coordinator.needsGeometrySync = false
             }
 
@@ -460,27 +705,36 @@ struct TextPreviewView: NSViewRepresentable {
                 scrollView.contentView.scroll(to: newOrigin)
                 scrollView.reflectScrolledClipView(scrollView.contentView)
                 CATransaction.commit()
+                self.flushPendingDisplay(textView: textView, scrollView: scrollView)
                 return
             case .highlight:
                 break
             }
 
-            guard let tlm = textView.textLayoutManager,
-                  let tcm = tlm.textContentManager else { return }
-            guard case .highlight(let targetNSRange) = target else { return }
+            guard let tlm = textView.textLayoutManager else { return }
+            guard case let .highlight(utf16Start, utf16End) = target else { return }
+            guard let targetMatchRange = coordinator.currentMatchRanges.first(where: {
+                $0.utf16Start == utf16Start && $0.utf16End == utf16End
+            }) else {
+                if attempt < maxAttempts - 1 {
+                    self.performScrollAttempt(
+                        textView: textView,
+                        target: target,
+                        generation: generation,
+                        coordinator: coordinator,
+                        attempt: attempt + 1
+                    )
+                }
+                return
+            }
+            let targetTextRange = targetMatchRange.range
 
-            // Convert NSRange to NSTextRange
-            guard let start = tcm.location(tcm.documentRange.location, offsetBy: targetNSRange.location),
-                  let end = tcm.location(start, offsetBy: targetNSRange.length),
-                  let targetTextRange = NSTextRange(location: start, end: end) else { return }
-
-            // Ensure layout for just this range
+            // Ensure layout for just this range.
             tlm.ensureLayout(for: targetTextRange)
 
-            // Get the frame of the highlight using STTextKitPlus
-            // TextKit 2 may return nil if layout isn't fully computed yet
+            // Get the frame of the highlight using STTextKitPlus.
+            // With document geometry stabilized first, this gives a reliable target rect.
             guard let rect = tlm.textSegmentFrame(in: targetTextRange, type: .highlight) else {
-                // Layout not ready - retry with exponential backoff
                 if attempt < maxAttempts - 1 {
                     self.performScrollAttempt(
                         textView: textView,
@@ -493,34 +747,36 @@ struct TextPreviewView: NSViewRepresentable {
                 return
             }
 
-            // Convert rect to scroll view coordinates.
-            let highlightRect = rect.offsetBy(dx: textView.textContainerInset.width, dy: textView.textContainerInset.height)
-            var documentHeight: CGFloat = 0
-            tlm.enumerateTextLayoutFragments(from: tlm.documentRange.endLocation,
-                                              options: [.reverse, .ensuresLayout]) { fragment in
-                documentHeight = fragment.layoutFragmentFrame.maxY
-                return false  // stop after first (last) fragment
+            let highlightRect = rect
+            let visibleHeight = scrollView.documentVisibleRect.height
+            let currentOrigin = scrollView.contentView.bounds.origin
+            let currentVisibleMinY = currentOrigin.y
+            let currentVisibleMaxY = currentOrigin.y + visibleHeight
+            let desiredAnchorY = currentOrigin.y + (visibleHeight / 3)
+            let currentAnchorDelta = highlightRect.midY - desiredAnchorY
+            let isCurrentlyVisible =
+                highlightRect.minY >= currentVisibleMinY &&
+                highlightRect.maxY <= currentVisibleMaxY
+
+            if isCurrentlyVisible, abs(currentAnchorDelta) <= 48 {
+                coordinator.clearUsageBoundsRecentering()
+                return
             }
 
-            let visibleHeight = scrollView.documentVisibleRect.height
             let targetOffsetY = highlightRect.midY - (visibleHeight / 3)
-            let contentHeight = max(
-                textView.bounds.height,
-                documentHeight + textView.textContainerInset.height * 2
-            )
+            let contentHeight = max(textView.bounds.height, scrollView.contentSize.height)
             let maxScrollY = max(0, contentHeight - visibleHeight)
             let clampedY = min(max(0, targetOffsetY), maxScrollY)
 
-            let currentOrigin = scrollView.contentView.bounds.origin
             let newOrigin = NSPoint(x: currentOrigin.x, y: clampedY)
             guard abs(currentOrigin.y - newOrigin.y) >= 1 else { return }
 
-            // Perform scroll with animations explicitly disabled
             CATransaction.begin()
             CATransaction.setDisableActions(true)
             scrollView.contentView.scroll(to: newOrigin)
             scrollView.reflectScrolledClipView(scrollView.contentView)
             CATransaction.commit()
+            self.flushPendingDisplay(textView: textView, scrollView: scrollView)
         }
 
         if delayMs == 0 {
@@ -530,22 +786,45 @@ struct TextPreviewView: NSViewRepresentable {
         }
     }
 
-    private func syncTextViewGeometry(textView: NSTextView, containerWidth: CGFloat) {
+    private func syncTextViewGeometry(textView: NSTextView, containerWidth: CGFloat) -> Bool {
         textView.textContainer?.containerSize = NSSize(
             width: containerWidth,
             height: .greatestFiniteMagnitude
         )
         textView.frame = NSRect(x: 0, y: 0, width: containerWidth, height: textView.frame.height)
+        textView.layoutSubtreeIfNeeded()
 
-        guard let scrollView = textView.enclosingScrollView else {
-            return
+        guard let scrollView = textView.enclosingScrollView,
+              let tlm = textView.textLayoutManager
+        else {
+            return false
         }
 
-        let targetHeight = max(
-            scrollView.contentSize.height,
-            documentHeight(for: textView) + textView.textContainerInset.height * 2
-        )
-        textView.frame = NSRect(x: 0, y: 0, width: containerWidth, height: targetHeight)
+        scrollView.layoutSubtreeIfNeeded()
+        tlm.textViewportLayoutController.layoutViewport()
+        textView.layoutSubtreeIfNeeded()
+        scrollView.layoutSubtreeIfNeeded()
+
+        let autoSizedHeight = textView.frame.height
+        if !textView.string.isEmpty && autoSizedHeight <= 0 {
+            return false
+        }
+
+        let targetHeight = max(scrollView.contentSize.height, autoSizedHeight)
+        if abs(textView.frame.height - targetHeight) > 0.5 {
+            textView.frame = NSRect(x: 0, y: 0, width: containerWidth, height: targetHeight)
+        }
+        flushPendingDisplay(textView: textView, scrollView: scrollView)
+        return true
+    }
+
+    private func flushPendingDisplay(textView: NSTextView, scrollView: NSScrollView) {
+        scrollView.contentView.layoutSubtreeIfNeeded()
+        textView.layoutSubtreeIfNeeded()
+        textView.setNeedsDisplay(textView.visibleRect)
+        scrollView.contentView.setNeedsDisplay(scrollView.contentView.bounds)
+        scrollView.displayIfNeeded()
+        textView.displayIfNeeded()
     }
 
     private func documentHeight(for textView: NSTextView) -> CGFloat {
@@ -553,11 +832,12 @@ struct TextPreviewView: NSViewRepresentable {
 
         var documentHeight: CGFloat = 0
         tlm.enumerateTextLayoutFragments(
-            from: tlm.documentRange.endLocation,
-            options: [.reverse, .ensuresLayout]
+            from: tlm.documentRange.location,
+            options: [.ensuresLayout]
         ) { fragment in
-            documentHeight = fragment.layoutFragmentFrame.maxY
-            return false
+            guard !fragment.isExtraLineFragment else { return true }
+            documentHeight = max(documentHeight, fragment.layoutFragmentFrame.maxY)
+            return true
         }
         return documentHeight
     }
@@ -568,34 +848,140 @@ struct TextPreviewView: NSViewRepresentable {
 
     // MARK: - Supporting Types
 
-    /// A resolved match: the original scalar indices (for identity) plus the TextKit 2 range (for operations).
+    /// A resolved match: the original UTF-16 indices (for identity) plus the TextKit 2 range (for operations).
     struct MatchRange {
         let range: NSTextRange
         let kind: HighlightKind
-        let scalarStart: UInt64
-        let scalarEnd: UInt64
+        let utf16Start: UInt64
+        let utf16End: UInt64
     }
 
     /// Hashable key for efficient Set-based diffing of match ranges.
     private struct MatchRangeKey: Hashable {
-        let scalarStart: UInt64
-        let scalarEnd: UInt64
+        let utf16Start: UInt64
+        let utf16End: UInt64
         let kind: HighlightKind
 
         init(_ match: MatchRange) {
-            self.scalarStart = match.scalarStart
-            self.scalarEnd = match.scalarEnd
-            self.kind = match.kind
+            utf16Start = match.utf16Start
+            utf16End = match.utf16End
+            kind = match.kind
         }
     }
 
-    class Coordinator {
-        var lastHighlights: [HighlightRange] = []
+    class Coordinator: NSObject, NSTextViewDelegate {
+        var lastHighlights: [Utf16HighlightRange] = []
         /// Current match ranges for diffing on next update.
         var currentMatchRanges: [MatchRange] = []
         var scrollGeneration: Int = 0
         var lastContentWidth: CGFloat = 0
+        var lastUsageBounds: CGRect = .zero
         var needsGeometrySync: Bool = false
+        private var pendingScrollTarget: ScrollTarget?
+        private var pendingAutoScrollExpiration: Date = .distantPast
+        private var pendingViewportRetryGeneration: Int?
+        fileprivate var onUsageBoundsChange: ((PreviewTextView) -> Void)?
+        private var usageBoundsObservation: NSKeyValueObservation?
+        fileprivate weak var observedTextView: PreviewTextView?
+
+        /// Limits how many KVO-driven re-scroll attempts can fire per scroll() call.
+        /// Prevents the layout feedback loop where KVO → scroll → layout → KVO → ...
+        private var kvoReScrollCount = 0
+        private static let maxKvoReScrollAttempts = 2
+
+        // Edit tracking
+        var currentItemId: Int64 = 0
+        var isEditing = false
+        var onTextChange: ((String) -> Void)?
+
+        deinit {
+            usageBoundsObservation?.invalidate()
+        }
+
+        fileprivate func observeUsageBounds(of textView: PreviewTextView) {
+            guard observedTextView !== textView || usageBoundsObservation == nil else { return }
+
+            usageBoundsObservation?.invalidate()
+            observedTextView = textView
+            lastUsageBounds = textView.textLayoutManager?.usageBoundsForTextContainer ?? .zero
+
+            guard let textLayoutManager = textView.textLayoutManager else { return }
+            usageBoundsObservation = textLayoutManager.observe(
+                \.usageBoundsForTextContainer,
+                options: [.new]
+            ) { [weak self, weak textView] textLayoutManager, _ in
+                guard let self, let textView else { return }
+                let usageBounds = textLayoutManager.usageBoundsForTextContainer
+                let changed =
+                    abs(usageBounds.origin.y - self.lastUsageBounds.origin.y) > 0.5 ||
+                    abs(usageBounds.size.height - self.lastUsageBounds.size.height) > 0.5
+                guard changed else { return }
+                self.lastUsageBounds = usageBounds
+
+                DispatchQueue.main.async { [weak self, weak textView] in
+                    guard let self, let textView else { return }
+                    self.onUsageBoundsChange?(textView)
+                }
+            }
+        }
+
+        fileprivate func armUsageBoundsRecentering(
+            target: ScrollTarget?,
+            duration: TimeInterval
+        ) {
+            pendingScrollTarget = target
+            pendingAutoScrollExpiration = target == nil ? .distantPast : Date().addingTimeInterval(duration)
+            pendingViewportRetryGeneration = nil
+        }
+
+        fileprivate func activeUsageBoundsTarget() -> ScrollTarget? {
+            guard Date() < pendingAutoScrollExpiration else {
+                pendingScrollTarget = nil
+                pendingAutoScrollExpiration = .distantPast
+                return nil
+            }
+            return pendingScrollTarget
+        }
+
+        fileprivate func clearUsageBoundsRecentering() {
+            pendingScrollTarget = nil
+            pendingAutoScrollExpiration = .distantPast
+            pendingViewportRetryGeneration = nil
+        }
+
+        fileprivate func resetKvoReScrollCount() {
+            kvoReScrollCount = 0
+        }
+
+        /// Returns true if a KVO re-scroll attempt is allowed, false if the limit is reached.
+        fileprivate func consumeKvoReScrollAttempt() -> Bool {
+            guard kvoReScrollCount < Self.maxKvoReScrollAttempts else { return false }
+            kvoReScrollCount += 1
+            return true
+        }
+
+        fileprivate func scheduleViewportRetry(for generation: Int) -> Bool {
+            guard pendingViewportRetryGeneration != generation else { return false }
+            pendingViewportRetryGeneration = generation
+            return true
+        }
+
+        fileprivate func clearViewportRetry() {
+            pendingViewportRetryGeneration = nil
+        }
+
+        func textDidBeginEditing(_: Notification) {
+            isEditing = true
+        }
+
+        func textDidEndEditing(_: Notification) {
+            isEditing = false
+        }
+
+        func textDidChange(_ notification: Notification) {
+            guard let onTextChange, let textView = notification.object as? NSTextView else { return }
+            onTextChange(textView.string)
+        }
     }
 }
 
@@ -608,7 +994,7 @@ struct LinkPreviewView: NSViewRepresentable {
     let url: String
     let metadataState: LinkMetadataState
 
-    func makeNSView(context: Context) -> LPLinkView {
+    func makeNSView(context _: Context) -> LPLinkView {
         let linkView = LPLinkView()
         if let metadata = buildMetadata() {
             linkView.metadata = metadata
@@ -618,7 +1004,8 @@ struct LinkPreviewView: NSViewRepresentable {
 
     func updateNSView(_ linkView: LPLinkView, context: Context) {
         guard context.coordinator.lastURL != url ||
-              context.coordinator.lastMetadataState != metadataState else {
+            context.coordinator.lastMetadataState != metadataState
+        else {
             return
         }
         context.coordinator.lastURL = url
@@ -635,15 +1022,15 @@ struct LinkPreviewView: NSViewRepresentable {
         metadata.originalURL = urlObj
         metadata.url = urlObj
 
-        if case .loaded(let payload) = metadataState {
+        if case let .loaded(payload) = metadataState {
             switch payload {
-            case .titleOnly(let title, _):
+            case let .titleOnly(title, _):
                 metadata.title = title
-            case .imageOnly(let imageData, _):
+            case let .imageOnly(imageData, _):
                 if let nsImage = NSImage(data: imageData) {
                     metadata.imageProvider = NSItemProvider(object: nsImage)
                 }
-            case .titleAndImage(let title, let imageData, _):
+            case let .titleAndImage(title, imageData, _):
                 metadata.title = title
                 if let nsImage = NSImage(data: imageData) {
                     metadata.imageProvider = NSItemProvider(object: nsImage)
@@ -667,10 +1054,11 @@ struct LinkPreviewView: NSViewRepresentable {
 
 struct ItemRow: View, Equatable {
     let metadata: ItemMetadata
-    let matchData: MatchData?
+    let rowDecoration: RowDecoration?
     let isSelected: Bool
     let isContextMenuTargeted: Bool
     let hasUserNavigated: Bool
+    let hasPendingEdit: Bool
     let onTap: () -> Void
     let contextMenuActions: [BrowserActionItem]
     let onContextMenuAction: (BrowserActionItem) -> Void
@@ -678,7 +1066,7 @@ struct ItemRow: View, Equatable {
     let onContextMenuShow: () -> Void
     let onContextMenuHide: () -> Void
 
-    private var accentSelected: Bool { isSelected && hasUserNavigated }
+    private var accentSelected: Bool { isSelected && hasUserNavigated && !hasPendingEdit }
 
     // Fixed height for exactly 1 line of text at font size 15
     private let rowHeight: CGFloat = 32
@@ -688,155 +1076,168 @@ struct ItemRow: View, Equatable {
     /// Text to display - uses matchData.text if in search mode, otherwise metadata.snippet
     /// SwiftUI's Three-Part HStack handles truncation with proper ellipsis via layout priorities
     private var displayText: String {
-        if let matchText = matchData?.text, !matchText.isEmpty {
-            return matchText
+        if let rowText = rowDecoration?.text, !rowText.isEmpty {
+            return rowText
         }
         return metadata.snippet
     }
 
     /// Highlights for display - passed directly from Rust (already adjusted for normalization)
-    private var displayHighlights: [HighlightRange] {
-        matchData?.highlights ?? []
+    private var displayHighlights: [Utf16HighlightRange] {
+        rowDecoration?.highlights ?? []
     }
-
 
     // Define exactly what constitutes a "change" for SwiftUI diffing
     // Note: onTap closure is intentionally excluded from equality comparison
     nonisolated static func == (lhs: ItemRow, rhs: ItemRow) -> Bool {
         return lhs.isSelected == rhs.isSelected &&
-               lhs.isContextMenuTargeted == rhs.isContextMenuTargeted &&
-               lhs.hasUserNavigated == rhs.hasUserNavigated &&
-               lhs.metadata == rhs.metadata &&
-               lhs.matchData == rhs.matchData
+            lhs.isContextMenuTargeted == rhs.isContextMenuTargeted &&
+            lhs.hasUserNavigated == rhs.hasUserNavigated &&
+            lhs.hasPendingEdit == rhs.hasPendingEdit &&
+            lhs.metadata == rhs.metadata &&
+            lhs.rowDecoration == rhs.rowDecoration
     }
 
     var body: some View {
         // 1. Wrap the content inside a Button
         Button(action: onTap) {
             HStack(spacing: 6) {
-            // Content type icon with badge overlay
-            ZStack(alignment: .bottomTrailing) {
-                // Main icon: image thumbnail, browser icon for links, color swatch, or SF symbol
+                // Content type icon with badge overlay (or pencil when editing)
                 Group {
-                    switch metadata.icon {
-                    case .thumbnail(let bytes):
-                        if let nsImage = NSImage(data: Data(bytes)) {
-                            Image(nsImage: nsImage)
-                                .resizable()
-                                .aspectRatio(contentMode: .fill)
-                        } else {
-                            Image(systemName: "photo")
-                                .resizable()
-                        }
-                    case .colorSwatch(let rgba):
-                        RoundedRectangle(cornerRadius: 6)
-                            .fill(Color(nsColor: NSColor(
-                                red: CGFloat((rgba >> 24) & 0xFF) / 255.0,
-                                green: CGFloat((rgba >> 16) & 0xFF) / 255.0,
-                                blue: CGFloat((rgba >> 8) & 0xFF) / 255.0,
-                                alpha: CGFloat(rgba & 0xFF) / 255.0
-                            )))
-                            .overlay(
-                                RoundedRectangle(cornerRadius: 6)
-                                    .strokeBorder(Color.primary.opacity(0.15), lineWidth: 1)
-                            )
-                    case .symbol(let iconType):
-                        if case .link = iconType,
-                           let browserURL = NSWorkspace.shared.urlForApplication(toOpen: URL(string: "https://")!) {
-                            Image(nsImage: NSWorkspace.shared.icon(forFile: browserURL.path))
-                                .resizable()
-                        } else if case .file = iconType,
-                                  let finderURL = NSWorkspace.shared.urlForApplication(withBundleIdentifier: "com.apple.finder") {
-                            Image(nsImage: NSWorkspace.shared.icon(forFile: finderURL.path))
-                                .resizable()
-                        } else {
-                            Image(nsImage: NSWorkspace.shared.icon(for: iconType.utType))
-                                .resizable()
+                    if hasPendingEdit {
+                        // Show pencil emoji when item has pending edit
+                        Text("✏️")
+                            .font(.system(size: 24))
+                            .frame(width: 32, height: 32)
+                    } else {
+                        ZStack(alignment: .bottomTrailing) {
+                            // Main icon: image thumbnail, browser icon for links, color swatch, or SF symbol
+                            Group {
+                                switch metadata.icon {
+                                case let .thumbnail(bytes):
+                                    if let nsImage = NSImage(data: Data(bytes)) {
+                                        Image(nsImage: nsImage)
+                                            .resizable()
+                                            .aspectRatio(contentMode: .fill)
+                                    } else {
+                                        Image(systemName: "photo")
+                                            .resizable()
+                                    }
+                                case let .colorSwatch(rgba):
+                                    RoundedRectangle(cornerRadius: 6)
+                                        .fill(Color(nsColor: NSColor(
+                                            red: CGFloat((rgba >> 24) & 0xFF) / 255.0,
+                                            green: CGFloat((rgba >> 16) & 0xFF) / 255.0,
+                                            blue: CGFloat((rgba >> 8) & 0xFF) / 255.0,
+                                            alpha: CGFloat(rgba & 0xFF) / 255.0
+                                        )))
+                                        .overlay(
+                                            RoundedRectangle(cornerRadius: 6)
+                                                .strokeBorder(Color.primary.opacity(0.15), lineWidth: 1)
+                                        )
+                                case let .symbol(iconType):
+                                    if case .link = iconType,
+                                       let browserURL = NSWorkspace.shared.urlForApplication(toOpen: URL(string: "https://")!)
+                                    {
+                                        Image(nsImage: NSWorkspace.shared.icon(forFile: browserURL.path))
+                                            .resizable()
+                                    } else if case .file = iconType,
+                                              let finderURL = NSWorkspace.shared.urlForApplication(withBundleIdentifier: "com.apple.finder")
+                                    {
+                                        Image(nsImage: NSWorkspace.shared.icon(forFile: finderURL.path))
+                                            .resizable()
+                                    } else {
+                                        Image(nsImage: NSWorkspace.shared.icon(for: iconType.utType))
+                                            .resizable()
+                                    }
+                                }
+                            }
+                            .frame(width: 32, height: 32)
+                            .clipShape(RoundedRectangle(cornerRadius: 4))
+
+                            // Badge: Bookmark icon for bookmarked items, otherwise source app icon
+                            if metadata.tags.contains(.bookmark) {
+                                Image("BookmarkIcon")
+                                    .resizable()
+                                    .frame(width: 18, height: 18)
+                                    .shadow(color: .black.opacity(0.3), radius: 1, x: 0, y: 1)
+                                    .offset(x: 4, y: 4)
+                            } else if let bundleID = metadata.sourceAppBundleId,
+                                      let appURL = NSWorkspace.shared.urlForApplication(withBundleIdentifier: bundleID)
+                            {
+                                // Skip badge for symbol links/files (app icon is already shown)
+                                let showBadge: Bool = {
+                                    switch metadata.icon {
+                                    case let .symbol(iconType):
+                                        return iconType != .link && iconType != .file
+                                    case .thumbnail, .colorSwatch:
+                                        return true
+                                    }
+                                }()
+
+                                if showBadge {
+                                    Image(nsImage: NSWorkspace.shared.icon(forFile: appURL.path))
+                                        .resizable()
+                                        .frame(width: 22, height: 22)
+                                        .clipShape(RoundedRectangle(cornerRadius: 3))
+                                        .shadow(color: .black.opacity(0.3), radius: 1, x: 0, y: 1)
+                                        .offset(x: 4, y: 4)
+                                }
+                            }
                         }
                     }
                 }
-                .frame(width: 32, height: 32)
-                .clipShape(RoundedRectangle(cornerRadius: 4))
-
-                // Badge: Bookmark icon for bookmarked items, otherwise source app icon
-                if metadata.tags.contains(.bookmark) {
-                    Image("BookmarkIcon")
-                        .resizable()
-                        .frame(width: 18, height: 18)
-                        .shadow(color: .black.opacity(0.3), radius: 1, x: 0, y: 1)
-                        .offset(x: 4, y: 4)
-                } else if let bundleID = metadata.sourceAppBundleId,
-                   let appURL = NSWorkspace.shared.urlForApplication(withBundleIdentifier: bundleID) {
-                    // Skip badge for symbol links/files (app icon is already shown)
-                    let showBadge: Bool = {
-                        switch metadata.icon {
-                        case .symbol(let iconType):
-                            return iconType != .link && iconType != .file
-                        case .thumbnail, .colorSwatch:
-                            return true
-                        }
-                    }()
-
-                    if showBadge {
-                        Image(nsImage: NSWorkspace.shared.icon(forFile: appURL.path))
-                            .resizable()
-                            .frame(width: 22, height: 22)
-                            .clipShape(RoundedRectangle(cornerRadius: 3))
-                            .shadow(color: .black.opacity(0.3), radius: 1, x: 0, y: 1)
-                            .offset(x: 4, y: 4)
-                    }
-                }
-            }
-            .frame(width: 38, height: 38)
-            .allowsHitTesting(false)
-
-            // Line number (shown in search mode when line > 1)
-            if let lineNumber = matchData?.lineNumber, lineNumber > 1 {
-                Text("L\(lineNumber):")
-                    .font(.custom(FontManager.mono, size: 13))
-                    .foregroundColor(accentSelected ? .white.opacity(0.7) : .secondary)
-                    .lineLimit(1)
-                    .fixedSize()
-                    .allowsHitTesting(false)
-            }
-
-            // Text content - SwiftUI Three-Part HStack with layout priorities
-            HStack(spacing: 6) {
-                HighlightedTextView(
-                    text: displayText,
-                    highlights: displayHighlights,
-                    accentSelected: accentSelected
-                )
-                .frame(maxWidth: .infinity, alignment: .leading)
+                .frame(width: 38, height: 38)
                 .allowsHitTesting(false)
-                .layoutPriority(1)
-            }
-            .frame(maxWidth: .infinity, alignment: .leading)
 
+                // Line number (shown in search mode when line > 1)
+                if let lineNumber = rowDecoration?.lineNumber, lineNumber > 1 {
+                    Text("L\(lineNumber):")
+                        .font(.custom(FontManager.mono, size: 13))
+                        .foregroundColor(accentSelected ? .white.opacity(0.7) : .secondary)
+                        .lineLimit(1)
+                        .fixedSize()
+                        .allowsHitTesting(false)
+                }
 
-        }
-        .frame(maxWidth: .infinity, minHeight: rowHeight, maxHeight: rowHeight, alignment: .leading)
-        .padding(.horizontal, 4)
-        .padding(.vertical, 4)
-        .background {
-            if accentSelected {
-                selectionBackground()
-            } else if isContextMenuTargeted && !isSelected {
-                Color.primary.opacity(0.11)
-            } else if isSelected {
-                Color.primary.opacity(0.225)
-            } else {
-                Color.clear
+                // Text content - SwiftUI Three-Part HStack with layout priorities
+                HStack(spacing: 6) {
+                    HighlightedTextView(
+                        text: displayText,
+                        highlights: displayHighlights,
+                        accentSelected: accentSelected
+                    )
+                    .frame(maxWidth: .infinity, alignment: .leading)
+                    .allowsHitTesting(false)
+                    .layoutPriority(1)
+                }
+                .frame(maxWidth: .infinity, alignment: .leading)
             }
-        }
-        .overlay {
-            if isContextMenuTargeted {
-                RoundedRectangle(cornerRadius: 10, style: .continuous)
-                    .strokeBorder(Color.primary.opacity(0.22), lineWidth: 1)
+            .frame(maxWidth: .infinity, minHeight: rowHeight, maxHeight: rowHeight, alignment: .leading)
+            .padding(.horizontal, 4)
+            .padding(.vertical, 4)
+            .background {
+                if isSelected && hasUserNavigated && hasPendingEdit {
+                    // Editing state: darker grey background
+                    Color.primary.opacity(0.35)
+                } else if accentSelected {
+                    Color.selectionBackground
+                } else if isContextMenuTargeted && !isSelected {
+                    Color.primary.opacity(0.11)
+                } else if isSelected {
+                    Color.primary.opacity(0.225)
+                } else {
+                    Color.clear
+                }
             }
-        }
-        .clipShape(RoundedRectangle(cornerRadius: 10, style: .continuous))
-        .contentShape(Rectangle())
+            .overlay {
+                if isContextMenuTargeted {
+                    RoundedRectangle(cornerRadius: 10, style: .continuous)
+                        .strokeBorder(Color.primary.opacity(0.22), lineWidth: 1)
+                }
+            }
+            .clipShape(RoundedRectangle(cornerRadius: 10, style: .continuous))
+            .contentShape(Rectangle())
         }
         // 2. Apply the plain style so it behaves like a standard row instead of a system button
         .buttonStyle(.plain)
@@ -855,7 +1256,6 @@ struct ItemRow: View, Equatable {
         .accessibilityAddTraits(.isButton)
         .accessibilityAddTraits(isSelected ? .isSelected : [])
     }
-
 }
 
 // MARK: - Right-Click Popover
@@ -882,7 +1282,7 @@ struct RightClickPopoverOverlay: NSViewRepresentable {
         return view
     }
 
-    func updateNSView(_ nsView: RightClickView, context: Context) {
+    func updateNSView(_: RightClickView, context: Context) {
         context.coordinator.actions = actions
         context.coordinator.onShow = onShow
         context.coordinator.onHide = onHide
@@ -966,7 +1366,7 @@ struct RightClickPopoverOverlay: NSViewRepresentable {
             coordinator.onHide?()
         }
 
-        override func menu(for event: NSEvent) -> NSMenu? {
+        override func menu(for _: NSEvent) -> NSMenu? {
             nil
         }
 
@@ -1016,7 +1416,7 @@ struct RightClickPopoverOverlay: NSViewRepresentable {
 /// Uses HighlightStyler for all index calculations with proper Unicode scalar handling.
 struct HighlightedTextView: View, Equatable {
     let text: String
-    let highlights: [HighlightRange]
+    let highlights: [Utf16HighlightRange]
     let accentSelected: Bool
 
     // Define equality for SwiftUI diffing
@@ -1036,9 +1436,9 @@ struct HighlightedTextView: View, Equatable {
         // Use firstTextBaseline so text aligns perfectly even with different weights
         HStack(alignment: .firstTextBaseline, spacing: 0) {
             if let firstHighlight = highlights.first {
-                // Use HighlightStyler for correct Unicode scalar handling
+                // Use HighlightStyler so the row renderer stays on UTF-16 offsets end to end.
                 let (prefix, match, suffix) = HighlightStyler.splitText(text, highlight: firstHighlight)
-                let suffixStartScalarIndex = Int(firstHighlight.end)
+                let suffixStartUtf16Offset = Int(firstHighlight.utf16End)
 
                 // 1. PREFIX: Truncates on the left ("...text")
                 if !prefix.isEmpty {
@@ -1055,7 +1455,7 @@ struct HighlightedTextView: View, Equatable {
                 // 3. SUFFIX: Truncates on the right ("text...")
                 // Apply any additional highlights that fall within suffix
                 if !suffix.isEmpty {
-                    suffixView(suffix: suffix, suffixStartScalarIndex: suffixStartScalarIndex)
+                    suffixView(suffix: suffix, suffixStartUtf16Offset: suffixStartUtf16Offset)
                         .font(font)
                         .foregroundColor(textColor)
                         .lineLimit(1)
@@ -1095,19 +1495,25 @@ struct HighlightedTextView: View, Equatable {
 
     /// Build suffix view with any additional highlights
     @ViewBuilder
-    private func suffixView(suffix: String, suffixStartScalarIndex: Int) -> some View {
+    private func suffixView(suffix: String, suffixStartUtf16Offset: Int) -> some View {
         // Check for additional highlights in the suffix (beyond the first one)
-        // Use Unicode scalar count for correct bounds checking
-        let suffixScalarCount = suffix.unicodeScalars.count
+        let suffixUtf16Count = suffix.utf16.count
         let additionalHighlights = highlights.dropFirst().filter { h in
-            HighlightStyler.highlightInSuffix(h, suffixStartScalarIndex: suffixStartScalarIndex, suffixScalarCount: suffixScalarCount)
+            HighlightStyler.highlightInSuffix(
+                h,
+                suffixStartUtf16Offset: suffixStartUtf16Offset,
+                suffixUtf16Count: suffixUtf16Count
+            )
         }
 
         if additionalHighlights.isEmpty {
             Text(suffix)
         } else {
-            // Use HighlightStyler for correct Unicode scalar handling
-            Text(HighlightStyler.attributedSuffix(suffix, suffixStartScalarIndex: suffixStartScalarIndex, highlights: Array(additionalHighlights)))
+            Text(HighlightStyler.attributedSuffix(
+                suffix,
+                suffixStartUtf16Offset: suffixStartUtf16Offset,
+                highlights: Array(additionalHighlights)
+            ))
         }
     }
 }
@@ -1131,7 +1537,7 @@ private struct FilterOptionRow: View {
                 .padding(.vertical, 5)
                 .background {
                     if isHighlighted {
-                        selectionBackground()
+                        Color.selectionBackground
                             .clipShape(RoundedRectangle(cornerRadius: 9))
                     } else {
                         RoundedRectangle(cornerRadius: 9)
@@ -1188,7 +1594,7 @@ struct ActionOptionRow: View {
 
     private var backgroundColor: Color {
         if isHighlighted {
-            return isDestructive ? Color.red.opacity(0.8) : Color(nsColor: .selectedContentBackgroundColor)
+            return isDestructive ? Color.red.opacity(0.8) : .selectionBackground
         }
         return Color.clear
     }
@@ -1196,10 +1602,22 @@ struct ActionOptionRow: View {
 
 // MARK: - Selection Background
 
-/// Shared selection highlight matching the system-selected content tint.
-@ViewBuilder
-private func selectionBackground() -> some View {
-    Color(nsColor: .selectedContentBackgroundColor)
+extension Color {
+    /// Selection background matching system tint, slightly desaturated for a subtler look.
+    static var selectionBackground: Color {
+        Color(nsColor: .selectedContentBackgroundColor.desaturated(by: 0.10))
+    }
+}
+
+private extension NSColor {
+    /// Returns a new color with saturation reduced by the given fraction (0.0–1.0).
+    func desaturated(by amount: CGFloat) -> NSColor {
+        guard let hsb = usingColorSpace(.sRGB) else { return self }
+        var h: CGFloat = 0, s: CGFloat = 0, b: CGFloat = 0, a: CGFloat = 0
+        hsb.getHue(&h, saturation: &s, brightness: &b, alpha: &a)
+        let newSaturation = max(0, s - amount)
+        return NSColor(hue: h, saturation: newSaturation, brightness: b, alpha: a)
+    }
 }
 
 // MARK: - Highlight Kind Color Mapping

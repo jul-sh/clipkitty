@@ -1,11 +1,13 @@
-import SwiftUI
 import ClipKittyRust
+import SwiftUI
 
 struct BrowserSearchBar<FilterPopoverContent: View>: View {
+    @Environment(\.colorScheme) private var colorScheme
     @Binding var searchText: String
     let filterLabel: String
     let searchSpinnerVisible: Bool
     let selectedItemAvailable: Bool
+    let hasPendingEdit: Bool
     let isFilterPopoverPresented: Binding<Bool>
     let focusTarget: FocusState<BrowserView.FocusTarget?>.Binding
     let onMoveSelection: (Int) -> Void
@@ -14,6 +16,8 @@ struct BrowserSearchBar<FilterPopoverContent: View>: View {
     let onOpenFilter: (_ viaKeyboard: Bool) -> Void
     let onOpenActions: (_ viaKeyboard: Bool) -> Void
     let onDelete: () -> Void
+    let onDiscardEdit: () -> Void
+    let onSaveEdit: () -> Void
     let onHandleNumberKey: (KeyPress) -> KeyPress.Result
     @ViewBuilder let filterPopoverContent: () -> FilterPopoverContent
 
@@ -28,6 +32,7 @@ struct BrowserSearchBar<FilterPopoverContent: View>: View {
                 .font(.custom(FontManager.sansSerif, size: 17))
                 .tint(.primary)
                 .focused(focusTarget, equals: .search)
+                .id(colorScheme)
                 .accessibilityIdentifier("SearchField")
                 .onKeyPress(.upArrow) {
                     onMoveSelection(-1)
@@ -50,8 +55,19 @@ struct BrowserSearchBar<FilterPopoverContent: View>: View {
                     }
                     return .handled
                 }
+                .onKeyPress("s", phases: .down) { keyPress in
+                    guard keyPress.modifiers.contains(.command), hasPendingEdit else {
+                        return .ignored
+                    }
+                    onSaveEdit()
+                    return .handled
+                }
                 .onKeyPress(.escape) {
-                    onDismiss()
+                    if hasPendingEdit {
+                        onDiscardEdit()
+                    } else {
+                        onDismiss()
+                    }
                     return .handled
                 }
                 .onKeyPress(.tab) {
@@ -99,5 +115,4 @@ struct BrowserSearchBar<FilterPopoverContent: View>: View {
         .padding(.horizontal, 17)
         .padding(.vertical, 13)
     }
-
 }

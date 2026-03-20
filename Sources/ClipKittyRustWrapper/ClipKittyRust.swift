@@ -2,9 +2,9 @@
 // Manual extensions for UniFFI-generated types from purr
 // Provides: Date conversions, UTType mappings, Identifiable/Sendable conformances
 
+import AppKit
 import Foundation
 import UniformTypeIdentifiers
-import AppKit
 
 // MARK: - ClipboardItem Extensions
 
@@ -25,9 +25,9 @@ extension ClipboardItem {
 
 // MARK: - IconType Extensions
 
-extension IconType {
+public extension IconType {
     /// SF Symbol name for each icon type
-    public var sfSymbolName: String {
+    var sfSymbolName: String {
         switch self {
         case .text: return "doc.text"
         case .link: return "link"
@@ -38,7 +38,7 @@ extension IconType {
     }
 
     /// UTType for the content (used for system icons)
-    public var utType: UTType {
+    var utType: UTType {
         switch self {
         case .text: return .text
         case .link: return .url
@@ -53,77 +53,45 @@ extension IconType {
 
 // MARK: - ClipboardContent Extensions
 
-extension ClipboardContent {
+public extension ClipboardContent {
     /// The searchable/displayable text content
-    public var textContent: String {
+    var textContent: String {
         switch self {
-        case .text(let value):
+        case let .text(value):
             return value
-        case .color(let value):
+        case let .color(value):
             return value
-        case .link(let url, _):
+        case let .link(url, _):
             return url
-        case .image(_, let description, _):
+        case let .image(_, description, _):
             // Avoid "Image: Image" when using the default description
             if description == "Image" {
                 return String(localized: "Image")
             }
             return "\(String(localized: "Image:")) \(description)"
-        case .file(let displayName, _):
+        case let .file(displayName, _):
             return displayName
         }
     }
 }
 
-// MARK: - HighlightRange Extensions
+// MARK: - Utf16HighlightRange Extensions
 
-extension HighlightRange {
-    /// Convert to NSRange for use with NSAttributedString.
-    /// IMPORTANT: Rust returns char indices (Unicode scalar values), but NSString/NSAttributedString
-    /// uses UTF-16 code units. For ASCII text they're the same, but for text with emojis or other
-    /// characters outside the BMP (Basic Multilingual Plane), they differ.
-    /// Use `nsRange(in:)` instead for correct handling of Unicode text.
-    @available(*, deprecated, message: "Use nsRange(in:) for correct Unicode handling")
-    public var nsRange: NSRange {
-        NSRange(location: Int(start), length: Int(end - start))
-    }
-
-    /// Convert Rust char indices to NSRange (UTF-16 code unit indices) for the given text.
-    /// This correctly handles emojis and other characters that take 2 UTF-16 code units.
-    public func nsRange(in text: String) -> NSRange {
-        let scalars = Array(text.unicodeScalars)
-        let startIdx = Int(start)
-        let endIdx = Int(end)
-
-        // Bounds check against Unicode scalar count (matches Rust's .chars() counting)
-        guard startIdx >= 0, endIdx <= scalars.count, startIdx <= endIdx else {
-            return NSRange(location: NSNotFound, length: 0)
-        }
-
-        // Convert scalar index to UTF-16 index by summing UTF-16 lengths of preceding scalars
-        var utf16Start = 0
-        for i in 0..<startIdx {
-            utf16Start += scalars[i].utf16.count
-        }
-
-        var utf16Length = 0
-        for i in startIdx..<endIdx {
-            utf16Length += scalars[i].utf16.count
-        }
-
-        return NSRange(location: utf16Start, length: utf16Length)
+public extension Utf16HighlightRange {
+    var nsRange: NSRange {
+        NSRange(location: Int(utf16Start), length: Int(utf16End - utf16Start))
     }
 }
 
 // MARK: - FileStatus Extensions
 
-extension FileStatus {
+public extension FileStatus {
     /// Convert to database string representation (mirrors Rust's to_database_str)
-    public func toDatabaseStr() -> String {
+    func toDatabaseStr() -> String {
         switch self {
         case .available:
             return "available"
-        case .moved(let newPath):
+        case let .moved(newPath):
             return "moved:\(newPath)"
         case .trashed:
             return "trashed"

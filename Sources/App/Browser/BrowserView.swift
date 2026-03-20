@@ -1,13 +1,13 @@
-import SwiftUI
 import AppKit
-import Observation
 import ClipKittyRust
+import Observation
+import SwiftUI
 
 struct BrowserView: View {
     @Bindable var viewModel: BrowserViewModel
     let displayVersion: Int
 
-    @State private var commandNumberEventMonitor: Any?
+    @State private var commandKeyEventMonitor: Any?
     @FocusState private var focusTarget: FocusTarget?
 
     enum FocusTarget: Hashable {
@@ -35,9 +35,10 @@ struct BrowserView: View {
                 filterLabel: filterLabel,
                 searchSpinnerVisible: viewModel.searchSpinnerVisible,
                 selectedItemAvailable: viewModel.selectedItem != nil,
+                hasPendingEdit: viewModel.selectedItemHasPendingEdit,
                 isFilterPopoverPresented: Binding(
                     get: {
-                        if case .filter = viewModel.session.overlays {
+                        if case .filter = viewModel.overlayState {
                             return true
                         }
                         return false
@@ -55,6 +56,11 @@ struct BrowserView: View {
                 onOpenFilter: openFilterOverlay,
                 onOpenActions: openActionsOverlay,
                 onDelete: viewModel.deleteSelectedItem,
+                onDiscardEdit: viewModel.discardCurrentEdit,
+                onSaveEdit: {
+                    viewModel.commitCurrentEdit()
+                    focusSearchField()
+                },
                 onHandleNumberKey: handleNumberKey
             ) {
                 BrowserFilterOverlay(
@@ -85,11 +91,11 @@ struct BrowserView: View {
         }
         .ignoresSafeArea(edges: .top)
         .onAppear {
-            installCommandNumberEventMonitor()
+            installCommandKeyEventMonitor()
             focusSearchField()
         }
         .onDisappear {
-            removeCommandNumberEventMonitor()
+            removeCommandKeyEventMonitor()
         }
     }
 
@@ -103,10 +109,10 @@ struct BrowserView: View {
 
     @ViewBuilder
     private var content: some View {
-        switch viewModel.session.query {
-        case .failed(_, let message, _):
+        switch viewModel.contentState {
+        case let .failed(_, message, _):
             BrowserPreviewPane.error(message)
-        case .idle, .pending, .ready:
+        case .idle, .loading, .loaded:
             HStack(spacing: 0) {
                 BrowserResultsList(
                     viewModel: viewModel,
@@ -169,7 +175,8 @@ struct BrowserView: View {
         guard let number = Int(keyPress.characters),
               number >= 1 && number <= 9,
               keyPress.modifiers.contains(.command),
-              handleCommandNumberShortcut(number) else {
+              handleCommandNumberShortcut(number)
+        else {
             return .ignored
         }
         return .handled
@@ -204,21 +211,31 @@ struct BrowserView: View {
     }
 
     @MainActor
-    private func installCommandNumberEventMonitor() {
-        guard commandNumberEventMonitor == nil else { return }
-        commandNumberEventMonitor = NSEvent.addLocalMonitorForEvents(matching: .keyDown) { event in
-            guard let number = commandNumber(from: event) else {
-                return event
+    private func installCommandKeyEventMonitor() {
+        guard commandKeyEventMonitor == nil else { return }
+        commandKeyEventMonitor = NSEvent.addLocalMonitorForEvents(matching: .keyDown) { event in
+            if let number = commandNumber(from: event) {
+                return handleCommandNumberShortcut(number) ? nil : event
             }
-            return handleCommandNumberShortcut(number) ? nil : event
+
+            // ⌘⌫ — delete selected item
+            let modifiers = event.modifierFlags.intersection(.deviceIndependentFlagsMask)
+            if modifiers == .command, event.keyCode == 51 {
+                if viewModel.selectedItem != nil {
+                    viewModel.deleteSelectedItem()
+                    return nil
+                }
+            }
+
+            return event
         }
     }
 
     @MainActor
-    private func removeCommandNumberEventMonitor() {
-        guard let commandNumberEventMonitor else { return }
-        NSEvent.removeMonitor(commandNumberEventMonitor)
-        self.commandNumberEventMonitor = nil
+    private func removeCommandKeyEventMonitor() {
+        guard let commandKeyEventMonitor else { return }
+        NSEvent.removeMonitor(commandKeyEventMonitor)
+        self.commandKeyEventMonitor = nil
     }
 
     private func commandNumber(from event: NSEvent) -> Int? {
@@ -271,13 +288,29 @@ private struct BannerBackgroundModifier: ViewModifier {
     }
 }
 
+/// Window corner radius for known macOS versions to match Spotlight's appearance.
+/// No public API exposes this, so we cap to known versions and fall back to native rounding.
+var systemWindowCornerRadius: CGFloat? {
+    let v = ProcessInfo.processInfo.operatingSystemVersion.majorVersion
+    return (26 ... 27).contains(v) ? 26 : nil
+}
+
 private extension View {
     @ViewBuilder
     func browserGlassBackground() -> some View {
+        let radius = systemWindowCornerRadius
         if #available(macOS 26.0, *) {
-            self.glassEffect(.regular.interactive(), in: .rect)
+            if let radius {
+                self.glassEffect(.regular.interactive(), in: .rect(cornerRadius: radius, style: .continuous))
+            } else {
+                self.glassEffect(.regular.interactive(), in: .rect)
+            }
         } else {
-            self.background(.regularMaterial)
+            if let radius {
+                background(.regularMaterial, in: RoundedRectangle(cornerRadius: radius, style: .continuous))
+            } else {
+                background(.regularMaterial)
+            }
         }
     }
 }

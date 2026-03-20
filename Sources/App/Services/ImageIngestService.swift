@@ -1,6 +1,6 @@
+import AppKit
 import Foundation
 import ImageIO
-import AppKit
 
 struct ProcessedImageIngest {
     let compressedData: Data

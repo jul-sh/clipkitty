@@ -1,12 +1,13 @@
 import AppKit
-import SwiftUI
 import Carbon
+import SwiftUI
 
+/// Records a keyboard shortcut when activated
 struct HotKeyRecorder: NSViewRepresentable {
     @Binding var state: HotKeyEditState
     let onHotKeyRecorded: (HotKey) -> Void
 
-    func makeNSView(context: Context) -> HotKeyRecorderView {
+    func makeNSView(context _: Context) -> HotKeyRecorderView {
         let view = HotKeyRecorderView()
         view.onHotKeyRecorded = { hotKey in
             onHotKeyRecorded(hotKey)
@@ -18,7 +19,7 @@ struct HotKeyRecorder: NSViewRepresentable {
         return view
     }
 
-    func updateNSView(_ nsView: HotKeyRecorderView, context: Context) {
+    func updateNSView(_ nsView: HotKeyRecorderView, context _: Context) {
         if case .recording = state {
             nsView.window?.makeFirstResponder(nsView)
         }
@@ -49,85 +50,5 @@ final class HotKeyRecorderView: NSView {
         onHotKeyRecorded?(hotKey)
     }
 
-    override func flagsChanged(with event: NSEvent) {}
-}
-
-struct AdvancedSettingsView: View {
-    @ObservedObject private var settings = AppSettings.shared
-    @State private var hotKeyState: HotKeyEditState = .idle
-
-    let onHotKeyChanged: (HotKey) -> Void
-
-    var body: some View {
-        Form {
-            Section(String(localized: "Hotkey")) {
-                HStack {
-                    Text(String(localized: "Open Clipboard History"))
-                    Spacer()
-                    Button(action: { hotKeyState = .recording }) {
-                        let state = hotKeyState
-                        let labelAndBackground: (String, Color) = {
-                            switch state {
-                            case .recording:
-                                return (String(localized: "Press keys..."), Color.accentColor.opacity(0.2))
-                            case .idle:
-                                return (settings.hotKey.displayString, Color.secondary.opacity(0.1))
-                            }
-                        }()
-
-                        Text(labelAndBackground.0)
-                            .frame(minWidth: 100)
-                            .padding(.horizontal, 8)
-                            .padding(.vertical, 4)
-                            .background(labelAndBackground.1)
-                            .cornerRadius(6)
-                    }
-                    .buttonStyle(.plain)
-                }
-                .background(
-                    HotKeyRecorder(
-                        state: $hotKeyState,
-                        onHotKeyRecorded: { hotKey in
-                            settings.hotKey = hotKey
-                            onHotKeyChanged(hotKey)
-                        }
-                    )
-                )
-
-                if settings.hotKey != .default {
-                    Button(String(localized: "Reset to Default (⌥Space)")) {
-                        settings.hotKey = .default
-                        onHotKeyChanged(.default)
-                    }
-                    .font(.caption)
-                }
-            }
-
-            Section(String(localized: "Integration")) {
-                if settings.hasPostEventPermission {
-                    Toggle(String(localized: "Direct Paste"), isOn: $settings.autoPasteEnabled)
-                    if settings.autoPasteEnabled {
-                        Text(String(localized: "ClipKitty will paste items directly into the previous app."))
-                            .font(.caption)
-                            .foregroundStyle(.secondary)
-                    } else {
-                        Text(String(localized: "Items will be copied to the clipboard without pasting."))
-                            .font(.caption)
-                            .foregroundStyle(.secondary)
-                    }
-                } else {
-                    Toggle(String(localized: "Direct Paste"), isOn: .constant(false))
-                        .disabled(true)
-                    Text(String(localized: "Paste items directly into the previous app. Requires permission in System Settings."))
-                        .font(.caption)
-                        .foregroundStyle(.secondary)
-                    Button(String(localized: "Open System Settings")) {
-                        NSWorkspace.shared.open(URL(string: "x-apple.systempreferences:com.apple.preference.security?Privacy_Accessibility")!)
-                    }
-                    .font(.caption)
-                }
-            }
-        }
-        .formStyle(.grouped)
-    }
+    override func flagsChanged(with _: NSEvent) {}
 }

@@ -2,8 +2,7 @@ import Foundation
 import ImageIO
 import Vision
 
-struct ImageDescriptionGenerator {
-
+enum ImageDescriptionGenerator {
     private enum VisionProcessingResult {
         case success(labels: [String], recognizedText: String?)
         case cancelled
@@ -18,7 +17,7 @@ struct ImageDescriptionGenerator {
         var maxLabelCount: Int = 100
 
         /// Maximum number of characters for the recognized text before truncating.
-        var maxTextLength: Int = 50_000
+        var maxTextLength: Int = 50000
     }
 
     static func generateDescription(from imageData: Data, config: Configuration = .init()) async -> String? {
@@ -40,7 +39,6 @@ struct ImageDescriptionGenerator {
         orientation: CGImagePropertyOrientation,
         config: Configuration
     ) async -> String? {
-
         // Setup Requests
         let labelRequest = VNClassifyImageRequest()
         let textRequest = VNRecognizeTextRequest()
@@ -51,7 +49,6 @@ struct ImageDescriptionGenerator {
         // Run blocking Vision work in a detached task
         let result = await Task.detached(priority: .userInitiated) {
             () -> VisionProcessingResult in
-
             if Task.isCancelled { return .cancelled }
 
             let handler = VNImageRequestHandler(cgImage: image, orientation: orientation, options: [:])
@@ -84,7 +81,7 @@ struct ImageDescriptionGenerator {
         }.value
 
         switch result {
-        case .success(let labels, let recognizedText):
+        case let .success(labels, recognizedText):
             return formatOutput(labels: labels, text: recognizedText, config: config)
         case .cancelled:
             return nil
@@ -123,7 +120,8 @@ extension CGImagePropertyOrientation {
     init(source: CGImageSource) {
         let properties = CGImageSourceCopyPropertiesAtIndex(source, 0, nil) as? [CFString: Any]
         if let rawValue = properties?[kCGImagePropertyOrientation] as? UInt32,
-           let orientation = CGImagePropertyOrientation(rawValue: rawValue) {
+           let orientation = CGImagePropertyOrientation(rawValue: rawValue)
+        {
             self = orientation
         } else {
             self = .up

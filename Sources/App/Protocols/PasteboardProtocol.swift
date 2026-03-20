@@ -22,7 +22,7 @@ protocol PasteboardProtocol: AnyObject {
 
 extension NSPasteboard: PasteboardProtocol {
     func types() -> [NSPasteboard.PasteboardType]? {
-        return self.types
+        return types
     }
 
     func readFileURLs() -> [URL] {

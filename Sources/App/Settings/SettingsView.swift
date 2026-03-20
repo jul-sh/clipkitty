@@ -8,7 +8,7 @@ enum HotKeyEditState: Equatable {
 enum SettingsTab: String, CaseIterable {
     case general = "General"
     case privacy = "Privacy"
-    case advanced = "Advanced"
+    case shortcuts = "Shortcuts"
 }
 
 struct SettingsView: View {
@@ -16,9 +16,8 @@ struct SettingsView: View {
 
     let store: ClipboardStore
     let onHotKeyChanged: (HotKey) -> Void
-    let onMenuBarBehaviorChanged: () -> Void
     #if SPARKLE_RELEASE
-    var onInstallUpdate: (() -> Void)? = nil
+        var onInstallUpdate: (() -> Void)? = nil
     #endif
 
     var body: some View {
@@ -37,34 +36,26 @@ struct SettingsView: View {
                 .tag(SettingsTab.privacy)
                 .accessibilityIdentifier("SettingsTab_Privacy")
 
-            advancedSettingsView
+            ShortcutsSettingsView(onHotKeyChanged: onHotKeyChanged)
                 .tabItem {
-                    Label(String(localized: "Advanced"), systemImage: "gearshape.2")
+                    Label(String(localized: "Shortcuts"), systemImage: "keyboard")
                 }
-                .tag(SettingsTab.advanced)
-                .accessibilityIdentifier("SettingsTab_Advanced")
+                .tag(SettingsTab.shortcuts)
+                .accessibilityIdentifier("SettingsTab_Shortcuts")
         }
-        .frame(width: 480, height: 420)
+        .frame(width: 560, height: 520)
     }
 
     private var generalSettingsView: GeneralSettingsView {
         #if SPARKLE_RELEASE
-        GeneralSettingsView(
-            store: store,
-            onHotKeyChanged: onHotKeyChanged,
-            onMenuBarBehaviorChanged: onMenuBarBehaviorChanged,
-            onInstallUpdate: onInstallUpdate
-        )
+            GeneralSettingsView(
+                store: store,
+                onInstallUpdate: onInstallUpdate
+            )
         #else
-        GeneralSettingsView(
-            store: store,
-            onHotKeyChanged: onHotKeyChanged,
-            onMenuBarBehaviorChanged: onMenuBarBehaviorChanged
-        )
+            GeneralSettingsView(
+                store: store
+            )
         #endif
-    }
-
-    private var advancedSettingsView: AdvancedSettingsView {
-        AdvancedSettingsView(onHotKeyChanged: onHotKeyChanged)
     }
 }

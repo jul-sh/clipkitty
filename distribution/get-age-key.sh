@@ -12,9 +12,12 @@ if [ -n "$AGE_SECRET_KEY" ]; then
     printf '%s' "$AGE_SECRET_KEY"
 elif KEY=$(security find-generic-password -s clipkitty -a AGE_SECRET_KEY -w 2>/dev/null); then
     printf '%s' "$KEY"
+elif command -v tapkey >/dev/null 2>&1 && KEY=$(tapkey derive clipkitty --format age 2>/dev/null); then
+    printf '%s' "$KEY"
 else
-    echo "Error: AGE_SECRET_KEY not set and not found in Keychain" >&2
+    echo "Error: AGE_SECRET_KEY not set and not found in Keychain or via tapkey" >&2
     echo "  Set via: export AGE_SECRET_KEY='AGE-SECRET-KEY-...'" >&2
     echo "  Or store: security add-generic-password -s clipkitty -a AGE_SECRET_KEY -w 'KEY'" >&2
+    echo "  Or install tapkey and run: tapkey register" >&2
     exit 1
 fi

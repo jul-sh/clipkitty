@@ -4,30 +4,10 @@ import ServiceManagement
 
 @MainActor
 final class LaunchAtLoginTests: XCTestCase {
-    func testUnavailableStateSeparatesLocationFromFailureNotice() {
-        let launchAtLogin = makeSubject(
-            status: .enabled,
-            bundlePath: "/tmp/ClipKitty.app"
-        )
-
-        XCTAssertEqual(
-            launchAtLogin.state,
-            .unavailable(reason: .notInApplicationsDirectory, notice: nil)
-        )
-
-        launchAtLogin.setDisabledDueToLocationError()
-
-        XCTAssertEqual(
-            launchAtLogin.state,
-            .unavailable(reason: .notInApplicationsDirectory, notice: .disabledDueToLocation)
-        )
-        XCTAssertFalse(launchAtLogin.state.canToggle)
-    }
-
     func testRegistrationFailureKeepsToggleActionable() {
         let service = MockLaunchAtLoginService(status: .notRegistered)
         service.registerError = NSError(domain: "Test", code: 1)
-        let launchAtLogin = makeSubject(service: service)
+        let launchAtLogin = LaunchAtLogin(service: service)
 
         XCTAssertFalse(launchAtLogin.enable())
         XCTAssertEqual(
@@ -40,7 +20,7 @@ final class LaunchAtLoginTests: XCTestCase {
     func testSuccessfulRetryClearsFailureNotice() {
         let service = MockLaunchAtLoginService(status: .notRegistered)
         service.registerError = NSError(domain: "Test", code: 1)
-        let launchAtLogin = makeSubject(service: service)
+        let launchAtLogin = LaunchAtLogin(service: service)
 
         XCTAssertFalse(launchAtLogin.enable())
 
@@ -53,19 +33,133 @@ final class LaunchAtLoginTests: XCTestCase {
             .available(status: .enabled, notice: nil)
         )
     }
+}
 
-    private func makeSubject(
-        service: MockLaunchAtLoginService = MockLaunchAtLoginService(status: .notRegistered),
-        status: SMAppService.Status = .notRegistered,
-        bundlePath: String = "/Applications/ClipKitty.app"
-    ) -> LaunchAtLogin {
-        service.status = status
-        return LaunchAtLogin(
-            service: service,
-            bundle: MockBundleInfo(bundlePath: bundlePath),
-            fileManager: MockFileManager()
-        )
+// MARK: - Snackbar Scheduler Tests
+
+@MainActor
+final class SnackbarSchedulerTests: XCTestCase {
+
+    // MARK: - Nudge tests (migrated from LaunchAtLoginPromptStateMachineTests)
+
+    func testFreshInstallAboveTimeGate() {
+        let env = MockSnackbarEnvironment()
+        XCTAssertEqual(evaluateSnackbar(env), .show(.nudge(.launchAtLogin)))
     }
+
+    func testFreshInstallBelowTimeGate() {
+        let now = Date()
+        let env = MockSnackbarEnvironment(
+            firstLaunchDate: now.addingTimeInterval(-1800), // 30 min ago
+            now: now
+        )
+        XCTAssertEqual(evaluateSnackbar(env), .showNothing)
+    }
+
+    func testAlreadyEnabled() {
+        let env = MockSnackbarEnvironment(isLaunchAtLoginSystemEnabled: true)
+        XCTAssertEqual(evaluateSnackbar(env), .showNothing)
+    }
+
+    func testPreviouslyDismissed() {
+        let env = MockSnackbarEnvironment(isLaunchAtLoginDismissed: true)
+        XCTAssertEqual(evaluateSnackbar(env), .showNothing)
+    }
+
+    func testAlreadyEnabledTakesPrecedenceOverDismissed() {
+        let env = MockSnackbarEnvironment(isLaunchAtLoginSystemEnabled: true, isLaunchAtLoginDismissed: true)
+        XCTAssertEqual(evaluateSnackbar(env), .showNothing)
+    }
+
+    func testTimeGateExactBoundary() {
+        let now = Date()
+        let env = MockSnackbarEnvironment(
+            firstLaunchDate: now.addingTimeInterval(-3600), // exactly 1 hour
+            now: now
+        )
+        XCTAssertEqual(evaluateSnackbar(env), .show(.nudge(.launchAtLogin)))
+    }
+
+    func testTimeGateJustUnder() {
+        let now = Date()
+        let env = MockSnackbarEnvironment(
+            firstLaunchDate: now.addingTimeInterval(-3599),
+            now: now
+        )
+        XCTAssertEqual(evaluateSnackbar(env), .showNothing)
+    }
+
+    // MARK: - Info priority tests
+
+    func testInfoTrumpsNudge() {
+        let env = MockSnackbarEnvironment(isRebuildingIndex: true)
+        XCTAssertEqual(evaluateSnackbar(env), .show(.info(.rebuildingIndex)))
+    }
+
+    func testInfoShownDuringRebuild() {
+        let env = MockSnackbarEnvironment(isRebuildingIndex: true)
+        XCTAssertEqual(evaluateSnackbar(env), .show(.info(.rebuildingIndex)))
+    }
+
+    // MARK: - Cooldown tests
+
+    func testCooldownAfterInfoBlocksNudge() {
+        let now = Date()
+        let env = MockSnackbarEnvironment(
+            lastInfoDismissDate: now.addingTimeInterval(-60), // 1 min ago
+            now: now
+        )
+        XCTAssertEqual(evaluateSnackbar(env), .showNothing)
+    }
+
+    func testCooldownAfterInfoExpired() {
+        let now = Date()
+        let env = MockSnackbarEnvironment(
+            lastInfoDismissDate: now.addingTimeInterval(-3601), // over 1 hour ago
+            now: now
+        )
+        XCTAssertEqual(evaluateSnackbar(env), .show(.nudge(.launchAtLogin)))
+    }
+
+    func testCooldownAfterNudgeInteraction() {
+        let now = Date()
+        let env = MockSnackbarEnvironment(
+            lastNudgeInteractionDate: now.addingTimeInterval(-3600), // 1 hour ago, well within 7 days
+            now: now
+        )
+        XCTAssertEqual(evaluateSnackbar(env), .showNothing)
+    }
+
+    func testCooldownAfterNudgeExpired() {
+        let now = Date()
+        let env = MockSnackbarEnvironment(
+            lastNudgeInteractionDate: now.addingTimeInterval(-8 * 24 * 60 * 60), // 8 days ago
+            now: now
+        )
+        XCTAssertEqual(evaluateSnackbar(env), .show(.nudge(.launchAtLogin)))
+    }
+
+    func testNothingActiveShowsNothing() {
+        let env = MockSnackbarEnvironment(isLaunchAtLoginSystemEnabled: true)
+        XCTAssertEqual(evaluateSnackbar(env), .showNothing)
+    }
+}
+
+// MARK: - Mock types
+
+private struct MockSnackbarEnvironment: SnackbarEnvironment {
+    var isRebuildingIndex: Bool = false
+
+    var lastInfoDismissDate: Date? = nil
+    var lastNudgeInteractionDate: Date? = nil
+    var cooldownAfterInfo: TimeInterval = 3600
+    var cooldownAfterNudgeInteraction: TimeInterval = 7 * 24 * 60 * 60
+
+    var isLaunchAtLoginSystemEnabled: Bool = false
+    var isLaunchAtLoginDismissed: Bool = false
+    var firstLaunchDate: Date = Date.distantPast
+    var minimumUseDuration: TimeInterval = 3600
+    var now: Date = Date()
 }
 
 private final class MockLaunchAtLoginService: LaunchAtLoginServiceProtocol {
@@ -88,9 +182,4 @@ private final class MockLaunchAtLoginService: LaunchAtLoginServiceProtocol {
             throw unregisterError
         }
     }
-}
-
-private struct MockBundleInfo: BundleInfoProtocol {
-    var bundleIdentifier: String? = "com.example.clipkitty"
-    var bundlePath: String
 }
