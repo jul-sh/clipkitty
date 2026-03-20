@@ -64,14 +64,6 @@ const FILE_EXTENSIONS: &[(&str, &str)] = &[
 ];
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
-enum FixtureItemKind {
-    Text,
-    Link,
-    Image,
-    File,
-}
-
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
 enum TextSizeClass {
     Tiny,
     Small,
@@ -81,10 +73,20 @@ enum TextSizeClass {
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
-struct FixtureSpec {
-    kind: FixtureItemKind,
-    size_class: Option<TextSizeClass>,
-    target_size: usize,
+enum FixtureSpec {
+    Text {
+        size_class: TextSizeClass,
+        target_size: usize,
+    },
+    Link {
+        target_size: usize,
+    },
+    Image {
+        target_size: usize,
+    },
+    File {
+        target_size: usize,
+    },
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -128,7 +130,7 @@ pub fn ensure_synthetic_benchmark_fixture(
     for (ordinal, spec) in fixture_specs().into_iter().enumerate() {
         let (app_name, bundle_id) = SOURCE_APPS[rng.random_range(0..SOURCE_APPS.len())];
         let mut item = build_item(spec, ordinal, &mut rng, app_name, bundle_id);
-        if let FixtureItemKind::Text = spec.kind {
+        if let FixtureSpec::Text { .. } = spec {
             total_text_bytes += item.text_content().len();
         }
         item.timestamp_unix = base_timestamp - ordinal as i64 * 90;
@@ -170,57 +172,35 @@ fn fixture_specs() -> Vec<FixtureSpec> {
     let mut specs = Vec::with_capacity(TOTAL_TEXT_ITEMS + TOTAL_LINK_ITEMS + TOTAL_IMAGE_ITEMS + TOTAL_FILE_ITEMS);
 
     specs.extend(repeat_specs(
-        FixtureItemKind::Text,
-        Some(TextSizeClass::Tiny),
+        TextSizeClass::Tiny,
         &spread_sizes(TINY_TEXT_ITEMS, 96, 920),
     ));
     specs.extend(repeat_specs(
-        FixtureItemKind::Text,
-        Some(TextSizeClass::Small),
+        TextSizeClass::Small,
         &spread_sizes(SMALL_TEXT_ITEMS, 1_200, 9_600),
     ));
     specs.extend(repeat_specs(
-        FixtureItemKind::Text,
-        Some(TextSizeClass::Medium),
+        TextSizeClass::Medium,
         &spread_sizes(MEDIUM_TEXT_ITEMS, 12_000, 92_000),
     ));
     specs.extend(repeat_specs(
-        FixtureItemKind::Text,
-        Some(TextSizeClass::Large),
+        TextSizeClass::Large,
         &LARGE_TEXT_TARGET_SIZES,
     ));
     specs.extend(repeat_specs(
-        FixtureItemKind::Text,
-        Some(TextSizeClass::Huge),
+        TextSizeClass::Huge,
         &HUGE_TEXT_TARGET_SIZES,
     ));
 
-    specs.extend((0..TOTAL_LINK_ITEMS).map(|_| FixtureSpec {
-        kind: FixtureItemKind::Link,
-        size_class: None,
-        target_size: 96,
-    }));
-    specs.extend((0..TOTAL_IMAGE_ITEMS).map(|_| FixtureSpec {
-        kind: FixtureItemKind::Image,
-        size_class: None,
-        target_size: 256,
-    }));
-    specs.push(FixtureSpec {
-        kind: FixtureItemKind::File,
-        size_class: None,
-        target_size: 256,
-    });
+    specs.extend((0..TOTAL_LINK_ITEMS).map(|_| FixtureSpec::Link { target_size: 96 }));
+    specs.extend((0..TOTAL_IMAGE_ITEMS).map(|_| FixtureSpec::Image { target_size: 256 }));
+    specs.push(FixtureSpec::File { target_size: 256 });
 
     specs
 }
 
-fn repeat_specs(
-    kind: FixtureItemKind,
-    size_class: Option<TextSizeClass>,
-    sizes: &[usize],
-) -> impl Iterator<Item = FixtureSpec> + '_ {
-    sizes.iter().copied().map(move |target_size| FixtureSpec {
-        kind,
+fn repeat_specs(size_class: TextSizeClass, sizes: &[usize]) -> impl Iterator<Item = FixtureSpec> + '_ {
+    sizes.iter().copied().map(move |target_size| FixtureSpec::Text {
         size_class,
         target_size,
     })
@@ -246,13 +226,16 @@ fn build_item(
     app_name: &str,
     bundle_id: &str,
 ) -> StoredItem {
-    match spec.kind {
-        FixtureItemKind::Text => StoredItem::new_text(
-            build_text_document(spec.size_class.expect("text items require a size class"), spec.target_size, ordinal, rng),
+    match spec {
+        FixtureSpec::Text {
+            size_class,
+            target_size,
+        } => StoredItem::new_text(
+            build_text_document(size_class, target_size, ordinal, rng),
             Some(app_name.to_string()),
             Some(bundle_id.to_string()),
         ),
-        FixtureItemKind::Link => StoredItem::new_text(
+        FixtureSpec::Link { .. } => StoredItem::new_text(
             format!(
                 "https://{}/team-{}/search/{}?query={}",
                 URL_HOSTS[rng.random_range(0..URL_HOSTS.len())],
@@ -268,8 +251,8 @@ fn build_item(
             Some(app_name.to_string()),
             Some(bundle_id.to_string()),
         ),
-        FixtureItemKind::Image => {
-            let mut data = vec![0u8; spec.target_size.max(128)];
+        FixtureSpec::Image { target_size } => {
+            let mut data = vec![0u8; target_size.max(128)];
             rng.fill(data.as_mut_slice());
             let mut thumbnail = vec![0u8; 96];
             rng.fill(thumbnail.as_mut_slice());
@@ -281,7 +264,7 @@ fn build_item(
                 false,
             )
         }
-        FixtureItemKind::File => {
+        FixtureSpec::File { .. } => {
             let (ext, uti) = FILE_EXTENSIONS[rng.random_range(0..FILE_EXTENSIONS.len())];
             StoredItem::new_file(
                 format!("/Users/julsh/Projects/clipkitty/benchmark_fixture_{ordinal}.{ext}"),
@@ -377,8 +360,10 @@ fn make_paragraph(word_count: usize, ordinal: usize, rng: &mut StdRng) -> String
 fn expected_total_text_bytes() -> usize {
     fixture_specs()
         .into_iter()
-        .filter(|spec| spec.kind == FixtureItemKind::Text)
-        .map(|spec| spec.target_size)
+        .filter_map(|spec| match spec {
+            FixtureSpec::Text { target_size, .. } => Some(target_size),
+            FixtureSpec::Link { .. } | FixtureSpec::Image { .. } | FixtureSpec::File { .. } => None,
+        })
         .sum()
 }
 
@@ -394,39 +379,39 @@ mod tests {
             TOTAL_TEXT_ITEMS + TOTAL_LINK_ITEMS + TOTAL_IMAGE_ITEMS + TOTAL_FILE_ITEMS
         );
         assert_eq!(
-            specs.iter().filter(|spec| spec.kind == FixtureItemKind::Text).count(),
+            specs.iter().filter(|spec| matches!(spec, FixtureSpec::Text { .. })).count(),
             TOTAL_TEXT_ITEMS
         );
         assert_eq!(
-            specs.iter().filter(|spec| spec.kind == FixtureItemKind::Link).count(),
+            specs.iter().filter(|spec| matches!(spec, FixtureSpec::Link { .. })).count(),
             TOTAL_LINK_ITEMS
         );
         assert_eq!(
-            specs.iter().filter(|spec| spec.kind == FixtureItemKind::Image).count(),
+            specs.iter().filter(|spec| matches!(spec, FixtureSpec::Image { .. })).count(),
             TOTAL_IMAGE_ITEMS
         );
         assert_eq!(
-            specs.iter().filter(|spec| spec.kind == FixtureItemKind::File).count(),
+            specs.iter().filter(|spec| matches!(spec, FixtureSpec::File { .. })).count(),
             TOTAL_FILE_ITEMS
         );
         assert_eq!(
-            specs.iter().filter(|spec| spec.size_class == Some(TextSizeClass::Tiny)).count(),
+            specs.iter().filter(|spec| matches!(spec, FixtureSpec::Text { size_class: TextSizeClass::Tiny, .. })).count(),
             TINY_TEXT_ITEMS
         );
         assert_eq!(
-            specs.iter().filter(|spec| spec.size_class == Some(TextSizeClass::Small)).count(),
+            specs.iter().filter(|spec| matches!(spec, FixtureSpec::Text { size_class: TextSizeClass::Small, .. })).count(),
             SMALL_TEXT_ITEMS
         );
         assert_eq!(
-            specs.iter().filter(|spec| spec.size_class == Some(TextSizeClass::Medium)).count(),
+            specs.iter().filter(|spec| matches!(spec, FixtureSpec::Text { size_class: TextSizeClass::Medium, .. })).count(),
             MEDIUM_TEXT_ITEMS
         );
         assert_eq!(
-            specs.iter().filter(|spec| spec.size_class == Some(TextSizeClass::Large)).count(),
+            specs.iter().filter(|spec| matches!(spec, FixtureSpec::Text { size_class: TextSizeClass::Large, .. })).count(),
             LARGE_TEXT_TARGET_SIZES.len()
         );
         assert_eq!(
-            specs.iter().filter(|spec| spec.size_class == Some(TextSizeClass::Huge)).count(),
+            specs.iter().filter(|spec| matches!(spec, FixtureSpec::Text { size_class: TextSizeClass::Huge, .. })).count(),
             HUGE_TEXT_TARGET_SIZES.len()
         );
     }

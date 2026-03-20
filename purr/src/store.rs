@@ -7,7 +7,7 @@ use crate::interface::{
     RebuildDurationExpectation, RowDecorationResult, SearchOutcome, SearchResult,
     StoreBootstrapPlan,
 };
-use crate::{save_service, search_service};
+use crate::{match_presentation, save_service, search_service};
 use once_cell::sync::Lazy;
 use parking_lot::Mutex;
 use std::path::{Path, PathBuf};
@@ -48,7 +48,7 @@ fn init_rayon() {
 pub struct ClipboardStore {
     db: Arc<Database>,
     indexer: Arc<Indexer>,
-    analysis_cache: Arc<search_service::HighlightAnalysisCache>,
+    analysis_cache: Arc<match_presentation::HighlightAnalysisCache>,
     /// Token for the currently running search, if any. Starting a new search cancels
     /// the previous one by calling cancel() on this token.
     active_search_token: Arc<Mutex<Option<CancellationToken>>>,
@@ -104,7 +104,7 @@ impl ClipboardStore {
         Ok(Self {
             db: Arc::new(database),
             indexer: Arc::new(indexer),
-            analysis_cache: Arc::new(search_service::HighlightAnalysisCache::default()),
+            analysis_cache: Arc::new(match_presentation::HighlightAnalysisCache::default()),
             active_search_token: Arc::new(Mutex::new(None)),
         })
     }
@@ -127,7 +127,7 @@ impl ClipboardStore {
         Ok(Self {
             db: Arc::new(db),
             indexer: Arc::new(indexer),
-            analysis_cache: Arc::new(search_service::HighlightAnalysisCache::default()),
+            analysis_cache: Arc::new(match_presentation::HighlightAnalysisCache::default()),
             active_search_token: Arc::new(Mutex::new(None)),
         })
     }
@@ -735,7 +735,7 @@ mod tests {
             &store.db,
             &store.analysis_cache,
             "He",
-            false,
+            crate::search_result_builder::ShortQueryMode::PrefixThenContains,
             &token,
             &rt.handle().clone(),
             None,

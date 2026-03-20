@@ -11,10 +11,13 @@ pub mod content_detection;
 pub mod database;
 pub mod indexer;
 pub mod interface;
+pub(crate) mod match_presentation;
+pub(crate) mod search_admission;
 pub mod models;
 pub mod ranking;
 mod save_service;
 pub mod search;
+mod search_result_builder;
 mod search_service;
 mod store;
 

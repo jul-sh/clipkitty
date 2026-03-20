@@ -13,6 +13,8 @@ use crate::ranking::{
     compute_bucket_score_with_perf, RankingPerfBreakdown, LARGE_DOC_THRESHOLD_BYTES,
 };
 use crate::ranking::{prepare_document_for_ranking, PrefixPreferenceQuery, ScoringContext};
+pub(crate) use crate::search_admission::CHUNK_PARENT_THRESHOLD_BYTES;
+use crate::search_admission::{PhaseOneAdmissionPolicy, PhaseTwoHead, PROXIMITY_BOOST_SCALE};
 use crate::search::SearchQuery;
 use chrono::Utc;
 use tokio_util::sync::CancellationToken;
@@ -21,23 +23,16 @@ use tokio_util::sync::CancellationToken;
 /// History: v3 = initial trigram, v4 = content_words WithFreqsAndPositions
 pub const INDEX_VERSION: &str = "v5";
 
-pub(crate) const CHUNK_PARENT_THRESHOLD_BYTES: usize = 128 * 1024;
 const CHUNK_TARGET_BYTES: usize = 16 * 1024;
 const CHUNK_OVERLAP_BYTES: usize = 2 * 1024;
 const CHUNK_BOUNDARY_SLACK_BYTES: usize = 1024;
-const PHASE_TWO_REGULAR_HEAD_LIMIT: usize = 64;
-const PHASE_TWO_LARGE_HEAD_LIMIT: usize = 8;
-const PHASE_TWO_TOTAL_HEAD_LIMIT: usize =
-    PHASE_TWO_REGULAR_HEAD_LIMIT + PHASE_TWO_LARGE_HEAD_LIMIT;
 const RAW_RECALL_BATCHES: [usize; 5] = [256, 512, 1024, 2048, 4096];
-
-/// Large boost for proximity PhraseQuery, creating distinct score bands.
-/// tweak_score decodes this to convert proximity into an additive tier
-/// that serves as a tiebreaker within the same recency bucket.
-const PROXIMITY_BOOST_SCALE: f32 = 1000.0;
 use parking_lot::RwLock;
-use std::collections::HashSet;
+use std::cmp::Ordering;
+use std::collections::{HashMap, HashSet};
 use std::path::Path;
+use tantivy::collector::{Collector, SegmentCollector, TopNComputer};
+#[cfg(test)]
 use tantivy::collector::TopDocs;
 use tantivy::directory::MmapDirectory;
 use tantivy::query::{
@@ -45,7 +40,7 @@ use tantivy::query::{
 };
 use tantivy::schema::*;
 use tantivy::tokenizer::{NgramTokenizer, TextAnalyzer, TokenFilter, TokenStream, Tokenizer};
-use tantivy::{DocId, Index, IndexReader, IndexWriter, ReloadPolicy, Score, Term};
+use tantivy::{DocAddress, DocId, Index, IndexReader, IndexWriter, ReloadPolicy, Score, SegmentReader, Term};
 use thiserror::Error;
 
 #[derive(Debug, Clone, Copy)]
@@ -397,85 +392,12 @@ fn chunk_slices(content: &str) -> Vec<ChunkSlice> {
     chunks
 }
 
-fn is_large_parent(parent_len: usize) -> bool {
-    parent_len > CHUNK_PARENT_THRESHOLD_BYTES
-}
-
-fn phase_one_size_penalty(parent_len: usize) -> f64 {
-    match parent_len {
-        0..=CHUNK_PARENT_THRESHOLD_BYTES => 0.0,
-        ..=1_048_576 => 16.0,
-        _ => 32.0,
-    }
-}
-
-fn should_stop_phase_one_recall(
-    candidates: &[SearchCandidate],
-    last_raw_score: Option<f32>,
-) -> bool {
-    if candidates.len() < PHASE_TWO_TOTAL_HEAD_LIMIT {
-        return false;
-    }
-
-    let regular_threshold = candidates
-        .iter()
-        .filter(|candidate| !is_large_parent(candidate.parent_len()))
-        .nth(PHASE_TWO_REGULAR_HEAD_LIMIT.saturating_sub(1))
-        .map(|candidate| candidate.tantivy_score);
-    let Some(regular_threshold) = regular_threshold else {
-        return false;
-    };
-
-    last_raw_score.is_some_and(|last_score| last_score < regular_threshold)
-}
-
-fn phase_two_head_indices(candidates: &[SearchCandidate]) -> Vec<usize> {
-    let mut regular = Vec::new();
-    let mut large = Vec::new();
-
-    for (index, candidate) in candidates.iter().enumerate() {
-        if is_large_parent(candidate.parent_len()) {
-            large.push(index);
-        } else {
-            regular.push(index);
-        }
-    }
-
-    let mut head = Vec::new();
-    head.extend(
-        regular
-            .iter()
-            .copied()
-            .take(PHASE_TWO_REGULAR_HEAD_LIMIT),
-    );
-
-    if regular.len() >= PHASE_TWO_REGULAR_HEAD_LIMIT {
-        let threshold = candidates[regular[PHASE_TWO_REGULAR_HEAD_LIMIT - 1]].tantivy_score;
-        head.extend(
-            large
-                .iter()
-                .copied()
-                .filter(|&index| candidates[index].tantivy_score >= threshold)
-                .take(PHASE_TWO_LARGE_HEAD_LIMIT),
-        );
-    } else {
-        head.extend(
-            large
-                .iter()
-                .copied()
-                .take(PHASE_TWO_TOTAL_HEAD_LIMIT.saturating_sub(head.len())),
-        );
-    }
-
-    head
-}
-
 #[cfg(not(feature = "perf-log"))]
 fn score_phase_two_candidate(
     candidate: &SearchCandidate,
     phase_two_query: PhaseTwoQuery<'_>,
     now: i64,
-) -> Option<crate::ranking::BucketScore> {
+) -> PhaseTwoCandidateScore {
     let content = candidate.content();
     let document = prepare_document_for_ranking(content);
 
@@ -491,7 +413,9 @@ fn score_phase_two_candidate(
         now,
     });
 
-    (bucket.words_matched_weight() > 0).then_some(bucket)
+    PhaseTwoCandidateScore {
+        bucket: (bucket.words_matched_weight() > 0).then_some(bucket),
+    }
 }
 
 #[cfg(feature = "perf-log")]
@@ -499,7 +423,7 @@ fn score_phase_two_candidate(
     candidate: &SearchCandidate,
     phase_two_query: PhaseTwoQuery<'_>,
     now: i64,
-) -> (Option<crate::ranking::BucketScore>, PhaseTwoCandidatePerf) {
+) -> PhaseTwoCandidateScore {
     let prep_start = std::time::Instant::now();
     let content = candidate.content();
     let document = prepare_document_for_ranking(content);
@@ -517,14 +441,244 @@ fn score_phase_two_candidate(
         now,
     });
 
-    (
-        (bucket.words_matched_weight() > 0).then_some(bucket),
-        PhaseTwoCandidatePerf {
+    PhaseTwoCandidateScore {
+        bucket: (bucket.words_matched_weight() > 0).then_some(bucket),
+        perf: PhaseTwoCandidatePerf {
             doc_bytes: content.len(),
             prep_ns,
             ranking,
         },
-    )
+    }
+}
+
+struct PhaseTwoCandidateScore {
+    bucket: Option<crate::ranking::BucketScore>,
+    #[cfg(feature = "perf-log")]
+    perf: PhaseTwoCandidatePerf,
+}
+
+struct PhaseTwoRun {
+    scored: Vec<(crate::ranking::BucketScore, usize)>,
+    #[cfg(feature = "perf-log")]
+    perf: PhaseTwoPerfTotals,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq)]
+struct CollapsedDocAddress {
+    item_id: i64,
+    doc_address: DocAddress,
+}
+
+impl Eq for CollapsedDocAddress {}
+
+impl Ord for CollapsedDocAddress {
+    fn cmp(&self, other: &Self) -> Ordering {
+        self.doc_address
+            .cmp(&other.doc_address)
+            .then_with(|| self.item_id.cmp(&other.item_id))
+    }
+}
+
+impl PartialOrd for CollapsedDocAddress {
+    fn partial_cmp(&self, other: &Self) -> Option<Ordering> {
+        Some(self.cmp(other))
+    }
+}
+
+#[derive(Debug, Clone, Copy)]
+struct CollapsedDocHit {
+    score: f32,
+    address: CollapsedDocAddress,
+}
+
+struct CollapsedTopDocs {
+    limit: usize,
+    now: i64,
+}
+
+// Collect the best Phase 1 hit per parent item within a segment so large-document
+// chunks are collapsed before we materialize stored docs or build the Phase 2 head.
+struct CollapsedTopDocsSegmentCollector {
+    segment_ord: u32,
+    item_id_reader: tantivy::fastfield::Column<i64>,
+    timestamp_reader: tantivy::fastfield::Column<i64>,
+    parent_len_reader: tantivy::fastfield::Column<i64>,
+    now: i64,
+    docs_by_item: HashMap<i64, CollapsedDocHit>,
+}
+
+impl CollapsedTopDocsSegmentCollector {
+    fn new(segment_ord: u32, segment_reader: &SegmentReader, now: i64) -> tantivy::Result<Self> {
+        Ok(Self {
+            segment_ord,
+            item_id_reader: segment_reader
+                .fast_fields()
+                .i64("item_id")
+                .expect("item_id fast field"),
+            timestamp_reader: segment_reader
+                .fast_fields()
+                .i64("timestamp")
+                .expect("timestamp fast field"),
+            parent_len_reader: segment_reader
+                .fast_fields()
+                .i64("parent_len")
+                .expect("parent_len fast field"),
+            now,
+            docs_by_item: HashMap::new(),
+        })
+    }
+}
+
+impl SegmentCollector for CollapsedTopDocsSegmentCollector {
+    type Fruit = Vec<CollapsedDocHit>;
+
+    fn collect(&mut self, doc: DocId, score: Score) {
+        let item_id = self.item_id_reader.first(doc).unwrap_or(0);
+        let timestamp = self.timestamp_reader.first(doc).unwrap_or(0);
+        let parent_len = self.parent_len_reader.first(doc).unwrap_or(0).max(0) as usize;
+        let blended_score =
+            PhaseOneAdmissionPolicy::blended_phase_one_score(score, timestamp, parent_len, self.now)
+                as f32;
+        let hit = CollapsedDocHit {
+            score: blended_score,
+            address: CollapsedDocAddress {
+                item_id,
+                doc_address: DocAddress::new(self.segment_ord, doc),
+            },
+        };
+        match self.docs_by_item.get(&item_id) {
+            Some(existing) if !collapsed_hit_is_better(&hit, existing) => {}
+            _ => {
+                self.docs_by_item.insert(item_id, hit);
+            }
+        }
+    }
+
+    fn harvest(self) -> Self::Fruit {
+        self.docs_by_item.into_values().collect()
+    }
+}
+
+impl Collector for CollapsedTopDocs {
+    type Fruit = Vec<(f32, DocAddress)>;
+    type Child = CollapsedTopDocsSegmentCollector;
+
+    fn for_segment(
+        &self,
+        segment_local_id: u32,
+        segment: &SegmentReader,
+    ) -> tantivy::Result<Self::Child> {
+        CollapsedTopDocsSegmentCollector::new(segment_local_id, segment, self.now)
+    }
+
+    fn requires_scoring(&self) -> bool {
+        true
+    }
+
+    fn merge_fruits(
+        &self,
+        segment_fruits: Vec<<Self::Child as SegmentCollector>::Fruit>,
+    ) -> tantivy::Result<Self::Fruit> {
+        let mut best_by_item: HashMap<i64, CollapsedDocHit> = HashMap::new();
+        for segment_hits in segment_fruits {
+            for hit in segment_hits {
+                match best_by_item.get(&hit.address.item_id) {
+                    Some(existing) if !collapsed_hit_is_better(&hit, existing) => {}
+                    _ => {
+                        best_by_item.insert(hit.address.item_id, hit);
+                    }
+                }
+            }
+        }
+
+        let mut top_docs: TopNComputer<f32, CollapsedDocAddress> = TopNComputer::new(self.limit);
+        for hit in best_by_item.into_values() {
+            top_docs.push(hit.score, hit.address);
+        }
+
+        Ok(top_docs
+            .into_sorted_vec()
+            .into_iter()
+            .map(|doc| (doc.feature, doc.doc.doc_address))
+            .collect())
+    }
+}
+
+fn collapsed_hit_is_better(candidate: &CollapsedDocHit, current: &CollapsedDocHit) -> bool {
+    candidate.score > current.score
+        || (candidate.score == current.score && candidate.address < current.address)
+}
+
+fn run_phase_two_head(
+    head: PhaseTwoHead,
+    candidates: &[SearchCandidate],
+    phase_two_query: PhaseTwoQuery<'_>,
+    now: i64,
+    token: &CancellationToken,
+) -> Result<PhaseTwoRun, IndexerError> {
+    use rayon::prelude::*;
+
+    const CANCELLATION_CHECK_CHUNK_SIZE: usize = 32;
+
+    let head_candidates: Vec<(usize, SearchCandidate)> = head
+        .into_indices()
+        .into_iter()
+        .map(|index| (index, candidates[index].clone()))
+        .collect();
+
+    let chunk_results: Vec<PhaseTwoRun> = head_candidates
+        .par_chunks(CANCELLATION_CHECK_CHUNK_SIZE)
+        .enumerate()
+        .map(|(_chunk_index, chunk)| {
+            let mut scored = Vec::with_capacity(chunk.len());
+            #[cfg(feature = "perf-log")]
+            let mut perf = PhaseTwoPerfTotals::default();
+
+            for (_offset, candidate) in chunk.iter().enumerate() {
+                if token.is_cancelled() {
+                    break;
+                }
+                #[cfg(test)]
+                test_support::on_phase_two_candidate(
+                    _chunk_index * CANCELLATION_CHECK_CHUNK_SIZE + _offset,
+                );
+                let outcome = score_phase_two_candidate(&candidate.1, phase_two_query, now);
+                #[cfg(feature = "perf-log")]
+                perf.record(outcome.perf, outcome.bucket.is_some());
+                if let Some(bucket) = outcome.bucket {
+                    scored.push((bucket, candidate.0));
+                }
+            }
+
+            PhaseTwoRun {
+                scored,
+                #[cfg(feature = "perf-log")]
+                perf,
+            }
+        })
+        .collect();
+
+    if token.is_cancelled() {
+        return Err(IndexerError::Tantivy(tantivy::TantivyError::InternalError(
+            "search cancelled".into(),
+        )));
+    }
+
+    let mut scored = Vec::new();
+    #[cfg(feature = "perf-log")]
+    let mut perf = PhaseTwoPerfTotals::default();
+
+    for mut chunk_result in chunk_results {
+        scored.append(&mut chunk_result.scored);
+        #[cfg(feature = "perf-log")]
+        perf.merge(chunk_result.perf);
+    }
+
+    Ok(PhaseTwoRun {
+        scored,
+        #[cfg(feature = "perf-log")]
+        perf,
+    })
 }
 
 /// Tantivy-based indexer with trigram tokenization
@@ -884,87 +1038,12 @@ impl Indexer {
                 .map(OwnedPrefixPreferenceQuery::as_borrowed),
         };
         let now = Utc::now().timestamp();
-        let head_indices = phase_two_head_indices(&candidates);
-        let head_candidates: Vec<(usize, SearchCandidate)> = head_indices
-            .iter()
-            .copied()
-            .map(|index| (index, candidates[index].clone()))
-            .collect();
-
-        use rayon::prelude::*;
-        // Process candidates in chunks to allow periodic cancellation checks.
-        // Smaller chunks = more responsive cancellation but higher overhead.
-        const CANCELLATION_CHECK_CHUNK_SIZE: usize = 32;
-        #[cfg(feature = "perf-log")]
-        let (mut scored, phase_two_perf) = {
-            let chunk_results: Vec<(
-                Vec<(crate::ranking::BucketScore, usize)>,
-                PhaseTwoPerfTotals,
-            )> = head_candidates
-                .par_chunks(CANCELLATION_CHECK_CHUNK_SIZE)
-                .enumerate()
-                .map(|(_chunk_index, chunk)| {
-                    let mut chunk_scored = Vec::with_capacity(chunk.len());
-                    let mut chunk_perf = PhaseTwoPerfTotals::default();
-                    for (_offset, candidate) in chunk.iter().enumerate() {
-                        if token.is_cancelled() {
-                            break;
-                        }
-                        #[cfg(test)]
-                        let global_index =
-                            _chunk_index * CANCELLATION_CHECK_CHUNK_SIZE + _offset;
-                        #[cfg(test)]
-                        test_support::on_phase_two_candidate(global_index);
-                        let (bucket, perf) =
-                            score_phase_two_candidate(&candidate.1, phase_two_query, now);
-                        let matched = bucket.is_some();
-                        chunk_perf.record(perf, matched);
-                        if let Some(bucket) = bucket {
-                            chunk_scored.push((bucket, candidate.0));
-                        }
-                    }
-                    (chunk_scored, chunk_perf)
-                })
-                .collect();
-
-            let mut scored = Vec::new();
-            let mut totals = PhaseTwoPerfTotals::default();
-            for (mut chunk_scored, chunk_perf) in chunk_results {
-                scored.append(&mut chunk_scored);
-                totals.merge(chunk_perf);
-            }
-            (scored, totals)
-        };
-        #[cfg(not(feature = "perf-log"))]
-        let mut scored: Vec<(crate::ranking::BucketScore, usize)> = head_candidates
-            .par_chunks(CANCELLATION_CHECK_CHUNK_SIZE)
-            .enumerate()
-            .map(|(_chunk_index, chunk)| {
-                let mut chunk_scored = Vec::with_capacity(chunk.len());
-                for (_offset, candidate) in chunk.iter().enumerate() {
-                    if token.is_cancelled() {
-                        break;
-                    }
-                    #[cfg(test)]
-                    let global_index = _chunk_index * CANCELLATION_CHECK_CHUNK_SIZE + _offset;
-                    #[cfg(test)]
-                    test_support::on_phase_two_candidate(global_index);
-                    if let Some(bucket) =
-                        score_phase_two_candidate(&candidate.1, phase_two_query, now)
-                    {
-                        chunk_scored.push((bucket, candidate.0));
-                    }
-                }
-                chunk_scored
-            })
-            .flatten()
-            .collect();
-
-        if token.is_cancelled() {
-            return Err(IndexerError::Tantivy(tantivy::TantivyError::InternalError(
-                "search cancelled".into(),
-            )));
-        }
+        let phase_two_head = PhaseOneAdmissionPolicy::select_phase_two_head(&candidates);
+        let PhaseTwoRun {
+            mut scored,
+            #[cfg(feature = "perf-log")]
+            perf: phase_two_perf,
+        } = run_phase_two_head(phase_two_head, &candidates, phase_two_query, now, token)?;
 
         scored.sort_unstable_by(|a, b| b.0.cmp(&a.0));
         let scored_indices: HashSet<usize> = scored.iter().map(|(_, index)| *index).collect();
@@ -1092,78 +1171,25 @@ impl Indexer {
         let final_query = self.build_trigram_query(query);
         let now = Utc::now().timestamp();
         let mut collapsed = Vec::new();
-        let segment_item_id_readers: Vec<_> = searcher
-            .segment_readers()
-            .iter()
-            .map(|segment_reader| {
-                segment_reader
-                    .fast_fields()
-                    .i64("item_id")
-                    .expect("item_id fast field")
-            })
-            .collect();
 
         for raw_limit in RAW_RECALL_BATCHES {
-            let top_collector = TopDocs::with_limit(raw_limit).tweak_score(
-                move |segment_reader: &tantivy::SegmentReader| {
-                    let ts_reader = segment_reader
-                        .fast_fields()
-                        .i64("timestamp")
-                        .expect("timestamp fast field");
-                    let parent_len_reader = segment_reader
-                        .fast_fields()
-                        .i64("parent_len")
-                        .expect("parent_len fast field");
-                    move |doc: DocId, score: Score| {
-                        let timestamp = ts_reader.first(doc).unwrap_or(0);
-                        let parent_len = parent_len_reader.first(doc).unwrap_or(0).max(0) as usize;
-                        let base = (score as f64).max(0.001);
-                        let age_secs = (now - timestamp).max(0) as f64;
-
-                        let proximity_tier = (base / PROXIMITY_BOOST_SCALE as f64).floor();
-                        let base_remainder = base - (proximity_tier * PROXIMITY_BOOST_SCALE as f64);
-                        let adjusted_remainder = if proximity_tier == 0.0 {
-                            (base_remainder - phase_one_size_penalty(parent_len)).max(0.0)
-                        } else {
-                            base_remainder
-                        };
-
-                        let k: f64 = 20.0;
-                        let max_hours: f64 = 400.0;
-                        let age_hours = age_secs / 3600.0;
-                        let denom = (1.0 + k * max_hours).ln();
-                        let recency_score = 255.0 * (1.0 - (1.0 + k * age_hours).ln() / denom);
-                        let recency_score = recency_score.max(0.0);
-
-                        recency_score * 10.0 + proximity_tier * 100.0 + adjusted_remainder
-                    }
-                },
-            );
+            let top_collector = CollapsedTopDocs {
+                limit: raw_limit,
+                now,
+            };
 
             let top_docs = searcher.search(final_query.as_ref(), &top_collector)?;
-            let last_raw_score = top_docs.last().map(|(score, _)| *score as f32);
+            let last_raw_score = top_docs.last().map(|(score, _)| *score);
             let top_doc_count = top_docs.len();
-            let mut seen_items = HashSet::new();
-            let mut selected_docs = Vec::with_capacity(top_doc_count);
-
+            let mut batch_collapsed = Vec::with_capacity(top_doc_count);
             for (blended_score, doc_address) in top_docs {
-                let item_id = segment_item_id_readers[doc_address.segment_ord as usize]
-                    .first(doc_address.doc_id)
-                    .unwrap_or(0);
-                if !seen_items.insert(item_id) {
-                    continue;
-                }
-                selected_docs.push((blended_score as f32, doc_address));
-            }
-
-            let mut batch_collapsed = Vec::with_capacity(selected_docs.len());
-            for (blended_score, doc_address) in selected_docs {
                 let doc: tantivy::TantivyDocument = searcher.doc(doc_address)?;
                 batch_collapsed.push(self.candidate_from_doc(&doc, blended_score));
             }
 
             collapsed = batch_collapsed;
-            if top_doc_count < raw_limit || should_stop_phase_one_recall(&collapsed, last_raw_score)
+            if top_doc_count < raw_limit
+                || PhaseOneAdmissionPolicy::should_stop_recall(&collapsed, last_raw_score)
             {
                 break;
             }
@@ -1733,15 +1759,15 @@ mod tests {
             CHUNK_PARENT_THRESHOLD_BYTES + 1,
         ));
 
-        let head = phase_two_head_indices(&candidates);
-        assert_eq!(head.len(), PHASE_TWO_REGULAR_HEAD_LIMIT);
+        let head = PhaseOneAdmissionPolicy::select_phase_two_head(&candidates).into_indices();
+        assert_eq!(head.len(), PhaseOneAdmissionPolicy::REGULAR_HEAD_LIMIT);
         assert!(
             head.iter().all(|&index| candidates[index].id != 999),
             "large parent should stay out of the bounded phase-two head when regular matches fill it"
         );
         assert!(
             head.iter()
-                .all(|&index| !is_large_parent(candidates[index].parent_len()))
+                .all(|&index| !PhaseOneAdmissionPolicy::is_large_parent(candidates[index].parent_len()))
         );
     }
 
@@ -1755,7 +1781,7 @@ mod tests {
             chunk_candidate(102, 996.0, CHUNK_PARENT_THRESHOLD_BYTES + 1),
         ];
 
-        let head = phase_two_head_indices(&candidates);
+        let head = PhaseOneAdmissionPolicy::select_phase_two_head(&candidates).into_indices();
         let head_ids: Vec<i64> = head.iter().map(|&index| candidates[index].id).collect();
         assert_eq!(head_ids.len(), 5);
         assert_eq!(head_ids, vec![1, 2, 100, 101, 102]);
