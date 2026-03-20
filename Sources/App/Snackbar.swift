@@ -21,6 +21,7 @@ struct GlassBackgroundModifier: ViewModifier {
 
 enum NudgeKind: Equatable {
     case launchAtLogin
+    case updateAvailable
 }
 
 enum InfoKind: Equatable {
@@ -43,6 +44,8 @@ struct SnackbarView: View {
         switch item {
         case .nudge(.launchAtLogin):
             LaunchAtLoginNudgeView(onEnable: onAction, onDismiss: onDismiss)
+        case .nudge(.updateAvailable):
+            UpdateAvailableNudgeView(onInstall: onAction, onDismiss: onDismiss)
         case .info(.rebuildingIndex):
             RebuildingIndexInfoView()
         }
@@ -65,6 +68,45 @@ private struct LaunchAtLoginNudgeView: View {
 
             Button("Enable") {
                 onEnable()
+            }
+            .buttonStyle(.plain)
+            .font(.system(size: 12, weight: .semibold))
+            .foregroundStyle(Color.accentColor)
+            .padding(.leading, 4)
+
+            Button {
+                onDismiss()
+            } label: {
+                Image(systemName: "xmark")
+                    .font(.system(size: 10, weight: .semibold))
+                    .foregroundStyle(.secondary)
+            }
+            .buttonStyle(.plain)
+            .padding(.leading, 2)
+        }
+        .padding(.horizontal, 14)
+        .padding(.vertical, 10)
+        .fixedSize()
+        .modifier(GlassBackgroundModifier())
+    }
+}
+
+private struct UpdateAvailableNudgeView: View {
+    let onInstall: () -> Void
+    let onDismiss: () -> Void
+
+    var body: some View {
+        HStack(spacing: 8) {
+            Image(systemName: "arrow.down.circle.fill")
+                .font(.system(size: 16, weight: .medium))
+                .foregroundStyle(.blue)
+
+            Text("Update available")
+                .font(.system(size: 13, weight: .medium))
+                .foregroundStyle(.primary)
+
+            Button("Install") {
+                onInstall()
             }
             .buttonStyle(.plain)
             .font(.system(size: 12, weight: .semibold))

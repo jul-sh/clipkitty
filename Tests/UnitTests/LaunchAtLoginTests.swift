@@ -160,6 +160,8 @@ private struct MockSnackbarEnvironment: SnackbarEnvironment {
     var firstLaunchDate: Date = Date.distantPast
     var minimumUseDuration: TimeInterval = 3600
     var now: Date = Date()
+
+    var isUpdateAvailable: Bool = false
 }
 
 private final class MockLaunchAtLoginService: LaunchAtLoginServiceProtocol {
