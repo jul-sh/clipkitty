@@ -196,7 +196,6 @@ final class FloatingPanelController: NSObject, NSWindowDelegate {
         guard case .hidden = panelState else { return }
 
         let previousApp = activationService.frontmostApplication()
-        store.resetForDisplay()
         if initialSearchQuery != nil { updatePanelContent() }
         centerPanel()
 
@@ -230,6 +229,7 @@ final class FloatingPanelController: NSObject, NSWindowDelegate {
         layer.transform = CATransform3DIdentity
         panel.alphaValue = 1
         panelState = .visible(previousApp: previousApp)
+        store.setPanelVisibility(true)
 
         let m = Self.animationMargin
         let contentFrame = panel.frame.insetBy(dx: m, dy: m)
@@ -285,6 +285,7 @@ final class FloatingPanelController: NSObject, NSWindowDelegate {
             layer.transform = CATransform3DIdentity
             layer.opacity = 1
             self.store.resetForDisplay()
+            self.store.setPanelVisibility(false)
         }
         layer.add(scale, forKey: "transform")
         layer.add(fade, forKey: "opacity")

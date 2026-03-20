@@ -31,12 +31,35 @@ struct ContentView: View {
     }
 
     var body: some View {
-        BrowserView(viewModel: viewModel, displayVersion: store.displayVersion)
+        let displayVersion = store.displayVersion
+        let contentRevision = store.contentRevision
+        let isPanelVisible = store.isPanelVisible
+
+        return BrowserView(viewModel: viewModel, displayVersion: displayVersion)
             .onAppear {
-                viewModel.onAppear(initialSearchQuery: initialSearchQuery)
+                viewModel.onAppear(
+                    initialSearchQuery: initialSearchQuery,
+                    contentRevision: contentRevision
+                )
             }
-            .onChange(of: store.displayVersion) { _, _ in
-                viewModel.handleDisplayReset(initialSearchQuery: initialSearchQuery)
+            .onChange(of: displayVersion) { _, _ in
+                viewModel.handleDisplayReset(
+                    initialSearchQuery: initialSearchQuery,
+                    contentRevision: contentRevision
+                )
+            }
+            .onChange(of: contentRevision) { _, newRevision in
+                viewModel.handleContentRevisionChange(
+                    newRevision,
+                    isPanelVisible: isPanelVisible
+                )
+            }
+            .onChange(of: isPanelVisible) { _, visible in
+                viewModel.handlePanelVisibilityChange(
+                    visible,
+                    initialSearchQuery: initialSearchQuery,
+                    contentRevision: contentRevision
+                )
             }
     }
 }

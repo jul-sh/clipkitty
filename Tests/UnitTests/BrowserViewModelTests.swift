@@ -77,6 +77,137 @@ final class BrowserViewModelTests: XCTestCase {
         XCTAssertEqual(viewModel.selectedItem?.itemMetadata.itemId, 2)
     }
 
+    func testHiddenContentRevisionRefreshKeepsPreviousResultsVisible() async {
+        let client = MockBrowserStoreClient()
+        let firstItem = makeItem(id: 1, text: "first")
+        let secondItem = makeItem(id: 2, text: "second")
+        client.enqueueSearchResponse(BrowserSearchResponse(
+            request: SearchRequest(text: "", filter: .all),
+            items: [makeMatch(id: 1, snippet: "first")],
+            firstItem: firstItem,
+            totalCount: 1
+        ))
+
+        let viewModel = BrowserViewModel(
+            client: client,
+            onSelect: { _, _ in },
+            onCopyOnly: { _, _ in },
+            onDismiss: {}
+        )
+
+        viewModel.onAppear(initialSearchQuery: "")
+        await flushMainActor()
+
+        XCTAssertEqual(viewModel.itemIds, [1])
+        XCTAssertEqual(viewModel.selectedItemId, 1)
+
+        viewModel.handleContentRevisionChange(1, isPanelVisible: false)
+        await flushMainActor()
+
+        XCTAssertEqual(client.startedSearchRequests, [
+            SearchRequest(text: "", filter: .all),
+            SearchRequest(text: "", filter: .all),
+        ])
+
+        guard case let .loading(request, previous, _) = viewModel.contentState else {
+            return XCTFail("Expected a background refresh while hidden")
+        }
+        XCTAssertEqual(request, SearchRequest(text: "", filter: .all))
+        XCTAssertEqual(previous?.response.items.map(\.itemMetadata.itemId), [1])
+        XCTAssertEqual(previous?.selection.itemId, 1)
+
+        client.resumeSearch(with: BrowserSearchResponse(
+            request: SearchRequest(text: "", filter: .all),
+            items: [makeMatch(id: 2, snippet: "second"), makeMatch(id: 1, snippet: "first")],
+            firstItem: secondItem,
+            totalCount: 2
+        ))
+        await flushMainActor()
+
+        XCTAssertEqual(viewModel.itemIds, [2, 1])
+        XCTAssertEqual(viewModel.selectedItemId, 2)
+    }
+
+    func testVisibleContentRevisionWaitsUntilPanelIsShownAgain() async {
+        let client = MockBrowserStoreClient()
+        let firstItem = makeItem(id: 1, text: "first")
+        let secondItem = makeItem(id: 2, text: "second")
+        client.enqueueSearchResponse(BrowserSearchResponse(
+            request: SearchRequest(text: "", filter: .all),
+            items: [makeMatch(id: 1, snippet: "first")],
+            firstItem: firstItem,
+            totalCount: 1
+        ))
+
+        let viewModel = BrowserViewModel(
+            client: client,
+            onSelect: { _, _ in },
+            onCopyOnly: { _, _ in },
+            onDismiss: {}
+        )
+
+        viewModel.onAppear(initialSearchQuery: "")
+        await flushMainActor()
+
+        viewModel.handleContentRevisionChange(1, isPanelVisible: true)
+        await flushMainActor()
+
+        XCTAssertEqual(client.startedSearchRequests.count, 1)
+        XCTAssertEqual(viewModel.itemIds, [1])
+
+        viewModel.handlePanelVisibilityChange(false, contentRevision: 1)
+        viewModel.handlePanelVisibilityChange(true, contentRevision: 1)
+        await flushMainActor()
+
+        XCTAssertEqual(client.startedSearchRequests.count, 2)
+        guard case let .loading(request, previous, _) = viewModel.contentState else {
+            return XCTFail("Expected reveal refresh to preserve stale results")
+        }
+        XCTAssertEqual(request, SearchRequest(text: "", filter: .all))
+        XCTAssertEqual(previous?.response.items.map(\.itemMetadata.itemId), [1])
+
+        client.resumeSearch(with: BrowserSearchResponse(
+            request: SearchRequest(text: "", filter: .all),
+            items: [makeMatch(id: 2, snippet: "second")],
+            firstItem: secondItem,
+            totalCount: 1
+        ))
+        await flushMainActor()
+
+        XCTAssertEqual(viewModel.itemIds, [2])
+        XCTAssertEqual(viewModel.selectedItemId, 2)
+    }
+
+    func testPanelShowDoesNotDuplicateHiddenRefreshAlreadyInFlight() async {
+        let client = MockBrowserStoreClient()
+        let firstItem = makeItem(id: 1, text: "first")
+        client.enqueueSearchResponse(BrowserSearchResponse(
+            request: SearchRequest(text: "", filter: .all),
+            items: [makeMatch(id: 1, snippet: "first")],
+            firstItem: firstItem,
+            totalCount: 1
+        ))
+
+        let viewModel = BrowserViewModel(
+            client: client,
+            onSelect: { _, _ in },
+            onCopyOnly: { _, _ in },
+            onDismiss: {}
+        )
+
+        viewModel.onAppear(initialSearchQuery: "")
+        await flushMainActor()
+
+        viewModel.handleContentRevisionChange(1, isPanelVisible: false)
+        await flushMainActor()
+        XCTAssertEqual(client.startedSearchRequests.count, 2)
+
+        viewModel.handlePanelVisibilityChange(true, contentRevision: 1)
+        await flushMainActor()
+
+        XCTAssertEqual(client.startedSearchRequests.count, 2)
+    }
+
     func testSelectedPreviewHighlightsRefreshWhenQueryChangesWithoutNavigation() async {
         let client = MockBrowserStoreClient()
         let item = makeItem(id: 1, text: "alpha beta")
