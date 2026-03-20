@@ -12,21 +12,46 @@ final class BrowserViewModel {
 
     private enum SearchExecution {
         case idle
-        case debouncing(request: SearchRequest, task: Task<Void, Never>)
-        case running(id: UUID, operation: BrowserSearchOperation, observer: Task<Void, Never>, spinner: Task<Void, Never>?)
+        case debouncing(request: SearchRequest, targetContentRevision: Int, task: Task<Void, Never>)
+        case running(
+            id: UUID,
+            request: SearchRequest,
+            targetContentRevision: Int,
+            operation: BrowserSearchOperation,
+            observer: Task<Void, Never>,
+            spinner: Task<Void, Never>?
+        )
 
         var id: UUID? {
-            guard case let .running(id, _, _, _) = self else { return nil }
+            guard case let .running(id, _, _, _, _, _) = self else { return nil }
             return id
+        }
+
+        var request: SearchRequest? {
+            switch self {
+            case .idle:
+                return nil
+            case let .debouncing(request, _, _), let .running(_, request, _, _, _, _):
+                return request
+            }
+        }
+
+        var targetContentRevision: Int? {
+            switch self {
+            case .idle:
+                return nil
+            case let .debouncing(_, targetContentRevision, _), let .running(_, _, targetContentRevision, _, _, _):
+                return targetContentRevision
+            }
         }
 
         mutating func cancel() {
             switch self {
             case .idle:
                 break
-            case let .debouncing(_, task):
+            case let .debouncing(_, _, task):
                 task.cancel()
-            case let .running(_, operation, observer, spinner):
+            case let .running(_, _, _, operation, observer, spinner):
                 operation.cancel()
                 observer.cancel()
                 spinner?.cancel()
@@ -45,6 +70,8 @@ final class BrowserViewModel {
     private var previewGeneration = 0
     private var metadataGeneration = 0
     private var hasAppliedInitialSearch = false
+    private var latestKnownContentRevision = 0
+    private var lastLoadedContentRevision: Int?
 
     private(set) var contentState: BrowserContentState = .idle(request: SearchRequest(text: "", filter: .all))
     private(set) var overlayState: OverlayState = .none
@@ -144,13 +171,17 @@ final class BrowserViewModel {
         editState.pendingEdits
     }
 
-    func onAppear(initialSearchQuery: String) {
+    func onAppear(initialSearchQuery: String, contentRevision: Int = 0) {
+        latestKnownContentRevision = max(latestKnownContentRevision, contentRevision)
         guard !hasAppliedInitialSearch else { return }
         hasAppliedInitialSearch = true
-        submitSearch(text: initialSearchQuery, filter: .all)
+        submitSearch(
+            request: SearchRequest(text: initialSearchQuery, filter: .all),
+            targetContentRevision: latestKnownContentRevision
+        )
     }
 
-    func handleDisplayReset(initialSearchQuery: String) {
+    func handleDisplayReset(initialSearchQuery: String, contentRevision: Int = 0) {
         searchExecution.cancel()
         previewTask?.cancel()
         previewTask = nil
@@ -165,6 +196,8 @@ final class BrowserViewModel {
         queryGeneration += 1
         previewGeneration += 1
         metadataGeneration += 1
+        latestKnownContentRevision = contentRevision
+        lastLoadedContentRevision = nil
         previewSpinnerVisible = false
         hasUserNavigated = false
         prefetchCache.removeAll()
@@ -175,7 +208,27 @@ final class BrowserViewModel {
         editState = .init()
         contentState = .idle(request: SearchRequest(text: "", filter: .all))
         hasAppliedInitialSearch = false
-        onAppear(initialSearchQuery: initialSearchQuery)
+        onAppear(initialSearchQuery: initialSearchQuery, contentRevision: contentRevision)
+    }
+
+    func handleContentRevisionChange(_ contentRevision: Int, isPanelVisible: Bool) {
+        latestKnownContentRevision = max(latestKnownContentRevision, contentRevision)
+        guard !isPanelVisible else { return }
+        refreshCurrentRequestIfStale()
+    }
+
+    func handlePanelVisibilityChange(
+        _ isPanelVisible: Bool,
+        initialSearchQuery: String = "",
+        contentRevision: Int = 0
+    ) {
+        latestKnownContentRevision = max(latestKnownContentRevision, contentRevision)
+        guard isPanelVisible else { return }
+        guard hasAppliedInitialSearch else {
+            onAppear(initialSearchQuery: initialSearchQuery, contentRevision: latestKnownContentRevision)
+            return
+        }
+        refreshCurrentRequestIfStale()
     }
 
     func dismiss() {
@@ -507,9 +560,25 @@ final class BrowserViewModel {
         }
     }
 
-    private func submitSearch(text rawText: String, filter: ItemQueryFilter) {
-        let request = SearchRequest(text: rawText, filter: filter)
+    private func refreshCurrentRequestIfStale() {
+        guard hasAppliedInitialSearch else { return }
+        guard lastLoadedContentRevision != latestKnownContentRevision || displayedContent == nil else { return }
+        guard searchExecution.request != contentState.request ||
+              searchExecution.targetContentRevision != latestKnownContentRevision
+        else {
+            return
+        }
+        submitSearch(request: contentState.request, targetContentRevision: latestKnownContentRevision)
+    }
 
+    private func submitSearch(text rawText: String, filter: ItemQueryFilter) {
+        submitSearch(
+            request: SearchRequest(text: rawText, filter: filter),
+            targetContentRevision: latestKnownContentRevision
+        )
+    }
+
+    private func submitSearch(request: SearchRequest, targetContentRevision: Int) {
         queryGeneration += 1
         hasUserNavigated = false
         prefetchCache.removeAll()
@@ -523,7 +592,7 @@ final class BrowserViewModel {
         contentState = .loading(request: request, previous: previous, phase: .debouncing)
 
         if request.text.isEmpty {
-            beginSearch(request: request)
+            beginSearch(request: request, targetContentRevision: targetContentRevision)
             return
         }
 
@@ -531,13 +600,17 @@ final class BrowserViewModel {
             try? await Task.sleep(for: .milliseconds(50))
             guard !Task.isCancelled else { return }
             await MainActor.run {
-                self?.beginSearch(request: request)
+                self?.beginSearch(request: request, targetContentRevision: targetContentRevision)
             }
         }
-        searchExecution = .debouncing(request: request, task: debounceTask)
+        searchExecution = .debouncing(
+            request: request,
+            targetContentRevision: targetContentRevision,
+            task: debounceTask
+        )
     }
 
-    private func beginSearch(request: SearchRequest) {
+    private func beginSearch(request: SearchRequest, targetContentRevision: Int) {
         let operation = client.startSearch(request: request)
         let operationId = UUID()
         contentState = .loading(request: request, previous: displayedContent, phase: .running(spinnerVisible: false))
@@ -546,7 +619,11 @@ final class BrowserViewModel {
             guard let self else { return }
             let outcome = await operation.awaitOutcome()
             await MainActor.run {
-                self.applySearchOutcome(outcome, operationId: operationId)
+                self.applySearchOutcome(
+                    outcome,
+                    operationId: operationId,
+                    targetContentRevision: targetContentRevision
+                )
             }
         }
 
@@ -558,16 +635,27 @@ final class BrowserViewModel {
             }
         }
 
-        searchExecution = .running(id: operationId, operation: operation, observer: observer, spinner: spinner)
+        searchExecution = .running(
+            id: operationId,
+            request: request,
+            targetContentRevision: targetContentRevision,
+            operation: operation,
+            observer: observer,
+            spinner: spinner
+        )
     }
 
-    private func applySearchOutcome(_ outcome: BrowserSearchOutcome, operationId: UUID) {
+    private func applySearchOutcome(
+        _ outcome: BrowserSearchOutcome,
+        operationId: UUID,
+        targetContentRevision: Int
+    ) {
         guard searchExecution.id == operationId else { return }
         searchExecution = .idle
 
         switch outcome {
         case let .success(response):
-            applySearchResponse(response)
+            applySearchResponse(response, targetContentRevision: targetContentRevision)
         case .cancelled:
             break
         case let .failure(error):
@@ -580,10 +668,11 @@ final class BrowserViewModel {
         }
     }
 
-    private func applySearchResponse(_ response: BrowserSearchResponse) {
+    private func applySearchResponse(_ response: BrowserSearchResponse, targetContentRevision: Int) {
         guard contentState.request == response.request else { return }
         let response = responseApplyingPendingMutations(response)
         cachePreviewPayload(response.firstPreviewPayload)
+        lastLoadedContentRevision = targetContentRevision
 
         let previousOrder = itemIds
         let previousSelection = selection
