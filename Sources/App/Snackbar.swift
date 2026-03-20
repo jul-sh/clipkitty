@@ -101,11 +101,11 @@ private struct UpdateAvailableNudgeView: View {
                 .font(.system(size: 16, weight: .medium))
                 .foregroundStyle(.blue)
 
-            Text("Update available")
+            Text("Update available", comment: "Snackbar message when a new version is ready to install")
                 .font(.system(size: 13, weight: .medium))
                 .foregroundStyle(.primary)
 
-            Button("Install") {
+            Button(String(localized: "Install", comment: "Snackbar button to install an available update")) {
                 onInstall()
             }
             .buttonStyle(.plain)
