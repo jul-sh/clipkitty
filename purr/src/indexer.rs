@@ -3,7 +3,9 @@
 //! Two-phase search: trigram recall (Phase 1) + Milli-style bucket re-ranking (Phase 2).
 //! For queries under 3 characters, returns empty (handled by search.rs streaming fallback).
 
-use crate::candidate::SearchCandidate;
+use crate::candidate::{
+    ChunkMatchContext, SearchCandidate, SearchMatchContext, WholeItemMatchContext,
+};
 #[cfg(not(feature = "perf-log"))]
 use crate::ranking::compute_bucket_score;
 #[cfg(feature = "perf-log")]
@@ -17,13 +19,24 @@ use tokio_util::sync::CancellationToken;
 
 /// Index version - bump this when schema changes to trigger automatic rebuild.
 /// History: v3 = initial trigram, v4 = content_words WithFreqsAndPositions
-pub const INDEX_VERSION: &str = "v4";
+pub const INDEX_VERSION: &str = "v5";
+
+pub(crate) const CHUNK_PARENT_THRESHOLD_BYTES: usize = 128 * 1024;
+const CHUNK_TARGET_BYTES: usize = 16 * 1024;
+const CHUNK_OVERLAP_BYTES: usize = 2 * 1024;
+const CHUNK_BOUNDARY_SLACK_BYTES: usize = 1024;
+const PHASE_TWO_REGULAR_HEAD_LIMIT: usize = 64;
+const PHASE_TWO_LARGE_HEAD_LIMIT: usize = 8;
+const PHASE_TWO_TOTAL_HEAD_LIMIT: usize =
+    PHASE_TWO_REGULAR_HEAD_LIMIT + PHASE_TWO_LARGE_HEAD_LIMIT;
+const RAW_RECALL_BATCHES: [usize; 5] = [256, 512, 1024, 2048, 4096];
 
 /// Large boost for proximity PhraseQuery, creating distinct score bands.
 /// tweak_score decodes this to convert proximity into an additive tier
 /// that serves as a tiebreaker within the same recency bucket.
 const PROXIMITY_BOOST_SCALE: f32 = 1000.0;
 use parking_lot::RwLock;
+use std::collections::HashSet;
 use std::path::Path;
 use tantivy::collector::TopDocs;
 use tantivy::directory::MmapDirectory;
@@ -34,6 +47,13 @@ use tantivy::schema::*;
 use tantivy::tokenizer::{NgramTokenizer, TextAnalyzer, TokenFilter, TokenStream, Tokenizer};
 use tantivy::{DocId, Index, IndexReader, IndexWriter, ReloadPolicy, Score, Term};
 use thiserror::Error;
+
+#[derive(Debug, Clone, Copy)]
+struct ChunkSlice {
+    index: u32,
+    start: usize,
+    end: usize,
+}
 
 /// Token filter that assigns incrementing positions to tokens.
 /// NgramTokenizer sets all positions to 0, which breaks PhraseQuery.
@@ -227,6 +247,229 @@ fn prepare_phase_two_query(query: &SearchQuery, recall_text: &str) -> OwnedPhase
     }
 }
 
+fn previous_char_boundary(content: &str, mut index: usize) -> usize {
+    while index > 0 && !content.is_char_boundary(index) {
+        index -= 1;
+    }
+    index
+}
+
+fn next_char_boundary(content: &str, mut index: usize) -> usize {
+    while index < content.len() && !content.is_char_boundary(index) {
+        index += 1;
+    }
+    index.min(content.len())
+}
+
+fn normalized_slice_bounds(
+    content: &str,
+    search_start: usize,
+    search_end: usize,
+) -> Option<(usize, usize)> {
+    let start = next_char_boundary(content, search_start.min(content.len()));
+    let end = previous_char_boundary(content, search_end.min(content.len()));
+    (start < end).then_some((start, end))
+}
+
+fn snapped_boundary_after(
+    content: &str,
+    search_start: usize,
+    search_end: usize,
+    preferred: usize,
+) -> Option<usize> {
+    let (search_start, search_end) = normalized_slice_bounds(content, search_start, search_end)?;
+    let mut last_before = None;
+    let mut first_after = None;
+    for (offset, ch) in content[search_start..search_end].char_indices() {
+        if !ch.is_whitespace() {
+            continue;
+        }
+        let boundary = search_start + offset + ch.len_utf8();
+        if boundary >= preferred {
+            first_after = Some(boundary);
+            break;
+        }
+        last_before = Some(boundary);
+    }
+    first_after.or(last_before)
+}
+
+fn snapped_boundary_before(
+    content: &str,
+    search_start: usize,
+    search_end: usize,
+    preferred: usize,
+) -> Option<usize> {
+    let (search_start, search_end) = normalized_slice_bounds(content, search_start, search_end)?;
+    let mut last_before = None;
+    let mut first_after = None;
+    for (offset, ch) in content[search_start..search_end].char_indices() {
+        if !ch.is_whitespace() {
+            continue;
+        }
+        let boundary = search_start + offset + ch.len_utf8();
+        if boundary <= preferred {
+            last_before = Some(boundary);
+        } else {
+            first_after = Some(boundary);
+            break;
+        }
+    }
+    last_before.or(first_after)
+}
+
+fn snap_chunk_end(content: &str, start: usize, preferred_end: usize) -> usize {
+    let min_end = next_char_boundary(content, start.saturating_add(1)).min(content.len());
+    let preferred_end = previous_char_boundary(content, preferred_end.min(content.len()));
+    if preferred_end <= min_end {
+        return min_end;
+    }
+    let search_start = preferred_end
+        .saturating_sub(CHUNK_BOUNDARY_SLACK_BYTES)
+        .max(min_end);
+    let search_end = next_char_boundary(
+        content,
+        (preferred_end + CHUNK_BOUNDARY_SLACK_BYTES).min(content.len()),
+    );
+    snapped_boundary_after(content, search_start, search_end, preferred_end)
+        .unwrap_or(preferred_end)
+        .max(min_end)
+        .min(content.len())
+}
+
+fn snap_chunk_start(content: &str, preferred_start: usize, chunk_end: usize) -> usize {
+    let chunk_end = previous_char_boundary(content, chunk_end.min(content.len()));
+    if chunk_end <= 1 {
+        return 0;
+    }
+    let max_start = previous_char_boundary(content, chunk_end.saturating_sub(1));
+    let preferred_start = previous_char_boundary(content, preferred_start.min(max_start));
+    let search_start = preferred_start.saturating_sub(CHUNK_BOUNDARY_SLACK_BYTES);
+    let search_end = next_char_boundary(
+        content,
+        (preferred_start + CHUNK_BOUNDARY_SLACK_BYTES)
+            .min(max_start)
+            .min(content.len()),
+    );
+    snapped_boundary_before(content, search_start, search_end, preferred_start)
+        .unwrap_or(preferred_start)
+        .min(max_start)
+}
+
+fn chunk_slices(content: &str) -> Vec<ChunkSlice> {
+    if content.len() <= CHUNK_PARENT_THRESHOLD_BYTES {
+        return Vec::new();
+    }
+
+    let mut chunks = Vec::new();
+    let mut start = 0usize;
+    let mut index = 0u32;
+
+    while start < content.len() {
+        let preferred_end = (start + CHUNK_TARGET_BYTES).min(content.len());
+        let end = if preferred_end == content.len() {
+            content.len()
+        } else {
+            let preferred_end = previous_char_boundary(content, preferred_end);
+            snap_chunk_end(content, start, preferred_end.max(start.saturating_add(1)))
+        };
+
+        chunks.push(ChunkSlice { index, start, end });
+        index += 1;
+
+        if end >= content.len() {
+            break;
+        }
+
+        let preferred_start = previous_char_boundary(content, end.saturating_sub(CHUNK_OVERLAP_BYTES));
+        let next_start = next_char_boundary(
+            content,
+            snap_chunk_start(content, preferred_start, end)
+                .max(start.saturating_add(1)),
+        );
+        if next_start <= start || next_start >= end {
+            start = end;
+        } else {
+            start = next_start;
+        }
+    }
+
+    chunks
+}
+
+fn is_large_parent(parent_len: usize) -> bool {
+    parent_len > CHUNK_PARENT_THRESHOLD_BYTES
+}
+
+fn phase_one_size_penalty(parent_len: usize) -> f64 {
+    match parent_len {
+        0..=CHUNK_PARENT_THRESHOLD_BYTES => 0.0,
+        ..=1_048_576 => 16.0,
+        _ => 32.0,
+    }
+}
+
+fn should_stop_phase_one_recall(
+    candidates: &[SearchCandidate],
+    last_raw_score: Option<f32>,
+) -> bool {
+    if candidates.len() < PHASE_TWO_TOTAL_HEAD_LIMIT {
+        return false;
+    }
+
+    let regular_threshold = candidates
+        .iter()
+        .filter(|candidate| !is_large_parent(candidate.parent_len()))
+        .nth(PHASE_TWO_REGULAR_HEAD_LIMIT.saturating_sub(1))
+        .map(|candidate| candidate.tantivy_score);
+    let Some(regular_threshold) = regular_threshold else {
+        return false;
+    };
+
+    last_raw_score.is_some_and(|last_score| last_score < regular_threshold)
+}
+
+fn phase_two_head_indices(candidates: &[SearchCandidate]) -> Vec<usize> {
+    let mut regular = Vec::new();
+    let mut large = Vec::new();
+
+    for (index, candidate) in candidates.iter().enumerate() {
+        if is_large_parent(candidate.parent_len()) {
+            large.push(index);
+        } else {
+            regular.push(index);
+        }
+    }
+
+    let mut head = Vec::new();
+    head.extend(
+        regular
+            .iter()
+            .copied()
+            .take(PHASE_TWO_REGULAR_HEAD_LIMIT),
+    );
+
+    if regular.len() >= PHASE_TWO_REGULAR_HEAD_LIMIT {
+        let threshold = candidates[regular[PHASE_TWO_REGULAR_HEAD_LIMIT - 1]].tantivy_score;
+        head.extend(
+            large
+                .iter()
+                .copied()
+                .filter(|&index| candidates[index].tantivy_score >= threshold)
+                .take(PHASE_TWO_LARGE_HEAD_LIMIT),
+        );
+    } else {
+        head.extend(
+            large
+                .iter()
+                .copied()
+                .take(PHASE_TWO_TOTAL_HEAD_LIMIT.saturating_sub(head.len())),
+        );
+    }
+
+    head
+}
+
 #[cfg(not(feature = "perf-log"))]
 fn score_phase_two_candidate(
     candidate: &SearchCandidate,
@@ -289,10 +532,14 @@ pub struct Indexer {
     index: Index,
     writer: RwLock<IndexWriter>,
     reader: RwLock<IndexReader>,
-    schema: Schema,
-    id_field: Field,
+    item_id_field: Field,
     content_field: Field,
     content_words_field: Field,
+    timestamp_field: Field,
+    parent_len_field: Field,
+    chunk_index_field: Field,
+    chunk_start_field: Field,
+    chunk_end_field: Field,
 }
 
 #[cfg(test)]
@@ -309,6 +556,7 @@ pub(crate) mod test_support {
 
     static HOOKS: Lazy<Mutex<SearchTestHooks>> =
         Lazy::new(|| Mutex::new(SearchTestHooks::default()));
+    pub(crate) static HOOK_TEST_LOCK: Lazy<Mutex<()>> = Lazy::new(|| Mutex::new(()));
 
     pub(crate) struct SearchTestHookGuard;
 
@@ -411,10 +659,14 @@ impl Indexer {
 
     fn from_parts(index: Index, writer: IndexWriter, reader: IndexReader, schema: Schema) -> Self {
         Self {
-            id_field: schema.get_field("id").unwrap(),
+            item_id_field: schema.get_field("item_id").unwrap(),
             content_field: schema.get_field("content").unwrap(),
             content_words_field: schema.get_field("content_words").unwrap(),
-            schema,
+            timestamp_field: schema.get_field("timestamp").unwrap(),
+            parent_len_field: schema.get_field("parent_len").unwrap(),
+            chunk_index_field: schema.get_field("chunk_index").unwrap(),
+            chunk_start_field: schema.get_field("chunk_start").unwrap(),
+            chunk_end_field: schema.get_field("chunk_end").unwrap(),
             index,
             writer: RwLock::new(writer),
             reader: RwLock::new(reader),
@@ -423,7 +675,7 @@ impl Indexer {
 
     fn build_schema() -> Schema {
         let mut builder = Schema::builder();
-        builder.add_i64_field("id", STORED | FAST | INDEXED);
+        builder.add_i64_field("item_id", STORED | FAST | INDEXED);
 
         // Content field with trigram tokenization
         let text_field_indexing = TextFieldIndexing::default()
@@ -443,6 +695,10 @@ impl Indexer {
         builder.add_text_field("content_words", word_options);
 
         builder.add_i64_field("timestamp", STORED | FAST);
+        builder.add_i64_field("parent_len", STORED | FAST);
+        builder.add_i64_field("chunk_index", STORED);
+        builder.add_i64_field("chunk_start", STORED);
+        builder.add_i64_field("chunk_end", STORED);
         builder.build()
     }
 
@@ -457,22 +713,60 @@ impl Indexer {
         index.tokenizers().register("trigram", tokenizer);
     }
 
+    fn add_search_unit_document(
+        &self,
+        writer: &IndexWriter,
+        item_id: i64,
+        content: &str,
+        timestamp: i64,
+        parent_len: usize,
+        chunk: Option<ChunkSlice>,
+    ) -> IndexerResult<()> {
+        let mut doc = tantivy::TantivyDocument::default();
+        doc.add_i64(self.item_id_field, item_id);
+        doc.add_text(self.content_field, content);
+        doc.add_text(self.content_words_field, content);
+        doc.add_i64(self.timestamp_field, timestamp);
+        doc.add_i64(self.parent_len_field, parent_len as i64);
+        doc.add_i64(
+            self.chunk_index_field,
+            chunk.map(|chunk| chunk.index as i64).unwrap_or(-1),
+        );
+        doc.add_i64(
+            self.chunk_start_field,
+            chunk.map(|chunk| chunk.start as i64).unwrap_or(0),
+        );
+        doc.add_i64(
+            self.chunk_end_field,
+            chunk.map(|chunk| chunk.end as i64).unwrap_or(parent_len as i64),
+        );
+        writer.add_document(doc)?;
+        Ok(())
+    }
+
     /// Add or update a document in the index
     pub fn add_document(&self, id: i64, content: &str, timestamp: i64) -> IndexerResult<()> {
         let writer = self.writer.read();
+        let parent_len = content.len();
 
         // Delete existing document with same ID (upsert semantics)
-        let id_term = tantivy::Term::from_field_i64(self.id_field, id);
+        let id_term = tantivy::Term::from_field_i64(self.item_id_field, id);
         writer.delete_term(id_term);
 
-        // Add new document
-        let mut doc = tantivy::TantivyDocument::default();
-        doc.add_i64(self.id_field, id);
-        doc.add_text(self.content_field, content);
-        doc.add_text(self.content_words_field, content);
-        doc.add_i64(self.schema.get_field("timestamp").unwrap(), timestamp);
-
-        writer.add_document(doc)?;
+        if parent_len > CHUNK_PARENT_THRESHOLD_BYTES {
+            for chunk in chunk_slices(content) {
+                self.add_search_unit_document(
+                    &writer,
+                    id,
+                    &content[chunk.start..chunk.end],
+                    timestamp,
+                    parent_len,
+                    Some(chunk),
+                )?;
+            }
+        } else {
+            self.add_search_unit_document(&writer, id, content, timestamp, parent_len, None)?;
+        }
 
         Ok(())
     }
@@ -485,7 +779,7 @@ impl Indexer {
 
     pub fn delete_document(&self, id: i64) -> IndexerResult<()> {
         let writer = self.writer.read();
-        let id_term = tantivy::Term::from_field_i64(self.id_field, id);
+        let id_term = tantivy::Term::from_field_i64(self.item_id_field, id);
         writer.delete_term(id_term);
         Ok(())
     }
@@ -590,6 +884,12 @@ impl Indexer {
                 .map(OwnedPrefixPreferenceQuery::as_borrowed),
         };
         let now = Utc::now().timestamp();
+        let head_indices = phase_two_head_indices(&candidates);
+        let head_candidates: Vec<(usize, SearchCandidate)> = head_indices
+            .iter()
+            .copied()
+            .map(|index| (index, candidates[index].clone()))
+            .collect();
 
         use rayon::prelude::*;
         // Process candidates in chunks to allow periodic cancellation checks.
@@ -600,25 +900,27 @@ impl Indexer {
             let chunk_results: Vec<(
                 Vec<(crate::ranking::BucketScore, usize)>,
                 PhaseTwoPerfTotals,
-            )> = candidates
+            )> = head_candidates
                 .par_chunks(CANCELLATION_CHECK_CHUNK_SIZE)
                 .enumerate()
-                .map(|(chunk_index, chunk)| {
+                .map(|(_chunk_index, chunk)| {
                     let mut chunk_scored = Vec::with_capacity(chunk.len());
                     let mut chunk_perf = PhaseTwoPerfTotals::default();
-                    for (offset, candidate) in chunk.iter().enumerate() {
+                    for (_offset, candidate) in chunk.iter().enumerate() {
                         if token.is_cancelled() {
                             break;
                         }
-                        let global_index = chunk_index * CANCELLATION_CHECK_CHUNK_SIZE + offset;
+                        #[cfg(test)]
+                        let global_index =
+                            _chunk_index * CANCELLATION_CHECK_CHUNK_SIZE + _offset;
                         #[cfg(test)]
                         test_support::on_phase_two_candidate(global_index);
                         let (bucket, perf) =
-                            score_phase_two_candidate(candidate, phase_two_query, now);
+                            score_phase_two_candidate(&candidate.1, phase_two_query, now);
                         let matched = bucket.is_some();
                         chunk_perf.record(perf, matched);
                         if let Some(bucket) = bucket {
-                            chunk_scored.push((bucket, global_index));
+                            chunk_scored.push((bucket, candidate.0));
                         }
                     }
                     (chunk_scored, chunk_perf)
@@ -634,21 +936,23 @@ impl Indexer {
             (scored, totals)
         };
         #[cfg(not(feature = "perf-log"))]
-        let mut scored: Vec<(crate::ranking::BucketScore, usize)> = candidates
+        let mut scored: Vec<(crate::ranking::BucketScore, usize)> = head_candidates
             .par_chunks(CANCELLATION_CHECK_CHUNK_SIZE)
             .enumerate()
-            .map(|(chunk_index, chunk)| {
+            .map(|(_chunk_index, chunk)| {
                 let mut chunk_scored = Vec::with_capacity(chunk.len());
-                for (offset, candidate) in chunk.iter().enumerate() {
+                for (_offset, candidate) in chunk.iter().enumerate() {
                     if token.is_cancelled() {
                         break;
                     }
-                    let global_index = chunk_index * CANCELLATION_CHECK_CHUNK_SIZE + offset;
+                    #[cfg(test)]
+                    let global_index = _chunk_index * CANCELLATION_CHECK_CHUNK_SIZE + _offset;
                     #[cfg(test)]
                     test_support::on_phase_two_candidate(global_index);
-                    if let Some(bucket) = score_phase_two_candidate(candidate, phase_two_query, now)
+                    if let Some(bucket) =
+                        score_phase_two_candidate(&candidate.1, phase_two_query, now)
                     {
-                        chunk_scored.push((bucket, global_index));
+                        chunk_scored.push((bucket, candidate.0));
                     }
                 }
                 chunk_scored
@@ -663,7 +967,7 @@ impl Indexer {
         }
 
         scored.sort_unstable_by(|a, b| b.0.cmp(&a.0));
-        scored.truncate(limit);
+        let scored_indices: HashSet<usize> = scored.iter().map(|(_, index)| *index).collect();
 
         #[cfg(feature = "perf-log")]
         {
@@ -698,19 +1002,83 @@ impl Indexer {
 
         let mut candidate_slots: Vec<Option<SearchCandidate>> =
             candidates.into_iter().map(Some).collect();
+        let mut ordered = Vec::new();
+        ordered.extend(
+            scored
+                .into_iter()
+                .filter_map(|(_, index)| candidate_slots[index].take()),
+        );
+        ordered.extend(
+            candidate_slots
+                .into_iter()
+                .enumerate()
+                .filter(|(index, _)| !scored_indices.contains(index))
+                .filter_map(|(_, candidate)| candidate),
+        );
+        ordered.truncate(limit);
 
-        Ok(scored
-            .into_iter()
-            .filter_map(|(_, i)| candidate_slots[i].take())
-            .collect())
+        Ok(ordered)
     }
 
-    /// Phase 1: Trigram recall using Tantivy BM25.
+    fn candidate_from_doc(
+        &self,
+        doc: &tantivy::TantivyDocument,
+        blended_score: f32,
+    ) -> SearchCandidate {
+        let item_id = doc
+            .get_first(self.item_id_field)
+            .and_then(|value| value.as_i64())
+            .unwrap_or(0);
+        let timestamp = doc
+            .get_first(self.timestamp_field)
+            .and_then(|value| value.as_i64())
+            .unwrap_or(0);
+        let parent_len = doc
+            .get_first(self.parent_len_field)
+            .and_then(|value| value.as_i64())
+            .unwrap_or(0)
+            .max(0) as usize;
+        let content: std::sync::Arc<str> = doc
+            .get_first(self.content_field)
+            .and_then(|value| value.as_str())
+            .unwrap_or("")
+            .to_string()
+            .into();
+        let chunk_index = doc
+            .get_first(self.chunk_index_field)
+            .and_then(|value| value.as_i64())
+            .unwrap_or(-1);
+
+        let match_context = if chunk_index >= 0 {
+            let chunk_start = doc
+                .get_first(self.chunk_start_field)
+                .and_then(|value| value.as_i64())
+                .unwrap_or(0)
+                .max(0) as usize;
+            let chunk_end = doc
+                .get_first(self.chunk_end_field)
+                .and_then(|value| value.as_i64())
+                .unwrap_or(parent_len as i64)
+                .max(0) as usize;
+            SearchMatchContext::Chunk(ChunkMatchContext::new(
+                content,
+                parent_len,
+                chunk_index as u32,
+                chunk_start,
+                chunk_end,
+            ))
+        } else {
+            SearchMatchContext::WholeItem(WholeItemMatchContext::new(content, parent_len))
+        };
+
+        SearchCandidate::new(item_id, timestamp, blended_score, match_context)
+    }
+
+    /// Phase 1: Trigram recall using Tantivy BM25 over whole items and chunks.
     ///
-    /// Builds an OR query from trigram terms with a min_match threshold.
-    /// For long queries (4+ words), only per-word trigrams are used (skipping
-    /// cross-word boundary trigrams) to reduce posting list evaluations.
-    fn trigram_recall(&self, query: &str, limit: usize) -> IndexerResult<Vec<SearchCandidate>> {
+    /// Retrieves unit hits in increasing batches, then collapses them to one
+    /// candidate per parent item before Phase 2.
+    fn trigram_recall(&self, query: &str, _limit: usize) -> IndexerResult<Vec<SearchCandidate>> {
         let reader = self.reader.read();
         let searcher = reader.searcher();
 
@@ -722,83 +1090,86 @@ impl Indexer {
         }
 
         let final_query = self.build_trigram_query(query);
-
-        // Use tweak_score to blend BM25 with recency at collection time.
-        let timestamp_field = self.schema.get_field("timestamp").unwrap();
         let now = Utc::now().timestamp();
-
-        let top_collector = TopDocs::with_limit(limit).tweak_score(
-            move |segment_reader: &tantivy::SegmentReader| {
-                let ts_reader = segment_reader
+        let mut collapsed = Vec::new();
+        let segment_item_id_readers: Vec<_> = searcher
+            .segment_readers()
+            .iter()
+            .map(|segment_reader| {
+                segment_reader
                     .fast_fields()
-                    .i64("timestamp")
-                    .expect("timestamp fast field");
-                move |doc: DocId, score: Score| {
-                    let timestamp = ts_reader.first(doc).unwrap_or(0);
-                    let base = (score as f64).max(0.001);
-                    let age_secs = (now - timestamp).max(0) as f64;
+                    .i64("item_id")
+                    .expect("item_id fast field")
+            })
+            .collect();
 
-                    // Decode proximity tier from score bands.
-                    // PROXIMITY_BOOST_SCALE (1000) creates distinct bands when PhraseQuery matches.
-                    let proximity_tier = (base / PROXIMITY_BOOST_SCALE as f64).floor();
-                    let base_remainder = base - (proximity_tier * PROXIMITY_BOOST_SCALE as f64);
+        for raw_limit in RAW_RECALL_BATCHES {
+            let top_collector = TopDocs::with_limit(raw_limit).tweak_score(
+                move |segment_reader: &tantivy::SegmentReader| {
+                    let ts_reader = segment_reader
+                        .fast_fields()
+                        .i64("timestamp")
+                        .expect("timestamp fast field");
+                    let parent_len_reader = segment_reader
+                        .fast_fields()
+                        .i64("parent_len")
+                        .expect("parent_len fast field");
+                    move |doc: DocId, score: Score| {
+                        let timestamp = ts_reader.first(doc).unwrap_or(0);
+                        let parent_len = parent_len_reader.first(doc).unwrap_or(0).max(0) as usize;
+                        let base = (score as f64).max(0.001);
+                        let age_secs = (now - timestamp).max(0) as f64;
 
-                    // Compute recency score (0-255 scale).
-                    // Formula: score = 255 * (1 - ln(1 + k*age_hours) / ln(1 + k*max_hours))
-                    let k: f64 = 20.0;
-                    let max_hours: f64 = 400.0;
-                    let age_hours = age_secs / 3600.0;
-                    let denom = (1.0 + k * max_hours).ln();
-                    let recency_score = 255.0 * (1.0 - (1.0 + k * age_hours).ln() / denom);
-                    let recency_score = recency_score.max(0.0);
+                        let proximity_tier = (base / PROXIMITY_BOOST_SCALE as f64).floor();
+                        let base_remainder = base - (proximity_tier * PROXIMITY_BOOST_SCALE as f64);
+                        let adjusted_remainder = if proximity_tier == 0.0 {
+                            (base_remainder - phase_one_size_penalty(parent_len)).max(0.0)
+                        } else {
+                            base_remainder
+                        };
 
-                    // Soft-lexicographic scoring with exponentially spaced weights.
-                    // Higher tiers dominate, but large lower-tier differences can
-                    // overcome small upper-tier differences.
-                    //
-                    // Weight ratio = 10x between tiers means:
-                    // - 2-point recency diff (200) beats 15-point proximity diff (150)
-                    // - 1-point recency diff (100) loses to 15-point proximity diff (150)
-                    //
-                    // Tiers (high to low):
-                    // 1. recency_score (0-255) * 10.0 = 0-2550
-                    // 2. proximity_tier (0-1) * 100.0 = 0-100  (proximity match = +100)
-                    // 3. base_remainder (BM25) * 1.0 = typically 0-50
-                    recency_score * 10.0 + proximity_tier * 100.0 + base_remainder
+                        let k: f64 = 20.0;
+                        let max_hours: f64 = 400.0;
+                        let age_hours = age_secs / 3600.0;
+                        let denom = (1.0 + k * max_hours).ln();
+                        let recency_score = 255.0 * (1.0 - (1.0 + k * age_hours).ln() / denom);
+                        let recency_score = recency_score.max(0.0);
+
+                        recency_score * 10.0 + proximity_tier * 100.0 + adjusted_remainder
+                    }
+                },
+            );
+
+            let top_docs = searcher.search(final_query.as_ref(), &top_collector)?;
+            let last_raw_score = top_docs.last().map(|(score, _)| *score as f32);
+            let top_doc_count = top_docs.len();
+            let mut seen_items = HashSet::new();
+            let mut selected_docs = Vec::with_capacity(top_doc_count);
+
+            for (blended_score, doc_address) in top_docs {
+                let item_id = segment_item_id_readers[doc_address.segment_ord as usize]
+                    .first(doc_address.doc_id)
+                    .unwrap_or(0);
+                if !seen_items.insert(item_id) {
+                    continue;
                 }
-            },
-        );
+                selected_docs.push((blended_score as f32, doc_address));
+            }
 
-        let top_docs = searcher.search(final_query.as_ref(), &top_collector)?;
+            let mut batch_collapsed = Vec::with_capacity(selected_docs.len());
+            for (blended_score, doc_address) in selected_docs {
+                let doc: tantivy::TantivyDocument = searcher.doc(doc_address)?;
+                batch_collapsed.push(self.candidate_from_doc(&doc, blended_score));
+            }
 
-        let mut candidates = Vec::with_capacity(top_docs.len());
-        for (blended_score, doc_address) in top_docs {
-            let doc: tantivy::TantivyDocument = searcher.doc(doc_address)?;
-            let id = doc
-                .get_first(self.id_field)
-                .and_then(|v| v.as_i64())
-                .unwrap_or(0);
-
-            let content = doc
-                .get_first(self.content_field)
-                .and_then(|v| v.as_str())
-                .unwrap_or("")
-                .to_string();
-
-            let timestamp = doc
-                .get_first(timestamp_field)
-                .and_then(|v| v.as_i64())
-                .unwrap_or(0);
-
-            candidates.push(SearchCandidate::new(
-                id,
-                content,
-                timestamp,
-                blended_score as f32,
-            ));
+            collapsed = batch_collapsed;
+            if top_doc_count < raw_limit || should_stop_phase_one_recall(&collapsed, last_raw_score)
+            {
+                break;
+            }
         }
 
-        Ok(candidates)
+        Ok(collapsed)
     }
 
     /// Build FuzzyTermQuery clauses on the word-tokenized field.
@@ -1058,6 +1429,33 @@ impl Indexer {
 mod tests {
     use super::*;
 
+    fn whole_candidate(id: i64, score: f32) -> SearchCandidate {
+        SearchCandidate::new(
+            id,
+            0,
+            score,
+            SearchMatchContext::WholeItem(WholeItemMatchContext::new(
+                std::sync::Arc::<str>::from("small match"),
+                64,
+            )),
+        )
+    }
+
+    fn chunk_candidate(id: i64, score: f32, parent_len: usize) -> SearchCandidate {
+        SearchCandidate::new(
+            id,
+            0,
+            score,
+            SearchMatchContext::Chunk(ChunkMatchContext::new(
+                std::sync::Arc::<str>::from("chunk match"),
+                parent_len,
+                0,
+                0,
+                11,
+            )),
+        )
+    }
+
     #[test]
     fn test_phrase_query_works_with_position_fix() {
         let indexer = Indexer::new_in_memory().unwrap();
@@ -1286,5 +1684,80 @@ mod tests {
             ids
         );
         assert!(!ids.contains(&2));
+    }
+
+    #[test]
+    fn test_chunked_parent_collapses_to_single_candidate() {
+        let indexer = Indexer::new_in_memory().unwrap();
+        let repeated_marker = "needlechunk ";
+        let content = repeated_marker
+            .repeat((CHUNK_PARENT_THRESHOLD_BYTES / repeated_marker.len()) + 4096);
+        indexer.add_document(1, &content, 1000).unwrap();
+        indexer.commit().unwrap();
+
+        let results = indexer.search("needlechunk", 20).unwrap();
+        let ids: Vec<i64> = results.iter().map(|candidate| candidate.id).collect();
+        assert_eq!(ids, vec![1], "chunk matches should collapse to one parent");
+        assert!(matches!(
+            results[0].match_context(),
+            SearchMatchContext::Chunk(_)
+        ));
+    }
+
+    #[test]
+    fn test_chunk_slices_preserve_utf8_boundaries() {
+        let multibyte = "\u{E0061}";
+        let content = format!(
+            "{}needle {}",
+            format!("word{multibyte} ").repeat((CHUNK_PARENT_THRESHOLD_BYTES / 10) + 4096),
+            multibyte
+        );
+
+        let slices = chunk_slices(&content);
+        assert!(!slices.is_empty());
+        for slice in slices {
+            assert!(content.is_char_boundary(slice.start));
+            assert!(content.is_char_boundary(slice.end));
+            assert!(slice.start < slice.end);
+        }
+    }
+
+    #[test]
+    fn test_large_parent_stays_out_of_bounded_phase_two_head() {
+        let mut candidates: Vec<SearchCandidate> = (0..70)
+            .map(|i| whole_candidate(i, 1_000.0 - i as f32))
+            .collect();
+        candidates.push(chunk_candidate(
+            999,
+            900.0,
+            CHUNK_PARENT_THRESHOLD_BYTES + 1,
+        ));
+
+        let head = phase_two_head_indices(&candidates);
+        assert_eq!(head.len(), PHASE_TWO_REGULAR_HEAD_LIMIT);
+        assert!(
+            head.iter().all(|&index| candidates[index].id != 999),
+            "large parent should stay out of the bounded phase-two head when regular matches fill it"
+        );
+        assert!(
+            head.iter()
+                .all(|&index| !is_large_parent(candidates[index].parent_len()))
+        );
+    }
+
+    #[test]
+    fn test_large_parents_backfill_phase_two_when_regular_matches_are_sparse() {
+        let candidates = vec![
+            whole_candidate(1, 1_000.0),
+            whole_candidate(2, 999.0),
+            chunk_candidate(100, 998.0, CHUNK_PARENT_THRESHOLD_BYTES + 1),
+            chunk_candidate(101, 997.0, CHUNK_PARENT_THRESHOLD_BYTES + 1),
+            chunk_candidate(102, 996.0, CHUNK_PARENT_THRESHOLD_BYTES + 1),
+        ];
+
+        let head = phase_two_head_indices(&candidates);
+        let head_ids: Vec<i64> = head.iter().map(|&index| candidates[index].id).collect();
+        assert_eq!(head_ids.len(), 5);
+        assert_eq!(head_ids, vec![1, 2, 100, 101, 102]);
     }
 }

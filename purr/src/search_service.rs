@@ -1,7 +1,8 @@
-use crate::database::Database;
+use crate::candidate::SearchMatchContext;
+use crate::database::{Database, SearchItemMetadata};
 use crate::indexer::Indexer;
 use crate::interface::{
-    ClipKittyError, ClipboardItem, ContentTypeFilter, ItemMatch, ItemQueryFilter, ItemTag,
+    ClipKittyError, ClipboardItem, ContentTypeFilter, ItemMatch, ItemMetadata, ItemQueryFilter, ItemTag,
     PreviewPayload, RowDecoration, RowDecorationResult, SearchResult,
 };
 use crate::models::StoredItem;
@@ -72,11 +73,11 @@ pub(crate) mod test_support {
 }
 
 /// Number of results to eagerly compute row decoration for (the rest are lazy).
-const EAGER_MATCH_DATA_COUNT: usize = 25;
+const EAGER_MATCH_DATA_COUNT: usize = 1;
 /// Content length threshold for "short" items that get eager row decoration.
 const SHORT_CONTENT_THRESHOLD: usize = 1024;
 /// Skip eager short-item decoration when results exceed this count.
-const EAGER_SHORT_RESULT_LIMIT: usize = 200;
+const EAGER_SHORT_RESULT_LIMIT: usize = 0;
 const SHORT_QUERY_MAX_RESULTS: usize = 50;
 const SHORT_QUERY_RECENT_WINDOW: usize = 5000;
 const SHORT_QUERY_CONTENT_CAP: usize = 512;
@@ -89,10 +90,115 @@ struct CachedHighlightAnalysis {
     analysis: Arc<search::HighlightAnalysis>,
 }
 
+#[derive(Clone)]
+enum CachedMatchContext {
+    WholeContent {
+        parent_content_hash: String,
+        content: Arc<str>,
+        analysis: Option<Arc<search::HighlightAnalysis>>,
+    },
+    ChunkRegion {
+        parent_content_hash: String,
+        chunk_content: Arc<str>,
+        chunk_start: usize,
+        chunk_end: usize,
+        analysis: Option<Arc<search::HighlightAnalysis>>,
+    },
+}
+
+impl CachedMatchContext {
+    fn from_search_match_context(
+        parent_content_hash: String,
+        match_context: &SearchMatchContext,
+    ) -> Self {
+        match match_context {
+            SearchMatchContext::WholeItem(ctx) => Self::WholeContent {
+                parent_content_hash,
+                content: Arc::from(ctx.content()),
+                analysis: None,
+            },
+            SearchMatchContext::Chunk(ctx) => Self::ChunkRegion {
+                parent_content_hash,
+                chunk_content: Arc::from(ctx.content()),
+                chunk_start: ctx.chunk_start(),
+                chunk_end: ctx.chunk_end(),
+                analysis: None,
+            },
+        }
+    }
+
+    fn content(&self) -> &str {
+        match self {
+            Self::WholeContent { content, .. } => content,
+            Self::ChunkRegion { chunk_content, .. } => chunk_content,
+        }
+    }
+
+    fn analysis(&self) -> Option<Arc<search::HighlightAnalysis>> {
+        match self {
+            Self::WholeContent { analysis, .. } | Self::ChunkRegion { analysis, .. } => {
+                analysis.clone()
+            }
+        }
+    }
+
+    fn set_analysis(&mut self, analysis: Arc<search::HighlightAnalysis>) {
+        match self {
+            Self::WholeContent {
+                analysis: slot, ..
+            }
+            | Self::ChunkRegion {
+                analysis: slot, ..
+            } => *slot = Some(analysis),
+        }
+    }
+
+    fn matches_parent_hash(&self, parent_content_hash: &str) -> bool {
+        match self {
+            Self::WholeContent {
+                parent_content_hash: cached,
+                ..
+            }
+            | Self::ChunkRegion {
+                parent_content_hash: cached,
+                ..
+            } => cached == parent_content_hash,
+        }
+    }
+
+    fn preview_decoration(
+        &self,
+        full_content: &str,
+        analysis: &search::HighlightAnalysis,
+    ) -> Option<crate::interface::PreviewDecoration> {
+        match self {
+            Self::WholeContent { .. } => Some(search::create_preview_decoration(full_content, analysis)),
+            Self::ChunkRegion {
+                chunk_start,
+                chunk_end,
+                ..
+            } if *chunk_start <= *chunk_end
+                && *chunk_end <= full_content.len()
+                && full_content.is_char_boundary(*chunk_start)
+                && full_content.is_char_boundary(*chunk_end) =>
+            {
+                let char_offset = full_content[..*chunk_start].chars().count();
+                Some(search::create_preview_decoration_with_char_offset(
+                    full_content,
+                    analysis,
+                    char_offset,
+                ))
+            }
+            _ => None,
+        }
+    }
+}
+
 #[derive(Default)]
 struct HighlightAnalysisCacheState {
     query_order: VecDeque<String>,
     entries_by_query: HashMap<String, HashMap<i64, CachedHighlightAnalysis>>,
+    match_contexts_by_query: HashMap<String, HashMap<i64, CachedMatchContext>>,
 }
 
 #[derive(Default)]
@@ -123,6 +229,7 @@ impl HighlightAnalysisCache {
         while state.query_order.len() > MAX_CACHED_QUERIES {
             if let Some(oldest) = state.query_order.pop_front() {
                 state.entries_by_query.remove(&oldest);
+                state.match_contexts_by_query.remove(&oldest);
             }
         }
     }
@@ -172,6 +279,60 @@ impl HighlightAnalysisCache {
                 analysis,
             },
         );
+    }
+
+    fn get_match_context(&self, query: &str, item_id: i64) -> Option<CachedMatchContext> {
+        let query_key = Self::normalized_query(query)?;
+        let mut state = self.state.lock();
+        let cached = state
+            .match_contexts_by_query
+            .get(&query_key)
+            .and_then(|entries| entries.get(&item_id).cloned());
+        if cached.is_some() {
+            Self::touch_query(&mut state, &query_key);
+        }
+        cached
+    }
+
+    fn insert_match_context(
+        &self,
+        query: &str,
+        item_id: i64,
+        parent_content_hash: String,
+        match_context: &SearchMatchContext,
+    ) {
+        let Some(query_key) = Self::normalized_query(query) else {
+            return;
+        };
+        let mut state = self.state.lock();
+        Self::touch_query(&mut state, &query_key);
+        let entries = state.match_contexts_by_query.entry(query_key).or_default();
+        if !entries.contains_key(&item_id) && entries.len() >= MAX_CACHED_ITEMS_PER_QUERY {
+            return;
+        }
+        entries.insert(
+            item_id,
+            CachedMatchContext::from_search_match_context(parent_content_hash, match_context),
+        );
+    }
+
+    fn set_match_context_analysis(
+        &self,
+        query: &str,
+        item_id: i64,
+        analysis: Arc<search::HighlightAnalysis>,
+    ) {
+        let Some(query_key) = Self::normalized_query(query) else {
+            return;
+        };
+        let mut state = self.state.lock();
+        let Some(entries) = state.match_contexts_by_query.get_mut(&query_key) else {
+            return;
+        };
+        if let Some(entry) = entries.get_mut(&item_id) {
+            entry.set_analysis(analysis);
+            Self::touch_query(&mut state, &query_key);
+        }
     }
 }
 
@@ -256,7 +417,25 @@ pub(crate) fn compute_row_decorations(
         return Ok(Vec::new());
     }
 
-    let items = db.fetch_items_by_ids(&item_ids)?;
+    let metadata_rows = db.fetch_search_item_metadata_by_ids(&item_ids)?;
+    let metadata_map: HashMap<i64, SearchItemMetadata> = metadata_rows
+        .into_iter()
+        .map(|metadata| (metadata.item_metadata.item_id, metadata))
+        .collect();
+    let missing_ids: Vec<i64> = item_ids
+        .iter()
+        .copied()
+        .filter(|id| {
+            let Some(metadata) = metadata_map.get(id) else {
+                return true;
+            };
+            match cache.get_match_context(&query, *id) {
+                Some(context) => !context.matches_parent_hash(&metadata.content_hash),
+                None => true,
+            }
+        })
+        .collect();
+    let items = db.fetch_items_by_ids(&missing_ids)?;
     let item_map: HashMap<i64, StoredItem> = items
         .into_iter()
         .filter_map(|item| item.id.map(|id| (id, item)))
@@ -266,10 +445,19 @@ pub(crate) fn compute_row_decorations(
     let results: Vec<RowDecorationResult> = item_ids
         .par_iter()
         .map(|id| {
-            let decoration = item_map.get(id).map(|item| {
-                let content = item.content.text_content();
-                row_decoration_for_item(cache, *id, content, &query)
+            let cached_context = metadata_map.get(id).and_then(|metadata| {
+                cache
+                    .get_match_context(&query, *id)
+                    .filter(|context| context.matches_parent_hash(&metadata.content_hash))
             });
+            let decoration = if cached_context.is_some() {
+                Some(row_decoration_for_cached_match(cache, *id, &query))
+            } else {
+                item_map.get(id).map(|item| {
+                    let content = item.content.text_content();
+                    row_decoration_for_item(cache, *id, content, &query)
+                })
+            };
             RowDecorationResult {
                 item_id: *id,
                 decoration,
@@ -289,9 +477,9 @@ pub(crate) fn load_preview_payload(
     let Some(item) = db.fetch_items_by_ids(&[item_id])?.into_iter().next() else {
         return Ok(None);
     };
-    let mut item = item.to_clipboard_item();
-    hydrate_clipboard_item_tags(db, &mut item)?;
-    Ok(Some(preview_payload_from_item(cache, item_id, item, &query)))
+    Ok(Some(preview_payload_from_stored_item(
+        cache, db, item_id, item, &query, true,
+    )?))
 }
 
 pub(crate) fn search_short_query_sync(
@@ -375,6 +563,34 @@ pub(crate) fn search_short_query_sync(
     Ok(results)
 }
 
+fn metadata_matches_filter(
+    metadata: &SearchItemMetadata,
+    filter: Option<&ContentTypeFilter>,
+) -> bool {
+    match filter {
+        Some(filter) => filter.matches_db_type(&metadata.db_type),
+        None => true,
+    }
+}
+
+fn apply_match_context_snippet(
+    cache: &HighlightAnalysisCache,
+    item_id: i64,
+    query: &str,
+    item_metadata: &mut ItemMetadata,
+    match_context: &SearchMatchContext,
+) {
+    if matches!(match_context, SearchMatchContext::Chunk(_)) {
+        item_metadata.snippet = analysis_for_cached_match_context(cache, item_id, query)
+            .map(|(context, analysis)| {
+                search::create_row_decoration(context.content(), &analysis.highlights).text
+            })
+            .unwrap_or_else(|| {
+                search::generate_preview(match_context.content(), search::SNIPPET_CONTEXT_CHARS * 2)
+            });
+    }
+}
+
 pub(crate) fn search_trigram_query_sync(
     db: &Database,
     indexer: &Indexer,
@@ -389,13 +605,14 @@ pub(crate) fn search_trigram_query_sync(
         return Err(ClipKittyError::Cancelled);
     }
 
-    let fuzzy_matches = search::search_trigram_lazy(indexer, query, token)?;
-    if fuzzy_matches.is_empty() {
+    let candidates = search::search_trigram_lazy(indexer, query, token)?;
+    if candidates.is_empty() {
         return Ok(Vec::new());
     }
+    let _ = runtime;
 
-    let ids: Vec<i64> = fuzzy_matches.iter().map(|m| m.id).collect();
-    let stored_items = db.fetch_items_by_ids_interruptible(&ids, token, runtime)?;
+    let ids: Vec<i64> = candidates.iter().map(|candidate| candidate.id).collect();
+    let metadata_rows = db.fetch_search_item_metadata_by_ids(&ids)?;
     if token.is_cancelled() {
         return Err(ClipKittyError::Cancelled);
     }
@@ -406,54 +623,66 @@ pub(crate) fn search_trigram_query_sync(
         None
     };
 
-    let item_map: HashMap<i64, StoredItem> = stored_items
+    let metadata_map: HashMap<i64, SearchItemMetadata> = metadata_rows
         .into_iter()
-        .filter_map(|item| item.id.map(|id| (id, item)))
-        .filter(|(id, _)| match &tagged_ids {
-            Some(tagged_ids) => tagged_ids.contains(id),
+        .filter(|metadata| match &tagged_ids {
+            Some(tagged_ids) => tagged_ids.contains(&metadata.item_metadata.item_id),
             None => true,
         })
-        .filter(|(_, item)| match filter {
-            Some(filter) => filter.matches_db_type(item.content.database_type()),
-            None => true,
-        })
+        .filter(|metadata| metadata_matches_filter(metadata, filter))
+        .map(|metadata| (metadata.item_metadata.item_id, metadata))
         .collect();
 
-    let few_results = fuzzy_matches.len() <= EAGER_SHORT_RESULT_LIMIT;
+    let few_results = metadata_map.len() <= EAGER_SHORT_RESULT_LIMIT;
     #[cfg(test)]
     test_support::before_eager_matches();
-    let mut results = Vec::with_capacity(fuzzy_matches.len());
-    for (index, fuzzy_match) in fuzzy_matches.into_iter().enumerate() {
+    let mut results = Vec::with_capacity(metadata_map.len());
+    let mut eager_index = 0usize;
+    for candidate in candidates {
         if token.is_cancelled() {
             return Err(ClipKittyError::Cancelled);
         }
-        let Some(item) = item_map.get(&fuzzy_match.id) else {
+        let Some(metadata) = metadata_map.get(&candidate.id) else {
             continue;
         };
-        let content = item.content.text_content();
-        let is_short = content.len() <= SHORT_CONTENT_THRESHOLD;
-        let item_match = if index < EAGER_MATCH_DATA_COUNT || (is_short && few_results) {
+        cache.insert_match_context(
+            query.raw_text(),
+            candidate.id,
+            metadata.content_hash.clone(),
+            candidate.match_context(),
+        );
+
+        let mut item_metadata = metadata.item_metadata.clone();
+        apply_match_context_snippet(
+            cache,
+            candidate.id,
+            query.raw_text(),
+            &mut item_metadata,
+            candidate.match_context(),
+        );
+        let is_short = candidate.content().len() <= SHORT_CONTENT_THRESHOLD;
+        let item_match = if eager_index < EAGER_MATCH_DATA_COUNT || (is_short && few_results) {
             #[cfg(test)]
-            test_support::on_eager_match(index);
+            test_support::on_eager_match(eager_index);
             if token.is_cancelled() {
                 return Err(ClipKittyError::Cancelled);
             }
             ItemMatch {
-                item_metadata: item.to_metadata(),
-                row_decoration: Some(row_decoration_for_item(
+                item_metadata,
+                row_decoration: Some(row_decoration_for_cached_match(
                     cache,
-                    fuzzy_match.id,
-                    content,
+                    candidate.id,
                     query.raw_text(),
                 )),
             }
         } else {
-            search::create_lazy_item_match(item)
+            search::create_lazy_item_match_with_metadata(item_metadata)
         };
         if token.is_cancelled() {
             return Err(ClipKittyError::Cancelled);
         }
         results.push(item_match);
+        eager_index += 1;
     }
 
     Ok(results)
@@ -556,6 +785,12 @@ fn fetch_preview_payload(
     let Some(first_item_id) = first_item_id else {
         return Ok(None);
     };
+    if matches!(
+        cache.get_match_context(query, first_item_id),
+        Some(CachedMatchContext::ChunkRegion { .. })
+    ) {
+        return Ok(None);
+    }
     let item = db
         .fetch_items_by_ids_interruptible(&[first_item_id], token, runtime)?
         .into_iter()
@@ -563,14 +798,14 @@ fn fetch_preview_payload(
     let Some(item) = item else {
         return Ok(None);
     };
-    let mut item = item.to_clipboard_item();
-    hydrate_clipboard_item_tags(db, &mut item)?;
-    Ok(Some(preview_payload_from_item(
+    Ok(Some(preview_payload_from_stored_item(
         cache,
+        db,
         first_item_id,
         item,
         query,
-    )))
+        false,
+    )?))
 }
 
 fn split_filter(filter: ItemQueryFilter) -> (Option<ContentTypeFilter>, Option<ItemTag>) {
@@ -640,6 +875,42 @@ fn analysis_for_item(
     Some(analysis)
 }
 
+fn analysis_for_cached_match_context(
+    cache: &HighlightAnalysisCache,
+    item_id: i64,
+    query: &str,
+) -> Option<(CachedMatchContext, Arc<search::HighlightAnalysis>)> {
+    let context = cache.get_match_context(query, item_id)?;
+    if let Some(analysis) = context.analysis() {
+        #[cfg(test)]
+        test_support::on_analysis_cache_hit(item_id, query);
+        return Some((context, analysis));
+    }
+
+    let analysis = search::analyze_content_for_query(context.content(), query)?;
+    #[cfg(test)]
+    test_support::on_analysis_computed(item_id, query);
+    let analysis = Arc::new(analysis);
+    cache.set_match_context_analysis(query, item_id, Arc::clone(&analysis));
+    Some((cache.get_match_context(query, item_id).unwrap_or(context), analysis))
+}
+
+fn row_decoration_for_cached_match(
+    cache: &HighlightAnalysisCache,
+    item_id: i64,
+    query: &str,
+) -> RowDecoration {
+    if let Some((context, analysis)) = analysis_for_cached_match_context(cache, item_id, query) {
+        search::create_row_decoration(context.content(), &analysis.highlights)
+    } else {
+        RowDecoration {
+            text: String::new(),
+            highlights: Vec::new(),
+            line_number: 0,
+        }
+    }
+}
+
 fn row_decoration_for_item(
     cache: &HighlightAnalysisCache,
     item_id: i64,
@@ -653,14 +924,57 @@ fn row_decoration_for_item(
     }
 }
 
-fn preview_payload_from_item(
+fn preview_decoration_for_item(
     cache: &HighlightAnalysisCache,
     item_id: i64,
-    item: ClipboardItem,
+    item: &ClipboardItem,
     query: &str,
-) -> PreviewPayload {
-    let decoration = analysis_for_item(cache, item_id, item.content.text_content(), query)
-        .map(|analysis| search::create_preview_decoration(item.content.text_content(), &analysis));
+) -> Option<crate::interface::PreviewDecoration> {
+    analysis_for_item(cache, item_id, item.content.text_content(), query)
+        .map(|analysis| search::create_preview_decoration(item.content.text_content(), &analysis))
+}
 
-    PreviewPayload { item, decoration }
+fn preview_payload_from_stored_item(
+    cache: &HighlightAnalysisCache,
+    db: &Database,
+    item_id: i64,
+    stored_item: StoredItem,
+    query: &str,
+    allow_large_chunk_decoration: bool,
+) -> Result<PreviewPayload, ClipKittyError> {
+    let parent_content_hash = stored_item.content_hash.clone();
+    let mut item = stored_item.to_clipboard_item();
+    hydrate_clipboard_item_tags(db, &mut item)?;
+
+    let cached_match_context = cache
+        .get_match_context(query, item_id)
+        .filter(|context| context.matches_parent_hash(&parent_content_hash));
+    if !allow_large_chunk_decoration
+        && matches!(cached_match_context, Some(CachedMatchContext::ChunkRegion { .. }))
+    {
+        return Ok(PreviewPayload {
+            item,
+            decoration: None,
+        });
+    }
+
+    let decoration = cached_match_context
+        .and_then(|context| {
+            let analysis = context.analysis().or_else(|| {
+                let analysis = search::analyze_content_for_query(context.content(), query)?;
+                #[cfg(test)]
+                test_support::on_analysis_computed(item_id, query);
+                let analysis = Arc::new(analysis);
+                cache.set_match_context_analysis(query, item_id, Arc::clone(&analysis));
+                Some(analysis)
+            })?;
+            #[cfg(test)]
+            if context.analysis().is_some() {
+                test_support::on_analysis_cache_hit(item_id, query);
+            }
+            context.preview_decoration(item.content.text_content(), &analysis)
+        })
+        .or_else(|| preview_decoration_for_item(cache, item_id, &item, query));
+
+    Ok(PreviewPayload { item, decoration })
 }

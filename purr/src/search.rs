@@ -9,9 +9,8 @@
 use crate::indexer::Indexer;
 use crate::interface::ClipKittyError;
 use crate::interface::{
-    HighlightKind, ItemMatch, PreviewDecoration, RowDecoration, Utf16HighlightRange,
+    HighlightKind, ItemMatch, ItemMetadata, PreviewDecoration, RowDecoration, Utf16HighlightRange,
 };
-use crate::models::StoredItem;
 use crate::ranking::{
     does_word_match, does_word_match_fast, prefix_match_for_query_word, WordMatchKind,
     LARGE_DOC_THRESHOLD_BYTES,
@@ -72,7 +71,6 @@ impl SearchQuery {
 
 #[derive(Debug, Clone)]
 pub(crate) struct FuzzyMatch {
-    pub(crate) id: i64,
     pub(crate) highlight_ranges: Vec<HighlightRange>,
 }
 
@@ -123,12 +121,12 @@ fn scalar_highlights_to_utf16(
 
 /// Search using Tantivy with bucket re-ranking for trigram queries (>= 3 chars).
 /// Phase 1 (trigram recall) and Phase 2 (bucket re-ranking) happen inside indexer.search().
-/// Returns lazy FuzzyMatch objects WITHOUT highlights - highlights are computed on-demand.
+/// Returns item-level search candidates with their best match context.
 pub(crate) fn search_trigram_lazy(
     indexer: &Indexer,
     query: &SearchQuery,
     token: &CancellationToken,
-) -> Result<Vec<FuzzyMatch>, ClipKittyError> {
+) -> Result<Vec<crate::candidate::SearchCandidate>, ClipKittyError> {
     if query.raw_text().is_empty() {
         return Ok(Vec::new());
     }
@@ -152,16 +150,7 @@ pub(crate) fn search_trigram_lazy(
         return Err(ClipKittyError::Cancelled);
     }
 
-    // Convert to FuzzyMatch without computing highlights
-    let results: Vec<FuzzyMatch> = candidates
-        .into_iter()
-        .map(|c| FuzzyMatch {
-            id: c.id,
-            highlight_ranges: Vec::new(), // Lazy: no highlights
-        })
-        .collect();
-
-    Ok(results)
+    Ok(candidates)
 }
 
 /// Map a `WordMatchKind` from ranking to a `HighlightKind` for the UI.
@@ -230,7 +219,6 @@ fn should_bridge_highlights(
 
 /// Context for highlighting a candidate document.
 pub(crate) struct HighlightContext<'a> {
-    pub id: i64,
     pub content: &'a str,
     pub doc_words: &'a [(usize, usize, String)],
     pub query_words: &'a [&'a str],
@@ -244,7 +232,7 @@ pub(crate) struct HighlightContext<'a> {
 /// `content_lower` and `doc_words` are pre-computed in Phase 2 to avoid
 /// redundant lowercasing and tokenization (~4000 allocations per search).
 ///
-/// For large documents (>5KB), uses fast matching (exact + prefix only)
+/// For large documents (>32KB), uses fast matching (exact + prefix only)
 /// to avoid expensive fuzzy/subsequence matching.
 pub(crate) fn highlight_candidate(ctx: &HighlightContext<'_>) -> FuzzyMatch {
     let mut word_highlights: Vec<(usize, usize, HighlightKind)> = Vec::new();
@@ -311,10 +299,7 @@ pub(crate) fn highlight_candidate(ctx: &HighlightContext<'_>) -> FuzzyMatch {
         })
         .collect();
 
-    FuzzyMatch {
-        id: ctx.id,
-        highlight_ranges,
-    }
+    FuzzyMatch { highlight_ranges }
 }
 
 /// Convert matched indices to highlight ranges with a specified kind
@@ -582,10 +567,30 @@ pub(crate) fn create_preview_decoration(
     }
 }
 
-/// Create ItemMatch without row decoration (lazy mode - computed on-demand via compute_row_decorations).
-pub(crate) fn create_lazy_item_match(item: &StoredItem) -> ItemMatch {
+pub(crate) fn create_preview_decoration_with_char_offset(
+    content: &str,
+    analysis: &HighlightAnalysis,
+    char_offset: usize,
+) -> PreviewDecoration {
+    let shifted_highlights: Vec<HighlightRange> = analysis
+        .highlights
+        .iter()
+        .map(|highlight| HighlightRange {
+            start: highlight.start + char_offset as u64,
+            end: highlight.end + char_offset as u64,
+            kind: highlight.kind,
+        })
+        .collect();
+
+    PreviewDecoration {
+        highlights: scalar_highlights_to_utf16(content, &shifted_highlights),
+        initial_scroll_highlight_index: analysis.initial_scroll_highlight_index,
+    }
+}
+
+pub(crate) fn create_lazy_item_match_with_metadata(item_metadata: ItemMetadata) -> ItemMatch {
     ItemMatch {
-        item_metadata: item.to_metadata(),
+        item_metadata,
         row_decoration: None,
     }
 }
@@ -643,7 +648,6 @@ fn compute_scalar_highlights(content: &str, query: &str) -> Vec<HighlightRange> 
 
     // Create a temporary FuzzyMatch to reuse highlight_candidate
     let fm = highlight_candidate(&HighlightContext {
-        id: 0,
         content,
         doc_words: &doc_words,
         query_words: &query_words,
@@ -980,7 +984,7 @@ mod tests {
 
     /// Helper: call highlight_candidate with automatic lowercasing/tokenization.
     fn hc(
-        id: i64,
+        _id: i64,
         content: &str,
         _timestamp: i64,
         _tantivy_score: f32,
@@ -989,7 +993,6 @@ mod tests {
     ) -> FuzzyMatch {
         let doc_words = tokenize_words(content);
         super::highlight_candidate(&super::HighlightContext {
-            id,
             content,
             doc_words: &doc_words,
             query_words,
