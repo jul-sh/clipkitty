@@ -479,7 +479,6 @@ struct TextPreviewView: NSViewRepresentable {
         let shouldUpdateText = itemChanged || (!coordinator.isEditing && textChanged)
         if shouldUpdateText {
             // Text content changed — replace storage attributes (font, color, paragraph style only).
-            // Highlights are applied as rendering attributes, not storage attributes.
             //
             // Memory consideration: For very large text (>100KB), NSAttributedString allocation
             // can be expensive. TextKit 2 handles large documents efficiently via lazy layout,
@@ -501,38 +500,11 @@ struct TextPreviewView: NSViewRepresentable {
         if itemChanged || textChanged || highlightsChanged {
             // Convert highlights to NSTextRanges for the layout manager
             let newMatchRanges = resolveTextRanges(highlights: highlights, text: text, layoutManager: tlm)
-            let oldMatchRanges = coordinator.currentMatchRanges
 
             coordinator.currentMatchRanges = newMatchRanges
             coordinator.lastHighlights = highlights
 
-            if let tlm {
-                if textChanged {
-                    // Full text replacement — apply all new highlights from scratch
-                    for match in newMatchRanges {
-                        tlm.setRenderingAttributes(
-                            HighlightStyler.renderingAttributes(for: match.kind),
-                            for: match.range
-                        )
-                    }
-                } else {
-                    // Only highlights changed — diff and invalidate minimally.
-                    // Remove old rendering attributes for ranges no longer highlighted
-                    let newSet = Set(newMatchRanges.map { MatchRangeKey($0) })
-                    for old in oldMatchRanges where !newSet.contains(MatchRangeKey(old)) {
-                        tlm.invalidateRenderingAttributes(for: old.range)
-                    }
-
-                    // Apply new rendering attributes
-                    let oldSet = Set(oldMatchRanges.map { MatchRangeKey($0) })
-                    for new in newMatchRanges where !oldSet.contains(MatchRangeKey(new)) {
-                        tlm.setRenderingAttributes(
-                            HighlightStyler.renderingAttributes(for: new.kind),
-                            for: new.range
-                        )
-                    }
-                }
-            }
+            applyHighlightAttributes(highlights: highlights, to: textView)
         }
 
         let scrollTarget: ScrollTarget
@@ -590,7 +562,6 @@ struct TextPreviewView: NSViewRepresentable {
             guard let textRange = NSTextRange(location: start, end: end) else { return nil }
             return MatchRange(
                 range: textRange,
-                kind: highlight.kind,
                 utf16Start: highlight.utf16Start,
                 utf16End: highlight.utf16End
             )
@@ -827,6 +798,47 @@ struct TextPreviewView: NSViewRepresentable {
         textView.displayIfNeeded()
     }
 
+    private func refreshHighlightDisplay(textView: NSTextView) {
+        textView.layoutSubtreeIfNeeded()
+        textView.setNeedsDisplay(textView.visibleRect)
+        textView.displayIfNeeded()
+
+        if let scrollView = textView.enclosingScrollView {
+            scrollView.contentView.setNeedsDisplay(scrollView.contentView.bounds)
+            scrollView.displayIfNeeded()
+        }
+    }
+
+    private func applyHighlightAttributes(
+        highlights: [Utf16HighlightRange],
+        to textView: NSTextView
+    ) {
+        guard let textStorage = textView.textStorage else { return }
+
+        let fullRange = NSRange(location: 0, length: textStorage.length)
+        textStorage.beginEditing()
+        if fullRange.length > 0 {
+            textStorage.removeAttribute(.backgroundColor, range: fullRange)
+            textStorage.removeAttribute(.underlineStyle, range: fullRange)
+        }
+
+        for highlight in highlights {
+            let nsRange = highlight.nsRange
+            guard nsRange.location != NSNotFound,
+                  nsRange.location + nsRange.length <= textStorage.length
+            else {
+                continue
+            }
+            textStorage.addAttributes(
+                HighlightStyler.attributes(for: highlight.kind),
+                range: nsRange
+            )
+        }
+        textStorage.endEditing()
+
+        refreshHighlightDisplay(textView: textView)
+    }
+
     private func documentHeight(for textView: NSTextView) -> CGFloat {
         guard let tlm = textView.textLayoutManager else { return 0 }
 
@@ -851,22 +863,8 @@ struct TextPreviewView: NSViewRepresentable {
     /// A resolved match: the original UTF-16 indices (for identity) plus the TextKit 2 range (for operations).
     struct MatchRange {
         let range: NSTextRange
-        let kind: HighlightKind
         let utf16Start: UInt64
         let utf16End: UInt64
-    }
-
-    /// Hashable key for efficient Set-based diffing of match ranges.
-    private struct MatchRangeKey: Hashable {
-        let utf16Start: UInt64
-        let utf16End: UInt64
-        let kind: HighlightKind
-
-        init(_ match: MatchRange) {
-            utf16Start = match.utf16Start
-            utf16End = match.utf16End
-            kind = match.kind
-        }
     }
 
     class Coordinator: NSObject, NSTextViewDelegate {

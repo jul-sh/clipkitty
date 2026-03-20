@@ -3,6 +3,7 @@ import Foundation
 @MainActor
 final class SnackbarCoordinator {
     private let makeEnvironment: @MainActor () -> SnackbarEnvironment
+    var onInstallUpdate: (() -> Void)?
 
     init(
         store: ClipboardStore? = nil,
@@ -29,6 +30,8 @@ final class SnackbarCoordinator {
             AppSettings.shared.launchAtLoginEnabled = true
             LaunchAtLogin.shared.enable()
             ToastWindow.shared.show(message: String(localized: "Launch at login enabled"))
+        case .updateAvailable:
+            onInstallUpdate?()
         }
     }
 
@@ -38,6 +41,8 @@ final class SnackbarCoordinator {
         switch kind {
         case .launchAtLogin:
             AppSettings.shared.launchAtLoginPromptDismissed = true
+        case .updateAvailable:
+            break
         }
     }
 
