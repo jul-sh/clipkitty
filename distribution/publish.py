@@ -3,7 +3,7 @@
 
 Prerequisites:
   - ClipKitty.pkg exists at PROJECT_ROOT (run `make -C distribution appstore` first)
-  - AGE_SECRET_KEY env var or stored in macOS Keychain (via get-age-key.sh)
+  - tapkey installed (via nix devShell), or AGE_SECRET_KEY env var
   - asc CLI installed (run distribution/install-deps.sh)
 
 Usage:
@@ -47,13 +47,10 @@ def run(cmd, *, check=True, capture=False, env=None):
     return r
 
 
-def decrypt_secret(name, age_key):
-    path = os.path.join(SECRETS_DIR, f"{name}.age")
-    if not os.path.isfile(path):
-        sys.exit(f"Error: Secret file not found: {path}")
+def decrypt_secret(name):
     r = subprocess.run(
-        ["age", "-d", "-i", "-", path],
-        input=age_key, capture_output=True, text=True,
+        [os.path.join(SCRIPT_DIR, "read-secret.sh"), name],
+        capture_output=True, text=True,
     )
     if r.returncode != 0:
         sys.exit(f"Error decrypting {name}: {r.stderr.strip()}")
@@ -69,20 +66,6 @@ def main():
 
     # --- Validate prerequisites ---
 
-    age_key = os.environ.get("AGE_SECRET_KEY", "")
-    if not age_key:
-        # Try to get from keychain via helper script
-        try:
-            r = subprocess.run(
-                [os.path.join(SCRIPT_DIR, "get-age-key.sh")],
-                capture_output=True, text=True, check=True
-            )
-            age_key = r.stdout
-        except subprocess.CalledProcessError:
-            sys.exit("Error: AGE_SECRET_KEY not set and not found in Keychain.\n"
-                     "  Set via: export AGE_SECRET_KEY='AGE-SECRET-KEY-...'\n"
-                     "  Or store: security add-generic-password -s clipkitty -a AGE_SECRET_KEY -w 'KEY'")
-
     if not shutil.which("asc"):
         sys.exit("Error: asc CLI not found. Run: distribution/install-deps.sh")
 
@@ -92,9 +75,9 @@ def main():
     # --- Decrypt secrets ---
 
     print("Decrypting secrets...")
-    asc_key_id = decrypt_secret("APPSTORE_KEY_ID", age_key)
-    asc_issuer_id = decrypt_secret("NOTARY_ISSUER_ID", age_key)
-    asc_private_key_b64 = decrypt_secret("NOTARY_KEY_BASE64", age_key)
+    asc_key_id = decrypt_secret("APPSTORE_KEY_ID")
+    asc_issuer_id = decrypt_secret("NOTARY_ISSUER_ID")
+    asc_private_key_b64 = decrypt_secret("NOTARY_KEY_BASE64")
 
     # --- Set up auth ---
     # xcrun altool requires the key at ~/.private_keys/AuthKey_<ID>.p8

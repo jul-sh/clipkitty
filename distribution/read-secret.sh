@@ -1,4 +1,8 @@
 #!/bin/bash
+# Decrypts a secret from secrets/<NAME>.age using tapkey.
+#
+# Usage:
+#   ./distribution/read-secret.sh SECRET_NAME
 
 set -euo pipefail
 
@@ -18,10 +22,4 @@ if [ ! -f "$SECRET_PATH" ]; then
     exit 1
 fi
 
-# Prefer tapkey --decrypt (no key file needed), fall back to age CLI
-if command -v tapkey >/dev/null 2>&1; then
-    tapkey clipkitty --decrypt "$SECRET_PATH"
-else
-    AGE_SECRET_KEY=$("$SCRIPT_DIR/get-age-key.sh")
-    age -d -i <(printf '%s' "$AGE_SECRET_KEY") "$SECRET_PATH"
-fi
+tapkey clipkitty --decrypt "$SECRET_PATH"

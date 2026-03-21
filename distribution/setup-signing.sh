@@ -6,8 +6,7 @@
 #   ./distribution/setup-signing.sh           # Create keychain & import certs
 #   ./distribution/setup-signing.sh --cleanup  # Remove temporary keychain
 #
-# Reads encrypted cert secrets from secrets/*.age using the age key from
-# the login keychain (or AGE_SECRET_KEY in CI).
+# Reads encrypted cert secrets from secrets/*.age via tapkey.
 
 set -euo pipefail
 
@@ -31,9 +30,6 @@ if all_codesigning_identities_available \
     echo "Signing certificates already available"
     exit 0
 fi
-
-AGE_SECRET_KEY=$("$SCRIPT_DIR/get-age-key.sh")
-export AGE_SECRET_KEY
 
 P12_PASS=$("$SCRIPT_DIR/read-secret.sh" P12_PASSWORD)
 APP_P12_PATH=$(mktemp "${TMPDIR:-/tmp}/clipkitty-app-cert.XXXXXX.p12")

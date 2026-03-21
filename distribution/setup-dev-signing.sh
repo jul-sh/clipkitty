@@ -6,8 +6,7 @@
 #   ./distribution/setup-dev-signing.sh           # Create keychain & import cert
 #   ./distribution/setup-dev-signing.sh --cleanup  # Remove temporary keychain
 #
-# Reads encrypted cert secrets from secrets/*.age using the age key from
-# the login keychain (or AGE_SECRET_KEY in CI).
+# Reads encrypted cert secrets from secrets/*.age via tapkey.
 
 set -euo pipefail
 
@@ -29,9 +28,6 @@ if all_codesigning_identities_available "Developer ID Application"; then
     echo "Developer ID certificate already available"
     exit 0
 fi
-
-AGE_SECRET_KEY=$("$SCRIPT_DIR/get-age-key.sh")
-export AGE_SECRET_KEY
 
 KEYCHAIN_PASSWORD=$(openssl rand -hex 16)
 P12_PATH=$(mktemp "${TMPDIR:-/tmp}/clipkitty-dev-cert.XXXXXX.p12")
