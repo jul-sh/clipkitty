@@ -146,16 +146,16 @@
         "nixpkgs": "nixpkgs_3"
       },
       "locked": {
-        "lastModified": 1774045888,
-        "narHash": "sha256-dfVvzzlTY5iAfcZto0y8FZD2gvAiBnS6SScIghmRaLk=",
+        "lastModified": 1774052848,
+        "narHash": "sha256-TnN5frKnC8EC8fsUkuf0D/rndkCGPSQQbLET4i4NjcQ=",
         "owner": "jul-sh",
         "repo": "tapkey",
-        "rev": "fcc29ca85ae2cc1d587943eb2f3b63d0672cb4a3",
+        "rev": "4629a4c32b2ffd0532463b4cda8547a522b913fa",
         "type": "github"
       },
       "original": {
         "owner": "jul-sh",
-        "ref": "v1.3.0",
+        "ref": "v2.1.0",
         "repo": "tapkey",
         "type": "github"
       }
