@@ -2,7 +2,7 @@ use super::{ExactnessSignals, MatchSpanStats};
 
 /// Documents larger than this threshold use fast matching (exact + prefix only).
 /// This trades typo tolerance for performance on large documents like code files.
-pub const LARGE_DOC_THRESHOLD_BYTES: usize = 5 * 1024; // 5KB
+pub const LARGE_DOC_THRESHOLD_BYTES: usize = 32 * 1024; // 32KB
 
 /// Bucket score tuple. Higher fields dominate lower ones.
 ///

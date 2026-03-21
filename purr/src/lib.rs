@@ -5,19 +5,23 @@
 //!
 //! Types are exported via UniFFI proc-macros (#[derive(uniffi::Record/Enum)]).
 
+pub mod benchmark_fixture;
 pub(crate) mod candidate;
 pub mod content_detection;
 pub mod database;
 pub mod indexer;
 pub mod interface;
+pub(crate) mod match_presentation;
+pub(crate) mod search_admission;
 pub mod models;
 pub mod ranking;
 mod save_service;
 pub mod search;
+mod search_result_builder;
 mod search_service;
 mod store;
 
 pub use interface::*;
-pub use store::{ClipboardStore, SearchOperation};
+pub use store::{inspect_store_bootstrap, ClipboardStore, SearchOperation};
 
 uniffi::setup_scaffolding!("purr");
