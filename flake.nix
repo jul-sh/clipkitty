@@ -5,7 +5,7 @@
     nixpkgs.url = "github:NixOS/nixpkgs/nixpkgs-unstable";
     rust-overlay.url = "github:oxalica/rust-overlay";
     flake-utils.url = "github:numtide/flake-utils";
-    tapkey.url = "github:jul-sh/tapkey/v2.1.0";
+    tapkey.url = "github:jul-sh/tapkey/v2.2.0";
   };
 
   outputs = { self, nixpkgs, rust-overlay, flake-utils, tapkey, ... }:
