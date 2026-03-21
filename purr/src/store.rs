@@ -7,7 +7,7 @@ use crate::interface::{
     RebuildDurationExpectation, RowDecorationResult, SearchOutcome, SearchResult,
     StoreBootstrapPlan,
 };
-use crate::{save_service, search_service};
+use crate::{match_presentation, save_service, search_service};
 use once_cell::sync::Lazy;
 use parking_lot::Mutex;
 use std::path::{Path, PathBuf};
@@ -48,7 +48,7 @@ fn init_rayon() {
 pub struct ClipboardStore {
     db: Arc<Database>,
     indexer: Arc<Indexer>,
-    analysis_cache: Arc<search_service::HighlightAnalysisCache>,
+    analysis_cache: Arc<match_presentation::HighlightAnalysisCache>,
     /// Token for the currently running search, if any. Starting a new search cancels
     /// the previous one by calling cancel() on this token.
     active_search_token: Arc<Mutex<Option<CancellationToken>>>,
@@ -104,7 +104,7 @@ impl ClipboardStore {
         Ok(Self {
             db: Arc::new(database),
             indexer: Arc::new(indexer),
-            analysis_cache: Arc::new(search_service::HighlightAnalysisCache::default()),
+            analysis_cache: Arc::new(match_presentation::HighlightAnalysisCache::default()),
             active_search_token: Arc::new(Mutex::new(None)),
         })
     }
@@ -127,7 +127,7 @@ impl ClipboardStore {
         Ok(Self {
             db: Arc::new(db),
             indexer: Arc::new(indexer),
-            analysis_cache: Arc::new(search_service::HighlightAnalysisCache::default()),
+            analysis_cache: Arc::new(match_presentation::HighlightAnalysisCache::default()),
             active_search_token: Arc::new(Mutex::new(None)),
         })
     }
@@ -146,7 +146,9 @@ impl ClipboardStore {
         let needs_rebuild = match Indexer::inspect(&Self::index_path_for_database(path))? {
             IndexInspection::Missing => db_count > 0,
             IndexInspection::RebuildRequired => true,
-            IndexInspection::Ready { doc_count } => doc_count != db_count,
+            // Chunked indexing means one parent item can expand to multiple index units.
+            // Still rebuild if the database has content but the matching-version index is empty.
+            IndexInspection::Ready { doc_count } => db_count > 0 && doc_count == 0,
         };
 
         if needs_rebuild {
@@ -643,9 +645,12 @@ mod tests {
             .collect();
 
         assert_eq!(ids, vec![prefix_id, infix_id]);
+        let decorations = store
+            .compute_row_decorations(vec![infix_id], "port".to_string())
+            .unwrap();
         assert_eq!(
-            result.matches[1]
-                .row_decoration
+            decorations[0]
+                .decoration
                 .as_ref()
                 .unwrap()
                 .highlights[0]
@@ -673,9 +678,12 @@ mod tests {
             .collect();
 
         assert_eq!(ids, vec![prefix_id, subword_id]);
+        let decorations = store
+            .compute_row_decorations(vec![subword_id], "code".to_string())
+            .unwrap();
         assert_eq!(
-            result.matches[1]
-                .row_decoration
+            decorations[0]
+                .decoration
                 .as_ref()
                 .unwrap()
                 .highlights[0]
@@ -727,7 +735,7 @@ mod tests {
             &store.db,
             &store.analysis_cache,
             "He",
-            false,
+            crate::search_result_builder::ShortQueryMode::PrefixThenContains,
             &token,
             &rt.handle().clone(),
             None,
@@ -845,6 +853,7 @@ mod tests {
     #[tokio::test]
     async fn test_phase_two_cancellation_stops_work_early() {
         let _lock = SEARCH_HOOK_TEST_LOCK.lock();
+        let _phase_two_hook_lock = crate::indexer::test_support::HOOK_TEST_LOCK.lock();
         let store = ClipboardStore::new_in_memory().unwrap();
         for i in 0..1_000 {
             store
@@ -1339,6 +1348,55 @@ mod tests {
         assert_eq!(result.matches.len(), 1);
     }
 
+    #[tokio::test]
+    async fn test_chunked_search_uses_best_chunk_snippet_and_full_preview_offsets() {
+        let store = ClipboardStore::new_in_memory().unwrap();
+        let leading = "noise ".repeat((crate::indexer::CHUNK_PARENT_THRESHOLD_BYTES / 6) + 4096);
+        let query = "alphauniqueterm";
+        let item_id = store
+            .save_text(
+                format!("{leading}{query} trailing context"),
+                None,
+                None,
+            )
+            .unwrap();
+
+        let result = store.search(query.to_string()).await.unwrap();
+        assert_eq!(result.matches.len(), 1);
+        assert_eq!(result.matches[0].item_metadata.item_id, item_id);
+        assert!(
+            result.matches[0].item_metadata.snippet.contains(query),
+            "chunked result snippet should come from the matched chunk"
+        );
+        assert!(
+            result
+                .first_preview_payload
+                .as_ref()
+                .is_none(),
+            "initial search should skip large chunked preview payload entirely"
+        );
+
+        let preview = search_service::load_preview_payload(
+            &store.db,
+            &store.analysis_cache,
+            item_id,
+            query.to_string(),
+        )
+        .unwrap()
+        .expect("preview payload should be present");
+        let decoration = preview
+            .decoration
+            .expect("preview decoration should be present");
+        let first_highlight = decoration
+            .highlights
+            .first()
+            .expect("preview should include highlights");
+        assert!(
+            first_highlight.utf16_start >= leading.len() as u64,
+            "preview highlights should be mapped back to full-document offsets"
+        );
+    }
+
     #[test]
     fn test_bootstrap_inspection_ready_when_index_matches() {
         let (_dir, db_path) = temp_db_path();
@@ -1372,6 +1430,22 @@ mod tests {
                 expectation: RebuildDurationExpectation::UnderFiveSeconds,
             }
         );
+    }
+
+    #[test]
+    fn test_bootstrap_inspection_ready_for_chunked_index() {
+        let (_dir, db_path) = temp_db_path();
+        let store = ClipboardStore::new(db_path.clone()).unwrap();
+        store
+            .save_text(
+                "noise ".repeat((crate::indexer::CHUNK_PARENT_THRESHOLD_BYTES / 6) + 4096),
+                None,
+                None,
+            )
+            .unwrap();
+
+        let plan = inspect_store_bootstrap(db_path).unwrap();
+        assert_eq!(plan, StoreBootstrapPlan::Ready);
     }
 
     #[test]

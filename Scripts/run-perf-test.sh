@@ -4,7 +4,7 @@
 #
 # This script:
 # 1. Builds the app in Release mode
-# 2. Sets up a performance test database with large items
+# 2. Sets up the generated synthetic performance database
 # 3. Launches the app
 # 4. Starts xctrace recording
 # 5. Simulates rapid typing via AppleScript
@@ -126,10 +126,10 @@ if [ ! -d "$APP_PATH" ]; then
 fi
 
 # Step 2: Generate performance database and index
-PERF_DB="$PROJECT_ROOT/distribution/SyntheticData_perf.sqlite"
-PERF_INDEX="$PROJECT_ROOT/distribution/tantivy_index_v4"
+PERF_FIXTURE_DIR="$PROJECT_ROOT/purr/generated/benchmarks"
+PERF_DB="$PERF_FIXTURE_DIR/synthetic_clipboard.sqlite"
 if [ "$SKIP_DB_GEN" = false ]; then
-    if [ ! -f "$PERF_DB" ] || [ ! -d "$PERF_INDEX" ]; then
+    if [ ! -f "$PERF_DB" ] || ! compgen -G "$PERF_FIXTURE_DIR/tantivy_index_*" > /dev/null; then
         echo ">>> Generating performance test database and index..."
         # Use native Rust code to ensure schema compatibility
         "$PROJECT_ROOT/Scripts/run-in-nix.sh" -c "cd purr && cargo run --release --bin generate-perf-db"
@@ -151,7 +151,7 @@ sleep 1
 
 # Clean up existing data
 rm -f "$APP_SUPPORT_DIR/clipboard-screenshot.sqlite"*
-rm -rf "$APP_SUPPORT_DIR/tantivy_index_v4"
+rm -rf "$APP_SUPPORT_DIR"/tantivy_index_*
 
 # Copy performance database and pre-built index
 if [ -f "$PERF_DB" ]; then
@@ -161,8 +161,8 @@ else
     echo "Warning: Performance database not found, using empty database"
 fi
 
-if [ -d "$PERF_INDEX" ]; then
-    cp -r "$PERF_INDEX" "$APP_SUPPORT_DIR/tantivy_index_v4"
+if compgen -G "$PERF_FIXTURE_DIR/tantivy_index_*" > /dev/null; then
+    cp -r "$PERF_FIXTURE_DIR"/tantivy_index_* "$APP_SUPPORT_DIR/"
     echo "    Pre-built index copied to app container"
 else
     echo "Warning: Pre-built index not found, index will be built at startup"

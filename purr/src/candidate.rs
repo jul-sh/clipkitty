@@ -1,29 +1,147 @@
-//! Search candidate with encapsulated content.
-//!
-//! Module isolation ensures no code outside this module can mutate `content`
-//! after construction.
+//! Search candidates and match contexts returned from Tantivy.
 
-/// A search candidate from Tantivy.
+use std::sync::Arc;
+
 #[derive(Debug, Clone)]
-pub struct SearchCandidate {
-    pub id: i64,
-    content: String,
-    pub timestamp: i64,
-    /// Blended score (BM25 + recency) from Tantivy's tweak_score
-    pub tantivy_score: f32,
+pub struct WholeItemMatchContext {
+    content: Arc<str>,
+    parent_len: usize,
 }
 
-impl SearchCandidate {
-    pub fn new(id: i64, content: String, timestamp: i64, tantivy_score: f32) -> Self {
+impl WholeItemMatchContext {
+    pub fn new(content: Arc<str>, parent_len: usize) -> Self {
         Self {
-            id,
             content,
-            timestamp,
-            tantivy_score,
+            parent_len,
         }
     }
 
     pub fn content(&self) -> &str {
         &self.content
+    }
+
+    pub fn parent_len(&self) -> usize {
+        self.parent_len
+    }
+}
+
+#[derive(Debug, Clone)]
+pub struct ChunkMatchContext {
+    content: Arc<str>,
+    parent_len: usize,
+    chunk_index: u32,
+    chunk_start: usize,
+    chunk_end: usize,
+}
+
+impl ChunkMatchContext {
+    pub fn new(
+        content: Arc<str>,
+        parent_len: usize,
+        chunk_index: u32,
+        chunk_start: usize,
+        chunk_end: usize,
+    ) -> Self {
+        Self {
+            content,
+            parent_len,
+            chunk_index,
+            chunk_start,
+            chunk_end,
+        }
+    }
+
+    pub fn content(&self) -> &str {
+        &self.content
+    }
+
+    pub fn parent_len(&self) -> usize {
+        self.parent_len
+    }
+
+    pub fn chunk_index(&self) -> u32 {
+        self.chunk_index
+    }
+
+    pub fn chunk_start(&self) -> usize {
+        self.chunk_start
+    }
+
+    pub fn chunk_end(&self) -> usize {
+        self.chunk_end
+    }
+}
+
+#[derive(Debug, Clone)]
+pub enum SearchMatchContext {
+    WholeItem(WholeItemMatchContext),
+    Chunk(ChunkMatchContext),
+}
+
+impl SearchMatchContext {
+    pub fn content(&self) -> &str {
+        match self {
+            Self::WholeItem(ctx) => ctx.content(),
+            Self::Chunk(ctx) => ctx.content(),
+        }
+    }
+
+    pub fn parent_len(&self) -> usize {
+        match self {
+            Self::WholeItem(ctx) => ctx.parent_len(),
+            Self::Chunk(ctx) => ctx.parent_len(),
+        }
+    }
+
+    pub fn chunk_range(&self) -> Option<(usize, usize)> {
+        match self {
+            Self::WholeItem(_) => None,
+            Self::Chunk(ctx) => Some((ctx.chunk_start(), ctx.chunk_end())),
+        }
+    }
+
+    pub fn chunk_index(&self) -> Option<u32> {
+        match self {
+            Self::WholeItem(_) => None,
+            Self::Chunk(ctx) => Some(ctx.chunk_index()),
+        }
+    }
+}
+
+/// An item-level search candidate produced after collapsing matching units.
+#[derive(Debug, Clone)]
+pub struct SearchCandidate {
+    pub id: i64,
+    pub timestamp: i64,
+    /// Blended Phase 1 score (recency + proximity + BM25 remainder).
+    pub tantivy_score: f32,
+    match_context: SearchMatchContext,
+}
+
+impl SearchCandidate {
+    pub fn new(
+        id: i64,
+        timestamp: i64,
+        tantivy_score: f32,
+        match_context: SearchMatchContext,
+    ) -> Self {
+        Self {
+            id,
+            timestamp,
+            tantivy_score,
+            match_context,
+        }
+    }
+
+    pub fn content(&self) -> &str {
+        self.match_context.content()
+    }
+
+    pub fn parent_len(&self) -> usize {
+        self.match_context.parent_len()
+    }
+
+    pub fn match_context(&self) -> &SearchMatchContext {
+        &self.match_context
     }
 }
