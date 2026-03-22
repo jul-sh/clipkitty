@@ -46,8 +46,17 @@ dmg:
 	@$(DIST_DIR)/build-dmg.sh "$(APP_PATH)" "$(PROJECT_ROOT)/$(APP_NAME).dmg"
 
 # Export app icon as PNG (for README, gh-pages, etc.)
+ICTOOL := /Applications/Xcode.app/Contents/Applications/Icon\ Composer.app/Contents/Executables/ictool
+
 icon-png:
-	@sips -s format png "$(PROJECT_ROOT)/AppIcon.icns" --out $(PROJECT_ROOT)/icon.png
+	@$(ICTOOL) "$(PROJECT_ROOT)/AppIcon.icon" \
+		--export-image \
+		--output-file $(PROJECT_ROOT)/icon.png \
+		--platform macOS \
+		--rendition Default \
+		--width 512 \
+		--height 512 \
+		--scale 1
 
 # ============================================================================
 # App Store Submission (build only — validate & upload happen in CI)

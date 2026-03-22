@@ -43,7 +43,20 @@
       "hidden" : false,
       "layers" : [
         {
+          "glass" : true,
           "hidden" : false,
+          "image-name" : "clipboard-2.png",
+          "name" : "clipboard-2",
+          "position" : {
+            "scale" : 0.62,
+            "translation-in-points" : [
+              0,
+              0
+            ]
+          }
+        },
+        {
+          "hidden" : true,
           "image-name" : "clip.png",
           "name" : "clip",
           "position" : {
