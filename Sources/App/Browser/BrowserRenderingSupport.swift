@@ -46,7 +46,7 @@ private extension View {
     @ViewBuilder
     func clipKittyGlassBackground() -> some View {
         if #available(macOS 26.0, *) {
-            self.glassEffect(.regular.interactive(), in: .rect)
+            glassEffect(.regular.interactive(), in: .rect)
         } else {
             background(.regularMaterial)
         }
@@ -196,6 +196,7 @@ private final class PreviewTextView: NSTextView {
     }()
 
     var onCmdReturn: (() -> Void)?
+    var onCmdK: (() -> Void)?
     var onSave: (() -> Void)?
     var onEscape: (() -> Void)?
     var onFocusChange: ((Bool) -> Void)?
@@ -206,6 +207,9 @@ private final class PreviewTextView: NSTextView {
             switch event.keyCode {
             case 36: // Cmd+Return
                 onCmdReturn?()
+                return
+            case 40: // Cmd+K
+                onCmdK?()
                 return
             case 1: // Cmd+S
                 onSave?()
@@ -250,6 +254,7 @@ private final class PreviewTextView: NSTextView {
         onViewportLayoutDidLayout?(self, textViewportLayoutController)
     }
 }
+
 /// How the preview pane should scroll when its content changes.
 enum PreviewScrollBehavior {
     /// No auto-scrolling — content stays at current position.
@@ -285,6 +290,7 @@ struct TextPreviewView: NSViewRepresentable {
     var onTextChange: ((String) -> Void)?
     var onEditingStateChange: ((Bool) -> Void)?
     var onCmdReturn: (() -> Void)?
+    var onCmdK: (() -> Void)?
     var onSave: (() -> Void)?
     var onEscape: (() -> Void)?
 
@@ -321,6 +327,7 @@ struct TextPreviewView: NSViewRepresentable {
         // Setup delegate for text changes
         textView.delegate = context.coordinator
         textView.onCmdReturn = onCmdReturn
+        textView.onCmdK = onCmdK
         textView.onSave = onSave
         textView.onEscape = onEscape
         textView.onFocusChange = onEditingStateChange
@@ -365,6 +372,7 @@ struct TextPreviewView: NSViewRepresentable {
         coordinator.observeUsageBounds(of: textView)
         coordinator.onTextChange = onTextChange
         textView.onCmdReturn = onCmdReturn
+        textView.onCmdK = onCmdK
         textView.onSave = onSave
         textView.onEscape = onEscape
         textView.onFocusChange = onEditingStateChange
@@ -1064,9 +1072,11 @@ struct ItemRow: View, Equatable {
     let onContextMenuShow: () -> Void
     let onContextMenuHide: () -> Void
 
-    private var accentSelected: Bool { isSelected && hasUserNavigated && !hasPendingEdit }
+    private var accentSelected: Bool {
+        isSelected && hasUserNavigated && !hasPendingEdit
+    }
 
-    // Fixed height for exactly 1 line of text at font size 15
+    /// Fixed height for exactly 1 line of text at font size 15
     private let rowHeight: CGFloat = 32
 
     // MARK: - Display Text (Simplified - SwiftUI handles truncation)
@@ -1085,8 +1095,8 @@ struct ItemRow: View, Equatable {
         rowDecoration?.highlights ?? []
     }
 
-    // Define exactly what constitutes a "change" for SwiftUI diffing
-    // Note: onTap closure is intentionally excluded from equality comparison
+    /// Define exactly what constitutes a "change" for SwiftUI diffing
+    /// Note: onTap closure is intentionally excluded from equality comparison
     nonisolated static func == (lhs: ItemRow, rhs: ItemRow) -> Bool {
         return lhs.isSelected == rhs.isSelected &&
             lhs.isContextMenuTargeted == rhs.isContextMenuTargeted &&
@@ -1416,11 +1426,6 @@ struct HighlightedTextView: View, Equatable {
     let text: String
     let highlights: [Utf16HighlightRange]
     let accentSelected: Bool
-
-    // Define equality for SwiftUI diffing
-    nonisolated static func == (lhs: HighlightedTextView, rhs: HighlightedTextView) -> Bool {
-        lhs.text == rhs.text && lhs.highlights == rhs.highlights && lhs.accentSelected == rhs.accentSelected
-    }
 
     private var textColor: Color {
         accentSelected ? .white : .primary

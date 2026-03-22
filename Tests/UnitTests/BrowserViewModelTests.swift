@@ -1,6 +1,6 @@
-import XCTest
-import ClipKittyRust
 @testable import ClipKitty
+import ClipKittyRust
+import XCTest
 
 @MainActor
 final class BrowserViewModelTests: XCTestCase {
@@ -898,7 +898,7 @@ final class BrowserViewModelTests: XCTestCase {
         XCTAssertEqual(viewModel.editFocus, .idle)
     }
 
-    func testEditRevertedToOriginalClearsPendingEdit() async {
+    func testEditRevertedToOriginalClearsPendingEdit() {
         let client = MockBrowserStoreClient()
         let viewModel = BrowserViewModel(
             client: client,
@@ -913,6 +913,115 @@ final class BrowserViewModelTests: XCTestCase {
         viewModel.onTextEdit("original", for: 1, originalText: "original")
 
         XCTAssertFalse(viewModel.hasPendingEdit(for: 1))
+    }
+
+    // MARK: - PreviewInteractionMode
+
+    func testPreviewInteractionModeIsBrowsingByDefault() async {
+        let client = MockBrowserStoreClient()
+        client.enqueueSearchResponse(BrowserSearchResponse(
+            request: SearchRequest(text: "", filter: .all),
+            items: [makeMatch(id: 1, snippet: "hello")],
+            firstItem: nil,
+            totalCount: 1
+        ))
+
+        let viewModel = BrowserViewModel(
+            client: client,
+            onSelect: { _, _ in },
+            onCopyOnly: { _, _ in },
+            onDismiss: {}
+        )
+
+        viewModel.onAppear(initialSearchQuery: "")
+        await flushMainActor()
+        client.resumeFetch(id: 1, with: makeItem(id: 1, text: "hello"))
+        await flushMainActor()
+
+        XCTAssertEqual(viewModel.previewInteractionMode, .browsing)
+    }
+
+    func testPreviewInteractionModeIsPreviewingWhenFocusedWithoutEdits() async {
+        let client = MockBrowserStoreClient()
+        client.enqueueSearchResponse(BrowserSearchResponse(
+            request: SearchRequest(text: "", filter: .all),
+            items: [makeMatch(id: 1, snippet: "hello")],
+            firstItem: nil,
+            totalCount: 1
+        ))
+
+        let viewModel = BrowserViewModel(
+            client: client,
+            onSelect: { _, _ in },
+            onCopyOnly: { _, _ in },
+            onDismiss: {}
+        )
+
+        viewModel.onAppear(initialSearchQuery: "")
+        await flushMainActor()
+        client.resumeFetch(id: 1, with: makeItem(id: 1, text: "hello"))
+        await flushMainActor()
+
+        viewModel.onEditingStateChange(true, for: 1)
+
+        XCTAssertEqual(viewModel.previewInteractionMode, .previewing(itemId: 1))
+    }
+
+    func testPreviewInteractionModeIsEditingWhenPendingEditsExist() async {
+        let client = MockBrowserStoreClient()
+        client.enqueueSearchResponse(BrowserSearchResponse(
+            request: SearchRequest(text: "", filter: .all),
+            items: [makeMatch(id: 1, snippet: "hello")],
+            firstItem: nil,
+            totalCount: 1
+        ))
+
+        let viewModel = BrowserViewModel(
+            client: client,
+            onSelect: { _, _ in },
+            onCopyOnly: { _, _ in },
+            onDismiss: {}
+        )
+
+        viewModel.onAppear(initialSearchQuery: "")
+        await flushMainActor()
+        client.resumeFetch(id: 1, with: makeItem(id: 1, text: "hello"))
+        await flushMainActor()
+
+        viewModel.onEditingStateChange(true, for: 1)
+        viewModel.onTextEdit("hello world", for: 1, originalText: "hello")
+
+        XCTAssertEqual(viewModel.previewInteractionMode, .editing(itemId: 1))
+    }
+
+    func testPreviewInteractionModeReturnsToBrowsingAfterDiscard() async {
+        let client = MockBrowserStoreClient()
+        client.enqueueSearchResponse(BrowserSearchResponse(
+            request: SearchRequest(text: "", filter: .all),
+            items: [makeMatch(id: 1, snippet: "hello")],
+            firstItem: nil,
+            totalCount: 1
+        ))
+
+        let viewModel = BrowserViewModel(
+            client: client,
+            onSelect: { _, _ in },
+            onCopyOnly: { _, _ in },
+            onDismiss: {}
+        )
+
+        viewModel.onAppear(initialSearchQuery: "")
+        await flushMainActor()
+        client.resumeFetch(id: 1, with: makeItem(id: 1, text: "hello"))
+        await flushMainActor()
+
+        viewModel.onEditingStateChange(true, for: 1)
+        viewModel.onTextEdit("hello world", for: 1, originalText: "hello")
+        XCTAssertEqual(viewModel.previewInteractionMode, .editing(itemId: 1))
+
+        viewModel.discardCurrentEdit()
+
+        XCTAssertEqual(viewModel.previewInteractionMode, .browsing)
     }
 
     func testMoveSelectionNavigatesList() async {
@@ -1185,7 +1294,7 @@ final class BrowserViewModelTests: XCTestCase {
     }
 
     private func flushMainActor() async {
-        for _ in 0..<5 {
+        for _ in 0 ..< 5 {
             await Task.yield()
         }
     }
@@ -1352,19 +1461,19 @@ private final class MockBrowserStoreClient: BrowserStoreClient {
         }
     }
 
-    func fetchLinkMetadata(url: String, itemId: Int64) async -> ClipboardItem? {
+    func fetchLinkMetadata(url _: String, itemId _: Int64) async -> ClipboardItem? {
         nil
     }
 
-    func addTag(itemId: Int64, tag: ItemTag) async -> Result<Void, ClipboardError> {
+    func addTag(itemId _: Int64, tag _: ItemTag) async -> Result<Void, ClipboardError> {
         addTagResult
     }
 
-    func removeTag(itemId: Int64, tag: ItemTag) async -> Result<Void, ClipboardError> {
+    func removeTag(itemId _: Int64, tag _: ItemTag) async -> Result<Void, ClipboardError> {
         removeTagResult
     }
 
-    func delete(itemId: Int64) async -> Result<Void, ClipboardError> {
+    func delete(itemId _: Int64) async -> Result<Void, ClipboardError> {
         deleteResult
     }
 

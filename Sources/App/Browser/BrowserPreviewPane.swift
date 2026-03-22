@@ -101,6 +101,10 @@ struct BrowserPreviewPane: View {
                 onCmdReturn: {
                     viewModel.confirmSelection()
                 },
+                onCmdK: {
+                    guard !viewModel.hasPendingEdit(for: item.itemMetadata.itemId) else { return }
+                    viewModel.openActionsOverlay(highlight: .index(0))
+                },
                 onSave: {
                     viewModel.commitCurrentEdit()
                     focusSearchField()
@@ -117,15 +121,15 @@ struct BrowserPreviewPane: View {
             .overlay(alignment: .topLeading) {
                 if isUITestPreviewDebugEnabled {
                     Color.clear
-                    .frame(width: 1, height: 1)
-                    .allowsHitTesting(false)
-                    .accessibilityElement(children: .ignore)
-                    .accessibilityLabel(previewHighlightDebugLabel(
-                        text: previewText,
-                        itemId: item.itemMetadata.itemId,
-                        previewState: content.previewState
-                    ))
-                    .accessibilityIdentifier("PreviewHighlightDebug")
+                        .frame(width: 1, height: 1)
+                        .allowsHitTesting(false)
+                        .accessibilityElement(children: .ignore)
+                        .accessibilityLabel(previewHighlightDebugLabel(
+                            text: previewText,
+                            itemId: item.itemMetadata.itemId,
+                            previewState: content.previewState
+                        ))
+                        .accessibilityIdentifier("PreviewHighlightDebug")
                 }
             }
         case let .image(data, description, _):
@@ -203,13 +207,12 @@ struct BrowserPreviewPane: View {
     }
 
     private func metadataFooter(for item: ClipboardItem) -> some View {
-        let itemId = item.itemMetadata.itemId
-        let hasPendingEdit = viewModel.hasPendingEdit(for: itemId)
-        let isFocused = viewModel.editFocus == .focused(itemId: itemId)
+        let mode = viewModel.previewInteractionMode
 
         return HStack(spacing: 12) {
-            if hasPendingEdit {
-                // Edit mode: show Discard and Save buttons
+            switch mode {
+            case .editing:
+                // Edit mode: show Discard, Save, and confirm buttons
                 Button {
                     viewModel.discardCurrentEdit()
                     focusSearchField()
@@ -243,14 +246,37 @@ struct BrowserPreviewPane: View {
                 Button {
                     viewModel.confirmSelection()
                 } label: {
-                    Text("\(isFocused ? "⌘" : "")↩ \(AppSettings.shared.pasteMode.editConfirmLabel)")
+                    Text("⌘↩ \(AppSettings.shared.pasteMode.editConfirmLabel)")
                         .padding(.horizontal, 10)
                         .padding(.vertical, 6)
                         .subtleHover()
                 }
                 .buttonStyle(.plain)
                 .fixedSize()
-            } else {
+
+            case .previewing:
+                // Preview focused but not yet edited: show actions and cmd+return confirm
+                BrowserActionsOverlay(
+                    viewModel: viewModel,
+                    focusSearchField: focusSearchField,
+                    focusTarget: focusTarget
+                )
+                .fixedSize()
+
+                Spacer(minLength: 0)
+
+                Button {
+                    viewModel.confirmSelection()
+                } label: {
+                    Text("⌘↩ \(AppSettings.shared.pasteMode.buttonLabel)")
+                        .padding(.horizontal, 10)
+                        .padding(.vertical, 6)
+                        .subtleHover()
+                }
+                .buttonStyle(.plain)
+                .fixedSize()
+
+            case .browsing:
                 // Normal mode: show metadata and paste button
                 Label(item.timeAgo, systemImage: "clock")
                     .lineLimit(1)
