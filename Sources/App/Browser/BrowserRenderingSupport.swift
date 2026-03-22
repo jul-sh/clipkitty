@@ -343,7 +343,7 @@ struct TextPreviewView: NSViewRepresentable {
 
     private func scaledFontSize(containerWidth: CGFloat) -> CGFloat {
         let lines = text.components(separatedBy: "\n")
-        if lines.count >= 10 { return fontSize }
+        if lines.count >= 15 { return fontSize }
 
         let baseFont = NSFont(name: fontName, size: fontSize)
             ?? NSFont.monospacedSystemFont(ofSize: fontSize, weight: .regular)
