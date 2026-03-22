@@ -522,6 +522,23 @@ final class BrowserViewModel {
         }
     }
 
+    enum PreviewInteractionMode: Equatable {
+        case browsing
+        case previewing(itemId: Int64)
+        case editing(itemId: Int64)
+    }
+
+    var previewInteractionMode: PreviewInteractionMode {
+        guard let id = selectedItemId else { return .browsing }
+        if editState.pendingEdits[id] != nil {
+            return .editing(itemId: id)
+        }
+        if editState.focus == .focused(itemId: id) {
+            return .previewing(itemId: id)
+        }
+        return .browsing
+    }
+
     var selectedItemHasPendingEdit: Bool {
         guard let id = selectedItemId else { return false }
         return editState.pendingEdits[id] != nil
@@ -564,7 +581,7 @@ final class BrowserViewModel {
         guard hasAppliedInitialSearch else { return }
         guard lastLoadedContentRevision != latestKnownContentRevision || displayedContent == nil else { return }
         guard searchExecution.request != contentState.request ||
-              searchExecution.targetContentRevision != latestKnownContentRevision
+            searchExecution.targetContentRevision != latestKnownContentRevision
         else {
             return
         }
