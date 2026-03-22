@@ -3,7 +3,7 @@
 
 Prerequisites:
   - ClipKitty.pkg exists at PROJECT_ROOT (run `make -C distribution appstore` first)
-  - tapkey installed (via nix devShell), or AGE_SECRET_KEY env var
+  - keytap installed (via nix devShell), or AGE_SECRET_KEY env var
   - asc CLI installed (run distribution/install-deps.sh)
 
 Usage:

@@ -5,10 +5,10 @@
     nixpkgs.url = "github:NixOS/nixpkgs/nixpkgs-unstable";
     rust-overlay.url = "github:oxalica/rust-overlay";
     flake-utils.url = "github:numtide/flake-utils";
-    tapkey.url = "github:jul-sh/tapkey";
+    keytap.url = "github:jul-sh/keytap";
   };
 
-  outputs = { self, nixpkgs, rust-overlay, flake-utils, tapkey, ... }:
+  outputs = { self, nixpkgs, rust-overlay, flake-utils, keytap, ... }:
     flake-utils.lib.eachDefaultSystem (system:
       let
         overlays = [ (import rust-overlay) ];
@@ -47,9 +47,8 @@
             rustToolchain
             pkgs.swiftlint
             pkgs.swiftformat
+            keytap.packages.${system}.default
             asc
-          ] ++ pkgs.lib.optionals (tapkey.packages ? ${system}) [
-            tapkey.packages.${system}.default
           ];
 
           shellHook = ''

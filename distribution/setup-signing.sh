@@ -6,7 +6,7 @@
 #   ./distribution/setup-signing.sh           # Create keychain & import certs
 #   ./distribution/setup-signing.sh --cleanup  # Remove temporary keychain
 #
-# Reads encrypted cert secrets from secrets/*.age via tapkey.
+# Reads encrypted cert secrets from secrets/*.age via keytap.
 
 set -euo pipefail
 

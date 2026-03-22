@@ -1,6 +1,6 @@
 #!/bin/bash
 # Decrypts a secret from secrets/<NAME>.age.
-# Uses tapkey locally; falls back to age + AGE_SECRET_KEY in CI.
+# Uses keytap locally; falls back to age + AGE_SECRET_KEY in CI.
 #
 # Usage:
 #   ./distribution/read-secret.sh SECRET_NAME
@@ -25,9 +25,9 @@ fi
 
 if [ -n "${AGE_SECRET_KEY:-}" ]; then
     echo "$AGE_SECRET_KEY" | age -d -i - "$SECRET_PATH"
-elif command -v tapkey &>/dev/null; then
-    tapkey clipkitty --decrypt "$SECRET_PATH"
+elif command -v keytap &>/dev/null; then
+    keytap decrypt "$SECRET_PATH" --key clipkitty
 else
-    echo "Error: Neither AGE_SECRET_KEY nor tapkey available" >&2
+    echo "Error: Neither AGE_SECRET_KEY nor keytap available" >&2
     exit 1
 fi
