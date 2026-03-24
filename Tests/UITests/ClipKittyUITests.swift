@@ -13,7 +13,9 @@ final class ClipKittyUITests: XCTestCase {
     }
 
     /// CI runners are slower; use longer timeouts to avoid flaky failures.
-    private var ciTimeout: TimeInterval { isCI ? 2.0 : 0.5 }
+    private var ciTimeout: TimeInterval {
+        isCI ? 2.0 : 0.5
+    }
 
     /// Wait for a condition to become true, polling at short intervals.
     private func waitForCondition(timeout: TimeInterval = 5, _ condition: () -> Bool) -> Bool {
@@ -84,7 +86,8 @@ final class ClipKittyUITests: XCTestCase {
     private func getBundleIdentifier(for appURL: URL) -> String {
         let plistURL = appURL.appendingPathComponent("Contents/Info.plist")
         if let plist = NSDictionary(contentsOf: plistURL),
-           let bundleId = plist["CFBundleIdentifier"] as? String {
+           let bundleId = plist["CFBundleIdentifier"] as? String
+        {
             return bundleId
         }
         return "com.eviljuliette.clipkitty"
@@ -215,7 +218,7 @@ final class ClipKittyUITests: XCTestCase {
         // Verify the copy succeeded and the file is a real SQLite database
         let copiedSize = (try? FileManager.default.attributesOfItem(atPath: targetURL.path)[.size] as? Int) ?? 0
         XCTAssertGreaterThan(copiedSize, 1024,
-            "Copied database is too small (\(copiedSize) bytes). Target: \(targetURL.path)")
+                             "Copied database is too small (\(copiedSize) bytes). Target: \(targetURL.path)")
     }
 
     /// Helper to get the currently selected index by finding the button with isSelected trait
@@ -253,14 +256,14 @@ final class ClipKittyUITests: XCTestCase {
 
     /// Regression test: verify the synthetic database was correctly seeded.
     /// If this fails, the DB is likely being placed in the wrong sandbox container path.
-    func testDatabaseNotEmpty() throws {
+    func testDatabaseNotEmpty() {
         let items = app.outlines.firstMatch.buttons.allElementsBoundByIndex
         XCTAssertGreaterThan(items.count, 0, "Database should contain items — empty DB indicates a seeding/path regression")
     }
 
     /// Tests that first item is selected on initial open.
     /// There should always be an item selected when items exist.
-    func testFirstItemSelectedOnOpen() throws {
+    func testFirstItemSelectedOnOpen() {
         // First item should be selected immediately after open
         XCTAssertTrue(waitForSelectedIndex(0, timeout: 3), "First item should be selected on open")
 
@@ -272,7 +275,7 @@ final class ClipKittyUITests: XCTestCase {
     /// Tests that first item's preview content is visible when selected.
     /// KNOWN ISSUE: First item shows in list but NOT in preview pane.
     /// The EditableTextPreview's NSTextView is not rendering/accessible.
-    func testFirstItemPreviewVisible() throws {
+    func testFirstItemPreviewVisible() {
         let panel = app.dialogs.firstMatch
         XCTAssertTrue(panel.exists, "Panel should be visible initially")
 
@@ -292,12 +295,12 @@ final class ClipKittyUITests: XCTestCase {
         }
 
         XCTAssertTrue(previewExists,
-            "Preview text view (PreviewTextView) should exist. KNOWN ISSUE: EditableTextPreview not rendering.")
+                      "Preview text view (PreviewTextView) should exist. KNOWN ISSUE: EditableTextPreview not rendering.")
     }
 
     /// Tests that Cmd+number shortcuts select and paste the corresponding history item.
     /// Cmd+2 should target the second item (index 1).
-    func testCommandNumberShortcutSelectsSecondItem() throws {
+    func testCommandNumberShortcutSelectsSecondItem() {
         let searchField = app.textFields["SearchField"]
         XCTAssertTrue(searchField.waitForExistence(timeout: 5), "Search field not found")
 
@@ -325,7 +328,7 @@ final class ClipKittyUITests: XCTestCase {
 
     /// Tests that selection resets to first when the selected item's position changes in the list.
     /// Selection should only reset when items are reordered, not on every search text change.
-    func testSelectionResetsWhenItemPositionChanges() throws {
+    func testSelectionResetsWhenItemPositionChanges() {
         let searchField = app.textFields.firstMatch
         XCTAssertTrue(searchField.waitForExistence(timeout: 5), "Search field not found")
 
@@ -334,7 +337,7 @@ final class ClipKittyUITests: XCTestCase {
 
         // Move selection down to item 3
         searchField.click()
-        for _ in 0..<3 {
+        for _ in 0 ..< 3 {
             searchField.typeText(XCUIKeyboardKey.downArrow.rawValue)
         }
         Thread.sleep(forTimeInterval: 0.1)
@@ -349,7 +352,7 @@ final class ClipKittyUITests: XCTestCase {
         XCTAssertTrue(waitForSelectedIndex(0, timeout: 2), "Selection should reset when item positions change")
     }
 
-    func testPreviewHighlightsRefreshWhenRefiningQueryForSameItem() throws {
+    func testPreviewHighlightsRefreshWhenRefiningQueryForSameItem() {
         let searchField = app.textFields["SearchField"]
         XCTAssertTrue(searchField.waitForExistence(timeout: 5), "Search field not found")
         let previewTextView = app.textViews["PreviewTextView"]
@@ -417,11 +420,9 @@ final class ClipKittyUITests: XCTestCase {
         )
     }
 
-
-
     /// Tests that the panel hides when focus moves to another application.
     /// This is Spotlight-like behavior - the panel should auto-dismiss on focus loss.
-    func testPanelHidesOnFocusLoss() throws {
+    func testPanelHidesOnFocusLoss() {
         let window = app.dialogs.firstMatch
         XCTAssertTrue(window.exists, "Window should be visible initially")
 
@@ -438,7 +439,7 @@ final class ClipKittyUITests: XCTestCase {
     /// Tests that the panel does NOT auto-show when the app is activated/focused.
     /// The panel should only appear via hotkey or menu - not automatically on app focus.
     /// This ensures settings and other interactions don't get overlaid by the panel.
-    func testPanelDoesNotAutoShowOnAppFocus() throws {
+    func testPanelDoesNotAutoShowOnAppFocus() {
         // Use the search field as a proxy for panel visibility — it's always inside the panel
         let searchField = app.textFields["SearchField"]
         XCTAssertTrue(searchField.exists, "Panel should be visible initially (search field present)")
@@ -480,7 +481,7 @@ final class ClipKittyUITests: XCTestCase {
 
     /// Tests that clicking on the preview text area allows text selection
     /// instead of dragging the window.
-    func testPreviewTextIsSelectable() throws {
+    func testPreviewTextIsSelectable() {
         let window = app.dialogs.firstMatch
         XCTAssertTrue(window.exists, "Window should be visible")
 
@@ -515,7 +516,7 @@ final class ClipKittyUITests: XCTestCase {
     /// Tests that the content-type filter dropdown is visible and functional.
     /// The dropdown capsule must be hittable (rendered with nonzero frame and sufficient contrast),
     /// open a popover with filter options, and allow selecting a filter.
-    func testFilterDropdownVisible() throws {
+    func testFilterDropdownVisible() {
         // 1. Find the filter dropdown button by accessibility identifier
         let filterButton = app.buttons["FilterDropdown"]
         XCTAssertTrue(filterButton.waitForExistence(timeout: 5), "Filter dropdown button should exist")
@@ -552,14 +553,14 @@ final class ClipKittyUITests: XCTestCase {
     // MARK: - Actions Menu
 
     /// Tests that the actions button is visible in the metadata footer.
-    func testActionsButtonVisible() throws {
+    func testActionsButtonVisible() {
         let actionsButton = app.buttons["ActionsButton"]
         XCTAssertTrue(actionsButton.waitForExistence(timeout: 5), "Actions button should exist in footer")
         XCTAssertTrue(actionsButton.isHittable, "Actions button should be hittable")
     }
 
     /// Tests that clicking the actions button opens a popover with action options.
-    func testActionsPopoverOpensOnClick() throws {
+    func testActionsPopoverOpensOnClick() {
         let actionsButton = app.buttons["ActionsButton"]
         XCTAssertTrue(actionsButton.waitForExistence(timeout: 5), "Actions button should exist")
 
@@ -576,7 +577,7 @@ final class ClipKittyUITests: XCTestCase {
     }
 
     /// Tests that Cmd+K opens the actions popover.
-    func testCmdKOpensActionsPopover() throws {
+    func testCmdKOpensActionsPopover() {
         let searchField = app.textFields["SearchField"]
         XCTAssertTrue(searchField.waitForExistence(timeout: 5), "Search field not found")
 
@@ -589,7 +590,7 @@ final class ClipKittyUITests: XCTestCase {
     }
 
     /// Tests that Escape closes the actions popover.
-    func testEscapeClosesActionsPopover() throws {
+    func testEscapeClosesActionsPopover() {
         let actionsButton = app.buttons["ActionsButton"]
         XCTAssertTrue(actionsButton.waitForExistence(timeout: 5))
 
@@ -608,7 +609,7 @@ final class ClipKittyUITests: XCTestCase {
 
     /// Tests the full delete flow: open actions via Cmd+K, navigate to Delete,
     /// confirm deletion — all via keyboard to avoid SwiftUI button click issues in CI.
-    func testDeleteItemViaKeyboard() throws {
+    func testDeleteItemViaKeyboard() {
         let searchField = app.textFields["SearchField"]
         XCTAssertTrue(searchField.waitForExistence(timeout: 5), "Search field not found")
 
@@ -654,7 +655,7 @@ final class ClipKittyUITests: XCTestCase {
     // MARK: - Toast Tests
 
     /// Tests that a toast notification appears when copying an item
-    func testToastAppearsOnCopy() throws {
+    func testToastAppearsOnCopy() {
         let searchField = app.textFields["SearchField"]
         XCTAssertTrue(searchField.waitForExistence(timeout: 5), "Search field not found")
 
@@ -718,7 +719,8 @@ final class ClipKittyUITests: XCTestCase {
         )
 
         guard let cgImage = image.cgImage(forProposedRect: nil, context: nil, hints: nil),
-              let cropped = cgImage.cropping(to: cropRect) else {
+              let cropped = cgImage.cropping(to: cropRect)
+        else {
             return
         }
 
@@ -773,7 +775,7 @@ final class ClipKittyUITests: XCTestCase {
     ///   - Matches: #7C3AED, #FF5733, #2DD4BF, #F472B6, Orange tabby cat...
     /// Scene 3 (0:14-0:20): Typo forgiveness "rivresid" finds "Riverside", loop back to empty
     ///   - Matches: Apartment walkthrough...437 Riverside Dr...
-    func testRecordSearchDemo() throws {
+    func testRecordSearchDemo() {
         let searchField = app.textFields.firstMatch
         XCTAssertTrue(searchField.waitForExistence(timeout: 5), "Search field not found")
 
@@ -798,15 +800,15 @@ final class ClipKittyUITests: XCTestCase {
 
             // Convert from bottom-left origin (AppKit) to top-left origin (video/ffmpeg)
             // NOTE: XCTest actually uses top-left origin already, so no flip needed
-            let topLeftY = pixelY  // Use directly, no conversion
+            let topLeftY = pixelY // Use directly, no conversion
 
             // Format: x,y,width,height (with some padding for shadow/border)
-            let padding: CGFloat = 80  // N points * 2 for scaling
+            let padding: CGFloat = 80 // N points * 2 for scaling
             let boundsString = String(format: "%.0f,%.0f,%.0f,%.0f",
-                                       max(0, pixelX - padding),
-                                       max(0, topLeftY - padding),
-                                       pixelWidth + padding * 2,
-                                       pixelHeight + padding * 2)
+                                      max(0, pixelX - padding),
+                                      max(0, topLeftY - padding),
+                                      pixelWidth + padding * 2,
+                                      pixelHeight + padding * 2)
             try? boundsString.write(toFile: "/tmp/clipkitty_window_bounds.txt",
                                     atomically: true, encoding: .utf8)
         }
@@ -817,13 +819,13 @@ final class ClipKittyUITests: XCTestCase {
         // Wait for recording to start (shell script signals when screencapture is running)
         let recordingStartedPath = "/tmp/clipkitty_recording_started.txt"
         var waitCount = 0
-        while !FileManager.default.fileExists(atPath: recordingStartedPath) && waitCount < 20 {
+        while !FileManager.default.fileExists(atPath: recordingStartedPath), waitCount < 20 {
             Thread.sleep(forTimeInterval: 0.5)
             waitCount += 1
         }
         try? FileManager.default.removeItem(atPath: recordingStartedPath)
 
-        // Helper to type with natural delays
+        /// Helper to type with natural delays
         func typeSlowly(_ text: String, delay: TimeInterval = 0.08) {
             for char in text {
                 searchField.typeText(String(char))
@@ -831,9 +833,9 @@ final class ClipKittyUITests: XCTestCase {
             }
         }
 
-        // Helper to clear search field
+        /// Helper to clear search field
         func clearSearch() {
-            searchField.typeKey("a", modifierFlags: .command)  // Select all
+            searchField.typeKey("a", modifierFlags: .command) // Select all
             searchField.typeKey(.delete, modifierFlags: [])
             Thread.sleep(forTimeInterval: 0.3)
         }
@@ -899,10 +901,143 @@ final class ClipKittyUITests: XCTestCase {
         try? "stop".write(toFile: "/tmp/clipkitty_demo_stop.txt", atomically: true, encoding: .utf8)
     }
 
+    /// Records an intro video showcasing ClipKitty's core capabilities.
+    /// Run with: make -C distribution intro-video
+    ///
+    /// Uses SyntheticData_video.sqlite (generated by: make -C distribution video-data)
+    /// which has the welcome message as the first item plus items for each scene.
+    ///
+    /// Scene 1 (0:00-0:06): Welcome — viewer reads "Welcome to ClipKitty!" (pre-selected first item)
+    /// Scene 2 (0:06-0:14): Fuzzy search — "Copy, find forver" finds "Copy it once, find it forever."
+    /// Scene 3 (0:14-0:21): Multi-line preview — "Multi-line preview" shows balloon ASCII art
+    /// Scene 3.5 (0:21-0:28): Bookmark — "private" then Cmd+K → Enter to bookmark
+    /// Scene 4 (0:28-0:35): Image filter — Tab to open filter, select Images, type "fast"
+    func testRecordIntroVideo() {
+        let searchField = app.textFields.firstMatch
+        XCTAssertTrue(searchField.waitForExistence(timeout: 5), "Search field not found")
+
+        // Save window bounds to temp file for video cropping
+        let window = app.dialogs.firstMatch
+        if window.exists {
+            let frame = window.frame
+            let scaleFactor = NSScreen.main?.backingScaleFactor ?? 2.0
+            let pixelX = frame.origin.x * scaleFactor
+            let pixelY = frame.origin.y * scaleFactor
+            let pixelWidth = frame.width * scaleFactor
+            let pixelHeight = frame.height * scaleFactor
+            let padding: CGFloat = 80
+            let boundsString = String(format: "%.0f,%.0f,%.0f,%.0f",
+                                      max(0, pixelX - padding),
+                                      max(0, pixelY - padding),
+                                      pixelWidth + padding * 2,
+                                      pixelHeight + padding * 2)
+            try? boundsString.write(toFile: "/tmp/clipkitty_window_bounds.txt",
+                                    atomically: true, encoding: .utf8)
+        }
+
+        // Signal that the demo is ready to start (shell script will start recording)
+        try? "start".write(toFile: "/tmp/clipkitty_demo_start.txt", atomically: true, encoding: .utf8)
+
+        // Wait for recording to start
+        let recordingStartedPath = "/tmp/clipkitty_recording_started.txt"
+        var waitCount = 0
+        while !FileManager.default.fileExists(atPath: recordingStartedPath), waitCount < 20 {
+            Thread.sleep(forTimeInterval: 0.5)
+            waitCount += 1
+        }
+        try? FileManager.default.removeItem(atPath: recordingStartedPath)
+
+        /// Helper to type with natural delays
+        func typeSlowly(_ text: String, delay: TimeInterval = 0.08) {
+            for char in text {
+                searchField.typeText(String(char))
+                Thread.sleep(forTimeInterval: delay)
+            }
+        }
+
+        /// Helper to clear search field
+        func clearSearch() {
+            searchField.typeKey("a", modifierFlags: .command)
+            searchField.typeKey(.delete, modifierFlags: [])
+            Thread.sleep(forTimeInterval: 0.3)
+        }
+
+        // ============================================================
+        // SCENE 1: Welcome (0:00 - 0:06)
+        // ============================================================
+        // The first item "Welcome to ClipKitty!" is already displayed.
+        // Just pause so the viewer can read it.
+        Thread.sleep(forTimeInterval: 5.0)
+
+        // ============================================================
+        // SCENE 2: Fuzzy Search (0:06 - 0:14)
+        // ============================================================
+        // Type "Copy, find forver" (intentional typo) — demonstrates typo tolerance
+        typeSlowly("Copy, find forver")
+        Thread.sleep(forTimeInterval: 2.5)
+
+        // ============================================================
+        // SCENE 3: Multi-line Preview (0:14 - 0:21)
+        // ============================================================
+        clearSearch()
+        typeSlowly("Multi-line preview")
+        Thread.sleep(forTimeInterval: 3.0)
+
+        // ============================================================
+        // SCENE 3.5: Bookmark (0:21 - 0:28)
+        // ============================================================
+        clearSearch()
+        typeSlowly("private")
+        Thread.sleep(forTimeInterval: 1.0)
+
+        // Open actions menu with Cmd+K (highlight starts at index 0 = Bookmark)
+        searchField.typeKey("k", modifierFlags: .command)
+        Thread.sleep(forTimeInterval: 1.0)
+
+        // Press Return to activate Bookmark (already highlighted at index 0)
+        app.typeKey(.return, modifierFlags: [])
+        Thread.sleep(forTimeInterval: 2.0)
+
+        // ============================================================
+        // SCENE 4: Image Filter (0:28 - 0:35)
+        // ============================================================
+        clearSearch()
+        Thread.sleep(forTimeInterval: 0.3)
+
+        // Press Tab to open filter overlay (keyboard-triggered, highlights current selection)
+        searchField.typeKey(.tab, modifierFlags: [])
+        Thread.sleep(forTimeInterval: 0.5)
+
+        // Navigate to Images: All(0) → Bookmarks(1) → Text(2) → Images(3)
+        app.typeKey(.downArrow, modifierFlags: [])
+        Thread.sleep(forTimeInterval: 0.15)
+        app.typeKey(.downArrow, modifierFlags: [])
+        Thread.sleep(forTimeInterval: 0.15)
+        app.typeKey(.downArrow, modifierFlags: [])
+        Thread.sleep(forTimeInterval: 0.3)
+
+        // Select Images
+        app.typeKey(.return, modifierFlags: [])
+        Thread.sleep(forTimeInterval: 0.5)
+
+        // Type "fast" to find the cartoon cat image
+        typeSlowly("fast")
+        Thread.sleep(forTimeInterval: 2.5)
+
+        // ============================================================
+        // OUTRO (0:35 - 0:37)
+        // ============================================================
+        clearSearch()
+        Thread.sleep(forTimeInterval: 1.0)
+
+        // Signal that the demo is finished
+        try? "stop".write(toFile: "/tmp/clipkitty_demo_stop.txt", atomically: true, encoding: .utf8)
+    }
+
     /// Captures multiple screenshot states for marketing materials.
     /// Run with: make marketing-screenshots
     /// NOTE: Relies entirely on demo items in SyntheticData.sqlite (generated with --demo flag)
-    func testTakeMarketingScreenshots() throws {
+    func testTakeMarketingScreenshots() {
         let searchField = app.textFields.firstMatch
         XCTAssertTrue(searchField.waitForExistence(timeout: 5), "Search field not found")
 
@@ -969,7 +1104,7 @@ final class ClipKittyUITests: XCTestCase {
         }
         XCTAssertTrue(hasTextViews, "Should have text views in the app")
 
-        let previewTextView = app.textViews.allElementsBoundByIndex.first!
+        let previewTextView = try XCTUnwrap(app.textViews.allElementsBoundByIndex.first)
         XCTAssertTrue(previewTextView.exists, "Preview text view should exist")
 
         // Verify the preview has content from the selected item
@@ -981,7 +1116,7 @@ final class ClipKittyUITests: XCTestCase {
         let initialFrame = window.frame
         clickAndWait(previewTextView, timeout: ciTimeout)
         XCTAssertEqual(window.frame.origin.x, initialFrame.origin.x, accuracy: 2,
-            "Window should not move when clicking preview text (text should be selectable)")
+                       "Window should not move when clicking preview text (text should be selectable)")
     }
 
     /// Tests that selecting different items updates the preview content.
@@ -1005,7 +1140,7 @@ final class ClipKittyUITests: XCTestCase {
             return
         }
 
-        let previewTextView = app.textViews.allElementsBoundByIndex.first!
+        let previewTextView = try XCTUnwrap(app.textViews.allElementsBoundByIndex.first)
         let firstItemText = previewTextView.value as? String ?? ""
 
         // Navigate to second item
@@ -1023,7 +1158,7 @@ final class ClipKittyUITests: XCTestCase {
     }
 
     /// Tests that copying an item via Return re-selects the first item.
-    func testEditedItemAppearsAtTopAndSelected() throws {
+    func testEditedItemAppearsAtTopAndSelected() {
         let searchField = app.textFields["SearchField"]
         XCTAssertTrue(searchField.waitForExistence(timeout: 5), "Search field not found")
 
@@ -1045,7 +1180,7 @@ final class ClipKittyUITests: XCTestCase {
     }
 
     /// Tests that images show an image preview, not an editable text view.
-    func testImagePreviewNotEditable() throws {
+    func testImagePreviewNotEditable() {
         let filterButton = app.buttons["FilterDropdown"]
         XCTAssertTrue(filterButton.waitForExistence(timeout: 5), "Filter button not found")
 
@@ -1078,7 +1213,7 @@ final class ClipKittyUITests: XCTestCase {
     }
 
     /// Tests that links show a link preview, not an editable text view.
-    func testLinkPreviewNotEditable() throws {
+    func testLinkPreviewNotEditable() {
         let filterButton = app.buttons["FilterDropdown"]
         XCTAssertTrue(filterButton.waitForExistence(timeout: 5), "Filter button not found")
 
@@ -1111,7 +1246,7 @@ final class ClipKittyUITests: XCTestCase {
     }
 
     /// Tests that copying via Return shows a toast notification.
-    func testEditAndCopyShowsCombinedToastMessage() throws {
+    func testEditAndCopyShowsCombinedToastMessage() {
         let searchField = app.textFields["SearchField"]
         XCTAssertTrue(searchField.waitForExistence(timeout: 5), "Search field not found")
 
@@ -1150,7 +1285,7 @@ final class ClipKittyUITests: XCTestCase {
             return
         }
 
-        let previewTextView = app.textViews.allElementsBoundByIndex.first!
+        let previewTextView = try XCTUnwrap(app.textViews.allElementsBoundByIndex.first)
         clickAndWait(previewTextView, timeout: ciTimeout)
 
         // Type some text to create an edit
@@ -1181,9 +1316,9 @@ final class ClipKittyUITests: XCTestCase {
 
     /// Helper to check if Save UI element exists
     private func saveUIExists() -> Bool {
-        let saveButtons = self.app.buttons.matching(NSPredicate(format: "label CONTAINS 'Save'")).allElementsBoundByIndex
+        let saveButtons = app.buttons.matching(NSPredicate(format: "label CONTAINS 'Save'")).allElementsBoundByIndex
         if !saveButtons.isEmpty { return true }
-        let saveTexts = self.app.staticTexts.matching(NSPredicate(format: "label CONTAINS 'Save'")).allElementsBoundByIndex
+        let saveTexts = app.staticTexts.matching(NSPredicate(format: "label CONTAINS 'Save'")).allElementsBoundByIndex
         return !saveTexts.isEmpty
     }
 
@@ -1204,7 +1339,7 @@ final class ClipKittyUITests: XCTestCase {
             return
         }
 
-        let previewTextView = app.textViews.allElementsBoundByIndex.first!
+        let previewTextView = try XCTUnwrap(app.textViews.allElementsBoundByIndex.first)
         let originalText = previewTextView.value as? String ?? ""
 
         // Click and edit
@@ -1227,7 +1362,7 @@ final class ClipKittyUITests: XCTestCase {
         // Text should revert to original
         let currentText = previewTextView.value as? String ?? ""
         XCTAssertEqual(currentText, originalText,
-            "Preview text should revert to original after Escape")
+                       "Preview text should revert to original after Escape")
     }
 
     /// Tests that Cmd+S saves the edit (replaces the original item).
@@ -1251,11 +1386,11 @@ final class ClipKittyUITests: XCTestCase {
             return
         }
 
-        let previewTextView = app.textViews.allElementsBoundByIndex.first!
+        let previewTextView = try XCTUnwrap(app.textViews.allElementsBoundByIndex.first)
 
         // Click and edit with unique text to avoid duplicate detection
         clickAndWait(previewTextView, timeout: ciTimeout)
-        let uniqueEdit = " UNIQUE_\(Int.random(in: 1000...9999))"
+        let uniqueEdit = " UNIQUE_\(Int.random(in: 1000 ... 9999))"
         typeTextSlowly(previewTextView, text: uniqueEdit)
         Thread.sleep(forTimeInterval: ciTimeout)
 
@@ -1269,7 +1404,7 @@ final class ClipKittyUITests: XCTestCase {
         // Toast should appear confirming save
         let toastWindow = app.windows["ToastWindow"]
         XCTAssertTrue(toastWindow.waitForExistence(timeout: 5),
-            "Toast should appear after saving edit")
+                      "Toast should appear after saving edit")
 
         // Wait for the list to update
         Thread.sleep(forTimeInterval: ciTimeout)
@@ -1283,7 +1418,7 @@ final class ClipKittyUITests: XCTestCase {
             self.app.outlines.firstMatch.buttons.allElementsBoundByIndex.count == initialCount
         }
         XCTAssertTrue(countStable,
-            "Item count should stay the same after edit (delete + save). Expected \(initialCount)")
+                      "Item count should stay the same after edit (delete + save). Expected \(initialCount)")
     }
 
     /// Tests that Cmd+Return saves the edit and copies/pastes the new item.
@@ -1303,11 +1438,11 @@ final class ClipKittyUITests: XCTestCase {
             return
         }
 
-        let previewTextView = app.textViews.allElementsBoundByIndex.first!
+        let previewTextView = try XCTUnwrap(app.textViews.allElementsBoundByIndex.first)
 
         // Click and edit with unique text
         clickAndWait(previewTextView, timeout: ciTimeout)
-        let uniqueEdit = " CMD_RETURN_\(Int.random(in: 1000...9999))"
+        let uniqueEdit = " CMD_RETURN_\(Int.random(in: 1000 ... 9999))"
         typeTextSlowly(previewTextView, text: uniqueEdit)
         Thread.sleep(forTimeInterval: ciTimeout)
 
@@ -1342,7 +1477,7 @@ final class ClipKittyUITests: XCTestCase {
             return
         }
 
-        let previewTextView = app.textViews.allElementsBoundByIndex.first!
+        let previewTextView = try XCTUnwrap(app.textViews.allElementsBoundByIndex.first)
 
         // Click and edit
         clickAndWait(previewTextView, timeout: ciTimeout)
@@ -1364,7 +1499,7 @@ final class ClipKittyUITests: XCTestCase {
         // The pending edit should be preserved - Save button should still be visible
         let saveExists = waitForCondition(timeout: 3) { self.saveUIExists() }
         XCTAssertTrue(saveExists,
-            "Save button should still appear when returning to edited item")
+                      "Save button should still appear when returning to edited item")
     }
 
     /// Tests that the Return button label shows Cmd+Return when in edit mode.
@@ -1384,7 +1519,7 @@ final class ClipKittyUITests: XCTestCase {
             return
         }
 
-        let previewTextView = app.textViews.allElementsBoundByIndex.first!
+        let previewTextView = try XCTUnwrap(app.textViews.allElementsBoundByIndex.first)
 
         // Click and edit
         clickAndWait(previewTextView, timeout: ciTimeout)
@@ -1403,5 +1538,4 @@ final class ClipKittyUITests: XCTestCase {
         }
         XCTAssertTrue(cmdReturnExists, "Confirm button should show ⌘↩ prefix when editing")
     }
-
 }
