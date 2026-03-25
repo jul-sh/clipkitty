@@ -77,6 +77,54 @@ final class BrowserViewModelTests: XCTestCase {
         XCTAssertEqual(viewModel.selectedItem?.itemMetadata.itemId, 2)
     }
 
+    func testDisplayResetKeepsPreviousResultsVisible() async {
+        let client = MockBrowserStoreClient()
+        let firstItem = makeItem(id: 1, text: "first")
+        let secondItem = makeItem(id: 2, text: "second")
+        client.enqueueSearchResponse(BrowserSearchResponse(
+            request: SearchRequest(text: "", filter: .all),
+            items: [makeMatch(id: 1, snippet: "first")],
+            firstItem: firstItem,
+            totalCount: 1
+        ))
+
+        let viewModel = BrowserViewModel(
+            client: client,
+            onSelect: { _, _ in },
+            onCopyOnly: { _, _ in },
+            onDismiss: {}
+        )
+
+        viewModel.onAppear(initialSearchQuery: "")
+        await flushMainActor()
+
+        XCTAssertEqual(viewModel.itemIds, [1])
+        XCTAssertEqual(viewModel.selectedItemId, 1)
+
+        viewModel.handleDisplayReset(initialSearchQuery: "")
+        await flushMainActor()
+
+        guard case let .loading(request, previous, _) = viewModel.contentState else {
+            return XCTFail("Expected display reset to preserve stale results while refreshing")
+        }
+        XCTAssertEqual(request, SearchRequest(text: "", filter: .all))
+        XCTAssertEqual(previous?.response.items.map(\.itemMetadata.itemId), [1])
+        XCTAssertEqual(previous?.selection.itemId, 1)
+        XCTAssertEqual(viewModel.itemIds, [1])
+        XCTAssertEqual(viewModel.selectedItemId, 1)
+
+        client.resumeSearch(with: BrowserSearchResponse(
+            request: SearchRequest(text: "", filter: .all),
+            items: [makeMatch(id: 2, snippet: "second")],
+            firstItem: secondItem,
+            totalCount: 1
+        ))
+        await flushMainActor()
+
+        XCTAssertEqual(viewModel.itemIds, [2])
+        XCTAssertEqual(viewModel.selectedItemId, 2)
+    }
+
     func testHiddenContentRevisionRefreshKeepsPreviousResultsVisible() async {
         let client = MockBrowserStoreClient()
         let firstItem = makeItem(id: 1, text: "first")

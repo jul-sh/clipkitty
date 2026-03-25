@@ -174,11 +174,7 @@ final class BrowserViewModel {
     func onAppear(initialSearchQuery: String, contentRevision: Int = 0) {
         latestKnownContentRevision = max(latestKnownContentRevision, contentRevision)
         guard !hasAppliedInitialSearch else { return }
-        hasAppliedInitialSearch = true
-        submitSearch(
-            request: SearchRequest(text: initialSearchQuery, filter: .all),
-            targetContentRevision: latestKnownContentRevision
-        )
+        startInitialSearch(initialSearchQuery: initialSearchQuery, targetContentRevision: latestKnownContentRevision)
     }
 
     func handleDisplayReset(initialSearchQuery: String, contentRevision: Int = 0) {
@@ -206,9 +202,10 @@ final class BrowserViewModel {
         overlayState = .none
         mutationState = .idle
         editState = .init()
-        contentState = .idle(request: SearchRequest(text: "", filter: .all))
+        // Preserve displayed content so the fresh search can enter `.loading(previous:)`
+        // instead of flashing the empty state while the new results are loading.
         hasAppliedInitialSearch = false
-        onAppear(initialSearchQuery: initialSearchQuery, contentRevision: contentRevision)
+        startInitialSearch(initialSearchQuery: initialSearchQuery, targetContentRevision: contentRevision)
     }
 
     func handleContentRevisionChange(_ contentRevision: Int, isPanelVisible: Bool) {
@@ -586,6 +583,14 @@ final class BrowserViewModel {
             return
         }
         submitSearch(request: contentState.request, targetContentRevision: latestKnownContentRevision)
+    }
+
+    private func startInitialSearch(initialSearchQuery: String, targetContentRevision: Int) {
+        hasAppliedInitialSearch = true
+        submitSearch(
+            request: SearchRequest(text: initialSearchQuery, filter: .all),
+            targetContentRevision: targetContentRevision
+        )
     }
 
     private func submitSearch(text rawText: String, filter: ItemQueryFilter) {
