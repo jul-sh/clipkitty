@@ -283,11 +283,6 @@ pub(super) fn compute_recency_score(timestamp: i64, now: i64) -> u8 {
     score.round().clamp(0.0, 255.0) as u8
 }
 
-/// Quantize BM25 score to u16 for the tiebreaker bucket.
-/// Scaled by 100× to preserve decimal precision while fitting in u16.
-pub(super) fn quantize_bm25(score: f32) -> u16 {
-    (score * 100.0).max(0.0).min(u16::MAX as f32) as u16
-}
 
 #[cfg(test)]
 pub(super) fn quality_detail_structure(quality_detail: QualityDetail) -> StructureDetail {

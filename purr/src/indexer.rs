@@ -14,7 +14,10 @@ use crate::ranking::{
 };
 use crate::ranking::{prepare_document_for_ranking, PrefixPreferenceQuery, ScoringContext};
 pub(crate) use crate::search_admission::CHUNK_PARENT_THRESHOLD_BYTES;
-use crate::search_admission::{PhaseOneAdmissionPolicy, PhaseTwoHead, PROXIMITY_BOOST_SCALE};
+use crate::search_admission::{
+    PhaseOneAdmissionPolicy, PhaseOneBlendedScore, PhaseTwoHead, PROXIMITY_BOOST_SCALE,
+    WORD_MATCH_SIGNAL,
+};
 use crate::search::SearchQuery;
 use chrono::Utc;
 use tokio_util::sync::CancellationToken;
@@ -36,7 +39,8 @@ use tantivy::collector::{Collector, SegmentCollector, TopNComputer};
 use tantivy::collector::TopDocs;
 use tantivy::directory::MmapDirectory;
 use tantivy::query::{
-    BooleanQuery, BoostQuery, FuzzyTermQuery, Occur, PhrasePrefixQuery, PhraseQuery, TermQuery,
+    BooleanQuery, BoostQuery, ConstScoreQuery, FuzzyTermQuery, Occur, PhrasePrefixQuery,
+    PhraseQuery, TermQuery,
 };
 use tantivy::schema::*;
 use tantivy::tokenizer::{NgramTokenizer, TextAnalyzer, TokenFilter, TokenStream, Tokenizer};
@@ -409,7 +413,7 @@ fn score_phase_two_candidate(
         last_word_is_prefix: phase_two_query.last_word_is_prefix,
         prefix_preference: phase_two_query.prefix_preference,
         timestamp: candidate.timestamp,
-        bm25_score: candidate.tantivy_score,
+        bm25_remainder: candidate.phase_one_score.bm25_remainder,
         now,
     });
 
@@ -437,7 +441,7 @@ fn score_phase_two_candidate(
         last_word_is_prefix: phase_two_query.last_word_is_prefix,
         prefix_preference: phase_two_query.prefix_preference,
         timestamp: candidate.timestamp,
-        bm25_score: candidate.tantivy_score,
+        bm25_remainder: candidate.phase_one_score.bm25_remainder,
         now,
     });
 
@@ -487,7 +491,7 @@ impl PartialOrd for CollapsedDocAddress {
 
 #[derive(Debug, Clone, Copy)]
 struct CollapsedDocHit {
-    score: f32,
+    score: PhaseOneBlendedScore,
     address: CollapsedDocAddress,
 }
 
@@ -536,11 +540,10 @@ impl SegmentCollector for CollapsedTopDocsSegmentCollector {
         let item_id = self.item_id_reader.first(doc).unwrap_or(0);
         let timestamp = self.timestamp_reader.first(doc).unwrap_or(0);
         let parent_len = self.parent_len_reader.first(doc).unwrap_or(0).max(0) as usize;
-        let blended_score =
-            PhaseOneAdmissionPolicy::blended_phase_one_score(score, timestamp, parent_len, self.now)
-                as f32;
+        let blended =
+            PhaseOneBlendedScore::decode(score, timestamp, parent_len, self.now);
         let hit = CollapsedDocHit {
-            score: blended_score,
+            score: blended,
             address: CollapsedDocAddress {
                 item_id,
                 doc_address: DocAddress::new(self.segment_ord, doc),
@@ -559,8 +562,14 @@ impl SegmentCollector for CollapsedTopDocsSegmentCollector {
     }
 }
 
+/// Phase 1 result carrying the structured blended score and doc address.
+struct PhaseOneHit {
+    score: PhaseOneBlendedScore,
+    doc_address: DocAddress,
+}
+
 impl Collector for CollapsedTopDocs {
-    type Fruit = Vec<(f32, DocAddress)>;
+    type Fruit = Vec<PhaseOneHit>;
     type Child = CollapsedTopDocsSegmentCollector;
 
     fn for_segment(
@@ -591,7 +600,8 @@ impl Collector for CollapsedTopDocs {
             }
         }
 
-        let mut top_docs: TopNComputer<f32, CollapsedDocAddress> = TopNComputer::new(self.limit);
+        let mut top_docs: TopNComputer<PhaseOneBlendedScore, CollapsedDocAddress> =
+            TopNComputer::new(self.limit);
         for hit in best_by_item.into_values() {
             top_docs.push(hit.score, hit.address);
         }
@@ -599,7 +609,10 @@ impl Collector for CollapsedTopDocs {
         Ok(top_docs
             .into_sorted_vec()
             .into_iter()
-            .map(|doc| (doc.feature, doc.doc.doc_address))
+            .map(|doc| PhaseOneHit {
+                score: doc.feature,
+                doc_address: doc.doc.doc_address,
+            })
             .collect())
     }
 }
@@ -1087,12 +1100,25 @@ impl Indexer {
                 .into_iter()
                 .filter_map(|(_, index)| candidate_slots[index].take()),
         );
+        // Tail: unscored candidates that didn't go through Phase 2.
+        // Require at least 40% of query words to have word-level matches;
+        // pure trigram coincidences without sufficient word overlap are noise.
+        let query_word_count = recall_text
+            .split_whitespace()
+            .filter(|w| w.len() >= 2)
+            .count() as u32;
+        let min_word_matches = if query_word_count > 0 {
+            (query_word_count * 2 / 5).max(1) // 40%, at least 1
+        } else {
+            0
+        };
         ordered.extend(
             candidate_slots
                 .into_iter()
                 .enumerate()
                 .filter(|(index, _)| !scored_indices.contains(index))
-                .filter_map(|(_, candidate)| candidate),
+                .filter_map(|(_, candidate)| candidate)
+                .filter(|candidate| candidate.word_match_count() >= min_word_matches),
         );
         ordered.truncate(limit);
 
@@ -1102,7 +1128,7 @@ impl Indexer {
     fn candidate_from_doc(
         &self,
         doc: &tantivy::TantivyDocument,
-        blended_score: f32,
+        phase_one_score: PhaseOneBlendedScore,
     ) -> SearchCandidate {
         let item_id = doc
             .get_first(self.item_id_field)
@@ -1150,7 +1176,7 @@ impl Indexer {
             SearchMatchContext::WholeItem(WholeItemMatchContext::new(content, parent_len))
         };
 
-        SearchCandidate::new(item_id, timestamp, blended_score, match_context)
+        SearchCandidate::new(item_id, timestamp, phase_one_score, match_context)
     }
 
     /// Phase 1: Trigram recall using Tantivy BM25 over whole items and chunks.
@@ -1179,17 +1205,17 @@ impl Indexer {
             };
 
             let top_docs = searcher.search(final_query.as_ref(), &top_collector)?;
-            let last_raw_score = top_docs.last().map(|(score, _)| *score);
+            let last_score = top_docs.last().map(|hit| hit.score);
             let top_doc_count = top_docs.len();
             let mut batch_collapsed = Vec::with_capacity(top_doc_count);
-            for (blended_score, doc_address) in top_docs {
-                let doc: tantivy::TantivyDocument = searcher.doc(doc_address)?;
-                batch_collapsed.push(self.candidate_from_doc(&doc, blended_score));
+            for hit in top_docs {
+                let doc: tantivy::TantivyDocument = searcher.doc(hit.doc_address)?;
+                batch_collapsed.push(self.candidate_from_doc(&doc, hit.score));
             }
 
             collapsed = batch_collapsed;
             if top_doc_count < raw_limit
-                || PhaseOneAdmissionPolicy::should_stop_recall(&collapsed, last_raw_score)
+                || PhaseOneAdmissionPolicy::should_stop_recall(&collapsed, last_score)
             {
                 break;
             }
@@ -1306,6 +1332,28 @@ impl Indexer {
         }
 
         boosts
+    }
+
+    /// Encode word-match count into the Tantivy score.
+    ///
+    /// Each query word (≥2 chars) gets a `ConstScoreQuery` that adds
+    /// [`WORD_MATCH_SIGNAL`] when that word appears in `content_words`.
+    /// The count is recovered by [`PhaseOneBlendedScore::decode`] as
+    /// `floor(raw_score / WORD_MATCH_SIGNAL)`.
+    fn encode_word_match_signals(
+        words: &[&str],
+        content_words_field: Field,
+    ) -> Vec<(Occur, Box<dyn tantivy::query::Query>)> {
+        words
+            .iter()
+            .filter(|w| w.len() >= 2)
+            .map(|word| {
+                let term = Term::from_field_text(content_words_field, &word.to_lowercase());
+                let term_q = TermQuery::new(term, IndexRecordOption::Basic);
+                let signal = ConstScoreQuery::new(Box::new(term_q), WORD_MATCH_SIGNAL);
+                (Occur::Should, Box::new(signal) as Box<dyn tantivy::query::Query>)
+            })
+            .collect()
     }
 
     /// Build a trigram query with phrase boosts for contiguity scoring.
@@ -1432,6 +1480,11 @@ impl Indexer {
             let mut outer: Vec<(Occur, Box<dyn tantivy::query::Query>)> = Vec::new();
             outer.push((Occur::Must, recall));
             outer.extend(all_boosts);
+
+            outer.extend(
+                Self::encode_word_match_signals(&words, self.content_words_field),
+            );
+
             Box::new(BooleanQuery::new(outer))
         }
     }
@@ -1459,7 +1512,7 @@ mod tests {
         SearchCandidate::new(
             id,
             0,
-            score,
+            PhaseOneBlendedScore::from_raw(score),
             SearchMatchContext::WholeItem(WholeItemMatchContext::new(
                 std::sync::Arc::<str>::from("small match"),
                 64,
@@ -1471,7 +1524,7 @@ mod tests {
         SearchCandidate::new(
             id,
             0,
-            score,
+            PhaseOneBlendedScore::from_raw(score),
             SearchMatchContext::Chunk(ChunkMatchContext::new(
                 std::sync::Arc::<str>::from("chunk match"),
                 parent_len,

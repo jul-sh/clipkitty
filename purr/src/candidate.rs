@@ -113,24 +113,28 @@ impl SearchMatchContext {
 pub struct SearchCandidate {
     pub id: i64,
     pub timestamp: i64,
-    /// Blended Phase 1 score (recency + proximity + BM25 remainder).
-    pub tantivy_score: f32,
+    /// Structured Phase 1 score (word matches, proximity, recency, BM25).
+    pub(crate) phase_one_score: crate::search_admission::PhaseOneBlendedScore,
     match_context: SearchMatchContext,
 }
 
 impl SearchCandidate {
-    pub fn new(
+    pub(crate) fn new(
         id: i64,
         timestamp: i64,
-        tantivy_score: f32,
+        phase_one_score: crate::search_admission::PhaseOneBlendedScore,
         match_context: SearchMatchContext,
     ) -> Self {
         Self {
             id,
             timestamp,
-            tantivy_score,
+            phase_one_score,
             match_context,
         }
+    }
+
+    pub fn word_match_count(&self) -> u32 {
+        self.phase_one_score.word_match_count
     }
 
     pub fn content(&self) -> &str {
