@@ -29,7 +29,7 @@ pub(crate) use self::matching::{
 };
 use self::policy::{
     compute_quality_detail, compute_quality_tier, compute_recency_bucket, compute_recency_score,
-    compute_structure_detail, quantize_bm25,
+    compute_structure_detail,
 };
 #[cfg(test)]
 use self::policy::{
@@ -59,8 +59,8 @@ pub struct ScoringContext<'a> {
     pub prefix_preference: Option<PrefixPreferenceQuery<'a>>,
     /// Document timestamp (unix seconds)
     pub timestamp: i64,
-    /// BM25 score from tantivy
-    pub bm25_score: f32,
+    /// Pre-quantized BM25 remainder from Phase 1 (already u16-scaled).
+    pub bm25_remainder: u16,
     /// Current time (unix seconds)
     pub now: i64,
 }
@@ -624,7 +624,7 @@ fn build_ranking_breakdown(ctx: &ScoringContext<'_>) -> RankingBreakdown {
         quality_signals,
         recency_bucket: compute_recency_bucket(ctx.timestamp, ctx.now),
         recency_score: compute_recency_score(ctx.timestamp, ctx.now),
-        bm25_quantized: quantize_bm25(ctx.bm25_score),
+        bm25_quantized: ctx.bm25_remainder,
     }
 }
 
@@ -656,7 +656,7 @@ fn build_ranking_breakdown_with_perf(
             quality_signals,
             recency_bucket: compute_recency_bucket(ctx.timestamp, ctx.now),
             recency_score: compute_recency_score(ctx.timestamp, ctx.now),
-            bm25_quantized: quantize_bm25(ctx.bm25_score),
+            bm25_quantized: ctx.bm25_remainder,
         },
         perf,
     )
@@ -674,7 +674,7 @@ pub fn compute_bucket_score(ctx: &ScoringContext<'_>) -> BucketScore {
             recency_bucket: compute_recency_bucket(ctx.timestamp, ctx.now),
             quality_detail: QualityDetail::default(),
             recency_score: compute_recency_score(ctx.timestamp, ctx.now),
-            bm25_quantized: quantize_bm25(ctx.bm25_score),
+            bm25_quantized: ctx.bm25_remainder,
             recency: ctx.timestamp,
         };
     }
@@ -693,7 +693,7 @@ pub(crate) fn compute_bucket_score_with_perf(
                 recency_bucket: compute_recency_bucket(ctx.timestamp, ctx.now),
                 quality_detail: QualityDetail::default(),
                 recency_score: compute_recency_score(ctx.timestamp, ctx.now),
-                bm25_quantized: quantize_bm25(ctx.bm25_score),
+                bm25_quantized: ctx.bm25_remainder,
                 recency: ctx.timestamp,
             },
             RankingPerfBreakdown::default(),
@@ -1519,7 +1519,7 @@ mod tests {
             last_word_is_prefix,
             prefix_preference,
             timestamp,
-            bm25_score: bm25,
+            bm25_remainder: (bm25 * 100.0).clamp(0.0, u16::MAX as f32) as u16,
             now,
         })
     }
