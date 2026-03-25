@@ -34,6 +34,7 @@ pub enum DatabaseError {
 
 pub type DatabaseResult<T> = Result<T, DatabaseError>;
 const SEARCH_METADATA_PREFIX_CHARS: usize = SNIPPET_CONTEXT_CHARS * 4;
+const BROWSE_METADATA_PREFIX_CHARS: usize = SNIPPET_CONTEXT_CHARS * 8;
 
 #[derive(Debug, Clone)]
 pub(crate) struct SearchItemMetadata {
@@ -413,14 +414,16 @@ impl Database {
 
         let sql = if before_timestamp.is_some() {
             format!(
-                r#"SELECT id, content, contentType, timestamp, sourceApp, sourceAppBundleId, thumbnail, colorRgba
+                r#"SELECT id, substr(ltrim(content, char(9) || char(10) || char(13) || ' '), 1, {}), contentType, timestamp, sourceApp, sourceAppBundleId, thumbnail, colorRgba
                    FROM items WHERE timestamp < ? {} {} ORDER BY timestamp DESC LIMIT ?"#,
+                BROWSE_METADATA_PREFIX_CHARS,
                 type_filter_clause_and, tag_clause_and
             )
         } else {
             format!(
-                r#"SELECT id, content, contentType, timestamp, sourceApp, sourceAppBundleId, thumbnail, colorRgba
+                r#"SELECT id, substr(ltrim(content, char(9) || char(10) || char(13) || ' '), 1, {}), contentType, timestamp, sourceApp, sourceAppBundleId, thumbnail, colorRgba
                    FROM items {} {} ORDER BY timestamp DESC LIMIT ?"#,
+                BROWSE_METADATA_PREFIX_CHARS,
                 type_filter_clause, tag_clause_where
             )
         };
@@ -1137,5 +1140,18 @@ mod tests {
             }
             other => panic!("expected inconsistency error, got {other:?}"),
         }
+    }
+
+    #[test]
+    fn test_fetch_item_metadata_preview_handles_large_leading_whitespace() {
+        let db = Database::open_in_memory().unwrap();
+        let content = format!("{}Hello world", " \n\t".repeat(2_000));
+        seed_base_item(&db, "text", &content, None);
+
+        let (items, total_count) = db.fetch_item_metadata(None, 1, None, None).unwrap();
+
+        assert_eq!(total_count, 1);
+        assert_eq!(items.len(), 1);
+        assert_eq!(items[0].snippet, generate_preview(&content, SNIPPET_CONTEXT_CHARS * 2));
     }
 }
