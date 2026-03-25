@@ -505,6 +505,10 @@ struct TextPreviewView: NSViewRepresentable {
         }
 
         let tlm = textView.textLayoutManager
+        if let tlm, itemChanged || textChanged || highlightsChanged {
+            clearHighlightRenderingAttributes(from: tlm)
+        }
+
         if itemChanged || textChanged || highlightsChanged {
             // Convert highlights to NSTextRanges for the layout manager
             let newMatchRanges = resolveTextRanges(highlights: highlights, text: text, layoutManager: tlm)
@@ -512,7 +516,7 @@ struct TextPreviewView: NSViewRepresentable {
             coordinator.currentMatchRanges = newMatchRanges
             coordinator.lastHighlights = highlights
 
-            applyHighlightAttributes(highlights: highlights, to: textView)
+            applyHighlightAttributes(matchRanges: newMatchRanges, to: textView)
         }
 
         let scrollTarget: ScrollTarget
@@ -571,7 +575,8 @@ struct TextPreviewView: NSViewRepresentable {
             return MatchRange(
                 range: textRange,
                 utf16Start: highlight.utf16Start,
-                utf16End: highlight.utf16End
+                utf16End: highlight.utf16End,
+                kind: highlight.kind
             )
         }
     }
@@ -817,32 +822,39 @@ struct TextPreviewView: NSViewRepresentable {
         }
     }
 
+    private func clearHighlightRenderingAttributes(from textLayoutManager: NSTextLayoutManager) {
+        let startLocation = textLayoutManager.documentRange.location
+        var renderedRanges: [NSTextRange] = []
+
+        textLayoutManager.enumerateRenderingAttributes(
+            from: startLocation,
+            reverse: false
+        ) { _, attributes, textRange in
+            if attributes.keys.contains(.backgroundColor) || attributes.keys.contains(.underlineStyle) {
+                renderedRanges.append(textRange)
+            }
+            return true
+        }
+
+        for textRange in renderedRanges {
+            textLayoutManager.removeRenderingAttribute(.backgroundColor, for: textRange)
+            textLayoutManager.removeRenderingAttribute(.underlineStyle, for: textRange)
+            textLayoutManager.invalidateRenderingAttributes(for: textRange)
+        }
+    }
+
     private func applyHighlightAttributes(
-        highlights: [Utf16HighlightRange],
+        matchRanges: [MatchRange],
         to textView: NSTextView
     ) {
-        guard let textStorage = textView.textStorage else { return }
+        guard let textLayoutManager = textView.textLayoutManager else { return }
 
-        let fullRange = NSRange(location: 0, length: textStorage.length)
-        textStorage.beginEditing()
-        if fullRange.length > 0 {
-            textStorage.removeAttribute(.backgroundColor, range: fullRange)
-            textStorage.removeAttribute(.underlineStyle, range: fullRange)
-        }
-
-        for highlight in highlights {
-            let nsRange = highlight.nsRange
-            guard nsRange.location != NSNotFound,
-                  nsRange.location + nsRange.length <= textStorage.length
-            else {
-                continue
-            }
-            textStorage.addAttributes(
-                HighlightStyler.attributes(for: highlight.kind),
-                range: nsRange
+        for matchRange in matchRanges {
+            textLayoutManager.setRenderingAttributes(
+                HighlightStyler.renderingAttributes(for: matchRange.kind),
+                for: matchRange.range
             )
         }
-        textStorage.endEditing()
 
         refreshHighlightDisplay(textView: textView)
     }
@@ -873,6 +885,7 @@ struct TextPreviewView: NSViewRepresentable {
         let range: NSTextRange
         let utf16Start: UInt64
         let utf16End: UInt64
+        let kind: HighlightKind
     }
 
     class Coordinator: NSObject, NSTextViewDelegate {
