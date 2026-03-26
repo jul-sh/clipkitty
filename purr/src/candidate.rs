@@ -108,6 +108,15 @@ impl SearchMatchContext {
     }
 }
 
+/// Whether a candidate was fully scored in Phase 2 or only had Phase 1 recall.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum ScoringPhase {
+    /// Went through full Phase 2 bucket re-ranking.
+    PhaseTwoScored,
+    /// Only appeared in Phase 1 recall (tail candidate).
+    PhaseOneOnly,
+}
+
 /// An item-level search candidate produced after collapsing matching units.
 #[derive(Debug, Clone)]
 pub struct SearchCandidate {
@@ -116,6 +125,7 @@ pub struct SearchCandidate {
     /// Structured Phase 1 score (word matches, proximity, recency, BM25).
     pub(crate) phase_one_score: crate::search_admission::PhaseOneBlendedScore,
     match_context: SearchMatchContext,
+    scoring_phase: ScoringPhase,
 }
 
 impl SearchCandidate {
@@ -130,7 +140,16 @@ impl SearchCandidate {
             timestamp,
             phase_one_score,
             match_context,
+            scoring_phase: ScoringPhase::PhaseOneOnly,
         }
+    }
+
+    pub fn scoring_phase(&self) -> ScoringPhase {
+        self.scoring_phase
+    }
+
+    pub fn set_scoring_phase(&mut self, phase: ScoringPhase) {
+        self.scoring_phase = phase;
     }
 
     pub fn word_match_count(&self) -> u32 {
