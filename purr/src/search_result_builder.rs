@@ -213,6 +213,7 @@ impl<'a> SearchResultAssembler<'a> {
                 candidate.id,
                 metadata.content_hash.clone(),
                 candidate.match_context(),
+                candidate.scoring_phase(),
             );
 
             let mut item_metadata = metadata.item_metadata.clone();

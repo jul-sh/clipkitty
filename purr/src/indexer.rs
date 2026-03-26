@@ -1094,6 +1094,11 @@ impl Indexer {
 
         let mut candidate_slots: Vec<Option<SearchCandidate>> =
             candidates.into_iter().map(Some).collect();
+        for &(_, index) in &scored {
+            if let Some(candidate) = candidate_slots[index].as_mut() {
+                candidate.set_scoring_phase(crate::candidate::ScoringPhase::PhaseTwoScored);
+            }
+        }
         let mut ordered = Vec::new();
         ordered.extend(
             scored

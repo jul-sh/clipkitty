@@ -12,8 +12,8 @@ use crate::interface::{
     HighlightKind, ItemMatch, ItemMetadata, PreviewDecoration, RowDecoration, Utf16HighlightRange,
 };
 use crate::ranking::{
-    does_word_match, does_word_match_fast, prefix_match_for_query_word, WordMatchKind,
-    LARGE_DOC_THRESHOLD_BYTES,
+    does_word_match, does_word_match_fast, does_word_match_fast_raw, prefix_match_for_query_word,
+    WordMatchKind, LARGE_DOC_THRESHOLD_BYTES,
 };
 use tokio_util::sync::CancellationToken;
 
@@ -671,6 +671,80 @@ pub(crate) fn analyze_content_for_query(content: &str, query: &str) -> Option<Hi
         highlights,
         initial_scroll_highlight_index,
     })
+}
+
+/// Lightweight word-match-only analysis for Phase 1-only (tail) items.
+///
+/// Uses exact + prefix matching only (via `does_word_match_fast_raw`),
+/// skipping fuzzy, subsequence, and subword matching for performance.
+pub(crate) fn analyze_content_word_match(content: &str, query: &str) -> Option<HighlightAnalysis> {
+    let trimmed = query.trim();
+    if trimmed.is_empty() {
+        return None;
+    }
+
+    let highlights = compute_word_match_highlights(content, trimmed);
+    let initial_scroll_highlight_index =
+        find_densest_highlight(&highlights, SNIPPET_CONTEXT_CHARS as u64).map(|idx| idx as u64);
+
+    Some(HighlightAnalysis {
+        highlights,
+        initial_scroll_highlight_index,
+    })
+}
+
+/// Compute highlights using exact + prefix word matching only.
+///
+/// For each query word, finds all matching document words and emits highlight
+/// ranges. Only `Exact` and `Prefix` match kinds are produced — no fuzzy,
+/// subsequence, or subword matching.
+fn compute_word_match_highlights(content: &str, query: &str) -> Vec<HighlightRange> {
+    let query_words_owned = tokenize_words(query);
+    let query_words: Vec<&str> = query_words_owned
+        .iter()
+        .map(|(_, _, w)| w.as_str())
+        .collect();
+    let last_word_is_prefix = query.ends_with(|c: char| c.is_alphanumeric());
+
+    let doc_words = tokenize_words(content);
+    let query_lower: Vec<String> = query_words.iter().map(|w| w.to_lowercase()).collect();
+
+    let mut highlights: Vec<(usize, usize, HighlightKind)> = Vec::new();
+
+    for (char_start, char_end, doc_word) in &doc_words {
+        if !is_word_token(doc_word) {
+            continue;
+        }
+        for (qi, qw_lower) in query_lower.iter().enumerate() {
+            if !is_word_token(&query_words[qi]) {
+                continue;
+            }
+            let prefix_match =
+                prefix_match_for_query_word(query_lower.len(), qi, last_word_is_prefix);
+            let wmk = does_word_match_fast_raw(qw_lower, doc_word, prefix_match);
+            if wmk != WordMatchKind::None {
+                append_word_highlight(
+                    &mut highlights,
+                    *char_start,
+                    *char_end,
+                    &query_words[qi],
+                    wmk,
+                );
+                break;
+            }
+        }
+    }
+
+    highlights.sort_unstable_by_key(|&(s, _, _)| s);
+
+    highlights
+        .into_iter()
+        .map(|(s, e, k)| HighlightRange {
+            start: s as u64,
+            end: e as u64,
+            kind: k,
+        })
+        .collect()
 }
 
 /// Compute row decoration for an item given a query.
