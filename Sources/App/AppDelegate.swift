@@ -267,6 +267,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate {
             AppSettings.shared.launchAtLoginPromptDismissed = true
             self?.welcomeWindowController = nil
             NSApp.setActivationPolicy(.accessory)
+            self?.panelController.show()
         }
         controller.onHotKeyChanged = { [weak self] hotKey in
             self?.hotKeyManager.register(hotKey: hotKey)
