@@ -5,9 +5,7 @@ use crate::interface::{
 };
 use crate::match_presentation::{HighlightAnalysisCache, MatchPresentation};
 use crate::search;
-use crate::search_result_builder::{
-    uses_short_query_path, SearchResultAssembler, ShortQueryMode,
-};
+use crate::search_result_builder::{uses_short_query_path, SearchResultAssembler, ShortQueryMode};
 use std::sync::Arc;
 use tokio_util::sync::CancellationToken;
 
@@ -152,12 +150,13 @@ fn execute_search_sync(
                 content_type_filter.as_ref(),
                 tag_filter,
             ),
-            search::SearchQuery::PreferPrefix { stripped_text, .. } => assembler.search_short_query(
-                stripped_text,
-                ShortQueryMode::PrefixOnly,
-                content_type_filter.as_ref(),
-                tag_filter,
-            ),
+            search::SearchQuery::PreferPrefix { stripped_text, .. } => assembler
+                .search_short_query(
+                    stripped_text,
+                    ShortQueryMode::PrefixOnly,
+                    content_type_filter.as_ref(),
+                    tag_filter,
+                ),
         };
     }
 

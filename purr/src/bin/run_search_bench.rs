@@ -59,7 +59,10 @@ async fn main() {
 
     let store = open_store_with_ready_index(&db_path);
     let queries: Vec<String> = if args.queries.is_empty() {
-        DEFAULT_QUERIES.iter().map(|query| query.to_string()).collect()
+        DEFAULT_QUERIES
+            .iter()
+            .map(|query| query.to_string())
+            .collect()
     } else {
         args.queries.clone()
     };

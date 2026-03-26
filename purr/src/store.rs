@@ -649,12 +649,7 @@ mod tests {
             .compute_row_decorations(vec![infix_id], "port".to_string())
             .unwrap();
         assert_eq!(
-            decorations[0]
-                .decoration
-                .as_ref()
-                .unwrap()
-                .highlights[0]
-                .kind,
+            decorations[0].decoration.as_ref().unwrap().highlights[0].kind,
             HighlightKind::Substring
         );
     }
@@ -682,12 +677,7 @@ mod tests {
             .compute_row_decorations(vec![subword_id], "code".to_string())
             .unwrap();
         assert_eq!(
-            decorations[0]
-                .decoration
-                .as_ref()
-                .unwrap()
-                .highlights[0]
-                .kind,
+            decorations[0].decoration.as_ref().unwrap().highlights[0].kind,
             HighlightKind::SubwordPrefix
         );
     }
@@ -740,7 +730,12 @@ mod tests {
             .map(|item| item.item_metadata.item_id)
             .collect();
 
-        assert!(ids.contains(&exact_id), "expected {:?} to contain {}", ids, exact_id);
+        assert!(
+            ids.contains(&exact_id),
+            "expected {:?} to contain {}",
+            ids,
+            exact_id
+        );
         assert!(
             !ids.contains(&scattered_id),
             "expected scattered short-word content to stay out of results, got {:?}",
@@ -1379,11 +1374,7 @@ mod tests {
         let leading = "noise ".repeat((crate::indexer::CHUNK_PARENT_THRESHOLD_BYTES / 6) + 4096);
         let query = "alphauniqueterm";
         let item_id = store
-            .save_text(
-                format!("{leading}{query} trailing context"),
-                None,
-                None,
-            )
+            .save_text(format!("{leading}{query} trailing context"), None, None)
             .unwrap();
 
         let result = store.search(query.to_string()).await.unwrap();
@@ -1394,10 +1385,7 @@ mod tests {
             "chunked result snippet should come from the matched chunk"
         );
         assert!(
-            result
-                .first_preview_payload
-                .as_ref()
-                .is_none(),
+            result.first_preview_payload.as_ref().is_none(),
             "initial search should skip large chunked preview payload entirely"
         );
 

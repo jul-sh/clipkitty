@@ -97,8 +97,7 @@ pub(crate) struct PhaseOneAdmissionPolicy;
 impl PhaseOneAdmissionPolicy {
     pub(crate) const REGULAR_HEAD_LIMIT: usize = 64;
     pub(crate) const LARGE_HEAD_LIMIT: usize = 8;
-    pub(crate) const TOTAL_HEAD_LIMIT: usize =
-        Self::REGULAR_HEAD_LIMIT + Self::LARGE_HEAD_LIMIT;
+    pub(crate) const TOTAL_HEAD_LIMIT: usize = Self::REGULAR_HEAD_LIMIT + Self::LARGE_HEAD_LIMIT;
 
     pub(crate) fn is_large_parent(parent_len: usize) -> bool {
         parent_len > CHUNK_PARENT_THRESHOLD_BYTES
@@ -132,12 +131,7 @@ impl PhaseOneAdmissionPolicy {
         }
 
         let mut indices = Vec::new();
-        indices.extend(
-            regular
-                .iter()
-                .copied()
-                .take(Self::REGULAR_HEAD_LIMIT),
-        );
+        indices.extend(regular.iter().copied().take(Self::REGULAR_HEAD_LIMIT));
 
         if regular.len() >= Self::REGULAR_HEAD_LIMIT {
             let threshold = candidates[regular[Self::REGULAR_HEAD_LIMIT - 1]].phase_one_score;

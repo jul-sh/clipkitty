@@ -416,15 +416,13 @@ impl Database {
             format!(
                 r#"SELECT id, substr(ltrim(content, char(9) || char(10) || char(13) || ' '), 1, {}), contentType, timestamp, sourceApp, sourceAppBundleId, thumbnail, colorRgba
                    FROM items WHERE timestamp < ? {} {} ORDER BY timestamp DESC LIMIT ?"#,
-                BROWSE_METADATA_PREFIX_CHARS,
-                type_filter_clause_and, tag_clause_and
+                BROWSE_METADATA_PREFIX_CHARS, type_filter_clause_and, tag_clause_and
             )
         } else {
             format!(
                 r#"SELECT id, substr(ltrim(content, char(9) || char(10) || char(13) || ' '), 1, {}), contentType, timestamp, sourceApp, sourceAppBundleId, thumbnail, colorRgba
                    FROM items {} {} ORDER BY timestamp DESC LIMIT ?"#,
-                BROWSE_METADATA_PREFIX_CHARS,
-                type_filter_clause, tag_clause_where
+                BROWSE_METADATA_PREFIX_CHARS, type_filter_clause, tag_clause_where
             )
         };
 
@@ -514,7 +512,10 @@ impl Database {
         let mut stmt = conn.prepare(&sql)?;
         let params: Vec<rusqlite::types::Value> = ids.iter().map(|&id| id.into()).collect();
         let items: Vec<SearchItemMetadata> = stmt
-            .query_map(rusqlite::params_from_iter(params), Self::row_to_search_item_metadata)?
+            .query_map(
+                rusqlite::params_from_iter(params),
+                Self::row_to_search_item_metadata,
+            )?
             .collect::<Result<Vec<_>, _>>()?;
 
         let id_to_item: std::collections::HashMap<i64, SearchItemMetadata> = items
@@ -1045,7 +1046,9 @@ impl Database {
         let id: i64 = row.get(0)?;
         let content_hash: String = row.get(1)?;
         let content_prefix: String = row.get(2)?;
-        let db_type = row.get::<_, Option<String>>(3)?.unwrap_or_else(|| "text".to_string());
+        let db_type = row
+            .get::<_, Option<String>>(3)?
+            .unwrap_or_else(|| "text".to_string());
         let timestamp_str: String = row.get(4)?;
         let source_app: Option<String> = row.get(5)?;
         let source_app_bundle_id: Option<String> = row.get(6)?;
@@ -1152,6 +1155,9 @@ mod tests {
 
         assert_eq!(total_count, 1);
         assert_eq!(items.len(), 1);
-        assert_eq!(items[0].snippet, generate_preview(&content, SNIPPET_CONTEXT_CHARS * 2));
+        assert_eq!(
+            items[0].snippet,
+            generate_preview(&content, SNIPPET_CONTEXT_CHARS * 2)
+        );
     }
 }
