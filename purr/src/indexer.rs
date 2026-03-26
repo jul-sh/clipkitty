@@ -1844,4 +1844,41 @@ mod tests {
         assert_eq!(head_ids.len(), 5);
         assert_eq!(head_ids, vec![1, 2, 100, 101, 102]);
     }
+
+    // ── Short-word query recall bug ───────────────────────────────
+    //
+    // Query: "A a B b" (4 single-char words)
+    // Item:  "A a B b C c D d E e F f G g H h I i J j K k L l M m N n O o P p Q q R r S s T t U u V v W w X x Y y Z z"
+    //
+    // Bug: 4 words triggers is_long_query, which generates per-word
+    // trigrams. But every word is 1 char — too short for any trigram.
+    // Result: zero trigrams → empty recall → item not found.
+    //
+    // Full-string trigrams would produce cross-word-boundary trigrams
+    // like "a a", " a ", "a b" that match the document, but they're
+    // skipped because is_long_query uses per-word-only mode.
+    // Fuzzy clauses are also disabled for 4+ word queries.
+
+    #[test]
+    fn test_short_words_long_query_recall() {
+        let indexer = Indexer::new_in_memory().unwrap();
+        indexer
+            .add_document(
+                1,
+                "A a B b C c D d E e F f G g H h I i J j K k L l M m N n O o P p Q q R r S s T t U u V v W w X x Y y Z z",
+                1000,
+            )
+            .unwrap();
+        indexer.add_document(2, "unrelated content here", 1000).unwrap();
+        indexer.commit().unwrap();
+
+        let results = indexer.search("A a B b", 10).unwrap();
+        let ids: Vec<i64> = results.iter().map(|c| c.id).collect();
+        assert!(
+            ids.contains(&1),
+            "query 'A a B b' with all single-char words should recall the matching item, got {:?}",
+            ids
+        );
+        assert!(!ids.contains(&2));
+    }
 }
