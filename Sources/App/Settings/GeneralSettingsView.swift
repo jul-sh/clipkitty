@@ -52,7 +52,8 @@ struct GeneralSettingsView: View {
                         .font(.subheadline)
                         .foregroundStyle(
                             launchAtLogin.state.hasFailureNotice
-                                ? AnyShapeStyle(.red) : AnyShapeStyle(.secondary))
+                                ? AnyShapeStyle(.red) : AnyShapeStyle(.secondary)
+                        )
 
                     if launchAtLogin.state.hasFailureNotice {
                         Button(String(localized: "Open Login Items Settings")) {
@@ -60,16 +61,19 @@ struct GeneralSettingsView: View {
                                 URL(
                                     string:
                                     "x-apple.systempreferences:com.apple.LoginItems-Settings.extension"
-                                )!)
+                                )!
+                            )
                         }
                         .font(.subheadline)
                     }
                 }
             }
 
-            Section(String(localized: "Paste Items")) {
-                PasteItemsSettingView()
-            }
+            #if !APP_STORE
+                Section(String(localized: "Paste Items")) {
+                    PasteItemsSettingView()
+                }
+            #endif
 
             Section(String(localized: "History")) {
                 LabeledContent(String(localized: "Storage Limit")) {
@@ -128,7 +132,9 @@ struct GeneralSettingsView: View {
                                 NSWorkspace.shared.open(
                                     URL(
                                         string:
-                                        "https://github.com/jul-sh/clipkitty/releases/latest")!)
+                                        "https://github.com/jul-sh/clipkitty/releases/latest"
+                                    )!
+                                )
                             }
                         }
                     case .available:
@@ -179,7 +185,8 @@ struct GeneralSettingsView: View {
                             Text(
                                 String(
                                     localized:
-                                    "Found a bug? Report it on GitHub with steps to reproduce.")
+                                    "Found a bug? Report it on GitHub with steps to reproduce."
+                                )
                             )
                             .font(.subheadline)
                             .foregroundStyle(.secondary)
@@ -188,7 +195,8 @@ struct GeneralSettingsView: View {
                                 NSWorkspace.shared.open(
                                     URL(
                                         string:
-                                        "https://github.com/jul-sh/clipkitty/issues/new/choose")!
+                                        "https://github.com/jul-sh/clipkitty/issues/new/choose"
+                                    )!
                                 )
                             }
                         }
