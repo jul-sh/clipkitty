@@ -169,7 +169,9 @@ fn remove_sqlite_sidecars(db_path: &Path) -> Result<()> {
 }
 
 fn fixture_specs() -> Vec<FixtureSpec> {
-    let mut specs = Vec::with_capacity(TOTAL_TEXT_ITEMS + TOTAL_LINK_ITEMS + TOTAL_IMAGE_ITEMS + TOTAL_FILE_ITEMS);
+    let mut specs = Vec::with_capacity(
+        TOTAL_TEXT_ITEMS + TOTAL_LINK_ITEMS + TOTAL_IMAGE_ITEMS + TOTAL_FILE_ITEMS,
+    );
 
     specs.extend(repeat_specs(
         TextSizeClass::Tiny,
@@ -183,14 +185,8 @@ fn fixture_specs() -> Vec<FixtureSpec> {
         TextSizeClass::Medium,
         &spread_sizes(MEDIUM_TEXT_ITEMS, 12_000, 92_000),
     ));
-    specs.extend(repeat_specs(
-        TextSizeClass::Large,
-        &LARGE_TEXT_TARGET_SIZES,
-    ));
-    specs.extend(repeat_specs(
-        TextSizeClass::Huge,
-        &HUGE_TEXT_TARGET_SIZES,
-    ));
+    specs.extend(repeat_specs(TextSizeClass::Large, &LARGE_TEXT_TARGET_SIZES));
+    specs.extend(repeat_specs(TextSizeClass::Huge, &HUGE_TEXT_TARGET_SIZES));
 
     specs.extend((0..TOTAL_LINK_ITEMS).map(|_| FixtureSpec::Link { target_size: 96 }));
     specs.extend((0..TOTAL_IMAGE_ITEMS).map(|_| FixtureSpec::Image { target_size: 256 }));
@@ -199,11 +195,17 @@ fn fixture_specs() -> Vec<FixtureSpec> {
     specs
 }
 
-fn repeat_specs(size_class: TextSizeClass, sizes: &[usize]) -> impl Iterator<Item = FixtureSpec> + '_ {
-    sizes.iter().copied().map(move |target_size| FixtureSpec::Text {
-        size_class,
-        target_size,
-    })
+fn repeat_specs(
+    size_class: TextSizeClass,
+    sizes: &[usize],
+) -> impl Iterator<Item = FixtureSpec> + '_ {
+    sizes
+        .iter()
+        .copied()
+        .map(move |target_size| FixtureSpec::Text {
+            size_class,
+            target_size,
+        })
 }
 
 fn spread_sizes(count: usize, min: usize, max: usize) -> Vec<usize> {
@@ -289,14 +291,21 @@ fn build_text_document(
     let mut sections = Vec::new();
     match size_class {
         TextSizeClass::Tiny => {
-            sections.push(format!("note {}: {}", ordinal, NOTE_SNIPPETS[ordinal % NOTE_SNIPPETS.len()]));
+            sections.push(format!(
+                "note {}: {}",
+                ordinal,
+                NOTE_SNIPPETS[ordinal % NOTE_SNIPPETS.len()]
+            ));
             if ordinal % 7 == 0 {
                 sections.push("function error return class".to_string());
             }
         }
         TextSizeClass::Small | TextSizeClass::Medium => {
             sections.push(CODE_SNIPPETS[ordinal % CODE_SNIPPETS.len()].to_string());
-            sections.push(format!("Context: {}", NOTE_SNIPPETS[ordinal % NOTE_SNIPPETS.len()]));
+            sections.push(format!(
+                "Context: {}",
+                NOTE_SNIPPETS[ordinal % NOTE_SNIPPETS.len()]
+            ));
         }
         TextSizeClass::Large | TextSizeClass::Huge => {
             sections.push(format!(
@@ -379,39 +388,96 @@ mod tests {
             TOTAL_TEXT_ITEMS + TOTAL_LINK_ITEMS + TOTAL_IMAGE_ITEMS + TOTAL_FILE_ITEMS
         );
         assert_eq!(
-            specs.iter().filter(|spec| matches!(spec, FixtureSpec::Text { .. })).count(),
+            specs
+                .iter()
+                .filter(|spec| matches!(spec, FixtureSpec::Text { .. }))
+                .count(),
             TOTAL_TEXT_ITEMS
         );
         assert_eq!(
-            specs.iter().filter(|spec| matches!(spec, FixtureSpec::Link { .. })).count(),
+            specs
+                .iter()
+                .filter(|spec| matches!(spec, FixtureSpec::Link { .. }))
+                .count(),
             TOTAL_LINK_ITEMS
         );
         assert_eq!(
-            specs.iter().filter(|spec| matches!(spec, FixtureSpec::Image { .. })).count(),
+            specs
+                .iter()
+                .filter(|spec| matches!(spec, FixtureSpec::Image { .. }))
+                .count(),
             TOTAL_IMAGE_ITEMS
         );
         assert_eq!(
-            specs.iter().filter(|spec| matches!(spec, FixtureSpec::File { .. })).count(),
+            specs
+                .iter()
+                .filter(|spec| matches!(spec, FixtureSpec::File { .. }))
+                .count(),
             TOTAL_FILE_ITEMS
         );
         assert_eq!(
-            specs.iter().filter(|spec| matches!(spec, FixtureSpec::Text { size_class: TextSizeClass::Tiny, .. })).count(),
+            specs
+                .iter()
+                .filter(|spec| matches!(
+                    spec,
+                    FixtureSpec::Text {
+                        size_class: TextSizeClass::Tiny,
+                        ..
+                    }
+                ))
+                .count(),
             TINY_TEXT_ITEMS
         );
         assert_eq!(
-            specs.iter().filter(|spec| matches!(spec, FixtureSpec::Text { size_class: TextSizeClass::Small, .. })).count(),
+            specs
+                .iter()
+                .filter(|spec| matches!(
+                    spec,
+                    FixtureSpec::Text {
+                        size_class: TextSizeClass::Small,
+                        ..
+                    }
+                ))
+                .count(),
             SMALL_TEXT_ITEMS
         );
         assert_eq!(
-            specs.iter().filter(|spec| matches!(spec, FixtureSpec::Text { size_class: TextSizeClass::Medium, .. })).count(),
+            specs
+                .iter()
+                .filter(|spec| matches!(
+                    spec,
+                    FixtureSpec::Text {
+                        size_class: TextSizeClass::Medium,
+                        ..
+                    }
+                ))
+                .count(),
             MEDIUM_TEXT_ITEMS
         );
         assert_eq!(
-            specs.iter().filter(|spec| matches!(spec, FixtureSpec::Text { size_class: TextSizeClass::Large, .. })).count(),
+            specs
+                .iter()
+                .filter(|spec| matches!(
+                    spec,
+                    FixtureSpec::Text {
+                        size_class: TextSizeClass::Large,
+                        ..
+                    }
+                ))
+                .count(),
             LARGE_TEXT_TARGET_SIZES.len()
         );
         assert_eq!(
-            specs.iter().filter(|spec| matches!(spec, FixtureSpec::Text { size_class: TextSizeClass::Huge, .. })).count(),
+            specs
+                .iter()
+                .filter(|spec| matches!(
+                    spec,
+                    FixtureSpec::Text {
+                        size_class: TextSizeClass::Huge,
+                        ..
+                    }
+                ))
+                .count(),
             HUGE_TEXT_TARGET_SIZES.len()
         );
     }

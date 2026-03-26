@@ -52,7 +52,14 @@ async fn row_decoration_short_text_returns_full_content() {
     let row = row_decoration_for("Hello World", "Hello").await;
     assert_eq!(row.text, "Hello World");
     assert_eq!(row.line_number, 1);
-    assert_eq!(utf16_slice(&row.text, row.highlights[0].utf16_start, row.highlights[0].utf16_end), "Hello");
+    assert_eq!(
+        utf16_slice(
+            &row.text,
+            row.highlights[0].utf16_start,
+            row.highlights[0].utf16_end
+        ),
+        "Hello"
+    );
 }
 
 #[tokio::test]

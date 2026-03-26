@@ -51,9 +51,12 @@ impl<'a> SearchResultAssembler<'a> {
         filter: ItemQueryFilter,
     ) -> Result<SearchResult, ClipKittyError> {
         let (content_type_filter, tag_filter) = split_filter(filter);
-        let (mut items, total_count) = self
-            .db
-            .fetch_item_metadata(None, 1000, content_type_filter.as_ref(), tag_filter.as_ref())?;
+        let (mut items, total_count) = self.db.fetch_item_metadata(
+            None,
+            1000,
+            content_type_filter.as_ref(),
+            tag_filter.as_ref(),
+        )?;
         self.hydrate_item_metadata_tags(&mut items)?;
         let first_preview_payload = self.presentation().load_first_preview_payload(
             items.first().map(|item| item.item_id),
@@ -132,14 +135,17 @@ impl<'a> SearchResultAssembler<'a> {
         if matches!(mode, ShortQueryMode::PrefixThenContains)
             && ordered_ids.len() < SHORT_QUERY_MAX_RESULTS
         {
-            let recent_candidates = self
-                .db
-                .fetch_recent_items_for_short_query(SHORT_QUERY_RECENT_WINDOW, filter, tag.as_ref())?;
+            let recent_candidates = self.db.fetch_recent_items_for_short_query(
+                SHORT_QUERY_RECENT_WINDOW,
+                filter,
+                tag.as_ref(),
+            )?;
             for (id, content, _) in recent_candidates {
                 if prefix_ids.contains(&id) {
                     continue;
                 }
-                let content_prefix: String = content.chars().take(SHORT_QUERY_CONTENT_CAP).collect();
+                let content_prefix: String =
+                    content.chars().take(SHORT_QUERY_CONTENT_CAP).collect();
                 if content_prefix.to_lowercase().contains(&query_lower) {
                     ordered_ids.push(id);
                 }
@@ -233,7 +239,8 @@ impl<'a> SearchResultAssembler<'a> {
                 ItemMatch {
                     item_metadata,
                     row_decoration: Some(
-                        presentation.row_decoration_for_cached_match(candidate.id, query.raw_text()),
+                        presentation
+                            .row_decoration_for_cached_match(candidate.id, query.raw_text()),
                     ),
                 }
             } else {
@@ -262,9 +269,9 @@ impl<'a> SearchResultAssembler<'a> {
             return Err(ClipKittyError::Cancelled);
         }
 
-        let stored_items = self
-            .db
-            .fetch_items_by_ids_interruptible(ordered_ids, self.token, self.runtime)?;
+        let stored_items =
+            self.db
+                .fetch_items_by_ids_interruptible(ordered_ids, self.token, self.runtime)?;
         let item_map: HashMap<i64, StoredItem> = stored_items
             .into_iter()
             .filter_map(|item| item.id.map(|id| (id, item)))
@@ -276,9 +283,11 @@ impl<'a> SearchResultAssembler<'a> {
             .filter_map(|id| {
                 item_map.get(id).map(|item| ItemMatch {
                     item_metadata: item.to_metadata(),
-                    row_decoration: Some(
-                        presentation.row_decoration_for_item(*id, item.content.text_content(), query),
-                    ),
+                    row_decoration: Some(presentation.row_decoration_for_item(
+                        *id,
+                        item.content.text_content(),
+                        query,
+                    )),
                 })
             })
             .collect())
@@ -299,10 +308,7 @@ impl<'a> SearchResultAssembler<'a> {
         Ok(())
     }
 
-    fn hydrate_item_metadata_tags(
-        &self,
-        items: &mut [ItemMetadata],
-    ) -> Result<(), ClipKittyError> {
+    fn hydrate_item_metadata_tags(&self, items: &mut [ItemMetadata]) -> Result<(), ClipKittyError> {
         let ids: Vec<i64> = items.iter().map(|item| item.item_id).collect();
         let tags_by_id = self.db.get_tags_for_ids(&ids)?;
         for item in items {
@@ -330,7 +336,9 @@ pub(crate) fn uses_short_query_path(parsed_query: &search::SearchQuery) -> bool 
     parsed_query.recall_text().chars().count() < MIN_TRIGRAM_QUERY_LEN
 }
 
-pub(crate) fn split_filter(filter: ItemQueryFilter) -> (Option<ContentTypeFilter>, Option<ItemTag>) {
+pub(crate) fn split_filter(
+    filter: ItemQueryFilter,
+) -> (Option<ContentTypeFilter>, Option<ItemTag>) {
     match filter {
         ItemQueryFilter::All => (None, None),
         ItemQueryFilter::ContentType { content_type } => (Some(content_type), None),

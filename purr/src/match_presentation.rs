@@ -1,8 +1,7 @@
 use crate::candidate::{ScoringPhase, SearchMatchContext};
 use crate::database::{Database, SearchItemMetadata};
 use crate::interface::{
-    ClipKittyError, ClipboardItem, ItemMetadata, PreviewPayload, RowDecoration,
-    RowDecorationResult,
+    ClipKittyError, ClipboardItem, ItemMetadata, PreviewPayload, RowDecoration, RowDecorationResult,
 };
 use crate::models::StoredItem;
 use crate::search::{self, HighlightAnalysis};
@@ -196,7 +195,9 @@ impl CachedMatchContext {
         analysis: &HighlightAnalysis,
     ) -> Option<crate::interface::PreviewDecoration> {
         match self {
-            Self::WholeContent { .. } => Some(search::create_preview_decoration(full_content, analysis)),
+            Self::WholeContent { .. } => {
+                Some(search::create_preview_decoration(full_content, analysis))
+            }
             Self::ChunkRegion {
                 chunk_start,
                 chunk_end,
@@ -246,7 +247,11 @@ impl HighlightAnalysisCache {
     }
 
     fn touch_query(state: &mut HighlightAnalysisCacheState, query_key: &str) {
-        if let Some(position) = state.query_order.iter().position(|entry| entry == query_key) {
+        if let Some(position) = state
+            .query_order
+            .iter()
+            .position(|entry| entry == query_key)
+        {
             state.query_order.remove(position);
         }
         state.query_order.push_back(query_key.to_string());
@@ -258,7 +263,12 @@ impl HighlightAnalysisCache {
         }
     }
 
-    pub(crate) fn get(&self, query: &str, item_id: i64, content: &str) -> Option<Arc<HighlightAnalysis>> {
+    pub(crate) fn get(
+        &self,
+        query: &str,
+        item_id: i64,
+        content: &str,
+    ) -> Option<Arc<HighlightAnalysis>> {
         let query_key = Self::normalized_query(query)?;
         let content_hash = Self::content_hash(content);
         let mut state = self.state.lock();
@@ -266,7 +276,9 @@ impl HighlightAnalysisCache {
             .entries_by_query
             .get_mut(&query_key)
             .and_then(|entries| match entries.get(&item_id) {
-                Some(entry) if entry.content_hash == content_hash => Some(Arc::clone(&entry.analysis)),
+                Some(entry) if entry.content_hash == content_hash => {
+                    Some(Arc::clone(&entry.analysis))
+                }
                 Some(_) => {
                     entries.remove(&item_id);
                     None
@@ -305,7 +317,11 @@ impl HighlightAnalysisCache {
         );
     }
 
-    pub(crate) fn get_match_context(&self, query: &str, item_id: i64) -> Option<CachedMatchContext> {
+    pub(crate) fn get_match_context(
+        &self,
+        query: &str,
+        item_id: i64,
+    ) -> Option<CachedMatchContext> {
         let query_key = Self::normalized_query(query)?;
         let mut state = self.state.lock();
         let cached = state
@@ -337,7 +353,11 @@ impl HighlightAnalysisCache {
         }
         entries.insert(
             item_id,
-            CachedMatchContext::from_search_match_context(parent_content_hash, match_context, scoring_phase),
+            CachedMatchContext::from_search_match_context(
+                parent_content_hash,
+                match_context,
+                scoring_phase,
+            ),
         );
     }
 
@@ -489,8 +509,13 @@ impl<'a> MatchPresentation<'a> {
         match_context: &SearchMatchContext,
         scoring_phase: ScoringPhase,
     ) {
-        self.cache
-            .insert_match_context(query, item_id, parent_content_hash, match_context, scoring_phase);
+        self.cache.insert_match_context(
+            query,
+            item_id,
+            parent_content_hash,
+            match_context,
+            scoring_phase,
+        );
     }
 
     pub(crate) fn apply_match_context_snippet(
@@ -507,7 +532,10 @@ impl<'a> MatchPresentation<'a> {
                     search::create_row_decoration(context.content(), &analysis.highlights).text
                 })
                 .unwrap_or_else(|| {
-                    search::generate_preview(match_context.content(), search::SNIPPET_CONTEXT_CHARS * 2)
+                    search::generate_preview(
+                        match_context.content(),
+                        search::SNIPPET_CONTEXT_CHARS * 2,
+                    )
                 });
         }
     }
@@ -598,7 +626,9 @@ impl<'a> MatchPresentation<'a> {
         query: &str,
     ) -> Option<crate::interface::PreviewDecoration> {
         self.analysis_for_item(item_id, item.content.text_content(), query)
-            .map(|analysis| search::create_preview_decoration(item.content.text_content(), &analysis))
+            .map(|analysis| {
+                search::create_preview_decoration(item.content.text_content(), &analysis)
+            })
     }
 
     fn analysis_for_item(
@@ -636,14 +666,21 @@ impl<'a> MatchPresentation<'a> {
 
         let analysis = match context.strategy() {
             HighlightStrategy::Full => search::analyze_content_for_query(context.content(), query),
-            HighlightStrategy::WordMatch => search::analyze_content_word_match(context.content(), query),
+            HighlightStrategy::WordMatch => {
+                search::analyze_content_word_match(context.content(), query)
+            }
         }?;
         #[cfg(test)]
         test_support::on_analysis_computed(item_id, query);
         let analysis = Arc::new(analysis);
         self.cache
             .set_match_context_analysis(query, item_id, Arc::clone(&analysis));
-        Some((self.cache.get_match_context(query, item_id).unwrap_or(context), analysis))
+        Some((
+            self.cache
+                .get_match_context(query, item_id)
+                .unwrap_or(context),
+            analysis,
+        ))
     }
 }
 

@@ -13,12 +13,12 @@ use crate::ranking::{
     compute_bucket_score_with_perf, RankingPerfBreakdown, LARGE_DOC_THRESHOLD_BYTES,
 };
 use crate::ranking::{prepare_document_for_ranking, PrefixPreferenceQuery, ScoringContext};
+use crate::search::{self, SearchQuery};
 pub(crate) use crate::search_admission::CHUNK_PARENT_THRESHOLD_BYTES;
 use crate::search_admission::{
     PhaseOneAdmissionPolicy, PhaseOneBlendedScore, PhaseTwoHead, PROXIMITY_BOOST_SCALE,
     WORD_MATCH_SIGNAL,
 };
-use crate::search::{self, SearchQuery};
 use chrono::Utc;
 use tokio_util::sync::CancellationToken;
 
@@ -34,9 +34,9 @@ use parking_lot::RwLock;
 use std::cmp::Ordering;
 use std::collections::{HashMap, HashSet};
 use std::path::Path;
-use tantivy::collector::{Collector, SegmentCollector, TopNComputer};
 #[cfg(test)]
 use tantivy::collector::TopDocs;
+use tantivy::collector::{Collector, SegmentCollector, TopNComputer};
 use tantivy::directory::MmapDirectory;
 use tantivy::query::{
     BooleanQuery, BoostQuery, ConstScoreQuery, FuzzyTermQuery, Occur, PhrasePrefixQuery,
@@ -44,7 +44,9 @@ use tantivy::query::{
 };
 use tantivy::schema::*;
 use tantivy::tokenizer::{NgramTokenizer, TextAnalyzer, TokenFilter, TokenStream, Tokenizer};
-use tantivy::{DocAddress, DocId, Index, IndexReader, IndexWriter, ReloadPolicy, Score, SegmentReader, Term};
+use tantivy::{
+    DocAddress, DocId, Index, IndexReader, IndexWriter, ReloadPolicy, Score, SegmentReader, Term,
+};
 use thiserror::Error;
 
 #[derive(Debug, Clone, Copy)]
@@ -173,14 +175,8 @@ impl PhaseOneQueryPlan {
 
 #[derive(Debug, Clone)]
 enum TrigramRecallPlan {
-    FullString {
-        query: String,
-        words: Vec<String>,
-    },
-    PerWord {
-        query: String,
-        words: Vec<String>,
-    },
+    FullString { query: String, words: Vec<String> },
+    PerWord { query: String, words: Vec<String> },
 }
 
 #[derive(Debug, Clone)]
@@ -426,11 +422,11 @@ fn chunk_slices(content: &str) -> Vec<ChunkSlice> {
             break;
         }
 
-        let preferred_start = previous_char_boundary(content, end.saturating_sub(CHUNK_OVERLAP_BYTES));
+        let preferred_start =
+            previous_char_boundary(content, end.saturating_sub(CHUNK_OVERLAP_BYTES));
         let next_start = next_char_boundary(
             content,
-            snap_chunk_start(content, preferred_start, end)
-                .max(start.saturating_add(1)),
+            snap_chunk_start(content, preferred_start, end).max(start.saturating_add(1)),
         );
         if next_start <= start || next_start >= end {
             start = end;
@@ -586,8 +582,7 @@ impl SegmentCollector for CollapsedTopDocsSegmentCollector {
         let item_id = self.item_id_reader.first(doc).unwrap_or(0);
         let timestamp = self.timestamp_reader.first(doc).unwrap_or(0);
         let parent_len = self.parent_len_reader.first(doc).unwrap_or(0).max(0) as usize;
-        let blended =
-            PhaseOneBlendedScore::decode(score, timestamp, parent_len, self.now);
+        let blended = PhaseOneBlendedScore::decode(score, timestamp, parent_len, self.now);
         let hit = CollapsedDocHit {
             score: blended,
             address: CollapsedDocAddress {
@@ -951,7 +946,9 @@ impl Indexer {
         );
         doc.add_i64(
             self.chunk_end_field,
-            chunk.map(|chunk| chunk.end as i64).unwrap_or(parent_len as i64),
+            chunk
+                .map(|chunk| chunk.end as i64)
+                .unwrap_or(parent_len as i64),
         );
         writer.add_document(doc)?;
         Ok(())
@@ -1102,7 +1099,7 @@ impl Indexer {
         let PhaseTwoRun {
             mut scored,
             #[cfg(feature = "perf-log")]
-            perf: phase_two_perf,
+                perf: phase_two_perf,
         } = run_phase_two_head(phase_two_head, &candidates, phase_two_query, now, token)?;
 
         scored.sort_unstable_by(|a, b| b.0.cmp(&a.0));
@@ -1286,7 +1283,8 @@ impl Indexer {
             .collect::<Vec<_>>();
         let last_word_is_prefix = query.ends_with(|c: char| c.is_alphanumeric());
 
-        if let Some(recall) = Self::plan_word_sequence_recall(&word_field_words, last_word_is_prefix)
+        if let Some(recall) =
+            Self::plan_word_sequence_recall(&word_field_words, last_word_is_prefix)
         {
             return PhaseOneQueryPlan::WordSequence {
                 recall,
@@ -1337,8 +1335,8 @@ impl Indexer {
             .filter(|word| word.chars().count() >= search::MIN_TRIGRAM_QUERY_LEN)
             .count();
         let has_no_trigrammable_words = trigrammable_words == 0;
-        let lacks_long_query_coverage = words.len() >= 4
-            && (trigrammable_words < 2 || trigrammable_words * 2 < words.len());
+        let lacks_long_query_coverage =
+            words.len() >= 4 && (trigrammable_words < 2 || trigrammable_words * 2 < words.len());
 
         if !has_no_trigrammable_words && !lacks_long_query_coverage {
             return None;
@@ -1359,7 +1357,9 @@ impl Indexer {
     }
 
     fn has_per_word_trigrams(&self, words: &[String]) -> bool {
-        words.iter().any(|word| !self.trigram_terms(word).is_empty())
+        words
+            .iter()
+            .any(|word| !self.trigram_terms(word).is_empty())
     }
 
     /// Build FuzzyTermQuery clauses on the word-tokenized field.
@@ -1468,10 +1468,9 @@ impl Indexer {
             }
         }
 
-        if let Some(prefix_query) = self.build_trailing_prefix_query(
-            &word_field.words,
-            word_field.last_word_is_prefix,
-        ) {
+        if let Some(prefix_query) =
+            self.build_trailing_prefix_query(&word_field.words, word_field.last_word_is_prefix)
+        {
             let boosted: Box<dyn tantivy::query::Query> = Box::new(BoostQuery::new(
                 Box::new(prefix_query),
                 PROXIMITY_BOOST_SCALE,
@@ -1501,7 +1500,10 @@ impl Indexer {
                 let term = Term::from_field_text(content_words_field, &word.to_lowercase());
                 let term_q = TermQuery::new(term, IndexRecordOption::Basic);
                 let signal = ConstScoreQuery::new(Box::new(term_q), WORD_MATCH_SIGNAL);
-                (Occur::Should, Box::new(signal) as Box<dyn tantivy::query::Query>)
+                (
+                    Occur::Should,
+                    Box::new(signal) as Box<dyn tantivy::query::Query>,
+                )
             })
             .collect()
     }
@@ -1547,7 +1549,9 @@ impl Indexer {
             .map(|(index, words)| {
                 let pair_terms = words
                     .iter()
-                    .map(|word| Term::from_field_text(self.content_words_field, &word.to_lowercase()))
+                    .map(|word| {
+                        Term::from_field_text(self.content_words_field, &word.to_lowercase())
+                    })
                     .collect::<Vec<_>>();
                 let is_last_pair = index + 1 == recall.words.len() - 1;
                 let query: Box<dyn tantivy::query::Query> =
@@ -1967,8 +1971,8 @@ mod tests {
     fn test_chunked_parent_collapses_to_single_candidate() {
         let indexer = Indexer::new_in_memory().unwrap();
         let repeated_marker = "needlechunk ";
-        let content = repeated_marker
-            .repeat((CHUNK_PARENT_THRESHOLD_BYTES / repeated_marker.len()) + 4096);
+        let content =
+            repeated_marker.repeat((CHUNK_PARENT_THRESHOLD_BYTES / repeated_marker.len()) + 4096);
         indexer.add_document(1, &content, 1000).unwrap();
         indexer.commit().unwrap();
 
@@ -2016,10 +2020,11 @@ mod tests {
             head.iter().all(|&index| candidates[index].id != 999),
             "large parent should stay out of the bounded phase-two head when regular matches fill it"
         );
-        assert!(
-            head.iter()
-                .all(|&index| !PhaseOneAdmissionPolicy::is_large_parent(candidates[index].parent_len()))
-        );
+        assert!(head
+            .iter()
+            .all(|&index| !PhaseOneAdmissionPolicy::is_large_parent(
+                candidates[index].parent_len()
+            )));
     }
 
     #[test]
@@ -2062,7 +2067,9 @@ mod tests {
                 1000,
             )
             .unwrap();
-        indexer.add_document(2, "unrelated content here", 1000).unwrap();
+        indexer
+            .add_document(2, "unrelated content here", 1000)
+            .unwrap();
         indexer.commit().unwrap();
 
         let results = indexer.search("A a B b", 10).unwrap();
@@ -2078,9 +2085,7 @@ mod tests {
     #[test]
     fn test_two_char_words_long_query_recall() {
         let indexer = Indexer::new_in_memory().unwrap();
-        indexer
-            .add_document(1, "ab cd ef gh ij kl", 1000)
-            .unwrap();
+        indexer.add_document(1, "ab cd ef gh ij kl", 1000).unwrap();
         indexer
             .add_document(2, "ab xx cd yy ef zz gh", 1000)
             .unwrap();
@@ -2110,7 +2115,9 @@ mod tests {
                 1000,
             )
             .unwrap();
-        indexer.add_document(2, "to something be something else", 1000).unwrap();
+        indexer
+            .add_document(2, "to something be something else", 1000)
+            .unwrap();
         indexer.commit().unwrap();
 
         let results = indexer.search("to be or not", 10).unwrap();

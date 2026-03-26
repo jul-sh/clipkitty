@@ -283,7 +283,6 @@ pub(super) fn compute_recency_score(timestamp: i64, now: i64) -> u8 {
     score.round().clamp(0.0, 255.0) as u8
 }
 
-
 #[cfg(test)]
 pub(super) fn quality_detail_structure(quality_detail: QualityDetail) -> StructureDetail {
     quality_detail.structure_detail

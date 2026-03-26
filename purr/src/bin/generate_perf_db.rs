@@ -5,7 +5,9 @@
 //!     cargo run --release --bin generate-perf-db -- --output /tmp/bench.sqlite
 
 use clap::Parser;
-use purr::benchmark_fixture::{default_synthetic_bench_db_path, ensure_synthetic_benchmark_fixture};
+use purr::benchmark_fixture::{
+    default_synthetic_bench_db_path, ensure_synthetic_benchmark_fixture,
+};
 use std::path::PathBuf;
 
 #[derive(Parser, Debug)]
