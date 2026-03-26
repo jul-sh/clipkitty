@@ -327,7 +327,7 @@ fn metadata_matches_filter(
 }
 
 pub(crate) fn uses_short_query_path(parsed_query: &search::SearchQuery) -> bool {
-    parsed_query.recall_text().len() < MIN_TRIGRAM_QUERY_LEN
+    parsed_query.recall_text().chars().count() < MIN_TRIGRAM_QUERY_LEN
 }
 
 pub(crate) fn split_filter(filter: ItemQueryFilter) -> (Option<ContentTypeFilter>, Option<ItemTag>) {

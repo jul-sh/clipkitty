@@ -723,6 +723,31 @@ mod tests {
             .any(|highlight| highlight.kind == HighlightKind::Prefix));
     }
 
+    #[tokio::test]
+    async fn test_search_uses_word_sequence_recall_for_long_short_word_queries() {
+        let store = ClipboardStore::new_in_memory().unwrap();
+        let exact_id = store
+            .save_text("A a B b C c D d".to_string(), None, None)
+            .unwrap();
+        let scattered_id = store
+            .save_text("A z B z C z D z".to_string(), None, None)
+            .unwrap();
+
+        let result = store.search("A a B b".to_string()).await.unwrap();
+        let ids: Vec<i64> = result
+            .matches
+            .iter()
+            .map(|item| item.item_metadata.item_id)
+            .collect();
+
+        assert!(ids.contains(&exact_id), "expected {:?} to contain {}", ids, exact_id);
+        assert!(
+            !ids.contains(&scattered_id),
+            "expected scattered short-word content to stay out of results, got {:?}",
+            ids
+        );
+    }
+
     #[test]
     fn test_short_query_sync_cancelled() {
         let rt = runtime();

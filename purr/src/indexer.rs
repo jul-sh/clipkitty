@@ -18,7 +18,7 @@ use crate::search_admission::{
     PhaseOneAdmissionPolicy, PhaseOneBlendedScore, PhaseTwoHead, PROXIMITY_BOOST_SCALE,
     WORD_MATCH_SIGNAL,
 };
-use crate::search::SearchQuery;
+use crate::search::{self, SearchQuery};
 use chrono::Utc;
 use tokio_util::sync::CancellationToken;
 
@@ -142,6 +142,52 @@ struct PhaseTwoQuery<'a> {
     joined_query_lower: Option<&'a str>,
     last_word_is_prefix: bool,
     prefix_preference: Option<PrefixPreferenceQuery<'a>>,
+}
+
+#[derive(Debug, Clone)]
+struct WordFieldPlan {
+    words: Vec<String>,
+    last_word_is_prefix: bool,
+    signal_min_chars: usize,
+}
+
+#[derive(Debug, Clone)]
+enum PhaseOneQueryPlan {
+    Trigram {
+        recall: TrigramRecallPlan,
+        word_field: WordFieldPlan,
+    },
+    WordSequence {
+        recall: WordSequenceRecallPlan,
+        word_field: WordFieldPlan,
+    },
+}
+
+impl PhaseOneQueryPlan {
+    fn word_field(&self) -> &WordFieldPlan {
+        match self {
+            Self::Trigram { word_field, .. } | Self::WordSequence { word_field, .. } => word_field,
+        }
+    }
+}
+
+#[derive(Debug, Clone)]
+enum TrigramRecallPlan {
+    FullString {
+        query: String,
+        words: Vec<String>,
+    },
+    PerWord {
+        query: String,
+        words: Vec<String>,
+    },
+}
+
+#[derive(Debug, Clone)]
+struct WordSequenceRecallPlan {
+    words: Vec<String>,
+    pair_min_match: usize,
+    last_word_is_prefix: bool,
 }
 
 #[derive(Debug, Clone)]
@@ -991,7 +1037,7 @@ impl Indexer {
         extra
     }
 
-    /// Two-phase search: trigram recall (Phase 1) + bucket re-ranking (Phase 2).
+    /// Two-phase search: indexed recall (Phase 1) + bucket re-ranking (Phase 2).
     /// Phase 1 gets a broad candidate set from Tantivy; Phase 2 applies the
     /// stricter bucket-ranking policy used by the rest of the search stack.
     pub fn search(&self, query: &str, limit: usize) -> IndexerResult<Vec<SearchCandidate>> {
@@ -1008,7 +1054,8 @@ impl Indexer {
         #[cfg(feature = "perf-log")]
         let t0 = std::time::Instant::now();
         let recall_text = query.recall_text();
-        let candidates = self.trigram_recall(recall_text, limit)?;
+        let phase_one_plan = self.plan_phase_one_query(recall_text);
+        let candidates = self.phase_one_recall(&phase_one_plan, limit)?;
         #[cfg(feature = "perf-log")]
         let t1 = std::time::Instant::now();
 
@@ -1108,9 +1155,11 @@ impl Indexer {
         // Tail: unscored candidates that didn't go through Phase 2.
         // Require at least 40% of query words to have word-level matches;
         // pure trigram coincidences without sufficient word overlap are noise.
-        let query_word_count = recall_text
-            .split_whitespace()
-            .filter(|w| w.len() >= 2)
+        let word_field = phase_one_plan.word_field();
+        let query_word_count = word_field
+            .words
+            .iter()
+            .filter(|word| word.chars().count() >= word_field.signal_min_chars)
             .count() as u32;
         let min_word_matches = if query_word_count > 0 {
             (query_word_count * 2 / 5).max(1) // 40%, at least 1
@@ -1184,22 +1233,22 @@ impl Indexer {
         SearchCandidate::new(item_id, timestamp, phase_one_score, match_context)
     }
 
-    /// Phase 1: Trigram recall using Tantivy BM25 over whole items and chunks.
+    /// Phase 1: indexed recall over whole items and chunks.
+    ///
+    /// Depending on the query shape, recall uses either:
+    /// - trigram BM25 over the raw content field, or
+    /// - adjacent word-sequence phrases over `content_words`
     ///
     /// Retrieves unit hits in increasing batches, then collapses them to one
     /// candidate per parent item before Phase 2.
-    fn trigram_recall(&self, query: &str, _limit: usize) -> IndexerResult<Vec<SearchCandidate>> {
+    fn phase_one_recall(
+        &self,
+        plan: &PhaseOneQueryPlan,
+        _limit: usize,
+    ) -> IndexerResult<Vec<SearchCandidate>> {
         let reader = self.reader.read();
         let searcher = reader.searcher();
-
-        // Query too short for trigrams — return empty vec (caller handles fallback)
-        let has_trigrams =
-            query.split_whitespace().any(|w| w.len() >= 3) || query.trim().len() >= 3;
-        if !has_trigrams {
-            return Ok(Vec::new());
-        }
-
-        let final_query = self.build_trigram_query(query);
+        let final_query = self.build_phase_one_query(plan);
         let now = Utc::now().timestamp();
         let mut collapsed = Vec::new();
 
@@ -1229,6 +1278,90 @@ impl Indexer {
         Ok(collapsed)
     }
 
+    fn plan_phase_one_query(&self, query: &str) -> PhaseOneQueryPlan {
+        let word_field_words = search::tokenize_words(query)
+            .into_iter()
+            .map(|(_, _, word)| word)
+            .filter(|word| search::is_word_token(word))
+            .collect::<Vec<_>>();
+        let last_word_is_prefix = query.ends_with(|c: char| c.is_alphanumeric());
+
+        if let Some(recall) = Self::plan_word_sequence_recall(&word_field_words, last_word_is_prefix)
+        {
+            return PhaseOneQueryPlan::WordSequence {
+                recall,
+                word_field: WordFieldPlan {
+                    words: word_field_words,
+                    last_word_is_prefix,
+                    signal_min_chars: 1,
+                },
+            };
+        }
+
+        let words = query
+            .split_whitespace()
+            .map(|word| word.to_string())
+            .collect::<Vec<_>>();
+        let recall = if words.len() >= 4 && self.has_per_word_trigrams(&words) {
+            TrigramRecallPlan::PerWord {
+                query: query.to_string(),
+                words,
+            }
+        } else {
+            TrigramRecallPlan::FullString {
+                query: query.to_string(),
+                words,
+            }
+        };
+
+        PhaseOneQueryPlan::Trigram {
+            recall,
+            word_field: WordFieldPlan {
+                words: word_field_words,
+                last_word_is_prefix,
+                signal_min_chars: 2,
+            },
+        }
+    }
+
+    fn plan_word_sequence_recall(
+        words: &[String],
+        last_word_is_prefix: bool,
+    ) -> Option<WordSequenceRecallPlan> {
+        if words.len() < 2 {
+            return None;
+        }
+
+        let trigrammable_words = words
+            .iter()
+            .filter(|word| word.chars().count() >= search::MIN_TRIGRAM_QUERY_LEN)
+            .count();
+        let has_no_trigrammable_words = trigrammable_words == 0;
+        let lacks_long_query_coverage = words.len() >= 4
+            && (trigrammable_words < 2 || trigrammable_words * 2 < words.len());
+
+        if !has_no_trigrammable_words && !lacks_long_query_coverage {
+            return None;
+        }
+
+        let pair_count = words.len() - 1;
+        let pair_min_match = match pair_count {
+            0 => return None,
+            1 | 2 => pair_count,
+            _ => (pair_count * 2).div_ceil(3).max(2),
+        };
+
+        Some(WordSequenceRecallPlan {
+            words: words.to_vec(),
+            pair_min_match,
+            last_word_is_prefix,
+        })
+    }
+
+    fn has_per_word_trigrams(&self, words: &[String]) -> bool {
+        words.iter().any(|word| !self.trigram_terms(word).is_empty())
+    }
+
     /// Build FuzzyTermQuery clauses on the word-tokenized field.
     /// For each query word with 3+ chars, creates a Levenshtein DFA query
     /// that catches substitutions, insertions, and deletions that trigrams miss.
@@ -1236,12 +1369,14 @@ impl Indexer {
     /// Only active for queries with 1-3 words. For 4+ word queries, the
     /// correctly-typed words provide enough trigrams for the trigram pathway;
     /// adding fuzzy clauses would recall scattered common-word matches.
-    fn build_fuzzy_word_clauses(&self, query: &str) -> Vec<Box<dyn tantivy::query::Query>> {
-        let words: Vec<&str> = query.split_whitespace().collect();
+    fn build_fuzzy_word_clauses(
+        &self,
+        words: &[String],
+        last_word_is_prefix: bool,
+    ) -> Vec<Box<dyn tantivy::query::Query>> {
         if words.len() >= 4 {
             return Vec::new();
         }
-        let last_word_is_prefix = query.ends_with(|c: char| c.is_alphanumeric());
 
         let mut clauses = Vec::new();
         for (i, word) in words.iter().enumerate() {
@@ -1265,15 +1400,17 @@ impl Indexer {
         clauses
     }
 
-    fn build_trailing_prefix_query(&self, query: &str) -> Option<PhrasePrefixQuery> {
-        let words: Vec<&str> = query.split_whitespace().collect();
-        let last_word_is_prefix = query.ends_with(|c: char| c.is_alphanumeric());
+    fn build_trailing_prefix_query(
+        &self,
+        words: &[String],
+        last_word_is_prefix: bool,
+    ) -> Option<PhrasePrefixQuery> {
         if !last_word_is_prefix || words.len() < 2 {
             return None;
         }
 
         let terms = words
-            .into_iter()
+            .iter()
             .map(|word| Term::from_field_text(self.content_words_field, &word.to_lowercase()))
             .collect();
 
@@ -1292,14 +1429,16 @@ impl Indexer {
     ///
     /// The PROXIMITY_BOOST_SCALE creates distinct score bands that tweak_score
     /// can decode and convert to an additive proximity tier.
-    fn build_word_boosts(&self, query: &str) -> Vec<(Occur, Box<dyn tantivy::query::Query>)> {
-        let words: Vec<&str> = query.split_whitespace().collect();
+    fn build_word_boosts(
+        &self,
+        word_field: &WordFieldPlan,
+    ) -> Vec<(Occur, Box<dyn tantivy::query::Query>)> {
         let mut boosts: Vec<(Occur, Box<dyn tantivy::query::Query>)> = Vec::new();
 
         // Exact word TermQuery boosts (2.0x) — match words at word boundaries
         // This helps approximate Phase 2's words_matched_weight priority.
-        for word in &words {
-            if word.len() < 2 {
+        for word in &word_field.words {
+            if word.chars().count() < word_field.signal_min_chars {
                 continue;
             }
             let term = Term::from_field_text(self.content_words_field, &word.to_lowercase());
@@ -1311,10 +1450,11 @@ impl Indexer {
 
         // Word proximity PhraseQuery with slop=3 (allows 3 intervening words).
         // Uses a large boost to create score bands that tweak_score decodes.
-        if words.len() >= 2 {
-            let terms: Vec<Term> = words
+        if word_field.words.len() >= 2 {
+            let terms: Vec<Term> = word_field
+                .words
                 .iter()
-                .filter(|w| w.len() >= 2)
+                .filter(|word| word.chars().count() >= word_field.signal_min_chars)
                 .map(|w| Term::from_field_text(self.content_words_field, &w.to_lowercase()))
                 .collect();
             if terms.len() >= 2 {
@@ -1328,7 +1468,10 @@ impl Indexer {
             }
         }
 
-        if let Some(prefix_query) = self.build_trailing_prefix_query(query) {
+        if let Some(prefix_query) = self.build_trailing_prefix_query(
+            &word_field.words,
+            word_field.last_word_is_prefix,
+        ) {
             let boosted: Box<dyn tantivy::query::Query> = Box::new(BoostQuery::new(
                 Box::new(prefix_query),
                 PROXIMITY_BOOST_SCALE,
@@ -1341,17 +1484,19 @@ impl Indexer {
 
     /// Encode word-match count into the Tantivy score.
     ///
-    /// Each query word (≥2 chars) gets a `ConstScoreQuery` that adds
+    /// Each query word meeting the plan's minimum length gets a `ConstScoreQuery`
+    /// that adds
     /// [`WORD_MATCH_SIGNAL`] when that word appears in `content_words`.
     /// The count is recovered by [`PhaseOneBlendedScore::decode`] as
     /// `floor(raw_score / WORD_MATCH_SIGNAL)`.
     fn encode_word_match_signals(
-        words: &[&str],
+        words: &[String],
         content_words_field: Field,
+        min_chars: usize,
     ) -> Vec<(Occur, Box<dyn tantivy::query::Query>)> {
         words
             .iter()
-            .filter(|w| w.len() >= 2)
+            .filter(|word| word.chars().count() >= min_chars)
             .map(|word| {
                 let term = Term::from_field_text(content_words_field, &word.to_lowercase());
                 let term_q = TermQuery::new(term, IndexRecordOption::Basic);
@@ -1361,25 +1506,88 @@ impl Indexer {
             .collect()
     }
 
-    /// Build a trigram query with phrase boosts for contiguity scoring.
+    /// Build the Phase 1 Tantivy query for the current recall plan.
     ///
-    /// Base query: OR of trigram terms with min_match threshold.
-    /// Phrase boosts: PhraseQuery per word (2x), per word-pair (3x), full query (5x).
-    /// These boost documents where query words appear as contiguous substrings,
-    /// improving candidate quality in the top-2000 results fed to Phase 2.
-    ///
-    /// For long queries (4+ words), only per-word trigrams are used in the base
-    /// query (skipping cross-word boundary trigrams like "lo " from "hello world")
-    /// to reduce posting list evaluations.
-    fn build_trigram_query(&self, query: &str) -> Box<dyn tantivy::query::Query> {
-        let words: Vec<&str> = query.split_whitespace().collect();
-        let is_long_query = words.len() >= 4;
+    fn build_phase_one_query(&self, plan: &PhaseOneQueryPlan) -> Box<dyn tantivy::query::Query> {
+        let recall: Box<dyn tantivy::query::Query> = match plan {
+            PhaseOneQueryPlan::Trigram { recall, word_field } => {
+                self.build_trigram_recall_query(recall, word_field)
+            }
+            PhaseOneQueryPlan::WordSequence { recall, .. } => {
+                self.build_word_sequence_recall_query(recall)
+            }
+        };
 
+        let word_field = plan.word_field();
+        let all_boosts = self.build_word_boosts(word_field);
+
+        if all_boosts.is_empty() {
+            recall
+        } else {
+            let mut outer: Vec<(Occur, Box<dyn tantivy::query::Query>)> = Vec::new();
+            outer.push((Occur::Must, recall));
+            outer.extend(all_boosts);
+            outer.extend(Self::encode_word_match_signals(
+                &word_field.words,
+                self.content_words_field,
+                word_field.signal_min_chars,
+            ));
+            Box::new(BooleanQuery::new(outer))
+        }
+    }
+
+    fn build_word_sequence_recall_query(
+        &self,
+        recall: &WordSequenceRecallPlan,
+    ) -> Box<dyn tantivy::query::Query> {
+        let pair_queries: Vec<(Occur, Box<dyn tantivy::query::Query>)> = recall
+            .words
+            .windows(2)
+            .enumerate()
+            .map(|(index, words)| {
+                let pair_terms = words
+                    .iter()
+                    .map(|word| Term::from_field_text(self.content_words_field, &word.to_lowercase()))
+                    .collect::<Vec<_>>();
+                let is_last_pair = index + 1 == recall.words.len() - 1;
+                let query: Box<dyn tantivy::query::Query> =
+                    if is_last_pair && recall.last_word_is_prefix {
+                        Box::new(PhrasePrefixQuery::new(pair_terms))
+                    } else {
+                        Box::new(PhraseQuery::new(pair_terms))
+                    };
+                (Occur::Should, query)
+            })
+            .collect();
+
+        if pair_queries.len() == 1 {
+            return pair_queries
+                .into_iter()
+                .next()
+                .map(|(_, query)| query)
+                .unwrap_or_else(|| Box::new(BooleanQuery::new(Vec::new())));
+        }
+
+        let mut sequence_query = BooleanQuery::new(pair_queries);
+        sequence_query.set_minimum_number_should_match(recall.pair_min_match);
+        Box::new(sequence_query)
+    }
+
+    fn build_trigram_recall_query(
+        &self,
+        recall: &TrigramRecallPlan,
+        word_field: &WordFieldPlan,
+    ) -> Box<dyn tantivy::query::Query> {
+        let (query, words, is_long_query) = match recall {
+            TrigramRecallPlan::FullString { query, words } => (query.as_str(), words, false),
+            TrigramRecallPlan::PerWord { query, words } => (query.as_str(), words, true),
+        };
+        let word_refs = words.iter().map(String::as_str).collect::<Vec<_>>();
         let (terms, mut seen) = if is_long_query {
             // Long query: per-word trigrams only (skip cross-word boundary trigrams)
             let mut all_terms = Vec::new();
             let mut seen = std::collections::HashSet::new();
-            for word in &words {
+            for word in &word_refs {
                 for term in self.trigram_terms(word) {
                     if seen.insert(term.clone()) {
                         all_terms.push(term);
@@ -1395,7 +1603,10 @@ impl Indexer {
         };
 
         if terms.is_empty() {
-            return Box::new(BooleanQuery::new(Vec::new()));
+            return self
+                .build_trailing_prefix_query(&word_field.words, word_field.last_word_is_prefix)
+                .map(|query| Box::new(query) as Box<dyn tantivy::query::Query>)
+                .unwrap_or_else(|| Box::new(BooleanQuery::new(Vec::new())));
         }
 
         // Compute min_match from original term count BEFORE adding variants.
@@ -1403,7 +1614,7 @@ impl Indexer {
         let num_terms = terms.len();
 
         // Add trigrams from transposition variants of short words (3-4 chars)
-        let variant_terms = self.transposition_trigrams(&words, &mut seen);
+        let variant_terms = self.transposition_trigrams(&word_refs, &mut seen);
 
         let subqueries: Vec<_> = terms
             .into_iter()
@@ -1434,64 +1645,46 @@ impl Indexer {
         }
 
         // Build the recall part: trigram OR fuzzy-word pathways
-        let fuzzy_clauses = self.build_fuzzy_word_clauses(query);
+        let fuzzy_clauses =
+            self.build_fuzzy_word_clauses(&word_field.words, word_field.last_word_is_prefix);
         let trailing_prefix_recall = self
-            .build_trailing_prefix_query(query)
+            .build_trailing_prefix_query(&word_field.words, word_field.last_word_is_prefix)
             .map(|query| Box::new(query) as Box<dyn tantivy::query::Query>);
-        let recall: Box<dyn tantivy::query::Query> = if fuzzy_clauses.is_empty()
-            && trailing_prefix_recall.is_none()
-        {
-            Box::new(recall_query)
-        } else {
-            let mut recall_paths = vec![(
-                Occur::Should,
-                Box::new(recall_query) as Box<dyn tantivy::query::Query>,
-            )];
-
-            if !fuzzy_clauses.is_empty() {
-                // Require at least half the fuzzy clauses to match. Since this
-                // pathway is limited to 1-3 word queries, the threshold stays
-                // tight enough to avoid scattered common-word matches.
-                let n = fuzzy_clauses.len();
-                let fuzzy_min = n.div_ceil(2);
-                let fuzzy_subqueries: Vec<(Occur, Box<dyn tantivy::query::Query>)> = fuzzy_clauses
-                    .into_iter()
-                    .map(|q| (Occur::Should, q))
-                    .collect();
-                let mut fuzzy_bool = BooleanQuery::new(fuzzy_subqueries);
-                fuzzy_bool.set_minimum_number_should_match(fuzzy_min);
-                recall_paths.push((
-                    Occur::Should,
-                    Box::new(fuzzy_bool) as Box<dyn tantivy::query::Query>,
-                ));
-            }
-
-            if let Some(prefix_recall) = trailing_prefix_recall {
-                recall_paths.push((Occur::Should, prefix_recall));
-            }
-
-            // OR: document passes if it matches any recall pathway.
-            let mut combined = BooleanQuery::new(recall_paths);
-            combined.set_minimum_number_should_match(1);
-            Box::new(combined)
-        };
-
-        // Word-level boosts: exact word matches and proximity (with score bands)
-        let all_boosts = self.build_word_boosts(query);
-
-        if all_boosts.is_empty() {
-            recall
-        } else {
-            let mut outer: Vec<(Occur, Box<dyn tantivy::query::Query>)> = Vec::new();
-            outer.push((Occur::Must, recall));
-            outer.extend(all_boosts);
-
-            outer.extend(
-                Self::encode_word_match_signals(&words, self.content_words_field),
-            );
-
-            Box::new(BooleanQuery::new(outer))
+        if fuzzy_clauses.is_empty() && trailing_prefix_recall.is_none() {
+            return Box::new(recall_query);
         }
+
+        let mut recall_paths = vec![(
+            Occur::Should,
+            Box::new(recall_query) as Box<dyn tantivy::query::Query>,
+        )];
+
+        if !fuzzy_clauses.is_empty() {
+            // Require at least half the fuzzy clauses to match. Since this
+            // pathway is limited to 1-3 word queries, the threshold stays
+            // tight enough to avoid scattered common-word matches.
+            let n = fuzzy_clauses.len();
+            let fuzzy_min = n.div_ceil(2);
+            let fuzzy_subqueries: Vec<(Occur, Box<dyn tantivy::query::Query>)> = fuzzy_clauses
+                .into_iter()
+                .map(|query| (Occur::Should, query))
+                .collect();
+            let mut fuzzy_bool = BooleanQuery::new(fuzzy_subqueries);
+            fuzzy_bool.set_minimum_number_should_match(fuzzy_min);
+            recall_paths.push((
+                Occur::Should,
+                Box::new(fuzzy_bool) as Box<dyn tantivy::query::Query>,
+            ));
+        }
+
+        if let Some(prefix_recall) = trailing_prefix_recall {
+            recall_paths.push((Occur::Should, prefix_recall));
+        }
+
+        // OR: document passes if it matches any recall pathway.
+        let mut combined = BooleanQuery::new(recall_paths);
+        combined.set_minimum_number_should_match(1);
+        Box::new(combined)
     }
 
     pub fn clear(&self) -> IndexerResult<()> {
@@ -1880,5 +2073,73 @@ mod tests {
             ids
         );
         assert!(!ids.contains(&2));
+    }
+
+    #[test]
+    fn test_two_char_words_long_query_recall() {
+        let indexer = Indexer::new_in_memory().unwrap();
+        indexer
+            .add_document(1, "ab cd ef gh ij kl", 1000)
+            .unwrap();
+        indexer
+            .add_document(2, "ab xx cd yy ef zz gh", 1000)
+            .unwrap();
+        indexer.commit().unwrap();
+
+        let results = indexer.search("ab cd ef gh", 10).unwrap();
+        let ids: Vec<i64> = results.iter().map(|candidate| candidate.id).collect();
+        assert!(
+            ids.contains(&1),
+            "query 'ab cd ef gh' should recall the exact short-word sequence, got {:?}",
+            ids
+        );
+        assert!(
+            !ids.contains(&2),
+            "query 'ab cd ef gh' should not recall scattered short words, got {:?}",
+            ids
+        );
+    }
+
+    #[test]
+    fn test_word_sequence_recall_accepts_dense_clusters_with_gap() {
+        let indexer = Indexer::new_in_memory().unwrap();
+        indexer
+            .add_document(
+                1,
+                "to be thinking carefully about the tradeoffs before deciding or not today",
+                1000,
+            )
+            .unwrap();
+        indexer.add_document(2, "to something be something else", 1000).unwrap();
+        indexer.commit().unwrap();
+
+        let results = indexer.search("to be or not", 10).unwrap();
+        let ids: Vec<i64> = results.iter().map(|candidate| candidate.id).collect();
+        assert!(
+            ids.contains(&1),
+            "query 'to be or not' should recall dense short-word clusters with a gap, got {:?}",
+            ids
+        );
+    }
+
+    #[test]
+    fn test_word_sequence_recall_rejects_scattered_short_words() {
+        let indexer = Indexer::new_in_memory().unwrap();
+        indexer
+            .add_document(
+                1,
+                "to something be something unrelated or something not",
+                1000,
+            )
+            .unwrap();
+        indexer.commit().unwrap();
+
+        let results = indexer.search("to be or not", 10).unwrap();
+        let ids: Vec<i64> = results.iter().map(|candidate| candidate.id).collect();
+        assert!(
+            ids.is_empty(),
+            "query 'to be or not' should not recall scattered short words without adjacent pairs, got {:?}",
+            ids
+        );
     }
 }
