@@ -59,6 +59,10 @@ struct Args {
     #[arg(long)]
     reclassify_colors: bool,
 
+    /// Only insert video-specific items (for intro video recording)
+    #[arg(long)]
+    video_only: bool,
+
     /// Locale for localized demo items (e.g., "ja", "de", "fr")
     /// When set, uses locale-specific demo content instead of English.
     #[arg(short, long)]
@@ -366,8 +370,10 @@ fn generate_timestamp(item_index: usize, now: i64) -> i64 {
 
 mod demo_data;
 mod demo_data_localized;
+mod demo_data_video;
 use demo_data::DEMO_ITEMS;
 use demo_data_localized::{get_localized_demo_items, get_localized_image_keywords};
+use demo_data_video::VIDEO_ITEMS;
 
 /// Source images with keyword captions (mirrors Vision framework output)
 /// Format: (filename, keywords, source_app, bundle_id, time_offset_seconds)
@@ -638,6 +644,73 @@ fn insert_demo_items(store: &ClipboardStore, db_path: &str, locale: Option<&str>
     Ok(())
 }
 
+/// Insert video-specific demo items for the intro video recording.
+/// Replaces the ClipKitty bullet-point item with video scene items and adds
+/// the fast.jpg cartoon image for the image filtering scene.
+fn insert_video_items(store: &ClipboardStore, db_path: &str) -> Result<()> {
+    let now = Utc::now().timestamp();
+
+    // Ensure locale column exists for image insertion
+    ensure_locale_column(db_path)?;
+
+    // Delete the existing ClipKitty bullet-point item (it occupies the first position)
+    let conn = rusqlite::Connection::open(db_path)?;
+    let mut stmt = conn.prepare(
+        "SELECT itemId FROM text_items WHERE value LIKE 'ClipKitty\n%'"
+    )?;
+    let item_ids: Vec<i64> = stmt
+        .query_map([], |row| row.get(0))?
+        .filter_map(|r| r.ok())
+        .collect();
+    for id in item_ids {
+        conn.execute("DELETE FROM text_items WHERE itemId = ?1", params![id])?;
+        conn.execute("DELETE FROM items WHERE id = ?1", params![id])?;
+    }
+    drop(stmt);
+    drop(conn);
+
+    // Insert video text items
+    for item in VIDEO_ITEMS {
+        let _ = store.save_text(
+            item.content.to_string(),
+            Some(item.source_app.to_string()),
+            Some(item.bundle_id.to_string()),
+        );
+        let mut hasher = DefaultHasher::new();
+        item.content.hash(&mut hasher);
+        let content_hash = hasher.finish().to_string();
+        if let Some(id) = find_id_by_hash(db_path, &content_hash) {
+            let _ = set_timestamp_direct(db_path, id, now + item.offset);
+        }
+    }
+
+    // Insert fast.jpg cartoon image for scene 4
+    let base_path = PathBuf::from(env!("CARGO_MANIFEST_DIR"));
+    let fast_image_path = base_path.join("../images/fast.jpg");
+    if let Ok(raw_data) = fs::read(&fast_image_path) {
+        let thumbnail = generate_thumbnail(&raw_data, 64);
+        let image_data = compress_to_heic(&fast_image_path, 1500, 60).unwrap_or(raw_data);
+        let description = "Fast, cat, running, 90s cartoon, retro, speed, Siamese cat, cute, kitten, animation, comic style, motion lines, energetic, dynamic, clipboard, dash, quick, vintage, hand-drawn, illustration";
+        if let Ok(id) = save_image_direct(
+            db_path,
+            image_data,
+            thumbnail,
+            description.to_string(),
+            Some("Photos".to_string()),
+            Some("com.apple.Photos".to_string()),
+            "en",
+        ) {
+            if id > 0 {
+                let _ = set_timestamp_direct(db_path, id, now - 50);
+            }
+        }
+    } else {
+        eprintln!("Warning: fast.jpg not found at {:?}", fast_image_path);
+    }
+
+    Ok(())
+}
+
 /// Reclassify text items as colors if they match color patterns.
 /// Iterates over all items with contentType='text' and updates them
 /// to contentType='color' with the parsed colorRgba if they're valid colors.
@@ -683,6 +756,14 @@ async fn main() -> Result<()> {
         println!("Inserting demo items{}...", locale_str.map(|l| format!(" for locale '{}'", l)).unwrap_or_default());
         insert_demo_items(&store, &abs_db_path, locale_str)?;
         println!("Demo items inserted.");
+        return Ok(());
+    }
+
+    // Video-only mode: insert video-specific items for intro video
+    if args.video_only {
+        println!("Inserting video items...");
+        insert_video_items(&store, &abs_db_path)?;
+        println!("Video items inserted.");
         return Ok(());
     }
 

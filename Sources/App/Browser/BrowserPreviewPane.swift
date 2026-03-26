@@ -60,26 +60,28 @@ struct BrowserPreviewPane: View {
         .frame(maxWidth: .infinity, maxHeight: .infinity)
     }
 
+    private func previewDecoration(for content: SelectedItemState) -> PreviewDecoration? {
+        switch content.previewState {
+        case .plain, .loading(.missing):
+            return nil
+        case let .loading(.stale(decoration)), let .highlighted(decoration):
+            return decoration
+        }
+    }
+
     @ViewBuilder
     private func previewContent(for content: SelectedItemState) -> some View {
         let item = content.item
         switch item.content {
         case .text, .color:
             let previewText = viewModel.pendingEdits[item.itemMetadata.itemId] ?? item.content.textContent
-            let previewDecoration: PreviewDecoration? = {
-                switch content.previewState {
-                case .plain, .loading(.missing):
-                    return nil
-                case let .loading(.stale(decoration)), let .highlighted(decoration):
-                    return decoration
-                }
-            }()
+            let decoration = previewDecoration(for: content)
             TextPreviewView(
                 text: previewText,
                 fontName: FontManager.mono,
                 fontSize: 15,
-                highlights: previewDecoration?.highlights ?? [],
-                initialScrollHighlightIndex: previewDecoration?.initialScrollHighlightIndex,
+                highlights: decoration?.highlights ?? [],
+                initialScrollHighlightIndex: decoration?.initialScrollHighlightIndex,
                 scrollBehavior: {
                     switch content.previewState {
                     case .plain:
@@ -133,6 +135,7 @@ struct BrowserPreviewPane: View {
                 }
             }
         case let .image(data, description, _):
+            let highlights = previewDecoration(for: content)?.highlights ?? []
             ScrollView(.vertical, showsIndicators: true) {
                 if let image = NSImage(data: data) {
                     VStack(spacing: 8) {
@@ -141,26 +144,42 @@ struct BrowserPreviewPane: View {
                             .aspectRatio(contentMode: .fit)
                             .frame(maxWidth: .infinity)
                         if !description.isEmpty {
-                            Text(description)
-                                .font(.callout)
-                                .foregroundStyle(.secondary)
-                                .frame(maxWidth: .infinity, alignment: .leading)
+                            if highlights.isEmpty {
+                                Text(description)
+                                    .font(.callout)
+                                    .foregroundStyle(.secondary)
+                                    .frame(maxWidth: .infinity, alignment: .leading)
+                            } else {
+                                Text(HighlightStyler.attributedText(description, highlights: highlights))
+                                    .font(.callout)
+                                    .foregroundStyle(.secondary)
+                                    .frame(maxWidth: .infinity, alignment: .leading)
+                            }
                         }
                     }
                     .padding(16)
                 }
             }
         case let .link(url, metadataState):
+            let highlights = previewDecoration(for: content)?.highlights ?? []
             ScrollView(.vertical, showsIndicators: true) {
                 VStack(alignment: .leading, spacing: 16) {
                     LinkPreviewView(url: url, metadataState: metadataState)
                         .frame(maxWidth: .infinity)
 
-                    Text(url)
-                        .font(.custom(FontManager.mono, size: 12))
-                        .foregroundStyle(.secondary)
-                        .textSelection(.enabled)
-                        .frame(maxWidth: .infinity, alignment: .leading)
+                    if highlights.isEmpty {
+                        Text(url)
+                            .font(.custom(FontManager.mono, size: 12))
+                            .foregroundStyle(.secondary)
+                            .textSelection(.enabled)
+                            .frame(maxWidth: .infinity, alignment: .leading)
+                    } else {
+                        Text(HighlightStyler.attributedText(url, highlights: highlights))
+                            .font(.custom(FontManager.mono, size: 12))
+                            .foregroundStyle(.secondary)
+                            .textSelection(.enabled)
+                            .frame(maxWidth: .infinity, alignment: .leading)
+                    }
 
                     Spacer()
                 }
