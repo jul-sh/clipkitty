@@ -1,4 +1,4 @@
-use crate::candidate::SearchMatchContext;
+use crate::candidate::{ScoringPhase, SearchMatchContext};
 use crate::database::{Database, SearchItemMetadata};
 use crate::interface::{
     ClipKittyError, ClipboardItem, ItemMetadata, PreviewPayload, RowDecoration,
@@ -80,19 +80,37 @@ struct CachedHighlightAnalysis {
     analysis: Arc<HighlightAnalysis>,
 }
 
+/// What kind of highlight analysis to use for this match context.
+#[derive(Clone, Copy, PartialEq, Eq)]
+pub(crate) enum HighlightStrategy {
+    /// Full analysis: fuzzy, subsequence, subword matching (Phase 2 items).
+    Full,
+    /// Exact + prefix word matching only (Phase 1-only tail items).
+    WordMatch,
+}
+
+/// Whether highlights have been computed yet.
+#[derive(Clone)]
+pub(crate) enum HighlightReadiness {
+    Pending,
+    Ready(Arc<HighlightAnalysis>),
+}
+
 #[derive(Clone)]
 pub(crate) enum CachedMatchContext {
     WholeContent {
         parent_content_hash: String,
         content: Arc<str>,
-        analysis: Option<Arc<HighlightAnalysis>>,
+        strategy: HighlightStrategy,
+        readiness: HighlightReadiness,
     },
     ChunkRegion {
         parent_content_hash: String,
         chunk_content: Arc<str>,
         chunk_start: usize,
         chunk_end: usize,
-        analysis: Option<Arc<HighlightAnalysis>>,
+        strategy: HighlightStrategy,
+        readiness: HighlightReadiness,
     },
 }
 
@@ -100,19 +118,26 @@ impl CachedMatchContext {
     fn from_search_match_context(
         parent_content_hash: String,
         match_context: &SearchMatchContext,
+        scoring_phase: ScoringPhase,
     ) -> Self {
+        let strategy = match scoring_phase {
+            ScoringPhase::PhaseTwoScored => HighlightStrategy::Full,
+            ScoringPhase::PhaseOneOnly => HighlightStrategy::WordMatch,
+        };
         match match_context {
             SearchMatchContext::WholeItem(ctx) => Self::WholeContent {
                 parent_content_hash,
                 content: Arc::from(ctx.content()),
-                analysis: None,
+                strategy,
+                readiness: HighlightReadiness::Pending,
             },
             SearchMatchContext::Chunk(ctx) => Self::ChunkRegion {
                 parent_content_hash,
                 chunk_content: Arc::from(ctx.content()),
                 chunk_start: ctx.chunk_start(),
                 chunk_end: ctx.chunk_end(),
-                analysis: None,
+                strategy,
+                readiness: HighlightReadiness::Pending,
             },
         }
     }
@@ -124,10 +149,19 @@ impl CachedMatchContext {
         }
     }
 
+    fn strategy(&self) -> HighlightStrategy {
+        match self {
+            Self::WholeContent { strategy, .. } | Self::ChunkRegion { strategy, .. } => *strategy,
+        }
+    }
+
     fn analysis(&self) -> Option<Arc<HighlightAnalysis>> {
         match self {
-            Self::WholeContent { analysis, .. } | Self::ChunkRegion { analysis, .. } => {
-                analysis.clone()
+            Self::WholeContent { readiness, .. } | Self::ChunkRegion { readiness, .. } => {
+                match readiness {
+                    HighlightReadiness::Ready(analysis) => Some(Arc::clone(analysis)),
+                    HighlightReadiness::Pending => None,
+                }
             }
         }
     }
@@ -135,11 +169,11 @@ impl CachedMatchContext {
     fn set_analysis(&mut self, analysis: Arc<HighlightAnalysis>) {
         match self {
             Self::WholeContent {
-                analysis: slot, ..
+                readiness: slot, ..
             }
             | Self::ChunkRegion {
-                analysis: slot, ..
-            } => *slot = Some(analysis),
+                readiness: slot, ..
+            } => *slot = HighlightReadiness::Ready(analysis),
         }
     }
 
@@ -290,6 +324,7 @@ impl HighlightAnalysisCache {
         item_id: i64,
         parent_content_hash: String,
         match_context: &SearchMatchContext,
+        scoring_phase: ScoringPhase,
     ) {
         let Some(query_key) = Self::normalized_query(query) else {
             return;
@@ -302,7 +337,7 @@ impl HighlightAnalysisCache {
         }
         entries.insert(
             item_id,
-            CachedMatchContext::from_search_match_context(parent_content_hash, match_context),
+            CachedMatchContext::from_search_match_context(parent_content_hash, match_context, scoring_phase),
         );
     }
 
@@ -452,9 +487,10 @@ impl<'a> MatchPresentation<'a> {
         item_id: i64,
         parent_content_hash: String,
         match_context: &SearchMatchContext,
+        scoring_phase: ScoringPhase,
     ) {
         self.cache
-            .insert_match_context(query, item_id, parent_content_hash, match_context);
+            .insert_match_context(query, item_id, parent_content_hash, match_context, scoring_phase);
     }
 
     pub(crate) fn apply_match_context_snippet(
@@ -598,7 +634,10 @@ impl<'a> MatchPresentation<'a> {
             return Some((context, analysis));
         }
 
-        let analysis = search::analyze_content_for_query(context.content(), query)?;
+        let analysis = match context.strategy() {
+            HighlightStrategy::Full => search::analyze_content_for_query(context.content(), query),
+            HighlightStrategy::WordMatch => search::analyze_content_word_match(context.content(), query),
+        }?;
         #[cfg(test)]
         test_support::on_analysis_computed(item_id, query);
         let analysis = Arc::new(analysis);
