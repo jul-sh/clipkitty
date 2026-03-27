@@ -288,7 +288,10 @@ final class BrowserViewModel {
         if case let .focused(focusedId) = editState.focus, focusedId != itemId {
             editState.focus = .idle
         }
-        setDisplayedSelection(.loading(itemId: itemId, origin: origin))
+        // Don't set .loading here — loadSelectedItem() resolves from cache synchronously
+        // on the common path (arrow key navigation), so .loading would be immediately
+        // overwritten by .selected, causing a redundant SwiftUI view graph invalidation.
+        // On cache misses, loadSelectedItem() sets .loading itself before going async.
         loadSelectedItem(itemId: itemId, origin: origin)
     }
 
