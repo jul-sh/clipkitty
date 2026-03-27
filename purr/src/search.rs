@@ -87,6 +87,17 @@ pub(crate) struct HighlightAnalysis {
     pub(crate) initial_scroll_highlight_index: Option<u64>,
 }
 
+#[derive(Debug, Clone, Copy)]
+enum PreviewHighlightLimit {
+    FocusedWindow {
+        max_highlights: usize,
+        context_chars: u64,
+    },
+}
+
+const PREVIEW_MAX_HIGHLIGHTS: usize = 64;
+const PREVIEW_HIGHLIGHT_CONTEXT_CHARS: u64 = 2048;
+
 fn utf16_offset_table(text: &str) -> Vec<u64> {
     let mut offsets = Vec::with_capacity(text.chars().count() + 1);
     let mut utf16_pos = 0u64;
@@ -117,6 +128,70 @@ fn scalar_highlights_to_utf16(
             })
         })
         .collect()
+}
+
+fn limit_preview_highlights(
+    analysis: &HighlightAnalysis,
+    limit: PreviewHighlightLimit,
+) -> (Vec<HighlightRange>, Option<u64>) {
+    match limit {
+        PreviewHighlightLimit::FocusedWindow {
+            max_highlights,
+            context_chars,
+        } => {
+            if analysis.highlights.is_empty() || max_highlights == 0 {
+                return (Vec::new(), None);
+            }
+
+            if analysis.highlights.len() <= max_highlights {
+                return (
+                    analysis.highlights.clone(),
+                    analysis.initial_scroll_highlight_index,
+                );
+            }
+
+            let anchor_index = analysis
+                .initial_scroll_highlight_index
+                .and_then(|index| usize::try_from(index).ok())
+                .filter(|index| *index < analysis.highlights.len())
+                .unwrap_or(0);
+            let anchor = &analysis.highlights[anchor_index];
+            let window_start = anchor.start.saturating_sub(context_chars);
+            let window_end = anchor.end.saturating_add(context_chars);
+
+            let visible_indices: Vec<usize> = analysis
+                .highlights
+                .iter()
+                .enumerate()
+                .filter_map(|(index, highlight)| {
+                    (highlight.end >= window_start && highlight.start <= window_end).then_some(index)
+                })
+                .collect();
+
+            let (mut slice_start, mut slice_end) = if let (Some(first), Some(last)) =
+                (visible_indices.first(), visible_indices.last())
+            {
+                (*first, last + 1)
+            } else {
+                (anchor_index, anchor_index + 1)
+            };
+
+            if slice_end - slice_start > max_highlights {
+                let preferred_start = anchor_index.saturating_sub(max_highlights / 2);
+                let max_start = slice_end.saturating_sub(max_highlights);
+                slice_start = preferred_start.clamp(slice_start, max_start);
+                slice_end = slice_start + max_highlights;
+            }
+
+            let limited = analysis.highlights[slice_start..slice_end].to_vec();
+            let limited_anchor = anchor_index
+                .checked_sub(slice_start)
+                .map(|index| index as u64)
+                .filter(|index| (*index as usize) < limited.len());
+
+            (limited, limited_anchor)
+        }
+    }
 }
 
 /// Search using Tantivy with bucket re-ranking for trigram queries (>= 3 chars).
@@ -561,9 +636,16 @@ pub(crate) fn create_preview_decoration(
     content: &str,
     analysis: &HighlightAnalysis,
 ) -> PreviewDecoration {
+    let (highlights, initial_scroll_highlight_index) = limit_preview_highlights(
+        analysis,
+        PreviewHighlightLimit::FocusedWindow {
+            max_highlights: PREVIEW_MAX_HIGHLIGHTS,
+            context_chars: PREVIEW_HIGHLIGHT_CONTEXT_CHARS,
+        },
+    );
     PreviewDecoration {
-        highlights: scalar_highlights_to_utf16(content, &analysis.highlights),
-        initial_scroll_highlight_index: analysis.initial_scroll_highlight_index,
+        highlights: scalar_highlights_to_utf16(content, &highlights),
+        initial_scroll_highlight_index,
     }
 }
 
@@ -572,8 +654,14 @@ pub(crate) fn create_preview_decoration_with_char_offset(
     analysis: &HighlightAnalysis,
     char_offset: usize,
 ) -> PreviewDecoration {
-    let shifted_highlights: Vec<HighlightRange> = analysis
-        .highlights
+    let (focused_highlights, initial_scroll_highlight_index) = limit_preview_highlights(
+        analysis,
+        PreviewHighlightLimit::FocusedWindow {
+            max_highlights: PREVIEW_MAX_HIGHLIGHTS,
+            context_chars: PREVIEW_HIGHLIGHT_CONTEXT_CHARS,
+        },
+    );
+    let shifted_highlights: Vec<HighlightRange> = focused_highlights
         .iter()
         .map(|highlight| HighlightRange {
             start: highlight.start + char_offset as u64,
@@ -584,7 +672,7 @@ pub(crate) fn create_preview_decoration_with_char_offset(
 
     PreviewDecoration {
         highlights: scalar_highlights_to_utf16(content, &shifted_highlights),
-        initial_scroll_highlight_index: analysis.initial_scroll_highlight_index,
+        initial_scroll_highlight_index,
     }
 }
 
@@ -1453,6 +1541,52 @@ error: Build failed due to failed dependency";
 
         let row = compute_row_decoration(content, "func");
         assert!(row.text.contains("func top level"));
+    }
+
+    #[test]
+    fn test_preview_decoration_limits_highlights_around_anchor() {
+        let content = "x".repeat(3000);
+        let highlights: Vec<HighlightRange> = (0..200)
+            .map(|index| HighlightRange {
+                start: (index * 10) as u64,
+                end: (index * 10 + 1) as u64,
+                kind: HighlightKind::Exact,
+            })
+            .collect();
+        let analysis = HighlightAnalysis {
+            highlights,
+            initial_scroll_highlight_index: Some(100),
+        };
+
+        let preview = create_preview_decoration(&content, &analysis);
+
+        assert!(preview.highlights.len() <= PREVIEW_MAX_HIGHLIGHTS);
+        let anchor_index = preview.initial_scroll_highlight_index.unwrap() as usize;
+        assert!(anchor_index < preview.highlights.len());
+        assert_eq!(preview.highlights[anchor_index].utf16_start, 1000);
+    }
+
+    #[test]
+    fn test_preview_decoration_with_char_offset_limits_and_shifts_anchor() {
+        let content = "x".repeat(4000);
+        let highlights: Vec<HighlightRange> = (0..150)
+            .map(|index| HighlightRange {
+                start: (index * 8) as u64,
+                end: (index * 8 + 2) as u64,
+                kind: HighlightKind::Exact,
+            })
+            .collect();
+        let analysis = HighlightAnalysis {
+            highlights,
+            initial_scroll_highlight_index: Some(75),
+        };
+
+        let preview = create_preview_decoration_with_char_offset(&content, &analysis, 500);
+
+        assert!(preview.highlights.len() <= PREVIEW_MAX_HIGHLIGHTS);
+        let anchor_index = preview.initial_scroll_highlight_index.unwrap() as usize;
+        assert!(anchor_index < preview.highlights.len());
+        assert_eq!(preview.highlights[anchor_index].utf16_start, 1100);
     }
 
     // ── HighlightKind verification tests ──────────────────────────
