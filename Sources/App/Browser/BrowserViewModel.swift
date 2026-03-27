@@ -13,6 +13,8 @@ final class BrowserViewModel {
     private let onSelect: (Int64, ClipboardContent) -> Void
     private let onCopyOnly: (Int64, ClipboardContent) -> Void
     private let onDismiss: () -> Void
+    private let showSnackbarNotification: (NotificationKind, (() -> Void)?) -> Void
+    private let dismissSnackbarNotification: () -> Void
 
     private enum SearchExecution {
         case idle
@@ -95,12 +97,16 @@ final class BrowserViewModel {
         client: BrowserStoreClient,
         onSelect: @escaping (Int64, ClipboardContent) -> Void,
         onCopyOnly: @escaping (Int64, ClipboardContent) -> Void,
-        onDismiss: @escaping () -> Void
+        onDismiss: @escaping () -> Void,
+        showSnackbarNotification: @escaping (NotificationKind, (() -> Void)?) -> Void = { _, _ in },
+        dismissSnackbarNotification: @escaping () -> Void = {}
     ) {
         self.client = client
         self.onSelect = onSelect
         self.onCopyOnly = onCopyOnly
         self.onDismiss = onDismiss
+        self.showSnackbarNotification = showSnackbarNotification
+        self.dismissSnackbarNotification = dismissSnackbarNotification
     }
 
     var searchText: String {
@@ -377,6 +383,20 @@ final class BrowserViewModel {
     }
 
     func deleteItem(itemId: Int64) {
+        // If a previous delete is pending undo, commit it immediately
+        if case let .deleting(.pending(prev)) = mutationState {
+            pendingDeleteTask?.cancel()
+            pendingDeleteTask = nil
+            dismissSnackbarNotification()
+            fireAndForgetDelete(prev.deletedItemId)
+            mutationState = .idle
+        }
+
+        // If a previous delete is already committing, just clear state
+        if case .deleting(.committing) = mutationState {
+            mutationState = .idle
+        }
+
         guard case .idle = mutationState else { return }
 
         let transaction = DeleteTransaction(
@@ -387,7 +407,7 @@ final class BrowserViewModel {
         mutationState = .deleting(.pending(transaction))
 
         applyOptimisticDelete(itemId: itemId)
-        showDeleteUndoToast()
+        showDeleteUndoNotification()
 
         pendingDeleteTask?.cancel()
         pendingDeleteTask = Task { [weak self] in
@@ -403,7 +423,7 @@ final class BrowserViewModel {
         guard case let .deleting(.pending(transaction)) = mutationState else { return }
         pendingDeleteTask?.cancel()
         pendingDeleteTask = nil
-        ToastWindow.shared.dismiss()
+        dismissSnackbarNotification()
         restoreSnapshot(transaction.snapshot, selection: transaction.selectionSnapshot)
         mutationState = .idle
     }
@@ -502,7 +522,7 @@ final class BrowserViewModel {
         editState.focus = .idle
 
         guard let selectedItemState else {
-            ToastWindow.shared.show(message: String(localized: "Saved"))
+            showSnackbarNotification(.passive(message: String(localized: "Saved"), iconSystemName: "checkmark.circle.fill"), nil)
             return
         }
 
@@ -533,7 +553,7 @@ final class BrowserViewModel {
             updatedFirstItem: updatedItem
         )
 
-        ToastWindow.shared.show(message: String(localized: "Saved"))
+        showSnackbarNotification(.passive(message: String(localized: "Saved"), iconSystemName: "checkmark.circle.fill"), nil)
 
         Task { [weak self] in
             guard let self else { return }
@@ -1186,14 +1206,22 @@ final class BrowserViewModel {
         mutationState = .failed(ActionFailure(message: error.localizedDescription))
     }
 
-    private func showDeleteUndoToast() {
-        ToastWindow.shared.show(
-            message: String(localized: "Deleted"),
-            iconSystemName: "trash",
-            iconColor: .secondaryLabelColor,
-            actionTitle: String(localized: "Undo")
+    private func showDeleteUndoNotification() {
+        showSnackbarNotification(
+            .actionable(
+                message: String(localized: "Deleted"),
+                iconSystemName: "trash",
+                actionTitle: String(localized: "Undo")
+            )
         ) { [weak self] in
             self?.undoPendingDelete()
+        }
+    }
+
+    private func fireAndForgetDelete(_ itemId: Int64) {
+        let client = self.client
+        Task {
+            _ = await client.delete(itemId: itemId)
         }
     }
 
