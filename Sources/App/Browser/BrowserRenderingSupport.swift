@@ -1071,7 +1071,7 @@ struct LinkPreviewView: NSViewRepresentable {
 
 // MARK: - Item Row
 
-struct ItemRow: View, Equatable {
+struct ItemRow: View {
     let metadata: ItemMetadata
     let rowDecoration: RowDecoration?
     let isSelected: Bool
@@ -1106,17 +1106,6 @@ struct ItemRow: View, Equatable {
     /// Highlights for display - passed directly from Rust (already adjusted for normalization)
     private var displayHighlights: [Utf16HighlightRange] {
         rowDecoration?.highlights ?? []
-    }
-
-    /// Define exactly what constitutes a "change" for SwiftUI diffing
-    /// Note: onTap closure is intentionally excluded from equality comparison
-    nonisolated static func == (lhs: ItemRow, rhs: ItemRow) -> Bool {
-        return lhs.isSelected == rhs.isSelected &&
-            lhs.isContextMenuTargeted == rhs.isContextMenuTargeted &&
-            lhs.hasUserNavigated == rhs.hasUserNavigated &&
-            lhs.hasPendingEdit == rhs.hasPendingEdit &&
-            lhs.metadata == rhs.metadata &&
-            lhs.rowDecoration == rhs.rowDecoration
     }
 
     var body: some View {
