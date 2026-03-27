@@ -2,7 +2,7 @@ use super::{ExactnessSignals, MatchSpanStats};
 
 /// Documents larger than this threshold use fast matching (exact + prefix only).
 /// This trades typo tolerance for performance on large documents like code files.
-pub const LARGE_DOC_THRESHOLD_BYTES: usize = 5 * 1024; // 5KB
+pub const LARGE_DOC_THRESHOLD_BYTES: usize = 32 * 1024; // 32KB
 
 /// Bucket score tuple. Higher fields dominate lower ones.
 ///
@@ -281,12 +281,6 @@ pub(super) fn compute_recency_score(timestamp: i64, now: i64) -> u8 {
     let denom = (1.0 + k * max_hours).ln();
     let score = 255.0 * (1.0 - (1.0 + k * age_hours).ln() / denom);
     score.round().clamp(0.0, 255.0) as u8
-}
-
-/// Quantize BM25 score to u16 for the tiebreaker bucket.
-/// Scaled by 100× to preserve decimal precision while fitting in u16.
-pub(super) fn quantize_bm25(score: f32) -> u16 {
-    (score * 100.0).max(0.0).min(u16::MAX as f32) as u16
 }
 
 #[cfg(test)]

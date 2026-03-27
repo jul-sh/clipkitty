@@ -33,6 +33,15 @@ pub enum DatabaseError {
 }
 
 pub type DatabaseResult<T> = Result<T, DatabaseError>;
+const SEARCH_METADATA_PREFIX_CHARS: usize = SNIPPET_CONTEXT_CHARS * 4;
+const BROWSE_METADATA_PREFIX_CHARS: usize = SNIPPET_CONTEXT_CHARS * 8;
+
+#[derive(Debug, Clone)]
+pub(crate) struct SearchItemMetadata {
+    pub(crate) content_hash: String,
+    pub(crate) db_type: String,
+    pub(crate) item_metadata: ItemMetadata,
+}
 
 /// Parse timestamp string from database to DateTime<Utc>
 fn parse_db_timestamp(timestamp_str: &str) -> DateTime<Utc> {
@@ -405,15 +414,15 @@ impl Database {
 
         let sql = if before_timestamp.is_some() {
             format!(
-                r#"SELECT id, content, contentType, timestamp, sourceApp, sourceAppBundleId, thumbnail, colorRgba
+                r#"SELECT id, substr(ltrim(content, char(9) || char(10) || char(13) || ' '), 1, {}), contentType, timestamp, sourceApp, sourceAppBundleId, thumbnail, colorRgba
                    FROM items WHERE timestamp < ? {} {} ORDER BY timestamp DESC LIMIT ?"#,
-                type_filter_clause_and, tag_clause_and
+                BROWSE_METADATA_PREFIX_CHARS, type_filter_clause_and, tag_clause_and
             )
         } else {
             format!(
-                r#"SELECT id, content, contentType, timestamp, sourceApp, sourceAppBundleId, thumbnail, colorRgba
+                r#"SELECT id, substr(ltrim(content, char(9) || char(10) || char(13) || ' '), 1, {}), contentType, timestamp, sourceApp, sourceAppBundleId, thumbnail, colorRgba
                    FROM items {} {} ORDER BY timestamp DESC LIMIT ?"#,
-                type_filter_clause, tag_clause_where
+                BROWSE_METADATA_PREFIX_CHARS, type_filter_clause, tag_clause_where
             )
         };
 
@@ -476,6 +485,42 @@ impl Database {
         let id_to_item: std::collections::HashMap<i64, StoredItem> = items
             .into_iter()
             .filter_map(|item| item.id.map(|id| (id, item)))
+            .collect();
+
+        Ok(ids
+            .iter()
+            .filter_map(|id| id_to_item.get(id).cloned())
+            .collect())
+    }
+
+    /// Fetch lightweight search result metadata by IDs, preserving order.
+    pub(crate) fn fetch_search_item_metadata_by_ids(
+        &self,
+        ids: &[i64],
+    ) -> DatabaseResult<Vec<SearchItemMetadata>> {
+        if ids.is_empty() {
+            return Ok(Vec::new());
+        }
+
+        let conn = self.get_conn()?;
+        let placeholders = ids.iter().map(|_| "?").collect::<Vec<_>>().join(",");
+        let sql = format!(
+            "SELECT id, contentHash, substr(content, 1, {}), contentType, timestamp, sourceApp, sourceAppBundleId, thumbnail, colorRgba FROM items WHERE id IN ({})",
+            SEARCH_METADATA_PREFIX_CHARS,
+            placeholders
+        );
+        let mut stmt = conn.prepare(&sql)?;
+        let params: Vec<rusqlite::types::Value> = ids.iter().map(|&id| id.into()).collect();
+        let items: Vec<SearchItemMetadata> = stmt
+            .query_map(
+                rusqlite::params_from_iter(params),
+                Self::row_to_search_item_metadata,
+            )?
+            .collect::<Result<Vec<_>, _>>()?;
+
+        let id_to_item: std::collections::HashMap<i64, SearchItemMetadata> = items
+            .into_iter()
+            .map(|item| (item.item_metadata.item_id, item))
             .collect();
 
         Ok(ids
@@ -996,6 +1041,38 @@ impl Database {
             tags: Vec::new(),
         })
     }
+
+    fn row_to_search_item_metadata(row: &rusqlite::Row) -> rusqlite::Result<SearchItemMetadata> {
+        let id: i64 = row.get(0)?;
+        let content_hash: String = row.get(1)?;
+        let content_prefix: String = row.get(2)?;
+        let db_type = row
+            .get::<_, Option<String>>(3)?
+            .unwrap_or_else(|| "text".to_string());
+        let timestamp_str: String = row.get(4)?;
+        let source_app: Option<String> = row.get(5)?;
+        let source_app_bundle_id: Option<String> = row.get(6)?;
+        let thumbnail: Option<Vec<u8>> = row.get(7)?;
+        let color_rgba: Option<u32> = row.get(8)?;
+
+        let timestamp = parse_db_timestamp(&timestamp_str);
+        let icon = ItemIcon::from_database(&db_type, color_rgba, thumbnail);
+        let snippet = generate_preview(&content_prefix, SNIPPET_CONTEXT_CHARS * 2);
+
+        Ok(SearchItemMetadata {
+            content_hash,
+            db_type,
+            item_metadata: ItemMetadata {
+                item_id: id,
+                icon,
+                snippet,
+                source_app,
+                source_app_bundle_id,
+                timestamp_unix: timestamp.timestamp(),
+                tags: Vec::new(),
+            },
+        })
+    }
 }
 
 // Database is now inherently thread-safe via r2d2 pool
@@ -1066,5 +1143,21 @@ mod tests {
             }
             other => panic!("expected inconsistency error, got {other:?}"),
         }
+    }
+
+    #[test]
+    fn test_fetch_item_metadata_preview_handles_large_leading_whitespace() {
+        let db = Database::open_in_memory().unwrap();
+        let content = format!("{}Hello world", " \n\t".repeat(2_000));
+        seed_base_item(&db, "text", &content, None);
+
+        let (items, total_count) = db.fetch_item_metadata(None, 1, None, None).unwrap();
+
+        assert_eq!(total_count, 1);
+        assert_eq!(items.len(), 1);
+        assert_eq!(
+            items[0].snippet,
+            generate_preview(&content, SNIPPET_CONTEXT_CHARS * 2)
+        );
     }
 }

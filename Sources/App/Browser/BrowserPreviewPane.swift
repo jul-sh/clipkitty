@@ -16,7 +16,7 @@ struct BrowserPreviewPane: View {
                 VStack(spacing: 0) {
                     ZStack {
                         previewContent(for: content)
-                        if case .loading = content.previewState,
+                        if case .loadingDecoration = content.previewState,
                            viewModel.previewSpinnerVisible
                         {
                             ProgressView()
@@ -60,32 +60,34 @@ struct BrowserPreviewPane: View {
         .frame(maxWidth: .infinity, maxHeight: .infinity)
     }
 
+    private func previewDecoration(for content: SelectedItemState) -> PreviewDecoration? {
+        switch content.previewState {
+        case .plain, .loadingDecoration(previous: nil):
+            return nil
+        case let .loadingDecoration(previous: .some(decoration)), let .highlighted(decoration):
+            return decoration
+        }
+    }
+
     @ViewBuilder
     private func previewContent(for content: SelectedItemState) -> some View {
         let item = content.item
         switch item.content {
         case .text, .color:
             let previewText = viewModel.pendingEdits[item.itemMetadata.itemId] ?? item.content.textContent
-            let previewDecoration: PreviewDecoration? = {
-                switch content.previewState {
-                case .plain, .loading(.missing):
-                    return nil
-                case let .loading(.stale(decoration)), let .highlighted(decoration):
-                    return decoration
-                }
-            }()
+            let decoration = previewDecoration(for: content)
             TextPreviewView(
                 text: previewText,
                 fontName: FontManager.mono,
                 fontSize: 15,
-                highlights: previewDecoration?.highlights ?? [],
-                initialScrollHighlightIndex: previewDecoration?.initialScrollHighlightIndex,
+                highlights: decoration?.highlights ?? [],
+                initialScrollHighlightIndex: decoration?.initialScrollHighlightIndex,
                 scrollBehavior: {
                     switch content.previewState {
                     case .plain:
                         return .autoScroll
-                    case .loading:
-                        return .manual
+                    case let .loadingDecoration(previous):
+                        return previous == nil ? .autoScroll : .manual
                     case .highlighted:
                         return content.origin == .user ? .trackHighlight : .autoScroll
                     }
@@ -100,6 +102,10 @@ struct BrowserPreviewPane: View {
                 },
                 onCmdReturn: {
                     viewModel.confirmSelection()
+                },
+                onCmdK: {
+                    guard viewModel.previewInteractionMode == .browsing else { return }
+                    viewModel.openActionsOverlay(highlight: .index(0))
                 },
                 onSave: {
                     viewModel.commitCurrentEdit()
@@ -117,18 +123,19 @@ struct BrowserPreviewPane: View {
             .overlay(alignment: .topLeading) {
                 if isUITestPreviewDebugEnabled {
                     Color.clear
-                    .frame(width: 1, height: 1)
-                    .allowsHitTesting(false)
-                    .accessibilityElement(children: .ignore)
-                    .accessibilityLabel(previewHighlightDebugLabel(
-                        text: previewText,
-                        itemId: item.itemMetadata.itemId,
-                        previewState: content.previewState
-                    ))
-                    .accessibilityIdentifier("PreviewHighlightDebug")
+                        .frame(width: 1, height: 1)
+                        .allowsHitTesting(false)
+                        .accessibilityElement(children: .ignore)
+                        .accessibilityLabel(previewHighlightDebugLabel(
+                            text: previewText,
+                            itemId: item.itemMetadata.itemId,
+                            previewState: content.previewState
+                        ))
+                        .accessibilityIdentifier("PreviewHighlightDebug")
                 }
             }
         case let .image(data, description, _):
+            let highlights = previewDecoration(for: content)?.highlights ?? []
             ScrollView(.vertical, showsIndicators: true) {
                 if let image = NSImage(data: data) {
                     VStack(spacing: 8) {
@@ -137,26 +144,42 @@ struct BrowserPreviewPane: View {
                             .aspectRatio(contentMode: .fit)
                             .frame(maxWidth: .infinity)
                         if !description.isEmpty {
-                            Text(description)
-                                .font(.callout)
-                                .foregroundStyle(.secondary)
-                                .frame(maxWidth: .infinity, alignment: .leading)
+                            if highlights.isEmpty {
+                                Text(description)
+                                    .font(.callout)
+                                    .foregroundStyle(.secondary)
+                                    .frame(maxWidth: .infinity, alignment: .leading)
+                            } else {
+                                Text(HighlightStyler.attributedText(description, highlights: highlights))
+                                    .font(.callout)
+                                    .foregroundStyle(.secondary)
+                                    .frame(maxWidth: .infinity, alignment: .leading)
+                            }
                         }
                     }
                     .padding(16)
                 }
             }
         case let .link(url, metadataState):
+            let highlights = previewDecoration(for: content)?.highlights ?? []
             ScrollView(.vertical, showsIndicators: true) {
                 VStack(alignment: .leading, spacing: 16) {
                     LinkPreviewView(url: url, metadataState: metadataState)
                         .frame(maxWidth: .infinity)
 
-                    Text(url)
-                        .font(.custom(FontManager.mono, size: 12))
-                        .foregroundStyle(.secondary)
-                        .textSelection(.enabled)
-                        .frame(maxWidth: .infinity, alignment: .leading)
+                    if highlights.isEmpty {
+                        Text(url)
+                            .font(.custom(FontManager.mono, size: 12))
+                            .foregroundStyle(.secondary)
+                            .textSelection(.enabled)
+                            .frame(maxWidth: .infinity, alignment: .leading)
+                    } else {
+                        Text(HighlightStyler.attributedText(url, highlights: highlights))
+                            .font(.custom(FontManager.mono, size: 12))
+                            .foregroundStyle(.secondary)
+                            .textSelection(.enabled)
+                            .frame(maxWidth: .infinity, alignment: .leading)
+                    }
 
                     Spacer()
                 }
@@ -187,11 +210,11 @@ struct BrowserPreviewPane: View {
         case .plain:
             state = "plain"
             fragments = []
-        case .loading(.missing):
-            state = "loading-missing"
+        case .loadingDecoration(previous: nil):
+            state = "loading-decoration"
             fragments = []
-        case let .loading(.stale(decoration)):
-            state = "loading-stale"
+        case let .loadingDecoration(previous: .some(decoration)):
+            state = "loading-decoration-stale"
             fragments = HighlightStyler.fragments(in: text, highlights: decoration.highlights)
         case let .highlighted(decoration):
             state = "highlighted"
@@ -203,13 +226,12 @@ struct BrowserPreviewPane: View {
     }
 
     private func metadataFooter(for item: ClipboardItem) -> some View {
-        let itemId = item.itemMetadata.itemId
-        let hasPendingEdit = viewModel.hasPendingEdit(for: itemId)
-        let isFocused = viewModel.editFocus == .focused(itemId: itemId)
+        let mode = viewModel.previewInteractionMode
 
         return HStack(spacing: 12) {
-            if hasPendingEdit {
-                // Edit mode: show Discard and Save buttons
+            switch mode {
+            case .editing:
+                // Edit mode: show Discard, Save, and confirm buttons
                 Button {
                     viewModel.discardCurrentEdit()
                     focusSearchField()
@@ -243,14 +265,30 @@ struct BrowserPreviewPane: View {
                 Button {
                     viewModel.confirmSelection()
                 } label: {
-                    Text("\(isFocused ? "⌘" : "")↩ \(AppSettings.shared.pasteMode.editConfirmLabel)")
+                    Text("⌘↩ \(AppSettings.shared.pasteMode.editConfirmLabel)")
                         .padding(.horizontal, 10)
                         .padding(.vertical, 6)
                         .subtleHover()
                 }
                 .buttonStyle(.plain)
                 .fixedSize()
-            } else {
+
+            case .previewing:
+                // Preview focused but not yet edited — Cmd+K is not active here
+                Spacer(minLength: 0)
+
+                Button {
+                    viewModel.confirmSelection()
+                } label: {
+                    Text("⌘↩ \(AppSettings.shared.pasteMode.buttonLabel)")
+                        .padding(.horizontal, 10)
+                        .padding(.vertical, 6)
+                        .subtleHover()
+                }
+                .buttonStyle(.plain)
+                .fixedSize()
+
+            case .browsing:
                 // Normal mode: show metadata and paste button
                 Label(item.timeAgo, systemImage: "clock")
                     .lineLimit(1)

@@ -27,7 +27,10 @@ final class FloatingPanelController: NSObject, NSWindowDelegate {
     private let mode: PanelMode
     private let activationService: AppActivationService
     private var panelState: PanelState = .hidden
-    private var animatedLayer: CALayer? { panel.contentView?.layer }
+    private var animatedLayer: CALayer? {
+        panel.contentView?.layer
+    }
+
     private let snackbarWindow: SnackbarWindow
     private let snackbarCoordinator: SnackbarCoordinator
 
@@ -51,7 +54,7 @@ final class FloatingPanelController: NSObject, NSWindowDelegate {
         self.activationService = activationService ?? AppActivationService()
         let coordinator = snackbarCoordinator ?? SnackbarCoordinator()
         self.snackbarCoordinator = coordinator
-        self.snackbarWindow = SnackbarWindow(coordinator: coordinator)
+        snackbarWindow = SnackbarWindow(coordinator: coordinator)
         super.init()
 
         setupPanel()
@@ -178,6 +181,7 @@ final class FloatingPanelController: NSObject, NSWindowDelegate {
     private static var animationMargin: CGFloat {
         ceil(max(panelSize.width, panelSize.height) * (animationScale - 1) / 2) + 2
     }
+
     private static var oversizedPanelSize: NSSize {
         let m = animationMargin * 2
         return NSSize(width: panelSize.width + m, height: panelSize.height + m)
@@ -196,7 +200,6 @@ final class FloatingPanelController: NSObject, NSWindowDelegate {
         guard case .hidden = panelState else { return }
 
         let previousApp = activationService.frontmostApplication()
-        store.resetForDisplay()
         if initialSearchQuery != nil { updatePanelContent() }
         centerPanel()
 
@@ -230,6 +233,7 @@ final class FloatingPanelController: NSObject, NSWindowDelegate {
         layer.transform = CATransform3DIdentity
         panel.alphaValue = 1
         panelState = .visible(previousApp: previousApp)
+        store.setPanelVisibility(true)
 
         let m = Self.animationMargin
         let contentFrame = panel.frame.insetBy(dx: m, dy: m)
@@ -285,6 +289,7 @@ final class FloatingPanelController: NSObject, NSWindowDelegate {
             layer.transform = CATransform3DIdentity
             layer.opacity = 1
             self.store.resetForDisplay()
+            self.store.setPanelVisibility(false)
         }
         layer.add(scale, forKey: "transform")
         layer.add(fade, forKey: "opacity")
@@ -309,13 +314,18 @@ final class FloatingPanelController: NSObject, NSWindowDelegate {
 
     private func selectItem(itemId: Int64, content: ClipboardContent) {
         store.paste(itemId: itemId, content: content)
-        let targetApp = hide()
-        if case .autoPaste = AppSettings.shared.pasteMode {
-            activationService.simulatePaste(to: targetApp)
-        } else {
-            // Show toast when copying without auto-paste
+        #if !APP_STORE
+            let targetApp = hide()
+            if case .autoPaste = AppSettings.shared.pasteMode {
+                activationService.simulatePaste(to: targetApp)
+            } else {
+                // Show toast when copying without auto-paste
+                ToastWindow.shared.show(message: String(localized: "Copied"))
+            }
+        #else
+            hide()
             ToastWindow.shared.show(message: String(localized: "Copied"))
-        }
+        #endif
     }
 
     private func copyOnlyItem(itemId: Int64, content: ClipboardContent) {

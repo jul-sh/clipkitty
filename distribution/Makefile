@@ -32,7 +32,7 @@ SCREENSHOT_LOCALES := en es zh-Hans zh-Hant ja ko fr de pt-BR ru
 .PHONY: dmg appstore appstore-local appstore-publish publish icon-png \
         synthetic-data run-synthetic marketing marketing-screenshots \
         marketing-screenshots-capture marketing-screenshots-localized \
-        preview-video screenshot
+        preview-video intro-video video-data screenshot
 
 # Build DMG installer
 dmg:
@@ -46,8 +46,17 @@ dmg:
 	@$(DIST_DIR)/build-dmg.sh "$(APP_PATH)" "$(PROJECT_ROOT)/$(APP_NAME).dmg"
 
 # Export app icon as PNG (for README, gh-pages, etc.)
+ICTOOL := /Applications/Xcode.app/Contents/Applications/Icon\ Composer.app/Contents/Executables/ictool
+
 icon-png:
-	@sips -s format png "$(PROJECT_ROOT)/AppIcon.icns" --out $(PROJECT_ROOT)/icon.png
+	@$(ICTOOL) "$(PROJECT_ROOT)/AppIcon.icon" \
+		--export-image \
+		--output-file $(PROJECT_ROOT)/icon.png \
+		--platform macOS \
+		--rendition Default \
+		--width 512 \
+		--height 512 \
+		--scale 1
 
 # ============================================================================
 # App Store Submission (build only — validate & upload happen in CI)
@@ -273,3 +282,20 @@ preview-video:
 	@echo "Recording App Store preview video..."
 	@$(DIST_DIR)/record-preview-video.sh
 	@echo "Preview video saved!"
+
+# Generate video-specific synthetic database (based on normal SyntheticData + video items)
+video-data:
+	@echo "Generating video database..."
+	@cp $(DIST_DIR)/SyntheticData.sqlite $(DIST_DIR)/SyntheticData_video.sqlite
+	@$(NIX_SHELL) "cd $(DIST_DIR)/rust-data-gen && cargo run --release -- --video-only --db-path ../SyntheticData_video.sqlite"
+	@echo "Video database generated at distribution/SyntheticData_video.sqlite"
+
+# Record intro video using video-specific database
+intro-video: video-data
+	@echo "Recording intro video..."
+	@$(DIST_DIR)/record-preview-video.sh \
+		--test testRecordIntroVideo \
+		--db SyntheticData_video.sqlite \
+		--output intro_video.mov \
+		--duration 50
+	@echo "Intro video saved!"

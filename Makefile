@@ -27,7 +27,7 @@ SIGNING_IDENTITY ?= $(shell security find-identity -v -p codesigning 2>/dev/null
 RUST_MARKER := .make/rust.marker
 RUST_LIB := Sources/ClipKittyRust/libpurr.a
 
-.PHONY: all clean rust rust-force generate build sign list-identities run run-perf test unittest uitest rust-test perf-test perf-db
+.PHONY: all clean rust rust-force generate build sign list-identities run run-perf test unittest uitest rust-test perf-test perf-db perf-bench
 
 all: rust generate build
 
@@ -82,9 +82,11 @@ run: all
 	@echo "Opening $(APP_NAME)..."
 	@open "$(DERIVED_DATA)/Build/Products/$(CONFIGURATION)/$(APP_NAME).app"
 
-# Run with synthetic perf test database (150 large items)
+# Run the app against the generated synthetic performance fixture
 BUNDLE_ID := com.eviljuliette.clipkitty
 APP_SUPPORT := $(HOME)/Library/Containers/$(BUNDLE_ID)/Data/Library/Application Support/ClipKitty
+PERF_FIXTURE_DIR := purr/generated/benchmarks
+PERF_DB := $(PERF_FIXTURE_DIR)/synthetic_clipboard.sqlite
 
 run-perf: all perf-db
 	@echo "Closing existing $(APP_NAME)..."
@@ -93,9 +95,9 @@ run-perf: all perf-db
 	@echo "Setting up perf test database and index..."
 	@mkdir -p "$(APP_SUPPORT)"
 	@rm -f "$(APP_SUPPORT)/clipboard-screenshot.sqlite"*
-	@rm -rf "$(APP_SUPPORT)/tantivy_index_v4"
-	@cp distribution/SyntheticData_perf.sqlite "$(APP_SUPPORT)/clipboard-screenshot.sqlite"
-	@cp -r distribution/tantivy_index_v4 "$(APP_SUPPORT)/tantivy_index_v4"
+	@rm -rf "$(APP_SUPPORT)"/tantivy_index_*
+	@cp "$(PERF_DB)" "$(APP_SUPPORT)/clipboard-screenshot.sqlite"
+	@cp -r $(PERF_FIXTURE_DIR)/tantivy_index_* "$(APP_SUPPORT)/"
 	@echo "Opening $(APP_NAME) with perf database..."
 	@open "$(DERIVED_DATA)/Build/Products/$(CONFIGURATION)/$(APP_NAME).app" --args --use-simulated-db
 
@@ -164,10 +166,16 @@ list-identities:
 	@echo "Set SIGNING_IDENTITY in your environment or pass to make:"
 	@echo "  make sign SIGNING_IDENTITY=\"Developer ID Application: Your Name (TEAMID)\""
 
-# Generate performance test database with large text items (uses native Rust)
+# Generate the synthetic benchmark database and matching index
 perf-db:
 	@echo "Generating performance test database..."
 	@$(NIX_SHELL) "cd purr && cargo run --release --bin generate-perf-db"
+
+# Run the maintained Rust search benchmark runner
+# Usage: make perf-bench [BENCH_ARGS="--iterations 20 --warmup 5 --query function"]
+perf-bench: perf-db
+	@echo "Running search benchmark..."
+	@$(NIX_SHELL) "cd purr && cargo run --release --bin run_search_bench -- $(BENCH_ARGS)"
 
 # Run performance tests with Instruments tracing
 # Usage: make perf-test [PERF_ARGS="--skip-build --fail-on-hangs"]

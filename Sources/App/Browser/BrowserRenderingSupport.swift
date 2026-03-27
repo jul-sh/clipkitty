@@ -46,7 +46,7 @@ private extension View {
     @ViewBuilder
     func clipKittyGlassBackground() -> some View {
         if #available(macOS 26.0, *) {
-            self.glassEffect(.regular.interactive(), in: .rect)
+            glassEffect(.regular.interactive(), in: .rect)
         } else {
             background(.regularMaterial)
         }
@@ -196,6 +196,7 @@ private final class PreviewTextView: NSTextView {
     }()
 
     var onCmdReturn: (() -> Void)?
+    var onCmdK: (() -> Void)?
     var onSave: (() -> Void)?
     var onEscape: (() -> Void)?
     var onFocusChange: ((Bool) -> Void)?
@@ -206,6 +207,9 @@ private final class PreviewTextView: NSTextView {
             switch event.keyCode {
             case 36: // Cmd+Return
                 onCmdReturn?()
+                return
+            case 40: // Cmd+K
+                onCmdK?()
                 return
             case 1: // Cmd+S
                 onSave?()
@@ -250,6 +254,7 @@ private final class PreviewTextView: NSTextView {
         onViewportLayoutDidLayout?(self, textViewportLayoutController)
     }
 }
+
 /// How the preview pane should scroll when its content changes.
 enum PreviewScrollBehavior {
     /// No auto-scrolling — content stays at current position.
@@ -285,6 +290,7 @@ struct TextPreviewView: NSViewRepresentable {
     var onTextChange: ((String) -> Void)?
     var onEditingStateChange: ((Bool) -> Void)?
     var onCmdReturn: (() -> Void)?
+    var onCmdK: (() -> Void)?
     var onSave: (() -> Void)?
     var onEscape: (() -> Void)?
 
@@ -321,6 +327,7 @@ struct TextPreviewView: NSViewRepresentable {
         // Setup delegate for text changes
         textView.delegate = context.coordinator
         textView.onCmdReturn = onCmdReturn
+        textView.onCmdK = onCmdK
         textView.onSave = onSave
         textView.onEscape = onEscape
         textView.onFocusChange = onEditingStateChange
@@ -336,7 +343,7 @@ struct TextPreviewView: NSViewRepresentable {
 
     private func scaledFontSize(containerWidth: CGFloat) -> CGFloat {
         let lines = text.components(separatedBy: "\n")
-        if lines.count >= 10 { return fontSize }
+        if lines.count >= 15 { return fontSize }
 
         let baseFont = NSFont(name: fontName, size: fontSize)
             ?? NSFont.monospacedSystemFont(ofSize: fontSize, weight: .regular)
@@ -365,6 +372,7 @@ struct TextPreviewView: NSViewRepresentable {
         coordinator.observeUsageBounds(of: textView)
         coordinator.onTextChange = onTextChange
         textView.onCmdReturn = onCmdReturn
+        textView.onCmdK = onCmdK
         textView.onSave = onSave
         textView.onEscape = onEscape
         textView.onFocusChange = onEditingStateChange
@@ -475,6 +483,12 @@ struct TextPreviewView: NSViewRepresentable {
             coordinator.needsGeometrySync = true
         }
 
+        let previousMatchRanges = coordinator.currentMatchRanges
+        let tlm = textView.textLayoutManager
+        if let tlm, itemChanged || textChanged || highlightsChanged, !previousMatchRanges.isEmpty {
+            clearHighlightRenderingAttributes(matchRanges: previousMatchRanges, from: tlm)
+        }
+
         // Only update text if item changed or we're not editing
         let shouldUpdateText = itemChanged || (!coordinator.isEditing && textChanged)
         if shouldUpdateText {
@@ -496,7 +510,6 @@ struct TextPreviewView: NSViewRepresentable {
             textView.textStorage?.setAttributedString(attributed)
         }
 
-        let tlm = textView.textLayoutManager
         if itemChanged || textChanged || highlightsChanged {
             // Convert highlights to NSTextRanges for the layout manager
             let newMatchRanges = resolveTextRanges(highlights: highlights, text: text, layoutManager: tlm)
@@ -504,7 +517,7 @@ struct TextPreviewView: NSViewRepresentable {
             coordinator.currentMatchRanges = newMatchRanges
             coordinator.lastHighlights = highlights
 
-            applyHighlightAttributes(highlights: highlights, to: textView)
+            applyHighlightAttributes(matchRanges: newMatchRanges, to: textView)
         }
 
         let scrollTarget: ScrollTarget
@@ -563,7 +576,8 @@ struct TextPreviewView: NSViewRepresentable {
             return MatchRange(
                 range: textRange,
                 utf16Start: highlight.utf16Start,
-                utf16End: highlight.utf16End
+                utf16End: highlight.utf16End,
+                kind: highlight.kind
             )
         }
     }
@@ -794,8 +808,42 @@ struct TextPreviewView: NSViewRepresentable {
         textView.layoutSubtreeIfNeeded()
         textView.setNeedsDisplay(textView.visibleRect)
         scrollView.contentView.setNeedsDisplay(scrollView.contentView.bounds)
-        scrollView.displayIfNeeded()
-        textView.displayIfNeeded()
+    }
+
+    private func refreshHighlightDisplay(textView: NSTextView) {
+        textView.layoutSubtreeIfNeeded()
+        textView.setNeedsDisplay(textView.visibleRect)
+
+        if let scrollView = textView.enclosingScrollView {
+            scrollView.contentView.setNeedsDisplay(scrollView.contentView.bounds)
+        }
+    }
+
+    private func clearHighlightRenderingAttributes(
+        matchRanges: [MatchRange],
+        from textLayoutManager: NSTextLayoutManager
+    ) {
+        for matchRange in matchRanges {
+            textLayoutManager.removeRenderingAttribute(.backgroundColor, for: matchRange.range)
+            textLayoutManager.removeRenderingAttribute(.underlineStyle, for: matchRange.range)
+            textLayoutManager.invalidateRenderingAttributes(for: matchRange.range)
+        }
+    }
+
+    private func applyHighlightAttributes(
+        matchRanges: [MatchRange],
+        to textView: NSTextView
+    ) {
+        guard let textLayoutManager = textView.textLayoutManager else { return }
+
+        for matchRange in matchRanges {
+            textLayoutManager.setRenderingAttributes(
+                HighlightStyler.renderingAttributes(for: matchRange.kind),
+                for: matchRange.range
+            )
+        }
+
+        refreshHighlightDisplay(textView: textView)
     }
 
     private func refreshHighlightDisplay(textView: NSTextView) {
@@ -865,6 +913,7 @@ struct TextPreviewView: NSViewRepresentable {
         let range: NSTextRange
         let utf16Start: UInt64
         let utf16End: UInt64
+        let kind: HighlightKind
     }
 
     class Coordinator: NSObject, NSTextViewDelegate {
@@ -1050,7 +1099,7 @@ struct LinkPreviewView: NSViewRepresentable {
 
 // MARK: - Item Row
 
-struct ItemRow: View, Equatable {
+struct ItemRow: View {
     let metadata: ItemMetadata
     let rowDecoration: RowDecoration?
     let isSelected: Bool
@@ -1064,9 +1113,11 @@ struct ItemRow: View, Equatable {
     let onContextMenuShow: () -> Void
     let onContextMenuHide: () -> Void
 
-    private var accentSelected: Bool { isSelected && hasUserNavigated && !hasPendingEdit }
+    private var accentSelected: Bool {
+        isSelected && hasUserNavigated && !hasPendingEdit
+    }
 
-    // Fixed height for exactly 1 line of text at font size 15
+    /// Fixed height for exactly 1 line of text at font size 15
     private let rowHeight: CGFloat = 32
 
     // MARK: - Display Text (Simplified - SwiftUI handles truncation)
@@ -1083,17 +1134,6 @@ struct ItemRow: View, Equatable {
     /// Highlights for display - passed directly from Rust (already adjusted for normalization)
     private var displayHighlights: [Utf16HighlightRange] {
         rowDecoration?.highlights ?? []
-    }
-
-    // Define exactly what constitutes a "change" for SwiftUI diffing
-    // Note: onTap closure is intentionally excluded from equality comparison
-    nonisolated static func == (lhs: ItemRow, rhs: ItemRow) -> Bool {
-        return lhs.isSelected == rhs.isSelected &&
-            lhs.isContextMenuTargeted == rhs.isContextMenuTargeted &&
-            lhs.hasUserNavigated == rhs.hasUserNavigated &&
-            lhs.hasPendingEdit == rhs.hasPendingEdit &&
-            lhs.metadata == rhs.metadata &&
-            lhs.rowDecoration == rhs.rowDecoration
     }
 
     var body: some View {
@@ -1416,11 +1456,6 @@ struct HighlightedTextView: View, Equatable {
     let text: String
     let highlights: [Utf16HighlightRange]
     let accentSelected: Bool
-
-    // Define equality for SwiftUI diffing
-    nonisolated static func == (lhs: HighlightedTextView, rhs: HighlightedTextView) -> Bool {
-        lhs.text == rhs.text && lhs.highlights == rhs.highlights && lhs.accentSelected == rhs.accentSelected
-    }
 
     private var textColor: Color {
         accentSelected ? .white : .primary

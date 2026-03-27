@@ -82,11 +82,6 @@ debug = false
 [profile.dev]
 opt-level = 1
 
-[[bench]]
-name = "search_benchmark"
-harness = false
-
 [dev-dependencies]
 tempfile = "*"
-criterion = { version = "*", features = ["html_reports"] }
 rusqlite = { version = "*", features = ["bundled"] }

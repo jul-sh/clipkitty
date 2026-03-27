@@ -124,6 +124,10 @@ final class ClipboardStore {
     /// Uses Int which will overflow after ~2 billion increments, but this is acceptable
     /// as the counter only needs to detect changes, not maintain absolute ordering
     private(set) var displayVersion: Int = 0
+    /// Increments when clipboard history content changes without implying a session reset
+    private(set) var contentRevision: Int = 0
+    /// Whether the floating panel is currently visible
+    private(set) var isPanelVisible = false
 
     /// Pasteboard for clipboard operations (injected for testability)
     private let pasteboard: PasteboardProtocol
@@ -319,6 +323,11 @@ final class ClipboardStore {
         refresh()
     }
 
+    func setPanelVisibility(_ isVisible: Bool) {
+        guard isPanelVisible != isVisible else { return }
+        isPanelVisible = isVisible
+    }
+
     func setQueryFilter(_ filter: ItemQueryFilter) {
         queryFilter = filter
         refresh()
@@ -365,7 +374,11 @@ final class ClipboardStore {
     /// Returns the updated item if successful
     func fetchLinkMetadata(url: String, itemId: Int64) async -> ClipboardItem? {
         guard let previewLoader else { return nil }
-        return await previewLoader.refreshLinkMetadata(url: url, itemId: itemId)
+        let item = await previewLoader.refreshLinkMetadata(url: url, itemId: itemId)
+        if item != nil {
+            invalidateContent()
+        }
+        return item
     }
 
     // MARK: - Refresh
@@ -373,6 +386,13 @@ final class ClipboardStore {
     /// Refresh items with current query (convenience for reload scenarios)
     private func refresh() {
         setSearchQuery(currentSearchQuery)
+    }
+
+    private func invalidateContent(refreshDisplayState: Bool = true) {
+        contentRevision += 1
+        if refreshDisplayState, hasResults, isPanelVisible {
+            refresh()
+        }
     }
 
     private func beginSearch(query: String) {
@@ -455,16 +475,11 @@ final class ClipboardStore {
 
             switch result {
             case let .success(itemId):
-                if self.hasResults {
-                    self.refresh()
-                }
+                self.invalidateContent()
 
                 if itemId > 0, URL(string: text) != nil, text.hasPrefix("http") {
                     guard AppSettings.shared.generateLinkPreviews else { return }
                     _ = await self.fetchLinkMetadata(url: text, itemId: itemId)
-                    if self.hasResults {
-                        self.refresh()
-                    }
                 }
 
             case let .failure(error):
@@ -483,11 +498,9 @@ final class ClipboardStore {
 
         if case let .failure(error) = result {
             ErrorReporter.report(error, showToast: false)
+            return
         }
-
-        if hasResults {
-            refresh()
-        }
+        invalidateContent()
     }
 
     /// Save text that was edited in the preview pane.
@@ -500,7 +513,11 @@ final class ClipboardStore {
             ))
         }
 
-        return await repository.updateTextItem(itemId: itemId, text: text)
+        let result = await repository.updateTextItem(itemId: itemId, text: text)
+        if case .success = result {
+            invalidateContent()
+        }
+        return result
     }
 
     private func saveImageItem(
@@ -544,9 +561,7 @@ final class ClipboardStore {
 
             switch result {
             case let .success(itemId):
-                if self.hasResults {
-                    self.refresh()
-                }
+                self.invalidateContent()
 
                 // Generate image description in background
                 Task {
@@ -783,9 +798,7 @@ final class ClipboardStore {
 
             switch result {
             case .success:
-                if self.hasResults {
-                    self.refresh()
-                }
+                self.invalidateContent()
             case let .failure(error):
                 ErrorReporter.report(error, showToast: false)
             }
@@ -934,12 +947,9 @@ final class ClipboardStore {
         // Log any errors but don't show toast (timestamp update is non-critical)
         if case let .failure(error) = result {
             ErrorReporter.report(error, showToast: false)
+            return
         }
-
-        // Reload if in browse mode
-        if hasResults {
-            refresh()
-        }
+        invalidateContent()
     }
 
     func delete(itemId: Int64) {
@@ -960,8 +970,11 @@ final class ClipboardStore {
 
         guard let repository else { return }
         Task {
-            if case let .failure(error) = await repository.delete(itemId: itemId) {
+            let result = await repository.delete(itemId: itemId)
+            if case let .failure(error) = result {
                 ErrorReporter.report(error, showToast: true)
+            } else {
+                self.invalidateContent(refreshDisplayState: false)
             }
         }
     }
@@ -973,7 +986,11 @@ final class ClipboardStore {
                 underlying: NSError(domain: "ClipKitty", code: 1, userInfo: [NSLocalizedDescriptionKey: "Database not available"])
             ))
         }
-        return await repository.delete(itemId: itemId)
+        let result = await repository.delete(itemId: itemId)
+        if case .success = result {
+            invalidateContent()
+        }
+        return result
     }
 
     func addTag(itemId: Int64, tag: ItemTag) async -> Result<Void, ClipboardError> {
@@ -983,7 +1000,11 @@ final class ClipboardStore {
                 underlying: NSError(domain: "ClipKitty", code: 1, userInfo: [NSLocalizedDescriptionKey: "Database not available"])
             ))
         }
-        return await repository.addTag(itemId: itemId, tag: tag)
+        let result = await repository.addTag(itemId: itemId, tag: tag)
+        if case .success = result {
+            invalidateContent()
+        }
+        return result
     }
 
     func removeTag(itemId: Int64, tag: ItemTag) async -> Result<Void, ClipboardError> {
@@ -993,7 +1014,11 @@ final class ClipboardStore {
                 underlying: NSError(domain: "ClipKitty", code: 1, userInfo: [NSLocalizedDescriptionKey: "Database not available"])
             ))
         }
-        return await repository.removeTag(itemId: itemId, tag: tag)
+        let result = await repository.removeTag(itemId: itemId, tag: tag)
+        if case .success = result {
+            invalidateContent()
+        }
+        return result
     }
 
     func clear() {
@@ -1002,8 +1027,11 @@ final class ClipboardStore {
 
         guard let repository else { return }
         Task {
-            if case let .failure(error) = await repository.clear() {
+            let result = await repository.clear()
+            if case let .failure(error) = result {
                 ErrorReporter.report(error, showToast: true)
+            } else {
+                self.invalidateContent(refreshDisplayState: false)
             }
         }
     }
@@ -1015,7 +1043,11 @@ final class ClipboardStore {
                 underlying: NSError(domain: "ClipKitty", code: 1, userInfo: [NSLocalizedDescriptionKey: "Database not available"])
             ))
         }
-        return await repository.clear()
+        let result = await repository.clear()
+        if case .success = result {
+            invalidateContent()
+        }
+        return result
     }
 
     // MARK: - Pruning

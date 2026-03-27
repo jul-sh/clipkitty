@@ -46,7 +46,6 @@ struct BrowserResultsList: View {
                             }
                         }
                     )
-                    .equatable()
                     .onAppear { onItemAppear(index: index) }
                     .accessibilityIdentifier("ItemRow_\(index)")
                     .listRowInsets(EdgeInsets(top: 2, leading: 0, bottom: 2, trailing: 0))

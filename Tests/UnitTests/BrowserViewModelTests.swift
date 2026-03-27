@@ -1,6 +1,6 @@
-import XCTest
-import ClipKittyRust
 @testable import ClipKitty
+import ClipKittyRust
+import XCTest
 
 @MainActor
 final class BrowserViewModelTests: XCTestCase {
@@ -77,6 +77,185 @@ final class BrowserViewModelTests: XCTestCase {
         XCTAssertEqual(viewModel.selectedItem?.itemMetadata.itemId, 2)
     }
 
+    func testDisplayResetKeepsPreviousResultsVisible() async {
+        let client = MockBrowserStoreClient()
+        let firstItem = makeItem(id: 1, text: "first")
+        let secondItem = makeItem(id: 2, text: "second")
+        client.enqueueSearchResponse(BrowserSearchResponse(
+            request: SearchRequest(text: "", filter: .all),
+            items: [makeMatch(id: 1, snippet: "first")],
+            firstItem: firstItem,
+            totalCount: 1
+        ))
+
+        let viewModel = BrowserViewModel(
+            client: client,
+            onSelect: { _, _ in },
+            onCopyOnly: { _, _ in },
+            onDismiss: {}
+        )
+
+        viewModel.onAppear(initialSearchQuery: "")
+        await flushMainActor()
+
+        XCTAssertEqual(viewModel.itemIds, [1])
+        XCTAssertEqual(viewModel.selectedItemId, 1)
+
+        viewModel.handleDisplayReset(initialSearchQuery: "")
+        await flushMainActor()
+
+        guard case let .loading(request, previous, _) = viewModel.contentState else {
+            return XCTFail("Expected display reset to preserve stale results while refreshing")
+        }
+        XCTAssertEqual(request, SearchRequest(text: "", filter: .all))
+        XCTAssertEqual(previous?.response.items.map(\.itemMetadata.itemId), [1])
+        XCTAssertEqual(previous?.selection.itemId, 1)
+        XCTAssertEqual(viewModel.itemIds, [1])
+        XCTAssertEqual(viewModel.selectedItemId, 1)
+
+        client.resumeSearch(with: BrowserSearchResponse(
+            request: SearchRequest(text: "", filter: .all),
+            items: [makeMatch(id: 2, snippet: "second")],
+            firstItem: secondItem,
+            totalCount: 1
+        ))
+        await flushMainActor()
+
+        XCTAssertEqual(viewModel.itemIds, [2])
+        XCTAssertEqual(viewModel.selectedItemId, 2)
+    }
+
+    func testHiddenContentRevisionRefreshKeepsPreviousResultsVisible() async {
+        let client = MockBrowserStoreClient()
+        let firstItem = makeItem(id: 1, text: "first")
+        let secondItem = makeItem(id: 2, text: "second")
+        client.enqueueSearchResponse(BrowserSearchResponse(
+            request: SearchRequest(text: "", filter: .all),
+            items: [makeMatch(id: 1, snippet: "first")],
+            firstItem: firstItem,
+            totalCount: 1
+        ))
+
+        let viewModel = BrowserViewModel(
+            client: client,
+            onSelect: { _, _ in },
+            onCopyOnly: { _, _ in },
+            onDismiss: {}
+        )
+
+        viewModel.onAppear(initialSearchQuery: "")
+        await flushMainActor()
+
+        XCTAssertEqual(viewModel.itemIds, [1])
+        XCTAssertEqual(viewModel.selectedItemId, 1)
+
+        viewModel.handleContentRevisionChange(1, isPanelVisible: false)
+        await flushMainActor()
+
+        XCTAssertEqual(client.startedSearchRequests, [
+            SearchRequest(text: "", filter: .all),
+            SearchRequest(text: "", filter: .all),
+        ])
+
+        guard case let .loading(request, previous, _) = viewModel.contentState else {
+            return XCTFail("Expected a background refresh while hidden")
+        }
+        XCTAssertEqual(request, SearchRequest(text: "", filter: .all))
+        XCTAssertEqual(previous?.response.items.map(\.itemMetadata.itemId), [1])
+        XCTAssertEqual(previous?.selection.itemId, 1)
+
+        client.resumeSearch(with: BrowserSearchResponse(
+            request: SearchRequest(text: "", filter: .all),
+            items: [makeMatch(id: 2, snippet: "second"), makeMatch(id: 1, snippet: "first")],
+            firstItem: secondItem,
+            totalCount: 2
+        ))
+        await flushMainActor()
+
+        XCTAssertEqual(viewModel.itemIds, [2, 1])
+        XCTAssertEqual(viewModel.selectedItemId, 2)
+    }
+
+    func testVisibleContentRevisionWaitsUntilPanelIsShownAgain() async {
+        let client = MockBrowserStoreClient()
+        let firstItem = makeItem(id: 1, text: "first")
+        let secondItem = makeItem(id: 2, text: "second")
+        client.enqueueSearchResponse(BrowserSearchResponse(
+            request: SearchRequest(text: "", filter: .all),
+            items: [makeMatch(id: 1, snippet: "first")],
+            firstItem: firstItem,
+            totalCount: 1
+        ))
+
+        let viewModel = BrowserViewModel(
+            client: client,
+            onSelect: { _, _ in },
+            onCopyOnly: { _, _ in },
+            onDismiss: {}
+        )
+
+        viewModel.onAppear(initialSearchQuery: "")
+        await flushMainActor()
+
+        viewModel.handleContentRevisionChange(1, isPanelVisible: true)
+        await flushMainActor()
+
+        XCTAssertEqual(client.startedSearchRequests.count, 1)
+        XCTAssertEqual(viewModel.itemIds, [1])
+
+        viewModel.handlePanelVisibilityChange(false, contentRevision: 1)
+        viewModel.handlePanelVisibilityChange(true, contentRevision: 1)
+        await flushMainActor()
+
+        XCTAssertEqual(client.startedSearchRequests.count, 2)
+        guard case let .loading(request, previous, _) = viewModel.contentState else {
+            return XCTFail("Expected reveal refresh to preserve stale results")
+        }
+        XCTAssertEqual(request, SearchRequest(text: "", filter: .all))
+        XCTAssertEqual(previous?.response.items.map(\.itemMetadata.itemId), [1])
+
+        client.resumeSearch(with: BrowserSearchResponse(
+            request: SearchRequest(text: "", filter: .all),
+            items: [makeMatch(id: 2, snippet: "second")],
+            firstItem: secondItem,
+            totalCount: 1
+        ))
+        await flushMainActor()
+
+        XCTAssertEqual(viewModel.itemIds, [2])
+        XCTAssertEqual(viewModel.selectedItemId, 2)
+    }
+
+    func testPanelShowDoesNotDuplicateHiddenRefreshAlreadyInFlight() async {
+        let client = MockBrowserStoreClient()
+        let firstItem = makeItem(id: 1, text: "first")
+        client.enqueueSearchResponse(BrowserSearchResponse(
+            request: SearchRequest(text: "", filter: .all),
+            items: [makeMatch(id: 1, snippet: "first")],
+            firstItem: firstItem,
+            totalCount: 1
+        ))
+
+        let viewModel = BrowserViewModel(
+            client: client,
+            onSelect: { _, _ in },
+            onCopyOnly: { _, _ in },
+            onDismiss: {}
+        )
+
+        viewModel.onAppear(initialSearchQuery: "")
+        await flushMainActor()
+
+        viewModel.handleContentRevisionChange(1, isPanelVisible: false)
+        await flushMainActor()
+        XCTAssertEqual(client.startedSearchRequests.count, 2)
+
+        viewModel.handlePanelVisibilityChange(true, contentRevision: 1)
+        await flushMainActor()
+
+        XCTAssertEqual(client.startedSearchRequests.count, 2)
+    }
+
     func testSelectedPreviewHighlightsRefreshWhenQueryChangesWithoutNavigation() async {
         let client = MockBrowserStoreClient()
         let item = makeItem(id: 1, text: "alpha beta")
@@ -126,7 +305,7 @@ final class BrowserViewModelTests: XCTestCase {
             return XCTFail("Expected selected item to stay visible while fresh highlights load")
         }
         XCTAssertEqual(selectedItemState.item.itemMetadata.itemId, 1)
-        guard case let .loading(.stale(staleDecoration)) = selectedItemState.previewState else {
+        guard case let .loadingDecoration(previous: .some(staleDecoration)) = selectedItemState.previewState else {
             return XCTFail("Expected stale highlights while updated preview payload is pending")
         }
         XCTAssertEqual(staleDecoration, firstDecoration)
@@ -145,7 +324,7 @@ final class BrowserViewModelTests: XCTestCase {
         XCTAssertEqual(client.loadPreviewDecorationRequests.map(\.query), ["a", "al"])
     }
 
-    func testActiveTextQueryKeepsSelectionLoadingUntilPreviewPayloadArrives() async {
+    func testActiveTextQueryKeepsSelectionVisibleWhilePreviewPayloadArrives() async {
         let client = MockBrowserStoreClient()
         let item = makeItem(id: 1, text: "alpha beta")
         let decoration = makePreviewDecoration(highlightStart: 0, highlightEnd: 1)
@@ -169,11 +348,14 @@ final class BrowserViewModelTests: XCTestCase {
         ))
         await flushMainActor()
 
-        guard case let .loading(itemId, _) = viewModel.selection else {
-            return XCTFail("Expected loading selection before preview payload arrives")
+        guard case let .selected(selectedItemState) = viewModel.selection else {
+            return XCTFail("Expected selected item to stay visible before preview payload arrives")
         }
-        XCTAssertEqual(itemId, 1)
-        XCTAssertNil(viewModel.selectedItem)
+        XCTAssertEqual(selectedItemState.item.itemMetadata.itemId, 1)
+        guard case .loadingDecoration(previous: nil) = selectedItemState.previewState else {
+            return XCTFail("Expected plain content with highlights still loading")
+        }
+        XCTAssertEqual(viewModel.selectedItem?.itemMetadata.itemId, 1)
         XCTAssertNil(viewModel.previewDecoration)
 
         client.resumePreviewPayload(
@@ -253,11 +435,14 @@ final class BrowserViewModelTests: XCTestCase {
         ))
         await flushMainActor()
 
-        guard case let .loading(itemId, _) = viewModel.selection else {
-            return XCTFail("Expected loading selection while highlighted preview payload is pending")
+        guard case let .selected(selectedItemState) = viewModel.selection else {
+            return XCTFail("Expected selected item to stay visible while highlighted preview payload is pending")
         }
-        XCTAssertEqual(itemId, 1)
-        XCTAssertNil(viewModel.selectedItem)
+        XCTAssertEqual(selectedItemState.item.itemMetadata.itemId, 1)
+        guard case .loadingDecoration(previous: nil) = selectedItemState.previewState else {
+            return XCTFail("Expected plain content with highlights still loading")
+        }
+        XCTAssertEqual(viewModel.selectedItem?.itemMetadata.itemId, 1)
         XCTAssertNil(viewModel.previewDecoration)
         XCTAssertEqual(client.loadPreviewDecorationRequests.map(\.query), ["al"])
 
@@ -767,7 +952,7 @@ final class BrowserViewModelTests: XCTestCase {
         XCTAssertEqual(viewModel.editFocus, .idle)
     }
 
-    func testEditRevertedToOriginalClearsPendingEdit() async {
+    func testEditRevertedToOriginalClearsPendingEdit() {
         let client = MockBrowserStoreClient()
         let viewModel = BrowserViewModel(
             client: client,
@@ -782,6 +967,115 @@ final class BrowserViewModelTests: XCTestCase {
         viewModel.onTextEdit("original", for: 1, originalText: "original")
 
         XCTAssertFalse(viewModel.hasPendingEdit(for: 1))
+    }
+
+    // MARK: - PreviewInteractionMode
+
+    func testPreviewInteractionModeIsBrowsingByDefault() async {
+        let client = MockBrowserStoreClient()
+        client.enqueueSearchResponse(BrowserSearchResponse(
+            request: SearchRequest(text: "", filter: .all),
+            items: [makeMatch(id: 1, snippet: "hello")],
+            firstItem: nil,
+            totalCount: 1
+        ))
+
+        let viewModel = BrowserViewModel(
+            client: client,
+            onSelect: { _, _ in },
+            onCopyOnly: { _, _ in },
+            onDismiss: {}
+        )
+
+        viewModel.onAppear(initialSearchQuery: "")
+        await flushMainActor()
+        client.resumeFetch(id: 1, with: makeItem(id: 1, text: "hello"))
+        await flushMainActor()
+
+        XCTAssertEqual(viewModel.previewInteractionMode, .browsing)
+    }
+
+    func testPreviewInteractionModeIsPreviewingWhenFocusedWithoutEdits() async {
+        let client = MockBrowserStoreClient()
+        client.enqueueSearchResponse(BrowserSearchResponse(
+            request: SearchRequest(text: "", filter: .all),
+            items: [makeMatch(id: 1, snippet: "hello")],
+            firstItem: nil,
+            totalCount: 1
+        ))
+
+        let viewModel = BrowserViewModel(
+            client: client,
+            onSelect: { _, _ in },
+            onCopyOnly: { _, _ in },
+            onDismiss: {}
+        )
+
+        viewModel.onAppear(initialSearchQuery: "")
+        await flushMainActor()
+        client.resumeFetch(id: 1, with: makeItem(id: 1, text: "hello"))
+        await flushMainActor()
+
+        viewModel.onEditingStateChange(true, for: 1)
+
+        XCTAssertEqual(viewModel.previewInteractionMode, .previewing(itemId: 1))
+    }
+
+    func testPreviewInteractionModeIsEditingWhenPendingEditsExist() async {
+        let client = MockBrowserStoreClient()
+        client.enqueueSearchResponse(BrowserSearchResponse(
+            request: SearchRequest(text: "", filter: .all),
+            items: [makeMatch(id: 1, snippet: "hello")],
+            firstItem: nil,
+            totalCount: 1
+        ))
+
+        let viewModel = BrowserViewModel(
+            client: client,
+            onSelect: { _, _ in },
+            onCopyOnly: { _, _ in },
+            onDismiss: {}
+        )
+
+        viewModel.onAppear(initialSearchQuery: "")
+        await flushMainActor()
+        client.resumeFetch(id: 1, with: makeItem(id: 1, text: "hello"))
+        await flushMainActor()
+
+        viewModel.onEditingStateChange(true, for: 1)
+        viewModel.onTextEdit("hello world", for: 1, originalText: "hello")
+
+        XCTAssertEqual(viewModel.previewInteractionMode, .editing(itemId: 1))
+    }
+
+    func testPreviewInteractionModeReturnsToBrowsingAfterDiscard() async {
+        let client = MockBrowserStoreClient()
+        client.enqueueSearchResponse(BrowserSearchResponse(
+            request: SearchRequest(text: "", filter: .all),
+            items: [makeMatch(id: 1, snippet: "hello")],
+            firstItem: nil,
+            totalCount: 1
+        ))
+
+        let viewModel = BrowserViewModel(
+            client: client,
+            onSelect: { _, _ in },
+            onCopyOnly: { _, _ in },
+            onDismiss: {}
+        )
+
+        viewModel.onAppear(initialSearchQuery: "")
+        await flushMainActor()
+        client.resumeFetch(id: 1, with: makeItem(id: 1, text: "hello"))
+        await flushMainActor()
+
+        viewModel.onEditingStateChange(true, for: 1)
+        viewModel.onTextEdit("hello world", for: 1, originalText: "hello")
+        XCTAssertEqual(viewModel.previewInteractionMode, .editing(itemId: 1))
+
+        viewModel.discardCurrentEdit()
+
+        XCTAssertEqual(viewModel.previewInteractionMode, .browsing)
     }
 
     func testMoveSelectionNavigatesList() async {
@@ -1054,7 +1348,7 @@ final class BrowserViewModelTests: XCTestCase {
     }
 
     private func flushMainActor() async {
-        for _ in 0..<5 {
+        for _ in 0 ..< 5 {
             await Task.yield()
         }
     }
@@ -1221,19 +1515,19 @@ private final class MockBrowserStoreClient: BrowserStoreClient {
         }
     }
 
-    func fetchLinkMetadata(url: String, itemId: Int64) async -> ClipboardItem? {
+    func fetchLinkMetadata(url _: String, itemId _: Int64) async -> ClipboardItem? {
         nil
     }
 
-    func addTag(itemId: Int64, tag: ItemTag) async -> Result<Void, ClipboardError> {
+    func addTag(itemId _: Int64, tag _: ItemTag) async -> Result<Void, ClipboardError> {
         addTagResult
     }
 
-    func removeTag(itemId: Int64, tag: ItemTag) async -> Result<Void, ClipboardError> {
+    func removeTag(itemId _: Int64, tag _: ItemTag) async -> Result<Void, ClipboardError> {
         removeTagResult
     }
 
-    func delete(itemId: Int64) async -> Result<Void, ClipboardError> {
+    func delete(itemId _: Int64) async -> Result<Void, ClipboardError> {
         deleteResult
     }
 

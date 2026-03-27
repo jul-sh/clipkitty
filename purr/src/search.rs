@@ -9,12 +9,11 @@
 use crate::indexer::Indexer;
 use crate::interface::ClipKittyError;
 use crate::interface::{
-    HighlightKind, ItemMatch, PreviewDecoration, RowDecoration, Utf16HighlightRange,
+    HighlightKind, ItemMatch, ItemMetadata, PreviewDecoration, RowDecoration, Utf16HighlightRange,
 };
-use crate::models::StoredItem;
 use crate::ranking::{
-    does_word_match, does_word_match_fast, prefix_match_for_query_word, WordMatchKind,
-    LARGE_DOC_THRESHOLD_BYTES,
+    does_word_match, does_word_match_fast, does_word_match_fast_raw, prefix_match_for_query_word,
+    WordMatchKind, LARGE_DOC_THRESHOLD_BYTES,
 };
 use tokio_util::sync::CancellationToken;
 
@@ -72,7 +71,6 @@ impl SearchQuery {
 
 #[derive(Debug, Clone)]
 pub(crate) struct FuzzyMatch {
-    pub(crate) id: i64,
     pub(crate) highlight_ranges: Vec<HighlightRange>,
 }
 
@@ -88,6 +86,17 @@ pub(crate) struct HighlightAnalysis {
     pub(crate) highlights: Vec<HighlightRange>,
     pub(crate) initial_scroll_highlight_index: Option<u64>,
 }
+
+#[derive(Debug, Clone, Copy)]
+enum PreviewHighlightLimit {
+    FocusedWindow {
+        max_highlights: usize,
+        context_chars: u64,
+    },
+}
+
+const PREVIEW_MAX_HIGHLIGHTS: usize = 64;
+const PREVIEW_HIGHLIGHT_CONTEXT_CHARS: u64 = 2048;
 
 fn utf16_offset_table(text: &str) -> Vec<u64> {
     let mut offsets = Vec::with_capacity(text.chars().count() + 1);
@@ -121,14 +130,78 @@ fn scalar_highlights_to_utf16(
         .collect()
 }
 
+fn limit_preview_highlights(
+    analysis: &HighlightAnalysis,
+    limit: PreviewHighlightLimit,
+) -> (Vec<HighlightRange>, Option<u64>) {
+    match limit {
+        PreviewHighlightLimit::FocusedWindow {
+            max_highlights,
+            context_chars,
+        } => {
+            if analysis.highlights.is_empty() || max_highlights == 0 {
+                return (Vec::new(), None);
+            }
+
+            if analysis.highlights.len() <= max_highlights {
+                return (
+                    analysis.highlights.clone(),
+                    analysis.initial_scroll_highlight_index,
+                );
+            }
+
+            let anchor_index = analysis
+                .initial_scroll_highlight_index
+                .and_then(|index| usize::try_from(index).ok())
+                .filter(|index| *index < analysis.highlights.len())
+                .unwrap_or(0);
+            let anchor = &analysis.highlights[anchor_index];
+            let window_start = anchor.start.saturating_sub(context_chars);
+            let window_end = anchor.end.saturating_add(context_chars);
+
+            let visible_indices: Vec<usize> = analysis
+                .highlights
+                .iter()
+                .enumerate()
+                .filter_map(|(index, highlight)| {
+                    (highlight.end >= window_start && highlight.start <= window_end).then_some(index)
+                })
+                .collect();
+
+            let (mut slice_start, mut slice_end) = if let (Some(first), Some(last)) =
+                (visible_indices.first(), visible_indices.last())
+            {
+                (*first, last + 1)
+            } else {
+                (anchor_index, anchor_index + 1)
+            };
+
+            if slice_end - slice_start > max_highlights {
+                let preferred_start = anchor_index.saturating_sub(max_highlights / 2);
+                let max_start = slice_end.saturating_sub(max_highlights);
+                slice_start = preferred_start.clamp(slice_start, max_start);
+                slice_end = slice_start + max_highlights;
+            }
+
+            let limited = analysis.highlights[slice_start..slice_end].to_vec();
+            let limited_anchor = anchor_index
+                .checked_sub(slice_start)
+                .map(|index| index as u64)
+                .filter(|index| (*index as usize) < limited.len());
+
+            (limited, limited_anchor)
+        }
+    }
+}
+
 /// Search using Tantivy with bucket re-ranking for trigram queries (>= 3 chars).
 /// Phase 1 (trigram recall) and Phase 2 (bucket re-ranking) happen inside indexer.search().
-/// Returns lazy FuzzyMatch objects WITHOUT highlights - highlights are computed on-demand.
+/// Returns item-level search candidates with their best match context.
 pub(crate) fn search_trigram_lazy(
     indexer: &Indexer,
     query: &SearchQuery,
     token: &CancellationToken,
-) -> Result<Vec<FuzzyMatch>, ClipKittyError> {
+) -> Result<Vec<crate::candidate::SearchCandidate>, ClipKittyError> {
     if query.raw_text().is_empty() {
         return Ok(Vec::new());
     }
@@ -152,16 +225,7 @@ pub(crate) fn search_trigram_lazy(
         return Err(ClipKittyError::Cancelled);
     }
 
-    // Convert to FuzzyMatch without computing highlights
-    let results: Vec<FuzzyMatch> = candidates
-        .into_iter()
-        .map(|c| FuzzyMatch {
-            id: c.id,
-            highlight_ranges: Vec::new(), // Lazy: no highlights
-        })
-        .collect();
-
-    Ok(results)
+    Ok(candidates)
 }
 
 /// Map a `WordMatchKind` from ranking to a `HighlightKind` for the UI.
@@ -230,7 +294,6 @@ fn should_bridge_highlights(
 
 /// Context for highlighting a candidate document.
 pub(crate) struct HighlightContext<'a> {
-    pub id: i64,
     pub content: &'a str,
     pub doc_words: &'a [(usize, usize, String)],
     pub query_words: &'a [&'a str],
@@ -244,7 +307,7 @@ pub(crate) struct HighlightContext<'a> {
 /// `content_lower` and `doc_words` are pre-computed in Phase 2 to avoid
 /// redundant lowercasing and tokenization (~4000 allocations per search).
 ///
-/// For large documents (>5KB), uses fast matching (exact + prefix only)
+/// For large documents (>32KB), uses fast matching (exact + prefix only)
 /// to avoid expensive fuzzy/subsequence matching.
 pub(crate) fn highlight_candidate(ctx: &HighlightContext<'_>) -> FuzzyMatch {
     let mut word_highlights: Vec<(usize, usize, HighlightKind)> = Vec::new();
@@ -311,10 +374,7 @@ pub(crate) fn highlight_candidate(ctx: &HighlightContext<'_>) -> FuzzyMatch {
         })
         .collect();
 
-    FuzzyMatch {
-        id: ctx.id,
-        highlight_ranges,
-    }
+    FuzzyMatch { highlight_ranges }
 }
 
 /// Convert matched indices to highlight ranges with a specified kind
@@ -576,16 +636,49 @@ pub(crate) fn create_preview_decoration(
     content: &str,
     analysis: &HighlightAnalysis,
 ) -> PreviewDecoration {
+    let (highlights, initial_scroll_highlight_index) = limit_preview_highlights(
+        analysis,
+        PreviewHighlightLimit::FocusedWindow {
+            max_highlights: PREVIEW_MAX_HIGHLIGHTS,
+            context_chars: PREVIEW_HIGHLIGHT_CONTEXT_CHARS,
+        },
+    );
     PreviewDecoration {
-        highlights: scalar_highlights_to_utf16(content, &analysis.highlights),
-        initial_scroll_highlight_index: analysis.initial_scroll_highlight_index,
+        highlights: scalar_highlights_to_utf16(content, &highlights),
+        initial_scroll_highlight_index,
     }
 }
 
-/// Create ItemMatch without row decoration (lazy mode - computed on-demand via compute_row_decorations).
-pub(crate) fn create_lazy_item_match(item: &StoredItem) -> ItemMatch {
+pub(crate) fn create_preview_decoration_with_char_offset(
+    content: &str,
+    analysis: &HighlightAnalysis,
+    char_offset: usize,
+) -> PreviewDecoration {
+    let (focused_highlights, initial_scroll_highlight_index) = limit_preview_highlights(
+        analysis,
+        PreviewHighlightLimit::FocusedWindow {
+            max_highlights: PREVIEW_MAX_HIGHLIGHTS,
+            context_chars: PREVIEW_HIGHLIGHT_CONTEXT_CHARS,
+        },
+    );
+    let shifted_highlights: Vec<HighlightRange> = focused_highlights
+        .iter()
+        .map(|highlight| HighlightRange {
+            start: highlight.start + char_offset as u64,
+            end: highlight.end + char_offset as u64,
+            kind: highlight.kind,
+        })
+        .collect();
+
+    PreviewDecoration {
+        highlights: scalar_highlights_to_utf16(content, &shifted_highlights),
+        initial_scroll_highlight_index,
+    }
+}
+
+pub(crate) fn create_lazy_item_match_with_metadata(item_metadata: ItemMetadata) -> ItemMatch {
     ItemMatch {
-        item_metadata: item.to_metadata(),
+        item_metadata,
         row_decoration: None,
     }
 }
@@ -643,7 +736,6 @@ fn compute_scalar_highlights(content: &str, query: &str) -> Vec<HighlightRange> 
 
     // Create a temporary FuzzyMatch to reuse highlight_candidate
     let fm = highlight_candidate(&HighlightContext {
-        id: 0,
         content,
         doc_words: &doc_words,
         query_words: &query_words,
@@ -667,6 +759,80 @@ pub(crate) fn analyze_content_for_query(content: &str, query: &str) -> Option<Hi
         highlights,
         initial_scroll_highlight_index,
     })
+}
+
+/// Lightweight word-match-only analysis for Phase 1-only (tail) items.
+///
+/// Uses exact + prefix matching only (via `does_word_match_fast_raw`),
+/// skipping fuzzy, subsequence, and subword matching for performance.
+pub(crate) fn analyze_content_word_match(content: &str, query: &str) -> Option<HighlightAnalysis> {
+    let trimmed = query.trim();
+    if trimmed.is_empty() {
+        return None;
+    }
+
+    let highlights = compute_word_match_highlights(content, trimmed);
+    let initial_scroll_highlight_index =
+        find_densest_highlight(&highlights, SNIPPET_CONTEXT_CHARS as u64).map(|idx| idx as u64);
+
+    Some(HighlightAnalysis {
+        highlights,
+        initial_scroll_highlight_index,
+    })
+}
+
+/// Compute highlights using exact + prefix word matching only.
+///
+/// For each query word, finds all matching document words and emits highlight
+/// ranges. Only `Exact` and `Prefix` match kinds are produced — no fuzzy,
+/// subsequence, or subword matching.
+fn compute_word_match_highlights(content: &str, query: &str) -> Vec<HighlightRange> {
+    let query_words_owned = tokenize_words(query);
+    let query_words: Vec<&str> = query_words_owned
+        .iter()
+        .map(|(_, _, w)| w.as_str())
+        .collect();
+    let last_word_is_prefix = query.ends_with(|c: char| c.is_alphanumeric());
+
+    let doc_words = tokenize_words(content);
+    let query_lower: Vec<String> = query_words.iter().map(|w| w.to_lowercase()).collect();
+
+    let mut highlights: Vec<(usize, usize, HighlightKind)> = Vec::new();
+
+    for (char_start, char_end, doc_word) in &doc_words {
+        if !is_word_token(doc_word) {
+            continue;
+        }
+        for (qi, qw_lower) in query_lower.iter().enumerate() {
+            if !is_word_token(&query_words[qi]) {
+                continue;
+            }
+            let prefix_match =
+                prefix_match_for_query_word(query_lower.len(), qi, last_word_is_prefix);
+            let wmk = does_word_match_fast_raw(qw_lower, doc_word, prefix_match);
+            if wmk != WordMatchKind::None {
+                append_word_highlight(
+                    &mut highlights,
+                    *char_start,
+                    *char_end,
+                    &query_words[qi],
+                    wmk,
+                );
+                break;
+            }
+        }
+    }
+
+    highlights.sort_unstable_by_key(|&(s, _, _)| s);
+
+    highlights
+        .into_iter()
+        .map(|(s, e, k)| HighlightRange {
+            start: s as u64,
+            end: e as u64,
+            kind: k,
+        })
+        .collect()
 }
 
 /// Compute row decoration for an item given a query.
@@ -980,7 +1146,7 @@ mod tests {
 
     /// Helper: call highlight_candidate with automatic lowercasing/tokenization.
     fn hc(
-        id: i64,
+        _id: i64,
         content: &str,
         _timestamp: i64,
         _tantivy_score: f32,
@@ -989,7 +1155,6 @@ mod tests {
     ) -> FuzzyMatch {
         let doc_words = tokenize_words(content);
         super::highlight_candidate(&super::HighlightContext {
-            id,
             content,
             doc_words: &doc_words,
             query_words,
@@ -1376,6 +1541,52 @@ error: Build failed due to failed dependency";
 
         let row = compute_row_decoration(content, "func");
         assert!(row.text.contains("func top level"));
+    }
+
+    #[test]
+    fn test_preview_decoration_limits_highlights_around_anchor() {
+        let content = "x".repeat(3000);
+        let highlights: Vec<HighlightRange> = (0..200)
+            .map(|index| HighlightRange {
+                start: (index * 10) as u64,
+                end: (index * 10 + 1) as u64,
+                kind: HighlightKind::Exact,
+            })
+            .collect();
+        let analysis = HighlightAnalysis {
+            highlights,
+            initial_scroll_highlight_index: Some(100),
+        };
+
+        let preview = create_preview_decoration(&content, &analysis);
+
+        assert!(preview.highlights.len() <= PREVIEW_MAX_HIGHLIGHTS);
+        let anchor_index = preview.initial_scroll_highlight_index.unwrap() as usize;
+        assert!(anchor_index < preview.highlights.len());
+        assert_eq!(preview.highlights[anchor_index].utf16_start, 1000);
+    }
+
+    #[test]
+    fn test_preview_decoration_with_char_offset_limits_and_shifts_anchor() {
+        let content = "x".repeat(4000);
+        let highlights: Vec<HighlightRange> = (0..150)
+            .map(|index| HighlightRange {
+                start: (index * 8) as u64,
+                end: (index * 8 + 2) as u64,
+                kind: HighlightKind::Exact,
+            })
+            .collect();
+        let analysis = HighlightAnalysis {
+            highlights,
+            initial_scroll_highlight_index: Some(75),
+        };
+
+        let preview = create_preview_decoration_with_char_offset(&content, &analysis, 500);
+
+        assert!(preview.highlights.len() <= PREVIEW_MAX_HIGHLIGHTS);
+        let anchor_index = preview.initial_scroll_highlight_index.unwrap() as usize;
+        assert!(anchor_index < preview.highlights.len());
+        assert_eq!(preview.highlights[anchor_index].utf16_start, 1100);
     }
 
     // ── HighlightKind verification tests ──────────────────────────
