@@ -118,7 +118,6 @@ struct BrowserPreviewPane: View {
                     focusSearchField()
                 }
             )
-            .id(previewIdentity(itemId: item.itemMetadata.itemId))
             .frame(maxWidth: .infinity, maxHeight: .infinity)
             .overlay(alignment: .topLeading) {
                 if isUITestPreviewDebugEnabled {
@@ -188,14 +187,6 @@ struct BrowserPreviewPane: View {
         case let .file(_, files):
             FilePreviewView(files: files, searchQuery: viewModel.searchText)
         }
-    }
-
-    private func previewIdentity(itemId: Int64) -> String {
-        // Only tie the view identity to the item itself. If we include matchData properties,
-        // SwiftUI will completely destroy and recreate the heavy NSTextView and TextKit 2
-        // hierarchy on every keystroke. This bypasses the optimized highlight diffing logic
-        // in `updateNSView` and causes 100% CPU hangs during rapid typing.
-        return String(itemId)
     }
 
     private func previewHighlightDebugLabel(

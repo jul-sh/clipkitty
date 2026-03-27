@@ -367,9 +367,14 @@ struct TextPreviewView: NSViewRepresentable {
     func updateNSView(_ nsView: NSScrollView, context: Context) {
         guard let textView = nsView.documentView as? PreviewTextView else { return }
 
-        // Update callbacks
         let coordinator = context.coordinator
         coordinator.observeUsageBounds(of: textView)
+
+        let itemChanged = coordinator.currentItemId != itemId
+        if itemChanged {
+            coordinator.prepareForDisplayedItemChange(to: itemId, in: textView)
+        }
+
         coordinator.onTextChange = onTextChange
         textView.onCmdReturn = onCmdReturn
         textView.onCmdK = onCmdK
@@ -436,13 +441,6 @@ struct TextPreviewView: NSViewRepresentable {
             )
         }
 
-        // Check if item changed
-        let itemChanged = coordinator.currentItemId != itemId
-        if itemChanged {
-            coordinator.currentItemId = itemId
-            coordinator.isEditing = false
-        }
-
         // Use live container width if available, otherwise fall back to persisted value
         let containerWidth = nsView.contentSize.width > 0
             ? nsView.contentSize.width
@@ -502,6 +500,9 @@ struct TextPreviewView: NSViewRepresentable {
             ])
 
             textView.textStorage?.setAttributedString(attributed)
+            if itemChanged {
+                coordinator.resetTextInteractionState(in: textView)
+            }
         }
 
         let tlm = textView.textLayoutManager
@@ -915,6 +916,33 @@ struct TextPreviewView: NSViewRepresentable {
 
         deinit {
             usageBoundsObservation?.invalidate()
+        }
+
+        fileprivate func prepareForDisplayedItemChange(to itemId: Int64, in textView: PreviewTextView) {
+            // Invalidate any pending scroll retries or KVO recentering work tied to the old item.
+            scrollGeneration += 1
+            clearUsageBoundsRecentering()
+            clearViewportRetry()
+            resetKvoReScrollCount()
+
+            if textView.window?.firstResponder === textView {
+                textView.window?.makeFirstResponder(nil)
+            }
+
+            currentItemId = itemId
+            isEditing = false
+            currentMatchRanges = []
+            lastHighlights = []
+            lastUsageBounds = textView.textLayoutManager?.usageBoundsForTextContainer ?? .zero
+            needsGeometrySync = true
+        }
+
+        fileprivate func resetTextInteractionState(in textView: PreviewTextView) {
+            if textView.hasMarkedText() {
+                textView.unmarkText()
+            }
+            textView.undoManager?.removeAllActions()
+            textView.setSelectedRange(NSRange(location: 0, length: 0))
         }
 
         fileprivate func observeUsageBounds(of textView: PreviewTextView) {
