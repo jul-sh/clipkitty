@@ -22,6 +22,47 @@ enum QueryLoadPhase {
     case running(spinnerVisible: Bool)
 }
 
+enum BrowserResultsState {
+    case idle(request: SearchRequest)
+    case loading(request: SearchRequest, previous: BrowserSearchResponse?, phase: QueryLoadPhase)
+    case loaded(BrowserSearchResponse)
+    case failed(request: SearchRequest, message: String, previous: BrowserSearchResponse?)
+
+    var request: SearchRequest {
+        switch self {
+        case let .idle(request), let .loading(request, _, _), let .failed(request, _, _):
+            return request
+        case let .loaded(response):
+            return response.request
+        }
+    }
+
+    var displayedResponse: BrowserSearchResponse? {
+        switch self {
+        case let .loaded(response):
+            return response
+        case let .loading(_, previous, _), let .failed(_, _, previous):
+            return previous
+        case .idle:
+            return nil
+        }
+    }
+
+    var items: [ItemMatch] {
+        displayedResponse?.items ?? []
+    }
+
+    var firstPreviewPayload: PreviewPayload? {
+        displayedResponse?.firstPreviewPayload
+    }
+
+    var failureMessage: String? {
+        guard case let .failed(_, message, _) = self else { return nil }
+        return message
+    }
+
+}
+
 enum BrowserContentState {
     case idle(request: SearchRequest)
     case loading(request: SearchRequest, previous: LoadedBrowserContent?, phase: QueryLoadPhase)
@@ -78,15 +119,47 @@ enum BrowserContentState {
         displayedContent?.selection ?? .none
     }
 
-    var isSearchSpinnerVisible: Bool {
-        guard case let .loading(_, _, .running(spinnerVisible)) = self else { return false }
-        return spinnerVisible
+    static func combine(
+        resultsState: BrowserResultsState,
+        selection: SelectionState
+    ) -> BrowserContentState {
+        func loadedContent(_ response: BrowserSearchResponse) -> LoadedBrowserContent {
+            LoadedBrowserContent(response: response, selection: selection)
+        }
+
+        switch resultsState {
+        case let .idle(request):
+            return .idle(request: request)
+        case let .loading(request, previous, phase):
+            return .loading(
+                request: request,
+                previous: previous.map(loadedContent),
+                phase: phase
+            )
+        case let .loaded(response):
+            return .loaded(loadedContent(response))
+        case let .failed(request, message, previous):
+            return .failed(
+                request: request,
+                message: message,
+                previous: previous.map(loadedContent)
+            )
+        }
     }
 }
 
 struct LoadedBrowserContent {
     let response: BrowserSearchResponse
     let selection: SelectionState
+}
+
+struct DisplayRow: Equatable, Identifiable {
+    let metadata: ItemMetadata
+    let rowDecoration: RowDecoration?
+
+    var id: Int64 {
+        metadata.itemId
+    }
 }
 
 enum SelectionOrigin {

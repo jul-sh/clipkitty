@@ -13,7 +13,7 @@ struct BrowserResultsList: View {
     var body: some View {
         ScrollViewReader { proxy in
             List {
-                ForEach(Array(displayRows.enumerated()), id: \.element.metadata.itemId) { index, row in
+                ForEach(Array(viewModel.displayRows.enumerated()), id: \.element.metadata.itemId) { index, row in
                     ItemRow(
                         metadata: row.metadata,
                         rowDecoration: row.rowDecoration,
@@ -92,13 +92,8 @@ struct BrowserResultsList: View {
         }
     }
 
-    private var displayRows: [(metadata: ItemMetadata, rowDecoration: RowDecoration?)] {
-        viewModel.contentState.items.map { ($0.itemMetadata, viewModel.rowDecoration(for: $0.itemMetadata.itemId)) }
-    }
-
     private func indexForItem(_ itemId: Int64?) -> Int? {
-        guard let itemId else { return nil }
-        return viewModel.itemIds.firstIndex(of: itemId)
+        viewModel.indexOfItem(itemId)
     }
 
     private func onItemAppear(index: Int) {

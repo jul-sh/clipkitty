@@ -6,8 +6,6 @@ struct BrowserSearchBar<FilterPopoverContent: View>: View {
     @Binding var searchText: String
     let filterLabel: String
     let searchSpinnerVisible: Bool
-    let selectedItemAvailable: Bool
-    let hasPendingEdit: Bool
     let isFilterPopoverPresented: Binding<Bool>
     let focusTarget: FocusState<BrowserView.FocusTarget?>.Binding
     let onMoveSelection: (Int) -> Void
@@ -16,7 +14,6 @@ struct BrowserSearchBar<FilterPopoverContent: View>: View {
     let onOpenFilter: (_ viaKeyboard: Bool) -> Void
     let onOpenActions: (_ viaKeyboard: Bool) -> Void
     let onDelete: () -> Void
-    let onDiscardEdit: () -> Void
     let onSaveEdit: () -> Void
     let onHandleNumberKey: (KeyPress) -> KeyPress.Result
     @ViewBuilder let filterPopoverContent: () -> FilterPopoverContent
@@ -50,24 +47,18 @@ struct BrowserSearchBar<FilterPopoverContent: View>: View {
                     guard keyPress.modifiers.contains(.command) else {
                         return .ignored
                     }
-                    if selectedItemAvailable {
-                        onOpenActions(true)
-                    }
+                    onOpenActions(true)
                     return .handled
                 }
                 .onKeyPress("s", phases: .down) { keyPress in
-                    guard keyPress.modifiers.contains(.command), hasPendingEdit else {
+                    guard keyPress.modifiers.contains(.command) else {
                         return .ignored
                     }
                     onSaveEdit()
                     return .handled
                 }
                 .onKeyPress(.escape) {
-                    if hasPendingEdit {
-                        onDiscardEdit()
-                    } else {
-                        onDismiss()
-                    }
+                    onDismiss()
                     return .handled
                 }
                 .onKeyPress(.tab) {
@@ -78,12 +69,10 @@ struct BrowserSearchBar<FilterPopoverContent: View>: View {
                     onHandleNumberKey(keyPress)
                 }
                 .onKeyPress(.delete) {
-                    guard selectedItemAvailable else { return .ignored }
                     onDelete()
                     return .handled
                 }
                 .onKeyPress(.deleteForward) {
-                    guard selectedItemAvailable else { return .ignored }
                     onDelete()
                     return .handled
                 }

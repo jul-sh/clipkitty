@@ -73,7 +73,8 @@ final class BrowserViewModel {
     private var latestKnownContentRevision = 0
     private var lastLoadedContentRevision: Int?
 
-    private(set) var contentState: BrowserContentState = .idle(request: SearchRequest(text: "", filter: .all))
+    private(set) var resultsState: BrowserResultsState = .idle(request: SearchRequest(text: "", filter: .all))
+    private(set) var selectionState: SelectionState = .none
     private(set) var overlayState: OverlayState = .none
     private(set) var mutationState: MutationState = .idle
     private(set) var editState: EditState = .init()
@@ -82,6 +83,9 @@ final class BrowserViewModel {
     private(set) var hasUserNavigated = false
     private(set) var prefetchCache: [Int64: ClipboardItem] = [:]
     private(set) var previewSpinnerVisible = false
+    private(set) var itemIds: [Int64] = []
+    private(set) var displayRows: [DisplayRow] = []
+    private var itemIndexById: [Int64: Int] = [:]
 
     init(
         client: BrowserStoreClient,
@@ -95,12 +99,16 @@ final class BrowserViewModel {
         self.onDismiss = onDismiss
     }
 
+    var contentState: BrowserContentState {
+        BrowserContentState.combine(resultsState: resultsState, selection: selectionState)
+    }
+
     var searchText: String {
-        contentState.request.text
+        resultsState.request.text
     }
 
     var contentTypeFilter: ContentTypeFilter {
-        switch contentState.request.filter {
+        switch resultsState.request.filter {
         case let .contentType(contentType):
             return contentType
         case .all, .tagged:
@@ -109,22 +117,21 @@ final class BrowserViewModel {
     }
 
     var selectedTagFilter: ItemTag? {
-        if case let .tagged(tag) = contentState.request.filter {
+        if case let .tagged(tag) = resultsState.request.filter {
             return tag
         }
         return nil
     }
 
     var searchSpinnerVisible: Bool {
-        contentState.isSearchSpinnerVisible
-    }
-
-    var itemIds: [Int64] {
-        contentState.items.map { $0.itemMetadata.itemId }
+        if case let .loading(_, _, .running(spinnerVisible)) = resultsState {
+            return spinnerVisible
+        }
+        return false
     }
 
     var selection: SelectionState {
-        contentState.selection
+        selectionState
     }
 
     var selectedItemId: Int64? {
@@ -151,11 +158,15 @@ final class BrowserViewModel {
 
     var selectedIndex: Int? {
         guard let selectedItemId else { return nil }
-        return itemIds.firstIndex(of: selectedItemId)
+        return itemIndexById[selectedItemId]
     }
 
     var itemCount: Int {
         itemIds.count
+    }
+
+    var resultsFailureMessage: String? {
+        resultsState.failureMessage
     }
 
     var mutationFailureMessage: String? {
@@ -233,7 +244,7 @@ final class BrowserViewModel {
     }
 
     func updateSearchText(_ value: String) {
-        submitSearch(text: value, filter: contentState.request.filter)
+        submitSearch(text: value, filter: resultsState.request.filter)
     }
 
     func setContentTypeFilter(_ filter: ContentTypeFilter) {
@@ -315,8 +326,8 @@ final class BrowserViewModel {
     }
 
     func loadRowDecorationsForItems(_ ids: [Int64]) {
-        guard displayedContent != nil else { return }
-        let request = contentState.request
+        guard displayedResponse != nil else { return }
+        let request = resultsState.request
         guard !request.text.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty else { return }
 
         let uniqueIds = Array(Set(ids)).sorted()
@@ -335,7 +346,7 @@ final class BrowserViewModel {
             await MainActor.run {
                 defer { self.rowDecorationTasks[key] = nil }
                 guard self.queryGeneration == generation,
-                      self.contentState.request == request
+                      self.resultsState.request == request
                 else {
                     return
                 }
@@ -343,13 +354,14 @@ final class BrowserViewModel {
                 var updates: [Int64: RowDecoration] = [:]
                 for result in results {
                     guard let decoration = result.decoration else { continue }
-                    guard self.itemIds.contains(result.itemId) else { continue }
+                    guard self.indexOfItem(result.itemId) != nil else { continue }
                     guard self.rowDecoration(for: result.itemId) == nil else { continue }
                     updates[result.itemId] = decoration
                 }
 
                 guard !updates.isEmpty else { return }
                 self.rowDecorationsByItemId.merge(updates) { existing, _ in existing }
+                self.rebuildDisplayedRows()
             }
         }
     }
@@ -393,17 +405,16 @@ final class BrowserViewModel {
     func clearAll() {
         mutationState = .clearing(ClearTransaction(snapshot: contentState))
 
-        let request = contentState.request
-        contentState = .loaded(LoadedBrowserContent(
-            response: BrowserSearchResponse(
-                request: request,
-                items: [],
-                firstPreviewPayload: nil,
-                totalCount: 0
-            ),
-            selection: .none
-        ))
+        let request = resultsState.request
+        setResultsState(.loaded(BrowserSearchResponse(
+            request: request,
+            items: [],
+            firstPreviewPayload: nil,
+            totalCount: 0
+        )))
+        setDisplayedSelection(.none)
         rowDecorationsByItemId.removeAll()
+        rebuildDisplayedRows()
         previewPayloadsByItemId.removeAll()
         prefetchCache.removeAll()
 
@@ -479,30 +490,54 @@ final class BrowserViewModel {
         }
         editState.focus = .idle
 
-        guard let selectedItemState else {
+        let currentMetadata: ItemMetadata
+        let selectionOrigin: SelectionOrigin
+        if let selectedItemState {
+            currentMetadata = selectedItemState.item.itemMetadata
+            selectionOrigin = selectedItemState.origin
+        } else if let previewPayload = previewPayloadsByItemId[id] {
+            currentMetadata = previewPayload.item.itemMetadata
+            selectionOrigin = selection.origin ?? .automatic
+        } else if let cachedItem = prefetchCache[id] {
+            currentMetadata = cachedItem.itemMetadata
+            selectionOrigin = selection.origin ?? .automatic
+        } else if let firstPreviewPayload = resultsState.firstPreviewPayload,
+                  firstPreviewPayload.item.itemMetadata.itemId == id
+        {
+            currentMetadata = firstPreviewPayload.item.itemMetadata
+            selectionOrigin = selection.origin ?? .automatic
+        } else if let displayedMetadata = displayedMetadata(for: id) {
+            currentMetadata = displayedMetadata
+            selectionOrigin = selection.origin ?? .automatic
+        } else {
             ToastWindow.shared.show(message: String(localized: "Saved"))
             return
         }
 
-        let currentItem = selectedItemState.item
+        previewTask?.cancel()
+        previewTask = nil
+        previewGeneration += 1
+        previewSpinnerVisible = false
+
         let updatedContent = ClipboardContent.text(value: editedText)
         let updatedSnippet = String(editedText.prefix(200))
         let updatedMetadata = ItemMetadata(
-            itemId: currentItem.itemMetadata.itemId,
-            icon: currentItem.itemMetadata.icon,
+            itemId: currentMetadata.itemId,
+            icon: currentMetadata.icon,
             snippet: updatedSnippet,
-            sourceApp: currentItem.itemMetadata.sourceApp,
-            sourceAppBundleId: currentItem.itemMetadata.sourceAppBundleId,
-            timestampUnix: currentItem.itemMetadata.timestampUnix,
-            tags: currentItem.itemMetadata.tags
+            sourceApp: currentMetadata.sourceApp,
+            sourceAppBundleId: currentMetadata.sourceAppBundleId,
+            timestampUnix: currentMetadata.timestampUnix,
+            tags: currentMetadata.tags
         )
         let updatedItem = ClipboardItem(itemMetadata: updatedMetadata, content: updatedContent)
         let updatedPreviewState: SelectedPreviewState = .plain
         previewPayloadsByItemId[id] = PreviewPayload(item: updatedItem, decoration: nil)
+        prefetchCache[id] = updatedItem
 
         setDisplayedSelection(.selected(SelectedItemState(
             item: updatedItem,
-            origin: selectedItemState.origin,
+            origin: selectionOrigin,
             previewState: updatedPreviewState
         )))
         updateDisplayedResponseForItem(
@@ -576,13 +611,13 @@ final class BrowserViewModel {
 
     private func refreshCurrentRequestIfStale() {
         guard hasAppliedInitialSearch else { return }
-        guard lastLoadedContentRevision != latestKnownContentRevision || displayedContent == nil else { return }
-        guard searchExecution.request != contentState.request ||
+        guard lastLoadedContentRevision != latestKnownContentRevision || displayedResponse == nil else { return }
+        guard searchExecution.request != resultsState.request ||
             searchExecution.targetContentRevision != latestKnownContentRevision
         else {
             return
         }
-        submitSearch(request: contentState.request, targetContentRevision: latestKnownContentRevision)
+        submitSearch(request: resultsState.request, targetContentRevision: latestKnownContentRevision)
     }
 
     private func startInitialSearch(initialSearchQuery: String, targetContentRevision: Int) {
@@ -606,12 +641,17 @@ final class BrowserViewModel {
         prefetchCache.removeAll()
         previewPayloadsByItemId.removeAll()
         rowDecorationsByItemId.removeAll()
+        rebuildDisplayedRows()
         searchExecution.cancel()
         rowDecorationTasks.values.forEach { $0.cancel() }
         rowDecorationTasks.removeAll()
 
-        let previous = displayedContent.map { resetSelection(in: $0, for: request.text) }
-        contentState = .loading(request: request, previous: previous, phase: .debouncing)
+        setDisplayedSelection(resetSelection(selectionState, for: request))
+        setResultsState(.loading(
+            request: request,
+            previous: displayedResponse,
+            phase: .debouncing
+        ))
 
         if request.text.isEmpty {
             beginSearch(request: request, targetContentRevision: targetContentRevision)
@@ -635,7 +675,11 @@ final class BrowserViewModel {
     private func beginSearch(request: SearchRequest, targetContentRevision: Int) {
         let operation = client.startSearch(request: request)
         let operationId = UUID()
-        contentState = .loading(request: request, previous: displayedContent, phase: .running(spinnerVisible: false))
+        setResultsState(.loading(
+            request: request,
+            previous: displayedResponse,
+            phase: .running(spinnerVisible: false)
+        ))
 
         let observer = Task { [weak self] in
             guard let self else { return }
@@ -681,17 +725,17 @@ final class BrowserViewModel {
         case .cancelled:
             break
         case let .failure(error):
-            guard case let .loading(request, previous, _) = contentState else { return }
-            contentState = .failed(
+            guard case let .loading(request, previous, _) = resultsState else { return }
+            setResultsState(.failed(
                 request: request,
                 message: error.localizedDescription,
                 previous: previous
-            )
+            ))
         }
     }
 
     private func applySearchResponse(_ response: BrowserSearchResponse, targetContentRevision: Int) {
-        guard contentState.request == response.request else { return }
+        guard resultsState.request == response.request else { return }
         let response = responseApplyingPendingMutations(response)
         cachePreviewPayload(response.firstPreviewPayload)
         lastLoadedContentRevision = targetContentRevision
@@ -700,7 +744,7 @@ final class BrowserViewModel {
         let previousSelection = selection
         let previousSelectedItemState = selectedItemState
 
-        contentState = .loaded(LoadedBrowserContent(response: response, selection: .none))
+        setResultsState(.loaded(response))
 
         let newOrder = response.items.map { $0.itemMetadata.itemId }
         guard !newOrder.isEmpty else {
@@ -799,9 +843,9 @@ final class BrowserViewModel {
         metadataTask?.cancel()
         previewGeneration += 1
         let generation = previewGeneration
-        let request = contentState.request
+        let request = resultsState.request
 
-        if let firstPreviewPayload = contentState.firstPreviewPayload,
+        if let firstPreviewPayload = resultsState.firstPreviewPayload,
            firstPreviewPayload.item.itemMetadata.itemId == itemId,
            isPreviewPayloadReady(firstPreviewPayload, for: request)
         {
@@ -853,7 +897,7 @@ final class BrowserViewModel {
             guard !Task.isCancelled else { return }
             await MainActor.run {
                 guard self.previewGeneration == generation,
-                      self.contentState.request == request,
+                      self.resultsState.request == request,
                       self.selectedItemId == itemId
                 else {
                     return
@@ -929,7 +973,7 @@ final class BrowserViewModel {
     }
 
     private func prefetchAdjacentItems(around itemId: Int64) {
-        guard let currentIndex = itemIds.firstIndex(of: itemId) else { return }
+        guard let currentIndex = indexOfItem(itemId) else { return }
         var idsToPrefetch: [Int64] = []
         if currentIndex > 0 {
             idsToPrefetch.append(itemIds[currentIndex - 1])
@@ -943,7 +987,7 @@ final class BrowserViewModel {
             for itemId in idsToPrefetch where self.prefetchCache[itemId] == nil {
                 guard let item = await self.client.fetchItem(id: itemId) else { continue }
                 await MainActor.run {
-                    if self.itemIds.contains(itemId) {
+                    if self.indexOfItem(itemId) != nil {
                         self.prefetchCache[itemId] = item
                     }
                 }
@@ -953,16 +997,16 @@ final class BrowserViewModel {
 
     private func showSearchSpinnerIfNeeded(operationId: UUID, request: SearchRequest) {
         guard searchExecution.id == operationId,
-              case let .loading(currentRequest, previous, .running(spinnerVisible: false)) = contentState,
+              case let .loading(currentRequest, previous, .running(spinnerVisible: false)) = resultsState,
               currentRequest == request
         else {
             return
         }
-        contentState = .loading(
+        setResultsState(.loading(
             request: currentRequest,
             previous: previous,
             phase: .running(spinnerVisible: true)
-        )
+        ))
     }
 
     private func schedulePreviewSpinner(for generation: Int, itemId: Int64) {
@@ -1063,7 +1107,26 @@ final class BrowserViewModel {
     }
 
     private func restoreSnapshot(_ snapshot: BrowserContentState) {
-        contentState = snapshot
+        switch snapshot {
+        case let .idle(request):
+            setResultsState(.idle(request: request))
+            setDisplayedSelection(.none)
+        case let .loading(request, previous, phase):
+            setResultsState(.loading(request: request, previous: previous?.response, phase: phase))
+            setDisplayedSelection(previous?.selection ?? .none)
+        case let .loaded(content):
+            setResultsState(.loaded(content.response))
+            setDisplayedSelection(content.selection)
+        case let .failed(request, message, previous):
+            setResultsState(.failed(request: request, message: message, previous: previous?.response))
+            setDisplayedSelection(previous?.selection ?? .none)
+        }
+        rowDecorationsByItemId = Dictionary(
+            uniqueKeysWithValues: snapshot.items.compactMap { itemMatch in
+                itemMatch.rowDecoration.map { (itemMatch.itemMetadata.itemId, $0) }
+            }
+        )
+        rebuildDisplayedRows()
         syncPreviewPayloadCacheToDisplayedState()
         clearInactiveEdits()
     }
@@ -1079,12 +1142,12 @@ final class BrowserViewModel {
         return nil
     }
 
-    private var displayedContent: LoadedBrowserContent? {
-        contentState.displayedContent
+    private var displayedResponse: BrowserSearchResponse? {
+        resultsState.displayedResponse
     }
 
     private var currentResponse: BrowserSearchResponse? {
-        displayedContent?.response
+        displayedResponse
     }
 
     private func responseApplyingPendingMutations(_ response: BrowserSearchResponse) -> BrowserSearchResponse {
@@ -1300,10 +1363,10 @@ final class BrowserViewModel {
     }
 
     func rowDecoration(for itemId: Int64) -> RowDecoration? {
-        if let decoration = rowDecorationsByItemId[itemId] {
-            return decoration
+        guard let index = itemIndexById[itemId], displayRows.indices.contains(index) else {
+            return nil
         }
-        return contentState.items.first { $0.itemMetadata.itemId == itemId }?.rowDecoration
+        return displayRows[index].rowDecoration
     }
 
     private func makeSelectedItemState(
@@ -1351,21 +1414,22 @@ final class BrowserViewModel {
         }
     }
 
-    private func resetSelection(in content: LoadedBrowserContent, for query: String) -> LoadedBrowserContent {
-        guard let selectedItem = content.selection.selectedItem else { return content }
-        let request = SearchRequest(text: query, filter: content.response.request.filter)
-        let selection: SelectionState
+    private func resetSelection(_ selection: SelectionState, for request: SearchRequest) -> SelectionState {
+        guard let selectedItem = selection.selectedItem else { return selection }
         if requiresAtomicPreviewLoad(for: selectedItem.item, request: request) {
-            if let staleSelectedItem = makeStaleLoadingSelectedItemState(from: selectedItem, origin: selectedItem.origin) {
-                selection = .selected(staleSelectedItem)
-            } else {
-                selection = .loading(itemId: selectedItem.item.itemMetadata.itemId, origin: selectedItem.origin)
+            if let staleSelectedItem = makeStaleLoadingSelectedItemState(
+                from: selectedItem,
+                origin: selectedItem.origin
+            ) {
+                return .selected(staleSelectedItem)
             }
-        } else {
-            selection = .selected(selectedItem)
+            return .loading(
+                itemId: selectedItem.item.itemMetadata.itemId,
+                origin: selectedItem.origin
+            )
         }
 
-        return LoadedBrowserContent(response: content.response, selection: selection)
+        return .selected(selectedItem)
     }
 
     private func cachePreviewPayload(_ payload: PreviewPayload?) {
@@ -1397,7 +1461,7 @@ final class BrowserViewModel {
     private func syncPreviewPayloadCacheToDisplayedState() {
         previewPayloadsByItemId.removeAll()
 
-        if let firstPreviewPayload = contentState.firstPreviewPayload {
+        if let firstPreviewPayload = resultsState.firstPreviewPayload {
             cachePreviewPayload(firstPreviewPayload)
         }
 
@@ -1413,6 +1477,18 @@ final class BrowserViewModel {
     private func itemIdentifier(at index: Int) -> Int64? {
         guard itemIds.indices.contains(index) else { return nil }
         return itemIds[index]
+    }
+
+    func indexOfItem(_ itemId: Int64?) -> Int? {
+        guard let itemId else { return nil }
+        return itemIndexById[itemId]
+    }
+
+    private func displayedMetadata(for itemId: Int64) -> ItemMetadata? {
+        guard let index = itemIndexById[itemId], displayRows.indices.contains(index) else {
+            return nil
+        }
+        return displayRows[index].metadata
     }
 
     private func performItemAction(
@@ -1439,14 +1515,19 @@ final class BrowserViewModel {
     }
 
     private func setDisplayedSelection(_ selection: SelectionState) {
-        updateDisplayedContent { content in
-            LoadedBrowserContent(response: content.response, selection: selection)
-        }
+        selectionState = selection
     }
 
     private func updateDisplayedResponse(_ response: BrowserSearchResponse) {
-        updateDisplayedContent { content in
-            LoadedBrowserContent(response: response, selection: content.selection)
+        switch resultsState {
+        case .idle:
+            break
+        case .loaded:
+            setResultsState(.loaded(response))
+        case let .loading(request, _, phase):
+            setResultsState(.loading(request: request, previous: response, phase: phase))
+        case let .failed(request, message, _):
+            setResultsState(.failed(request: request, message: message, previous: response))
         }
     }
 
@@ -1484,19 +1565,33 @@ final class BrowserViewModel {
         ))
     }
 
-    private func updateDisplayedContent(_ transform: (LoadedBrowserContent) -> LoadedBrowserContent) {
-        switch contentState {
-        case .idle:
-            break
-        case let .loaded(content):
-            contentState = .loaded(transform(content))
-        case let .loading(request, previous, phase):
-            guard let previous else { return }
-            contentState = .loading(request: request, previous: transform(previous), phase: phase)
-        case let .failed(request, message, previous):
-            guard let previous else { return }
-            contentState = .failed(request: request, message: message, previous: transform(previous))
+    private func setResultsState(_ state: BrowserResultsState) {
+        resultsState = state
+        rebuildDisplayedRows()
+    }
+
+    private func rebuildDisplayedRows() {
+        let items = resultsState.items
+        var nextItemIds: [Int64] = []
+        nextItemIds.reserveCapacity(items.count)
+        var nextIndexById: [Int64: Int] = [:]
+        nextIndexById.reserveCapacity(items.count)
+        var nextDisplayRows: [DisplayRow] = []
+        nextDisplayRows.reserveCapacity(items.count)
+
+        for (index, itemMatch) in items.enumerated() {
+            let itemId = itemMatch.itemMetadata.itemId
+            nextItemIds.append(itemId)
+            nextIndexById[itemId] = index
+            nextDisplayRows.append(DisplayRow(
+                metadata: itemMatch.itemMetadata,
+                rowDecoration: rowDecorationsByItemId[itemId] ?? itemMatch.rowDecoration
+            ))
         }
+
+        itemIds = nextItemIds
+        itemIndexById = nextIndexById
+        displayRows = nextDisplayRows
     }
 
     private func clearInactiveEdits() {

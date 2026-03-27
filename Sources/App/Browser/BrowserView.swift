@@ -34,8 +34,6 @@ struct BrowserView: View {
                 ),
                 filterLabel: filterLabel,
                 searchSpinnerVisible: viewModel.searchSpinnerVisible,
-                selectedItemAvailable: viewModel.selectedItem != nil,
-                hasPendingEdit: viewModel.selectedItemHasPendingEdit,
                 isFilterPopoverPresented: Binding(
                     get: {
                         if case .filter = viewModel.overlayState {
@@ -52,12 +50,21 @@ struct BrowserView: View {
                 focusTarget: $focusTarget,
                 onMoveSelection: viewModel.moveSelection(by:),
                 onConfirm: viewModel.confirmSelection,
-                onDismiss: viewModel.dismiss,
+                onDismiss: {
+                    if viewModel.selectedItemHasPendingEdit {
+                        viewModel.discardCurrentEdit()
+                    } else {
+                        viewModel.dismiss()
+                    }
+                },
                 onOpenFilter: openFilterOverlay,
                 onOpenActions: openActionsOverlay,
-                onDelete: viewModel.deleteSelectedItem,
-                onDiscardEdit: viewModel.discardCurrentEdit,
+                onDelete: {
+                    guard viewModel.selectedItem != nil else { return }
+                    viewModel.deleteSelectedItem()
+                },
                 onSaveEdit: {
+                    guard viewModel.selectedItemHasPendingEdit else { return }
                     viewModel.commitCurrentEdit()
                     focusSearchField()
                 },
@@ -76,7 +83,6 @@ struct BrowserView: View {
             content
         }
         .accessibilityElement(children: .contain)
-        .accessibilityIdentifier("SelectedIndex_\(viewModel.selectedIndex ?? -1)")
         .frame(maxWidth: .infinity, maxHeight: .infinity)
         .background(
             Color.clear
@@ -109,10 +115,9 @@ struct BrowserView: View {
 
     @ViewBuilder
     private var content: some View {
-        switch viewModel.contentState {
-        case let .failed(_, message, _):
+        if let message = viewModel.resultsFailureMessage {
             BrowserPreviewPane.error(message)
-        case .idle, .loading, .loaded:
+        } else {
             HStack(spacing: 0) {
                 BrowserResultsList(
                     viewModel: viewModel,

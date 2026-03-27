@@ -1063,13 +1063,69 @@ struct LinkPreviewView: NSViewRepresentable {
         Coordinator()
     }
 
-    class Coordinator {
+class Coordinator {
         var lastURL: String?
         var lastMetadataState: LinkMetadataState?
     }
 }
 
 // MARK: - Item Row
+
+@MainActor
+private enum RowIconCache {
+    private static let workspace = NSWorkspace.shared
+    private static let browserIcon: NSImage = {
+        if let browserURL = URL(string: "https://").flatMap({ workspace.urlForApplication(toOpen: $0) }) {
+            return workspace.icon(forFile: browserURL.path)
+        }
+        return workspace.icon(for: IconType.link.utType)
+    }()
+    private static let finderIcon: NSImage = {
+        if let finderURL = workspace.urlForApplication(withBundleIdentifier: "com.apple.finder") {
+            return workspace.icon(forFile: finderURL.path)
+        }
+        return workspace.icon(for: IconType.file.utType)
+    }()
+    private static var symbolIcons: [IconType: NSImage] = [:]
+    private static var sourceAppIcons: [String: NSImage] = [:]
+    private static var missingSourceAppBundleIDs: Set<String> = []
+
+    static func symbolImage(for iconType: IconType) -> NSImage {
+        if let cachedImage = symbolIcons[iconType] {
+            return cachedImage
+        }
+
+        let image: NSImage
+        switch iconType {
+        case .link:
+            image = browserIcon
+        case .file:
+            image = finderIcon
+        case .text, .image, .color:
+            image = workspace.icon(for: iconType.utType)
+        }
+
+        symbolIcons[iconType] = image
+        return image
+    }
+
+    static func sourceAppImage(bundleID: String) -> NSImage? {
+        if let cachedImage = sourceAppIcons[bundleID] {
+            return cachedImage
+        }
+        if missingSourceAppBundleIDs.contains(bundleID) {
+            return nil
+        }
+        guard let appURL = workspace.urlForApplication(withBundleIdentifier: bundleID) else {
+            missingSourceAppBundleIDs.insert(bundleID)
+            return nil
+        }
+
+        let image = workspace.icon(forFile: appURL.path)
+        sourceAppIcons[bundleID] = image
+        return image
+    }
+}
 
 struct ItemRow: View, Equatable {
     let metadata: ItemMetadata
@@ -1106,6 +1162,15 @@ struct ItemRow: View, Equatable {
     /// Highlights for display - passed directly from Rust (already adjusted for normalization)
     private var displayHighlights: [Utf16HighlightRange] {
         rowDecoration?.highlights ?? []
+    }
+
+    private var showsSourceAppBadge: Bool {
+        switch metadata.icon {
+        case let .symbol(iconType):
+            return iconType != .link && iconType != .file
+        case .thumbnail, .colorSwatch:
+            return true
+        }
     }
 
     /// Define exactly what constitutes a "change" for SwiftUI diffing
@@ -1157,20 +1222,8 @@ struct ItemRow: View, Equatable {
                                                 .strokeBorder(Color.primary.opacity(0.15), lineWidth: 1)
                                         )
                                 case let .symbol(iconType):
-                                    if case .link = iconType,
-                                       let browserURL = NSWorkspace.shared.urlForApplication(toOpen: URL(string: "https://")!)
-                                    {
-                                        Image(nsImage: NSWorkspace.shared.icon(forFile: browserURL.path))
-                                            .resizable()
-                                    } else if case .file = iconType,
-                                              let finderURL = NSWorkspace.shared.urlForApplication(withBundleIdentifier: "com.apple.finder")
-                                    {
-                                        Image(nsImage: NSWorkspace.shared.icon(forFile: finderURL.path))
-                                            .resizable()
-                                    } else {
-                                        Image(nsImage: NSWorkspace.shared.icon(for: iconType.utType))
-                                            .resizable()
-                                    }
+                                    Image(nsImage: RowIconCache.symbolImage(for: iconType))
+                                        .resizable()
                                 }
                             }
                             .frame(width: 32, height: 32)
@@ -1184,20 +1237,10 @@ struct ItemRow: View, Equatable {
                                     .shadow(color: .black.opacity(0.3), radius: 1, x: 0, y: 1)
                                     .offset(x: 4, y: 4)
                             } else if let bundleID = metadata.sourceAppBundleId,
-                                      let appURL = NSWorkspace.shared.urlForApplication(withBundleIdentifier: bundleID)
+                                      let sourceAppImage = RowIconCache.sourceAppImage(bundleID: bundleID)
                             {
-                                // Skip badge for symbol links/files (app icon is already shown)
-                                let showBadge: Bool = {
-                                    switch metadata.icon {
-                                    case let .symbol(iconType):
-                                        return iconType != .link && iconType != .file
-                                    case .thumbnail, .colorSwatch:
-                                        return true
-                                    }
-                                }()
-
-                                if showBadge {
-                                    Image(nsImage: NSWorkspace.shared.icon(forFile: appURL.path))
+                                if showsSourceAppBadge {
+                                    Image(nsImage: sourceAppImage)
                                         .resizable()
                                         .frame(width: 22, height: 22)
                                         .clipShape(RoundedRectangle(cornerRadius: 3))
