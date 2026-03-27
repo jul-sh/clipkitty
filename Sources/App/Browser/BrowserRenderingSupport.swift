@@ -188,6 +188,11 @@ struct FilePreviewView: View {
 
 /// NSTextView subclass with custom key handling for the preview pane
 private final class PreviewTextView: NSTextView {
+    private enum FocusClickScrollState {
+        case idle
+        case suppressing(originalOrigin: NSPoint)
+    }
+
     // NSTextView keeps itself as the viewport layout delegate. We expose the same optional
     // selector on our subclass and forward to NSTextView's original implementation so we can
     // observe post-layout state without replacing AppKit's delegate plumbing.
@@ -196,6 +201,7 @@ private final class PreviewTextView: NSTextView {
         guard let method = class_getInstanceMethod(NSTextView.self, didLayoutSelector) else { return nil }
         return method_getImplementation(method)
     }()
+    private var focusClickScrollState: FocusClickScrollState = .idle
 
     var onCmdReturn: (() -> Void)?
     var onCmdK: (() -> Void)?
@@ -203,6 +209,28 @@ private final class PreviewTextView: NSTextView {
     var onEscape: (() -> Void)?
     var onFocusChange: ((Bool) -> Void)?
     var onViewportLayoutDidLayout: ((PreviewTextView, NSTextViewportLayoutController) -> Void)?
+
+    override func mouseDown(with event: NSEvent) {
+        if window?.firstResponder !== self,
+           let originalOrigin = enclosingScrollView?.contentView.bounds.origin
+        {
+            focusClickScrollState = .suppressing(originalOrigin: originalOrigin)
+        } else {
+            focusClickScrollState = .idle
+        }
+
+        super.mouseDown(with: event)
+
+        restoreFocusClickScrollIfNeeded()
+        DispatchQueue.main.async { [weak self] in
+            self?.restoreFocusClickScrollIfNeeded(finalize: true)
+        }
+    }
+
+    override func scrollRangeToVisible(_ range: NSRange) {
+        guard case .idle = focusClickScrollState else { return }
+        super.scrollRangeToVisible(range)
+    }
 
     override func keyDown(with event: NSEvent) {
         if event.modifierFlags.contains(.command) {
@@ -238,6 +266,26 @@ private final class PreviewTextView: NSTextView {
         let result = super.resignFirstResponder()
         if result { onFocusChange?(false) }
         return result
+    }
+
+    private func restoreFocusClickScrollIfNeeded(finalize: Bool = false) {
+        guard case let .suppressing(originalOrigin) = focusClickScrollState else { return }
+        restoreScrollOriginIfNeeded(originalOrigin)
+        if finalize {
+            focusClickScrollState = .idle
+        }
+    }
+
+    private func restoreScrollOriginIfNeeded(_ originalOrigin: NSPoint) {
+        guard let scrollView = enclosingScrollView else { return }
+        let currentOrigin = scrollView.contentView.bounds.origin
+        guard abs(currentOrigin.y - originalOrigin.y) >= 1 else { return }
+
+        CATransaction.begin()
+        CATransaction.setDisableActions(true)
+        scrollView.contentView.scroll(to: originalOrigin)
+        scrollView.reflectScrolledClipView(scrollView.contentView)
+        CATransaction.commit()
     }
 
     @objc(textViewportLayoutControllerDidLayout:)
@@ -342,7 +390,7 @@ struct TextPreviewView: NSViewRepresentable {
         textView.onCmdK = onCmdK
         textView.onSave = onSave
         textView.onEscape = onEscape
-        textView.onFocusChange = onEditingStateChange
+        installFocusHandler(on: textView, coordinator: context.coordinator)
         context.coordinator.onTextChange = onTextChange
 
         scrollView.documentView = textView
@@ -395,6 +443,25 @@ struct TextPreviewView: NSViewRepresentable {
         return fontSize * scale
     }
 
+    private func installFocusHandler(
+        on textView: PreviewTextView,
+        coordinator: Coordinator
+    ) {
+        textView.onFocusChange = { [weak coordinator] isFocused in
+            onEditingStateChange?(isFocused)
+
+            guard isFocused, let coordinator else { return }
+
+            // Hand scroll control to the user once they click into the preview.
+            // Otherwise a still-armed highlight recenter can fire during the
+            // focus/layout transition and jump back to the active match.
+            coordinator.clearUsageBoundsRecentering()
+            coordinator.clearViewportRetry()
+            coordinator.resetKvoReScrollCount()
+            coordinator.scrollGeneration += 1
+        }
+    }
+
     func updateNSView(_ nsView: NSScrollView, context: Context) {
         guard let textView = nsView.documentView as? PreviewTextView else { return }
 
@@ -411,7 +478,7 @@ struct TextPreviewView: NSViewRepresentable {
         textView.onCmdK = onCmdK
         textView.onSave = onSave
         textView.onEscape = onEscape
-        textView.onFocusChange = onEditingStateChange
+        installFocusHandler(on: textView, coordinator: coordinator)
         textView.onViewportLayoutDidLayout = { [weak coordinator] observedTextView, textViewportLayoutController in
             guard let coordinator,
                   scrollBehavior != .manual,
@@ -481,7 +548,15 @@ struct TextPreviewView: NSViewRepresentable {
         }
 
         let textChanged = itemChanged ? true : textView.string != (TextPreviewView.textCache[itemId] ?? "")
+        let highlightsChanged = coordinator.lastHighlights != highlights
         let contentWidthChanged = abs(coordinator.lastContentWidth - containerWidth) > 0.5
+        let gainedHighlights = !highlights.isEmpty && coordinator.lastHighlights.isEmpty
+
+        guard itemChanged || textChanged || highlightsChanged || contentWidthChanged else { return }
+        coordinator.lastContentWidth = containerWidth
+        if itemChanged || textChanged || contentWidthChanged || gainedHighlights {
+            coordinator.needsGeometrySync = true
+        }
 
         let scaledSize: CGFloat
         if itemChanged || textChanged || contentWidthChanged {
@@ -493,15 +568,16 @@ struct TextPreviewView: NSViewRepresentable {
         let font = NSFont(name: fontName, size: scaledSize)
             ?? NSFont.monospacedSystemFont(ofSize: scaledSize, weight: .regular)
 
-        // Settle container dimensions FIRST so that any deferred scroll
-        // computes geometry against the correct width.
+        // Only mutate TextKit geometry when preview content or container width changed.
+        // Focus-only SwiftUI updates should not touch the text view at all because even
+        // redundant geometry writes can trigger AppKit to keep the insertion point visible.
         textView.textContainer?.containerSize = NSSize(
             width: containerWidth,
             height: .greatestFiniteMagnitude
         )
         textView.frame = NSRect(x: 0, y: 0, width: containerWidth, height: textView.frame.height)
 
-        // Set typing attributes for consistent font during editing
+        // Set typing attributes for consistent font during editing.
         let paragraphStyle = NSMutableParagraphStyle()
         paragraphStyle.lineBreakMode = .byWordWrapping
         textView.typingAttributes = [
@@ -511,14 +587,6 @@ struct TextPreviewView: NSViewRepresentable {
         ]
 
         let text = TextPreviewView.textCache[itemId] ?? ""
-        let highlightsChanged = coordinator.lastHighlights != highlights
-        let gainedHighlights = !highlights.isEmpty && coordinator.lastHighlights.isEmpty
-        coordinator.lastContentWidth = containerWidth
-
-        guard itemChanged || textChanged || highlightsChanged || contentWidthChanged else { return }
-        if itemChanged || textChanged || contentWidthChanged || gainedHighlights {
-            coordinator.needsGeometrySync = true
-        }
 
         let previousMatchRanges = coordinator.currentMatchRanges
         let tlm = textView.textLayoutManager
