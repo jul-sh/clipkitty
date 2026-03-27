@@ -1,6 +1,9 @@
 import ClipKittyRust
 import Foundation
 import Observation
+import os.signpost
+
+private let poi = OSLog(subsystem: "com.eviljuliette.clipkitty", category: .pointsOfInterest)
 
 @MainActor
 @Observable
@@ -285,6 +288,10 @@ final class BrowserViewModel {
     }
 
     func select(itemId: Int64, origin: SelectionOrigin) {
+        let signpostID = OSSignpostID(log: poi)
+        os_signpost(.begin, log: poi, name: "select", signpostID: signpostID, "itemId=%lld origin=%{public}s", itemId, String(describing: origin))
+        defer { os_signpost(.end, log: poi, name: "select", signpostID: signpostID) }
+
         if case let .focused(focusedId) = editState.focus, focusedId != itemId {
             editState.focus = .idle
         }
@@ -819,6 +826,10 @@ final class BrowserViewModel {
     }
 
     private func loadSelectedItem(itemId: Int64, origin: SelectionOrigin) {
+        let signpostID = OSSignpostID(log: poi)
+        os_signpost(.begin, log: poi, name: "loadSelectedItem", signpostID: signpostID, "itemId=%lld", itemId)
+        defer { os_signpost(.end, log: poi, name: "loadSelectedItem", signpostID: signpostID) }
+
         previewTask?.cancel()
         metadataTask?.cancel()
         previewGeneration += 1
@@ -1583,6 +1594,7 @@ final class BrowserViewModel {
     }
 
     private func setDisplayedSelection(_ selection: SelectionState) {
+        os_signpost(.event, log: poi, name: "setDisplayedSelection", "%{public}s", selection.poiLabel)
         updateDisplayedContent { content in
             LoadedBrowserContent(response: content.response, selection: selection)
         }
