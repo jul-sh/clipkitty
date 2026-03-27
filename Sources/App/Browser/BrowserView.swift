@@ -97,6 +97,9 @@ struct BrowserView: View {
         .onDisappear {
             removeCommandKeyEventMonitor()
         }
+        .onChange(of: displayVersion) { _, _ in
+            focusSearchField()
+        }
     }
 
     private var filterLabel: String {
