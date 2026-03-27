@@ -36,7 +36,7 @@ set -e
 SCRIPT_DIR="$(cd "$(dirname "$0")" && pwd)"
 PROJECT_ROOT="$(dirname "$SCRIPT_DIR")"
 DERIVED_DATA="$PROJECT_ROOT/DerivedData"
-APP_PATH="$DERIVED_DATA/Build/Products/Debug/ClipKitty.app"
+APP_PATH="$DERIVED_DATA/Build/Products/Release/ClipKitty.app"
 BUNDLE_ID="com.eviljuliette.clipkitty"
 
 # Defaults
@@ -99,10 +99,10 @@ done
 
 TRACE_FILE="$OUTPUT_DIR/perf_${TIMESTAMP}.trace"
 
-echo "=== ClipKitty Performance Test ==="
+echo "=== ClipKitty Navigation Performance Test ==="
 echo "Template: $TEMPLATE"
 echo "Output: $TRACE_FILE"
-echo "Typing delay: ${TYPING_DELAY}ms"
+echo "Navigation delay: ${TYPING_DELAY}ms"
 echo ""
 
 # Create output directory
@@ -194,9 +194,9 @@ echo "    xctrace PID: $XCTRACE_PID"
 # Give xctrace time to attach
 sleep 3
 
-# Step 6: Run typing simulation
-echo ">>> Running typing simulation..."
-"$SCRIPT_DIR/simulate-typing.sh" --delay "$TYPING_DELAY" 2>&1 | tee "$OUTPUT_DIR/typing_log_${TIMESTAMP}.txt"
+# Step 6: Run navigation simulation
+echo ">>> Running navigation simulation..."
+"$SCRIPT_DIR/simulate-navigation.sh" --delay "$TYPING_DELAY" --count 20 2>&1 | tee "$OUTPUT_DIR/nav_log_${TIMESTAMP}.txt"
 
 # Step 7: Stop trace
 echo ">>> Stopping trace..."
@@ -231,16 +231,16 @@ if [ "$TRACE_ONLY" = false ]; then
         ANALYSIS_ARGS="$ANALYSIS_ARGS --fail-on-hangs"
     fi
 
-    python3 "$SCRIPT_DIR/analyze-trace.py" "$TRACE_FILE" $ANALYSIS_ARGS || ANALYSIS_RESULT=$?
+    uv run python3 "$SCRIPT_DIR/analyze-trace.py" "$TRACE_FILE" $ANALYSIS_ARGS || ANALYSIS_RESULT=$?
 
     # Save JSON report (with same ignore-first setting)
-    python3 "$SCRIPT_DIR/analyze-trace.py" "$TRACE_FILE" --ignore-first "$IGNORE_FIRST" --json > "$OUTPUT_DIR/report_${TIMESTAMP}.json" 2>/dev/null || true
+    uv run python3 "$SCRIPT_DIR/analyze-trace.py" "$TRACE_FILE" --ignore-first "$IGNORE_FIRST" --json > "$OUTPUT_DIR/report_${TIMESTAMP}.json" 2>/dev/null || true
 
     echo ""
     echo ">>> Reports saved:"
     echo "    Trace: $TRACE_FILE"
     echo "    JSON:  $OUTPUT_DIR/report_${TIMESTAMP}.json"
-    echo "    Log:   $OUTPUT_DIR/typing_log_${TIMESTAMP}.txt"
+    echo "    Log:   $OUTPUT_DIR/nav_log_${TIMESTAMP}.txt"
 
     # Return appropriate exit code
     if [ "$FAIL_ON_HANGS" = true ] && [ "${ANALYSIS_RESULT:-0}" -ne 0 ]; then
