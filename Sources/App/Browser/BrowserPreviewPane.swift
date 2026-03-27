@@ -16,7 +16,7 @@ struct BrowserPreviewPane: View {
                 VStack(spacing: 0) {
                     ZStack {
                         previewContent(for: content)
-                        if case .loading = content.previewState,
+                        if case .loadingDecoration = content.previewState,
                            viewModel.previewSpinnerVisible
                         {
                             ProgressView()
@@ -62,9 +62,9 @@ struct BrowserPreviewPane: View {
 
     private func previewDecoration(for content: SelectedItemState) -> PreviewDecoration? {
         switch content.previewState {
-        case .plain, .loading(.missing):
+        case .plain, .loadingDecoration(previous: nil):
             return nil
-        case let .loading(.stale(decoration)), let .highlighted(decoration):
+        case let .loadingDecoration(previous: .some(decoration)), let .highlighted(decoration):
             return decoration
         }
     }
@@ -86,8 +86,8 @@ struct BrowserPreviewPane: View {
                     switch content.previewState {
                     case .plain:
                         return .autoScroll
-                    case .loading:
-                        return .manual
+                    case let .loadingDecoration(previous):
+                        return previous == nil ? .autoScroll : .manual
                     case .highlighted:
                         return content.origin == .user ? .trackHighlight : .autoScroll
                     }
@@ -210,11 +210,11 @@ struct BrowserPreviewPane: View {
         case .plain:
             state = "plain"
             fragments = []
-        case .loading(.missing):
-            state = "loading-missing"
+        case .loadingDecoration(previous: nil):
+            state = "loading-decoration"
             fragments = []
-        case let .loading(.stale(decoration)):
-            state = "loading-stale"
+        case let .loadingDecoration(previous: .some(decoration)):
+            state = "loading-decoration-stale"
             fragments = HighlightStyler.fragments(in: text, highlights: decoration.highlights)
         case let .highlighted(decoration):
             state = "highlighted"

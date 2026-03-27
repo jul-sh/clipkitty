@@ -305,7 +305,7 @@ final class BrowserViewModelTests: XCTestCase {
             return XCTFail("Expected selected item to stay visible while fresh highlights load")
         }
         XCTAssertEqual(selectedItemState.item.itemMetadata.itemId, 1)
-        guard case let .loading(.stale(staleDecoration)) = selectedItemState.previewState else {
+        guard case let .loadingDecoration(previous: .some(staleDecoration)) = selectedItemState.previewState else {
             return XCTFail("Expected stale highlights while updated preview payload is pending")
         }
         XCTAssertEqual(staleDecoration, firstDecoration)
@@ -324,7 +324,7 @@ final class BrowserViewModelTests: XCTestCase {
         XCTAssertEqual(client.loadPreviewDecorationRequests.map(\.query), ["a", "al"])
     }
 
-    func testActiveTextQueryKeepsSelectionLoadingUntilPreviewPayloadArrives() async {
+    func testActiveTextQueryKeepsSelectionVisibleWhilePreviewPayloadArrives() async {
         let client = MockBrowserStoreClient()
         let item = makeItem(id: 1, text: "alpha beta")
         let decoration = makePreviewDecoration(highlightStart: 0, highlightEnd: 1)
@@ -348,11 +348,14 @@ final class BrowserViewModelTests: XCTestCase {
         ))
         await flushMainActor()
 
-        guard case let .loading(itemId, _) = viewModel.selection else {
-            return XCTFail("Expected loading selection before preview payload arrives")
+        guard case let .selected(selectedItemState) = viewModel.selection else {
+            return XCTFail("Expected selected item to stay visible before preview payload arrives")
         }
-        XCTAssertEqual(itemId, 1)
-        XCTAssertNil(viewModel.selectedItem)
+        XCTAssertEqual(selectedItemState.item.itemMetadata.itemId, 1)
+        guard case .loadingDecoration(previous: nil) = selectedItemState.previewState else {
+            return XCTFail("Expected plain content with highlights still loading")
+        }
+        XCTAssertEqual(viewModel.selectedItem?.itemMetadata.itemId, 1)
         XCTAssertNil(viewModel.previewDecoration)
 
         client.resumePreviewPayload(
@@ -432,11 +435,14 @@ final class BrowserViewModelTests: XCTestCase {
         ))
         await flushMainActor()
 
-        guard case let .loading(itemId, _) = viewModel.selection else {
-            return XCTFail("Expected loading selection while highlighted preview payload is pending")
+        guard case let .selected(selectedItemState) = viewModel.selection else {
+            return XCTFail("Expected selected item to stay visible while highlighted preview payload is pending")
         }
-        XCTAssertEqual(itemId, 1)
-        XCTAssertNil(viewModel.selectedItem)
+        XCTAssertEqual(selectedItemState.item.itemMetadata.itemId, 1)
+        guard case .loadingDecoration(previous: nil) = selectedItemState.previewState else {
+            return XCTFail("Expected plain content with highlights still loading")
+        }
+        XCTAssertEqual(viewModel.selectedItem?.itemMetadata.itemId, 1)
         XCTAssertNil(viewModel.previewDecoration)
         XCTAssertEqual(client.loadPreviewDecorationRequests.map(\.query), ["al"])
 
