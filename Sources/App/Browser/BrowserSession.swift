@@ -74,10 +74,6 @@ enum BrowserContentState {
         }
     }
 
-    var selection: SelectionState {
-        displayedContent?.selection ?? .none
-    }
-
     var isSearchSpinnerVisible: Bool {
         guard case let .loading(_, _, .running(spinnerVisible)) = self else { return false }
         return spinnerVisible
@@ -86,7 +82,6 @@ enum BrowserContentState {
 
 struct LoadedBrowserContent {
     let response: BrowserSearchResponse
-    let selection: SelectionState
 }
 
 enum SelectionOrigin {
@@ -182,6 +177,7 @@ enum DeleteMutation {
 struct DeleteTransaction {
     let deletedItemId: Int64
     let snapshot: BrowserContentState
+    let selectionSnapshot: SelectionState
 }
 
 enum TagMutation {
@@ -197,6 +193,7 @@ struct TagMutationTransaction {
 
 struct ClearTransaction {
     let snapshot: BrowserContentState
+    let selectionSnapshot: SelectionState
 }
 
 struct ActionFailure {

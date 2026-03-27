@@ -76,8 +76,9 @@ struct BrowserPreviewPane: View {
         case .text, .color:
             let previewText = viewModel.pendingEdits[item.itemMetadata.itemId] ?? item.content.textContent
             let decoration = previewDecoration(for: content)
+            let _ = { TextPreviewView.textCache[item.itemMetadata.itemId] = previewText }()
             TextPreviewView(
-                text: previewText,
+                itemId: item.itemMetadata.itemId,
                 fontName: FontManager.mono,
                 fontSize: 15,
                 highlights: decoration?.highlights ?? [],
@@ -92,7 +93,6 @@ struct BrowserPreviewPane: View {
                         return content.origin == .user ? .trackHighlight : .autoScroll
                     }
                 }(),
-                itemId: item.itemMetadata.itemId,
                 originalText: item.content.textContent,
                 onTextChange: { newText in
                     viewModel.onTextEdit(newText, for: item.itemMetadata.itemId, originalText: item.content.textContent)
@@ -118,7 +118,6 @@ struct BrowserPreviewPane: View {
                     focusSearchField()
                 }
             )
-            .id(previewIdentity(itemId: item.itemMetadata.itemId))
             .frame(maxWidth: .infinity, maxHeight: .infinity)
             .overlay(alignment: .topLeading) {
                 if isUITestPreviewDebugEnabled {
@@ -304,12 +303,15 @@ struct BrowserPreviewPane: View {
                     }
                 } else if let app = item.itemMetadata.sourceApp {
                     HStack(spacing: 4) {
-                        if let bundleID = item.itemMetadata.sourceAppBundleId,
-                           let appURL = NSWorkspace.shared.urlForApplication(withBundleIdentifier: bundleID)
-                        {
-                            Image(nsImage: NSWorkspace.shared.icon(forFile: appURL.path))
-                                .resizable()
-                                .frame(width: 14, height: 14)
+                        if let bundleID = item.itemMetadata.sourceAppBundleId {
+                            let icon = viewModel.appIcon(for: bundleID)
+                            if let icon {
+                                Image(nsImage: icon)
+                                    .resizable()
+                                    .frame(width: 14, height: 14)
+                            } else {
+                                Image(systemName: "app")
+                            }
                         } else {
                             Image(systemName: "app")
                         }

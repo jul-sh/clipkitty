@@ -4,10 +4,12 @@ import ObjectiveC.runtime
 import STTextKitPlus
 import SwiftUI
 import UniformTypeIdentifiers
+import os.signpost
 
 /// Max time to show stale content before clearing to spinner during slow loads.
 /// Used for both preview item loading and search result loading.
 private let staleContentTimeout: Duration = .milliseconds(150)
+private let poi = OSLog(subsystem: "com.eviljuliette.clipkitty", category: .pointsOfInterest)
 
 private enum SpinnerState: Equatable {
     case idle
@@ -270,8 +272,17 @@ enum PreviewScrollBehavior {
     case trackHighlight
 }
 
-struct TextPreviewView: NSViewRepresentable {
+class TextPreviewContent: Equatable {
     let text: String
+    init(text: String) { self.text = text }
+    static func == (lhs: TextPreviewContent, rhs: TextPreviewContent) -> Bool {
+        return lhs === rhs
+    }
+}
+
+struct TextPreviewView: NSViewRepresentable {
+    static var textCache: [Int64: String] = [:]
+    let itemId: Int64
     let fontName: String
     let fontSize: CGFloat
     var highlights: [Utf16HighlightRange] = []
@@ -285,7 +296,6 @@ struct TextPreviewView: NSViewRepresentable {
     var scrollBehavior: PreviewScrollBehavior = .autoScroll
 
     // Edit callbacks
-    var itemId: Int64 = 0
     var originalText: String = ""
     var onTextChange: ((String) -> Void)?
     var onEditingStateChange: ((Bool) -> Void)?
@@ -342,6 +352,7 @@ struct TextPreviewView: NSViewRepresentable {
     private static var lastKnownContainerWidth: CGFloat = 0
 
     private func scaledFontSize(containerWidth: CGFloat) -> CGFloat {
+        let text = TextPreviewView.textCache[itemId] ?? ""
         let lines = text.components(separatedBy: "\n")
         if lines.count >= 15 { return fontSize }
 
@@ -472,7 +483,8 @@ struct TextPreviewView: NSViewRepresentable {
             .paragraphStyle: paragraphStyle,
         ]
 
-        let textChanged = textView.string != text
+        let text = TextPreviewView.textCache[itemId] ?? ""
+        let textChanged = coordinator.lastRenderedText != text
         let highlightsChanged = coordinator.lastHighlights != highlights
         let contentWidthChanged = abs(coordinator.lastContentWidth - containerWidth) > 0.5
         let gainedHighlights = !highlights.isEmpty && coordinator.lastHighlights.isEmpty
@@ -492,6 +504,8 @@ struct TextPreviewView: NSViewRepresentable {
         // Only update text if item changed or we're not editing
         let shouldUpdateText = itemChanged || (!coordinator.isEditing && textChanged)
         if shouldUpdateText {
+            let text = TextPreviewView.textCache[itemId] ?? ""
+            let previewText = text // Or fetch from reference
             // Text content changed — replace storage attributes (font, color, paragraph style only).
             //
             // Memory consideration: For very large text (>100KB), NSAttributedString allocation
@@ -500,7 +514,6 @@ struct TextPreviewView: NSViewRepresentable {
             // Consider implementing a size limit or truncation if clipboard items exceed ~1MB.
             let paragraphStyle = NSMutableParagraphStyle()
             paragraphStyle.lineBreakMode = .byWordWrapping
-
             let attributed = NSMutableAttributedString(string: text, attributes: [
                 .font: font,
                 .foregroundColor: NSColor.labelColor,
@@ -508,6 +521,7 @@ struct TextPreviewView: NSViewRepresentable {
             ])
 
             textView.textStorage?.setAttributedString(attributed)
+            coordinator.lastRenderedText = text // Update cache!
         }
 
         if itemChanged || textChanged || highlightsChanged {
@@ -897,6 +911,7 @@ struct TextPreviewView: NSViewRepresentable {
 
         // Edit tracking
         var currentItemId: Int64 = 0
+        var lastRenderedText: String? = nil
         var isEditing = false
         var onTextChange: ((String) -> Void)?
 
@@ -986,7 +1001,9 @@ struct TextPreviewView: NSViewRepresentable {
 
         func textDidChange(_ notification: Notification) {
             guard let onTextChange, let textView = notification.object as? NSTextView else { return }
-            onTextChange(textView.string)
+            let text = textView.string
+            lastRenderedText = text
+            onTextChange(text)
         }
     }
 }

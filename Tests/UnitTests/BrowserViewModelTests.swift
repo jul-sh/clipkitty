@@ -109,7 +109,6 @@ final class BrowserViewModelTests: XCTestCase {
         }
         XCTAssertEqual(request, SearchRequest(text: "", filter: .all))
         XCTAssertEqual(previous?.response.items.map(\.itemMetadata.itemId), [1])
-        XCTAssertEqual(previous?.selection.itemId, 1)
         XCTAssertEqual(viewModel.itemIds, [1])
         XCTAssertEqual(viewModel.selectedItemId, 1)
 
@@ -162,7 +161,6 @@ final class BrowserViewModelTests: XCTestCase {
         }
         XCTAssertEqual(request, SearchRequest(text: "", filter: .all))
         XCTAssertEqual(previous?.response.items.map(\.itemMetadata.itemId), [1])
-        XCTAssertEqual(previous?.selection.itemId, 1)
 
         client.resumeSearch(with: BrowserSearchResponse(
             request: SearchRequest(text: "", filter: .all),
