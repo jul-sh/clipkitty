@@ -104,7 +104,7 @@ struct BrowserPreviewPane: View {
                     viewModel.confirmSelection()
                 },
                 onCmdK: {
-                    guard !viewModel.hasPendingEdit(for: item.itemMetadata.itemId) else { return }
+                    guard viewModel.previewInteractionMode == .browsing else { return }
                     viewModel.openActionsOverlay(highlight: .index(0))
                 },
                 onSave: {
@@ -274,14 +274,7 @@ struct BrowserPreviewPane: View {
                 .fixedSize()
 
             case .previewing:
-                // Preview focused but not yet edited: show actions and cmd+return confirm
-                BrowserActionsOverlay(
-                    viewModel: viewModel,
-                    focusSearchField: focusSearchField,
-                    focusTarget: focusTarget
-                )
-                .fixedSize()
-
+                // Preview focused but not yet edited — Cmd+K is not active here
                 Spacer(minLength: 0)
 
                 Button {
