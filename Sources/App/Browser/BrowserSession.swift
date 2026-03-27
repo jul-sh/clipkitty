@@ -138,6 +138,16 @@ enum SelectionState {
         guard case let .selected(selectedItem) = self else { return nil }
         return selectedItem
     }
+
+    /// Lightweight label for os_signpost Points of Interest.
+    var poiLabel: String {
+        switch self {
+        case .none: return "none"
+        case let .loading(itemId, _): return "loading(\(itemId))"
+        case let .selected(state): return "selected(\(state.item.itemMetadata.itemId))"
+        case let .failed(itemId, _): return "failed(\(itemId))"
+        }
+    }
 }
 
 enum OverlayState {
