@@ -483,6 +483,12 @@ struct TextPreviewView: NSViewRepresentable {
             coordinator.needsGeometrySync = true
         }
 
+        let previousMatchRanges = coordinator.currentMatchRanges
+        let tlm = textView.textLayoutManager
+        if let tlm, itemChanged || textChanged || highlightsChanged, !previousMatchRanges.isEmpty {
+            clearHighlightRenderingAttributes(matchRanges: previousMatchRanges, from: tlm)
+        }
+
         // Only update text if item changed or we're not editing
         let shouldUpdateText = itemChanged || (!coordinator.isEditing && textChanged)
         if shouldUpdateText {
@@ -502,11 +508,6 @@ struct TextPreviewView: NSViewRepresentable {
             ])
 
             textView.textStorage?.setAttributedString(attributed)
-        }
-
-        let tlm = textView.textLayoutManager
-        if let tlm, itemChanged || textChanged || highlightsChanged {
-            clearHighlightRenderingAttributes(from: tlm)
         }
 
         if itemChanged || textChanged || highlightsChanged {
@@ -807,39 +808,25 @@ struct TextPreviewView: NSViewRepresentable {
         textView.layoutSubtreeIfNeeded()
         textView.setNeedsDisplay(textView.visibleRect)
         scrollView.contentView.setNeedsDisplay(scrollView.contentView.bounds)
-        scrollView.displayIfNeeded()
-        textView.displayIfNeeded()
     }
 
     private func refreshHighlightDisplay(textView: NSTextView) {
         textView.layoutSubtreeIfNeeded()
         textView.setNeedsDisplay(textView.visibleRect)
-        textView.displayIfNeeded()
 
         if let scrollView = textView.enclosingScrollView {
             scrollView.contentView.setNeedsDisplay(scrollView.contentView.bounds)
-            scrollView.displayIfNeeded()
         }
     }
 
-    private func clearHighlightRenderingAttributes(from textLayoutManager: NSTextLayoutManager) {
-        let startLocation = textLayoutManager.documentRange.location
-        var renderedRanges: [NSTextRange] = []
-
-        textLayoutManager.enumerateRenderingAttributes(
-            from: startLocation,
-            reverse: false
-        ) { _, attributes, textRange in
-            if attributes.keys.contains(.backgroundColor) || attributes.keys.contains(.underlineStyle) {
-                renderedRanges.append(textRange)
-            }
-            return true
-        }
-
-        for textRange in renderedRanges {
-            textLayoutManager.removeRenderingAttribute(.backgroundColor, for: textRange)
-            textLayoutManager.removeRenderingAttribute(.underlineStyle, for: textRange)
-            textLayoutManager.invalidateRenderingAttributes(for: textRange)
+    private func clearHighlightRenderingAttributes(
+        matchRanges: [MatchRange],
+        from textLayoutManager: NSTextLayoutManager
+    ) {
+        for matchRange in matchRanges {
+            textLayoutManager.removeRenderingAttribute(.backgroundColor, for: matchRange.range)
+            textLayoutManager.removeRenderingAttribute(.underlineStyle, for: matchRange.range)
+            textLayoutManager.invalidateRenderingAttributes(for: matchRange.range)
         }
     }
 

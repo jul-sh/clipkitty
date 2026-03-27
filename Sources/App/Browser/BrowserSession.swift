@@ -94,14 +94,9 @@ enum SelectionOrigin {
     case user
 }
 
-enum LoadingPreviewState: Equatable {
-    case missing
-    case stale(PreviewDecoration)
-}
-
 enum SelectedPreviewState: Equatable {
     case plain
-    case loading(LoadingPreviewState)
+    case loadingDecoration(previous: PreviewDecoration?)
     case highlighted(PreviewDecoration)
 }
 
