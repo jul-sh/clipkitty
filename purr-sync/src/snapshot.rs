@@ -1,6 +1,6 @@
 //! Sync snapshot envelope — the mutable compaction artifact.
 
-use crate::sync::types::{ItemAggregate, SYNC_SCHEMA_VERSION};
+use crate::types::{ItemAggregate, SYNC_SCHEMA_VERSION};
 use serde::{Deserialize, Serialize};
 
 /// A compacted snapshot of a single logical item's aggregate state.

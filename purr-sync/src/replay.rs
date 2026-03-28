@@ -7,13 +7,14 @@
 //! 4. Retry deferred events after each batch.
 //! 5. Mark needs_full_resync if unresolved gaps past threshold.
 
-use crate::database::Database;
-use crate::database::DatabaseResult;
-use crate::sync::event::ItemEvent;
-use crate::sync::projector;
-use crate::sync::snapshot::ItemSnapshot;
-use crate::sync::store::SyncStore;
-use crate::sync::types::*;
+use crate::error::SyncResult;
+use crate::event::ItemEvent;
+use crate::projector;
+use crate::snapshot::ItemSnapshot;
+use crate::store::SyncStore;
+use crate::types::*;
+use r2d2::Pool;
+use r2d2_sqlite::SqliteConnectionManager;
 
 /// Maximum deferred event retries before marking full resync needed.
 const MAX_DEFERRED_RETRY_ROUNDS: usize = 3;
@@ -33,10 +34,10 @@ pub struct BatchApplyResult {
 
 /// Apply a batch of remote snapshots. Snapshots should be applied before events.
 pub fn apply_remote_snapshots(
-    db: &Database,
+    pool: &Pool<SqliteConnectionManager>,
     snapshots: &[ItemSnapshot],
-) -> DatabaseResult<usize> {
-    let sync = SyncStore::new(db);
+) -> SyncResult<usize> {
+    let sync = SyncStore::new(pool);
     let mut applied = 0;
 
     for snapshot in snapshots {
@@ -73,12 +74,11 @@ pub fn apply_remote_snapshots(
 }
 
 /// Apply a single remote event.
-/// Returns the apply result for the caller to act on.
 pub fn apply_remote_event(
-    db: &Database,
+    pool: &Pool<SqliteConnectionManager>,
     event: &ItemEvent,
-) -> DatabaseResult<ApplyResult> {
-    let sync = SyncStore::new(db);
+) -> SyncResult<ApplyResult> {
+    let sync = SyncStore::new(pool);
 
     // Dedup check.
     if sync.is_event_applied(&event.event_id)? {
@@ -143,14 +143,14 @@ pub fn apply_remote_event(
 
 /// Apply a batch of remote events and retry deferred events.
 pub fn apply_remote_event_batch(
-    db: &Database,
+    pool: &Pool<SqliteConnectionManager>,
     events: &[ItemEvent],
-) -> DatabaseResult<BatchApplyResult> {
+) -> SyncResult<BatchApplyResult> {
     let mut result = BatchApplyResult::default();
 
     // Apply all new events.
     for event in events {
-        match apply_remote_event(db, event)? {
+        match apply_remote_event(pool, event)? {
             ApplyResult::Applied(_) => result.events_applied += 1,
             ApplyResult::Ignored(_) => result.events_ignored += 1,
             ApplyResult::Deferred(_) => result.events_deferred += 1,
@@ -164,17 +164,17 @@ pub fn apply_remote_event_batch(
     }
 
     // Retry deferred events.
-    retry_deferred_events(db, &mut result)?;
+    retry_deferred_events(pool, &mut result)?;
 
     Ok(result)
 }
 
 /// Retry deferred events, up to MAX_DEFERRED_RETRY_ROUNDS.
 fn retry_deferred_events(
-    db: &Database,
+    pool: &Pool<SqliteConnectionManager>,
     result: &mut BatchApplyResult,
-) -> DatabaseResult<()> {
-    let sync = SyncStore::new(db);
+) -> SyncResult<()> {
+    let sync = SyncStore::new(pool);
 
     for _round in 0..MAX_DEFERRED_RETRY_ROUNDS {
         let deferred = sync.fetch_all_deferred_events()?;
@@ -260,20 +260,11 @@ fn retry_deferred_events(
 }
 
 /// Full resync: clear local sync state and rebuild from snapshots.
-///
-/// 1. Clear sync log, deferred events, dedup, and projection.
-/// 2. Rebuild projection from the provided snapshots.
-///
-/// The caller is responsible for:
-/// - Fetching all current ItemSnapshot records from CloudKit.
-/// - Rebuilding the local SQLite read model from snapshot data.
-/// - Rebuilding the Tantivy index.
-/// - Storing a fresh zone token and resuming incremental sync.
 pub fn full_resync_from_snapshots(
-    db: &Database,
+    pool: &Pool<SqliteConnectionManager>,
     snapshots: &[ItemSnapshot],
-) -> DatabaseResult<usize> {
-    let sync = SyncStore::new(db);
+) -> SyncResult<usize> {
+    let sync = SyncStore::new(pool);
 
     // Clear all sync state.
     sync.clear_sync_state()?;
@@ -288,8 +279,6 @@ pub fn full_resync_from_snapshots(
             ItemAggregate::Tombstoned(tomb) => (tomb.versions, true),
         };
 
-        // local_item_id is None — the caller will rebuild the read model
-        // and set local IDs via upsert_projection.
         sync.upsert_projection(
             &snapshot.global_item_id,
             None,
@@ -310,7 +299,7 @@ pub fn full_resync_from_snapshots(
 fn load_aggregate(
     sync: &SyncStore<'_>,
     global_item_id: &str,
-) -> DatabaseResult<Option<ItemAggregate>> {
+) -> SyncResult<Option<ItemAggregate>> {
     // First check projection for version info.
     let projection = sync.fetch_projection(global_item_id)?;
     if projection.is_none() {

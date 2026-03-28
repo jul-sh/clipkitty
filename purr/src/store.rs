@@ -6,6 +6,7 @@ use crate::interface::{
     ClipKittyError, ClipboardItem, ClipboardStoreApi, ItemQueryFilter, ItemTag, PreviewPayload,
     RowDecorationResult, SearchOutcome, SearchResult, StoreBootstrapPlan,
 };
+use crate::sync_bridge::{RealSyncEmitter, SyncEmitter};
 use crate::{match_presentation, save_service, search_service};
 use once_cell::sync::Lazy;
 use parking_lot::Mutex;
@@ -47,6 +48,7 @@ pub struct ClipboardStore {
     db: Arc<Database>,
     indexer: Arc<Indexer>,
     analysis_cache: Arc<match_presentation::HighlightAnalysisCache>,
+    sync_emitter: Arc<dyn SyncEmitter>,
     /// Token for the currently running search, if any. Starting a new search cancels
     /// the previous one by calling cancel() on this token.
     active_search_token: Arc<Mutex<Option<CancellationToken>>>,
@@ -98,11 +100,13 @@ impl ClipboardStore {
         init_rayon();
         let database = Database::open_in_memory().map_err(ClipKittyError::from)?;
         let indexer = Indexer::new_in_memory()?;
+        let emitter = RealSyncEmitter::new(database.pool().clone());
 
         Ok(Self {
             db: Arc::new(database),
             indexer: Arc::new(indexer),
             analysis_cache: Arc::new(match_presentation::HighlightAnalysisCache::default()),
+            sync_emitter: Arc::new(emitter),
             active_search_token: Arc::new(Mutex::new(None)),
         })
     }
@@ -127,11 +131,13 @@ impl ClipboardStore {
     fn open_at_path(path: &Path) -> Result<Self, ClipKittyError> {
         let db = Database::open(path).map_err(ClipKittyError::from)?;
         let indexer = Indexer::new(&Self::index_path_for_database(path))?;
+        let emitter = RealSyncEmitter::new(db.pool().clone());
 
         Ok(Self {
             db: Arc::new(db),
             indexer: Arc::new(indexer),
             analysis_cache: Arc::new(match_presentation::HighlightAnalysisCache::default()),
+            sync_emitter: Arc::new(emitter),
             active_search_token: Arc::new(Mutex::new(None)),
         })
     }
@@ -268,6 +274,7 @@ impl ClipboardStoreApi for ClipboardStore {
         save_service::save_text(
             &self.db,
             &self.indexer,
+            &*self.sync_emitter,
             text,
             source_app,
             source_app_bundle_id,
@@ -352,6 +359,7 @@ impl ClipboardStoreApi for ClipboardStore {
         save_service::save_files(
             &self.db,
             &self.indexer,
+            &*self.sync_emitter,
             paths,
             filenames,
             file_sizes,
@@ -377,6 +385,7 @@ impl ClipboardStoreApi for ClipboardStore {
         save_service::save_file(
             &self.db,
             &self.indexer,
+            &*self.sync_emitter,
             path,
             filename,
             file_size,
@@ -399,6 +408,7 @@ impl ClipboardStoreApi for ClipboardStore {
         save_service::save_image(
             &self.db,
             &self.indexer,
+            &*self.sync_emitter,
             image_data,
             thumbnail,
             source_app,
@@ -414,7 +424,7 @@ impl ClipboardStoreApi for ClipboardStore {
         description: Option<String>,
         image_data: Option<Vec<u8>>,
     ) -> Result<(), ClipKittyError> {
-        save_service::update_link_metadata(&self.db, item_id, title, description, image_data)
+        save_service::update_link_metadata(&self.db, &*self.sync_emitter, item_id, title, description, image_data)
     }
 
     fn update_image_description(
@@ -422,35 +432,35 @@ impl ClipboardStoreApi for ClipboardStore {
         item_id: i64,
         description: String,
     ) -> Result<(), ClipKittyError> {
-        save_service::update_image_description(&self.db, &self.indexer, item_id, description)
+        save_service::update_image_description(&self.db, &self.indexer, &*self.sync_emitter, item_id, description)
     }
 
     fn update_text_item(&self, item_id: i64, text: String) -> Result<(), ClipKittyError> {
-        save_service::update_text_item(&self.db, &self.indexer, item_id, text)
+        save_service::update_text_item(&self.db, &self.indexer, &*self.sync_emitter, item_id, text)
     }
 
     fn update_timestamp(&self, item_id: i64) -> Result<(), ClipKittyError> {
-        save_service::update_timestamp(&self.db, &self.indexer, item_id)
+        save_service::update_timestamp(&self.db, &self.indexer, &*self.sync_emitter, item_id)
     }
 
     fn add_tag(&self, item_id: i64, tag: ItemTag) -> Result<(), ClipKittyError> {
-        save_service::add_tag(&self.db, item_id, tag)
+        save_service::add_tag(&self.db, &*self.sync_emitter, item_id, tag)
     }
 
     fn remove_tag(&self, item_id: i64, tag: ItemTag) -> Result<(), ClipKittyError> {
-        save_service::remove_tag(&self.db, item_id, tag)
+        save_service::remove_tag(&self.db, &*self.sync_emitter, item_id, tag)
     }
 
     fn delete_item(&self, item_id: i64) -> Result<(), ClipKittyError> {
-        save_service::delete_item(&self.db, &self.indexer, item_id)
+        save_service::delete_item(&self.db, &self.indexer, &*self.sync_emitter, item_id)
     }
 
     fn clear(&self) -> Result<(), ClipKittyError> {
-        save_service::clear(&self.db, &self.indexer)
+        save_service::clear(&self.db, &self.indexer, &*self.sync_emitter)
     }
 
     fn prune_to_size(&self, max_bytes: i64, keep_ratio: f64) -> Result<u64, ClipKittyError> {
-        save_service::prune_to_size(&self.db, &self.indexer, max_bytes, keep_ratio)
+        save_service::prune_to_size(&self.db, &self.indexer, &*self.sync_emitter, max_bytes, keep_ratio)
     }
 }
 
@@ -465,9 +475,9 @@ impl ClipboardStore {
         &self,
     ) -> Result<Vec<crate::interface::SyncEventRecord>, ClipKittyError> {
         use crate::interface::SyncEventRecord;
-        use crate::sync::store::SyncStore;
+        use purr_sync::store::SyncStore;
 
-        let sync = SyncStore::new(&self.db);
+        let sync = SyncStore::new(self.db.pool());
         let events = sync.fetch_pending_upload_events()?;
         Ok(events
             .into_iter()
@@ -489,9 +499,9 @@ impl ClipboardStore {
 
     /// Mark events as uploaded after CloudKit confirms receipt.
     pub fn mark_events_uploaded(&self, event_ids: Vec<String>) -> Result<(), ClipKittyError> {
-        use crate::sync::store::SyncStore;
+        use purr_sync::store::SyncStore;
 
-        let sync = SyncStore::new(&self.db);
+        let sync = SyncStore::new(self.db.pool());
         let refs: Vec<&str> = event_ids.iter().map(|s| s.as_str()).collect();
         sync.mark_events_uploaded(&refs)?;
         Ok(())
@@ -503,9 +513,9 @@ impl ClipboardStore {
         record: crate::interface::SyncEventRecord,
     ) -> Result<crate::interface::SyncApplyOutcome, ClipKittyError> {
         use crate::interface::SyncApplyOutcome;
-        use crate::sync::event::ItemEvent;
-        use crate::sync::replay;
-        use crate::sync::types::ApplyResult;
+        use purr_sync::event::ItemEvent;
+        use purr_sync::replay;
+        use purr_sync::types::ApplyResult;
 
         let event = ItemEvent::from_stored(
             record.event_id,
@@ -518,7 +528,7 @@ impl ClipboardStore {
         )
         .map_err(|e| ClipKittyError::InvalidInput(e))?;
 
-        let result = replay::apply_remote_event(&self.db, &event)?;
+        let result = replay::apply_remote_event(self.db.pool(), &event)?;
 
         Ok(match result {
             ApplyResult::Applied(_) => SyncApplyOutcome::Applied,
@@ -536,8 +546,8 @@ impl ClipboardStore {
         &self,
         record: crate::interface::SyncSnapshotRecord,
     ) -> Result<bool, ClipKittyError> {
-        use crate::sync::replay;
-        use crate::sync::snapshot::ItemSnapshot;
+        use purr_sync::replay;
+        use purr_sync::snapshot::ItemSnapshot;
 
         let snapshot = ItemSnapshot::from_stored(
             record.global_item_id,
@@ -548,18 +558,18 @@ impl ClipboardStore {
         )
         .map_err(|e| ClipKittyError::InvalidInput(e))?;
 
-        let applied = replay::apply_remote_snapshots(&self.db, &[snapshot])?;
+        let applied = replay::apply_remote_snapshots(self.db.pool(), &[snapshot])?;
         Ok(applied > 0)
     }
 
     /// Run compaction and retention for all items.
     pub fn run_compaction(&self) -> Result<crate::interface::CompactionResult, ClipKittyError> {
         use crate::interface::CompactionResult;
-        use crate::sync::compactor;
+        use purr_sync::compactor;
 
-        let items_compacted = compactor::compact_all(&self.db)? as u64;
-        let events_purged = compactor::purge_retained_events(&self.db)? as u64;
-        let tombstones_purged = compactor::purge_tombstone_snapshots(&self.db)? as u64;
+        let items_compacted = compactor::compact_all(self.db.pool())? as u64;
+        let events_purged = compactor::purge_retained_events(self.db.pool())? as u64;
+        let tombstones_purged = compactor::purge_tombstone_snapshots(self.db.pool())? as u64;
 
         Ok(CompactionResult {
             items_compacted,
@@ -575,8 +585,8 @@ impl ClipboardStore {
         &self,
         snapshot_records: Vec<crate::interface::SyncSnapshotRecord>,
     ) -> Result<u64, ClipKittyError> {
-        use crate::sync::replay;
-        use crate::sync::snapshot::ItemSnapshot;
+        use purr_sync::replay;
+        use purr_sync::snapshot::ItemSnapshot;
 
         let snapshots: Vec<ItemSnapshot> = snapshot_records
             .into_iter()
@@ -592,7 +602,7 @@ impl ClipboardStore {
             })
             .collect::<Result<Vec<_>, _>>()?;
 
-        let applied = replay::full_resync_from_snapshots(&self.db, &snapshots)?;
+        let applied = replay::full_resync_from_snapshots(self.db.pool(), &snapshots)?;
         Ok(applied as u64)
     }
 
@@ -602,10 +612,10 @@ impl ClipboardStore {
         device_id: String,
     ) -> Result<crate::interface::SyncDeviceState, ClipKittyError> {
         use crate::interface::SyncDeviceState;
-        use crate::sync::store::SyncStore;
-        use crate::sync::types::{FLAG_INDEX_DIRTY, FLAG_NEEDS_FULL_RESYNC};
+        use purr_sync::store::SyncStore;
+        use purr_sync::types::{FLAG_INDEX_DIRTY, FLAG_NEEDS_FULL_RESYNC};
 
-        let sync = SyncStore::new(&self.db);
+        let sync = SyncStore::new(self.db.pool());
         let token = sync.fetch_zone_change_token(&device_id)?;
         let needs_resync = sync.get_dirty_flag(FLAG_NEEDS_FULL_RESYNC)?;
         let index_dirty = sync.get_dirty_flag(FLAG_INDEX_DIRTY)?;
@@ -624,19 +634,19 @@ impl ClipboardStore {
         device_id: String,
         token: Option<Vec<u8>>,
     ) -> Result<(), ClipKittyError> {
-        use crate::sync::store::SyncStore;
+        use purr_sync::store::SyncStore;
 
-        let sync = SyncStore::new(&self.db);
+        let sync = SyncStore::new(self.db.pool());
         sync.upsert_device_state(&device_id, token.as_deref())?;
         Ok(())
     }
 
     /// Clear the index_dirty flag (after a successful rebuild).
     pub fn clear_index_dirty_flag(&self) -> Result<(), ClipKittyError> {
-        use crate::sync::store::SyncStore;
-        use crate::sync::types::FLAG_INDEX_DIRTY;
+        use purr_sync::store::SyncStore;
+        use purr_sync::types::FLAG_INDEX_DIRTY;
 
-        let sync = SyncStore::new(&self.db);
+        let sync = SyncStore::new(self.db.pool());
         sync.set_dirty_flag(FLAG_INDEX_DIRTY, false)?;
         Ok(())
     }

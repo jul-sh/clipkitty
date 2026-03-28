@@ -2,39 +2,31 @@ use crate::database::Database;
 use crate::indexer::Indexer;
 use crate::interface::{ClipKittyError, ItemTag, LinkMetadataPayload, LinkMetadataState};
 use crate::models::StoredItem;
-use crate::sync::event::ItemEvent;
-use crate::sync::store::SyncStore;
-use crate::sync::types::*;
+use purr_sync::types::*;
+use crate::sync_bridge::SyncEmitter;
 use chrono::Utc;
-use uuid::Uuid;
-
-/// Device ID for locally-originated events.
-/// In production this will come from the SyncEngine; for now we use a
-/// per-process constant. The actual device ID is set once at startup
-/// and stored in sync_device_state.
-fn local_device_id() -> &'static str {
-    "local"
-}
 
 // ═══════════════════════════════════════════════════════════════════════════════
-// Save operations — each builds an event, appends it, then applies locally.
+// Save operations — each emits a sync event, then applies locally.
 // ═══════════════════════════════════════════════════════════════════════════════
 
 pub(crate) fn save_text(
     db: &Database,
     indexer: &Indexer,
+    emitter: &dyn SyncEmitter,
     text: String,
     source_app: Option<String>,
     source_app_bundle_id: Option<String>,
 ) -> Result<i64, ClipKittyError> {
     let item = StoredItem::new_text(text, source_app, source_app_bundle_id);
-    dedupe_or_insert_and_index(db, indexer, item)
+    dedupe_or_insert_and_index(db, indexer, emitter, item)
 }
 
 #[allow(clippy::too_many_arguments)]
 pub(crate) fn save_file(
     db: &Database,
     indexer: &Indexer,
+    emitter: &dyn SyncEmitter,
     path: String,
     filename: String,
     file_size: u64,
@@ -54,13 +46,14 @@ pub(crate) fn save_file(
         source_app,
         source_app_bundle_id,
     );
-    dedupe_or_insert_and_index(db, indexer, item)
+    dedupe_or_insert_and_index(db, indexer, emitter, item)
 }
 
 #[allow(clippy::too_many_arguments)]
 pub(crate) fn save_files(
     db: &Database,
     indexer: &Indexer,
+    emitter: &dyn SyncEmitter,
     paths: Vec<String>,
     filenames: Vec<String>,
     file_sizes: Vec<u64>,
@@ -80,12 +73,13 @@ pub(crate) fn save_files(
         source_app,
         source_app_bundle_id,
     );
-    dedupe_or_insert_and_index(db, indexer, item)
+    dedupe_or_insert_and_index(db, indexer, emitter, item)
 }
 
 pub(crate) fn save_image(
     db: &Database,
     indexer: &Indexer,
+    emitter: &dyn SyncEmitter,
     image_data: Vec<u8>,
     thumbnail: Option<Vec<u8>>,
     source_app: Option<String>,
@@ -103,11 +97,12 @@ pub(crate) fn save_image(
         source_app_bundle_id,
         is_animated,
     );
-    dedupe_or_insert_and_index(db, indexer, item)
+    dedupe_or_insert_and_index(db, indexer, emitter, item)
 }
 
 pub(crate) fn update_link_metadata(
     db: &Database,
+    emitter: &dyn SyncEmitter,
     item_id: i64,
     title: Option<String>,
     description: Option<String>,
@@ -138,25 +133,12 @@ pub(crate) fn update_link_metadata(
     let (title, description, image_data) = state.to_database_fields();
 
     // Emit sync event.
-    let sync = SyncStore::new(db);
-    if let Some(global_id) = sync.global_id_for_local(item_id)? {
-        if let Some(proj) = sync.fetch_projection(&global_id)? {
-            let metadata = LinkMetadataSnapshot {
-                title: title.clone(),
-                description: description.clone(),
-                image_data_base64: image_data.as_ref().map(|d| base64_encode(d)),
-            };
-            let event = ItemEvent::new_local(
-                global_id,
-                local_device_id(),
-                ItemEventPayload::LinkMetadataUpdated {
-                    metadata,
-                    base_metadata_version: proj.versions.metadata,
-                },
-            );
-            sync.append_local_event(&event)?;
-        }
-    }
+    let metadata = LinkMetadataSnapshot {
+        title: title.clone(),
+        description: description.clone(),
+        image_data_base64: image_data.as_ref().map(|d| base64_encode(d)),
+    };
+    emitter.emit_link_metadata_updated(item_id, metadata)?;
 
     db.update_link_metadata(
         item_id,
@@ -170,29 +152,16 @@ pub(crate) fn update_link_metadata(
 pub(crate) fn update_image_description(
     db: &Database,
     indexer: &Indexer,
+    emitter: &dyn SyncEmitter,
     item_id: i64,
     description: String,
 ) -> Result<(), ClipKittyError> {
-    // Emit sync event.
-    let sync = SyncStore::new(db);
-    if let Some(global_id) = sync.global_id_for_local(item_id)? {
-        if let Some(proj) = sync.fetch_projection(&global_id)? {
-            let event = ItemEvent::new_local(
-                global_id,
-                local_device_id(),
-                ItemEventPayload::ImageDescriptionUpdated {
-                    description: description.clone(),
-                    base_content_version: proj.versions.content,
-                },
-            );
-            sync.append_local_event(&event)?;
-        }
-    }
+    emitter.emit_image_description_updated(item_id, &description)?;
 
     db.update_image_description(item_id, &description)?;
     if let Some(item) = get_stored_item(db, item_id)? {
         if let Err(_) = indexer.add_document(item_id, &description, item.timestamp_unix) {
-            let _ = sync.set_dirty_flag(FLAG_INDEX_DIRTY, true);
+            let _ = emitter.set_index_dirty();
         } else {
             let _ = indexer.commit();
         }
@@ -203,31 +172,18 @@ pub(crate) fn update_image_description(
 pub(crate) fn update_text_item(
     db: &Database,
     indexer: &Indexer,
+    emitter: &dyn SyncEmitter,
     item_id: i64,
     text: String,
 ) -> Result<(), ClipKittyError> {
     let content_hash = StoredItem::hash_string(&text);
 
-    // Emit sync event.
-    let sync = SyncStore::new(db);
-    if let Some(global_id) = sync.global_id_for_local(item_id)? {
-        if let Some(proj) = sync.fetch_projection(&global_id)? {
-            let event = ItemEvent::new_local(
-                global_id,
-                local_device_id(),
-                ItemEventPayload::TextEdited {
-                    new_text: text.clone(),
-                    base_content_version: proj.versions.content,
-                },
-            );
-            sync.append_local_event(&event)?;
-        }
-    }
+    emitter.emit_text_edited(item_id, &text)?;
 
     db.update_text_item(item_id, &text, &content_hash)?;
     if let Some(item) = get_stored_item(db, item_id)? {
         if let Err(_) = indexer.add_document(item_id, &text, item.timestamp_unix) {
-            let _ = sync.set_dirty_flag(FLAG_INDEX_DIRTY, true);
+            let _ = emitter.set_index_dirty();
         } else {
             let _ = indexer.commit();
         }
@@ -238,66 +194,37 @@ pub(crate) fn update_text_item(
 pub(crate) fn update_timestamp(
     db: &Database,
     _indexer: &Indexer,
+    emitter: &dyn SyncEmitter,
     item_id: i64,
 ) -> Result<(), ClipKittyError> {
     let now = Utc::now();
 
-    // Emit sync event.
-    let sync = SyncStore::new(db);
-    if let Some(global_id) = sync.global_id_for_local(item_id)? {
-        if let Some(proj) = sync.fetch_projection(&global_id)? {
-            let event = ItemEvent::new_local(
-                global_id,
-                local_device_id(),
-                ItemEventPayload::ItemTouched {
-                    new_last_used_at_unix: now.timestamp(),
-                    base_touch_version: proj.versions.touch,
-                },
-            );
-            sync.append_local_event(&event)?;
-        }
-    }
+    emitter.emit_item_touched(item_id, now.timestamp())?;
 
     db.update_timestamp(item_id, now)?;
     // Touch only changes the timestamp — no need to re-index searchable content.
     Ok(())
 }
 
-pub(crate) fn add_tag(db: &Database, item_id: i64, tag: ItemTag) -> Result<(), ClipKittyError> {
-    // Emit sync event.
-    let sync = SyncStore::new(db);
-    if let Some(global_id) = sync.global_id_for_local(item_id)? {
-        if let Some(proj) = sync.fetch_projection(&global_id)? {
-            let event = ItemEvent::new_local(
-                global_id,
-                local_device_id(),
-                ItemEventPayload::BookmarkSet {
-                    base_bookmark_version: proj.versions.bookmark,
-                },
-            );
-            sync.append_local_event(&event)?;
-        }
-    }
+pub(crate) fn add_tag(
+    db: &Database,
+    emitter: &dyn SyncEmitter,
+    item_id: i64,
+    tag: ItemTag,
+) -> Result<(), ClipKittyError> {
+    emitter.emit_bookmark_set(item_id)?;
 
     db.add_tag(item_id, tag)?;
     Ok(())
 }
 
-pub(crate) fn remove_tag(db: &Database, item_id: i64, tag: ItemTag) -> Result<(), ClipKittyError> {
-    // Emit sync event.
-    let sync = SyncStore::new(db);
-    if let Some(global_id) = sync.global_id_for_local(item_id)? {
-        if let Some(proj) = sync.fetch_projection(&global_id)? {
-            let event = ItemEvent::new_local(
-                global_id,
-                local_device_id(),
-                ItemEventPayload::BookmarkCleared {
-                    base_bookmark_version: proj.versions.bookmark,
-                },
-            );
-            sync.append_local_event(&event)?;
-        }
-    }
+pub(crate) fn remove_tag(
+    db: &Database,
+    emitter: &dyn SyncEmitter,
+    item_id: i64,
+    tag: ItemTag,
+) -> Result<(), ClipKittyError> {
+    emitter.emit_bookmark_cleared(item_id)?;
 
     db.remove_tag(item_id, tag)?;
     Ok(())
@@ -306,22 +233,10 @@ pub(crate) fn remove_tag(db: &Database, item_id: i64, tag: ItemTag) -> Result<()
 pub(crate) fn delete_item(
     db: &Database,
     indexer: &Indexer,
+    emitter: &dyn SyncEmitter,
     item_id: i64,
 ) -> Result<(), ClipKittyError> {
-    // Emit sync event.
-    let sync = SyncStore::new(db);
-    if let Some(global_id) = sync.global_id_for_local(item_id)? {
-        if let Some(proj) = sync.fetch_projection(&global_id)? {
-            let event = ItemEvent::new_local(
-                global_id,
-                local_device_id(),
-                ItemEventPayload::ItemDeleted {
-                    base_existence_version: proj.versions.existence,
-                },
-            );
-            sync.append_local_event(&event)?;
-        }
-    }
+    emitter.emit_item_deleted(item_id)?;
 
     db.delete_item(item_id)?;
     indexer.delete_document(item_id)?;
@@ -329,10 +244,13 @@ pub(crate) fn delete_item(
     Ok(())
 }
 
-pub(crate) fn clear(db: &Database, indexer: &Indexer) -> Result<(), ClipKittyError> {
+pub(crate) fn clear(
+    db: &Database,
+    indexer: &Indexer,
+    emitter: &dyn SyncEmitter,
+) -> Result<(), ClipKittyError> {
     // Clear sync state before clearing items so we don't leave orphan sync records.
-    let sync = SyncStore::new(db);
-    sync.clear_sync_state()?;
+    emitter.emit_clear()?;
 
     db.clear_all()?;
     indexer.clear()?;
@@ -342,26 +260,15 @@ pub(crate) fn clear(db: &Database, indexer: &Indexer) -> Result<(), ClipKittyErr
 pub(crate) fn prune_to_size(
     db: &Database,
     indexer: &Indexer,
+    emitter: &dyn SyncEmitter,
     max_bytes: i64,
     keep_ratio: f64,
 ) -> Result<u64, ClipKittyError> {
     let deleted_ids = db.get_prunable_ids(max_bytes, keep_ratio)?;
 
     // Emit ItemDeleted events for each pruned item.
-    let sync = SyncStore::new(db);
     for id in &deleted_ids {
-        if let Some(global_id) = sync.global_id_for_local(*id)? {
-            if let Some(proj) = sync.fetch_projection(&global_id)? {
-                let event = ItemEvent::new_local(
-                    global_id,
-                    local_device_id(),
-                    ItemEventPayload::ItemDeleted {
-                        base_existence_version: proj.versions.existence,
-                    },
-                );
-                sync.append_local_event(&event)?;
-            }
-        }
+        emitter.emit_item_deleted(*id)?;
         indexer.delete_document(*id)?;
     }
     if !deleted_ids.is_empty() {
@@ -377,6 +284,7 @@ pub(crate) fn prune_to_size(
 fn dedupe_or_insert_and_index(
     db: &Database,
     indexer: &Indexer,
+    emitter: &dyn SyncEmitter,
     item: StoredItem,
 ) -> Result<i64, ClipKittyError> {
     if let Some(existing) = db.find_by_hash(&item.content_hash)? {
@@ -387,54 +295,20 @@ fn dedupe_or_insert_and_index(
             indexer.commit()?;
 
             // Emit touch event for the existing item.
-            let sync = SyncStore::new(db);
-            if let Some(global_id) = sync.global_id_for_local(id)? {
-                if let Some(proj) = sync.fetch_projection(&global_id)? {
-                    let event = ItemEvent::new_local(
-                        global_id,
-                        local_device_id(),
-                        ItemEventPayload::ItemTouched {
-                            new_last_used_at_unix: now.timestamp(),
-                            base_touch_version: proj.versions.touch,
-                        },
-                    );
-                    sync.append_local_event(&event)?;
-                }
-            }
+            emitter.emit_item_touched(id, now.timestamp())?;
 
             return Ok(0);
         }
     }
 
-    // New item — generate global ID and emit ItemCreated.
+    // New item — emit ItemCreated via the emitter.
     let index_text = index_text(&item);
     let id = db.insert_item(&item)?;
     indexer.add_document(id, &index_text, item.timestamp_unix)?;
     indexer.commit()?;
 
-    // Build snapshot data and emit event.
-    let global_item_id = Uuid::new_v4().to_string();
     let snapshot_data = snapshot_from_stored_item(&item);
-    let event = ItemEvent::new_local(
-        global_item_id.clone(),
-        local_device_id(),
-        ItemEventPayload::ItemCreated {
-            snapshot: snapshot_data,
-        },
-    );
-
-    let sync = SyncStore::new(db);
-    sync.append_local_event(&event)?;
-
-    // Set up projection: global_item_id -> local_item_id.
-    let versions = VersionVector {
-        content: 1,
-        bookmark: 0,
-        existence: 1,
-        touch: 1,
-        metadata: 1,
-    };
-    sync.upsert_projection(&global_item_id, Some(id), &versions, false)?;
+    emitter.emit_item_created(id, snapshot_data)?;
 
     Ok(id)
 }

@@ -1,29 +1,35 @@
 //! Sync store — local persistence layer for sync state.
 //!
-//! CRUD operations on all sync tables through the Database connection pool.
+//! CRUD operations on all sync tables through a shared connection pool.
 
-use crate::database::{Database, DatabaseResult};
-use crate::sync::event::ItemEvent;
-use crate::sync::snapshot::ItemSnapshot;
-use crate::sync::types::*;
+use crate::error::{SyncError, SyncResult};
+use crate::event::ItemEvent;
+use crate::snapshot::ItemSnapshot;
+use crate::types::*;
 use chrono::Utc;
+use r2d2::Pool;
+use r2d2_sqlite::SqliteConnectionManager;
 use rusqlite::params;
 
-/// Sync-specific persistence operations layered on top of the shared Database.
+/// Sync-specific persistence operations layered on top of a shared pool.
 pub struct SyncStore<'a> {
-    db: &'a Database,
+    pool: &'a Pool<SqliteConnectionManager>,
 }
 
 impl<'a> SyncStore<'a> {
-    pub fn new(db: &'a Database) -> Self {
-        Self { db }
+    pub fn new(pool: &'a Pool<SqliteConnectionManager>) -> Self {
+        Self { pool }
+    }
+
+    fn get_conn(&self) -> SyncResult<r2d2::PooledConnection<SqliteConnectionManager>> {
+        Ok(self.pool.get()?)
     }
 
     // ── Events ───────────────────────────────────────────────────────────
 
     /// Append a local event to sync_events.
-    pub fn append_local_event(&self, event: &ItemEvent) -> DatabaseResult<()> {
-        let conn = self.db.get_conn()?;
+    pub fn append_local_event(&self, event: &ItemEvent) -> SyncResult<()> {
+        let conn = self.get_conn()?;
         conn.execute(
             r#"INSERT INTO sync_events
                (event_id, global_item_id, origin_device_id, schema_version, recorded_at,
@@ -43,8 +49,8 @@ impl<'a> SyncStore<'a> {
     }
 
     /// Append a remote event to sync_events (non-local).
-    pub fn append_remote_event(&self, event: &ItemEvent) -> DatabaseResult<()> {
-        let conn = self.db.get_conn()?;
+    pub fn append_remote_event(&self, event: &ItemEvent) -> SyncResult<()> {
+        let conn = self.get_conn()?;
         conn.execute(
             r#"INSERT OR IGNORE INTO sync_events
                (event_id, global_item_id, origin_device_id, schema_version, recorded_at,
@@ -67,8 +73,8 @@ impl<'a> SyncStore<'a> {
     pub fn fetch_uncompacted_events(
         &self,
         global_item_id: &str,
-    ) -> DatabaseResult<Vec<ItemEvent>> {
-        let conn = self.db.get_conn()?;
+    ) -> SyncResult<Vec<ItemEvent>> {
+        let conn = self.get_conn()?;
         let mut stmt = conn.prepare(
             r#"SELECT event_id, global_item_id, origin_device_id, schema_version,
                       recorded_at, payload_type, payload_data
@@ -93,14 +99,14 @@ impl<'a> SyncStore<'a> {
             .into_iter()
             .map(|(eid, gid, dev, schema, rec, pt, pd)| {
                 ItemEvent::from_stored(eid, gid, dev, schema, rec, &pt, &pd)
-                    .map_err(|e| crate::database::DatabaseError::InconsistentData(e))
+                    .map_err(SyncError::InconsistentData)
             })
             .collect()
     }
 
     /// Fetch pending local events that haven't been uploaded yet.
-    pub fn fetch_pending_upload_events(&self) -> DatabaseResult<Vec<ItemEvent>> {
-        let conn = self.db.get_conn()?;
+    pub fn fetch_pending_upload_events(&self) -> SyncResult<Vec<ItemEvent>> {
+        let conn = self.get_conn()?;
         let mut stmt = conn.prepare(
             r#"SELECT event_id, global_item_id, origin_device_id, schema_version,
                       recorded_at, payload_type, payload_data
@@ -125,17 +131,17 @@ impl<'a> SyncStore<'a> {
             .into_iter()
             .map(|(eid, gid, dev, schema, rec, pt, pd)| {
                 ItemEvent::from_stored(eid, gid, dev, schema, rec, &pt, &pd)
-                    .map_err(|e| crate::database::DatabaseError::InconsistentData(e))
+                    .map_err(SyncError::InconsistentData)
             })
             .collect()
     }
 
     /// Mark events as uploaded.
-    pub fn mark_events_uploaded(&self, event_ids: &[&str]) -> DatabaseResult<()> {
+    pub fn mark_events_uploaded(&self, event_ids: &[&str]) -> SyncResult<()> {
         if event_ids.is_empty() {
             return Ok(());
         }
-        let conn = self.db.get_conn()?;
+        let conn = self.get_conn()?;
         let placeholders: Vec<String> = (1..=event_ids.len()).map(|i| format!("?{i}")).collect();
         let sql = format!(
             "UPDATE sync_events SET uploaded = 1 WHERE event_id IN ({})",
@@ -148,11 +154,11 @@ impl<'a> SyncStore<'a> {
     }
 
     /// Mark events as compacted.
-    pub fn mark_events_compacted(&self, event_ids: &[&str]) -> DatabaseResult<()> {
+    pub fn mark_events_compacted(&self, event_ids: &[&str]) -> SyncResult<()> {
         if event_ids.is_empty() {
             return Ok(());
         }
-        let conn = self.db.get_conn()?;
+        let conn = self.get_conn()?;
         let placeholders: Vec<String> = (1..=event_ids.len()).map(|i| format!("?{i}")).collect();
         let sql = format!(
             "UPDATE sync_events SET compacted = 1 WHERE event_id IN ({})",
@@ -165,8 +171,8 @@ impl<'a> SyncStore<'a> {
     }
 
     /// Delete compacted events older than the given threshold.
-    pub fn delete_compacted_events_before(&self, threshold_unix: i64) -> DatabaseResult<usize> {
-        let conn = self.db.get_conn()?;
+    pub fn delete_compacted_events_before(&self, threshold_unix: i64) -> SyncResult<usize> {
+        let conn = self.get_conn()?;
         let count = conn.execute(
             "DELETE FROM sync_events WHERE compacted = 1 AND recorded_at < ?1",
             params![threshold_unix],
@@ -175,8 +181,8 @@ impl<'a> SyncStore<'a> {
     }
 
     /// Count uncompacted events for an item.
-    pub fn count_uncompacted_events(&self, global_item_id: &str) -> DatabaseResult<usize> {
-        let conn = self.db.get_conn()?;
+    pub fn count_uncompacted_events(&self, global_item_id: &str) -> SyncResult<usize> {
+        let conn = self.get_conn()?;
         let count: i64 = conn.query_row(
             "SELECT COUNT(*) FROM sync_events WHERE global_item_id = ?1 AND compacted = 0",
             params![global_item_id],
@@ -186,8 +192,8 @@ impl<'a> SyncStore<'a> {
     }
 
     /// Sum payload sizes of uncompacted events for an item.
-    pub fn uncompacted_payload_size(&self, global_item_id: &str) -> DatabaseResult<usize> {
-        let conn = self.db.get_conn()?;
+    pub fn uncompacted_payload_size(&self, global_item_id: &str) -> SyncResult<usize> {
+        let conn = self.get_conn()?;
         let size: i64 = conn.query_row(
             "SELECT COALESCE(SUM(LENGTH(payload_data)), 0) FROM sync_events WHERE global_item_id = ?1 AND compacted = 0",
             params![global_item_id],
@@ -200,8 +206,8 @@ impl<'a> SyncStore<'a> {
     pub fn oldest_uncompacted_event_time(
         &self,
         global_item_id: &str,
-    ) -> DatabaseResult<Option<i64>> {
-        let conn = self.db.get_conn()?;
+    ) -> SyncResult<Option<i64>> {
+        let conn = self.get_conn()?;
         let result = conn.query_row(
             "SELECT MIN(recorded_at) FROM sync_events WHERE global_item_id = ?1 AND compacted = 0",
             params![global_item_id],
@@ -211,8 +217,8 @@ impl<'a> SyncStore<'a> {
     }
 
     /// Fetch all global_item_ids that have uncompacted events.
-    pub fn items_with_uncompacted_events(&self) -> DatabaseResult<Vec<String>> {
-        let conn = self.db.get_conn()?;
+    pub fn items_with_uncompacted_events(&self) -> SyncResult<Vec<String>> {
+        let conn = self.get_conn()?;
         let mut stmt = conn.prepare(
             "SELECT DISTINCT global_item_id FROM sync_events WHERE compacted = 0",
         )?;
@@ -225,8 +231,8 @@ impl<'a> SyncStore<'a> {
     // ── Snapshots ────────────────────────────────────────────────────────
 
     /// Upsert a snapshot (insert or replace).
-    pub fn upsert_snapshot(&self, snapshot: &ItemSnapshot) -> DatabaseResult<()> {
-        let conn = self.db.get_conn()?;
+    pub fn upsert_snapshot(&self, snapshot: &ItemSnapshot) -> SyncResult<()> {
+        let conn = self.get_conn()?;
         conn.execute(
             r#"INSERT INTO sync_snapshots
                (global_item_id, snapshot_revision, schema_version, covers_through_event, aggregate_state)
@@ -248,8 +254,8 @@ impl<'a> SyncStore<'a> {
     }
 
     /// Fetch snapshot for an item.
-    pub fn fetch_snapshot(&self, global_item_id: &str) -> DatabaseResult<Option<ItemSnapshot>> {
-        let conn = self.db.get_conn()?;
+    pub fn fetch_snapshot(&self, global_item_id: &str) -> SyncResult<Option<ItemSnapshot>> {
+        let conn = self.get_conn()?;
         let result = conn.query_row(
             r#"SELECT global_item_id, snapshot_revision, schema_version,
                       covers_through_event, aggregate_state
@@ -267,7 +273,7 @@ impl<'a> SyncStore<'a> {
         match result {
             Ok((gid, rev, schema, covers, agg)) => {
                 let snap = ItemSnapshot::from_stored(gid, rev, schema, covers, &agg)
-                    .map_err(|e| crate::database::DatabaseError::InconsistentData(e))?;
+                    .map_err(SyncError::InconsistentData)?;
                 Ok(Some(snap))
             }
             Err(rusqlite::Error::QueryReturnedNoRows) => Ok(None),
@@ -276,8 +282,8 @@ impl<'a> SyncStore<'a> {
     }
 
     /// Fetch all snapshots (for full resync).
-    pub fn fetch_all_snapshots(&self) -> DatabaseResult<Vec<ItemSnapshot>> {
-        let conn = self.db.get_conn()?;
+    pub fn fetch_all_snapshots(&self) -> SyncResult<Vec<ItemSnapshot>> {
+        let conn = self.get_conn()?;
         let mut stmt = conn.prepare(
             r#"SELECT global_item_id, snapshot_revision, schema_version,
                       covers_through_event, aggregate_state
@@ -297,14 +303,14 @@ impl<'a> SyncStore<'a> {
         rows.into_iter()
             .map(|(gid, rev, schema, covers, agg)| {
                 ItemSnapshot::from_stored(gid, rev, schema, covers, &agg)
-                    .map_err(|e| crate::database::DatabaseError::InconsistentData(e))
+                    .map_err(SyncError::InconsistentData)
             })
             .collect()
     }
 
     /// Delete a snapshot.
-    pub fn delete_snapshot(&self, global_item_id: &str) -> DatabaseResult<()> {
-        let conn = self.db.get_conn()?;
+    pub fn delete_snapshot(&self, global_item_id: &str) -> SyncResult<()> {
+        let conn = self.get_conn()?;
         conn.execute(
             "DELETE FROM sync_snapshots WHERE global_item_id = ?1",
             params![global_item_id],
@@ -321,8 +327,8 @@ impl<'a> SyncStore<'a> {
         local_item_id: Option<i64>,
         versions: &VersionVector,
         is_tombstoned: bool,
-    ) -> DatabaseResult<()> {
-        let conn = self.db.get_conn()?;
+    ) -> SyncResult<()> {
+        let conn = self.get_conn()?;
         conn.execute(
             r#"INSERT INTO sync_projection
                (global_item_id, local_item_id, content_version, bookmark_version,
@@ -354,8 +360,8 @@ impl<'a> SyncStore<'a> {
     pub fn fetch_projection(
         &self,
         global_item_id: &str,
-    ) -> DatabaseResult<Option<ProjectionEntry>> {
-        let conn = self.db.get_conn()?;
+    ) -> SyncResult<Option<ProjectionEntry>> {
+        let conn = self.get_conn()?;
         let result = conn.query_row(
             r#"SELECT global_item_id, local_item_id, content_version, bookmark_version,
                       existence_version, touch_version, metadata_version, is_tombstoned
@@ -384,8 +390,8 @@ impl<'a> SyncStore<'a> {
     }
 
     /// Look up global_item_id by local_item_id.
-    pub fn global_id_for_local(&self, local_item_id: i64) -> DatabaseResult<Option<String>> {
-        let conn = self.db.get_conn()?;
+    pub fn global_id_for_local(&self, local_item_id: i64) -> SyncResult<Option<String>> {
+        let conn = self.get_conn()?;
         let result = conn.query_row(
             "SELECT global_item_id FROM sync_projection WHERE local_item_id = ?1",
             params![local_item_id],
@@ -399,8 +405,8 @@ impl<'a> SyncStore<'a> {
     }
 
     /// Clear all projection entries (for full resync).
-    pub fn clear_projections(&self) -> DatabaseResult<()> {
-        let conn = self.db.get_conn()?;
+    pub fn clear_projections(&self) -> SyncResult<()> {
+        let conn = self.get_conn()?;
         conn.execute("DELETE FROM sync_projection", [])?;
         Ok(())
     }
@@ -412,7 +418,7 @@ impl<'a> SyncStore<'a> {
         &self,
         event: &ItemEvent,
         reason: &DeferredReason,
-    ) -> DatabaseResult<()> {
+    ) -> SyncResult<()> {
         let reason_str = match reason {
             DeferredReason::MissingItem => "missing_item".to_string(),
             DeferredReason::FutureVersion {
@@ -421,7 +427,7 @@ impl<'a> SyncStore<'a> {
                 current,
             } => format!("future_version:{:?}:{}:{}", domain, event_base, current),
         };
-        let conn = self.db.get_conn()?;
+        let conn = self.get_conn()?;
         conn.execute(
             r#"INSERT OR REPLACE INTO sync_deferred_events
                (event_id, global_item_id, origin_device_id, schema_version, recorded_at,
@@ -446,8 +452,8 @@ impl<'a> SyncStore<'a> {
     pub fn fetch_deferred_events_for_item(
         &self,
         global_item_id: &str,
-    ) -> DatabaseResult<Vec<ItemEvent>> {
-        let conn = self.db.get_conn()?;
+    ) -> SyncResult<Vec<ItemEvent>> {
+        let conn = self.get_conn()?;
         let mut stmt = conn.prepare(
             r#"SELECT event_id, global_item_id, origin_device_id, schema_version,
                       recorded_at, payload_type, payload_data
@@ -472,14 +478,14 @@ impl<'a> SyncStore<'a> {
             .into_iter()
             .map(|(eid, gid, dev, schema, rec, pt, pd)| {
                 ItemEvent::from_stored(eid, gid, dev, schema, rec, &pt, &pd)
-                    .map_err(|e| crate::database::DatabaseError::InconsistentData(e))
+                    .map_err(SyncError::InconsistentData)
             })
             .collect()
     }
 
     /// Fetch all deferred events.
-    pub fn fetch_all_deferred_events(&self) -> DatabaseResult<Vec<ItemEvent>> {
-        let conn = self.db.get_conn()?;
+    pub fn fetch_all_deferred_events(&self) -> SyncResult<Vec<ItemEvent>> {
+        let conn = self.get_conn()?;
         let mut stmt = conn.prepare(
             r#"SELECT event_id, global_item_id, origin_device_id, schema_version,
                       recorded_at, payload_type, payload_data
@@ -503,14 +509,14 @@ impl<'a> SyncStore<'a> {
             .into_iter()
             .map(|(eid, gid, dev, schema, rec, pt, pd)| {
                 ItemEvent::from_stored(eid, gid, dev, schema, rec, &pt, &pd)
-                    .map_err(|e| crate::database::DatabaseError::InconsistentData(e))
+                    .map_err(SyncError::InconsistentData)
             })
             .collect()
     }
 
     /// Remove a deferred event (after it's been successfully applied or discarded).
-    pub fn remove_deferred_event(&self, event_id: &str) -> DatabaseResult<()> {
-        let conn = self.db.get_conn()?;
+    pub fn remove_deferred_event(&self, event_id: &str) -> SyncResult<()> {
+        let conn = self.get_conn()?;
         conn.execute(
             "DELETE FROM sync_deferred_events WHERE event_id = ?1",
             params![event_id],
@@ -519,15 +525,15 @@ impl<'a> SyncStore<'a> {
     }
 
     /// Clear all deferred events (for full resync).
-    pub fn clear_deferred_events(&self) -> DatabaseResult<()> {
-        let conn = self.db.get_conn()?;
+    pub fn clear_deferred_events(&self) -> SyncResult<()> {
+        let conn = self.get_conn()?;
         conn.execute("DELETE FROM sync_deferred_events", [])?;
         Ok(())
     }
 
     /// Count deferred events (to detect if we're stuck).
-    pub fn count_deferred_events(&self) -> DatabaseResult<usize> {
-        let conn = self.db.get_conn()?;
+    pub fn count_deferred_events(&self) -> SyncResult<usize> {
+        let conn = self.get_conn()?;
         let count: i64 = conn.query_row(
             "SELECT COUNT(*) FROM sync_deferred_events",
             [],
@@ -539,8 +545,8 @@ impl<'a> SyncStore<'a> {
     // ── Dedup ────────────────────────────────────────────────────────────
 
     /// Check if a remote event has already been applied.
-    pub fn is_event_applied(&self, event_id: &str) -> DatabaseResult<bool> {
-        let conn = self.db.get_conn()?;
+    pub fn is_event_applied(&self, event_id: &str) -> SyncResult<bool> {
+        let conn = self.get_conn()?;
         let count: i64 = conn.query_row(
             "SELECT COUNT(*) FROM sync_dedup WHERE event_id = ?1",
             params![event_id],
@@ -550,8 +556,8 @@ impl<'a> SyncStore<'a> {
     }
 
     /// Mark a remote event as applied.
-    pub fn mark_event_applied(&self, event_id: &str) -> DatabaseResult<()> {
-        let conn = self.db.get_conn()?;
+    pub fn mark_event_applied(&self, event_id: &str) -> SyncResult<()> {
+        let conn = self.get_conn()?;
         conn.execute(
             "INSERT OR IGNORE INTO sync_dedup (event_id, applied_at) VALUES (?1, ?2)",
             params![event_id, Utc::now().timestamp()],
@@ -560,8 +566,8 @@ impl<'a> SyncStore<'a> {
     }
 
     /// Clear dedup table (for full resync).
-    pub fn clear_dedup(&self) -> DatabaseResult<()> {
-        let conn = self.db.get_conn()?;
+    pub fn clear_dedup(&self) -> SyncResult<()> {
+        let conn = self.get_conn()?;
         conn.execute("DELETE FROM sync_dedup", [])?;
         Ok(())
     }
@@ -573,9 +579,9 @@ impl<'a> SyncStore<'a> {
         &self,
         device_id: &str,
         zone_change_token: Option<&[u8]>,
-    ) -> DatabaseResult<()> {
+    ) -> SyncResult<()> {
         let now = Utc::now().timestamp();
-        let conn = self.db.get_conn()?;
+        let conn = self.get_conn()?;
         conn.execute(
             r#"INSERT INTO sync_device_state
                (device_id, last_zone_change_token, heartbeat_at)
@@ -592,8 +598,8 @@ impl<'a> SyncStore<'a> {
     pub fn fetch_zone_change_token(
         &self,
         device_id: &str,
-    ) -> DatabaseResult<Option<Vec<u8>>> {
-        let conn = self.db.get_conn()?;
+    ) -> SyncResult<Option<Vec<u8>>> {
+        let conn = self.get_conn()?;
         let result = conn.query_row(
             "SELECT last_zone_change_token FROM sync_device_state WHERE device_id = ?1",
             params![device_id],
@@ -607,9 +613,9 @@ impl<'a> SyncStore<'a> {
     }
 
     /// Mark the last full resync time for a device.
-    pub fn mark_full_resync(&self, device_id: &str) -> DatabaseResult<()> {
+    pub fn mark_full_resync(&self, device_id: &str) -> SyncResult<()> {
         let now = Utc::now().timestamp();
-        let conn = self.db.get_conn()?;
+        let conn = self.get_conn()?;
         conn.execute(
             r#"UPDATE sync_device_state SET last_full_resync_at = ?1, heartbeat_at = ?2
                WHERE device_id = ?3"#,
@@ -621,8 +627,8 @@ impl<'a> SyncStore<'a> {
     // ── Dirty Flags ──────────────────────────────────────────────────────
 
     /// Get a dirty flag value.
-    pub fn get_dirty_flag(&self, flag_name: &str) -> DatabaseResult<bool> {
-        let conn = self.db.get_conn()?;
+    pub fn get_dirty_flag(&self, flag_name: &str) -> SyncResult<bool> {
+        let conn = self.get_conn()?;
         let result = conn.query_row(
             "SELECT flag_value FROM sync_dirty_flags WHERE flag_name = ?1",
             params![flag_name],
@@ -636,9 +642,9 @@ impl<'a> SyncStore<'a> {
     }
 
     /// Set a dirty flag.
-    pub fn set_dirty_flag(&self, flag_name: &str, value: bool) -> DatabaseResult<()> {
+    pub fn set_dirty_flag(&self, flag_name: &str, value: bool) -> SyncResult<()> {
         let now = Utc::now().timestamp();
-        let conn = self.db.get_conn()?;
+        let conn = self.get_conn()?;
         conn.execute(
             r#"INSERT INTO sync_dirty_flags (flag_name, flag_value, updated_at)
                VALUES (?1, ?2, ?3)
@@ -653,8 +659,8 @@ impl<'a> SyncStore<'a> {
     // ── Bulk Operations (for full resync) ────────────────────────────────
 
     /// Clear all sync state except device_state (preserves device_id).
-    pub fn clear_sync_state(&self) -> DatabaseResult<()> {
-        let conn = self.db.get_conn()?;
+    pub fn clear_sync_state(&self) -> SyncResult<()> {
+        let conn = self.get_conn()?;
         conn.execute_batch(
             r#"
             DELETE FROM sync_events;

@@ -1,0 +1,23 @@
+[workspace]
+members = ["purr", "purr-sync", "distribution/demo-data"]
+resolver = "2"
+
+[profile.release]
+opt-level = 3
+lto = "fat"
+codegen-units = 1
+strip = true
+panic = "abort"
+debug = false
+
+[profile.release.package."*"]
+opt-level = 3
+codegen-units = 1
+
+[profile.bench]
+opt-level = 3
+lto = "thin"
+debug = false
+
+[profile.dev]
+opt-level = 1

@@ -1,6 +1,6 @@
 //! Sync event envelope — the immutable record of a single mutation.
 
-use crate::sync::types::{ItemEventPayload, SYNC_SCHEMA_VERSION};
+use crate::types::{ItemEventPayload, SYNC_SCHEMA_VERSION};
 use chrono::Utc;
 use serde::{Deserialize, Serialize};
 use uuid::Uuid;

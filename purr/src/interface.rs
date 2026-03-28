@@ -729,3 +729,12 @@ impl From<crate::indexer::IndexerError> for ClipKittyError {
         ClipKittyError::IndexError(e.to_string())
     }
 }
+
+impl From<purr_sync::SyncError> for ClipKittyError {
+    fn from(e: purr_sync::SyncError) -> Self {
+        match e {
+            purr_sync::SyncError::InconsistentData(msg) => ClipKittyError::DataInconsistency(msg),
+            other => ClipKittyError::DatabaseError(other.to_string()),
+        }
+    }
+}

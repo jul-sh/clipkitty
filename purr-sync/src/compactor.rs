@@ -6,13 +6,14 @@
 //! - Oldest uncompacted event older than 7 days
 //! - Tombstone older than 30 days still accumulating stale events
 
-use crate::database::Database;
-use crate::database::DatabaseResult;
-use crate::sync::projector;
-use crate::sync::snapshot::ItemSnapshot;
-use crate::sync::store::SyncStore;
-use crate::sync::types::*;
+use crate::error::SyncResult;
+use crate::projector;
+use crate::snapshot::ItemSnapshot;
+use crate::store::SyncStore;
+use crate::types::*;
 use chrono::Utc;
+use r2d2::Pool;
+use r2d2_sqlite::SqliteConnectionManager;
 
 /// Result of a compaction attempt on a single item.
 #[derive(Debug, PartialEq, Eq)]
@@ -29,7 +30,7 @@ pub enum CompactionOutcome {
 }
 
 /// Check whether an item needs compaction.
-pub fn needs_compaction(sync: &SyncStore<'_>, global_item_id: &str) -> DatabaseResult<bool> {
+pub fn needs_compaction(sync: &SyncStore<'_>, global_item_id: &str) -> SyncResult<bool> {
     let count = sync.count_uncompacted_events(global_item_id)?;
     if count == 0 {
         return Ok(false);
@@ -63,16 +64,8 @@ pub fn needs_compaction(sync: &SyncStore<'_>, global_item_id: &str) -> DatabaseR
 }
 
 /// Run compaction for a single item.
-///
-/// 1. Load latest local snapshot (or initialize from events).
-/// 2. Fold all uncompacted events into a new aggregate.
-/// 3. Write new local snapshot with incremented revision.
-/// 4. Mark local events as compacted.
-///
-/// Returns the compaction outcome. The caller is responsible for
-/// uploading the snapshot to CloudKit and cleaning up remote events.
-pub fn compact_item(db: &Database, global_item_id: &str) -> DatabaseResult<CompactionOutcome> {
-    let sync = SyncStore::new(db);
+pub fn compact_item(pool: &Pool<SqliteConnectionManager>, global_item_id: &str) -> SyncResult<CompactionOutcome> {
+    let sync = SyncStore::new(pool);
     let events = sync.fetch_uncompacted_events(global_item_id)?;
     if events.is_empty() {
         return Ok(CompactionOutcome::NoEvents);
@@ -96,7 +89,6 @@ pub fn compact_item(db: &Database, global_item_id: &str) -> DatabaseResult<Compa
             }
             ApplyResult::Deferred(_) | ApplyResult::Forked(_) => {
                 // Skip — these can't be folded into the snapshot cleanly.
-                // They'll remain uncompacted for now.
             }
         }
     }
@@ -136,15 +128,14 @@ pub fn compact_item(db: &Database, global_item_id: &str) -> DatabaseResult<Compa
 }
 
 /// Run compaction across all items that need it.
-/// Returns the number of items compacted.
-pub fn compact_all(db: &Database) -> DatabaseResult<usize> {
-    let sync = SyncStore::new(db);
+pub fn compact_all(pool: &Pool<SqliteConnectionManager>) -> SyncResult<usize> {
+    let sync = SyncStore::new(pool);
     let item_ids = sync.items_with_uncompacted_events()?;
     let mut compacted_count = 0;
 
     for gid in &item_ids {
         if needs_compaction(&sync, gid)? {
-            match compact_item(db, gid)? {
+            match compact_item(pool, gid)? {
                 CompactionOutcome::Compacted { .. } => compacted_count += 1,
                 _ => {}
             }
@@ -155,15 +146,15 @@ pub fn compact_all(db: &Database) -> DatabaseResult<usize> {
 }
 
 /// Delete compacted events that have exceeded retention.
-pub fn purge_retained_events(db: &Database) -> DatabaseResult<usize> {
-    let sync = SyncStore::new(db);
+pub fn purge_retained_events(pool: &Pool<SqliteConnectionManager>) -> SyncResult<usize> {
+    let sync = SyncStore::new(pool);
     let threshold = Utc::now().timestamp() - COMPACTED_EVENT_RETENTION_SECS;
     sync.delete_compacted_events_before(threshold)
 }
 
 /// Delete tombstone snapshots that have exceeded retention.
-pub fn purge_tombstone_snapshots(db: &Database) -> DatabaseResult<usize> {
-    let sync = SyncStore::new(db);
+pub fn purge_tombstone_snapshots(pool: &Pool<SqliteConnectionManager>) -> SyncResult<usize> {
+    let sync = SyncStore::new(pool);
     let threshold = Utc::now().timestamp() - TOMBSTONE_SNAPSHOT_RETENTION_SECS;
     let all_snapshots = sync.fetch_all_snapshots()?;
     let mut purged = 0;

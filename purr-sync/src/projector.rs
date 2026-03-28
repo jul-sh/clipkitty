@@ -8,7 +8,7 @@
 //! - edit vs edit from same base with different text: fork into new logical item
 //! - metadata events (link preview, image description) lose to newer user edits
 
-use crate::sync::types::*;
+use crate::types::*;
 
 /// Apply a single event payload to an existing aggregate.
 ///
@@ -49,7 +49,7 @@ pub fn apply_event(
 
 // ─────────────────────────────────────────────────────────────────────────────
 // Per-payload apply functions
-// ─────────���───────────────────���─────────────────────────────��─────────────────
+// ─────────────────────────────────────────────────────────────────────────────
 
 fn apply_item_created(
     aggregate: Option<&ItemAggregate>,
@@ -126,7 +126,7 @@ fn apply_text_edited(
             if let TypeSpecificData::Text { ref mut value } = new_snapshot.type_specific {
                 *value = new_text.to_string();
             }
-            new_snapshot.content_hash = crate::models::StoredItem::hash_string(new_text);
+            new_snapshot.content_hash = crate::util::content_hash(new_text);
 
             let mut new_versions = live.versions;
             new_versions.content += 1;
@@ -443,9 +443,9 @@ fn apply_image_description_updated(
     }
 }
 
-// ──────────────────────���──────────────────────────────────────────────────────
+// ─────────────────────────────────────────────────────────────────────────────
 // Fork helpers
-// ──────────────────────��──────────────────────────────────────────────────────
+// ─────────────────────────────────────────────────────────────────────────────
 
 fn fork_from_text_edit(aggregate: &ItemAggregate, new_text: &str) -> ApplyResult {
     // Build a new snapshot from the edit content.
@@ -453,7 +453,7 @@ fn fork_from_text_edit(aggregate: &ItemAggregate, new_text: &str) -> ApplyResult
         ItemAggregate::Live(live) => {
             let mut snap = live.snapshot.clone();
             snap.content_text = new_text.to_string();
-            snap.content_hash = crate::models::StoredItem::hash_string(new_text);
+            snap.content_hash = crate::util::content_hash(new_text);
             if let TypeSpecificData::Text { ref mut value } = snap.type_specific {
                 *value = new_text.to_string();
             }
@@ -463,7 +463,7 @@ fn fork_from_text_edit(aggregate: &ItemAggregate, new_text: &str) -> ApplyResult
         ItemAggregate::Tombstoned(tomb) => ItemSnapshotData {
             content_type: tomb.content_type.clone(),
             content_text: new_text.to_string(),
-            content_hash: crate::models::StoredItem::hash_string(new_text),
+            content_hash: crate::util::content_hash(new_text),
             source_app: None,
             source_app_bundle_id: None,
             timestamp_unix: chrono::Utc::now().timestamp(),
