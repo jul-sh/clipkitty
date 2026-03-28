@@ -4,8 +4,7 @@ use crate::database::Database;
 use crate::indexer::{IndexInspection, Indexer};
 use crate::interface::{
     ClipKittyError, ClipboardItem, ClipboardStoreApi, ItemQueryFilter, ItemTag, PreviewPayload,
-    RebuildDurationExpectation, RowDecorationResult, SearchOutcome, SearchResult,
-    StoreBootstrapPlan,
+    RowDecorationResult, SearchOutcome, SearchResult, StoreBootstrapPlan,
 };
 use crate::{match_presentation, save_service, search_service};
 use once_cell::sync::Lazy;
@@ -24,7 +23,6 @@ static FALLBACK_RUNTIME: Lazy<tokio::runtime::Runtime> = Lazy::new(|| {
 });
 
 static RAYON_INIT: Once = Once::new();
-const LONG_REBUILD_BYTE_THRESHOLD: i64 = 50_000_000; // 50 MB
 
 fn init_rayon() {
     RAYON_INIT.call_once(|| {
@@ -132,14 +130,6 @@ impl ClipboardStore {
         })
     }
 
-    fn rebuild_duration_expectation(db_size_bytes: i64) -> RebuildDurationExpectation {
-        if db_size_bytes >= LONG_REBUILD_BYTE_THRESHOLD {
-            RebuildDurationExpectation::OverFiveSeconds
-        } else {
-            RebuildDurationExpectation::UnderFiveSeconds
-        }
-    }
-
     fn inspect_bootstrap(path: &Path) -> Result<StoreBootstrapPlan, ClipKittyError> {
         let db = Database::open(path).map_err(ClipKittyError::from)?;
         let db_count = db.count_items()?;
@@ -152,10 +142,7 @@ impl ClipboardStore {
         };
 
         if needs_rebuild {
-            let db_size = db.database_size().unwrap_or(0);
-            return Ok(StoreBootstrapPlan::RebuildIndex {
-                expectation: Self::rebuild_duration_expectation(db_size),
-            });
+            return Ok(StoreBootstrapPlan::RebuildIndex);
         }
 
         Ok(StoreBootstrapPlan::Ready)
@@ -477,7 +464,7 @@ mod tests {
     use super::*;
     use crate::interface::{
         ClipboardContent, FileStatus, HighlightKind, IconType, ItemIcon, ItemQueryFilter,
-        LinkMetadataPayload, LinkMetadataState, RebuildDurationExpectation, StoreBootstrapPlan,
+        LinkMetadataPayload, LinkMetadataState, StoreBootstrapPlan,
     };
     use once_cell::sync::Lazy;
     use parking_lot::Mutex as TestMutex;
@@ -1437,12 +1424,7 @@ mod tests {
         std::fs::remove_dir_all(index_path).unwrap();
 
         let plan = inspect_store_bootstrap(db_path).unwrap();
-        assert_eq!(
-            plan,
-            StoreBootstrapPlan::RebuildIndex {
-                expectation: RebuildDurationExpectation::UnderFiveSeconds,
-            }
-        );
+        assert_eq!(plan, StoreBootstrapPlan::RebuildIndex);
     }
 
     #[test]
@@ -1459,18 +1441,6 @@ mod tests {
 
         let plan = inspect_store_bootstrap(db_path).unwrap();
         assert_eq!(plan, StoreBootstrapPlan::Ready);
-    }
-
-    #[test]
-    fn test_rebuild_duration_expectation_marks_threshold_as_long_running() {
-        assert_eq!(
-            ClipboardStore::rebuild_duration_expectation(LONG_REBUILD_BYTE_THRESHOLD),
-            RebuildDurationExpectation::OverFiveSeconds
-        );
-        assert_eq!(
-            ClipboardStore::rebuild_duration_expectation(LONG_REBUILD_BYTE_THRESHOLD - 1),
-            RebuildDurationExpectation::UnderFiveSeconds
-        );
     }
 
     #[tokio::test]

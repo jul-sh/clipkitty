@@ -57,6 +57,14 @@ final class FloatingPanelController: NSObject, NSWindowDelegate {
         snackbarWindow = SnackbarWindow(coordinator: coordinator)
         super.init()
 
+        coordinator.showNotification = { [weak self] kind in
+            self?.snackbarWindow.showNotification(kind)
+        }
+
+        ErrorReporter.showNotification = { [weak self] kind in
+            self?.snackbarWindow.showNotification(kind)
+        }
+
         setupPanel()
     }
 
@@ -117,6 +125,12 @@ final class FloatingPanelController: NSObject, NSWindowDelegate {
             },
             onDismiss: { [weak self] in
                 self?.hide()
+            },
+            showSnackbarNotification: { [weak self] kind, action in
+                self?.snackbarWindow.showNotification(kind, onAction: action)
+            },
+            dismissSnackbarNotification: { [weak self] in
+                self?.snackbarWindow.dismissNotification()
             },
             initialSearchQuery: initialSearchQuery ?? ""
         )
@@ -259,7 +273,7 @@ final class FloatingPanelController: NSObject, NSWindowDelegate {
     func hide() -> NSRunningApplication? {
         snackbarObservationTask?.cancel()
         snackbarObservationTask = nil
-        snackbarWindow.hide()
+        snackbarWindow.panelDidHide()
 
         let previousApp: NSRunningApplication?
         switch panelState {
@@ -319,18 +333,17 @@ final class FloatingPanelController: NSObject, NSWindowDelegate {
             if case .autoPaste = AppSettings.shared.pasteMode {
                 activationService.simulatePaste(to: targetApp)
             } else {
-                // Show toast when copying without auto-paste
-                ToastWindow.shared.show(message: String(localized: "Copied"))
+                snackbarWindow.showNotification(.passive(message: String(localized: "Copied"), iconSystemName: "checkmark.circle.fill"))
             }
         #else
             hide()
-            ToastWindow.shared.show(message: String(localized: "Copied"))
+            snackbarWindow.showNotification(.passive(message: String(localized: "Copied"), iconSystemName: "checkmark.circle.fill"))
         #endif
     }
 
     private func copyOnlyItem(itemId: Int64, content: ClipboardContent) {
         store.paste(itemId: itemId, content: content)
         hide()
-        ToastWindow.shared.show(message: String(localized: "Copied"))
+        snackbarWindow.showNotification(.passive(message: String(localized: "Copied"), iconSystemName: "checkmark.circle.fill"))
     }
 }
