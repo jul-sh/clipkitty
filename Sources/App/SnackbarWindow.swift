@@ -3,48 +3,51 @@ import SwiftUI
 
 @MainActor
 final class SnackbarWindow {
-    private var window: NSWindow?
     private let coordinator: SnackbarCoordinator
 
-    // Notification state (transient, auto-dismissing)
-    private var notificationWindow: NSWindow?
-    private var notificationDismissTask: Task<Void, Never>?
-    private var notificationAction: (() -> Void)?
+    private var nudgeWindow: NSWindow?
+    private var notification: ActiveNotification?
 
     /// Last known panel frame — used for positioning. Nil when panel is hidden.
     private var panelFrame: NSRect?
+
+    private struct ActiveNotification {
+        let window: NSWindow
+        let anchoredToPanel: Bool
+        var dismissTask: Task<Void, Never>?
+        var action: (() -> Void)?
+    }
 
     init(coordinator: SnackbarCoordinator) {
         self.coordinator = coordinator
     }
 
-    // MARK: - Nudge/Info snackbar (polling-based, panel-anchored only)
+    // MARK: - Nudge/Info (polling-based, panel-anchored only)
 
     func showIfNeeded(relativeTo panelFrame: NSRect) {
         self.panelFrame = panelFrame
 
-        // Don't show nudge/info while a notification is active
-        guard notificationWindow == nil else { return }
+        guard notification == nil else { return }
 
         let decision = coordinator.evaluate()
         switch decision {
         case let .show(item):
-            show(item: item, relativeTo: panelFrame)
+            showNudge(item: item, relativeTo: panelFrame)
         case .showNothing:
-            hideNudgeInfo()
+            dismissNudge()
         }
     }
 
-    private func show(item: SnackbarItem, relativeTo panelFrame: NSRect) {
+    private func showNudge(item: SnackbarItem, relativeTo panelFrame: NSRect) {
         let view = SnackbarView(
             item: item,
             onAction: { [weak self] in
                 self?.handleAction(item)
-                self?.hideNudgeInfo()
+                self?.dismissNudge()
             },
             onDismiss: { [weak self] in
                 self?.handleDismiss(item)
-                self?.hideNudgeInfo()
+                self?.dismissNudge()
             }
         )
 
@@ -52,48 +55,42 @@ final class SnackbarWindow {
         let fittingSize = hostingView.fittingSize
         hostingView.frame = NSRect(origin: .zero, size: fittingSize)
 
-        if let existingWindow = window {
+        if let existingWindow = nudgeWindow {
             existingWindow.contentView = hostingView
             positionRelativeToPanel(existingWindow, size: fittingSize, panelFrame: panelFrame)
             existingWindow.orderFront(nil)
             return
         }
 
-        let snackbarWindow = makeWindow(hostingView: hostingView)
-        positionRelativeToPanel(snackbarWindow, size: fittingSize, panelFrame: panelFrame)
-        animateIn(snackbarWindow, slideUp: false)
-        window = snackbarWindow
+        let window = makeWindow(hostingView: hostingView)
+        positionRelativeToPanel(window, size: fittingSize, panelFrame: panelFrame)
+        animateIn(window, slideUp: false)
+        nudgeWindow = window
     }
 
-    private func hideNudgeInfo() {
-        guard let window else { return }
-        self.window = nil
-        animateOut(window, slideUp: true)
+    private func dismissNudge() {
+        guard let nudgeWindow else { return }
+        self.nudgeWindow = nil
+        animateOut(nudgeWindow, slideUp: true)
     }
 
     // MARK: - Transient notifications (auto-dismiss, dual positioning)
 
     func showNotification(_ kind: NotificationKind, onAction: (() -> Void)? = nil) {
-        // Dismiss any existing notification instantly
-        if let existingWindow = notificationWindow {
-            notificationDismissTask?.cancel()
-            notificationDismissTask = nil
-            notificationAction = nil
-            notificationWindow = nil
-            existingWindow.orderOut(nil)
+        if let existing = notification {
+            existing.dismissTask?.cancel()
+            existing.window.orderOut(nil)
+            notification = nil
         }
 
-        // Hide nudge/info while notification is showing
-        if window != nil { hideNudgeInfo() }
+        if nudgeWindow != nil { dismissNudge() }
 
         let item = SnackbarItem.notification(kind)
-        let actionHandler = onAction
-        self.notificationAction = actionHandler
 
         let view = SnackbarView(
             item: item,
             onAction: { [weak self] in
-                actionHandler?()
+                onAction?()
                 self?.dismissNotification()
             },
             onDismiss: { [weak self] in
@@ -105,47 +102,39 @@ final class SnackbarWindow {
         let fittingSize = hostingView.fittingSize
         hostingView.frame = NSRect(origin: .zero, size: fittingSize)
 
-        let notifWindow = makeWindow(hostingView: hostingView)
+        let window = makeWindow(hostingView: hostingView)
 
         if case .actionable = kind {
-            notifWindow.ignoresMouseEvents = false
+            window.ignoresMouseEvents = false
         }
+
+        let anchored = panelFrame != nil
 
         if let panelFrame {
-            positionRelativeToPanel(notifWindow, size: fittingSize, panelFrame: panelFrame)
+            positionRelativeToPanel(window, size: fittingSize, panelFrame: panelFrame)
         } else {
-            positionScreenCenter(notifWindow, size: fittingSize)
+            positionScreenCenter(window, size: fittingSize)
         }
 
-        notificationWindow = notifWindow
+        animateIn(window, slideUp: !anchored)
 
-        if panelFrame != nil {
-            animateIn(notifWindow, slideUp: false)
-        } else {
-            animateIn(notifWindow, slideUp: true)
-        }
-
-        scheduleNotificationDismiss(duration: kind.duration)
+        notification = ActiveNotification(
+            window: window,
+            anchoredToPanel: anchored,
+            dismissTask: scheduleDismiss(after: kind.duration),
+            action: onAction
+        )
     }
 
     func dismissNotification() {
-        notificationDismissTask?.cancel()
-        notificationDismissTask = nil
-        notificationAction = nil
-
-        guard let notifWindow = notificationWindow else { return }
-        notificationWindow = nil
-
-        if panelFrame != nil {
-            animateOut(notifWindow, slideUp: true)
-        } else {
-            animateOut(notifWindow, slideUp: false)
-        }
+        guard let active = notification else { return }
+        active.dismissTask?.cancel()
+        notification = nil
+        animateOut(active.window, slideUp: active.anchoredToPanel)
     }
 
-    private func scheduleNotificationDismiss(duration: TimeInterval) {
-        notificationDismissTask?.cancel()
-        notificationDismissTask = Task { @MainActor in
+    private func scheduleDismiss(after duration: TimeInterval) -> Task<Void, Never> {
+        Task { @MainActor in
             try? await Task.sleep(for: .seconds(duration))
             guard !Task.isCancelled else { return }
             self.dismissNotification()
@@ -156,11 +145,14 @@ final class SnackbarWindow {
 
     func panelDidHide() {
         panelFrame = nil
-        hideNudgeInfo()
+        dismissNudge()
+        if notification?.anchoredToPanel == true {
+            dismissNotification()
+        }
     }
 
-    func hide() {
-        hideNudgeInfo()
+    func hideAll() {
+        dismissNudge()
         dismissNotification()
     }
 
