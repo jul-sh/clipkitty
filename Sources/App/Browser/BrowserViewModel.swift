@@ -1070,15 +1070,14 @@ final class BrowserViewModel {
         }
     }
 
+    private let prefetchRadius = 5
+
     private func prefetchAdjacentItems(around itemId: Int64) {
         guard let currentIndex = indexOfItem(itemId) else { return }
-        var idsToPrefetch: [Int64] = []
-        if currentIndex > 0 {
-            idsToPrefetch.append(itemIds[currentIndex - 1])
-        }
-        if currentIndex + 1 < itemIds.count {
-            idsToPrefetch.append(itemIds[currentIndex + 1])
-        }
+        let start = max(0, currentIndex - prefetchRadius)
+        let end = min(itemIds.count - 1, currentIndex + prefetchRadius)
+        guard start <= end else { return }
+        let idsToPrefetch = (start...end).map { itemIds[$0] }
 
         Task { [weak self] in
             guard let self else { return }
