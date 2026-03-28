@@ -222,7 +222,8 @@ public final class SparkleAppUpdater {
             try updater.start()
             _ = updater.clearFeedURLFromUserDefaults()
             log.info("Sparkle updater started")
-            log.info("Update channel: \(updateChannel.rawValue, privacy: .public)")
+            let channel = updateChannel
+            log.info("Update channel: \(channel.rawValue, privacy: .public)")
             #if !DEBUG
                 // Trigger a check shortly after launch to ensure updates are found promptly,
                 // rather than waiting for the full scheduled interval on first launch.

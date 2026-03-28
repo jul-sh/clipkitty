@@ -171,8 +171,6 @@ final class ClipKittyUITests: XCTestCase {
 
         let sqliteSourceURL = projectRoot.appendingPathComponent("distribution/\(databaseFilename)")
         let targetURL = appSupportDir.appendingPathComponent("clipboard-screenshot.sqlite")
-        let indexDirURL = appSupportDir.appendingPathComponent("tantivy_index_v4")
-
         try? FileManager.default.createDirectory(at: appSupportDir, withIntermediateDirectories: true)
 
         // Kill existing instances and clean up old data
@@ -184,7 +182,12 @@ final class ClipKittyUITests: XCTestCase {
         Thread.sleep(forTimeInterval: 0.2)
 
         try? FileManager.default.removeItem(at: targetURL)
-        try? FileManager.default.removeItem(at: indexDirURL)
+        // Remove all Tantivy index versions so the app rebuilds from scratch
+        if let contents = try? FileManager.default.contentsOfDirectory(at: appSupportDir, includingPropertiesForKeys: nil) {
+            for item in contents where item.lastPathComponent.hasPrefix("tantivy_index_") {
+                try? FileManager.default.removeItem(at: item)
+            }
+        }
         // SQLite WAL files: handle both hyphen (-wal) and dot (.wal) naming conventions
         try? FileManager.default.removeItem(at: URL(fileURLWithPath: targetURL.path + "-wal"))
         try? FileManager.default.removeItem(at: URL(fileURLWithPath: targetURL.path + "-shm"))
