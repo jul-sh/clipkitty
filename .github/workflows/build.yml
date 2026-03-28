@@ -147,7 +147,7 @@ jobs:
             -scheme ClipKittyUITests \
             -destination "platform=macOS" \
             -derivedDataPath DerivedData \
-            -skip-testing:ClipKittyUITests/ClipKittyUITests/testRecordSearchDemo \
+            -skip-testing:ClipKittyUITests/ClipKittyUITests/testRecordIntroVideo \
             -skip-testing:ClipKittyUITests/ClipKittyUITests/testTakeMarketingScreenshots
 
       - name: Create Virtual Retina Display

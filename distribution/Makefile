@@ -32,7 +32,7 @@ SCREENSHOT_LOCALES := en es zh-Hans zh-Hant ja ko fr de pt-BR ru
 .PHONY: dmg appstore appstore-local appstore-publish publish icon-png \
         synthetic-data run-synthetic marketing marketing-screenshots \
         marketing-screenshots-capture marketing-screenshots-localized \
-        preview-video intro-video video-data screenshot
+        intro-video intro-video-localized video-data screenshot
 
 # Build DMG installer
 dmg:
@@ -277,12 +277,6 @@ marketing-screenshots-localized:
 marketing: marketing-screenshots-localized
 	@echo "All marketing assets generated!"
 
-# Record App Store preview video
-preview-video:
-	@echo "Recording App Store preview video..."
-	@$(DIST_DIR)/record-preview-video.sh
-	@echo "Preview video saved!"
-
 # Generate video-specific synthetic database (based on normal SyntheticData + video items)
 video-data:
 	@echo "Generating video database..."
@@ -294,8 +288,30 @@ video-data:
 intro-video: video-data
 	@echo "Recording intro video..."
 	@$(DIST_DIR)/record-preview-video.sh \
-		--test testRecordIntroVideo \
 		--db SyntheticData_video.sqlite \
 		--output intro_video.mov \
 		--duration 50
 	@echo "Intro video saved!"
+
+# Generate video databases for all locales and record localized intro videos.
+# Each locale gets its own video database and output video file.
+intro-video-localized:
+	@rm -f /tmp/clipkitty_screenshot_locale.txt
+	@for locale in $(SCREENSHOT_LOCALES); do \
+		echo "=== Recording intro video for $$locale ==="; \
+		echo "$$locale" > /tmp/clipkitty_screenshot_locale.txt; \
+		if [ "$$locale" = "en" ]; then \
+			cp $(DIST_DIR)/SyntheticData.sqlite $(DIST_DIR)/SyntheticData_video.sqlite; \
+		else \
+			cp $(DIST_DIR)/SyntheticData_$$locale.sqlite $(DIST_DIR)/SyntheticData_video.sqlite; \
+		fi; \
+		$(NIX_SHELL) "cd $(DIST_DIR)/rust-data-gen && cargo run --release -- --video-only --db-path ../SyntheticData_video.sqlite"; \
+		mkdir -p $(PROJECT_ROOT)/marketing/$$locale; \
+		$(DIST_DIR)/record-preview-video.sh \
+			--db SyntheticData_video.sqlite \
+			--output $$locale/intro_video.mov \
+			--duration 50; \
+		echo "  $$locale video saved to marketing/$$locale/intro_video.mov"; \
+	done
+	@rm -f /tmp/clipkitty_screenshot_locale.txt
+	@echo "All localized intro videos complete!"
