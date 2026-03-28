@@ -10,6 +10,7 @@ struct GeneralSettingsView: View {
     let store: ClipboardStore
     #if SPARKLE_RELEASE
         var onInstallUpdate: (() -> Void)? = nil
+        var onCheckForUpdates: (() -> Void)? = nil
     #endif
 
     private let minDatabaseSizeGB = 0.5
@@ -148,6 +149,27 @@ struct GeneralSettingsView: View {
                                 onInstallUpdate?()
                             }
                         }
+                    case .checking:
+                        HStack(spacing: 6) {
+                            ProgressView()
+                                .controlSize(.small)
+                            Text(String(localized: "Checking for updates…"))
+                                .foregroundStyle(.secondary)
+                        }
+                    case .downloading:
+                        HStack(spacing: 6) {
+                            ProgressView()
+                                .controlSize(.small)
+                            Text(String(localized: "Downloading update…"))
+                                .foregroundStyle(.secondary)
+                        }
+                    case .installing:
+                        HStack(spacing: 6) {
+                            ProgressView()
+                                .controlSize(.small)
+                            Text(String(localized: "Installing update…"))
+                                .foregroundStyle(.secondary)
+                        }
                     case .idle:
                         EmptyView()
                     }
@@ -181,6 +203,11 @@ struct GeneralSettingsView: View {
                     }
 
                     if case .beta = settings.updateChannel {
+                        Button(String(localized: "Check for Updates")) {
+                            onCheckForUpdates?()
+                        }
+                        .disabled(settings.updateCheckState != .idle)
+
                         VStack(alignment: .leading, spacing: 8) {
                             Text(
                                 String(

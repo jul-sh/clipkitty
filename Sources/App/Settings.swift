@@ -81,6 +81,9 @@ enum PasteMode {
     /// State of update checking
     enum UpdateCheckState: Equatable {
         case idle
+        case checking
+        case downloading
+        case installing
         case available
         case checkFailed
     }

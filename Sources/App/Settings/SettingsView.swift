@@ -18,6 +18,7 @@ struct SettingsView: View {
     let onHotKeyChanged: (HotKey) -> Void
     #if SPARKLE_RELEASE
         var onInstallUpdate: (() -> Void)? = nil
+        var onCheckForUpdates: (() -> Void)? = nil
     #endif
 
     var body: some View {
@@ -50,7 +51,8 @@ struct SettingsView: View {
         #if SPARKLE_RELEASE
             GeneralSettingsView(
                 store: store,
-                onInstallUpdate: onInstallUpdate
+                onInstallUpdate: onInstallUpdate,
+                onCheckForUpdates: onCheckForUpdates
             )
         #else
             GeneralSettingsView(
