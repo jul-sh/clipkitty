@@ -183,9 +183,9 @@ final class SnackbarWindow {
     // MARK: - Window creation & animation
 
     private func makeWindow(hostingView: NSHostingView<some View>) -> NSWindow {
-        let window = NSPanel(
+        let window = NSWindow(
             contentRect: hostingView.frame,
-            styleMask: [.borderless, .nonactivatingPanel],
+            styleMask: [.borderless],
             backing: .buffered,
             defer: false
         )
