@@ -93,7 +93,6 @@ struct BrowserPreviewPane: View {
                         return content.origin == .user ? .trackHighlight : .autoScroll
                     }
                 }(),
-                originalText: item.content.textContent,
                 onTextChange: { newText in
                     viewModel.onTextEdit(newText, for: item.itemMetadata.itemId, originalText: item.content.textContent)
                 },
@@ -303,15 +302,12 @@ struct BrowserPreviewPane: View {
                     }
                 } else if let app = item.itemMetadata.sourceApp {
                     HStack(spacing: 4) {
-                        if let bundleID = item.itemMetadata.sourceAppBundleId {
-                            let icon = viewModel.appIcon(for: bundleID)
-                            if let icon {
-                                Image(nsImage: icon)
-                                    .resizable()
-                                    .frame(width: 14, height: 14)
-                            } else {
-                                Image(systemName: "app")
-                            }
+                        if let bundleID = item.itemMetadata.sourceAppBundleId,
+                           let appURL = NSWorkspace.shared.urlForApplication(withBundleIdentifier: bundleID)
+                        {
+                            Image(nsImage: NSWorkspace.shared.icon(forFile: appURL.path))
+                                .resizable()
+                                .frame(width: 14, height: 14)
                         } else {
                             Image(systemName: "app")
                         }

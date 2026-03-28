@@ -84,6 +84,15 @@ struct LoadedBrowserContent {
     let response: BrowserSearchResponse
 }
 
+struct DisplayRow: Equatable, Identifiable {
+    let metadata: ItemMetadata
+    let rowDecoration: RowDecoration?
+
+    var id: Int64 {
+        metadata.itemId
+    }
+}
+
 enum SelectionOrigin {
     case automatic
     case user
