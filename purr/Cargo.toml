@@ -51,11 +51,12 @@ sha2 = "0.10"
 strsim = "*"
 triple_accel = "*"
 uuid = { version = "*", features = ["v4", "serde"] }
-purr-sync = { path = "../purr-sync" }
+purr-sync = { path = "../purr-sync", optional = true }
 
 [features]
-default = ["serde"]
+default = ["serde", "sync"]
 serde = ["chrono/serde"]
+sync = ["dep:purr-sync"]
 perf-log = []
 
 

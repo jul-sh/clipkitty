@@ -501,6 +501,7 @@ pub struct ClipboardItem {
 // ═══════════════════════════════════════════════════════════════════════════════
 
 /// A serialized sync event ready for CloudKit transport.
+#[cfg(feature = "sync")]
 #[derive(Debug, Clone, PartialEq, uniffi::Record)]
 pub struct SyncEventRecord {
     pub event_id: String,
@@ -513,6 +514,7 @@ pub struct SyncEventRecord {
 }
 
 /// A serialized sync snapshot ready for CloudKit transport.
+#[cfg(feature = "sync")]
 #[derive(Debug, Clone, PartialEq, uniffi::Record)]
 pub struct SyncSnapshotRecord {
     pub global_item_id: String,
@@ -523,6 +525,7 @@ pub struct SyncSnapshotRecord {
 }
 
 /// Result of applying a remote event.
+#[cfg(feature = "sync")]
 #[derive(Debug, Clone, PartialEq, uniffi::Enum)]
 pub enum SyncApplyOutcome {
     Applied,
@@ -532,6 +535,7 @@ pub enum SyncApplyOutcome {
 }
 
 /// Result of applying a batch of remote events.
+#[cfg(feature = "sync")]
 #[derive(Debug, Clone, PartialEq, uniffi::Record)]
 pub struct SyncBatchResult {
     pub events_applied: u64,
@@ -543,6 +547,7 @@ pub struct SyncBatchResult {
 }
 
 /// Device sync state.
+#[cfg(feature = "sync")]
 #[derive(Debug, Clone, PartialEq, uniffi::Record)]
 pub struct SyncDeviceState {
     pub device_id: String,
@@ -552,6 +557,7 @@ pub struct SyncDeviceState {
 }
 
 /// Outcome of a compaction run.
+#[cfg(feature = "sync")]
 #[derive(Debug, Clone, PartialEq, uniffi::Record)]
 pub struct CompactionResult {
     pub items_compacted: u64,
@@ -730,6 +736,7 @@ impl From<crate::indexer::IndexerError> for ClipKittyError {
     }
 }
 
+#[cfg(feature = "sync")]
 impl From<purr_sync::SyncError> for ClipKittyError {
     fn from(e: purr_sync::SyncError) -> Self {
         match e {

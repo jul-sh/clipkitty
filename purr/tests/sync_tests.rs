@@ -9,7 +9,13 @@ use purr_sync::projector;
 use purr_sync::replay;
 use purr_sync::snapshot::ItemSnapshot;
 use purr_sync::store::SyncStore;
-use purr_sync::types::*;
+use purr_sync::types::{
+    ApplyResult, DeferredReason, FileSnapshotEntry, ForkPlan, IgnoreReason, ItemAggregate,
+    ItemEventPayload, ItemSnapshotData, LinkMetadataSnapshot, LiveItemState, ProjectionDelta,
+    TombstoneState, TypeSpecificData, VersionDomain, VersionVector, COMPACTION_EVENT_THRESHOLD,
+    FLAG_INDEX_DIRTY, FLAG_NEEDS_FULL_RESYNC, SYNC_SCHEMA_VERSION,
+    TOMBSTONE_SNAPSHOT_RETENTION_SECS,
+};
 
 use purr::database::Database;
 use purr::ClipboardStore;

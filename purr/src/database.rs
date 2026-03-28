@@ -34,6 +34,7 @@ pub enum DatabaseError {
 
 pub type DatabaseResult<T> = Result<T, DatabaseError>;
 
+#[cfg(feature = "sync")]
 impl From<purr_sync::SyncError> for DatabaseError {
     fn from(e: purr_sync::SyncError) -> Self {
         match e {
@@ -195,6 +196,7 @@ impl Database {
         );
 
         // ── Sync tables (delegated to purr-sync) ──────────────────────
+        #[cfg(feature = "sync")]
         purr_sync::schema::setup_sync_schema(&conn)?;
 
         Ok(())
