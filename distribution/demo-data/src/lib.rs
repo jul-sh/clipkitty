@@ -35,8 +35,8 @@ pub const DEMO_ITEMS: &[DemoItem] = &[
     },
     DemoItem {
         content: "river_animation_keyframes.css",
-        source_app: "TextEdit",
-        bundle_id: "com.apple.TextEdit",
+        source_app: "Xcode",
+        bundle_id: "com.apple.dt.Xcode",
         offset: -3500,
     },
     DemoItem {
@@ -47,8 +47,8 @@ pub const DEMO_ITEMS: &[DemoItem] = &[
     },
     DemoItem {
         content: "return fetchData().then(res => res.json()).catch(handleError)...",
-        source_app: "TextEdit",
-        bundle_id: "com.apple.TextEdit",
+        source_app: "Xcode",
+        bundle_id: "com.apple.dt.Xcode",
         offset: -3200,
     },
     DemoItem {
@@ -71,8 +71,8 @@ pub const DEMO_ITEMS: &[DemoItem] = &[
     },
     DemoItem {
         content: "border-radius: 8px;",
-        source_app: "TextEdit",
-        bundle_id: "com.apple.TextEdit",
+        source_app: "Messages",
+        bundle_id: "com.apple.MobileSMS",
         offset: -2800,
     },
     // Deploy command for search demo (fuzzy match target)
@@ -90,8 +90,8 @@ pub const DEMO_ITEMS: &[DemoItem] = &[
     },
     DemoItem {
         content: "#border-container { margin: 0; padding: 16px; display: flex; flex-direction: column; ...",
-        source_app: "TextEdit",
-        bundle_id: "com.apple.TextEdit",
+        source_app: "Pages",
+        bundle_id: "com.apple.iWork.Pages",
         offset: -1200,
     },
     DemoItem {
@@ -102,20 +102,20 @@ pub const DEMO_ITEMS: &[DemoItem] = &[
     },
     DemoItem {
         content: "catch (error) { logger.error(error); Sentry.captureException(error); ...",
-        source_app: "TextEdit",
-        bundle_id: "com.apple.TextEdit",
+        source_app: "Xcode",
+        bundle_id: "com.apple.dt.Xcode",
         offset: -1000,
     },
     DemoItem {
         content: "concatenate_strings(a, b)",
-        source_app: "TextEdit",
-        bundle_id: "com.apple.TextEdit",
+        source_app: "Keynote",
+        bundle_id: "com.apple.iWork.Keynote",
         offset: -900,
     },
     DemoItem {
         content: r#"categories: [{ id: 1, name: "Electronics", subcategories: [...] }]"#,
-        source_app: "TextEdit",
-        bundle_id: "com.apple.TextEdit",
+        source_app: "Terminal",
+        bundle_id: "com.apple.Terminal",
         offset: -800,
     },
     DemoItem {
@@ -144,8 +144,8 @@ pub const DEMO_ITEMS: &[DemoItem] = &[
     },
     DemoItem {
         content: "#!/bin/bash\nset -euo pipefail\necho \"Deploying to prod...\"",
-        source_app: "TextEdit",
-        bundle_id: "com.apple.TextEdit",
+        source_app: "Terminal",
+        bundle_id: "com.apple.Terminal",
         offset: -40,
     },
     DemoItem {
