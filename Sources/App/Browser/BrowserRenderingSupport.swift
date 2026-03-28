@@ -1,10 +1,10 @@
 import AppKit
 import ClipKittyRust
 import ObjectiveC.runtime
+import os.signpost
 import STTextKitPlus
 import SwiftUI
 import UniformTypeIdentifiers
-import os.signpost
 
 /// Max time to show stale content before clearing to spinner during slow loads.
 /// Used for both preview item loading and search result loading.
@@ -201,6 +201,7 @@ private final class PreviewTextView: NSTextView {
         guard let method = class_getInstanceMethod(NSTextView.self, didLayoutSelector) else { return nil }
         return method_getImplementation(method)
     }()
+
     private var focusClickScrollState: FocusClickScrollState = .idle
 
     var onCmdReturn: (() -> Void)?
@@ -322,14 +323,17 @@ enum PreviewScrollBehavior {
 
 class TextPreviewContent: Equatable {
     let text: String
-    init(text: String) { self.text = text }
+    init(text: String) {
+        self.text = text
+    }
+
     static func == (lhs: TextPreviewContent, rhs: TextPreviewContent) -> Bool {
         return lhs === rhs
     }
 }
 
 struct TextPreviewView: NSViewRepresentable {
-    private static let maxAutoScaleCharacters = 4_096
+    private static let maxAutoScaleCharacters = 4096
     private static let maxAutoScaleLines = 14
 
     static var textCache: [Int64: String] = [:]
@@ -594,11 +598,12 @@ struct TextPreviewView: NSViewRepresentable {
             clearHighlightRenderingAttributes(matchRanges: previousMatchRanges, from: tlm)
         }
 
-        // Only update text if item changed or we're not editing
-        let shouldUpdateText = itemChanged || (!coordinator.isEditing && textChanged)
+        // Reset the text view's attributed content when the highlight set changes for the
+        // same item. This reuses the same preview view but gives TextKit a clean baseline
+        // for the new overlay, which is much lighter than a full item reset.
+        let shouldUpdateText = itemChanged || (!coordinator.isEditing && (textChanged || highlightsChanged))
         if shouldUpdateText {
             let text = TextPreviewView.textCache[itemId] ?? ""
-            let previewText = text // Or fetch from reference
             // Text content changed — replace storage attributes (font, color, paragraph style only).
             //
             // Memory consideration: For very large text (>100KB), NSAttributedString allocation
@@ -628,6 +633,7 @@ struct TextPreviewView: NSViewRepresentable {
             coordinator.lastHighlights = highlights
 
             applyHighlightAttributes(matchRanges: newMatchRanges, to: textView)
+            refreshHighlightDisplay(textView: textView)
         }
 
         let scrollTarget: ScrollTarget
@@ -952,8 +958,6 @@ struct TextPreviewView: NSViewRepresentable {
                 for: matchRange.range
             )
         }
-
-        refreshHighlightDisplay(textView: textView)
     }
 
     private func documentHeight(for textView: NSTextView) -> CGFloat {
@@ -1008,7 +1012,7 @@ struct TextPreviewView: NSViewRepresentable {
 
         // Edit tracking
         var currentItemId: Int64 = 0
-        var lastRenderedText: String? = nil
+        var lastRenderedText: String?
         var isEditing = false
         var onTextChange: ((String) -> Void)?
 
@@ -1207,12 +1211,14 @@ private enum RowIconCache {
         }
         return workspace.icon(for: IconType.link.utType)
     }()
+
     private static let finderIcon: NSImage = {
         if let finderURL = workspace.urlForApplication(withBundleIdentifier: "com.apple.finder") {
             return workspace.icon(forFile: finderURL.path)
         }
         return workspace.icon(for: IconType.file.utType)
     }()
+
     private static var symbolIcons: [IconType: NSImage] = [:]
     private static var sourceAppIcons: [String: NSImage] = [:]
     private static var missingSourceAppBundleIDs: Set<String> = []

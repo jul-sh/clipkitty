@@ -1022,17 +1022,26 @@ final class BrowserViewModel {
                 }
 
                 self.previewSpinnerVisible = false
-                guard let payload else { return }
-                self.cachePreviewPayload(payload)
-                guard self.previewPayloadSatisfiesDecorationRequirement(payload, for: request) else {
+                guard let payload else {
+                    self.resolveSelectionWithoutPreviewDecoration(itemId: itemId, origin: origin)
                     return
                 }
-                self.setDisplayedSelection(.selected(self.makeSelectedItemState(
-                    for: payload,
-                    origin: origin,
-                    request: request,
-                    previousDecoration: self.carriedPreviewDecoration(for: itemId)
-                )))
+
+                self.cachePreviewPayload(payload)
+                if self.previewPayloadSatisfiesDecorationRequirement(payload, for: request) {
+                    self.setDisplayedSelection(.selected(self.makeSelectedItemState(
+                        for: payload,
+                        origin: origin,
+                        request: request,
+                        previousDecoration: self.carriedPreviewDecoration(for: itemId)
+                    )))
+                } else {
+                    self.setDisplayedSelection(.selected(SelectedItemState(
+                        item: payload.item,
+                        origin: origin,
+                        previewState: .plain
+                    )))
+                }
                 self.prefetchAdjacentItems(around: itemId)
                 self.maybeRefreshLinkMetadata(for: payload.item, generation: generation)
             }
@@ -1542,6 +1551,20 @@ final class BrowserViewModel {
         for request: SearchRequest
     ) -> Bool {
         !requiresPreviewDecoration(for: payload.item, request: request) || payload.decoration != nil
+    }
+
+    private func resolveSelectionWithoutPreviewDecoration(itemId: Int64, origin: SelectionOrigin) {
+        guard let currentSelectedItemState = selectedItemState,
+              currentSelectedItemState.item.itemMetadata.itemId == itemId
+        else {
+            return
+        }
+
+        setDisplayedSelection(.selected(SelectedItemState(
+            item: currentSelectedItemState.item,
+            origin: origin,
+            previewState: .plain
+        )))
     }
 
     private func selectionDuringSearchTransition(to request: SearchRequest) -> SelectionState {
