@@ -3,9 +3,7 @@
 # Requires: ffmpeg (brew install ffmpeg)
 #
 # Usage:
-#   ./record-preview-video.sh                                    # Default: search demo
-#   ./record-preview-video.sh --test testRecordIntroVideo \
-#       --db SyntheticData_video.sqlite --output intro_video.mov --duration 50
+#   ./record-preview-video.sh --db SyntheticData_video.sqlite --output intro_video.mov --duration 50
 #
 # NOTE: You must grant screen recording permission to Terminal/your shell:
 #   System Settings > Privacy & Security > Screen Recording > [Enable Terminal]
@@ -14,7 +12,7 @@
 set -e
 
 # ── Argument parsing ─────────────────────────────────────────────────────────
-TEST_NAME="testRecordSearchDemo"
+TEST_NAME="testRecordIntroVideo"
 DB_NAME=""
 OUTPUT_NAME="app_preview.mov"
 RECORD_DURATION=35

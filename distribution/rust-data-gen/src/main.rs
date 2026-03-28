@@ -443,6 +443,11 @@ const SOURCE_IMAGES: &[(&str, &str, &str, &str, i64)] = &[
         "photograph, whale, building, roadside, blue, car wash, americana, kitsch, architecture, vintage",
         "Photos", "com.apple.Photos", -2400,
     ),
+    (
+        "fast.jpg",
+        "Fast, cat, running, 90s cartoon, retro, speed, Siamese cat, cute, kitten, animation, comic style, motion lines, energetic, dynamic, clipboard, dash, quick, vintage, hand-drawn, illustration",
+        "Photos", "com.apple.Photos", -50,
+    ),
 ];
 
 /// Find item ID by content hash (for setting timestamps on duplicates)
@@ -590,7 +595,13 @@ fn insert_demo_items(store: &ClipboardStore, db_path: &str, locale: Option<&str>
                         continue;
                     }
 
-                    let image_path = source_images_dir.join(filename);
+                    // Use locale-specific variant for fast.jpg (e.g. fast_ja.jpg)
+                    let resolved_filename = if *filename == "fast.jpg" && *locale_code != "en" {
+                        format!("fast_{}.jpg", locale_code)
+                    } else {
+                        filename.to_string()
+                    };
+                    let image_path = source_images_dir.join(&resolved_filename);
                     if let Ok(raw_data) = fs::read(&image_path) {
                         let thumbnail = generate_thumbnail(&raw_data, 64);
                         let image_data = compress_to_heic(&image_path, 1500, 60).unwrap_or(raw_data);
@@ -645,13 +656,9 @@ fn insert_demo_items(store: &ClipboardStore, db_path: &str, locale: Option<&str>
 }
 
 /// Insert video-specific demo items for the intro video recording.
-/// Replaces the ClipKitty bullet-point item with video scene items and adds
-/// the fast.jpg cartoon image for the image filtering scene.
+/// Replaces the ClipKitty bullet-point item with video scene items.
 fn insert_video_items(store: &ClipboardStore, db_path: &str) -> Result<()> {
     let now = Utc::now().timestamp();
-
-    // Ensure locale column exists for image insertion
-    ensure_locale_column(db_path)?;
 
     // Delete the existing ClipKitty bullet-point item (it occupies the first position)
     let conn = rusqlite::Connection::open(db_path)?;
@@ -682,30 +689,6 @@ fn insert_video_items(store: &ClipboardStore, db_path: &str) -> Result<()> {
         if let Some(id) = find_id_by_hash(db_path, &content_hash) {
             let _ = set_timestamp_direct(db_path, id, now + item.offset);
         }
-    }
-
-    // Insert fast.jpg cartoon image for scene 4
-    let base_path = PathBuf::from(env!("CARGO_MANIFEST_DIR"));
-    let fast_image_path = base_path.join("../images/fast.jpg");
-    if let Ok(raw_data) = fs::read(&fast_image_path) {
-        let thumbnail = generate_thumbnail(&raw_data, 64);
-        let image_data = compress_to_heic(&fast_image_path, 1500, 60).unwrap_or(raw_data);
-        let description = "Fast, cat, running, 90s cartoon, retro, speed, Siamese cat, cute, kitten, animation, comic style, motion lines, energetic, dynamic, clipboard, dash, quick, vintage, hand-drawn, illustration";
-        if let Ok(id) = save_image_direct(
-            db_path,
-            image_data,
-            thumbnail,
-            description.to_string(),
-            Some("Photos".to_string()),
-            Some("com.apple.Photos".to_string()),
-            "en",
-        ) {
-            if id > 0 {
-                let _ = set_timestamp_direct(db_path, id, now - 50);
-            }
-        }
-    } else {
-        eprintln!("Warning: fast.jpg not found at {:?}", fast_image_path);
     }
 
     Ok(())
