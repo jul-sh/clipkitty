@@ -1269,7 +1269,7 @@ final class BrowserViewModelTests: XCTestCase {
         XCTAssertEqual(value, "selected text")
     }
 
-    func testConsecutiveDeleteCommitsPreviousImmediately() async {
+    func testConsecutiveDeleteAccumulatesBatch() async {
         let client = MockBrowserStoreClient()
         client.enqueueSearchResponse(BrowserSearchResponse(
             request: SearchRequest(text: "", filter: .all),
@@ -1297,13 +1297,13 @@ final class BrowserViewModelTests: XCTestCase {
         viewModel.deleteSelectedItem()
         await flushMainActor()
 
-        // Both items should be deleted — first committed immediately, second pending
+        // Both items should be deleted and accumulated in one pending batch
         XCTAssertEqual(viewModel.itemIds, [])
 
         guard case let .deleting(.pending(transaction)) = viewModel.mutationState else {
-            return XCTFail("Expected second delete to be pending")
+            return XCTFail("Expected batch delete to be pending")
         }
-        XCTAssertEqual(transaction.deletedItemId, 2)
+        XCTAssertEqual(transaction.deletedItemIds, [1, 2])
     }
 
     func testDismissMutationFailureClearsState() async {
