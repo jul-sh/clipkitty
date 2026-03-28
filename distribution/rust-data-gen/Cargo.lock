@@ -539,6 +539,14 @@ dependencies = [
 ]
 
 [[package]]
+name = "demo-data"
+version = "0.1.0"
+dependencies = [
+ "csv",
+ "once_cell",
+]
+
+[[package]]
 name = "deranged"
 version = "0.5.5"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -2050,6 +2058,7 @@ dependencies = [
  "chrono",
  "clap",
  "csv",
+ "demo-data",
  "futures",
  "image",
  "indicatif",

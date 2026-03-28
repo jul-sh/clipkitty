@@ -368,12 +368,10 @@ fn generate_timestamp(item_index: usize, now: i64) -> i64 {
     now - age_seconds
 }
 
-mod demo_data;
-mod demo_data_localized;
-mod demo_data_video;
 use demo_data::DEMO_ITEMS;
-use demo_data_localized::{get_localized_demo_items, get_localized_image_keywords};
-use demo_data_video::VIDEO_ITEMS;
+use demo_data::localized::{get_localized_demo_items, get_localized_image_keywords};
+use demo_data::video::VIDEO_ITEMS;
+use demo_data::video_localized::get_localized_video_items;
 
 /// Source images with keyword captions (mirrors Vision framework output)
 /// Format: (filename, keywords, source_app, bundle_id, time_offset_seconds)
@@ -498,7 +496,6 @@ fn delete_english_demo_items(db_path: &str) -> Result<()> {
         "%riverside_park_picnic_directions.txt",            // File path
         "%driver_config.yaml",                              // File path
         "%river_animation_keyframes.css",                   // File path
-        "%private_key_backup.pem",                          // File path
         "%README.md",                                       // File path
         "%catalog_api_response.json",                       // File path
     ];
@@ -657,7 +654,7 @@ fn insert_demo_items(store: &ClipboardStore, db_path: &str, locale: Option<&str>
 
 /// Insert video-specific demo items for the intro video recording.
 /// Replaces the ClipKitty bullet-point item with video scene items.
-fn insert_video_items(store: &ClipboardStore, db_path: &str) -> Result<()> {
+fn insert_video_items(store: &ClipboardStore, db_path: &str, locale: Option<&str>) -> Result<()> {
     let now = Utc::now().timestamp();
 
     // Delete the existing ClipKitty bullet-point item (it occupies the first position)
@@ -676,8 +673,13 @@ fn insert_video_items(store: &ClipboardStore, db_path: &str) -> Result<()> {
     drop(stmt);
     drop(conn);
 
+    // Use localized video items if available, otherwise English
+    let items = locale
+        .and_then(|l| get_localized_video_items(l))
+        .unwrap_or(VIDEO_ITEMS);
+
     // Insert video text items
-    for item in VIDEO_ITEMS {
+    for item in items {
         let _ = store.save_text(
             item.content.to_string(),
             Some(item.source_app.to_string()),
@@ -690,6 +692,31 @@ fn insert_video_items(store: &ClipboardStore, db_path: &str) -> Result<()> {
             let _ = set_timestamp_direct(db_path, id, now + item.offset);
         }
     }
+
+    Ok(())
+}
+
+/// Write video search queries as JSON for the UI test to read.
+/// The Swift test reads `/tmp/clipkitty_video_queries.json` to get
+/// locale-appropriate search terms instead of hardcoding them.
+fn write_video_queries(locale: Option<&str>) -> Result<()> {
+    use demo_data::video::VIDEO_SCENES;
+    use demo_data::video_localized::get_localized_video_scenes;
+
+    let scenes = locale.and_then(|l| get_localized_video_scenes(l));
+
+    let queries = serde_json::json!({
+        "welcome": scenes.map(|s| s.welcome_query).unwrap_or(VIDEO_SCENES[0].query),
+        "find_forever": scenes.map(|s| s.find_forever_query).unwrap_or(VIDEO_SCENES[1].query),
+        "multiline": scenes.map(|s| s.multiline_query).unwrap_or(VIDEO_SCENES[2].query),
+        "secure_private": scenes.map(|s| s.secure_private_query).unwrap_or(VIDEO_SCENES[3].query),
+        "fast": scenes.map(|s| s.fast_query).unwrap_or("fast"),
+    });
+
+    std::fs::write(
+        "/tmp/clipkitty_video_queries.json",
+        serde_json::to_string_pretty(&queries)?,
+    )?;
 
     Ok(())
 }
@@ -744,8 +771,12 @@ async fn main() -> Result<()> {
 
     // Video-only mode: insert video-specific items for intro video
     if args.video_only {
-        println!("Inserting video items...");
-        insert_video_items(&store, &abs_db_path)?;
+        let locale_str = args.locale.as_deref();
+        println!("Inserting video items{}...",
+            locale_str.map(|l| format!(" for locale '{}'", l)).unwrap_or_default());
+        insert_video_items(&store, &abs_db_path, locale_str)?;
+        // Write search queries for the UI test to read
+        write_video_queries(locale_str)?;
         println!("Video items inserted.");
         return Ok(());
     }

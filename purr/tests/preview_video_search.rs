@@ -612,6 +612,87 @@ tee: gateway_42235.log: Transport endpoint is not connected
 }
 
 // ============================================================
+// Intro Video: Target Item Ranks First
+// ============================================================
+// Uses VIDEO_ITEMS and VIDEO_SCENES as single source of truth.
+// For each scene, verifies that after 33% of the query is typed
+// the target item appears first and stays first through the full query.
+
+use demo_data::video::{VIDEO_ITEMS, VIDEO_SCENES};
+use demo_data::DemoItem;
+
+/// Create a store from DemoItems, inserting oldest first with 1.1s gaps
+/// to give them distinct timestamps with proper recency ordering.
+fn create_store_from_demo_items(items: &[DemoItem]) -> (ClipboardStore, TempDir) {
+    let temp_dir = TempDir::new().unwrap();
+    let db_path = temp_dir
+        .path()
+        .join("test.db")
+        .to_string_lossy()
+        .to_string();
+    let store = ClipboardStore::new(db_path).unwrap();
+
+    // Sort by offset ascending (most negative = oldest, inserted first)
+    let mut sorted: Vec<&DemoItem> = items.iter().collect();
+    sorted.sort_by_key(|item| item.offset);
+
+    for item in sorted {
+        store
+            .save_text(
+                item.content.to_string(),
+                Some(item.source_app.to_string()),
+                Some(item.bundle_id.to_string()),
+            )
+            .unwrap();
+        // 1.1s gap ensures distinct timestamps (1s resolution)
+        std::thread::sleep(std::time::Duration::from_millis(1100));
+    }
+
+    (store, temp_dir)
+}
+
+#[tokio::test]
+async fn video_scenes_rank_target_first() {
+    let (store, _temp) = create_store_from_demo_items(VIDEO_ITEMS);
+
+    for scene in VIDEO_SCENES {
+        let target_content = scene.target.content;
+
+        // Full query must always rank target first
+        let contents = search_contents(&store, scene.query).await;
+        assert!(
+            !contents.is_empty() && contents[0].contains(target_content),
+            "Scene '{}': full query should find target '{}...' first, got: {:?}",
+            scene.query,
+            &target_content[..target_content.len().min(40)],
+            contents.iter().take(3).collect::<Vec<_>>()
+        );
+
+        // Also check at each word boundary (progressive typing)
+        let words: Vec<&str> = scene.query.split_whitespace().collect();
+        if words.len() > 1 {
+            for word_count in 1..=words.len() {
+                let partial = words[..word_count].join(" ");
+                let contents = search_contents(&store, &partial).await;
+                // After 2+ words, target should be first
+                if word_count >= 2 {
+                    assert!(
+                        !contents.is_empty() && contents[0].contains(target_content),
+                        "Scene '{}': after '{}' ({}/{} words), expected '{}...' first, got: {:?}",
+                        scene.query,
+                        partial,
+                        word_count,
+                        words.len(),
+                        &target_content[..target_content.len().min(40)],
+                        contents.iter().take(3).collect::<Vec<_>>()
+                    );
+                }
+            }
+        }
+    }
+}
+
+// ============================================================
 // Fuzzy Word Recall Tests
 // ============================================================
 

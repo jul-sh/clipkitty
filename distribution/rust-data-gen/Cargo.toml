@@ -5,6 +5,7 @@ edition = "2021"
 
 [dependencies]
 purr = { path = "../../purr" }
+demo-data = { path = "../demo-data" }
 anyhow = "*"
 clap = { version = "*", features = ["derive"] }
 tokio = { version = "*", features = ["full"] }

@@ -47,6 +47,7 @@
             rustToolchain
             pkgs.swiftlint
             pkgs.swiftformat
+            pkgs.ffmpeg
             keytap.packages.${system}.default
             asc
           ];
