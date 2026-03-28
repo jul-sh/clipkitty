@@ -17,6 +17,10 @@ BUILD_NUMBER ?= $(VERSION)
 # Build configuration: Debug, Release (DMG), or AppStore (sandboxed)
 CONFIGURATION ?= Release
 
+# Architecture: build only for the current arch by default.
+# CI sets UNIVERSAL=1 to produce a universal (arm64 + x86_64) binary.
+ONLY_ACTIVE_ARCH := $(if $(UNIVERSAL),NO,YES)
+
 # DerivedData location for deterministic output paths
 DERIVED_DATA := $(SCRIPT_DIR)/DerivedData
 
@@ -65,6 +69,7 @@ build:
 		-derivedDataPath $(DERIVED_DATA) \
 		MARKETING_VERSION=$(VERSION) \
 		CURRENT_PROJECT_VERSION=$(BUILD_NUMBER) \
+		ONLY_ACTIVE_ARCH=$(ONLY_ACTIVE_ARCH) \
 		build
 
 # Sign the built app (for distribution)
