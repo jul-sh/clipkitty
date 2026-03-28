@@ -762,145 +762,6 @@ final class ClipKittyUITests: XCTestCase {
         }
     }
 
-    /// Records a demo of the search functionality for App Store preview video.
-    /// Run with: make preview-video
-    /// This test types slowly to create a visually appealing demo.
-    ///
-    /// NOTE: Relies entirely on demo items in SyntheticData.sqlite (generated with --demo flag)
-    ///
-    /// Script timing (20 seconds total):
-    /// Scene 1 (0:00-0:08): Meta pitch - fuzzy search refinement "hello" -> "hello clip"
-    ///   - Matches: Hello ClipKitty, hello_world.py, sayHello, Hello and welcome...
-    /// Scene 2 (0:08-0:14): Color swatches "#" -> "#f", then image "cat"
-    ///   - Matches: #7C3AED, #FF5733, #2DD4BF, #F472B6, Orange tabby cat...
-    /// Scene 3 (0:14-0:20): Typo forgiveness "rivresid" finds "Riverside", loop back to empty
-    ///   - Matches: Apartment walkthrough...437 Riverside Dr...
-    func testRecordSearchDemo() {
-        let searchField = app.textFields.firstMatch
-        XCTAssertTrue(searchField.waitForExistence(timeout: 5), "Search field not found")
-
-        // Save window bounds to temp file for video cropping
-        let window = app.dialogs.firstMatch
-        if window.exists {
-            let frame = window.frame
-            // XCUIElement.frame is in points, but screen recording is in pixels
-            // Get the scale factor by comparing screenshot pixel size to screen bounds
-            let screenshot = XCUIScreen.main.screenshot()
-            let screenPixelHeight = screenshot.image.size.height
-            let screenPixelWidth = screenshot.image.size.width
-
-            // Get the actual scale factor from NSScreen (works for any display)
-            let scaleFactor = NSScreen.main?.backingScaleFactor ?? 2.0
-
-            // Convert frame from points to pixels
-            let pixelX = frame.origin.x * scaleFactor
-            let pixelY = frame.origin.y * scaleFactor
-            let pixelWidth = frame.width * scaleFactor
-            let pixelHeight = frame.height * scaleFactor
-
-            // Convert from bottom-left origin (AppKit) to top-left origin (video/ffmpeg)
-            // NOTE: XCTest actually uses top-left origin already, so no flip needed
-            let topLeftY = pixelY // Use directly, no conversion
-
-            // Format: x,y,width,height (with some padding for shadow/border)
-            let padding: CGFloat = 80 // N points * 2 for scaling
-            let boundsString = String(format: "%.0f,%.0f,%.0f,%.0f",
-                                      max(0, pixelX - padding),
-                                      max(0, topLeftY - padding),
-                                      pixelWidth + padding * 2,
-                                      pixelHeight + padding * 2)
-            try? boundsString.write(toFile: "/tmp/clipkitty_window_bounds.txt",
-                                    atomically: true, encoding: .utf8)
-        }
-
-        // Signal that the demo is ready to start (shell script will start recording)
-        try? "start".write(toFile: "/tmp/clipkitty_demo_start.txt", atomically: true, encoding: .utf8)
-
-        // Wait for recording to start (shell script signals when screencapture is running)
-        let recordingStartedPath = "/tmp/clipkitty_recording_started.txt"
-        var waitCount = 0
-        while !FileManager.default.fileExists(atPath: recordingStartedPath), waitCount < 20 {
-            Thread.sleep(forTimeInterval: 0.5)
-            waitCount += 1
-        }
-        try? FileManager.default.removeItem(atPath: recordingStartedPath)
-
-        /// Helper to type with natural delays
-        func typeSlowly(_ text: String, delay: TimeInterval = 0.08) {
-            for char in text {
-                searchField.typeText(String(char))
-                Thread.sleep(forTimeInterval: delay)
-            }
-        }
-
-        /// Helper to clear search field
-        func clearSearch() {
-            searchField.typeKey("a", modifierFlags: .command) // Select all
-            searchField.typeKey(.delete, modifierFlags: [])
-            Thread.sleep(forTimeInterval: 0.3)
-        }
-
-        // ============================================================
-        // SCENE 1: Meta Pitch - Fuzzy search refinement (0:00 - 0:08)
-        // ============================================================
-
-        // 0:00 - Initial pause (ensure recording has captured initial state)
-        Thread.sleep(forTimeInterval: 1.0)
-
-        // Type "h"
-        typeSlowly("h")
-        Thread.sleep(forTimeInterval: 0.8)
-
-        // Continue to "hello"
-        typeSlowly("ello")
-        Thread.sleep(forTimeInterval: 0.8)
-
-        // Continue to "hello clip"
-        typeSlowly(" clip")
-        Thread.sleep(forTimeInterval: 1.5)
-
-        // ============================================================
-        // SCENE 2: Color and Image Preview (0:08 - 0:14)
-        // ============================================================
-
-        // Scene 2
-        clearSearch()
-        Thread.sleep(forTimeInterval: 0.3)
-
-        typeSlowly("#")
-        Thread.sleep(forTimeInterval: 0.5)
-
-        typeSlowly("f")
-        Thread.sleep(forTimeInterval: 0.8)
-
-        clearSearch()
-        typeSlowly("cat")
-        Thread.sleep(forTimeInterval: 2.0)
-
-        // ============================================================
-        // SCENE 3: Typo Forgiveness, Six Months Deep (0:14 - 0:20)
-        // ============================================================
-
-        // Scene 3
-        clearSearch()
-        Thread.sleep(forTimeInterval: 0.3)
-
-        typeSlowly("r")
-        Thread.sleep(forTimeInterval: 0.3)
-
-        typeSlowly("iv")
-        Thread.sleep(forTimeInterval: 0.5)
-
-        typeSlowly("resid")
-        Thread.sleep(forTimeInterval: 1.5)
-
-        clearSearch()
-        Thread.sleep(forTimeInterval: 0.5)
-
-        // Signal that the demo is finished
-        try? "stop".write(toFile: "/tmp/clipkitty_demo_stop.txt", atomically: true, encoding: .utf8)
-    }
-
     /// Records an intro video showcasing ClipKitty's core capabilities.
     /// Run with: make -C distribution intro-video
     ///
@@ -1020,8 +881,15 @@ final class ClipKittyUITests: XCTestCase {
         app.typeKey(.return, modifierFlags: [])
         Thread.sleep(forTimeInterval: 0.5)
 
-        // Type "fast" to find the cartoon cat image
-        typeSlowly("fast")
+        // Type a locale-appropriate search term to find the cartoon cat image
+        let fastSearchTerms: [String: String] = [
+            "es": "rápido", "fr": "rapide", "de": "schnell",
+            "ja": "爆速", "ko": "빠름", "ru": "быстро",
+            "zh-Hans": "飞快", "zh-Hant": "飛快", "pt-BR": "rápido",
+        ]
+        let videoLocale = readTempConfig(Self.localeConfigFile, envFallback: "SCREENSHOT_LOCALE")
+        let fastSearchTerm = videoLocale.flatMap { fastSearchTerms[$0] } ?? "fast"
+        typeSlowly(fastSearchTerm)
         Thread.sleep(forTimeInterval: 2.5)
 
         // ============================================================
