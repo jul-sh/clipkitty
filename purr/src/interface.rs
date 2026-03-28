@@ -482,20 +482,11 @@ pub enum SearchOutcome {
     Cancelled,
 }
 
-/// Heuristic classification for how long an index rebuild is expected to take.
-#[derive(Debug, Clone, Copy, PartialEq, Eq, uniffi::Enum)]
-pub enum RebuildDurationExpectation {
-    UnderFiveSeconds,
-    OverFiveSeconds,
-}
-
 /// Explicit bootstrap plan for opening the store.
 #[derive(Debug, Clone, PartialEq, Eq, uniffi::Enum)]
 pub enum StoreBootstrapPlan {
     Ready,
-    RebuildIndex {
-        expectation: RebuildDurationExpectation,
-    },
+    RebuildIndex,
 }
 
 /// Full clipboard item for preview pane

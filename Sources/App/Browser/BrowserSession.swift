@@ -184,7 +184,7 @@ enum DeleteMutation {
 }
 
 struct DeleteTransaction {
-    let deletedItemId: Int64
+    var deletedItemIds: [Int64]
     let snapshot: BrowserContentState
     let selectionSnapshot: SelectionState
 }

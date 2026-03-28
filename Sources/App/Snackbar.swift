@@ -27,9 +27,41 @@ enum InfoKind: Equatable {
     case rebuildingIndex
 }
 
+enum NotificationKind: Equatable {
+    case passive(message: String, iconSystemName: String)
+    case actionable(message: String, iconSystemName: String, actionTitle: String)
+
+    var message: String {
+        switch self {
+        case let .passive(message, _), let .actionable(message, _, _):
+            return message
+        }
+    }
+
+    var iconSystemName: String {
+        switch self {
+        case let .passive(_, icon), let .actionable(_, icon, _):
+            return icon
+        }
+    }
+
+    var duration: TimeInterval {
+        switch self {
+        case let .passive(message, _):
+            let baseDuration = 2.0
+            let extraChars = max(0, message.count - 10)
+            let extraTime = Double(extraChars / 10) * 0.5
+            return min(baseDuration + extraTime, 4.5)
+        case .actionable:
+            return 4.0
+        }
+    }
+}
+
 enum SnackbarItem: Equatable {
     case nudge(NudgeKind)
     case info(InfoKind)
+    case notification(NotificationKind)
 }
 
 // MARK: - Snackbar views
@@ -45,7 +77,38 @@ struct SnackbarView: View {
             LaunchAtLoginNudgeView(onEnable: onAction, onDismiss: onDismiss)
         case .info(.rebuildingIndex):
             RebuildingIndexInfoView()
+        case let .notification(kind):
+            NotificationSnackbarView(kind: kind, onAction: onAction)
         }
+    }
+}
+
+private struct NotificationSnackbarView: View {
+    let kind: NotificationKind
+    let onAction: () -> Void
+
+    var body: some View {
+        HStack(spacing: 8) {
+            Image(systemName: kind.iconSystemName)
+                .font(.system(size: 18, weight: .medium))
+                .foregroundStyle(.secondary)
+
+            Text(kind.message)
+                .font(.system(size: 14, weight: .medium))
+                .foregroundStyle(.primary)
+
+            if case let .actionable(_, _, actionTitle) = kind {
+                Button(actionTitle, action: onAction)
+                    .buttonStyle(.plain)
+                    .font(.system(size: 13, weight: .semibold))
+                    .foregroundStyle(Color.accentColor)
+                    .padding(.leading, 8)
+            }
+        }
+        .padding(.horizontal, 16)
+        .padding(.vertical, 12)
+        .fixedSize()
+        .modifier(GlassBackgroundModifier())
     }
 }
 

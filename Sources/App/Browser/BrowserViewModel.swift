@@ -13,6 +13,8 @@ final class BrowserViewModel {
     private let onSelect: (Int64, ClipboardContent) -> Void
     private let onCopyOnly: (Int64, ClipboardContent) -> Void
     private let onDismiss: () -> Void
+    private let showSnackbarNotification: (NotificationKind, (() -> Void)?) -> Void
+    private let dismissSnackbarNotification: () -> Void
 
     private enum SearchExecution {
         case idle
@@ -95,12 +97,16 @@ final class BrowserViewModel {
         client: BrowserStoreClient,
         onSelect: @escaping (Int64, ClipboardContent) -> Void,
         onCopyOnly: @escaping (Int64, ClipboardContent) -> Void,
-        onDismiss: @escaping () -> Void
+        onDismiss: @escaping () -> Void,
+        showSnackbarNotification: @escaping (NotificationKind, (() -> Void)?) -> Void = { _, _ in },
+        dismissSnackbarNotification: @escaping () -> Void = {}
     ) {
         self.client = client
         self.onSelect = onSelect
         self.onCopyOnly = onCopyOnly
         self.onDismiss = onDismiss
+        self.showSnackbarNotification = showSnackbarNotification
+        self.dismissSnackbarNotification = dismissSnackbarNotification
     }
 
     var searchText: String {
@@ -377,18 +383,37 @@ final class BrowserViewModel {
     }
 
     func deleteItem(itemId: Int64) {
+        // Accumulate into existing pending delete batch
+        if case var .deleting(.pending(prev)) = mutationState {
+            pendingDeleteTask?.cancel()
+            prev.deletedItemIds.append(itemId)
+            mutationState = .deleting(.pending(prev))
+            applyOptimisticDelete(itemId: itemId)
+            showDeleteUndoNotification(count: prev.deletedItemIds.count)
+            scheduleDeleteCommit()
+            return
+        }
+
+        // If a previous delete is already committing, just clear state
+        if case .deleting(.committing) = mutationState {
+            mutationState = .idle
+        }
+
         guard case .idle = mutationState else { return }
 
         let transaction = DeleteTransaction(
-            deletedItemId: itemId,
+            deletedItemIds: [itemId],
             snapshot: contentState,
             selectionSnapshot: selectionState
         )
         mutationState = .deleting(.pending(transaction))
 
         applyOptimisticDelete(itemId: itemId)
-        showDeleteUndoToast()
+        showDeleteUndoNotification(count: 1)
+        scheduleDeleteCommit()
+    }
 
+    private func scheduleDeleteCommit() {
         pendingDeleteTask?.cancel()
         pendingDeleteTask = Task { [weak self] in
             try? await Task.sleep(for: .seconds(3))
@@ -403,7 +428,7 @@ final class BrowserViewModel {
         guard case let .deleting(.pending(transaction)) = mutationState else { return }
         pendingDeleteTask?.cancel()
         pendingDeleteTask = nil
-        ToastWindow.shared.dismiss()
+        dismissSnackbarNotification()
         restoreSnapshot(transaction.snapshot, selection: transaction.selectionSnapshot)
         mutationState = .idle
     }
@@ -502,7 +527,7 @@ final class BrowserViewModel {
         editState.focus = .idle
 
         guard let selectedItemState else {
-            ToastWindow.shared.show(message: String(localized: "Saved"))
+            showSnackbarNotification(.passive(message: String(localized: "Saved"), iconSystemName: "checkmark.circle.fill"), nil)
             return
         }
 
@@ -533,7 +558,7 @@ final class BrowserViewModel {
             updatedFirstItem: updatedItem
         )
 
-        ToastWindow.shared.show(message: String(localized: "Saved"))
+        showSnackbarNotification(.passive(message: String(localized: "Saved"), iconSystemName: "checkmark.circle.fill"), nil)
 
         Task { [weak self] in
             guard let self else { return }
@@ -1156,17 +1181,18 @@ final class BrowserViewModel {
 
         Task { [weak self] in
             guard let self else { return }
-            let result = await self.client.delete(itemId: transaction.deletedItemId)
+            var lastError: ClipboardError?
+            for itemId in transaction.deletedItemIds {
+                let result = await self.client.delete(itemId: itemId)
+                if case let .failure(error) = result {
+                    lastError = error
+                }
+            }
             await MainActor.run {
-                switch result {
-                case .success:
-                    if case let .deleting(.committing(activeTransaction)) = self.mutationState,
-                       activeTransaction.deletedItemId == transaction.deletedItemId
-                    {
-                        self.mutationState = .idle
-                    }
-                case let .failure(error):
+                if let error = lastError {
                     self.restoreDeleteFailure(error: error)
+                } else if case .deleting(.committing) = self.mutationState {
+                    self.mutationState = .idle
                 }
             }
         }
@@ -1186,12 +1212,16 @@ final class BrowserViewModel {
         mutationState = .failed(ActionFailure(message: error.localizedDescription))
     }
 
-    private func showDeleteUndoToast() {
-        ToastWindow.shared.show(
-            message: String(localized: "Deleted"),
-            iconSystemName: "trash",
-            iconColor: .secondaryLabelColor,
-            actionTitle: String(localized: "Undo")
+    private func showDeleteUndoNotification(count: Int) {
+        let message = count > 1
+            ? String(localized: "Deleted \(count)")
+            : String(localized: "Deleted")
+        showSnackbarNotification(
+            .actionable(
+                message: message,
+                iconSystemName: "trash",
+                actionTitle: String(localized: "Undo")
+            )
         ) { [weak self] in
             self?.undoPendingDelete()
         }
@@ -1235,7 +1265,7 @@ final class BrowserViewModel {
     private func responseApplyingPendingMutations(_ response: BrowserSearchResponse) -> BrowserSearchResponse {
         switch mutationState {
         case let .deleting(.pending(transaction)), let .deleting(.committing(transaction)):
-            return responseHidingDeletedItem(response, deletedItemId: transaction.deletedItemId)
+            return responseHidingDeletedItems(response, deletedItemIds: transaction.deletedItemIds)
         case let .tagging(.pending(mutation)), let .tagging(.settling(mutation)):
             return responseApplyingTagMutation(
                 response,
@@ -1248,21 +1278,21 @@ final class BrowserViewModel {
         }
     }
 
-    private func responseHidingDeletedItem(_ response: BrowserSearchResponse, deletedItemId: Int64) -> BrowserSearchResponse {
-        guard response.items.contains(where: { $0.itemMetadata.itemId == deletedItemId }) else {
-            return response
-        }
+    private func responseHidingDeletedItems(_ response: BrowserSearchResponse, deletedItemIds: [Int64]) -> BrowserSearchResponse {
+        let idSet = Set(deletedItemIds)
+        let filteredItems = response.items.filter { !idSet.contains($0.itemMetadata.itemId) }
+        guard filteredItems.count < response.items.count else { return response }
 
-        let filteredItems = response.items.filter { $0.itemMetadata.itemId != deletedItemId }
-        let filteredFirstPreviewPayload = response.firstPreviewPayload?.item.itemMetadata.itemId == deletedItemId
-            ? nil
-            : response.firstPreviewPayload
+        let filteredFirstPreviewPayload: PreviewPayload? =
+            if let preview = response.firstPreviewPayload,
+               idSet.contains(preview.item.itemMetadata.itemId) { nil }
+            else { response.firstPreviewPayload }
 
         return BrowserSearchResponse(
             request: response.request,
             items: filteredItems,
             firstPreviewPayload: filteredFirstPreviewPayload,
-            totalCount: max(0, response.totalCount - 1)
+            totalCount: max(0, response.totalCount - idSet.count)
         )
     }
 
