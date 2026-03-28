@@ -3,7 +3,7 @@
 //! Each locale has its own DEMO_ITEMS that replace the English content.
 //! The fuzzy search demo uses locale-appropriate search terms.
 
-use super::demo_data::DemoItem;
+use crate::DemoItem;
 use once_cell::sync::Lazy;
 use std::collections::HashMap;
 
@@ -39,6 +39,7 @@ fn load_image_keywords() -> Result<HashMap<(String, String), String>, Box<dyn st
         .parent()
         .ok_or("Failed to get parent directory")?
         .join("image_keywords.csv");
+    // CSV lives at distribution/image_keywords.csv (sibling of demo-data/)
 
     let mut reader = csv::Reader::from_path(csv_path)?;
     let mut map = HashMap::new();
@@ -53,7 +54,7 @@ fn load_image_keywords() -> Result<HashMap<(String, String), String>, Box<dyn st
         .collect();
 
     for result in reader.records() {
-        let record = result?;
+        let record: csv::StringRecord = result?;
         let filename = record.get(0).ok_or("Missing filename column")?.to_string();
 
         // Store keywords for each locale

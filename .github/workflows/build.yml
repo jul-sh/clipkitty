@@ -408,6 +408,76 @@ jobs:
           echo "Marketing 2: https://raw.githubusercontent.com/$REPO/gh-pages/marketing_2.png"
           echo "Marketing 3: https://raw.githubusercontent.com/$REPO/gh-pages/marketing_3.png"
 
+  # Generate localized intro videos for App Store previews.
+  # Runs only on pushes to main/release or manual dispatch (not on PRs).
+  #
+  # LIMITATION: macOS screen recording (screencapture) requires TCC Screen
+  # Recording permission, which cannot be granted non-interactively in CI.
+  # GitHub Actions runners do not have this permission and there is no
+  # supported way to enable it headlessly. This job will build the app,
+  # prepare the localized video databases, and attempt the recording, but
+  # the screencapture step is expected to produce blank/empty output or
+  # fail on CI runners. It is primarily useful for self-hosted runners
+  # where Screen Recording permission has been pre-granted.
+  intro-videos:
+    runs-on: macos-26
+    needs: build
+    if: github.event_name == 'push' || github.event_name == 'workflow_dispatch'
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+        with:
+          lfs: true
+          fetch-depth: 0
+
+      - name: Setup Swift
+        uses: swift-actions/setup-swift@v2
+        with:
+          swift-version: "6.2"
+
+      - name: Install Nix
+        uses: DeterminateSystems/nix-installer-action@main
+
+      - name: Install Distribution Dependencies
+        run: ./distribution/install-deps.sh
+
+      - name: Install Tuist
+        run: |
+          brew tap tuist/tuist
+          brew install --formula tuist
+          tuist version
+
+      - name: Build Rust Core
+        run: make rust
+
+      - name: Generate Xcode Project
+        run: make generate
+
+      - name: Build App
+        run: make build UNIVERSAL=1
+
+      - name: Create Virtual Retina Display
+        run: |
+          xcrun clang -framework CoreGraphics -framework Foundation \
+            -o /tmp/create-retina-display distribution/create-retina-display.m
+          /tmp/create-retina-display &
+          echo "$!" > /tmp/retina-display.pid
+          sleep 5
+
+      - name: Generate Localized Intro Videos
+        run: make -C distribution intro-video-localized UNIVERSAL=1
+
+      - name: Teardown Virtual Display
+        if: always()
+        run: kill "$(cat /tmp/retina-display.pid 2>/dev/null)" 2>/dev/null || true
+
+      - name: Upload Intro Videos
+        uses: actions/upload-artifact@v4
+        with:
+          name: intro-videos
+          path: marketing/*/intro_video.mov
+
   # Upload to App Store Connect via ASC CLI
   appstore:
     runs-on: macos-26

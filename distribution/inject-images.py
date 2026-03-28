@@ -68,8 +68,14 @@ def main():
     conn = sqlite3.connect(db_path)
     cursor = conn.cursor()
 
-    # Get current timestamp as base
-    now = datetime.now()
+    # Use the latest text item's timestamp as base so image offsets are
+    # relative to the same anchor regardless of when this script runs.
+    cursor.execute("SELECT MAX(timestamp) FROM items WHERE contentType != 'image'")
+    row = cursor.fetchone()
+    if row and row[0]:
+        now = datetime.strptime(row[0], '%Y-%m-%d %H:%M:%S')
+    else:
+        now = datetime.now()
 
     # Ensure image_items table has locale column
     cursor.execute("PRAGMA table_info(image_items)")

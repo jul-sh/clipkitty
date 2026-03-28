@@ -1,6 +1,6 @@
 #!/bin/bash
 # Records a video of ClipKitty via a UI test.
-# Requires: ffmpeg (brew install ffmpeg)
+# ffmpeg is provided via the Nix dev shell (flake.nix).
 #
 # Usage:
 #   ./record-preview-video.sh --db SyntheticData_video.sqlite --output intro_video.mov --duration 50
@@ -36,13 +36,18 @@ FINAL_VIDEO="$OUTPUT_DIR/$OUTPUT_NAME"
 # Create output directory
 mkdir -p "$OUTPUT_DIR"
 
-# Check for ffmpeg (optional — used for crop/scale post-processing)
+# Resolve ffmpeg: direct, or via Nix dev shell
+NIX_SHELL="$PROJECT_ROOT/Scripts/run-in-nix.sh"
 HAS_FFMPEG=false
 if command -v ffmpeg &> /dev/null; then
     HAS_FFMPEG=true
+elif [ -x "$NIX_SHELL" ]; then
+    HAS_FFMPEG=true
+    # Wrap ffmpeg so bare invocations go through Nix
+    ffmpeg() { "$NIX_SHELL" -c "ffmpeg $(printf '%q ' "$@")"; }
+    echo "Using ffmpeg from Nix dev shell"
 else
     echo "Note: ffmpeg not found. Will output raw recording (no crop/scale)."
-    echo "  Install with: brew install ffmpeg"
     echo ""
 fi
 
@@ -245,7 +250,7 @@ else
     echo "Output: $FINAL_VIDEO"
     echo "Size: $FILE_SIZE"
     echo ""
-    echo "Install ffmpeg for crop/scale/trim: brew install ffmpeg"
+    echo "Install ffmpeg or use Nix dev shell for crop/scale/trim"
 fi
 
 echo "Closing ClipKitty..."

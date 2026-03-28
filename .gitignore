@@ -18,6 +18,7 @@ Tuist/.build/
 node_modules
 
 # Rust
+distribution/demo-data/target/
 distribution/rust-data-gen/target/
 rust-core/target/
 purr/target/
