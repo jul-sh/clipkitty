@@ -50,6 +50,7 @@ futures = "*"
 sha2 = "*"
 strsim = "*"
 triple_accel = "*"
+purr-sync = { path = "../purr-sync" }
 
 [features]
 default = ["serde"]

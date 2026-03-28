@@ -22,9 +22,11 @@ distribution/demo-data/target/
 distribution/rust-data-gen/target/
 rust-core/target/
 purr/target/
+purr-sync/target/
 purr/generated/
 purr/include/
 purr/*.a
+purr-sync/Cargo.lock
 
 # Generated UniFFI bindings (regenerate with: cargo run --bin generate-bindings)
 Sources/ClipKittyRust/purr.swift

@@ -1,0 +1,11 @@
+[package]
+name = "purr-sync"
+version = "0.1.0"
+edition = "2021"
+
+[lib]
+name = "purr_sync"
+
+[dependencies]
+uniffi = { version = "*", features = ["cli"] }
+uuid = { version = "*", features = ["v4"] }

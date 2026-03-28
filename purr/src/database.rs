@@ -10,6 +10,10 @@ use crate::interface::{
 use crate::models::StoredItem;
 use crate::search::{generate_preview, SNIPPET_CONTEXT_CHARS};
 use chrono::{DateTime, TimeZone, Utc};
+use purr_sync::{
+    initial_sync_version, new_sync_identifier, next_sync_version, SyncDomain, SyncShadowRow,
+    SyncShadowState,
+};
 use r2d2::{Pool, PooledConnection};
 use r2d2_sqlite::SqliteConnectionManager;
 use rusqlite::params;
@@ -168,6 +172,29 @@ impl Database {
                 PRIMARY KEY (itemId, tag)
             );
             CREATE INDEX IF NOT EXISTS idx_item_tags_tag ON item_tags(tag);
+
+            CREATE TABLE IF NOT EXISTS sync_shadow (
+                globalItemId TEXT PRIMARY KEY,
+                itemId INTEGER UNIQUE REFERENCES items(id) ON DELETE SET NULL,
+                state TEXT NOT NULL DEFAULT 'live',
+                recordChangeTag TEXT,
+                pendingUpload INTEGER NOT NULL DEFAULT 1,
+                contentCounter INTEGER NOT NULL DEFAULT 0,
+                contentDeviceId TEXT NOT NULL DEFAULT '',
+                bookmarkCounter INTEGER NOT NULL DEFAULT 0,
+                bookmarkDeviceId TEXT NOT NULL DEFAULT '',
+                activityCounter INTEGER NOT NULL DEFAULT 0,
+                activityDeviceId TEXT NOT NULL DEFAULT '',
+                deleteCounter INTEGER NOT NULL DEFAULT 0,
+                deleteDeviceId TEXT NOT NULL DEFAULT ''
+            );
+            CREATE INDEX IF NOT EXISTS idx_sync_shadow_item ON sync_shadow(itemId);
+            CREATE INDEX IF NOT EXISTS idx_sync_shadow_pending ON sync_shadow(pendingUpload, globalItemId);
+
+            CREATE TABLE IF NOT EXISTS sync_state (
+                key TEXT PRIMARY KEY,
+                value TEXT NOT NULL
+            );
         "#,
         )?;
 
@@ -226,63 +253,64 @@ impl Database {
             ],
         )?;
         let item_id = tx.last_insert_rowid();
-
-        match &item.content {
-            ClipboardContent::Text { value } | ClipboardContent::Color { value } => {
-                tx.execute(
-                    "INSERT INTO text_items (itemId, value) VALUES (?1, ?2)",
-                    params![item_id, value],
-                )?;
-            }
-            ClipboardContent::Image {
-                data,
-                description,
-                is_animated,
-            } => {
-                tx.execute(
-                    "INSERT INTO image_items (itemId, data, description, is_animated) VALUES (?1, ?2, ?3, ?4)",
-                    params![item_id, data, description, *is_animated as i32],
-                )?;
-            }
-            ClipboardContent::Link {
-                url,
-                metadata_state,
-            } => {
-                let (title, description, image_data) = metadata_state.to_database_fields();
-                // Store link preview image as items.thumbnail
-                if image_data.is_some() {
-                    tx.execute(
-                        "UPDATE items SET thumbnail = ?1 WHERE id = ?2",
-                        params![image_data, item_id],
-                    )?;
-                }
-                tx.execute(
-                    "INSERT INTO link_items (itemId, url, title, description) VALUES (?1, ?2, ?3, ?4)",
-                    params![item_id, url, title, description],
-                )?;
-            }
-            ClipboardContent::File { files, .. } => {
-                for (ordinal, file) in files.iter().enumerate() {
-                    tx.execute(
-                        r#"INSERT INTO file_items (itemId, ordinal, path, filename, fileSize, uti, bookmarkData, fileStatus)
-                           VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8)"#,
-                        params![
-                            item_id,
-                            ordinal as i64,
-                            file.path,
-                            file.filename,
-                            file.file_size as i64,
-                            file.uti,
-                            file.bookmark_data,
-                            file.file_status.to_database_str(),
-                        ],
-                    )?;
-                }
-            }
-        }
+        Self::write_item_children(&tx, item_id, item)?;
 
         tx.commit()?;
         Ok(item_id)
+    }
+
+    /// Replace an existing item in-place while preserving its local item ID and tags.
+    pub fn replace_item_preserving_id(
+        &self,
+        item_id: i64,
+        item: &StoredItem,
+    ) -> DatabaseResult<()> {
+        let conn = self.get_conn()?;
+        let tx = conn.unchecked_transaction()?;
+
+        let timestamp = Utc
+            .timestamp_opt(item.timestamp_unix, 0)
+            .single()
+            .unwrap_or_else(Utc::now);
+        let timestamp_str = timestamp.format("%Y-%m-%d %H:%M:%S%.f").to_string();
+        let content_type = item.content.database_type();
+        let content_text = item.content.text_content().to_string();
+
+        tx.execute(
+            r#"
+            UPDATE items
+            SET contentType = ?1,
+                contentHash = ?2,
+                content = ?3,
+                timestamp = ?4,
+                sourceApp = ?5,
+                sourceAppBundleId = ?6,
+                thumbnail = ?7,
+                colorRgba = ?8
+            WHERE id = ?9
+            "#,
+            params![
+                content_type,
+                item.content_hash,
+                content_text,
+                timestamp_str,
+                item.source_app,
+                item.source_app_bundle_id,
+                item.thumbnail,
+                item.color_rgba,
+                item_id,
+            ],
+        )?;
+
+        tx.execute("DELETE FROM text_items WHERE itemId = ?1", [item_id])?;
+        tx.execute("DELETE FROM image_items WHERE itemId = ?1", [item_id])?;
+        tx.execute("DELETE FROM link_items WHERE itemId = ?1", [item_id])?;
+        tx.execute("DELETE FROM file_items WHERE itemId = ?1", [item_id])?;
+
+        Self::write_item_children(&tx, item_id, item)?;
+
+        tx.commit()?;
+        Ok(())
     }
 
     /// Find an existing item by content hash
@@ -381,6 +409,170 @@ impl Database {
     pub fn clear_all(&self) -> DatabaseResult<()> {
         let conn = self.get_conn()?;
         conn.execute("DELETE FROM items", [])?;
+        Ok(())
+    }
+
+    pub(crate) fn sync_device_id(&self) -> DatabaseResult<String> {
+        let conn = self.get_conn()?;
+        Self::sync_device_id_with_conn(&conn)
+    }
+
+    #[cfg_attr(not(test), allow(dead_code))]
+    pub(crate) fn get_sync_shadow_by_item_id(
+        &self,
+        item_id: i64,
+    ) -> DatabaseResult<Option<SyncShadowRow>> {
+        let conn = self.get_conn()?;
+        Self::get_sync_shadow_by_item_id_with_conn(&conn, item_id)
+    }
+
+    pub(crate) fn get_sync_shadow_by_global_id(
+        &self,
+        global_item_id: &str,
+    ) -> DatabaseResult<Option<SyncShadowRow>> {
+        let conn = self.get_conn()?;
+        Self::get_sync_shadow_by_global_id_with_conn(&conn, global_item_id)
+    }
+
+    pub(crate) fn pending_sync_shadows(&self, limit: usize) -> DatabaseResult<Vec<SyncShadowRow>> {
+        let conn = self.get_conn()?;
+        Self::pending_sync_shadows_with_conn(&conn, limit)
+    }
+
+    pub(crate) fn backfill_missing_sync_shadows(&self, limit: usize) -> DatabaseResult<usize> {
+        let conn = self.get_conn()?;
+        let device_id = Self::sync_device_id_with_conn(&conn)?;
+        let mut stmt = conn.prepare(
+            r#"
+            SELECT items.id
+            FROM items
+            LEFT JOIN sync_shadow ON sync_shadow.itemId = items.id
+            WHERE items.contentType != 'file' AND sync_shadow.itemId IS NULL
+            ORDER BY items.timestamp DESC
+            LIMIT ?1
+            "#,
+        )?;
+        let item_ids: Vec<i64> = stmt
+            .query_map([limit as i64], |row| row.get(0))?
+            .collect::<Result<Vec<_>, _>>()?;
+
+        for item_id in &item_ids {
+            if let Some(row) = Self::new_backfilled_sync_shadow(&conn, *item_id, &device_id)? {
+                Self::save_sync_shadow_with_conn(&conn, &row)?;
+            }
+        }
+
+        Ok(item_ids.len())
+    }
+
+    pub(crate) fn stage_local_item_created(&self, item_id: i64) -> DatabaseResult<()> {
+        let conn = self.get_conn()?;
+        let device_id = Self::sync_device_id_with_conn(&conn)?;
+        if Self::get_sync_shadow_by_item_id_with_conn(&conn, item_id)?.is_some() {
+            return Ok(());
+        }
+
+        if let Some(row) = Self::new_backfilled_sync_shadow(&conn, item_id, &device_id)? {
+            Self::save_sync_shadow_with_conn(&conn, &row)?;
+        }
+        Ok(())
+    }
+
+    pub(crate) fn stage_local_item_domain_change(
+        &self,
+        item_id: i64,
+        domain: SyncDomain,
+    ) -> DatabaseResult<()> {
+        let conn = self.get_conn()?;
+        let device_id = Self::sync_device_id_with_conn(&conn)?;
+        let mut row = match Self::get_sync_shadow_by_item_id_with_conn(&conn, item_id)? {
+            Some(row) => row,
+            None => {
+                let Some(row) = Self::new_backfilled_sync_shadow(&conn, item_id, &device_id)?
+                else {
+                    return Ok(());
+                };
+                row
+            }
+        };
+
+        match domain {
+            SyncDomain::Content => {
+                row.content_version = next_sync_version(&row.content_version, &device_id);
+            }
+            SyncDomain::Bookmark => {
+                row.bookmark_version = next_sync_version(&row.bookmark_version, &device_id);
+            }
+            SyncDomain::Activity => {
+                row.activity_version = next_sync_version(&row.activity_version, &device_id);
+            }
+        }
+
+        row.pending_upload = true;
+        row.state = SyncShadowState::Live;
+        row.item_id = Some(item_id);
+        Self::save_sync_shadow_with_conn(&conn, &row)
+    }
+
+    pub(crate) fn stage_local_item_delete(
+        &self,
+        item_id: i64,
+    ) -> DatabaseResult<Option<SyncShadowRow>> {
+        let conn = self.get_conn()?;
+        let device_id = Self::sync_device_id_with_conn(&conn)?;
+        let mut row = match Self::get_sync_shadow_by_item_id_with_conn(&conn, item_id)? {
+            Some(row) => row,
+            None => {
+                let Some(row) = Self::new_backfilled_sync_shadow(&conn, item_id, &device_id)?
+                else {
+                    return Ok(None);
+                };
+                row
+            }
+        };
+
+        row.delete_version = next_sync_version(&row.delete_version, &device_id);
+        row.pending_upload = true;
+        row.state = SyncShadowState::Tombstone;
+        row.item_id = None;
+        Self::save_sync_shadow_with_conn(&conn, &row)?;
+        Ok(Some(row))
+    }
+
+    pub(crate) fn acknowledge_sync_change_uploaded(
+        &self,
+        global_item_id: &str,
+        record_change_tag: Option<&str>,
+    ) -> DatabaseResult<()> {
+        let conn = self.get_conn()?;
+        conn.execute(
+            "UPDATE sync_shadow SET pendingUpload = 0, recordChangeTag = ?1 WHERE globalItemId = ?2",
+            params![record_change_tag, global_item_id],
+        )?;
+        Ok(())
+    }
+
+    pub(crate) fn save_sync_shadow(&self, row: &SyncShadowRow) -> DatabaseResult<()> {
+        let conn = self.get_conn()?;
+        Self::save_sync_shadow_with_conn(&conn, row)
+    }
+
+    pub(crate) fn remove_sync_shadow_by_item_ids(&self, item_ids: &[i64]) -> DatabaseResult<()> {
+        if item_ids.is_empty() {
+            return Ok(());
+        }
+
+        let conn = self.get_conn()?;
+        let placeholders = item_ids.iter().map(|_| "?").collect::<Vec<_>>().join(",");
+        let sql = format!("DELETE FROM sync_shadow WHERE itemId IN ({placeholders})");
+        let params: Vec<rusqlite::types::Value> = item_ids.iter().map(|&id| id.into()).collect();
+        conn.execute(&sql, rusqlite::params_from_iter(params))?;
+        Ok(())
+    }
+
+    pub(crate) fn clear_sync_shadow(&self) -> DatabaseResult<()> {
+        let conn = self.get_conn()?;
+        conn.execute("DELETE FROM sync_shadow", [])?;
         Ok(())
     }
 
@@ -758,6 +950,280 @@ impl Database {
         )?;
 
         Ok(items_to_delete)
+    }
+
+    fn write_item_children(
+        tx: &rusqlite::Transaction<'_>,
+        item_id: i64,
+        item: &StoredItem,
+    ) -> DatabaseResult<()> {
+        match &item.content {
+            ClipboardContent::Text { value } | ClipboardContent::Color { value } => {
+                tx.execute(
+                    "INSERT INTO text_items (itemId, value) VALUES (?1, ?2)",
+                    params![item_id, value],
+                )?;
+            }
+            ClipboardContent::Image {
+                data,
+                description,
+                is_animated,
+            } => {
+                tx.execute(
+                    "INSERT INTO image_items (itemId, data, description, is_animated) VALUES (?1, ?2, ?3, ?4)",
+                    params![item_id, data, description, *is_animated as i32],
+                )?;
+            }
+            ClipboardContent::Link {
+                url,
+                metadata_state,
+            } => {
+                let (title, description, image_data) = metadata_state.to_database_fields();
+                if image_data.is_some() {
+                    tx.execute(
+                        "UPDATE items SET thumbnail = ?1 WHERE id = ?2",
+                        params![image_data, item_id],
+                    )?;
+                }
+                tx.execute(
+                    "INSERT INTO link_items (itemId, url, title, description) VALUES (?1, ?2, ?3, ?4)",
+                    params![item_id, url, title, description],
+                )?;
+            }
+            ClipboardContent::File { files, .. } => {
+                for (ordinal, file) in files.iter().enumerate() {
+                    tx.execute(
+                        r#"INSERT INTO file_items (itemId, ordinal, path, filename, fileSize, uti, bookmarkData, fileStatus)
+                           VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8)"#,
+                        params![
+                            item_id,
+                            ordinal as i64,
+                            file.path,
+                            file.filename,
+                            file.file_size as i64,
+                            file.uti,
+                            file.bookmark_data,
+                            file.file_status.to_database_str(),
+                        ],
+                    )?;
+                }
+            }
+        }
+
+        Ok(())
+    }
+
+    fn sync_device_id_with_conn(conn: &rusqlite::Connection) -> DatabaseResult<String> {
+        let result = conn.query_row(
+            "SELECT value FROM sync_state WHERE key = 'device_id'",
+            [],
+            |row| row.get::<_, String>(0),
+        );
+        match result {
+            Ok(device_id) => Ok(device_id),
+            Err(rusqlite::Error::QueryReturnedNoRows) => {
+                let device_id = new_sync_identifier();
+                conn.execute(
+                    "INSERT INTO sync_state (key, value) VALUES ('device_id', ?1)",
+                    params![device_id],
+                )?;
+                Ok(device_id)
+            }
+            Err(error) => Err(error.into()),
+        }
+    }
+
+    fn row_to_sync_shadow(row: &rusqlite::Row<'_>) -> rusqlite::Result<SyncShadowRow> {
+        let state: String = row.get(2)?;
+        Ok(SyncShadowRow {
+            global_item_id: row.get(0)?,
+            item_id: row.get(1)?,
+            state: SyncShadowState::from_database_str(&state).map_err(|message| {
+                rusqlite::Error::FromSqlConversionFailure(
+                    2,
+                    rusqlite::types::Type::Text,
+                    Box::new(std::io::Error::new(
+                        std::io::ErrorKind::InvalidData,
+                        message,
+                    )),
+                )
+            })?,
+            record_change_tag: row.get(3)?,
+            pending_upload: row.get::<_, i64>(4)? != 0,
+            content_version: crate::interface::SyncVersion {
+                counter: row.get(5)?,
+                device_id: row.get(6)?,
+            },
+            bookmark_version: crate::interface::SyncVersion {
+                counter: row.get(7)?,
+                device_id: row.get(8)?,
+            },
+            activity_version: crate::interface::SyncVersion {
+                counter: row.get(9)?,
+                device_id: row.get(10)?,
+            },
+            delete_version: crate::interface::SyncVersion {
+                counter: row.get(11)?,
+                device_id: row.get(12)?,
+            },
+        })
+    }
+
+    fn get_sync_shadow_by_item_id_with_conn(
+        conn: &rusqlite::Connection,
+        item_id: i64,
+    ) -> DatabaseResult<Option<SyncShadowRow>> {
+        let result = conn.query_row(
+            r#"
+            SELECT globalItemId, itemId, state, recordChangeTag, pendingUpload,
+                   contentCounter, contentDeviceId,
+                   bookmarkCounter, bookmarkDeviceId,
+                   activityCounter, activityDeviceId,
+                   deleteCounter, deleteDeviceId
+            FROM sync_shadow
+            WHERE itemId = ?1
+            "#,
+            [item_id],
+            Self::row_to_sync_shadow,
+        );
+        match result {
+            Ok(row) => Ok(Some(row)),
+            Err(rusqlite::Error::QueryReturnedNoRows) => Ok(None),
+            Err(error) => Err(error.into()),
+        }
+    }
+
+    fn get_sync_shadow_by_global_id_with_conn(
+        conn: &rusqlite::Connection,
+        global_item_id: &str,
+    ) -> DatabaseResult<Option<SyncShadowRow>> {
+        let result = conn.query_row(
+            r#"
+            SELECT globalItemId, itemId, state, recordChangeTag, pendingUpload,
+                   contentCounter, contentDeviceId,
+                   bookmarkCounter, bookmarkDeviceId,
+                   activityCounter, activityDeviceId,
+                   deleteCounter, deleteDeviceId
+            FROM sync_shadow
+            WHERE globalItemId = ?1
+            "#,
+            [global_item_id],
+            Self::row_to_sync_shadow,
+        );
+        match result {
+            Ok(row) => Ok(Some(row)),
+            Err(rusqlite::Error::QueryReturnedNoRows) => Ok(None),
+            Err(error) => Err(error.into()),
+        }
+    }
+
+    fn save_sync_shadow_with_conn(
+        conn: &rusqlite::Connection,
+        row: &SyncShadowRow,
+    ) -> DatabaseResult<()> {
+        conn.execute(
+            r#"
+            INSERT INTO sync_shadow (
+                globalItemId, itemId, state, recordChangeTag, pendingUpload,
+                contentCounter, contentDeviceId,
+                bookmarkCounter, bookmarkDeviceId,
+                activityCounter, activityDeviceId,
+                deleteCounter, deleteDeviceId
+            )
+            VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11, ?12, ?13)
+            ON CONFLICT(globalItemId) DO UPDATE SET
+                itemId = excluded.itemId,
+                state = excluded.state,
+                recordChangeTag = excluded.recordChangeTag,
+                pendingUpload = excluded.pendingUpload,
+                contentCounter = excluded.contentCounter,
+                contentDeviceId = excluded.contentDeviceId,
+                bookmarkCounter = excluded.bookmarkCounter,
+                bookmarkDeviceId = excluded.bookmarkDeviceId,
+                activityCounter = excluded.activityCounter,
+                activityDeviceId = excluded.activityDeviceId,
+                deleteCounter = excluded.deleteCounter,
+                deleteDeviceId = excluded.deleteDeviceId
+            "#,
+            params![
+                row.global_item_id,
+                row.item_id,
+                row.state.database_str(),
+                row.record_change_tag,
+                if row.pending_upload { 1 } else { 0 },
+                row.content_version.counter,
+                row.content_version.device_id,
+                row.bookmark_version.counter,
+                row.bookmark_version.device_id,
+                row.activity_version.counter,
+                row.activity_version.device_id,
+                row.delete_version.counter,
+                row.delete_version.device_id,
+            ],
+        )?;
+        Ok(())
+    }
+
+    fn pending_sync_shadows_with_conn(
+        conn: &rusqlite::Connection,
+        limit: usize,
+    ) -> DatabaseResult<Vec<SyncShadowRow>> {
+        let mut stmt = conn.prepare(
+            r#"
+            SELECT globalItemId, itemId, state, recordChangeTag, pendingUpload,
+                   contentCounter, contentDeviceId,
+                   bookmarkCounter, bookmarkDeviceId,
+                   activityCounter, activityDeviceId,
+                   deleteCounter, deleteDeviceId
+            FROM sync_shadow
+            WHERE pendingUpload = 1
+            ORDER BY globalItemId
+            LIMIT ?1
+            "#,
+        )?;
+        let rows = stmt
+            .query_map([limit as i64], Self::row_to_sync_shadow)?
+            .collect::<Result<Vec<_>, _>>()?;
+        Ok(rows)
+    }
+
+    fn new_backfilled_sync_shadow(
+        conn: &rusqlite::Connection,
+        item_id: i64,
+        device_id: &str,
+    ) -> DatabaseResult<Option<SyncShadowRow>> {
+        let content_type = match conn.query_row(
+            "SELECT contentType FROM items WHERE id = ?1",
+            [item_id],
+            |row| row.get::<_, String>(0),
+        ) {
+            Ok(value) => value,
+            Err(rusqlite::Error::QueryReturnedNoRows) => return Ok(None),
+            Err(error) => return Err(error.into()),
+        };
+
+        if content_type == "file" {
+            return Ok(None);
+        }
+
+        let bookmark_exists: i64 = conn.query_row(
+            "SELECT EXISTS(SELECT 1 FROM item_tags WHERE itemId = ?1 AND tag = ?2)",
+            params![item_id, ItemTag::Bookmark.database_str()],
+            |row| row.get(0),
+        )?;
+        let is_bookmarked = bookmark_exists != 0;
+
+        Ok(Some(SyncShadowRow {
+            global_item_id: new_sync_identifier(),
+            item_id: Some(item_id),
+            state: SyncShadowState::Live,
+            record_change_tag: None,
+            pending_upload: true,
+            content_version: initial_sync_version(device_id, 1),
+            bookmark_version: initial_sync_version(device_id, if is_bookmarked { 1 } else { 0 }),
+            activity_version: initial_sync_version(device_id, 1),
+            delete_version: initial_sync_version(device_id, 0),
+        }))
     }
 
     /// Build a SQL clause for filtering by content type.

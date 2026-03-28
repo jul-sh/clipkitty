@@ -5,6 +5,11 @@
 
 use thiserror::Error;
 
+pub use purr_sync::{
+    LinkMetadataPayload, LinkMetadataState, SyncApplyReport, SyncContentPayload, SyncLiveSnapshot,
+    SyncRecordChange, SyncSnapshot, SyncTombstoneSnapshot, SyncVersion,
+};
+
 // ═══════════════════════════════════════════════════════════════════════════════
 // ENUMS
 // ═══════════════════════════════════════════════════════════════════════════════
@@ -170,126 +175,6 @@ impl ItemIcon {
             _ => ItemIcon::Symbol {
                 icon_type: IconType::Text,
             },
-        }
-    }
-}
-
-/// Legal payloads for a successful link metadata fetch.
-#[derive(Debug, Clone, PartialEq, Eq, uniffi::Enum)]
-pub enum LinkMetadataPayload {
-    TitleOnly {
-        title: String,
-        description: Option<String>,
-    },
-    ImageOnly {
-        image_data: Vec<u8>,
-        description: Option<String>,
-    },
-    TitleAndImage {
-        title: String,
-        image_data: Vec<u8>,
-        description: Option<String>,
-    },
-}
-
-/// Link metadata fetch state
-#[derive(Debug, Clone, PartialEq, Eq, uniffi::Enum)]
-pub enum LinkMetadataState {
-    Pending,
-    Loaded { payload: LinkMetadataPayload },
-    Failed,
-}
-
-impl LinkMetadataPayload {
-    fn normalized_description(description: Option<&str>) -> Option<String> {
-        description
-            .map(str::trim)
-            .filter(|value| !value.is_empty())
-            .map(String::from)
-    }
-}
-
-impl LinkMetadataState {
-    /// Convert to database fields (title, description, image_data)
-    /// NULL title = pending, empty title = failed, otherwise = loaded.
-    pub fn to_database_fields(&self) -> (Option<String>, Option<String>, Option<Vec<u8>>) {
-        match self {
-            LinkMetadataState::Pending => (None, None, None),
-            LinkMetadataState::Failed => (Some(String::new()), None, None),
-            LinkMetadataState::Loaded { payload } => match payload {
-                LinkMetadataPayload::TitleOnly { title, description } => {
-                    (Some(title.clone()), description.clone(), None)
-                }
-                LinkMetadataPayload::ImageOnly {
-                    image_data,
-                    description,
-                } => (None, description.clone(), Some(image_data.clone())),
-                LinkMetadataPayload::TitleAndImage {
-                    title,
-                    image_data,
-                    description,
-                } => (
-                    Some(title.clone()),
-                    description.clone(),
-                    Some(image_data.clone()),
-                ),
-            },
-        }
-    }
-
-    /// Reconstruct from database fields, surfacing invalid combinations instead of
-    /// silently coercing them into another state.
-    pub fn from_database(
-        title: Option<&str>,
-        description: Option<&str>,
-        image_data: Option<Vec<u8>>,
-    ) -> Result<Self, String> {
-        let normalized_title = title
-            .map(str::trim)
-            .filter(|value| !value.is_empty())
-            .map(String::from);
-        let normalized_description = LinkMetadataPayload::normalized_description(description);
-
-        match (title, normalized_title, normalized_description, image_data) {
-            (None, None, None, None) => Ok(LinkMetadataState::Pending),
-            (Some(""), None, None, None) => Ok(LinkMetadataState::Failed),
-            (Some(raw_title), None, _, Some(_)) if raw_title.trim().is_empty() => {
-                Err("failed link metadata row unexpectedly stored image data".to_string())
-            }
-            (Some(raw_title), None, Some(_), None) if raw_title.trim().is_empty() => {
-                Err("failed link metadata row unexpectedly stored description".to_string())
-            }
-            (Some(_), Some(title), description, None) => Ok(LinkMetadataState::Loaded {
-                payload: LinkMetadataPayload::TitleOnly { title, description },
-            }),
-            (None, None, description, Some(image_data)) => Ok(LinkMetadataState::Loaded {
-                payload: LinkMetadataPayload::ImageOnly {
-                    image_data,
-                    description,
-                },
-            }),
-            (Some(_), Some(title), description, Some(image_data)) => {
-                Ok(LinkMetadataState::Loaded {
-                    payload: LinkMetadataPayload::TitleAndImage {
-                        title,
-                        image_data,
-                        description,
-                    },
-                })
-            }
-            (None, None, Some(_), None) => {
-                Err("link metadata row stored a description without a title or image".to_string())
-            }
-            (None, Some(_), _, _) => Err(
-                "link metadata row normalized to a title without an underlying title column"
-                    .to_string(),
-            ),
-            (Some(raw_title), None, _, None) => Err(format!(
-                "link metadata row stored an invalid title value `{raw_title}`"
-            )),
-            (Some(raw_title), None, _, Some(_)) => Err(format!(
-                "link metadata row stored an invalid title value `{raw_title}`"
-            )),
         }
     }
 }
@@ -556,6 +441,22 @@ pub trait ClipboardStoreApi: Send + Sync {
 
     /// Get the database size in bytes
     fn database_size(&self) -> i64;
+
+    /// Load pending sync changes that still need to be uploaded.
+    fn pending_sync_changes(&self, limit: u32) -> Result<Vec<SyncRecordChange>, ClipKittyError>;
+
+    /// Mark a sync change as uploaded and store the latest transport change tag.
+    fn acknowledge_sync_change_uploaded(
+        &self,
+        global_item_id: String,
+        record_change_tag: Option<String>,
+    ) -> Result<(), ClipKittyError>;
+
+    /// Apply a batch of remote sync changes without echoing them back into the outbox.
+    fn apply_remote_sync_changes(
+        &self,
+        changes: Vec<SyncRecordChange>,
+    ) -> Result<SyncApplyReport, ClipKittyError>;
 
     // ─────────────────────────────────────────────────────────────────────────────
     // Write Operations

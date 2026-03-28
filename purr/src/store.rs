@@ -4,7 +4,8 @@ use crate::database::Database;
 use crate::indexer::{IndexInspection, Indexer};
 use crate::interface::{
     ClipKittyError, ClipboardItem, ClipboardStoreApi, ItemQueryFilter, ItemTag, PreviewPayload,
-    RowDecorationResult, SearchOutcome, SearchResult, StoreBootstrapPlan,
+    RowDecorationResult, SearchOutcome, SearchResult, StoreBootstrapPlan, SyncApplyReport,
+    SyncRecordChange,
 };
 use crate::{match_presentation, save_service, search_service};
 use once_cell::sync::Lazy;
@@ -253,6 +254,29 @@ impl ClipboardStoreApi for ClipboardStore {
         self.db.database_size().unwrap_or(0)
     }
 
+    fn pending_sync_changes(&self, limit: u32) -> Result<Vec<SyncRecordChange>, ClipKittyError> {
+        save_service::pending_sync_changes(&self.db, limit)
+    }
+
+    fn acknowledge_sync_change_uploaded(
+        &self,
+        global_item_id: String,
+        record_change_tag: Option<String>,
+    ) -> Result<(), ClipKittyError> {
+        save_service::acknowledge_sync_change_uploaded(
+            &self.db,
+            &global_item_id,
+            record_change_tag.as_deref(),
+        )
+    }
+
+    fn apply_remote_sync_changes(
+        &self,
+        changes: Vec<SyncRecordChange>,
+    ) -> Result<SyncApplyReport, ClipKittyError> {
+        save_service::apply_remote_sync_changes(&self.db, &self.indexer, changes)
+    }
+
     fn save_text(
         &self,
         text: String,
@@ -464,10 +488,13 @@ mod tests {
     use super::*;
     use crate::interface::{
         ClipboardContent, FileStatus, HighlightKind, IconType, ItemIcon, ItemQueryFilter,
-        LinkMetadataPayload, LinkMetadataState, StoreBootstrapPlan,
+        LinkMetadataPayload, LinkMetadataState, StoreBootstrapPlan, SyncContentPayload,
+        SyncLiveSnapshot, SyncRecordChange, SyncSnapshot, SyncTombstoneSnapshot, SyncVersion,
     };
+    use crate::models::StoredItem;
     use once_cell::sync::Lazy;
     use parking_lot::Mutex as TestMutex;
+    use std::collections::BTreeSet;
     use std::sync::atomic::{AtomicUsize, Ordering};
     use std::sync::{Arc, OnceLock};
     use tempfile::tempdir;
@@ -500,6 +527,105 @@ mod tests {
         let dir = tempdir().unwrap();
         let db_path = dir.path().join("clipboard.sqlite");
         (dir, db_path.to_string_lossy().to_string())
+    }
+
+    fn sync_version(counter: i64, device_id: &str) -> SyncVersion {
+        SyncVersion {
+            counter,
+            device_id: device_id.to_string(),
+        }
+    }
+
+    fn live_change(
+        global_item_id: &str,
+        content: SyncContentPayload,
+        activity_timestamp_unix: i64,
+        content_version: SyncVersion,
+        bookmark_version: SyncVersion,
+        activity_version: SyncVersion,
+        delete_version: SyncVersion,
+    ) -> SyncRecordChange {
+        SyncRecordChange {
+            snapshot: SyncSnapshot::Live {
+                snapshot: SyncLiveSnapshot {
+                    global_item_id: global_item_id.to_string(),
+                    content,
+                    source_app: None,
+                    source_app_bundle_id: None,
+                    is_bookmarked: false,
+                    activity_timestamp_unix,
+                    content_version,
+                    bookmark_version,
+                    activity_version,
+                    delete_version,
+                },
+            },
+            record_change_tag: Some(format!("tag-{global_item_id}-{activity_timestamp_unix}")),
+        }
+    }
+
+    fn tombstone_change(
+        global_item_id: &str,
+        content_version: SyncVersion,
+        delete_version: SyncVersion,
+    ) -> SyncRecordChange {
+        let delete_counter = delete_version.counter;
+        SyncRecordChange {
+            snapshot: SyncSnapshot::Tombstone {
+                snapshot: SyncTombstoneSnapshot {
+                    global_item_id: global_item_id.to_string(),
+                    content_version,
+                    delete_version,
+                },
+            },
+            record_change_tag: Some(format!("tag-{global_item_id}-delete-{}", delete_counter)),
+        }
+    }
+
+    fn db_ids_matching_query(store: &ClipboardStore, query: &str) -> BTreeSet<i64> {
+        let lowered = query.to_lowercase();
+        store
+            .db
+            .fetch_all_items()
+            .unwrap()
+            .into_iter()
+            .filter_map(|item| {
+                let item_id = item.id?;
+                item.text_content()
+                    .to_lowercase()
+                    .contains(&lowered)
+                    .then_some(item_id)
+            })
+            .collect()
+    }
+
+    fn db_id_for_exact_text(store: &ClipboardStore, text: &str) -> i64 {
+        store
+            .db
+            .fetch_all_items()
+            .unwrap()
+            .into_iter()
+            .find_map(|item| {
+                (item.text_content() == text)
+                    .then_some(item.id.expect("stored items should have ids when fetched"))
+            })
+            .expect("expected to find item by exact text")
+    }
+
+    async fn search_ids(store: &ClipboardStore, query: &str) -> Vec<i64> {
+        store
+            .search(query.to_string())
+            .await
+            .unwrap()
+            .matches
+            .into_iter()
+            .map(|item| item.item_metadata.item_id)
+            .collect()
+    }
+
+    async fn assert_search_matches_db_for_query(store: &ClipboardStore, query: &str) {
+        let search_ids: BTreeSet<i64> = search_ids(store, query).await.into_iter().collect();
+        assert_eq!(search_ids, db_ids_matching_query(store, query));
     }
 
     #[test]
@@ -1470,5 +1596,318 @@ mod tests {
             .map(|item| item.item_metadata.item_id)
             .collect();
         assert_eq!(ids, vec![item_id]);
+    }
+
+    #[test]
+    fn test_pending_sync_changes_backfill_supported_items_and_skip_files() {
+        let store = ClipboardStore::new_in_memory().unwrap();
+
+        let text_item = StoredItem::new_text("syncprobe backfill text".to_string(), None, None);
+        let text_id = store.db.insert_item(&text_item).unwrap();
+        store
+            .indexer
+            .add_document(text_id, text_item.text_content(), text_item.timestamp_unix)
+            .unwrap();
+
+        let file_item = StoredItem::new_file(
+            "/tmp/syncprobe.txt".to_string(),
+            "syncprobe.txt".to_string(),
+            42,
+            "public.plain-text".to_string(),
+            vec![1, 2, 3],
+            None,
+            None,
+            None,
+        );
+        let file_id = store.db.insert_item(&file_item).unwrap();
+        store
+            .indexer
+            .add_document(
+                file_id,
+                &file_item.file_index_text().unwrap(),
+                file_item.timestamp_unix,
+            )
+            .unwrap();
+        store.indexer.commit().unwrap();
+
+        let changes = store.pending_sync_changes(10).unwrap();
+        assert_eq!(changes.len(), 1);
+        match &changes[0].snapshot {
+            SyncSnapshot::Live { snapshot } => {
+                assert_eq!(
+                    snapshot.content,
+                    SyncContentPayload::Text {
+                        value: "syncprobe backfill text".to_string(),
+                    }
+                );
+            }
+            other => panic!("expected live snapshot, got {other:?}"),
+        }
+
+        assert!(store
+            .db
+            .get_sync_shadow_by_item_id(text_id)
+            .unwrap()
+            .is_some());
+        assert!(store
+            .db
+            .get_sync_shadow_by_item_id(file_id)
+            .unwrap()
+            .is_none());
+    }
+
+    #[tokio::test]
+    async fn test_local_mutations_keep_database_and_index_in_sync() {
+        let store = ClipboardStore::new_in_memory().unwrap();
+        let first_id = store
+            .save_text("syncprobe local first".to_string(), None, None)
+            .unwrap();
+        let second_id = store
+            .save_text("syncprobe local second".to_string(), None, None)
+            .unwrap();
+
+        assert_search_matches_db_for_query(&store, "syncprobe").await;
+
+        store
+            .update_text_item(first_id, "syncprobe local edited".to_string())
+            .unwrap();
+        assert!(search_ids(&store, "edited").await.contains(&first_id));
+        assert_search_matches_db_for_query(&store, "syncprobe").await;
+
+        store.delete_item(second_id).unwrap();
+        assert!(search_ids(&store, "second").await.is_empty());
+        assert_search_matches_db_for_query(&store, "syncprobe").await;
+
+        store.rebuild_index().unwrap();
+        assert_search_matches_db_for_query(&store, "syncprobe").await;
+    }
+
+    #[test]
+    fn test_acknowledge_bookmark_and_delete_update_pending_sync_snapshot() {
+        let store = ClipboardStore::new_in_memory().unwrap();
+        let item_id = store
+            .save_text("syncprobe sync row".to_string(), None, None)
+            .unwrap();
+
+        let pending = store.pending_sync_changes(10).unwrap();
+        assert_eq!(pending.len(), 1);
+        let global_item_id = match &pending[0].snapshot {
+            SyncSnapshot::Live { snapshot } => snapshot.global_item_id.clone(),
+            other => panic!("expected live snapshot, got {other:?}"),
+        };
+
+        store
+            .acknowledge_sync_change_uploaded(
+                global_item_id.clone(),
+                Some("server-tag-1".to_string()),
+            )
+            .unwrap();
+        assert!(store.pending_sync_changes(10).unwrap().is_empty());
+
+        store.add_tag(item_id, ItemTag::Bookmark).unwrap();
+        let pending = store.pending_sync_changes(10).unwrap();
+        assert_eq!(pending.len(), 1);
+        match &pending[0].snapshot {
+            SyncSnapshot::Live { snapshot } => {
+                assert_eq!(snapshot.global_item_id, global_item_id);
+                assert!(snapshot.is_bookmarked);
+            }
+            other => panic!("expected live snapshot, got {other:?}"),
+        }
+
+        store.delete_item(item_id).unwrap();
+        let pending = store.pending_sync_changes(10).unwrap();
+        assert_eq!(pending.len(), 1);
+        match &pending[0].snapshot {
+            SyncSnapshot::Tombstone { snapshot } => {
+                assert_eq!(snapshot.global_item_id, global_item_id);
+            }
+            other => panic!("expected tombstone snapshot, got {other:?}"),
+        }
+    }
+
+    #[tokio::test]
+    async fn test_remote_live_insert_and_activity_update_stay_in_sync() {
+        let store = ClipboardStore::new_in_memory().unwrap();
+
+        let device = "remote-a";
+        store
+            .apply_remote_sync_changes(vec![
+                live_change(
+                    "remote-alpha",
+                    SyncContentPayload::Text {
+                        value: "rankprobe alpha".to_string(),
+                    },
+                    100,
+                    sync_version(1, device),
+                    sync_version(0, device),
+                    sync_version(1, device),
+                    sync_version(0, device),
+                ),
+                live_change(
+                    "remote-beta",
+                    SyncContentPayload::Text {
+                        value: "rankprobe beta".to_string(),
+                    },
+                    200,
+                    sync_version(1, device),
+                    sync_version(0, device),
+                    sync_version(1, device),
+                    sync_version(0, device),
+                ),
+            ])
+            .unwrap();
+
+        assert!(store.pending_sync_changes(10).unwrap().is_empty());
+        assert_search_matches_db_for_query(&store, "rankprobe").await;
+
+        let alpha_id = db_id_for_exact_text(&store, "rankprobe alpha");
+        let beta_id = db_id_for_exact_text(&store, "rankprobe beta");
+        assert_eq!(search_ids(&store, "").await[..2], [beta_id, alpha_id]);
+
+        store
+            .apply_remote_sync_changes(vec![live_change(
+                "remote-alpha",
+                SyncContentPayload::Text {
+                    value: "rankprobe alpha".to_string(),
+                },
+                300,
+                sync_version(1, device),
+                sync_version(0, device),
+                sync_version(2, device),
+                sync_version(0, device),
+            )])
+            .unwrap();
+
+        assert!(store.pending_sync_changes(10).unwrap().is_empty());
+        assert_search_matches_db_for_query(&store, "rankprobe").await;
+        assert_eq!(search_ids(&store, "").await[0], alpha_id);
+
+        store.rebuild_index().unwrap();
+        assert_search_matches_db_for_query(&store, "rankprobe").await;
+        assert_eq!(search_ids(&store, "").await[0], alpha_id);
+    }
+
+    #[tokio::test]
+    async fn test_remote_content_update_and_tombstone_update_sqlite_and_index_together() {
+        let store = ClipboardStore::new_in_memory().unwrap();
+
+        store
+            .apply_remote_sync_changes(vec![live_change(
+                "remote-doc",
+                SyncContentPayload::Text {
+                    value: "syncprobe oldterm".to_string(),
+                },
+                100,
+                sync_version(1, "remote-a"),
+                sync_version(0, "remote-a"),
+                sync_version(1, "remote-a"),
+                sync_version(0, "remote-a"),
+            )])
+            .unwrap();
+
+        let item_id = db_id_for_exact_text(&store, "syncprobe oldterm");
+        assert_eq!(search_ids(&store, "oldterm").await, vec![item_id]);
+
+        store
+            .apply_remote_sync_changes(vec![live_change(
+                "remote-doc",
+                SyncContentPayload::Text {
+                    value: "syncprobe newterm".to_string(),
+                },
+                100,
+                sync_version(2, "remote-b"),
+                sync_version(0, "remote-a"),
+                sync_version(1, "remote-a"),
+                sync_version(0, "remote-a"),
+            )])
+            .unwrap();
+
+        assert!(search_ids(&store, "oldterm").await.is_empty());
+        assert_eq!(search_ids(&store, "newterm").await, vec![item_id]);
+        assert_search_matches_db_for_query(&store, "syncprobe").await;
+
+        store
+            .apply_remote_sync_changes(vec![tombstone_change(
+                "remote-doc",
+                sync_version(2, "remote-b"),
+                sync_version(1, "remote-b"),
+            )])
+            .unwrap();
+
+        assert!(search_ids(&store, "newterm").await.is_empty());
+        assert!(store.pending_sync_changes(10).unwrap().is_empty());
+        assert_eq!(db_ids_matching_query(&store, "syncprobe"), BTreeSet::new());
+
+        store.rebuild_index().unwrap();
+        assert!(search_ids(&store, "newterm").await.is_empty());
+    }
+
+    #[tokio::test]
+    async fn test_remote_conflicting_content_edit_forks_local_copy() {
+        let store = ClipboardStore::new_in_memory().unwrap();
+
+        store
+            .apply_remote_sync_changes(vec![live_change(
+                "shared-item",
+                SyncContentPayload::Text {
+                    value: "forkprobe seed".to_string(),
+                },
+                100,
+                sync_version(1, "remote-a"),
+                sync_version(0, "remote-a"),
+                sync_version(1, "remote-a"),
+                sync_version(0, "remote-a"),
+            )])
+            .unwrap();
+
+        let shared_id = db_id_for_exact_text(&store, "forkprobe seed");
+        store
+            .update_text_item(shared_id, "forkprobe local edit".to_string())
+            .unwrap();
+
+        let report = store
+            .apply_remote_sync_changes(vec![live_change(
+                "shared-item",
+                SyncContentPayload::Text {
+                    value: "forkprobe remote edit".to_string(),
+                },
+                100,
+                sync_version(2, "remote-b"),
+                sync_version(0, "remote-a"),
+                sync_version(1, "remote-a"),
+                sync_version(0, "remote-a"),
+            )])
+            .unwrap();
+
+        assert_eq!(report.applied_change_count, 1);
+        assert_eq!(report.fork_count, 1);
+        assert_search_matches_db_for_query(&store, "forkprobe").await;
+        let remote_id = db_id_for_exact_text(&store, "forkprobe remote edit");
+        let local_id = db_id_for_exact_text(&store, "forkprobe local edit");
+        assert!(search_ids(&store, "forkprobe remote")
+            .await
+            .contains(&remote_id));
+        assert!(search_ids(&store, "forkprobe local")
+            .await
+            .contains(&local_id));
+
+        let pending = store.pending_sync_changes(10).unwrap();
+        assert_eq!(pending.len(), 1);
+        match &pending[0].snapshot {
+            SyncSnapshot::Live { snapshot } => {
+                assert_ne!(snapshot.global_item_id, "shared-item");
+                assert_eq!(
+                    snapshot.content,
+                    SyncContentPayload::Text {
+                        value: "forkprobe local edit".to_string(),
+                    }
+                );
+            }
+            other => panic!("expected forked live snapshot, got {other:?}"),
+        }
+
+        store.rebuild_index().unwrap();
+        assert_search_matches_db_for_query(&store, "forkprobe").await;
     }
 }
