@@ -136,6 +136,7 @@ final class ClipboardStore {
     private let fileManager: FileManagerProtocol
     private var previewLoader: PreviewLoader?
     @ObservationIgnored private var pasteboardMonitor: PasteboardMonitor!
+    private var syncEngine: SyncEngine?
 
     // MARK: - Initialization
 
@@ -218,6 +219,7 @@ final class ClipboardStore {
             lifecycle = .ready
             refresh()
             pruneIfNeeded()
+            startSyncEngine(rustStore: rustStore)
         } catch {
             let dbError = ClipboardError.databaseInitFailed(underlying: error)
             ErrorReporter.reportCritical(dbError)
@@ -243,6 +245,7 @@ final class ClipboardStore {
                 self.lifecycle = .ready
                 self.refresh()
                 self.pruneIfNeeded()
+                self.startSyncEngine(rustStore: runtime.store)
             } catch {
                 let dbError = ClipboardError.databaseInitFailed(underlying: error)
                 ErrorReporter.reportCritical(dbError)
@@ -390,6 +393,27 @@ final class ClipboardStore {
         contentRevision += 1
         if refreshDisplayState, hasResults, isPanelVisible {
             refresh()
+        }
+    }
+
+    // MARK: - Sync Engine
+
+    private func startSyncEngine(rustStore: ClipKittyRust.ClipboardStore) {
+        let engine = SyncEngine(store: rustStore)
+        engine.onContentChanged = { [weak self] in
+            Task { @MainActor in
+                self?.invalidateContent()
+            }
+        }
+        self.syncEngine = engine
+        engine.start()
+    }
+
+    /// Stop the sync engine on teardown to cancel background tasks.
+    nonisolated func stopSyncEngine() {
+        Task { @MainActor in
+            syncEngine?.stop()
+            syncEngine = nil
         }
     }
 

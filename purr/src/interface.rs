@@ -496,6 +496,69 @@ pub struct ClipboardItem {
     pub content: ClipboardContent,
 }
 
+// ═══════════════════════════════════════════════════════════════════════════════
+// SYNC TYPES (exposed to Swift for SyncEngine)
+// ═══════════════════════════════════════════════════════════════════════════════
+
+/// A serialized sync event ready for CloudKit transport.
+#[derive(Debug, Clone, PartialEq, uniffi::Record)]
+pub struct SyncEventRecord {
+    pub event_id: String,
+    pub global_item_id: String,
+    pub origin_device_id: String,
+    pub schema_version: u32,
+    pub recorded_at: i64,
+    pub payload_type: String,
+    pub payload_data: String,
+}
+
+/// A serialized sync snapshot ready for CloudKit transport.
+#[derive(Debug, Clone, PartialEq, uniffi::Record)]
+pub struct SyncSnapshotRecord {
+    pub global_item_id: String,
+    pub snapshot_revision: u64,
+    pub schema_version: u32,
+    pub covers_through_event: Option<String>,
+    pub aggregate_data: String,
+}
+
+/// Result of applying a remote event.
+#[derive(Debug, Clone, PartialEq, uniffi::Enum)]
+pub enum SyncApplyOutcome {
+    Applied,
+    Ignored,
+    Deferred,
+    Forked { forked_snapshot_data: String },
+}
+
+/// Result of applying a batch of remote events.
+#[derive(Debug, Clone, PartialEq, uniffi::Record)]
+pub struct SyncBatchResult {
+    pub events_applied: u64,
+    pub events_ignored: u64,
+    pub events_deferred: u64,
+    pub events_forked: u64,
+    pub snapshots_applied: u64,
+    pub needs_full_resync: bool,
+}
+
+/// Device sync state.
+#[derive(Debug, Clone, PartialEq, uniffi::Record)]
+pub struct SyncDeviceState {
+    pub device_id: String,
+    pub zone_change_token: Option<Vec<u8>>,
+    pub needs_full_resync: bool,
+    pub index_dirty: bool,
+}
+
+/// Outcome of a compaction run.
+#[derive(Debug, Clone, PartialEq, uniffi::Record)]
+pub struct CompactionResult {
+    pub items_compacted: u64,
+    pub events_purged: u64,
+    pub tombstones_purged: u64,
+}
+
 /// Error type for ClipKitty operations
 #[derive(Debug, Clone, Error, PartialEq, uniffi::Error)]
 pub enum ClipKittyError {

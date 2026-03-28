@@ -1536,6 +1536,7 @@ dependencies = [
  "triple_accel",
  "uniffi",
  "url",
+ "uuid",
  "validator",
 ]
 

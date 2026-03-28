@@ -50,6 +50,7 @@ futures = "*"
 sha2 = "*"
 strsim = "*"
 triple_accel = "*"
+uuid = { version = "*", features = ["v4", "serde"] }
 
 [features]
 default = ["serde"]

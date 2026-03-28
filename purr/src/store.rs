@@ -107,6 +107,12 @@ impl ClipboardStore {
         })
     }
 
+    /// Expose database reference for integration tests.
+    #[cfg(test)]
+    pub fn db_for_test(&self) -> &Database {
+        &self.db
+    }
+
     fn runtime_handle(&self) -> tokio::runtime::Handle {
         tokio::runtime::Handle::try_current().unwrap_or_else(|_| FALLBACK_RUNTIME.handle().clone())
     }
@@ -445,6 +451,194 @@ impl ClipboardStoreApi for ClipboardStore {
 
     fn prune_to_size(&self, max_bytes: i64, keep_ratio: f64) -> Result<u64, ClipKittyError> {
         save_service::prune_to_size(&self.db, &self.indexer, max_bytes, keep_ratio)
+    }
+}
+
+// ═══════════════════════════════════════════════════════════════════════════════
+// Sync FFI — methods exposed to Swift SyncEngine
+// ═══════════════════════════════════════════════════════════════════════════════
+
+#[uniffi::export]
+impl ClipboardStore {
+    /// Fetch pending local events that need uploading to CloudKit.
+    pub fn pending_local_events(
+        &self,
+    ) -> Result<Vec<crate::interface::SyncEventRecord>, ClipKittyError> {
+        use crate::interface::SyncEventRecord;
+        use crate::sync::store::SyncStore;
+
+        let sync = SyncStore::new(&self.db);
+        let events = sync.fetch_pending_upload_events()?;
+        Ok(events
+            .into_iter()
+            .map(|e| {
+                let payload_type = e.payload_type().to_string();
+                let payload_data = e.payload_data();
+                SyncEventRecord {
+                    event_id: e.event_id,
+                    global_item_id: e.global_item_id,
+                    origin_device_id: e.origin_device_id,
+                    schema_version: e.schema_version,
+                    recorded_at: e.recorded_at,
+                    payload_type,
+                    payload_data,
+                }
+            })
+            .collect())
+    }
+
+    /// Mark events as uploaded after CloudKit confirms receipt.
+    pub fn mark_events_uploaded(&self, event_ids: Vec<String>) -> Result<(), ClipKittyError> {
+        use crate::sync::store::SyncStore;
+
+        let sync = SyncStore::new(&self.db);
+        let refs: Vec<&str> = event_ids.iter().map(|s| s.as_str()).collect();
+        sync.mark_events_uploaded(&refs)?;
+        Ok(())
+    }
+
+    /// Apply a single remote event received from CloudKit.
+    pub fn apply_remote_event(
+        &self,
+        record: crate::interface::SyncEventRecord,
+    ) -> Result<crate::interface::SyncApplyOutcome, ClipKittyError> {
+        use crate::interface::SyncApplyOutcome;
+        use crate::sync::event::ItemEvent;
+        use crate::sync::replay;
+        use crate::sync::types::ApplyResult;
+
+        let event = ItemEvent::from_stored(
+            record.event_id,
+            record.global_item_id,
+            record.origin_device_id,
+            record.schema_version,
+            record.recorded_at,
+            &record.payload_type,
+            &record.payload_data,
+        )
+        .map_err(|e| ClipKittyError::InvalidInput(e))?;
+
+        let result = replay::apply_remote_event(&self.db, &event)?;
+
+        Ok(match result {
+            ApplyResult::Applied(_) => SyncApplyOutcome::Applied,
+            ApplyResult::Ignored(_) => SyncApplyOutcome::Ignored,
+            ApplyResult::Deferred(_) => SyncApplyOutcome::Deferred,
+            ApplyResult::Forked(plan) => SyncApplyOutcome::Forked {
+                forked_snapshot_data: serde_json::to_string(&plan.forked_snapshot)
+                    .unwrap_or_default(),
+            },
+        })
+    }
+
+    /// Apply a remote snapshot received from CloudKit.
+    pub fn apply_remote_snapshot(
+        &self,
+        record: crate::interface::SyncSnapshotRecord,
+    ) -> Result<bool, ClipKittyError> {
+        use crate::sync::replay;
+        use crate::sync::snapshot::ItemSnapshot;
+
+        let snapshot = ItemSnapshot::from_stored(
+            record.global_item_id,
+            record.snapshot_revision,
+            record.schema_version,
+            record.covers_through_event,
+            &record.aggregate_data,
+        )
+        .map_err(|e| ClipKittyError::InvalidInput(e))?;
+
+        let applied = replay::apply_remote_snapshots(&self.db, &[snapshot])?;
+        Ok(applied > 0)
+    }
+
+    /// Run compaction and retention for all items.
+    pub fn run_compaction(&self) -> Result<crate::interface::CompactionResult, ClipKittyError> {
+        use crate::interface::CompactionResult;
+        use crate::sync::compactor;
+
+        let items_compacted = compactor::compact_all(&self.db)? as u64;
+        let events_purged = compactor::purge_retained_events(&self.db)? as u64;
+        let tombstones_purged = compactor::purge_tombstone_snapshots(&self.db)? as u64;
+
+        Ok(CompactionResult {
+            items_compacted,
+            events_purged,
+            tombstones_purged,
+        })
+    }
+
+    /// Perform a full resync from the provided snapshots.
+    /// Clears all sync state and rebuilds from snapshots.
+    /// The caller must also rebuild the local read model and Tantivy index.
+    pub fn full_resync(
+        &self,
+        snapshot_records: Vec<crate::interface::SyncSnapshotRecord>,
+    ) -> Result<u64, ClipKittyError> {
+        use crate::sync::replay;
+        use crate::sync::snapshot::ItemSnapshot;
+
+        let snapshots: Vec<ItemSnapshot> = snapshot_records
+            .into_iter()
+            .map(|r| {
+                ItemSnapshot::from_stored(
+                    r.global_item_id,
+                    r.snapshot_revision,
+                    r.schema_version,
+                    r.covers_through_event,
+                    &r.aggregate_data,
+                )
+                .map_err(|e| ClipKittyError::InvalidInput(e))
+            })
+            .collect::<Result<Vec<_>, _>>()?;
+
+        let applied = replay::full_resync_from_snapshots(&self.db, &snapshots)?;
+        Ok(applied as u64)
+    }
+
+    /// Get the current sync device state.
+    pub fn get_sync_device_state(
+        &self,
+        device_id: String,
+    ) -> Result<crate::interface::SyncDeviceState, ClipKittyError> {
+        use crate::interface::SyncDeviceState;
+        use crate::sync::store::SyncStore;
+        use crate::sync::types::{FLAG_INDEX_DIRTY, FLAG_NEEDS_FULL_RESYNC};
+
+        let sync = SyncStore::new(&self.db);
+        let token = sync.fetch_zone_change_token(&device_id)?;
+        let needs_resync = sync.get_dirty_flag(FLAG_NEEDS_FULL_RESYNC)?;
+        let index_dirty = sync.get_dirty_flag(FLAG_INDEX_DIRTY)?;
+
+        Ok(SyncDeviceState {
+            device_id,
+            zone_change_token: token,
+            needs_full_resync: needs_resync,
+            index_dirty,
+        })
+    }
+
+    /// Update the device's zone change token after a successful fetch.
+    pub fn update_zone_change_token(
+        &self,
+        device_id: String,
+        token: Option<Vec<u8>>,
+    ) -> Result<(), ClipKittyError> {
+        use crate::sync::store::SyncStore;
+
+        let sync = SyncStore::new(&self.db);
+        sync.upsert_device_state(&device_id, token.as_deref())?;
+        Ok(())
+    }
+
+    /// Clear the index_dirty flag (after a successful rebuild).
+    pub fn clear_index_dirty_flag(&self) -> Result<(), ClipKittyError> {
+        use crate::sync::store::SyncStore;
+        use crate::sync::types::FLAG_INDEX_DIRTY;
+
+        let sync = SyncStore::new(&self.db);
+        sync.set_dirty_flag(FLAG_INDEX_DIRTY, false)?;
+        Ok(())
     }
 }
 
