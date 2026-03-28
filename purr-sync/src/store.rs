@@ -658,6 +658,40 @@ impl<'a> SyncStore<'a> {
 
     // ── Bulk Operations (for full resync) ────────────────────────────────
 
+    /// Fetch event IDs that are compacted, uploaded, and older than the given threshold.
+    /// These are safe to delete from CloudKit since they've been superseded by snapshots.
+    pub fn fetch_purgeable_cloud_event_ids(
+        &self,
+        older_than_unix: i64,
+    ) -> SyncResult<Vec<String>> {
+        let conn = self.get_conn()?;
+        let mut stmt = conn.prepare(
+            r#"SELECT event_id FROM sync_events
+               WHERE compacted = 1 AND uploaded = 1 AND recorded_at < ?1"#,
+        )?;
+        let ids = stmt
+            .query_map(params![older_than_unix], |row| row.get(0))?
+            .collect::<Result<Vec<String>, _>>()?;
+        Ok(ids)
+    }
+
+    /// Delete specific events by their IDs (after CloudKit confirms deletion).
+    pub fn delete_events_by_ids(&self, event_ids: &[&str]) -> SyncResult<usize> {
+        if event_ids.is_empty() {
+            return Ok(0);
+        }
+        let conn = self.get_conn()?;
+        let placeholders: Vec<String> = (1..=event_ids.len()).map(|i| format!("?{i}")).collect();
+        let sql = format!(
+            "DELETE FROM sync_events WHERE event_id IN ({})",
+            placeholders.join(", ")
+        );
+        let params: Vec<&dyn rusqlite::ToSql> =
+            event_ids.iter().map(|id| id as &dyn rusqlite::ToSql).collect();
+        let count = conn.execute(&sql, params.as_slice())?;
+        Ok(count)
+    }
+
     /// Clear all sync state except device_state (preserves device_id).
     pub fn clear_sync_state(&self) -> SyncResult<()> {
         let conn = self.get_conn()?;

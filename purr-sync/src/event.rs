@@ -34,6 +34,10 @@ impl ItemEvent {
     }
 
     /// Reconstruct from database/CloudKit fields.
+    ///
+    /// If the payload cannot be deserialized (e.g. from a newer schema version),
+    /// returns an event with `ItemEventPayload::Unknown` so the caller can
+    /// gracefully ignore it rather than failing the entire batch.
     pub fn from_stored(
         event_id: String,
         global_item_id: String,
@@ -43,9 +47,13 @@ impl ItemEvent {
         payload_type: &str,
         payload_data: &str,
     ) -> Result<Self, String> {
-        let _ = payload_type; // type tag is embedded in the JSON discriminant
-        let payload: ItemEventPayload =
-            serde_json::from_str(payload_data).map_err(|e| format!("payload deserialize: {e}"))?;
+        let payload = match serde_json::from_str::<ItemEventPayload>(payload_data) {
+            Ok(p) => p,
+            Err(_) => ItemEventPayload::Unknown {
+                raw_type: payload_type.to_string(),
+                raw_data: payload_data.to_string(),
+            },
+        };
         Ok(Self {
             event_id,
             global_item_id,

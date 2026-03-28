@@ -160,18 +160,25 @@ pub(crate) trait SyncEmitter: Send + Sync {
 // Real implementation — projection lookup + event append via SyncStore
 // ═══════════════════════════════════════════════════════════════════════════════
 
-/// Device ID for locally-originated events.
-fn local_device_id() -> &'static str {
-    "local"
-}
-
 pub(crate) struct RealSyncEmitter {
     pool: Pool<SqliteConnectionManager>,
+    device_id: parking_lot::Mutex<String>,
 }
 
 impl RealSyncEmitter {
     pub fn new(pool: Pool<SqliteConnectionManager>) -> Self {
-        Self { pool }
+        Self {
+            pool,
+            device_id: parking_lot::Mutex::new("local".to_string()),
+        }
+    }
+
+    pub fn set_device_id(&self, device_id: String) {
+        *self.device_id.lock() = device_id;
+    }
+
+    fn local_device_id(&self) -> String {
+        self.device_id.lock().clone()
     }
 
     fn sync_store(&self) -> SyncStore<'_> {
@@ -188,7 +195,7 @@ impl SyncEmitter for RealSyncEmitter {
         let global_item_id = uuid::Uuid::new_v4().to_string();
         let event = ItemEvent::new_local(
             global_item_id.clone(),
-            local_device_id(),
+            &self.local_device_id(),
             ItemEventPayload::ItemCreated { snapshot },
         );
         let sync = self.sync_store();
@@ -215,7 +222,7 @@ impl SyncEmitter for RealSyncEmitter {
             if let Some(proj) = sync.fetch_projection(&global_id)? {
                 let event = ItemEvent::new_local(
                     global_id,
-                    local_device_id(),
+                    &self.local_device_id(),
                     ItemEventPayload::ItemTouched {
                         new_last_used_at_unix: timestamp_unix,
                         base_touch_version: proj.versions.touch,
@@ -237,7 +244,7 @@ impl SyncEmitter for RealSyncEmitter {
             if let Some(proj) = sync.fetch_projection(&global_id)? {
                 let event = ItemEvent::new_local(
                     global_id,
-                    local_device_id(),
+                    &self.local_device_id(),
                     ItemEventPayload::TextEdited {
                         new_text: new_text.to_string(),
                         base_content_version: proj.versions.content,
@@ -255,7 +262,7 @@ impl SyncEmitter for RealSyncEmitter {
             if let Some(proj) = sync.fetch_projection(&global_id)? {
                 let event = ItemEvent::new_local(
                     global_id,
-                    local_device_id(),
+                    &self.local_device_id(),
                     ItemEventPayload::BookmarkSet {
                         base_bookmark_version: proj.versions.bookmark,
                     },
@@ -272,7 +279,7 @@ impl SyncEmitter for RealSyncEmitter {
             if let Some(proj) = sync.fetch_projection(&global_id)? {
                 let event = ItemEvent::new_local(
                     global_id,
-                    local_device_id(),
+                    &self.local_device_id(),
                     ItemEventPayload::BookmarkCleared {
                         base_bookmark_version: proj.versions.bookmark,
                     },
@@ -289,7 +296,7 @@ impl SyncEmitter for RealSyncEmitter {
             if let Some(proj) = sync.fetch_projection(&global_id)? {
                 let event = ItemEvent::new_local(
                     global_id,
-                    local_device_id(),
+                    &self.local_device_id(),
                     ItemEventPayload::ItemDeleted {
                         base_existence_version: proj.versions.existence,
                     },
@@ -310,7 +317,7 @@ impl SyncEmitter for RealSyncEmitter {
             if let Some(proj) = sync.fetch_projection(&global_id)? {
                 let event = ItemEvent::new_local(
                     global_id,
-                    local_device_id(),
+                    &self.local_device_id(),
                     ItemEventPayload::LinkMetadataUpdated {
                         metadata,
                         base_metadata_version: proj.versions.metadata,
@@ -332,7 +339,7 @@ impl SyncEmitter for RealSyncEmitter {
             if let Some(proj) = sync.fetch_projection(&global_id)? {
                 let event = ItemEvent::new_local(
                     global_id,
-                    local_device_id(),
+                    &self.local_device_id(),
                     ItemEventPayload::ImageDescriptionUpdated {
                         description: description.to_string(),
                         base_content_version: proj.versions.content,

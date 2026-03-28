@@ -44,6 +44,11 @@ pub fn apply_event(
             description,
             base_content_version,
         } => apply_image_description_updated(aggregate, description, *base_content_version),
+        ItemEventPayload::Unknown { raw_type, .. } => {
+            ApplyResult::Ignored(IgnoreReason::UnknownPayload {
+                raw_type: raw_type.clone(),
+            })
+        }
     }
 }
 

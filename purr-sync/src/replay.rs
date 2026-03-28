@@ -85,6 +85,24 @@ pub fn apply_remote_event(
         return Ok(ApplyResult::Ignored(IgnoreReason::AlreadyApplied));
     }
 
+    // Forward compatibility: reject events from incompatible future versions.
+    if event.schema_version > SYNC_SCHEMA_VERSION {
+        // Mark as applied so we don't re-process on every cycle.
+        sync.mark_event_applied(&event.event_id)?;
+        return Ok(ApplyResult::Ignored(IgnoreReason::UnsupportedVersion {
+            event_version: event.schema_version,
+            max_supported: SYNC_SCHEMA_VERSION,
+        }));
+    }
+
+    // Unknown payload types (from newer clients within compatible version range).
+    if let ItemEventPayload::Unknown { ref raw_type, .. } = event.payload {
+        sync.mark_event_applied(&event.event_id)?;
+        return Ok(ApplyResult::Ignored(IgnoreReason::UnknownPayload {
+            raw_type: raw_type.clone(),
+        }));
+    }
+
     // Load current aggregate from projection + snapshot.
     let aggregate = load_aggregate(&sync, &event.global_item_id)?;
 

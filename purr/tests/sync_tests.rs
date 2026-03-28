@@ -2267,3 +2267,133 @@ mod replay_audit_tests {
         assert_eq!(fork, restored);
     }
 }
+
+// ═══════════════════════════════════════════════════════════════════════════════
+// FORWARD COMPATIBILITY TESTS
+// ═══════════════════════════════════════════════════════════════════════════════
+
+mod forward_compat_tests {
+    use super::*;
+
+    #[test]
+    fn test_unknown_schema_version_ignored() {
+        let db = test_db();
+
+        // Create the item first so the event isn't deferred due to missing item.
+        let create = ItemEvent::new_local(
+            "item-fwd".to_string(),
+            "device-A",
+            ItemEventPayload::ItemCreated {
+                snapshot: text_snapshot("forward compat test"),
+            },
+        );
+        replay::apply_remote_event(db.pool(), &create).unwrap();
+
+        // Construct an event with a future schema version.
+        let future_event = ItemEvent {
+            event_id: uuid::Uuid::new_v4().to_string(),
+            global_item_id: "item-fwd".to_string(),
+            origin_device_id: "device-future".to_string(),
+            schema_version: 999,
+            recorded_at: chrono::Utc::now().timestamp(),
+            payload: ItemEventPayload::TextEdited {
+                new_text: "from the future".to_string(),
+                base_content_version: 1,
+            },
+        };
+
+        let result = replay::apply_remote_event(db.pool(), &future_event).unwrap();
+        match result {
+            ApplyResult::Ignored(IgnoreReason::UnsupportedVersion {
+                event_version,
+                max_supported,
+            }) => {
+                assert_eq!(event_version, 999);
+                assert_eq!(max_supported, SYNC_SCHEMA_VERSION);
+            }
+            other => panic!("Expected UnsupportedVersion, got {other:?}"),
+        }
+
+        // Verify it's been marked as applied (won't be re-processed).
+        let sync = SyncStore::new(db.pool());
+        assert!(sync.is_event_applied(&future_event.event_id).unwrap());
+    }
+
+    #[test]
+    fn test_unknown_payload_type_ignored() {
+        let db = test_db();
+
+        // Use from_stored with a payload that can't be deserialized into any known variant.
+        let event = ItemEvent::from_stored(
+            uuid::Uuid::new_v4().to_string(),
+            "item-unknown".to_string(),
+            "device-future".to_string(),
+            SYNC_SCHEMA_VERSION,
+            chrono::Utc::now().timestamp(),
+            "new_payload_type_v2",
+            r#"{"some_field": "some_value"}"#,
+        )
+        .unwrap();
+
+        // Verify it was parsed as Unknown.
+        assert!(
+            matches!(event.payload, ItemEventPayload::Unknown { .. }),
+            "Expected Unknown payload, got {:?}",
+            event.payload
+        );
+
+        let result = replay::apply_remote_event(db.pool(), &event).unwrap();
+        match result {
+            ApplyResult::Ignored(IgnoreReason::UnknownPayload { raw_type }) => {
+                assert_eq!(raw_type, "new_payload_type_v2");
+            }
+            other => panic!("Expected UnknownPayload, got {other:?}"),
+        }
+
+        // Verify marked as applied.
+        let sync = SyncStore::new(db.pool());
+        assert!(sync.is_event_applied(&event.event_id).unwrap());
+    }
+
+    #[test]
+    fn test_unknown_payload_projector_ignores() {
+        let payload = ItemEventPayload::Unknown {
+            raw_type: "future_event_type".to_string(),
+            raw_data: "{}".to_string(),
+        };
+
+        let snapshot = text_snapshot("test");
+        let agg = live_aggregate(snapshot, default_versions());
+        let result = projector::apply_event(Some(&agg), &payload);
+
+        assert!(
+            matches!(
+                result,
+                ApplyResult::Ignored(IgnoreReason::UnknownPayload { .. })
+            ),
+            "Projector should ignore unknown payload, got {result:?}"
+        );
+    }
+
+    #[test]
+    fn test_from_stored_with_invalid_json_returns_unknown() {
+        let event = ItemEvent::from_stored(
+            "evt-1".to_string(),
+            "item-1".to_string(),
+            "device-1".to_string(),
+            1,
+            1000000,
+            "text_edited",
+            "this is not valid json at all",
+        )
+        .unwrap();
+
+        match &event.payload {
+            ItemEventPayload::Unknown { raw_type, raw_data } => {
+                assert_eq!(raw_type, "text_edited");
+                assert_eq!(raw_data, "this is not valid json at all");
+            }
+            other => panic!("Expected Unknown, got {other:?}"),
+        }
+    }
+}

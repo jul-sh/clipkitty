@@ -76,6 +76,22 @@ struct GeneralSettingsView: View {
                 }
             #endif
 
+            Section(String(localized: "iCloud Sync")) {
+                Toggle(String(localized: "Sync clipboard history across devices"), isOn: $settings.syncEnabled)
+                    .onChange(of: settings.syncEnabled) { _, newValue in
+                        store.setSyncEnabled(newValue)
+                    }
+
+                if settings.syncEnabled {
+                    HStack {
+                        syncStatusIcon
+                        Text(syncStatusText)
+                            .foregroundStyle(.secondary)
+                    }
+                    .font(.subheadline)
+                }
+            }
+
             Section(String(localized: "History")) {
                 LabeledContent(String(localized: "Storage Limit")) {
                     HStack(spacing: 8) {
@@ -300,6 +316,51 @@ struct GeneralSettingsView: View {
             rounded = (value * 10).rounded() / 10
         }
         return min(max(rounded, minDatabaseSizeGB), maxDatabaseSizeGB)
+    }
+
+    @ViewBuilder
+    private var syncStatusIcon: some View {
+        if let engine = store.syncEngine {
+            switch engine.status {
+            case .idle:
+                Image(systemName: "icloud").foregroundStyle(.secondary)
+            case .connecting:
+                ProgressView().controlSize(.small)
+            case .syncing:
+                ProgressView().controlSize(.small)
+            case .synced:
+                Image(systemName: "checkmark.icloud").foregroundStyle(.green)
+            case .error:
+                Image(systemName: "exclamationmark.icloud").foregroundStyle(.orange)
+            case .unavailable:
+                Image(systemName: "xmark.icloud").foregroundStyle(.red)
+            }
+        } else {
+            Image(systemName: "icloud.slash").foregroundStyle(.secondary)
+        }
+    }
+
+    private var syncStatusText: String {
+        guard let engine = store.syncEngine else {
+            return String(localized: "Not running")
+        }
+        switch engine.status {
+        case .idle:
+            return String(localized: "Waiting to sync")
+        case .connecting:
+            return String(localized: "Connecting to iCloud…")
+        case .syncing:
+            return String(localized: "Syncing…")
+        case let .synced(lastSync):
+            let formatter = RelativeDateTimeFormatter()
+            formatter.unitsStyle = .abbreviated
+            let relative = formatter.localizedString(for: lastSync, relativeTo: Date())
+            return String(localized: "Synced \(relative)")
+        case let .error(message):
+            return String(localized: "Error: \(message)")
+        case .unavailable:
+            return String(localized: "iCloud not available")
+        }
     }
 
     private func checkAttestation() async {

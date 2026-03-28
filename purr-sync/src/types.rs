@@ -7,6 +7,12 @@ use serde::{Deserialize, Serialize};
 /// Current schema version for sync events and snapshots.
 pub const SYNC_SCHEMA_VERSION: u32 = 1;
 
+/// Minimum schema version we can still process (forward compatibility window).
+/// Events with `schema_version` in `[SYNC_MIN_COMPATIBLE_VERSION, SYNC_SCHEMA_VERSION]`
+/// are applied normally. Events above SYNC_SCHEMA_VERSION but still deserializable
+/// are applied with a warning. Events with unknown payload types are ignored gracefully.
+pub const SYNC_MIN_COMPATIBLE_VERSION: u32 = 1;
+
 // ─────────────────────────────────────────────────────────────────────────────
 // Version Counters
 // ─────────────────────────────────────────────────────────────────────────────
@@ -73,6 +79,12 @@ pub enum ItemEventPayload {
         description: String,
         base_content_version: u64,
     },
+    /// Payload from a newer schema version that we don't understand.
+    /// Preserved for round-tripping but ignored by the projector.
+    Unknown {
+        raw_type: String,
+        raw_data: String,
+    },
 }
 
 impl ItemEventPayload {
@@ -87,6 +99,11 @@ impl ItemEventPayload {
             Self::ItemTouched { .. } => "item_touched",
             Self::LinkMetadataUpdated { .. } => "link_metadata_updated",
             Self::ImageDescriptionUpdated { .. } => "image_description_updated",
+            Self::Unknown { raw_type, .. } => {
+                // Leak a copy so we can return &'static str.
+                // Unknown payloads are rare; this is acceptable.
+                Box::leak(raw_type.clone().into_boxed_str())
+            }
         }
     }
 }
@@ -230,6 +247,13 @@ pub enum IgnoreReason {
     OperationOnTombstone,
     /// Duplicate event (already applied).
     AlreadyApplied,
+    /// Event's schema version is too new and incompatible.
+    UnsupportedVersion {
+        event_version: u32,
+        max_supported: u32,
+    },
+    /// Payload type is unknown (from a newer client).
+    UnknownPayload { raw_type: String },
 }
 
 /// Why an event was deferred (cannot apply yet).

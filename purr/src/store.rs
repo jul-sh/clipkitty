@@ -50,7 +50,7 @@ pub struct ClipboardStore {
     indexer: Arc<Indexer>,
     analysis_cache: Arc<match_presentation::HighlightAnalysisCache>,
     #[cfg(feature = "sync")]
-    sync_emitter: Arc<dyn SyncEmitter>,
+    sync_emitter: Arc<RealSyncEmitter>,
     /// Token for the currently running search, if any. Starting a new search cancels
     /// the previous one by calling cancel() on this token.
     active_search_token: Arc<Mutex<Option<CancellationToken>>>,
@@ -103,8 +103,7 @@ impl ClipboardStore {
         let database = Database::open_in_memory().map_err(ClipKittyError::from)?;
         let indexer = Indexer::new_in_memory()?;
         #[cfg(feature = "sync")]
-        let sync_emitter: Arc<dyn SyncEmitter> =
-            Arc::new(RealSyncEmitter::new(database.pool().clone()));
+        let sync_emitter = Arc::new(RealSyncEmitter::new(database.pool().clone()));
 
         Ok(Self {
             db: Arc::new(database),
@@ -137,8 +136,7 @@ impl ClipboardStore {
         let db = Database::open(path).map_err(ClipKittyError::from)?;
         let indexer = Indexer::new(&Self::index_path_for_database(path))?;
         #[cfg(feature = "sync")]
-        let sync_emitter: Arc<dyn SyncEmitter> =
-            Arc::new(RealSyncEmitter::new(db.pool().clone()));
+        let sync_emitter = Arc::new(RealSyncEmitter::new(db.pool().clone()));
 
         Ok(Self {
             db: Arc::new(db),
@@ -581,6 +579,12 @@ impl ClipboardStoreApi for ClipboardStore {
 #[cfg(feature = "sync")]
 #[uniffi::export]
 impl ClipboardStore {
+    /// Set the device ID used for locally-originated sync events.
+    /// Called by SyncEngine.start() with the stable UUID from UserDefaults.
+    pub fn set_sync_device_id(&self, device_id: String) {
+        self.sync_emitter.set_device_id(device_id);
+    }
+
     /// Fetch pending local events that need uploading to CloudKit.
     pub fn pending_local_events(
         &self,
@@ -750,6 +754,27 @@ impl ClipboardStore {
         let sync = SyncStore::new(self.db.pool());
         sync.upsert_device_state(&device_id, token.as_deref())?;
         Ok(())
+    }
+
+    /// Fetch event IDs eligible for CloudKit deletion (compacted + uploaded + old).
+    /// Called by SyncEngine after compaction to clean up CloudKit records.
+    pub fn purgeable_cloud_event_ids(&self, max_age_days: u32) -> Result<Vec<String>, ClipKittyError> {
+        use purr_sync::store::SyncStore;
+
+        let threshold = chrono::Utc::now().timestamp() - (max_age_days as i64 * 86400);
+        let sync = SyncStore::new(self.db.pool());
+        let ids = sync.fetch_purgeable_cloud_event_ids(threshold)?;
+        Ok(ids)
+    }
+
+    /// Delete local event records after their CloudKit counterparts have been deleted.
+    pub fn purge_cloud_events(&self, event_ids: Vec<String>) -> Result<u64, ClipKittyError> {
+        use purr_sync::store::SyncStore;
+
+        let sync = SyncStore::new(self.db.pool());
+        let refs: Vec<&str> = event_ids.iter().map(|s| s.as_str()).collect();
+        let count = sync.delete_events_by_ids(&refs)?;
+        Ok(count as u64)
     }
 
     /// Clear the index_dirty flag (after a successful rebuild).

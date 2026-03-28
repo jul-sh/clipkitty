@@ -136,7 +136,7 @@ final class ClipboardStore {
     private let fileManager: FileManagerProtocol
     private var previewLoader: PreviewLoader?
     @ObservationIgnored private var pasteboardMonitor: PasteboardMonitor!
-    private var syncEngine: SyncEngine?
+    private(set) var syncEngine: SyncEngine?
 
     // MARK: - Initialization
 
@@ -398,7 +398,12 @@ final class ClipboardStore {
 
     // MARK: - Sync Engine
 
+    private var rustStoreRef: ClipKittyRust.ClipboardStore?
+
     private func startSyncEngine(rustStore: ClipKittyRust.ClipboardStore) {
+        rustStoreRef = rustStore
+        guard AppSettings.shared.syncEnabled else { return }
+
         let engine = SyncEngine(store: rustStore)
         engine.onContentChanged = { [weak self] in
             Task { @MainActor in
@@ -407,6 +412,25 @@ final class ClipboardStore {
         }
         self.syncEngine = engine
         engine.start()
+    }
+
+    /// Toggle sync engine based on the syncEnabled setting.
+    func setSyncEnabled(_ enabled: Bool) {
+        if enabled {
+            if syncEngine == nil, let rustStore = rustStoreRef {
+                let engine = SyncEngine(store: rustStore)
+                engine.onContentChanged = { [weak self] in
+                    Task { @MainActor in
+                        self?.invalidateContent()
+                    }
+                }
+                self.syncEngine = engine
+                engine.start()
+            }
+        } else {
+            syncEngine?.stop()
+            syncEngine = nil
+        }
     }
 
     /// Stop the sync engine on teardown to cancel background tasks.

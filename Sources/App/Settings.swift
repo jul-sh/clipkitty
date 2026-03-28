@@ -198,6 +198,11 @@ final class AppSettings: ObservableObject {
     /// The date the app was first launched (for time-gating the launch-at-login prompt)
     let firstLaunchDate: Date
 
+    /// Whether iCloud sync is enabled
+    @Published var syncEnabled: Bool {
+        didSet { save() }
+    }
+
     /// Bundle IDs of apps whose clipboard content should be ignored
     @Published var ignoredAppBundleIds: Set<String> {
         didSet { save() }
@@ -218,6 +223,7 @@ final class AppSettings: ObservableObject {
     private let firstLaunchDateKey = "firstLaunchDate"
     private let lastInfoDismissDateKey = "lastInfoDismissDate"
     private let lastNudgeInteractionDateKey = "lastNudgeInteractionDate"
+    private let syncEnabledKey = "syncEnabled"
     private let ignoredAppBundleIdsKey = "ignoredAppBundleIds"
     #if SPARKLE_RELEASE
         private let autoInstallUpdatesKey = "autoInstallUpdates"
@@ -265,6 +271,9 @@ final class AppSettings: ObservableObject {
             defaults.set(firstLaunchDate, forKey: firstLaunchDateKey)
         }
 
+        // Sync - default to enabled
+        syncEnabled = defaults.object(forKey: syncEnabledKey) as? Bool ?? true
+
         // Privacy settings - default to enabled for user protection
         ignoreConfidentialContent = defaults.object(forKey: ignoreConfidentialKey) as? Bool ?? true
         ignoreTransientContent = defaults.object(forKey: ignoreTransientKey) as? Bool ?? true
@@ -303,6 +312,7 @@ final class AppSettings: ObservableObject {
         defaults.set(lastInfoDismissDate, forKey: lastInfoDismissDateKey)
         defaults.set(lastNudgeInteractionDate, forKey: lastNudgeInteractionDateKey)
         defaults.set(hasCompletedOnboarding, forKey: hasCompletedOnboardingKey)
+        defaults.set(syncEnabled, forKey: syncEnabledKey)
         defaults.set(ignoreConfidentialContent, forKey: ignoreConfidentialKey)
         defaults.set(ignoreTransientContent, forKey: ignoreTransientKey)
         defaults.set(generateLinkPreviews, forKey: generateLinkPreviewsKey)

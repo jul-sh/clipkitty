@@ -7,18 +7,24 @@ import os.log
 ///
 /// Lifecycle:
 /// 1. Starts after ClipboardStore.swift sets lifecycle = .ready
-/// 2. Fetches zone changes since the last token
-/// 3. Applies remote snapshots, then remote events
-/// 4. Uploads pending local events
-/// 5. Runs background compaction on a schedule
-/// 6. Triggers full resync when the zone token expires
+/// 2. Sets the Rust-side device ID for event attribution
+/// 3. Fetches zone changes since the last token
+/// 4. Applies remote snapshots, then remote events
+/// 5. Uploads pending local events (with CKAsset for large images)
+/// 6. Runs background compaction and CloudKit cleanup on a schedule
+/// 7. Triggers full resync when the zone token expires
 final class SyncEngine {
     // MARK: - Configuration
 
     private static let zoneName = "ClipKittySync"
     private static let subscriptionID = "clipkitty-sync-changes"
     private static let compactionInterval: TimeInterval = 300 // 5 minutes
-    private static let syncInterval: TimeInterval = 30
+    private static let baseInterval: TimeInterval = 30
+    private static let subscriptionActiveInterval: TimeInterval = 60
+    /// Base64 payload threshold for CKAsset extraction (500KB ≈ 375KB raw).
+    private static let assetThresholdBytes = 500_000
+    /// Age threshold for CloudKit event cleanup (30 days).
+    private static let cloudCleanupAgeDays: UInt32 = 30
 
     private let logger = Logger(subsystem: "com.clipkitty", category: "SyncEngine")
 
@@ -34,7 +40,13 @@ final class SyncEngine {
 
     private var syncTask: Task<Void, Never>?
     private var compactionTask: Task<Void, Never>?
-    private var isRunning = false
+    private(set) var isRunning = false
+    private var backoff = SyncBackoff()
+    private var hasActiveSubscription = false
+    private var lastCloudCleanupDate: Date?
+
+    /// Current sync status for UI display.
+    @Published private(set) var status: SyncStatus = .idle
 
     /// Callback invoked after a sync batch changes local content.
     var onContentChanged: (() -> Void)?
@@ -55,6 +67,10 @@ final class SyncEngine {
             UserDefaults.standard.set(newId, forKey: "clipkitty.sync.deviceId")
             self.deviceId = newId
         }
+
+        self.lastCloudCleanupDate = UserDefaults.standard.object(
+            forKey: "clipkitty.sync.lastCloudCleanup"
+        ) as? Date
     }
 
     // MARK: - Lifecycle
@@ -64,18 +80,24 @@ final class SyncEngine {
         isRunning = true
         logger.info("SyncEngine starting for device \(self.deviceId)")
 
+        // Set the Rust-side device ID so events are attributed correctly.
+        store.setSyncDeviceId(deviceId: deviceId)
+
         syncTask = Task.detached(priority: .utility) { [weak self] in
             guard let self else { return }
 
             // Check iCloud availability before starting sync.
+            await self.updateStatus(.connecting)
             let status = try? await self.container.accountStatus()
             guard status == .available else {
                 self.logger.warning("iCloud account not available (status: \(String(describing: status))), sync disabled")
                 self.isRunning = false
+                await self.updateStatus(.unavailable)
                 return
             }
 
             await self.ensureZoneExists()
+            await self.setupSubscription()
             await self.runSyncLoop()
         }
 
@@ -90,7 +112,32 @@ final class SyncEngine {
         compactionTask?.cancel()
         syncTask = nil
         compactionTask = nil
+        Task { await updateStatus(.idle) }
         logger.info("SyncEngine stopped")
+    }
+
+    /// Trigger an immediate sync cycle (e.g. from push notification).
+    func handleRemoteNotification() {
+        guard isRunning else { return }
+        Task.detached(priority: .utility) { [weak self] in
+            await self?.performSyncCycle()
+        }
+    }
+
+    // MARK: - Status
+
+    enum SyncStatus: Equatable {
+        case idle
+        case connecting
+        case syncing
+        case synced(lastSync: Date)
+        case error(String)
+        case unavailable
+    }
+
+    @MainActor
+    private func updateStatus(_ newStatus: SyncStatus) {
+        status = newStatus
     }
 
     // MARK: - Zone Setup
@@ -107,22 +154,64 @@ final class SyncEngine {
         }
     }
 
+    // MARK: - Push Subscription
+
+    private func setupSubscription() async {
+        let subscriptionSavedKey = "clipkitty.sync.subscriptionSaved"
+        if UserDefaults.standard.bool(forKey: subscriptionSavedKey) {
+            hasActiveSubscription = true
+            return
+        }
+
+        do {
+            let subscription = CKDatabaseSubscription(subscriptionID: Self.subscriptionID)
+            let notificationInfo = CKSubscription.NotificationInfo()
+            notificationInfo.shouldSendContentAvailable = true
+            subscription.notificationInfo = notificationInfo
+
+            try await database.save(subscription)
+            UserDefaults.standard.set(true, forKey: subscriptionSavedKey)
+            hasActiveSubscription = true
+            logger.info("Push subscription created")
+        } catch {
+            let nsError = error as NSError
+            // "subscription already exists" is fine — treat as success.
+            if nsError.domain == CKError.errorDomain,
+               nsError.code == CKError.serverRejectedRequest.rawValue
+            {
+                UserDefaults.standard.set(true, forKey: subscriptionSavedKey)
+                hasActiveSubscription = true
+            } else {
+                logger.warning("Push subscription setup failed: \(error.localizedDescription)")
+            }
+        }
+    }
+
     // MARK: - Sync Loop
 
     private func runSyncLoop() async {
         while !Task.isCancelled && isRunning {
             await performSyncCycle()
-            try? await Task.sleep(for: .seconds(Self.syncInterval))
+
+            let interval = hasActiveSubscription
+                ? Self.subscriptionActiveInterval
+                : Self.baseInterval
+            let delay = backoff.currentDelay ?? interval
+
+            try? await Task.sleep(for: .seconds(delay))
         }
     }
 
     func performSyncCycle() async {
+        await updateStatus(.syncing)
         do {
             let deviceState = try store.getSyncDeviceState(deviceId: deviceId)
 
             if deviceState.needsFullResync {
                 logger.info("Full resync required")
                 await performFullResync()
+                backoff.reset()
+                await updateStatus(.synced(lastSync: Date()))
                 return
             }
 
@@ -142,6 +231,8 @@ final class SyncEngine {
             if changes.tokenExpired {
                 logger.info("Zone change token expired, triggering full resync")
                 await performFullResync()
+                backoff.reset()
+                await updateStatus(.synced(lastSync: Date()))
                 return
             }
 
@@ -161,17 +252,29 @@ final class SyncEngine {
                 }
             }
 
-            // 3. Apply remote events.
+            // 3. Apply remote events (with CKAsset rehydration).
             if !changes.events.isEmpty {
                 let eventRecords = changes.events.map { record in
-                    SyncEventRecord(
+                    var payloadData = record["payloadData"] as? String ?? "{}"
+
+                    // Rehydrate CKAsset: inject base64 image data back into payload.
+                    if let asset = record["imageAsset"] as? CKAsset,
+                       let fileURL = asset.fileURL,
+                       let data = try? Data(contentsOf: fileURL)
+                    {
+                        payloadData = Self.injectBase64IntoPayload(
+                            payloadData, key: "data_base64", data: data
+                        )
+                    }
+
+                    return SyncEventRecord(
                         eventId: record.recordID.recordName,
                         globalItemId: record["globalItemId"] as? String ?? "",
                         originDeviceId: record["originDeviceId"] as? String ?? "",
                         schemaVersion: UInt32(record["schemaVersion"] as? Int64 ?? 1),
                         recordedAt: record["recordedAt"] as? Int64 ?? 0,
                         payloadType: record["payloadType"] as? String ?? "",
-                        payloadData: record["payloadData"] as? String ?? "{}"
+                        payloadData: payloadData
                     )
                 }
                 for event in eventRecords {
@@ -196,8 +299,13 @@ final class SyncEngine {
             // 6. Upload pending local events.
             await uploadPendingEvents()
 
+            backoff.reset()
+            await updateStatus(.synced(lastSync: Date()))
+
         } catch {
-            logger.error("Sync cycle error: \(error.localizedDescription)")
+            let delay = backoff.registerFailure(error: error)
+            logger.error("Sync cycle error: \(error.localizedDescription), backing off \(delay)s")
+            await updateStatus(.error(error.localizedDescription))
         }
     }
 
@@ -275,6 +383,7 @@ final class SyncEngine {
 
             let zoneID = recordZone.zoneID
             var records: [CKRecord] = []
+            var tempFiles: [URL] = []
 
             for event in pendingEvents {
                 let recordID = CKRecord.ID(recordName: event.eventId, zoneID: zoneID)
@@ -284,7 +393,21 @@ final class SyncEngine {
                 record["schemaVersion"] = Int64(event.schemaVersion) as CKRecordValue
                 record["recordedAt"] = event.recordedAt as CKRecordValue
                 record["payloadType"] = event.payloadType as CKRecordValue
-                record["payloadData"] = event.payloadData as CKRecordValue
+
+                // CKAsset extraction for large image payloads.
+                var payloadData = event.payloadData
+                if let (strippedPayload, imageData) = Self.extractLargeBase64(
+                    from: payloadData, key: "data_base64", threshold: Self.assetThresholdBytes
+                ) {
+                    payloadData = strippedPayload
+                    let tempURL = FileManager.default.temporaryDirectory
+                        .appendingPathComponent(UUID().uuidString + ".bin")
+                    try imageData.write(to: tempURL)
+                    record["imageAsset"] = CKAsset(fileURL: tempURL)
+                    tempFiles.append(tempURL)
+                }
+
+                record["payloadData"] = payloadData as CKRecordValue
                 records.append(record)
             }
 
@@ -308,6 +431,11 @@ final class SyncEngine {
                 database.add(operation)
             }
 
+            // Clean up temp files.
+            for url in tempFiles {
+                try? FileManager.default.removeItem(at: url)
+            }
+
             if !uploadedIds.isEmpty {
                 try store.markEventsUploaded(eventIds: uploadedIds)
                 logger.debug("Uploaded \(uploadedIds.count) events")
@@ -317,12 +445,51 @@ final class SyncEngine {
         }
     }
 
+    // MARK: - CKAsset Helpers
+
+    /// Extract a large base64 value from a JSON payload, returning the stripped JSON and raw data.
+    private static func extractLargeBase64(
+        from jsonString: String, key: String, threshold: Int
+    ) -> (String, Data)? {
+        guard let jsonData = jsonString.data(using: .utf8),
+              var dict = try? JSONSerialization.jsonObject(with: jsonData) as? [String: Any],
+              let base64String = dict[key] as? String,
+              base64String.count > threshold,
+              let rawData = Data(base64Encoded: base64String)
+        else { return nil }
+
+        dict[key] = ""
+        guard let strippedData = try? JSONSerialization.data(withJSONObject: dict),
+              let strippedString = String(data: strippedData, encoding: .utf8)
+        else { return nil }
+
+        return (strippedString, rawData)
+    }
+
+    /// Inject base64-encoded data back into a JSON payload string.
+    private static func injectBase64IntoPayload(
+        _ jsonString: String, key: String, data: Data
+    ) -> String {
+        guard let jsonData = jsonString.data(using: .utf8),
+              var dict = try? JSONSerialization.jsonObject(with: jsonData) as? [String: Any]
+        else { return jsonString }
+
+        dict[key] = data.base64EncodedString()
+
+        guard let resultData = try? JSONSerialization.data(withJSONObject: dict),
+              let resultString = String(data: resultData, encoding: .utf8)
+        else { return jsonString }
+
+        return resultString
+    }
+
     // MARK: - Compaction
 
     private func runCompactionLoop() async {
         while !Task.isCancelled && isRunning {
             try? await Task.sleep(for: .seconds(Self.compactionInterval))
             await performCompaction()
+            await performCloudCleanupIfDue()
         }
     }
 
@@ -336,6 +503,55 @@ final class SyncEngine {
             }
         } catch {
             logger.error("Compaction error: \(error.localizedDescription)")
+        }
+    }
+
+    // MARK: - CloudKit Cleanup
+
+    private func performCloudCleanupIfDue() async {
+        // Run at most once per day.
+        if let lastCleanup = lastCloudCleanupDate,
+           Date().timeIntervalSince(lastCleanup) < 86400
+        {
+            return
+        }
+
+        do {
+            let eventIds = try store.purgeableCloudEventIds(maxAgeDays: Self.cloudCleanupAgeDays)
+            guard !eventIds.isEmpty else {
+                lastCloudCleanupDate = Date()
+                UserDefaults.standard.set(lastCloudCleanupDate, forKey: "clipkitty.sync.lastCloudCleanup")
+                return
+            }
+
+            // Delete from CloudKit.
+            let zoneID = recordZone.zoneID
+            let recordIDs = eventIds.map { CKRecord.ID(recordName: $0, zoneID: zoneID) }
+
+            // CloudKit batch delete limit is 400; chunk if needed.
+            for chunk in recordIDs.chunked(into: 400) {
+                let operation = CKModifyRecordsOperation(
+                    recordsToSave: nil,
+                    recordIDsToDelete: chunk
+                )
+                operation.isAtomic = false
+
+                await withCheckedContinuation { (continuation: CheckedContinuation<Void, Never>) in
+                    operation.modifyRecordsResultBlock = { _ in
+                        continuation.resume()
+                    }
+                    database.add(operation)
+                }
+            }
+
+            // Purge locally after successful CloudKit deletion.
+            let purged = try store.purgeCloudEvents(eventIds: eventIds)
+            logger.info("CloudKit cleanup: deleted \(purged) old compacted events")
+
+            lastCloudCleanupDate = Date()
+            UserDefaults.standard.set(lastCloudCleanupDate, forKey: "clipkitty.sync.lastCloudCleanup")
+        } catch {
+            logger.error("CloudKit cleanup error: \(error.localizedDescription)")
         }
     }
 
@@ -399,5 +615,63 @@ final class SyncEngine {
         }
 
         return snapshots
+    }
+}
+
+// MARK: - Backoff
+
+/// Exponential backoff with CKError-aware delay extraction.
+private struct SyncBackoff {
+    private static let baseDelay: TimeInterval = 30
+    private static let maxDelay: TimeInterval = 900 // 15 minutes
+    private static let quotaDelay: TimeInterval = 300 // 5 minutes
+
+    private(set) var currentDelay: TimeInterval?
+    private var consecutiveFailures = 0
+
+    mutating func reset() {
+        currentDelay = nil
+        consecutiveFailures = 0
+    }
+
+    /// Register a failure and return the delay to use.
+    @discardableResult
+    mutating func registerFailure(error: Error) -> TimeInterval {
+        consecutiveFailures += 1
+
+        let delay: TimeInterval
+        let ckError = error as? CKError
+
+        switch ckError?.code {
+        case .requestRateLimited, .serviceUnavailable:
+            // Use server-provided retry-after if available.
+            if let retryAfter = ckError?.retryAfterSeconds {
+                delay = retryAfter
+            } else {
+                delay = min(Self.baseDelay * pow(2, Double(consecutiveFailures - 1)), Self.maxDelay)
+            }
+        case .quotaExceeded:
+            delay = Self.quotaDelay
+        case .networkUnavailable, .networkFailure:
+            delay = min(Self.baseDelay * pow(2, Double(consecutiveFailures - 1)), Self.maxDelay)
+        case .serverResponseLost:
+            // Retry quickly once.
+            delay = consecutiveFailures <= 1 ? 2 : Self.baseDelay
+        default:
+            delay = min(Self.baseDelay * pow(2, Double(consecutiveFailures - 1)), Self.maxDelay)
+        }
+
+        currentDelay = delay
+        return delay
+    }
+}
+
+// MARK: - Array Chunking
+
+private extension Array {
+    func chunked(into size: Int) -> [[Element]] {
+        stride(from: 0, to: count, by: size).map {
+            Array(self[$0 ..< Swift.min($0 + size, count)])
+        }
     }
 }
