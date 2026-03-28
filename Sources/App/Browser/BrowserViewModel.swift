@@ -85,9 +85,11 @@ final class BrowserViewModel {
     private(set) var rowDecorationsByItemId: [Int64: RowDecoration] = [:]
     private var previewPayloadsByItemId: [Int64: PreviewPayload] = [:]
     private(set) var hasUserNavigated = false
-    private var appIconCache: [String: NSImage] = [:]
     private(set) var prefetchCache: [Int64: ClipboardItem] = [:]
     private(set) var previewSpinnerVisible = false
+    private(set) var itemIds: [Int64] = []
+    private(set) var displayRows: [DisplayRow] = []
+    private var itemIndexById: [Int64: Int] = [:]
 
     init(
         client: BrowserStoreClient,
@@ -125,8 +127,9 @@ final class BrowserViewModel {
         contentState.isSearchSpinnerVisible
     }
 
-    var itemIds: [Int64] {
-        contentState.items.map { $0.itemMetadata.itemId }
+    func indexOfItem(_ itemId: Int64?) -> Int? {
+        guard let itemId else { return nil }
+        return itemIndexById[itemId]
     }
 
     var selection: SelectionState {
@@ -157,7 +160,7 @@ final class BrowserViewModel {
 
     var selectedIndex: Int? {
         guard let selectedItemId else { return nil }
-        return itemIds.firstIndex(of: selectedItemId)
+        return itemIndexById[selectedItemId]
     }
 
     var itemCount: Int {
@@ -356,13 +359,14 @@ final class BrowserViewModel {
                 var updates: [Int64: RowDecoration] = [:]
                 for result in results {
                     guard let decoration = result.decoration else { continue }
-                    guard self.itemIds.contains(result.itemId) else { continue }
+                    guard self.indexOfItem(result.itemId) != nil else { continue }
                     guard self.rowDecoration(for: result.itemId) == nil else { continue }
                     updates[result.itemId] = decoration
                 }
 
                 guard !updates.isEmpty else { return }
                 self.rowDecorationsByItemId.merge(updates) { existing, _ in existing }
+                self.rebuildDisplayedRows()
             }
         }
     }
@@ -421,6 +425,7 @@ final class BrowserViewModel {
             )
         ))
         rowDecorationsByItemId.removeAll()
+        rebuildDisplayedRows()
         previewPayloadsByItemId.removeAll()
         prefetchCache.removeAll()
 
@@ -631,6 +636,7 @@ final class BrowserViewModel {
             setDisplayedSelection(.none)
         }
         contentState = .loading(request: request, previous: displayedContent, phase: .debouncing)
+        rebuildDisplayedRows()
 
         if request.text.isEmpty {
             beginSearch(request: request, targetContentRevision: targetContentRevision)
@@ -655,6 +661,7 @@ final class BrowserViewModel {
         let operation = client.startSearch(request: request)
         let operationId = UUID()
         contentState = .loading(request: request, previous: displayedContent, phase: .running(spinnerVisible: false))
+        rebuildDisplayedRows()
 
         let observer = Task { [weak self] in
             guard let self else { return }
@@ -706,6 +713,7 @@ final class BrowserViewModel {
                 message: error.localizedDescription,
                 previous: previous
             )
+            rebuildDisplayedRows()
         }
     }
 
@@ -720,6 +728,7 @@ final class BrowserViewModel {
         let previousSelectedItemState = selectedItemState
 
         contentState = .loaded(LoadedBrowserContent(response: response))
+        rebuildDisplayedRows()
 
         let newOrder = response.items.map { $0.itemMetadata.itemId }
         guard !newOrder.isEmpty else {
@@ -1062,7 +1071,7 @@ final class BrowserViewModel {
     }
 
     private func prefetchAdjacentItems(around itemId: Int64) {
-        guard let currentIndex = itemIds.firstIndex(of: itemId) else { return }
+        guard let currentIndex = indexOfItem(itemId) else { return }
         var idsToPrefetch: [Int64] = []
         if currentIndex > 0 {
             idsToPrefetch.append(itemIds[currentIndex - 1])
@@ -1076,7 +1085,7 @@ final class BrowserViewModel {
             for itemId in idsToPrefetch where self.prefetchCache[itemId] == nil {
                 guard let item = await self.client.fetchItem(id: itemId) else { continue }
                 await MainActor.run {
-                    if self.itemIds.contains(itemId) {
+                    if self.indexOfItem(itemId) != nil {
                         self.prefetchCache[itemId] = item
                     }
                 }
@@ -1197,6 +1206,7 @@ final class BrowserViewModel {
 
     private func restoreSnapshot(_ snapshot: BrowserContentState, selection: SelectionState?) {
         contentState = snapshot
+        rebuildDisplayedRows()
         if let selection {
             setDisplayedSelection(selection)
         }
@@ -1436,10 +1446,10 @@ final class BrowserViewModel {
     }
 
     func rowDecoration(for itemId: Int64) -> RowDecoration? {
-        if let decoration = rowDecorationsByItemId[itemId] {
-            return decoration
+        guard let index = itemIndexById[itemId], displayRows.indices.contains(index) else {
+            return nil
         }
-        return contentState.items.first { $0.itemMetadata.itemId == itemId }?.rowDecoration
+        return displayRows[index].rowDecoration
     }
 
     private func makeSelectedItemState(
@@ -1647,6 +1657,31 @@ final class BrowserViewModel {
             guard let previous else { return }
             contentState = .failed(request: request, message: message, previous: transform(previous))
         }
+        rebuildDisplayedRows()
+    }
+
+    private func rebuildDisplayedRows() {
+        let items = contentState.items
+        var nextItemIds: [Int64] = []
+        nextItemIds.reserveCapacity(items.count)
+        var nextIndexById: [Int64: Int] = [:]
+        nextIndexById.reserveCapacity(items.count)
+        var nextDisplayRows: [DisplayRow] = []
+        nextDisplayRows.reserveCapacity(items.count)
+
+        for (index, itemMatch) in items.enumerated() {
+            let itemId = itemMatch.itemMetadata.itemId
+            nextItemIds.append(itemId)
+            nextIndexById[itemId] = index
+            nextDisplayRows.append(DisplayRow(
+                metadata: itemMatch.itemMetadata,
+                rowDecoration: rowDecorationsByItemId[itemId] ?? itemMatch.rowDecoration
+            ))
+        }
+
+        itemIds = nextItemIds
+        itemIndexById = nextIndexById
+        displayRows = nextDisplayRows
     }
 
     private func clearInactiveEdits() {
@@ -1670,12 +1705,4 @@ final class BrowserViewModel {
         }
     }
 
-    // MARK: - Fix 3: Icon Caching
-    func appIcon(for bundleId: String) -> NSImage? {
-        if let cached = appIconCache[bundleId] { return cached }
-        guard let appURL = NSWorkspace.shared.urlForApplication(withBundleIdentifier: bundleId) else { return nil }
-        let icon = NSWorkspace.shared.icon(forFile: appURL.path)
-        appIconCache[bundleId] = icon
-        return icon
-    }
 }

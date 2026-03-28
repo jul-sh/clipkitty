@@ -281,6 +281,9 @@ class TextPreviewContent: Equatable {
 }
 
 struct TextPreviewView: NSViewRepresentable {
+    private static let maxAutoScaleCharacters = 4_096
+    private static let maxAutoScaleLines = 14
+
     static var textCache: [Int64: String] = [:]
     let itemId: Int64
     let fontName: String
@@ -296,7 +299,6 @@ struct TextPreviewView: NSViewRepresentable {
     var scrollBehavior: PreviewScrollBehavior = .autoScroll
 
     // Edit callbacks
-    var originalText: String = ""
     var onTextChange: ((String) -> Void)?
     var onEditingStateChange: ((Bool) -> Void)?
     var onCmdReturn: (() -> Void)?
@@ -352,9 +354,8 @@ struct TextPreviewView: NSViewRepresentable {
     private static var lastKnownContainerWidth: CGFloat = 0
 
     private func scaledFontSize(containerWidth: CGFloat) -> CGFloat {
-        let text = TextPreviewView.textCache[itemId] ?? ""
-        let lines = text.components(separatedBy: "\n")
-        if lines.count >= 15 { return fontSize }
+        let nsText = (TextPreviewView.textCache[itemId] ?? "") as NSString
+        guard nsText.length <= Self.maxAutoScaleCharacters else { return fontSize }
 
         let baseFont = NSFont(name: fontName, size: fontSize)
             ?? NSFont.monospacedSystemFont(ofSize: fontSize, weight: .regular)
@@ -363,12 +364,31 @@ struct TextPreviewView: NSViewRepresentable {
         if availableWidth <= 0 { return fontSize }
 
         let attributes: [NSAttributedString.Key: Any] = [.font: baseFont]
+        let fullRange = NSRange(location: 0, length: nsText.length)
+        var lineCount = 0
         var maxLineWidth: CGFloat = 0
-        for line in lines {
-            let lineWidth = (line as NSString).size(withAttributes: attributes).width
-            if lineWidth >= availableWidth { return fontSize }
+
+        nsText.enumerateSubstrings(
+            in: fullRange,
+            options: [.byLines]
+        ) { substring, _, _, stop in
+            lineCount += 1
+            guard lineCount <= Self.maxAutoScaleLines else {
+                stop.pointee = true
+                return
+            }
+
+            let lineWidth = (substring as NSString? ?? "").size(withAttributes: attributes).width
+            if lineWidth >= availableWidth {
+                maxLineWidth = availableWidth
+                stop.pointee = true
+                return
+            }
+
             maxLineWidth = max(maxLineWidth, lineWidth)
         }
+
+        if lineCount == 0 || lineCount > Self.maxAutoScaleLines { return fontSize }
         if maxLineWidth <= 0 { return fontSize }
 
         let scale = min(1.5, availableWidth / maxLineWidth) * 0.95
@@ -378,9 +398,14 @@ struct TextPreviewView: NSViewRepresentable {
     func updateNSView(_ nsView: NSScrollView, context: Context) {
         guard let textView = nsView.documentView as? PreviewTextView else { return }
 
-        // Update callbacks
         let coordinator = context.coordinator
         coordinator.observeUsageBounds(of: textView)
+
+        let itemChanged = coordinator.currentItemId != itemId
+        if itemChanged {
+            coordinator.prepareForDisplayedItemChange(to: itemId, in: textView)
+        }
+
         coordinator.onTextChange = onTextChange
         textView.onCmdReturn = onCmdReturn
         textView.onCmdK = onCmdK
@@ -447,13 +472,6 @@ struct TextPreviewView: NSViewRepresentable {
             )
         }
 
-        // Check if item changed
-        let itemChanged = coordinator.currentItemId != itemId
-        if itemChanged {
-            coordinator.currentItemId = itemId
-            coordinator.isEditing = false
-        }
-
         // Use live container width if available, otherwise fall back to persisted value
         let containerWidth = nsView.contentSize.width > 0
             ? nsView.contentSize.width
@@ -462,7 +480,16 @@ struct TextPreviewView: NSViewRepresentable {
             Self.lastKnownContainerWidth = nsView.contentSize.width
         }
 
-        let scaledSize = scaledFontSize(containerWidth: containerWidth)
+        let textChanged = itemChanged ? true : textView.string != (TextPreviewView.textCache[itemId] ?? "")
+        let contentWidthChanged = abs(coordinator.lastContentWidth - containerWidth) > 0.5
+
+        let scaledSize: CGFloat
+        if itemChanged || textChanged || contentWidthChanged {
+            scaledSize = scaledFontSize(containerWidth: containerWidth)
+            coordinator.lastScaledFontSize = scaledSize
+        } else {
+            scaledSize = coordinator.lastScaledFontSize ?? fontSize
+        }
         let font = NSFont(name: fontName, size: scaledSize)
             ?? NSFont.monospacedSystemFont(ofSize: scaledSize, weight: .regular)
 
@@ -484,9 +511,7 @@ struct TextPreviewView: NSViewRepresentable {
         ]
 
         let text = TextPreviewView.textCache[itemId] ?? ""
-        let textChanged = coordinator.lastRenderedText != text
         let highlightsChanged = coordinator.lastHighlights != highlights
-        let contentWidthChanged = abs(coordinator.lastContentWidth - containerWidth) > 0.5
         let gainedHighlights = !highlights.isEmpty && coordinator.lastHighlights.isEmpty
         coordinator.lastContentWidth = containerWidth
 
@@ -522,6 +547,9 @@ struct TextPreviewView: NSViewRepresentable {
 
             textView.textStorage?.setAttributedString(attributed)
             coordinator.lastRenderedText = text // Update cache!
+            if itemChanged {
+                coordinator.resetTextInteractionState(in: textView)
+            }
         }
 
         if itemChanged || textChanged || highlightsChanged {
@@ -895,6 +923,7 @@ struct TextPreviewView: NSViewRepresentable {
         var currentMatchRanges: [MatchRange] = []
         var scrollGeneration: Int = 0
         var lastContentWidth: CGFloat = 0
+        var lastScaledFontSize: CGFloat?
         var lastUsageBounds: CGRect = .zero
         var needsGeometrySync: Bool = false
         private var pendingScrollTarget: ScrollTarget?
@@ -917,6 +946,32 @@ struct TextPreviewView: NSViewRepresentable {
 
         deinit {
             usageBoundsObservation?.invalidate()
+        }
+
+        fileprivate func prepareForDisplayedItemChange(to itemId: Int64, in textView: PreviewTextView) {
+            scrollGeneration += 1
+            clearUsageBoundsRecentering()
+            clearViewportRetry()
+            resetKvoReScrollCount()
+
+            if textView.window?.firstResponder === textView {
+                textView.window?.makeFirstResponder(nil)
+            }
+
+            currentItemId = itemId
+            isEditing = false
+            currentMatchRanges = []
+            lastHighlights = []
+            lastUsageBounds = textView.textLayoutManager?.usageBoundsForTextContainer ?? .zero
+            needsGeometrySync = true
+        }
+
+        fileprivate func resetTextInteractionState(in textView: PreviewTextView) {
+            if textView.hasMarkedText() {
+                textView.unmarkText()
+            }
+            textView.undoManager?.removeAllActions()
+            textView.setSelectedRange(NSRange(location: 0, length: 0))
         }
 
         fileprivate func observeUsageBounds(of textView: PreviewTextView) {
@@ -1075,6 +1130,62 @@ struct LinkPreviewView: NSViewRepresentable {
 
 // MARK: - Item Row
 
+@MainActor
+private enum RowIconCache {
+    private static let workspace = NSWorkspace.shared
+    private static let browserIcon: NSImage = {
+        if let browserURL = URL(string: "https://").flatMap({ workspace.urlForApplication(toOpen: $0) }) {
+            return workspace.icon(forFile: browserURL.path)
+        }
+        return workspace.icon(for: IconType.link.utType)
+    }()
+    private static let finderIcon: NSImage = {
+        if let finderURL = workspace.urlForApplication(withBundleIdentifier: "com.apple.finder") {
+            return workspace.icon(forFile: finderURL.path)
+        }
+        return workspace.icon(for: IconType.file.utType)
+    }()
+    private static var symbolIcons: [IconType: NSImage] = [:]
+    private static var sourceAppIcons: [String: NSImage] = [:]
+    private static var missingSourceAppBundleIDs: Set<String> = []
+
+    static func symbolImage(for iconType: IconType) -> NSImage {
+        if let cachedImage = symbolIcons[iconType] {
+            return cachedImage
+        }
+
+        let image: NSImage
+        switch iconType {
+        case .link:
+            image = browserIcon
+        case .file:
+            image = finderIcon
+        case .text, .image, .color:
+            image = workspace.icon(for: iconType.utType)
+        }
+
+        symbolIcons[iconType] = image
+        return image
+    }
+
+    static func sourceAppImage(bundleID: String) -> NSImage? {
+        if let cachedImage = sourceAppIcons[bundleID] {
+            return cachedImage
+        }
+        if missingSourceAppBundleIDs.contains(bundleID) {
+            return nil
+        }
+        guard let appURL = workspace.urlForApplication(withBundleIdentifier: bundleID) else {
+            missingSourceAppBundleIDs.insert(bundleID)
+            return nil
+        }
+
+        let image = workspace.icon(forFile: appURL.path)
+        sourceAppIcons[bundleID] = image
+        return image
+    }
+}
+
 struct ItemRow: View {
     let metadata: ItemMetadata
     let rowDecoration: RowDecoration?
@@ -1110,6 +1221,15 @@ struct ItemRow: View {
     /// Highlights for display - passed directly from Rust (already adjusted for normalization)
     private var displayHighlights: [Utf16HighlightRange] {
         rowDecoration?.highlights ?? []
+    }
+
+    private var showsSourceAppBadge: Bool {
+        switch metadata.icon {
+        case let .symbol(iconType):
+            return iconType != .link && iconType != .file
+        case .thumbnail, .colorSwatch:
+            return true
+        }
     }
 
     var body: some View {
@@ -1150,20 +1270,8 @@ struct ItemRow: View {
                                                 .strokeBorder(Color.primary.opacity(0.15), lineWidth: 1)
                                         )
                                 case let .symbol(iconType):
-                                    if case .link = iconType,
-                                       let browserURL = NSWorkspace.shared.urlForApplication(toOpen: URL(string: "https://")!)
-                                    {
-                                        Image(nsImage: NSWorkspace.shared.icon(forFile: browserURL.path))
-                                            .resizable()
-                                    } else if case .file = iconType,
-                                              let finderURL = NSWorkspace.shared.urlForApplication(withBundleIdentifier: "com.apple.finder")
-                                    {
-                                        Image(nsImage: NSWorkspace.shared.icon(forFile: finderURL.path))
-                                            .resizable()
-                                    } else {
-                                        Image(nsImage: NSWorkspace.shared.icon(for: iconType.utType))
-                                            .resizable()
-                                    }
+                                    Image(nsImage: RowIconCache.symbolImage(for: iconType))
+                                        .resizable()
                                 }
                             }
                             .frame(width: 32, height: 32)
@@ -1177,20 +1285,10 @@ struct ItemRow: View {
                                     .shadow(color: .black.opacity(0.3), radius: 1, x: 0, y: 1)
                                     .offset(x: 4, y: 4)
                             } else if let bundleID = metadata.sourceAppBundleId,
-                                      let appURL = NSWorkspace.shared.urlForApplication(withBundleIdentifier: bundleID)
+                                      let sourceAppImage = RowIconCache.sourceAppImage(bundleID: bundleID)
                             {
-                                // Skip badge for symbol links/files (app icon is already shown)
-                                let showBadge: Bool = {
-                                    switch metadata.icon {
-                                    case let .symbol(iconType):
-                                        return iconType != .link && iconType != .file
-                                    case .thumbnail, .colorSwatch:
-                                        return true
-                                    }
-                                }()
-
-                                if showBadge {
-                                    Image(nsImage: NSWorkspace.shared.icon(forFile: appURL.path))
+                                if showsSourceAppBadge {
+                                    Image(nsImage: sourceAppImage)
                                         .resizable()
                                         .frame(width: 22, height: 22)
                                         .clipShape(RoundedRectangle(cornerRadius: 3))
