@@ -89,21 +89,17 @@ pub enum ItemEventPayload {
 
 impl ItemEventPayload {
     /// Returns the string tag used for `payload_type` in the database and CloudKit.
-    pub fn type_tag(&self) -> &'static str {
+    pub fn type_tag(&self) -> String {
         match self {
-            Self::ItemCreated { .. } => "item_created",
-            Self::TextEdited { .. } => "text_edited",
-            Self::BookmarkSet { .. } => "bookmark_set",
-            Self::BookmarkCleared { .. } => "bookmark_cleared",
-            Self::ItemDeleted { .. } => "item_deleted",
-            Self::ItemTouched { .. } => "item_touched",
-            Self::LinkMetadataUpdated { .. } => "link_metadata_updated",
-            Self::ImageDescriptionUpdated { .. } => "image_description_updated",
-            Self::Unknown { raw_type, .. } => {
-                // Leak a copy so we can return &'static str.
-                // Unknown payloads are rare; this is acceptable.
-                Box::leak(raw_type.clone().into_boxed_str())
-            }
+            Self::ItemCreated { .. } => "item_created".to_string(),
+            Self::TextEdited { .. } => "text_edited".to_string(),
+            Self::BookmarkSet { .. } => "bookmark_set".to_string(),
+            Self::BookmarkCleared { .. } => "bookmark_cleared".to_string(),
+            Self::ItemDeleted { .. } => "item_deleted".to_string(),
+            Self::ItemTouched { .. } => "item_touched".to_string(),
+            Self::LinkMetadataUpdated { .. } => "link_metadata_updated".to_string(),
+            Self::ImageDescriptionUpdated { .. } => "image_description_updated".to_string(),
+            Self::Unknown { raw_type, .. } => raw_type.clone(),
         }
     }
 }

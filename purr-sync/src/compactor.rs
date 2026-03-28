@@ -10,7 +10,11 @@ use crate::error::SyncResult;
 use crate::projector;
 use crate::snapshot::ItemSnapshot;
 use crate::store::SyncStore;
-use crate::types::*;
+use crate::types::{
+    ApplyResult, ItemAggregate, COMPACTED_EVENT_RETENTION_SECS, COMPACTION_AGE_THRESHOLD_SECS,
+    COMPACTION_EVENT_THRESHOLD, COMPACTION_PAYLOAD_THRESHOLD, TOMBSTONE_COMPACTION_AGE_SECS,
+    TOMBSTONE_SNAPSHOT_RETENTION_SECS,
+};
 use chrono::Utc;
 use r2d2::Pool;
 use r2d2_sqlite::SqliteConnectionManager;

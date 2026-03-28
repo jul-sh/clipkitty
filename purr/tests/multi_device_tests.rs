@@ -27,7 +27,7 @@ struct TestDevice {
 }
 
 impl TestDevice {
-    fn new(_name: &str) -> Self {
+    fn new() -> Self {
         let dir = TempDir::new().unwrap();
         let db_path = dir.path().join("test.db").to_string_lossy().to_string();
         let store = ClipboardStore::new(db_path.clone()).unwrap();
@@ -86,8 +86,8 @@ fn text_snapshot(text: &str) -> ItemSnapshotData {
 
 #[test]
 fn test_two_devices_create_and_sync() {
-    let device_a = TestDevice::new("device-a");
-    let device_b = TestDevice::new("device-b");
+    let device_a = TestDevice::new();
+    let device_b = TestDevice::new();
 
     // Device A creates an item.
     device_a
@@ -124,8 +124,8 @@ fn test_two_devices_create_and_sync() {
 
 #[test]
 fn test_concurrent_edit_conflict_forks() {
-    let device_a = TestDevice::new("device-a");
-    let device_b = TestDevice::new("device-b");
+    let device_a = TestDevice::new();
+    let device_b = TestDevice::new();
 
     // Both devices start with the same item (simulate via ItemCreated event).
     let create_event = ItemEvent::new_local(
@@ -176,8 +176,8 @@ fn test_concurrent_edit_conflict_forks() {
 
 #[test]
 fn test_offline_reconnect_batch() {
-    let device_a = TestDevice::new("device-a");
-    let device_b = TestDevice::new("device-b");
+    let device_a = TestDevice::new();
+    let device_b = TestDevice::new();
 
     // Device A creates multiple items while B is "offline".
     device_a
@@ -207,8 +207,8 @@ fn test_offline_reconnect_batch() {
 
 #[test]
 fn test_out_of_order_events_deferred_then_resolved() {
-    let device_a = TestDevice::new("device-a");
-    let device_b = TestDevice::new("device-b");
+    let device_a = TestDevice::new();
+    let device_b = TestDevice::new();
 
     // Create an item on device A.
     let create_event = ItemEvent::new_local(
@@ -247,8 +247,8 @@ fn test_out_of_order_events_deferred_then_resolved() {
 
 #[test]
 fn test_delete_on_one_device_tombstones_on_other() {
-    let device_a = TestDevice::new("device-a");
-    let device_b = TestDevice::new("device-b");
+    let device_a = TestDevice::new();
+    let device_b = TestDevice::new();
 
     // Shared item created on both devices.
     let create_event = ItemEvent::new_local(
@@ -283,8 +283,8 @@ fn test_delete_on_one_device_tombstones_on_other() {
 
 #[test]
 fn test_bookmark_and_edit_apply_independently() {
-    let device_a = TestDevice::new("device-a");
-    let device_b = TestDevice::new("device-b");
+    let device_a = TestDevice::new();
+    let device_b = TestDevice::new();
 
     // Shared item.
     let create_event = ItemEvent::new_local(
@@ -329,8 +329,8 @@ fn test_bookmark_and_edit_apply_independently() {
 
 #[test]
 fn test_duplicate_event_across_devices() {
-    let device_a = TestDevice::new("device-a");
-    let device_b = TestDevice::new("device-b");
+    let device_a = TestDevice::new();
+    let device_b = TestDevice::new();
 
     let create_event = ItemEvent::new_local(
         "item-dup".to_string(),

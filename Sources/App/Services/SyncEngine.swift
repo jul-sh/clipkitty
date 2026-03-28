@@ -13,6 +13,7 @@ import os.log
 /// 5. Uploads pending local events (with CKAsset for large images)
 /// 6. Runs background compaction and CloudKit cleanup on a schedule
 /// 7. Triggers full resync when the zone token expires
+@MainActor
 final class SyncEngine {
     // MARK: - Configuration
 
@@ -91,8 +92,7 @@ final class SyncEngine {
             let status = try? await self.container.accountStatus()
             guard status == .available else {
                 self.logger.warning("iCloud account not available (status: \(String(describing: status))), sync disabled")
-                self.isRunning = false
-                await self.updateStatus(.unavailable)
+                await self.setUnavailable()
                 return
             }
 
@@ -112,7 +112,7 @@ final class SyncEngine {
         compactionTask?.cancel()
         syncTask = nil
         compactionTask = nil
-        Task { await updateStatus(.idle) }
+        updateStatus(.idle)
         logger.info("SyncEngine stopped")
     }
 
@@ -135,9 +135,14 @@ final class SyncEngine {
         case unavailable
     }
 
-    @MainActor
     private func updateStatus(_ newStatus: SyncStatus) {
         status = newStatus
+    }
+
+    /// Marks the engine as unavailable and stops it. Callable from detached tasks.
+    private func setUnavailable() {
+        isRunning = false
+        status = .unavailable
     }
 
     // MARK: - Zone Setup
@@ -203,7 +208,7 @@ final class SyncEngine {
     }
 
     func performSyncCycle() async {
-        await updateStatus(.syncing)
+        updateStatus(.syncing)
         do {
             let deviceState = try store.getSyncDeviceState(deviceId: deviceId)
 
@@ -211,7 +216,7 @@ final class SyncEngine {
                 logger.info("Full resync required")
                 await performFullResync()
                 backoff.reset()
-                await updateStatus(.synced(lastSync: Date()))
+                updateStatus(.synced(lastSync: Date()))
                 return
             }
 
@@ -232,7 +237,7 @@ final class SyncEngine {
                 logger.info("Zone change token expired, triggering full resync")
                 await performFullResync()
                 backoff.reset()
-                await updateStatus(.synced(lastSync: Date()))
+                updateStatus(.synced(lastSync: Date()))
                 return
             }
 
@@ -248,7 +253,11 @@ final class SyncEngine {
                     )
                 }
                 for snapshot in snapshotRecords {
-                    _ = try? store.applyRemoteSnapshot(record: snapshot)
+                    do {
+                        try store.applyRemoteSnapshot(record: snapshot)
+                    } catch {
+                        logger.warning("Failed to apply snapshot: \(error.localizedDescription)")
+                    }
                 }
             }
 
@@ -278,7 +287,15 @@ final class SyncEngine {
                     )
                 }
                 for event in eventRecords {
-                    _ = try? store.applyRemoteEvent(record: event)
+                    do {
+                        let outcome = try store.applyRemoteEvent(record: event)
+                        if case .forked(let snapshotData) = outcome {
+                            // Fork outcomes are handled by Rust-side materialization now
+                            logger.info("Event forked for item \(event.globalItemId)")
+                        }
+                    } catch {
+                        logger.warning("Failed to apply event \(event.eventId): \(error.localizedDescription)")
+                    }
                 }
             }
 
@@ -297,15 +314,26 @@ final class SyncEngine {
             }
 
             // 6. Upload pending local events.
-            await uploadPendingEvents()
-
-            backoff.reset()
-            await updateStatus(.synced(lastSync: Date()))
+            let uploadSuccess = await uploadPendingEvents()
+            if uploadSuccess {
+                backoff.reset()
+                updateStatus(.synced(lastSync: Date()))
+            } else {
+                // Don't reset backoff or claim synced if upload failed.
+                let delay = backoff.registerFailure(
+                    error: NSError(
+                        domain: "SyncEngine", code: 1,
+                        userInfo: [NSLocalizedDescriptionKey: "Upload failed"]
+                    )
+                )
+                logger.warning("Upload failed, backing off \(delay)s")
+                updateStatus(.error("Upload failed"))
+            }
 
         } catch {
             let delay = backoff.registerFailure(error: error)
             logger.error("Sync cycle error: \(error.localizedDescription), backing off \(delay)s")
-            await updateStatus(.error(error.localizedDescription))
+            updateStatus(.error(error.localizedDescription))
         }
     }
 
@@ -376,10 +404,11 @@ final class SyncEngine {
 
     // MARK: - Upload
 
-    private func uploadPendingEvents() async {
+    /// Returns true if upload succeeded or there was nothing to upload.
+    private func uploadPendingEvents() async -> Bool {
         do {
             let pendingEvents = try store.pendingLocalEvents()
-            guard !pendingEvents.isEmpty else { return }
+            guard !pendingEvents.isEmpty else { return true }
 
             let zoneID = recordZone.zoneID
             var records: [CKRecord] = []
@@ -440,43 +469,78 @@ final class SyncEngine {
                 try store.markEventsUploaded(eventIds: uploadedIds)
                 logger.debug("Uploaded \(uploadedIds.count) events")
             }
+            return true
         } catch {
             logger.error("Upload error: \(error.localizedDescription)")
+            return false
         }
     }
 
     // MARK: - CKAsset Helpers
 
-    /// Extract a large base64 value from a JSON payload, returning the stripped JSON and raw data.
+    /// Recursively find and extract a large base64 value from nested JSON.
     private static func extractLargeBase64(
         from jsonString: String, key: String, threshold: Int
     ) -> (String, Data)? {
         guard let jsonData = jsonString.data(using: .utf8),
-              var dict = try? JSONSerialization.jsonObject(with: jsonData) as? [String: Any],
-              let base64String = dict[key] as? String,
-              base64String.count > threshold,
-              let rawData = Data(base64Encoded: base64String)
+              var root = try? JSONSerialization.jsonObject(with: jsonData) as? [String: Any]
         else { return nil }
 
-        dict[key] = ""
-        guard let strippedData = try? JSONSerialization.data(withJSONObject: dict),
+        var extractedData: Data?
+
+        func walk(_ dict: inout [String: Any]) -> Bool {
+            if let base64String = dict[key] as? String,
+               base64String.count > threshold,
+               let rawData = Data(base64Encoded: base64String)
+            {
+                dict[key] = ""
+                extractedData = rawData
+                return true
+            }
+            for (k, v) in dict {
+                if var nested = v as? [String: Any], walk(&nested) {
+                    dict[k] = nested
+                    return true
+                }
+            }
+            return false
+        }
+
+        guard walk(&root),
+              let data = extractedData,
+              let strippedData = try? JSONSerialization.data(withJSONObject: root),
               let strippedString = String(data: strippedData, encoding: .utf8)
         else { return nil }
 
-        return (strippedString, rawData)
+        return (strippedString, data)
     }
 
-    /// Inject base64-encoded data back into a JSON payload string.
+    /// Recursively inject base64-encoded data back into nested JSON.
     private static func injectBase64IntoPayload(
         _ jsonString: String, key: String, data: Data
     ) -> String {
         guard let jsonData = jsonString.data(using: .utf8),
-              var dict = try? JSONSerialization.jsonObject(with: jsonData) as? [String: Any]
+              var root = try? JSONSerialization.jsonObject(with: jsonData) as? [String: Any]
         else { return jsonString }
 
-        dict[key] = data.base64EncodedString()
+        let base64String = data.base64EncodedString()
 
-        guard let resultData = try? JSONSerialization.data(withJSONObject: dict),
+        func walk(_ dict: inout [String: Any]) -> Bool {
+            if dict[key] is String {
+                dict[key] = base64String
+                return true
+            }
+            for (k, v) in dict {
+                if var nested = v as? [String: Any], walk(&nested) {
+                    dict[k] = nested
+                    return true
+                }
+            }
+            return false
+        }
+
+        guard walk(&root),
+              let resultData = try? JSONSerialization.data(withJSONObject: root),
               let resultString = String(data: resultData, encoding: .utf8)
         else { return jsonString }
 
@@ -489,6 +553,7 @@ final class SyncEngine {
         while !Task.isCancelled && isRunning {
             try? await Task.sleep(for: .seconds(Self.compactionInterval))
             await performCompaction()
+            await uploadSnapshots()
             await performCloudCleanupIfDue()
         }
     }
@@ -503,6 +568,45 @@ final class SyncEngine {
             }
         } catch {
             logger.error("Compaction error: \(error.localizedDescription)")
+        }
+    }
+
+    /// Upload compacted snapshots to CloudKit so other devices can full-resync.
+    private func uploadSnapshots() async {
+        do {
+            let snapshots = try store.pendingSnapshotRecords()
+            guard !snapshots.isEmpty else { return }
+
+            let zoneID = recordZone.zoneID
+            let records: [CKRecord] = snapshots.map { snapshot in
+                let recordID = CKRecord.ID(recordName: snapshot.globalItemId, zoneID: zoneID)
+                let record = CKRecord(recordType: "ItemSnapshot", recordID: recordID)
+                record["snapshotRevision"] = Int64(snapshot.snapshotRevision) as CKRecordValue
+                record["schemaVersion"] = Int64(snapshot.schemaVersion) as CKRecordValue
+                record["coversThroughEvent"] = snapshot.coversThroughEvent as CKRecordValue?
+                record["aggregateData"] = snapshot.aggregateData as CKRecordValue
+                return record
+            }
+
+            for chunk in records.chunked(into: 400) {
+                let operation = CKModifyRecordsOperation(
+                    recordsToSave: chunk,
+                    recordIDsToDelete: nil
+                )
+                operation.savePolicy = .changedKeys
+                operation.isAtomic = false
+
+                await withCheckedContinuation { (continuation: CheckedContinuation<Void, Never>) in
+                    operation.modifyRecordsResultBlock = { _ in
+                        continuation.resume()
+                    }
+                    database.add(operation)
+                }
+            }
+
+            logger.debug("Uploaded \(snapshots.count) snapshots to CloudKit")
+        } catch {
+            logger.error("Snapshot upload error: \(error.localizedDescription)")
         }
     }
 
@@ -595,12 +699,12 @@ final class SyncEngine {
 
     private func fetchAllSnapshots() async -> [CKRecord] {
         var snapshots: [CKRecord] = []
-
-        let query = CKQuery(recordType: "ItemSnapshot", predicate: NSPredicate(value: true))
         let zoneID = recordZone.zoneID
+        var cursor: CKQueryOperation.Cursor?
 
         do {
-            let (results, _) = try await database.records(
+            let query = CKQuery(recordType: "ItemSnapshot", predicate: NSPredicate(value: true))
+            let (results, queryCursor) = try await database.records(
                 matching: query,
                 inZoneWith: zoneID,
                 resultsLimit: CKQueryOperation.maximumResults
@@ -609,6 +713,20 @@ final class SyncEngine {
                 if case let .success(record) = result {
                     snapshots.append(record)
                 }
+            }
+            cursor = queryCursor
+
+            while let activeCursor = cursor {
+                let (moreResults, nextCursor) = try await database.records(
+                    continuingMatchFrom: activeCursor,
+                    resultsLimit: CKQueryOperation.maximumResults
+                )
+                for (_, result) in moreResults {
+                    if case let .success(record) = result {
+                        snapshots.append(record)
+                    }
+                }
+                cursor = nextCursor
             }
         } catch {
             logger.error("Fetch all snapshots error: \(error.localizedDescription)")

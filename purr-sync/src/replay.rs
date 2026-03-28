@@ -12,7 +12,10 @@ use crate::event::ItemEvent;
 use crate::projector;
 use crate::snapshot::ItemSnapshot;
 use crate::store::SyncStore;
-use crate::types::*;
+use crate::types::{
+    ApplyResult, ForkPlan, IgnoreReason, ItemAggregate, ItemEventPayload, FLAG_NEEDS_FULL_RESYNC,
+    SYNC_SCHEMA_VERSION,
+};
 use r2d2::Pool;
 use r2d2_sqlite::SqliteConnectionManager;
 

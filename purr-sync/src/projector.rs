@@ -8,7 +8,11 @@
 //! - edit vs edit from same base with different text: fork into new logical item
 //! - metadata events (link preview, image description) lose to newer user edits
 
-use crate::types::*;
+use crate::types::{
+    ApplyResult, DeferredReason, ForkPlan, IgnoreReason, ItemAggregate, ItemEventPayload,
+    ItemSnapshotData, LinkMetadataSnapshot, LiveItemState, ProjectionDelta, TombstoneState,
+    TypeSpecificData, VersionDomain, VersionVector,
+};
 
 /// Apply a single event payload to an existing aggregate.
 ///

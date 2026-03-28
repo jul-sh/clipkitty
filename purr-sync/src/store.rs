@@ -5,7 +5,7 @@
 use crate::error::{SyncError, SyncResult};
 use crate::event::ItemEvent;
 use crate::snapshot::ItemSnapshot;
-use crate::types::*;
+use crate::types::{DeferredReason, VersionVector};
 use chrono::Utc;
 use r2d2::Pool;
 use r2d2_sqlite::SqliteConnectionManager;

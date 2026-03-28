@@ -13,6 +13,12 @@ struct GeneralSettingsView: View {
         var onCheckForUpdates: (() -> Void)? = nil
     #endif
 
+    private static let relativeDateFormatter: RelativeDateTimeFormatter = {
+        let formatter = RelativeDateTimeFormatter()
+        formatter.unitsStyle = .abbreviated
+        return formatter
+    }()
+
     private let minDatabaseSizeGB = 0.5
     private let maxDatabaseSizeGB = 64.0
 
@@ -352,9 +358,7 @@ struct GeneralSettingsView: View {
         case .syncing:
             return String(localized: "Syncing…")
         case let .synced(lastSync):
-            let formatter = RelativeDateTimeFormatter()
-            formatter.unitsStyle = .abbreviated
-            let relative = formatter.localizedString(for: lastSync, relativeTo: Date())
+            let relative = Self.relativeDateFormatter.localizedString(for: lastSync, relativeTo: Date())
             return String(localized: "Synced \(relative)")
         case let .error(message):
             return String(localized: "Error: \(message)")

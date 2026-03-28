@@ -573,6 +573,91 @@ impl ClipboardStoreApi for ClipboardStore {
 }
 
 // ═══════════════════════════════════════════════════════════════════════════════
+// Sync internals — not exposed via FFI
+// ═══════════════════════════════════════════════════════════════════════════════
+
+#[cfg(feature = "sync")]
+impl ClipboardStore {
+    /// Materialize a sync aggregate into the local items table.
+    ///
+    /// For Live aggregates: upsert into items table (insert if new, update if exists).
+    /// For Tombstoned aggregates: delete from items table.
+    fn materialize_aggregate(
+        &self,
+        global_item_id: &str,
+        aggregate: &purr_sync::types::ItemAggregate,
+        index_dirty: bool,
+    ) -> Result<(), ClipKittyError> {
+        use crate::sync_bridge::stored_item_from_snapshot;
+        use purr_sync::store::SyncStore;
+        use purr_sync::types::ItemAggregate;
+
+        let sync = SyncStore::new(self.db.pool());
+        let proj = sync.fetch_projection(global_item_id)?;
+
+        match aggregate {
+            ItemAggregate::Live(live) => {
+                let item = stored_item_from_snapshot(&live.snapshot)
+                    .map_err(ClipKittyError::InvalidInput)?;
+
+                if let Some(ref proj) = proj {
+                    if let Some(local_id) = proj.local_item_id {
+                        // Update existing item: delete old, insert new.
+                        self.db.delete_item(local_id)?;
+                        let new_id = self.db.insert_item(&item)?;
+                        if index_dirty {
+                            let text = item
+                                .file_index_text()
+                                .unwrap_or_else(|| item.text_content().to_string());
+                            let _ = self.indexer.delete_document(local_id);
+                            let _ =
+                                self.indexer
+                                    .add_document(new_id, &text, item.timestamp_unix);
+                            let _ = self.indexer.commit();
+                        }
+                        // Re-map projection to the new local ID.
+                        sync.upsert_projection(
+                            global_item_id,
+                            Some(new_id),
+                            &live.versions,
+                            false,
+                        )?;
+                        return Ok(());
+                    }
+                }
+
+                // No existing local item — insert fresh.
+                let new_id = self.db.insert_item(&item)?;
+                if index_dirty {
+                    let text = item
+                        .file_index_text()
+                        .unwrap_or_else(|| item.text_content().to_string());
+                    let _ = self.indexer.add_document(new_id, &text, item.timestamp_unix);
+                    let _ = self.indexer.commit();
+                }
+                sync.upsert_projection(
+                    global_item_id,
+                    Some(new_id),
+                    &live.versions,
+                    false,
+                )?;
+            }
+            ItemAggregate::Tombstoned(_tomb) => {
+                if let Some(ref proj) = proj {
+                    if let Some(local_id) = proj.local_item_id {
+                        let _ = self.indexer.delete_document(local_id);
+                        let _ = self.indexer.commit();
+                        self.db.delete_item(local_id)?;
+                    }
+                }
+            }
+        }
+
+        Ok(())
+    }
+}
+
+// ═══════════════════════════════════════════════════════════════════════════════
 // Sync FFI — methods exposed to Swift SyncEngine
 // ═══════════════════════════════════════════════════════════════════════════════
 
@@ -612,6 +697,30 @@ impl ClipboardStore {
             .collect())
     }
 
+    /// Fetch compacted snapshots that need uploading to CloudKit.
+    pub fn pending_snapshot_records(
+        &self,
+    ) -> Result<Vec<crate::interface::SyncSnapshotRecord>, ClipKittyError> {
+        use crate::interface::SyncSnapshotRecord;
+        use purr_sync::store::SyncStore;
+
+        let sync = SyncStore::new(self.db.pool());
+        let snapshots = sync.fetch_all_snapshots()?;
+        Ok(snapshots
+            .into_iter()
+            .map(|s| {
+                let aggregate_data = s.aggregate_data();
+                SyncSnapshotRecord {
+                    global_item_id: s.global_item_id,
+                    snapshot_revision: s.snapshot_revision,
+                    schema_version: s.schema_version,
+                    covers_through_event: s.covers_through_event,
+                    aggregate_data,
+                }
+            })
+            .collect())
+    }
+
     /// Mark events as uploaded after CloudKit confirms receipt.
     pub fn mark_events_uploaded(&self, event_ids: Vec<String>) -> Result<(), ClipKittyError> {
         use purr_sync::store::SyncStore;
@@ -623,18 +732,23 @@ impl ClipboardStore {
     }
 
     /// Apply a single remote event received from CloudKit.
+    ///
+    /// When an event is Applied, the local items table is updated to reflect
+    /// the new state so the app's read model stays in sync.
     pub fn apply_remote_event(
         &self,
         record: crate::interface::SyncEventRecord,
     ) -> Result<crate::interface::SyncApplyOutcome, ClipKittyError> {
         use crate::interface::SyncApplyOutcome;
+        use crate::sync_bridge::stored_item_from_snapshot;
         use purr_sync::event::ItemEvent;
         use purr_sync::replay;
+        use purr_sync::store::SyncStore;
         use purr_sync::types::ApplyResult;
 
         let event = ItemEvent::from_stored(
             record.event_id,
-            record.global_item_id,
+            record.global_item_id.clone(),
             record.origin_device_id,
             record.schema_version,
             record.recorded_at,
@@ -645,15 +759,46 @@ impl ClipboardStore {
 
         let result = replay::apply_remote_event(self.db.pool(), &event)?;
 
-        Ok(match result {
-            ApplyResult::Applied(_) => SyncApplyOutcome::Applied,
-            ApplyResult::Ignored(_) => SyncApplyOutcome::Ignored,
-            ApplyResult::Deferred(_) => SyncApplyOutcome::Deferred,
-            ApplyResult::Forked(plan) => SyncApplyOutcome::Forked {
-                forked_snapshot_data: serde_json::to_string(&plan.forked_snapshot)
-                    .unwrap_or_default(),
-            },
-        })
+        match &result {
+            ApplyResult::Applied(delta) => {
+                self.materialize_aggregate(
+                    &record.global_item_id,
+                    &delta.new_aggregate,
+                    delta.index_dirty,
+                )?;
+                Ok(SyncApplyOutcome::Applied)
+            }
+            ApplyResult::Ignored(_) => Ok(SyncApplyOutcome::Ignored),
+            ApplyResult::Deferred(_) => Ok(SyncApplyOutcome::Deferred),
+            ApplyResult::Forked(plan) => {
+                // Create a new local item from the forked snapshot.
+                let item = stored_item_from_snapshot(&plan.forked_snapshot)
+                    .map_err(ClipKittyError::InvalidInput)?;
+                let new_id = self.db.insert_item(&item)?;
+                let text = item
+                    .file_index_text()
+                    .unwrap_or_else(|| item.text_content().to_string());
+                let _ = self.indexer.add_document(new_id, &text, item.timestamp_unix);
+                let _ = self.indexer.commit();
+
+                // Create a sync projection for the forked item so it can sync.
+                let fork_global_id = uuid::Uuid::new_v4().to_string();
+                let sync = SyncStore::new(self.db.pool());
+                let versions = purr_sync::types::VersionVector {
+                    content: 1,
+                    bookmark: 0,
+                    existence: 1,
+                    touch: 1,
+                    metadata: 1,
+                };
+                sync.upsert_projection(&fork_global_id, Some(new_id), &versions, false)?;
+
+                Ok(SyncApplyOutcome::Forked {
+                    forked_snapshot_data: serde_json::to_string(&plan.forked_snapshot)
+                        .unwrap_or_default(),
+                })
+            }
+        }
     }
 
     /// Apply a remote snapshot received from CloudKit.
@@ -694,14 +839,17 @@ impl ClipboardStore {
     }
 
     /// Perform a full resync from the provided snapshots.
-    /// Clears all sync state and rebuilds from snapshots.
-    /// The caller must also rebuild the local read model and Tantivy index.
+    /// Clears all sync state, rebuilds from snapshots, and materializes
+    /// live items into the local items table + Tantivy index.
     pub fn full_resync(
         &self,
         snapshot_records: Vec<crate::interface::SyncSnapshotRecord>,
     ) -> Result<u64, ClipKittyError> {
+        use crate::sync_bridge::stored_item_from_snapshot;
         use purr_sync::replay;
         use purr_sync::snapshot::ItemSnapshot;
+        use purr_sync::store::SyncStore;
+        use purr_sync::types::ItemAggregate;
 
         let snapshots: Vec<ItemSnapshot> = snapshot_records
             .into_iter()
@@ -718,6 +866,33 @@ impl ClipboardStore {
             .collect::<Result<Vec<_>, _>>()?;
 
         let applied = replay::full_resync_from_snapshots(self.db.pool(), &snapshots)?;
+
+        // Materialize live snapshots into the items table.
+        let sync = SyncStore::new(self.db.pool());
+        for snapshot in &snapshots {
+            if let ItemAggregate::Live(live) = &snapshot.aggregate {
+                if let Ok(item) = stored_item_from_snapshot(&live.snapshot) {
+                    if let Ok(new_id) = self.db.insert_item(&item) {
+                        let text = item
+                            .file_index_text()
+                            .unwrap_or_else(|| item.text_content().to_string());
+                        let _ =
+                            self.indexer
+                                .add_document(new_id, &text, item.timestamp_unix);
+
+                        // Update projection with local_item_id.
+                        let _ = sync.upsert_projection(
+                            &snapshot.global_item_id,
+                            Some(new_id),
+                            &live.versions,
+                            false,
+                        );
+                    }
+                }
+            }
+        }
+        let _ = self.indexer.commit();
+
         Ok(applied as u64)
     }
 

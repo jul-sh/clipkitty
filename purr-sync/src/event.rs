@@ -65,12 +65,18 @@ impl ItemEvent {
     }
 
     /// Serialize the payload for storage.
+    ///
+    /// For Unknown payloads, returns the original raw JSON to preserve
+    /// round-trip fidelity — re-serializing would wrap it in `{"Unknown":...}`.
     pub fn payload_data(&self) -> String {
-        serde_json::to_string(&self.payload).expect("payload serialization cannot fail")
+        match &self.payload {
+            ItemEventPayload::Unknown { raw_data, .. } => raw_data.clone(),
+            _ => serde_json::to_string(&self.payload).expect("payload serialization cannot fail"),
+        }
     }
 
     /// The type tag string for database/CloudKit `payload_type` column.
-    pub fn payload_type(&self) -> &'static str {
+    pub fn payload_type(&self) -> String {
         self.payload.type_tag()
     }
 

@@ -107,6 +107,102 @@ fn base64_encode(data: &[u8]) -> String {
     base64::engine::general_purpose::STANDARD.encode(data)
 }
 
+fn base64_decode(s: &str) -> Result<Vec<u8>, String> {
+    use base64::Engine;
+    base64::engine::general_purpose::STANDARD
+        .decode(s)
+        .map_err(|e| format!("base64 decode error: {e}"))
+}
+
+/// Reconstruct a StoredItem from an ItemSnapshotData (reverse of snapshot_from_stored_item).
+/// Used to materialize remote sync changes into the local items table.
+pub(crate) fn stored_item_from_snapshot(
+    snapshot: &purr_sync::types::ItemSnapshotData,
+) -> Result<crate::models::StoredItem, String> {
+    use crate::interface::{ClipboardContent, FileEntry, FileStatus, LinkMetadataState};
+
+    let content = match &snapshot.type_specific {
+        purr_sync::types::TypeSpecificData::Text { value } => ClipboardContent::Text {
+            value: value.clone(),
+        },
+        purr_sync::types::TypeSpecificData::Color { value } => ClipboardContent::Color {
+            value: value.clone(),
+        },
+        purr_sync::types::TypeSpecificData::Link { url, metadata } => {
+            let metadata_state = match metadata {
+                Some(meta) => {
+                    let image_data = meta
+                        .image_data_base64
+                        .as_deref()
+                        .filter(|s| !s.is_empty())
+                        .map(base64_decode)
+                        .transpose()?;
+                    LinkMetadataState::from_database(
+                        meta.title.as_deref(),
+                        meta.description.as_deref(),
+                        image_data,
+                    )?
+                }
+                None => LinkMetadataState::Pending,
+            };
+            ClipboardContent::Link {
+                url: url.clone(),
+                metadata_state,
+            }
+        }
+        purr_sync::types::TypeSpecificData::Image {
+            data_base64,
+            description,
+            is_animated,
+        } => ClipboardContent::Image {
+            data: base64_decode(data_base64)?,
+            description: description.clone(),
+            is_animated: *is_animated,
+        },
+        purr_sync::types::TypeSpecificData::File {
+            display_name,
+            files,
+        } => {
+            let entries = files
+                .iter()
+                .map(|f| {
+                    Ok(FileEntry {
+                        file_item_id: 0,
+                        path: f.path.clone(),
+                        filename: f.filename.clone(),
+                        file_size: f.file_size,
+                        uti: f.uti.clone(),
+                        bookmark_data: base64_decode(&f.bookmark_data_base64)?,
+                        file_status: FileStatus::from_database_str(&f.file_status),
+                    })
+                })
+                .collect::<Result<Vec<_>, String>>()?;
+            ClipboardContent::File {
+                display_name: display_name.clone(),
+                files: entries,
+            }
+        }
+    };
+
+    let thumbnail = snapshot
+        .thumbnail_base64
+        .as_deref()
+        .filter(|s| !s.is_empty())
+        .map(base64_decode)
+        .transpose()?;
+
+    Ok(crate::models::StoredItem {
+        id: None,
+        content,
+        content_hash: snapshot.content_hash.clone(),
+        timestamp_unix: snapshot.timestamp_unix,
+        source_app: snapshot.source_app.clone(),
+        source_app_bundle_id: snapshot.source_app_bundle_id.clone(),
+        thumbnail,
+        color_rgba: snapshot.color_rgba,
+    })
+}
+
 // ═══════════════════════════════════════════════════════════════════════════════
 // SyncEmitter trait
 // ═══════════════════════════════════════════════════════════════════════════════

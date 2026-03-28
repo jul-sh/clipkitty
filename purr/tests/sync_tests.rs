@@ -1360,7 +1360,7 @@ mod serialization_tests {
             event.origin_device_id.clone(),
             event.schema_version,
             event.recorded_at,
-            payload_type,
+            &payload_type,
             &payload_data,
         )
         .unwrap();
@@ -1385,7 +1385,7 @@ mod serialization_tests {
             event.origin_device_id.clone(),
             event.schema_version,
             event.recorded_at,
-            event.payload_type(),
+            &event.payload_type(),
             &event.payload_data(),
         )
         .unwrap();
