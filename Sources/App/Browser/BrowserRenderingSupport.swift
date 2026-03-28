@@ -1657,21 +1657,13 @@ struct HighlightedTextView: View, Equatable {
     }
 
     /// Build the highlighted match view with optional underline
-    @ViewBuilder
     private func highlightedMatchView(match: String, kind: HighlightKind) -> some View {
-        let baseView = Text(match)
+        Text(HighlightStyler.attributedFragment(match, kind: kind))
             .font(font)
             .foregroundColor(textColor)
             .lineLimit(1)
             .truncationMode(.tail)
             .layoutPriority(1)
-            .background(HighlightStyler.color(for: kind))
-
-        if HighlightStyler.usesUnderline(kind) {
-            baseView.underline()
-        } else {
-            baseView
-        }
     }
 
     /// Build suffix view with any additional highlights
