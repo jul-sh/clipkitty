@@ -1,5 +1,10 @@
 //! Shared demo data for synthetic data generation and tests.
 
+pub mod localized;
+pub mod video;
+pub mod video_localized;
+
+#[derive(Clone, Copy)]
 pub struct DemoItem {
     pub content: &'static str,
     pub source_app: &'static str,
@@ -39,12 +44,6 @@ pub const DEMO_ITEMS: &[DemoItem] = &[
         source_app: "Automator",
         bundle_id: "com.apple.Automator",
         offset: -3400,
-    },
-    DemoItem {
-        content: "private_key_backup.pem",
-        source_app: "Finder",
-        bundle_id: "com.apple.finder",
-        offset: -3300,
     },
     DemoItem {
         content: "return fetchData().then(res => res.json()).catch(handleError)...",

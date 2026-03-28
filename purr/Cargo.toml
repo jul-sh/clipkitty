@@ -85,3 +85,5 @@ opt-level = 1
 [dev-dependencies]
 tempfile = "*"
 rusqlite = { version = "*", features = ["bundled"] }
+chrono = "*"
+demo-data = { path = "../distribution/demo-data" }
