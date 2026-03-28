@@ -82,8 +82,14 @@ def main():
 
     # Process each image from the manifest
     for item in manifest:
-        heic_path = images_dir / item['file']
-        thumb_path = images_dir / item['thumbnail']
+        # Use locale-specific image file if available
+        locale_files = item.get('locale_files', {})
+        if locale in locale_files:
+            heic_path = images_dir / locale_files[locale]['file']
+            thumb_path = images_dir / locale_files[locale]['thumbnail']
+        else:
+            heic_path = images_dir / item['file']
+            thumb_path = images_dir / item['thumbnail']
 
         if not heic_path.exists():
             print(f"Warning: Image file not found: {heic_path}")

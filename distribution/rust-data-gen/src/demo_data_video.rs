@@ -7,7 +7,7 @@ use crate::demo_data::DemoItem;
 pub const VIDEO_ITEMS: &[DemoItem] = &[
     // Scene 1: Welcome message — most recent item, shown on launch
     DemoItem {
-        content: "Welcome to ClipKitty! \u{1F431}\n\nThe best clipboard manager for macOS.",
+        content: "Welcome to ClipKitty! \u{1F431}\n\nBest clipboard manager.",
         source_app: "Safari",
         bundle_id: "com.apple.Safari",
         offset: -10,

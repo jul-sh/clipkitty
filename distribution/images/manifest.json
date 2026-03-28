@@ -102,5 +102,24 @@
     "source_app": "Photos",
     "bundle_id": "com.apple.Photos",
     "offset_seconds": -2400
+  },
+  {
+    "file": "fast.heic",
+    "thumbnail": "fast_thumb.webp",
+    "locale_files": {
+      "es": { "file": "fast_es.heic", "thumbnail": "fast_es_thumb.webp" },
+      "fr": { "file": "fast_fr.heic", "thumbnail": "fast_fr_thumb.webp" },
+      "de": { "file": "fast_de.heic", "thumbnail": "fast_de_thumb.webp" },
+      "ja": { "file": "fast_ja.heic", "thumbnail": "fast_ja_thumb.webp" },
+      "ko": { "file": "fast_ko.heic", "thumbnail": "fast_ko_thumb.webp" },
+      "zh-Hans": { "file": "fast_zh-Hans.heic", "thumbnail": "fast_zh-Hans_thumb.webp" },
+      "zh-Hant": { "file": "fast_zh-Hant.heic", "thumbnail": "fast_zh-Hant_thumb.webp" },
+      "pt-BR": { "file": "fast_pt-BR.heic", "thumbnail": "fast_pt-BR_thumb.webp" },
+      "ru": { "file": "fast_ru.heic", "thumbnail": "fast_ru_thumb.webp" }
+    },
+    "description_en": "Fast, cat, running, 90s cartoon, retro, speed, Siamese cat, cute, kitten, animation, comic style, motion lines, energetic, dynamic, clipboard, dash, quick, vintage, hand-drawn, illustration",
+    "source_app": "Photos",
+    "bundle_id": "com.apple.Photos",
+    "offset_seconds": -50
   }
 ]
