@@ -51,6 +51,10 @@ marketing/
 
 # Rust build artifacts
 purr/target/
+purr-core/target/
+purr-core/Cargo.lock
+purr-sync/target/
+purr-sync/Cargo.lock
 
 # Log files
 *.log

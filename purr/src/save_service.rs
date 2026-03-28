@@ -1,21 +1,29 @@
-use crate::database::Database;
-use crate::indexer::Indexer;
-use crate::interface::{
-    ClipKittyError, ItemTag, LinkMetadataPayload, LinkMetadataState, SyncApplyReport,
-    SyncLiveSnapshot, SyncRecordChange, SyncSnapshot, SyncTombstoneSnapshot,
-};
-use crate::models::StoredItem;
+use crate::interface::{ClipKittyError, ItemTag};
+#[cfg(feature = "sync")]
+use crate::interface::{SyncApplyReport, SyncLiveSnapshot, SyncRecordChange, SyncSnapshot, SyncTombstoneSnapshot};
+#[cfg(feature = "sync")]
 use crate::sync_adapter::{
     is_bookmarked, live_snapshot_from_parts, stored_item_from_live_snapshot,
     tombstone_snapshot_from_row,
 };
-use chrono::{TimeZone, Utc};
+#[cfg(feature = "sync")]
+use crate::sync_db;
+#[cfg(feature = "sync")]
+use chrono::TimeZone;
+#[cfg(feature = "sync")]
+use chrono::Utc;
+use purr_core::database::Database;
+use purr_core::indexer::Indexer;
+#[cfg(feature = "sync")]
+use purr_core::models::StoredItem;
+#[cfg(feature = "sync")]
 use purr_sync::{
     initial_sync_version, new_sync_identifier, plan_remote_apply, sync_shadow_for_live_snapshot,
     sync_shadow_for_tombstone_snapshot, LocalSyncRecord, PendingUploadDisposition,
     RemoteApplyDecision, SyncDomain, SyncShadowRow, SyncShadowState,
 };
 
+#[cfg(feature = "sync")]
 #[derive(Debug, Default, Clone, Copy)]
 struct ApplyRemoteOutcome {
     applied: bool,
@@ -30,8 +38,15 @@ pub(crate) fn save_text(
     source_app: Option<String>,
     source_app_bundle_id: Option<String>,
 ) -> Result<i64, ClipKittyError> {
-    let item = StoredItem::new_text(text, source_app, source_app_bundle_id);
-    dedupe_or_insert_and_index(db, indexer, item)
+    #[cfg(feature = "sync")]
+    let content_hash = StoredItem::hash_string(&text);
+
+    let id = purr_core::save_service::save_text(db, indexer, text, source_app, source_app_bundle_id)?;
+
+    #[cfg(feature = "sync")]
+    finalize_sync_after_save(db, id, &content_hash)?;
+
+    Ok(id)
 }
 
 #[allow(clippy::too_many_arguments)]
@@ -47,7 +62,21 @@ pub(crate) fn save_file(
     source_app: Option<String>,
     source_app_bundle_id: Option<String>,
 ) -> Result<i64, ClipKittyError> {
-    let item = StoredItem::new_file(
+    #[cfg(feature = "sync")]
+    let probe_item = StoredItem::new_file(
+        path.clone(),
+        filename.clone(),
+        file_size,
+        uti.clone(),
+        bookmark_data.clone(),
+        thumbnail.clone(),
+        source_app.clone(),
+        source_app_bundle_id.clone(),
+    );
+
+    let id = purr_core::save_service::save_file(
+        db,
+        indexer,
         path,
         filename,
         file_size,
@@ -56,8 +85,12 @@ pub(crate) fn save_file(
         thumbnail,
         source_app,
         source_app_bundle_id,
-    );
-    dedupe_or_insert_and_index(db, indexer, item)
+    )?;
+
+    #[cfg(feature = "sync")]
+    finalize_sync_after_save(db, id, &probe_item.content_hash)?;
+
+    Ok(id)
 }
 
 #[allow(clippy::too_many_arguments)]
@@ -73,7 +106,21 @@ pub(crate) fn save_files(
     source_app: Option<String>,
     source_app_bundle_id: Option<String>,
 ) -> Result<i64, ClipKittyError> {
-    let item = StoredItem::new_files(
+    #[cfg(feature = "sync")]
+    let probe_item = StoredItem::new_files(
+        paths.clone(),
+        filenames.clone(),
+        file_sizes.clone(),
+        utis.clone(),
+        bookmark_data_list.clone(),
+        thumbnail.clone(),
+        source_app.clone(),
+        source_app_bundle_id.clone(),
+    );
+
+    let id = purr_core::save_service::save_files(
+        db,
+        indexer,
         paths,
         filenames,
         file_sizes,
@@ -82,8 +129,12 @@ pub(crate) fn save_files(
         thumbnail,
         source_app,
         source_app_bundle_id,
-    );
-    dedupe_or_insert_and_index(db, indexer, item)
+    )?;
+
+    #[cfg(feature = "sync")]
+    finalize_sync_after_save(db, id, &probe_item.content_hash)?;
+
+    Ok(id)
 }
 
 pub(crate) fn save_image(
@@ -95,18 +146,23 @@ pub(crate) fn save_image(
     source_app_bundle_id: Option<String>,
     is_animated: bool,
 ) -> Result<i64, ClipKittyError> {
-    if image_data.is_empty() {
-        return Err(ClipKittyError::InvalidInput("Empty image data".into()));
-    }
+    #[cfg(feature = "sync")]
+    let content_hash = StoredItem::hash_bytes(&image_data);
 
-    let item = StoredItem::new_image_with_thumbnail(
+    let id = purr_core::save_service::save_image(
+        db,
+        indexer,
         image_data,
         thumbnail,
         source_app,
         source_app_bundle_id,
         is_animated,
-    );
-    dedupe_or_insert_and_index(db, indexer, item)
+    )?;
+
+    #[cfg(feature = "sync")]
+    finalize_sync_after_save(db, id, &content_hash)?;
+
+    Ok(id)
 }
 
 pub(crate) fn update_link_metadata(
@@ -116,36 +172,11 @@ pub(crate) fn update_link_metadata(
     description: Option<String>,
     image_data: Option<Vec<u8>>,
 ) -> Result<(), ClipKittyError> {
-    let title = title.and_then(non_empty);
-    let description = description.and_then(non_empty);
-    let state = match (title, description, image_data) {
-        (None, None, None) => LinkMetadataState::Failed,
-        (None, Some(_), None) => LinkMetadataState::Failed,
-        (Some(title), description, None) => LinkMetadataState::Loaded {
-            payload: LinkMetadataPayload::TitleOnly { title, description },
-        },
-        (None, description, Some(image_data)) => LinkMetadataState::Loaded {
-            payload: LinkMetadataPayload::ImageOnly {
-                image_data,
-                description,
-            },
-        },
-        (Some(title), description, Some(image_data)) => LinkMetadataState::Loaded {
-            payload: LinkMetadataPayload::TitleAndImage {
-                title,
-                image_data,
-                description,
-            },
-        },
-    };
-    let (title, description, image_data) = state.to_database_fields();
-    db.update_link_metadata(
-        item_id,
-        title.as_deref(),
-        description.as_deref(),
-        image_data.as_deref(),
-    )?;
-    db.stage_local_item_domain_change(item_id, SyncDomain::Content)?;
+    purr_core::save_service::update_link_metadata(db, item_id, title, description, image_data)?;
+
+    #[cfg(feature = "sync")]
+    sync_db::stage_local_item_domain_change(db, item_id, SyncDomain::Content)?;
+
     Ok(())
 }
 
@@ -155,12 +186,11 @@ pub(crate) fn update_image_description(
     item_id: i64,
     description: String,
 ) -> Result<(), ClipKittyError> {
-    db.update_image_description(item_id, &description)?;
-    if let Some(item) = get_stored_item(db, item_id)? {
-        indexer.add_document(item_id, &description, item.timestamp_unix)?;
-        indexer.commit()?;
-    }
-    db.stage_local_item_domain_change(item_id, SyncDomain::Content)?;
+    purr_core::save_service::update_image_description(db, indexer, item_id, description)?;
+
+    #[cfg(feature = "sync")]
+    sync_db::stage_local_item_domain_change(db, item_id, SyncDomain::Content)?;
+
     Ok(())
 }
 
@@ -170,13 +200,11 @@ pub(crate) fn update_text_item(
     item_id: i64,
     text: String,
 ) -> Result<(), ClipKittyError> {
-    let content_hash = StoredItem::hash_string(&text);
-    db.update_text_item(item_id, &text, &content_hash)?;
-    if let Some(item) = get_stored_item(db, item_id)? {
-        indexer.add_document(item_id, &text, item.timestamp_unix)?;
-        indexer.commit()?;
-    }
-    db.stage_local_item_domain_change(item_id, SyncDomain::Content)?;
+    purr_core::save_service::update_text_item(db, indexer, item_id, text)?;
+
+    #[cfg(feature = "sync")]
+    sync_db::stage_local_item_domain_change(db, item_id, SyncDomain::Content)?;
+
     Ok(())
 }
 
@@ -185,25 +213,29 @@ pub(crate) fn update_timestamp(
     indexer: &Indexer,
     item_id: i64,
 ) -> Result<(), ClipKittyError> {
-    let now = Utc::now();
-    db.update_timestamp(item_id, now)?;
-    if let Some(item) = get_stored_item(db, item_id)? {
-        indexer.add_document(item_id, item.text_content(), now.timestamp())?;
-        indexer.commit()?;
-    }
-    db.stage_local_item_domain_change(item_id, SyncDomain::Activity)?;
+    purr_core::save_service::update_timestamp(db, indexer, item_id)?;
+
+    #[cfg(feature = "sync")]
+    sync_db::stage_local_item_domain_change(db, item_id, SyncDomain::Activity)?;
+
     Ok(())
 }
 
 pub(crate) fn add_tag(db: &Database, item_id: i64, tag: ItemTag) -> Result<(), ClipKittyError> {
-    db.add_tag(item_id, tag)?;
-    db.stage_local_item_domain_change(item_id, SyncDomain::Bookmark)?;
+    purr_core::save_service::add_tag(db, item_id, tag)?;
+
+    #[cfg(feature = "sync")]
+    sync_db::stage_local_item_domain_change(db, item_id, SyncDomain::Bookmark)?;
+
     Ok(())
 }
 
 pub(crate) fn remove_tag(db: &Database, item_id: i64, tag: ItemTag) -> Result<(), ClipKittyError> {
-    db.remove_tag(item_id, tag)?;
-    db.stage_local_item_domain_change(item_id, SyncDomain::Bookmark)?;
+    purr_core::save_service::remove_tag(db, item_id, tag)?;
+
+    #[cfg(feature = "sync")]
+    sync_db::stage_local_item_domain_change(db, item_id, SyncDomain::Bookmark)?;
+
     Ok(())
 }
 
@@ -212,17 +244,18 @@ pub(crate) fn delete_item(
     indexer: &Indexer,
     item_id: i64,
 ) -> Result<(), ClipKittyError> {
-    let _ = db.stage_local_item_delete(item_id)?;
-    db.delete_item(item_id)?;
-    indexer.delete_document(item_id)?;
-    indexer.commit()?;
-    Ok(())
+    #[cfg(feature = "sync")]
+    let _ = sync_db::stage_local_item_delete(db, item_id)?;
+
+    purr_core::save_service::delete_item(db, indexer, item_id)
 }
 
 pub(crate) fn clear(db: &Database, indexer: &Indexer) -> Result<(), ClipKittyError> {
-    db.clear_all()?;
-    db.clear_sync_shadow()?;
-    indexer.clear()?;
+    purr_core::save_service::clear(db, indexer)?;
+
+    #[cfg(feature = "sync")]
+    sync_db::clear_sync_shadow(db)?;
+
     Ok(())
 }
 
@@ -239,10 +272,14 @@ pub(crate) fn prune_to_size(
     if !deleted_ids.is_empty() {
         indexer.commit()?;
     }
-    db.remove_sync_shadow_by_item_ids(&deleted_ids)?;
+
+    #[cfg(feature = "sync")]
+    sync_db::remove_sync_shadow_by_item_ids(db, &deleted_ids)?;
+
     Ok(db.prune_to_size(max_bytes, keep_ratio)? as u64)
 }
 
+#[cfg(feature = "sync")]
 pub(crate) fn pending_sync_changes(
     db: &Database,
     limit: u32,
@@ -251,22 +288,24 @@ pub(crate) fn pending_sync_changes(
         return Ok(Vec::new());
     }
 
-    db.backfill_missing_sync_shadows(limit as usize)?;
-    db.pending_sync_shadows(limit as usize)?
+    sync_db::backfill_missing_sync_shadows(db, limit as usize)?;
+    sync_db::pending_sync_shadows(db, limit as usize)?
         .into_iter()
         .map(|row| materialize_sync_change(db, row))
         .collect()
 }
 
+#[cfg(feature = "sync")]
 pub(crate) fn acknowledge_sync_change_uploaded(
     db: &Database,
     global_item_id: &str,
     record_change_tag: Option<&str>,
 ) -> Result<(), ClipKittyError> {
-    db.acknowledge_sync_change_uploaded(global_item_id, record_change_tag)?;
+    sync_db::acknowledge_sync_change_uploaded(db, global_item_id, record_change_tag)?;
     Ok(())
 }
 
+#[cfg(feature = "sync")]
 pub(crate) fn apply_remote_sync_changes(
     db: &Database,
     indexer: &Indexer,
@@ -290,30 +329,7 @@ pub(crate) fn apply_remote_sync_changes(
     Ok(report)
 }
 
-fn dedupe_or_insert_and_index(
-    db: &Database,
-    indexer: &Indexer,
-    item: StoredItem,
-) -> Result<i64, ClipKittyError> {
-    if let Some(existing) = db.find_by_hash(&item.content_hash)? {
-        if let Some(id) = existing.id {
-            let now = Utc::now();
-            db.update_timestamp(id, now)?;
-            indexer.add_document(id, &index_text(&existing), now.timestamp())?;
-            indexer.commit()?;
-            db.stage_local_item_domain_change(id, SyncDomain::Activity)?;
-            return Ok(0);
-        }
-    }
-
-    let index_text = index_text(&item);
-    let id = db.insert_item(&item)?;
-    indexer.add_document(id, &index_text, item.timestamp_unix)?;
-    indexer.commit()?;
-    db.stage_local_item_created(id)?;
-    Ok(id)
-}
-
+#[cfg(feature = "sync")]
 fn materialize_sync_change(
     db: &Database,
     row: SyncShadowRow,
@@ -349,6 +365,7 @@ fn materialize_sync_change(
     })
 }
 
+#[cfg(feature = "sync")]
 fn apply_remote_sync_change(
     db: &Database,
     indexer: &Indexer,
@@ -405,11 +422,12 @@ fn apply_remote_sync_change(
     }
 }
 
+#[cfg(feature = "sync")]
 fn load_local_sync_record(
     db: &Database,
     global_item_id: &str,
 ) -> Result<LocalSyncRecord, ClipKittyError> {
-    let Some(row) = db.get_sync_shadow_by_global_id(global_item_id)? else {
+    let Some(row) = sync_db::get_sync_shadow_by_global_id(db, global_item_id)? else {
         return Ok(LocalSyncRecord::Missing);
     };
 
@@ -441,6 +459,7 @@ fn load_local_sync_record(
     }
 }
 
+#[cfg(feature = "sync")]
 fn create_forked_local_item(
     db: &Database,
     indexer: &Indexer,
@@ -452,7 +471,7 @@ fn create_forked_local_item(
         db.add_tag(item_id, ItemTag::Bookmark)?;
     }
 
-    let device_id = db.sync_device_id()?;
+    let device_id = sync_db::sync_device_id(db)?;
     let fork_row = SyncShadowRow {
         global_item_id: new_sync_identifier(),
         item_id: Some(item_id),
@@ -467,7 +486,7 @@ fn create_forked_local_item(
         activity_version: initial_sync_version(&device_id, 1),
         delete_version: initial_sync_version(&device_id, 0),
     };
-    db.save_sync_shadow(&fork_row)?;
+    sync_db::save_sync_shadow(db, &fork_row)?;
     indexer.add_document(
         item_id,
         &index_text(&item),
@@ -476,6 +495,7 @@ fn create_forked_local_item(
     Ok(())
 }
 
+#[cfg(feature = "sync")]
 fn persist_live_snapshot(
     db: &Database,
     indexer: &Indexer,
@@ -502,7 +522,7 @@ fn persist_live_snapshot(
 
             let row =
                 sync_shadow_for_live_snapshot(snapshot, item_id, pending_upload, record_change_tag);
-            db.save_sync_shadow(&row)?;
+            sync_db::save_sync_shadow(db, &row)?;
             outcome.applied = true;
         }
         LocalSyncRecord::Live {
@@ -552,7 +572,7 @@ fn persist_live_snapshot(
             let new_row =
                 sync_shadow_for_live_snapshot(snapshot, item_id, pending_upload, record_change_tag);
             if *row != new_row {
-                db.save_sync_shadow(&new_row)?;
+                sync_db::save_sync_shadow(db, &new_row)?;
                 outcome.applied = true;
             }
 
@@ -563,6 +583,7 @@ fn persist_live_snapshot(
     Ok(outcome)
 }
 
+#[cfg(feature = "sync")]
 fn persist_tombstone_snapshot(
     db: &Database,
     indexer: &Indexer,
@@ -593,29 +614,45 @@ fn persist_tombstone_snapshot(
         record_change_tag,
     );
     if local.row() != Some(&new_row) {
-        db.save_sync_shadow(&new_row)?;
+        sync_db::save_sync_shadow(db, &new_row)?;
         outcome.applied = true;
     }
 
     Ok(outcome)
 }
 
+#[cfg(feature = "sync")]
+fn finalize_sync_after_save(
+    db: &Database,
+    item_id: i64,
+    content_hash: &str,
+) -> Result<(), ClipKittyError> {
+    if item_id == 0 {
+        if let Some(existing) = db.find_by_hash(content_hash)? {
+            if let Some(existing_id) = existing.id {
+                sync_db::stage_local_item_domain_change(db, existing_id, SyncDomain::Activity)?;
+            }
+        }
+    } else {
+        sync_db::stage_local_item_created(db, item_id)?;
+    }
+    Ok(())
+}
+
+#[cfg(feature = "sync")]
 fn get_stored_item(db: &Database, item_id: i64) -> Result<Option<StoredItem>, ClipKittyError> {
     Ok(db.fetch_items_by_ids(&[item_id])?.into_iter().next())
 }
 
+#[cfg(feature = "sync")]
 fn index_text(item: &StoredItem) -> String {
     item.file_index_text()
         .unwrap_or_else(|| item.text_content().to_string())
 }
 
+#[cfg(feature = "sync")]
 fn timestamp_from_unix(timestamp_unix: i64) -> chrono::DateTime<Utc> {
     Utc.timestamp_opt(timestamp_unix, 0)
         .single()
         .unwrap_or_else(Utc::now)
-}
-
-fn non_empty(value: String) -> Option<String> {
-    let trimmed = value.trim();
-    (!trimmed.is_empty()).then(|| trimmed.to_string())
 }

@@ -1,6 +1,6 @@
 use crate::database::Database;
+use crate::indexer::Indexer;
 use crate::models::StoredItem;
-use crate::ClipboardStore;
 use anyhow::Result;
 use rand::rngs::StdRng;
 use rand::{Rng, SeedableRng};
@@ -147,8 +147,18 @@ pub fn ensure_synthetic_benchmark_fixture(
         fs::remove_dir_all(&index_path)?;
     }
 
-    let store = ClipboardStore::new(db_path.to_string_lossy().to_string())?;
-    store.rebuild_index()?;
+    let indexer = Indexer::new(&index_path)?;
+    let items = Database::open(db_path)?.fetch_all_items()?;
+    indexer.clear()?;
+    for item in items {
+        if let Some(id) = item.id {
+            let index_text = item
+                .file_index_text()
+                .unwrap_or_else(|| item.text_content().to_string());
+            indexer.add_document(id, &index_text, item.timestamp_unix)?;
+        }
+    }
+    indexer.commit()?;
 
     Ok(SyntheticBenchSummary {
         total_items: TOTAL_TEXT_ITEMS + TOTAL_LINK_ITEMS + TOTAL_IMAGE_ITEMS + TOTAL_FILE_ITEMS,

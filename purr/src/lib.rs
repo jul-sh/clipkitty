@@ -1,27 +1,18 @@
-//! ClipKitty Core - Rust business logic for clipboard management
-//!
-//! This library implements the core business logic for the ClipKitty clipboard manager,
-//! with efficient search using Tantivy (trigram retrieval with phrase-boost scoring).
-//!
-//! Types are exported via UniFFI proc-macros (#[derive(uniffi::Record/Enum)]).
+//! ClipKitty UniFFI wrapper over `purr-core`, with optional sync integration.
 
-pub mod benchmark_fixture;
-pub(crate) mod candidate;
-pub mod content_detection;
-pub mod database;
-pub mod indexer;
 pub mod interface;
-pub(crate) mod match_presentation;
-pub mod models;
-pub mod ranking;
 mod save_service;
-pub mod search;
-pub(crate) mod search_admission;
-mod search_result_builder;
-mod search_service;
 mod store;
+#[cfg(feature = "sync")]
 mod sync_adapter;
+#[cfg(feature = "sync")]
+mod sync_db;
 
+pub use purr_core::{
+    benchmark_fixture, content_detection, database, indexer, match_presentation, models, ranking,
+    search, search_service,
+};
+#[allow(unused_imports)]
 pub use interface::*;
 pub use store::{inspect_store_bootstrap, ClipboardStore, SearchOperation};
 

@@ -1,0 +1,169 @@
+use crate::database::Database;
+use crate::indexer::Indexer;
+use crate::interface::{
+    ClipKittyError, ItemMatch, ItemQueryFilter, PreviewPayload, RowDecorationResult, SearchResult,
+};
+use crate::match_presentation::{HighlightAnalysisCache, MatchPresentation};
+use crate::search;
+use crate::search_result_builder::{uses_short_query_path, SearchResultAssembler, ShortQueryMode};
+use std::sync::Arc;
+use tokio_util::sync::CancellationToken;
+
+#[cfg(any(test, feature = "test-support"))]
+use crate::interface::{ContentTypeFilter, ItemTag};
+
+#[cfg(any(test, feature = "test-support"))]
+pub mod test_support {
+    pub use crate::match_presentation::test_support::*;
+}
+
+pub struct SearchContext {
+    pub db: Arc<Database>,
+    pub indexer: Arc<Indexer>,
+    pub cache: Arc<HighlightAnalysisCache>,
+    pub runtime: tokio::runtime::Handle,
+    pub token: CancellationToken,
+}
+
+pub async fn execute_search(
+    context: SearchContext,
+    query: String,
+    filter: ItemQueryFilter,
+) -> Result<SearchResult, ClipKittyError> {
+    let parsed_query = search::SearchQuery::parse(&query);
+    if context.token.is_cancelled() {
+        return Err(ClipKittyError::Cancelled);
+    }
+
+    if parsed_query.raw_text().is_empty() {
+        return SearchResultAssembler::new(
+            &context.db,
+            &context.cache,
+            &context.token,
+            &context.runtime,
+        )
+        .build_empty_query_result(filter);
+    }
+
+    let SearchContext {
+        db,
+        indexer,
+        cache,
+        runtime,
+        token,
+    } = context;
+    let parsed_query_owned = parsed_query.clone();
+    let filter_copy = filter;
+    let runtime_for_closure = runtime.clone();
+    let db_for_closure = Arc::clone(&db);
+    let indexer_for_closure = Arc::clone(&indexer);
+    let cache_for_closure = Arc::clone(&cache);
+    let token_for_closure = token.clone();
+
+    let handle = runtime.spawn_blocking(move || {
+        execute_search_sync(
+            &db_for_closure,
+            &indexer_for_closure,
+            &cache_for_closure,
+            &parsed_query_owned,
+            filter_copy,
+            &token_for_closure,
+            &runtime_for_closure,
+        )
+    });
+
+    let matches = match handle.await {
+        Ok(Ok(result)) => result,
+        Ok(Err(error)) => return Err(error),
+        Err(_join_error) => return Err(ClipKittyError::Cancelled),
+    };
+
+    SearchResultAssembler::new(&db, &cache, &token, &runtime)
+        .build_search_result(parsed_query.raw_text(), matches)
+}
+
+pub fn compute_row_decorations(
+    db: &Database,
+    cache: &HighlightAnalysisCache,
+    item_ids: Vec<i64>,
+    query: String,
+) -> Result<Vec<RowDecorationResult>, ClipKittyError> {
+    MatchPresentation::new(db, cache).compute_row_decorations(item_ids, query)
+}
+
+pub fn load_preview_payload(
+    db: &Database,
+    cache: &HighlightAnalysisCache,
+    item_id: i64,
+    query: String,
+) -> Result<Option<PreviewPayload>, ClipKittyError> {
+    MatchPresentation::new(db, cache).load_preview_payload(item_id, query)
+}
+
+#[cfg(any(test, feature = "test-support"))]
+pub fn search_short_query_sync(
+    db: &Database,
+    cache: &HighlightAnalysisCache,
+    query: &str,
+    mode: ShortQueryMode,
+    token: &CancellationToken,
+    runtime: &tokio::runtime::Handle,
+    filter: Option<&ContentTypeFilter>,
+    tag: Option<ItemTag>,
+) -> Result<Vec<ItemMatch>, ClipKittyError> {
+    SearchResultAssembler::new(db, cache, token, runtime)
+        .search_short_query(query, mode, filter, tag)
+}
+
+#[cfg(any(test, feature = "test-support"))]
+pub fn search_trigram_query_sync(
+    db: &Database,
+    indexer: &Indexer,
+    cache: &HighlightAnalysisCache,
+    query: &search::SearchQuery,
+    token: &CancellationToken,
+    runtime: &tokio::runtime::Handle,
+    filter: Option<&ContentTypeFilter>,
+    tag: Option<ItemTag>,
+) -> Result<Vec<ItemMatch>, ClipKittyError> {
+    SearchResultAssembler::new(db, cache, token, runtime)
+        .search_trigram_query(indexer, query, filter, tag)
+}
+
+fn execute_search_sync(
+    db: &Database,
+    indexer: &Indexer,
+    cache: &HighlightAnalysisCache,
+    parsed_query: &search::SearchQuery,
+    filter: ItemQueryFilter,
+    token: &CancellationToken,
+    runtime: &tokio::runtime::Handle,
+) -> Result<Vec<ItemMatch>, ClipKittyError> {
+    let assembler = SearchResultAssembler::new(db, cache, token, runtime);
+    let (content_type_filter, tag_filter) = crate::search_result_builder::split_filter(filter);
+
+    if uses_short_query_path(parsed_query) {
+        return match parsed_query {
+            search::SearchQuery::Plain { text } => assembler.search_short_query(
+                text,
+                ShortQueryMode::PrefixThenContains,
+                content_type_filter.as_ref(),
+                tag_filter,
+            ),
+            search::SearchQuery::PreferPrefix { stripped_text, .. } => assembler
+                .search_short_query(
+                    stripped_text,
+                    ShortQueryMode::PrefixOnly,
+                    content_type_filter.as_ref(),
+                    tag_filter,
+                ),
+        };
+    }
+
+    assembler.search_trigram_query(
+        indexer,
+        parsed_query,
+        content_type_filter.as_ref(),
+        tag_filter,
+    )
+}

@@ -4,9 +4,10 @@ use crate::database::Database;
 use crate::indexer::{IndexInspection, Indexer};
 use crate::interface::{
     ClipKittyError, ClipboardItem, ClipboardStoreApi, ItemQueryFilter, ItemTag, PreviewPayload,
-    RowDecorationResult, SearchOutcome, SearchResult, StoreBootstrapPlan, SyncApplyReport,
-    SyncRecordChange,
+    RowDecorationResult, SearchOutcome, SearchResult, StoreBootstrapPlan,
 };
+#[cfg(feature = "sync")]
+use crate::interface::{SyncApplyReport, SyncRecordChange};
 use crate::{match_presentation, save_service, search_service};
 use once_cell::sync::Lazy;
 use parking_lot::Mutex;
@@ -254,29 +255,6 @@ impl ClipboardStoreApi for ClipboardStore {
         self.db.database_size().unwrap_or(0)
     }
 
-    fn pending_sync_changes(&self, limit: u32) -> Result<Vec<SyncRecordChange>, ClipKittyError> {
-        save_service::pending_sync_changes(&self.db, limit)
-    }
-
-    fn acknowledge_sync_change_uploaded(
-        &self,
-        global_item_id: String,
-        record_change_tag: Option<String>,
-    ) -> Result<(), ClipKittyError> {
-        save_service::acknowledge_sync_change_uploaded(
-            &self.db,
-            &global_item_id,
-            record_change_tag.as_deref(),
-        )
-    }
-
-    fn apply_remote_sync_changes(
-        &self,
-        changes: Vec<SyncRecordChange>,
-    ) -> Result<SyncApplyReport, ClipKittyError> {
-        save_service::apply_remote_sync_changes(&self.db, &self.indexer, changes)
-    }
-
     fn save_text(
         &self,
         text: String,
@@ -472,6 +450,36 @@ impl ClipboardStoreApi for ClipboardStore {
     }
 }
 
+#[cfg(feature = "sync")]
+#[uniffi::export]
+impl ClipboardStore {
+    pub fn pending_sync_changes(
+        &self,
+        limit: u32,
+    ) -> Result<Vec<SyncRecordChange>, ClipKittyError> {
+        save_service::pending_sync_changes(&self.db, limit)
+    }
+
+    pub fn acknowledge_sync_change_uploaded(
+        &self,
+        global_item_id: String,
+        record_change_tag: Option<String>,
+    ) -> Result<(), ClipKittyError> {
+        save_service::acknowledge_sync_change_uploaded(
+            &self.db,
+            &global_item_id,
+            record_change_tag.as_deref(),
+        )
+    }
+
+    pub fn apply_remote_sync_changes(
+        &self,
+        changes: Vec<SyncRecordChange>,
+    ) -> Result<SyncApplyReport, ClipKittyError> {
+        save_service::apply_remote_sync_changes(&self.db, &self.indexer, changes)
+    }
+}
+
 #[uniffi::export]
 impl SearchOperation {
     pub fn cancel(&self) {
@@ -488,9 +496,14 @@ mod tests {
     use super::*;
     use crate::interface::{
         ClipboardContent, FileStatus, HighlightKind, IconType, ItemIcon, ItemQueryFilter,
-        LinkMetadataPayload, LinkMetadataState, StoreBootstrapPlan, SyncContentPayload,
-        SyncLiveSnapshot, SyncRecordChange, SyncSnapshot, SyncTombstoneSnapshot, SyncVersion,
+        LinkMetadataPayload, LinkMetadataState, StoreBootstrapPlan,
     };
+    #[cfg(feature = "sync")]
+    use crate::interface::{
+        SyncContentPayload, SyncLiveSnapshot, SyncRecordChange, SyncSnapshot,
+        SyncTombstoneSnapshot, SyncVersion,
+    };
+    #[cfg(feature = "sync")]
     use crate::models::StoredItem;
     use once_cell::sync::Lazy;
     use parking_lot::Mutex as TestMutex;
@@ -529,6 +542,7 @@ mod tests {
         (dir, db_path.to_string_lossy().to_string())
     }
 
+    #[cfg(feature = "sync")]
     fn sync_version(counter: i64, device_id: &str) -> SyncVersion {
         SyncVersion {
             counter,
@@ -536,6 +550,7 @@ mod tests {
         }
     }
 
+    #[cfg(feature = "sync")]
     fn live_change(
         global_item_id: &str,
         content: SyncContentPayload,
@@ -564,6 +579,7 @@ mod tests {
         }
     }
 
+    #[cfg(feature = "sync")]
     fn tombstone_change(
         global_item_id: &str,
         content_version: SyncVersion,
@@ -599,6 +615,7 @@ mod tests {
             .collect()
     }
 
+    #[cfg(feature = "sync")]
     fn db_id_for_exact_text(store: &ClipboardStore, text: &str) -> i64 {
         store
             .db
@@ -868,7 +885,7 @@ mod tests {
             &store.db,
             &store.analysis_cache,
             "He",
-            crate::search_result_builder::ShortQueryMode::PrefixThenContains,
+            purr_core::search_result_builder::ShortQueryMode::PrefixThenContains,
             &token,
             &rt.handle().clone(),
             None,
@@ -1599,6 +1616,7 @@ mod tests {
     }
 
     #[test]
+    #[cfg(feature = "sync")]
     fn test_pending_sync_changes_backfill_supported_items_and_skip_files() {
         let store = ClipboardStore::new_in_memory().unwrap();
 
@@ -1644,14 +1662,10 @@ mod tests {
             other => panic!("expected live snapshot, got {other:?}"),
         }
 
-        assert!(store
-            .db
-            .get_sync_shadow_by_item_id(text_id)
+        assert!(crate::sync_db::get_sync_shadow_by_item_id(&store.db, text_id)
             .unwrap()
             .is_some());
-        assert!(store
-            .db
-            .get_sync_shadow_by_item_id(file_id)
+        assert!(crate::sync_db::get_sync_shadow_by_item_id(&store.db, file_id)
             .unwrap()
             .is_none());
     }
@@ -1683,6 +1697,7 @@ mod tests {
     }
 
     #[test]
+    #[cfg(feature = "sync")]
     fn test_acknowledge_bookmark_and_delete_update_pending_sync_snapshot() {
         let store = ClipboardStore::new_in_memory().unwrap();
         let item_id = store
@@ -1727,6 +1742,7 @@ mod tests {
     }
 
     #[tokio::test]
+    #[cfg(feature = "sync")]
     async fn test_remote_live_insert_and_activity_update_stay_in_sync() {
         let store = ClipboardStore::new_in_memory().unwrap();
 
@@ -1789,6 +1805,7 @@ mod tests {
     }
 
     #[tokio::test]
+    #[cfg(feature = "sync")]
     async fn test_remote_content_update_and_tombstone_update_sqlite_and_index_together() {
         let store = ClipboardStore::new_in_memory().unwrap();
 
@@ -1844,6 +1861,7 @@ mod tests {
     }
 
     #[tokio::test]
+    #[cfg(feature = "sync")]
     async fn test_remote_conflicting_content_edit_forks_local_copy() {
         let store = ClipboardStore::new_in_memory().unwrap();
 

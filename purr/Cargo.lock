@@ -1518,10 +1518,11 @@ dependencies = [
  "image",
  "once_cell",
  "parking_lot",
+ "purr-core",
  "purr-sync",
  "r2d2",
  "r2d2_sqlite",
- "rand 0.9.2",
+ "rand 0.8.5",
  "rayon",
  "rusqlite",
  "serde",
@@ -1541,9 +1542,43 @@ dependencies = [
 ]
 
 [[package]]
+name = "purr-core"
+version = "0.1.0"
+dependencies = [
+ "anyhow",
+ "async-trait",
+ "base64",
+ "chrono",
+ "csscolorparser",
+ "futures",
+ "image",
+ "once_cell",
+ "parking_lot",
+ "r2d2",
+ "r2d2_sqlite",
+ "rand 0.8.5",
+ "rayon",
+ "rusqlite",
+ "serde",
+ "serde_json",
+ "sha2",
+ "strsim",
+ "tantivy",
+ "thiserror",
+ "thread-priority",
+ "tokio",
+ "tokio-util",
+ "triple_accel",
+ "uniffi",
+ "url",
+ "validator",
+]
+
+[[package]]
 name = "purr-sync"
 version = "0.1.0"
 dependencies = [
+ "purr-core",
  "uniffi",
  "uuid",
 ]

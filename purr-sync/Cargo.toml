@@ -7,5 +7,6 @@ edition = "2021"
 name = "purr_sync"
 
 [dependencies]
+purr-core = { path = "../purr-core" }
 uniffi = { version = "*", features = ["cli"] }
 uuid = { version = "*", features = ["v4"] }
