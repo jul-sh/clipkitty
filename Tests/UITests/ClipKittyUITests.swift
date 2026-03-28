@@ -830,6 +830,12 @@ final class ClipKittyUITests: XCTestCase {
         XCTAssertTrue(panel.waitForExistence(timeout: 5), "Panel should reappear after toggle")
         Thread.sleep(forTimeInterval: 0.5)
 
+        // Navigate away and back to force the preview to re-render with correct font scaling
+        app.typeKey(.downArrow, modifierFlags: [])
+        Thread.sleep(forTimeInterval: 0.2)
+        app.typeKey(.upArrow, modifierFlags: [])
+        Thread.sleep(forTimeInterval: 0.3)
+
         // Signal that the demo is ready to start (shell script will start recording)
         try? "start".write(toFile: "/tmp/clipkitty_demo_start.txt", atomically: true, encoding: .utf8)
 
@@ -925,6 +931,12 @@ final class ClipKittyUITests: XCTestCase {
         let panel = app.dialogs.firstMatch
         XCTAssertTrue(panel.waitForExistence(timeout: 5), "Panel should reappear after hotkey toggle")
         Thread.sleep(forTimeInterval: 0.5)
+
+        // Navigate away and back to force the preview to re-render with correct font scaling
+        app.typeKey(.downArrow, modifierFlags: [])
+        Thread.sleep(forTimeInterval: 0.2)
+        app.typeKey(.upArrow, modifierFlags: [])
+        Thread.sleep(forTimeInterval: 0.3)
 
         // Screenshot 1: Initial state showing clipboard history
         Thread.sleep(forTimeInterval: 1.0)
