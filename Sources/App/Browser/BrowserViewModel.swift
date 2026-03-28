@@ -658,7 +658,7 @@ final class BrowserViewModel {
         rowDecorationTasks.removeAll()
 
         if displayedContent?.response.request != request {
-            setDisplayedSelection(.none)
+            setDisplayedSelection(selectionDuringSearchTransition(to: request))
         }
         contentState = .loading(request: request, previous: displayedContent, phase: .debouncing)
         rebuildDisplayedRows()
@@ -1102,7 +1102,7 @@ final class BrowserViewModel {
         let start = max(0, currentIndex - prefetchRadius)
         let end = min(itemIds.count - 1, currentIndex + prefetchRadius)
         guard start <= end else { return }
-        let idsToPrefetch = (start...end).map { itemIds[$0] }
+        let idsToPrefetch = (start ... end).map { itemIds[$0] }
 
         Task { [weak self] in
             guard let self else { return }
@@ -1285,7 +1285,7 @@ final class BrowserViewModel {
 
         let filteredFirstPreviewPayload: PreviewPayload? =
             if let preview = response.firstPreviewPayload,
-               idSet.contains(preview.item.itemMetadata.itemId) { nil }
+            idSet.contains(preview.item.itemMetadata.itemId) { nil }
             else { response.firstPreviewPayload }
 
         return BrowserSearchResponse(
@@ -1544,6 +1544,24 @@ final class BrowserViewModel {
         !requiresPreviewDecoration(for: payload.item, request: request) || payload.decoration != nil
     }
 
+    private func selectionDuringSearchTransition(to request: SearchRequest) -> SelectionState {
+        guard displayedContent != nil else { return .none }
+
+        switch selectionState {
+        case let .selected(selectedItemState):
+            guard requiresPreviewDecoration(for: selectedItemState.item, request: request) else {
+                return .selected(selectedItemState)
+            }
+
+            return .selected(makeDecorationLoadingSelectedItemState(
+                from: selectedItemState,
+                origin: selectedItemState.origin
+            ))
+        case .loading, .failed, .none:
+            return selectionState
+        }
+    }
+
     private func cachePreviewPayload(_ payload: PreviewPayload?) {
         guard let payload else { return }
         let itemId = payload.item.itemMetadata.itemId
@@ -1634,7 +1652,7 @@ final class BrowserViewModel {
     }
 
     private func updateDisplayedResponse(_ response: BrowserSearchResponse) {
-        updateDisplayedContent { content in
+        updateDisplayedContent { _ in
             LoadedBrowserContent(response: response)
         }
     }
@@ -1733,5 +1751,4 @@ final class BrowserViewModel {
             mutationState = .idle
         }
     }
-
 }

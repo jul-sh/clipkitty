@@ -422,6 +422,19 @@ final class BrowserViewModelTests: XCTestCase {
         XCTAssertNil(viewModel.previewDecoration)
 
         viewModel.updateSearchText("al")
+        await flushMainActor()
+
+        guard case let .selected(staleSelection) = viewModel.selection else {
+            return XCTFail("Expected selected item to stay visible while search results are pending")
+        }
+        XCTAssertEqual(staleSelection.item.itemMetadata.itemId, 1)
+        guard case .loadingDecoration(previous: nil) = staleSelection.previewState else {
+            return XCTFail("Expected stale preview content to remain visible while fresh highlights load")
+        }
+        XCTAssertEqual(viewModel.selectedItemId, 1)
+        XCTAssertEqual(viewModel.selectedItem?.itemMetadata.itemId, 1)
+        XCTAssertNil(viewModel.previewDecoration)
+
         try? await Task.sleep(for: .milliseconds(75))
         await flushMainActor()
 
