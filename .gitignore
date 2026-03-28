@@ -8,6 +8,7 @@ DerivedData/
 DerivedDataTests/
 perf_traces/
 *.xcresult/
+*.trace/
 
 # Tuist
 Derived/

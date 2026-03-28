@@ -65,6 +65,7 @@ build:
 		-derivedDataPath $(DERIVED_DATA) \
 		MARKETING_VERSION=$(VERSION) \
 		CURRENT_PROJECT_VERSION=$(BUILD_NUMBER) \
+		ONLY_ACTIVE_ARCH=$(if $(UNIVERSAL),NO,YES) \
 		build
 
 # Sign the built app (for distribution)

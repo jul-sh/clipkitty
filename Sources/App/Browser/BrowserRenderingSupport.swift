@@ -1,6 +1,7 @@
 import AppKit
 import ClipKittyRust
 import ObjectiveC.runtime
+import os.signpost
 import STTextKitPlus
 import SwiftUI
 import UniformTypeIdentifiers
@@ -8,6 +9,7 @@ import UniformTypeIdentifiers
 /// Max time to show stale content before clearing to spinner during slow loads.
 /// Used for both preview item loading and search result loading.
 private let staleContentTimeout: Duration = .milliseconds(150)
+private let poi = OSLog(subsystem: "com.eviljuliette.clipkitty", category: .pointsOfInterest)
 
 private enum SpinnerState: Equatable {
     case idle
@@ -186,6 +188,11 @@ struct FilePreviewView: View {
 
 /// NSTextView subclass with custom key handling for the preview pane
 private final class PreviewTextView: NSTextView {
+    private enum FocusClickScrollState {
+        case idle
+        case suppressing(originalOrigin: NSPoint)
+    }
+
     // NSTextView keeps itself as the viewport layout delegate. We expose the same optional
     // selector on our subclass and forward to NSTextView's original implementation so we can
     // observe post-layout state without replacing AppKit's delegate plumbing.
@@ -195,12 +202,36 @@ private final class PreviewTextView: NSTextView {
         return method_getImplementation(method)
     }()
 
+    private var focusClickScrollState: FocusClickScrollState = .idle
+
     var onCmdReturn: (() -> Void)?
     var onCmdK: (() -> Void)?
     var onSave: (() -> Void)?
     var onEscape: (() -> Void)?
     var onFocusChange: ((Bool) -> Void)?
     var onViewportLayoutDidLayout: ((PreviewTextView, NSTextViewportLayoutController) -> Void)?
+
+    override func mouseDown(with event: NSEvent) {
+        if window?.firstResponder !== self,
+           let originalOrigin = enclosingScrollView?.contentView.bounds.origin
+        {
+            focusClickScrollState = .suppressing(originalOrigin: originalOrigin)
+        } else {
+            focusClickScrollState = .idle
+        }
+
+        super.mouseDown(with: event)
+
+        restoreFocusClickScrollIfNeeded()
+        DispatchQueue.main.async { [weak self] in
+            self?.restoreFocusClickScrollIfNeeded(finalize: true)
+        }
+    }
+
+    override func scrollRangeToVisible(_ range: NSRange) {
+        guard case .idle = focusClickScrollState else { return }
+        super.scrollRangeToVisible(range)
+    }
 
     override func keyDown(with event: NSEvent) {
         if event.modifierFlags.contains(.command) {
@@ -238,6 +269,26 @@ private final class PreviewTextView: NSTextView {
         return result
     }
 
+    private func restoreFocusClickScrollIfNeeded(finalize: Bool = false) {
+        guard case let .suppressing(originalOrigin) = focusClickScrollState else { return }
+        restoreScrollOriginIfNeeded(originalOrigin)
+        if finalize {
+            focusClickScrollState = .idle
+        }
+    }
+
+    private func restoreScrollOriginIfNeeded(_ originalOrigin: NSPoint) {
+        guard let scrollView = enclosingScrollView else { return }
+        let currentOrigin = scrollView.contentView.bounds.origin
+        guard abs(currentOrigin.y - originalOrigin.y) >= 1 else { return }
+
+        CATransaction.begin()
+        CATransaction.setDisableActions(true)
+        scrollView.contentView.scroll(to: originalOrigin)
+        scrollView.reflectScrolledClipView(scrollView.contentView)
+        CATransaction.commit()
+    }
+
     @objc(textViewportLayoutControllerDidLayout:)
     func clipKitty_textViewportLayoutControllerDidLayout(
         _ textViewportLayoutController: NSTextViewportLayoutController
@@ -270,8 +321,23 @@ enum PreviewScrollBehavior {
     case trackHighlight
 }
 
-struct TextPreviewView: NSViewRepresentable {
+class TextPreviewContent: Equatable {
     let text: String
+    init(text: String) {
+        self.text = text
+    }
+
+    static func == (lhs: TextPreviewContent, rhs: TextPreviewContent) -> Bool {
+        return lhs === rhs
+    }
+}
+
+struct TextPreviewView: NSViewRepresentable {
+    private static let maxAutoScaleCharacters = 4096
+    private static let maxAutoScaleLines = 14
+
+    static var textCache: [Int64: String] = [:]
+    let itemId: Int64
     let fontName: String
     let fontSize: CGFloat
     var highlights: [Utf16HighlightRange] = []
@@ -285,8 +351,6 @@ struct TextPreviewView: NSViewRepresentable {
     var scrollBehavior: PreviewScrollBehavior = .autoScroll
 
     // Edit callbacks
-    var itemId: Int64 = 0
-    var originalText: String = ""
     var onTextChange: ((String) -> Void)?
     var onEditingStateChange: ((Bool) -> Void)?
     var onCmdReturn: (() -> Void)?
@@ -330,7 +394,7 @@ struct TextPreviewView: NSViewRepresentable {
         textView.onCmdK = onCmdK
         textView.onSave = onSave
         textView.onEscape = onEscape
-        textView.onFocusChange = onEditingStateChange
+        installFocusHandler(on: textView, coordinator: context.coordinator)
         context.coordinator.onTextChange = onTextChange
 
         scrollView.documentView = textView
@@ -342,8 +406,8 @@ struct TextPreviewView: NSViewRepresentable {
     private static var lastKnownContainerWidth: CGFloat = 0
 
     private func scaledFontSize(containerWidth: CGFloat) -> CGFloat {
-        let lines = text.components(separatedBy: "\n")
-        if lines.count >= 15 { return fontSize }
+        let nsText = (TextPreviewView.textCache[itemId] ?? "") as NSString
+        guard nsText.length <= Self.maxAutoScaleCharacters else { return fontSize }
 
         let baseFont = NSFont(name: fontName, size: fontSize)
             ?? NSFont.monospacedSystemFont(ofSize: fontSize, weight: .regular)
@@ -352,30 +416,73 @@ struct TextPreviewView: NSViewRepresentable {
         if availableWidth <= 0 { return fontSize }
 
         let attributes: [NSAttributedString.Key: Any] = [.font: baseFont]
+        let fullRange = NSRange(location: 0, length: nsText.length)
+        var lineCount = 0
         var maxLineWidth: CGFloat = 0
-        for line in lines {
-            let lineWidth = (line as NSString).size(withAttributes: attributes).width
-            if lineWidth >= availableWidth { return fontSize }
+
+        nsText.enumerateSubstrings(
+            in: fullRange,
+            options: [.byLines]
+        ) { substring, _, _, stop in
+            lineCount += 1
+            guard lineCount <= Self.maxAutoScaleLines else {
+                stop.pointee = true
+                return
+            }
+
+            let lineWidth = (substring as NSString? ?? "").size(withAttributes: attributes).width
+            if lineWidth >= availableWidth {
+                maxLineWidth = availableWidth
+                stop.pointee = true
+                return
+            }
+
             maxLineWidth = max(maxLineWidth, lineWidth)
         }
+
+        if lineCount == 0 || lineCount > Self.maxAutoScaleLines { return fontSize }
         if maxLineWidth <= 0 { return fontSize }
 
         let scale = min(1.5, availableWidth / maxLineWidth) * 0.95
         return fontSize * scale
     }
 
+    private func installFocusHandler(
+        on textView: PreviewTextView,
+        coordinator: Coordinator
+    ) {
+        textView.onFocusChange = { [weak coordinator] isFocused in
+            onEditingStateChange?(isFocused)
+
+            guard isFocused, let coordinator else { return }
+
+            // Hand scroll control to the user once they click into the preview.
+            // Otherwise a still-armed highlight recenter can fire during the
+            // focus/layout transition and jump back to the active match.
+            coordinator.clearUsageBoundsRecentering()
+            coordinator.clearViewportRetry()
+            coordinator.resetKvoReScrollCount()
+            coordinator.scrollGeneration += 1
+        }
+    }
+
     func updateNSView(_ nsView: NSScrollView, context: Context) {
         guard let textView = nsView.documentView as? PreviewTextView else { return }
 
-        // Update callbacks
         let coordinator = context.coordinator
         coordinator.observeUsageBounds(of: textView)
+
+        let itemChanged = coordinator.currentItemId != itemId
+        if itemChanged {
+            coordinator.prepareForDisplayedItemChange(to: itemId, in: textView)
+        }
+
         coordinator.onTextChange = onTextChange
         textView.onCmdReturn = onCmdReturn
         textView.onCmdK = onCmdK
         textView.onSave = onSave
         textView.onEscape = onEscape
-        textView.onFocusChange = onEditingStateChange
+        installFocusHandler(on: textView, coordinator: coordinator)
         textView.onViewportLayoutDidLayout = { [weak coordinator] observedTextView, textViewportLayoutController in
             guard let coordinator,
                   scrollBehavior != .manual,
@@ -436,13 +543,6 @@ struct TextPreviewView: NSViewRepresentable {
             )
         }
 
-        // Check if item changed
-        let itemChanged = coordinator.currentItemId != itemId
-        if itemChanged {
-            coordinator.currentItemId = itemId
-            coordinator.isEditing = false
-        }
-
         // Use live container width if available, otherwise fall back to persisted value
         let containerWidth = nsView.contentSize.width > 0
             ? nsView.contentSize.width
@@ -451,19 +551,37 @@ struct TextPreviewView: NSViewRepresentable {
             Self.lastKnownContainerWidth = nsView.contentSize.width
         }
 
-        let scaledSize = scaledFontSize(containerWidth: containerWidth)
+        let textChanged = itemChanged ? true : textView.string != (TextPreviewView.textCache[itemId] ?? "")
+        let highlightsChanged = coordinator.lastHighlights != highlights
+        let contentWidthChanged = abs(coordinator.lastContentWidth - containerWidth) > 0.5
+        let gainedHighlights = !highlights.isEmpty && coordinator.lastHighlights.isEmpty
+
+        guard itemChanged || textChanged || highlightsChanged || contentWidthChanged else { return }
+        coordinator.lastContentWidth = containerWidth
+        if itemChanged || textChanged || contentWidthChanged || gainedHighlights {
+            coordinator.needsGeometrySync = true
+        }
+
+        let scaledSize: CGFloat
+        if itemChanged || textChanged || contentWidthChanged {
+            scaledSize = scaledFontSize(containerWidth: containerWidth)
+            coordinator.lastScaledFontSize = scaledSize
+        } else {
+            scaledSize = coordinator.lastScaledFontSize ?? fontSize
+        }
         let font = NSFont(name: fontName, size: scaledSize)
             ?? NSFont.monospacedSystemFont(ofSize: scaledSize, weight: .regular)
 
-        // Settle container dimensions FIRST so that any deferred scroll
-        // computes geometry against the correct width.
+        // Only mutate TextKit geometry when preview content or container width changed.
+        // Focus-only SwiftUI updates should not touch the text view at all because even
+        // redundant geometry writes can trigger AppKit to keep the insertion point visible.
         textView.textContainer?.containerSize = NSSize(
             width: containerWidth,
             height: .greatestFiniteMagnitude
         )
         textView.frame = NSRect(x: 0, y: 0, width: containerWidth, height: textView.frame.height)
 
-        // Set typing attributes for consistent font during editing
+        // Set typing attributes for consistent font during editing.
         let paragraphStyle = NSMutableParagraphStyle()
         paragraphStyle.lineBreakMode = .byWordWrapping
         textView.typingAttributes = [
@@ -472,16 +590,7 @@ struct TextPreviewView: NSViewRepresentable {
             .paragraphStyle: paragraphStyle,
         ]
 
-        let textChanged = textView.string != text
-        let highlightsChanged = coordinator.lastHighlights != highlights
-        let contentWidthChanged = abs(coordinator.lastContentWidth - containerWidth) > 0.5
-        let gainedHighlights = !highlights.isEmpty && coordinator.lastHighlights.isEmpty
-        coordinator.lastContentWidth = containerWidth
-
-        guard itemChanged || textChanged || highlightsChanged || contentWidthChanged else { return }
-        if itemChanged || textChanged || contentWidthChanged || gainedHighlights {
-            coordinator.needsGeometrySync = true
-        }
+        let text = TextPreviewView.textCache[itemId] ?? ""
 
         let previousMatchRanges = coordinator.currentMatchRanges
         let tlm = textView.textLayoutManager
@@ -489,9 +598,12 @@ struct TextPreviewView: NSViewRepresentable {
             clearHighlightRenderingAttributes(matchRanges: previousMatchRanges, from: tlm)
         }
 
-        // Only update text if item changed or we're not editing
-        let shouldUpdateText = itemChanged || (!coordinator.isEditing && textChanged)
+        // Reset the text view's attributed content when the highlight set changes for the
+        // same item. This reuses the same preview view but gives TextKit a clean baseline
+        // for the new overlay, which is much lighter than a full item reset.
+        let shouldUpdateText = itemChanged || (!coordinator.isEditing && (textChanged || highlightsChanged))
         if shouldUpdateText {
+            let text = TextPreviewView.textCache[itemId] ?? ""
             // Text content changed — replace storage attributes (font, color, paragraph style only).
             //
             // Memory consideration: For very large text (>100KB), NSAttributedString allocation
@@ -500,7 +612,6 @@ struct TextPreviewView: NSViewRepresentable {
             // Consider implementing a size limit or truncation if clipboard items exceed ~1MB.
             let paragraphStyle = NSMutableParagraphStyle()
             paragraphStyle.lineBreakMode = .byWordWrapping
-
             let attributed = NSMutableAttributedString(string: text, attributes: [
                 .font: font,
                 .foregroundColor: NSColor.labelColor,
@@ -508,6 +619,10 @@ struct TextPreviewView: NSViewRepresentable {
             ])
 
             textView.textStorage?.setAttributedString(attributed)
+            coordinator.lastRenderedText = text // Update cache!
+            if itemChanged {
+                coordinator.resetTextInteractionState(in: textView)
+            }
         }
 
         if itemChanged || textChanged || highlightsChanged {
@@ -518,6 +633,7 @@ struct TextPreviewView: NSViewRepresentable {
             coordinator.lastHighlights = highlights
 
             applyHighlightAttributes(matchRanges: newMatchRanges, to: textView)
+            refreshHighlightDisplay(textView: textView)
         }
 
         let scrollTarget: ScrollTarget
@@ -842,8 +958,6 @@ struct TextPreviewView: NSViewRepresentable {
                 for: matchRange.range
             )
         }
-
-        refreshHighlightDisplay(textView: textView)
     }
 
     private func refreshHighlightDisplay(textView: NSTextView) {
@@ -922,6 +1036,7 @@ struct TextPreviewView: NSViewRepresentable {
         var currentMatchRanges: [MatchRange] = []
         var scrollGeneration: Int = 0
         var lastContentWidth: CGFloat = 0
+        var lastScaledFontSize: CGFloat?
         var lastUsageBounds: CGRect = .zero
         var needsGeometrySync: Bool = false
         private var pendingScrollTarget: ScrollTarget?
@@ -938,11 +1053,38 @@ struct TextPreviewView: NSViewRepresentable {
 
         // Edit tracking
         var currentItemId: Int64 = 0
+        var lastRenderedText: String?
         var isEditing = false
         var onTextChange: ((String) -> Void)?
 
         deinit {
             usageBoundsObservation?.invalidate()
+        }
+
+        fileprivate func prepareForDisplayedItemChange(to itemId: Int64, in textView: PreviewTextView) {
+            scrollGeneration += 1
+            clearUsageBoundsRecentering()
+            clearViewportRetry()
+            resetKvoReScrollCount()
+
+            if textView.window?.firstResponder === textView {
+                textView.window?.makeFirstResponder(nil)
+            }
+
+            currentItemId = itemId
+            isEditing = false
+            currentMatchRanges = []
+            lastHighlights = []
+            lastUsageBounds = textView.textLayoutManager?.usageBoundsForTextContainer ?? .zero
+            needsGeometrySync = true
+        }
+
+        fileprivate func resetTextInteractionState(in textView: PreviewTextView) {
+            if textView.hasMarkedText() {
+                textView.unmarkText()
+            }
+            textView.undoManager?.removeAllActions()
+            textView.setSelectedRange(NSRange(location: 0, length: 0))
         }
 
         fileprivate func observeUsageBounds(of textView: PreviewTextView) {
@@ -1027,7 +1169,9 @@ struct TextPreviewView: NSViewRepresentable {
 
         func textDidChange(_ notification: Notification) {
             guard let onTextChange, let textView = notification.object as? NSTextView else { return }
-            onTextChange(textView.string)
+            let text = textView.string
+            lastRenderedText = text
+            onTextChange(text)
         }
     }
 }
@@ -1099,6 +1243,64 @@ struct LinkPreviewView: NSViewRepresentable {
 
 // MARK: - Item Row
 
+@MainActor
+private enum RowIconCache {
+    private static let workspace = NSWorkspace.shared
+    private static let browserIcon: NSImage = {
+        if let browserURL = URL(string: "https://").flatMap({ workspace.urlForApplication(toOpen: $0) }) {
+            return workspace.icon(forFile: browserURL.path)
+        }
+        return workspace.icon(for: IconType.link.utType)
+    }()
+
+    private static let finderIcon: NSImage = {
+        if let finderURL = workspace.urlForApplication(withBundleIdentifier: "com.apple.finder") {
+            return workspace.icon(forFile: finderURL.path)
+        }
+        return workspace.icon(for: IconType.file.utType)
+    }()
+
+    private static var symbolIcons: [IconType: NSImage] = [:]
+    private static var sourceAppIcons: [String: NSImage] = [:]
+    private static var missingSourceAppBundleIDs: Set<String> = []
+
+    static func symbolImage(for iconType: IconType) -> NSImage {
+        if let cachedImage = symbolIcons[iconType] {
+            return cachedImage
+        }
+
+        let image: NSImage
+        switch iconType {
+        case .link:
+            image = browserIcon
+        case .file:
+            image = finderIcon
+        case .text, .image, .color:
+            image = workspace.icon(for: iconType.utType)
+        }
+
+        symbolIcons[iconType] = image
+        return image
+    }
+
+    static func sourceAppImage(bundleID: String) -> NSImage? {
+        if let cachedImage = sourceAppIcons[bundleID] {
+            return cachedImage
+        }
+        if missingSourceAppBundleIDs.contains(bundleID) {
+            return nil
+        }
+        guard let appURL = workspace.urlForApplication(withBundleIdentifier: bundleID) else {
+            missingSourceAppBundleIDs.insert(bundleID)
+            return nil
+        }
+
+        let image = workspace.icon(forFile: appURL.path)
+        sourceAppIcons[bundleID] = image
+        return image
+    }
+}
+
 struct ItemRow: View {
     let metadata: ItemMetadata
     let rowDecoration: RowDecoration?
@@ -1134,6 +1336,15 @@ struct ItemRow: View {
     /// Highlights for display - passed directly from Rust (already adjusted for normalization)
     private var displayHighlights: [Utf16HighlightRange] {
         rowDecoration?.highlights ?? []
+    }
+
+    private var showsSourceAppBadge: Bool {
+        switch metadata.icon {
+        case let .symbol(iconType):
+            return iconType != .link && iconType != .file
+        case .thumbnail, .colorSwatch:
+            return true
+        }
     }
 
     var body: some View {
@@ -1174,20 +1385,8 @@ struct ItemRow: View {
                                                 .strokeBorder(Color.primary.opacity(0.15), lineWidth: 1)
                                         )
                                 case let .symbol(iconType):
-                                    if case .link = iconType,
-                                       let browserURL = NSWorkspace.shared.urlForApplication(toOpen: URL(string: "https://")!)
-                                    {
-                                        Image(nsImage: NSWorkspace.shared.icon(forFile: browserURL.path))
-                                            .resizable()
-                                    } else if case .file = iconType,
-                                              let finderURL = NSWorkspace.shared.urlForApplication(withBundleIdentifier: "com.apple.finder")
-                                    {
-                                        Image(nsImage: NSWorkspace.shared.icon(forFile: finderURL.path))
-                                            .resizable()
-                                    } else {
-                                        Image(nsImage: NSWorkspace.shared.icon(for: iconType.utType))
-                                            .resizable()
-                                    }
+                                    Image(nsImage: RowIconCache.symbolImage(for: iconType))
+                                        .resizable()
                                 }
                             }
                             .frame(width: 32, height: 32)
@@ -1201,20 +1400,10 @@ struct ItemRow: View {
                                     .shadow(color: .black.opacity(0.3), radius: 1, x: 0, y: 1)
                                     .offset(x: 4, y: 4)
                             } else if let bundleID = metadata.sourceAppBundleId,
-                                      let appURL = NSWorkspace.shared.urlForApplication(withBundleIdentifier: bundleID)
+                                      let sourceAppImage = RowIconCache.sourceAppImage(bundleID: bundleID)
                             {
-                                // Skip badge for symbol links/files (app icon is already shown)
-                                let showBadge: Bool = {
-                                    switch metadata.icon {
-                                    case let .symbol(iconType):
-                                        return iconType != .link && iconType != .file
-                                    case .thumbnail, .colorSwatch:
-                                        return true
-                                    }
-                                }()
-
-                                if showBadge {
-                                    Image(nsImage: NSWorkspace.shared.icon(forFile: appURL.path))
+                                if showsSourceAppBadge {
+                                    Image(nsImage: sourceAppImage)
                                         .resizable()
                                         .frame(width: 22, height: 22)
                                         .clipShape(RoundedRectangle(cornerRadius: 3))
@@ -1509,21 +1698,13 @@ struct HighlightedTextView: View, Equatable {
     }
 
     /// Build the highlighted match view with optional underline
-    @ViewBuilder
     private func highlightedMatchView(match: String, kind: HighlightKind) -> some View {
-        let baseView = Text(match)
+        Text(HighlightStyler.attributedFragment(match, kind: kind))
             .font(font)
             .foregroundColor(textColor)
             .lineLimit(1)
             .truncationMode(.tail)
             .layoutPriority(1)
-            .background(HighlightStyler.color(for: kind))
-
-        if HighlightStyler.usesUnderline(kind) {
-            baseView.underline()
-        } else {
-            baseView
-        }
     }
 
     /// Build suffix view with any additional highlights

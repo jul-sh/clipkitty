@@ -109,7 +109,6 @@ final class BrowserViewModelTests: XCTestCase {
         }
         XCTAssertEqual(request, SearchRequest(text: "", filter: .all))
         XCTAssertEqual(previous?.response.items.map(\.itemMetadata.itemId), [1])
-        XCTAssertEqual(previous?.selection.itemId, 1)
         XCTAssertEqual(viewModel.itemIds, [1])
         XCTAssertEqual(viewModel.selectedItemId, 1)
 
@@ -162,7 +161,6 @@ final class BrowserViewModelTests: XCTestCase {
         }
         XCTAssertEqual(request, SearchRequest(text: "", filter: .all))
         XCTAssertEqual(previous?.response.items.map(\.itemMetadata.itemId), [1])
-        XCTAssertEqual(previous?.selection.itemId, 1)
 
         client.resumeSearch(with: BrowserSearchResponse(
             request: SearchRequest(text: "", filter: .all),
@@ -424,6 +422,19 @@ final class BrowserViewModelTests: XCTestCase {
         XCTAssertNil(viewModel.previewDecoration)
 
         viewModel.updateSearchText("al")
+        await flushMainActor()
+
+        guard case let .selected(staleSelection) = viewModel.selection else {
+            return XCTFail("Expected selected item to stay visible while search results are pending")
+        }
+        XCTAssertEqual(staleSelection.item.itemMetadata.itemId, 1)
+        guard case .loadingDecoration(previous: nil) = staleSelection.previewState else {
+            return XCTFail("Expected stale preview content to remain visible while fresh highlights load")
+        }
+        XCTAssertEqual(viewModel.selectedItemId, 1)
+        XCTAssertEqual(viewModel.selectedItem?.itemMetadata.itemId, 1)
+        XCTAssertNil(viewModel.previewDecoration)
+
         try? await Task.sleep(for: .milliseconds(75))
         await flushMainActor()
 
@@ -510,6 +521,75 @@ final class BrowserViewModelTests: XCTestCase {
         await flushMainActor()
 
         XCTAssertEqual(viewModel.previewDecoration, freshDecoration)
+    }
+
+    func testUndecoratedFreshPreviewClearsStaleHighlight() async {
+        let client = MockBrowserStoreClient()
+        let item = makeItem(id: 1, text: "hello_arrr")
+        let staleDecoration = makePreviewDecoration(highlightStart: 0, highlightEnd: 6)
+
+        let viewModel = BrowserViewModel(
+            client: client,
+            onSelect: { _, _ in },
+            onCopyOnly: { _, _ in },
+            onDismiss: {}
+        )
+
+        viewModel.updateSearchText("hello")
+        try? await Task.sleep(for: .milliseconds(75))
+        await flushMainActor()
+        client.resumeSearch(with: BrowserSearchResponse(
+            request: SearchRequest(text: "hello", filter: .all),
+            items: [makeMatch(id: 1, snippet: "hello_arrr")],
+            firstItem: item,
+            totalCount: 1
+        ))
+        await flushMainActor()
+
+        client.resumePreviewPayload(
+            itemId: 1,
+            query: "hello",
+            with: makePreviewPayload(item: item, decoration: staleDecoration)
+        )
+        await flushMainActor()
+        await flushMainActor()
+        XCTAssertEqual(viewModel.previewDecoration, staleDecoration)
+
+        viewModel.updateSearchText("hello_arr")
+        await flushMainActor()
+
+        guard case let .selected(staleSelection) = viewModel.selection else {
+            return XCTFail("Expected stale selection while new search is pending")
+        }
+        XCTAssertEqual(staleSelection.item.itemMetadata.itemId, 1)
+        XCTAssertEqual(viewModel.previewDecoration, staleDecoration)
+
+        try? await Task.sleep(for: .milliseconds(75))
+        await flushMainActor()
+        client.resumeSearch(with: BrowserSearchResponse(
+            request: SearchRequest(text: "hello_arr", filter: .all),
+            items: [makeMatch(id: 1, snippet: "hello_arrr")],
+            firstItem: item,
+            totalCount: 1
+        ))
+        await flushMainActor()
+
+        client.resumePreviewPayload(
+            itemId: 1,
+            query: "hello_arr",
+            with: makePreviewPayload(item: item, decoration: nil)
+        )
+        await flushMainActor()
+        await flushMainActor()
+
+        XCTAssertEqual(viewModel.selectedItem?.itemMetadata.itemId, 1)
+        XCTAssertNil(viewModel.previewDecoration)
+        guard case let .selected(selectedItemState) = viewModel.selection else {
+            return XCTFail("Expected selected item after fresh preview load")
+        }
+        guard case .plain = selectedItemState.previewState else {
+            return XCTFail("Expected stale highlight to clear when fresh preview has no decoration")
+        }
     }
 
     func testStaleRowDecorationCompletionDoesNotMutateCurrentQueryOrPreview() async {
@@ -1271,7 +1351,7 @@ final class BrowserViewModelTests: XCTestCase {
         XCTAssertEqual(value, "selected text")
     }
 
-    func testDeleteBlockedWhileMutationPending() async {
+    func testConsecutiveDeleteAccumulatesBatch() async {
         let client = MockBrowserStoreClient()
         client.enqueueSearchResponse(BrowserSearchResponse(
             request: SearchRequest(text: "", filter: .all),
@@ -1299,13 +1379,13 @@ final class BrowserViewModelTests: XCTestCase {
         viewModel.deleteSelectedItem()
         await flushMainActor()
 
-        XCTAssertEqual(viewModel.itemIds, [2])
-        XCTAssertTrue(viewModel.itemIds.contains(2))
+        // Both items should be deleted and accumulated in one pending batch
+        XCTAssertEqual(viewModel.itemIds, [])
 
         guard case let .deleting(.pending(transaction)) = viewModel.mutationState else {
-            return XCTFail("Expected original delete to remain pending")
+            return XCTFail("Expected batch delete to be pending")
         }
-        XCTAssertEqual(transaction.deletedItemId, 1)
+        XCTAssertEqual(transaction.deletedItemIds, [1, 2])
     }
 
     func testDismissMutationFailureClearsState() async {

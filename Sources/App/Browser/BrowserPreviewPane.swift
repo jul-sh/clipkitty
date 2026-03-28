@@ -76,8 +76,9 @@ struct BrowserPreviewPane: View {
         case .text, .color:
             let previewText = viewModel.pendingEdits[item.itemMetadata.itemId] ?? item.content.textContent
             let decoration = previewDecoration(for: content)
+            let _ = { TextPreviewView.textCache[item.itemMetadata.itemId] = previewText }()
             TextPreviewView(
-                text: previewText,
+                itemId: item.itemMetadata.itemId,
                 fontName: FontManager.mono,
                 fontSize: 15,
                 highlights: decoration?.highlights ?? [],
@@ -92,8 +93,6 @@ struct BrowserPreviewPane: View {
                         return content.origin == .user ? .trackHighlight : .autoScroll
                     }
                 }(),
-                itemId: item.itemMetadata.itemId,
-                originalText: item.content.textContent,
                 onTextChange: { newText in
                     viewModel.onTextEdit(newText, for: item.itemMetadata.itemId, originalText: item.content.textContent)
                 },
@@ -118,7 +117,6 @@ struct BrowserPreviewPane: View {
                     focusSearchField()
                 }
             )
-            .id(previewIdentity(itemId: item.itemMetadata.itemId))
             .frame(maxWidth: .infinity, maxHeight: .infinity)
             .overlay(alignment: .topLeading) {
                 if isUITestPreviewDebugEnabled {

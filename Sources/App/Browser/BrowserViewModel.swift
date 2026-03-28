@@ -1,6 +1,10 @@
+import AppKit
 import ClipKittyRust
 import Foundation
 import Observation
+import os.signpost
+
+private let poi = OSLog(subsystem: "com.eviljuliette.clipkitty", category: .pointsOfInterest)
 
 @MainActor
 @Observable
@@ -9,6 +13,8 @@ final class BrowserViewModel {
     private let onSelect: (Int64, ClipboardContent) -> Void
     private let onCopyOnly: (Int64, ClipboardContent) -> Void
     private let onDismiss: () -> Void
+    private let showSnackbarNotification: (NotificationKind, (() -> Void)?) -> Void
+    private let dismissSnackbarNotification: () -> Void
 
     private enum SearchExecution {
         case idle
@@ -74,6 +80,7 @@ final class BrowserViewModel {
     private var lastLoadedContentRevision: Int?
 
     private(set) var contentState: BrowserContentState = .idle(request: SearchRequest(text: "", filter: .all))
+    private(set) var selectionState: SelectionState = .none
     private(set) var overlayState: OverlayState = .none
     private(set) var mutationState: MutationState = .idle
     private(set) var editState: EditState = .init()
@@ -82,17 +89,24 @@ final class BrowserViewModel {
     private(set) var hasUserNavigated = false
     private(set) var prefetchCache: [Int64: ClipboardItem] = [:]
     private(set) var previewSpinnerVisible = false
+    private(set) var itemIds: [Int64] = []
+    private(set) var displayRows: [DisplayRow] = []
+    private var itemIndexById: [Int64: Int] = [:]
 
     init(
         client: BrowserStoreClient,
         onSelect: @escaping (Int64, ClipboardContent) -> Void,
         onCopyOnly: @escaping (Int64, ClipboardContent) -> Void,
-        onDismiss: @escaping () -> Void
+        onDismiss: @escaping () -> Void,
+        showSnackbarNotification: @escaping (NotificationKind, (() -> Void)?) -> Void = { _, _ in },
+        dismissSnackbarNotification: @escaping () -> Void = {}
     ) {
         self.client = client
         self.onSelect = onSelect
         self.onCopyOnly = onCopyOnly
         self.onDismiss = onDismiss
+        self.showSnackbarNotification = showSnackbarNotification
+        self.dismissSnackbarNotification = dismissSnackbarNotification
     }
 
     var searchText: String {
@@ -119,12 +133,13 @@ final class BrowserViewModel {
         contentState.isSearchSpinnerVisible
     }
 
-    var itemIds: [Int64] {
-        contentState.items.map { $0.itemMetadata.itemId }
+    func indexOfItem(_ itemId: Int64?) -> Int? {
+        guard let itemId else { return nil }
+        return itemIndexById[itemId]
     }
 
     var selection: SelectionState {
-        contentState.selection
+        selectionState
     }
 
     var selectedItemId: Int64? {
@@ -151,7 +166,7 @@ final class BrowserViewModel {
 
     var selectedIndex: Int? {
         guard let selectedItemId else { return nil }
-        return itemIds.firstIndex(of: selectedItemId)
+        return itemIndexById[selectedItemId]
     }
 
     var itemCount: Int {
@@ -285,10 +300,17 @@ final class BrowserViewModel {
     }
 
     func select(itemId: Int64, origin: SelectionOrigin) {
+        let signpostID = OSSignpostID(log: poi)
+        os_signpost(.begin, log: poi, name: "select", signpostID: signpostID, "itemId=%lld origin=%{public}s", itemId, String(describing: origin))
+        defer { os_signpost(.end, log: poi, name: "select", signpostID: signpostID) }
+
         if case let .focused(focusedId) = editState.focus, focusedId != itemId {
             editState.focus = .idle
         }
-        setDisplayedSelection(.loading(itemId: itemId, origin: origin))
+        // Don't set .loading here — loadSelectedItem() resolves from cache synchronously
+        // on the common path (arrow key navigation), so .loading would be immediately
+        // overwritten by .selected, causing a redundant SwiftUI view graph invalidation.
+        // On cache misses, loadSelectedItem() sets .loading itself before going async.
         loadSelectedItem(itemId: itemId, origin: origin)
     }
 
@@ -343,13 +365,14 @@ final class BrowserViewModel {
                 var updates: [Int64: RowDecoration] = [:]
                 for result in results {
                     guard let decoration = result.decoration else { continue }
-                    guard self.itemIds.contains(result.itemId) else { continue }
+                    guard self.indexOfItem(result.itemId) != nil else { continue }
                     guard self.rowDecoration(for: result.itemId) == nil else { continue }
                     updates[result.itemId] = decoration
                 }
 
                 guard !updates.isEmpty else { return }
                 self.rowDecorationsByItemId.merge(updates) { existing, _ in existing }
+                self.rebuildDisplayedRows()
             }
         }
     }
@@ -360,17 +383,37 @@ final class BrowserViewModel {
     }
 
     func deleteItem(itemId: Int64) {
+        // Accumulate into existing pending delete batch
+        if case var .deleting(.pending(prev)) = mutationState {
+            pendingDeleteTask?.cancel()
+            prev.deletedItemIds.append(itemId)
+            mutationState = .deleting(.pending(prev))
+            applyOptimisticDelete(itemId: itemId)
+            showDeleteUndoNotification(count: prev.deletedItemIds.count)
+            scheduleDeleteCommit()
+            return
+        }
+
+        // If a previous delete is already committing, just clear state
+        if case .deleting(.committing) = mutationState {
+            mutationState = .idle
+        }
+
         guard case .idle = mutationState else { return }
 
         let transaction = DeleteTransaction(
-            deletedItemId: itemId,
-            snapshot: contentState
+            deletedItemIds: [itemId],
+            snapshot: contentState,
+            selectionSnapshot: selectionState
         )
         mutationState = .deleting(.pending(transaction))
 
         applyOptimisticDelete(itemId: itemId)
-        showDeleteUndoToast()
+        showDeleteUndoNotification(count: 1)
+        scheduleDeleteCommit()
+    }
 
+    private func scheduleDeleteCommit() {
         pendingDeleteTask?.cancel()
         pendingDeleteTask = Task { [weak self] in
             try? await Task.sleep(for: .seconds(3))
@@ -385,25 +428,29 @@ final class BrowserViewModel {
         guard case let .deleting(.pending(transaction)) = mutationState else { return }
         pendingDeleteTask?.cancel()
         pendingDeleteTask = nil
-        ToastWindow.shared.dismiss()
-        restoreSnapshot(transaction.snapshot)
+        dismissSnackbarNotification()
+        restoreSnapshot(transaction.snapshot, selection: transaction.selectionSnapshot)
         mutationState = .idle
     }
 
     func clearAll() {
-        mutationState = .clearing(ClearTransaction(snapshot: contentState))
+        mutationState = .clearing(ClearTransaction(
+            snapshot: contentState,
+            selectionSnapshot: selectionState
+        ))
 
         let request = contentState.request
+        setDisplayedSelection(.none)
         contentState = .loaded(LoadedBrowserContent(
             response: BrowserSearchResponse(
                 request: request,
                 items: [],
                 firstPreviewPayload: nil,
                 totalCount: 0
-            ),
-            selection: .none
+            )
         ))
         rowDecorationsByItemId.removeAll()
+        rebuildDisplayedRows()
         previewPayloadsByItemId.removeAll()
         prefetchCache.removeAll()
 
@@ -480,7 +527,7 @@ final class BrowserViewModel {
         editState.focus = .idle
 
         guard let selectedItemState else {
-            ToastWindow.shared.show(message: String(localized: "Saved"))
+            showSnackbarNotification(.passive(message: String(localized: "Saved"), iconSystemName: "checkmark.circle.fill"), nil)
             return
         }
 
@@ -511,7 +558,7 @@ final class BrowserViewModel {
             updatedFirstItem: updatedItem
         )
 
-        ToastWindow.shared.show(message: String(localized: "Saved"))
+        showSnackbarNotification(.passive(message: String(localized: "Saved"), iconSystemName: "checkmark.circle.fill"), nil)
 
         Task { [weak self] in
             guard let self else { return }
@@ -610,8 +657,11 @@ final class BrowserViewModel {
         rowDecorationTasks.values.forEach { $0.cancel() }
         rowDecorationTasks.removeAll()
 
-        let previous = displayedContent.map { resetSelection(in: $0, for: request.text) }
-        contentState = .loading(request: request, previous: previous, phase: .debouncing)
+        if displayedContent?.response.request != request {
+            setDisplayedSelection(selectionDuringSearchTransition(to: request))
+        }
+        contentState = .loading(request: request, previous: displayedContent, phase: .debouncing)
+        rebuildDisplayedRows()
 
         if request.text.isEmpty {
             beginSearch(request: request, targetContentRevision: targetContentRevision)
@@ -636,6 +686,7 @@ final class BrowserViewModel {
         let operation = client.startSearch(request: request)
         let operationId = UUID()
         contentState = .loading(request: request, previous: displayedContent, phase: .running(spinnerVisible: false))
+        rebuildDisplayedRows()
 
         let observer = Task { [weak self] in
             guard let self else { return }
@@ -687,6 +738,7 @@ final class BrowserViewModel {
                 message: error.localizedDescription,
                 previous: previous
             )
+            rebuildDisplayedRows()
         }
     }
 
@@ -700,7 +752,8 @@ final class BrowserViewModel {
         let previousSelection = selection
         let previousSelectedItemState = selectedItemState
 
-        contentState = .loaded(LoadedBrowserContent(response: response, selection: .none))
+        contentState = .loaded(LoadedBrowserContent(response: response))
+        rebuildDisplayedRows()
 
         let newOrder = response.items.map { $0.itemMetadata.itemId }
         guard !newOrder.isEmpty else {
@@ -816,6 +869,10 @@ final class BrowserViewModel {
     }
 
     private func loadSelectedItem(itemId: Int64, origin: SelectionOrigin) {
+        let signpostID = OSSignpostID(log: poi)
+        os_signpost(.begin, log: poi, name: "loadSelectedItem", signpostID: signpostID, "itemId=%lld", itemId)
+        defer { os_signpost(.end, log: poi, name: "loadSelectedItem", signpostID: signpostID) }
+
         previewTask?.cancel()
         metadataTask?.cancel()
         previewGeneration += 1
@@ -965,17 +1022,26 @@ final class BrowserViewModel {
                 }
 
                 self.previewSpinnerVisible = false
-                guard let payload else { return }
-                self.cachePreviewPayload(payload)
-                guard self.previewPayloadSatisfiesDecorationRequirement(payload, for: request) else {
+                guard let payload else {
+                    self.resolveSelectionWithoutPreviewDecoration(itemId: itemId, origin: origin)
                     return
                 }
-                self.setDisplayedSelection(.selected(self.makeSelectedItemState(
-                    for: payload,
-                    origin: origin,
-                    request: request,
-                    previousDecoration: self.carriedPreviewDecoration(for: itemId)
-                )))
+
+                self.cachePreviewPayload(payload)
+                if self.previewPayloadSatisfiesDecorationRequirement(payload, for: request) {
+                    self.setDisplayedSelection(.selected(self.makeSelectedItemState(
+                        for: payload,
+                        origin: origin,
+                        request: request,
+                        previousDecoration: self.carriedPreviewDecoration(for: itemId)
+                    )))
+                } else {
+                    self.setDisplayedSelection(.selected(SelectedItemState(
+                        item: payload.item,
+                        origin: origin,
+                        previewState: .plain
+                    )))
+                }
                 self.prefetchAdjacentItems(around: itemId)
                 self.maybeRefreshLinkMetadata(for: payload.item, generation: generation)
             }
@@ -1038,22 +1104,21 @@ final class BrowserViewModel {
         }
     }
 
+    private let prefetchRadius = 5
+
     private func prefetchAdjacentItems(around itemId: Int64) {
-        guard let currentIndex = itemIds.firstIndex(of: itemId) else { return }
-        var idsToPrefetch: [Int64] = []
-        if currentIndex > 0 {
-            idsToPrefetch.append(itemIds[currentIndex - 1])
-        }
-        if currentIndex + 1 < itemIds.count {
-            idsToPrefetch.append(itemIds[currentIndex + 1])
-        }
+        guard let currentIndex = indexOfItem(itemId) else { return }
+        let start = max(0, currentIndex - prefetchRadius)
+        let end = min(itemIds.count - 1, currentIndex + prefetchRadius)
+        guard start <= end else { return }
+        let idsToPrefetch = (start ... end).map { itemIds[$0] }
 
         Task { [weak self] in
             guard let self else { return }
             for itemId in idsToPrefetch where self.prefetchCache[itemId] == nil {
                 guard let item = await self.client.fetchItem(id: itemId) else { continue }
                 await MainActor.run {
-                    if self.itemIds.contains(itemId) {
+                    if self.indexOfItem(itemId) != nil {
                         self.prefetchCache[itemId] = item
                     }
                 }
@@ -1125,17 +1190,18 @@ final class BrowserViewModel {
 
         Task { [weak self] in
             guard let self else { return }
-            let result = await self.client.delete(itemId: transaction.deletedItemId)
+            var lastError: ClipboardError?
+            for itemId in transaction.deletedItemIds {
+                let result = await self.client.delete(itemId: itemId)
+                if case let .failure(error) = result {
+                    lastError = error
+                }
+            }
             await MainActor.run {
-                switch result {
-                case .success:
-                    if case let .deleting(.committing(activeTransaction)) = self.mutationState,
-                       activeTransaction.deletedItemId == transaction.deletedItemId
-                    {
-                        self.mutationState = .idle
-                    }
-                case let .failure(error):
+                if let error = lastError {
                     self.restoreDeleteFailure(error: error)
+                } else if case .deleting(.committing) = self.mutationState {
+                    self.mutationState = .idle
                 }
             }
         }
@@ -1151,16 +1217,20 @@ final class BrowserViewModel {
         }
         pendingDeleteTask?.cancel()
         pendingDeleteTask = nil
-        restoreSnapshot(transaction.snapshot)
+        restoreSnapshot(transaction.snapshot, selection: transaction.selectionSnapshot)
         mutationState = .failed(ActionFailure(message: error.localizedDescription))
     }
 
-    private func showDeleteUndoToast() {
-        ToastWindow.shared.show(
-            message: String(localized: "Deleted"),
-            iconSystemName: "trash",
-            iconColor: .secondaryLabelColor,
-            actionTitle: String(localized: "Undo")
+    private func showDeleteUndoNotification(count: Int) {
+        let message = count > 1
+            ? String(localized: "Deleted \(count)")
+            : String(localized: "Deleted")
+        showSnackbarNotification(
+            .actionable(
+                message: message,
+                iconSystemName: "trash",
+                actionTitle: String(localized: "Undo")
+            )
         ) { [weak self] in
             self?.undoPendingDelete()
         }
@@ -1168,12 +1238,16 @@ final class BrowserViewModel {
 
     private func restoreClearFailure(error: ClipboardError) {
         guard case let .clearing(transaction) = mutationState else { return }
-        restoreSnapshot(transaction.snapshot)
+        restoreSnapshot(transaction.snapshot, selection: transaction.selectionSnapshot)
         mutationState = .failed(ActionFailure(message: error.localizedDescription))
     }
 
-    private func restoreSnapshot(_ snapshot: BrowserContentState) {
+    private func restoreSnapshot(_ snapshot: BrowserContentState, selection: SelectionState?) {
         contentState = snapshot
+        rebuildDisplayedRows()
+        if let selection {
+            setDisplayedSelection(selection)
+        }
         syncPreviewPayloadCacheToDisplayedState()
         clearInactiveEdits()
     }
@@ -1200,7 +1274,7 @@ final class BrowserViewModel {
     private func responseApplyingPendingMutations(_ response: BrowserSearchResponse) -> BrowserSearchResponse {
         switch mutationState {
         case let .deleting(.pending(transaction)), let .deleting(.committing(transaction)):
-            return responseHidingDeletedItem(response, deletedItemId: transaction.deletedItemId)
+            return responseHidingDeletedItems(response, deletedItemIds: transaction.deletedItemIds)
         case let .tagging(.pending(mutation)), let .tagging(.settling(mutation)):
             return responseApplyingTagMutation(
                 response,
@@ -1213,21 +1287,21 @@ final class BrowserViewModel {
         }
     }
 
-    private func responseHidingDeletedItem(_ response: BrowserSearchResponse, deletedItemId: Int64) -> BrowserSearchResponse {
-        guard response.items.contains(where: { $0.itemMetadata.itemId == deletedItemId }) else {
-            return response
-        }
+    private func responseHidingDeletedItems(_ response: BrowserSearchResponse, deletedItemIds: [Int64]) -> BrowserSearchResponse {
+        let idSet = Set(deletedItemIds)
+        let filteredItems = response.items.filter { !idSet.contains($0.itemMetadata.itemId) }
+        guard filteredItems.count < response.items.count else { return response }
 
-        let filteredItems = response.items.filter { $0.itemMetadata.itemId != deletedItemId }
-        let filteredFirstPreviewPayload = response.firstPreviewPayload?.item.itemMetadata.itemId == deletedItemId
-            ? nil
-            : response.firstPreviewPayload
+        let filteredFirstPreviewPayload: PreviewPayload? =
+            if let preview = response.firstPreviewPayload,
+            idSet.contains(preview.item.itemMetadata.itemId) { nil }
+            else { response.firstPreviewPayload }
 
         return BrowserSearchResponse(
             request: response.request,
             items: filteredItems,
             firstPreviewPayload: filteredFirstPreviewPayload,
-            totalCount: max(0, response.totalCount - 1)
+            totalCount: max(0, response.totalCount - idSet.count)
         )
     }
 
@@ -1264,7 +1338,7 @@ final class BrowserViewModel {
                 case let .failure(error):
                     self.pendingTagSettleTask?.cancel()
                     self.pendingTagSettleTask = nil
-                    self.restoreSnapshot(snapshot)
+                    self.restoreSnapshot(snapshot, selection: nil)
                     self.mutationState = .failed(ActionFailure(message: error.localizedDescription))
                 }
             }
@@ -1410,10 +1484,10 @@ final class BrowserViewModel {
     }
 
     func rowDecoration(for itemId: Int64) -> RowDecoration? {
-        if let decoration = rowDecorationsByItemId[itemId] {
-            return decoration
+        guard let index = itemIndexById[itemId], displayRows.indices.contains(index) else {
+            return nil
         }
-        return contentState.items.first { $0.itemMetadata.itemId == itemId }?.rowDecoration
+        return displayRows[index].rowDecoration
     }
 
     private func makeSelectedItemState(
@@ -1479,20 +1553,36 @@ final class BrowserViewModel {
         !requiresPreviewDecoration(for: payload.item, request: request) || payload.decoration != nil
     }
 
-    private func resetSelection(in content: LoadedBrowserContent, for query: String) -> LoadedBrowserContent {
-        guard let selectedItem = content.selection.selectedItem else { return content }
-        let request = SearchRequest(text: query, filter: content.response.request.filter)
-        let selection: SelectionState
-        if requiresPreviewDecoration(for: selectedItem.item, request: request) {
-            selection = .selected(makeDecorationLoadingSelectedItemState(
-                from: selectedItem,
-                origin: selectedItem.origin
-            ))
-        } else {
-            selection = .selected(selectedItem)
+    private func resolveSelectionWithoutPreviewDecoration(itemId: Int64, origin: SelectionOrigin) {
+        guard let currentSelectedItemState = selectedItemState,
+              currentSelectedItemState.item.itemMetadata.itemId == itemId
+        else {
+            return
         }
 
-        return LoadedBrowserContent(response: content.response, selection: selection)
+        setDisplayedSelection(.selected(SelectedItemState(
+            item: currentSelectedItemState.item,
+            origin: origin,
+            previewState: .plain
+        )))
+    }
+
+    private func selectionDuringSearchTransition(to request: SearchRequest) -> SelectionState {
+        guard displayedContent != nil else { return .none }
+
+        switch selectionState {
+        case let .selected(selectedItemState):
+            guard requiresPreviewDecoration(for: selectedItemState.item, request: request) else {
+                return .selected(selectedItemState)
+            }
+
+            return .selected(makeDecorationLoadingSelectedItemState(
+                from: selectedItemState,
+                origin: selectedItemState.origin
+            ))
+        case .loading, .failed, .none:
+            return selectionState
+        }
     }
 
     private func cachePreviewPayload(_ payload: PreviewPayload?) {
@@ -1580,14 +1670,13 @@ final class BrowserViewModel {
     }
 
     private func setDisplayedSelection(_ selection: SelectionState) {
-        updateDisplayedContent { content in
-            LoadedBrowserContent(response: content.response, selection: selection)
-        }
+        os_signpost(.event, log: poi, name: "setDisplayedSelection", "%{public}s", selection.poiLabel)
+        selectionState = selection
     }
 
     private func updateDisplayedResponse(_ response: BrowserSearchResponse) {
-        updateDisplayedContent { content in
-            LoadedBrowserContent(response: response, selection: content.selection)
+        updateDisplayedContent { _ in
+            LoadedBrowserContent(response: response)
         }
     }
 
@@ -1638,6 +1727,31 @@ final class BrowserViewModel {
             guard let previous else { return }
             contentState = .failed(request: request, message: message, previous: transform(previous))
         }
+        rebuildDisplayedRows()
+    }
+
+    private func rebuildDisplayedRows() {
+        let items = contentState.items
+        var nextItemIds: [Int64] = []
+        nextItemIds.reserveCapacity(items.count)
+        var nextIndexById: [Int64: Int] = [:]
+        nextIndexById.reserveCapacity(items.count)
+        var nextDisplayRows: [DisplayRow] = []
+        nextDisplayRows.reserveCapacity(items.count)
+
+        for (index, itemMatch) in items.enumerated() {
+            let itemId = itemMatch.itemMetadata.itemId
+            nextItemIds.append(itemId)
+            nextIndexById[itemId] = index
+            nextDisplayRows.append(DisplayRow(
+                metadata: itemMatch.itemMetadata,
+                rowDecoration: rowDecorationsByItemId[itemId] ?? itemMatch.rowDecoration
+            ))
+        }
+
+        itemIds = nextItemIds
+        itemIndexById = nextIndexById
+        displayRows = nextDisplayRows
     }
 
     private func clearInactiveEdits() {

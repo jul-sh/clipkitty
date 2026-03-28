@@ -6,6 +6,8 @@ struct ContentView: View {
     let onSelect: (Int64, ClipboardContent) -> Void
     let onCopyOnly: (Int64, ClipboardContent) -> Void
     let onDismiss: () -> Void
+    let showSnackbarNotification: (NotificationKind, (() -> Void)?) -> Void
+    let dismissSnackbarNotification: () -> Void
     var initialSearchQuery: String = ""
 
     @State private var viewModel: BrowserViewModel
@@ -15,18 +17,24 @@ struct ContentView: View {
         onSelect: @escaping (Int64, ClipboardContent) -> Void,
         onCopyOnly: @escaping (Int64, ClipboardContent) -> Void,
         onDismiss: @escaping () -> Void,
+        showSnackbarNotification: @escaping (NotificationKind, (() -> Void)?) -> Void,
+        dismissSnackbarNotification: @escaping () -> Void,
         initialSearchQuery: String = ""
     ) {
         self.store = store
         self.onSelect = onSelect
         self.onCopyOnly = onCopyOnly
         self.onDismiss = onDismiss
+        self.showSnackbarNotification = showSnackbarNotification
+        self.dismissSnackbarNotification = dismissSnackbarNotification
         self.initialSearchQuery = initialSearchQuery
         _viewModel = State(initialValue: BrowserViewModel(
             client: ClipboardStoreBrowserClient(store: store),
             onSelect: onSelect,
             onCopyOnly: onCopyOnly,
-            onDismiss: onDismiss
+            onDismiss: onDismiss,
+            showSnackbarNotification: showSnackbarNotification,
+            dismissSnackbarNotification: dismissSnackbarNotification
         ))
     }
 

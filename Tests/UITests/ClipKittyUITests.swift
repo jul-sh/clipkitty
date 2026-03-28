@@ -319,7 +319,7 @@ final class ClipKittyUITests: XCTestCase {
         // In CI the panel may hide after paste, so verify via toast instead of selection.
         app.typeKey("2", modifierFlags: .command)
 
-        let toastWindow = app.windows["ToastWindow"]
+        let toastWindow = app.windows["SnackbarNotificationWindow"]
         XCTAssertTrue(
             toastWindow.waitForExistence(timeout: 5),
             "Cmd+2 should trigger copy (toast should appear)"
@@ -663,7 +663,7 @@ final class ClipKittyUITests: XCTestCase {
         searchField.typeKey(.return, modifierFlags: [])
 
         // Toast should appear
-        let toastWindow = app.windows["ToastWindow"]
+        let toastWindow = app.windows["SnackbarNotificationWindow"]
         XCTAssertTrue(toastWindow.waitForExistence(timeout: 3), "Toast window should appear after copying")
 
         // Toast should disappear after ~1.5 seconds
@@ -1172,7 +1172,7 @@ final class ClipKittyUITests: XCTestCase {
         app.typeKey(.return, modifierFlags: [])
 
         // Toast should appear confirming copy
-        let toastWindow = app.windows["ToastWindow"]
+        let toastWindow = app.windows["SnackbarNotificationWindow"]
         XCTAssertTrue(toastWindow.waitForExistence(timeout: 5), "Toast should appear after copy")
 
         // After toast dismisses, if panel is still visible, selection should be valid
@@ -1257,7 +1257,7 @@ final class ClipKittyUITests: XCTestCase {
         searchField.typeKey(.return, modifierFlags: [])
 
         // Toast should appear
-        let toastWindow = app.windows["ToastWindow"]
+        let toastWindow = app.windows["SnackbarNotificationWindow"]
         XCTAssertTrue(toastWindow.waitForExistence(timeout: 5), "Toast window should appear after copy")
 
         // Toast should auto-dismiss
@@ -1402,7 +1402,7 @@ final class ClipKittyUITests: XCTestCase {
         app.typeKey("s", modifierFlags: .command)
 
         // Toast should appear confirming save
-        let toastWindow = app.windows["ToastWindow"]
+        let toastWindow = app.windows["SnackbarNotificationWindow"]
         XCTAssertTrue(toastWindow.waitForExistence(timeout: 5),
                       "Toast should appear after saving edit")
 

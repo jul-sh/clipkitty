@@ -24,6 +24,10 @@ fi
 # Repo-managed temp keychains are disposable. Never try to unlock a stale one.
 delete_temp_keychain "$KEYCHAIN_PATH"
 
+# Remove any stale/locked temp keychains (from this or other projects) that would
+# cause errSecInternalComponent during codesign.
+purge_stale_temp_keychains
+
 if all_codesigning_identities_available "Developer ID Application"; then
     echo "Developer ID certificate already available"
     exit 0

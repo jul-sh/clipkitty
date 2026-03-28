@@ -69,14 +69,17 @@ extension Result where Failure == Error {
     }
 }
 
-// MARK: - Error Toast Integration
+// MARK: - Error Notification Integration
 
-/// Centralized error reporting that shows user-facing toasts for critical errors
+/// Centralized error reporting that shows user-facing notifications for critical errors
 @MainActor
 enum ErrorReporter {
     private static let logger = Logger(subsystem: Bundle.main.bundleIdentifier ?? "ClipKitty", category: "Error")
 
-    /// Report an error, optionally showing a toast to the user
+    /// Callback for showing notification snackbars. Set by FloatingPanelController on init.
+    static var showNotification: ((NotificationKind) -> Void)?
+
+    /// Report an error, optionally showing a notification to the user
     static func report(
         _ error: Error,
         showToast: Bool = false,
@@ -88,7 +91,7 @@ enum ErrorReporter {
         let fileName = (file as NSString).lastPathComponent
         logger.error("[\(fileName):\(line)] \(error.localizedDescription)")
 
-        // Optionally show toast for user-facing errors
+        // Optionally show notification for user-facing errors
         if showToast {
             let message: String
             if let clipboardError = error as? ClipboardError {
@@ -96,7 +99,7 @@ enum ErrorReporter {
             } else {
                 message = error.localizedDescription
             }
-            ToastWindow.shared.show(message: message)
+            showNotification?(.passive(message: message, iconSystemName: "exclamationmark.triangle.fill"))
         }
     }
 

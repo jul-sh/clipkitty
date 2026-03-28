@@ -202,10 +202,8 @@ final class ClipboardStore {
         case .ready:
             openSynchronously(dbPath: dbPath)
 
-        case let .rebuildIndex(expectation):
-            if expectation == .overFiveSeconds {
-                lifecycle = .rebuildingIndex
-            }
+        case .rebuildIndex:
+            lifecycle = .rebuildingIndex
             openWithRebuild(dbPath: dbPath)
         }
     }

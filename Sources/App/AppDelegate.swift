@@ -100,6 +100,9 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate {
                 // Convert SparkleUpdater.UpdateCheckState to app's UpdateCheckState
                 switch state {
                 case .idle: AppSettings.shared.updateCheckState = .idle
+                case .checking: AppSettings.shared.updateCheckState = .checking
+                case .downloading: AppSettings.shared.updateCheckState = .downloading
+                case .installing: AppSettings.shared.updateCheckState = .installing
                 case .available: AppSettings.shared.updateCheckState = .available
                 case .checkFailed: AppSettings.shared.updateCheckState = .checkFailed
                 }
@@ -231,6 +234,9 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate {
                     },
                     onInstallUpdate: { [weak self] in
                         self?.updater?.installUpdate()
+                    },
+                    onCheckForUpdates: { [weak self] in
+                        self?.updater?.checkForUpdates()
                     }
                 )
             #else

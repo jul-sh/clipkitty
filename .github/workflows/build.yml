@@ -130,10 +130,10 @@ jobs:
         run: make generate
 
       - name: Build App (SparkleRelease)
-        run: make build CONFIGURATION=SparkleRelease
+        run: make build CONFIGURATION=SparkleRelease UNIVERSAL=1
 
       - name: Build App (AppStore)
-        run: make build CONFIGURATION=AppStore
+        run: make build CONFIGURATION=AppStore UNIVERSAL=1
 
       - name: Create AppStore Archive
         run: |
@@ -160,7 +160,7 @@ jobs:
 
       - name: Generate Marketing Screenshots
         run: |
-          make -C distribution marketing-screenshots-localized
+          make -C distribution marketing-screenshots-localized UNIVERSAL=1
           ls -lh marketing/*/screenshot_*.png
 
       - name: Teardown Virtual Display
@@ -174,7 +174,7 @@ jobs:
         run: |
           chmod +x distribution/build-dmg.sh
 
-          make build CONFIGURATION=SparkleRelease
+          make build CONFIGURATION=SparkleRelease UNIVERSAL=1
 
           # Sign nested frameworks/bundles first (inside-out for Sparkle, XPC services, etc.)
           APP="DerivedData/Build/Products/SparkleRelease/ClipKitty.app"
@@ -509,7 +509,8 @@ jobs:
           VERSION="${major}.${minor}.${COMMIT_COUNT}"
           make -C distribution appstore-publish \
             VERSION="${VERSION}" \
-            BUILD_NUMBER="${COMMIT_COUNT}"
+            BUILD_NUMBER="${COMMIT_COUNT}" \
+            UNIVERSAL=1
         env:
           AGE_SECRET_KEY: ${{ secrets.AGE_SECRET_KEY }}
 

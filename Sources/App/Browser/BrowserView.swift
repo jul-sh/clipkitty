@@ -167,6 +167,10 @@ struct BrowserView: View {
     ///                          If false (mouse trigger), no initial highlight - hover will control it.
     private func openActionsOverlay(viaKeyboard: Bool) {
         guard viewModel.selectedItem != nil else { return }
+        if case .actions = viewModel.overlayState, viaKeyboard {
+            viewModel.closeOverlay()
+            return
+        }
         let highlight: MenuHighlightState = viaKeyboard ? .index(0) : .none
         viewModel.openActionsOverlay(highlight: highlight)
         if viaKeyboard {

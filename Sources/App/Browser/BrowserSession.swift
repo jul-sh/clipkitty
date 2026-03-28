@@ -74,10 +74,6 @@ enum BrowserContentState {
         }
     }
 
-    var selection: SelectionState {
-        displayedContent?.selection ?? .none
-    }
-
     var isSearchSpinnerVisible: Bool {
         guard case let .loading(_, _, .running(spinnerVisible)) = self else { return false }
         return spinnerVisible
@@ -86,7 +82,15 @@ enum BrowserContentState {
 
 struct LoadedBrowserContent {
     let response: BrowserSearchResponse
-    let selection: SelectionState
+}
+
+struct DisplayRow: Equatable, Identifiable {
+    let metadata: ItemMetadata
+    let rowDecoration: RowDecoration?
+
+    var id: Int64 {
+        metadata.itemId
+    }
 }
 
 enum SelectionOrigin {
@@ -138,6 +142,16 @@ enum SelectionState {
         guard case let .selected(selectedItem) = self else { return nil }
         return selectedItem
     }
+
+    /// Lightweight label for os_signpost Points of Interest.
+    var poiLabel: String {
+        switch self {
+        case .none: return "none"
+        case let .loading(itemId, _): return "loading(\(itemId))"
+        case let .selected(state): return "selected(\(state.item.itemMetadata.itemId))"
+        case let .failed(itemId, _): return "failed(\(itemId))"
+        }
+    }
 }
 
 enum OverlayState {
@@ -170,8 +184,9 @@ enum DeleteMutation {
 }
 
 struct DeleteTransaction {
-    let deletedItemId: Int64
+    var deletedItemIds: [Int64]
     let snapshot: BrowserContentState
+    let selectionSnapshot: SelectionState
 }
 
 enum TagMutation {
@@ -187,6 +202,7 @@ struct TagMutationTransaction {
 
 struct ClearTransaction {
     let snapshot: BrowserContentState
+    let selectionSnapshot: SelectionState
 }
 
 struct ActionFailure {

@@ -138,6 +138,19 @@ enum HighlightStyler {
         return attributed
     }
 
+    static func attributedFragment(
+        _ text: String,
+        kind: HighlightKind
+    ) -> AttributedString {
+        attributedText(text, highlights: [
+            Utf16HighlightRange(
+                utf16Start: 0,
+                utf16End: UInt64(text.utf16.count),
+                kind: kind
+            ),
+        ])
+    }
+
     static func fragments(
         in text: String,
         highlights: [Utf16HighlightRange]
@@ -235,7 +248,7 @@ enum HighlightStyler {
         else {
             return nil
         }
-        return stringStart..<stringEnd
+        return stringStart ..< stringEnd
     }
 
     private static func mergeOverlapping(_ highlights: [Utf16HighlightRange]) -> [Utf16HighlightRange] {

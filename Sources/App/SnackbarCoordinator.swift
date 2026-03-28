@@ -3,7 +3,7 @@ import Foundation
 @MainActor
 final class SnackbarCoordinator {
     private let makeEnvironment: @MainActor () -> SnackbarEnvironment
-    var onInstallUpdate: (() -> Void)?
+    var showNotification: ((NotificationKind) -> Void)?
 
     init(
         store: ClipboardStore? = nil,
@@ -29,9 +29,7 @@ final class SnackbarCoordinator {
             AppSettings.shared.launchAtLoginPromptDismissed = true
             AppSettings.shared.launchAtLoginEnabled = true
             LaunchAtLogin.shared.enable()
-            ToastWindow.shared.show(message: String(localized: "Launch at login enabled"))
-        case .updateAvailable:
-            onInstallUpdate?()
+            showNotification?(.passive(message: String(localized: "Launch at login enabled"), iconSystemName: "checkmark.circle.fill"))
         }
     }
 
