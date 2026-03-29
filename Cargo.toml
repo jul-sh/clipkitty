@@ -1,5 +1,5 @@
 [workspace]
-members = ["purr", "purr-sync", "distribution/demo-data"]
+members = ["purr", "purr-sync", "distribution/demo-data", "distribution/rust-data-gen"]
 resolver = "2"
 
 [profile.release]
