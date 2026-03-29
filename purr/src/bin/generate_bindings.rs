@@ -26,12 +26,16 @@ use std::process::Command;
 fn main() {
     let rust_dir = PathBuf::from(env!("CARGO_MANIFEST_DIR"));
     let project_root = rust_dir.parent().expect("No parent directory");
+    let target_dir = project_root.join("target");
 
     // Ensure Rust is built with the same deployment target as the Swift app
     env::set_var("MACOSX_DEPLOYMENT_TARGET", "15.0");
 
     println!("Building Rust library...");
     run_cmd("cargo", &["build", "--release"], &rust_dir);
+
+    let dylib_path = target_dir.join("release/libpurr.dylib");
+    let generated_dir = rust_dir.join("generated");
 
     println!("Generating Swift bindings...");
     run_cmd(
@@ -42,18 +46,18 @@ fn main() {
             "uniffi-bindgen",
             "generate",
             "--library",
-            "target/release/libpurr.dylib",
+            &dylib_path.to_string_lossy(),
             "--language",
             "swift",
             "--out-dir",
-            "generated",
+            &generated_dir.to_string_lossy(),
         ],
         &rust_dir,
     );
 
     let swift_dest = project_root.join("Sources/ClipKittyRust");
     let wrapper_dest = project_root.join("Sources/ClipKittyRustWrapper");
-    let generated = rust_dir.join("generated");
+    let generated = generated_dir;
 
     // Read and fix Swift 6 concurrency + module import
     println!("Copying generated Swift file...");
@@ -92,12 +96,14 @@ fn main() {
         &rust_dir,
     );
 
+    let aarch64_lib = target_dir.join("aarch64-apple-darwin/release/libpurr.a");
+    let x86_64_lib = target_dir.join("x86_64-apple-darwin/release/libpurr.a");
     run_cmd(
         "lipo",
         &[
             "-create",
-            "target/aarch64-apple-darwin/release/libpurr.a",
-            "target/x86_64-apple-darwin/release/libpurr.a",
+            &aarch64_lib.to_string_lossy(),
+            &x86_64_lib.to_string_lossy(),
             "-output",
             &swift_dest.join("libpurr.a").to_string_lossy(),
         ],
