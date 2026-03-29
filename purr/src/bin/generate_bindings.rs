@@ -28,8 +28,10 @@ fn main() {
     let project_root = rust_dir.parent().expect("No parent directory");
     let target_dir = project_root.join("target");
 
-    // Ensure Rust is built with the same deployment target as the Swift app
-    env::set_var("MACOSX_DEPLOYMENT_TARGET", "15.0");
+    // Keep the Rust artifacts aligned with the app's supported macOS floor.
+    let deployment_target =
+        env::var("MACOSX_DEPLOYMENT_TARGET").unwrap_or_else(|_| "14.0".to_string());
+    env::set_var("MACOSX_DEPLOYMENT_TARGET", &deployment_target);
 
     println!("Building Rust library...");
     run_cmd("cargo", &["build", "--release"], &rust_dir);

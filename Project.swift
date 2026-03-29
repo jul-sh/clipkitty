@@ -134,14 +134,14 @@ let project = Project(
                         "CK_BUILD_CHANNEL": "Debug",
                         "SWIFT_ACTIVE_COMPILATION_CONDITIONS": "ENABLE_SYNC",
                         // Weak-link Sparkle frameworks so app runs without them
-                        "OTHER_LDFLAGS": .array(["$(inherited)", "-lpurr", "-weak_framework", "SparkleUpdater", "-weak_framework", "Sparkle"]),
+                        "OTHER_LDFLAGS": .array(["$(inherited)", "-weak_framework", "SparkleUpdater", "-weak_framework", "Sparkle"]),
                     ]),
                     .release(name: "Release", settings: [
                         "CODE_SIGN_ENTITLEMENTS": "Sources/App/ClipKitty.oss.entitlements",
                         "CK_BUILD_CHANNEL": "Release",
                         "SWIFT_ACTIVE_COMPILATION_CONDITIONS": "ENABLE_SYNC",
                         // Weak-link Sparkle frameworks so app runs without them
-                        "OTHER_LDFLAGS": .array(["$(inherited)", "-lpurr", "-weak_framework", "SparkleUpdater", "-weak_framework", "Sparkle"]),
+                        "OTHER_LDFLAGS": .array(["$(inherited)", "-weak_framework", "SparkleUpdater", "-weak_framework", "Sparkle"]),
                     ]),
                     .release(name: .configuration("SparkleRelease"), settings: [
                         "CODE_SIGN_ENTITLEMENTS": "Sources/App/ClipKitty.oss.entitlements",
@@ -159,7 +159,7 @@ let project = Project(
                         "CK_BUILD_CHANNEL": "AppStore",
                         "SWIFT_ACTIVE_COMPILATION_CONDITIONS": "APP_STORE ENABLE_SYNC",
                         // Weak-link Sparkle frameworks so app runs without them
-                        "OTHER_LDFLAGS": .array(["$(inherited)", "-lpurr", "-weak_framework", "SparkleUpdater", "-weak_framework", "Sparkle"]),
+                        "OTHER_LDFLAGS": .array(["$(inherited)", "-weak_framework", "SparkleUpdater", "-weak_framework", "Sparkle"]),
                     ]),
                 ]
             )
@@ -256,7 +256,7 @@ let project = Project(
 
                         echo "Rust changed: $STORED_HASH -> $CURRENT_HASH"
                         if [ -x "Scripts/run-in-nix.sh" ]; then
-                            Scripts/run-in-nix.sh -c "cd purr && cargo run --release --bin generate-bindings"
+                            Scripts/run-in-nix.sh -c "cd purr && MACOSX_DEPLOYMENT_TARGET=14.0 cargo run --release --bin generate-bindings"
                             mkdir -p .make && echo "$CURRENT_HASH" > "$MARKER"
                         fi
                         """,
@@ -313,7 +313,7 @@ let project = Project(
 
                         echo "Rust changed: $STORED_HASH -> $CURRENT_HASH"
                         if [ -x "Scripts/run-in-nix.sh" ]; then
-                            Scripts/run-in-nix.sh -c "cd purr && cargo run --release --bin generate-bindings"
+                            Scripts/run-in-nix.sh -c "cd purr && MACOSX_DEPLOYMENT_TARGET=14.0 cargo run --release --bin generate-bindings"
                             mkdir -p .make && echo "$CURRENT_HASH" > "$MARKER"
                         fi
                         """,
