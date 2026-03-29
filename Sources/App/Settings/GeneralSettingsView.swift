@@ -341,6 +341,8 @@ struct GeneralSettingsView: View {
                     Image(systemName: "checkmark.icloud").foregroundStyle(.green)
                 case .error:
                     Image(systemName: "exclamationmark.icloud").foregroundStyle(.orange)
+                case .temporarilyUnavailable:
+                    Image(systemName: "clock.badge.exclamationmark").foregroundStyle(.orange)
                 case .unavailable:
                     Image(systemName: "xmark.icloud").foregroundStyle(.red)
                 }
@@ -365,6 +367,8 @@ struct GeneralSettingsView: View {
                 return String(localized: "Synced \(relative)")
             case let .error(message):
                 return String(localized: "Error: \(message)")
+            case .temporarilyUnavailable:
+                return String(localized: "iCloud temporarily unavailable")
             case .unavailable:
                 return String(localized: "iCloud not available")
             }
