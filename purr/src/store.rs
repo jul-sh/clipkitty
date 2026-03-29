@@ -236,9 +236,6 @@ impl ClipboardStore {
         operation
     }
 
-    pub fn start_search(&self, query: String, filter: ItemQueryFilter) -> Arc<SearchOperation> {
-        self.begin_search_operation(query, filter)
-    }
 }
 
 #[uniffi::export]
@@ -251,6 +248,10 @@ impl ClipboardStore {
 
     pub fn rebuild_index(&self) -> Result<(), ClipKittyError> {
         self.rebuild_index_contents()
+    }
+
+    pub fn start_search(&self, query: String, filter: ItemQueryFilter) -> Arc<SearchOperation> {
+        self.begin_search_operation(query, filter)
     }
 }
 
