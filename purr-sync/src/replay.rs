@@ -77,13 +77,15 @@ pub fn apply_remote_snapshots(
             sync.upsert_snapshot(snapshot)?;
 
             // Update projection from snapshot aggregate.
-            let (versions, is_tombstoned) = match &snapshot.aggregate {
-                ItemAggregate::Live(live) => (live.versions, false),
-                ItemAggregate::Tombstoned(tomb) => (tomb.versions, true),
-            };
-
             let existing_proj = sync.fetch_projection(&snapshot.global_item_id)?;
-            let local_id = existing_proj.and_then(|p| p.local_item_id);
+            let (versions, local_id, is_tombstoned) = match &snapshot.aggregate {
+                ItemAggregate::Live(live) => (
+                    live.versions,
+                    existing_proj.and_then(|p| p.local_item_id),
+                    false,
+                ),
+                ItemAggregate::Tombstoned(tomb) => (tomb.versions, None, true),
+            };
 
             sync.upsert_projection(
                 &snapshot.global_item_id,
@@ -157,13 +159,15 @@ pub fn apply_remote_event(
             sync.upsert_snapshot(&updated_snap)?;
 
             // Update projection.
-            let (versions, is_tombstoned) = match &delta.new_aggregate {
-                ItemAggregate::Live(live) => (live.versions, false),
-                ItemAggregate::Tombstoned(tomb) => (tomb.versions, true),
-            };
-
             let existing_proj = sync.fetch_projection(&event.global_item_id)?;
-            let local_id = existing_proj.and_then(|p| p.local_item_id);
+            let (versions, local_id, is_tombstoned) = match &delta.new_aggregate {
+                ItemAggregate::Live(live) => (
+                    live.versions,
+                    existing_proj.and_then(|p| p.local_item_id),
+                    false,
+                ),
+                ItemAggregate::Tombstoned(tomb) => (tomb.versions, None, true),
+            };
 
             sync.upsert_projection(
                 &event.global_item_id,
@@ -258,12 +262,15 @@ fn retry_deferred_events(
                     );
                     sync.upsert_snapshot(&updated_snap)?;
 
-                    let (versions, is_tombstoned) = match &delta.new_aggregate {
-                        ItemAggregate::Live(live) => (live.versions, false),
-                        ItemAggregate::Tombstoned(tomb) => (tomb.versions, true),
-                    };
                     let existing_proj = sync.fetch_projection(&event.global_item_id)?;
-                    let local_id = existing_proj.and_then(|p| p.local_item_id);
+                    let (versions, local_id, is_tombstoned) = match &delta.new_aggregate {
+                        ItemAggregate::Live(live) => (
+                            live.versions,
+                            existing_proj.and_then(|p| p.local_item_id),
+                            false,
+                        ),
+                        ItemAggregate::Tombstoned(tomb) => (tomb.versions, None, true),
+                    };
                     sync.upsert_projection(
                         &event.global_item_id,
                         local_id,

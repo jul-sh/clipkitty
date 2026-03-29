@@ -3,6 +3,7 @@
 import CloudKit
 import ClipKittyRust
 import Foundation
+import Observation
 import os.log
 
 /// Orchestrates iCloud sync via CloudKit using the Rust event-sourced core.
@@ -14,6 +15,7 @@ import os.log
 /// - Compaction and cleanup run on periodic schedules within the coordinator
 /// - Push notifications wake the coordinator via an async signal
 @MainActor
+@Observable
 final class SyncEngine {
     // MARK: - Configuration
 
@@ -27,33 +29,48 @@ final class SyncEngine {
     /// Age threshold for CloudKit event cleanup (30 days).
     private static let cloudCleanupAgeDays: UInt32 = 30
 
+    @ObservationIgnored
     private let logger = Logger(subsystem: "com.clipkitty", category: "SyncEngine")
 
     // MARK: - Dependencies
 
+    @ObservationIgnored
     private let store: ClipKittyRust.ClipboardStore
+    @ObservationIgnored
     private let container: CKContainer
+    @ObservationIgnored
     private let database: CKDatabase
+    @ObservationIgnored
     private let recordZone: CKRecordZone
+    @ObservationIgnored
     private let deviceId: String
 
     // MARK: - State
 
+    @ObservationIgnored
     private var coordinatorTask: Task<Void, Never>?
+    @ObservationIgnored
     private(set) var isRunning = false
+    @ObservationIgnored
     private var backoff = SyncBackoff()
+    @ObservationIgnored
     private var hasActiveSubscription = false
+    @ObservationIgnored
     private var lastCompactionDate: Date?
+    @ObservationIgnored
     private var lastCloudCleanupDate: Date?
 
     /// Wake signal for push notifications to collapse the sleep interval.
+    @ObservationIgnored
     private let wakeStream: AsyncStream<Void>
+    @ObservationIgnored
     private let wakeContinuation: AsyncStream<Void>.Continuation
 
     /// Current sync status for UI display.
-    @Published private(set) var status: SyncStatus = .idle
+    private(set) var status: SyncStatus = .idle
 
     /// Callback invoked after a sync batch changes local content.
+    @ObservationIgnored
     var onContentChanged: (() -> Void)?
 
     // MARK: - Upload Outcome
@@ -61,6 +78,14 @@ final class SyncEngine {
     /// Structured outcome of uploading pending events to CloudKit.
     private enum UploadOutcome {
         case uploaded(eventIds: [String])
+        case nothingToUpload
+        case retryableFailure(reason: String)
+        case permanentFailure(reason: String)
+    }
+
+    /// Structured outcome of uploading snapshots to CloudKit.
+    private enum SnapshotUploadOutcome {
+        case uploaded(count: Int)
         case nothingToUpload
         case retryableFailure(reason: String)
         case permanentFailure(reason: String)
@@ -237,7 +262,7 @@ final class SyncEngine {
 
             if deviceState.needsFullResync {
                 logger.info("Full resync required")
-                await performFullResync()
+                try await performFullResync()
                 backoff.reset()
                 updateStatus(.synced(lastSync: Date()))
                 return
@@ -254,13 +279,15 @@ final class SyncEngine {
                 try? NSKeyedUnarchiver.unarchivedObject(ofClass: CKServerChangeToken.self, from: $0)
             }
             let changes = await fetchZoneChanges(since: changeToken)
-
             if changes.tokenExpired {
                 logger.info("Zone change token expired, triggering full resync")
-                await performFullResync()
+                try await performFullResync()
                 backoff.reset()
                 updateStatus(.synced(lastSync: Date()))
                 return
+            }
+            if let fetchError = changes.fetchError {
+                throw fetchError
             }
 
             // ── Phase 2: Convert CKRecords + rehydrate CKAssets ──
@@ -295,7 +322,7 @@ final class SyncEngine {
 
             case .fullResyncRequired:
                 logger.info("Batch triggered full resync")
-                await performFullResync()
+                try await performFullResync()
                 backoff.reset()
                 updateStatus(.synced(lastSync: Date()))
                 return
@@ -311,13 +338,13 @@ final class SyncEngine {
             let uploadResult = await uploadPendingEvents()
 
             // ── Phase 7: Upload checkpoints (snapshots) ──
-            await uploadSnapshots()
+            let snapshotUploadResult = await uploadSnapshots()
 
             // ── Phase 8: Periodic cleanup ──
             await performCloudCleanupIfDue()
 
             // ── Phase 9: Final status ──
-            switch uploadResult {
+            switch combinedUploadOutcome(events: uploadResult, snapshots: snapshotUploadResult) {
             case .uploaded, .nothingToUpload:
                 backoff.reset()
                 updateStatus(.synced(lastSync: Date()))
@@ -399,6 +426,7 @@ final class SyncEngine {
         var snapshots: [CKRecord] = []
         var newToken: CKServerChangeToken?
         var tokenExpired = false
+        var fetchError: Error?
     }
 
     private func fetchZoneChanges(
@@ -425,6 +453,9 @@ final class SyncEngine {
                         result.snapshots.append(record)
                     }
                 case let .failure(error):
+                    if result.fetchError == nil {
+                        result.fetchError = error
+                    }
                     Logger(subsystem: "com.clipkitty", category: "SyncEngine")
                         .warning("Record fetch error: \(error.localizedDescription)")
                 }
@@ -442,13 +473,23 @@ final class SyncEngine {
                     let nsError = error as NSError
                     if nsError.code == CKError.changeTokenExpired.rawValue {
                         result.tokenExpired = true
+                    } else if result.fetchError == nil {
+                        result.fetchError = error
                     }
                     Logger(subsystem: "com.clipkitty", category: "SyncEngine")
                         .warning("Zone fetch error: \(error.localizedDescription)")
                 }
             }
 
-            operation.fetchRecordZoneChangesResultBlock = { _ in
+            operation.fetchRecordZoneChangesResultBlock = { fetchResult in
+                if case let .failure(error) = fetchResult {
+                    let nsError = error as NSError
+                    if nsError.code == CKError.changeTokenExpired.rawValue {
+                        result.tokenExpired = true
+                    } else if result.fetchError == nil {
+                        result.fetchError = error
+                    }
+                }
                 continuation.resume(returning: result)
             }
 
@@ -501,7 +542,7 @@ final class SyncEngine {
             operation.savePolicy = .ifServerRecordUnchanged
             operation.isAtomic = false
 
-            let (uploadedIds, errors) = await withCheckedContinuation { (continuation: CheckedContinuation<([String], [Error]), Never>) in
+            let (uploadedIds, errors, operationError) = await withCheckedContinuation { (continuation: CheckedContinuation<([String], [Error], Error?), Never>) in
                 var saved: [String] = []
                 var failures: [Error] = []
                 operation.perRecordSaveBlock = { recordID, result in
@@ -509,11 +550,20 @@ final class SyncEngine {
                     case .success:
                         saved.append(recordID.recordName)
                     case .failure(let error):
-                        failures.append(error)
+                        if Self.isAlreadyUploadedEventError(error) {
+                            saved.append(recordID.recordName)
+                        } else {
+                            failures.append(error)
+                        }
                     }
                 }
-                operation.modifyRecordsResultBlock = { _ in
-                    continuation.resume(returning: (saved, failures))
+                operation.modifyRecordsResultBlock = { result in
+                    switch result {
+                    case .success:
+                        continuation.resume(returning: (saved, failures, nil))
+                    case let .failure(error):
+                        continuation.resume(returning: (saved, failures, error))
+                    }
                 }
                 database.add(operation)
             }
@@ -529,16 +579,19 @@ final class SyncEngine {
             }
 
             // Determine outcome based on success/failure counts.
-            if errors.isEmpty {
+            let missingRecordCount = pendingEvents.count - uploadedIds.count - errors.count
+            let primaryError = errors.first ?? (missingRecordCount > 0 ? operationError : nil)
+            if primaryError == nil {
                 return .uploaded(eventIds: uploadedIds)
             }
 
-            // Classify the first error.
-            let primaryError = errors.first!
-            if Self.isPermanentError(primaryError) {
-                return .permanentFailure(reason: primaryError.localizedDescription)
+            if let primaryError {
+                if Self.isPermanentError(primaryError) {
+                    return .permanentFailure(reason: primaryError.localizedDescription)
+                }
+                return .retryableFailure(reason: primaryError.localizedDescription)
             }
-            return .retryableFailure(reason: primaryError.localizedDescription)
+            return .retryableFailure(reason: "CloudKit event upload failed")
 
         } catch {
             if Self.isPermanentError(error) {
@@ -557,6 +610,41 @@ final class SyncEngine {
             return true
         default:
             return false
+        }
+    }
+
+    /// Event uploads are append-only and keyed by immutable IDs.
+    /// If CloudKit already has the record, the desired state is already satisfied.
+    private static func isAlreadyUploadedEventError(_ error: Error) -> Bool {
+        guard let ckError = error as? CKError else { return false }
+        return ckError.code == .serverRecordChanged
+    }
+
+    /// Event cleanup is idempotent: a missing record is already deleted remotely.
+    private static func isAlreadyDeletedRecordError(_ error: Error) -> Bool {
+        guard let ckError = error as? CKError else { return false }
+        return ckError.code == .unknownItem
+    }
+
+    private func combinedUploadOutcome(
+        events: UploadOutcome,
+        snapshots: SnapshotUploadOutcome
+    ) -> UploadOutcome {
+        switch (events, snapshots) {
+        case let (.permanentFailure(reason), _):
+            return .permanentFailure(reason: reason)
+        case let (_, .permanentFailure(reason)):
+            return .permanentFailure(reason: reason)
+        case let (.retryableFailure(reason), _):
+            return .retryableFailure(reason: reason)
+        case let (_, .retryableFailure(reason)):
+            return .retryableFailure(reason: reason)
+        case (.uploaded(let eventIds), .uploaded(_)), (.uploaded(let eventIds), .nothingToUpload):
+            return .uploaded(eventIds: eventIds)
+        case (.nothingToUpload, .uploaded(_)):
+            return .uploaded(eventIds: [])
+        case (.nothingToUpload, .nothingToUpload):
+            return .nothingToUpload
         }
     }
 
@@ -647,10 +735,10 @@ final class SyncEngine {
     }
 
     /// Upload compacted snapshots to CloudKit and mark them as uploaded.
-    private func uploadSnapshots() async {
+    private func uploadSnapshots() async -> SnapshotUploadOutcome {
         do {
             let snapshots = try store.pendingSnapshotRecords()
-            guard !snapshots.isEmpty else { return }
+            guard !snapshots.isEmpty else { return .nothingToUpload }
 
             let zoneID = recordZone.zoneID
             let records: [CKRecord] = snapshots.map { snapshot in
@@ -663,9 +751,11 @@ final class SyncEngine {
                 return record
             }
 
+            var uploadedCount = 0
             for chunk in records.chunked(into: 400) {
-                let savedIds = await withCheckedContinuation { (continuation: CheckedContinuation<[String], Never>) in
+                let (savedIds, errors, operationError) = await withCheckedContinuation { (continuation: CheckedContinuation<([String], [Error], Error?), Never>) in
                     var saved: [String] = []
+                    var failures: [Error] = []
                     let operation = CKModifyRecordsOperation(
                         recordsToSave: chunk,
                         recordIDsToDelete: nil
@@ -673,12 +763,20 @@ final class SyncEngine {
                     operation.savePolicy = .changedKeys
                     operation.isAtomic = false
                     operation.perRecordSaveBlock = { recordID, result in
-                        if case .success = result {
+                        switch result {
+                        case .success:
                             saved.append(recordID.recordName)
+                        case let .failure(error):
+                            failures.append(error)
                         }
                     }
-                    operation.modifyRecordsResultBlock = { _ in
-                        continuation.resume(returning: saved)
+                    operation.modifyRecordsResultBlock = { result in
+                        switch result {
+                        case .success:
+                            continuation.resume(returning: (saved, failures, nil))
+                        case let .failure(error):
+                            continuation.resume(returning: (saved, failures, error))
+                        }
                     }
                     database.add(operation)
                 }
@@ -687,11 +785,26 @@ final class SyncEngine {
                 for globalItemId in savedIds {
                     try? store.markSnapshotUploaded(globalItemId: globalItemId)
                 }
+                uploadedCount += savedIds.count
+
+                let missingRecordCount = chunk.count - savedIds.count - errors.count
+                if let error = errors.first ?? (missingRecordCount > 0 ? operationError : nil) {
+                    logger.error("Snapshot upload error: \(error.localizedDescription)")
+                    if Self.isPermanentError(error) {
+                        return .permanentFailure(reason: error.localizedDescription)
+                    }
+                    return .retryableFailure(reason: error.localizedDescription)
+                }
             }
 
-            logger.debug("Uploaded \(snapshots.count) snapshots to CloudKit")
+            logger.debug("Uploaded \(uploadedCount) snapshots to CloudKit")
+            return .uploaded(count: uploadedCount)
         } catch {
             logger.error("Snapshot upload error: \(error.localizedDescription)")
+            if Self.isPermanentError(error) {
+                return .permanentFailure(reason: error.localizedDescription)
+            }
+            return .retryableFailure(reason: error.localizedDescription)
         }
     }
 
@@ -718,6 +831,8 @@ final class SyncEngine {
             let recordIDs = eventIds.map { CKRecord.ID(recordName: $0, zoneID: zoneID) }
 
             // CloudKit batch delete limit is 400; chunk if needed.
+            var deletedEventIds: [String] = []
+            var encounteredFailure = false
             for chunk in recordIDs.chunked(into: 400) {
                 let operation = CKModifyRecordsOperation(
                     recordsToSave: nil,
@@ -725,20 +840,50 @@ final class SyncEngine {
                 )
                 operation.isAtomic = false
 
-                await withCheckedContinuation { (continuation: CheckedContinuation<Void, Never>) in
-                    operation.modifyRecordsResultBlock = { _ in
-                        continuation.resume()
+                let (deletedIds, errors, operationError) = await withCheckedContinuation { (continuation: CheckedContinuation<([String], [Error], Error?), Never>) in
+                    var deletedIds: [String] = []
+                    var failures: [Error] = []
+                    operation.perRecordDeleteBlock = { recordID, result in
+                        switch result {
+                        case .success:
+                            deletedIds.append(recordID.recordName)
+                        case let .failure(error):
+                            if Self.isAlreadyDeletedRecordError(error) {
+                                deletedIds.append(recordID.recordName)
+                            } else {
+                                failures.append(error)
+                            }
+                        }
+                    }
+                    operation.modifyRecordsResultBlock = { result in
+                        switch result {
+                        case .success:
+                            continuation.resume(returning: (deletedIds, failures, nil))
+                        case let .failure(error):
+                            continuation.resume(returning: (deletedIds, failures, error))
+                        }
                     }
                     database.add(operation)
+                }
+
+                deletedEventIds.append(contentsOf: deletedIds)
+                let missingRecordCount = chunk.count - deletedIds.count - errors.count
+                if let error = errors.first ?? (missingRecordCount > 0 ? operationError : nil) {
+                    encounteredFailure = true
+                    logger.warning("CloudKit cleanup partial failure: \(error.localizedDescription)")
                 }
             }
 
             // Purge locally after successful CloudKit deletion.
-            let purged = try store.purgeCloudEvents(eventIds: eventIds)
-            logger.info("CloudKit cleanup: deleted \(purged) old compacted events")
+            if !deletedEventIds.isEmpty {
+                let purged = try store.purgeCloudEvents(eventIds: deletedEventIds)
+                logger.info("CloudKit cleanup: deleted \(purged) old compacted events")
+            }
 
-            lastCloudCleanupDate = Date()
-            UserDefaults.standard.set(lastCloudCleanupDate, forKey: "clipkitty.sync.lastCloudCleanup")
+            if !encounteredFailure {
+                lastCloudCleanupDate = Date()
+                UserDefaults.standard.set(lastCloudCleanupDate, forKey: "clipkitty.sync.lastCloudCleanup")
+            }
         } catch {
             logger.error("CloudKit cleanup error: \(error.localizedDescription)")
         }
@@ -746,141 +891,128 @@ final class SyncEngine {
 
     // MARK: - Full Resync
 
-    private func performFullResync() async {
+    private func performFullResync() async throws {
         logger.info("Starting full resync")
-        do {
-            // 1. Fetch all snapshots (checkpoints) from CloudKit.
-            let allSnapshots = await fetchAllSnapshots()
+        // 1. Fetch all snapshots (checkpoints) from CloudKit.
+        let allSnapshots = try await fetchAllSnapshots()
 
-            // 2. Fetch all events (tail) from CloudKit.
-            let allEvents = await fetchAllEvents()
+        // 2. Fetch all events (tail) from CloudKit.
+        let allEvents = try await fetchAllEvents()
 
-            // 3. Convert to FFI records.
-            let snapshotRecords = allSnapshots.map { record in
-                SyncSnapshotRecord(
-                    globalItemId: record.recordID.recordName,
-                    snapshotRevision: UInt64(record["snapshotRevision"] as? Int64 ?? 0),
-                    schemaVersion: UInt32(record["schemaVersion"] as? Int64 ?? 1),
-                    coversThroughEvent: record["coversThroughEvent"] as? String,
-                    aggregateData: record["aggregateData"] as? String ?? "{}"
-                )
-            }
-
-            let eventRecords: [SyncEventRecord] = allEvents.map { record in
-                var payloadData = record["payloadData"] as? String ?? "{}"
-                // Rehydrate CKAsset for image data.
-                if let asset = record["imageAsset"] as? CKAsset,
-                   let fileURL = asset.fileURL,
-                   let data = try? Data(contentsOf: fileURL)
-                {
-                    payloadData = Self.injectBase64IntoPayload(
-                        payloadData, key: "data_base64", data: data
-                    )
-                }
-                return SyncEventRecord(
-                    eventId: record.recordID.recordName,
-                    globalItemId: record["globalItemId"] as? String ?? "",
-                    originDeviceId: record["originDeviceId"] as? String ?? "",
-                    schemaVersion: UInt32(record["schemaVersion"] as? Int64 ?? 1),
-                    recordedAt: record["recordedAt"] as? Int64 ?? 0,
-                    payloadType: record["payloadType"] as? String ?? "",
-                    payloadData: payloadData
-                )
-            }
-
-            // 4. Pass BOTH checkpoints and tail events to Rust.
-            let result = try store.fullResyncWithTail(
-                snapshotRecords: snapshotRecords,
-                tailEventRecords: eventRecords
+        // 3. Convert to FFI records.
+        let snapshotRecords = allSnapshots.map { record in
+            SyncSnapshotRecord(
+                globalItemId: record.recordID.recordName,
+                snapshotRevision: UInt64(record["snapshotRevision"] as? Int64 ?? 0),
+                schemaVersion: UInt32(record["schemaVersion"] as? Int64 ?? 1),
+                coversThroughEvent: record["coversThroughEvent"] as? String,
+                aggregateData: record["aggregateData"] as? String ?? "{}"
             )
-            logger.info("Full resync: \(result.checkpointsApplied) checkpoints, \(result.tailEventsApplied) tail events applied")
-
-            // 5. Rebuild Tantivy index.
-            try store.rebuildIndex()
-            try store.clearIndexDirtyFlag()
-
-            // 6. Clear token (start fresh).
-            try store.updateZoneChangeToken(deviceId: deviceId, token: nil)
-
-            // 7. Notify UI.
-            onContentChanged?()
-
-        } catch {
-            logger.error("Full resync error: \(error.localizedDescription)")
         }
+
+        let eventRecords: [SyncEventRecord] = allEvents.map { record in
+            var payloadData = record["payloadData"] as? String ?? "{}"
+            // Rehydrate CKAsset for image data.
+            if let asset = record["imageAsset"] as? CKAsset,
+               let fileURL = asset.fileURL,
+               let data = try? Data(contentsOf: fileURL)
+            {
+                payloadData = Self.injectBase64IntoPayload(
+                    payloadData, key: "data_base64", data: data
+                )
+            }
+            return SyncEventRecord(
+                eventId: record.recordID.recordName,
+                globalItemId: record["globalItemId"] as? String ?? "",
+                originDeviceId: record["originDeviceId"] as? String ?? "",
+                schemaVersion: UInt32(record["schemaVersion"] as? Int64 ?? 1),
+                recordedAt: record["recordedAt"] as? Int64 ?? 0,
+                payloadType: record["payloadType"] as? String ?? "",
+                payloadData: payloadData
+            )
+        }
+
+        // 4. Pass BOTH checkpoints and tail events to Rust.
+        let result = try store.fullResyncWithTail(
+            snapshotRecords: snapshotRecords,
+            tailEventRecords: eventRecords
+        )
+        logger.info("Full resync: \(result.checkpointsApplied) checkpoints, \(result.tailEventsApplied) tail events applied")
+
+        // 5. Rebuild Tantivy index.
+        try store.rebuildIndex()
+        try store.clearIndexDirtyFlag()
+
+        // 6. Clear token (start fresh).
+        try store.updateZoneChangeToken(deviceId: deviceId, token: nil)
+
+        // 7. Notify UI.
+        onContentChanged?()
     }
 
-    private func fetchAllSnapshots() async -> [CKRecord] {
+    private func fetchAllSnapshots() async throws -> [CKRecord] {
         var snapshots: [CKRecord] = []
         let zoneID = recordZone.zoneID
         var cursor: CKQueryOperation.Cursor?
 
-        do {
-            let query = CKQuery(recordType: "ItemSnapshot", predicate: NSPredicate(value: true))
-            let (results, queryCursor) = try await database.records(
-                matching: query,
-                inZoneWith: zoneID,
+        let query = CKQuery(recordType: "ItemSnapshot", predicate: NSPredicate(value: true))
+        let (results, queryCursor) = try await database.records(
+            matching: query,
+            inZoneWith: zoneID,
+            resultsLimit: CKQueryOperation.maximumResults
+        )
+        for (_, result) in results {
+            if case let .success(record) = result {
+                snapshots.append(record)
+            }
+        }
+        cursor = queryCursor
+
+        while let activeCursor = cursor {
+            let (moreResults, nextCursor) = try await database.records(
+                continuingMatchFrom: activeCursor,
                 resultsLimit: CKQueryOperation.maximumResults
             )
-            for (_, result) in results {
+            for (_, result) in moreResults {
                 if case let .success(record) = result {
                     snapshots.append(record)
                 }
             }
-            cursor = queryCursor
-
-            while let activeCursor = cursor {
-                let (moreResults, nextCursor) = try await database.records(
-                    continuingMatchFrom: activeCursor,
-                    resultsLimit: CKQueryOperation.maximumResults
-                )
-                for (_, result) in moreResults {
-                    if case let .success(record) = result {
-                        snapshots.append(record)
-                    }
-                }
-                cursor = nextCursor
-            }
-        } catch {
-            logger.error("Fetch all snapshots error: \(error.localizedDescription)")
+            cursor = nextCursor
         }
 
         return snapshots
     }
 
-    private func fetchAllEvents() async -> [CKRecord] {
+    private func fetchAllEvents() async throws -> [CKRecord] {
         var events: [CKRecord] = []
         let zoneID = recordZone.zoneID
         var cursor: CKQueryOperation.Cursor?
 
-        do {
-            let query = CKQuery(recordType: "ItemEvent", predicate: NSPredicate(value: true))
-            let (results, queryCursor) = try await database.records(
-                matching: query,
-                inZoneWith: zoneID,
+        let query = CKQuery(recordType: "ItemEvent", predicate: NSPredicate(value: true))
+        let (results, queryCursor) = try await database.records(
+            matching: query,
+            inZoneWith: zoneID,
+            resultsLimit: CKQueryOperation.maximumResults
+        )
+        for (_, result) in results {
+            if case let .success(record) = result {
+                events.append(record)
+            }
+        }
+        cursor = queryCursor
+
+        while let activeCursor = cursor {
+            let (moreResults, nextCursor) = try await database.records(
+                continuingMatchFrom: activeCursor,
                 resultsLimit: CKQueryOperation.maximumResults
             )
-            for (_, result) in results {
+            for (_, result) in moreResults {
                 if case let .success(record) = result {
                     events.append(record)
                 }
             }
-            cursor = queryCursor
-
-            while let activeCursor = cursor {
-                let (moreResults, nextCursor) = try await database.records(
-                    continuingMatchFrom: activeCursor,
-                    resultsLimit: CKQueryOperation.maximumResults
-                )
-                for (_, result) in moreResults {
-                    if case let .success(record) = result {
-                        events.append(record)
-                    }
-                }
-                cursor = nextCursor
-            }
-        } catch {
-            logger.error("Fetch all events error: \(error.localizedDescription)")
+            cursor = nextCursor
         }
 
         return events

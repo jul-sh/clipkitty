@@ -636,6 +636,16 @@ impl Database {
         Ok(items)
     }
 
+    /// Fetch all item IDs, ordered by recency.
+    pub fn fetch_all_item_ids(&self) -> DatabaseResult<Vec<i64>> {
+        let conn = self.get_conn()?;
+        let mut stmt = conn.prepare("SELECT id FROM items ORDER BY timestamp DESC")?;
+        let ids = stmt
+            .query_map([], |row| row.get(0))?
+            .collect::<Result<Vec<i64>, _>>()?;
+        Ok(ids)
+    }
+
     /// Get IDs that would be pruned (for index deletion before database prune)
     pub fn get_prunable_ids(&self, max_bytes: i64, keep_ratio: f64) -> DatabaseResult<Vec<i64>> {
         let current_size = self.database_size()?;

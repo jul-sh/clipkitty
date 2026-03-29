@@ -553,9 +553,10 @@ impl ClipboardStoreApi for ClipboardStore {
     }
 
     fn clear(&self) -> Result<(), ClipKittyError> {
-        // Clear sync state before clearing items (existing ordering).
         #[cfg(feature = "sync")]
-        self.sync_emitter.emit_clear()?;
+        for item_id in self.db.fetch_all_item_ids()? {
+            self.sync_emitter.emit_item_deleted(item_id)?;
+        }
 
         save_service::clear(&self.db, &self.indexer)
     }
@@ -616,6 +617,9 @@ impl ClipboardStore {
                                     .add_document(new_id, &text, item.timestamp_unix);
                             let _ = self.indexer.commit();
                         }
+                        if live.snapshot.is_bookmarked {
+                            self.db.add_tag(new_id, crate::interface::ItemTag::Bookmark)?;
+                        }
                         // Re-map projection to the new local ID.
                         sync.upsert_projection(
                             global_item_id,
@@ -636,6 +640,9 @@ impl ClipboardStore {
                     let _ = self.indexer.add_document(new_id, &text, item.timestamp_unix);
                     let _ = self.indexer.commit();
                 }
+                if live.snapshot.is_bookmarked {
+                    self.db.add_tag(new_id, crate::interface::ItemTag::Bookmark)?;
+                }
                 sync.upsert_projection(
                     global_item_id,
                     Some(new_id),
@@ -650,6 +657,9 @@ impl ClipboardStore {
                         let _ = self.indexer.commit();
                         self.db.delete_item(local_id)?;
                     }
+                }
+                if let purr_sync::types::ItemAggregate::Tombstoned(tomb) = aggregate {
+                    sync.upsert_projection(global_item_id, None, &tomb.versions, true)?;
                 }
             }
         }
@@ -706,7 +716,7 @@ impl ClipboardStore {
         use purr_sync::store::SyncStore;
 
         let sync = SyncStore::new(self.db.pool());
-        let snapshots = sync.fetch_all_snapshots()?;
+        let snapshots = sync.fetch_pending_upload_snapshots()?;
         Ok(snapshots
             .into_iter()
             .map(|s| {
@@ -1011,6 +1021,9 @@ impl ClipboardStore {
 
         let applied = replay::full_resync_from_snapshots(self.db.pool(), &snapshots)?;
 
+        self.db.clear_all()?;
+        self.indexer.clear()?;
+
         // Materialize all snapshots into the read model.
         for snapshot in &snapshots {
             self.materialize_aggregate(
@@ -1071,6 +1084,9 @@ impl ClipboardStore {
             .collect::<Result<Vec<_>, _>>()?;
 
         let result = replay::full_resync(self.db.pool(), &snapshots, &tail_events)?;
+
+        self.db.clear_all()?;
+        self.indexer.clear()?;
 
         // Materialize all live snapshots into the read model.
         let sync = SyncStore::new(self.db.pool());

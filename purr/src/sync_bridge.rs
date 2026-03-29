@@ -6,10 +6,12 @@
 //! This entire module is compiled only when the `sync` feature is enabled.
 
 use purr_sync::event::ItemEvent;
+use purr_sync::projector;
+use purr_sync::snapshot::ItemSnapshot;
 use purr_sync::store::SyncStore;
 use purr_sync::types::{
-    FileSnapshotEntry, ItemEventPayload, ItemSnapshotData, LinkMetadataSnapshot, TypeSpecificData,
-    VersionVector, FLAG_INDEX_DIRTY,
+    ApplyResult, FileSnapshotEntry, ItemAggregate, ItemEventPayload, ItemSnapshotData,
+    LinkMetadataSnapshot, TypeSpecificData, FLAG_INDEX_DIRTY,
 };
 
 use crate::interface::{ClipboardContent, ClipKittyError, LinkMetadataState};
@@ -247,8 +249,6 @@ pub(crate) trait SyncEmitter: Send + Sync {
         description: &str,
     ) -> Result<(), ClipKittyError>;
 
-    fn emit_clear(&self) -> Result<(), ClipKittyError>;
-
     fn set_index_dirty(&self) -> Result<(), ClipKittyError>;
 }
 
@@ -280,6 +280,81 @@ impl RealSyncEmitter {
     fn sync_store(&self) -> SyncStore<'_> {
         SyncStore::new(&self.pool)
     }
+
+    fn append_local_event_and_advance(
+        &self,
+        local_item_id: Option<i64>,
+        event: &ItemEvent,
+    ) -> Result<(), ClipKittyError> {
+        let sync = self.sync_store();
+        let current_aggregate = sync.fetch_snapshot(&event.global_item_id)?.map(|s| s.aggregate);
+
+        match projector::apply_event(current_aggregate.as_ref(), &event.payload) {
+            ApplyResult::Applied(delta) => {
+                sync.append_local_event(event)?;
+                self.persist_local_aggregate(
+                    &sync,
+                    &event.global_item_id,
+                    local_item_id,
+                    &delta.new_aggregate,
+                    &event.event_id,
+                )
+            }
+            ApplyResult::Ignored(reason) => Err(ClipKittyError::DataInconsistency(format!(
+                "local sync event `{}` was ignored: {reason:?}",
+                event.payload_type()
+            ))),
+            ApplyResult::Deferred(reason) => Err(ClipKittyError::DataInconsistency(format!(
+                "local sync event `{}` was deferred: {reason:?}",
+                event.payload_type()
+            ))),
+            ApplyResult::Forked(plan) => Err(ClipKittyError::DataInconsistency(format!(
+                "local sync event `{}` unexpectedly forked: {}",
+                event.payload_type(),
+                plan.reason
+            ))),
+        }
+    }
+
+    fn persist_local_aggregate(
+        &self,
+        sync: &SyncStore<'_>,
+        global_item_id: &str,
+        local_item_id: Option<i64>,
+        aggregate: &ItemAggregate,
+        event_id: &str,
+    ) -> Result<(), ClipKittyError> {
+        let existing_snapshot = sync.fetch_snapshot(global_item_id)?;
+        let previous_revision = existing_snapshot
+            .as_ref()
+            .map(|snapshot| snapshot.snapshot_revision)
+            .unwrap_or(0);
+        let snapshot = ItemSnapshot::compacted(
+            global_item_id.to_string(),
+            previous_revision,
+            event_id.to_string(),
+            aggregate.clone(),
+        );
+        sync.upsert_snapshot(&snapshot)?;
+
+        let existing_projection = sync.fetch_projection(global_item_id)?;
+        let (versions, projection_local_id, is_tombstoned) = match aggregate {
+            ItemAggregate::Live(live) => (
+                live.versions,
+                local_item_id.or_else(|| existing_projection.and_then(|entry| entry.local_item_id)),
+                false,
+            ),
+            ItemAggregate::Tombstoned(tomb) => (tomb.versions, None, true),
+        };
+
+        sync.upsert_projection(
+            global_item_id,
+            projection_local_id,
+            &versions,
+            is_tombstoned,
+        )?;
+        Ok(())
+    }
 }
 
 impl SyncEmitter for RealSyncEmitter {
@@ -294,18 +369,7 @@ impl SyncEmitter for RealSyncEmitter {
             &self.local_device_id(),
             ItemEventPayload::ItemCreated { snapshot },
         );
-        let sync = self.sync_store();
-        sync.append_local_event(&event)?;
-
-        let versions = VersionVector {
-            content: 1,
-            bookmark: 0,
-            existence: 1,
-            touch: 1,
-            metadata: 1,
-        };
-        sync.upsert_projection(&global_item_id, Some(local_item_id), &versions, false)?;
-        Ok(())
+        self.append_local_event_and_advance(Some(local_item_id), &event)
     }
 
     fn emit_item_touched(
@@ -324,7 +388,7 @@ impl SyncEmitter for RealSyncEmitter {
                         base_touch_version: proj.versions.touch,
                     },
                 );
-                sync.append_local_event(&event)?;
+                self.append_local_event_and_advance(Some(local_item_id), &event)?;
             }
         }
         Ok(())
@@ -346,7 +410,7 @@ impl SyncEmitter for RealSyncEmitter {
                         base_content_version: proj.versions.content,
                     },
                 );
-                sync.append_local_event(&event)?;
+                self.append_local_event_and_advance(Some(local_item_id), &event)?;
             }
         }
         Ok(())
@@ -363,7 +427,7 @@ impl SyncEmitter for RealSyncEmitter {
                         base_bookmark_version: proj.versions.bookmark,
                     },
                 );
-                sync.append_local_event(&event)?;
+                self.append_local_event_and_advance(Some(local_item_id), &event)?;
             }
         }
         Ok(())
@@ -380,7 +444,7 @@ impl SyncEmitter for RealSyncEmitter {
                         base_bookmark_version: proj.versions.bookmark,
                     },
                 );
-                sync.append_local_event(&event)?;
+                self.append_local_event_and_advance(Some(local_item_id), &event)?;
             }
         }
         Ok(())
@@ -397,7 +461,7 @@ impl SyncEmitter for RealSyncEmitter {
                         base_existence_version: proj.versions.existence,
                     },
                 );
-                sync.append_local_event(&event)?;
+                self.append_local_event_and_advance(None, &event)?;
             }
         }
         Ok(())
@@ -419,7 +483,7 @@ impl SyncEmitter for RealSyncEmitter {
                         base_metadata_version: proj.versions.metadata,
                     },
                 );
-                sync.append_local_event(&event)?;
+                self.append_local_event_and_advance(Some(local_item_id), &event)?;
             }
         }
         Ok(())
@@ -441,15 +505,9 @@ impl SyncEmitter for RealSyncEmitter {
                         base_content_version: proj.versions.content,
                     },
                 );
-                sync.append_local_event(&event)?;
+                self.append_local_event_and_advance(Some(local_item_id), &event)?;
             }
         }
-        Ok(())
-    }
-
-    fn emit_clear(&self) -> Result<(), ClipKittyError> {
-        let sync = self.sync_store();
-        sync.clear_sync_state()?;
         Ok(())
     }
 

@@ -175,6 +175,7 @@ pub fn purge_tombstone_snapshots(pool: &Pool<SqliteConnectionManager>) -> SyncRe
         if let ItemAggregate::Tombstoned(ref tomb) = snapshot.aggregate {
             if tomb.deleted_at_unix < threshold {
                 sync.delete_snapshot(&snapshot.global_item_id)?;
+                sync.delete_projection(&snapshot.global_item_id)?;
                 purged += 1;
             }
         }

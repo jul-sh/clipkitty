@@ -1243,7 +1243,7 @@ mod write_path_tests {
 
     #[test]
     fn delete_item_emits_deleted_event() {
-        let (store, _dir) = test_store();
+        let (store, dir) = test_store();
 
         let id = store
             .save_text("to delete".to_string(), None, None)
@@ -1257,6 +1257,15 @@ mod write_path_tests {
             .filter(|e| e.payload_type == "item_deleted")
             .collect();
         assert_eq!(delete_events.len(), 1);
+
+        let db = store_db(&dir);
+        let sync = SyncStore::new(db.pool());
+        assert!(sync.global_id_for_local(id).unwrap().is_none());
+
+        let gid = pending[0].global_item_id.clone();
+        let projection = sync.fetch_projection(&gid).unwrap().unwrap();
+        assert!(projection.is_tombstoned);
+        assert_eq!(projection.local_item_id, None);
     }
 
     #[test]
@@ -1274,6 +1283,57 @@ mod write_path_tests {
             .filter(|e| e.payload_type == "text_edited")
             .collect();
         assert_eq!(edit_events.len(), 1);
+    }
+
+    #[test]
+    fn sequential_local_text_edits_advance_sync_versions() {
+        let (store, dir) = test_store();
+
+        let id = store
+            .save_text("original".to_string(), None, None)
+            .unwrap();
+        store.update_text_item(id, "edited once".to_string()).unwrap();
+        store.update_text_item(id, "edited twice".to_string()).unwrap();
+
+        let pending = store.pending_local_events().unwrap();
+        let edit_events: Vec<_> = pending
+            .iter()
+            .filter(|event| event.payload_type == "text_edited")
+            .map(|event| {
+                ItemEvent::from_stored(
+                    event.event_id.clone(),
+                    event.global_item_id.clone(),
+                    event.origin_device_id.clone(),
+                    event.schema_version,
+                    event.recorded_at,
+                    &event.payload_type,
+                    &event.payload_data,
+                )
+                .unwrap()
+            })
+            .collect();
+
+        assert_eq!(edit_events.len(), 2);
+        match &edit_events[0].payload {
+            ItemEventPayload::TextEdited {
+                base_content_version,
+                ..
+            } => assert_eq!(*base_content_version, 1),
+            other => panic!("expected text_edited payload, got {other:?}"),
+        }
+        match &edit_events[1].payload {
+            ItemEventPayload::TextEdited {
+                base_content_version,
+                ..
+            } => assert_eq!(*base_content_version, 2),
+            other => panic!("expected text_edited payload, got {other:?}"),
+        }
+
+        let db = store_db(&dir);
+        let sync = SyncStore::new(db.pool());
+        let gid = sync.global_id_for_local(id).unwrap().unwrap();
+        let projection = sync.fetch_projection(&gid).unwrap().unwrap();
+        assert_eq!(projection.versions.content, 3);
     }
 
     #[test]
@@ -1986,6 +2046,8 @@ mod compaction_audit_tests {
         });
         let snap = ItemSnapshot::initial("old-tombstone".to_string(), tomb_agg);
         sync.upsert_snapshot(&snap).unwrap();
+        sync.upsert_projection("old-tombstone", None, &default_versions(), true)
+            .unwrap();
 
         // Create a recent tombstone.
         let recent_agg = ItemAggregate::Tombstoned(TombstoneState {
@@ -2002,6 +2064,7 @@ mod compaction_audit_tests {
         // Verify the recent one still exists.
         assert!(sync.fetch_snapshot("recent-tombstone").unwrap().is_some());
         assert!(sync.fetch_snapshot("old-tombstone").unwrap().is_none());
+        assert!(sync.fetch_projection("old-tombstone").unwrap().is_none());
     }
 }
 
@@ -2096,28 +2159,67 @@ mod write_path_audit_tests {
     }
 
     #[test]
-    fn clear_also_clears_sync_state() {
+    fn clear_emits_delete_events_and_retains_sync_tombstones() {
         let (store, dir) = test_store();
 
-        let id = store
+        let first_id = store
             .save_text("will be cleared".to_string(), None, None)
             .unwrap();
-        assert!(id > 0);
+        let second_id = store
+            .save_text("will also be cleared".to_string(), None, None)
+            .unwrap();
+        assert!(first_id > 0);
+        assert!(second_id > 0);
 
-        // Verify events exist before clear.
         let pending = store.pending_local_events().unwrap();
-        assert!(!pending.is_empty());
+        let created_count = pending
+            .iter()
+            .filter(|event| event.payload_type == "item_created")
+            .count();
+        assert_eq!(created_count, 2);
 
         store.clear().unwrap();
 
-        // Sync events should be cleared too.
         let pending = store.pending_local_events().unwrap();
-        assert!(pending.is_empty());
+        let delete_events: Vec<_> = pending
+            .iter()
+            .filter(|event| event.payload_type == "item_deleted")
+            .collect();
+        assert_eq!(delete_events.len(), 2);
 
-        // Projection should be cleared.
         let db = store_db(&dir);
         let sync = SyncStore::new(db.pool());
-        assert!(sync.global_id_for_local(id).unwrap().is_none());
+        assert!(sync.global_id_for_local(first_id).unwrap().is_none());
+        assert!(sync.global_id_for_local(second_id).unwrap().is_none());
+
+        for event in delete_events {
+            let projection = sync
+                .fetch_projection(&event.global_item_id)
+                .unwrap()
+                .unwrap();
+            assert!(projection.is_tombstoned);
+            assert_eq!(projection.local_item_id, None);
+        }
+    }
+
+    #[test]
+    fn pending_snapshot_records_only_include_unuploaded_snapshots() {
+        let (store, dir) = test_store();
+
+        let id = store
+            .save_text("snapshot me".to_string(), None, None)
+            .unwrap();
+        let pending = store.pending_snapshot_records().unwrap();
+        assert_eq!(pending.len(), 1);
+
+        let db = store_db(&dir);
+        let sync = SyncStore::new(db.pool());
+        let gid = sync.global_id_for_local(id).unwrap().unwrap();
+
+        store.mark_snapshot_uploaded(gid).unwrap();
+
+        let pending = store.pending_snapshot_records().unwrap();
+        assert!(pending.is_empty());
     }
 
     #[test]
@@ -2240,6 +2342,87 @@ mod replay_audit_tests {
         let batch = replay::apply_remote_event_batch(db.pool(), &[edit, dup_create]).unwrap();
         assert_eq!(batch.events_applied, 1);
         assert_eq!(batch.events_ignored, 1);
+    }
+
+    #[test]
+    fn full_resync_with_tail_replaces_stale_local_rows() {
+        let (store, dir) = test_store();
+
+        let stale_id = store.save_text("stale local row".to_string(), None, None).unwrap();
+        assert!(stale_id > 0);
+
+        let aggregate = ItemAggregate::Live(LiveItemState {
+            snapshot: text_snapshot("remote truth"),
+            versions: default_versions(),
+        });
+        let snapshot = ItemSnapshot::initial("remote-item".to_string(), aggregate);
+        let record = purr::interface::SyncSnapshotRecord {
+            global_item_id: snapshot.global_item_id.clone(),
+            snapshot_revision: snapshot.snapshot_revision,
+            schema_version: snapshot.schema_version,
+            covers_through_event: snapshot.covers_through_event.clone(),
+            aggregate_data: snapshot.aggregate_data(),
+        };
+
+        let result = store.full_resync_with_tail(vec![record], vec![]).unwrap();
+        assert_eq!(result.checkpoints_applied, 1);
+        assert_eq!(result.tail_events_applied, 0);
+
+        let db = store_db(&dir);
+        assert!(db.fetch_items_by_ids(&[stale_id]).unwrap().is_empty());
+
+        let all_items = db.fetch_all_items().unwrap();
+        assert_eq!(all_items.len(), 1);
+        assert_eq!(all_items[0].text_content(), "remote truth");
+    }
+
+    #[test]
+    fn remote_bookmark_events_materialize_item_tags() {
+        let (store, dir) = test_store();
+
+        let created = ItemEvent::new_local(
+            "remote-bookmark-item".to_string(),
+            "device-A",
+            ItemEventPayload::ItemCreated {
+                snapshot: text_snapshot("bookmark me"),
+            },
+        );
+        store
+            .apply_remote_event(purr::interface::SyncEventRecord {
+                event_id: created.event_id.clone(),
+                global_item_id: created.global_item_id.clone(),
+                origin_device_id: created.origin_device_id.clone(),
+                schema_version: created.schema_version,
+                recorded_at: created.recorded_at,
+                payload_type: created.payload_type(),
+                payload_data: created.payload_data(),
+            })
+            .unwrap();
+
+        let bookmarked = ItemEvent::new_local(
+            "remote-bookmark-item".to_string(),
+            "device-A",
+            ItemEventPayload::BookmarkSet {
+                base_bookmark_version: 0,
+            },
+        );
+        store
+            .apply_remote_event(purr::interface::SyncEventRecord {
+                event_id: bookmarked.event_id.clone(),
+                global_item_id: bookmarked.global_item_id.clone(),
+                origin_device_id: bookmarked.origin_device_id.clone(),
+                schema_version: bookmarked.schema_version,
+                recorded_at: bookmarked.recorded_at,
+                payload_type: bookmarked.payload_type(),
+                payload_data: bookmarked.payload_data(),
+            })
+            .unwrap();
+
+        let db = store_db(&dir);
+        let local_id = db.fetch_all_items().unwrap()[0].id.unwrap();
+        let mut items = store.fetch_by_ids(vec![local_id]).unwrap();
+        let item = items.pop().unwrap();
+        assert_eq!(item.item_metadata.tags, vec![purr::interface::ItemTag::Bookmark]);
     }
 
     #[test]

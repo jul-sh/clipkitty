@@ -524,6 +524,16 @@ impl<'a> SyncStore<'a> {
         Ok(())
     }
 
+    /// Delete a single projection entry.
+    pub fn delete_projection(&self, global_item_id: &str) -> SyncResult<()> {
+        let conn = self.get_conn()?;
+        conn.execute(
+            "DELETE FROM sync_projection WHERE global_item_id = ?1",
+            params![global_item_id],
+        )?;
+        Ok(())
+    }
+
     // ── Deferred Events ──────────────────────────────────────────────────
 
     /// Store a deferred event.
