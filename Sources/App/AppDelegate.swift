@@ -58,7 +58,9 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate {
         FontManager.registerFonts()
 
         // Register for silent push notifications (iCloud sync).
-        NSApplication.shared.registerForRemoteNotifications()
+        #if ENABLE_SYNC
+            NSApplication.shared.registerForRemoteNotifications()
+        #endif
 
         if case .simulatedDatabase = launchMode {
             populateTestDatabase()
@@ -321,14 +323,16 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate {
         hotKeyManager.unregister()
     }
 
-    nonisolated func application(
-        _: NSApplication,
-        didReceiveRemoteNotification userInfo: [String: Any]
-    ) {
-        Task { @MainActor in
-            store.syncEngine?.handleRemoteNotification()
+    #if ENABLE_SYNC
+        nonisolated func application(
+            _: NSApplication,
+            didReceiveRemoteNotification userInfo: [String: Any]
+        ) {
+            Task { @MainActor in
+                store.syncEngine?.handleRemoteNotification()
+            }
         }
-    }
+    #endif
 
     func applicationSupportsSecureRestorableState(_: NSApplication) -> Bool {
         true

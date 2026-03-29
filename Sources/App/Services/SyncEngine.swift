@@ -1,3 +1,5 @@
+#if ENABLE_SYNC
+
 import CloudKit
 import ClipKittyRust
 import Foundation
@@ -942,3 +944,5 @@ private extension Array {
         }
     }
 }
+
+#endif

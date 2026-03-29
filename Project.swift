@@ -132,19 +132,21 @@ let project = Project(
                     .debug(name: "Debug", settings: [
                         "CODE_SIGN_ENTITLEMENTS": "Sources/App/ClipKitty.oss.entitlements",
                         "CK_BUILD_CHANNEL": "Debug",
+                        "SWIFT_ACTIVE_COMPILATION_CONDITIONS": "ENABLE_SYNC",
                         // Weak-link Sparkle frameworks so app runs without them
                         "OTHER_LDFLAGS": .array(["$(inherited)", "-lpurr", "-weak_framework", "SparkleUpdater", "-weak_framework", "Sparkle"]),
                     ]),
                     .release(name: "Release", settings: [
                         "CODE_SIGN_ENTITLEMENTS": "Sources/App/ClipKitty.oss.entitlements",
                         "CK_BUILD_CHANNEL": "Release",
+                        "SWIFT_ACTIVE_COMPILATION_CONDITIONS": "ENABLE_SYNC",
                         // Weak-link Sparkle frameworks so app runs without them
                         "OTHER_LDFLAGS": .array(["$(inherited)", "-lpurr", "-weak_framework", "SparkleUpdater", "-weak_framework", "Sparkle"]),
                     ]),
                     .release(name: .configuration("SparkleRelease"), settings: [
                         "CODE_SIGN_ENTITLEMENTS": "Sources/App/ClipKitty.oss.entitlements",
                         "CK_BUILD_CHANNEL": "Sparkle",
-                        "SWIFT_ACTIVE_COMPILATION_CONDITIONS": "SPARKLE_RELEASE",
+                        "SWIFT_ACTIVE_COMPILATION_CONDITIONS": "SPARKLE_RELEASE ENABLE_SYNC",
                         // Sparkle configuration - only set for SparkleRelease
                         "SPARKLE_FEED_URL": "https://jul-sh.github.io/clipkitty/appcast.xml",
                         "SPARKLE_PUBLIC_KEY": "9VqfSPPY2Gr8QTYDLa99yJXAFWnHw5aybSbKaYDyCq0=",
@@ -155,7 +157,7 @@ let project = Project(
                     .release(name: .configuration("AppStore"), settings: [
                         "CODE_SIGN_ENTITLEMENTS": "Sources/App/ClipKitty.appstore.entitlements",
                         "CK_BUILD_CHANNEL": "AppStore",
-                        "SWIFT_ACTIVE_COMPILATION_CONDITIONS": "APP_STORE",
+                        "SWIFT_ACTIVE_COMPILATION_CONDITIONS": "APP_STORE ENABLE_SYNC",
                         // Weak-link Sparkle frameworks so app runs without them
                         "OTHER_LDFLAGS": .array(["$(inherited)", "-lpurr", "-weak_framework", "SparkleUpdater", "-weak_framework", "Sparkle"]),
                     ]),

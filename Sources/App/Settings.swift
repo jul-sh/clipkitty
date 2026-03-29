@@ -198,10 +198,12 @@ final class AppSettings: ObservableObject {
     /// The date the app was first launched (for time-gating the launch-at-login prompt)
     let firstLaunchDate: Date
 
-    /// Whether iCloud sync is enabled
-    @Published var syncEnabled: Bool {
-        didSet { save() }
-    }
+    #if ENABLE_SYNC
+        /// Whether iCloud sync is enabled
+        @Published var syncEnabled: Bool {
+            didSet { save() }
+        }
+    #endif
 
     /// Bundle IDs of apps whose clipboard content should be ignored
     @Published var ignoredAppBundleIds: Set<String> {
@@ -223,7 +225,9 @@ final class AppSettings: ObservableObject {
     private let firstLaunchDateKey = "firstLaunchDate"
     private let lastInfoDismissDateKey = "lastInfoDismissDate"
     private let lastNudgeInteractionDateKey = "lastNudgeInteractionDate"
-    private let syncEnabledKey = "syncEnabled"
+    #if ENABLE_SYNC
+        private let syncEnabledKey = "syncEnabled"
+    #endif
     private let ignoredAppBundleIdsKey = "ignoredAppBundleIds"
     #if SPARKLE_RELEASE
         private let autoInstallUpdatesKey = "autoInstallUpdates"
@@ -272,7 +276,9 @@ final class AppSettings: ObservableObject {
         }
 
         // Sync - default to enabled
-        syncEnabled = defaults.object(forKey: syncEnabledKey) as? Bool ?? true
+        #if ENABLE_SYNC
+            syncEnabled = defaults.object(forKey: syncEnabledKey) as? Bool ?? true
+        #endif
 
         // Privacy settings - default to enabled for user protection
         ignoreConfidentialContent = defaults.object(forKey: ignoreConfidentialKey) as? Bool ?? true
@@ -312,7 +318,9 @@ final class AppSettings: ObservableObject {
         defaults.set(lastInfoDismissDate, forKey: lastInfoDismissDateKey)
         defaults.set(lastNudgeInteractionDate, forKey: lastNudgeInteractionDateKey)
         defaults.set(hasCompletedOnboarding, forKey: hasCompletedOnboardingKey)
-        defaults.set(syncEnabled, forKey: syncEnabledKey)
+        #if ENABLE_SYNC
+            defaults.set(syncEnabled, forKey: syncEnabledKey)
+        #endif
         defaults.set(ignoreConfidentialContent, forKey: ignoreConfidentialKey)
         defaults.set(ignoreTransientContent, forKey: ignoreTransientKey)
         defaults.set(generateLinkPreviews, forKey: generateLinkPreviewsKey)

@@ -136,7 +136,9 @@ final class ClipboardStore {
     private let fileManager: FileManagerProtocol
     private var previewLoader: PreviewLoader?
     @ObservationIgnored private var pasteboardMonitor: PasteboardMonitor!
-    private(set) var syncEngine: SyncEngine?
+    #if ENABLE_SYNC
+        private(set) var syncEngine: SyncEngine?
+    #endif
 
     // MARK: - Initialization
 
@@ -219,7 +221,9 @@ final class ClipboardStore {
             lifecycle = .ready
             refresh()
             pruneIfNeeded()
-            startSyncEngine(rustStore: rustStore)
+            #if ENABLE_SYNC
+                startSyncEngine(rustStore: rustStore)
+            #endif
         } catch {
             let dbError = ClipboardError.databaseInitFailed(underlying: error)
             ErrorReporter.reportCritical(dbError)
@@ -245,7 +249,9 @@ final class ClipboardStore {
                 self.lifecycle = .ready
                 self.refresh()
                 self.pruneIfNeeded()
-                self.startSyncEngine(rustStore: runtime.store)
+                #if ENABLE_SYNC
+                    self.startSyncEngine(rustStore: runtime.store)
+                #endif
             } catch {
                 let dbError = ClipboardError.databaseInitFailed(underlying: error)
                 ErrorReporter.reportCritical(dbError)
@@ -398,48 +404,50 @@ final class ClipboardStore {
 
     // MARK: - Sync Engine
 
-    private var rustStoreRef: ClipKittyRust.ClipboardStore?
+    #if ENABLE_SYNC
+        private var rustStoreRef: ClipKittyRust.ClipboardStore?
 
-    private func startSyncEngine(rustStore: ClipKittyRust.ClipboardStore) {
-        rustStoreRef = rustStore
-        guard AppSettings.shared.syncEnabled else { return }
+        private func startSyncEngine(rustStore: ClipKittyRust.ClipboardStore) {
+            rustStoreRef = rustStore
+            guard AppSettings.shared.syncEnabled else { return }
 
-        let engine = SyncEngine(store: rustStore)
-        engine.onContentChanged = { [weak self] in
-            Task { @MainActor in
-                self?.invalidateContent()
-            }
-        }
-        self.syncEngine = engine
-        engine.start()
-    }
-
-    /// Toggle sync engine based on the syncEnabled setting.
-    func setSyncEnabled(_ enabled: Bool) {
-        if enabled {
-            if syncEngine == nil, let rustStore = rustStoreRef {
-                let engine = SyncEngine(store: rustStore)
-                engine.onContentChanged = { [weak self] in
-                    Task { @MainActor in
-                        self?.invalidateContent()
-                    }
+            let engine = SyncEngine(store: rustStore)
+            engine.onContentChanged = { [weak self] in
+                Task { @MainActor in
+                    self?.invalidateContent()
                 }
-                self.syncEngine = engine
-                engine.start()
             }
-        } else {
-            syncEngine?.stop()
-            syncEngine = nil
+            self.syncEngine = engine
+            engine.start()
         }
-    }
 
-    /// Stop the sync engine on teardown to cancel background tasks.
-    nonisolated func stopSyncEngine() {
-        Task { @MainActor in
-            syncEngine?.stop()
-            syncEngine = nil
+        /// Toggle sync engine based on the syncEnabled setting.
+        func setSyncEnabled(_ enabled: Bool) {
+            if enabled {
+                if syncEngine == nil, let rustStore = rustStoreRef {
+                    let engine = SyncEngine(store: rustStore)
+                    engine.onContentChanged = { [weak self] in
+                        Task { @MainActor in
+                            self?.invalidateContent()
+                        }
+                    }
+                    self.syncEngine = engine
+                    engine.start()
+                }
+            } else {
+                syncEngine?.stop()
+                syncEngine = nil
+            }
         }
-    }
+
+        /// Stop the sync engine on teardown to cancel background tasks.
+        nonisolated func stopSyncEngine() {
+            Task { @MainActor in
+                syncEngine?.stop()
+                syncEngine = nil
+            }
+        }
+    #endif
 
     private func beginSearch(query: String) {
         guard let repository else {
