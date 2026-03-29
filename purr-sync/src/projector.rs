@@ -488,5 +488,6 @@ fn fork_from_text_edit(aggregate: &ItemAggregate, new_text: &str) -> ApplyResult
     ApplyResult::Forked(ForkPlan {
         forked_snapshot,
         reason: "concurrent text edit conflict".to_string(),
+        forked_from: None, // Populated by replay layer which has the global_item_id.
     })
 }

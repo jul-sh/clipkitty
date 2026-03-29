@@ -565,6 +565,45 @@ pub struct CompactionResult {
     pub tombstones_purged: u64,
 }
 
+/// Outcome of applying a downloaded batch of remote changes.
+/// Determines whether the CloudKit zone change token should be advanced.
+#[cfg(feature = "sync")]
+#[derive(Debug, Clone, PartialEq, uniffi::Enum)]
+pub enum SyncDownloadBatchOutcome {
+    Applied {
+        events_applied: u64,
+        snapshots_applied: u64,
+    },
+    PartialFailure {
+        applied_count: u64,
+        failed_count: u64,
+        should_retry: bool,
+    },
+    FullResyncRequired,
+}
+
+/// Whether a checkpoint has been replicated to CloudKit.
+#[cfg(feature = "sync")]
+#[derive(Debug, Clone, PartialEq, uniffi::Enum)]
+pub enum SyncCheckpointState {
+    Absent,
+    LocalOnly { covers_through_event: String },
+    Uploaded {
+        covers_through_event: String,
+        uploaded_at: i64,
+    },
+}
+
+/// Result of a full resync operation (checkpoints + tail events).
+#[cfg(feature = "sync")]
+#[derive(Debug, Clone, PartialEq, uniffi::Record)]
+pub struct SyncFullResyncResult {
+    pub checkpoints_applied: u64,
+    pub tail_events_applied: u64,
+    pub tail_events_ignored: u64,
+    pub tail_events_deferred: u64,
+}
+
 /// Error type for ClipKitty operations
 #[derive(Debug, Clone, Error, PartialEq, uniffi::Error)]
 pub enum ClipKittyError {

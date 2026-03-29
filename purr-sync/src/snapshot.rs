@@ -13,6 +13,12 @@ pub struct ItemSnapshot {
     /// The event_id of the last event folded into this snapshot.
     pub covers_through_event: Option<String>,
     pub aggregate: ItemAggregate,
+    /// Whether this snapshot has been uploaded to CloudKit.
+    #[serde(default)]
+    pub uploaded: bool,
+    /// Unix timestamp when uploaded, if applicable.
+    #[serde(default)]
+    pub uploaded_at: Option<i64>,
 }
 
 impl ItemSnapshot {
@@ -24,6 +30,8 @@ impl ItemSnapshot {
             schema_version: SYNC_SCHEMA_VERSION,
             covers_through_event: None,
             aggregate,
+            uploaded: false,
+            uploaded_at: None,
         }
     }
 
@@ -40,6 +48,8 @@ impl ItemSnapshot {
             schema_version: SYNC_SCHEMA_VERSION,
             covers_through_event: Some(covers_through_event),
             aggregate,
+            uploaded: false,
+            uploaded_at: None,
         }
     }
 
@@ -55,6 +65,8 @@ impl ItemSnapshot {
         schema_version: u32,
         covers_through_event: Option<String>,
         aggregate_data: &str,
+        uploaded: bool,
+        uploaded_at: Option<i64>,
     ) -> Result<Self, String> {
         let aggregate: ItemAggregate = serde_json::from_str(aggregate_data)
             .map_err(|e| format!("aggregate deserialize: {e}"))?;
@@ -64,6 +76,8 @@ impl ItemSnapshot {
             schema_version,
             covers_through_event,
             aggregate,
+            uploaded,
+            uploaded_at,
         })
     }
 }

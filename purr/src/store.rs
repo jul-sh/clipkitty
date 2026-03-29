@@ -731,6 +731,142 @@ impl ClipboardStore {
         Ok(())
     }
 
+    /// Mark a snapshot as uploaded to CloudKit.
+    pub fn mark_snapshot_uploaded(
+        &self,
+        global_item_id: String,
+    ) -> Result<(), ClipKittyError> {
+        use purr_sync::store::SyncStore;
+
+        let sync = SyncStore::new(self.db.pool());
+        sync.mark_snapshot_uploaded(&global_item_id)?;
+        Ok(())
+    }
+
+    /// Apply a batch of remote events and snapshots.
+    /// Returns a structured outcome indicating whether it's safe to advance
+    /// the CloudKit zone change token.
+    pub fn apply_remote_batch(
+        &self,
+        event_records: Vec<crate::interface::SyncEventRecord>,
+        snapshot_records: Vec<crate::interface::SyncSnapshotRecord>,
+    ) -> Result<crate::interface::SyncDownloadBatchOutcome, ClipKittyError> {
+        use crate::interface::SyncDownloadBatchOutcome;
+        use crate::sync_bridge::stored_item_from_snapshot;
+        use purr_sync::event::ItemEvent;
+        use purr_sync::replay;
+        use purr_sync::snapshot::ItemSnapshot;
+        use purr_sync::store::SyncStore;
+
+        // Apply snapshots first.
+        let mut snapshots_applied: usize = 0;
+        for record in &snapshot_records {
+            let snapshot = ItemSnapshot::from_stored(
+                record.global_item_id.clone(),
+                record.snapshot_revision,
+                record.schema_version,
+                record.covers_through_event.clone(),
+                &record.aggregate_data,
+                false,
+                None,
+            )
+            .map_err(|e| ClipKittyError::InvalidInput(e))?;
+
+            let global_item_id = snapshot.global_item_id.clone();
+            let aggregate = snapshot.aggregate.clone();
+            let applied = replay::apply_remote_snapshots(self.db.pool(), &[snapshot])?;
+            if applied > 0 {
+                self.materialize_aggregate(&global_item_id, &aggregate, true)?;
+                snapshots_applied += 1;
+            }
+        }
+
+        // Convert and apply events as a batch.
+        let events: Vec<ItemEvent> = event_records
+            .iter()
+            .map(|r| {
+                ItemEvent::from_stored(
+                    r.event_id.clone(),
+                    r.global_item_id.clone(),
+                    r.origin_device_id.clone(),
+                    r.schema_version,
+                    r.recorded_at,
+                    &r.payload_type,
+                    &r.payload_data,
+                )
+                .map_err(|e| ClipKittyError::InvalidInput(e))
+            })
+            .collect::<Result<Vec<_>, _>>()?;
+
+        let mut batch_result = replay::apply_remote_event_batch(self.db.pool(), &events)?;
+
+        // Materialize Applied events into the read model.
+        // Re-fetch the applied events' aggregates from the sync store.
+        let sync = SyncStore::new(self.db.pool());
+        for event_record in &event_records {
+            if sync.fetch_projection(&event_record.global_item_id)?.is_some() {
+                if let Some(snapshot) = sync.fetch_snapshot(&event_record.global_item_id)? {
+                    if self
+                        .materialize_aggregate(
+                            &event_record.global_item_id,
+                            &snapshot.aggregate,
+                            true,
+                        )
+                        .is_err()
+                    {
+                        batch_result.materialization_failures += 1;
+                    }
+                }
+            }
+        }
+
+        // Handle fork plans.
+        for (_original_gid, plan) in &batch_result.fork_plans {
+            let item = stored_item_from_snapshot(&plan.forked_snapshot)
+                .map_err(ClipKittyError::InvalidInput)?;
+            let new_id = self.db.insert_item(&item)?;
+            let text = item
+                .file_index_text()
+                .unwrap_or_else(|| item.text_content().to_string());
+            let _ = self.indexer.add_document(new_id, &text, item.timestamp_unix);
+            let _ = self.indexer.commit();
+
+            let fork_global_id = uuid::Uuid::new_v4().to_string();
+            let versions = purr_sync::types::VersionVector {
+                content: 1,
+                bookmark: 0,
+                existence: 1,
+                touch: 1,
+                metadata: 1,
+            };
+            sync.upsert_projection(&fork_global_id, Some(new_id), &versions, false)?;
+        }
+
+        // Build the download outcome.
+        let outcome = batch_result.download_outcome(snapshots_applied);
+        Ok(match outcome {
+            purr_sync::types::DownloadBatchOutcome::Applied {
+                events_applied,
+                snapshots_applied,
+            } => SyncDownloadBatchOutcome::Applied {
+                events_applied: events_applied as u64,
+                snapshots_applied: snapshots_applied as u64,
+            },
+            purr_sync::types::DownloadBatchOutcome::PartialFailure {
+                applied_count,
+                failed_count,
+                should_retry,
+            } => SyncDownloadBatchOutcome::PartialFailure {
+                applied_count: applied_count as u64,
+                failed_count: failed_count as u64,
+                should_retry,
+            },
+            purr_sync::types::DownloadBatchOutcome::FullResyncRequired => {
+                SyncDownloadBatchOutcome::FullResyncRequired
+            }
+        })
+    }
+
     /// Apply a single remote event received from CloudKit.
     ///
     /// When an event is Applied, the local items table is updated to reflect
@@ -802,6 +938,7 @@ impl ClipboardStore {
     }
 
     /// Apply a remote snapshot received from CloudKit.
+    /// Materializes the snapshot into the read model (items table + index).
     pub fn apply_remote_snapshot(
         &self,
         record: crate::interface::SyncSnapshotRecord,
@@ -815,10 +952,17 @@ impl ClipboardStore {
             record.schema_version,
             record.covers_through_event,
             &record.aggregate_data,
+            false,
+            None,
         )
         .map_err(|e| ClipKittyError::InvalidInput(e))?;
 
+        let global_item_id = snapshot.global_item_id.clone();
+        let aggregate = snapshot.aggregate.clone();
         let applied = replay::apply_remote_snapshots(self.db.pool(), &[snapshot])?;
+        if applied > 0 {
+            self.materialize_aggregate(&global_item_id, &aggregate, true)?;
+        }
         Ok(applied > 0)
     }
 
@@ -845,11 +989,8 @@ impl ClipboardStore {
         &self,
         snapshot_records: Vec<crate::interface::SyncSnapshotRecord>,
     ) -> Result<u64, ClipKittyError> {
-        use crate::sync_bridge::stored_item_from_snapshot;
         use purr_sync::replay;
         use purr_sync::snapshot::ItemSnapshot;
-        use purr_sync::store::SyncStore;
-        use purr_sync::types::ItemAggregate;
 
         let snapshots: Vec<ItemSnapshot> = snapshot_records
             .into_iter()
@@ -860,6 +1001,8 @@ impl ClipboardStore {
                     r.schema_version,
                     r.covers_through_event,
                     &r.aggregate_data,
+                    false,
+                    None,
                 )
                 .map_err(|e| ClipKittyError::InvalidInput(e))
             })
@@ -867,33 +1010,85 @@ impl ClipboardStore {
 
         let applied = replay::full_resync_from_snapshots(self.db.pool(), &snapshots)?;
 
-        // Materialize live snapshots into the items table.
-        let sync = SyncStore::new(self.db.pool());
+        // Materialize all snapshots into the read model.
         for snapshot in &snapshots {
-            if let ItemAggregate::Live(live) = &snapshot.aggregate {
-                if let Ok(item) = stored_item_from_snapshot(&live.snapshot) {
-                    if let Ok(new_id) = self.db.insert_item(&item) {
-                        let text = item
-                            .file_index_text()
-                            .unwrap_or_else(|| item.text_content().to_string());
-                        let _ =
-                            self.indexer
-                                .add_document(new_id, &text, item.timestamp_unix);
-
-                        // Update projection with local_item_id.
-                        let _ = sync.upsert_projection(
-                            &snapshot.global_item_id,
-                            Some(new_id),
-                            &live.versions,
-                            false,
-                        );
-                    }
-                }
-            }
+            self.materialize_aggregate(
+                &snapshot.global_item_id,
+                &snapshot.aggregate,
+                true,
+            )?;
         }
         let _ = self.indexer.commit();
 
         Ok(applied as u64)
+    }
+
+    /// Perform a full resync from checkpoints and tail events.
+    /// Clears sync state, applies checkpoints, replays tail events,
+    /// and materializes all live items into the read model.
+    pub fn full_resync_with_tail(
+        &self,
+        snapshot_records: Vec<crate::interface::SyncSnapshotRecord>,
+        tail_event_records: Vec<crate::interface::SyncEventRecord>,
+    ) -> Result<crate::interface::SyncFullResyncResult, ClipKittyError> {
+        use crate::interface::SyncFullResyncResult;
+        use purr_sync::event::ItemEvent;
+        use purr_sync::replay;
+        use purr_sync::snapshot::ItemSnapshot;
+        use purr_sync::store::SyncStore;
+
+        let snapshots: Vec<ItemSnapshot> = snapshot_records
+            .into_iter()
+            .map(|r| {
+                ItemSnapshot::from_stored(
+                    r.global_item_id,
+                    r.snapshot_revision,
+                    r.schema_version,
+                    r.covers_through_event,
+                    &r.aggregate_data,
+                    false,
+                    None,
+                )
+                .map_err(|e| ClipKittyError::InvalidInput(e))
+            })
+            .collect::<Result<Vec<_>, _>>()?;
+
+        let tail_events: Vec<ItemEvent> = tail_event_records
+            .into_iter()
+            .map(|r| {
+                ItemEvent::from_stored(
+                    r.event_id,
+                    r.global_item_id,
+                    r.origin_device_id,
+                    r.schema_version,
+                    r.recorded_at,
+                    &r.payload_type,
+                    &r.payload_data,
+                )
+                .map_err(|e| ClipKittyError::InvalidInput(e))
+            })
+            .collect::<Result<Vec<_>, _>>()?;
+
+        let result = replay::full_resync(self.db.pool(), &snapshots, &tail_events)?;
+
+        // Materialize all live snapshots into the read model.
+        let sync = SyncStore::new(self.db.pool());
+        let all_snapshots = sync.fetch_all_snapshots()?;
+        for snapshot in &all_snapshots {
+            self.materialize_aggregate(
+                &snapshot.global_item_id,
+                &snapshot.aggregate,
+                true,
+            )?;
+        }
+        let _ = self.indexer.commit();
+
+        Ok(SyncFullResyncResult {
+            checkpoints_applied: result.checkpoints_applied as u64,
+            tail_events_applied: result.tail_events_applied as u64,
+            tail_events_ignored: result.tail_events_ignored as u64,
+            tail_events_deferred: result.tail_events_deferred as u64,
+        })
     }
 
     /// Get the current sync device state.
@@ -931,14 +1126,14 @@ impl ClipboardStore {
         Ok(())
     }
 
-    /// Fetch event IDs eligible for CloudKit deletion (compacted + uploaded + old).
-    /// Called by SyncEngine after compaction to clean up CloudKit records.
+    /// Fetch event IDs eligible for CloudKit deletion.
+    /// Only returns events that are compacted, old, AND covered by an uploaded checkpoint.
     pub fn purgeable_cloud_event_ids(&self, max_age_days: u32) -> Result<Vec<String>, ClipKittyError> {
         use purr_sync::store::SyncStore;
 
         let threshold = chrono::Utc::now().timestamp() - (max_age_days as i64 * 86400);
         let sync = SyncStore::new(self.db.pool());
-        let ids = sync.fetch_purgeable_cloud_event_ids(threshold)?;
+        let ids = sync.fetch_checkpoint_safe_purgeable_events(threshold)?;
         Ok(ids)
     }
 

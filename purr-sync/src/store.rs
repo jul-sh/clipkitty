@@ -5,7 +5,7 @@
 use crate::error::{SyncError, SyncResult};
 use crate::event::ItemEvent;
 use crate::snapshot::ItemSnapshot;
-use crate::types::{DeferredReason, VersionVector};
+use crate::types::{CheckpointState, DeferredReason, VersionVector};
 use chrono::Utc;
 use r2d2::Pool;
 use r2d2_sqlite::SqliteConnectionManager;
@@ -235,19 +235,24 @@ impl<'a> SyncStore<'a> {
         let conn = self.get_conn()?;
         conn.execute(
             r#"INSERT INTO sync_snapshots
-               (global_item_id, snapshot_revision, schema_version, covers_through_event, aggregate_state)
-               VALUES (?1, ?2, ?3, ?4, ?5)
+               (global_item_id, snapshot_revision, schema_version,
+                covers_through_event, aggregate_state, uploaded, uploaded_at)
+               VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7)
                ON CONFLICT(global_item_id) DO UPDATE SET
                  snapshot_revision = excluded.snapshot_revision,
                  schema_version = excluded.schema_version,
                  covers_through_event = excluded.covers_through_event,
-                 aggregate_state = excluded.aggregate_state"#,
+                 aggregate_state = excluded.aggregate_state,
+                 uploaded = excluded.uploaded,
+                 uploaded_at = excluded.uploaded_at"#,
             params![
                 snapshot.global_item_id,
                 snapshot.snapshot_revision as i64,
                 snapshot.schema_version,
                 snapshot.covers_through_event,
                 snapshot.aggregate_data(),
+                snapshot.uploaded as i32,
+                snapshot.uploaded_at,
             ],
         )?;
         Ok(())
@@ -258,7 +263,7 @@ impl<'a> SyncStore<'a> {
         let conn = self.get_conn()?;
         let result = conn.query_row(
             r#"SELECT global_item_id, snapshot_revision, schema_version,
-                      covers_through_event, aggregate_state
+                      covers_through_event, aggregate_state, uploaded, uploaded_at
                FROM sync_snapshots WHERE global_item_id = ?1"#,
             params![global_item_id],
             |row| {
@@ -267,13 +272,16 @@ impl<'a> SyncStore<'a> {
                 let schema: u32 = row.get(2)?;
                 let covers: Option<String> = row.get(3)?;
                 let agg: String = row.get(4)?;
-                Ok((gid, rev as u64, schema, covers, agg))
+                let uploaded: bool = row.get::<_, i32>(5)? != 0;
+                let uploaded_at: Option<i64> = row.get(6)?;
+                Ok((gid, rev as u64, schema, covers, agg, uploaded, uploaded_at))
             },
         );
         match result {
-            Ok((gid, rev, schema, covers, agg)) => {
-                let snap = ItemSnapshot::from_stored(gid, rev, schema, covers, &agg)
-                    .map_err(SyncError::InconsistentData)?;
+            Ok((gid, rev, schema, covers, agg, uploaded, uploaded_at)) => {
+                let snap =
+                    ItemSnapshot::from_stored(gid, rev, schema, covers, &agg, uploaded, uploaded_at)
+                        .map_err(SyncError::InconsistentData)?;
                 Ok(Some(snap))
             }
             Err(rusqlite::Error::QueryReturnedNoRows) => Ok(None),
@@ -286,7 +294,7 @@ impl<'a> SyncStore<'a> {
         let conn = self.get_conn()?;
         let mut stmt = conn.prepare(
             r#"SELECT global_item_id, snapshot_revision, schema_version,
-                      covers_through_event, aggregate_state
+                      covers_through_event, aggregate_state, uploaded, uploaded_at
                FROM sync_snapshots"#,
         )?;
         let rows = stmt
@@ -296,13 +304,15 @@ impl<'a> SyncStore<'a> {
                 let schema: u32 = row.get(2)?;
                 let covers: Option<String> = row.get(3)?;
                 let agg: String = row.get(4)?;
-                Ok((gid, rev as u64, schema, covers, agg))
+                let uploaded: bool = row.get::<_, i32>(5)? != 0;
+                let uploaded_at: Option<i64> = row.get(6)?;
+                Ok((gid, rev as u64, schema, covers, agg, uploaded, uploaded_at))
             })?
             .collect::<Result<Vec<_>, _>>()?;
 
         rows.into_iter()
-            .map(|(gid, rev, schema, covers, agg)| {
-                ItemSnapshot::from_stored(gid, rev, schema, covers, &agg)
+            .map(|(gid, rev, schema, covers, agg, uploaded, uploaded_at)| {
+                ItemSnapshot::from_stored(gid, rev, schema, covers, &agg, uploaded, uploaded_at)
                     .map_err(SyncError::InconsistentData)
             })
             .collect()
@@ -316,6 +326,109 @@ impl<'a> SyncStore<'a> {
             params![global_item_id],
         )?;
         Ok(())
+    }
+
+    /// Mark a snapshot as uploaded to CloudKit.
+    pub fn mark_snapshot_uploaded(&self, global_item_id: &str) -> SyncResult<()> {
+        let conn = self.get_conn()?;
+        let now = Utc::now().timestamp();
+        conn.execute(
+            "UPDATE sync_snapshots SET uploaded = 1, uploaded_at = ?1 WHERE global_item_id = ?2",
+            params![now, global_item_id],
+        )?;
+        Ok(())
+    }
+
+    /// Fetch snapshots that have not been uploaded yet (for the upload queue).
+    pub fn fetch_pending_upload_snapshots(&self) -> SyncResult<Vec<ItemSnapshot>> {
+        let conn = self.get_conn()?;
+        let mut stmt = conn.prepare(
+            r#"SELECT global_item_id, snapshot_revision, schema_version,
+                      covers_through_event, aggregate_state, uploaded, uploaded_at
+               FROM sync_snapshots WHERE uploaded = 0"#,
+        )?;
+        let rows = stmt
+            .query_map([], |row| {
+                let gid: String = row.get(0)?;
+                let rev: i64 = row.get(1)?;
+                let schema: u32 = row.get(2)?;
+                let covers: Option<String> = row.get(3)?;
+                let agg: String = row.get(4)?;
+                let uploaded: bool = row.get::<_, i32>(5)? != 0;
+                let uploaded_at: Option<i64> = row.get(6)?;
+                Ok((gid, rev as u64, schema, covers, agg, uploaded, uploaded_at))
+            })?
+            .collect::<Result<Vec<_>, _>>()?;
+
+        rows.into_iter()
+            .map(|(gid, rev, schema, covers, agg, uploaded, uploaded_at)| {
+                ItemSnapshot::from_stored(gid, rev, schema, covers, &agg, uploaded, uploaded_at)
+                    .map_err(SyncError::InconsistentData)
+            })
+            .collect()
+    }
+
+    /// Check whether a specific item's snapshot has been uploaded.
+    pub fn is_snapshot_uploaded(&self, global_item_id: &str) -> SyncResult<bool> {
+        let conn = self.get_conn()?;
+        let result = conn.query_row(
+            "SELECT uploaded FROM sync_snapshots WHERE global_item_id = ?1",
+            params![global_item_id],
+            |row| row.get::<_, i32>(0),
+        );
+        match result {
+            Ok(v) => Ok(v != 0),
+            Err(rusqlite::Error::QueryReturnedNoRows) => Ok(false),
+            Err(e) => Err(e.into()),
+        }
+    }
+
+    /// Get the checkpoint state for an item.
+    pub fn checkpoint_state(&self, global_item_id: &str) -> SyncResult<CheckpointState> {
+        let conn = self.get_conn()?;
+        let result = conn.query_row(
+            r#"SELECT covers_through_event, uploaded, uploaded_at
+               FROM sync_snapshots WHERE global_item_id = ?1"#,
+            params![global_item_id],
+            |row| {
+                let covers: Option<String> = row.get(0)?;
+                let uploaded: bool = row.get::<_, i32>(1)? != 0;
+                let uploaded_at: Option<i64> = row.get(2)?;
+                Ok((covers, uploaded, uploaded_at))
+            },
+        );
+        match result {
+            Ok((Some(covers), true, Some(at))) => Ok(CheckpointState::Uploaded {
+                covers_through_event: covers,
+                uploaded_at: at,
+            }),
+            Ok((Some(covers), false, _)) => Ok(CheckpointState::LocalOnly {
+                covers_through_event: covers,
+            }),
+            Ok((None, _, _)) | Ok((_, _, _)) => Ok(CheckpointState::Absent),
+            Err(rusqlite::Error::QueryReturnedNoRows) => Ok(CheckpointState::Absent),
+            Err(e) => Err(e.into()),
+        }
+    }
+
+    /// Fetch event IDs that are safe to purge: compacted AND covered by an uploaded checkpoint.
+    pub fn fetch_checkpoint_safe_purgeable_events(
+        &self,
+        older_than_unix: i64,
+    ) -> SyncResult<Vec<String>> {
+        let conn = self.get_conn()?;
+        let mut stmt = conn.prepare(
+            r#"SELECT e.event_id
+               FROM sync_events e
+               INNER JOIN sync_snapshots s ON e.global_item_id = s.global_item_id
+               WHERE e.compacted = 1
+                 AND e.recorded_at < ?1
+                 AND s.uploaded = 1"#,
+        )?;
+        let ids = stmt
+            .query_map(params![older_than_unix], |row| row.get(0))?
+            .collect::<Result<Vec<String>, _>>()?;
+        Ok(ids)
     }
 
     // ── Projection ───────────────────────────────────────────────────────

@@ -272,6 +272,11 @@ pub struct ForkPlan {
     pub forked_snapshot: ItemSnapshotData,
     /// Human-readable reason for the fork.
     pub reason: String,
+    /// The global_item_id of the original item that triggered the fork.
+    /// Set by the replay layer (not the projector) since the projector
+    /// operates on aggregates without item identity.
+    #[serde(default)]
+    pub forked_from: Option<String>,
 }
 
 // ─────────────────────────────────────────────────────────────────────────────
@@ -299,3 +304,60 @@ pub const TOMBSTONE_COMPACTION_AGE_SECS: i64 = 30 * 24 * 3600;
 pub const TOMBSTONE_SNAPSHOT_RETENTION_SECS: i64 = 90 * 24 * 3600;
 /// Retention: keep compacted raw events for 30 days after snapshot coverage.
 pub const COMPACTED_EVENT_RETENTION_SECS: i64 = 30 * 24 * 3600;
+
+// ─────────────────────────────────────────────────────────────────────────────
+// Download Batch Outcome
+// ─────────────────────────────────────────────────────────────────────────────
+
+/// Outcome of applying a downloaded batch of remote changes.
+/// Used to decide whether the CloudKit zone change token should be advanced.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum DownloadBatchOutcome {
+    /// All events and snapshots applied successfully.
+    Applied {
+        events_applied: usize,
+        snapshots_applied: usize,
+    },
+    /// Some events failed to materialize into the read model.
+    /// Token must NOT be advanced — retry on next cycle.
+    PartialFailure {
+        applied_count: usize,
+        failed_count: usize,
+        should_retry: bool,
+    },
+    /// Deferred events exceeded retry threshold; full resync needed.
+    FullResyncRequired,
+}
+
+// ─────────────────────────────────────────────────────────────────────────────
+// Checkpoint State
+// ─────────────────────────────────────────────────────────────────────────────
+
+/// Whether a checkpoint (compacted snapshot) has been replicated to CloudKit.
+/// Drives cleanup gating: events are only purgeable when covered by an
+/// uploaded checkpoint.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum CheckpointState {
+    /// No snapshot exists for this item.
+    Absent,
+    /// Snapshot exists locally but has not been uploaded to CloudKit.
+    LocalOnly { covers_through_event: String },
+    /// Snapshot has been confirmed in CloudKit.
+    Uploaded {
+        covers_through_event: String,
+        uploaded_at: i64,
+    },
+}
+
+// ─────────────────────────────────────────────────────────────────────────────
+// Full Resync Result
+// ─────────────────────────────────────────────────────────────────────────────
+
+/// Result of a full resync operation (checkpoints + tail events).
+#[derive(Debug, Clone, PartialEq, Eq, Default)]
+pub struct FullResyncResult {
+    pub checkpoints_applied: usize,
+    pub tail_events_applied: usize,
+    pub tail_events_ignored: usize,
+    pub tail_events_deferred: usize,
+}

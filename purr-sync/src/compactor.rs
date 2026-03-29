@@ -149,11 +149,19 @@ pub fn compact_all(pool: &Pool<SqliteConnectionManager>) -> SyncResult<usize> {
     Ok(compacted_count)
 }
 
-/// Delete compacted events that have exceeded retention.
+/// Delete compacted events that have exceeded retention AND are covered by
+/// an uploaded checkpoint. Events are only safe to delete when a checkpoint
+/// that covers them has been replicated to CloudKit, ensuring lagging devices
+/// can still recover via full resync.
 pub fn purge_retained_events(pool: &Pool<SqliteConnectionManager>) -> SyncResult<usize> {
     let sync = SyncStore::new(pool);
     let threshold = Utc::now().timestamp() - COMPACTED_EVENT_RETENTION_SECS;
-    sync.delete_compacted_events_before(threshold)
+    let purgeable_ids = sync.fetch_checkpoint_safe_purgeable_events(threshold)?;
+    if purgeable_ids.is_empty() {
+        return Ok(0);
+    }
+    let refs: Vec<&str> = purgeable_ids.iter().map(|s| s.as_str()).collect();
+    sync.delete_events_by_ids(&refs)
 }
 
 /// Delete tombstone snapshots that have exceeded retention.

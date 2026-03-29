@@ -28,12 +28,15 @@ pub fn setup_sync_schema(conn: &rusqlite::Connection) -> SyncResult<()> {
             ON sync_events(global_item_id, compacted) WHERE compacted = 0;
 
         -- Latest known snapshot per item. Mutable (overwritten on compaction).
+        -- Acts as a checkpoint: tracks whether it has been uploaded to CloudKit.
         CREATE TABLE IF NOT EXISTS sync_snapshots (
             global_item_id TEXT PRIMARY KEY,
             snapshot_revision INTEGER NOT NULL DEFAULT 0,
             schema_version INTEGER NOT NULL DEFAULT 1,
             covers_through_event TEXT,
-            aggregate_state TEXT NOT NULL
+            aggregate_state TEXT NOT NULL,
+            uploaded INTEGER NOT NULL DEFAULT 0,
+            uploaded_at INTEGER
         );
 
         -- Map global_item_id -> local_item_id plus per-domain version counters.
@@ -87,5 +90,16 @@ pub fn setup_sync_schema(conn: &rusqlite::Connection) -> SyncResult<()> {
         );
         "#,
     )?;
+
+    // Idempotent migration for existing databases: add checkpoint upload columns.
+    let _ = conn.execute(
+        "ALTER TABLE sync_snapshots ADD COLUMN uploaded INTEGER NOT NULL DEFAULT 0",
+        [],
+    );
+    let _ = conn.execute(
+        "ALTER TABLE sync_snapshots ADD COLUMN uploaded_at INTEGER",
+        [],
+    );
+
     Ok(())
 }

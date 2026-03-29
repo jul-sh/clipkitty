@@ -1410,7 +1410,7 @@ mod serialization_tests {
         let data = snapshot.aggregate_data();
 
         let restored =
-            ItemSnapshot::from_stored("item-1".to_string(), 1, SYNC_SCHEMA_VERSION, None, &data)
+            ItemSnapshot::from_stored("item-1".to_string(), 1, SYNC_SCHEMA_VERSION, None, &data, false, None)
                 .unwrap();
 
         assert_eq!(restored.aggregate, agg);
@@ -2261,6 +2261,7 @@ mod replay_audit_tests {
         let fork = ForkPlan {
             forked_snapshot: text_snapshot("forked"),
             reason: "conflict".to_string(),
+            forked_from: Some("original-item".to_string()),
         };
         let json = serde_json::to_string(&fork).unwrap();
         let restored: ForkPlan = serde_json::from_str(&json).unwrap();
