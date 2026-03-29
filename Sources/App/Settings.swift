@@ -275,9 +275,9 @@ final class AppSettings: ObservableObject {
             defaults.set(firstLaunchDate, forKey: firstLaunchDateKey)
         }
 
-        // Sync - default to enabled
+        // Sync - default to disabled (user opts in via Settings)
         #if ENABLE_SYNC
-            syncEnabled = defaults.object(forKey: syncEnabledKey) as? Bool ?? true
+            syncEnabled = defaults.object(forKey: syncEnabledKey) as? Bool ?? false
         #endif
 
         // Privacy settings - default to enabled for user protection

@@ -58,8 +58,12 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate {
         FontManager.registerFonts()
 
         // Register for silent push notifications (iCloud sync).
+        // Only register when sync is enabled — calling this without APS
+        // entitlements can terminate the app in sandboxed environments.
         #if ENABLE_SYNC
-            NSApplication.shared.registerForRemoteNotifications()
+            if AppSettings.shared.syncEnabled {
+                NSApplication.shared.registerForRemoteNotifications()
+            }
         #endif
 
         if case .simulatedDatabase = launchMode {
