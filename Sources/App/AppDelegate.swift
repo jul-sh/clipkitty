@@ -38,6 +38,9 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate {
     private var statusMenu: NSMenu?
     private var cancellables = Set<AnyCancellable>()
     private var snackbarCoordinator: SnackbarCoordinator!
+    #if ENABLE_SYNC
+        private var syncPreferenceController: SyncPreferenceController?
+    #endif
     #if SPARKLE_RELEASE
         private var updater: SparkleAppUpdater?
     #endif
@@ -57,15 +60,6 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate {
     func applicationDidFinishLaunching(_: Notification) {
         FontManager.registerFonts()
 
-        // Register for silent push notifications (iCloud sync).
-        // Only register when sync is enabled — calling this without APS
-        // entitlements can terminate the app in sandboxed environments.
-        #if ENABLE_SYNC
-            if AppSettings.shared.syncEnabled {
-                NSApplication.shared.registerForRemoteNotifications()
-            }
-        #endif
-
         if case .simulatedDatabase = launchMode {
             populateTestDatabase()
         }
@@ -76,6 +70,9 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate {
         case .simulatedDatabase:
             store = ClipboardStore(screenshotMode: true)
         }
+        #if ENABLE_SYNC
+            configureSyncPreferenceController()
+        #endif
 
         snackbarCoordinator = SnackbarCoordinator(store: store)
         snackbarCoordinator.syncWithSystem()
@@ -325,12 +322,33 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate {
     func applicationWillTerminate(_: Notification) {
         store.stopMonitoring()
         hotKeyManager.unregister()
+        #if ENABLE_SYNC
+            syncPreferenceController?.unbind()
+            syncPreferenceController = nil
+            store.stopSyncEngine()
+        #endif
     }
 
     #if ENABLE_SYNC
+        private func configureSyncPreferenceController() {
+            let controller = SyncPreferenceController(
+                applySyncEnabled: { [weak self] enabled in
+                    self?.store.setSyncEnabled(enabled)
+                },
+                registerForRemoteNotifications: {
+                    NSApplication.shared.registerForRemoteNotifications()
+                }
+            )
+            controller.bind(
+                initialValue: AppSettings.shared.syncEnabled,
+                changes: AppSettings.shared.$syncEnabled
+            )
+            syncPreferenceController = controller
+        }
+
         nonisolated func application(
             _: NSApplication,
-            didReceiveRemoteNotification userInfo: [String: Any]
+            didReceiveRemoteNotification _: [String: Any]
         ) {
             Task { @MainActor in
                 store.syncEngine?.handleRemoteNotification()

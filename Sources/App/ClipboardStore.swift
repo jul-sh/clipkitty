@@ -137,7 +137,26 @@ final class ClipboardStore {
     private var previewLoader: PreviewLoader?
     @ObservationIgnored private var pasteboardMonitor: PasteboardMonitor!
     #if ENABLE_SYNC
-        private(set) var syncEngine: SyncEngine?
+        private enum SyncRuntime {
+            case waitingForBootstrap(enabled: Bool)
+            case disabled(store: ClipKittyRust.ClipboardStore)
+            case enabled(store: ClipKittyRust.ClipboardStore, engine: SyncEngine)
+
+            var syncEngine: SyncEngine? {
+                switch self {
+                case .waitingForBootstrap, .disabled:
+                    return nil
+                case let .enabled(_, engine):
+                    return engine
+                }
+            }
+        }
+
+        private var syncRuntime: SyncRuntime = .waitingForBootstrap(enabled: false)
+
+        var syncEngine: SyncEngine? {
+            syncRuntime.syncEngine
+        }
     #endif
 
     // MARK: - Initialization
@@ -222,7 +241,7 @@ final class ClipboardStore {
             refresh()
             pruneIfNeeded()
             #if ENABLE_SYNC
-                startSyncEngine(rustStore: rustStore)
+                initializeSyncRuntime(with: rustStore)
             #endif
         } catch {
             let dbError = ClipboardError.databaseInitFailed(underlying: error)
@@ -250,7 +269,7 @@ final class ClipboardStore {
                 self.refresh()
                 self.pruneIfNeeded()
                 #if ENABLE_SYNC
-                    self.startSyncEngine(rustStore: runtime.store)
+                    self.initializeSyncRuntime(with: runtime.store)
                 #endif
             } catch {
                 let dbError = ClipboardError.databaseInitFailed(underlying: error)
@@ -405,46 +424,64 @@ final class ClipboardStore {
     // MARK: - Sync Engine
 
     #if ENABLE_SYNC
-        private var rustStoreRef: ClipKittyRust.ClipboardStore?
+        private func initializeSyncRuntime(with rustStore: ClipKittyRust.ClipboardStore) {
+            let enabled: Bool
+            switch syncRuntime {
+            case let .waitingForBootstrap(pendingEnabled):
+                enabled = pendingEnabled
+            case .disabled, .enabled:
+                enabled = false
+            }
 
-        private func startSyncEngine(rustStore: ClipKittyRust.ClipboardStore) {
-            rustStoreRef = rustStore
-            guard AppSettings.shared.syncEnabled else { return }
+            syncRuntime = .disabled(store: rustStore)
+            setSyncEnabled(enabled)
+        }
 
+        private func makeSyncEngine(rustStore: ClipKittyRust.ClipboardStore) -> SyncEngine {
             let engine = SyncEngine(store: rustStore)
             engine.onContentChanged = { [weak self] in
                 Task { @MainActor in
                     self?.invalidateContent()
                 }
             }
-            self.syncEngine = engine
-            engine.start()
+            return engine
+        }
+
+        private func disableSyncEngine(
+            rustStore: ClipKittyRust.ClipboardStore,
+            engine: SyncEngine
+        ) {
+            engine.stop()
+            syncRuntime = .disabled(store: rustStore)
         }
 
         /// Toggle sync engine based on the syncEnabled setting.
         func setSyncEnabled(_ enabled: Bool) {
-            if enabled {
-                if syncEngine == nil, let rustStore = rustStoreRef {
-                    let engine = SyncEngine(store: rustStore)
-                    engine.onContentChanged = { [weak self] in
-                        Task { @MainActor in
-                            self?.invalidateContent()
-                        }
-                    }
-                    self.syncEngine = engine
-                    engine.start()
-                }
-            } else {
-                syncEngine?.stop()
-                syncEngine = nil
+            switch syncRuntime {
+            case .waitingForBootstrap:
+                syncRuntime = .waitingForBootstrap(enabled: enabled)
+            case let .disabled(rustStore):
+                guard enabled else { return }
+                let engine = makeSyncEngine(rustStore: rustStore)
+                syncRuntime = .enabled(store: rustStore, engine: engine)
+                engine.start()
+            case let .enabled(rustStore, engine):
+                guard !enabled else { return }
+                disableSyncEngine(rustStore: rustStore, engine: engine)
             }
         }
 
         /// Stop the sync engine on teardown to cancel background tasks.
         nonisolated func stopSyncEngine() {
             Task { @MainActor in
-                syncEngine?.stop()
-                syncEngine = nil
+                switch syncRuntime {
+                case .waitingForBootstrap:
+                    syncRuntime = .waitingForBootstrap(enabled: false)
+                case .disabled:
+                    break
+                case let .enabled(rustStore, engine):
+                    disableSyncEngine(rustStore: rustStore, engine: engine)
+                }
             }
         }
     #endif

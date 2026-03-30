@@ -85,9 +85,6 @@ struct GeneralSettingsView: View {
             #if ENABLE_SYNC
                 Section(String(localized: "iCloud Sync")) {
                     Toggle(String(localized: "Sync clipboard history across devices"), isOn: $settings.syncEnabled)
-                        .onChange(of: settings.syncEnabled) { _, newValue in
-                            store.setSyncEnabled(newValue)
-                        }
 
                     if settings.syncEnabled {
                         HStack {
