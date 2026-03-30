@@ -4480,6 +4480,62 @@
           }
         }
       }
+    },
+    "iCloud account not found. Please log in to enable sync.": {
+      "localizations": {
+        "en": { "stringUnit": { "state": "translated", "value": "iCloud account not found. Please log in to enable sync." } },
+        "es": { "stringUnit": { "state": "translated", "value": "No se encontró la cuenta de iCloud. Inicie sesión para activar la sincronización." } },
+        "zh-Hans": { "stringUnit": { "state": "translated", "value": "找不到 iCloud 帐户。请登录以启用同步。" } },
+        "zh-Hant": { "stringUnit": { "state": "translated", "value": "找不到 iCloud 帳號。請登入以啟用同步。" } },
+        "ja": { "stringUnit": { "state": "translated", "value": "iCloudアカウントが見つかりません。同期を有効にするにはログインしてください。" } },
+        "ko": { "stringUnit": { "state": "translated", "value": "iCloud 계정을 찾을 수 없습니다. 동기화를 활성화하려면 로그인하세요." } },
+        "fr": { "stringUnit": { "state": "translated", "value": "Compte iCloud introuvable. Veuillez vous connecter pour activer la synchronisation." } },
+        "de": { "stringUnit": { "state": "translated", "value": "iCloud-Account nicht gefunden. Bitte melden Sie sich an, um die Synchronisierung zu aktivieren." } },
+        "pt-BR": { "stringUnit": { "state": "translated", "value": "Conta do iCloud não encontrada. Inicie sessão para ativar a sincronização." } },
+        "ru": { "stringUnit": { "state": "translated", "value": "Учетная запись iCloud не найдена. Пожалуйста, войдите в систему, чтобы включить синхронизацию." } }
+      }
+    },
+    "iCloud access is restricted on this machine.": {
+      "localizations": {
+        "en": { "stringUnit": { "state": "translated", "value": "iCloud access is restricted on this machine." } },
+        "es": { "stringUnit": { "state": "translated", "value": "El acceso a iCloud está restringido en este equipo." } },
+        "zh-Hans": { "stringUnit": { "state": "translated", "value": "此电脑上的 iCloud 访问受到限制。" } },
+        "zh-Hant": { "stringUnit": { "state": "translated", "value": "此電腦上的 iCloud 存取受到限制。" } },
+        "ja": { "stringUnit": { "state": "translated", "value": "このマシンではiCloudへのアクセスが制限されています。" } },
+        "ko": { "stringUnit": { "state": "translated", "value": "이 컴퓨터에서는 iCloud 접근이 제한됩니다." } },
+        "fr": { "stringUnit": { "state": "translated", "value": "L'accès à iCloud est restreint sur cette machine." } },
+        "de": { "stringUnit": { "state": "translated", "value": "Der iCloud-Zugriff ist auf diesem Computer eingeschränkt." } },
+        "pt-BR": { "stringUnit": { "state": "translated", "value": "O acesso ao iCloud está restrito nesta máquina." } },
+        "ru": { "stringUnit": { "state": "translated", "value": "Доступ к iCloud ограничен на этом компьютере." } }
+      }
+    },
+    "Could not determine iCloud account status.": {
+      "localizations": {
+        "en": { "stringUnit": { "state": "translated", "value": "Could not determine iCloud account status." } },
+        "es": { "stringUnit": { "state": "translated", "value": "No se pudo determinar el estado de la cuenta de iCloud." } },
+        "zh-Hans": { "stringUnit": { "state": "translated", "value": "无法确定 iCloud 帐户状态。" } },
+        "zh-Hant": { "stringUnit": { "state": "translated", "value": "無法確定 iCloud 帳號狀態。" } },
+        "ja": { "stringUnit": { "state": "translated", "value": "iCloudアカウントのステータスを特定できませんでした。" } },
+        "ko": { "stringUnit": { "state": "translated", "value": "iCloud 계정 상태를 확인할 수 없습니다." } },
+        "fr": { "stringUnit": { "state": "translated", "value": "Impossible de déterminer l’état du compte iCloud." } },
+        "de": { "stringUnit": { "state": "translated", "value": "iCloud-Account-Status konnte nicht ermittelt werden." } },
+        "pt-BR": { "stringUnit": { "state": "translated", "value": "Não foi possível determinar o status da conta do iCloud." } },
+        "ru": { "stringUnit": { "state": "translated", "value": "Не удалось определить статус учетной записи iCloud." } }
+      }
+    },
+    "Error checking iCloud status: %@": {
+      "localizations": {
+        "en": { "stringUnit": { "state": "translated", "value": "Error checking iCloud status: %@" } },
+        "es": { "stringUnit": { "state": "translated", "value": "Error al comprobar el estado de iCloud: %@" } },
+        "zh-Hans": { "stringUnit": { "state": "translated", "value": "检查 iCloud 状态时发生错误：%@" } },
+        "zh-Hant": { "stringUnit": { "state": "translated", "value": "檢查 iCloud 狀態時發生錯誤：%@" } },
+        "ja": { "stringUnit": { "state": "translated", "value": "iCloudステータスの確認中にエラーが発生しました: %@" } },
+        "ko": { "stringUnit": { "state": "translated", "value": "iCloud 상태 확인 중 오류 발생: %@" } },
+        "fr": { "stringUnit": { "state": "translated", "value": "Erreur lors de la vérification de l'état d'iCloud : %@" } },
+        "de": { "stringUnit": { "state": "translated", "value": "Fehler beim Überprüfen des iCloud-Status: %@" } },
+        "pt-BR": { "stringUnit": { "state": "translated", "value": "Erro ao verificar o status do iCloud: %@" } },
+        "ru": { "stringUnit": { "state": "translated", "value": "Ошибка при проверке статуса iCloud: %@" } }
+      }
     }
   },
   "version": "1.0"

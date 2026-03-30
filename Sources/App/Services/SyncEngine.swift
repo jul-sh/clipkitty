@@ -1292,11 +1292,13 @@
     private final class CloudKitSyncTransport: SyncCloudTransport {
         private let logger = Logger(subsystem: "com.clipkitty", category: "SyncEngine")
         private let container: CKContainer
-        private let database: CKDatabase
+
+        private var database: CKDatabase {
+            container.privateCloudDatabase
+        }
 
         init(containerIdentifier: String) {
             container = CKContainer(identifier: containerIdentifier)
-            database = container.privateCloudDatabase
         }
 
         func accountStatus() async throws -> CKAccountStatus {
