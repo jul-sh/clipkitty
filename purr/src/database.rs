@@ -47,6 +47,14 @@ impl From<purr_sync::SyncError> for DatabaseError {
 
 const SEARCH_METADATA_PREFIX_CHARS: usize = SNIPPET_CONTEXT_CHARS * 4;
 const BROWSE_METADATA_PREFIX_CHARS: usize = SNIPPET_CONTEXT_CHARS * 8;
+const GENERATED_ITEM_ID_SQL: &str = r#"lower(
+    hex(randomblob(4)) || '-' ||
+    hex(randomblob(2)) || '-4' ||
+    substr(hex(randomblob(2)),2) || '-' ||
+    substr('89ab', abs(random()) % 4 + 1, 1) ||
+    substr(hex(randomblob(2)),2) || '-' ||
+    hex(randomblob(6))
+)"#;
 
 #[derive(Debug, Clone)]
 pub(crate) struct SearchItemMetadata {
@@ -62,6 +70,128 @@ fn parse_db_timestamp(timestamp_str: &str) -> DateTime<Utc> {
         .or_else(|_| chrono::NaiveDateTime::parse_from_str(timestamp_str, "%Y-%m-%d %H:%M:%S"))
         .map(|dt| Utc.from_utc_datetime(&dt))
         .unwrap_or_else(|_| Utc::now())
+}
+
+fn table_column_not_null(
+    conn: &rusqlite::Connection,
+    table: &str,
+    column: &str,
+) -> DatabaseResult<bool> {
+    let pragma = format!("PRAGMA table_info({table})");
+    let mut stmt = conn.prepare(&pragma)?;
+    let mut rows = stmt.query([])?;
+    while let Some(row) = rows.next()? {
+        let name: String = row.get(1)?;
+        if name == column {
+            let not_null: i64 = row.get(3)?;
+            return Ok(not_null != 0);
+        }
+    }
+    Ok(false)
+}
+
+fn repair_item_ids(conn: &rusqlite::Connection) -> DatabaseResult<()> {
+    let sql = format!(
+        r#"
+        WITH duplicate_rows AS (
+            SELECT id
+            FROM (
+                SELECT
+                    id,
+                    item_id,
+                    ROW_NUMBER() OVER (PARTITION BY item_id ORDER BY id) AS ordinal
+                FROM items
+                WHERE item_id IS NOT NULL AND item_id != ''
+            )
+            WHERE ordinal > 1
+        )
+        UPDATE items
+        SET item_id = {GENERATED_ITEM_ID_SQL}
+        WHERE item_id IS NULL
+           OR item_id = ''
+           OR id IN (SELECT id FROM duplicate_rows);
+        "#
+    );
+    conn.execute_batch(&sql)?;
+    Ok(())
+}
+
+fn enforce_non_null_item_ids(conn: &rusqlite::Connection) -> DatabaseResult<()> {
+    if table_column_not_null(conn, "items", "item_id")? {
+        return Ok(());
+    }
+
+    conn.execute_batch("PRAGMA foreign_keys=OFF;")?;
+
+    let migration_result = (|| -> DatabaseResult<()> {
+        let tx = conn.unchecked_transaction()?;
+        let sql = format!(
+            r#"
+            CREATE TABLE items_new (
+                id INTEGER PRIMARY KEY AUTOINCREMENT,
+                item_id TEXT NOT NULL,
+                contentType TEXT NOT NULL,
+                contentHash TEXT NOT NULL,
+                content TEXT NOT NULL,
+                timestamp TEXT NOT NULL,
+                sourceApp TEXT,
+                sourceAppBundleId TEXT,
+                thumbnail BLOB,
+                colorRgba INTEGER
+            );
+
+            INSERT INTO items_new (
+                id,
+                item_id,
+                contentType,
+                contentHash,
+                content,
+                timestamp,
+                sourceApp,
+                sourceAppBundleId,
+                thumbnail,
+                colorRgba
+            )
+            SELECT
+                id,
+                COALESCE(NULLIF(item_id, ''), {GENERATED_ITEM_ID_SQL}),
+                contentType,
+                contentHash,
+                content,
+                timestamp,
+                sourceApp,
+                sourceAppBundleId,
+                thumbnail,
+                colorRgba
+            FROM items;
+
+            DROP TABLE items;
+            ALTER TABLE items_new RENAME TO items;
+
+            CREATE INDEX IF NOT EXISTS idx_items_hash ON items(contentHash);
+            CREATE INDEX IF NOT EXISTS idx_items_timestamp ON items(timestamp);
+            CREATE INDEX IF NOT EXISTS idx_items_content_prefix ON items(content COLLATE NOCASE);
+            "#
+        );
+        tx.execute_batch(&sql)?;
+        tx.commit()?;
+        Ok(())
+    })();
+
+    let restore_result = conn.execute_batch("PRAGMA foreign_keys=ON;");
+    restore_result?;
+    migration_result?;
+
+    let mut stmt = conn.prepare("PRAGMA foreign_key_check")?;
+    let mut rows = stmt.query([])?;
+    if let Some(row) = rows.next()? {
+        let table: String = row.get(0)?;
+        return Err(DatabaseError::InconsistentData(format!(
+            "foreign key violation after items migration in table `{table}`"
+        )));
+    }
+
+    Ok(())
 }
 
 /// Thread-safe database wrapper using connection pooling
@@ -134,7 +264,7 @@ impl Database {
             r#"
             CREATE TABLE IF NOT EXISTS items (
                 id INTEGER PRIMARY KEY AUTOINCREMENT,
-                item_id TEXT,
+                item_id TEXT NOT NULL,
                 contentType TEXT NOT NULL,
                 contentHash TEXT NOT NULL,
                 content TEXT NOT NULL,
@@ -200,18 +330,9 @@ impl Database {
         // Migration: Add item_id column to existing items tables
         let _ = conn.execute("ALTER TABLE items ADD COLUMN item_id TEXT", []);
 
-        // Backfill NULL item_ids with generated UUIDs
-        conn.execute(
-            r#"UPDATE items SET item_id = lower(
-                hex(randomblob(4)) || '-' ||
-                hex(randomblob(2)) || '-4' ||
-                substr(hex(randomblob(2)),2) || '-' ||
-                substr('89ab', abs(random()) % 4 + 1, 1) ||
-                substr(hex(randomblob(2)),2) || '-' ||
-                hex(randomblob(6))
-            ) WHERE item_id IS NULL"#,
-            [],
-        )?;
+        // Repair missing / duplicate logical IDs before enforcing storage invariants.
+        repair_item_ids(&conn)?;
+        enforce_non_null_item_ids(&conn)?;
 
         // Unique index on item_id
         conn.execute(
@@ -1228,19 +1349,17 @@ impl Database {
             ClipboardContent::File { display_name, .. } => {
                 let display_name = display_name.clone();
                 let mut stmt = conn.prepare(
-                    "SELECT id, path, filename, fileSize, uti, bookmarkData, fileStatus FROM file_items WHERE itemId = ?1 ORDER BY ordinal"
+                    "SELECT path, filename, fileSize, uti, bookmarkData, fileStatus FROM file_items WHERE itemId = ?1 ORDER BY ordinal"
                 )?;
                 let files: Vec<FileEntry> = stmt
                     .query_map([item_id], |row| {
-                        let file_item_id: i64 = row.get(0)?;
-                        let path: String = row.get(1)?;
-                        let filename: String = row.get(2)?;
-                        let file_size: i64 = row.get(3)?;
-                        let uti: String = row.get(4)?;
-                        let bookmark_data: Vec<u8> = row.get(5)?;
-                        let file_status_str: String = row.get(6)?;
+                        let path: String = row.get(0)?;
+                        let filename: String = row.get(1)?;
+                        let file_size: i64 = row.get(2)?;
+                        let uti: String = row.get(3)?;
+                        let bookmark_data: Vec<u8> = row.get(4)?;
+                        let file_status_str: String = row.get(5)?;
                         Ok(FileEntry {
-                            file_item_id,
                             path,
                             filename,
                             file_size: file_size as u64,
@@ -1332,6 +1451,7 @@ unsafe impl Sync for Database {}
 #[cfg(test)]
 mod tests {
     use super::*;
+    use tempfile::NamedTempFile;
 
     fn seed_base_item(
         db: &Database,
@@ -1410,5 +1530,123 @@ mod tests {
             items[0].snippet,
             generate_preview(&content, SNIPPET_CONTEXT_CHARS * 2)
         );
+    }
+
+    #[test]
+    fn test_new_schema_requires_non_null_item_id() {
+        let db = Database::open_in_memory().unwrap();
+        let conn = db.get_conn().unwrap();
+        assert!(table_column_not_null(&conn, "items", "item_id").unwrap());
+    }
+
+    #[test]
+    fn test_legacy_items_table_without_item_id_is_migrated() {
+        let temp = NamedTempFile::new().unwrap();
+        {
+            let conn = rusqlite::Connection::open(temp.path()).unwrap();
+            conn.execute_batch(
+                r#"
+                PRAGMA foreign_keys=ON;
+                CREATE TABLE items (
+                    id INTEGER PRIMARY KEY AUTOINCREMENT,
+                    contentType TEXT NOT NULL,
+                    contentHash TEXT NOT NULL,
+                    content TEXT NOT NULL,
+                    timestamp TEXT NOT NULL,
+                    sourceApp TEXT,
+                    sourceAppBundleId TEXT,
+                    thumbnail BLOB,
+                    colorRgba INTEGER
+                );
+                CREATE TABLE text_items (
+                    itemId INTEGER PRIMARY KEY REFERENCES items(id) ON DELETE CASCADE,
+                    value TEXT NOT NULL
+                );
+                INSERT INTO items (id, contentType, contentHash, content, timestamp)
+                VALUES (1, 'text', 'hash-text-legacy', 'legacy text', '2026-01-01 00:00:00');
+                INSERT INTO text_items (itemId, value) VALUES (1, 'legacy text');
+                "#,
+            )
+            .unwrap();
+        }
+
+        let db = Database::open(temp.path()).unwrap();
+        let conn = db.get_conn().unwrap();
+        assert!(table_column_not_null(&conn, "items", "item_id").unwrap());
+
+        let item_ids: Vec<String> = {
+            let mut stmt = conn.prepare("SELECT item_id FROM items ORDER BY id").unwrap();
+            stmt.query_map([], |row| row.get(0))
+                .unwrap()
+                .collect::<Result<Vec<_>, _>>()
+                .unwrap()
+        };
+        drop(conn);
+
+        assert_eq!(item_ids.len(), 1);
+        assert!(!item_ids[0].is_empty());
+        let items = db.fetch_items_by_item_ids(&item_ids).unwrap();
+        assert_eq!(items.len(), 1);
+        assert_eq!(items[0].content.text_content(), "legacy text");
+    }
+
+    #[test]
+    fn test_nullable_and_duplicate_item_ids_are_repaired() {
+        let temp = NamedTempFile::new().unwrap();
+        {
+            let conn = rusqlite::Connection::open(temp.path()).unwrap();
+            conn.execute_batch(
+                r#"
+                PRAGMA foreign_keys=ON;
+                CREATE TABLE items (
+                    id INTEGER PRIMARY KEY AUTOINCREMENT,
+                    item_id TEXT,
+                    contentType TEXT NOT NULL,
+                    contentHash TEXT NOT NULL,
+                    content TEXT NOT NULL,
+                    timestamp TEXT NOT NULL,
+                    sourceApp TEXT,
+                    sourceAppBundleId TEXT,
+                    thumbnail BLOB,
+                    colorRgba INTEGER
+                );
+                CREATE TABLE text_items (
+                    itemId INTEGER PRIMARY KEY REFERENCES items(id) ON DELETE CASCADE,
+                    value TEXT NOT NULL
+                );
+                INSERT INTO items (id, item_id, contentType, contentHash, content, timestamp)
+                VALUES
+                    (1, 'duplicate-id', 'text', 'hash-1', 'first', '2026-01-01 00:00:00'),
+                    (2, 'duplicate-id', 'text', 'hash-2', 'second', '2026-01-01 00:00:01'),
+                    (3, NULL, 'text', 'hash-3', 'third', '2026-01-01 00:00:02');
+                INSERT INTO text_items (itemId, value)
+                VALUES (1, 'first'), (2, 'second'), (3, 'third');
+                "#,
+            )
+            .unwrap();
+        }
+
+        let db = Database::open(temp.path()).unwrap();
+        let conn = db.get_conn().unwrap();
+        assert!(table_column_not_null(&conn, "items", "item_id").unwrap());
+
+        let item_ids: Vec<String> = {
+            let mut stmt = conn.prepare("SELECT item_id FROM items ORDER BY id").unwrap();
+            stmt.query_map([], |row| row.get(0))
+                .unwrap()
+                .collect::<Result<Vec<_>, _>>()
+                .unwrap()
+        };
+        drop(conn);
+
+        assert_eq!(item_ids.len(), 3);
+        assert_eq!(
+            item_ids.iter().cloned().collect::<std::collections::HashSet<_>>().len(),
+            3
+        );
+        assert!(item_ids.iter().all(|item_id| !item_id.is_empty()));
+
+        let items = db.fetch_items_by_item_ids(&item_ids).unwrap();
+        assert_eq!(items.len(), 3);
     }
 }

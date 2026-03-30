@@ -295,10 +295,8 @@ impl LinkMetadataState {
 }
 
 /// A single file entry within a file clipboard item.
-/// Each file gets its own row in `file_items` with an independent ID for status tracking.
 #[derive(Debug, Clone, PartialEq, uniffi::Record)]
 pub struct FileEntry {
-    pub file_item_id: i64,
     pub path: String,
     pub filename: String,
     pub file_size: u64,

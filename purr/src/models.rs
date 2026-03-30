@@ -166,10 +166,8 @@ impl StoredItem {
 
         let display_name = format!("{} {}", type_prefix, items_summary);
 
-        // Build FileEntry vec (file_item_id=0 since not yet inserted)
         let files: Vec<FileEntry> = (0..file_count)
             .map(|i| FileEntry {
-                file_item_id: 0,
                 path: paths[i].clone(),
                 filename: filenames[i].clone(),
                 file_size: file_sizes[i],

@@ -170,7 +170,6 @@ pub(crate) fn stored_item_from_snapshot(
                 .iter()
                 .map(|f| {
                     Ok(FileEntry {
-                        file_item_id: 0,
                         path: f.path.clone(),
                         filename: f.filename.clone(),
                         file_size: f.file_size,
