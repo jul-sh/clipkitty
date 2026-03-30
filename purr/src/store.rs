@@ -235,7 +235,6 @@ impl ClipboardStore {
 
         operation
     }
-
 }
 
 #[uniffi::export]
@@ -465,13 +464,8 @@ impl ClipboardStoreApi for ClipboardStore {
             // DB write, we must emit after to get the resolved fields.
         }
         #[allow(unused_variables)]
-        let resolved = save_service::update_link_metadata(
-            &self.db,
-            item_id,
-            title,
-            description,
-            image_data,
-        )?;
+        let resolved =
+            save_service::update_link_metadata(&self.db, item_id, title, description, image_data)?;
         #[cfg(feature = "sync")]
         {
             let snapshot = crate::sync_bridge::link_metadata_snapshot(&resolved);
@@ -508,8 +502,7 @@ impl ClipboardStoreApi for ClipboardStore {
         self.sync_emitter.emit_text_edited(item_id, &text)?;
 
         #[allow(unused_variables)]
-        let reindex =
-            save_service::update_text_item(&self.db, &self.indexer, item_id, text)?;
+        let reindex = save_service::update_text_item(&self.db, &self.indexer, item_id, text)?;
 
         #[cfg(feature = "sync")]
         if matches!(reindex, save_service::ReindexOutcome::IndexFailed) {
@@ -562,8 +555,7 @@ impl ClipboardStoreApi for ClipboardStore {
     }
 
     fn prune_to_size(&self, max_bytes: i64, keep_ratio: f64) -> Result<u64, ClipKittyError> {
-        let outcome =
-            save_service::prune_to_size(&self.db, &self.indexer, max_bytes, keep_ratio)?;
+        let outcome = save_service::prune_to_size(&self.db, &self.indexer, max_bytes, keep_ratio)?;
 
         #[cfg(feature = "sync")]
         for id in &outcome.deleted_ids {
@@ -584,51 +576,58 @@ impl ClipboardStore {
     ///
     /// For Live aggregates: upsert into items table (insert if new, update if exists).
     /// For Tombstoned aggregates: delete from items table.
+    /// Returns the current local row ID when the item remains live.
     fn materialize_aggregate(
         &self,
         global_item_id: &str,
         aggregate: &purr_sync::types::ItemAggregate,
         index_dirty: bool,
-    ) -> Result<(), ClipKittyError> {
+        fallback_local_item_id: Option<i64>,
+    ) -> Result<Option<i64>, ClipKittyError> {
         use crate::sync_bridge::stored_item_from_snapshot;
-        use purr_sync::store::SyncStore;
+        use purr_sync::store::{ProjectionState, SyncStore};
         use purr_sync::types::ItemAggregate;
 
         let sync = SyncStore::new(self.db.pool());
         let proj = sync.fetch_projection(global_item_id)?;
+        let local_item_id = match proj.map(|entry| entry.state) {
+            Some(ProjectionState::Materialized { local_item_id, .. }) => Some(local_item_id),
+            Some(ProjectionState::PendingMaterialization { .. })
+            | Some(ProjectionState::Tombstoned { .. })
+            | None => fallback_local_item_id,
+        };
 
         match aggregate {
             ItemAggregate::Live(live) => {
                 let item = stored_item_from_snapshot(&live.snapshot)
                     .map_err(ClipKittyError::InvalidInput)?;
 
-                if let Some(ref proj) = proj {
-                    if let Some(local_id) = proj.local_item_id {
-                        // Update existing item: delete old, insert new.
-                        self.db.delete_item(local_id)?;
-                        let new_id = self.db.insert_item(&item)?;
-                        if index_dirty {
-                            let text = item
-                                .file_index_text()
-                                .unwrap_or_else(|| item.text_content().to_string());
-                            let _ = self.indexer.delete_document(local_id);
-                            let _ =
-                                self.indexer
-                                    .add_document(new_id, &text, item.timestamp_unix);
-                            let _ = self.indexer.commit();
-                        }
-                        if live.snapshot.is_bookmarked {
-                            self.db.add_tag(new_id, crate::interface::ItemTag::Bookmark)?;
-                        }
-                        // Re-map projection to the new local ID.
-                        sync.upsert_projection(
-                            global_item_id,
-                            Some(new_id),
-                            &live.versions,
-                            false,
-                        )?;
-                        return Ok(());
+                if let Some(local_id) = local_item_id {
+                    self.db.replace_item_preserving_id(local_id, &item)?;
+                    if index_dirty {
+                        let text = item
+                            .file_index_text()
+                            .unwrap_or_else(|| item.text_content().to_string());
+                        let _ = self
+                            .indexer
+                            .add_document(local_id, &text, item.timestamp_unix);
+                        let _ = self.indexer.commit();
                     }
+                    if live.snapshot.is_bookmarked {
+                        self.db
+                            .add_tag(local_id, crate::interface::ItemTag::Bookmark)?;
+                    } else {
+                        self.db
+                            .remove_tag(local_id, crate::interface::ItemTag::Bookmark)?;
+                    }
+                    sync.upsert_projection(
+                        global_item_id,
+                        &ProjectionState::Materialized {
+                            local_item_id: local_id,
+                            versions: live.versions,
+                        },
+                    )?;
+                    return Ok(Some(local_id));
                 }
 
                 // No existing local item — insert fresh.
@@ -637,34 +636,39 @@ impl ClipboardStore {
                     let text = item
                         .file_index_text()
                         .unwrap_or_else(|| item.text_content().to_string());
-                    let _ = self.indexer.add_document(new_id, &text, item.timestamp_unix);
+                    let _ = self
+                        .indexer
+                        .add_document(new_id, &text, item.timestamp_unix);
                     let _ = self.indexer.commit();
                 }
                 if live.snapshot.is_bookmarked {
-                    self.db.add_tag(new_id, crate::interface::ItemTag::Bookmark)?;
+                    self.db
+                        .add_tag(new_id, crate::interface::ItemTag::Bookmark)?;
                 }
                 sync.upsert_projection(
                     global_item_id,
-                    Some(new_id),
-                    &live.versions,
-                    false,
+                    &ProjectionState::Materialized {
+                        local_item_id: new_id,
+                        versions: live.versions,
+                    },
                 )?;
+                Ok(Some(new_id))
             }
-            ItemAggregate::Tombstoned(_tomb) => {
-                if let Some(ref proj) = proj {
-                    if let Some(local_id) = proj.local_item_id {
-                        let _ = self.indexer.delete_document(local_id);
-                        let _ = self.indexer.commit();
-                        self.db.delete_item(local_id)?;
-                    }
+            ItemAggregate::Tombstoned(tomb) => {
+                if let Some(local_id) = local_item_id {
+                    let _ = self.indexer.delete_document(local_id);
+                    let _ = self.indexer.commit();
+                    self.db.delete_item(local_id)?;
                 }
-                if let purr_sync::types::ItemAggregate::Tombstoned(tomb) = aggregate {
-                    sync.upsert_projection(global_item_id, None, &tomb.versions, true)?;
-                }
+                sync.upsert_projection(
+                    global_item_id,
+                    &ProjectionState::Tombstoned {
+                        versions: tomb.versions,
+                    },
+                )?;
+                Ok(None)
             }
         }
-
-        Ok(())
     }
 }
 
@@ -743,10 +747,7 @@ impl ClipboardStore {
     }
 
     /// Mark a snapshot as uploaded to CloudKit.
-    pub fn mark_snapshot_uploaded(
-        &self,
-        global_item_id: String,
-    ) -> Result<(), ClipKittyError> {
+    pub fn mark_snapshot_uploaded(&self, global_item_id: String) -> Result<(), ClipKittyError> {
         use purr_sync::store::SyncStore;
 
         let sync = SyncStore::new(self.db.pool());
@@ -767,7 +768,36 @@ impl ClipboardStore {
         use purr_sync::event::ItemEvent;
         use purr_sync::replay;
         use purr_sync::snapshot::ItemSnapshot;
-        use purr_sync::store::SyncStore;
+        use purr_sync::store::{ProjectionState, SyncStore};
+        use std::collections::HashMap;
+
+        let sync = SyncStore::new(self.db.pool());
+        let mut known_local_item_ids: HashMap<String, Option<i64>> = HashMap::new();
+        for global_item_id in snapshot_records
+            .iter()
+            .map(|record| record.global_item_id.as_str())
+            .chain(
+                event_records
+                    .iter()
+                    .map(|record| record.global_item_id.as_str()),
+            )
+        {
+            known_local_item_ids
+                .entry(global_item_id.to_string())
+                .or_insert(
+                    match sync
+                        .fetch_projection(global_item_id)?
+                        .map(|entry| entry.state)
+                    {
+                        Some(ProjectionState::Materialized { local_item_id, .. }) => {
+                            Some(local_item_id)
+                        }
+                        Some(ProjectionState::PendingMaterialization { .. })
+                        | Some(ProjectionState::Tombstoned { .. })
+                        | None => None,
+                    },
+                );
+        }
 
         // Apply snapshots first.
         let mut snapshots_applied: usize = 0;
@@ -787,7 +817,13 @@ impl ClipboardStore {
             let aggregate = snapshot.aggregate.clone();
             let applied = replay::apply_remote_snapshots(self.db.pool(), &[snapshot])?;
             if applied > 0 {
-                self.materialize_aggregate(&global_item_id, &aggregate, true)?;
+                let local_item_id = self.materialize_aggregate(
+                    &global_item_id,
+                    &aggregate,
+                    true,
+                    known_local_item_ids.get(&global_item_id).copied().flatten(),
+                )?;
+                known_local_item_ids.insert(global_item_id, local_item_id);
                 snapshots_applied += 1;
             }
         }
@@ -815,17 +851,27 @@ impl ClipboardStore {
         // Re-fetch the applied events' aggregates from the sync store.
         let sync = SyncStore::new(self.db.pool());
         for event_record in &event_records {
-            if sync.fetch_projection(&event_record.global_item_id)?.is_some() {
+            if sync
+                .fetch_projection(&event_record.global_item_id)?
+                .is_some()
+            {
                 if let Some(snapshot) = sync.fetch_snapshot(&event_record.global_item_id)? {
-                    if self
-                        .materialize_aggregate(
-                            &event_record.global_item_id,
-                            &snapshot.aggregate,
-                            true,
-                        )
-                        .is_err()
-                    {
-                        batch_result.materialization_failures += 1;
+                    match self.materialize_aggregate(
+                        &event_record.global_item_id,
+                        &snapshot.aggregate,
+                        true,
+                        known_local_item_ids
+                            .get(&event_record.global_item_id)
+                            .copied()
+                            .flatten(),
+                    ) {
+                        Ok(local_item_id) => {
+                            known_local_item_ids
+                                .insert(event_record.global_item_id.clone(), local_item_id);
+                        }
+                        Err(_) => {
+                            batch_result.materialization_failures += 1;
+                        }
                     }
                 }
             }
@@ -839,7 +885,9 @@ impl ClipboardStore {
             let text = item
                 .file_index_text()
                 .unwrap_or_else(|| item.text_content().to_string());
-            let _ = self.indexer.add_document(new_id, &text, item.timestamp_unix);
+            let _ = self
+                .indexer
+                .add_document(new_id, &text, item.timestamp_unix);
             let _ = self.indexer.commit();
 
             let fork_global_id = uuid::Uuid::new_v4().to_string();
@@ -850,7 +898,13 @@ impl ClipboardStore {
                 touch: 1,
                 metadata: 1,
             };
-            sync.upsert_projection(&fork_global_id, Some(new_id), &versions, false)?;
+            sync.upsert_projection(
+                &fork_global_id,
+                &purr_sync::store::ProjectionState::Materialized {
+                    local_item_id: new_id,
+                    versions,
+                },
+            )?;
         }
 
         // Build the download outcome.
@@ -890,7 +944,7 @@ impl ClipboardStore {
         use crate::sync_bridge::stored_item_from_snapshot;
         use purr_sync::event::ItemEvent;
         use purr_sync::replay;
-        use purr_sync::store::SyncStore;
+        use purr_sync::store::{ProjectionState, SyncStore};
         use purr_sync::types::ApplyResult;
 
         let event = ItemEvent::from_stored(
@@ -904,14 +958,25 @@ impl ClipboardStore {
         )
         .map_err(|e| ClipKittyError::InvalidInput(e))?;
 
+        let sync = SyncStore::new(self.db.pool());
+        let fallback_local_item_id = match sync
+            .fetch_projection(&record.global_item_id)?
+            .map(|entry| entry.state)
+        {
+            Some(ProjectionState::Materialized { local_item_id, .. }) => Some(local_item_id),
+            Some(ProjectionState::PendingMaterialization { .. })
+            | Some(ProjectionState::Tombstoned { .. })
+            | None => None,
+        };
         let result = replay::apply_remote_event(self.db.pool(), &event)?;
 
         match &result {
             ApplyResult::Applied(delta) => {
-                self.materialize_aggregate(
+                let _ = self.materialize_aggregate(
                     &record.global_item_id,
                     &delta.new_aggregate,
                     delta.index_dirty,
+                    fallback_local_item_id,
                 )?;
                 Ok(SyncApplyOutcome::Applied)
             }
@@ -925,7 +990,9 @@ impl ClipboardStore {
                 let text = item
                     .file_index_text()
                     .unwrap_or_else(|| item.text_content().to_string());
-                let _ = self.indexer.add_document(new_id, &text, item.timestamp_unix);
+                let _ = self
+                    .indexer
+                    .add_document(new_id, &text, item.timestamp_unix);
                 let _ = self.indexer.commit();
 
                 // Create a sync projection for the forked item so it can sync.
@@ -938,7 +1005,13 @@ impl ClipboardStore {
                     touch: 1,
                     metadata: 1,
                 };
-                sync.upsert_projection(&fork_global_id, Some(new_id), &versions, false)?;
+                sync.upsert_projection(
+                    &fork_global_id,
+                    &purr_sync::store::ProjectionState::Materialized {
+                        local_item_id: new_id,
+                        versions,
+                    },
+                )?;
 
                 Ok(SyncApplyOutcome::Forked {
                     forked_snapshot_data: serde_json::to_string(&plan.forked_snapshot)
@@ -970,9 +1043,26 @@ impl ClipboardStore {
 
         let global_item_id = snapshot.global_item_id.clone();
         let aggregate = snapshot.aggregate.clone();
+        let sync = purr_sync::store::SyncStore::new(self.db.pool());
+        let fallback_local_item_id = match sync
+            .fetch_projection(&global_item_id)?
+            .map(|entry| entry.state)
+        {
+            Some(purr_sync::store::ProjectionState::Materialized { local_item_id, .. }) => {
+                Some(local_item_id)
+            }
+            Some(purr_sync::store::ProjectionState::PendingMaterialization { .. })
+            | Some(purr_sync::store::ProjectionState::Tombstoned { .. })
+            | None => None,
+        };
         let applied = replay::apply_remote_snapshots(self.db.pool(), &[snapshot])?;
         if applied > 0 {
-            self.materialize_aggregate(&global_item_id, &aggregate, true)?;
+            let _ = self.materialize_aggregate(
+                &global_item_id,
+                &aggregate,
+                true,
+                fallback_local_item_id,
+            )?;
         }
         Ok(applied > 0)
     }
@@ -1026,10 +1116,11 @@ impl ClipboardStore {
 
         // Materialize all snapshots into the read model.
         for snapshot in &snapshots {
-            self.materialize_aggregate(
+            let _ = self.materialize_aggregate(
                 &snapshot.global_item_id,
                 &snapshot.aggregate,
                 true,
+                None,
             )?;
         }
         let _ = self.indexer.commit();
@@ -1092,10 +1183,11 @@ impl ClipboardStore {
         let sync = SyncStore::new(self.db.pool());
         let all_snapshots = sync.fetch_all_snapshots()?;
         for snapshot in &all_snapshots {
-            self.materialize_aggregate(
+            let _ = self.materialize_aggregate(
                 &snapshot.global_item_id,
                 &snapshot.aggregate,
                 true,
+                None,
             )?;
         }
         let _ = self.indexer.commit();
@@ -1145,7 +1237,10 @@ impl ClipboardStore {
 
     /// Fetch event IDs eligible for CloudKit deletion.
     /// Only returns events that are compacted, old, AND covered by an uploaded checkpoint.
-    pub fn purgeable_cloud_event_ids(&self, max_age_days: u32) -> Result<Vec<String>, ClipKittyError> {
+    pub fn purgeable_cloud_event_ids(
+        &self,
+        max_age_days: u32,
+    ) -> Result<Vec<String>, ClipKittyError> {
         use purr_sync::store::SyncStore;
 
         let threshold = chrono::Utc::now().timestamp() - (max_age_days as i64 * 86400);
@@ -1193,9 +1288,7 @@ mod tests {
     #[test]
     fn test_round_trip_save_and_fetch() {
         let store = ClipboardStore::new_in_memory().unwrap();
-        let id = store
-            .save_text("hello world".into(), None, None)
-            .unwrap();
+        let id = store.save_text("hello world".into(), None, None).unwrap();
         assert!(id > 0);
 
         let items = store.fetch_by_ids(vec![id]).unwrap();
@@ -1205,14 +1298,10 @@ mod tests {
     #[test]
     fn test_dedup_returns_zero() {
         let store = ClipboardStore::new_in_memory().unwrap();
-        let id = store
-            .save_text("hello world".into(), None, None)
-            .unwrap();
+        let id = store.save_text("hello world".into(), None, None).unwrap();
         assert!(id > 0);
 
-        let dup = store
-            .save_text("hello world".into(), None, None)
-            .unwrap();
+        let dup = store.save_text("hello world".into(), None, None).unwrap();
         assert_eq!(dup, 0);
     }
 }

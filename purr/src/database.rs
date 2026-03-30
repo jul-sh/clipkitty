@@ -224,13 +224,7 @@ impl Database {
         let conn = self.get_conn()?;
         let tx = conn.unchecked_transaction()?;
 
-        let timestamp = Utc
-            .timestamp_opt(item.timestamp_unix, 0)
-            .single()
-            .unwrap_or_else(Utc::now);
-        let timestamp_str = timestamp.format("%Y-%m-%d %H:%M:%S%.f").to_string();
-        let content_type = item.content.database_type();
-        let content_text = item.content.text_content().to_string();
+        let (timestamp_str, content_type, content_text) = Self::base_item_fields(item);
 
         tx.execute(
             r#"INSERT INTO items (contentType, contentHash, content, timestamp, sourceApp, sourceAppBundleId, thumbnail, colorRgba)
@@ -247,7 +241,75 @@ impl Database {
             ],
         )?;
         let item_id = tx.last_insert_rowid();
+        Self::write_child_rows(&tx, item_id, item)?;
 
+        tx.commit()?;
+        Ok(item_id)
+    }
+
+    /// Replace an existing clipboard item while preserving its local row ID.
+    pub fn replace_item_preserving_id(
+        &self,
+        item_id: i64,
+        item: &StoredItem,
+    ) -> DatabaseResult<()> {
+        let conn = self.get_conn()?;
+        let tx = conn.unchecked_transaction()?;
+        let (timestamp_str, content_type, content_text) = Self::base_item_fields(item);
+
+        tx.execute(
+            r#"UPDATE items
+               SET contentType = ?1,
+                   contentHash = ?2,
+                   content = ?3,
+                   timestamp = ?4,
+                   sourceApp = ?5,
+                   sourceAppBundleId = ?6,
+                   thumbnail = ?7,
+                   colorRgba = ?8
+               WHERE id = ?9"#,
+            params![
+                content_type,
+                item.content_hash,
+                content_text,
+                timestamp_str,
+                item.source_app,
+                item.source_app_bundle_id,
+                item.thumbnail,
+                item.color_rgba,
+                item_id,
+            ],
+        )?;
+
+        tx.execute("DELETE FROM text_items WHERE itemId = ?1", params![item_id])?;
+        tx.execute(
+            "DELETE FROM image_items WHERE itemId = ?1",
+            params![item_id],
+        )?;
+        tx.execute("DELETE FROM link_items WHERE itemId = ?1", params![item_id])?;
+        tx.execute("DELETE FROM file_items WHERE itemId = ?1", params![item_id])?;
+        Self::write_child_rows(&tx, item_id, item)?;
+
+        tx.commit()?;
+        Ok(())
+    }
+
+    fn base_item_fields(item: &StoredItem) -> (String, String, String) {
+        let timestamp = Utc
+            .timestamp_opt(item.timestamp_unix, 0)
+            .single()
+            .unwrap_or_else(Utc::now);
+        let timestamp_str = timestamp.format("%Y-%m-%d %H:%M:%S%.f").to_string();
+        let content_type = item.content.database_type().to_string();
+        let content_text = item.content.text_content().to_string();
+        (timestamp_str, content_type, content_text)
+    }
+
+    fn write_child_rows(
+        tx: &rusqlite::Transaction<'_>,
+        item_id: i64,
+        item: &StoredItem,
+    ) -> DatabaseResult<()> {
         match &item.content {
             ClipboardContent::Text { value } | ClipboardContent::Color { value } => {
                 tx.execute(
@@ -269,14 +331,7 @@ impl Database {
                 url,
                 metadata_state,
             } => {
-                let (title, description, image_data) = metadata_state.to_database_fields();
-                // Store link preview image as items.thumbnail
-                if image_data.is_some() {
-                    tx.execute(
-                        "UPDATE items SET thumbnail = ?1 WHERE id = ?2",
-                        params![image_data, item_id],
-                    )?;
-                }
+                let (title, description, _) = metadata_state.to_database_fields();
                 tx.execute(
                     "INSERT INTO link_items (itemId, url, title, description) VALUES (?1, ?2, ?3, ?4)",
                     params![item_id, url, title, description],
@@ -302,8 +357,7 @@ impl Database {
             }
         }
 
-        tx.commit()?;
-        Ok(item_id)
+        Ok(())
     }
 
     /// Find an existing item by content hash

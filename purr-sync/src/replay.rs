@@ -11,7 +11,7 @@ use crate::error::SyncResult;
 use crate::event::ItemEvent;
 use crate::projector;
 use crate::snapshot::ItemSnapshot;
-use crate::store::SyncStore;
+use crate::store::{ProjectionEntry, ProjectionState, SyncStore};
 use crate::types::{
     ApplyResult, DownloadBatchOutcome, ForkPlan, FullResyncResult, IgnoreReason, ItemAggregate,
     ItemEventPayload, FLAG_NEEDS_FULL_RESYNC, SYNC_SCHEMA_VERSION,
@@ -77,22 +77,12 @@ pub fn apply_remote_snapshots(
             sync.upsert_snapshot(snapshot)?;
 
             // Update projection from snapshot aggregate.
-            let existing_proj = sync.fetch_projection(&snapshot.global_item_id)?;
-            let (versions, local_id, is_tombstoned) = match &snapshot.aggregate {
-                ItemAggregate::Live(live) => (
-                    live.versions,
-                    existing_proj.and_then(|p| p.local_item_id),
-                    false,
-                ),
-                ItemAggregate::Tombstoned(tomb) => (tomb.versions, None, true),
-            };
+            let projection_state = projection_state_for_aggregate(
+                sync.fetch_projection(&snapshot.global_item_id)?,
+                &snapshot.aggregate,
+            );
 
-            sync.upsert_projection(
-                &snapshot.global_item_id,
-                local_id,
-                &versions,
-                is_tombstoned,
-            )?;
+            sync.upsert_projection(&snapshot.global_item_id, &projection_state)?;
 
             applied += 1;
         }
@@ -159,22 +149,12 @@ pub fn apply_remote_event(
             sync.upsert_snapshot(&updated_snap)?;
 
             // Update projection.
-            let existing_proj = sync.fetch_projection(&event.global_item_id)?;
-            let (versions, local_id, is_tombstoned) = match &delta.new_aggregate {
-                ItemAggregate::Live(live) => (
-                    live.versions,
-                    existing_proj.and_then(|p| p.local_item_id),
-                    false,
-                ),
-                ItemAggregate::Tombstoned(tomb) => (tomb.versions, None, true),
-            };
+            let projection_state = projection_state_for_aggregate(
+                sync.fetch_projection(&event.global_item_id)?,
+                &delta.new_aggregate,
+            );
 
-            sync.upsert_projection(
-                &event.global_item_id,
-                local_id,
-                &versions,
-                is_tombstoned,
-            )?;
+            sync.upsert_projection(&event.global_item_id, &projection_state)?;
         }
         ApplyResult::Ignored(_) => {
             // Mark as applied so we don't re-process.
@@ -209,9 +189,7 @@ pub fn apply_remote_event_batch(
             ApplyResult::Deferred(_) => result.events_deferred += 1,
             ApplyResult::Forked(plan) => {
                 result.events_forked += 1;
-                result
-                    .fork_plans
-                    .push((event.global_item_id.clone(), plan));
+                result.fork_plans.push((event.global_item_id.clone(), plan));
             }
         }
     }
@@ -262,21 +240,11 @@ fn retry_deferred_events(
                     );
                     sync.upsert_snapshot(&updated_snap)?;
 
-                    let existing_proj = sync.fetch_projection(&event.global_item_id)?;
-                    let (versions, local_id, is_tombstoned) = match &delta.new_aggregate {
-                        ItemAggregate::Live(live) => (
-                            live.versions,
-                            existing_proj.and_then(|p| p.local_item_id),
-                            false,
-                        ),
-                        ItemAggregate::Tombstoned(tomb) => (tomb.versions, None, true),
-                    };
-                    sync.upsert_projection(
-                        &event.global_item_id,
-                        local_id,
-                        &versions,
-                        is_tombstoned,
-                    )?;
+                    let projection_state = projection_state_for_aggregate(
+                        sync.fetch_projection(&event.global_item_id)?,
+                        &delta.new_aggregate,
+                    );
+                    sync.upsert_projection(&event.global_item_id, &projection_state)?;
 
                     result.events_applied += 1;
                     result.events_deferred = result.events_deferred.saturating_sub(1);
@@ -295,9 +263,7 @@ fn retry_deferred_events(
                     sync.mark_event_applied(&event.event_id)?;
                     result.events_forked += 1;
                     result.events_deferred = result.events_deferred.saturating_sub(1);
-                    result
-                        .fork_plans
-                        .push((event.global_item_id.clone(), plan));
+                    result.fork_plans.push((event.global_item_id.clone(), plan));
                     progress = true;
                 }
                 ApplyResult::Deferred(_) => {
@@ -340,12 +306,16 @@ pub fn full_resync(
     for snapshot in checkpoints {
         sync.upsert_snapshot(snapshot)?;
 
-        let (versions, is_tombstoned) = match &snapshot.aggregate {
-            ItemAggregate::Live(live) => (live.versions, false),
-            ItemAggregate::Tombstoned(tomb) => (tomb.versions, true),
+        let projection_state = match &snapshot.aggregate {
+            ItemAggregate::Live(live) => ProjectionState::PendingMaterialization {
+                versions: live.versions,
+            },
+            ItemAggregate::Tombstoned(tomb) => ProjectionState::Tombstoned {
+                versions: tomb.versions,
+            },
         };
 
-        sync.upsert_projection(&snapshot.global_item_id, None, &versions, is_tombstoned)?;
+        sync.upsert_projection(&snapshot.global_item_id, &projection_state)?;
 
         result.checkpoints_applied += 1;
     }
@@ -395,10 +365,7 @@ pub fn full_resync_from_snapshots(
 }
 
 /// Load the current aggregate for an item from the projection and snapshot.
-fn load_aggregate(
-    sync: &SyncStore<'_>,
-    global_item_id: &str,
-) -> SyncResult<Option<ItemAggregate>> {
+fn load_aggregate(sync: &SyncStore<'_>, global_item_id: &str) -> SyncResult<Option<ItemAggregate>> {
     // First check projection for version info.
     let projection = sync.fetch_projection(global_item_id)?;
     if projection.is_none() {
@@ -410,4 +377,28 @@ fn load_aggregate(
     // Projection exists — use snapshot as authoritative aggregate.
     let snapshot = sync.fetch_snapshot(global_item_id)?;
     Ok(snapshot.map(|s| s.aggregate))
+}
+
+fn projection_state_for_aggregate(
+    existing_projection: Option<ProjectionEntry>,
+    aggregate: &ItemAggregate,
+) -> ProjectionState {
+    match aggregate {
+        ItemAggregate::Live(live) => match existing_projection.map(|entry| entry.state) {
+            Some(ProjectionState::Materialized { local_item_id, .. }) => {
+                ProjectionState::Materialized {
+                    local_item_id,
+                    versions: live.versions,
+                }
+            }
+            Some(ProjectionState::PendingMaterialization { .. })
+            | Some(ProjectionState::Tombstoned { .. })
+            | None => ProjectionState::PendingMaterialization {
+                versions: live.versions,
+            },
+        },
+        ItemAggregate::Tombstoned(tomb) => ProjectionState::Tombstoned {
+            versions: tomb.versions,
+        },
+    }
 }

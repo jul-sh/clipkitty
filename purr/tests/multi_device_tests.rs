@@ -5,10 +5,10 @@
 
 use purr_sync::event::ItemEvent;
 use purr_sync::replay;
-use purr_sync::store::SyncStore;
+use purr_sync::store::{ProjectionEntry, ProjectionState, SyncStore};
 use purr_sync::types::{
-    ApplyResult, DeferredReason, IgnoreReason, ItemEventPayload, ItemSnapshotData,
-    TypeSpecificData,
+    ApplyResult, DeferredReason, IgnoreReason, ItemEventPayload, ItemSnapshotData, TypeSpecificData,
+    VersionVector,
 };
 
 use purr::database::Database;
@@ -80,6 +80,28 @@ fn text_snapshot(text: &str) -> ItemSnapshotData {
     }
 }
 
+fn assert_projection_pending(entry: &ProjectionEntry) -> VersionVector {
+    match &entry.state {
+        ProjectionState::PendingMaterialization { versions } => *versions,
+        ProjectionState::Materialized { .. } => {
+            panic!("expected pending projection, got materialized")
+        }
+        ProjectionState::Tombstoned { .. } => panic!("expected pending projection, got tombstoned"),
+    }
+}
+
+fn assert_projection_tombstoned(entry: &ProjectionEntry) {
+    match entry.state {
+        ProjectionState::Tombstoned { .. } => {}
+        ProjectionState::PendingMaterialization { .. } => {
+            panic!("expected tombstoned projection, got pending materialization")
+        }
+        ProjectionState::Materialized { .. } => {
+            panic!("expected tombstoned projection, got materialized")
+        }
+    }
+}
+
 // ═══════════════════════════════════════════════════════════════════════════════
 // Multi-device tests
 // ═══════════════════════════════════════════════════════════════════════════════
@@ -118,8 +140,8 @@ fn test_two_devices_create_and_sync() {
         .unwrap();
     assert!(proj.is_some());
     let proj = proj.unwrap();
-    assert!(!proj.is_tombstoned);
-    assert_eq!(proj.versions.existence, 1);
+    let versions = assert_projection_pending(&proj);
+    assert_eq!(versions.existence, 1);
 }
 
 #[test]
@@ -278,7 +300,7 @@ fn test_delete_on_one_device_tombstones_on_other() {
     // Verify tombstone on B.
     let sync_b = device_b.sync_store();
     let proj = sync_b.fetch_projection("item-del").unwrap().unwrap();
-    assert!(proj.is_tombstoned);
+    assert_projection_tombstoned(&proj);
 }
 
 #[test]
@@ -323,8 +345,9 @@ fn test_bookmark_and_edit_apply_independently() {
     // Verify both changes applied.
     let sync_a = device_a.sync_store();
     let proj = sync_a.fetch_projection("item-indep").unwrap().unwrap();
-    assert_eq!(proj.versions.bookmark, 1); // bookmark bumped
-    assert_eq!(proj.versions.content, 2); // content bumped
+    let versions = assert_projection_pending(&proj);
+    assert_eq!(versions.bookmark, 1); // bookmark bumped
+    assert_eq!(versions.content, 2); // content bumped
 }
 
 #[test]

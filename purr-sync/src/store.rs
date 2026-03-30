@@ -70,10 +70,7 @@ impl<'a> SyncStore<'a> {
     }
 
     /// Fetch uncompacted events for a given item, ordered by recorded_at.
-    pub fn fetch_uncompacted_events(
-        &self,
-        global_item_id: &str,
-    ) -> SyncResult<Vec<ItemEvent>> {
+    pub fn fetch_uncompacted_events(&self, global_item_id: &str) -> SyncResult<Vec<ItemEvent>> {
         let conn = self.get_conn()?;
         let mut stmt = conn.prepare(
             r#"SELECT event_id, global_item_id, origin_device_id, schema_version,
@@ -147,8 +144,10 @@ impl<'a> SyncStore<'a> {
             "UPDATE sync_events SET uploaded = 1 WHERE event_id IN ({})",
             placeholders.join(", ")
         );
-        let params: Vec<&dyn rusqlite::ToSql> =
-            event_ids.iter().map(|id| id as &dyn rusqlite::ToSql).collect();
+        let params: Vec<&dyn rusqlite::ToSql> = event_ids
+            .iter()
+            .map(|id| id as &dyn rusqlite::ToSql)
+            .collect();
         conn.execute(&sql, params.as_slice())?;
         Ok(())
     }
@@ -164,8 +163,10 @@ impl<'a> SyncStore<'a> {
             "UPDATE sync_events SET compacted = 1 WHERE event_id IN ({})",
             placeholders.join(", ")
         );
-        let params: Vec<&dyn rusqlite::ToSql> =
-            event_ids.iter().map(|id| id as &dyn rusqlite::ToSql).collect();
+        let params: Vec<&dyn rusqlite::ToSql> = event_ids
+            .iter()
+            .map(|id| id as &dyn rusqlite::ToSql)
+            .collect();
         conn.execute(&sql, params.as_slice())?;
         Ok(())
     }
@@ -203,10 +204,7 @@ impl<'a> SyncStore<'a> {
     }
 
     /// Get the oldest uncompacted event timestamp for an item.
-    pub fn oldest_uncompacted_event_time(
-        &self,
-        global_item_id: &str,
-    ) -> SyncResult<Option<i64>> {
+    pub fn oldest_uncompacted_event_time(&self, global_item_id: &str) -> SyncResult<Option<i64>> {
         let conn = self.get_conn()?;
         let result = conn.query_row(
             "SELECT MIN(recorded_at) FROM sync_events WHERE global_item_id = ?1 AND compacted = 0",
@@ -219,9 +217,8 @@ impl<'a> SyncStore<'a> {
     /// Fetch all global_item_ids that have uncompacted events.
     pub fn items_with_uncompacted_events(&self) -> SyncResult<Vec<String>> {
         let conn = self.get_conn()?;
-        let mut stmt = conn.prepare(
-            "SELECT DISTINCT global_item_id FROM sync_events WHERE compacted = 0",
-        )?;
+        let mut stmt =
+            conn.prepare("SELECT DISTINCT global_item_id FROM sync_events WHERE compacted = 0")?;
         let ids = stmt
             .query_map([], |row| row.get(0))?
             .collect::<Result<Vec<String>, _>>()?;
@@ -279,9 +276,16 @@ impl<'a> SyncStore<'a> {
         );
         match result {
             Ok((gid, rev, schema, covers, agg, uploaded, uploaded_at)) => {
-                let snap =
-                    ItemSnapshot::from_stored(gid, rev, schema, covers, &agg, uploaded, uploaded_at)
-                        .map_err(SyncError::InconsistentData)?;
+                let snap = ItemSnapshot::from_stored(
+                    gid,
+                    rev,
+                    schema,
+                    covers,
+                    &agg,
+                    uploaded,
+                    uploaded_at,
+                )
+                .map_err(SyncError::InconsistentData)?;
                 Ok(Some(snap))
             }
             Err(rusqlite::Error::QueryReturnedNoRows) => Ok(None),
@@ -433,14 +437,20 @@ impl<'a> SyncStore<'a> {
 
     // ── Projection ───────────────────────────────────────────────────────
 
-    /// Upsert a projection entry mapping global → local item id + versions.
+    /// Upsert a projection entry mapping global IDs into an explicit materialization state.
     pub fn upsert_projection(
         &self,
         global_item_id: &str,
-        local_item_id: Option<i64>,
-        versions: &VersionVector,
-        is_tombstoned: bool,
+        state: &ProjectionState,
     ) -> SyncResult<()> {
+        let (local_item_id, versions, is_tombstoned) = match state {
+            ProjectionState::PendingMaterialization { versions } => (None, versions, false),
+            ProjectionState::Materialized {
+                local_item_id,
+                versions,
+            } => (Some(*local_item_id), versions, false),
+            ProjectionState::Tombstoned { versions } => (None, versions, true),
+        };
         let conn = self.get_conn()?;
         conn.execute(
             r#"INSERT INTO sync_projection
@@ -470,10 +480,7 @@ impl<'a> SyncStore<'a> {
     }
 
     /// Fetch the projection entry for a global item.
-    pub fn fetch_projection(
-        &self,
-        global_item_id: &str,
-    ) -> SyncResult<Option<ProjectionEntry>> {
+    pub fn fetch_projection(&self, global_item_id: &str) -> SyncResult<Option<ProjectionEntry>> {
         let conn = self.get_conn()?;
         let result = conn.query_row(
             r#"SELECT global_item_id, local_item_id, content_version, bookmark_version,
@@ -481,17 +488,28 @@ impl<'a> SyncStore<'a> {
                FROM sync_projection WHERE global_item_id = ?1"#,
             params![global_item_id],
             |row| {
+                let versions = VersionVector {
+                    content: row.get::<_, i64>(2)? as u64,
+                    bookmark: row.get::<_, i64>(3)? as u64,
+                    existence: row.get::<_, i64>(4)? as u64,
+                    touch: row.get::<_, i64>(5)? as u64,
+                    metadata: row.get::<_, i64>(6)? as u64,
+                };
+                let local_item_id: Option<i64> = row.get(1)?;
+                let is_tombstoned = row.get::<_, i32>(7)? != 0;
+                let state = if is_tombstoned {
+                    ProjectionState::Tombstoned { versions }
+                } else if let Some(local_item_id) = local_item_id {
+                    ProjectionState::Materialized {
+                        local_item_id,
+                        versions,
+                    }
+                } else {
+                    ProjectionState::PendingMaterialization { versions }
+                };
                 Ok(ProjectionEntry {
                     global_item_id: row.get(0)?,
-                    local_item_id: row.get(1)?,
-                    versions: VersionVector {
-                        content: row.get::<_, i64>(2)? as u64,
-                        bookmark: row.get::<_, i64>(3)? as u64,
-                        existence: row.get::<_, i64>(4)? as u64,
-                        touch: row.get::<_, i64>(5)? as u64,
-                        metadata: row.get::<_, i64>(6)? as u64,
-                    },
-                    is_tombstoned: row.get::<_, i32>(7)? != 0,
+                    state,
                 })
             },
         );
@@ -537,11 +555,7 @@ impl<'a> SyncStore<'a> {
     // ── Deferred Events ──────────────────────────────────────────────────
 
     /// Store a deferred event.
-    pub fn defer_event(
-        &self,
-        event: &ItemEvent,
-        reason: &DeferredReason,
-    ) -> SyncResult<()> {
+    pub fn defer_event(&self, event: &ItemEvent, reason: &DeferredReason) -> SyncResult<()> {
         let reason_str = match reason {
             DeferredReason::MissingItem => "missing_item".to_string(),
             DeferredReason::FutureVersion {
@@ -657,11 +671,10 @@ impl<'a> SyncStore<'a> {
     /// Count deferred events (to detect if we're stuck).
     pub fn count_deferred_events(&self) -> SyncResult<usize> {
         let conn = self.get_conn()?;
-        let count: i64 = conn.query_row(
-            "SELECT COUNT(*) FROM sync_deferred_events",
-            [],
-            |row| row.get(0),
-        )?;
+        let count: i64 =
+            conn.query_row("SELECT COUNT(*) FROM sync_deferred_events", [], |row| {
+                row.get(0)
+            })?;
         Ok(count as usize)
     }
 
@@ -718,10 +731,7 @@ impl<'a> SyncStore<'a> {
     }
 
     /// Fetch the zone change token for a device.
-    pub fn fetch_zone_change_token(
-        &self,
-        device_id: &str,
-    ) -> SyncResult<Option<Vec<u8>>> {
+    pub fn fetch_zone_change_token(&self, device_id: &str) -> SyncResult<Option<Vec<u8>>> {
         let conn = self.get_conn()?;
         let result = conn.query_row(
             "SELECT last_zone_change_token FROM sync_device_state WHERE device_id = ?1",
@@ -783,10 +793,7 @@ impl<'a> SyncStore<'a> {
 
     /// Fetch event IDs that are compacted, uploaded, and older than the given threshold.
     /// These are safe to delete from CloudKit since they've been superseded by snapshots.
-    pub fn fetch_purgeable_cloud_event_ids(
-        &self,
-        older_than_unix: i64,
-    ) -> SyncResult<Vec<String>> {
+    pub fn fetch_purgeable_cloud_event_ids(&self, older_than_unix: i64) -> SyncResult<Vec<String>> {
         let conn = self.get_conn()?;
         let mut stmt = conn.prepare(
             r#"SELECT event_id FROM sync_events
@@ -809,8 +816,10 @@ impl<'a> SyncStore<'a> {
             "DELETE FROM sync_events WHERE event_id IN ({})",
             placeholders.join(", ")
         );
-        let params: Vec<&dyn rusqlite::ToSql> =
-            event_ids.iter().map(|id| id as &dyn rusqlite::ToSql).collect();
+        let params: Vec<&dyn rusqlite::ToSql> = event_ids
+            .iter()
+            .map(|id| id as &dyn rusqlite::ToSql)
+            .collect();
         let count = conn.execute(&sql, params.as_slice())?;
         Ok(count)
     }
@@ -836,7 +845,20 @@ impl<'a> SyncStore<'a> {
 #[derive(Debug, Clone, PartialEq)]
 pub struct ProjectionEntry {
     pub global_item_id: String,
-    pub local_item_id: Option<i64>,
-    pub versions: VersionVector,
-    pub is_tombstoned: bool,
+    pub state: ProjectionState,
+}
+
+/// The sync projection's materialization state at the domain boundary.
+#[derive(Debug, Clone, PartialEq)]
+pub enum ProjectionState {
+    PendingMaterialization {
+        versions: VersionVector,
+    },
+    Materialized {
+        local_item_id: i64,
+        versions: VersionVector,
+    },
+    Tombstoned {
+        versions: VersionVector,
+    },
 }
