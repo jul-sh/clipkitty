@@ -14,21 +14,23 @@ pub(crate) enum InsertOutcome {
     /// A duplicate was found; the existing item was touched.
     Deduplicated {
         existing_id: i64,
+        item_id: String,
         touched_at_unix: i64,
     },
     /// A new item was inserted.
     Inserted {
         new_id: i64,
+        item_id: String,
         item: StoredItem,
     },
 }
 
 impl InsertOutcome {
-    /// Return the FFI-facing id (0 for dedupe, positive for new).
-    pub(crate) fn ffi_id(&self) -> i64 {
+    /// Return the FFI-facing item_id (empty string for dedupe, stable item_id for new).
+    pub(crate) fn ffi_id(&self) -> String {
         match self {
-            InsertOutcome::Deduplicated { .. } => 0,
-            InsertOutcome::Inserted { new_id, .. } => *new_id,
+            InsertOutcome::Deduplicated { .. } => String::new(),
+            InsertOutcome::Inserted { item_id, .. } => item_id.clone(),
         }
     }
 }
@@ -52,7 +54,7 @@ pub(crate) struct ResolvedLinkMetadata {
 /// Outcome of a prune operation.
 #[allow(dead_code)]
 pub(crate) struct PruneOutcome {
-    pub deleted_ids: Vec<i64>,
+    pub deleted_ids: Vec<String>,
     pub bytes_freed: u64,
 }
 
@@ -200,7 +202,7 @@ pub(crate) fn update_image_description(
     db.update_image_description(item_id, &description)?;
     if let Some(item) = get_stored_item(db, item_id)? {
         if indexer
-            .add_document(item_id, &description, item.timestamp_unix)
+            .add_document(&item.item_id, &description, item.timestamp_unix)
             .is_err()
         {
             return Ok(ReindexOutcome::IndexFailed);
@@ -221,7 +223,7 @@ pub(crate) fn update_text_item(
     db.update_text_item(item_id, &text, &content_hash)?;
     if let Some(item) = get_stored_item(db, item_id)? {
         if indexer
-            .add_document(item_id, &text, item.timestamp_unix)
+            .add_document(&item.item_id, &text, item.timestamp_unix)
             .is_err()
         {
             return Ok(ReindexOutcome::IndexFailed);
@@ -231,29 +233,18 @@ pub(crate) fn update_text_item(
     Ok(ReindexOutcome::Indexed)
 }
 
-pub(crate) fn update_timestamp(
-    db: &Database,
-    item_id: i64,
-) -> Result<i64, ClipKittyError> {
+pub(crate) fn update_timestamp(db: &Database, item_id: i64) -> Result<i64, ClipKittyError> {
     let now = Utc::now();
     db.update_timestamp(item_id, now)?;
     Ok(now.timestamp())
 }
 
-pub(crate) fn add_tag(
-    db: &Database,
-    item_id: i64,
-    tag: ItemTag,
-) -> Result<(), ClipKittyError> {
+pub(crate) fn add_tag(db: &Database, item_id: i64, tag: ItemTag) -> Result<(), ClipKittyError> {
     db.add_tag(item_id, tag)?;
     Ok(())
 }
 
-pub(crate) fn remove_tag(
-    db: &Database,
-    item_id: i64,
-    tag: ItemTag,
-) -> Result<(), ClipKittyError> {
+pub(crate) fn remove_tag(db: &Database, item_id: i64, tag: ItemTag) -> Result<(), ClipKittyError> {
     db.remove_tag(item_id, tag)?;
     Ok(())
 }
@@ -263,16 +254,18 @@ pub(crate) fn delete_item(
     indexer: &Indexer,
     item_id: i64,
 ) -> Result<(), ClipKittyError> {
+    // Fetch the string item_id before deleting from DB (needed for index deletion).
+    let string_item_id = get_stored_item(db, item_id)?
+        .map(|item| item.item_id);
     db.delete_item(item_id)?;
-    indexer.delete_document(item_id)?;
-    indexer.commit()?;
+    if let Some(sid) = string_item_id {
+        indexer.delete_document(&sid)?;
+        indexer.commit()?;
+    }
     Ok(())
 }
 
-pub(crate) fn clear(
-    db: &Database,
-    indexer: &Indexer,
-) -> Result<(), ClipKittyError> {
+pub(crate) fn clear(db: &Database, indexer: &Indexer) -> Result<(), ClipKittyError> {
     db.clear_all()?;
     indexer.clear()?;
     Ok(())
@@ -284,14 +277,15 @@ pub(crate) fn prune_to_size(
     max_bytes: i64,
     keep_ratio: f64,
 ) -> Result<PruneOutcome, ClipKittyError> {
-    let deleted_ids = db.get_prunable_ids(max_bytes, keep_ratio)?;
+    let prunable = db.get_prunable_ids(max_bytes, keep_ratio)?;
 
-    for id in &deleted_ids {
-        indexer.delete_document(*id)?;
+    for (_row_id, item_id) in &prunable {
+        indexer.delete_document(item_id)?;
     }
-    if !deleted_ids.is_empty() {
+    if !prunable.is_empty() {
         indexer.commit()?;
     }
+    let deleted_ids: Vec<String> = prunable.into_iter().map(|(_, item_id)| item_id).collect();
     let bytes_freed = db.prune_to_size(max_bytes, keep_ratio)? as u64;
     Ok(PruneOutcome {
         deleted_ids,
@@ -312,22 +306,28 @@ fn dedupe_or_insert_and_index(
         if let Some(id) = existing.id {
             let now = Utc::now();
             db.update_timestamp(id, now)?;
-            indexer.add_document(id, &index_text(&existing), now.timestamp())?;
+            indexer.add_document(&existing.item_id, &index_text(&existing), now.timestamp())?;
             indexer.commit()?;
 
             return Ok(InsertOutcome::Deduplicated {
                 existing_id: id,
+                item_id: existing.item_id.clone(),
                 touched_at_unix: now.timestamp(),
             });
         }
     }
 
     let index_text = index_text(&item);
+    let stable_item_id = item.item_id.clone();
     let id = db.insert_item(&item)?;
-    indexer.add_document(id, &index_text, item.timestamp_unix)?;
+    indexer.add_document(&item.item_id, &index_text, item.timestamp_unix)?;
     indexer.commit()?;
 
-    Ok(InsertOutcome::Inserted { new_id: id, item })
+    Ok(InsertOutcome::Inserted {
+        new_id: id,
+        item_id: stable_item_id,
+        item,
+    })
 }
 
 fn get_stored_item(db: &Database, item_id: i64) -> Result<Option<StoredItem>, ClipKittyError> {

@@ -119,6 +119,7 @@ fn base64_decode(s: &str) -> Result<Vec<u8>, String> {
 /// Reconstruct a StoredItem from an ItemSnapshotData (reverse of snapshot_from_stored_item).
 /// Used to materialize remote sync changes into the local items table.
 pub(crate) fn stored_item_from_snapshot(
+    item_id: String,
     snapshot: &purr_sync::types::ItemSnapshotData,
 ) -> Result<crate::models::StoredItem, String> {
     use crate::interface::{ClipboardContent, FileEntry, FileStatus, LinkMetadataState};
@@ -195,6 +196,7 @@ pub(crate) fn stored_item_from_snapshot(
 
     Ok(crate::models::StoredItem {
         id: None,
+        item_id,
         content,
         content_hash: snapshot.content_hash.clone(),
         timestamp_unix: snapshot.timestamp_unix,
@@ -212,36 +214,37 @@ pub(crate) fn stored_item_from_snapshot(
 /// Trait for emitting sync events from mutation operations.
 ///
 /// Implementations handle projection lookup, event construction, and persistence.
+/// All methods take `item_id: &str` — the stable string item ID from the items table.
 pub(crate) trait SyncEmitter: Send + Sync {
     fn emit_item_created(
         &self,
-        local_item_id: i64,
+        item_id: &str,
         snapshot: ItemSnapshotData,
     ) -> Result<(), ClipKittyError>;
 
     fn emit_item_touched(
         &self,
-        local_item_id: i64,
+        item_id: &str,
         timestamp_unix: i64,
     ) -> Result<(), ClipKittyError>;
 
-    fn emit_text_edited(&self, local_item_id: i64, new_text: &str) -> Result<(), ClipKittyError>;
+    fn emit_text_edited(&self, item_id: &str, new_text: &str) -> Result<(), ClipKittyError>;
 
-    fn emit_bookmark_set(&self, local_item_id: i64) -> Result<(), ClipKittyError>;
+    fn emit_bookmark_set(&self, item_id: &str) -> Result<(), ClipKittyError>;
 
-    fn emit_bookmark_cleared(&self, local_item_id: i64) -> Result<(), ClipKittyError>;
+    fn emit_bookmark_cleared(&self, item_id: &str) -> Result<(), ClipKittyError>;
 
-    fn emit_item_deleted(&self, local_item_id: i64) -> Result<(), ClipKittyError>;
+    fn emit_item_deleted(&self, item_id: &str) -> Result<(), ClipKittyError>;
 
     fn emit_link_metadata_updated(
         &self,
-        local_item_id: i64,
+        item_id: &str,
         metadata: LinkMetadataSnapshot,
     ) -> Result<(), ClipKittyError>;
 
     fn emit_image_description_updated(
         &self,
-        local_item_id: i64,
+        item_id: &str,
         description: &str,
     ) -> Result<(), ClipKittyError>;
 
@@ -279,12 +282,11 @@ impl RealSyncEmitter {
 
     fn append_local_event_and_advance(
         &self,
-        local_item_id: Option<i64>,
         event: &ItemEvent,
     ) -> Result<(), ClipKittyError> {
         let sync = self.sync_store();
         let current_aggregate = sync
-            .fetch_snapshot(&event.global_item_id)?
+            .fetch_snapshot(&event.item_id)?
             .map(|s| s.aggregate);
 
         match projector::apply_event(current_aggregate.as_ref(), &event.payload) {
@@ -292,8 +294,7 @@ impl RealSyncEmitter {
                 sync.append_local_event(event)?;
                 self.persist_local_aggregate(
                     &sync,
-                    &event.global_item_id,
-                    local_item_id,
+                    &event.item_id,
                     &delta.new_aggregate,
                     &event.event_id,
                 )
@@ -317,41 +318,35 @@ impl RealSyncEmitter {
     fn persist_local_aggregate(
         &self,
         sync: &SyncStore<'_>,
-        global_item_id: &str,
-        local_item_id: Option<i64>,
+        item_id: &str,
         aggregate: &ItemAggregate,
         event_id: &str,
     ) -> Result<(), ClipKittyError> {
-        let existing_snapshot = sync.fetch_snapshot(global_item_id)?;
+        let existing_snapshot = sync.fetch_snapshot(item_id)?;
         let previous_revision = existing_snapshot
             .as_ref()
             .map(|snapshot| snapshot.snapshot_revision)
             .unwrap_or(0);
         let snapshot = ItemSnapshot::compacted(
-            global_item_id.to_string(),
+            item_id.to_string(),
             previous_revision,
             event_id.to_string(),
             aggregate.clone(),
         );
         sync.upsert_snapshot(&snapshot)?;
 
-        let existing_projection = sync.fetch_projection(global_item_id)?;
+        let existing_projection = sync.fetch_projection(item_id)?;
         let projection_state = match aggregate {
             ItemAggregate::Live(live) => {
-                match (local_item_id, existing_projection.map(|entry| entry.state)) {
-                    (Some(local_item_id), _) => ProjectionState::Materialized {
-                        local_item_id,
-                        versions: live.versions,
-                    },
-                    (None, Some(ProjectionState::Materialized { local_item_id, .. })) => {
+                match existing_projection.map(|entry| entry.state) {
+                    Some(ProjectionState::Materialized { .. }) => {
                         ProjectionState::Materialized {
-                            local_item_id,
                             versions: live.versions,
                         }
                     }
-                    (None, Some(ProjectionState::PendingMaterialization { .. }))
-                    | (None, Some(ProjectionState::Tombstoned { .. }))
-                    | (None, None) => ProjectionState::PendingMaterialization {
+                    Some(ProjectionState::PendingMaterialization { .. })
+                    | Some(ProjectionState::Tombstoned { .. })
+                    | None => ProjectionState::Materialized {
                         versions: live.versions,
                     },
                 }
@@ -361,25 +356,25 @@ impl RealSyncEmitter {
             },
         };
 
-        sync.upsert_projection(global_item_id, &projection_state)?;
+        sync.upsert_projection(item_id, &projection_state)?;
         Ok(())
     }
 
     fn materialized_projection_versions(
         &self,
         sync: &SyncStore<'_>,
-        global_item_id: &str,
+        item_id: &str,
     ) -> Result<Option<purr_sync::types::VersionVector>, ClipKittyError> {
-        let projection = sync.fetch_projection(global_item_id)?;
+        let projection = sync.fetch_projection(item_id)?;
         match projection.map(|entry| entry.state) {
             Some(ProjectionState::Materialized { versions, .. }) => Ok(Some(versions)),
             Some(ProjectionState::PendingMaterialization { .. }) => {
                 Err(ClipKittyError::DataInconsistency(format!(
-                    "global item `{global_item_id}` is pending materialization for a local mutation"
+                    "global item `{item_id}` is pending materialization for a local mutation"
                 )))
             }
             Some(ProjectionState::Tombstoned { .. }) => Err(ClipKittyError::DataInconsistency(
-                format!("global item `{global_item_id}` is tombstoned for a local mutation"),
+                format!("global item `{item_id}` is tombstoned for a local mutation"),
             )),
             None => Ok(None),
         }
@@ -389,149 +384,134 @@ impl RealSyncEmitter {
 impl SyncEmitter for RealSyncEmitter {
     fn emit_item_created(
         &self,
-        local_item_id: i64,
+        item_id: &str,
         snapshot: ItemSnapshotData,
     ) -> Result<(), ClipKittyError> {
-        let global_item_id = uuid::Uuid::new_v4().to_string();
         let event = ItemEvent::new_local(
-            global_item_id.clone(),
+            item_id.to_string(),
             &self.local_device_id(),
             ItemEventPayload::ItemCreated { snapshot },
         );
-        self.append_local_event_and_advance(Some(local_item_id), &event)
+        self.append_local_event_and_advance(&event)
     }
 
     fn emit_item_touched(
         &self,
-        local_item_id: i64,
+        item_id: &str,
         timestamp_unix: i64,
     ) -> Result<(), ClipKittyError> {
         let sync = self.sync_store();
-        if let Some(global_id) = sync.global_id_for_local(local_item_id)? {
-            if let Some(versions) = self.materialized_projection_versions(&sync, &global_id)? {
-                let event = ItemEvent::new_local(
-                    global_id,
-                    &self.local_device_id(),
-                    ItemEventPayload::ItemTouched {
-                        new_last_used_at_unix: timestamp_unix,
-                        base_touch_version: versions.touch,
-                    },
-                );
-                self.append_local_event_and_advance(Some(local_item_id), &event)?;
-            }
+        if let Some(versions) = self.materialized_projection_versions(&sync, item_id)? {
+            let event = ItemEvent::new_local(
+                item_id.to_string(),
+                &self.local_device_id(),
+                ItemEventPayload::ItemTouched {
+                    new_last_used_at_unix: timestamp_unix,
+                    base_touch_version: versions.touch,
+                },
+            );
+            self.append_local_event_and_advance(&event)?;
         }
         Ok(())
     }
 
-    fn emit_text_edited(&self, local_item_id: i64, new_text: &str) -> Result<(), ClipKittyError> {
+    fn emit_text_edited(&self, item_id: &str, new_text: &str) -> Result<(), ClipKittyError> {
         let sync = self.sync_store();
-        if let Some(global_id) = sync.global_id_for_local(local_item_id)? {
-            if let Some(versions) = self.materialized_projection_versions(&sync, &global_id)? {
-                let event = ItemEvent::new_local(
-                    global_id,
-                    &self.local_device_id(),
-                    ItemEventPayload::TextEdited {
-                        new_text: new_text.to_string(),
-                        base_content_version: versions.content,
-                    },
-                );
-                self.append_local_event_and_advance(Some(local_item_id), &event)?;
-            }
+        if let Some(versions) = self.materialized_projection_versions(&sync, item_id)? {
+            let event = ItemEvent::new_local(
+                item_id.to_string(),
+                &self.local_device_id(),
+                ItemEventPayload::TextEdited {
+                    new_text: new_text.to_string(),
+                    base_content_version: versions.content,
+                },
+            );
+            self.append_local_event_and_advance(&event)?;
         }
         Ok(())
     }
 
-    fn emit_bookmark_set(&self, local_item_id: i64) -> Result<(), ClipKittyError> {
+    fn emit_bookmark_set(&self, item_id: &str) -> Result<(), ClipKittyError> {
         let sync = self.sync_store();
-        if let Some(global_id) = sync.global_id_for_local(local_item_id)? {
-            if let Some(versions) = self.materialized_projection_versions(&sync, &global_id)? {
-                let event = ItemEvent::new_local(
-                    global_id,
-                    &self.local_device_id(),
-                    ItemEventPayload::BookmarkSet {
-                        base_bookmark_version: versions.bookmark,
-                    },
-                );
-                self.append_local_event_and_advance(Some(local_item_id), &event)?;
-            }
+        if let Some(versions) = self.materialized_projection_versions(&sync, item_id)? {
+            let event = ItemEvent::new_local(
+                item_id.to_string(),
+                &self.local_device_id(),
+                ItemEventPayload::BookmarkSet {
+                    base_bookmark_version: versions.bookmark,
+                },
+            );
+            self.append_local_event_and_advance(&event)?;
         }
         Ok(())
     }
 
-    fn emit_bookmark_cleared(&self, local_item_id: i64) -> Result<(), ClipKittyError> {
+    fn emit_bookmark_cleared(&self, item_id: &str) -> Result<(), ClipKittyError> {
         let sync = self.sync_store();
-        if let Some(global_id) = sync.global_id_for_local(local_item_id)? {
-            if let Some(versions) = self.materialized_projection_versions(&sync, &global_id)? {
-                let event = ItemEvent::new_local(
-                    global_id,
-                    &self.local_device_id(),
-                    ItemEventPayload::BookmarkCleared {
-                        base_bookmark_version: versions.bookmark,
-                    },
-                );
-                self.append_local_event_and_advance(Some(local_item_id), &event)?;
-            }
+        if let Some(versions) = self.materialized_projection_versions(&sync, item_id)? {
+            let event = ItemEvent::new_local(
+                item_id.to_string(),
+                &self.local_device_id(),
+                ItemEventPayload::BookmarkCleared {
+                    base_bookmark_version: versions.bookmark,
+                },
+            );
+            self.append_local_event_and_advance(&event)?;
         }
         Ok(())
     }
 
-    fn emit_item_deleted(&self, local_item_id: i64) -> Result<(), ClipKittyError> {
+    fn emit_item_deleted(&self, item_id: &str) -> Result<(), ClipKittyError> {
         let sync = self.sync_store();
-        if let Some(global_id) = sync.global_id_for_local(local_item_id)? {
-            if let Some(versions) = self.materialized_projection_versions(&sync, &global_id)? {
-                let event = ItemEvent::new_local(
-                    global_id,
-                    &self.local_device_id(),
-                    ItemEventPayload::ItemDeleted {
-                        base_existence_version: versions.existence,
-                    },
-                );
-                self.append_local_event_and_advance(None, &event)?;
-            }
+        if let Some(versions) = self.materialized_projection_versions(&sync, item_id)? {
+            let event = ItemEvent::new_local(
+                item_id.to_string(),
+                &self.local_device_id(),
+                ItemEventPayload::ItemDeleted {
+                    base_existence_version: versions.existence,
+                },
+            );
+            self.append_local_event_and_advance(&event)?;
         }
         Ok(())
     }
 
     fn emit_link_metadata_updated(
         &self,
-        local_item_id: i64,
+        item_id: &str,
         metadata: LinkMetadataSnapshot,
     ) -> Result<(), ClipKittyError> {
         let sync = self.sync_store();
-        if let Some(global_id) = sync.global_id_for_local(local_item_id)? {
-            if let Some(versions) = self.materialized_projection_versions(&sync, &global_id)? {
-                let event = ItemEvent::new_local(
-                    global_id,
-                    &self.local_device_id(),
-                    ItemEventPayload::LinkMetadataUpdated {
-                        metadata,
-                        base_metadata_version: versions.metadata,
-                    },
-                );
-                self.append_local_event_and_advance(Some(local_item_id), &event)?;
-            }
+        if let Some(versions) = self.materialized_projection_versions(&sync, item_id)? {
+            let event = ItemEvent::new_local(
+                item_id.to_string(),
+                &self.local_device_id(),
+                ItemEventPayload::LinkMetadataUpdated {
+                    metadata,
+                    base_metadata_version: versions.metadata,
+                },
+            );
+            self.append_local_event_and_advance(&event)?;
         }
         Ok(())
     }
 
     fn emit_image_description_updated(
         &self,
-        local_item_id: i64,
+        item_id: &str,
         description: &str,
     ) -> Result<(), ClipKittyError> {
         let sync = self.sync_store();
-        if let Some(global_id) = sync.global_id_for_local(local_item_id)? {
-            if let Some(versions) = self.materialized_projection_versions(&sync, &global_id)? {
-                let event = ItemEvent::new_local(
-                    global_id,
-                    &self.local_device_id(),
-                    ItemEventPayload::ImageDescriptionUpdated {
-                        description: description.to_string(),
-                        base_content_version: versions.content,
-                    },
-                );
-                self.append_local_event_and_advance(Some(local_item_id), &event)?;
-            }
+        if let Some(versions) = self.materialized_projection_versions(&sync, item_id)? {
+            let event = ItemEvent::new_local(
+                item_id.to_string(),
+                &self.local_device_id(),
+                ItemEventPayload::ImageDescriptionUpdated {
+                    description: description.to_string(),
+                    base_content_version: versions.content,
+                },
+            );
+            self.append_local_event_and_advance(&event)?;
         }
         Ok(())
     }

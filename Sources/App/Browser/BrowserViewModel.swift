@@ -10,8 +10,8 @@ private let poi = OSLog(subsystem: "com.eviljuliette.clipkitty", category: .poin
 @Observable
 final class BrowserViewModel {
     private let client: BrowserStoreClient
-    private let onSelect: (Int64, ClipboardContent) -> Void
-    private let onCopyOnly: (Int64, ClipboardContent) -> Void
+    private let onSelect: (String, ClipboardContent) -> Void
+    private let onCopyOnly: (String, ClipboardContent) -> Void
     private let onDismiss: () -> Void
     private let showSnackbarNotification: (NotificationKind, (() -> Void)?) -> Void
     private let dismissSnackbarNotification: () -> Void
@@ -84,19 +84,19 @@ final class BrowserViewModel {
     private(set) var overlayState: OverlayState = .none
     private(set) var mutationState: MutationState = .idle
     private(set) var editState: EditState = .init()
-    private(set) var rowDecorationsByItemId: [Int64: RowDecoration] = [:]
-    private var previewPayloadsByItemId: [Int64: PreviewPayload] = [:]
+    private(set) var rowDecorationsByItemId: [String: RowDecoration] = [:]
+    private var previewPayloadsByItemId: [String: PreviewPayload] = [:]
     private(set) var hasUserNavigated = false
-    private(set) var prefetchCache: [Int64: ClipboardItem] = [:]
+    private(set) var prefetchCache: [String: ClipboardItem] = [:]
     private(set) var previewSpinnerVisible = false
-    private(set) var itemIds: [Int64] = []
+    private(set) var itemIds: [String] = []
     private(set) var displayRows: [DisplayRow] = []
-    private var itemIndexById: [Int64: Int] = [:]
+    private var itemIndexById: [String: Int] = [:]
 
     init(
         client: BrowserStoreClient,
-        onSelect: @escaping (Int64, ClipboardContent) -> Void,
-        onCopyOnly: @escaping (Int64, ClipboardContent) -> Void,
+        onSelect: @escaping (String, ClipboardContent) -> Void,
+        onCopyOnly: @escaping (String, ClipboardContent) -> Void,
         onDismiss: @escaping () -> Void,
         showSnackbarNotification: @escaping (NotificationKind, (() -> Void)?) -> Void = { _, _ in },
         dismissSnackbarNotification: @escaping () -> Void = {}
@@ -133,7 +133,7 @@ final class BrowserViewModel {
         contentState.isSearchSpinnerVisible
     }
 
-    func indexOfItem(_ itemId: Int64?) -> Int? {
+    func indexOfItem(_ itemId: String?) -> Int? {
         guard let itemId else { return nil }
         return itemIndexById[itemId]
     }
@@ -142,7 +142,7 @@ final class BrowserViewModel {
         selectionState
     }
 
-    var selectedItemId: Int64? {
+    var selectedItemId: String? {
         selection.itemId
     }
 
@@ -182,7 +182,7 @@ final class BrowserViewModel {
         editState.focus
     }
 
-    var pendingEdits: [Int64: String] {
+    var pendingEdits: [String: String] {
         editState.pendingEdits
     }
 
@@ -299,9 +299,9 @@ final class BrowserViewModel {
         select(itemId: itemId, origin: .user)
     }
 
-    func select(itemId: Int64, origin: SelectionOrigin) {
+    func select(itemId: String, origin: SelectionOrigin) {
         let signpostID = OSSignpostID(log: poi)
-        os_signpost(.begin, log: poi, name: "select", signpostID: signpostID, "itemId=%lld origin=%{public}s", itemId, String(describing: origin))
+        os_signpost(.begin, log: poi, name: "select", signpostID: signpostID, "itemId=%{public}s origin=%{public}s", itemId, String(describing: origin))
         defer { os_signpost(.end, log: poi, name: "select", signpostID: signpostID) }
 
         if case let .focused(focusedId) = editState.focus, focusedId != itemId {
@@ -321,7 +321,7 @@ final class BrowserViewModel {
         onSelect(item.itemMetadata.itemId, content)
     }
 
-    func confirmItem(itemId: Int64) {
+    func confirmItem(itemId: String) {
         performItemAction(itemId: itemId, handler: onSelect)
     }
 
@@ -332,11 +332,11 @@ final class BrowserViewModel {
         onCopyOnly(item.itemMetadata.itemId, content)
     }
 
-    func copyOnlyItem(itemId: Int64) {
+    func copyOnlyItem(itemId: String) {
         performItemAction(itemId: itemId, handler: onCopyOnly)
     }
 
-    func loadRowDecorationsForItems(_ ids: [Int64]) {
+    func loadRowDecorationsForItems(_ ids: [String]) {
         guard displayedContent != nil else { return }
         let request = contentState.request
         guard !request.text.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty else { return }
@@ -348,7 +348,7 @@ final class BrowserViewModel {
         guard !itemIdsNeedingDecoration.isEmpty else { return }
 
         let generation = queryGeneration
-        let key = "\(generation)|\(request.text)|\(itemIdsNeedingDecoration.map(String.init).joined(separator: ","))"
+        let key = "\(generation)|\(request.text)|\(itemIdsNeedingDecoration.joined(separator: ","))"
         guard rowDecorationTasks[key] == nil else { return }
 
         rowDecorationTasks[key] = Task { [weak self] in
@@ -362,7 +362,7 @@ final class BrowserViewModel {
                     return
                 }
 
-                var updates: [Int64: RowDecoration] = [:]
+                var updates: [String: RowDecoration] = [:]
                 for result in results {
                     guard let decoration = result.decoration else { continue }
                     guard self.indexOfItem(result.itemId) != nil else { continue }
@@ -382,7 +382,7 @@ final class BrowserViewModel {
         deleteItem(itemId: itemId)
     }
 
-    func deleteItem(itemId: Int64) {
+    func deleteItem(itemId: String) {
         // Accumulate into existing pending delete batch
         if case var .deleting(.pending(prev)) = mutationState {
             pendingDeleteTask?.cancel()
@@ -478,11 +478,11 @@ final class BrowserViewModel {
         mutateItemTag(itemId: itemId, tag: tag, shouldInclude: false)
     }
 
-    func addTag(_ tag: ItemTag, toItem itemId: Int64) {
+    func addTag(_ tag: ItemTag, toItem itemId: String) {
         mutateItemTag(itemId: itemId, tag: tag, shouldInclude: true)
     }
 
-    func removeTag(_ tag: ItemTag, fromItem itemId: Int64) {
+    func removeTag(_ tag: ItemTag, fromItem itemId: String) {
         mutateItemTag(itemId: itemId, tag: tag, shouldInclude: false)
     }
 
@@ -493,7 +493,7 @@ final class BrowserViewModel {
         return item.content
     }
 
-    func onTextEdit(_ newText: String, for itemId: Int64, originalText: String) {
+    func onTextEdit(_ newText: String, for itemId: String, originalText: String) {
         if newText == originalText {
             editState.pendingEdits.removeValue(forKey: itemId)
         } else {
@@ -501,7 +501,7 @@ final class BrowserViewModel {
         }
     }
 
-    func onEditingStateChange(_ isEditing: Bool, for itemId: Int64) {
+    func onEditingStateChange(_ isEditing: Bool, for itemId: String) {
         if isEditing {
             editState.focus = .focused(itemId: itemId)
         } else if case let .focused(id) = editState.focus, id == itemId {
@@ -568,8 +568,8 @@ final class BrowserViewModel {
 
     enum PreviewInteractionMode: Equatable {
         case browsing
-        case previewing(itemId: Int64)
-        case editing(itemId: Int64)
+        case previewing(itemId: String)
+        case editing(itemId: String)
     }
 
     var previewInteractionMode: PreviewInteractionMode {
@@ -593,13 +593,13 @@ final class BrowserViewModel {
         return editState.focus == .focused(itemId: id) || editState.pendingEdits[id] != nil
     }
 
-    func hasPendingEdit(for itemId: Int64) -> Bool {
+    func hasPendingEdit(for itemId: String) -> Bool {
         editState.pendingEdits[itemId] != nil
     }
 
     func performAction(
         _ action: BrowserActionItem,
-        itemId: Int64,
+        itemId: String,
         dismissOverlay: () -> Void
     ) {
         switch action {
@@ -793,7 +793,7 @@ final class BrowserViewModel {
     }
 
     private func refreshSelection(
-        itemId: Int64,
+        itemId: String,
         origin: SelectionOrigin,
         response: BrowserSearchResponse,
         previousSelectedItemState: SelectedItemState?
@@ -868,9 +868,9 @@ final class BrowserViewModel {
         loadSelectedItem(itemId: itemId, origin: origin)
     }
 
-    private func loadSelectedItem(itemId: Int64, origin: SelectionOrigin) {
+    private func loadSelectedItem(itemId: String, origin: SelectionOrigin) {
         let signpostID = OSSignpostID(log: poi)
-        os_signpost(.begin, log: poi, name: "loadSelectedItem", signpostID: signpostID, "itemId=%lld", itemId)
+        os_signpost(.begin, log: poi, name: "loadSelectedItem", signpostID: signpostID, "itemId=%{public}s", itemId)
         defer { os_signpost(.end, log: poi, name: "loadSelectedItem", signpostID: signpostID) }
 
         previewTask?.cancel()
@@ -1004,7 +1004,7 @@ final class BrowserViewModel {
     }
 
     private func loadPreviewDecoration(
-        itemId: Int64,
+        itemId: String,
         origin: SelectionOrigin,
         request: SearchRequest,
         generation: Int
@@ -1106,7 +1106,7 @@ final class BrowserViewModel {
 
     private let prefetchRadius = 5
 
-    private func prefetchAdjacentItems(around itemId: Int64) {
+    private func prefetchAdjacentItems(around itemId: String) {
         guard let currentIndex = indexOfItem(itemId) else { return }
         let start = max(0, currentIndex - prefetchRadius)
         let end = min(itemIds.count - 1, currentIndex + prefetchRadius)
@@ -1140,7 +1140,7 @@ final class BrowserViewModel {
         )
     }
 
-    private func schedulePreviewSpinner(for generation: Int, itemId: Int64) {
+    private func schedulePreviewSpinner(for generation: Int, itemId: String) {
         previewSpinnerVisible = false
         Task { [weak self] in
             try? await Task.sleep(for: .milliseconds(150))
@@ -1157,7 +1157,7 @@ final class BrowserViewModel {
         }
     }
 
-    private func applyOptimisticDelete(itemId: Int64) {
+    private func applyOptimisticDelete(itemId: String) {
         guard let response = currentResponse else { return }
         let filteredItems = response.items.filter { $0.itemMetadata.itemId != itemId }
         rowDecorationsByItemId.removeValue(forKey: itemId)
@@ -1252,7 +1252,7 @@ final class BrowserViewModel {
         clearInactiveEdits()
     }
 
-    private func nextSelectionAfterDelete(deleting _: Int64) -> Int64? {
+    private func nextSelectionAfterDelete(deleting _: String) -> String? {
         guard let currentIndex = selectedIndex else { return nil }
         if currentIndex + 1 < itemCount {
             return itemIdentifier(at: currentIndex + 1)
@@ -1287,7 +1287,7 @@ final class BrowserViewModel {
         }
     }
 
-    private func responseHidingDeletedItems(_ response: BrowserSearchResponse, deletedItemIds: [Int64]) -> BrowserSearchResponse {
+    private func responseHidingDeletedItems(_ response: BrowserSearchResponse, deletedItemIds: [String]) -> BrowserSearchResponse {
         let idSet = Set(deletedItemIds)
         let filteredItems = response.items.filter { !idSet.contains($0.itemMetadata.itemId) }
         guard filteredItems.count < response.items.count else { return response }
@@ -1305,12 +1305,16 @@ final class BrowserViewModel {
         )
     }
 
-    private func mutateItemTag(itemId: Int64, tag: ItemTag, shouldInclude: Bool) {
-        let snapshot = contentState
-
+    private func mutateItemTag(itemId: String, tag: ItemTag, shouldInclude: Bool) {
         pendingTagSettleTask?.cancel()
         pendingTagSettleTask = nil
-        let transaction = TagMutationTransaction(itemId: itemId, tag: tag, shouldInclude: shouldInclude)
+        let transaction = TagMutationTransaction(
+            itemId: itemId,
+            tag: tag,
+            shouldInclude: shouldInclude,
+            snapshot: contentState,
+            selectionSnapshot: selectionState
+        )
         mutationState = .tagging(.pending(transaction))
         applyOptimisticTagMutation(itemId: itemId, tag: tag, shouldInclude: shouldInclude)
 
@@ -1338,14 +1342,14 @@ final class BrowserViewModel {
                 case let .failure(error):
                     self.pendingTagSettleTask?.cancel()
                     self.pendingTagSettleTask = nil
-                    self.restoreSnapshot(snapshot, selection: nil)
+                    self.restoreSnapshot(transaction.snapshot, selection: transaction.selectionSnapshot)
                     self.mutationState = .failed(ActionFailure(message: error.localizedDescription))
                 }
             }
         }
     }
 
-    private func applyOptimisticTagMutation(itemId: Int64, tag: ItemTag, shouldInclude: Bool) {
+    private func applyOptimisticTagMutation(itemId: String, tag: ItemTag, shouldInclude: Bool) {
         guard let response = currentResponse else { return }
         let updatedResponse = responseApplyingTagMutation(
             response,
@@ -1389,7 +1393,7 @@ final class BrowserViewModel {
         clearInactiveEdits()
     }
 
-    private func scheduleTagMutationSettleFallback(itemId: Int64, tag: ItemTag, shouldInclude: Bool) {
+    private func scheduleTagMutationSettleFallback(itemId: String, tag: ItemTag, shouldInclude: Bool) {
         pendingTagSettleTask?.cancel()
         pendingTagSettleTask = Task { [weak self] in
             try? await Task.sleep(for: .milliseconds(300))
@@ -1410,7 +1414,7 @@ final class BrowserViewModel {
 
     private func responseApplyingTagMutation(
         _ response: BrowserSearchResponse,
-        itemId: Int64,
+        itemId: String,
         tag: ItemTag,
         shouldInclude: Bool
     ) -> BrowserSearchResponse {
@@ -1483,7 +1487,7 @@ final class BrowserViewModel {
         )
     }
 
-    func rowDecoration(for itemId: Int64) -> RowDecoration? {
+    func rowDecoration(for itemId: String) -> RowDecoration? {
         guard let index = itemIndexById[itemId], displayRows.indices.contains(index) else {
             return nil
         }
@@ -1553,7 +1557,7 @@ final class BrowserViewModel {
         !requiresPreviewDecoration(for: payload.item, request: request) || payload.decoration != nil
     }
 
-    private func resolveSelectionWithoutPreviewDecoration(itemId: Int64, origin: SelectionOrigin) {
+    private func resolveSelectionWithoutPreviewDecoration(itemId: String, origin: SelectionOrigin) {
         guard let currentSelectedItemState = selectedItemState,
               currentSelectedItemState.item.itemMetadata.itemId == itemId
         else {
@@ -1601,7 +1605,7 @@ final class BrowserViewModel {
         }
     }
 
-    private func carriedPreviewDecoration(for itemId: Int64) -> PreviewDecoration? {
+    private func carriedPreviewDecoration(for itemId: String) -> PreviewDecoration? {
         guard let selectedItemState,
               selectedItemState.item.itemMetadata.itemId == itemId
         else {
@@ -1610,7 +1614,7 @@ final class BrowserViewModel {
         return previewDecoration
     }
 
-    private func isPreviewAwaitingPayload(for itemId: Int64) -> Bool {
+    private func isPreviewAwaitingPayload(for itemId: String) -> Bool {
         switch selection {
         case let .loading(loadingItemId, _):
             return loadingItemId == itemId
@@ -1641,14 +1645,14 @@ final class BrowserViewModel {
         }
     }
 
-    private func itemIdentifier(at index: Int) -> Int64? {
+    private func itemIdentifier(at index: Int) -> String? {
         guard itemIds.indices.contains(index) else { return nil }
         return itemIds[index]
     }
 
     private func performItemAction(
-        itemId: Int64,
-        handler: @escaping (Int64, ClipboardContent) -> Void
+        itemId: String,
+        handler: @escaping (String, ClipboardContent) -> Void
     ) {
         if let selectedItem, selectedItem.itemMetadata.itemId == itemId {
             handler(selectedItem.itemMetadata.itemId, selectedItem.content)
@@ -1681,7 +1685,7 @@ final class BrowserViewModel {
     }
 
     private func updateDisplayedResponseForItem(
-        itemId: Int64,
+        itemId: String,
         updatedMetadata: ItemMetadata,
         updatedFirstItem: ClipboardItem
     ) {
@@ -1732,9 +1736,9 @@ final class BrowserViewModel {
 
     private func rebuildDisplayedRows() {
         let items = contentState.items
-        var nextItemIds: [Int64] = []
+        var nextItemIds: [String] = []
         nextItemIds.reserveCapacity(items.count)
-        var nextIndexById: [Int64: Int] = [:]
+        var nextIndexById: [String: Int] = [:]
         nextIndexById.reserveCapacity(items.count)
         var nextDisplayRows: [DisplayRow] = []
         nextDisplayRows.reserveCapacity(items.count)

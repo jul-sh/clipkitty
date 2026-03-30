@@ -21,6 +21,7 @@ use sha2::{Digest, Sha256};
 #[derive(Debug, Clone, PartialEq)]
 pub struct StoredItem {
     pub id: Option<i64>,
+    pub item_id: String,
     pub content: ClipboardContent,
     pub content_hash: String,
     pub timestamp_unix: i64,
@@ -48,6 +49,7 @@ impl StoredItem {
         };
         Self {
             id: None,
+            item_id: uuid::Uuid::new_v4().to_string(),
             content,
             content_hash,
             timestamp_unix: chrono::Utc::now().timestamp(),
@@ -70,6 +72,7 @@ impl StoredItem {
         let content_hash = Self::hash_bytes(&image_data);
         Self {
             id: None,
+            item_id: uuid::Uuid::new_v4().to_string(),
             content: ClipboardContent::Image {
                 data: image_data,
                 description: "Image".to_string(),
@@ -178,6 +181,7 @@ impl StoredItem {
 
         Self {
             id: None,
+            item_id: uuid::Uuid::new_v4().to_string(),
             content: ClipboardContent::File {
                 display_name,
                 files,
@@ -241,7 +245,7 @@ impl StoredItem {
     pub fn to_metadata(&self) -> ItemMetadata {
         use crate::search::SNIPPET_CONTEXT_CHARS;
         ItemMetadata {
-            item_id: self.id.unwrap_or(0),
+            item_id: self.item_id.clone(),
             icon: self.item_icon(),
             snippet: self.display_text(SNIPPET_CONTEXT_CHARS * 2),
             source_app: self.source_app.clone(),

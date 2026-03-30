@@ -34,8 +34,8 @@ pub enum CompactionOutcome {
 }
 
 /// Check whether an item needs compaction.
-pub fn needs_compaction(sync: &SyncStore<'_>, global_item_id: &str) -> SyncResult<bool> {
-    let count = sync.count_uncompacted_events(global_item_id)?;
+pub fn needs_compaction(sync: &SyncStore<'_>, item_id: &str) -> SyncResult<bool> {
+    let count = sync.count_uncompacted_events(item_id)?;
     if count == 0 {
         return Ok(false);
     }
@@ -43,20 +43,20 @@ pub fn needs_compaction(sync: &SyncStore<'_>, global_item_id: &str) -> SyncResul
         return Ok(true);
     }
 
-    let payload_size = sync.uncompacted_payload_size(global_item_id)?;
+    let payload_size = sync.uncompacted_payload_size(item_id)?;
     if payload_size >= COMPACTION_PAYLOAD_THRESHOLD {
         return Ok(true);
     }
 
     let now = Utc::now().timestamp();
-    if let Some(oldest) = sync.oldest_uncompacted_event_time(global_item_id)? {
+    if let Some(oldest) = sync.oldest_uncompacted_event_time(item_id)? {
         if now - oldest >= COMPACTION_AGE_THRESHOLD_SECS {
             return Ok(true);
         }
     }
 
     // Check tombstone compaction trigger.
-    if let Some(snapshot) = sync.fetch_snapshot(global_item_id)? {
+    if let Some(snapshot) = sync.fetch_snapshot(item_id)? {
         if let ItemAggregate::Tombstoned(ref tomb) = snapshot.aggregate {
             if now - tomb.deleted_at_unix >= TOMBSTONE_COMPACTION_AGE_SECS && count > 0 {
                 return Ok(true);
@@ -68,15 +68,18 @@ pub fn needs_compaction(sync: &SyncStore<'_>, global_item_id: &str) -> SyncResul
 }
 
 /// Run compaction for a single item.
-pub fn compact_item(pool: &Pool<SqliteConnectionManager>, global_item_id: &str) -> SyncResult<CompactionOutcome> {
+pub fn compact_item(
+    pool: &Pool<SqliteConnectionManager>,
+    item_id: &str,
+) -> SyncResult<CompactionOutcome> {
     let sync = SyncStore::new(pool);
-    let events = sync.fetch_uncompacted_events(global_item_id)?;
+    let events = sync.fetch_uncompacted_events(item_id)?;
     if events.is_empty() {
         return Ok(CompactionOutcome::NoEvents);
     }
 
     // Start from existing snapshot or None.
-    let existing_snapshot = sync.fetch_snapshot(global_item_id)?;
+    let existing_snapshot = sync.fetch_snapshot(item_id)?;
     let mut aggregate = existing_snapshot.as_ref().map(|s| s.aggregate.clone());
 
     let mut applied_event_ids = Vec::new();
@@ -116,7 +119,7 @@ pub fn compact_item(pool: &Pool<SqliteConnectionManager>, global_item_id: &str) 
         .to_string();
 
     let snapshot = ItemSnapshot::compacted(
-        global_item_id.to_string(),
+        item_id.to_string(),
         previous_revision,
         last_event_id,
         final_aggregate,
@@ -174,8 +177,8 @@ pub fn purge_tombstone_snapshots(pool: &Pool<SqliteConnectionManager>) -> SyncRe
     for snapshot in &all_snapshots {
         if let ItemAggregate::Tombstoned(ref tomb) = snapshot.aggregate {
             if tomb.deleted_at_unix < threshold {
-                sync.delete_snapshot(&snapshot.global_item_id)?;
-                sync.delete_projection(&snapshot.global_item_id)?;
+                sync.delete_snapshot(&snapshot.item_id)?;
+                sync.delete_projection(&snapshot.item_id)?;
                 purged += 1;
             }
         }

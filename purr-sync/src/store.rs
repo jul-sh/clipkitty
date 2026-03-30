@@ -32,12 +32,12 @@ impl<'a> SyncStore<'a> {
         let conn = self.get_conn()?;
         conn.execute(
             r#"INSERT INTO sync_events
-               (event_id, global_item_id, origin_device_id, schema_version, recorded_at,
+               (event_id, item_id, origin_device_id, schema_version, recorded_at,
                 payload_type, payload_data, is_local, uploaded, compacted)
                VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, 1, 0, 0)"#,
             params![
                 event.event_id,
-                event.global_item_id,
+                event.item_id,
                 event.origin_device_id,
                 event.schema_version,
                 event.recorded_at,
@@ -53,12 +53,12 @@ impl<'a> SyncStore<'a> {
         let conn = self.get_conn()?;
         conn.execute(
             r#"INSERT OR IGNORE INTO sync_events
-               (event_id, global_item_id, origin_device_id, schema_version, recorded_at,
+               (event_id, item_id, origin_device_id, schema_version, recorded_at,
                 payload_type, payload_data, is_local, uploaded, compacted)
                VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, 0, 1, 0)"#,
             params![
                 event.event_id,
-                event.global_item_id,
+                event.item_id,
                 event.origin_device_id,
                 event.schema_version,
                 event.recorded_at,
@@ -70,17 +70,17 @@ impl<'a> SyncStore<'a> {
     }
 
     /// Fetch uncompacted events for a given item, ordered by recorded_at.
-    pub fn fetch_uncompacted_events(&self, global_item_id: &str) -> SyncResult<Vec<ItemEvent>> {
+    pub fn fetch_uncompacted_events(&self, item_id: &str) -> SyncResult<Vec<ItemEvent>> {
         let conn = self.get_conn()?;
         let mut stmt = conn.prepare(
-            r#"SELECT event_id, global_item_id, origin_device_id, schema_version,
+            r#"SELECT event_id, item_id, origin_device_id, schema_version,
                       recorded_at, payload_type, payload_data
                FROM sync_events
-               WHERE global_item_id = ?1 AND compacted = 0
+               WHERE item_id = ?1 AND compacted = 0
                ORDER BY recorded_at ASC"#,
         )?;
         let events = stmt
-            .query_map(params![global_item_id], |row| {
+            .query_map(params![item_id], |row| {
                 let event_id: String = row.get(0)?;
                 let gid: String = row.get(1)?;
                 let device: String = row.get(2)?;
@@ -105,7 +105,7 @@ impl<'a> SyncStore<'a> {
     pub fn fetch_pending_upload_events(&self) -> SyncResult<Vec<ItemEvent>> {
         let conn = self.get_conn()?;
         let mut stmt = conn.prepare(
-            r#"SELECT event_id, global_item_id, origin_device_id, schema_version,
+            r#"SELECT event_id, item_id, origin_device_id, schema_version,
                       recorded_at, payload_type, payload_data
                FROM sync_events
                WHERE is_local = 1 AND uploaded = 0
@@ -182,43 +182,43 @@ impl<'a> SyncStore<'a> {
     }
 
     /// Count uncompacted events for an item.
-    pub fn count_uncompacted_events(&self, global_item_id: &str) -> SyncResult<usize> {
+    pub fn count_uncompacted_events(&self, item_id: &str) -> SyncResult<usize> {
         let conn = self.get_conn()?;
         let count: i64 = conn.query_row(
-            "SELECT COUNT(*) FROM sync_events WHERE global_item_id = ?1 AND compacted = 0",
-            params![global_item_id],
+            "SELECT COUNT(*) FROM sync_events WHERE item_id = ?1 AND compacted = 0",
+            params![item_id],
             |row| row.get(0),
         )?;
         Ok(count as usize)
     }
 
     /// Sum payload sizes of uncompacted events for an item.
-    pub fn uncompacted_payload_size(&self, global_item_id: &str) -> SyncResult<usize> {
+    pub fn uncompacted_payload_size(&self, item_id: &str) -> SyncResult<usize> {
         let conn = self.get_conn()?;
         let size: i64 = conn.query_row(
-            "SELECT COALESCE(SUM(LENGTH(payload_data)), 0) FROM sync_events WHERE global_item_id = ?1 AND compacted = 0",
-            params![global_item_id],
+            "SELECT COALESCE(SUM(LENGTH(payload_data)), 0) FROM sync_events WHERE item_id = ?1 AND compacted = 0",
+            params![item_id],
             |row| row.get(0),
         )?;
         Ok(size as usize)
     }
 
     /// Get the oldest uncompacted event timestamp for an item.
-    pub fn oldest_uncompacted_event_time(&self, global_item_id: &str) -> SyncResult<Option<i64>> {
+    pub fn oldest_uncompacted_event_time(&self, item_id: &str) -> SyncResult<Option<i64>> {
         let conn = self.get_conn()?;
         let result = conn.query_row(
-            "SELECT MIN(recorded_at) FROM sync_events WHERE global_item_id = ?1 AND compacted = 0",
-            params![global_item_id],
+            "SELECT MIN(recorded_at) FROM sync_events WHERE item_id = ?1 AND compacted = 0",
+            params![item_id],
             |row| row.get::<_, Option<i64>>(0),
         )?;
         Ok(result)
     }
 
-    /// Fetch all global_item_ids that have uncompacted events.
+    /// Fetch all item_ids that have uncompacted events.
     pub fn items_with_uncompacted_events(&self) -> SyncResult<Vec<String>> {
         let conn = self.get_conn()?;
         let mut stmt =
-            conn.prepare("SELECT DISTINCT global_item_id FROM sync_events WHERE compacted = 0")?;
+            conn.prepare("SELECT DISTINCT item_id FROM sync_events WHERE compacted = 0")?;
         let ids = stmt
             .query_map([], |row| row.get(0))?
             .collect::<Result<Vec<String>, _>>()?;
@@ -232,10 +232,10 @@ impl<'a> SyncStore<'a> {
         let conn = self.get_conn()?;
         conn.execute(
             r#"INSERT INTO sync_snapshots
-               (global_item_id, snapshot_revision, schema_version,
+               (item_id, snapshot_revision, schema_version,
                 covers_through_event, aggregate_state, uploaded, uploaded_at)
                VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7)
-               ON CONFLICT(global_item_id) DO UPDATE SET
+               ON CONFLICT(item_id) DO UPDATE SET
                  snapshot_revision = excluded.snapshot_revision,
                  schema_version = excluded.schema_version,
                  covers_through_event = excluded.covers_through_event,
@@ -243,7 +243,7 @@ impl<'a> SyncStore<'a> {
                  uploaded = excluded.uploaded,
                  uploaded_at = excluded.uploaded_at"#,
             params![
-                snapshot.global_item_id,
+                snapshot.item_id,
                 snapshot.snapshot_revision as i64,
                 snapshot.schema_version,
                 snapshot.covers_through_event,
@@ -256,13 +256,13 @@ impl<'a> SyncStore<'a> {
     }
 
     /// Fetch snapshot for an item.
-    pub fn fetch_snapshot(&self, global_item_id: &str) -> SyncResult<Option<ItemSnapshot>> {
+    pub fn fetch_snapshot(&self, item_id: &str) -> SyncResult<Option<ItemSnapshot>> {
         let conn = self.get_conn()?;
         let result = conn.query_row(
-            r#"SELECT global_item_id, snapshot_revision, schema_version,
+            r#"SELECT item_id, snapshot_revision, schema_version,
                       covers_through_event, aggregate_state, uploaded, uploaded_at
-               FROM sync_snapshots WHERE global_item_id = ?1"#,
-            params![global_item_id],
+               FROM sync_snapshots WHERE item_id = ?1"#,
+            params![item_id],
             |row| {
                 let gid: String = row.get(0)?;
                 let rev: i64 = row.get(1)?;
@@ -297,7 +297,7 @@ impl<'a> SyncStore<'a> {
     pub fn fetch_all_snapshots(&self) -> SyncResult<Vec<ItemSnapshot>> {
         let conn = self.get_conn()?;
         let mut stmt = conn.prepare(
-            r#"SELECT global_item_id, snapshot_revision, schema_version,
+            r#"SELECT item_id, snapshot_revision, schema_version,
                       covers_through_event, aggregate_state, uploaded, uploaded_at
                FROM sync_snapshots"#,
         )?;
@@ -323,22 +323,22 @@ impl<'a> SyncStore<'a> {
     }
 
     /// Delete a snapshot.
-    pub fn delete_snapshot(&self, global_item_id: &str) -> SyncResult<()> {
+    pub fn delete_snapshot(&self, item_id: &str) -> SyncResult<()> {
         let conn = self.get_conn()?;
         conn.execute(
-            "DELETE FROM sync_snapshots WHERE global_item_id = ?1",
-            params![global_item_id],
+            "DELETE FROM sync_snapshots WHERE item_id = ?1",
+            params![item_id],
         )?;
         Ok(())
     }
 
     /// Mark a snapshot as uploaded to CloudKit.
-    pub fn mark_snapshot_uploaded(&self, global_item_id: &str) -> SyncResult<()> {
+    pub fn mark_snapshot_uploaded(&self, item_id: &str) -> SyncResult<()> {
         let conn = self.get_conn()?;
         let now = Utc::now().timestamp();
         conn.execute(
-            "UPDATE sync_snapshots SET uploaded = 1, uploaded_at = ?1 WHERE global_item_id = ?2",
-            params![now, global_item_id],
+            "UPDATE sync_snapshots SET uploaded = 1, uploaded_at = ?1 WHERE item_id = ?2",
+            params![now, item_id],
         )?;
         Ok(())
     }
@@ -347,7 +347,7 @@ impl<'a> SyncStore<'a> {
     pub fn fetch_pending_upload_snapshots(&self) -> SyncResult<Vec<ItemSnapshot>> {
         let conn = self.get_conn()?;
         let mut stmt = conn.prepare(
-            r#"SELECT global_item_id, snapshot_revision, schema_version,
+            r#"SELECT item_id, snapshot_revision, schema_version,
                       covers_through_event, aggregate_state, uploaded, uploaded_at
                FROM sync_snapshots WHERE uploaded = 0"#,
         )?;
@@ -373,11 +373,11 @@ impl<'a> SyncStore<'a> {
     }
 
     /// Check whether a specific item's snapshot has been uploaded.
-    pub fn is_snapshot_uploaded(&self, global_item_id: &str) -> SyncResult<bool> {
+    pub fn is_snapshot_uploaded(&self, item_id: &str) -> SyncResult<bool> {
         let conn = self.get_conn()?;
         let result = conn.query_row(
-            "SELECT uploaded FROM sync_snapshots WHERE global_item_id = ?1",
-            params![global_item_id],
+            "SELECT uploaded FROM sync_snapshots WHERE item_id = ?1",
+            params![item_id],
             |row| row.get::<_, i32>(0),
         );
         match result {
@@ -388,12 +388,12 @@ impl<'a> SyncStore<'a> {
     }
 
     /// Get the checkpoint state for an item.
-    pub fn checkpoint_state(&self, global_item_id: &str) -> SyncResult<CheckpointState> {
+    pub fn checkpoint_state(&self, item_id: &str) -> SyncResult<CheckpointState> {
         let conn = self.get_conn()?;
         let result = conn.query_row(
             r#"SELECT covers_through_event, uploaded, uploaded_at
-               FROM sync_snapshots WHERE global_item_id = ?1"#,
-            params![global_item_id],
+               FROM sync_snapshots WHERE item_id = ?1"#,
+            params![item_id],
             |row| {
                 let covers: Option<String> = row.get(0)?;
                 let uploaded: bool = row.get::<_, i32>(1)? != 0;
@@ -424,7 +424,7 @@ impl<'a> SyncStore<'a> {
         let mut stmt = conn.prepare(
             r#"SELECT e.event_id
                FROM sync_events e
-               INNER JOIN sync_snapshots s ON e.global_item_id = s.global_item_id
+               INNER JOIN sync_snapshots s ON e.item_id = s.item_id
                WHERE e.compacted = 1
                  AND e.recorded_at < ?1
                  AND s.uploaded = 1"#,
@@ -437,99 +437,80 @@ impl<'a> SyncStore<'a> {
 
     // ── Projection ───────────────────────────────────────────────────────
 
-    /// Upsert a projection entry mapping global IDs into an explicit materialization state.
+    /// Upsert a projection entry tracking lifecycle state and versions.
     pub fn upsert_projection(
         &self,
-        global_item_id: &str,
+        item_id: &str,
         state: &ProjectionState,
     ) -> SyncResult<()> {
-        let (local_item_id, versions, is_tombstoned) = match state {
-            ProjectionState::PendingMaterialization { versions } => (None, versions, false),
-            ProjectionState::Materialized {
-                local_item_id,
-                versions,
-            } => (Some(*local_item_id), versions, false),
-            ProjectionState::Tombstoned { versions } => (None, versions, true),
+        let (versions, is_tombstoned, is_materialized) = match state {
+            ProjectionState::PendingMaterialization { versions } => (versions, false, false),
+            ProjectionState::Materialized { versions } => (versions, false, true),
+            ProjectionState::Tombstoned { versions } => (versions, true, false),
         };
         let conn = self.get_conn()?;
         conn.execute(
             r#"INSERT INTO sync_projection
-               (global_item_id, local_item_id, content_version, bookmark_version,
-                existence_version, touch_version, metadata_version, is_tombstoned)
+               (item_id, content_version, bookmark_version,
+                existence_version, touch_version, metadata_version,
+                is_tombstoned, is_materialized)
                VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8)
-               ON CONFLICT(global_item_id) DO UPDATE SET
-                 local_item_id = excluded.local_item_id,
+               ON CONFLICT(item_id) DO UPDATE SET
                  content_version = excluded.content_version,
                  bookmark_version = excluded.bookmark_version,
                  existence_version = excluded.existence_version,
                  touch_version = excluded.touch_version,
                  metadata_version = excluded.metadata_version,
-                 is_tombstoned = excluded.is_tombstoned"#,
+                 is_tombstoned = excluded.is_tombstoned,
+                 is_materialized = excluded.is_materialized"#,
             params![
-                global_item_id,
-                local_item_id,
+                item_id,
                 versions.content as i64,
                 versions.bookmark as i64,
                 versions.existence as i64,
                 versions.touch as i64,
                 versions.metadata as i64,
                 is_tombstoned as i32,
+                is_materialized as i32,
             ],
         )?;
         Ok(())
     }
 
     /// Fetch the projection entry for a global item.
-    pub fn fetch_projection(&self, global_item_id: &str) -> SyncResult<Option<ProjectionEntry>> {
+    pub fn fetch_projection(&self, item_id: &str) -> SyncResult<Option<ProjectionEntry>> {
         let conn = self.get_conn()?;
         let result = conn.query_row(
-            r#"SELECT global_item_id, local_item_id, content_version, bookmark_version,
-                      existence_version, touch_version, metadata_version, is_tombstoned
-               FROM sync_projection WHERE global_item_id = ?1"#,
-            params![global_item_id],
+            r#"SELECT item_id, content_version, bookmark_version,
+                      existence_version, touch_version, metadata_version,
+                      is_tombstoned, is_materialized
+               FROM sync_projection WHERE item_id = ?1"#,
+            params![item_id],
             |row| {
                 let versions = VersionVector {
-                    content: row.get::<_, i64>(2)? as u64,
-                    bookmark: row.get::<_, i64>(3)? as u64,
-                    existence: row.get::<_, i64>(4)? as u64,
-                    touch: row.get::<_, i64>(5)? as u64,
-                    metadata: row.get::<_, i64>(6)? as u64,
+                    content: row.get::<_, i64>(1)? as u64,
+                    bookmark: row.get::<_, i64>(2)? as u64,
+                    existence: row.get::<_, i64>(3)? as u64,
+                    touch: row.get::<_, i64>(4)? as u64,
+                    metadata: row.get::<_, i64>(5)? as u64,
                 };
-                let local_item_id: Option<i64> = row.get(1)?;
-                let is_tombstoned = row.get::<_, i32>(7)? != 0;
+                let is_tombstoned = row.get::<_, i32>(6)? != 0;
+                let is_materialized = row.get::<_, i32>(7)? != 0;
                 let state = if is_tombstoned {
                     ProjectionState::Tombstoned { versions }
-                } else if let Some(local_item_id) = local_item_id {
-                    ProjectionState::Materialized {
-                        local_item_id,
-                        versions,
-                    }
+                } else if is_materialized {
+                    ProjectionState::Materialized { versions }
                 } else {
                     ProjectionState::PendingMaterialization { versions }
                 };
                 Ok(ProjectionEntry {
-                    global_item_id: row.get(0)?,
+                    item_id: row.get(0)?,
                     state,
                 })
             },
         );
         match result {
             Ok(entry) => Ok(Some(entry)),
-            Err(rusqlite::Error::QueryReturnedNoRows) => Ok(None),
-            Err(e) => Err(e.into()),
-        }
-    }
-
-    /// Look up global_item_id by local_item_id.
-    pub fn global_id_for_local(&self, local_item_id: i64) -> SyncResult<Option<String>> {
-        let conn = self.get_conn()?;
-        let result = conn.query_row(
-            "SELECT global_item_id FROM sync_projection WHERE local_item_id = ?1",
-            params![local_item_id],
-            |row| row.get(0),
-        );
-        match result {
-            Ok(gid) => Ok(Some(gid)),
             Err(rusqlite::Error::QueryReturnedNoRows) => Ok(None),
             Err(e) => Err(e.into()),
         }
@@ -543,11 +524,11 @@ impl<'a> SyncStore<'a> {
     }
 
     /// Delete a single projection entry.
-    pub fn delete_projection(&self, global_item_id: &str) -> SyncResult<()> {
+    pub fn delete_projection(&self, item_id: &str) -> SyncResult<()> {
         let conn = self.get_conn()?;
         conn.execute(
-            "DELETE FROM sync_projection WHERE global_item_id = ?1",
-            params![global_item_id],
+            "DELETE FROM sync_projection WHERE item_id = ?1",
+            params![item_id],
         )?;
         Ok(())
     }
@@ -567,12 +548,12 @@ impl<'a> SyncStore<'a> {
         let conn = self.get_conn()?;
         conn.execute(
             r#"INSERT OR REPLACE INTO sync_deferred_events
-               (event_id, global_item_id, origin_device_id, schema_version, recorded_at,
+               (event_id, item_id, origin_device_id, schema_version, recorded_at,
                 payload_type, payload_data, deferred_reason, deferred_at)
                VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9)"#,
             params![
                 event.event_id,
-                event.global_item_id,
+                event.item_id,
                 event.origin_device_id,
                 event.schema_version,
                 event.recorded_at,
@@ -588,18 +569,18 @@ impl<'a> SyncStore<'a> {
     /// Fetch all deferred events for a given item.
     pub fn fetch_deferred_events_for_item(
         &self,
-        global_item_id: &str,
+        item_id: &str,
     ) -> SyncResult<Vec<ItemEvent>> {
         let conn = self.get_conn()?;
         let mut stmt = conn.prepare(
-            r#"SELECT event_id, global_item_id, origin_device_id, schema_version,
+            r#"SELECT event_id, item_id, origin_device_id, schema_version,
                       recorded_at, payload_type, payload_data
                FROM sync_deferred_events
-               WHERE global_item_id = ?1
+               WHERE item_id = ?1
                ORDER BY recorded_at ASC"#,
         )?;
         let events = stmt
-            .query_map(params![global_item_id], |row| {
+            .query_map(params![item_id], |row| {
                 let event_id: String = row.get(0)?;
                 let gid: String = row.get(1)?;
                 let device: String = row.get(2)?;
@@ -624,7 +605,7 @@ impl<'a> SyncStore<'a> {
     pub fn fetch_all_deferred_events(&self) -> SyncResult<Vec<ItemEvent>> {
         let conn = self.get_conn()?;
         let mut stmt = conn.prepare(
-            r#"SELECT event_id, global_item_id, origin_device_id, schema_version,
+            r#"SELECT event_id, item_id, origin_device_id, schema_version,
                       recorded_at, payload_type, payload_data
                FROM sync_deferred_events
                ORDER BY recorded_at ASC"#,
@@ -844,7 +825,7 @@ impl<'a> SyncStore<'a> {
 /// A row from sync_projection.
 #[derive(Debug, Clone, PartialEq)]
 pub struct ProjectionEntry {
-    pub global_item_id: String,
+    pub item_id: String,
     pub state: ProjectionState,
 }
 
@@ -855,7 +836,6 @@ pub enum ProjectionState {
         versions: VersionVector,
     },
     Materialized {
-        local_item_id: i64,
         versions: VersionVector,
     },
     Tombstoned {

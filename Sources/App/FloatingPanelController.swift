@@ -326,7 +326,7 @@ final class FloatingPanelController: NSObject, NSWindowDelegate {
         panel.setFrameOrigin(NSPoint(x: x, y: y))
     }
 
-    private func selectItem(itemId: Int64, content: ClipboardContent) {
+    private func selectItem(itemId: String, content: ClipboardContent) {
         store.paste(itemId: itemId, content: content)
         #if !APP_STORE
             let targetApp = hide()
@@ -341,7 +341,7 @@ final class FloatingPanelController: NSObject, NSWindowDelegate {
         #endif
     }
 
-    private func copyOnlyItem(itemId: Int64, content: ClipboardContent) {
+    private func copyOnlyItem(itemId: String, content: ClipboardContent) {
         store.paste(itemId: itemId, content: content)
         hide()
         snackbarWindow.showNotification(.passive(message: String(localized: "Copied"), iconSystemName: "checkmark.circle.fill"))

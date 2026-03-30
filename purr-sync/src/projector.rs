@@ -17,10 +17,7 @@ use crate::types::{
 /// Apply a single event payload to an existing aggregate.
 ///
 /// The caller is responsible for dedup checking (`sync_dedup`) before calling this.
-pub fn apply_event(
-    aggregate: Option<&ItemAggregate>,
-    payload: &ItemEventPayload,
-) -> ApplyResult {
+pub fn apply_event(aggregate: Option<&ItemAggregate>, payload: &ItemEventPayload) -> ApplyResult {
     match payload {
         ItemEventPayload::ItemCreated { snapshot } => apply_item_created(aggregate, snapshot),
         ItemEventPayload::TextEdited {
@@ -162,9 +159,7 @@ fn apply_bookmark_set(
     };
 
     match agg {
-        ItemAggregate::Tombstoned(_) => {
-            ApplyResult::Ignored(IgnoreReason::OperationOnTombstone)
-        }
+        ItemAggregate::Tombstoned(_) => ApplyResult::Ignored(IgnoreReason::OperationOnTombstone),
         ItemAggregate::Live(live) => {
             let current = live.versions.bookmark;
             if base_bookmark_version < current {
@@ -209,9 +204,7 @@ fn apply_bookmark_cleared(
     };
 
     match agg {
-        ItemAggregate::Tombstoned(_) => {
-            ApplyResult::Ignored(IgnoreReason::OperationOnTombstone)
-        }
+        ItemAggregate::Tombstoned(_) => ApplyResult::Ignored(IgnoreReason::OperationOnTombstone),
         ItemAggregate::Live(live) => {
             let current = live.versions.bookmark;
             if base_bookmark_version < current {
@@ -256,9 +249,7 @@ fn apply_item_deleted(
     };
 
     match agg {
-        ItemAggregate::Tombstoned(_) => {
-            ApplyResult::Ignored(IgnoreReason::OperationOnTombstone)
-        }
+        ItemAggregate::Tombstoned(_) => ApplyResult::Ignored(IgnoreReason::OperationOnTombstone),
         ItemAggregate::Live(live) => {
             let current = live.versions.existence;
             if base_existence_version < current {
@@ -303,9 +294,7 @@ fn apply_item_touched(
     };
 
     match agg {
-        ItemAggregate::Tombstoned(_) => {
-            ApplyResult::Ignored(IgnoreReason::OperationOnTombstone)
-        }
+        ItemAggregate::Tombstoned(_) => ApplyResult::Ignored(IgnoreReason::OperationOnTombstone),
         ItemAggregate::Live(live) => {
             let current = live.versions.touch;
             if base_touch_version < current {
@@ -351,9 +340,7 @@ fn apply_link_metadata_updated(
     };
 
     match agg {
-        ItemAggregate::Tombstoned(_) => {
-            ApplyResult::Ignored(IgnoreReason::OperationOnTombstone)
-        }
+        ItemAggregate::Tombstoned(_) => ApplyResult::Ignored(IgnoreReason::OperationOnTombstone),
         ItemAggregate::Live(live) => {
             let current = live.versions.metadata;
             if base_metadata_version < current {
@@ -406,9 +393,7 @@ fn apply_image_description_updated(
     };
 
     match agg {
-        ItemAggregate::Tombstoned(_) => {
-            ApplyResult::Ignored(IgnoreReason::OperationOnTombstone)
-        }
+        ItemAggregate::Tombstoned(_) => ApplyResult::Ignored(IgnoreReason::OperationOnTombstone),
         ItemAggregate::Live(live) => {
             let current = live.versions.content;
             // Image description is a metadata-class update that loses to newer content edits.
@@ -488,6 +473,6 @@ fn fork_from_text_edit(aggregate: &ItemAggregate, new_text: &str) -> ApplyResult
     ApplyResult::Forked(ForkPlan {
         forked_snapshot,
         reason: "concurrent text edit conflict".to_string(),
-        forked_from: None, // Populated by replay layer which has the global_item_id.
+        forked_from: None, // Populated by replay layer which has the item_id.
     })
 }

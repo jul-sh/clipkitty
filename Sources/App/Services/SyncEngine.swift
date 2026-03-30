@@ -506,7 +506,7 @@
             let eventRecords: [SyncEventRecord] = try changes.events.map { record in
                 try SyncEventRecord(
                     eventId: record.recordID.recordName,
-                    globalItemId: record["globalItemId"] as? String ?? "",
+                    itemId: record["itemId"] as? String ?? "",
                     originDeviceId: record["originDeviceId"] as? String ?? "",
                     schemaVersion: UInt32(record["schemaVersion"] as? Int64 ?? 1),
                     recordedAt: record["recordedAt"] as? Int64 ?? 0,
@@ -517,7 +517,7 @@
 
             let snapshotRecords: [SyncSnapshotRecord] = changes.snapshots.map { record in
                 SyncSnapshotRecord(
-                    globalItemId: record.recordID.recordName,
+                    itemId: record.recordID.recordName,
                     snapshotRevision: UInt64(record["snapshotRevision"] as? Int64 ?? 0),
                     schemaVersion: UInt32(record["schemaVersion"] as? Int64 ?? 1),
                     coversThroughEvent: record["coversThroughEvent"] as? String,
@@ -543,7 +543,7 @@
                 for event in pendingEvents {
                     let recordID = CKRecord.ID(recordName: event.eventId, zoneID: zoneID)
                     let record = CKRecord(recordType: "ItemEvent", recordID: recordID)
-                    record["globalItemId"] = event.globalItemId as CKRecordValue
+                    record["itemId"] = event.itemId as CKRecordValue
                     record["originDeviceId"] = event.originDeviceId as CKRecordValue
                     record["schemaVersion"] = Int64(event.schemaVersion) as CKRecordValue
                     record["recordedAt"] = event.recordedAt as CKRecordValue
@@ -789,7 +789,7 @@
 
                 let zoneID = recordZone.zoneID
                 let records: [CKRecord] = snapshots.map { snapshot in
-                    let recordID = CKRecord.ID(recordName: snapshot.globalItemId, zoneID: zoneID)
+                    let recordID = CKRecord.ID(recordName: snapshot.itemId, zoneID: zoneID)
                     let record = CKRecord(recordType: "ItemSnapshot", recordID: recordID)
                     record["snapshotRevision"] = Int64(snapshot.snapshotRevision) as CKRecordValue
                     record["schemaVersion"] = Int64(snapshot.schemaVersion) as CKRecordValue
@@ -805,8 +805,8 @@
                     let errors = Array(saveResult.perRecordErrors.values)
 
                     // Mark each successfully uploaded snapshot.
-                    for globalItemId in savedIds {
-                        try store.markSnapshotUploaded(globalItemId: globalItemId)
+                    for itemId in savedIds {
+                        try store.markSnapshotUploaded(itemId: itemId)
                     }
                     uploadedCount += savedIds.count
 
@@ -911,7 +911,7 @@
             // 3. Convert to FFI records.
             let snapshotRecords = allSnapshots.map { record in
                 SyncSnapshotRecord(
-                    globalItemId: record.recordID.recordName,
+                    itemId: record.recordID.recordName,
                     snapshotRevision: UInt64(record["snapshotRevision"] as? Int64 ?? 0),
                     schemaVersion: UInt32(record["schemaVersion"] as? Int64 ?? 1),
                     coversThroughEvent: record["coversThroughEvent"] as? String,
@@ -922,7 +922,7 @@
             let eventRecords: [SyncEventRecord] = try allEvents.map { record in
                 try SyncEventRecord(
                     eventId: record.recordID.recordName,
-                    globalItemId: record["globalItemId"] as? String ?? "",
+                    itemId: record["itemId"] as? String ?? "",
                     originDeviceId: record["originDeviceId"] as? String ?? "",
                     schemaVersion: UInt32(record["schemaVersion"] as? Int64 ?? 1),
                     recordedAt: record["recordedAt"] as? Int64 ?? 0,

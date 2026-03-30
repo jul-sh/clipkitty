@@ -86,31 +86,48 @@ fn main() {
     .expect("Write modulemap");
 
     // Build universal static library
-    println!("Building universal static library...");
-    run_cmd(
-        "cargo",
-        &["build", "--release", "--target", "aarch64-apple-darwin"],
-        &rust_dir,
-    );
-    run_cmd(
-        "cargo",
-        &["build", "--release", "--target", "x86_64-apple-darwin"],
-        &rust_dir,
-    );
+    println!("Building static library...");
+    let installed_targets = installed_rust_targets();
+    let preferred_targets = ["aarch64-apple-darwin", "x86_64-apple-darwin"];
+    let available_targets: Vec<&str> = preferred_targets
+        .iter()
+        .copied()
+        .filter(|target| installed_targets.iter().any(|installed| installed == target))
+        .collect();
 
-    let aarch64_lib = target_dir.join("aarch64-apple-darwin/release/libpurr.a");
-    let x86_64_lib = target_dir.join("x86_64-apple-darwin/release/libpurr.a");
-    run_cmd(
-        "lipo",
-        &[
-            "-create",
-            &aarch64_lib.to_string_lossy(),
-            &x86_64_lib.to_string_lossy(),
-            "-output",
-            &swift_dest.join("libpurr.a").to_string_lossy(),
-        ],
-        &rust_dir,
-    );
+    for target in &available_targets {
+        run_cmd("cargo", &["build", "--release", "--target", target], &rust_dir);
+    }
+
+    let output_lib = swift_dest.join("libpurr.a");
+    match available_targets.as_slice() {
+        [single_target] => {
+            let lib = target_dir.join(format!("{single_target}/release/libpurr.a"));
+            fs::copy(lib, &output_lib).expect("Copy static lib");
+            println!("Copied single-arch static library for {single_target}");
+        }
+        [first_target, second_target] => {
+            let first_lib = target_dir.join(format!("{first_target}/release/libpurr.a"));
+            let second_lib = target_dir.join(format!("{second_target}/release/libpurr.a"));
+            run_cmd(
+                "lipo",
+                &[
+                    "-create",
+                    &first_lib.to_string_lossy(),
+                    &second_lib.to_string_lossy(),
+                    "-output",
+                    &output_lib.to_string_lossy(),
+                ],
+                &rust_dir,
+            );
+            println!("Created universal static library");
+        }
+        _ => {
+            fs::copy(target_dir.join("release/libpurr.a"), &output_lib)
+                .expect("Copy host static lib");
+            println!("Copied host-arch static library");
+        }
+    }
 
     println!("Done! Bindings regenerated successfully.");
     println!("Generated files:");
@@ -135,4 +152,24 @@ fn run_cmd(program: &str, args: &[&str], dir: &PathBuf) {
     if !status.success() {
         panic!("{} failed with status: {}", program, status);
     }
+}
+
+fn installed_rust_targets() -> Vec<String> {
+    let Ok(output) = Command::new("rustup")
+        .args(["target", "list", "--installed"])
+        .output()
+    else {
+        return Vec::new();
+    };
+
+    if !output.status.success() {
+        return Vec::new();
+    }
+
+    String::from_utf8_lossy(&output.stdout)
+        .lines()
+        .map(str::trim)
+        .filter(|line| !line.is_empty())
+        .map(String::from)
+        .collect()
 }

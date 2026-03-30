@@ -296,7 +296,7 @@ final class SyncEngineTests: XCTestCase {
 
         let recordID = CKRecord.ID(recordName: "event-1", zoneID: zoneID)
         let record = CKRecord(recordType: "ItemEvent", recordID: recordID)
-        record["globalItemId"] = "global-1" as CKRecordValue
+        record["itemId"] = "global-1" as CKRecordValue
         record["originDeviceId"] = "remote-device" as CKRecordValue
         record["schemaVersion"] = Int64(1) as CKRecordValue
         record["recordedAt"] = Int64(1) as CKRecordValue

@@ -9,7 +9,7 @@ use uuid::Uuid;
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub struct ItemEvent {
     pub event_id: String,
-    pub global_item_id: String,
+    pub item_id: String,
     pub origin_device_id: String,
     pub schema_version: u32,
     pub recorded_at: i64,
@@ -18,14 +18,10 @@ pub struct ItemEvent {
 
 impl ItemEvent {
     /// Create a new local event with a fresh UUID and current timestamp.
-    pub fn new_local(
-        global_item_id: String,
-        device_id: &str,
-        payload: ItemEventPayload,
-    ) -> Self {
+    pub fn new_local(item_id: String, device_id: &str, payload: ItemEventPayload) -> Self {
         Self {
             event_id: Uuid::new_v4().to_string(),
-            global_item_id,
+            item_id,
             origin_device_id: device_id.to_string(),
             schema_version: SYNC_SCHEMA_VERSION,
             recorded_at: Utc::now().timestamp(),
@@ -40,7 +36,7 @@ impl ItemEvent {
     /// gracefully ignore it rather than failing the entire batch.
     pub fn from_stored(
         event_id: String,
-        global_item_id: String,
+        item_id: String,
         origin_device_id: String,
         schema_version: u32,
         recorded_at: i64,
@@ -56,7 +52,7 @@ impl ItemEvent {
         };
         Ok(Self {
             event_id,
-            global_item_id,
+            item_id,
             origin_device_id,
             schema_version,
             recorded_at,

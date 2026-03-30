@@ -50,6 +50,7 @@ const BROWSE_METADATA_PREFIX_CHARS: usize = SNIPPET_CONTEXT_CHARS * 8;
 
 #[derive(Debug, Clone)]
 pub(crate) struct SearchItemMetadata {
+    pub(crate) row_id: i64,
     pub(crate) content_hash: String,
     pub(crate) db_type: String,
     pub(crate) item_metadata: ItemMetadata,
@@ -133,6 +134,7 @@ impl Database {
             r#"
             CREATE TABLE IF NOT EXISTS items (
                 id INTEGER PRIMARY KEY AUTOINCREMENT,
+                item_id TEXT,
                 contentType TEXT NOT NULL,
                 contentHash TEXT NOT NULL,
                 content TEXT NOT NULL,
@@ -195,6 +197,28 @@ impl Database {
             [],
         );
 
+        // Migration: Add item_id column to existing items tables
+        let _ = conn.execute("ALTER TABLE items ADD COLUMN item_id TEXT", []);
+
+        // Backfill NULL item_ids with generated UUIDs
+        conn.execute(
+            r#"UPDATE items SET item_id = lower(
+                hex(randomblob(4)) || '-' ||
+                hex(randomblob(2)) || '-4' ||
+                substr(hex(randomblob(2)),2) || '-' ||
+                substr('89ab', abs(random()) % 4 + 1, 1) ||
+                substr(hex(randomblob(2)),2) || '-' ||
+                hex(randomblob(6))
+            ) WHERE item_id IS NULL"#,
+            [],
+        )?;
+
+        // Unique index on item_id
+        conn.execute(
+            "CREATE UNIQUE INDEX IF NOT EXISTS idx_items_item_id ON items(item_id)",
+            [],
+        )?;
+
         // ── Sync tables (delegated to purr-sync) ──────────────────────
         #[cfg(feature = "sync")]
         purr_sync::schema::setup_sync_schema(&conn)?;
@@ -217,6 +241,21 @@ impl Database {
         Ok(count as u64)
     }
 
+    /// Look up the stable string item_id for a given numeric row ID.
+    pub fn fetch_item_id_by_row_id(&self, row_id: i64) -> DatabaseResult<Option<String>> {
+        let conn = self.get_conn()?;
+        let result = conn.query_row(
+            "SELECT item_id FROM items WHERE id = ?1",
+            [row_id],
+            |row| row.get(0),
+        );
+        match result {
+            Ok(id) => Ok(Some(id)),
+            Err(rusqlite::Error::QueryReturnedNoRows) => Ok(None),
+            Err(e) => Err(e.into()),
+        }
+    }
+
     /// Insert a new clipboard item using a transaction.
     /// Inserts into `items` + the appropriate child table(s).
     /// Returns the item ID.
@@ -227,9 +266,10 @@ impl Database {
         let (timestamp_str, content_type, content_text) = Self::base_item_fields(item);
 
         tx.execute(
-            r#"INSERT INTO items (contentType, contentHash, content, timestamp, sourceApp, sourceAppBundleId, thumbnail, colorRgba)
-               VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8)"#,
+            r#"INSERT INTO items (item_id, contentType, contentHash, content, timestamp, sourceApp, sourceAppBundleId, thumbnail, colorRgba)
+               VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9)"#,
             params![
+                item.item_id,
                 content_type,
                 item.content_hash,
                 content_text,
@@ -364,7 +404,7 @@ impl Database {
     pub fn find_by_hash(&self, hash: &str) -> DatabaseResult<Option<StoredItem>> {
         let conn = self.get_conn()?;
         let result = conn.query_row(
-            "SELECT id, contentType, contentHash, content, timestamp, sourceApp, sourceAppBundleId, thumbnail, colorRgba FROM items WHERE contentHash = ?1 LIMIT 1",
+            "SELECT id, contentType, contentHash, content, timestamp, sourceApp, sourceAppBundleId, thumbnail, colorRgba, item_id FROM items WHERE contentHash = ?1 LIMIT 1",
             [hash],
             Self::row_to_base_item,
         );
@@ -489,13 +529,13 @@ impl Database {
 
         let sql = if before_timestamp.is_some() {
             format!(
-                r#"SELECT id, substr(ltrim(content, char(9) || char(10) || char(13) || ' '), 1, {}), contentType, timestamp, sourceApp, sourceAppBundleId, thumbnail, colorRgba
+                r#"SELECT id, substr(ltrim(content, char(9) || char(10) || char(13) || ' '), 1, {}), contentType, timestamp, sourceApp, sourceAppBundleId, thumbnail, colorRgba, item_id
                    FROM items WHERE timestamp < ? {} {} ORDER BY timestamp DESC LIMIT ?"#,
                 BROWSE_METADATA_PREFIX_CHARS, type_filter_clause_and, tag_clause_and
             )
         } else {
             format!(
-                r#"SELECT id, substr(ltrim(content, char(9) || char(10) || char(13) || ' '), 1, {}), contentType, timestamp, sourceApp, sourceAppBundleId, thumbnail, colorRgba
+                r#"SELECT id, substr(ltrim(content, char(9) || char(10) || char(13) || ' '), 1, {}), contentType, timestamp, sourceApp, sourceAppBundleId, thumbnail, colorRgba, item_id
                    FROM items {} {} ORDER BY timestamp DESC LIMIT ?"#,
                 BROWSE_METADATA_PREFIX_CHARS, type_filter_clause, tag_clause_where
             )
@@ -539,7 +579,7 @@ impl Database {
         let conn = self.get_conn()?;
         let placeholders = ids.iter().map(|_| "?").collect::<Vec<_>>().join(",");
         let sql = format!(
-            "SELECT id, contentType, contentHash, content, timestamp, sourceApp, sourceAppBundleId, thumbnail, colorRgba FROM items WHERE id IN ({})",
+            "SELECT id, contentType, contentHash, content, timestamp, sourceApp, sourceAppBundleId, thumbnail, colorRgba, item_id FROM items WHERE id IN ({})",
             placeholders
         );
 
@@ -568,24 +608,27 @@ impl Database {
             .collect())
     }
 
-    /// Fetch lightweight search result metadata by IDs, preserving order.
-    pub(crate) fn fetch_search_item_metadata_by_ids(
+    /// Fetch lightweight search result metadata by string item_ids, preserving order.
+    pub(crate) fn fetch_search_item_metadata_by_string_ids(
         &self,
-        ids: &[i64],
+        item_ids: &[&str],
     ) -> DatabaseResult<Vec<SearchItemMetadata>> {
-        if ids.is_empty() {
+        if item_ids.is_empty() {
             return Ok(Vec::new());
         }
 
         let conn = self.get_conn()?;
-        let placeholders = ids.iter().map(|_| "?").collect::<Vec<_>>().join(",");
+        let placeholders = item_ids.iter().map(|_| "?").collect::<Vec<_>>().join(",");
         let sql = format!(
-            "SELECT id, contentHash, substr(content, 1, {}), contentType, timestamp, sourceApp, sourceAppBundleId, thumbnail, colorRgba FROM items WHERE id IN ({})",
+            "SELECT id, contentHash, substr(content, 1, {}), contentType, timestamp, sourceApp, sourceAppBundleId, thumbnail, colorRgba, item_id FROM items WHERE item_id IN ({})",
             SEARCH_METADATA_PREFIX_CHARS,
             placeholders
         );
         let mut stmt = conn.prepare(&sql)?;
-        let params: Vec<rusqlite::types::Value> = ids.iter().map(|&id| id.into()).collect();
+        let params: Vec<rusqlite::types::Value> = item_ids
+            .iter()
+            .map(|&id| rusqlite::types::Value::from(id.to_string()))
+            .collect();
         let items: Vec<SearchItemMetadata> = stmt
             .query_map(
                 rusqlite::params_from_iter(params),
@@ -593,15 +636,44 @@ impl Database {
             )?
             .collect::<Result<Vec<_>, _>>()?;
 
-        let id_to_item: std::collections::HashMap<i64, SearchItemMetadata> = items
+        let id_to_item: std::collections::HashMap<String, SearchItemMetadata> = items
             .into_iter()
-            .map(|item| (item.item_metadata.item_id, item))
+            .map(|item| (item.item_metadata.item_id.clone(), item))
             .collect();
 
-        Ok(ids
+        Ok(item_ids
             .iter()
-            .filter_map(|id| id_to_item.get(id).cloned())
+            .filter_map(|id| id_to_item.get(*id).cloned())
             .collect())
+    }
+
+    /// Filter string item_ids by tag, returning those that have the tag.
+    pub(crate) fn filter_string_ids_by_tag(
+        &self,
+        item_ids: &[&str],
+        tag: ItemTag,
+    ) -> DatabaseResult<Vec<String>> {
+        if item_ids.is_empty() {
+            return Ok(Vec::new());
+        }
+
+        let conn = self.get_conn()?;
+        let placeholders = item_ids.iter().map(|_| "?").collect::<Vec<_>>().join(",");
+        let sql = format!(
+            "SELECT i.item_id FROM items i INNER JOIN item_tags t ON i.id = t.itemId WHERE t.tag = ? AND i.item_id IN ({})",
+            placeholders
+        );
+        let mut params: Vec<rusqlite::types::Value> = vec![tag.database_str().to_string().into()];
+        params.extend(
+            item_ids
+                .iter()
+                .map(|&id| rusqlite::types::Value::from(id.to_string())),
+        );
+        let mut stmt = conn.prepare(&sql)?;
+        let result: Vec<String> = stmt
+            .query_map(rusqlite::params_from_iter(params), |row| row.get(0))?
+            .collect::<Result<Vec<_>, _>>()?;
+        Ok(result)
     }
 
     /// Fetch items by IDs with SQLite C-level interrupt support.
@@ -629,7 +701,7 @@ impl Database {
 
         let placeholders = ids.iter().map(|_| "?").collect::<Vec<_>>().join(",");
         let sql = format!(
-            "SELECT id, contentType, contentHash, content, timestamp, sourceApp, sourceAppBundleId, thumbnail, colorRgba FROM items WHERE id IN ({})",
+            "SELECT id, contentType, contentHash, content, timestamp, sourceApp, sourceAppBundleId, thumbnail, colorRgba, item_id FROM items WHERE id IN ({})",
             placeholders
         );
 
@@ -674,7 +746,7 @@ impl Database {
     pub fn fetch_all_items(&self) -> DatabaseResult<Vec<StoredItem>> {
         let conn = self.get_conn()?;
         let mut stmt = conn.prepare(
-            "SELECT id, contentType, contentHash, content, timestamp, sourceApp, sourceAppBundleId, thumbnail, colorRgba FROM items ORDER BY timestamp DESC"
+            "SELECT id, contentType, contentHash, content, timestamp, sourceApp, sourceAppBundleId, thumbnail, colorRgba, item_id FROM items ORDER BY timestamp DESC"
         )?;
         let mut items = stmt
             .query_map([], Self::row_to_base_item)?
@@ -700,8 +772,9 @@ impl Database {
         Ok(ids)
     }
 
-    /// Get IDs that would be pruned (for index deletion before database prune)
-    pub fn get_prunable_ids(&self, max_bytes: i64, keep_ratio: f64) -> DatabaseResult<Vec<i64>> {
+    /// Get IDs that would be pruned (for index deletion before database prune).
+    /// Returns (row_id, item_id) pairs so callers can delete from both DB and search index.
+    pub fn get_prunable_ids(&self, max_bytes: i64, keep_ratio: f64) -> DatabaseResult<Vec<(i64, String)>> {
         let current_size = self.database_size()?;
         if current_size <= max_bytes {
             return Ok(Vec::new());
@@ -722,9 +795,11 @@ impl Database {
         let items_to_delete =
             std::cmp::max(100, ((current_size - target_size) / avg_item_size) as usize);
 
-        let mut stmt = conn.prepare("SELECT id FROM items ORDER BY timestamp ASC LIMIT ?1")?;
-        let ids: Vec<i64> = stmt
-            .query_map([items_to_delete as i64], |row| row.get(0))?
+        let mut stmt = conn.prepare("SELECT id, item_id FROM items ORDER BY timestamp ASC LIMIT ?1")?;
+        let ids: Vec<(i64, String)> = stmt
+            .query_map([items_to_delete as i64], |row| {
+                Ok((row.get(0)?, row.get(1)?))
+            })?
             .collect::<Result<Vec<_>, _>>()?;
 
         Ok(ids)
@@ -927,6 +1002,91 @@ impl Database {
         Ok(map)
     }
 
+    /// Resolve a string item_id to its numeric row ID.
+    pub fn fetch_row_id_by_item_id(&self, item_id: &str) -> DatabaseResult<Option<i64>> {
+        let conn = self.get_conn()?;
+        let result = conn.query_row(
+            "SELECT id FROM items WHERE item_id = ?1",
+            [item_id],
+            |row| row.get(0),
+        );
+        match result {
+            Ok(id) => Ok(Some(id)),
+            Err(rusqlite::Error::QueryReturnedNoRows) => Ok(None),
+            Err(e) => Err(e.into()),
+        }
+    }
+
+    /// Fetch full items by string item_ids, preserving the order of the input IDs.
+    pub fn fetch_items_by_item_ids(&self, item_ids: &[String]) -> DatabaseResult<Vec<StoredItem>> {
+        if item_ids.is_empty() {
+            return Ok(Vec::new());
+        }
+
+        let conn = self.get_conn()?;
+        let placeholders = item_ids.iter().map(|_| "?").collect::<Vec<_>>().join(",");
+        let sql = format!(
+            "SELECT id, contentType, contentHash, content, timestamp, sourceApp, sourceAppBundleId, thumbnail, colorRgba, item_id FROM items WHERE item_id IN ({})",
+            placeholders
+        );
+
+        let mut stmt = conn.prepare(&sql)?;
+        let params: Vec<rusqlite::types::Value> =
+            item_ids.iter().map(|id| id.clone().into()).collect();
+        let mut items: Vec<StoredItem> = stmt
+            .query_map(rusqlite::params_from_iter(params), Self::row_to_base_item)?
+            .collect::<Result<Vec<_>, _>>()?;
+
+        for item in &mut items {
+            if let Some(id) = item.id {
+                Self::populate_child_content(&conn, item, id)?;
+            }
+        }
+
+        let id_to_item: std::collections::HashMap<String, StoredItem> = items
+            .into_iter()
+            .map(|item| (item.item_id.clone(), item))
+            .collect();
+
+        Ok(item_ids
+            .iter()
+            .filter_map(|id| id_to_item.get(id).cloned())
+            .collect())
+    }
+
+    /// Get tags for items keyed by string item_id.
+    pub fn get_tags_for_item_ids(
+        &self,
+        item_ids: &[String],
+    ) -> DatabaseResult<std::collections::HashMap<String, Vec<ItemTag>>> {
+        if item_ids.is_empty() {
+            return Ok(std::collections::HashMap::new());
+        }
+
+        let conn = self.get_conn()?;
+        let placeholders = item_ids.iter().map(|_| "?").collect::<Vec<_>>().join(",");
+        let sql = format!(
+            "SELECT i.item_id, t.tag FROM item_tags t JOIN items i ON i.id = t.itemId WHERE i.item_id IN ({}) ORDER BY t.tag",
+            placeholders
+        );
+        let mut stmt = conn.prepare(&sql)?;
+        let params: Vec<rusqlite::types::Value> =
+            item_ids.iter().map(|id| id.clone().into()).collect();
+        let rows = stmt.query_map(rusqlite::params_from_iter(params), |row| {
+            Ok((row.get::<_, String>(0)?, row.get::<_, String>(1)?))
+        })?;
+
+        let mut map: std::collections::HashMap<String, Vec<ItemTag>> =
+            std::collections::HashMap::new();
+        for row in rows {
+            let (id, tag) = row?;
+            let tag = ItemTag::from_database_str(&tag).map_err(DatabaseError::InconsistentData)?;
+            map.entry(id).or_default().push(tag);
+        }
+
+        Ok(map)
+    }
+
     pub fn filter_ids_by_tag(&self, ids: &[i64], tag: ItemTag) -> DatabaseResult<Vec<i64>> {
         if ids.is_empty() {
             return Ok(Vec::new());
@@ -959,6 +1119,7 @@ impl Database {
         let source_app_bundle_id: Option<String> = row.get(6)?;
         let thumbnail: Option<Vec<u8>> = row.get(7)?;
         let color_rgba: Option<u32> = row.get(8)?;
+        let item_id: String = row.get(9)?;
 
         let timestamp = parse_db_timestamp(&timestamp_str);
 
@@ -987,6 +1148,7 @@ impl Database {
 
         Ok(StoredItem {
             id: Some(id),
+            item_id,
             content,
             content_hash,
             timestamp_unix: timestamp.timestamp(),
@@ -1101,7 +1263,7 @@ impl Database {
 
     /// Convert a database row to lightweight ItemMetadata
     fn row_to_metadata(row: &rusqlite::Row) -> rusqlite::Result<ItemMetadata> {
-        let id: i64 = row.get(0)?;
+        let _id: i64 = row.get(0)?;
         let content: String = row.get(1)?;
         let content_type: Option<String> = row.get(2)?;
         let timestamp_str: String = row.get(3)?;
@@ -1109,6 +1271,7 @@ impl Database {
         let source_app_bundle_id: Option<String> = row.get(5)?;
         let thumbnail: Option<Vec<u8>> = row.get(6)?;
         let color_rgba: Option<u32> = row.get(7)?;
+        let item_id: String = row.get(8)?;
 
         let timestamp = parse_db_timestamp(&timestamp_str);
         let db_type = content_type.as_deref().unwrap_or("text");
@@ -1117,7 +1280,7 @@ impl Database {
         let snippet = generate_preview(&content, SNIPPET_CONTEXT_CHARS * 2);
 
         Ok(ItemMetadata {
-            item_id: id,
+            item_id,
             icon,
             snippet,
             source_app,
@@ -1128,7 +1291,7 @@ impl Database {
     }
 
     fn row_to_search_item_metadata(row: &rusqlite::Row) -> rusqlite::Result<SearchItemMetadata> {
-        let id: i64 = row.get(0)?;
+        let row_id: i64 = row.get(0)?;
         let content_hash: String = row.get(1)?;
         let content_prefix: String = row.get(2)?;
         let db_type = row
@@ -1139,16 +1302,18 @@ impl Database {
         let source_app_bundle_id: Option<String> = row.get(6)?;
         let thumbnail: Option<Vec<u8>> = row.get(7)?;
         let color_rgba: Option<u32> = row.get(8)?;
+        let item_id: String = row.get(9)?;
 
         let timestamp = parse_db_timestamp(&timestamp_str);
         let icon = ItemIcon::from_database(&db_type, color_rgba, thumbnail);
         let snippet = generate_preview(&content_prefix, SNIPPET_CONTEXT_CHARS * 2);
 
         Ok(SearchItemMetadata {
+            row_id,
             content_hash,
             db_type,
             item_metadata: ItemMetadata {
-                item_id: id,
+                item_id,
                 icon,
                 snippet,
                 source_app,
@@ -1175,9 +1340,10 @@ mod tests {
         thumbnail: Option<Vec<u8>>,
     ) -> i64 {
         let conn = db.get_conn().unwrap();
+        let item_id = uuid::Uuid::new_v4().to_string();
         conn.execute(
-            "INSERT INTO items (contentType, contentHash, content, timestamp, thumbnail) VALUES (?1, ?2, ?3, '2026-01-01 00:00:00', ?4)",
-            params![content_type, format!("hash-{content_type}-{content}"), content, thumbnail],
+            "INSERT INTO items (item_id, contentType, contentHash, content, timestamp, thumbnail) VALUES (?1, ?2, ?3, ?4, '2026-01-01 00:00:00', ?5)",
+            params![item_id, content_type, format!("hash-{content_type}-{content}"), content, thumbnail],
         )
         .unwrap();
         conn.last_insert_rowid()

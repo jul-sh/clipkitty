@@ -67,7 +67,7 @@ pub fn apply_remote_snapshots(
     let mut applied = 0;
 
     for snapshot in snapshots {
-        let existing = sync.fetch_snapshot(&snapshot.global_item_id)?;
+        let existing = sync.fetch_snapshot(&snapshot.item_id)?;
         let should_apply = match &existing {
             None => true,
             Some(existing) => snapshot.snapshot_revision > existing.snapshot_revision,
@@ -78,11 +78,11 @@ pub fn apply_remote_snapshots(
 
             // Update projection from snapshot aggregate.
             let projection_state = projection_state_for_aggregate(
-                sync.fetch_projection(&snapshot.global_item_id)?,
+                sync.fetch_projection(&snapshot.item_id)?,
                 &snapshot.aggregate,
             );
 
-            sync.upsert_projection(&snapshot.global_item_id, &projection_state)?;
+            sync.upsert_projection(&snapshot.item_id, &projection_state)?;
 
             applied += 1;
         }
@@ -122,13 +122,13 @@ pub fn apply_remote_event(
     }
 
     // Load current aggregate from projection + snapshot.
-    let aggregate = load_aggregate(&sync, &event.global_item_id)?;
+    let aggregate = load_aggregate(&sync, &event.item_id)?;
 
     let mut result = projector::apply_event(aggregate.as_ref(), &event.payload);
 
     // Enrich fork plans with the originating item's global ID.
     if let ApplyResult::Forked(ref mut plan) = result {
-        plan.forked_from = Some(event.global_item_id.clone());
+        plan.forked_from = Some(event.item_id.clone());
     }
 
     match &result {
@@ -138,10 +138,10 @@ pub fn apply_remote_event(
             sync.mark_event_applied(&event.event_id)?;
 
             // Update snapshot with new aggregate so subsequent loads see current state.
-            let existing_snap = sync.fetch_snapshot(&event.global_item_id)?;
+            let existing_snap = sync.fetch_snapshot(&event.item_id)?;
             let prev_rev = existing_snap.map(|s| s.snapshot_revision).unwrap_or(0);
             let updated_snap = ItemSnapshot::compacted(
-                event.global_item_id.clone(),
+                event.item_id.clone(),
                 prev_rev,
                 event.event_id.clone(),
                 delta.new_aggregate.clone(),
@@ -150,11 +150,11 @@ pub fn apply_remote_event(
 
             // Update projection.
             let projection_state = projection_state_for_aggregate(
-                sync.fetch_projection(&event.global_item_id)?,
+                sync.fetch_projection(&event.item_id)?,
                 &delta.new_aggregate,
             );
 
-            sync.upsert_projection(&event.global_item_id, &projection_state)?;
+            sync.upsert_projection(&event.item_id, &projection_state)?;
         }
         ApplyResult::Ignored(_) => {
             // Mark as applied so we don't re-process.
@@ -189,7 +189,7 @@ pub fn apply_remote_event_batch(
             ApplyResult::Deferred(_) => result.events_deferred += 1,
             ApplyResult::Forked(plan) => {
                 result.events_forked += 1;
-                result.fork_plans.push((event.global_item_id.clone(), plan));
+                result.fork_plans.push((event.item_id.clone(), plan));
             }
         }
     }
@@ -215,12 +215,12 @@ fn retry_deferred_events(
 
         let mut progress = false;
         for event in &deferred {
-            let aggregate = load_aggregate(&sync, &event.global_item_id)?;
+            let aggregate = load_aggregate(&sync, &event.item_id)?;
             let mut apply_result = projector::apply_event(aggregate.as_ref(), &event.payload);
 
             // Enrich fork plans with lineage.
             if let ApplyResult::Forked(ref mut plan) = apply_result {
-                plan.forked_from = Some(event.global_item_id.clone());
+                plan.forked_from = Some(event.item_id.clone());
             }
 
             match apply_result {
@@ -230,10 +230,10 @@ fn retry_deferred_events(
                     sync.mark_event_applied(&event.event_id)?;
 
                     // Update snapshot with new aggregate.
-                    let existing_snap = sync.fetch_snapshot(&event.global_item_id)?;
+                    let existing_snap = sync.fetch_snapshot(&event.item_id)?;
                     let prev_rev = existing_snap.map(|s| s.snapshot_revision).unwrap_or(0);
                     let updated_snap = ItemSnapshot::compacted(
-                        event.global_item_id.clone(),
+                        event.item_id.clone(),
                         prev_rev,
                         event.event_id.clone(),
                         delta.new_aggregate.clone(),
@@ -241,10 +241,10 @@ fn retry_deferred_events(
                     sync.upsert_snapshot(&updated_snap)?;
 
                     let projection_state = projection_state_for_aggregate(
-                        sync.fetch_projection(&event.global_item_id)?,
+                        sync.fetch_projection(&event.item_id)?,
                         &delta.new_aggregate,
                     );
-                    sync.upsert_projection(&event.global_item_id, &projection_state)?;
+                    sync.upsert_projection(&event.item_id, &projection_state)?;
 
                     result.events_applied += 1;
                     result.events_deferred = result.events_deferred.saturating_sub(1);
@@ -263,7 +263,7 @@ fn retry_deferred_events(
                     sync.mark_event_applied(&event.event_id)?;
                     result.events_forked += 1;
                     result.events_deferred = result.events_deferred.saturating_sub(1);
-                    result.fork_plans.push((event.global_item_id.clone(), plan));
+                    result.fork_plans.push((event.item_id.clone(), plan));
                     progress = true;
                 }
                 ApplyResult::Deferred(_) => {
@@ -315,7 +315,7 @@ pub fn full_resync(
             },
         };
 
-        sync.upsert_projection(&snapshot.global_item_id, &projection_state)?;
+        sync.upsert_projection(&snapshot.item_id, &projection_state)?;
 
         result.checkpoints_applied += 1;
     }
@@ -345,7 +345,11 @@ pub fn full_resync(
             ApplyResult::Applied(_) => result.tail_events_applied += 1,
             ApplyResult::Ignored(_) => result.tail_events_ignored += 1,
             ApplyResult::Deferred(_) => result.tail_events_deferred += 1,
-            ApplyResult::Forked(_) => result.tail_events_applied += 1,
+            ApplyResult::Forked(plan) => {
+                result.tail_events_applied += 1;
+                result.tail_events_forked += 1;
+                result.fork_plans.push((event.item_id.clone(), plan));
+            }
         }
     }
 
@@ -365,17 +369,17 @@ pub fn full_resync_from_snapshots(
 }
 
 /// Load the current aggregate for an item from the projection and snapshot.
-fn load_aggregate(sync: &SyncStore<'_>, global_item_id: &str) -> SyncResult<Option<ItemAggregate>> {
+fn load_aggregate(sync: &SyncStore<'_>, item_id: &str) -> SyncResult<Option<ItemAggregate>> {
     // First check projection for version info.
-    let projection = sync.fetch_projection(global_item_id)?;
+    let projection = sync.fetch_projection(item_id)?;
     if projection.is_none() {
         // No projection entry — check if there's a snapshot.
-        let snapshot = sync.fetch_snapshot(global_item_id)?;
+        let snapshot = sync.fetch_snapshot(item_id)?;
         return Ok(snapshot.map(|s| s.aggregate));
     }
 
     // Projection exists — use snapshot as authoritative aggregate.
-    let snapshot = sync.fetch_snapshot(global_item_id)?;
+    let snapshot = sync.fetch_snapshot(item_id)?;
     Ok(snapshot.map(|s| s.aggregate))
 }
 
@@ -385,12 +389,9 @@ fn projection_state_for_aggregate(
 ) -> ProjectionState {
     match aggregate {
         ItemAggregate::Live(live) => match existing_projection.map(|entry| entry.state) {
-            Some(ProjectionState::Materialized { local_item_id, .. }) => {
-                ProjectionState::Materialized {
-                    local_item_id,
-                    versions: live.versions,
-                }
-            }
+            Some(ProjectionState::Materialized { .. }) => ProjectionState::Materialized {
+                versions: live.versions,
+            },
             Some(ProjectionState::PendingMaterialization { .. })
             | Some(ProjectionState::Tombstoned { .. })
             | None => ProjectionState::PendingMaterialization {

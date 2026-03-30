@@ -122,14 +122,11 @@ fn default_versions() -> VersionVector {
 
 fn assert_projection_materialized(
     entry: &ProjectionEntry,
-    expected_local_item_id: i64,
 ) -> VersionVector {
     match &entry.state {
         ProjectionState::Materialized {
-            local_item_id,
             versions,
         } => {
-            assert_eq!(*local_item_id, expected_local_item_id);
             *versions
         }
         ProjectionState::PendingMaterialization { .. } => {
@@ -685,7 +682,7 @@ mod store_tests {
         let pending = sync.fetch_pending_upload_events().unwrap();
         assert_eq!(pending.len(), 1);
         assert_eq!(pending[0].event_id, event.event_id);
-        assert_eq!(pending[0].global_item_id, "item-1");
+        assert_eq!(pending[0].item_id, "item-1");
     }
 
     #[test]
@@ -736,19 +733,14 @@ mod store_tests {
         sync.upsert_projection(
             "global-1",
             &ProjectionState::Materialized {
-                local_item_id: 42,
                 versions,
             },
         )
         .unwrap();
 
         let entry = sync.fetch_projection("global-1").unwrap().unwrap();
-        let projected_versions = assert_projection_materialized(&entry, 42);
+        let projected_versions = assert_projection_materialized(&entry);
         assert_eq!(projected_versions, versions);
-
-        // Reverse lookup.
-        let gid = sync.global_id_for_local(42).unwrap().unwrap();
-        assert_eq!(gid, "global-1");
     }
 
     #[test]
@@ -851,7 +843,6 @@ mod store_tests {
         sync.upsert_projection(
             "global-1",
             &ProjectionState::Materialized {
-                local_item_id: 1,
                 versions: default_versions(),
             },
         )
@@ -888,7 +879,6 @@ mod replay_tests {
         sync.upsert_projection(
             global_id,
             &ProjectionState::Materialized {
-                local_item_id: 1,
                 versions: default_versions(),
             },
         )
@@ -1148,7 +1138,6 @@ mod compaction_tests {
         sync.upsert_projection(
             global_id,
             &ProjectionState::Materialized {
-                local_item_id: 1,
                 versions: default_versions(),
             },
         )
@@ -1200,7 +1189,7 @@ mod compaction_tests {
             } => {
                 assert!(events_compacted > 0);
                 assert_eq!(snapshot.snapshot_revision, 2); // initial=1, compacted=2
-                assert_eq!(snapshot.global_item_id, "item-1");
+                assert_eq!(snapshot.item_id, "item-1");
             }
             other => panic!("expected Compacted, got {other:?}"),
         }
@@ -1255,7 +1244,7 @@ mod write_path_tests {
         let id = store
             .save_text("hello sync".to_string(), None, None)
             .unwrap();
-        assert!(id > 0);
+        assert!(!id.is_empty());
 
         // Verify event was emitted.
         let pending = store.pending_local_events().unwrap();
@@ -1265,9 +1254,8 @@ mod write_path_tests {
         // Verify projection exists.
         let db = store_db(&dir);
         let sync = SyncStore::new(db.pool());
-        let gid = sync.global_id_for_local(id).unwrap().unwrap();
-        let proj = sync.fetch_projection(&gid).unwrap().unwrap();
-        let versions = assert_projection_materialized(&proj, id);
+        let proj = sync.fetch_projection(&id).unwrap().unwrap();
+        let versions = assert_projection_materialized(&proj);
         assert_eq!(versions.content, 1);
         assert_eq!(versions.existence, 1);
     }
@@ -1280,13 +1268,13 @@ mod write_path_tests {
         let id = store
             .save_text("hello sync".to_string(), None, None)
             .unwrap();
-        assert!(id > 0);
+        assert!(!id.is_empty());
 
         // Duplicate save (returns 0 for dedup).
         let id2 = store
             .save_text("hello sync".to_string(), None, None)
             .unwrap();
-        assert_eq!(id2, 0);
+        assert!(id2.is_empty());
 
         // Should have 2 events: item_created + item_touched.
         let pending = store.pending_local_events().unwrap();
@@ -1302,7 +1290,7 @@ mod write_path_tests {
         let id = store
             .save_text("to delete".to_string(), None, None)
             .unwrap();
-        store.delete_item(id).unwrap();
+        store.delete_item(id.clone()).unwrap();
 
         let pending = store.pending_local_events().unwrap();
         assert!(pending.len() >= 2);
@@ -1314,10 +1302,8 @@ mod write_path_tests {
 
         let db = store_db(&dir);
         let sync = SyncStore::new(db.pool());
-        assert!(sync.global_id_for_local(id).unwrap().is_none());
 
-        let gid = pending[0].global_item_id.clone();
-        let projection = sync.fetch_projection(&gid).unwrap().unwrap();
+        let projection = sync.fetch_projection(&id).unwrap().unwrap();
         assert_projection_tombstoned(&projection);
     }
 
@@ -1326,7 +1312,7 @@ mod write_path_tests {
         let (store, _dir) = test_store();
 
         let id = store.save_text("original".to_string(), None, None).unwrap();
-        store.update_text_item(id, "edited".to_string()).unwrap();
+        store.update_text_item(id.clone(), "edited".to_string()).unwrap();
 
         let pending = store.pending_local_events().unwrap();
         let edit_events: Vec<_> = pending
@@ -1342,10 +1328,10 @@ mod write_path_tests {
 
         let id = store.save_text("original".to_string(), None, None).unwrap();
         store
-            .update_text_item(id, "edited once".to_string())
+            .update_text_item(id.clone(), "edited once".to_string())
             .unwrap();
         store
-            .update_text_item(id, "edited twice".to_string())
+            .update_text_item(id.clone(), "edited twice".to_string())
             .unwrap();
 
         let pending = store.pending_local_events().unwrap();
@@ -1355,7 +1341,7 @@ mod write_path_tests {
             .map(|event| {
                 ItemEvent::from_stored(
                     event.event_id.clone(),
-                    event.global_item_id.clone(),
+                    event.item_id.clone(),
                     event.origin_device_id.clone(),
                     event.schema_version,
                     event.recorded_at,
@@ -1384,9 +1370,8 @@ mod write_path_tests {
 
         let db = store_db(&dir);
         let sync = SyncStore::new(db.pool());
-        let gid = sync.global_id_for_local(id).unwrap().unwrap();
-        let projection = sync.fetch_projection(&gid).unwrap().unwrap();
-        let versions = assert_projection_materialized(&projection, id);
+        let projection = sync.fetch_projection(&id).unwrap().unwrap();
+        let versions = assert_projection_materialized(&projection);
         assert_eq!(versions.content, 3);
     }
 
@@ -1417,10 +1402,10 @@ mod write_path_tests {
             .save_text("bookmarked".to_string(), None, None)
             .unwrap();
         store
-            .add_tag(id, purr::interface::ItemTag::Bookmark)
+            .add_tag(id.clone(), purr::interface::ItemTag::Bookmark)
             .unwrap();
         store
-            .remove_tag(id, purr::interface::ItemTag::Bookmark)
+            .remove_tag(id.clone(), purr::interface::ItemTag::Bookmark)
             .unwrap();
 
         let pending = store.pending_local_events().unwrap();
@@ -1470,7 +1455,7 @@ mod serialization_tests {
 
         let restored = ItemEvent::from_stored(
             event.event_id.clone(),
-            event.global_item_id.clone(),
+            event.item_id.clone(),
             event.origin_device_id.clone(),
             event.schema_version,
             event.recorded_at,
@@ -1495,7 +1480,7 @@ mod serialization_tests {
 
         let restored = ItemEvent::from_stored(
             event.event_id.clone(),
-            event.global_item_id.clone(),
+            event.item_id.clone(),
             event.origin_device_id.clone(),
             event.schema_version,
             event.recorded_at,
@@ -1930,7 +1915,6 @@ mod compaction_audit_tests {
         sync.upsert_projection(
             gid,
             &ProjectionState::Materialized {
-                local_item_id: 1,
                 versions: default_versions(),
             },
         )
@@ -1973,7 +1957,6 @@ mod compaction_audit_tests {
         sync.upsert_projection(
             gid,
             &ProjectionState::Materialized {
-                local_item_id: 1,
                 versions: default_versions(),
             },
         )
@@ -2081,7 +2064,6 @@ mod compaction_audit_tests {
         sync.upsert_projection(
             gid,
             &ProjectionState::Materialized {
-                local_item_id: 1,
                 versions: default_versions(),
             },
         )
@@ -2168,7 +2150,7 @@ mod write_path_audit_tests {
         let id = store
             .save_image(png_bytes, None, None, None, false)
             .unwrap();
-        assert!(id > 0);
+        assert!(!id.is_empty());
 
         let pending = store.pending_local_events().unwrap();
         assert_eq!(pending.len(), 1);
@@ -2191,7 +2173,7 @@ mod write_path_audit_tests {
                 None,
             )
             .unwrap();
-        assert!(id > 0);
+        assert!(!id.is_empty());
 
         let pending = store.pending_local_events().unwrap();
         assert_eq!(pending.len(), 1);
@@ -2252,8 +2234,8 @@ mod write_path_audit_tests {
         let second_id = store
             .save_text("will also be cleared".to_string(), None, None)
             .unwrap();
-        assert!(first_id > 0);
-        assert!(second_id > 0);
+        assert!(!first_id.is_empty());
+        assert!(!second_id.is_empty());
 
         let pending = store.pending_local_events().unwrap();
         let created_count = pending
@@ -2273,12 +2255,10 @@ mod write_path_audit_tests {
 
         let db = store_db(&dir);
         let sync = SyncStore::new(db.pool());
-        assert!(sync.global_id_for_local(first_id).unwrap().is_none());
-        assert!(sync.global_id_for_local(second_id).unwrap().is_none());
 
         for event in delete_events {
             let projection = sync
-                .fetch_projection(&event.global_item_id)
+                .fetch_projection(&event.item_id)
                 .unwrap()
                 .unwrap();
             assert_projection_tombstoned(&projection);
@@ -2287,7 +2267,7 @@ mod write_path_audit_tests {
 
     #[test]
     fn pending_snapshot_records_only_include_unuploaded_snapshots() {
-        let (store, dir) = test_store();
+        let (store, _dir) = test_store();
 
         let id = store
             .save_text("snapshot me".to_string(), None, None)
@@ -2295,11 +2275,7 @@ mod write_path_audit_tests {
         let pending = store.pending_snapshot_records().unwrap();
         assert_eq!(pending.len(), 1);
 
-        let db = store_db(&dir);
-        let sync = SyncStore::new(db.pool());
-        let gid = sync.global_id_for_local(id).unwrap().unwrap();
-
-        store.mark_snapshot_uploaded(gid).unwrap();
+        store.mark_snapshot_uploaded(id).unwrap();
 
         let pending = store.pending_snapshot_records().unwrap();
         assert!(pending.is_empty());
@@ -2437,7 +2413,7 @@ mod replay_audit_tests {
         let stale_id = store
             .save_text("stale local row".to_string(), None, None)
             .unwrap();
-        assert!(stale_id > 0);
+        assert!(!stale_id.is_empty());
 
         let aggregate = ItemAggregate::Live(LiveItemState {
             snapshot: text_snapshot("remote truth"),
@@ -2445,7 +2421,7 @@ mod replay_audit_tests {
         });
         let snapshot = ItemSnapshot::initial("remote-item".to_string(), aggregate);
         let record = purr::interface::SyncSnapshotRecord {
-            global_item_id: snapshot.global_item_id.clone(),
+            item_id: snapshot.item_id.clone(),
             snapshot_revision: snapshot.snapshot_revision,
             schema_version: snapshot.schema_version,
             covers_through_event: snapshot.covers_through_event.clone(),
@@ -2457,7 +2433,7 @@ mod replay_audit_tests {
         assert_eq!(result.tail_events_applied, 0);
 
         let db = store_db(&dir);
-        assert!(db.fetch_items_by_ids(&[stale_id]).unwrap().is_empty());
+        assert!(db.fetch_items_by_item_ids(&[stale_id]).unwrap().is_empty());
 
         let all_items = db.fetch_all_items().unwrap();
         assert_eq!(all_items.len(), 1);
@@ -2478,7 +2454,7 @@ mod replay_audit_tests {
         store
             .apply_remote_event(purr::interface::SyncEventRecord {
                 event_id: created.event_id.clone(),
-                global_item_id: created.global_item_id.clone(),
+                item_id: created.item_id.clone(),
                 origin_device_id: created.origin_device_id.clone(),
                 schema_version: created.schema_version,
                 recorded_at: created.recorded_at,
@@ -2497,7 +2473,7 @@ mod replay_audit_tests {
         store
             .apply_remote_event(purr::interface::SyncEventRecord {
                 event_id: bookmarked.event_id.clone(),
-                global_item_id: bookmarked.global_item_id.clone(),
+                item_id: bookmarked.item_id.clone(),
                 origin_device_id: bookmarked.origin_device_id.clone(),
                 schema_version: bookmarked.schema_version,
                 recorded_at: bookmarked.recorded_at,
@@ -2507,8 +2483,8 @@ mod replay_audit_tests {
             .unwrap();
 
         let db = store_db(&dir);
-        let local_id = db.fetch_all_items().unwrap()[0].id.unwrap();
-        let mut items = store.fetch_by_ids(vec![local_id]).unwrap();
+        let item_id = db.fetch_all_items().unwrap()[0].item_id.clone();
+        let mut items = store.fetch_by_ids(vec![item_id]).unwrap();
         let item = items.pop().unwrap();
         assert_eq!(
             item.item_metadata.tags,
@@ -2530,7 +2506,7 @@ mod replay_audit_tests {
         store
             .apply_remote_event(purr::interface::SyncEventRecord {
                 event_id: created.event_id.clone(),
-                global_item_id: created.global_item_id.clone(),
+                item_id: created.item_id.clone(),
                 origin_device_id: created.origin_device_id.clone(),
                 schema_version: created.schema_version,
                 recorded_at: created.recorded_at,
@@ -2555,7 +2531,7 @@ mod replay_audit_tests {
         store
             .apply_remote_event(purr::interface::SyncEventRecord {
                 event_id: edited.event_id.clone(),
-                global_item_id: edited.global_item_id.clone(),
+                item_id: edited.item_id.clone(),
                 origin_device_id: edited.origin_device_id.clone(),
                 schema_version: edited.schema_version,
                 recorded_at: edited.recorded_at,
@@ -2568,6 +2544,108 @@ mod replay_audit_tests {
         assert_eq!(after_items.len(), 1);
         assert_eq!(after_items[0].id.unwrap(), before_id);
         assert_eq!(after_items[0].text_content(), "after edit");
+    }
+
+    #[test]
+    fn remote_fork_creates_new_local_synced_item() {
+        let (store, dir) = test_store();
+
+        let created = ItemEvent::new_local(
+            "shared-item".to_string(),
+            "device-A",
+            ItemEventPayload::ItemCreated {
+                snapshot: text_snapshot("before edit"),
+            },
+        );
+        store
+            .apply_remote_event(purr::interface::SyncEventRecord {
+                event_id: created.event_id.clone(),
+                item_id: created.item_id.clone(),
+                origin_device_id: created.origin_device_id.clone(),
+                schema_version: created.schema_version,
+                recorded_at: created.recorded_at,
+                payload_type: created.payload_type(),
+                payload_data: created.payload_data(),
+            })
+            .unwrap();
+
+        let first_edit = ItemEvent::new_local(
+            "shared-item".to_string(),
+            "device-A",
+            ItemEventPayload::TextEdited {
+                new_text: "edited by A".to_string(),
+                base_content_version: 1,
+            },
+        );
+        store
+            .apply_remote_event(purr::interface::SyncEventRecord {
+                event_id: first_edit.event_id.clone(),
+                item_id: first_edit.item_id.clone(),
+                origin_device_id: first_edit.origin_device_id.clone(),
+                schema_version: first_edit.schema_version,
+                recorded_at: first_edit.recorded_at,
+                payload_type: first_edit.payload_type(),
+                payload_data: first_edit.payload_data(),
+            })
+            .unwrap();
+
+        let conflicting_edit = ItemEvent::new_local(
+            "shared-item".to_string(),
+            "device-B",
+            ItemEventPayload::TextEdited {
+                new_text: "edited by B".to_string(),
+                base_content_version: 1,
+            },
+        );
+        let fork_result = store
+            .apply_remote_event(purr::interface::SyncEventRecord {
+                event_id: conflicting_edit.event_id.clone(),
+                item_id: conflicting_edit.item_id.clone(),
+                origin_device_id: conflicting_edit.origin_device_id.clone(),
+                schema_version: conflicting_edit.schema_version,
+                recorded_at: conflicting_edit.recorded_at,
+                payload_type: conflicting_edit.payload_type(),
+                payload_data: conflicting_edit.payload_data(),
+            })
+            .unwrap();
+        assert!(matches!(
+            fork_result,
+            purr::interface::SyncApplyOutcome::Forked { .. }
+        ));
+
+        let db = store_db(&dir);
+        let all_items = db.fetch_all_items().unwrap();
+        assert_eq!(all_items.len(), 2);
+
+        let original_item = all_items
+            .iter()
+            .find(|item| item.item_id == "shared-item")
+            .unwrap();
+        assert_eq!(original_item.text_content(), "edited by A");
+
+        let forked_item = all_items
+            .iter()
+            .find(|item| item.text_content() == "edited by B")
+            .unwrap();
+        assert_ne!(forked_item.item_id, "shared-item");
+
+        let pending_events = store.pending_local_events().unwrap();
+        assert_eq!(pending_events.len(), 1);
+        assert_eq!(pending_events[0].item_id, forked_item.item_id);
+        assert_eq!(pending_events[0].payload_type, "item_created");
+
+        let sync = SyncStore::new(db.pool());
+        let projection = sync
+            .fetch_projection(&forked_item.item_id)
+            .unwrap()
+            .unwrap();
+        match projection.state {
+            ProjectionState::Materialized { versions } => {
+                assert_eq!(versions.content, 1);
+                assert_eq!(versions.existence, 1);
+            }
+            other => panic!("expected materialized fork projection, got {other:?}"),
+        }
     }
 
     #[test]
@@ -2592,7 +2670,7 @@ mod replay_audit_tests {
             .apply_remote_batch(
                 vec![purr::interface::SyncEventRecord {
                     event_id: deleted.event_id.clone(),
-                    global_item_id: deleted.global_item_id.clone(),
+                    item_id: deleted.item_id.clone(),
                     origin_device_id: deleted.origin_device_id.clone(),
                     schema_version: deleted.schema_version,
                     recorded_at: deleted.recorded_at,
@@ -2600,7 +2678,7 @@ mod replay_audit_tests {
                     payload_data: deleted.payload_data(),
                 }],
                 vec![purr::interface::SyncSnapshotRecord {
-                    global_item_id: snapshot.global_item_id.clone(),
+                    item_id: snapshot.item_id.clone(),
                     snapshot_revision: snapshot.snapshot_revision,
                     schema_version: snapshot.schema_version,
                     covers_through_event: snapshot.covers_through_event.clone(),
@@ -2645,7 +2723,7 @@ mod replay_audit_tests {
         store
             .apply_remote_event(purr::interface::SyncEventRecord {
                 event_id: created.event_id.clone(),
-                global_item_id: created.global_item_id.clone(),
+                item_id: created.item_id.clone(),
                 origin_device_id: created.origin_device_id.clone(),
                 schema_version: created.schema_version,
                 recorded_at: created.recorded_at,
@@ -2665,7 +2743,7 @@ mod replay_audit_tests {
             .apply_remote_batch(
                 vec![purr::interface::SyncEventRecord {
                     event_id: deleted.event_id.clone(),
-                    global_item_id: deleted.global_item_id.clone(),
+                    item_id: deleted.item_id.clone(),
                     origin_device_id: deleted.origin_device_id.clone(),
                     schema_version: deleted.schema_version,
                     recorded_at: deleted.recorded_at,
@@ -2692,6 +2770,86 @@ mod replay_audit_tests {
             .unwrap()
             .unwrap();
         assert_projection_tombstoned(&projection);
+    }
+
+    #[test]
+    fn full_resync_with_tail_preserves_forked_conflict_items() {
+        let (store, dir) = test_store();
+
+        let checkpoint = ItemSnapshot::initial(
+            "shared-item".to_string(),
+            live_aggregate(text_snapshot("before edit"), default_versions()),
+        );
+        let first_edit = ItemEvent::new_local(
+            "shared-item".to_string(),
+            "device-A",
+            ItemEventPayload::TextEdited {
+                new_text: "edited by A".to_string(),
+                base_content_version: 1,
+            },
+        );
+        let conflicting_edit = ItemEvent::new_local(
+            "shared-item".to_string(),
+            "device-B",
+            ItemEventPayload::TextEdited {
+                new_text: "edited by B".to_string(),
+                base_content_version: 1,
+            },
+        );
+
+        let result = store
+            .full_resync_with_tail(
+                vec![purr::interface::SyncSnapshotRecord {
+                    item_id: checkpoint.item_id.clone(),
+                    snapshot_revision: checkpoint.snapshot_revision,
+                    schema_version: checkpoint.schema_version,
+                    covers_through_event: checkpoint.covers_through_event.clone(),
+                    aggregate_data: checkpoint.aggregate_data(),
+                }],
+                vec![
+                    purr::interface::SyncEventRecord {
+                        event_id: first_edit.event_id.clone(),
+                        item_id: first_edit.item_id.clone(),
+                        origin_device_id: first_edit.origin_device_id.clone(),
+                        schema_version: first_edit.schema_version,
+                        recorded_at: first_edit.recorded_at,
+                        payload_type: first_edit.payload_type(),
+                        payload_data: first_edit.payload_data(),
+                    },
+                    purr::interface::SyncEventRecord {
+                        event_id: conflicting_edit.event_id.clone(),
+                        item_id: conflicting_edit.item_id.clone(),
+                        origin_device_id: conflicting_edit.origin_device_id.clone(),
+                        schema_version: conflicting_edit.schema_version,
+                        recorded_at: conflicting_edit.recorded_at,
+                        payload_type: conflicting_edit.payload_type(),
+                        payload_data: conflicting_edit.payload_data(),
+                    },
+                ],
+            )
+            .unwrap();
+
+        assert_eq!(result.checkpoints_applied, 1);
+        assert_eq!(result.tail_events_applied, 2);
+        assert_eq!(result.tail_events_forked, 1);
+
+        let db = store_db(&dir);
+        let all_items = db.fetch_all_items().unwrap();
+        assert_eq!(all_items.len(), 2);
+        assert!(
+            all_items.iter().any(|item| item.item_id == "shared-item"
+                && item.text_content() == "edited by A")
+        );
+        let forked_item = all_items
+            .iter()
+            .find(|item| item.text_content() == "edited by B")
+            .unwrap();
+        assert_ne!(forked_item.item_id, "shared-item");
+
+        let pending_events = store.pending_local_events().unwrap();
+        assert_eq!(pending_events.len(), 1);
+        assert_eq!(pending_events[0].item_id, forked_item.item_id);
+        assert_eq!(pending_events[0].payload_type, "item_created");
     }
 
     #[test]
@@ -2745,7 +2903,7 @@ mod forward_compat_tests {
         // Construct an event with a future schema version.
         let future_event = ItemEvent {
             event_id: uuid::Uuid::new_v4().to_string(),
-            global_item_id: "item-fwd".to_string(),
+            item_id: "item-fwd".to_string(),
             origin_device_id: "device-future".to_string(),
             schema_version: 999,
             recorded_at: chrono::Utc::now().timestamp(),

@@ -336,8 +336,8 @@ struct TextPreviewView: NSViewRepresentable {
     private static let maxAutoScaleCharacters = 4096
     private static let maxAutoScaleLines = 14
 
-    static var textCache: [Int64: String] = [:]
-    let itemId: Int64
+    static var textCache: [String: String] = [:]
+    let itemId: String
     let fontName: String
     let fontSize: CGFloat
     var highlights: [Utf16HighlightRange] = []
@@ -1011,7 +1011,7 @@ struct TextPreviewView: NSViewRepresentable {
         private static let maxKvoReScrollAttempts = 2
 
         // Edit tracking
-        var currentItemId: Int64 = 0
+        var currentItemId: String = ""
         var lastRenderedText: String?
         var isEditing = false
         var onTextChange: ((String) -> Void)?
@@ -1020,7 +1020,7 @@ struct TextPreviewView: NSViewRepresentable {
             usageBoundsObservation?.invalidate()
         }
 
-        fileprivate func prepareForDisplayedItemChange(to itemId: Int64, in textView: PreviewTextView) {
+        fileprivate func prepareForDisplayedItemChange(to itemId: String, in textView: PreviewTextView) {
             scrollGeneration += 1
             clearUsageBoundsRecentering()
             clearViewportRetry()

@@ -172,15 +172,14 @@ impl ClipboardStore {
         let prepared: Vec<_> = items
             .par_iter()
             .map(|item| {
-                let id = item.id.expect("persisted item should have id");
                 let text = item
                     .file_index_text()
                     .unwrap_or_else(|| item.text_content().to_string());
-                (id, text, item.timestamp_unix)
+                (item.item_id.as_str(), text, item.timestamp_unix)
             })
             .collect();
-        for (id, text, ts) in prepared {
-            self.indexer.add_document(id, &text, ts)?;
+        for (item_id, text, ts) in prepared {
+            self.indexer.add_document(item_id, &text, ts)?;
         }
         self.indexer.commit()?;
         Ok(())
@@ -260,18 +259,34 @@ impl ClipboardStore {
     fn emit_for_insert(&self, outcome: &save_service::InsertOutcome) -> Result<(), ClipKittyError> {
         match outcome {
             save_service::InsertOutcome::Deduplicated {
-                existing_id,
+                item_id,
                 touched_at_unix,
+                ..
             } => {
                 self.sync_emitter
-                    .emit_item_touched(*existing_id, *touched_at_unix)?;
+                    .emit_item_touched(item_id, *touched_at_unix)?;
             }
-            save_service::InsertOutcome::Inserted { new_id, item } => {
+            save_service::InsertOutcome::Inserted { item_id, item, .. } => {
                 let snapshot = crate::sync_bridge::snapshot_from_stored_item(item);
-                self.sync_emitter.emit_item_created(*new_id, snapshot)?;
+                self.sync_emitter.emit_item_created(item_id, snapshot)?;
             }
         }
         Ok(())
+    }
+
+    /// Look up the stable string item_id for a row ID, for use in sync emission.
+    #[cfg(feature = "sync")]
+    fn resolve_item_id(&self, row_id: i64) -> Result<Option<String>, ClipKittyError> {
+        Ok(self.db.fetch_item_id_by_row_id(row_id)?)
+    }
+}
+
+impl ClipboardStore {
+    /// Resolve a string item_id to its numeric row ID, returning an error if not found.
+    fn require_row_id(&self, item_id: &str) -> Result<i64, ClipKittyError> {
+        self.db
+            .fetch_row_id_by_item_id(item_id)?
+            .ok_or_else(|| ClipKittyError::InvalidInput(format!("item not found: {item_id}")))
     }
 }
 
@@ -293,7 +308,7 @@ impl ClipboardStoreApi for ClipboardStore {
         text: String,
         source_app: Option<String>,
         source_app_bundle_id: Option<String>,
-    ) -> Result<i64, ClipKittyError> {
+    ) -> Result<String, ClipKittyError> {
         let outcome = save_service::save_text(
             &self.db,
             &self.indexer,
@@ -335,13 +350,13 @@ impl ClipboardStoreApi for ClipboardStore {
         }
     }
 
-    fn fetch_by_ids(&self, item_ids: Vec<i64>) -> Result<Vec<ClipboardItem>, ClipKittyError> {
-        let stored_items = self.db.fetch_items_by_ids(&item_ids)?;
+    fn fetch_by_ids(&self, item_ids: Vec<String>) -> Result<Vec<ClipboardItem>, ClipKittyError> {
+        let stored_items = self.db.fetch_items_by_item_ids(&item_ids)?;
         let mut items: Vec<ClipboardItem> = stored_items
             .into_iter()
             .map(|item| item.to_clipboard_item())
             .collect();
-        let tags_by_id = self.db.get_tags_for_ids(&item_ids)?;
+        let tags_by_id = self.db.get_tags_for_item_ids(&item_ids)?;
         for item in &mut items {
             item.item_metadata.tags = tags_by_id
                 .get(&item.item_metadata.item_id)
@@ -353,7 +368,7 @@ impl ClipboardStoreApi for ClipboardStore {
 
     fn compute_row_decorations(
         &self,
-        item_ids: Vec<i64>,
+        item_ids: Vec<String>,
         query: String,
     ) -> Result<Vec<RowDecorationResult>, ClipKittyError> {
         search_service::compute_row_decorations(&self.db, &self.analysis_cache, item_ids, query)
@@ -361,7 +376,7 @@ impl ClipboardStoreApi for ClipboardStore {
 
     fn load_preview_payload(
         &self,
-        item_id: i64,
+        item_id: String,
         query: String,
     ) -> Result<Option<PreviewPayload>, ClipKittyError> {
         search_service::load_preview_payload(&self.db, &self.analysis_cache, item_id, query)
@@ -377,7 +392,7 @@ impl ClipboardStoreApi for ClipboardStore {
         thumbnail: Option<Vec<u8>>,
         source_app: Option<String>,
         source_app_bundle_id: Option<String>,
-    ) -> Result<i64, ClipKittyError> {
+    ) -> Result<String, ClipKittyError> {
         if paths.is_empty() {
             return Err(ClipKittyError::InvalidInput("No files provided".into()));
         }
@@ -408,7 +423,7 @@ impl ClipboardStoreApi for ClipboardStore {
         thumbnail: Option<Vec<u8>>,
         source_app: Option<String>,
         source_app_bundle_id: Option<String>,
-    ) -> Result<i64, ClipKittyError> {
+    ) -> Result<String, ClipKittyError> {
         let outcome = save_service::save_file(
             &self.db,
             &self.indexer,
@@ -433,7 +448,7 @@ impl ClipboardStoreApi for ClipboardStore {
         source_app: Option<String>,
         source_app_bundle_id: Option<String>,
         is_animated: bool,
-    ) -> Result<i64, ClipKittyError> {
+    ) -> Result<String, ClipKittyError> {
         let outcome = save_service::save_image(
             &self.db,
             &self.indexer,
@@ -450,44 +465,37 @@ impl ClipboardStoreApi for ClipboardStore {
 
     fn update_link_metadata(
         &self,
-        item_id: i64,
+        item_id: String,
         title: Option<String>,
         description: Option<String>,
         image_data: Option<Vec<u8>>,
     ) -> Result<(), ClipKittyError> {
-        // Emit before DB write (existing ordering).
-        #[cfg(feature = "sync")]
-        {
-            // Build the snapshot from the raw inputs before save_service normalizes them.
-            // We need to call save_service first to get the resolved metadata, but the
-            // original code emitted before the DB write. Since save_service now does the
-            // DB write, we must emit after to get the resolved fields.
-        }
+        let row_id = self.require_row_id(&item_id)?;
         #[allow(unused_variables)]
         let resolved =
-            save_service::update_link_metadata(&self.db, item_id, title, description, image_data)?;
+            save_service::update_link_metadata(&self.db, row_id, title, description, image_data)?;
         #[cfg(feature = "sync")]
         {
             let snapshot = crate::sync_bridge::link_metadata_snapshot(&resolved);
             self.sync_emitter
-                .emit_link_metadata_updated(item_id, snapshot)?;
+                .emit_link_metadata_updated(&item_id, snapshot)?;
         }
         Ok(())
     }
 
     fn update_image_description(
         &self,
-        item_id: i64,
+        item_id: String,
         description: String,
     ) -> Result<(), ClipKittyError> {
-        // Emit before DB write (existing ordering).
+        let row_id = self.require_row_id(&item_id)?;
         #[cfg(feature = "sync")]
         self.sync_emitter
-            .emit_image_description_updated(item_id, &description)?;
+            .emit_image_description_updated(&item_id, &description)?;
 
         #[allow(unused_variables)]
         let reindex =
-            save_service::update_image_description(&self.db, &self.indexer, item_id, description)?;
+            save_service::update_image_description(&self.db, &self.indexer, row_id, description)?;
 
         #[cfg(feature = "sync")]
         if matches!(reindex, save_service::ReindexOutcome::IndexFailed) {
@@ -496,13 +504,13 @@ impl ClipboardStoreApi for ClipboardStore {
         Ok(())
     }
 
-    fn update_text_item(&self, item_id: i64, text: String) -> Result<(), ClipKittyError> {
-        // Emit before DB write (existing ordering).
+    fn update_text_item(&self, item_id: String, text: String) -> Result<(), ClipKittyError> {
+        let row_id = self.require_row_id(&item_id)?;
         #[cfg(feature = "sync")]
-        self.sync_emitter.emit_text_edited(item_id, &text)?;
+        self.sync_emitter.emit_text_edited(&item_id, &text)?;
 
         #[allow(unused_variables)]
-        let reindex = save_service::update_text_item(&self.db, &self.indexer, item_id, text)?;
+        let reindex = save_service::update_text_item(&self.db, &self.indexer, row_id, text)?;
 
         #[cfg(feature = "sync")]
         if matches!(reindex, save_service::ReindexOutcome::IndexFailed) {
@@ -511,44 +519,47 @@ impl ClipboardStoreApi for ClipboardStore {
         Ok(())
     }
 
-    fn update_timestamp(&self, item_id: i64) -> Result<(), ClipKittyError> {
+    fn update_timestamp(&self, item_id: String) -> Result<(), ClipKittyError> {
+        let row_id = self.require_row_id(&item_id)?;
         #[allow(unused_variables)]
-        let timestamp_unix = save_service::update_timestamp(&self.db, item_id)?;
+        let timestamp_unix = save_service::update_timestamp(&self.db, row_id)?;
 
         #[cfg(feature = "sync")]
         self.sync_emitter
-            .emit_item_touched(item_id, timestamp_unix)?;
+            .emit_item_touched(&item_id, timestamp_unix)?;
         Ok(())
     }
 
-    fn add_tag(&self, item_id: i64, tag: ItemTag) -> Result<(), ClipKittyError> {
-        // Emit before DB write (existing ordering).
+    fn add_tag(&self, item_id: String, tag: ItemTag) -> Result<(), ClipKittyError> {
+        let row_id = self.require_row_id(&item_id)?;
         #[cfg(feature = "sync")]
-        self.sync_emitter.emit_bookmark_set(item_id)?;
+        self.sync_emitter.emit_bookmark_set(&item_id)?;
 
-        save_service::add_tag(&self.db, item_id, tag)
+        save_service::add_tag(&self.db, row_id, tag)
     }
 
-    fn remove_tag(&self, item_id: i64, tag: ItemTag) -> Result<(), ClipKittyError> {
-        // Emit before DB write (existing ordering).
+    fn remove_tag(&self, item_id: String, tag: ItemTag) -> Result<(), ClipKittyError> {
+        let row_id = self.require_row_id(&item_id)?;
         #[cfg(feature = "sync")]
-        self.sync_emitter.emit_bookmark_cleared(item_id)?;
+        self.sync_emitter.emit_bookmark_cleared(&item_id)?;
 
-        save_service::remove_tag(&self.db, item_id, tag)
+        save_service::remove_tag(&self.db, row_id, tag)
     }
 
-    fn delete_item(&self, item_id: i64) -> Result<(), ClipKittyError> {
-        // Emit before DB write (existing ordering).
+    fn delete_item(&self, item_id: String) -> Result<(), ClipKittyError> {
+        let row_id = self.require_row_id(&item_id)?;
         #[cfg(feature = "sync")]
-        self.sync_emitter.emit_item_deleted(item_id)?;
+        self.sync_emitter.emit_item_deleted(&item_id)?;
 
-        save_service::delete_item(&self.db, &self.indexer, item_id)
+        save_service::delete_item(&self.db, &self.indexer, row_id)
     }
 
     fn clear(&self) -> Result<(), ClipKittyError> {
         #[cfg(feature = "sync")]
-        for item_id in self.db.fetch_all_item_ids()? {
-            self.sync_emitter.emit_item_deleted(item_id)?;
+        for row_id in self.db.fetch_all_item_ids()? {
+            if let Some(stable_id) = self.resolve_item_id(row_id)? {
+                self.sync_emitter.emit_item_deleted(&stable_id)?;
+            }
         }
 
         save_service::clear(&self.db, &self.indexer)
@@ -558,8 +569,8 @@ impl ClipboardStoreApi for ClipboardStore {
         let outcome = save_service::prune_to_size(&self.db, &self.indexer, max_bytes, keep_ratio)?;
 
         #[cfg(feature = "sync")]
-        for id in &outcome.deleted_ids {
-            self.sync_emitter.emit_item_deleted(*id)?;
+        for item_id in &outcome.deleted_ids {
+            self.sync_emitter.emit_item_deleted(item_id)?;
         }
 
         Ok(outcome.bytes_freed)
@@ -572,6 +583,64 @@ impl ClipboardStoreApi for ClipboardStore {
 
 #[cfg(feature = "sync")]
 impl ClipboardStore {
+    fn materialize_search_document(
+        &self,
+        item: &crate::models::StoredItem,
+    ) -> Result<(), ClipKittyError> {
+        use purr_sync::store::SyncStore;
+        use purr_sync::types::FLAG_INDEX_DIRTY;
+
+        let text = item
+            .file_index_text()
+            .unwrap_or_else(|| item.text_content().to_string());
+        if self
+            .indexer
+            .add_document(&item.item_id, &text, item.timestamp_unix)
+            .and_then(|_| self.indexer.commit())
+            .is_err()
+        {
+            let sync = SyncStore::new(self.db.pool());
+            let _ = sync.set_dirty_flag(FLAG_INDEX_DIRTY, true);
+        }
+        Ok(())
+    }
+
+    fn remove_search_document(&self, item_id: &str) -> Result<(), ClipKittyError> {
+        use purr_sync::store::SyncStore;
+        use purr_sync::types::FLAG_INDEX_DIRTY;
+
+        if self
+            .indexer
+            .delete_document(item_id)
+            .and_then(|_| self.indexer.commit())
+            .is_err()
+        {
+            let sync = SyncStore::new(self.db.pool());
+            let _ = sync.set_dirty_flag(FLAG_INDEX_DIRTY, true);
+        }
+        Ok(())
+    }
+
+    fn materialize_forked_snapshot(
+        &self,
+        snapshot: &purr_sync::types::ItemSnapshotData,
+    ) -> Result<String, ClipKittyError> {
+        use crate::sync_bridge::stored_item_from_snapshot;
+
+        let fork_item_id = uuid::Uuid::new_v4().to_string();
+        let item = stored_item_from_snapshot(fork_item_id.clone(), snapshot)
+            .map_err(ClipKittyError::InvalidInput)?;
+        let row_id = self.db.insert_item(&item)?;
+        self.materialize_search_document(&item)?;
+        if snapshot.is_bookmarked {
+            self.db
+                .add_tag(row_id, crate::interface::ItemTag::Bookmark)?;
+        }
+        self.sync_emitter
+            .emit_item_created(&fork_item_id, snapshot.clone())?;
+        Ok(fork_item_id)
+    }
+
     /// Materialize a sync aggregate into the local items table.
     ///
     /// For Live aggregates: upsert into items table (insert if new, update if exists).
@@ -579,7 +648,7 @@ impl ClipboardStore {
     /// Returns the current local row ID when the item remains live.
     fn materialize_aggregate(
         &self,
-        global_item_id: &str,
+        item_id: &str,
         aggregate: &purr_sync::types::ItemAggregate,
         index_dirty: bool,
         fallback_local_item_id: Option<i64>,
@@ -589,29 +658,23 @@ impl ClipboardStore {
         use purr_sync::types::ItemAggregate;
 
         let sync = SyncStore::new(self.db.pool());
-        let proj = sync.fetch_projection(global_item_id)?;
-        let local_item_id = match proj.map(|entry| entry.state) {
-            Some(ProjectionState::Materialized { local_item_id, .. }) => Some(local_item_id),
-            Some(ProjectionState::PendingMaterialization { .. })
-            | Some(ProjectionState::Tombstoned { .. })
-            | None => fallback_local_item_id,
-        };
+
+        // Resolve local row ID: look up by item_id in the items table,
+        // falling back to the caller-provided hint.
+        let local_item_id = self
+            .db
+            .fetch_row_id_by_item_id(item_id)?
+            .or(fallback_local_item_id);
 
         match aggregate {
             ItemAggregate::Live(live) => {
-                let item = stored_item_from_snapshot(&live.snapshot)
+                let item = stored_item_from_snapshot(item_id.to_string(), &live.snapshot)
                     .map_err(ClipKittyError::InvalidInput)?;
 
                 if let Some(local_id) = local_item_id {
                     self.db.replace_item_preserving_id(local_id, &item)?;
                     if index_dirty {
-                        let text = item
-                            .file_index_text()
-                            .unwrap_or_else(|| item.text_content().to_string());
-                        let _ = self
-                            .indexer
-                            .add_document(local_id, &text, item.timestamp_unix);
-                        let _ = self.indexer.commit();
+                        self.materialize_search_document(&item)?;
                     }
                     if live.snapshot.is_bookmarked {
                         self.db
@@ -621,9 +684,8 @@ impl ClipboardStore {
                             .remove_tag(local_id, crate::interface::ItemTag::Bookmark)?;
                     }
                     sync.upsert_projection(
-                        global_item_id,
+                        item_id,
                         &ProjectionState::Materialized {
-                            local_item_id: local_id,
                             versions: live.versions,
                         },
                     )?;
@@ -633,22 +695,15 @@ impl ClipboardStore {
                 // No existing local item — insert fresh.
                 let new_id = self.db.insert_item(&item)?;
                 if index_dirty {
-                    let text = item
-                        .file_index_text()
-                        .unwrap_or_else(|| item.text_content().to_string());
-                    let _ = self
-                        .indexer
-                        .add_document(new_id, &text, item.timestamp_unix);
-                    let _ = self.indexer.commit();
+                    self.materialize_search_document(&item)?;
                 }
                 if live.snapshot.is_bookmarked {
                     self.db
                         .add_tag(new_id, crate::interface::ItemTag::Bookmark)?;
                 }
                 sync.upsert_projection(
-                    global_item_id,
+                    item_id,
                     &ProjectionState::Materialized {
-                        local_item_id: new_id,
                         versions: live.versions,
                     },
                 )?;
@@ -656,12 +711,11 @@ impl ClipboardStore {
             }
             ItemAggregate::Tombstoned(tomb) => {
                 if let Some(local_id) = local_item_id {
-                    let _ = self.indexer.delete_document(local_id);
-                    let _ = self.indexer.commit();
+                    self.remove_search_document(item_id)?;
                     self.db.delete_item(local_id)?;
                 }
                 sync.upsert_projection(
-                    global_item_id,
+                    item_id,
                     &ProjectionState::Tombstoned {
                         versions: tomb.versions,
                     },
@@ -701,7 +755,7 @@ impl ClipboardStore {
                 let payload_data = e.payload_data();
                 SyncEventRecord {
                     event_id: e.event_id,
-                    global_item_id: e.global_item_id,
+                    item_id: e.item_id,
                     origin_device_id: e.origin_device_id,
                     schema_version: e.schema_version,
                     recorded_at: e.recorded_at,
@@ -726,7 +780,7 @@ impl ClipboardStore {
             .map(|s| {
                 let aggregate_data = s.aggregate_data();
                 SyncSnapshotRecord {
-                    global_item_id: s.global_item_id,
+                    item_id: s.item_id,
                     snapshot_revision: s.snapshot_revision,
                     schema_version: s.schema_version,
                     covers_through_event: s.covers_through_event,
@@ -747,11 +801,11 @@ impl ClipboardStore {
     }
 
     /// Mark a snapshot as uploaded to CloudKit.
-    pub fn mark_snapshot_uploaded(&self, global_item_id: String) -> Result<(), ClipKittyError> {
+    pub fn mark_snapshot_uploaded(&self, item_id: String) -> Result<(), ClipKittyError> {
         use purr_sync::store::SyncStore;
 
         let sync = SyncStore::new(self.db.pool());
-        sync.mark_snapshot_uploaded(&global_item_id)?;
+        sync.mark_snapshot_uploaded(&item_id)?;
         Ok(())
     }
 
@@ -764,46 +818,34 @@ impl ClipboardStore {
         snapshot_records: Vec<crate::interface::SyncSnapshotRecord>,
     ) -> Result<crate::interface::SyncDownloadBatchOutcome, ClipKittyError> {
         use crate::interface::SyncDownloadBatchOutcome;
-        use crate::sync_bridge::stored_item_from_snapshot;
         use purr_sync::event::ItemEvent;
         use purr_sync::replay;
         use purr_sync::snapshot::ItemSnapshot;
-        use purr_sync::store::{ProjectionState, SyncStore};
+        use purr_sync::store::SyncStore;
         use std::collections::HashMap;
 
-        let sync = SyncStore::new(self.db.pool());
         let mut known_local_item_ids: HashMap<String, Option<i64>> = HashMap::new();
-        for global_item_id in snapshot_records
+        for item_id in snapshot_records
             .iter()
-            .map(|record| record.global_item_id.as_str())
+            .map(|record| record.item_id.as_str())
             .chain(
                 event_records
                     .iter()
-                    .map(|record| record.global_item_id.as_str()),
+                    .map(|record| record.item_id.as_str()),
             )
         {
             known_local_item_ids
-                .entry(global_item_id.to_string())
-                .or_insert(
-                    match sync
-                        .fetch_projection(global_item_id)?
-                        .map(|entry| entry.state)
-                    {
-                        Some(ProjectionState::Materialized { local_item_id, .. }) => {
-                            Some(local_item_id)
-                        }
-                        Some(ProjectionState::PendingMaterialization { .. })
-                        | Some(ProjectionState::Tombstoned { .. })
-                        | None => None,
-                    },
-                );
+                .entry(item_id.to_string())
+                .or_insert_with(|| {
+                    self.db.fetch_row_id_by_item_id(item_id).ok().flatten()
+                });
         }
 
         // Apply snapshots first.
         let mut snapshots_applied: usize = 0;
         for record in &snapshot_records {
             let snapshot = ItemSnapshot::from_stored(
-                record.global_item_id.clone(),
+                record.item_id.clone(),
                 record.snapshot_revision,
                 record.schema_version,
                 record.covers_through_event.clone(),
@@ -813,17 +855,17 @@ impl ClipboardStore {
             )
             .map_err(|e| ClipKittyError::InvalidInput(e))?;
 
-            let global_item_id = snapshot.global_item_id.clone();
+            let item_id = snapshot.item_id.clone();
             let aggregate = snapshot.aggregate.clone();
             let applied = replay::apply_remote_snapshots(self.db.pool(), &[snapshot])?;
             if applied > 0 {
                 let local_item_id = self.materialize_aggregate(
-                    &global_item_id,
+                    &item_id,
                     &aggregate,
                     true,
-                    known_local_item_ids.get(&global_item_id).copied().flatten(),
+                    known_local_item_ids.get(&item_id).copied().flatten(),
                 )?;
-                known_local_item_ids.insert(global_item_id, local_item_id);
+                known_local_item_ids.insert(item_id, local_item_id);
                 snapshots_applied += 1;
             }
         }
@@ -834,7 +876,7 @@ impl ClipboardStore {
             .map(|r| {
                 ItemEvent::from_stored(
                     r.event_id.clone(),
-                    r.global_item_id.clone(),
+                    r.item_id.clone(),
                     r.origin_device_id.clone(),
                     r.schema_version,
                     r.recorded_at,
@@ -852,22 +894,22 @@ impl ClipboardStore {
         let sync = SyncStore::new(self.db.pool());
         for event_record in &event_records {
             if sync
-                .fetch_projection(&event_record.global_item_id)?
+                .fetch_projection(&event_record.item_id)?
                 .is_some()
             {
-                if let Some(snapshot) = sync.fetch_snapshot(&event_record.global_item_id)? {
+                if let Some(snapshot) = sync.fetch_snapshot(&event_record.item_id)? {
                     match self.materialize_aggregate(
-                        &event_record.global_item_id,
+                        &event_record.item_id,
                         &snapshot.aggregate,
                         true,
                         known_local_item_ids
-                            .get(&event_record.global_item_id)
+                            .get(&event_record.item_id)
                             .copied()
                             .flatten(),
                     ) {
                         Ok(local_item_id) => {
                             known_local_item_ids
-                                .insert(event_record.global_item_id.clone(), local_item_id);
+                                .insert(event_record.item_id.clone(), local_item_id);
                         }
                         Err(_) => {
                             batch_result.materialization_failures += 1;
@@ -879,32 +921,7 @@ impl ClipboardStore {
 
         // Handle fork plans.
         for (_original_gid, plan) in &batch_result.fork_plans {
-            let item = stored_item_from_snapshot(&plan.forked_snapshot)
-                .map_err(ClipKittyError::InvalidInput)?;
-            let new_id = self.db.insert_item(&item)?;
-            let text = item
-                .file_index_text()
-                .unwrap_or_else(|| item.text_content().to_string());
-            let _ = self
-                .indexer
-                .add_document(new_id, &text, item.timestamp_unix);
-            let _ = self.indexer.commit();
-
-            let fork_global_id = uuid::Uuid::new_v4().to_string();
-            let versions = purr_sync::types::VersionVector {
-                content: 1,
-                bookmark: 0,
-                existence: 1,
-                touch: 1,
-                metadata: 1,
-            };
-            sync.upsert_projection(
-                &fork_global_id,
-                &purr_sync::store::ProjectionState::Materialized {
-                    local_item_id: new_id,
-                    versions,
-                },
-            )?;
+            let _ = self.materialize_forked_snapshot(&plan.forked_snapshot)?;
         }
 
         // Build the download outcome.
@@ -941,15 +958,13 @@ impl ClipboardStore {
         record: crate::interface::SyncEventRecord,
     ) -> Result<crate::interface::SyncApplyOutcome, ClipKittyError> {
         use crate::interface::SyncApplyOutcome;
-        use crate::sync_bridge::stored_item_from_snapshot;
         use purr_sync::event::ItemEvent;
         use purr_sync::replay;
-        use purr_sync::store::{ProjectionState, SyncStore};
         use purr_sync::types::ApplyResult;
 
         let event = ItemEvent::from_stored(
             record.event_id,
-            record.global_item_id.clone(),
+            record.item_id.clone(),
             record.origin_device_id,
             record.schema_version,
             record.recorded_at,
@@ -958,22 +973,15 @@ impl ClipboardStore {
         )
         .map_err(|e| ClipKittyError::InvalidInput(e))?;
 
-        let sync = SyncStore::new(self.db.pool());
-        let fallback_local_item_id = match sync
-            .fetch_projection(&record.global_item_id)?
-            .map(|entry| entry.state)
-        {
-            Some(ProjectionState::Materialized { local_item_id, .. }) => Some(local_item_id),
-            Some(ProjectionState::PendingMaterialization { .. })
-            | Some(ProjectionState::Tombstoned { .. })
-            | None => None,
-        };
+        let fallback_local_item_id = self
+            .db
+            .fetch_row_id_by_item_id(&record.item_id)?;
         let result = replay::apply_remote_event(self.db.pool(), &event)?;
 
         match &result {
             ApplyResult::Applied(delta) => {
                 let _ = self.materialize_aggregate(
-                    &record.global_item_id,
+                    &record.item_id,
                     &delta.new_aggregate,
                     delta.index_dirty,
                     fallback_local_item_id,
@@ -983,35 +991,7 @@ impl ClipboardStore {
             ApplyResult::Ignored(_) => Ok(SyncApplyOutcome::Ignored),
             ApplyResult::Deferred(_) => Ok(SyncApplyOutcome::Deferred),
             ApplyResult::Forked(plan) => {
-                // Create a new local item from the forked snapshot.
-                let item = stored_item_from_snapshot(&plan.forked_snapshot)
-                    .map_err(ClipKittyError::InvalidInput)?;
-                let new_id = self.db.insert_item(&item)?;
-                let text = item
-                    .file_index_text()
-                    .unwrap_or_else(|| item.text_content().to_string());
-                let _ = self
-                    .indexer
-                    .add_document(new_id, &text, item.timestamp_unix);
-                let _ = self.indexer.commit();
-
-                // Create a sync projection for the forked item so it can sync.
-                let fork_global_id = uuid::Uuid::new_v4().to_string();
-                let sync = SyncStore::new(self.db.pool());
-                let versions = purr_sync::types::VersionVector {
-                    content: 1,
-                    bookmark: 0,
-                    existence: 1,
-                    touch: 1,
-                    metadata: 1,
-                };
-                sync.upsert_projection(
-                    &fork_global_id,
-                    &purr_sync::store::ProjectionState::Materialized {
-                        local_item_id: new_id,
-                        versions,
-                    },
-                )?;
+                let _ = self.materialize_forked_snapshot(&plan.forked_snapshot)?;
 
                 Ok(SyncApplyOutcome::Forked {
                     forked_snapshot_data: serde_json::to_string(&plan.forked_snapshot)
@@ -1031,7 +1011,7 @@ impl ClipboardStore {
         use purr_sync::snapshot::ItemSnapshot;
 
         let snapshot = ItemSnapshot::from_stored(
-            record.global_item_id,
+            record.item_id,
             record.snapshot_revision,
             record.schema_version,
             record.covers_through_event,
@@ -1041,24 +1021,15 @@ impl ClipboardStore {
         )
         .map_err(|e| ClipKittyError::InvalidInput(e))?;
 
-        let global_item_id = snapshot.global_item_id.clone();
+        let item_id = snapshot.item_id.clone();
         let aggregate = snapshot.aggregate.clone();
-        let sync = purr_sync::store::SyncStore::new(self.db.pool());
-        let fallback_local_item_id = match sync
-            .fetch_projection(&global_item_id)?
-            .map(|entry| entry.state)
-        {
-            Some(purr_sync::store::ProjectionState::Materialized { local_item_id, .. }) => {
-                Some(local_item_id)
-            }
-            Some(purr_sync::store::ProjectionState::PendingMaterialization { .. })
-            | Some(purr_sync::store::ProjectionState::Tombstoned { .. })
-            | None => None,
-        };
+        let fallback_local_item_id = self
+            .db
+            .fetch_row_id_by_item_id(&item_id)?;
         let applied = replay::apply_remote_snapshots(self.db.pool(), &[snapshot])?;
         if applied > 0 {
             let _ = self.materialize_aggregate(
-                &global_item_id,
+                &item_id,
                 &aggregate,
                 true,
                 fallback_local_item_id,
@@ -1097,7 +1068,7 @@ impl ClipboardStore {
             .into_iter()
             .map(|r| {
                 ItemSnapshot::from_stored(
-                    r.global_item_id,
+                    r.item_id,
                     r.snapshot_revision,
                     r.schema_version,
                     r.covers_through_event,
@@ -1117,7 +1088,7 @@ impl ClipboardStore {
         // Materialize all snapshots into the read model.
         for snapshot in &snapshots {
             let _ = self.materialize_aggregate(
-                &snapshot.global_item_id,
+                &snapshot.item_id,
                 &snapshot.aggregate,
                 true,
                 None,
@@ -1146,7 +1117,7 @@ impl ClipboardStore {
             .into_iter()
             .map(|r| {
                 ItemSnapshot::from_stored(
-                    r.global_item_id,
+                    r.item_id,
                     r.snapshot_revision,
                     r.schema_version,
                     r.covers_through_event,
@@ -1163,7 +1134,7 @@ impl ClipboardStore {
             .map(|r| {
                 ItemEvent::from_stored(
                     r.event_id,
-                    r.global_item_id,
+                    r.item_id,
                     r.origin_device_id,
                     r.schema_version,
                     r.recorded_at,
@@ -1184,11 +1155,14 @@ impl ClipboardStore {
         let all_snapshots = sync.fetch_all_snapshots()?;
         for snapshot in &all_snapshots {
             let _ = self.materialize_aggregate(
-                &snapshot.global_item_id,
+                &snapshot.item_id,
                 &snapshot.aggregate,
                 true,
                 None,
             )?;
+        }
+        for (_original_item_id, plan) in &result.fork_plans {
+            let _ = self.materialize_forked_snapshot(&plan.forked_snapshot)?;
         }
         let _ = self.indexer.commit();
 
@@ -1197,6 +1171,7 @@ impl ClipboardStore {
             tail_events_applied: result.tail_events_applied as u64,
             tail_events_ignored: result.tail_events_ignored as u64,
             tail_events_deferred: result.tail_events_deferred as u64,
+            tail_events_forked: result.tail_events_forked as u64,
         })
     }
 
@@ -1289,19 +1264,19 @@ mod tests {
     fn test_round_trip_save_and_fetch() {
         let store = ClipboardStore::new_in_memory().unwrap();
         let id = store.save_text("hello world".into(), None, None).unwrap();
-        assert!(id > 0);
+        assert!(!id.is_empty());
 
         let items = store.fetch_by_ids(vec![id]).unwrap();
         assert_eq!(items.len(), 1);
     }
 
     #[test]
-    fn test_dedup_returns_zero() {
+    fn test_dedup_returns_empty_string() {
         let store = ClipboardStore::new_in_memory().unwrap();
         let id = store.save_text("hello world".into(), None, None).unwrap();
-        assert!(id > 0);
+        assert!(!id.is_empty());
 
         let dup = store.save_text("hello world".into(), None, None).unwrap();
-        assert_eq!(dup, 0);
+        assert!(dup.is_empty());
     }
 }

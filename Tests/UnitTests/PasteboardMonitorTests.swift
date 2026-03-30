@@ -1,6 +1,6 @@
 import AppKit
-import XCTest
 @testable import ClipKitty
+import XCTest
 
 @MainActor
 final class PasteboardMonitorTests: XCTestCase {
@@ -25,7 +25,7 @@ final class PasteboardMonitorTests: XCTestCase {
         )
 
         XCTAssertEqual(mode, .deepIdle)
-        XCTAssertEqual(mode.intervalMilliseconds, 2_000)
+        XCTAssertEqual(mode.intervalMilliseconds, PasteboardMonitor.PollingMode.deepIdle.intervalMilliseconds)
     }
 
     func testLowPowerModeDowngradesActiveToIdle() {
@@ -46,7 +46,7 @@ final class PasteboardMonitorTests: XCTestCase {
         let detected = expectation(description: "text detected")
 
         let monitor = PasteboardMonitor(pasteboard: pasteboard, workspace: workspace) { content in
-            guard case .text(let text, _, _) = content else {
+            guard case let .text(text, _, _) = content else {
                 return XCTFail("Expected text detection")
             }
             XCTAssertEqual(text, "hello")

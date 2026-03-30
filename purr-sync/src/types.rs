@@ -272,7 +272,7 @@ pub struct ForkPlan {
     pub forked_snapshot: ItemSnapshotData,
     /// Human-readable reason for the fork.
     pub reason: String,
-    /// The global_item_id of the original item that triggered the fork.
+    /// The item_id of the original item that triggered the fork.
     /// Set by the replay layer (not the projector) since the projector
     /// operates on aggregates without item identity.
     #[serde(default)]
@@ -360,4 +360,6 @@ pub struct FullResyncResult {
     pub tail_events_applied: usize,
     pub tail_events_ignored: usize,
     pub tail_events_deferred: usize,
+    pub tail_events_forked: usize,
+    pub fork_plans: Vec<(String, ForkPlan)>,
 }
