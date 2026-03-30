@@ -27,6 +27,16 @@
         <string>com.eviljuliette.clipkitty-spki</string>
     </array>
 
+    <!-- CloudKit: iCloud sync for clipboard history -->
+    <key>com.apple.developer.icloud-services</key>
+    <array>
+        <string>CloudKit</string>
+    </array>
+    <key>com.apple.developer.icloud-container-identifiers</key>
+    <array>
+        <string>iCloud.com.clipkitty</string>
+    </array>
+
     <!-- Hardware: camera/microphone/location are omitted; no sensor access. -->
 
     <!-- Automation: automation.apple-events is omitted; no cross-app scripting. -->
