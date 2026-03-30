@@ -424,6 +424,9 @@ struct GeneralSettingsView: View {
                 case .couldNotDetermine:
                     isICloudAvailable = false
                     iCloudStatusMessage = String(localized: "Could not determine iCloud account status.")
+                case .temporarilyUnavailable:
+                    isICloudAvailable = false
+                    iCloudStatusMessage = String(localized: "iCloud temporarily unavailable. Please try again later.")
                 @unknown default:
                     isICloudAvailable = false
                 }
@@ -436,7 +439,7 @@ struct GeneralSettingsView: View {
 
     private func copyRecentLogs() {
         do {
-            let store = OSLogStore(scope: .currentProcessIdentifier)
+            let store = try OSLogStore(scope: .currentProcessIdentifier)
             let since = store.position(date: Date().addingTimeInterval(-3600))
             let entries = try store.getEntries(at: since)
                 .compactMap { $0 as? OSLogEntryLog }
