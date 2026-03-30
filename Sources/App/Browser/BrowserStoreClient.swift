@@ -46,15 +46,15 @@ private final class ClipboardStoreBrowserSearchOperation: BrowserSearchOperation
 @MainActor
 protocol BrowserStoreClient: AnyObject {
     func startSearch(request: SearchRequest) -> BrowserSearchOperation
-    func fetchItem(id: Int64) async -> ClipboardItem?
-    func loadRowDecorations(itemIds: [Int64], query: String) async -> [RowDecorationResult]
-    func loadPreviewPayload(itemId: Int64, query: String) async -> PreviewPayload?
-    func fetchLinkMetadata(url: String, itemId: Int64) async -> ClipboardItem?
-    func addTag(itemId: Int64, tag: ItemTag) async -> Result<Void, ClipboardError>
-    func removeTag(itemId: Int64, tag: ItemTag) async -> Result<Void, ClipboardError>
-    func delete(itemId: Int64) async -> Result<Void, ClipboardError>
+    func fetchItem(id: String) async -> ClipboardItem?
+    func loadRowDecorations(itemIds: [String], query: String) async -> [RowDecorationResult]
+    func loadPreviewPayload(itemId: String, query: String) async -> PreviewPayload?
+    func fetchLinkMetadata(url: String, itemId: String) async -> ClipboardItem?
+    func addTag(itemId: String, tag: ItemTag) async -> Result<Void, ClipboardError>
+    func removeTag(itemId: String, tag: ItemTag) async -> Result<Void, ClipboardError>
+    func delete(itemId: String) async -> Result<Void, ClipboardError>
     func clear() async -> Result<Void, ClipboardError>
-    func updateTextItem(itemId: Int64, text: String) async -> Result<Void, ClipboardError>
+    func updateTextItem(itemId: String, text: String) async -> Result<Void, ClipboardError>
 }
 
 @MainActor
@@ -72,31 +72,31 @@ final class ClipboardStoreBrowserClient: BrowserStoreClient {
         )
     }
 
-    func fetchItem(id: Int64) async -> ClipboardItem? {
+    func fetchItem(id: String) async -> ClipboardItem? {
         await store.fetchItem(id: id)
     }
 
-    func loadRowDecorations(itemIds: [Int64], query: String) async -> [RowDecorationResult] {
+    func loadRowDecorations(itemIds: [String], query: String) async -> [RowDecorationResult] {
         await store.loadRowDecorations(itemIds: itemIds, query: query)
     }
 
-    func loadPreviewPayload(itemId: Int64, query: String) async -> PreviewPayload? {
+    func loadPreviewPayload(itemId: String, query: String) async -> PreviewPayload? {
         await store.loadPreviewPayload(itemId: itemId, query: query)
     }
 
-    func fetchLinkMetadata(url: String, itemId: Int64) async -> ClipboardItem? {
+    func fetchLinkMetadata(url: String, itemId: String) async -> ClipboardItem? {
         await store.fetchLinkMetadata(url: url, itemId: itemId)
     }
 
-    func addTag(itemId: Int64, tag: ItemTag) async -> Result<Void, ClipboardError> {
+    func addTag(itemId: String, tag: ItemTag) async -> Result<Void, ClipboardError> {
         await store.addTag(itemId: itemId, tag: tag)
     }
 
-    func removeTag(itemId: Int64, tag: ItemTag) async -> Result<Void, ClipboardError> {
+    func removeTag(itemId: String, tag: ItemTag) async -> Result<Void, ClipboardError> {
         await store.removeTag(itemId: itemId, tag: tag)
     }
 
-    func delete(itemId: Int64) async -> Result<Void, ClipboardError> {
+    func delete(itemId: String) async -> Result<Void, ClipboardError> {
         await store.deleteItem(itemId: itemId)
     }
 
@@ -104,7 +104,7 @@ final class ClipboardStoreBrowserClient: BrowserStoreClient {
         await store.clearAll()
     }
 
-    func updateTextItem(itemId: Int64, text: String) async -> Result<Void, ClipboardError> {
+    func updateTextItem(itemId: String, text: String) async -> Result<Void, ClipboardError> {
         await store.updateTextItem(itemId: itemId, text: text)
     }
 }

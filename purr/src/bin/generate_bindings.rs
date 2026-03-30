@@ -26,12 +26,18 @@ use std::process::Command;
 fn main() {
     let rust_dir = PathBuf::from(env!("CARGO_MANIFEST_DIR"));
     let project_root = rust_dir.parent().expect("No parent directory");
+    let target_dir = project_root.join("target");
 
-    // Ensure Rust is built with the same deployment target as the Swift app
-    env::set_var("MACOSX_DEPLOYMENT_TARGET", "15.0");
+    // Keep the Rust artifacts aligned with the app's supported macOS floor.
+    let deployment_target =
+        env::var("MACOSX_DEPLOYMENT_TARGET").unwrap_or_else(|_| "14.0".to_string());
+    env::set_var("MACOSX_DEPLOYMENT_TARGET", &deployment_target);
 
     println!("Building Rust library...");
     run_cmd("cargo", &["build", "--release"], &rust_dir);
+
+    let dylib_path = target_dir.join("release/libpurr.dylib");
+    let generated_dir = rust_dir.join("generated");
 
     println!("Generating Swift bindings...");
     run_cmd(
@@ -42,18 +48,18 @@ fn main() {
             "uniffi-bindgen",
             "generate",
             "--library",
-            "target/release/libpurr.dylib",
+            &dylib_path.to_string_lossy(),
             "--language",
             "swift",
             "--out-dir",
-            "generated",
+            &generated_dir.to_string_lossy(),
         ],
         &rust_dir,
     );
 
     let swift_dest = project_root.join("Sources/ClipKittyRust");
     let wrapper_dest = project_root.join("Sources/ClipKittyRustWrapper");
-    let generated = rust_dir.join("generated");
+    let generated = generated_dir;
 
     // Read and fix Swift 6 concurrency + module import
     println!("Copying generated Swift file...");
@@ -80,29 +86,48 @@ fn main() {
     .expect("Write modulemap");
 
     // Build universal static library
-    println!("Building universal static library...");
-    run_cmd(
-        "cargo",
-        &["build", "--release", "--target", "aarch64-apple-darwin"],
-        &rust_dir,
-    );
-    run_cmd(
-        "cargo",
-        &["build", "--release", "--target", "x86_64-apple-darwin"],
-        &rust_dir,
-    );
+    println!("Building static library...");
+    let installed_targets = installed_rust_targets();
+    let preferred_targets = ["aarch64-apple-darwin", "x86_64-apple-darwin"];
+    let available_targets: Vec<&str> = preferred_targets
+        .iter()
+        .copied()
+        .filter(|target| installed_targets.iter().any(|installed| installed == target))
+        .collect();
 
-    run_cmd(
-        "lipo",
-        &[
-            "-create",
-            "target/aarch64-apple-darwin/release/libpurr.a",
-            "target/x86_64-apple-darwin/release/libpurr.a",
-            "-output",
-            &swift_dest.join("libpurr.a").to_string_lossy(),
-        ],
-        &rust_dir,
-    );
+    for target in &available_targets {
+        run_cmd("cargo", &["build", "--release", "--target", target], &rust_dir);
+    }
+
+    let output_lib = swift_dest.join("libpurr.a");
+    match available_targets.as_slice() {
+        [single_target] => {
+            let lib = target_dir.join(format!("{single_target}/release/libpurr.a"));
+            fs::copy(lib, &output_lib).expect("Copy static lib");
+            println!("Copied single-arch static library for {single_target}");
+        }
+        [first_target, second_target] => {
+            let first_lib = target_dir.join(format!("{first_target}/release/libpurr.a"));
+            let second_lib = target_dir.join(format!("{second_target}/release/libpurr.a"));
+            run_cmd(
+                "lipo",
+                &[
+                    "-create",
+                    &first_lib.to_string_lossy(),
+                    &second_lib.to_string_lossy(),
+                    "-output",
+                    &output_lib.to_string_lossy(),
+                ],
+                &rust_dir,
+            );
+            println!("Created universal static library");
+        }
+        _ => {
+            fs::copy(target_dir.join("release/libpurr.a"), &output_lib)
+                .expect("Copy host static lib");
+            println!("Copied host-arch static library");
+        }
+    }
 
     println!("Done! Bindings regenerated successfully.");
     println!("Generated files:");
@@ -127,4 +152,30 @@ fn run_cmd(program: &str, args: &[&str], dir: &PathBuf) {
     if !status.success() {
         panic!("{} failed with status: {}", program, status);
     }
+}
+
+fn installed_rust_targets() -> Vec<String> {
+    // Check the sysroot for installed target libraries.  This works with both
+    // rustup-managed and Nix-managed toolchains (rustup metadata doesn't
+    // reflect targets installed via Nix's rust-overlay).
+    let sysroot = Command::new("rustc")
+        .args(["--print", "sysroot"])
+        .output()
+        .ok()
+        .filter(|o| o.status.success())
+        .map(|o| String::from_utf8_lossy(&o.stdout).trim().to_string());
+
+    if let Some(sysroot) = sysroot {
+        let rustlib = PathBuf::from(&sysroot).join("lib/rustlib");
+        if let Ok(entries) = fs::read_dir(&rustlib) {
+            return entries
+                .filter_map(|e| e.ok())
+                .filter(|e| e.path().join("lib").is_dir())
+                .filter_map(|e| e.file_name().into_string().ok())
+                .filter(|name| name.contains("-apple-darwin"))
+                .collect();
+        }
+    }
+
+    Vec::new()
 }

@@ -13,6 +13,12 @@ struct GeneralSettingsView: View {
         var onCheckForUpdates: (() -> Void)? = nil
     #endif
 
+    private static let relativeDateFormatter: RelativeDateTimeFormatter = {
+        let formatter = RelativeDateTimeFormatter()
+        formatter.unitsStyle = .abbreviated
+        return formatter
+    }()
+
     private let minDatabaseSizeGB = 0.5
     private let maxDatabaseSizeGB = 64.0
 
@@ -73,6 +79,21 @@ struct GeneralSettingsView: View {
             #if !APP_STORE
                 Section(String(localized: "Paste Items")) {
                     PasteItemsSettingView()
+                }
+            #endif
+
+            #if ENABLE_SYNC
+                Section(String(localized: "iCloud Sync")) {
+                    Toggle(String(localized: "Sync clipboard history across devices"), isOn: $settings.syncEnabled)
+
+                    if settings.syncEnabled {
+                        HStack {
+                            syncStatusIcon
+                            Text(syncStatusText)
+                                .foregroundStyle(.secondary)
+                        }
+                        .font(.subheadline)
+                    }
                 }
             #endif
 
@@ -301,6 +322,55 @@ struct GeneralSettingsView: View {
         }
         return min(max(rounded, minDatabaseSizeGB), maxDatabaseSizeGB)
     }
+
+    #if ENABLE_SYNC
+        @ViewBuilder
+        private var syncStatusIcon: some View {
+            if let engine = store.syncEngine {
+                switch engine.status {
+                case .idle:
+                    Image(systemName: "icloud").foregroundStyle(.secondary)
+                case .connecting:
+                    ProgressView().controlSize(.small)
+                case .syncing:
+                    ProgressView().controlSize(.small)
+                case .synced:
+                    Image(systemName: "checkmark.icloud").foregroundStyle(.green)
+                case .error:
+                    Image(systemName: "exclamationmark.icloud").foregroundStyle(.orange)
+                case .temporarilyUnavailable:
+                    Image(systemName: "clock.badge.exclamationmark").foregroundStyle(.orange)
+                case .unavailable:
+                    Image(systemName: "xmark.icloud").foregroundStyle(.red)
+                }
+            } else {
+                Image(systemName: "icloud.slash").foregroundStyle(.secondary)
+            }
+        }
+
+        private var syncStatusText: String {
+            guard let engine = store.syncEngine else {
+                return String(localized: "Not running")
+            }
+            switch engine.status {
+            case .idle:
+                return String(localized: "Waiting to sync")
+            case .connecting:
+                return String(localized: "Connecting to iCloud…")
+            case .syncing:
+                return String(localized: "Syncing…")
+            case let .synced(lastSync):
+                let relative = Self.relativeDateFormatter.localizedString(for: lastSync, relativeTo: Date())
+                return String(localized: "Synced \(relative)")
+            case let .error(message):
+                return String(localized: "Error: \(message)")
+            case .temporarilyUnavailable:
+                return String(localized: "iCloud temporarily unavailable")
+            case .unavailable:
+                return String(localized: "iCloud not available")
+            }
+        }
+    #endif
 
     private func checkAttestation() async {
         guard let hash = binaryHash else { return }
