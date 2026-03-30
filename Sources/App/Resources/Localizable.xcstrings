@@ -4536,6 +4536,76 @@
         "pt-BR": { "stringUnit": { "state": "translated", "value": "Erro ao verificar o status do iCloud: %@" } },
         "ru": { "stringUnit": { "state": "translated", "value": "Ошибка при проверке статуса iCloud: %@" } }
       }
+    },
+    "Up to date, as of": {
+      "localizations": {
+        "en": { "stringUnit": { "state": "translated", "value": "Up to date, as of" } },
+        "es": { "stringUnit": { "state": "translated", "value": "Al día, el" } },
+        "zh-Hans": { "stringUnit": { "state": "translated", "value": "最新，截至" } },
+        "zh-Hant": { "stringUnit": { "state": "translated", "value": "最新，截至" } },
+        "ja": { "stringUnit": { "state": "translated", "value": "最新、確認日時:" } },
+        "ko": { "stringUnit": { "state": "translated", "value": "최신 상태, 기준:" } },
+        "fr": { "stringUnit": { "state": "translated", "value": "À jour, au" } },
+        "de": { "stringUnit": { "state": "translated", "value": "Aktuell, Stand" } },
+        "pt-BR": { "stringUnit": { "state": "translated", "value": "Atualizado em" } },
+        "ru": { "stringUnit": { "state": "translated", "value": "Обновлено по состоянию на" } }
+      }
+    },
+    "Update available, as of": {
+      "localizations": {
+        "en": { "stringUnit": { "state": "translated", "value": "Update available, as of" } },
+        "es": { "stringUnit": { "state": "translated", "value": "Actualización disponible, el" } },
+        "zh-Hans": { "stringUnit": { "state": "translated", "value": "有新版本，截至" } },
+        "zh-Hant": { "stringUnit": { "state": "translated", "value": "有新版本，截至" } },
+        "ja": { "stringUnit": { "state": "translated", "value": "アップデートあり、確認日時:" } },
+        "ko": { "stringUnit": { "state": "translated", "value": "업데이트 가능, 기준:" } },
+        "fr": { "stringUnit": { "state": "translated", "value": "Mise à jour disponible, au" } },
+        "de": { "stringUnit": { "state": "translated", "value": "Update verfügbar, Stand" } },
+        "pt-BR": { "stringUnit": { "state": "translated", "value": "Atualização disponível em" } },
+        "ru": { "stringUnit": { "state": "translated", "value": "Доступно обновление по состоянию на" } }
+      }
+    },
+    "Downloading update, as of": {
+      "localizations": {
+        "en": { "stringUnit": { "state": "translated", "value": "Downloading update, as of" } },
+        "es": { "stringUnit": { "state": "translated", "value": "Descargando actualización, el" } },
+        "zh-Hans": { "stringUnit": { "state": "translated", "value": "正在下载更新，截至" } },
+        "zh-Hant": { "stringUnit": { "state": "translated", "value": "正在下載更新，截至" } },
+        "ja": { "stringUnit": { "state": "translated", "value": "アップデートをダウンロード中、確認日時:" } },
+        "ko": { "stringUnit": { "state": "translated", "value": "업데이트 다운로드 중, 기준:" } },
+        "fr": { "stringUnit": { "state": "translated", "value": "Téléchargement de la mise à jour, au" } },
+        "de": { "stringUnit": { "state": "translated", "value": "Update wird heruntergeladen, Stand" } },
+        "pt-BR": { "stringUnit": { "state": "translated", "value": "Baixando atualização em" } },
+        "ru": { "stringUnit": { "state": "translated", "value": "Скачивание обновления по состоянию на" } }
+      }
+    },
+    "Installing update, as of": {
+      "localizations": {
+        "en": { "stringUnit": { "state": "translated", "value": "Installing update, as of" } },
+        "es": { "stringUnit": { "state": "translated", "value": "Instalando actualización, el" } },
+        "zh-Hans": { "stringUnit": { "state": "translated", "value": "正在安装更新，截至" } },
+        "zh-Hant": { "stringUnit": { "state": "translated", "value": "正在安裝更新，截至" } },
+        "ja": { "stringUnit": { "state": "translated", "value": "アップデートをインストール中、確認日時:" } },
+        "ko": { "stringUnit": { "state": "translated", "value": "업데이트 설치 중, 기준:" } },
+        "fr": { "stringUnit": { "state": "translated", "value": "Installation de la mise à jour, au" } },
+        "de": { "stringUnit": { "state": "translated", "value": "Update wird installiert, Stand" } },
+        "pt-BR": { "stringUnit": { "state": "translated", "value": "Instalando atualização em" } },
+        "ru": { "stringUnit": { "state": "translated", "value": "Установка обновления по состоянию на" } }
+      }
+    },
+    "Check failed, as of": {
+      "localizations": {
+        "en": { "stringUnit": { "state": "translated", "value": "Check failed, as of" } },
+        "es": { "stringUnit": { "state": "translated", "value": "Error en la comprobación, el" } },
+        "zh-Hans": { "stringUnit": { "state": "translated", "value": "检查失败，截至" } },
+        "zh-Hant": { "stringUnit": { "state": "translated", "value": "檢查失敗，截至" } },
+        "ja": { "stringUnit": { "state": "translated", "value": "確認に失敗しました、確認日時:" } },
+        "ko": { "stringUnit": { "state": "translated", "value": "확인 실패, 기준:" } },
+        "fr": { "stringUnit": { "state": "translated", "value": "Échec de la vérification, au" } },
+        "de": { "stringUnit": { "state": "translated", "value": "Überprüfung fehlgeschlagen, Stand" } },
+        "pt-BR": { "stringUnit": { "state": "translated", "value": "Falha na verificação em" } },
+        "ru": { "stringUnit": { "state": "translated", "value": "Ошибка проверки по состоянию на" } }
+      }
     }
   },
   "version": "1.0"
