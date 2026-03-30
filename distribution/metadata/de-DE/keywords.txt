@@ -1,1 +1,1 @@
-Zwischenablage,Verlauf,Manager,kopieren,einfügen,suchen,Snippets,Vorschau,Produktivität,Archiv
+Zwischenablage,Verlauf,Manager,kopieren,einfügen,suchen,Snippets,Synchronisierung,iCloud,Produktivität

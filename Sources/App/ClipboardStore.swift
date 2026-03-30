@@ -136,6 +136,28 @@ final class ClipboardStore {
     private let fileManager: FileManagerProtocol
     private var previewLoader: PreviewLoader?
     @ObservationIgnored private var pasteboardMonitor: PasteboardMonitor!
+    #if ENABLE_SYNC
+        private enum SyncRuntime {
+            case waitingForBootstrap(enabled: Bool)
+            case disabled(store: ClipKittyRust.ClipboardStore)
+            case enabled(store: ClipKittyRust.ClipboardStore, engine: SyncEngine)
+
+            var syncEngine: SyncEngine? {
+                switch self {
+                case .waitingForBootstrap, .disabled:
+                    return nil
+                case let .enabled(_, engine):
+                    return engine
+                }
+            }
+        }
+
+        private var syncRuntime: SyncRuntime = .waitingForBootstrap(enabled: false)
+
+        var syncEngine: SyncEngine? {
+            syncRuntime.syncEngine
+        }
+    #endif
 
     // MARK: - Initialization
 
@@ -218,6 +240,9 @@ final class ClipboardStore {
             lifecycle = .ready
             refresh()
             pruneIfNeeded()
+            #if ENABLE_SYNC
+                initializeSyncRuntime(with: rustStore)
+            #endif
         } catch {
             let dbError = ClipboardError.databaseInitFailed(underlying: error)
             ErrorReporter.reportCritical(dbError)
@@ -243,6 +268,9 @@ final class ClipboardStore {
                 self.lifecycle = .ready
                 self.refresh()
                 self.pruneIfNeeded()
+                #if ENABLE_SYNC
+                    self.initializeSyncRuntime(with: runtime.store)
+                #endif
             } catch {
                 let dbError = ClipboardError.databaseInitFailed(underlying: error)
                 ErrorReporter.reportCritical(dbError)
@@ -353,24 +381,24 @@ final class ClipboardStore {
     }
 
     /// Fetch full ClipboardItem by ID
-    func fetchItem(id: Int64) async -> ClipboardItem? {
+    func fetchItem(id: String) async -> ClipboardItem? {
         guard let previewLoader else { return nil }
         return await previewLoader.fetchItem(id: id)
     }
 
-    func loadRowDecorations(itemIds: [Int64], query: String) async -> [RowDecorationResult] {
+    func loadRowDecorations(itemIds: [String], query: String) async -> [RowDecorationResult] {
         guard let repository else { return [] }
         return await repository.computeRowDecorations(itemIds: itemIds, query: query)
     }
 
-    func loadPreviewPayload(itemId: Int64, query: String) async -> PreviewPayload? {
+    func loadPreviewPayload(itemId: String, query: String) async -> PreviewPayload? {
         guard let repository else { return nil }
         return await repository.loadPreviewPayload(itemId: itemId, query: query)
     }
 
     /// Fetch link metadata using LinkPresentation and persist to database
     /// Returns the updated item if successful
-    func fetchLinkMetadata(url: String, itemId: Int64) async -> ClipboardItem? {
+    func fetchLinkMetadata(url: String, itemId: String) async -> ClipboardItem? {
         guard let previewLoader else { return nil }
         let item = await previewLoader.refreshLinkMetadata(url: url, itemId: itemId)
         if item != nil {
@@ -392,6 +420,71 @@ final class ClipboardStore {
             refresh()
         }
     }
+
+    // MARK: - Sync Engine
+
+    #if ENABLE_SYNC
+        private func initializeSyncRuntime(with rustStore: ClipKittyRust.ClipboardStore) {
+            let enabled: Bool
+            switch syncRuntime {
+            case let .waitingForBootstrap(pendingEnabled):
+                enabled = pendingEnabled
+            case .disabled, .enabled:
+                enabled = false
+            }
+
+            syncRuntime = .disabled(store: rustStore)
+            setSyncEnabled(enabled)
+        }
+
+        private func makeSyncEngine(rustStore: ClipKittyRust.ClipboardStore) -> SyncEngine {
+            let engine = SyncEngine(store: rustStore)
+            engine.onContentChanged = { [weak self] in
+                Task { @MainActor in
+                    self?.invalidateContent()
+                }
+            }
+            return engine
+        }
+
+        private func disableSyncEngine(
+            rustStore: ClipKittyRust.ClipboardStore,
+            engine: SyncEngine
+        ) {
+            engine.stop()
+            syncRuntime = .disabled(store: rustStore)
+        }
+
+        /// Toggle sync engine based on the syncEnabled setting.
+        func setSyncEnabled(_ enabled: Bool) {
+            switch syncRuntime {
+            case .waitingForBootstrap:
+                syncRuntime = .waitingForBootstrap(enabled: enabled)
+            case let .disabled(rustStore):
+                guard enabled else { return }
+                let engine = makeSyncEngine(rustStore: rustStore)
+                syncRuntime = .enabled(store: rustStore, engine: engine)
+                engine.start()
+            case let .enabled(rustStore, engine):
+                guard !enabled else { return }
+                disableSyncEngine(rustStore: rustStore, engine: engine)
+            }
+        }
+
+        /// Stop the sync engine on teardown to cancel background tasks.
+        nonisolated func stopSyncEngine() {
+            Task { @MainActor in
+                switch syncRuntime {
+                case .waitingForBootstrap:
+                    syncRuntime = .waitingForBootstrap(enabled: false)
+                case .disabled:
+                    break
+                case let .enabled(rustStore, engine):
+                    disableSyncEngine(rustStore: rustStore, engine: engine)
+                }
+            }
+        }
+    #endif
 
     private func beginSearch(query: String) {
         guard let repository else {
@@ -475,7 +568,7 @@ final class ClipboardStore {
             case let .success(itemId):
                 self.invalidateContent()
 
-                if itemId > 0, URL(string: text) != nil, text.hasPrefix("http") {
+                if !itemId.isEmpty, URL(string: text) != nil, text.hasPrefix("http") {
                     guard AppSettings.shared.generateLinkPreviews else { return }
                     _ = await self.fetchLinkMetadata(url: text, itemId: itemId)
                 }
@@ -486,7 +579,7 @@ final class ClipboardStore {
         }
     }
 
-    private func generateAndUpdateImageDescription(itemId: Int64, imageData: Data) async {
+    private func generateAndUpdateImageDescription(itemId: String, imageData: Data) async {
         guard let description = await ImageDescriptionGenerator.generateDescription(from: imageData) else { return }
         let trimmed = description.trimmingCharacters(in: .whitespacesAndNewlines)
         guard !trimmed.isEmpty else { return }
@@ -503,7 +596,7 @@ final class ClipboardStore {
 
     /// Save text that was edited in the preview pane.
     /// Update a text item's content in-place.
-    func updateTextItem(itemId: Int64, text: String) async -> Result<Void, ClipboardError> {
+    func updateTextItem(itemId: String, text: String) async -> Result<Void, ClipboardError> {
         guard let repository else {
             return .failure(.databaseOperationFailed(
                 operation: "updateTextItem",
@@ -560,6 +653,7 @@ final class ClipboardStore {
             switch result {
             case let .success(itemId):
                 self.invalidateContent()
+                guard !itemId.isEmpty else { return }
 
                 // Generate image description in background
                 Task {
@@ -805,7 +899,7 @@ final class ClipboardStore {
 
     // MARK: - Actions
 
-    func paste(itemId: Int64, content: ClipboardContent) {
+    func paste(itemId: String, content: ClipboardContent) {
         // Handle images differently - convert off main thread
         if case let .image(data, _, isAnimated) = content {
             pasteImage(data: Data(data), isAnimated: isAnimated, itemId: itemId)
@@ -824,7 +918,7 @@ final class ClipboardStore {
         }
     }
 
-    private func pasteImage(data: Data, isAnimated: Bool, itemId: Int64?) {
+    private func pasteImage(data: Data, isAnimated: Bool, itemId: String?) {
         Task {
             if isAnimated {
                 // Convert animated HEIC to GIF for pasting (CPU-intensive, use background)
@@ -919,7 +1013,7 @@ final class ClipboardStore {
         return gifData as Data
     }
 
-    private func pasteFiles(files: [FileEntry], itemId: Int64) {
+    private func pasteFiles(files: [FileEntry], itemId: String) {
         // Resolve each file's bookmark to get current URL
         var resolvedURLs: [URL] = []
         for file in files {
@@ -938,7 +1032,7 @@ final class ClipboardStore {
         }
     }
 
-    private func updateItemTimestamp(id: Int64) async {
+    private func updateItemTimestamp(id: String) async {
         guard let repository else { return }
         let result = await repository.updateTimestamp(itemId: id)
 
@@ -950,7 +1044,7 @@ final class ClipboardStore {
         invalidateContent()
     }
 
-    func delete(itemId: Int64) {
+    func delete(itemId: String) {
         // Update UI immediately
         switch state {
         case let .results(query, items, firstItem):
@@ -977,7 +1071,7 @@ final class ClipboardStore {
         }
     }
 
-    func deleteItem(itemId: Int64) async -> Result<Void, ClipboardError> {
+    func deleteItem(itemId: String) async -> Result<Void, ClipboardError> {
         guard let repository else {
             return .failure(.databaseOperationFailed(
                 operation: "deleteItem",
@@ -991,7 +1085,7 @@ final class ClipboardStore {
         return result
     }
 
-    func addTag(itemId: Int64, tag: ItemTag) async -> Result<Void, ClipboardError> {
+    func addTag(itemId: String, tag: ItemTag) async -> Result<Void, ClipboardError> {
         guard let repository else {
             return .failure(.databaseOperationFailed(
                 operation: "addTag",
@@ -1005,7 +1099,7 @@ final class ClipboardStore {
         return result
     }
 
-    func removeTag(itemId: Int64, tag: ItemTag) async -> Result<Void, ClipboardError> {
+    func removeTag(itemId: String, tag: ItemTag) async -> Result<Void, ClipboardError> {
         guard let repository else {
             return .failure(.databaseOperationFailed(
                 operation: "removeTag",

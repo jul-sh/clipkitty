@@ -35,7 +35,7 @@ all: rust generate build
 # This marker is shared with Xcode pre-build actions for consistency
 $(RUST_MARKER): $(shell git ls-files purr 2>/dev/null)
 	@echo "Building Rust core..."
-	@$(NIX_SHELL) "cd purr && cargo run --release --bin generate-bindings"
+	@$(NIX_SHELL) "cd purr && MACOSX_DEPLOYMENT_TARGET=14.0 cargo run --release --bin generate-bindings"
 	@mkdir -p .make
 	@touch $(RUST_MARKER)
 	@git rev-parse HEAD:purr > .make/rust-tree-hash 2>/dev/null || true
