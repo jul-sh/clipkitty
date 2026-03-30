@@ -1,6 +1,7 @@
 import AppKit
 import SwiftUI
 import CloudKit
+import OSLog
 
 struct GeneralSettingsView: View {
     @ObservedObject private var settings = AppSettings.shared
@@ -9,6 +10,7 @@ struct GeneralSettingsView: View {
     @State private var attestationURL: URL?
     @State private var isICloudAvailable = true
     @State private var iCloudStatusMessage: String? = nil
+    @State private var logsCopied = false
 
     let store: ClipboardStore
     #if SPARKLE_RELEASE
@@ -275,6 +277,11 @@ struct GeneralSettingsView: View {
                                 )
                             }
                         }
+
+                        Button(logsCopied ? String(localized: "Logs Copied!") : String(localized: "Copy Recent Logs")) {
+                            copyRecentLogs()
+                        }
+                        .disabled(logsCopied)
                     }
                 }
             #endif
@@ -426,6 +433,28 @@ struct GeneralSettingsView: View {
             }
         }
     #endif
+
+    private func copyRecentLogs() {
+        do {
+            let store = OSLogStore(scope: .currentProcessIdentifier)
+            let since = store.position(date: Date().addingTimeInterval(-3600))
+            let entries = try store.getEntries(at: since)
+                .compactMap { $0 as? OSLogEntryLog }
+                .map { "[\($0.date.formatted(.iso8601))] [\($0.category)] \($0.composedMessage)" }
+                .joined(separator: "\n")
+
+            let header = "ClipKitty \(appVersion) (\(buildNumber)) \(buildChannel) — logs from last hour"
+            NSPasteboard.general.clearContents()
+            NSPasteboard.general.setString("\(header)\n\n\(entries)", forType: .string)
+            logsCopied = true
+            DispatchQueue.main.asyncAfter(deadline: .now() + 2) {
+                logsCopied = false
+            }
+        } catch {
+            NSPasteboard.general.clearContents()
+            NSPasteboard.general.setString("Failed to read logs: \(error.localizedDescription)", forType: .string)
+        }
+    }
 
     private func checkAttestation() async {
         guard let hash = binaryHash else { return }
