@@ -73,7 +73,7 @@ final class ClipboardRepository {
         await startSearch(query: query, filter: filter).awaitOutcome()
     }
 
-    func fetchItem(id: Int64) async -> ClipboardItem? {
+    func fetchItem(id: String) async -> ClipboardItem? {
         let result = await runRepositoryOperation("fetchItem", on: store) { store in
             try store.fetchByIds(itemIds: [id])
         }
@@ -83,7 +83,7 @@ final class ClipboardRepository {
         return nil
     }
 
-    func computeRowDecorations(itemIds: [Int64], query: String) async -> [RowDecorationResult] {
+    func computeRowDecorations(itemIds: [String], query: String) async -> [RowDecorationResult] {
         let result = await runRepositoryOperation("computeRowDecorations", on: store) { store in
             try store.computeRowDecorations(itemIds: itemIds, query: query)
         }
@@ -93,7 +93,7 @@ final class ClipboardRepository {
         return []
     }
 
-    func loadPreviewPayload(itemId: Int64, query: String) async -> PreviewPayload? {
+    func loadPreviewPayload(itemId: String, query: String) async -> PreviewPayload? {
         let result = await runRepositoryOperation("loadPreviewPayload", on: store) { store in
             try store.loadPreviewPayload(itemId: itemId, query: query)
         }
@@ -107,7 +107,7 @@ final class ClipboardRepository {
         text: String,
         sourceApp: String?,
         sourceAppBundleId: String?
-    ) async -> Result<Int64, ClipboardError> {
+    ) async -> Result<String, ClipboardError> {
         await runRepositoryOperation("saveText", on: store) { store in
             try store.saveText(
                 text: text,
@@ -123,7 +123,7 @@ final class ClipboardRepository {
         sourceApp: String?,
         sourceAppBundleId: String?,
         isAnimated: Bool
-    ) async -> Result<Int64, ClipboardError> {
+    ) async -> Result<String, ClipboardError> {
         await runRepositoryOperation("saveImage", on: store) { store in
             try store.saveImage(
                 imageData: imageData,
@@ -144,7 +144,7 @@ final class ClipboardRepository {
         thumbnail: Data?,
         sourceApp: String?,
         sourceAppBundleId: String?
-    ) async -> Result<Int64, ClipboardError> {
+    ) async -> Result<String, ClipboardError> {
         await runRepositoryOperation("saveFiles", on: store) { store in
             try store.saveFiles(
                 paths: paths,
@@ -159,14 +159,14 @@ final class ClipboardRepository {
         }
     }
 
-    func updateTextItem(itemId: Int64, text: String) async -> Result<Void, ClipboardError> {
+    func updateTextItem(itemId: String, text: String) async -> Result<Void, ClipboardError> {
         await runRepositoryOperation("updateTextItem", on: store) { store in
             try store.updateTextItem(itemId: itemId, text: text)
         }
     }
 
     func updateLinkMetadata(
-        itemId: Int64,
+        itemId: String,
         title: String?,
         description: String?,
         imageData: Data?
@@ -181,31 +181,31 @@ final class ClipboardRepository {
         }
     }
 
-    func updateImageDescription(itemId: Int64, description: String) async -> Result<Void, ClipboardError> {
+    func updateImageDescription(itemId: String, description: String) async -> Result<Void, ClipboardError> {
         await runRepositoryOperation("updateImageDescription", on: store) { store in
             try store.updateImageDescription(itemId: itemId, description: description)
         }
     }
 
-    func updateTimestamp(itemId: Int64) async -> Result<Void, ClipboardError> {
+    func updateTimestamp(itemId: String) async -> Result<Void, ClipboardError> {
         await runRepositoryOperation("updateTimestamp", on: store) { store in
             try store.updateTimestamp(itemId: itemId)
         }
     }
 
-    func addTag(itemId: Int64, tag: ItemTag) async -> Result<Void, ClipboardError> {
+    func addTag(itemId: String, tag: ItemTag) async -> Result<Void, ClipboardError> {
         await runRepositoryOperation("addTag", on: store) { store in
             try store.addTag(itemId: itemId, tag: tag)
         }
     }
 
-    func removeTag(itemId: Int64, tag: ItemTag) async -> Result<Void, ClipboardError> {
+    func removeTag(itemId: String, tag: ItemTag) async -> Result<Void, ClipboardError> {
         await runRepositoryOperation("removeTag", on: store) { store in
             try store.removeTag(itemId: itemId, tag: tag)
         }
     }
 
-    func delete(itemId: Int64) async -> Result<Void, ClipboardError> {
+    func delete(itemId: String) async -> Result<Void, ClipboardError> {
         await runRepositoryOperation("deleteItem", on: store) { store in
             try store.deleteItem(itemId: itemId)
         }
