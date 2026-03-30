@@ -724,6 +724,39 @@ impl ClipboardStore {
             }
         }
     }
+
+    /// Re-materialize the current sync snapshot for an item into the read model.
+    ///
+    /// This lets duplicate/already-applied remote records heal the read model if
+    /// sync state was stored successfully but a prior materialization failed.
+    fn materialize_current_sync_state(
+        &self,
+        item_id: &str,
+        index_dirty: bool,
+        fallback_local_item_id: Option<i64>,
+    ) -> Result<Option<i64>, ClipKittyError> {
+        use purr_sync::store::SyncStore;
+
+        let sync = SyncStore::new(self.db.pool());
+        let Some(_) = sync.fetch_projection(item_id)? else {
+            return Ok(self
+                .db
+                .fetch_row_id_by_item_id(item_id)?
+                .or(fallback_local_item_id));
+        };
+        let snapshot = sync.fetch_snapshot(item_id)?.ok_or_else(|| {
+            ClipKittyError::DataInconsistency(format!(
+                "sync projection for item `{item_id}` is missing snapshot state"
+            ))
+        })?;
+
+        self.materialize_aggregate(
+            item_id,
+            &snapshot.aggregate,
+            index_dirty,
+            fallback_local_item_id,
+        )
+    }
 }
 
 // ═══════════════════════════════════════════════════════════════════════════════
@@ -821,24 +854,17 @@ impl ClipboardStore {
         use purr_sync::event::ItemEvent;
         use purr_sync::replay;
         use purr_sync::snapshot::ItemSnapshot;
-        use purr_sync::store::SyncStore;
         use std::collections::HashMap;
 
         let mut known_local_item_ids: HashMap<String, Option<i64>> = HashMap::new();
         for item_id in snapshot_records
             .iter()
             .map(|record| record.item_id.as_str())
-            .chain(
-                event_records
-                    .iter()
-                    .map(|record| record.item_id.as_str()),
-            )
+            .chain(event_records.iter().map(|record| record.item_id.as_str()))
         {
             known_local_item_ids
                 .entry(item_id.to_string())
-                .or_insert_with(|| {
-                    self.db.fetch_row_id_by_item_id(item_id).ok().flatten()
-                });
+                .or_insert_with(|| self.db.fetch_row_id_by_item_id(item_id).ok().flatten());
         }
 
         // Apply snapshots first.
@@ -856,16 +882,14 @@ impl ClipboardStore {
             .map_err(|e| ClipKittyError::InvalidInput(e))?;
 
             let item_id = snapshot.item_id.clone();
-            let aggregate = snapshot.aggregate.clone();
             let applied = replay::apply_remote_snapshots(self.db.pool(), &[snapshot])?;
+            let local_item_id = self.materialize_current_sync_state(
+                &item_id,
+                true,
+                known_local_item_ids.get(&item_id).copied().flatten(),
+            )?;
+            known_local_item_ids.insert(item_id, local_item_id);
             if applied > 0 {
-                let local_item_id = self.materialize_aggregate(
-                    &item_id,
-                    &aggregate,
-                    true,
-                    known_local_item_ids.get(&item_id).copied().flatten(),
-                )?;
-                known_local_item_ids.insert(item_id, local_item_id);
                 snapshots_applied += 1;
             }
         }
@@ -891,30 +915,20 @@ impl ClipboardStore {
 
         // Materialize Applied events into the read model.
         // Re-fetch the applied events' aggregates from the sync store.
-        let sync = SyncStore::new(self.db.pool());
         for event_record in &event_records {
-            if sync
-                .fetch_projection(&event_record.item_id)?
-                .is_some()
-            {
-                if let Some(snapshot) = sync.fetch_snapshot(&event_record.item_id)? {
-                    match self.materialize_aggregate(
-                        &event_record.item_id,
-                        &snapshot.aggregate,
-                        true,
-                        known_local_item_ids
-                            .get(&event_record.item_id)
-                            .copied()
-                            .flatten(),
-                    ) {
-                        Ok(local_item_id) => {
-                            known_local_item_ids
-                                .insert(event_record.item_id.clone(), local_item_id);
-                        }
-                        Err(_) => {
-                            batch_result.materialization_failures += 1;
-                        }
-                    }
+            match self.materialize_current_sync_state(
+                &event_record.item_id,
+                true,
+                known_local_item_ids
+                    .get(&event_record.item_id)
+                    .copied()
+                    .flatten(),
+            ) {
+                Ok(local_item_id) => {
+                    known_local_item_ids.insert(event_record.item_id.clone(), local_item_id);
+                }
+                Err(_) => {
+                    batch_result.materialization_failures += 1;
                 }
             }
         }
@@ -960,7 +974,7 @@ impl ClipboardStore {
         use crate::interface::SyncApplyOutcome;
         use purr_sync::event::ItemEvent;
         use purr_sync::replay;
-        use purr_sync::types::ApplyResult;
+        use purr_sync::types::{ApplyResult, IgnoreReason};
 
         let event = ItemEvent::from_stored(
             record.event_id,
@@ -973,20 +987,25 @@ impl ClipboardStore {
         )
         .map_err(|e| ClipKittyError::InvalidInput(e))?;
 
-        let fallback_local_item_id = self
-            .db
-            .fetch_row_id_by_item_id(&record.item_id)?;
+        let fallback_local_item_id = self.db.fetch_row_id_by_item_id(&record.item_id)?;
         let result = replay::apply_remote_event(self.db.pool(), &event)?;
 
         match &result {
-            ApplyResult::Applied(delta) => {
-                let _ = self.materialize_aggregate(
+            ApplyResult::Applied(_) => {
+                let _ = self.materialize_current_sync_state(
                     &record.item_id,
-                    &delta.new_aggregate,
-                    delta.index_dirty,
+                    true,
                     fallback_local_item_id,
                 )?;
                 Ok(SyncApplyOutcome::Applied)
+            }
+            ApplyResult::Ignored(IgnoreReason::AlreadyApplied) => {
+                let _ = self.materialize_current_sync_state(
+                    &record.item_id,
+                    true,
+                    fallback_local_item_id,
+                )?;
+                Ok(SyncApplyOutcome::Ignored)
             }
             ApplyResult::Ignored(_) => Ok(SyncApplyOutcome::Ignored),
             ApplyResult::Deferred(_) => Ok(SyncApplyOutcome::Deferred),
@@ -1022,19 +1041,9 @@ impl ClipboardStore {
         .map_err(|e| ClipKittyError::InvalidInput(e))?;
 
         let item_id = snapshot.item_id.clone();
-        let aggregate = snapshot.aggregate.clone();
-        let fallback_local_item_id = self
-            .db
-            .fetch_row_id_by_item_id(&item_id)?;
+        let fallback_local_item_id = self.db.fetch_row_id_by_item_id(&item_id)?;
         let applied = replay::apply_remote_snapshots(self.db.pool(), &[snapshot])?;
-        if applied > 0 {
-            let _ = self.materialize_aggregate(
-                &item_id,
-                &aggregate,
-                true,
-                fallback_local_item_id,
-            )?;
-        }
+        let _ = self.materialize_current_sync_state(&item_id, true, fallback_local_item_id)?;
         Ok(applied > 0)
     }
 
@@ -1044,7 +1053,9 @@ impl ClipboardStore {
         use purr_sync::compactor;
 
         let items_compacted = compactor::compact_all(self.db.pool())? as u64;
-        let events_purged = compactor::purge_retained_events(self.db.pool())? as u64;
+        // Old compacted events stay local until CloudKit deletion is confirmed so
+        // event cleanup and dedup pruning share one authoritative handoff.
+        let events_purged = 0;
         let tombstones_purged = compactor::purge_tombstone_snapshots(self.db.pool())? as u64;
 
         Ok(CompactionResult {
@@ -1087,12 +1098,8 @@ impl ClipboardStore {
 
         // Materialize all snapshots into the read model.
         for snapshot in &snapshots {
-            let _ = self.materialize_aggregate(
-                &snapshot.item_id,
-                &snapshot.aggregate,
-                true,
-                None,
-            )?;
+            let _ =
+                self.materialize_aggregate(&snapshot.item_id, &snapshot.aggregate, true, None)?;
         }
         let _ = self.indexer.commit();
 
@@ -1154,12 +1161,8 @@ impl ClipboardStore {
         let sync = SyncStore::new(self.db.pool());
         let all_snapshots = sync.fetch_all_snapshots()?;
         for snapshot in &all_snapshots {
-            let _ = self.materialize_aggregate(
-                &snapshot.item_id,
-                &snapshot.aggregate,
-                true,
-                None,
-            )?;
+            let _ =
+                self.materialize_aggregate(&snapshot.item_id, &snapshot.aggregate, true, None)?;
         }
         for (_original_item_id, plan) in &result.fork_plans {
             let _ = self.materialize_forked_snapshot(&plan.forked_snapshot)?;
@@ -1230,7 +1233,7 @@ impl ClipboardStore {
 
         let sync = SyncStore::new(self.db.pool());
         let refs: Vec<&str> = event_ids.iter().map(|s| s.as_str()).collect();
-        let count = sync.delete_events_by_ids(&refs)?;
+        let count = sync.delete_events_and_dedup_by_ids(&refs)?;
         Ok(count as u64)
     }
 

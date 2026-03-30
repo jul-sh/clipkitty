@@ -438,11 +438,7 @@ impl<'a> SyncStore<'a> {
     // ── Projection ───────────────────────────────────────────────────────
 
     /// Upsert a projection entry tracking lifecycle state and versions.
-    pub fn upsert_projection(
-        &self,
-        item_id: &str,
-        state: &ProjectionState,
-    ) -> SyncResult<()> {
+    pub fn upsert_projection(&self, item_id: &str, state: &ProjectionState) -> SyncResult<()> {
         let (versions, is_tombstoned, is_materialized) = match state {
             ProjectionState::PendingMaterialization { versions } => (versions, false, false),
             ProjectionState::Materialized { versions } => (versions, false, true),
@@ -567,10 +563,7 @@ impl<'a> SyncStore<'a> {
     }
 
     /// Fetch all deferred events for a given item.
-    pub fn fetch_deferred_events_for_item(
-        &self,
-        item_id: &str,
-    ) -> SyncResult<Vec<ItemEvent>> {
+    pub fn fetch_deferred_events_for_item(&self, item_id: &str) -> SyncResult<Vec<ItemEvent>> {
         let conn = self.get_conn()?;
         let mut stmt = conn.prepare(
             r#"SELECT event_id, item_id, origin_device_id, schema_version,
@@ -805,6 +798,34 @@ impl<'a> SyncStore<'a> {
         Ok(count)
     }
 
+    /// Delete specific events and their dedup markers after CloudKit confirms deletion.
+    pub fn delete_events_and_dedup_by_ids(&self, event_ids: &[&str]) -> SyncResult<usize> {
+        if event_ids.is_empty() {
+            return Ok(0);
+        }
+
+        let conn = self.get_conn()?;
+        let tx = conn.unchecked_transaction()?;
+        let placeholders: Vec<String> = (1..=event_ids.len()).map(|i| format!("?{i}")).collect();
+        let event_sql = format!(
+            "DELETE FROM sync_events WHERE event_id IN ({})",
+            placeholders.join(", ")
+        );
+        let dedup_sql = format!(
+            "DELETE FROM sync_dedup WHERE event_id IN ({})",
+            placeholders.join(", ")
+        );
+        let params: Vec<&dyn rusqlite::ToSql> = event_ids
+            .iter()
+            .map(|id| id as &dyn rusqlite::ToSql)
+            .collect();
+
+        let deleted_events = tx.execute(&event_sql, params.as_slice())?;
+        tx.execute(&dedup_sql, params.as_slice())?;
+        tx.commit()?;
+        Ok(deleted_events)
+    }
+
     /// Clear all sync state except device_state (preserves device_id).
     pub fn clear_sync_state(&self) -> SyncResult<()> {
         let conn = self.get_conn()?;
@@ -832,13 +853,7 @@ pub struct ProjectionEntry {
 /// The sync projection's materialization state at the domain boundary.
 #[derive(Debug, Clone, PartialEq)]
 pub enum ProjectionState {
-    PendingMaterialization {
-        versions: VersionVector,
-    },
-    Materialized {
-        versions: VersionVector,
-    },
-    Tombstoned {
-        versions: VersionVector,
-    },
+    PendingMaterialization { versions: VersionVector },
+    Materialized { versions: VersionVector },
+    Tombstoned { versions: VersionVector },
 }

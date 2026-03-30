@@ -120,15 +120,9 @@ fn default_versions() -> VersionVector {
     }
 }
 
-fn assert_projection_materialized(
-    entry: &ProjectionEntry,
-) -> VersionVector {
+fn assert_projection_materialized(entry: &ProjectionEntry) -> VersionVector {
     match &entry.state {
-        ProjectionState::Materialized {
-            versions,
-        } => {
-            *versions
-        }
+        ProjectionState::Materialized { versions } => *versions,
         ProjectionState::PendingMaterialization { .. } => {
             panic!("expected materialized projection, got pending materialization")
         }
@@ -730,13 +724,8 @@ mod store_tests {
             touch: 5,
             metadata: 2,
         };
-        sync.upsert_projection(
-            "global-1",
-            &ProjectionState::Materialized {
-                versions,
-            },
-        )
-        .unwrap();
+        sync.upsert_projection("global-1", &ProjectionState::Materialized { versions })
+            .unwrap();
 
         let entry = sync.fetch_projection("global-1").unwrap().unwrap();
         let projected_versions = assert_projection_materialized(&entry);
@@ -1312,7 +1301,9 @@ mod write_path_tests {
         let (store, _dir) = test_store();
 
         let id = store.save_text("original".to_string(), None, None).unwrap();
-        store.update_text_item(id.clone(), "edited".to_string()).unwrap();
+        store
+            .update_text_item(id.clone(), "edited".to_string())
+            .unwrap();
 
         let pending = store.pending_local_events().unwrap();
         let edit_events: Vec<_> = pending
@@ -2257,10 +2248,7 @@ mod write_path_audit_tests {
         let sync = SyncStore::new(db.pool());
 
         for event in delete_events {
-            let projection = sync
-                .fetch_projection(&event.item_id)
-                .unwrap()
-                .unwrap();
+            let projection = sync.fetch_projection(&event.item_id).unwrap().unwrap();
             assert_projection_tombstoned(&projection);
         }
     }
@@ -2544,6 +2532,130 @@ mod replay_audit_tests {
         assert_eq!(after_items.len(), 1);
         assert_eq!(after_items[0].id.unwrap(), before_id);
         assert_eq!(after_items[0].text_content(), "after edit");
+    }
+
+    #[test]
+    fn duplicate_remote_event_rehydrates_missing_read_model() {
+        let (store, dir) = test_store();
+
+        let created = ItemEvent::new_local(
+            "remote-heal-event".to_string(),
+            "device-A",
+            ItemEventPayload::ItemCreated {
+                snapshot: text_snapshot("healed from sync state"),
+            },
+        );
+        let make_record = || purr::interface::SyncEventRecord {
+            event_id: created.event_id.clone(),
+            item_id: created.item_id.clone(),
+            origin_device_id: created.origin_device_id.clone(),
+            schema_version: created.schema_version,
+            recorded_at: created.recorded_at,
+            payload_type: created.payload_type(),
+            payload_data: created.payload_data(),
+        };
+
+        store.apply_remote_event(make_record()).unwrap();
+
+        let db = store_db(&dir);
+        let row_id = db.fetch_all_items().unwrap()[0].id.unwrap();
+        db.delete_item(row_id).unwrap();
+        assert!(db.fetch_all_items().unwrap().is_empty());
+
+        let outcome = store.apply_remote_event(make_record()).unwrap();
+        assert!(matches!(
+            outcome,
+            purr::interface::SyncApplyOutcome::Ignored
+        ));
+
+        let healed_items = db.fetch_all_items().unwrap();
+        assert_eq!(healed_items.len(), 1);
+        assert_eq!(healed_items[0].text_content(), "healed from sync state");
+    }
+
+    #[test]
+    fn duplicate_remote_snapshot_rehydrates_missing_read_model() {
+        let (store, dir) = test_store();
+
+        let snapshot = ItemSnapshot::initial(
+            "remote-heal-snapshot".to_string(),
+            live_aggregate(text_snapshot("snapshot healed"), default_versions()),
+        );
+        let make_record = || purr::interface::SyncSnapshotRecord {
+            item_id: snapshot.item_id.clone(),
+            snapshot_revision: snapshot.snapshot_revision,
+            schema_version: snapshot.schema_version,
+            covers_through_event: snapshot.covers_through_event.clone(),
+            aggregate_data: snapshot.aggregate_data(),
+        };
+
+        assert!(store.apply_remote_snapshot(make_record()).unwrap());
+
+        let db = store_db(&dir);
+        let row_id = db.fetch_all_items().unwrap()[0].id.unwrap();
+        db.delete_item(row_id).unwrap();
+        assert!(db.fetch_all_items().unwrap().is_empty());
+
+        assert!(!store.apply_remote_snapshot(make_record()).unwrap());
+
+        let healed_items = db.fetch_all_items().unwrap();
+        assert_eq!(healed_items.len(), 1);
+        assert_eq!(healed_items[0].text_content(), "snapshot healed");
+    }
+
+    #[test]
+    fn cloud_cleanup_waits_for_remote_delete_before_pruning_dedup() {
+        let (store, dir) = test_store();
+
+        let created = ItemEvent::new_local(
+            "remote-cleanup-item".to_string(),
+            "device-A",
+            ItemEventPayload::ItemCreated {
+                snapshot: text_snapshot("cleanup me"),
+            },
+        );
+        store
+            .apply_remote_event(purr::interface::SyncEventRecord {
+                event_id: created.event_id.clone(),
+                item_id: created.item_id.clone(),
+                origin_device_id: created.origin_device_id.clone(),
+                schema_version: created.schema_version,
+                recorded_at: created.recorded_at,
+                payload_type: created.payload_type(),
+                payload_data: created.payload_data(),
+            })
+            .unwrap();
+
+        let db = store_db(&dir);
+        let sync = SyncStore::new(db.pool());
+        store
+            .mark_snapshot_uploaded(created.item_id.clone())
+            .unwrap();
+        sync.mark_events_compacted(&[created.event_id.as_str()])
+            .unwrap();
+
+        let aged_recorded_at = chrono::Utc::now().timestamp() - (31 * 24 * 3600);
+        let conn = db.pool().get().unwrap();
+        conn.execute(
+            "UPDATE sync_events SET recorded_at = ?1 WHERE event_id = ?2",
+            rusqlite::params![aged_recorded_at, created.event_id.clone()],
+        )
+        .unwrap();
+
+        let compaction = store.run_compaction().unwrap();
+        assert_eq!(compaction.events_purged, 0);
+        assert!(sync.is_event_applied(&created.event_id).unwrap());
+        assert_eq!(
+            store.purgeable_cloud_event_ids(30).unwrap(),
+            vec![created.event_id.clone()]
+        );
+
+        let purged = store
+            .purge_cloud_events(vec![created.event_id.clone()])
+            .unwrap();
+        assert_eq!(purged, 1);
+        assert!(!sync.is_event_applied(&created.event_id).unwrap());
+        assert!(store.purgeable_cloud_event_ids(30).unwrap().is_empty());
     }
 
     #[test]
@@ -2836,10 +2948,9 @@ mod replay_audit_tests {
         let db = store_db(&dir);
         let all_items = db.fetch_all_items().unwrap();
         assert_eq!(all_items.len(), 2);
-        assert!(
-            all_items.iter().any(|item| item.item_id == "shared-item"
-                && item.text_content() == "edited by A")
-        );
+        assert!(all_items
+            .iter()
+            .any(|item| item.item_id == "shared-item" && item.text_content() == "edited by A"));
         let forked_item = all_items
             .iter()
             .find(|item| item.text_content() == "edited by B")
