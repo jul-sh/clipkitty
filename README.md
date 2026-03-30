@@ -4,7 +4,7 @@
 
 **Never lose what you copied.**
 
-Unlimited history • Instant fuzzy search • Live preview • Private & offline
+Unlimited history • Instant fuzzy search • Live preview • iCloud Sync • Private by default
 
 <img src="https://raw.githubusercontent.com/jul-sh/clipkitty/gh-pages/marketing_1.png" alt="ClipKitty clipboard history" width="820">
 <img src="https://raw.githubusercontent.com/jul-sh/clipkitty/gh-pages/marketing_2.png" alt="ClipKitty fuzzy search" width="820">
@@ -31,7 +31,8 @@ ClipKitty stores everything. Finds it in milliseconds; whether you have 100 item
 * **Live Preview Pane**: See full content instantly as you navigate. Multi-line text, code blocks, images; no truncation, no waiting on tooltips.
 * **OCR & Smart Search**: Search text inside images and screenshots. AI-powered descriptions make visual content searchable.
 * **Keyboard-First**: `⌥Space` to open, arrow keys to navigate, `Return` to paste. `⌘1-9` for quick access.
-* **Privacy-First**: 100% on-device and offline. No telemetry, no cloud sync, no accounts.
+* **iCloud Sync**: Optionally sync your clipboard history across all your Macs via iCloud. Enable it in settings when you want your history everywhere.
+* **Privacy-First**: 100% on-device by default. No telemetry, no accounts. Optional iCloud Sync uses only your private iCloud container.
 * **Secure & Attested**: Don't take my word for it. Source code is fully open source and auditable. Builds are attested: you can [verify](VERIFY.md) the app was built from the public source code.
 
 ## Installation
