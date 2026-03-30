@@ -1,11 +1,14 @@
 import AppKit
 import SwiftUI
+import CloudKit
 
 struct GeneralSettingsView: View {
     @ObservedObject private var settings = AppSettings.shared
     @ObservedObject private var launchAtLogin = LaunchAtLogin.shared
     @State private var showClearConfirmation = false
     @State private var attestationURL: URL?
+    @State private var isICloudAvailable = true
+    @State private var iCloudStatusMessage: String? = nil
 
     let store: ClipboardStore
     #if SPARKLE_RELEASE
@@ -85,6 +88,13 @@ struct GeneralSettingsView: View {
             #if ENABLE_SYNC
                 Section(String(localized: "iCloud Sync")) {
                     Toggle(String(localized: "Sync clipboard history across devices"), isOn: $settings.syncEnabled)
+                        .disabled(!isICloudAvailable)
+
+                    if !isICloudAvailable, let message = iCloudStatusMessage {
+                        Text(message)
+                            .font(.subheadline)
+                            .foregroundStyle(.secondary)
+                    }
 
                     if settings.syncEnabled {
                         HStack {
@@ -268,6 +278,9 @@ struct GeneralSettingsView: View {
             }
             .task {
                 await checkAttestation()
+                #if ENABLE_SYNC
+                await checkICloudAccountStatus()
+                #endif
             }
         }
         .formStyle(.grouped)
@@ -368,6 +381,31 @@ struct GeneralSettingsView: View {
                 return String(localized: "iCloud temporarily unavailable")
             case .unavailable:
                 return String(localized: "iCloud not available")
+            }
+        }
+
+        private func checkICloudAccountStatus() async {
+            let container = CKContainer(identifier: "iCloud.com.clipkitty")
+            do {
+                let status = try await container.accountStatus()
+                switch status {
+                case .available:
+                    isICloudAvailable = true
+                case .noAccount:
+                    isICloudAvailable = false
+                    iCloudStatusMessage = String(localized: "iCloud account not found. Please log in to enable sync.")
+                case .restricted:
+                    isICloudAvailable = false
+                    iCloudStatusMessage = String(localized: "iCloud access is restricted on this machine.")
+                case .couldNotDetermine:
+                    isICloudAvailable = false
+                    iCloudStatusMessage = String(localized: "Could not determine iCloud account status.")
+                @unknown default:
+                    isICloudAvailable = false
+                }
+            } catch {
+                isICloudAvailable = false
+                iCloudStatusMessage = String(localized: "Error checking iCloud status: \(error.localizedDescription)")
             }
         }
     #endif
