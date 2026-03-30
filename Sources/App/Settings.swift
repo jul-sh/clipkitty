@@ -79,7 +79,7 @@ enum PasteMode {
 
 #if SPARKLE_RELEASE
     /// State of update checking
-    enum UpdateCheckState: String, Codable, Equatable {
+    enum UpdateCheckState: Equatable {
         case idle
         case checking
         case downloading
@@ -142,12 +142,6 @@ final class AppSettings: ObservableObject {
 
     #if SPARKLE_RELEASE
         @Published var updateCheckState: UpdateCheckState = .idle
-        @Published var lastUpdateCheckDate: Date? {
-            didSet { save() }
-        }
-        @Published var lastUpdateCheckResult: UpdateCheckState = .idle {
-            didSet { save() }
-        }
         @Published var autoInstallUpdates: Bool {
             didSet { save() }
         }
@@ -238,8 +232,6 @@ final class AppSettings: ObservableObject {
     #if SPARKLE_RELEASE
         private let autoInstallUpdatesKey = "autoInstallUpdates"
         private let updateChannelKey = "updateChannel"
-        private let lastUpdateCheckDateKey = "lastUpdateCheckDate"
-        private let lastUpdateCheckResultKey = "lastUpdateCheckResult"
     #endif
 
     /// Flag to prevent save() calls during initialization (didSet triggers before init completes)
@@ -269,9 +261,6 @@ final class AppSettings: ObservableObject {
             autoInstallUpdates = defaults.object(forKey: autoInstallUpdatesKey) as? Bool ?? true
             let storedUpdateChannel = defaults.string(forKey: updateChannelKey)
             updateChannel = storedUpdateChannel.flatMap(UpdateChannel.init(rawValue:)) ?? .stable
-            lastUpdateCheckDate = defaults.object(forKey: lastUpdateCheckDateKey) as? Date
-            let storedResult = defaults.string(forKey: lastUpdateCheckResultKey)
-            lastUpdateCheckResult = storedResult.flatMap(UpdateCheckState.init(rawValue:)) ?? .idle
         #endif
 
         launchAtLoginPromptDismissed = defaults.bool(forKey: launchAtLoginPromptDismissedKey)
@@ -339,8 +328,6 @@ final class AppSettings: ObservableObject {
         #if SPARKLE_RELEASE
             defaults.set(autoInstallUpdates, forKey: autoInstallUpdatesKey)
             defaults.set(updateChannel.rawValue, forKey: updateChannelKey)
-            defaults.set(lastUpdateCheckDate, forKey: lastUpdateCheckDateKey)
-            defaults.set(lastUpdateCheckResult.rawValue, forKey: lastUpdateCheckResultKey)
         #endif
     }
 

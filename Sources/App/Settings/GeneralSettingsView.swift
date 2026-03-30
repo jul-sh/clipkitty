@@ -152,74 +152,57 @@ struct GeneralSettingsView: View {
 
             #if SPARKLE_RELEASE
                 Section(String(localized: "Updates")) {
-                    HStack {
-                        Text(String(localized: "Status:"))
-                        Spacer()
-                        switch settings.updateCheckState {
-                        case .idle:
-                            Text(String(localized: "Up to date"))
-                                .foregroundStyle(.secondary)
-                        case .checking:
-                            HStack(spacing: 6) {
-                                ProgressView()
-                                    .controlSize(.small)
-                                Text(String(localized: "Checking…"))
-                                    .foregroundStyle(.secondary)
+                    switch settings.updateCheckState {
+                    case .checkFailed:
+                        HStack {
+                            Label(
+                                String(localized: "Unable to check for updates."),
+                                systemImage: "exclamationmark.triangle"
+                            )
+                            Spacer()
+                            Button(String(localized: "Download")) {
+                                NSWorkspace.shared.open(
+                                    URL(
+                                        string:
+                                        "https://github.com/jul-sh/clipkitty/releases/latest"
+                                    )!
+                                )
                             }
-                        case .downloading:
+                        }
+                    case .available:
+                        HStack {
+                            Label(
+                                String(localized: "A new version of ClipKitty is available."),
+                                systemImage: "arrow.down.circle"
+                            )
+                            Spacer()
+                            Button(String(localized: "Install")) {
+                                onInstallUpdate?()
+                            }
+                        }
+                    case .checking:
+                        HStack(spacing: 6) {
+                            ProgressView()
+                                .controlSize(.small)
+                            Text(String(localized: "Checking for updates…"))
+                                .foregroundStyle(.secondary)
+                        }
+                    case .downloading:
+                        HStack(spacing: 6) {
+                            ProgressView()
+                                .controlSize(.small)
                             Text(String(localized: "Downloading update…"))
                                 .foregroundStyle(.secondary)
-                        case .installing:
+                        }
+                    case .installing:
+                        HStack(spacing: 6) {
+                            ProgressView()
+                                .controlSize(.small)
                             Text(String(localized: "Installing update…"))
                                 .foregroundStyle(.secondary)
-                        case .available:
-                            HStack(spacing: 6) {
-                                Text(String(localized: "Update available"))
-                                    .fontWeight(.semibold)
-                                Button(String(localized: "Install")) {
-                                    onInstallUpdate?()
-                                }
-                                .buttonStyle(.borderedProminent)
-                            }
-                        case .checkFailed:
-                            HStack(spacing: 6) {
-                                Label(
-                                    String(localized: "Check failed"),
-                                    systemImage: "exclamationmark.triangle"
-                                )
-                                Button(String(localized: "Download")) {
-                                    NSWorkspace.shared.open(
-                                        URL(
-                                            string:
-                                            "https://github.com/jul-sh/clipkitty/releases/latest"
-                                        )!
-                                    )
-                                }
-                            }
                         }
-                    }
-                    
-                    if let lastChecked = settings.lastUpdateCheckDate {
-                        HStack(spacing: 4) {
-                            switch settings.lastUpdateCheckResult {
-                            case .idle:
-                                Text(String(localized: "Up to date, as of"))
-                            case .available:
-                                Text(String(localized: "Update available, as of"))
-                            case .downloading:
-                                Text(String(localized: "Downloading update, as of"))
-                            case .installing:
-                                Text(String(localized: "Installing update, as of"))
-                            case .checkFailed:
-                                Text(String(localized: "Check failed, as of"))
-                            case .checking:
-                                EmptyView()
-                            }
-                            
-                            Text(lastChecked, style: .date)
-                            Text(lastChecked, style: .time)
-                        }
-                        .foregroundStyle(.secondary)
+                    case .idle:
+                        EmptyView()
                     }
 
                     Toggle(
