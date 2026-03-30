@@ -95,17 +95,13 @@
         private var accountChangeObserver: NSObjectProtocol?
         @ObservationIgnored
         private var backoff = SyncBackoff()
-        @ObservationIgnored
-        private var coordinatorState: CoordinatorState
+        private var engineState: EngineState
 
         /// Wake signal for push notifications to collapse the sleep interval.
         @ObservationIgnored
         private let wakeStream: AsyncStream<Void>
         @ObservationIgnored
         private let wakeContinuation: AsyncStream<Void>.Continuation
-
-        /// Current sync status for UI display.
-        private(set) var status: SyncStatus = .idle
 
         /// Callback invoked after a sync batch changes local content.
         @ObservationIgnored
@@ -129,20 +125,30 @@
             case permanentFailure(reason: String)
         }
 
-        private enum CoordinatorState {
-            case stopped(CoordinatorContext)
-            case running(CoordinatorContext)
+        private enum EngineState {
+            case idle(MaintenanceState)
+            case active(ActiveState)
+            case unavailable(MaintenanceState)
         }
 
-        private struct CoordinatorContext {
+        private struct ActiveState {
             var bootstrap: BootstrapState
+            var activity: ActivityState
             var maintenance: MaintenanceState
         }
 
-        private enum BootstrapState {
+        private enum BootstrapState: Equatable {
             case needsZone
             case needsSubscription
             case ready
+        }
+
+        private enum ActivityState: Equatable {
+            case connecting
+            case syncing
+            case synced(lastSync: Date)
+            case error(String)
+            case temporarilyUnavailable
         }
 
         private struct MaintenanceState {
@@ -188,13 +194,10 @@
             let lastCloudCleanupDate = userDefaults.object(
                 forKey: "clipkitty.sync.lastCloudCleanup"
             ) as? Date
-            coordinatorState = .stopped(
-                CoordinatorContext(
-                    bootstrap: .needsZone,
-                    maintenance: MaintenanceState(
-                        lastCompactionDate: nil,
-                        lastCloudCleanupDate: lastCloudCleanupDate
-                    )
+            engineState = .idle(
+                MaintenanceState(
+                    lastCompactionDate: nil,
+                    lastCloudCleanupDate: lastCloudCleanupDate
                 )
             )
 
@@ -206,8 +209,14 @@
         // MARK: - Lifecycle
 
         func start() {
-            guard case let .stopped(context) = coordinatorState else { return }
-            coordinatorState = .running(context)
+            guard coordinatorTask == nil else { return }
+            engineState = .active(
+                ActiveState(
+                    bootstrap: .needsZone,
+                    activity: .connecting,
+                    maintenance: maintenanceState()
+                )
+            )
             registerAccountChangeObserverIfNeeded()
             let deviceId = self.deviceId
             logger.info("SyncEngine starting for device \(deviceId)")
@@ -222,17 +231,16 @@
         }
 
         func stop() {
-            coordinatorState = .stopped(coordinatorContext())
             coordinatorTask?.cancel()
             coordinatorTask = nil
             removeAccountChangeObserver()
-            updateStatus(.idle)
+            engineState = .idle(maintenanceState())
             logger.info("SyncEngine stopped")
         }
 
         /// Signal the coordinator to wake up immediately (e.g. from push notification).
         func handleRemoteNotification() {
-            guard case .running = coordinatorState else { return }
+            guard coordinatorTask != nil else { return }
             wakeContinuation.yield(())
         }
 
@@ -248,50 +256,108 @@
             case unavailable
         }
 
-        private func updateStatus(_ newStatus: SyncStatus) {
-            status = newStatus
+        var status: SyncStatus {
+            switch engineState {
+            case .idle:
+                return .idle
+            case .unavailable:
+                return .unavailable
+            case let .active(state):
+                switch state.activity {
+                case .connecting:
+                    return .connecting
+                case .syncing:
+                    return .syncing
+                case let .synced(lastSync):
+                    return .synced(lastSync: lastSync)
+                case let .error(message):
+                    return .error(message)
+                case .temporarilyUnavailable:
+                    return .temporarilyUnavailable
+                }
+            }
         }
 
         /// Marks the engine as unavailable and stops it. Callable from detached tasks.
         private func setUnavailable() {
-            coordinatorState = .stopped(coordinatorContext())
-            status = .unavailable
-        }
-
-        private func coordinatorContext() -> CoordinatorContext {
-            switch coordinatorState {
-            case let .stopped(context), let .running(context):
-                return context
-            }
+            coordinatorTask?.cancel()
+            coordinatorTask = nil
+            engineState = .unavailable(maintenanceState())
         }
 
         private func maintenanceState() -> MaintenanceState {
-            coordinatorContext().maintenance
+            switch engineState {
+            case let .idle(maintenance), let .unavailable(maintenance):
+                return maintenance
+            case let .active(state):
+                return state.maintenance
+            }
         }
 
-        private func updateCoordinatorContext(
-            _ mutate: (inout CoordinatorContext) -> Void
-        ) {
-            switch coordinatorState {
-            case var .stopped(context):
-                mutate(&context)
-                coordinatorState = .stopped(context)
-            case var .running(context):
-                mutate(&context)
-                coordinatorState = .running(context)
+        private func updateMaintenanceState(_ mutate: (inout MaintenanceState) -> Void) {
+            switch engineState {
+            case var .idle(maintenance):
+                mutate(&maintenance)
+                engineState = .idle(maintenance)
+            case var .unavailable(maintenance):
+                mutate(&maintenance)
+                engineState = .unavailable(maintenance)
+            case var .active(state):
+                mutate(&state.maintenance)
+                engineState = .active(state)
+            }
+        }
+
+        private func updateActiveState(_ mutate: (inout ActiveState) -> Void) {
+            switch engineState {
+            case var .active(state):
+                mutate(&state)
+                engineState = .active(state)
+            case let .idle(maintenance), let .unavailable(maintenance):
+                var state = ActiveState(
+                    bootstrap: .needsZone,
+                    activity: .connecting,
+                    maintenance: maintenance
+                )
+                mutate(&state)
+                engineState = .active(state)
+            }
+        }
+
+        private func prepareForAvailableCycle() {
+            switch engineState {
+            case let .idle(maintenance), let .unavailable(maintenance):
+                engineState = .active(
+                    ActiveState(
+                        bootstrap: .needsZone,
+                        activity: .connecting,
+                        maintenance: maintenance
+                    )
+                )
+            case var .active(state):
+                switch (state.bootstrap, state.activity) {
+                case (.needsZone, _), (.needsSubscription, _), (.ready, .connecting),
+                     (.ready, .temporarilyUnavailable):
+                    state.activity = .connecting
+                    engineState = .active(state)
+                case (.ready, .syncing), (.ready, .synced(_)), (.ready, .error(_)):
+                    break
+                }
             }
         }
 
         // MARK: - Zone Setup
 
         private func ensureZoneExists() async throws {
-            guard case .needsZone = coordinatorContext().bootstrap else {
+            guard case let .active(state) = engineState,
+                  case .needsZone = state.bootstrap
+            else {
                 return
             }
 
             try await cloud.ensureZoneExists(recordZone)
-            updateCoordinatorContext { context in
-                context.bootstrap = .needsSubscription
+            updateActiveState { state in
+                state.bootstrap = .needsSubscription
             }
             logger.debug("Record zone ensured")
         }
@@ -299,7 +365,9 @@
         // MARK: - Push Subscription
 
         private func setupSubscription() async {
-            guard case .needsSubscription = coordinatorContext().bootstrap else {
+            guard case let .active(state) = engineState,
+                  case .needsSubscription = state.bootstrap
+            else {
                 return
             }
 
@@ -310,8 +378,8 @@
                 subscription.notificationInfo = notificationInfo
 
                 try await cloud.saveSubscription(subscription)
-                updateCoordinatorContext { context in
-                    context.bootstrap = .ready
+                updateActiveState { state in
+                    state.bootstrap = .ready
                 }
                 logger.info("Push subscription created")
             } catch {
@@ -323,20 +391,22 @@
 
         private func runCoordinatorLoop() async {
             while !Task.isCancelled {
-                guard case .running = coordinatorState else {
-                    break
-                }
                 await runCoordinatorCycle()
-                guard !Task.isCancelled, case let .running(state) = coordinatorState else {
+                guard !Task.isCancelled else {
                     break
                 }
 
                 let interval: TimeInterval
-                switch state.bootstrap {
-                case .ready:
-                    interval = Self.subscriptionActiveInterval
-                case .needsZone, .needsSubscription:
-                    interval = Self.baseInterval
+                switch engineState {
+                case let .active(state):
+                    switch state.bootstrap {
+                    case .ready:
+                        interval = Self.subscriptionActiveInterval
+                    case .needsZone, .needsSubscription:
+                        interval = Self.baseInterval
+                    }
+                case .idle, .unavailable:
+                    return
                 }
                 let delay = backoff.currentDelay ?? interval
 
@@ -364,7 +434,9 @@
                 case .temporarilyUnavailable:
                     let delay = backoff.registerFailure(error: CKError(.serviceUnavailable))
                     logger.warning("iCloud account temporarily unavailable, backoff \(delay)s")
-                    updateStatus(.temporarilyUnavailable)
+                    updateActiveState { state in
+                        state.activity = .temporarilyUnavailable
+                    }
                     return
                 case .unavailable:
                     logger.warning("iCloud account unavailable, sync disabled")
@@ -372,15 +444,12 @@
                     return
                 }
 
-                switch (coordinatorContext().bootstrap, status) {
-                case (.needsZone, _), (.needsSubscription, _), (.ready, .idle), (.ready, .unavailable), (.ready, .temporarilyUnavailable):
-                    updateStatus(.connecting)
-                case (.ready, .connecting), (.ready, .syncing), (.ready, .synced(_)), (.ready, .error(_)):
-                    break
-                }
+                prepareForAvailableCycle()
                 try await ensureZoneExists()
                 await setupSubscription()
-                updateStatus(.syncing)
+                updateActiveState { state in
+                    state.activity = .syncing
+                }
 
                 // ── Phase 0: Check device state ──
                 let deviceState = try store.getSyncDeviceState(deviceId: deviceId)
@@ -389,7 +458,9 @@
                     logger.info("Full resync required")
                     try await performFullResync()
                     backoff.reset()
-                    updateStatus(.synced(lastSync: now()))
+                    updateActiveState { state in
+                        state.activity = .synced(lastSync: now())
+                    }
                     return
                 }
 
@@ -408,7 +479,9 @@
                     logger.info("Zone change token expired, triggering full resync")
                     try await performFullResync()
                     backoff.reset()
-                    updateStatus(.synced(lastSync: now()))
+                    updateActiveState { state in
+                        state.activity = .synced(lastSync: now())
+                    }
                     return
                 }
                 if let fetchError = changes.fetchError {
@@ -449,15 +522,17 @@
                     logger.info("Batch triggered full resync")
                     try await performFullResync()
                     backoff.reset()
-                    updateStatus(.synced(lastSync: now()))
+                    updateActiveState { state in
+                        state.activity = .synced(lastSync: now())
+                    }
                     return
                 }
 
                 // ── Phase 5: Periodic compaction ──
                 if shouldRunCompaction() {
                     await performCompaction()
-                    updateCoordinatorContext { context in
-                        context.maintenance.lastCompactionDate = now()
+                    updateMaintenanceState { maintenance in
+                        maintenance.lastCompactionDate = now()
                     }
                 }
 
@@ -474,7 +549,9 @@
                 switch combinedUploadOutcome(events: uploadResult, snapshots: snapshotUploadResult) {
                 case .uploaded, .nothingToUpload:
                     backoff.reset()
-                    updateStatus(.synced(lastSync: now()))
+                    updateActiveState { state in
+                        state.activity = .synced(lastSync: now())
+                    }
                 case let .retryableFailure(reason):
                     let delay = backoff.registerFailure(
                         error: NSError(
@@ -483,16 +560,22 @@
                         )
                     )
                     logger.warning("Upload retryable: \(reason), backoff \(delay)s")
-                    updateStatus(.error("Upload failed, retrying"))
+                    updateActiveState { state in
+                        state.activity = .error("Upload failed, retrying")
+                    }
                 case let .permanentFailure(reason):
                     logger.error("Upload permanent failure: \(reason)")
-                    updateStatus(.error("Upload failed permanently"))
+                    updateActiveState { state in
+                        state.activity = .error("Upload failed permanently")
+                    }
                 }
 
             } catch {
                 let delay = backoff.registerFailure(error: error)
                 logger.error("Coordinator cycle error: \(error.localizedDescription), backoff \(delay)s")
-                updateStatus(.error(error.localizedDescription))
+                updateActiveState { state in
+                    state.activity = .error(error.localizedDescription)
+                }
             }
         }
 
@@ -547,13 +630,13 @@
         }
 
         private func handleAccountChanged() {
-            if case .running = coordinatorState {
+            if coordinatorTask != nil {
                 logger.info("iCloud account changed, waking sync coordinator")
                 wakeContinuation.yield(())
                 return
             }
 
-            guard case .unavailable = status else { return }
+            guard case .unavailable = engineState else { return }
             logger.info("iCloud account changed, restarting sync coordinator")
             start()
         }
@@ -1095,8 +1178,8 @@
                 let eventIds = try store.purgeableCloudEventIds(maxAgeDays: Self.cloudCleanupAgeDays)
                 guard !eventIds.isEmpty else {
                     let cleanupDate = now()
-                    updateCoordinatorContext { context in
-                        context.maintenance.lastCloudCleanupDate = cleanupDate
+                    updateMaintenanceState { maintenance in
+                        maintenance.lastCloudCleanupDate = cleanupDate
                     }
                     userDefaults.set(cleanupDate, forKey: "clipkitty.sync.lastCloudCleanup")
                     return
@@ -1138,8 +1221,8 @@
 
                 if !encounteredFailure {
                     let cleanupDate = now()
-                    updateCoordinatorContext { context in
-                        context.maintenance.lastCloudCleanupDate = cleanupDate
+                    updateMaintenanceState { maintenance in
+                        maintenance.lastCloudCleanupDate = cleanupDate
                     }
                     userDefaults.set(cleanupDate, forKey: "clipkitty.sync.lastCloudCleanup")
                 }

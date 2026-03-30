@@ -920,6 +920,56 @@ final class SyncEngineTests: XCTestCase {
         await waitUntil {
             transport.ensureZoneAttempts == 1 && transport.subscriptionSaveAttempts == 1
         }
+        await waitUntil {
+            if case .synced = engine.status {
+                return true
+            }
+            return false
+        }
+        assertSynced(engine.status)
+    }
+
+    func testAccountChangeRestartRebootstrapsAfterLosingAvailableAccount() async throws {
+        let store = try makeStore()
+        let defaults = makeDefaults()
+        let transport = FakeCloudTransport()
+        let notificationCenter = NotificationCenter()
+        transport.accountStatusResult = .success(.available)
+
+        let engine = makeEngine(
+            store: store,
+            transport: transport,
+            defaults: defaults,
+            notificationCenter: notificationCenter
+        )
+        defer { engine.stop() }
+
+        engine.start()
+
+        await waitUntil {
+            transport.ensureZoneAttempts == 1 && transport.subscriptionSaveAttempts == 1
+        }
+        assertSynced(engine.status)
+
+        transport.accountStatusResult = .success(.noAccount)
+        await engine.runCoordinatorCycle()
+
+        assertUnavailable(engine.status)
+        XCTAssertEqual(transport.ensureZoneAttempts, 1)
+        XCTAssertEqual(transport.subscriptionSaveAttempts, 1)
+
+        transport.accountStatusResult = .success(.available)
+        notificationCenter.post(name: Notification.Name.CKAccountChanged, object: nil)
+
+        await waitUntil {
+            transport.ensureZoneAttempts == 2 && transport.subscriptionSaveAttempts == 2
+        }
+        await waitUntil {
+            if case .synced = engine.status {
+                return true
+            }
+            return false
+        }
         assertSynced(engine.status)
     }
 
