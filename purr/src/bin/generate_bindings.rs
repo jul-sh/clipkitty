@@ -155,21 +155,27 @@ fn run_cmd(program: &str, args: &[&str], dir: &PathBuf) {
 }
 
 fn installed_rust_targets() -> Vec<String> {
-    let Ok(output) = Command::new("rustup")
-        .args(["target", "list", "--installed"])
+    // Check the sysroot for installed target libraries.  This works with both
+    // rustup-managed and Nix-managed toolchains (rustup metadata doesn't
+    // reflect targets installed via Nix's rust-overlay).
+    let sysroot = Command::new("rustc")
+        .args(["--print", "sysroot"])
         .output()
-    else {
-        return Vec::new();
-    };
+        .ok()
+        .filter(|o| o.status.success())
+        .map(|o| String::from_utf8_lossy(&o.stdout).trim().to_string());
 
-    if !output.status.success() {
-        return Vec::new();
+    if let Some(sysroot) = sysroot {
+        let rustlib = PathBuf::from(&sysroot).join("lib/rustlib");
+        if let Ok(entries) = fs::read_dir(&rustlib) {
+            return entries
+                .filter_map(|e| e.ok())
+                .filter(|e| e.path().join("lib").is_dir())
+                .filter_map(|e| e.file_name().into_string().ok())
+                .filter(|name| name.contains("-apple-darwin"))
+                .collect();
+        }
     }
 
-    String::from_utf8_lossy(&output.stdout)
-        .lines()
-        .map(str::trim)
-        .filter(|line| !line.is_empty())
-        .map(String::from)
-        .collect()
+    Vec::new()
 }
