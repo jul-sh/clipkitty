@@ -235,12 +235,14 @@ fn save_image_direct(
     let content_hash = hasher.finish().to_string();
     let thumbnail = thumbnail.or_else(|| generate_thumbnail(&image_data, 64));
 
+    let item_uuid = uuid::Uuid::new_v4().to_string();
     let tx = conn.unchecked_transaction()?;
 
     tx.execute(
-        r#"INSERT INTO items (contentType, contentHash, content, timestamp, sourceApp, sourceAppBundleId, thumbnail)
-           VALUES ('image', ?1, ?2, ?3, ?4, ?5, ?6)"#,
+        r#"INSERT INTO items (item_id, contentType, contentHash, content, timestamp, sourceApp, sourceAppBundleId, thumbnail)
+           VALUES (?1, 'image', ?2, ?3, ?4, ?5, ?6, ?7)"#,
         params![
+            item_uuid,
             content_hash,
             description,
             timestamp_str,
