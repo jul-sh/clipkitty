@@ -188,6 +188,7 @@
             guard !isRunning else { return }
             isRunning = true
             registerAccountChangeObserverIfNeeded()
+            let deviceId = self.deviceId
             logger.info("SyncEngine starting for device \(deviceId)")
 
             // Set the Rust-side device ID so events are attributed correctly.
