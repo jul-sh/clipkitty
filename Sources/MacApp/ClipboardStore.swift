@@ -449,6 +449,11 @@ final class ClipboardStore {
                 enabled = false
             }
 
+            // Set the device ID early so events emitted before sync is enabled
+            // already carry the correct device attribution.
+            let deviceId = SyncEngine.resolveDeviceId()
+            rustStore.setSyncDeviceId(deviceId: deviceId)
+
             syncRuntime = .disabled(store: rustStore)
             setSyncEnabled(enabled)
         }

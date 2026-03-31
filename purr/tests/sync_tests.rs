@@ -1423,19 +1423,13 @@ mod write_path_tests {
     }
 
     #[test]
-    fn set_sync_device_id_restamps_local_events() {
+    fn events_use_device_id_when_set_before_save() {
         let (store, _dir) = test_store();
 
-        // Events emitted before set_sync_device_id have origin_device_id "local".
-        let id = store.save_text("before sync".to_string(), None, None).unwrap();
-        assert!(!id.is_empty());
-
-        let pending = store.pending_local_events().unwrap();
-        assert_eq!(pending.len(), 1);
-        assert_eq!(pending[0].origin_device_id, "local");
-
-        // Setting the real device ID should restamp existing events.
+        // Setting device ID before any saves (mirrors app startup flow).
         store.set_sync_device_id("device-abc-123".to_string());
+
+        store.save_text("after device id".to_string(), None, None).unwrap();
 
         let pending = store.pending_local_events().unwrap();
         assert_eq!(pending.len(), 1);

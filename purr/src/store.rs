@@ -797,19 +797,11 @@ impl ClipboardStore {
 #[uniffi::export]
 impl ClipboardStore {
     /// Set the device ID used for locally-originated sync events.
-    /// Called by SyncEngine.start() with the stable UUID from UserDefaults.
     ///
-    /// Also re-stamps any pending local events that were recorded with the
-    /// placeholder device ID `"local"` (emitted before sync was enabled).
+    /// Should be called as early as possible (at store initialization) so that
+    /// all emitted events carry the correct device attribution from the start.
     pub fn set_sync_device_id(&self, device_id: String) {
-        self.sync_emitter.set_device_id(device_id.clone());
-
-        // Fix up events emitted before the real device ID was known.
-        let conn = self.db.pool().get().expect("pool connection for device-id fixup");
-        let _ = conn.execute(
-            "UPDATE sync_events SET origin_device_id = ?1 WHERE origin_device_id = 'local' AND is_local = 1",
-            rusqlite::params![device_id],
-        );
+        self.sync_emitter.set_device_id(device_id);
     }
 
     /// Fetch pending local events that need uploading to CloudKit.
