@@ -1,3 +1,4 @@
+import ClipKittyShared
 import SwiftUI
 
 enum HotKeyEditState: Equatable {

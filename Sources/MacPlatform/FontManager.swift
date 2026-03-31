@@ -2,15 +2,15 @@ import AppKit
 import CoreText
 import Foundation
 
-enum FontManager {
+public enum FontManager {
     // Preferred custom fonts with system fallbacks.
     // Use PostScript names so registered fonts resolve reliably.
-    static var sansSerif: String {
+    public static var sansSerif: String {
         let name = "IosevkaCharon-Regular"
         return fontAvailable(name) ? name : NSFont.systemFont(ofSize: 0).fontName
     }
 
-    static var mono: String {
+    public static var mono: String {
         let name = "IosevkaCharonMono-Regular"
         return fontAvailable(name) ? name : NSFont.monospacedSystemFont(ofSize: 0, weight: .regular).fontName
     }
@@ -19,8 +19,8 @@ enum FontManager {
         NSFont(name: name, size: 12) != nil
     }
 
-    static func registerFonts() {
-        guard let resourceURL = Bundle.module.resourceURL else {
+    public static func registerFonts() {
+        guard let resourceURL = Bundle.main.resourceURL else {
             return
         }
 

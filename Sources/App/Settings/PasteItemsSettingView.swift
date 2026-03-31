@@ -1,4 +1,5 @@
 import AppKit
+import ClipKittyMacPlatform
 import SwiftUI
 
 #if !APP_STORE

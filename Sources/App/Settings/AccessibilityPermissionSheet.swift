@@ -1,4 +1,5 @@
 import AppKit
+import ClipKittyMacPlatform
 import SwiftUI
 
 /// A sheet explaining what accessibility permission enables and how to grant it.

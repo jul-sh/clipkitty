@@ -4,7 +4,7 @@ import Foundation
 // MARK: - Pasteboard Protocols
 
 /// Protocol for clipboard access, enabling mock injection for testing
-protocol PasteboardProtocol: AnyObject {
+public protocol PasteboardProtocol: AnyObject {
     var changeCount: Int { get }
     @discardableResult func clearContents() -> Int
     func setString(_ string: String, forType type: NSPasteboard.PasteboardType) -> Bool
@@ -20,12 +20,12 @@ protocol PasteboardProtocol: AnyObject {
 
 // MARK: - NSPasteboard Conformance
 
-extension NSPasteboard: PasteboardProtocol {
-    func types() -> [NSPasteboard.PasteboardType]? {
+extension NSPasteboard: @retroactive PasteboardProtocol {
+    public func types() -> [NSPasteboard.PasteboardType]? {
         return types
     }
 
-    func readFileURLs() -> [URL] {
+    public func readFileURLs() -> [URL] {
         let urls = readObjects(forClasses: [NSURL.self], options: [
             .urlReadingFileURLsOnly: true,
         ]) as? [URL]
@@ -37,7 +37,7 @@ extension NSPasteboard: PasteboardProtocol {
 
 /// Protocol for workspace access, enabling mock injection for testing
 /// Note: NSWorkspace's icon methods are thread-safe, so no @MainActor needed
-protocol WorkspaceProtocol {
+public protocol WorkspaceProtocol {
     var frontmostApplication: NSRunningApplication? { get }
     var notificationCenter: NotificationCenter { get }
     func icon(forFile path: String) -> NSImage
@@ -49,12 +49,12 @@ protocol WorkspaceProtocol {
 
 // MARK: - NSWorkspace Conformance
 
-extension NSWorkspace: WorkspaceProtocol {}
+extension NSWorkspace: @retroactive WorkspaceProtocol {}
 
 // MARK: - File Manager Protocol
 
 /// Protocol for file system access, enabling mock injection for testing
-protocol FileManagerProtocol {
+public protocol FileManagerProtocol {
     func fileExists(atPath path: String) -> Bool
     func contents(atPath path: String) -> Data?
     func contentsOfDirectory(atPath path: String) throws -> [String]
@@ -65,13 +65,13 @@ protocol FileManagerProtocol {
     func removeItem(at url: URL) throws
 }
 
-extension FileManager: FileManagerProtocol {}
+extension FileManager: @retroactive FileManagerProtocol {}
 
 // MARK: - Bundle Protocol
 
-protocol BundleInfoProtocol {
+public protocol BundleInfoProtocol {
     var bundleIdentifier: String? { get }
     var bundlePath: String { get }
 }
 
-extension Bundle: BundleInfoProtocol {}
+extension Bundle: @retroactive BundleInfoProtocol {}

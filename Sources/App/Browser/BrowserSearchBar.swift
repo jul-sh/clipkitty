@@ -1,4 +1,6 @@
+import ClipKittyMacPlatform
 import ClipKittyRust
+import ClipKittyShared
 import SwiftUI
 
 struct BrowserSearchBar<FilterPopoverContent: View>: View {

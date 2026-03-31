@@ -1,20 +1,20 @@
 import AppKit
 import Foundation
 
-enum DetectedPasteboardContent {
+public enum DetectedPasteboardContent {
     case text(text: String, sourceApp: String?, sourceAppBundleId: String?)
     case image(data: Data, isAnimated: Bool, sourceApp: String?, sourceAppBundleId: String?)
     case files(urls: [URL], sourceApp: String?, sourceAppBundleId: String?)
 }
 
 @MainActor
-final class PasteboardMonitor {
-    enum PollingMode: Equatable {
+public final class PasteboardMonitor {
+    public enum PollingMode: Equatable {
         case active
         case idle
         case deepIdle
 
-        static func mode(
+        public static func mode(
             forIdleDuration idleDuration: Duration
         ) -> PollingMode {
             if idleDuration < .seconds(30) {
@@ -26,7 +26,7 @@ final class PasteboardMonitor {
             }
         }
 
-        var intervalMilliseconds: Int {
+        public var intervalMilliseconds: Int {
             switch self {
             case .active:
                 return 200
@@ -37,7 +37,7 @@ final class PasteboardMonitor {
             }
         }
 
-        func adjustedForLowPowerMode() -> PollingMode {
+        public func adjustedForLowPowerMode() -> PollingMode {
             switch self {
             case .active:
                 return .idle
@@ -72,9 +72,27 @@ final class PasteboardMonitor {
         }
     }
 
+    /// Configuration for content filtering, injected from the app layer.
+    public struct FilterConfiguration {
+        public let isAppIgnored: (String?) -> Bool
+        public let ignoreConfidentialContent: Bool
+        public let ignoreTransientContent: Bool
+
+        public init(
+            isAppIgnored: @escaping (String?) -> Bool,
+            ignoreConfidentialContent: Bool,
+            ignoreTransientContent: Bool
+        ) {
+            self.isAppIgnored = isAppIgnored
+            self.ignoreConfidentialContent = ignoreConfidentialContent
+            self.ignoreTransientContent = ignoreTransientContent
+        }
+    }
+
     private let pasteboard: PasteboardProtocol
     private let workspace: WorkspaceProtocol
     private let onDetection: @MainActor (DetectedPasteboardContent) -> Void
+    private let filterConfiguration: @MainActor () -> FilterConfiguration
 
     private var lastChangeCount: Int
     private var pollingTask: Task<Void, Never>?
@@ -87,19 +105,21 @@ final class PasteboardMonitor {
     private static let gifType = NSPasteboard.PasteboardType("com.compuserve.gif")
     private static let legacyFileNamesType = NSPasteboard.PasteboardType("NSFilenamesPboardType")
 
-    init(
+    public init(
         pasteboard: PasteboardProtocol,
         workspace: WorkspaceProtocol,
+        filterConfiguration: @escaping @MainActor () -> FilterConfiguration,
         onDetection: @escaping @MainActor (DetectedPasteboardContent) -> Void
     ) {
         self.pasteboard = pasteboard
         self.workspace = workspace
+        self.filterConfiguration = filterConfiguration
         self.onDetection = onDetection
         lastChangeCount = pasteboard.changeCount
         lastDetectionTime = ContinuousClock.now - .seconds(30)
     }
 
-    func start() {
+    public func start() {
         pollingTask?.cancel()
         setupSystemObservers()
 
@@ -123,7 +143,7 @@ final class PasteboardMonitor {
         }
     }
 
-    func stop() {
+    public func stop() {
         pollingTask?.cancel()
         pollingTask = nil
         wakeContinuation?.finish()
@@ -131,7 +151,7 @@ final class PasteboardMonitor {
         removeSystemObservers()
     }
 
-    func acknowledgeLocalWrite(changeCount: Int) {
+    public func acknowledgeLocalWrite(changeCount: Int) {
         lastChangeCount = changeCount
     }
 
@@ -174,7 +194,7 @@ final class PasteboardMonitor {
         sleepMonitoring = .notMonitoring
     }
 
-    static func pollingMode(
+    public static func pollingMode(
         now: ContinuousClock.Instant,
         lastDetectionTime: ContinuousClock.Instant,
         isLowPowerModeEnabled: Bool
@@ -203,22 +223,22 @@ final class PasteboardMonitor {
         lastChangeCount = currentCount
         lastDetectionTime = ContinuousClock.now
 
-        let settings = AppSettings.shared
+        let filter = filterConfiguration()
         let availableTypes = Set(pasteboard.types() ?? [])
         guard !availableTypes.isEmpty else { return }
 
         let sourceApplication = workspace.frontmostApplication
         let sourceAppBundleID = sourceApplication?.bundleIdentifier
 
-        if settings.isAppIgnored(bundleId: sourceAppBundleID) {
+        if filter.isAppIgnored(sourceAppBundleID) {
             return
         }
 
-        if settings.ignoreConfidentialContent, availableTypes.contains(Self.concealedType) {
+        if filter.ignoreConfidentialContent, availableTypes.contains(Self.concealedType) {
             return
         }
 
-        if settings.ignoreTransientContent, availableTypes.contains(Self.transientType) {
+        if filter.ignoreTransientContent, availableTypes.contains(Self.transientType) {
             return
         }
 

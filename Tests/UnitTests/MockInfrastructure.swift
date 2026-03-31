@@ -1,6 +1,7 @@
 import AppKit
-import Foundation
 @testable import ClipKitty
+@testable import ClipKittyMacPlatform
+import Foundation
 
 // MARK: - Mock Pasteboard
 

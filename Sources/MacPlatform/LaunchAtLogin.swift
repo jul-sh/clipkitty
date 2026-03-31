@@ -1,28 +1,28 @@
 import Foundation
 import ServiceManagement
 
-protocol LaunchAtLoginServiceProtocol {
+public protocol LaunchAtLoginServiceProtocol {
     var status: SMAppService.Status { get }
     func register() throws
     func unregister() throws
 }
 
-extension SMAppService: LaunchAtLoginServiceProtocol {}
+extension SMAppService: @retroactive LaunchAtLoginServiceProtocol {}
 
-enum LaunchAtLoginState: Equatable {
+public enum LaunchAtLoginState: Equatable {
     case available(status: RegistrationStatus, notice: Notice?)
 
-    enum RegistrationStatus: Equatable {
+    public enum RegistrationStatus: Equatable {
         case enabled
         case disabled
     }
 
-    enum Notice: Equatable {
+    public enum Notice: Equatable {
         case registrationFailed
         case unregistrationFailed
     }
 
-    var displayMessage: String? {
+    public var displayMessage: String? {
         switch self {
         case .available(_, .registrationFailed):
             return String(localized: "Could not enable launch at login. Please add ClipKitty manually in System Settings.")
@@ -33,7 +33,7 @@ enum LaunchAtLoginState: Equatable {
         }
     }
 
-    var isEnabled: Bool {
+    public var isEnabled: Bool {
         switch self {
         case .available(.enabled, _):
             return true
@@ -42,11 +42,11 @@ enum LaunchAtLoginState: Equatable {
         }
     }
 
-    var canToggle: Bool {
+    public var canToggle: Bool {
         true
     }
 
-    var hasFailureNotice: Bool {
+    public var hasFailureNotice: Bool {
         switch self {
         case .available(_, .registrationFailed), .available(_, .unregistrationFailed):
             return true
@@ -62,22 +62,22 @@ enum LaunchAtLoginState: Equatable {
 /// - Uses the app's bundle identifier to ensure only one registration exists
 /// - Keeps the toggle actionable after transient failures
 @MainActor
-final class LaunchAtLogin: ObservableObject {
-    static let shared = LaunchAtLogin()
+public final class LaunchAtLogin: ObservableObject {
+    public static let shared = LaunchAtLogin()
 
-    @Published private(set) var state: LaunchAtLoginState
+    @Published public private(set) var state: LaunchAtLoginState
 
-    var isEnabled: Bool {
+    public var isEnabled: Bool {
         state.isEnabled
     }
 
-    var errorMessage: String? {
+    public var errorMessage: String? {
         state.displayMessage
     }
 
     private let service: LaunchAtLoginServiceProtocol
 
-    init(
+    public init(
         service: LaunchAtLoginServiceProtocol = SMAppService.mainApp
     ) {
         self.service = service
@@ -85,7 +85,7 @@ final class LaunchAtLogin: ObservableObject {
         refreshState()
     }
 
-    func refreshState() {
+    public func refreshState() {
         refreshState(retaining: nil)
     }
 
@@ -104,7 +104,7 @@ final class LaunchAtLogin: ObservableObject {
     }
 
     @discardableResult
-    func enable() -> Bool {
+    public func enable() -> Bool {
         do {
             try service.register()
             objectWillChange.send()
@@ -118,7 +118,7 @@ final class LaunchAtLogin: ObservableObject {
     }
 
     @discardableResult
-    func disable() -> Bool {
+    public func disable() -> Bool {
         do {
             try service.unregister()
             objectWillChange.send()
@@ -132,7 +132,7 @@ final class LaunchAtLogin: ObservableObject {
     }
 
     @discardableResult
-    func setEnabled(_ enabled: Bool) -> Bool {
+    public func setEnabled(_ enabled: Bool) -> Bool {
         enabled ? enable() : disable()
     }
 }

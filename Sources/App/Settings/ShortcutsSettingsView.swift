@@ -1,4 +1,5 @@
 import AppKit
+import ClipKittyShared
 import SwiftUI
 
 struct ShortcutsSettingsView: View {

@@ -1,5 +1,8 @@
 import AppKit
+import ClipKittyAppleServices
+import ClipKittyMacPlatform
 import ClipKittyRust
+import ClipKittyShared
 import Foundation
 import ImageIO
 import Observation
@@ -176,7 +179,15 @@ final class ClipboardStore {
         self.fileManager = fileManager
         pasteboardMonitor = PasteboardMonitor(
             pasteboard: pasteboard,
-            workspace: workspace
+            workspace: workspace,
+            filterConfiguration: {
+                let settings = AppSettings.shared
+                return PasteboardMonitor.FilterConfiguration(
+                    isAppIgnored: { settings.isAppIgnored(bundleId: $0) },
+                    ignoreConfidentialContent: settings.ignoreConfidentialContent,
+                    ignoreTransientContent: settings.ignoreTransientContent
+                )
+            }
         ) { [weak self] detectedContent in
             self?.handleDetectedPasteboardContent(detectedContent)
         }

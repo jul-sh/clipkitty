@@ -1,15 +1,18 @@
-import AppKit
+import CoreGraphics
 import Foundation
+import ImageIO
 @preconcurrency import LinkPresentation
 
 /// Fetches link metadata using Apple's LinkPresentation framework
 @MainActor
-final class LinkMetadataFetcher {
+public final class LinkMetadataFetcher {
     /// In-flight fetch tasks keyed by item ID (prevents duplicate fetches)
     private var activeFetches: [String: Task<FetchedLinkMetadata?, Never>] = [:]
 
+    public init() {}
+
     /// Fetch metadata for a URL, caching by item ID to prevent duplicate requests
-    func fetchMetadata(for url: String, itemId: String) async -> FetchedLinkMetadata? {
+    public func fetchMetadata(for url: String, itemId: String) async -> FetchedLinkMetadata? {
         // Return if already fetching
         if let existingTask = activeFetches[itemId] {
             return await existingTask.value
@@ -41,13 +44,13 @@ final class LinkMetadataFetcher {
     }
 
     /// Cancel any in-flight fetch for an item
-    func cancelFetch(for itemId: String) {
+    public func cancelFetch(for itemId: String) {
         activeFetches[itemId]?.cancel()
         activeFetches.removeValue(forKey: itemId)
     }
 
     /// Cancel all in-flight fetches (cleanup on deinit)
-    func cancelAllFetches() {
+    public func cancelAllFetches() {
         for (_, task) in activeFetches {
             task.cancel()
         }
@@ -86,10 +89,10 @@ final class LinkMetadataFetcher {
 
     /// Crop image to at most 3:2 aspect ratio, center-cropping excess height.
     private static func clampImageTo3x2(_ data: Data) -> Data? {
-        guard let image = NSImage(data: data),
-              let rep = image.representations.first else { return nil }
-        let w = CGFloat(rep.pixelsWide)
-        let h = CGFloat(rep.pixelsHigh)
+        guard let source = CGImageSourceCreateWithData(data as CFData, nil),
+              let cgImage = CGImageSourceCreateImageAtIndex(source, 0, nil) else { return nil }
+        let w = CGFloat(cgImage.width)
+        let h = CGFloat(cgImage.height)
         guard w > 0, h > 0 else { return nil }
 
         let minRatio: CGFloat = 3.0 / 2.0
@@ -100,20 +103,26 @@ final class LinkMetadataFetcher {
         let cropY = (h - croppedH) / 2.0
         let cropRect = CGRect(x: 0, y: cropY, width: w, height: croppedH)
 
-        guard let cgImage = image.cgImage(forProposedRect: nil, context: nil, hints: nil)?
-            .cropping(to: cropRect) else { return nil }
+        guard let cropped = cgImage.cropping(to: cropRect) else { return nil }
 
-        let cropped = NSBitmapImageRep(cgImage: cgImage)
-        return cropped.representation(using: .jpeg, properties: [.compressionFactor: 0.85])
+        let jpegData = NSMutableData()
+        guard let dest = CGImageDestinationCreateWithData(
+            jpegData as CFMutableData, "public.jpeg" as CFString, 1, nil
+        ) else { return nil }
+        CGImageDestinationAddImage(dest, cropped, [
+            kCGImageDestinationLossyCompressionQuality: 0.85,
+        ] as CFDictionary)
+        guard CGImageDestinationFinalize(dest) else { return nil }
+        return jpegData as Data
     }
 }
 
-enum FetchedLinkMetadata: Equatable {
+public enum FetchedLinkMetadata: Equatable {
     case titleOnly(title: String, description: String?)
     case imageOnly(imageData: Data, description: String?)
     case titleAndImage(title: String, imageData: Data, description: String?)
 
-    var title: String? {
+    public var title: String? {
         switch self {
         case let .titleOnly(title, _), let .titleAndImage(title, _, _):
             return title
@@ -122,14 +131,14 @@ enum FetchedLinkMetadata: Equatable {
         }
     }
 
-    var description: String? {
+    public var description: String? {
         switch self {
         case let .titleOnly(_, desc), let .imageOnly(_, desc), let .titleAndImage(_, _, desc):
             return desc
         }
     }
 
-    var imageData: Data? {
+    public var imageData: Data? {
         switch self {
         case let .imageOnly(data, _), let .titleAndImage(_, data, _):
             return data

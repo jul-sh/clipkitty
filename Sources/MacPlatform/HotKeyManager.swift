@@ -1,5 +1,6 @@
 import AppKit
 import Carbon
+import ClipKittyShared
 
 // MARK: - HotKey Registration State
 
@@ -13,15 +14,15 @@ private enum RegistrationState: Sendable {
 /// Manages global hotkey registration using Carbon APIs.
 /// @MainActor isolated because Carbon hotkey APIs must be called from the main thread.
 @MainActor
-final class HotKeyManager {
+public final class HotKeyManager {
     private var state: RegistrationState = .unregistered
     private let callback: @MainActor () -> Void
 
-    init(callback: @escaping @MainActor () -> Void) {
+    public init(callback: @escaping @MainActor () -> Void) {
         self.callback = callback
     }
 
-    func register(hotKey: HotKey = .default) {
+    public func register(hotKey: HotKey = .default) {
         // If already registered, just update the hotkey (reuse event handler)
         if case let .registered(oldHotKeyRef, existingEventHandler) = state {
             UnregisterEventHotKey(oldHotKeyRef)
@@ -106,7 +107,7 @@ final class HotKeyManager {
         return status == noErr
     }
 
-    func unregister() {
+    public func unregister() {
         if case let .registered(hotKey, eventHandler) = state {
             UnregisterEventHotKey(hotKey)
             RemoveEventHandler(eventHandler)

@@ -1,4 +1,5 @@
 import ClipKittyRust
+import ClipKittyShared
 import SwiftUI
 
 struct ContentView: View {

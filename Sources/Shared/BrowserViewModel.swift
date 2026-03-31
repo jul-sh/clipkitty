@@ -1,4 +1,3 @@
-import AppKit
 import ClipKittyRust
 import Foundation
 import Observation
@@ -8,8 +7,9 @@ private let poi = OSLog(subsystem: "com.eviljuliette.clipkitty", category: .poin
 
 @MainActor
 @Observable
-final class BrowserViewModel {
+public final class BrowserViewModel {
     private let client: BrowserStoreClient
+    private let shouldGenerateLinkPreviews: @MainActor () -> Bool
     private let onSelect: (String, ClipboardContent) -> Void
     private let onCopyOnly: (String, ClipboardContent) -> Void
     private let onDismiss: () -> Void
@@ -79,22 +79,23 @@ final class BrowserViewModel {
     private var latestKnownContentRevision = 0
     private var lastLoadedContentRevision: Int?
 
-    private(set) var contentState: BrowserContentState = .idle(request: SearchRequest(text: "", filter: .all))
-    private(set) var selectionState: SelectionState = .none
-    private(set) var overlayState: OverlayState = .none
-    private(set) var mutationState: MutationState = .idle
-    private(set) var editState: EditState = .init()
-    private(set) var rowDecorationsByItemId: [String: RowDecoration] = [:]
+    public private(set) var contentState: BrowserContentState = .idle(request: SearchRequest(text: "", filter: .all))
+    public private(set) var selectionState: SelectionState = .none
+    public private(set) var overlayState: OverlayState = .none
+    public private(set) var mutationState: MutationState = .idle
+    public private(set) var editState: EditState = .init()
+    public private(set) var rowDecorationsByItemId: [String: RowDecoration] = [:]
     private var previewPayloadsByItemId: [String: PreviewPayload] = [:]
-    private(set) var hasUserNavigated = false
-    private(set) var prefetchCache: [String: ClipboardItem] = [:]
-    private(set) var previewSpinnerVisible = false
-    private(set) var itemIds: [String] = []
-    private(set) var displayRows: [DisplayRow] = []
+    public private(set) var hasUserNavigated = false
+    public private(set) var prefetchCache: [String: ClipboardItem] = [:]
+    public private(set) var previewSpinnerVisible = false
+    public private(set) var itemIds: [String] = []
+    public private(set) var displayRows: [DisplayRow] = []
     private var itemIndexById: [String: Int] = [:]
 
-    init(
+    public init(
         client: BrowserStoreClient,
+        shouldGenerateLinkPreviews: @escaping @MainActor () -> Bool = { true },
         onSelect: @escaping (String, ClipboardContent) -> Void,
         onCopyOnly: @escaping (String, ClipboardContent) -> Void,
         onDismiss: @escaping () -> Void,
@@ -102,6 +103,7 @@ final class BrowserViewModel {
         dismissSnackbarNotification: @escaping () -> Void = {}
     ) {
         self.client = client
+        self.shouldGenerateLinkPreviews = shouldGenerateLinkPreviews
         self.onSelect = onSelect
         self.onCopyOnly = onCopyOnly
         self.onDismiss = onDismiss
@@ -109,11 +111,11 @@ final class BrowserViewModel {
         self.dismissSnackbarNotification = dismissSnackbarNotification
     }
 
-    var searchText: String {
+    public var searchText: String {
         contentState.request.text
     }
 
-    var contentTypeFilter: ContentTypeFilter {
+    public var contentTypeFilter: ContentTypeFilter {
         switch contentState.request.filter {
         case let .contentType(contentType):
             return contentType
@@ -122,39 +124,39 @@ final class BrowserViewModel {
         }
     }
 
-    var selectedTagFilter: ItemTag? {
+    public var selectedTagFilter: ItemTag? {
         if case let .tagged(tag) = contentState.request.filter {
             return tag
         }
         return nil
     }
 
-    var searchSpinnerVisible: Bool {
+    public var searchSpinnerVisible: Bool {
         contentState.isSearchSpinnerVisible
     }
 
-    func indexOfItem(_ itemId: String?) -> Int? {
+    public func indexOfItem(_ itemId: String?) -> Int? {
         guard let itemId else { return nil }
         return itemIndexById[itemId]
     }
 
-    var selection: SelectionState {
+    public var selection: SelectionState {
         selectionState
     }
 
-    var selectedItemId: String? {
+    public var selectedItemId: String? {
         selection.itemId
     }
 
-    var selectedItemState: SelectedItemState? {
+    public var selectedItemState: SelectedItemState? {
         selection.selectedItem
     }
 
-    var selectedItem: ClipboardItem? {
+    public var selectedItem: ClipboardItem? {
         selectedItemState?.item
     }
 
-    var previewDecoration: PreviewDecoration? {
+    public var previewDecoration: PreviewDecoration? {
         guard let selectedItemState else { return nil }
         switch selectedItemState.previewState {
         case .plain, .loadingDecoration(previous: nil):
@@ -164,35 +166,35 @@ final class BrowserViewModel {
         }
     }
 
-    var selectedIndex: Int? {
+    public var selectedIndex: Int? {
         guard let selectedItemId else { return nil }
         return itemIndexById[selectedItemId]
     }
 
-    var itemCount: Int {
+    public var itemCount: Int {
         itemIds.count
     }
 
-    var mutationFailureMessage: String? {
+    public var mutationFailureMessage: String? {
         guard case let .failed(failure) = mutationState else { return nil }
         return failure.message
     }
 
-    var editFocus: EditState.Focus {
+    public var editFocus: EditState.Focus {
         editState.focus
     }
 
-    var pendingEdits: [String: String] {
+    public var pendingEdits: [String: String] {
         editState.pendingEdits
     }
 
-    func onAppear(initialSearchQuery: String, contentRevision: Int = 0) {
+    public func onAppear(initialSearchQuery: String, contentRevision: Int = 0) {
         latestKnownContentRevision = max(latestKnownContentRevision, contentRevision)
         guard !hasAppliedInitialSearch else { return }
         startInitialSearch(initialSearchQuery: initialSearchQuery, targetContentRevision: latestKnownContentRevision)
     }
 
-    func handleDisplayReset(initialSearchQuery: String, contentRevision: Int = 0) {
+    public func handleDisplayReset(initialSearchQuery: String, contentRevision: Int = 0) {
         searchExecution.cancel()
         previewTask?.cancel()
         previewTask = nil
@@ -223,13 +225,13 @@ final class BrowserViewModel {
         startInitialSearch(initialSearchQuery: initialSearchQuery, targetContentRevision: contentRevision)
     }
 
-    func handleContentRevisionChange(_ contentRevision: Int, isPanelVisible: Bool) {
+    public func handleContentRevisionChange(_ contentRevision: Int, isPanelVisible: Bool) {
         latestKnownContentRevision = max(latestKnownContentRevision, contentRevision)
         guard !isPanelVisible else { return }
         refreshCurrentRequestIfStale()
     }
 
-    func handlePanelVisibilityChange(
+    public func handlePanelVisibilityChange(
         _ isPanelVisible: Bool,
         initialSearchQuery: String = "",
         contentRevision: Int = 0
@@ -243,50 +245,50 @@ final class BrowserViewModel {
         refreshCurrentRequestIfStale()
     }
 
-    func dismiss() {
+    public func dismiss() {
         onDismiss()
     }
 
-    func updateSearchText(_ value: String) {
+    public func updateSearchText(_ value: String) {
         submitSearch(text: value, filter: contentState.request.filter)
     }
 
-    func setContentTypeFilter(_ filter: ContentTypeFilter) {
+    public func setContentTypeFilter(_ filter: ContentTypeFilter) {
         let queryFilter: ItemQueryFilter = filter == .all ? .all : .contentType(contentType: filter)
         submitSearch(text: searchText, filter: queryFilter)
     }
 
-    func setTagFilter(_ tag: ItemTag?) {
+    public func setTagFilter(_ tag: ItemTag?) {
         let queryFilter: ItemQueryFilter = tag.map { .tagged(tag: $0) } ?? .all
         submitSearch(text: searchText, filter: queryFilter)
     }
 
-    func openFilterOverlay(highlight: FilterOverlayState) {
+    public func openFilterOverlay(highlight: FilterOverlayState) {
         overlayState = .filter(highlight)
     }
 
-    func openActionsOverlay(highlight: MenuHighlightState) {
+    public func openActionsOverlay(highlight: MenuHighlightState) {
         overlayState = .actions(highlight)
     }
 
-    func closeOverlay() {
+    public func closeOverlay() {
         overlayState = .none
     }
 
-    func dismissMutationFailure() {
+    public func dismissMutationFailure() {
         guard case .failed = mutationState else { return }
         mutationState = .idle
     }
 
-    func setFilterOverlayState(_ highlight: FilterOverlayState) {
+    public func setFilterOverlayState(_ highlight: FilterOverlayState) {
         overlayState = .filter(highlight)
     }
 
-    func setActionsOverlayState(_ highlight: MenuHighlightState) {
+    public func setActionsOverlayState(_ highlight: MenuHighlightState) {
         overlayState = .actions(highlight)
     }
 
-    func moveSelection(by offset: Int) {
+    public func moveSelection(by offset: Int) {
         hasUserNavigated = true
         guard let currentIndex = selectedIndex else {
             if let firstItemId = itemIds.first {
@@ -299,7 +301,7 @@ final class BrowserViewModel {
         select(itemId: itemId, origin: .user)
     }
 
-    func select(itemId: String, origin: SelectionOrigin) {
+    public func select(itemId: String, origin: SelectionOrigin) {
         let signpostID = OSSignpostID(log: poi)
         os_signpost(.begin, log: poi, name: "select", signpostID: signpostID, "itemId=%{public}s origin=%{public}s", itemId, String(describing: origin))
         defer { os_signpost(.end, log: poi, name: "select", signpostID: signpostID) }
@@ -314,29 +316,29 @@ final class BrowserViewModel {
         loadSelectedItem(itemId: itemId, origin: origin)
     }
 
-    func confirmSelection() {
+    public func confirmSelection() {
         guard let item = selectedItem else { return }
         let content = effectiveContent(for: item)
         commitCurrentEdit()
         onSelect(item.itemMetadata.itemId, content)
     }
 
-    func confirmItem(itemId: String) {
+    public func confirmItem(itemId: String) {
         performItemAction(itemId: itemId, handler: onSelect)
     }
 
-    func copyOnlySelection() {
+    public func copyOnlySelection() {
         guard let item = selectedItem else { return }
         let content = effectiveContent(for: item)
         commitCurrentEdit()
         onCopyOnly(item.itemMetadata.itemId, content)
     }
 
-    func copyOnlyItem(itemId: String) {
+    public func copyOnlyItem(itemId: String) {
         performItemAction(itemId: itemId, handler: onCopyOnly)
     }
 
-    func loadRowDecorationsForItems(_ ids: [String]) {
+    public func loadRowDecorationsForItems(_ ids: [String]) {
         guard displayedContent != nil else { return }
         let request = contentState.request
         guard !request.text.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty else { return }
@@ -377,12 +379,12 @@ final class BrowserViewModel {
         }
     }
 
-    func deleteSelectedItem() {
+    public func deleteSelectedItem() {
         guard let itemId = selectedItemId else { return }
         deleteItem(itemId: itemId)
     }
 
-    func deleteItem(itemId: String) {
+    public func deleteItem(itemId: String) {
         // Accumulate into existing pending delete batch
         if case var .deleting(.pending(prev)) = mutationState {
             pendingDeleteTask?.cancel()
@@ -424,7 +426,7 @@ final class BrowserViewModel {
         }
     }
 
-    func undoPendingDelete() {
+    public func undoPendingDelete() {
         guard case let .deleting(.pending(transaction)) = mutationState else { return }
         pendingDeleteTask?.cancel()
         pendingDeleteTask = nil
@@ -433,7 +435,7 @@ final class BrowserViewModel {
         mutationState = .idle
     }
 
-    func clearAll() {
+    public func clearAll() {
         mutationState = .clearing(ClearTransaction(
             snapshot: contentState,
             selectionSnapshot: selectionState
@@ -468,32 +470,32 @@ final class BrowserViewModel {
         }
     }
 
-    func addTagToSelectedItem(_ tag: ItemTag) {
+    public func addTagToSelectedItem(_ tag: ItemTag) {
         guard let itemId = selectedItemId else { return }
         mutateItemTag(itemId: itemId, tag: tag, shouldInclude: true)
     }
 
-    func removeTagFromSelectedItem(_ tag: ItemTag) {
+    public func removeTagFromSelectedItem(_ tag: ItemTag) {
         guard let itemId = selectedItemId else { return }
         mutateItemTag(itemId: itemId, tag: tag, shouldInclude: false)
     }
 
-    func addTag(_ tag: ItemTag, toItem itemId: String) {
+    public func addTag(_ tag: ItemTag, toItem itemId: String) {
         mutateItemTag(itemId: itemId, tag: tag, shouldInclude: true)
     }
 
-    func removeTag(_ tag: ItemTag, fromItem itemId: String) {
+    public func removeTag(_ tag: ItemTag, fromItem itemId: String) {
         mutateItemTag(itemId: itemId, tag: tag, shouldInclude: false)
     }
 
-    func effectiveContent(for item: ClipboardItem) -> ClipboardContent {
+    public func effectiveContent(for item: ClipboardItem) -> ClipboardContent {
         if let editedText = editState.pendingEdits[item.itemMetadata.itemId] {
             return .text(value: editedText)
         }
         return item.content
     }
 
-    func onTextEdit(_ newText: String, for itemId: String, originalText: String) {
+    public func onTextEdit(_ newText: String, for itemId: String, originalText: String) {
         if newText == originalText {
             editState.pendingEdits.removeValue(forKey: itemId)
         } else {
@@ -501,7 +503,7 @@ final class BrowserViewModel {
         }
     }
 
-    func onEditingStateChange(_ isEditing: Bool, for itemId: String) {
+    public func onEditingStateChange(_ isEditing: Bool, for itemId: String) {
         if isEditing {
             editState.focus = .focused(itemId: itemId)
         } else if case let .focused(id) = editState.focus, id == itemId {
@@ -509,14 +511,14 @@ final class BrowserViewModel {
         }
     }
 
-    func discardCurrentEdit() {
+    public func discardCurrentEdit() {
         if let id = selectedItemId {
             editState.pendingEdits.removeValue(forKey: id)
         }
         editState.focus = .idle
     }
 
-    func commitCurrentEdit() {
+    public func commitCurrentEdit() {
         guard let id = selectedItemId,
               let editedText = editState.pendingEdits.removeValue(forKey: id),
               !editedText.isEmpty
@@ -566,13 +568,13 @@ final class BrowserViewModel {
         }
     }
 
-    enum PreviewInteractionMode: Equatable {
+    public enum PreviewInteractionMode: Equatable {
         case browsing
         case previewing(itemId: String)
         case editing(itemId: String)
     }
 
-    var previewInteractionMode: PreviewInteractionMode {
+    public var previewInteractionMode: PreviewInteractionMode {
         guard let id = selectedItemId else { return .browsing }
         if editState.pendingEdits[id] != nil {
             return .editing(itemId: id)
@@ -583,22 +585,31 @@ final class BrowserViewModel {
         return .browsing
     }
 
-    var selectedItemHasPendingEdit: Bool {
+    public var selectedItemHasPendingEdit: Bool {
         guard let id = selectedItemId else { return false }
         return editState.pendingEdits[id] != nil
     }
 
-    var isEditingPreview: Bool {
+    public var isEditingPreview: Bool {
         guard let id = selectedItemId else { return false }
         return editState.focus == .focused(itemId: id) || editState.pendingEdits[id] != nil
     }
 
-    func hasPendingEdit(for itemId: String) -> Bool {
+    public func hasPendingEdit(for itemId: String) -> Bool {
         editState.pendingEdits[itemId] != nil
     }
 
-    func performAction(
-        _ action: BrowserActionItem,
+    /// Semantic browser actions (platform-independent).
+    public enum BrowserAction {
+        case defaultAction
+        case copyOnly
+        case bookmark
+        case unbookmark
+        case delete
+    }
+
+    public func performAction(
+        _ action: BrowserAction,
         itemId: String,
         dismissOverlay: () -> Void
     ) {
@@ -1051,7 +1062,7 @@ final class BrowserViewModel {
     private func maybeRefreshLinkMetadata(for item: ClipboardItem, generation: Int) {
         guard case let .link(url, metadataState) = item.content,
               case .pending = metadataState,
-              AppSettings.shared.generateLinkPreviews
+              shouldGenerateLinkPreviews()
         else {
             return
         }
@@ -1487,7 +1498,7 @@ final class BrowserViewModel {
         )
     }
 
-    func rowDecoration(for itemId: String) -> RowDecoration? {
+    public func rowDecoration(for itemId: String) -> RowDecoration? {
         guard let index = itemIndexById[itemId], displayRows.indices.contains(index) else {
             return nil
         }

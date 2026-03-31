@@ -1,4 +1,6 @@
 import AppKit
+import ClipKittyMacPlatform
+import ClipKittyShared
 import SwiftUI
 
 // MARK: - SwiftUI Views

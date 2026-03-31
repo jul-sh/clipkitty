@@ -1,15 +1,21 @@
-import AppKit
+import CoreGraphics
 import Foundation
 import ImageIO
 
-struct ProcessedImageIngest {
-    let compressedData: Data
-    let thumbnailData: Data?
-    let isAnimated: Bool
+public struct ProcessedImageIngest {
+    public let compressedData: Data
+    public let thumbnailData: Data?
+    public let isAnimated: Bool
+
+    public init(compressedData: Data, thumbnailData: Data?, isAnimated: Bool) {
+        self.compressedData = compressedData
+        self.thumbnailData = thumbnailData
+        self.isAnimated = isAnimated
+    }
 }
 
-enum ImageIngestService {
-    static func process(
+public enum ImageIngestService {
+    public static func process(
         rawImageData: Data,
         isAnimated: Bool,
         quality: CGFloat,

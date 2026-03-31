@@ -1,6 +1,7 @@
-import XCTest
 import AppKit
 @testable import ClipKitty
+@testable import ClipKittyMacPlatform
+import XCTest
 
 /// Tests for MockPasteboard to ensure it correctly mimics NSPasteboard behavior.
 /// These tests verify the mock infrastructure works before using it in other tests.

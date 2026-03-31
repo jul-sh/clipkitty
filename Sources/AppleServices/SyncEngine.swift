@@ -6,27 +6,61 @@
     import Observation
     import os.log
 
-    struct SyncZoneChangeResult {
-        var events: [CKRecord] = []
-        var snapshots: [CKRecord] = []
-        var newToken: CKServerChangeToken?
-        var tokenExpired = false
-        var fetchError: Error?
+    public struct SyncZoneChangeResult {
+        public var events: [CKRecord]
+        public var snapshots: [CKRecord]
+        public var newToken: CKServerChangeToken?
+        public var tokenExpired: Bool
+        public var fetchError: Error?
+
+        public init(
+            events: [CKRecord] = [],
+            snapshots: [CKRecord] = [],
+            newToken: CKServerChangeToken? = nil,
+            tokenExpired: Bool = false,
+            fetchError: Error? = nil
+        ) {
+            self.events = events
+            self.snapshots = snapshots
+            self.newToken = newToken
+            self.tokenExpired = tokenExpired
+            self.fetchError = fetchError
+        }
     }
 
-    struct SyncRecordSaveResult {
-        var savedRecordIDs: [CKRecord.ID] = []
-        var perRecordErrors: [CKRecord.ID: Error] = [:]
-        var operationError: Error?
+    public struct SyncRecordSaveResult {
+        public var savedRecordIDs: [CKRecord.ID]
+        public var perRecordErrors: [CKRecord.ID: Error]
+        public var operationError: Error?
+
+        public init(
+            savedRecordIDs: [CKRecord.ID] = [],
+            perRecordErrors: [CKRecord.ID: Error] = [:],
+            operationError: Error? = nil
+        ) {
+            self.savedRecordIDs = savedRecordIDs
+            self.perRecordErrors = perRecordErrors
+            self.operationError = operationError
+        }
     }
 
-    struct SyncRecordDeleteResult {
-        var deletedRecordIDs: [CKRecord.ID] = []
-        var perRecordErrors: [CKRecord.ID: Error] = [:]
-        var operationError: Error?
+    public struct SyncRecordDeleteResult {
+        public var deletedRecordIDs: [CKRecord.ID]
+        public var perRecordErrors: [CKRecord.ID: Error]
+        public var operationError: Error?
+
+        public init(
+            deletedRecordIDs: [CKRecord.ID] = [],
+            perRecordErrors: [CKRecord.ID: Error] = [:],
+            operationError: Error? = nil
+        ) {
+            self.deletedRecordIDs = deletedRecordIDs
+            self.perRecordErrors = perRecordErrors
+            self.operationError = operationError
+        }
     }
 
-    protocol SyncCloudTransport {
+    public protocol SyncCloudTransport {
         func accountStatus() async throws -> CKAccountStatus
         func ensureZoneExists(_ zone: CKRecordZone) async throws
         func saveSubscription(_ subscription: CKDatabaseSubscription) async throws
@@ -55,7 +89,7 @@
     /// - Push notifications wake the coordinator via an async signal
     @MainActor
     @Observable
-    final class SyncEngine {
+    public final class SyncEngine {
         // MARK: - Configuration
 
         private static let zoneName = "ClipKittySync"
@@ -105,7 +139,7 @@
 
         /// Callback invoked after a sync batch changes local content.
         @ObservationIgnored
-        var onContentChanged: (() -> Void)?
+        public var onContentChanged: (() -> Void)?
 
         // MARK: - Upload Outcome
 
@@ -158,14 +192,14 @@
 
         // MARK: - Init
 
-        convenience init(store: ClipKittyRust.ClipboardStore) {
+        public convenience init(store: ClipKittyRust.ClipboardStore) {
             self.init(
                 store: store,
                 cloud: CloudKitSyncTransport(containerIdentifier: "iCloud.com.eviljuliette.clipkitty")
             )
         }
 
-        init(
+        public init(
             store: ClipKittyRust.ClipboardStore,
             cloud: any SyncCloudTransport,
             userDefaults: UserDefaults = .standard,
@@ -208,7 +242,7 @@
 
         // MARK: - Lifecycle
 
-        func start() {
+        public func start() {
             guard coordinatorTask == nil else { return }
             engineState = .active(
                 ActiveState(
@@ -230,7 +264,7 @@
             }
         }
 
-        func stop() {
+        public func stop() {
             coordinatorTask?.cancel()
             coordinatorTask = nil
             removeAccountChangeObserver()
@@ -239,14 +273,14 @@
         }
 
         /// Signal the coordinator to wake up immediately (e.g. from push notification).
-        func handleRemoteNotification() {
+        public func handleRemoteNotification() {
             guard coordinatorTask != nil else { return }
             wakeContinuation.yield(())
         }
 
         // MARK: - Status
 
-        enum SyncStatus: Equatable {
+        public enum SyncStatus: Equatable {
             case idle
             case connecting
             case syncing
@@ -256,7 +290,7 @@
             case unavailable
         }
 
-        var status: SyncStatus {
+        public var status: SyncStatus {
             switch engineState {
             case .idle:
                 return .idle
@@ -426,7 +460,7 @@
         }
 
         /// Single serial coordinator cycle: fetch → apply → compact → upload → cleanup.
-        func runCoordinatorCycle() async {
+        public func runCoordinatorCycle() async {
             do {
                 switch try await accountAvailability() {
                 case .available:
@@ -1093,7 +1127,7 @@
 
         // MARK: - Compaction
 
-        func performCompaction() async {
+        public func performCompaction() async {
             do {
                 let result = try store.runCompaction()
                 if result.itemsCompacted > 0 || result.eventsPurged > 0 || result.tombstonesPurged > 0 {

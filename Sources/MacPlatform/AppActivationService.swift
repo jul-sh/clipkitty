@@ -1,24 +1,24 @@
 import AppKit
 
 @MainActor
-final class AppActivationService {
+public final class AppActivationService {
     private let workspace: WorkspaceProtocol
 
-    init(workspace: WorkspaceProtocol = NSWorkspace.shared) {
+    public init(workspace: WorkspaceProtocol = NSWorkspace.shared) {
         self.workspace = workspace
     }
 
-    func frontmostApplication() -> NSRunningApplication? {
+    public func frontmostApplication() -> NSRunningApplication? {
         workspace.frontmostApplication
     }
 
-    func activate(_ app: NSRunningApplication?) {
+    public func activate(_ app: NSRunningApplication?) {
         guard let app, !app.isTerminated else { return }
         app.activate()
     }
 
     #if !APP_STORE
-        func simulatePaste(to targetApp: NSRunningApplication?) {
+        public func simulatePaste(to targetApp: NSRunningApplication?) {
             guard let targetApp, !targetApp.isTerminated else {
                 return
             }

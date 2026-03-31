@@ -67,6 +67,62 @@ let project = Project(
             )
         ),
 
+        // MARK: ClipKittyShared — Cross-platform Swift library (no AppKit)
+        .target(
+            name: "ClipKittyShared",
+            destinations: .macOS,
+            product: .staticLibrary,
+            bundleId: "com.eviljuliette.clipkitty.shared",
+            deploymentTargets: .macOS("14.0"),
+            sources: ["Sources/Shared/**"],
+            dependencies: [
+                .target(name: "ClipKittyRust"),
+            ]
+        ),
+
+        // MARK: ClipKittyAppleServices — Cross-Apple services (no AppKit)
+        .target(
+            name: "ClipKittyAppleServices",
+            destinations: .macOS,
+            product: .staticLibrary,
+            bundleId: "com.eviljuliette.clipkitty.appleservices",
+            deploymentTargets: .macOS("14.0"),
+            sources: ["Sources/AppleServices/**"],
+            dependencies: [
+                .target(name: "ClipKittyRust"),
+                .target(name: "ClipKittyShared"),
+            ],
+            settings: .settings(
+                configurations: [
+                    .debug(name: "Debug", settings: [
+                        "SWIFT_ACTIVE_COMPILATION_CONDITIONS": "ENABLE_SYNC",
+                    ]),
+                    .release(name: "Release", settings: [
+                        "SWIFT_ACTIVE_COMPILATION_CONDITIONS": "ENABLE_SYNC",
+                    ]),
+                    .release(name: .configuration("SparkleRelease"), settings: [
+                        "SWIFT_ACTIVE_COMPILATION_CONDITIONS": "ENABLE_SYNC",
+                    ]),
+                    .release(name: .configuration("AppStore"), settings: [
+                        "SWIFT_ACTIVE_COMPILATION_CONDITIONS": "ENABLE_SYNC",
+                    ]),
+                ]
+            )
+        ),
+
+        // MARK: ClipKittyMacPlatform — macOS-only platform integrations
+        .target(
+            name: "ClipKittyMacPlatform",
+            destinations: .macOS,
+            product: .staticLibrary,
+            bundleId: "com.eviljuliette.clipkitty.macplatform",
+            deploymentTargets: .macOS("14.0"),
+            sources: ["Sources/MacPlatform/**"],
+            dependencies: [
+                .target(name: "ClipKittyShared"),
+            ]
+        ),
+
         // MARK: ClipKitty — macOS app
         .target(
             name: "ClipKitty",
@@ -117,6 +173,9 @@ let project = Project(
             ],
             dependencies: [
                 .target(name: "ClipKittyRust"),
+                .target(name: "ClipKittyShared"),
+                .target(name: "ClipKittyAppleServices"),
+                .target(name: "ClipKittyMacPlatform"),
                 .sdk(name: "SystemConfiguration", type: .framework),
                 .external(name: "STTextKitPlus"),
                 .external(name: "SparkleUpdater"),
@@ -187,6 +246,9 @@ let project = Project(
             dependencies: [
                 .target(name: "ClipKitty"),
                 .target(name: "ClipKittyRust"),
+                .target(name: "ClipKittyShared"),
+                .target(name: "ClipKittyAppleServices"),
+                .target(name: "ClipKittyMacPlatform"),
             ],
             settings: .settings(
                 base: [

@@ -1,3 +1,5 @@
+import ClipKittyMacPlatform
+import ClipKittyShared
 import Foundation
 
 @MainActor

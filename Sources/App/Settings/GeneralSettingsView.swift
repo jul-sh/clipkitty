@@ -1,6 +1,8 @@
 import AppKit
-import SwiftUI
+import ClipKittyMacPlatform
+import ClipKittyShared
 import CloudKit
+import SwiftUI
 import OSLog
 
 struct GeneralSettingsView: View {

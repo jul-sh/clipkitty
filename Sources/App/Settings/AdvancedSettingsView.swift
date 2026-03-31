@@ -1,5 +1,6 @@
 import AppKit
 import Carbon
+import ClipKittyShared
 import SwiftUI
 
 /// Records a keyboard shortcut when activated

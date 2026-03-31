@@ -1,5 +1,7 @@
 import AppKit
+import ClipKittyMacPlatform
 import ClipKittyRust
+import ClipKittyShared
 import Observation
 import SwiftUI
 

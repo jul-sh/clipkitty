@@ -2,11 +2,11 @@ import CryptoKit
 import Foundation
 
 /// Shared utility functions used across ClipKitty
-enum Utilities {
+public enum Utilities {
     /// Format bytes into human-readable size string
     /// - Parameter bytes: Number of bytes (can be negative)
     /// - Returns: Formatted string like "1.2 GB", "500 MB", "10 KB", or "42 bytes"
-    static func formatBytes(_ bytes: Int64) -> String {
+    public static func formatBytes(_ bytes: Int64) -> String {
         let absBytes = abs(bytes)
         let kb = Double(absBytes) / 1024
         let mb = kb / 1024
@@ -26,7 +26,7 @@ enum Utilities {
     /// Compute SHA-256 hash of a file
     /// - Parameter url: File URL to hash
     /// - Returns: Lowercase hex string of the hash, or nil if file cannot be read
-    static func sha256(of url: URL) -> String? {
+    public static func sha256(of url: URL) -> String? {
         guard let data = try? Data(contentsOf: url) else { return nil }
         let digest = SHA256.hash(data: data)
         return digest.map { String(format: "%02x", $0) }.joined()

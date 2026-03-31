@@ -1,3 +1,4 @@
+import ClipKittyShared
 import SwiftUI
 
 struct BrowserActionsOverlay: View {
@@ -66,7 +67,7 @@ struct BrowserActionsOverlay: View {
                 performAction: { action in
                     guard let itemId = viewModel.selectedItemId else { return }
                     viewModel.performAction(
-                        action,
+                        action.browserAction,
                         itemId: itemId,
                         dismissOverlay: viewModel.closeOverlay
                     )

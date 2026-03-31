@@ -1,5 +1,7 @@
 import AppKit
+import ClipKittyMacPlatform
 import ClipKittyRust
+import ClipKittyShared
 import ObjectiveC.runtime
 import os.signpost
 import STTextKitPlus

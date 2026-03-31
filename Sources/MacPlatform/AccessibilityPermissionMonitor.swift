@@ -5,25 +5,25 @@ import Foundation
 /// Polls at regular intervals since macOS doesn't provide permission change notifications.
 @MainActor
 @Observable
-final class AccessibilityPermissionMonitor {
+public final class AccessibilityPermissionMonitor {
     /// Current permission state
-    private(set) var isGranted: Bool
+    public private(set) var isGranted: Bool
 
     /// Whether the monitor is actively polling
-    private(set) var isMonitoring: Bool = false
+    public private(set) var isMonitoring: Bool = false
 
     private var pollingTask: Task<Void, Never>?
 
     /// Polling interval when waiting for permission
     private let pollingIntervalMs: Int = 500
 
-    init() {
+    public init() {
         isGranted = AXIsProcessTrusted()
     }
 
     /// Start monitoring for permission changes.
     /// Polling continues until permission is granted or `stop()` is called.
-    func start() {
+    public func start() {
         guard !isMonitoring else { return }
 
         // Check current state first
@@ -56,7 +56,7 @@ final class AccessibilityPermissionMonitor {
     }
 
     /// Stop monitoring for permission changes.
-    func stop() {
+    public func stop() {
         pollingTask?.cancel()
         pollingTask = nil
         isMonitoring = false
@@ -65,7 +65,7 @@ final class AccessibilityPermissionMonitor {
     /// Request accessibility permission.
     /// This triggers the system prompt to add the app to accessibility permissions.
     @discardableResult
-    func requestPermission() -> Bool {
+    public func requestPermission() -> Bool {
         // Using AXIsProcessTrustedWithOptions with prompt option triggers the system dialog
         let options = [kAXTrustedCheckOptionPrompt.takeUnretainedValue(): true] as CFDictionary
         let result = AXIsProcessTrustedWithOptions(options)
@@ -75,7 +75,7 @@ final class AccessibilityPermissionMonitor {
     }
 
     /// Refresh the current permission state without affecting monitoring.
-    func refresh() {
+    public func refresh() {
         isGranted = AXIsProcessTrusted()
     }
 }

@@ -1,4 +1,5 @@
 import ClipKittyRust
+import ClipKittyShared
 import SwiftUI
 
 struct BrowserResultsList: View {
@@ -28,7 +29,7 @@ struct BrowserResultsList: View {
                         contextMenuActions: BrowserActionItem.items(for: row.metadata.tags),
                         onContextMenuAction: { action in
                             viewModel.performAction(
-                                action,
+                                action.browserAction,
                                 itemId: row.metadata.itemId,
                                 dismissOverlay: {}
                             )

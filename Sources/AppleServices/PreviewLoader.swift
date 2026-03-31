@@ -1,12 +1,13 @@
 import ClipKittyRust
+import ClipKittyShared
 import Foundation
 
 @MainActor
-final class PreviewLoader {
+public final class PreviewLoader {
     private let repository: ClipboardRepository
     private let linkMetadataFetcher: LinkMetadataFetcher
 
-    init(
+    public init(
         repository: ClipboardRepository,
         linkMetadataFetcher: LinkMetadataFetcher? = nil
     ) {
@@ -14,11 +15,11 @@ final class PreviewLoader {
         self.linkMetadataFetcher = linkMetadataFetcher ?? LinkMetadataFetcher()
     }
 
-    func fetchItem(id: String) async -> ClipboardItem? {
+    public func fetchItem(id: String) async -> ClipboardItem? {
         await repository.fetchItem(id: id)
     }
 
-    func refreshLinkMetadata(url: String, itemId: String) async -> ClipboardItem? {
+    public func refreshLinkMetadata(url: String, itemId: String) async -> ClipboardItem? {
         guard let metadata = await linkMetadataFetcher.fetchMetadata(for: url, itemId: itemId) else {
             _ = await repository.updateLinkMetadata(
                 itemId: itemId,

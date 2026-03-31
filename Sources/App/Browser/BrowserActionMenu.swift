@@ -1,4 +1,5 @@
 import ClipKittyRust
+import ClipKittyShared
 import SwiftUI
 
 @MainActor
@@ -84,6 +85,17 @@ enum BrowserActionItem: Equatable {
     static func showsDivider(before index: Int, in items: [BrowserActionItem]) -> Bool {
         guard items.indices.contains(index), index > 0 else { return false }
         return items[index].isDestructive
+    }
+
+    /// Map to the shared semantic action type for BrowserViewModel.
+    var browserAction: BrowserViewModel.BrowserAction {
+        switch self {
+        case .defaultAction: return .defaultAction
+        case .copyOnly: return .copyOnly
+        case .bookmark: return .bookmark
+        case .unbookmark: return .unbookmark
+        case .delete: return .delete
+        }
     }
 }
 

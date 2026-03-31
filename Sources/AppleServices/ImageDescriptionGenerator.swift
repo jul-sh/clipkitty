@@ -2,25 +2,35 @@ import Foundation
 import ImageIO
 import Vision
 
-enum ImageDescriptionGenerator {
+public enum ImageDescriptionGenerator {
     private enum VisionProcessingResult {
         case success(labels: [String], recognizedText: String?)
         case cancelled
         case failed(Error)
     }
 
-    struct Configuration {
+    public struct Configuration {
         /// Minimum confidence to accept a label (0.0 - 1.0).
-        var minConfidence: Float = 0.35
+        public var minConfidence: Float = 0.35
 
         /// Maximum number of classification labels to include.
-        var maxLabelCount: Int = 100
+        public var maxLabelCount: Int = 100
 
         /// Maximum number of characters for the recognized text before truncating.
-        var maxTextLength: Int = 50000
+        public var maxTextLength: Int = 50000
+
+        public init(
+            minConfidence: Float = 0.35,
+            maxLabelCount: Int = 100,
+            maxTextLength: Int = 50000
+        ) {
+            self.minConfidence = minConfidence
+            self.maxLabelCount = maxLabelCount
+            self.maxTextLength = maxTextLength
+        }
     }
 
-    static func generateDescription(from imageData: Data, config: Configuration = .init()) async -> String? {
+    public static func generateDescription(from imageData: Data, config: Configuration = .init()) async -> String? {
         // 1. Create source to read properties efficiently
         guard let source = CGImageSourceCreateWithData(imageData as CFData, nil) else { return nil }
 
@@ -116,7 +126,7 @@ enum ImageDescriptionGenerator {
 
 // MARK: - Helpers
 
-extension CGImagePropertyOrientation {
+public extension CGImagePropertyOrientation {
     init(source: CGImageSource) {
         let properties = CGImageSourceCopyPropertiesAtIndex(source, 0, nil) as? [CFString: Any]
         if let rawValue = properties?[kCGImagePropertyOrientation] as? UInt32,
