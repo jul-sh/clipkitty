@@ -1278,8 +1278,8 @@ struct ItemRow: View {
         isSelected && hasUserNavigated && !hasPendingEdit
     }
 
-    /// Fixed height for exactly 1 line of text at font size 15
-    private let rowHeight: CGFloat = 32
+    /// Height for exactly 1 line of text, scaled with text size setting
+    private var rowHeight: CGFloat { AppSettings.shared.scaled(32) }
 
     // MARK: - Display Text (Simplified - SwiftUI handles truncation)
 
@@ -1315,8 +1315,8 @@ struct ItemRow: View {
                     if hasPendingEdit {
                         // Show pencil emoji when item has pending edit
                         Text("✏️")
-                            .font(.system(size: 24))
-                            .frame(width: 32, height: 32)
+                            .font(.system(size: AppSettings.shared.scaled(24)))
+                            .frame(width: AppSettings.shared.scaled(32), height: AppSettings.shared.scaled(32))
                     } else {
                         ZStack(alignment: .bottomTrailing) {
                             // Main icon: image thumbnail, browser icon for links, color swatch, or SF symbol
@@ -1348,7 +1348,7 @@ struct ItemRow: View {
                                         .resizable()
                                 }
                             }
-                            .frame(width: 32, height: 32)
+                            .frame(width: AppSettings.shared.scaled(32), height: AppSettings.shared.scaled(32))
                             .clipShape(RoundedRectangle(cornerRadius: 4))
 
                             // Badge: Bookmark icon for bookmarked items, otherwise source app icon
@@ -1373,7 +1373,7 @@ struct ItemRow: View {
                         }
                     }
                 }
-                .frame(width: 38, height: 38)
+                .frame(width: AppSettings.shared.scaled(38), height: AppSettings.shared.scaled(38))
                 .allowsHitTesting(false)
 
                 // Line number (shown in search mode when line > 1)
@@ -1391,7 +1391,8 @@ struct ItemRow: View {
                     HighlightedTextView(
                         text: displayText,
                         highlights: displayHighlights,
-                        accentSelected: accentSelected
+                        accentSelected: accentSelected,
+                        textScale: AppSettings.shared.textScale
                     )
                     .frame(maxWidth: .infinity, alignment: .leading)
                     .allowsHitTesting(false)
@@ -1604,13 +1605,14 @@ struct HighlightedTextView: View, Equatable {
     let text: String
     let highlights: [Utf16HighlightRange]
     let accentSelected: Bool
+    let textScale: CGFloat
 
     private var textColor: Color {
         accentSelected ? .white : .primary
     }
 
     private var font: Font {
-        .custom(FontManager.sansSerif, size: 15)
+        .custom(FontManager.sansSerif, size: 15 * textScale)
     }
 
     var body: some View {

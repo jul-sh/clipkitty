@@ -127,17 +127,20 @@ let project = Project(
                     "LIBRARY_SEARCH_PATHS": .array(["$(inherited)", "$(PROJECT_DIR)/Sources/ClipKittyRust"]),
                     "SWIFT_EMIT_LOC_STRINGS": "YES",
                     "LOCALIZATION_PREFERS_STRING_CATALOGS": "YES",
+                    "CODE_SIGN_STYLE": "Manual",
+                    "CODE_SIGN_IDENTITY": "Developer ID Application",
+                    "DEVELOPMENT_TEAM": "ANBBV7LQ2P",
                 ],
                 configurations: [
                     .debug(name: "Debug", settings: [
-                        "CODE_SIGN_ENTITLEMENTS": "Sources/App/ClipKitty.oss.entitlements",
+                        "CODE_SIGN_ENTITLEMENTS": "Sources/App/ClipKitty.dev.entitlements",
                         "CK_BUILD_CHANNEL": "Debug",
                         "SWIFT_ACTIVE_COMPILATION_CONDITIONS": "ENABLE_SYNC",
                         // Weak-link Sparkle frameworks so app runs without them
                         "OTHER_LDFLAGS": .array(["$(inherited)", "-weak_framework", "SparkleUpdater", "-weak_framework", "Sparkle"]),
                     ]),
                     .release(name: "Release", settings: [
-                        "CODE_SIGN_ENTITLEMENTS": "Sources/App/ClipKitty.oss.entitlements",
+                        "CODE_SIGN_ENTITLEMENTS": "Sources/App/ClipKitty.dev.entitlements",
                         "CK_BUILD_CHANNEL": "Release",
                         "SWIFT_ACTIVE_COMPILATION_CONDITIONS": "ENABLE_SYNC",
                         // Weak-link Sparkle frameworks so app runs without them
@@ -328,6 +331,7 @@ let project = Project(
         ),
     ],
     additionalFiles: [
+        "Sources/App/ClipKitty.dev.entitlements",
         "Sources/App/ClipKitty.oss.entitlements",
     ]
 )

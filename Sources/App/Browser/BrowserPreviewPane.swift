@@ -80,7 +80,7 @@ struct BrowserPreviewPane: View {
             TextPreviewView(
                 itemId: item.itemMetadata.itemId,
                 fontName: FontManager.mono,
-                fontSize: 15,
+                fontSize: AppSettings.shared.scaled(15),
                 highlights: decoration?.highlights ?? [],
                 initialScrollHighlightIndex: decoration?.initialScrollHighlightIndex,
                 scrollBehavior: {
