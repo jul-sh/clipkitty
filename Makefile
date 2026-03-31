@@ -27,7 +27,7 @@ SIGNING_IDENTITY ?= $(shell security find-identity -v -p codesigning 2>/dev/null
 RUST_MARKER := .make/rust.marker
 RUST_LIB := Sources/ClipKittyRust/libpurr.a
 
-.PHONY: all clean rust rust-force generate build signing api-key provisioning sign list-identities run run-perf test unittest uitest rust-test perf-test perf-db perf-bench
+.PHONY: all clean rust rust-force rust-ios rust-ios-force generate build signing api-key provisioning sign list-identities run run-perf test unittest uitest rust-test perf-test perf-db perf-bench build-ios
 
 all: rust generate build
 
@@ -48,6 +48,26 @@ rust: $(RUST_MARKER)
 rust-force:
 	@rm -f $(RUST_MARKER)
 	@$(MAKE) rust
+
+# iOS Rust build marker and outputs
+RUST_IOS_MARKER := .make/rust-ios.marker
+RUST_IOS_LIB := Sources/ClipKittyRust/libpurr_ios.a
+
+# Marker-based Rust iOS build - cross-compile for aarch64-apple-ios
+$(RUST_IOS_MARKER): $(shell git ls-files purr 2>/dev/null)
+	@echo "Building Rust core for iOS..."
+	@$(NIX_SHELL) "cd purr && IPHONEOS_DEPLOYMENT_TARGET=17.0 cargo build --release --target aarch64-apple-ios --lib"
+	@cp purr/target/aarch64-apple-ios/release/libpurr.a $(RUST_IOS_LIB)
+	@mkdir -p .make
+	@touch $(RUST_IOS_MARKER)
+	@git rev-parse HEAD:purr > .make/rust-ios-tree-hash 2>/dev/null || true
+
+rust-ios: $(RUST_IOS_MARKER)
+	@test -f $(RUST_IOS_LIB) || (rm -f $(RUST_IOS_MARKER) && $(MAKE) $(RUST_IOS_MARKER))
+
+rust-ios-force:
+	@rm -f $(RUST_IOS_MARKER)
+	@$(MAKE) rust-ios
 
 # Resolve dependencies and generate Xcode project from Tuist manifest
 generate:
@@ -206,3 +226,17 @@ perf-bench: perf-db
 perf-test: all perf-db
 	@echo "Running performance tests with tracing..."
 	@./Scripts/run-perf-test.sh --skip-build $(PERF_ARGS)
+
+# Build iOS app
+# Usage: make build-ios [CONFIGURATION=Debug]
+IOS_CONFIGURATION ?= Debug
+build-ios: rust-ios generate
+	@echo "Building ClipKittyiOS ($(IOS_CONFIGURATION))..."
+	@xcodebuild -workspace $(APP_NAME).xcworkspace \
+		-scheme ClipKittyiOS \
+		-configuration $(IOS_CONFIGURATION) \
+		-derivedDataPath $(DERIVED_DATA) \
+		-destination "generic/platform=iOS" \
+		MARKETING_VERSION=$(VERSION) \
+		CURRENT_PROJECT_VERSION=$(BUILD_NUMBER) \
+		build

@@ -27,7 +27,7 @@ let project = Project(
     ),
     targets: [
 
-        // MARK: ClipKittyRustFFI — C library (FFI bridge to Rust)
+        // MARK: ClipKittyRustFFI — C library (FFI bridge to Rust) — macOS
         // SYNC: Library name must match purr/Cargo.toml [lib] name = "purr"
         // SYNC: Header comes from purr/src/bin/generate_bindings.rs → purrFFI.h
         .target(
@@ -48,7 +48,7 @@ let project = Project(
             )
         ),
 
-        // MARK: ClipKittyRust — Swift wrapper (UniFFI-generated + manual)
+        // MARK: ClipKittyRust — Swift wrapper (UniFFI-generated + manual) — macOS
         .target(
             name: "ClipKittyRust",
             destinations: .macOS,
@@ -58,6 +58,44 @@ let project = Project(
             sources: ["Sources/ClipKittyRustWrapper/**"],
             dependencies: [
                 .target(name: "ClipKittyRustFFI"),
+            ],
+            settings: .settings(
+                base: [
+                    // UniFFI-generated code not yet compatible with Swift 6 strict concurrency
+                    "SWIFT_VERSION": "5.0",
+                ]
+            )
+        ),
+
+        // MARK: ClipKittyRustFFI-iOS — C library (FFI bridge to Rust) — iOS
+        .target(
+            name: "ClipKittyRustFFI-iOS",
+            destinations: .iOS,
+            product: .staticLibrary,
+            bundleId: "com.eviljuliette.clipkitty.rustffi.ios",
+            deploymentTargets: .iOS("17.0"),
+            sources: ["Sources/ClipKittyRust/ClipKittyRustFFI.c"],
+            headers: .headers(
+                public: ["Sources/ClipKittyRust/purrFFI.h"]
+            ),
+            settings: .settings(
+                base: [
+                    "HEADER_SEARCH_PATHS": .array(["$(inherited)", "$(PROJECT_DIR)/Sources/ClipKittyRust"]),
+                    "MODULEMAP_FILE": "$(PROJECT_DIR)/Sources/ClipKittyRust/module.modulemap",
+                ]
+            )
+        ),
+
+        // MARK: ClipKittyRust-iOS — Swift wrapper (UniFFI-generated + manual) — iOS
+        .target(
+            name: "ClipKittyRust-iOS",
+            destinations: .iOS,
+            product: .staticLibrary,
+            bundleId: "com.eviljuliette.clipkitty.rust.ios",
+            deploymentTargets: .iOS("17.0"),
+            sources: ["Sources/ClipKittyRustWrapper/**"],
+            dependencies: [
+                .target(name: "ClipKittyRustFFI-iOS"),
             ],
             settings: .settings(
                 base: [
@@ -169,6 +207,64 @@ let project = Project(
                         "SWIFT_ACTIVE_COMPILATION_CONDITIONS": "APP_STORE ENABLE_SYNC",
                         // Weak-link Sparkle frameworks so app runs without them
                         "OTHER_LDFLAGS": .array(["$(inherited)", "-weak_framework", "SparkleUpdater", "-weak_framework", "Sparkle"]),
+                    ]),
+                ]
+            )
+        ),
+
+        // MARK: ClipKittyiOS — iPhone app (read-only sync viewer)
+        .target(
+            name: "ClipKittyiOS",
+            destinations: .iOS,
+            product: .app,
+            bundleId: "com.eviljuliette.clipkitty.ios",
+            deploymentTargets: .iOS("17.0"),
+            infoPlist: .extendingDefault(with: [
+                "CFBundleDisplayName": "ClipKitty",
+                "CFBundleIconName": "AppIcon",
+                "CFBundleDevelopmentRegion": "en",
+                "CFBundleShortVersionString": "$(MARKETING_VERSION)",
+                "CFBundleVersion": "$(CURRENT_PROJECT_VERSION)",
+                "ITSAppUsesNonExemptEncryption": false,
+                "UILaunchScreen": [:],
+                "UIBackgroundModes": .array(["fetch", "remote-notification"]),
+            ]),
+            sources: ["Sources/iOSApp/**"],
+            resources: [
+                "Sources/iOSApp/Resources/**",
+                "Sources/App/Assets.xcassets",
+            ],
+            dependencies: [
+                .target(name: "ClipKittyRust-iOS"),
+            ],
+            settings: .settings(
+                base: [
+                    "OTHER_LDFLAGS": .array(["$(inherited)", "-lpurr_ios"]),
+                    "LIBRARY_SEARCH_PATHS": .array(["$(inherited)", "$(PROJECT_DIR)/Sources/ClipKittyRust"]),
+                    "SWIFT_EMIT_LOC_STRINGS": "YES",
+                    "DEVELOPMENT_TEAM": "ANBBV7LQ2P",
+                    "SWIFT_ACTIVE_COMPILATION_CONDITIONS": "ENABLE_SYNC",
+                ],
+                configurations: [
+                    .debug(name: "Debug", settings: [
+                        "CODE_SIGN_STYLE": "Automatic",
+                        "CODE_SIGN_IDENTITY": "Apple Development",
+                        "CODE_SIGN_ENTITLEMENTS": "Sources/iOSApp/ClipKittyiOS.debug.entitlements",
+                    ]),
+                    .release(name: "Release", settings: [
+                        "CODE_SIGN_STYLE": "Automatic",
+                        "CODE_SIGN_IDENTITY": "Apple Development",
+                        "CODE_SIGN_ENTITLEMENTS": "Sources/iOSApp/ClipKittyiOS.debug.entitlements",
+                    ]),
+                    .release(name: .configuration("SparkleRelease"), settings: [
+                        "CODE_SIGN_STYLE": "Automatic",
+                        "CODE_SIGN_IDENTITY": "Apple Development",
+                        "CODE_SIGN_ENTITLEMENTS": "Sources/iOSApp/ClipKittyiOS.debug.entitlements",
+                    ]),
+                    .release(name: .configuration("AppStore"), settings: [
+                        "CODE_SIGN_STYLE": "Automatic",
+                        "CODE_SIGN_IDENTITY": "Apple Distribution",
+                        "CODE_SIGN_ENTITLEMENTS": "Sources/iOSApp/ClipKittyiOS.appstore.entitlements",
                     ]),
                 ]
             )
@@ -295,6 +391,53 @@ let project = Project(
             ),
             archiveAction: .archiveAction(configuration: .configuration("AppStore"))
         ),
+        // iOS app scheme
+        .scheme(
+            name: "ClipKittyiOS",
+            shared: true,
+            buildAction: .buildAction(
+                targets: [.target("ClipKittyiOS")],
+                preActions: [
+                    .executionAction(
+                        title: "Build Rust Core (iOS)",
+                        scriptText: """
+                        cd "$PROJECT_DIR"
+                        MARKER=".make/rust-ios-tree-hash"
+                        LIB="Sources/ClipKittyRust/libpurr_ios.a"
+                        CURRENT_HASH=$(git rev-parse HEAD:purr 2>/dev/null || echo "unknown")
+                        STORED_HASH=$(cat "$MARKER" 2>/dev/null || echo "none")
+
+                        if [ -f "$LIB" ] && [ "$CURRENT_HASH" = "$STORED_HASH" ]; then
+                            echo "Rust iOS bindings up to date (tree hash: ${CURRENT_HASH:0:8}), skipping."
+                            exit 0
+                        fi
+
+                        echo "Rust changed: $STORED_HASH -> $CURRENT_HASH"
+                        if [ -x "Scripts/run-in-nix.sh" ]; then
+                            Scripts/run-in-nix.sh -c "cd purr && IPHONEOS_DEPLOYMENT_TARGET=17.0 cargo run --release --bin generate-bindings -- --ios"
+                            mkdir -p .make && echo "$CURRENT_HASH" > "$MARKER"
+                        fi
+                        """,
+                        target: .target("ClipKittyiOS")
+                    ),
+                ]
+            ),
+            runAction: .runAction(
+                configuration: "Debug",
+                executable: .target("ClipKittyiOS")
+            )
+        ),
+        // iOS App Store scheme
+        .scheme(
+            name: "ClipKittyiOS-AppStore",
+            shared: true,
+            buildAction: .buildAction(targets: [.target("ClipKittyiOS")]),
+            runAction: .runAction(
+                configuration: .configuration("AppStore"),
+                executable: .target("ClipKittyiOS")
+            ),
+            archiveAction: .archiveAction(configuration: .configuration("AppStore"))
+        ),
         // UI tests scheme
         .scheme(
             name: "ClipKittyUITests",
@@ -340,5 +483,7 @@ let project = Project(
         "Sources/App/ClipKitty.oss.entitlements",
         "Sources/App/ClipKitty.debug.entitlements",
         "Sources/App/ClipKitty.sparkle.entitlements",
+        "Sources/iOSApp/ClipKittyiOS.debug.entitlements",
+        "Sources/iOSApp/ClipKittyiOS.appstore.entitlements",
     ]
 )
