@@ -1421,6 +1421,26 @@ mod write_path_tests {
             .collect();
         assert_eq!(touch_events.len(), 1);
     }
+
+    #[test]
+    fn set_sync_device_id_restamps_local_events() {
+        let (store, _dir) = test_store();
+
+        // Events emitted before set_sync_device_id have origin_device_id "local".
+        let id = store.save_text("before sync".to_string(), None, None).unwrap();
+        assert!(!id.is_empty());
+
+        let pending = store.pending_local_events().unwrap();
+        assert_eq!(pending.len(), 1);
+        assert_eq!(pending[0].origin_device_id, "local");
+
+        // Setting the real device ID should restamp existing events.
+        store.set_sync_device_id("device-abc-123".to_string());
+
+        let pending = store.pending_local_events().unwrap();
+        assert_eq!(pending.len(), 1);
+        assert_eq!(pending[0].origin_device_id, "device-abc-123");
+    }
 }
 
 // ═══════════════════════════════════════════════════════════════════════════════
