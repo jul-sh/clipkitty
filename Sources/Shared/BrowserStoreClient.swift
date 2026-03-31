@@ -17,7 +17,7 @@ public protocol BrowserSearchOperation: AnyObject {
 public protocol BrowserStoreClient: AnyObject {
     func startSearch(request: SearchRequest) -> BrowserSearchOperation
     func fetchItem(id: String) async -> ClipboardItem?
-    func loadRowDecorations(itemIds: [String], query: String) async -> [RowDecorationResult]
+    func loadListDecorations(itemIds: [String], query: String, presentation: ListPresentationProfile) async -> [ListDecorationResult]
     func loadPreviewPayload(itemId: String, query: String) async -> PreviewPayload?
     func fetchLinkMetadata(url: String, itemId: String) async -> ClipboardItem?
     func addTag(itemId: String, tag: ItemTag) async -> Result<Void, ClipboardError>

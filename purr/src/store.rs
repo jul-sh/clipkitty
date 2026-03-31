@@ -3,8 +3,9 @@
 use crate::database::Database;
 use crate::indexer::{IndexInspection, Indexer};
 use crate::interface::{
-    ClipKittyError, ClipboardItem, ClipboardStoreApi, ItemQueryFilter, ItemTag, PreviewPayload,
-    RowDecorationResult, SearchOutcome, SearchResult, StoreBootstrapPlan,
+    ClipKittyError, ClipboardItem, ClipboardStoreApi, ItemQueryFilter, ItemTag,
+    ListDecorationResult, ListPresentationProfile, PreviewPayload, SearchOutcome, SearchResult,
+    StoreBootstrapPlan,
 };
 #[cfg(feature = "sync")]
 use crate::sync_bridge::{RealSyncEmitter, SyncEmitter};
@@ -189,6 +190,7 @@ impl ClipboardStore {
         &self,
         query: String,
         filter: ItemQueryFilter,
+        presentation: ListPresentationProfile,
     ) -> Arc<SearchOperation> {
         let token = CancellationToken::new();
         let completion = Arc::new(SearchCompletionCell::new());
@@ -218,6 +220,7 @@ impl ClipboardStore {
                     cache,
                     runtime: runtime_clone,
                     token: token.clone(),
+                    presentation,
                 },
                 query,
                 filter,
@@ -248,8 +251,23 @@ impl ClipboardStore {
         self.rebuild_index_contents()
     }
 
-    pub fn start_search(&self, query: String, filter: ItemQueryFilter) -> Arc<SearchOperation> {
-        self.begin_search_operation(query, filter)
+    pub fn start_search(
+        &self,
+        query: String,
+        filter: ItemQueryFilter,
+        presentation: ListPresentationProfile,
+    ) -> Arc<SearchOperation> {
+        self.begin_search_operation(query, filter, presentation)
+    }
+
+    /// Format an excerpt for a given presentation profile.
+    /// Exposed to Swift so optimistic edit updates don't need local truncation rules.
+    pub fn format_excerpt(
+        &self,
+        content: String,
+        presentation: ListPresentationProfile,
+    ) -> String {
+        crate::search::format_excerpt(&content, presentation)
     }
 }
 
@@ -321,9 +339,13 @@ impl ClipboardStoreApi for ClipboardStore {
         Ok(outcome.ffi_id())
     }
 
-    async fn search(&self, query: String) -> Result<SearchResult, ClipKittyError> {
+    async fn search(
+        &self,
+        query: String,
+        presentation: ListPresentationProfile,
+    ) -> Result<SearchResult, ClipKittyError> {
         match self
-            .begin_search_operation(query, ItemQueryFilter::All)
+            .begin_search_operation(query, ItemQueryFilter::All, presentation)
             .await_result()
             .await?
         {
@@ -336,12 +358,13 @@ impl ClipboardStoreApi for ClipboardStore {
         &self,
         query: String,
         filter: ItemQueryFilter,
+        presentation: ListPresentationProfile,
     ) -> Result<SearchResult, ClipKittyError> {
         if filter == ItemQueryFilter::All {
-            return self.search(query).await;
+            return self.search(query, presentation).await;
         }
         match self
-            .begin_search_operation(query, filter)
+            .begin_search_operation(query, filter, presentation)
             .await_result()
             .await?
         {
@@ -366,12 +389,19 @@ impl ClipboardStoreApi for ClipboardStore {
         Ok(items)
     }
 
-    fn compute_row_decorations(
+    fn compute_list_decorations(
         &self,
         item_ids: Vec<String>,
         query: String,
-    ) -> Result<Vec<RowDecorationResult>, ClipKittyError> {
-        search_service::compute_row_decorations(&self.db, &self.analysis_cache, item_ids, query)
+        presentation: ListPresentationProfile,
+    ) -> Result<Vec<ListDecorationResult>, ClipKittyError> {
+        search_service::compute_list_decorations(
+            &self.db,
+            &self.analysis_cache,
+            item_ids,
+            query,
+            presentation,
+        )
     }
 
     fn load_preview_payload(

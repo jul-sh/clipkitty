@@ -1264,7 +1264,7 @@ private enum RowIconCache {
 
 struct ItemRow: View {
     let metadata: ItemMetadata
-    let rowDecoration: RowDecoration?
+    let listDecoration: ListDecoration?
     let isSelected: Bool
     let isContextMenuTargeted: Bool
     let hasUserNavigated: Bool
@@ -1288,7 +1288,7 @@ struct ItemRow: View {
     /// Text to display - uses matchData.text if in search mode, otherwise metadata.snippet
     /// SwiftUI's Three-Part HStack handles truncation with proper ellipsis via layout priorities
     private var displayText: String {
-        if let rowText = rowDecoration?.text, !rowText.isEmpty {
+        if let rowText = listDecoration?.text, !rowText.isEmpty {
             return rowText
         }
         return metadata.snippet
@@ -1296,7 +1296,7 @@ struct ItemRow: View {
 
     /// Highlights for display - passed directly from Rust (already adjusted for normalization)
     private var displayHighlights: [Utf16HighlightRange] {
-        rowDecoration?.highlights ?? []
+        listDecoration?.highlights ?? []
     }
 
     private var showsSourceAppBadge: Bool {
@@ -1379,7 +1379,7 @@ struct ItemRow: View {
                 .allowsHitTesting(false)
 
                 // Line number (shown in search mode when line > 1)
-                if let lineNumber = rowDecoration?.lineNumber, lineNumber > 1 {
+                if let lineNumber = listDecoration?.lineNumber, lineNumber > 1 {
                     Text("L\(lineNumber):")
                         .font(.custom(FontManager.mono, size: 13))
                         .foregroundColor(accentSelected ? .white.opacity(0.7) : .secondary)

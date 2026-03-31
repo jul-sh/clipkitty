@@ -1,7 +1,8 @@
 use crate::candidate::{ScoringPhase, SearchMatchContext};
 use crate::database::{Database, SearchItemMetadata};
 use crate::interface::{
-    ClipKittyError, ClipboardItem, ItemMetadata, PreviewPayload, RowDecoration, RowDecorationResult,
+    ClipKittyError, ClipboardItem, ItemMetadata, ListDecoration, ListDecorationResult,
+    ListPresentationProfile, PreviewPayload,
 };
 use crate::models::StoredItem;
 use crate::search::{self, HighlightAnalysis};
@@ -397,11 +398,12 @@ impl<'a> MatchPresentation<'a> {
         Self { db, cache }
     }
 
-    pub(crate) fn compute_row_decorations(
+    pub(crate) fn compute_list_decorations(
         &self,
         item_ids: Vec<String>,
         query: String,
-    ) -> Result<Vec<RowDecorationResult>, ClipKittyError> {
+        profile: ListPresentationProfile,
+    ) -> Result<Vec<ListDecorationResult>, ClipKittyError> {
         if item_ids.is_empty() {
             return Ok(Vec::new());
         }
@@ -442,13 +444,18 @@ impl<'a> MatchPresentation<'a> {
                         .filter(|context| context.matches_parent_hash(&metadata.content_hash))
                 });
                 let decoration = if cached_context.is_some() {
-                    Some(self.row_decoration_for_cached_match(id, &query))
+                    Some(self.list_decoration_for_cached_match(id, &query, profile))
                 } else {
                     item_map.get(id).map(|item| {
-                        self.row_decoration_for_item(id, item.content.text_content(), &query)
+                        self.list_decoration_for_item(
+                            id,
+                            item.content.text_content(),
+                            &query,
+                            profile,
+                        )
                     })
                 };
-                RowDecorationResult {
+                ListDecorationResult {
                     item_id: id.clone(),
                     decoration,
                 }
@@ -533,31 +540,35 @@ impl<'a> MatchPresentation<'a> {
         query: &str,
         item_metadata: &mut ItemMetadata,
         match_context: &SearchMatchContext,
+        profile: ListPresentationProfile,
     ) {
         if matches!(match_context, SearchMatchContext::Chunk(_)) {
             item_metadata.snippet = self
                 .analysis_for_cached_match_context(item_id, query)
                 .map(|(context, analysis)| {
-                    search::create_row_decoration(context.content(), &analysis.highlights).text
+                    search::create_list_decoration(
+                        context.content(),
+                        &analysis.highlights,
+                        profile,
+                    )
+                    .text
                 })
                 .unwrap_or_else(|| {
-                    search::generate_preview(
-                        match_context.content(),
-                        search::SNIPPET_CONTEXT_CHARS * 2,
-                    )
+                    search::generate_preview_for_profile(match_context.content(), profile)
                 });
         }
     }
 
-    pub(crate) fn row_decoration_for_cached_match(
+    pub(crate) fn list_decoration_for_cached_match(
         &self,
         item_id: &str,
         query: &str,
-    ) -> RowDecoration {
+        profile: ListPresentationProfile,
+    ) -> ListDecoration {
         if let Some((context, analysis)) = self.analysis_for_cached_match_context(item_id, query) {
-            search::create_row_decoration(context.content(), &analysis.highlights)
+            search::create_list_decoration(context.content(), &analysis.highlights, profile)
         } else {
-            RowDecoration {
+            ListDecoration {
                 text: String::new(),
                 highlights: Vec::new(),
                 line_number: 0,
@@ -565,16 +576,17 @@ impl<'a> MatchPresentation<'a> {
         }
     }
 
-    pub(crate) fn row_decoration_for_item(
+    pub(crate) fn list_decoration_for_item(
         &self,
         item_id: &str,
         content: &str,
         query: &str,
-    ) -> RowDecoration {
+        profile: ListPresentationProfile,
+    ) -> ListDecoration {
         if let Some(analysis) = self.analysis_for_item(item_id, content, query) {
-            search::create_row_decoration(content, &analysis.highlights)
+            search::create_list_decoration(content, &analysis.highlights, profile)
         } else {
-            search::compute_row_decoration(content, query)
+            search::compute_list_decoration(content, query, profile)
         }
     }
 
