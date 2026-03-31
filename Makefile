@@ -77,8 +77,8 @@ provisioning: api-key
 XCODE_SETTINGS ?=
 
 # Build using xcodebuild
-# Debug/Release use Automatic signing; SparkleRelease/AppStore use Manual (CI)
-build: api-key
+# Automatic signing with API key auth locally; CI provides its own signing identity
+build:
 	@echo "Building $(APP_NAME) ($(CONFIGURATION))..."
 	@xcodebuild -workspace $(APP_NAME).xcworkspace \
 		-scheme $(APP_NAME) \

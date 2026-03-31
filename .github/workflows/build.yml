@@ -246,6 +246,8 @@ jobs:
 
           ./distribution/build-dmg.sh "$APP" ClipKitty.dmg
           codesign --force --sign "Developer ID Application" ClipKitty.dmg
+        env:
+          AGE_SECRET_KEY: ${{ secrets.AGE_SECRET_KEY }}
 
       # 2. Notarize with Apple
       - name: Notarize DMG
@@ -527,6 +529,13 @@ jobs:
       - name: Generate Xcode Project
         run: make generate
 
+      - name: Prepare API Key for Automatic Signing
+        run: |
+          mkdir -p .make/keys
+          ./distribution/read-secret.sh NOTARY_KEY_BASE64 | base64 --decode > .make/keys/AuthKey.p8
+        env:
+          AGE_SECRET_KEY: ${{ secrets.AGE_SECRET_KEY }}
+
       - name: Build App
         run: make build UNIVERSAL=1 XCODE_SETTINGS="CODE_SIGNING_ALLOWED=NO"
         env:
@@ -648,6 +657,13 @@ jobs:
         with:
           name: assets
           path: .
+
+      - name: Prepare API Key for Automatic Signing
+        run: |
+          mkdir -p .make/keys
+          echo "$NOTARY_KEY_BASE64" | base64 --decode > .make/keys/AuthKey.p8
+        env:
+          NOTARY_KEY_BASE64: ${{ steps.secrets.outputs.NOTARY_KEY_BASE64 }}
 
       - name: Build and Publish to App Store Connect
         run: |
