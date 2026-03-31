@@ -111,6 +111,17 @@ impl ItemTag {
     }
 }
 
+/// Presentation profile for list surfaces.
+///
+/// Selects how Rust formats excerpts (snippets) for the calling UI.
+/// Compact rows collapse all whitespace into a single line; cards preserve
+/// meaningful line breaks for multiline display.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, uniffi::Enum)]
+pub enum ListPresentationProfile {
+    CompactRow,
+    Card,
+}
+
 /// Mutually exclusive search filters for the browser.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, uniffi::Enum)]
 pub enum ItemQueryFilter {
@@ -388,45 +399,38 @@ pub struct Utf16HighlightRange {
     pub kind: HighlightKind,
 }
 
-/// Snippet decoration data for list rows.
+/// Snippet decoration data for list surfaces (compact rows and cards).
 ///
 /// # Display Contract: Two-layer truncation with ellipsis
 ///
 /// Both Rust and Swift may truncate, each adding their own ellipsis.
 ///
-/// ## What Rust does (first pass - up to 400 chars):
-/// - **Whitespace normalization**: Newlines, tabs, carriage returns → single spaces; consecutive spaces collapsed
+/// ## What Rust does (first pass):
+/// - **CompactRow**: Newlines/tabs/returns → single spaces; consecutive spaces collapsed (up to 400 chars)
+/// - **Card**: Preserves meaningful line breaks; collapses pathological whitespace (up to 800 chars)
 /// - **Truncation ellipsis**: Prefixes "…" if truncated from start, suffixes "…" if truncated from end
 /// - **Highlight adjustment**: Indices account for normalization AND leading ellipsis prefix (+1 if present)
 ///
-/// ## What Swift does (second pass - ~50 visible chars):
-/// - Windows `text` to ~50 characters, centered on `highlights[0]`
+/// ## What Swift does (second pass):
+/// - CompactRow: windows `text` to ~50 characters, centered on `highlights[0]`
+/// - Card: clamps to N visible lines (e.g. 8 on iPhone)
 /// - Adds "…" prefix if window start > 0, adds "…" suffix if window end < text length
 /// - Adjusts highlight indices: subtracts window start, adds 1 if Swift added prefix ellipsis
-///
-/// ## Example flow:
-/// ```text
-/// Original (500 chars):  "prefix...\n\n  code with    spaces and MATCH suffix..."
-/// Rust output (70 chars): "…code with spaces and MATCH suffix…"  (normalized, truncated both ends)
-/// Rust highlights: [25, 30] (adjusted for normalization +1 for leading ellipsis)
-/// Swift windows (50 chars): "…paces and MATCH suffix…"  (further truncated, ellipsis on both ends)
-/// Swift highlights: adjusted for window, +1 for Swift's prefix ellipsis
-/// ```
 #[derive(Debug, Clone, PartialEq, Default, uniffi::Record)]
-pub struct RowDecoration {
-    /// Snippet text with whitespace normalized, "…" prefix if Rust truncated from start, "…" suffix if Rust truncated from end
+pub struct ListDecoration {
+    /// Snippet text. CompactRow: whitespace-normalized single line. Card: multiline-friendly.
     pub text: String,
-    /// Highlight ranges into `text`, adjusted for normalization and Rust's leading ellipsis prefix.
+    /// Highlight ranges into `text`, adjusted for normalization and leading ellipsis prefix.
     pub highlights: Vec<Utf16HighlightRange>,
     /// 1-indexed line number where the match occurs in the original content
     pub line_number: u64,
 }
 
-/// Decoration payload for a single row-decoration request result.
+/// Decoration payload for a single list-decoration request result.
 #[derive(Debug, Clone, PartialEq, uniffi::Record)]
-pub struct RowDecorationResult {
+pub struct ListDecorationResult {
     pub item_id: String,
-    pub decoration: Option<RowDecoration>,
+    pub decoration: Option<ListDecoration>,
 }
 
 /// Preview-only highlight decoration for the full item content.
@@ -460,8 +464,8 @@ pub struct ItemMetadata {
 #[derive(Debug, Clone, PartialEq, uniffi::Record)]
 pub struct ItemMatch {
     pub item_metadata: ItemMetadata,
-    /// Row decoration data. None for lazy results - call compute_row_decorations to populate.
-    pub row_decoration: Option<RowDecoration>,
+    /// List decoration data. None for lazy results - call compute_list_decorations to populate.
+    pub list_decoration: Option<ListDecoration>,
 }
 
 /// Search result container
@@ -636,22 +640,28 @@ pub trait ClipboardStoreApi: Send + Sync {
     // ─────────────────────────────────────────────────────────────────────────────
 
     /// Search for items. Empty query returns all recent items.
-    async fn search(&self, query: String) -> Result<SearchResult, ClipKittyError>;
+    async fn search(
+        &self,
+        query: String,
+        presentation: ListPresentationProfile,
+    ) -> Result<SearchResult, ClipKittyError>;
 
     /// Search with a typed filter scope.
     async fn search_filtered(
         &self,
         query: String,
         filter: ItemQueryFilter,
+        presentation: ListPresentationProfile,
     ) -> Result<SearchResult, ClipKittyError>;
 
-    /// Compute row decorations for multiple items given the search query.
+    /// Compute list decorations for multiple items given the search query.
     /// Called on-demand for visible items in the list view.
-    fn compute_row_decorations(
+    fn compute_list_decorations(
         &self,
         item_ids: Vec<String>,
         query: String,
-    ) -> Result<Vec<RowDecorationResult>, ClipKittyError>;
+        presentation: ListPresentationProfile,
+    ) -> Result<Vec<ListDecorationResult>, ClipKittyError>;
 
     /// Load the preview payload for a single item given the search query.
     fn load_preview_payload(

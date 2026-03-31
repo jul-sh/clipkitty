@@ -43,7 +43,7 @@ final class ClipboardStoreBrowserClient: BrowserStoreClient {
     func startSearch(request: SearchRequest) -> BrowserSearchOperation {
         ClipboardStoreBrowserSearchOperation(
             request: request,
-            operation: store.startSearch(query: request.text, filter: request.filter)
+            operation: store.startSearch(query: request.text, filter: request.filter, presentation: .compactRow)
         )
     }
 
@@ -51,8 +51,8 @@ final class ClipboardStoreBrowserClient: BrowserStoreClient {
         await store.fetchItem(id: id)
     }
 
-    func loadRowDecorations(itemIds: [String], query: String) async -> [RowDecorationResult] {
-        await store.loadRowDecorations(itemIds: itemIds, query: query)
+    func loadListDecorations(itemIds: [String], query: String, presentation: ListPresentationProfile) async -> [ListDecorationResult] {
+        await store.loadListDecorations(itemIds: itemIds, query: query, presentation: presentation)
     }
 
     func loadPreviewPayload(itemId: String, query: String) async -> PreviewPayload? {

@@ -69,7 +69,7 @@ public final class BrowserViewModel {
     private var searchExecution: SearchExecution = .idle
     private var previewTask: Task<Void, Never>?
     private var metadataTask: Task<Void, Never>?
-    private var rowDecorationTasks: [String: Task<Void, Never>] = [:]
+    private var listDecorationTasks: [String: Task<Void, Never>] = [:]
     private var pendingDeleteTask: Task<Void, Never>?
     private var pendingTagSettleTask: Task<Void, Never>?
     private var queryGeneration = 0
@@ -84,7 +84,7 @@ public final class BrowserViewModel {
     public private(set) var overlayState: OverlayState = .none
     public private(set) var mutationState: MutationState = .idle
     public private(set) var editState: EditState = .init()
-    public private(set) var rowDecorationsByItemId: [String: RowDecoration] = [:]
+    public private(set) var listDecorationsByItemId: [String: ListDecoration] = [:]
     private var previewPayloadsByItemId: [String: PreviewPayload] = [:]
     public private(set) var hasUserNavigated = false
     public private(set) var prefetchCache: [String: ClipboardItem] = [:]
@@ -200,8 +200,8 @@ public final class BrowserViewModel {
         previewTask = nil
         metadataTask?.cancel()
         metadataTask = nil
-        rowDecorationTasks.values.forEach { $0.cancel() }
-        rowDecorationTasks.removeAll()
+        listDecorationTasks.values.forEach { $0.cancel() }
+        listDecorationTasks.removeAll()
         pendingDeleteTask?.cancel()
         pendingDeleteTask = nil
         pendingTagSettleTask?.cancel()
@@ -215,7 +215,7 @@ public final class BrowserViewModel {
         hasUserNavigated = false
         prefetchCache.removeAll()
         previewPayloadsByItemId.removeAll()
-        rowDecorationsByItemId.removeAll()
+        listDecorationsByItemId.removeAll()
         overlayState = .none
         mutationState = .idle
         editState = .init()
@@ -338,7 +338,7 @@ public final class BrowserViewModel {
         performItemAction(itemId: itemId, handler: onCopyOnly)
     }
 
-    public func loadRowDecorationsForItems(_ ids: [String]) {
+    public func loadListDecorationsForItems(_ ids: [String]) {
         guard displayedContent != nil else { return }
         let request = contentState.request
         guard !request.text.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty else { return }
@@ -346,34 +346,34 @@ public final class BrowserViewModel {
         let uniqueIds = Array(Set(ids)).sorted()
         guard !uniqueIds.isEmpty else { return }
 
-        let itemIdsNeedingDecoration = uniqueIds.filter { rowDecoration(for: $0) == nil }
+        let itemIdsNeedingDecoration = uniqueIds.filter { listDecoration(for: $0) == nil }
         guard !itemIdsNeedingDecoration.isEmpty else { return }
 
         let generation = queryGeneration
         let key = "\(generation)|\(request.text)|\(itemIdsNeedingDecoration.joined(separator: ","))"
-        guard rowDecorationTasks[key] == nil else { return }
+        guard listDecorationTasks[key] == nil else { return }
 
-        rowDecorationTasks[key] = Task { [weak self] in
+        listDecorationTasks[key] = Task { [weak self] in
             guard let self else { return }
-            let results = await self.client.loadRowDecorations(itemIds: itemIdsNeedingDecoration, query: request.text)
+            let results = await self.client.loadListDecorations(itemIds: itemIdsNeedingDecoration, query: request.text, presentation: .compactRow)
             await MainActor.run {
-                defer { self.rowDecorationTasks[key] = nil }
+                defer { self.listDecorationTasks[key] = nil }
                 guard self.queryGeneration == generation,
                       self.contentState.request == request
                 else {
                     return
                 }
 
-                var updates: [String: RowDecoration] = [:]
+                var updates: [String: ListDecoration] = [:]
                 for result in results {
                     guard let decoration = result.decoration else { continue }
                     guard self.indexOfItem(result.itemId) != nil else { continue }
-                    guard self.rowDecoration(for: result.itemId) == nil else { continue }
+                    guard self.listDecoration(for: result.itemId) == nil else { continue }
                     updates[result.itemId] = decoration
                 }
 
                 guard !updates.isEmpty else { return }
-                self.rowDecorationsByItemId.merge(updates) { existing, _ in existing }
+                self.listDecorationsByItemId.merge(updates) { existing, _ in existing }
                 self.rebuildDisplayedRows()
             }
         }
@@ -451,7 +451,7 @@ public final class BrowserViewModel {
                 totalCount: 0
             )
         ))
-        rowDecorationsByItemId.removeAll()
+        listDecorationsByItemId.removeAll()
         rebuildDisplayedRows()
         previewPayloadsByItemId.removeAll()
         prefetchCache.removeAll()
@@ -535,7 +535,7 @@ public final class BrowserViewModel {
 
         let currentItem = selectedItemState.item
         let updatedContent = ClipboardContent.text(value: editedText)
-        let updatedSnippet = String(editedText.prefix(200))
+        let updatedSnippet = editedText
         let updatedMetadata = ItemMetadata(
             itemId: currentItem.itemMetadata.itemId,
             icon: currentItem.itemMetadata.icon,
@@ -663,10 +663,10 @@ public final class BrowserViewModel {
         hasUserNavigated = false
         prefetchCache.removeAll()
         previewPayloadsByItemId.removeAll()
-        rowDecorationsByItemId.removeAll()
+        listDecorationsByItemId.removeAll()
         searchExecution.cancel()
-        rowDecorationTasks.values.forEach { $0.cancel() }
-        rowDecorationTasks.removeAll()
+        listDecorationTasks.values.forEach { $0.cancel() }
+        listDecorationTasks.removeAll()
 
         if displayedContent?.response.request != request {
             setDisplayedSelection(selectionDuringSearchTransition(to: request))
@@ -1171,7 +1171,7 @@ public final class BrowserViewModel {
     private func applyOptimisticDelete(itemId: String) {
         guard let response = currentResponse else { return }
         let filteredItems = response.items.filter { $0.itemMetadata.itemId != itemId }
-        rowDecorationsByItemId.removeValue(forKey: itemId)
+        listDecorationsByItemId.removeValue(forKey: itemId)
         previewPayloadsByItemId.removeValue(forKey: itemId)
         prefetchCache.removeValue(forKey: itemId)
         let deletedSelectedItem = selectedItemId == itemId
@@ -1439,13 +1439,13 @@ public final class BrowserViewModel {
                activeTag == tag,
                !updatedMetadata.tags.contains(tag)
             {
-                rowDecorationsByItemId.removeValue(forKey: itemMatch.itemMetadata.itemId)
+                listDecorationsByItemId.removeValue(forKey: itemMatch.itemMetadata.itemId)
                 previewPayloadsByItemId.removeValue(forKey: itemMatch.itemMetadata.itemId)
                 prefetchCache.removeValue(forKey: itemMatch.itemMetadata.itemId)
                 return nil
             }
 
-            return ItemMatch(itemMetadata: updatedMetadata, rowDecoration: itemMatch.rowDecoration)
+            return ItemMatch(itemMetadata: updatedMetadata, listDecoration: itemMatch.listDecoration)
         }
 
         let updatedFirstPreviewPayload = response.firstPreviewPayload.flatMap { payload -> PreviewPayload? in
@@ -1498,11 +1498,11 @@ public final class BrowserViewModel {
         )
     }
 
-    public func rowDecoration(for itemId: String) -> RowDecoration? {
+    public func listDecoration(for itemId: String) -> ListDecoration? {
         guard let index = itemIndexById[itemId], displayRows.indices.contains(index) else {
             return nil
         }
-        return displayRows[index].rowDecoration
+        return displayRows[index].listDecoration
     }
 
     private func makeSelectedItemState(
@@ -1705,7 +1705,7 @@ public final class BrowserViewModel {
             guard itemMatch.itemMetadata.itemId == itemId else { return itemMatch }
             return ItemMatch(
                 itemMetadata: updatedMetadata,
-                rowDecoration: itemMatch.rowDecoration
+                listDecoration: itemMatch.listDecoration
             )
         }
         let firstPreviewPayload: PreviewPayload? = {
@@ -1760,7 +1760,7 @@ public final class BrowserViewModel {
             nextIndexById[itemId] = index
             nextDisplayRows.append(DisplayRow(
                 metadata: itemMatch.itemMetadata,
-                rowDecoration: rowDecorationsByItemId[itemId] ?? itemMatch.rowDecoration
+                listDecoration: listDecorationsByItemId[itemId] ?? itemMatch.listDecoration
             ))
         }
 

@@ -1,7 +1,7 @@
 use crate::database::{Database, SearchItemMetadata};
 use crate::interface::{
     ClipKittyError, ContentTypeFilter, ItemMatch, ItemMetadata, ItemQueryFilter, ItemTag,
-    SearchResult,
+    ListPresentationProfile, SearchResult,
 };
 use crate::match_presentation::{HighlightAnalysisCache, MatchPresentation};
 use crate::models::StoredItem;
@@ -29,6 +29,7 @@ pub(crate) struct SearchResultAssembler<'a> {
     cache: &'a HighlightAnalysisCache,
     token: &'a CancellationToken,
     runtime: &'a tokio::runtime::Handle,
+    presentation: ListPresentationProfile,
 }
 
 impl<'a> SearchResultAssembler<'a> {
@@ -37,12 +38,14 @@ impl<'a> SearchResultAssembler<'a> {
         cache: &'a HighlightAnalysisCache,
         token: &'a CancellationToken,
         runtime: &'a tokio::runtime::Handle,
+        presentation: ListPresentationProfile,
     ) -> Self {
         Self {
             db,
             cache,
             token,
             runtime,
+            presentation,
         }
     }
 
@@ -68,7 +71,7 @@ impl<'a> SearchResultAssembler<'a> {
             .into_iter()
             .map(|item_metadata| ItemMatch {
                 item_metadata,
-                row_decoration: None,
+                list_decoration: None,
             })
             .collect();
 
@@ -228,6 +231,7 @@ impl<'a> SearchResultAssembler<'a> {
                 query.raw_text(),
                 &mut item_metadata,
                 candidate.match_context(),
+                self.presentation,
             );
             let is_short = candidate.content().len() <= SHORT_CONTENT_THRESHOLD;
             let item_match = if eager_index < EAGER_MATCH_DATA_COUNT || (is_short && few_results) {
@@ -238,9 +242,12 @@ impl<'a> SearchResultAssembler<'a> {
                 }
                 ItemMatch {
                     item_metadata,
-                    row_decoration: Some(
-                        presentation
-                            .row_decoration_for_cached_match(&candidate.id, query.raw_text()),
+                    list_decoration: Some(
+                        presentation.list_decoration_for_cached_match(
+                            &candidate.id,
+                            query.raw_text(),
+                            self.presentation,
+                        ),
                     ),
                 }
             } else {
@@ -283,10 +290,11 @@ impl<'a> SearchResultAssembler<'a> {
             .filter_map(|id| {
                 item_map.get(id).map(|item| ItemMatch {
                     item_metadata: item.to_metadata(),
-                    row_decoration: Some(presentation.row_decoration_for_item(
+                    list_decoration: Some(presentation.list_decoration_for_item(
                         &item.item_id,
                         item.content.text_content(),
                         query,
+                        self.presentation,
                     )),
                 })
             })

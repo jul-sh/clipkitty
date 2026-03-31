@@ -64,13 +64,13 @@ public final class ClipboardRepository {
         await runRepositoryOperation("databaseSize", on: store) { $0.databaseSize() }
     }
 
-    public func startSearch(query: String, filter: ItemQueryFilter) -> ClipboardSearchOperation {
-        let operation = store.startSearch(query: query, filter: filter)
+    public func startSearch(query: String, filter: ItemQueryFilter, presentation: ListPresentationProfile) -> ClipboardSearchOperation {
+        let operation = store.startSearch(query: query, filter: filter, presentation: presentation)
         return RustClipboardSearchOperation(operation: operation)
     }
 
-    public func search(query: String, filter: ItemQueryFilter) async -> RepositorySearchOutcome {
-        await startSearch(query: query, filter: filter).awaitOutcome()
+    public func search(query: String, filter: ItemQueryFilter, presentation: ListPresentationProfile) async -> RepositorySearchOutcome {
+        await startSearch(query: query, filter: filter, presentation: presentation).awaitOutcome()
     }
 
     public func fetchItem(id: String) async -> ClipboardItem? {
@@ -83,9 +83,9 @@ public final class ClipboardRepository {
         return nil
     }
 
-    public func computeRowDecorations(itemIds: [String], query: String) async -> [RowDecorationResult] {
-        let result = await runRepositoryOperation("computeRowDecorations", on: store) { store in
-            try store.computeRowDecorations(itemIds: itemIds, query: query)
+    public func computeListDecorations(itemIds: [String], query: String, presentation: ListPresentationProfile) async -> [ListDecorationResult] {
+        let result = await runRepositoryOperation("computeListDecorations", on: store) { store in
+            try store.computeListDecorations(itemIds: itemIds, query: query, presentation: presentation)
         }
         if case let .success(decorations) = result {
             return decorations
