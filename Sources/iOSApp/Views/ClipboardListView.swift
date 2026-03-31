@@ -287,97 +287,106 @@ struct ClipboardListView: View {
     private func clipboardContent(
         viewModel: ClipboardListViewModel
     ) -> some View {
-        VStack(spacing: 0) {
-            // Main content
-            if let error = viewModel.errorMessage {
-                Spacer()
-                ContentUnavailableView(
-                    "Error",
-                    systemImage: "exclamationmark.triangle",
-                    description: Text(error)
-                )
-                Spacer()
-            } else if viewModel.items.isEmpty && !viewModel.isSearching {
-                Spacer()
-                if viewModel.searchText.isEmpty {
+        GlassEffectContainer {
+            VStack(spacing: 0) {
+                // Main content
+                if let error = viewModel.errorMessage {
+                    Spacer()
                     ContentUnavailableView(
-                        "No Clipboard History",
-                        systemImage: "doc.on.clipboard",
-                        description: Text(
-                            "Items copied on your Mac will appear here via iCloud sync.\nTap + to add from this device's clipboard."
-                        )
+                        "Error",
+                        systemImage: "exclamationmark.triangle",
+                        description: Text(error)
                     )
-                } else {
-                    ContentUnavailableView.search(text: viewModel.searchText)
-                }
-                Spacer()
-            } else {
-                List {
-                    ForEach(viewModel.items, id: \.itemMetadata.itemId) {
-                        item in
-                        NavigationLink(value: item.itemMetadata.itemId) {
-                            ItemRowView(
-                                metadata: item.itemMetadata,
-                                decoration: viewModel.rowDecorations[
-                                    item.itemMetadata.itemId
-                                ],
-                                searchQuery: viewModel.searchText
+                    Spacer()
+                } else if viewModel.items.isEmpty && !viewModel.isSearching {
+                    Spacer()
+                    if viewModel.searchText.isEmpty {
+                        ContentUnavailableView(
+                            "No Clipboard History",
+                            systemImage: "doc.on.clipboard",
+                            description: Text(
+                                "Items copied on your Mac will appear here via iCloud sync.\nTap + to add from this device's clipboard."
                             )
-                        }
-                        .swipeActions(
-                            edge: .trailing,
-                            allowsFullSwipe: true
+                        )
+                    } else {
+                        ContentUnavailableView.search(
+                            text: viewModel.searchText)
+                    }
+                    Spacer()
+                } else {
+                    List {
+                        ForEach(
+                            viewModel.items, id: \.itemMetadata.itemId
                         ) {
-                            Button(role: .destructive) {
-                                Task {
-                                    await viewModel.deleteItem(
+                            item in
+                            NavigationLink(value: item.itemMetadata.itemId)
+                            {
+                                ItemRowView(
+                                    metadata: item.itemMetadata,
+                                    decoration: viewModel.rowDecorations[
                                         item.itemMetadata.itemId
-                                    )
-                                }
-                            } label: {
-                                Label("Delete", systemImage: "trash")
+                                    ],
+                                    searchQuery: viewModel.searchText
+                                )
                             }
-                        }
-                        .swipeActions(edge: .leading) {
-                            Button {
-                                Task {
-                                    await viewModel.toggleBookmark(
-                                        item.itemMetadata.itemId
-                                    )
-                                }
-                            } label: {
-                                if item.itemMetadata.tags.contains(.bookmark) {
+                            .swipeActions(
+                                edge: .trailing,
+                                allowsFullSwipe: true
+                            ) {
+                                Button(role: .destructive) {
+                                    Task {
+                                        await viewModel.deleteItem(
+                                            item.itemMetadata.itemId
+                                        )
+                                    }
+                                } label: {
                                     Label(
-                                        "Unbookmark",
-                                        systemImage: "bookmark.slash"
-                                    )
-                                } else {
-                                    Label(
-                                        "Bookmark",
-                                        systemImage: "bookmark"
-                                    )
+                                        "Delete", systemImage: "trash")
                                 }
                             }
-                            .tint(.orange)
+                            .swipeActions(edge: .leading) {
+                                Button {
+                                    Task {
+                                        await viewModel.toggleBookmark(
+                                            item.itemMetadata.itemId
+                                        )
+                                    }
+                                } label: {
+                                    if item.itemMetadata.tags.contains(
+                                        .bookmark)
+                                    {
+                                        Label(
+                                            "Unbookmark",
+                                            systemImage: "bookmark.slash"
+                                        )
+                                    } else {
+                                        Label(
+                                            "Bookmark",
+                                            systemImage: "bookmark"
+                                        )
+                                    }
+                                }
+                                .tint(.orange)
+                            }
                         }
                     }
+                    .listStyle(.plain)
+                    .navigationDestination(for: String.self) { itemId in
+                        ClipboardDetailView(itemId: itemId)
+                    }
+                    .refreshable {
+                        viewModel.performSearch()
+                    }
                 }
-                .listStyle(.plain)
-                .navigationDestination(for: String.self) { itemId in
-                    ClipboardDetailView(itemId: itemId)
-                }
-                .refreshable {
-                    viewModel.performSearch()
-                }
-            }
 
-            // Search bar (when visible)
-            if viewModel.isSearchBarVisible {
-                searchBar(viewModel: viewModel)
-            }
+                // Search bar (when visible)
+                if viewModel.isSearchBarVisible {
+                    searchBar(viewModel: viewModel)
+                }
 
-            // Bottom toolbar
-            bottomToolbar(viewModel: viewModel)
+                // Bottom toolbar
+                bottomToolbar(viewModel: viewModel)
+            }
         }
         .overlay(alignment: .top) {
             if showPastedToast {
@@ -461,7 +470,7 @@ struct ClipboardListView: View {
             .foregroundStyle(.secondary)
         }
         .padding(.horizontal, 12)
-        .background(Color(.secondarySystemBackground))
+        .glassEffect()
     }
 
     // MARK: - Search Bar
@@ -502,13 +511,12 @@ struct ClipboardListView: View {
                     .font(.system(size: 13, weight: .semibold))
                     .foregroundStyle(.secondary)
                     .frame(width: 28, height: 28)
-                    .background(Color(.tertiarySystemFill))
-                    .clipShape(Circle())
+                    .glassEffect(in: .circle)
             }
         }
         .padding(.horizontal, 12)
         .padding(.vertical, 8)
-        .background(Color(.secondarySystemBackground))
+        .glassEffect()
         .transition(.move(edge: .bottom).combined(with: .opacity))
     }
 
@@ -577,9 +585,7 @@ struct ClipboardListView: View {
         }
         .padding(.horizontal, 16)
         .padding(.vertical, 10)
-        .background(.ultraThinMaterial)
-        .clipShape(Capsule())
-        .shadow(radius: 4)
+        .glassEffect(in: .capsule)
         .padding(.top, 8)
         .transition(.move(edge: .top).combined(with: .opacity))
         .animation(.easeInOut, value: showPastedToast)

@@ -95,7 +95,7 @@ struct ClipboardDetailView: View {
                 .textSelection(.enabled)
                 .padding(12)
                 .frame(maxWidth: .infinity, alignment: .leading)
-                .background(Color(.secondarySystemBackground))
+                .background(.regularMaterial)
                 .clipShape(RoundedRectangle(cornerRadius: 10))
         }
     }
@@ -120,7 +120,7 @@ struct ClipboardDetailView: View {
 
                     Spacer()
 
-                    Text(formatBytes(data.count))
+                    Text(FormattingHelpers.formatBytes(data.count))
                         .font(.caption)
                         .foregroundStyle(.secondary)
                 }
@@ -201,7 +201,7 @@ struct ClipboardDetailView: View {
             }
             .padding(12)
             .frame(maxWidth: .infinity, alignment: .leading)
-            .background(Color(.secondarySystemBackground))
+            .background(.regularMaterial)
             .clipShape(RoundedRectangle(cornerRadius: 10))
         }
     }
@@ -234,13 +234,13 @@ struct ClipboardDetailView: View {
                     Spacer()
 
                     if entry.fileSize > 0 {
-                        Text(formatBytes(Int(entry.fileSize)))
+                        Text(FormattingHelpers.formatBytes(Int(entry.fileSize)))
                             .font(.caption)
                             .foregroundStyle(.tertiary)
                     }
                 }
                 .padding(10)
-                .background(Color(.secondarySystemBackground))
+                .background(.regularMaterial)
                 .clipShape(RoundedRectangle(cornerRadius: 8))
             }
         }
@@ -260,7 +260,7 @@ struct ClipboardDetailView: View {
 
             LabeledContent("Copied") {
                 Text(
-                    formatDate(
+                    FormattingHelpers.formatDate(
                         timestampUnix: item.itemMetadata.timestampUnix
                     )
                 )
@@ -392,44 +392,8 @@ struct ClipboardDetailView: View {
         }
     }
 
-    private func formatDate(timestampUnix: Int64) -> String {
-        let date = Date(timeIntervalSince1970: TimeInterval(timestampUnix))
-        let formatter = DateFormatter()
-        formatter.dateStyle = .medium
-        formatter.timeStyle = .short
-        return formatter.string(from: date)
-    }
-
-    private func formatBytes(_ bytes: Int) -> String {
-        ByteCountFormatter.string(
-            fromByteCount: Int64(bytes),
-            countStyle: .file
-        )
-    }
-
     private func parseColor(_ colorString: String) -> Color {
-        // Parse hex color string (e.g., "#FF5733" or "rgb(255, 87, 51)")
-        let hex = colorString
-            .trimmingCharacters(in: .whitespacesAndNewlines)
-            .replacingOccurrences(of: "#", with: "")
-
-        guard hex.count == 6 || hex.count == 8,
-              let value = UInt64(hex, radix: 16)
-        else {
-            return .gray
-        }
-
-        if hex.count == 8 {
-            let r = Double((value >> 24) & 0xFF) / 255.0
-            let g = Double((value >> 16) & 0xFF) / 255.0
-            let b = Double((value >> 8) & 0xFF) / 255.0
-            let a = Double(value & 0xFF) / 255.0
-            return Color(.sRGB, red: r, green: g, blue: b, opacity: a)
-        } else {
-            let r = Double((value >> 16) & 0xFF) / 255.0
-            let g = Double((value >> 8) & 0xFF) / 255.0
-            let b = Double(value & 0xFF) / 255.0
-            return Color(.sRGB, red: r, green: g, blue: b, opacity: 1.0)
-        }
+        guard let c = FormattingHelpers.parseHexColor(colorString) else { return .gray }
+        return Color(.sRGB, red: c.r, green: c.g, blue: c.b, opacity: c.a)
     }
 }

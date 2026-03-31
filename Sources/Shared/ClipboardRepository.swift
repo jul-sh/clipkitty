@@ -1,6 +1,8 @@
 import ClipKittyRust
 import Foundation
 
+// MARK: - Search Operation
+
 enum RepositorySearchOutcome {
     case success(SearchResult)
     case cancelled
@@ -38,6 +40,8 @@ private final class RustClipboardSearchOperation: ClipboardSearchOperation {
     }
 }
 
+// MARK: - Repository Operation Helper
+
 func runRepositoryOperation<T: Sendable>(
     _ operation: String,
     on store: ClipKittyRust.ClipboardStore,
@@ -52,6 +56,8 @@ func runRepositoryOperation<T: Sendable>(
         return .failure(.databaseOperationFailed(operation: operation, underlying: error))
     }
 }
+
+// MARK: - Repository
 
 final class ClipboardRepository {
     let store: ClipKittyRust.ClipboardStore

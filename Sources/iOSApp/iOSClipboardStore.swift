@@ -191,14 +191,24 @@ final class iOSClipboardStore: ObservableObject {
 
     func saveText(text: String) async -> Bool {
         guard let repo = repository else { return false }
-        let result = await repo.saveText(text: text)
+        let result = await repo.saveText(
+            text: text,
+            sourceApp: nil,
+            sourceAppBundleId: nil
+        )
         if case .success = result { contentRevision += 1 }
         return result.isSuccess
     }
 
     func saveImage(imageData: Data) async -> Bool {
         guard let repo = repository else { return false }
-        let result = await repo.saveImage(imageData: imageData)
+        let result = await repo.saveImage(
+            imageData: imageData,
+            thumbnail: nil,
+            sourceApp: nil,
+            sourceAppBundleId: nil,
+            isAnimated: false
+        )
         if case .success = result { contentRevision += 1 }
         return result.isSuccess
     }

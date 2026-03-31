@@ -56,7 +56,7 @@ RUST_IOS_LIB := Sources/ClipKittyRust/libpurr_ios.a
 # Marker-based Rust iOS build - cross-compile for aarch64-apple-ios
 $(RUST_IOS_MARKER): $(shell git ls-files purr 2>/dev/null)
 	@echo "Building Rust core for iOS..."
-	@$(NIX_SHELL) "cd purr && IPHONEOS_DEPLOYMENT_TARGET=17.0 cargo build --release --target aarch64-apple-ios --lib"
+	@$(NIX_SHELL) "cd purr && IPHONEOS_DEPLOYMENT_TARGET=26.0 cargo build --release --target aarch64-apple-ios --lib"
 	@cp purr/target/aarch64-apple-ios/release/libpurr.a $(RUST_IOS_LIB)
 	@mkdir -p .make
 	@touch $(RUST_IOS_MARKER)

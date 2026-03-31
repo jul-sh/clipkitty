@@ -73,7 +73,7 @@ let project = Project(
             destinations: .iOS,
             product: .staticLibrary,
             bundleId: "com.eviljuliette.clipkitty.rustffi.ios",
-            deploymentTargets: .iOS("17.0"),
+            deploymentTargets: .iOS("26.0"),
             sources: ["Sources/ClipKittyRust/ClipKittyRustFFI.c"],
             headers: .headers(
                 public: ["Sources/ClipKittyRust/purrFFI.h"]
@@ -92,7 +92,7 @@ let project = Project(
             destinations: .iOS,
             product: .staticLibrary,
             bundleId: "com.eviljuliette.clipkitty.rust.ios",
-            deploymentTargets: .iOS("17.0"),
+            deploymentTargets: .iOS("26.0"),
             sources: ["Sources/ClipKittyRustWrapper/**"],
             dependencies: [
                 .target(name: "ClipKittyRustFFI-iOS"),
@@ -131,7 +131,7 @@ let project = Project(
                 "SUAutomaticallyUpdate": "$(SPARKLE_AUTO_UPDATE)",
                 "SUEnableInstallerLauncherService": "$(SPARKLE_INSTALLER_SERVICE)",
             ]),
-            sources: ["Sources/App/**"],
+            sources: ["Sources/App/**", "Sources/Shared/**"],
             resources: [
                 .folderReference(path: "Sources/App/Resources/Fonts"),
                 "Sources/App/Resources/menu-bar.svg",
@@ -218,7 +218,7 @@ let project = Project(
             destinations: .iOS,
             product: .app,
             bundleId: "com.eviljuliette.clipkitty.ios",
-            deploymentTargets: .iOS("17.0"),
+            deploymentTargets: .iOS("26.0"),
             infoPlist: .extendingDefault(with: [
                 "CFBundleDisplayName": "ClipKitty",
                 "CFBundleIconName": "AppIcon",
@@ -229,7 +229,7 @@ let project = Project(
                 "UILaunchScreen": [:],
                 "UIBackgroundModes": .array(["fetch", "remote-notification"]),
             ]),
-            sources: ["Sources/iOSApp/**"],
+            sources: ["Sources/iOSApp/**", "Sources/Shared/**"],
             resources: [
                 "Sources/iOSApp/Resources/**",
                 "Sources/App/Assets.xcassets",
@@ -414,7 +414,7 @@ let project = Project(
 
                         echo "Rust changed: $STORED_HASH -> $CURRENT_HASH"
                         if [ -x "Scripts/run-in-nix.sh" ]; then
-                            Scripts/run-in-nix.sh -c "cd purr && IPHONEOS_DEPLOYMENT_TARGET=17.0 cargo run --release --bin generate-bindings -- --ios"
+                            Scripts/run-in-nix.sh -c "cd purr && IPHONEOS_DEPLOYMENT_TARGET=26.0 cargo run --release --bin generate-bindings -- --ios"
                             mkdir -p .make && echo "$CURRENT_HASH" > "$MARKER"
                         fi
                         """,

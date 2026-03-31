@@ -109,20 +109,7 @@ struct ItemRowView: View {
     }
 
     private func sourceAppIcon(bundleId: String) -> String? {
-        let id = bundleId.lowercased()
-        if id.contains("safari") { return "safari" }
-        if id.contains("mail") { return "envelope" }
-        if id.contains("notes") { return "note.text" }
-        if id.contains("messages") { return "message" }
-        if id.contains("slack") { return "number" }
-        if id.contains("terminal") || id.contains("iterm") {
-            return "terminal"
-        }
-        if id.contains("xcode") { return "hammer" }
-        if id.contains("finder") { return "folder" }
-        if id.contains("textedit") { return "doc.text" }
-        if id.contains("preview") { return "eye" }
-        return nil
+        FormattingHelpers.sourceAppIcon(bundleId: bundleId)
     }
 
     // MARK: - Display Text
@@ -198,17 +185,11 @@ struct ItemRowView: View {
     // MARK: - Helpers
 
     private func colorFromRGBA(_ rgba: UInt32) -> Color {
-        let r = Double((rgba >> 24) & 0xFF) / 255.0
-        let g = Double((rgba >> 16) & 0xFF) / 255.0
-        let b = Double((rgba >> 8) & 0xFF) / 255.0
-        let a = Double(rgba & 0xFF) / 255.0
-        return Color(.sRGB, red: r, green: g, blue: b, opacity: a)
+        let c = FormattingHelpers.colorFromRGBA(rgba)
+        return Color(.sRGB, red: c.r, green: c.g, blue: c.b, opacity: c.a)
     }
 
     private func timeAgo(from timestampUnix: Int64) -> String {
-        let date = Date(timeIntervalSince1970: TimeInterval(timestampUnix))
-        let formatter = RelativeDateTimeFormatter()
-        formatter.unitsStyle = .abbreviated
-        return formatter.localizedString(for: date, relativeTo: Date())
+        FormattingHelpers.timeAgo(from: timestampUnix)
     }
 }

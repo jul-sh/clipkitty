@@ -88,7 +88,7 @@ struct iOSSettingsView: View {
     private var storageSection: some View {
         Section("Storage") {
             LabeledContent("Database Size") {
-                Text(formatBytes(databaseSize))
+                Text(FormattingHelpers.formatBytes(databaseSize))
                     .foregroundStyle(.secondary)
             }
 
@@ -144,10 +144,4 @@ struct iOSSettingsView: View {
         Bundle.main.infoDictionary?["CFBundleVersion"] as? String ?? "Unknown"
     }
 
-    private func formatBytes(_ bytes: Int64) -> String {
-        ByteCountFormatter.string(
-            fromByteCount: bytes,
-            countStyle: .file
-        )
-    }
 }

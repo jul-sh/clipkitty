@@ -6,45 +6,6 @@
     import Observation
     import os.log
 
-    struct SyncZoneChangeResult {
-        var events: [CKRecord] = []
-        var snapshots: [CKRecord] = []
-        var newToken: CKServerChangeToken?
-        var tokenExpired = false
-        var fetchError: Error?
-    }
-
-    struct SyncRecordSaveResult {
-        var savedRecordIDs: [CKRecord.ID] = []
-        var perRecordErrors: [CKRecord.ID: Error] = [:]
-        var operationError: Error?
-    }
-
-    struct SyncRecordDeleteResult {
-        var deletedRecordIDs: [CKRecord.ID] = []
-        var perRecordErrors: [CKRecord.ID: Error] = [:]
-        var operationError: Error?
-    }
-
-    protocol SyncCloudTransport {
-        func accountStatus() async throws -> CKAccountStatus
-        func ensureZoneExists(_ zone: CKRecordZone) async throws
-        func saveSubscription(_ subscription: CKDatabaseSubscription) async throws
-        func fetchZoneChanges(
-            in zoneID: CKRecordZone.ID,
-            since changeToken: CKServerChangeToken?
-        ) async -> SyncZoneChangeResult
-        func saveRecords(
-            _ records: [CKRecord],
-            savePolicy: CKModifyRecordsOperation.RecordSavePolicy
-        ) async -> SyncRecordSaveResult
-        func deleteRecords(_ recordIDs: [CKRecord.ID]) async -> SyncRecordDeleteResult
-        func fetchAllRecords(
-            ofType recordType: String,
-            in zoneID: CKRecordZone.ID
-        ) async throws -> [CKRecord]
-    }
-
     /// Orchestrates iCloud sync via CloudKit using the Rust event-sourced core.
     ///
     /// Architecture:
@@ -683,7 +644,7 @@
                 let zoneID = recordZone.zoneID
                 var records: [CKRecord] = []
                 var tempFiles: [URL] = []
-                defer { Self.cleanupTemporaryFiles(tempFiles) }
+                defer { BlobBundleCodec.cleanupTemporaryFiles(tempFiles) }
 
                 for event in pendingEvents {
                     let recordID = CKRecord.ID(recordName: event.eventId, zoneID: zoneID)
@@ -792,76 +753,6 @@
             }
         }
 
-        private enum CloudRecordJSONField {
-            case payloadData
-            case aggregateData
-
-            var recordFieldName: String {
-                switch self {
-                case .payloadData:
-                    return "payloadData"
-                case .aggregateData:
-                    return "aggregateData"
-                }
-            }
-        }
-
-        private enum BlobPathComponent: Codable, Equatable {
-            case key(String)
-            case index(Int)
-
-            init(from decoder: Decoder) throws {
-                let container = try decoder.singleValueContainer()
-                if let key = try? container.decode(String.self) {
-                    self = .key(key)
-                } else {
-                    self = try .index(container.decode(Int.self))
-                }
-            }
-
-            func encode(to encoder: Encoder) throws {
-                var container = encoder.singleValueContainer()
-                switch self {
-                case let .key(key):
-                    try container.encode(key)
-                case let .index(index):
-                    try container.encode(index)
-                }
-            }
-        }
-
-        private struct BlobBundleEntry: Codable, Equatable {
-            let path: [BlobPathComponent]
-            let base64Value: String
-        }
-
-        private struct BlobBundle: Codable, Equatable {
-            let entries: [BlobBundleEntry]
-        }
-
-        private enum SyncEngineDataError: LocalizedError {
-            case missingAssetFileURL(recordID: String)
-            case assetReadFailed(recordID: String, underlying: Error)
-            case invalidBlobBundle(recordID: String, underlying: Error)
-            case jsonRehydrationFailed(recordID: String, underlying: Error)
-            case blobInjectionFailed(recordID: String, path: String)
-
-            var errorDescription: String? {
-                switch self {
-                case let .missingAssetFileURL(recordID):
-                    return "CloudKit asset for record \(recordID) did not provide a file URL"
-                case let .assetReadFailed(recordID, underlying):
-                    return "Failed to read CloudKit asset for record \(recordID): \(underlying.localizedDescription)"
-                case let .invalidBlobBundle(recordID, underlying):
-                    return "Failed to decode CloudKit blob bundle for record \(recordID): \(underlying.localizedDescription)"
-                case let .jsonRehydrationFailed(recordID, underlying):
-                    return "Failed to rehydrate CloudKit JSON for record \(recordID): \(underlying.localizedDescription)"
-                case let .blobInjectionFailed(recordID, path):
-                    return "CloudKit blob bundle for record \(recordID) could not be injected at path \(path)"
-                }
-            }
-        }
-
         // MARK: - CKAsset Helpers
 
         private func configureJSONField(
@@ -869,9 +760,9 @@
             on record: CKRecord,
             field: CloudRecordJSONField
         ) throws -> URL? {
-            if let (strippedJSON, bundle) = Self.extractBase64Bundle(from: jsonString) {
+            if let (strippedJSON, bundle) = BlobBundleCodec.extractBase64Bundle(from: jsonString) {
                 record[field.recordFieldName] = strippedJSON as CKRecordValue
-                let bundleURL = try Self.writeBlobBundle(bundle)
+                let bundleURL = try BlobBundleCodec.writeBlobBundle(bundle)
                 record[Self.blobBundleFieldName] = CKAsset(fileURL: bundleURL)
                 return bundleURL
             }
@@ -888,207 +779,9 @@
             guard let asset = record[Self.blobBundleFieldName] as? CKAsset else {
                 return jsonString
             }
-            guard let fileURL = asset.fileURL else {
-                throw SyncEngineDataError.missingAssetFileURL(recordID: record.recordID.recordName)
-            }
 
-            let bundle: BlobBundle
-            do {
-                let data = try Data(contentsOf: fileURL)
-                bundle = try JSONDecoder().decode(BlobBundle.self, from: data)
-            } catch let error as DecodingError {
-                throw SyncEngineDataError.invalidBlobBundle(
-                    recordID: record.recordID.recordName,
-                    underlying: error
-                )
-            } catch {
-                throw SyncEngineDataError.assetReadFailed(
-                    recordID: record.recordID.recordName,
-                    underlying: error
-                )
-            }
-
-            return try Self.inject(
-                blobBundle: bundle,
-                into: jsonString,
-                recordID: record.recordID.recordName
-            )
-        }
-
-        private static func writeBlobBundle(_ bundle: BlobBundle) throws -> URL {
-            let tempURL = FileManager.default.temporaryDirectory
-                .appendingPathComponent(UUID().uuidString + ".json")
-            let data = try JSONEncoder().encode(bundle)
-            try data.write(to: tempURL)
-            return tempURL
-        }
-
-        private static func cleanupTemporaryFiles(_ urls: [URL]) {
-            for url in urls {
-                try? FileManager.default.removeItem(at: url)
-            }
-        }
-
-        /// Recursively extract any non-empty base64 values from `_base64` JSON fields.
-        private static func extractBase64Bundle(from jsonString: String) -> (String, BlobBundle)? {
-            guard let jsonData = jsonString.data(using: .utf8),
-                  var root = try? JSONSerialization.jsonObject(with: jsonData)
-            else { return nil }
-
-            var entries: [BlobBundleEntry] = []
-
-            func walk(_ value: inout Any, path: [BlobPathComponent]) {
-                if var dict = value as? [String: Any] {
-                    for key in dict.keys.sorted() {
-                        if let base64Value = dict[key] as? String,
-                           key.hasSuffix("_base64"),
-                           !base64Value.isEmpty,
-                           Data(base64Encoded: base64Value) != nil
-                        {
-                            entries.append(
-                                BlobBundleEntry(
-                                    path: path + [.key(key)],
-                                    base64Value: base64Value
-                                )
-                            )
-                            dict[key] = ""
-                            continue
-                        }
-
-                        if var child = dict[key] {
-                            walk(&child, path: path + [.key(key)])
-                            dict[key] = child
-                        }
-                    }
-                    value = dict
-                    return
-                }
-
-                if var array = value as? [Any] {
-                    for index in array.indices {
-                        var child = array[index]
-                        walk(&child, path: path + [.index(index)])
-                        array[index] = child
-                    }
-                    value = array
-                }
-            }
-
-            walk(&root, path: [])
-
-            guard !entries.isEmpty,
-                  let strippedData = try? JSONSerialization.data(withJSONObject: root),
-                  let strippedString = String(data: strippedData, encoding: .utf8)
-            else { return nil }
-
-            return (strippedString, BlobBundle(entries: entries))
-        }
-
-        private static func inject(
-            blobBundle: BlobBundle,
-            into jsonString: String,
-            recordID: String
-        ) throws -> String {
-            guard let jsonData = jsonString.data(using: .utf8) else {
-                throw SyncEngineDataError.jsonRehydrationFailed(
-                    recordID: recordID,
-                    underlying: NSError(
-                        domain: "SyncEngine",
-                        code: 3,
-                        userInfo: [NSLocalizedDescriptionKey: "JSON string was not valid UTF-8"]
-                    )
-                )
-            }
-
-            do {
-                var root = try JSONSerialization.jsonObject(with: jsonData)
-                for entry in blobBundle.entries {
-                    guard setJSONValue(
-                        entry.base64Value,
-                        at: entry.path,
-                        in: &root
-                    ) else {
-                        throw SyncEngineDataError.blobInjectionFailed(
-                            recordID: recordID,
-                            path: pathDescription(entry.path)
-                        )
-                    }
-                }
-
-                let resultData = try JSONSerialization.data(withJSONObject: root)
-                guard let resultString = String(data: resultData, encoding: .utf8) else {
-                    throw NSError(
-                        domain: "SyncEngine",
-                        code: 4,
-                        userInfo: [NSLocalizedDescriptionKey: "Failed to encode rehydrated JSON as UTF-8"]
-                    )
-                }
-                return resultString
-            } catch let error as SyncEngineDataError {
-                throw error
-            } catch {
-                throw SyncEngineDataError.jsonRehydrationFailed(
-                    recordID: recordID,
-                    underlying: error
-                )
-            }
-        }
-
-        private static func setJSONValue(
-            _ value: String,
-            at path: [BlobPathComponent],
-            in node: inout Any
-        ) -> Bool {
-            guard let component = path.first else { return false }
-
-            switch component {
-            case let .key(key):
-                guard var dict = node as? [String: Any] else { return false }
-                if path.count == 1 {
-                    dict[key] = value
-                    node = dict
-                    return true
-                }
-                guard var child = dict[key] else { return false }
-                guard setJSONValue(value, at: Array(path.dropFirst()), in: &child) else {
-                    return false
-                }
-                dict[key] = child
-                node = dict
-                return true
-
-            case let .index(index):
-                guard var array = node as? [Any], array.indices.contains(index) else {
-                    return false
-                }
-                if path.count == 1 {
-                    array[index] = value
-                    node = array
-                    return true
-                }
-                var child = array[index]
-                guard setJSONValue(value, at: Array(path.dropFirst()), in: &child) else {
-                    return false
-                }
-                array[index] = child
-                node = array
-                return true
-            }
-        }
-
-        private static func pathDescription(_ path: [BlobPathComponent]) -> String {
-            if path.isEmpty {
-                return "$"
-            }
-
-            return "$" + path.map { component in
-                switch component {
-                case let .key(key):
-                    return ".\(key)"
-                case let .index(index):
-                    return "[\(index)]"
-                }
-            }.joined()
+            let bundle = try BlobBundleCodec.readBlobBundle(from: asset)
+            return try BlobBundleCodec.inject(blobBundle: bundle, into: jsonString)
         }
 
         // MARK: - Compaction
@@ -1114,7 +807,7 @@
 
                 let zoneID = recordZone.zoneID
                 var tempFiles: [URL] = []
-                defer { Self.cleanupTemporaryFiles(tempFiles) }
+                defer { BlobBundleCodec.cleanupTemporaryFiles(tempFiles) }
                 let records: [CKRecord] = try snapshots.map { snapshot in
                     let recordID = CKRecord.ID(recordName: snapshot.itemId, zoneID: zoneID)
                     let record = CKRecord(recordType: "ItemSnapshot", recordID: recordID)
@@ -1535,16 +1228,6 @@
 
             currentDelay = delay
             return delay
-        }
-    }
-
-    // MARK: - Array Chunking
-
-    private extension Array {
-        func chunked(into size: Int) -> [[Element]] {
-            stride(from: 0, to: count, by: size).map {
-                Array(self[$0 ..< Swift.min($0 + size, count)])
-            }
         }
     }
 
