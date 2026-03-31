@@ -12,7 +12,7 @@ RED='\033[0;31m'
 GREEN='\033[0;32m'
 NC='\033[0m'
 
-CATALOG="Sources/App/Resources/Localizable.xcstrings"
+CATALOG="Sources/MacApp/Resources/Localizable.xcstrings"
 
 if [ ! -f "$CATALOG" ]; then
     echo -e "${RED}Localization catalog not found: $CATALOG${NC}"

@@ -40,7 +40,7 @@ dmg:
 	@echo "Signing for distribution..."
 	@codesign --force --options runtime \
 		--sign "$(SIGNING_IDENTITY)" \
-		--entitlements $(PROJECT_ROOT)/Sources/App/ClipKitty.oss.entitlements \
+		--entitlements $(PROJECT_ROOT)/Sources/MacApp/ClipKitty.oss.entitlements \
 		"$(APP_PATH)"
 	@echo "Building DMG installer..."
 	@$(DIST_DIR)/build-dmg.sh "$(APP_PATH)" "$(PROJECT_ROOT)/$(APP_NAME).dmg"
@@ -82,7 +82,7 @@ appstore:
 	@echo "Re-signing for App Store distribution..."
 	@codesign --force --options runtime \
 		--sign "$(APPSTORE_SIGNING_IDENTITY)" \
-		--entitlements $(PROJECT_ROOT)/Sources/App/ClipKitty.appstore.entitlements \
+		--entitlements $(PROJECT_ROOT)/Sources/MacApp/ClipKitty.appstore.entitlements \
 		"$(DERIVED_DATA)/Build/Products/AppStore/$(APP_NAME).app"
 	@echo "Creating installer package..."
 	@rm -f "$(PROJECT_ROOT)/$(APP_NAME).pkg"
@@ -211,7 +211,7 @@ marketing-screenshots-capture:
 	@$(MAKE) -C $(PROJECT_ROOT) all CONFIGURATION=AppStore
 	@codesign --force --options runtime \
 		--sign "$(SIGNING_IDENTITY)" \
-		--entitlements $(PROJECT_ROOT)/Sources/App/ClipKitty.appstore.entitlements \
+		--entitlements $(PROJECT_ROOT)/Sources/MacApp/ClipKitty.appstore.entitlements \
 		"$(DERIVED_DATA)/Build/Products/AppStore/$(APP_NAME).app"
 	@echo "Capturing marketing screenshots..."
 	@$(DIST_DIR)/prepare-screenshot-environment.sh 'cd $(PROJECT_ROOT) && xcodebuild test -scheme ClipKittyUITests -configuration AppStore -destination "platform=macOS" -derivedDataPath DerivedData $(if $(SKIP_SIGNING),CODE_SIGNING_ALLOWED=NO,) -only-testing:ClipKittyUITests/ClipKittyUITests/testTakeMarketingScreenshots 2>&1 | grep -E "(Test Case|passed|failed)" || true'
@@ -238,7 +238,7 @@ marketing-screenshots-localized:
 	@$(MAKE) -C $(PROJECT_ROOT) all CONFIGURATION=AppStore
 	@codesign --force --options runtime \
 		--sign "$(SIGNING_IDENTITY)" \
-		--entitlements $(PROJECT_ROOT)/Sources/App/ClipKitty.appstore.entitlements \
+		--entitlements $(PROJECT_ROOT)/Sources/MacApp/ClipKitty.appstore.entitlements \
 		"$(DERIVED_DATA)/Build/Products/AppStore/$(APP_NAME).app"
 	@rm -f /tmp/clipkitty_screenshot_locale.txt
 	@rm -f /tmp/clipkitty_screenshot_db.txt
