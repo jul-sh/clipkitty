@@ -410,9 +410,8 @@ struct GeneralSettingsView: View {
         }
 
         private func checkICloudAccountStatus() async {
-            let container = CKContainer(identifier: "iCloud.com.clipkitty")
             do {
-                let status = try await container.accountStatus()
+                let status = try await CKContainer.default().accountStatus()
                 switch status {
                 case .available:
                     isICloudAvailable = true
