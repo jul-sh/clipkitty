@@ -84,7 +84,7 @@ struct GeneralSettingsView: View {
             Section(String(localized: "Appearance")) {
                 LabeledContent(String(localized: "Text Size")) {
                     HStack(spacing: 8) {
-                        Slider(value: $settings.textScale, in: 0.8...1.5, step: 0.05)
+                        Slider(value: $settings.textScale, in: 1.0...1.5, step: 0.05)
                             .frame(maxWidth: .infinity)
                         Text("\(Int(settings.textScale * 100))%")
                             .foregroundStyle(.secondary)
