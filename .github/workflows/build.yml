@@ -143,15 +143,36 @@ jobs:
       - name: Generate Xcode Project
         run: make generate
 
+      - name: Prepare Build Authentication
+        run: |
+          mkdir -p .make/keys
+          echo "${{ steps.secrets.outputs.NOTARY_KEY_BASE64 }}" | base64 --decode > .make/keys/AuthKey.p8
+
       - name: Build App (SparkleRelease)
-        run: make build CONFIGURATION=SparkleRelease UNIVERSAL=1
-        env:
-          AGE_SECRET_KEY: ${{ secrets.AGE_SECRET_KEY }}
+        run: |
+          xcodebuild -workspace ClipKitty.xcworkspace \
+            -scheme ClipKitty \
+            -configuration SparkleRelease \
+            -derivedDataPath DerivedData \
+            -allowProvisioningUpdates \
+            -authenticationKeyPath .make/keys/AuthKey.p8 \
+            -authenticationKeyID "${{ steps.secrets.outputs.NOTARY_KEY_ID }}" \
+            -authenticationKeyIssuerID "${{ steps.secrets.outputs.NOTARY_ISSUER_ID }}" \
+            ONLY_ACTIVE_ARCH=NO \
+            build
 
       - name: Build App (AppStore)
-        run: make build CONFIGURATION=AppStore UNIVERSAL=1
-        env:
-          AGE_SECRET_KEY: ${{ secrets.AGE_SECRET_KEY }}
+        run: |
+          xcodebuild -workspace ClipKitty.xcworkspace \
+            -scheme ClipKitty \
+            -configuration AppStore \
+            -derivedDataPath DerivedData \
+            -allowProvisioningUpdates \
+            -authenticationKeyPath .make/keys/AuthKey.p8 \
+            -authenticationKeyID "${{ steps.secrets.outputs.NOTARY_KEY_ID }}" \
+            -authenticationKeyIssuerID "${{ steps.secrets.outputs.NOTARY_ISSUER_ID }}" \
+            ONLY_ACTIVE_ARCH=NO \
+            build
 
       - name: Create AppStore Archive
         run: |
@@ -192,7 +213,16 @@ jobs:
         run: |
           chmod +x distribution/build-dmg.sh
 
-          make build CONFIGURATION=SparkleRelease UNIVERSAL=1
+          xcodebuild -workspace ClipKitty.xcworkspace \
+            -scheme ClipKitty \
+            -configuration SparkleRelease \
+            -derivedDataPath DerivedData \
+            -allowProvisioningUpdates \
+            -authenticationKeyPath .make/keys/AuthKey.p8 \
+            -authenticationKeyID "${{ steps.secrets.outputs.NOTARY_KEY_ID }}" \
+            -authenticationKeyIssuerID "${{ steps.secrets.outputs.NOTARY_ISSUER_ID }}" \
+            ONLY_ACTIVE_ARCH=NO \
+            build
 
           # Sign nested frameworks/bundles first (inside-out for Sparkle, XPC services, etc.)
           APP="DerivedData/Build/Products/SparkleRelease/ClipKitty.app"
@@ -210,8 +240,6 @@ jobs:
 
           ./distribution/build-dmg.sh "$APP" ClipKitty.dmg
           codesign --force --sign "Developer ID Application" ClipKitty.dmg
-        env:
-          AGE_SECRET_KEY: ${{ secrets.AGE_SECRET_KEY }}
 
       # 2. Notarize with Apple
       - name: Notarize DMG
@@ -452,6 +480,7 @@ jobs:
           fetch-depth: 0
 
       - name: Decrypt secrets
+        id: intro-secrets
         run: |
           brew install age
           echo "$AGE_SECRET_KEY" > /tmp/age-key.txt
@@ -493,10 +522,23 @@ jobs:
       - name: Generate Xcode Project
         run: make generate
 
+      - name: Prepare Build Authentication
+        run: |
+          mkdir -p .make/keys
+          echo "${{ steps.intro-secrets.outputs.NOTARY_KEY_BASE64 }}" | base64 --decode > .make/keys/AuthKey.p8
+
       - name: Build App
-        run: make build UNIVERSAL=1
-        env:
-          AGE_SECRET_KEY: ${{ secrets.AGE_SECRET_KEY }}
+        run: |
+          xcodebuild -workspace ClipKitty.xcworkspace \
+            -scheme ClipKitty \
+            -configuration Release \
+            -derivedDataPath DerivedData \
+            -allowProvisioningUpdates \
+            -authenticationKeyPath .make/keys/AuthKey.p8 \
+            -authenticationKeyID "${{ steps.intro-secrets.outputs.NOTARY_KEY_ID }}" \
+            -authenticationKeyIssuerID "${{ steps.intro-secrets.outputs.NOTARY_ISSUER_ID }}" \
+            ONLY_ACTIVE_ARCH=NO \
+            build
 
       - name: Generate Localized Demo Databases
         run: ./distribution/patch-demo-items.sh
