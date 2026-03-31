@@ -32,10 +32,10 @@ let project = Project(
         // SYNC: Header comes from purr/src/bin/generate_bindings.rs → purrFFI.h
         .target(
             name: "ClipKittyRustFFI",
-            destinations: .macOS,
+            destinations: [.mac, .iPhone],
             product: .staticLibrary,
             bundleId: "com.eviljuliette.clipkitty.rustffi",
-            deploymentTargets: .macOS("14.0"),
+            deploymentTargets: .multiplatform(iOS: "26.0", macOS: "14.0"),
             sources: ["Sources/ClipKittyRust/ClipKittyRustFFI.c"],
             headers: .headers(
                 public: ["Sources/ClipKittyRust/purrFFI.h"]
@@ -51,10 +51,10 @@ let project = Project(
         // MARK: ClipKittyRust — Swift wrapper (UniFFI-generated + manual)
         .target(
             name: "ClipKittyRust",
-            destinations: .macOS,
+            destinations: [.mac, .iPhone],
             product: .staticLibrary,
             bundleId: "com.eviljuliette.clipkitty.rust",
-            deploymentTargets: .macOS("14.0"),
+            deploymentTargets: .multiplatform(iOS: "26.0", macOS: "14.0"),
             sources: ["Sources/ClipKittyRustWrapper/**"],
             dependencies: [
                 .target(name: "ClipKittyRustFFI"),
@@ -65,6 +65,62 @@ let project = Project(
                     "SWIFT_VERSION": "5.0",
                 ]
             )
+        ),
+
+        // MARK: ClipKittyShared — Cross-platform Swift library (no AppKit)
+        .target(
+            name: "ClipKittyShared",
+            destinations: [.mac, .iPhone],
+            product: .staticLibrary,
+            bundleId: "com.eviljuliette.clipkitty.shared",
+            deploymentTargets: .multiplatform(iOS: "26.0", macOS: "14.0"),
+            sources: ["Sources/Shared/**"],
+            dependencies: [
+                .target(name: "ClipKittyRust"),
+            ]
+        ),
+
+        // MARK: ClipKittyAppleServices — Cross-Apple services (no AppKit)
+        .target(
+            name: "ClipKittyAppleServices",
+            destinations: [.mac, .iPhone],
+            product: .staticLibrary,
+            bundleId: "com.eviljuliette.clipkitty.appleservices",
+            deploymentTargets: .multiplatform(iOS: "26.0", macOS: "14.0"),
+            sources: ["Sources/AppleServices/**"],
+            dependencies: [
+                .target(name: "ClipKittyRust"),
+                .target(name: "ClipKittyShared"),
+            ],
+            settings: .settings(
+                configurations: [
+                    .debug(name: "Debug", settings: [
+                        "SWIFT_ACTIVE_COMPILATION_CONDITIONS": "ENABLE_SYNC",
+                    ]),
+                    .release(name: "Release", settings: [
+                        "SWIFT_ACTIVE_COMPILATION_CONDITIONS": "ENABLE_SYNC",
+                    ]),
+                    .release(name: .configuration("SparkleRelease"), settings: [
+                        "SWIFT_ACTIVE_COMPILATION_CONDITIONS": "ENABLE_SYNC",
+                    ]),
+                    .release(name: .configuration("AppStore"), settings: [
+                        "SWIFT_ACTIVE_COMPILATION_CONDITIONS": "ENABLE_SYNC",
+                    ]),
+                ]
+            )
+        ),
+
+        // MARK: ClipKittyMacPlatform — macOS-only platform integrations
+        .target(
+            name: "ClipKittyMacPlatform",
+            destinations: .macOS,
+            product: .staticLibrary,
+            bundleId: "com.eviljuliette.clipkitty.macplatform",
+            deploymentTargets: .macOS("14.0"),
+            sources: ["Sources/MacPlatform/**"],
+            dependencies: [
+                .target(name: "ClipKittyShared"),
+            ]
         ),
 
         // MARK: ClipKitty — macOS app
@@ -93,13 +149,13 @@ let project = Project(
                 "SUAutomaticallyUpdate": "$(SPARKLE_AUTO_UPDATE)",
                 "SUEnableInstallerLauncherService": "$(SPARKLE_INSTALLER_SERVICE)",
             ]),
-            sources: ["Sources/App/**"],
+            sources: ["Sources/MacApp/**"],
             resources: [
-                .folderReference(path: "Sources/App/Resources/Fonts"),
-                "Sources/App/Resources/menu-bar.svg",
-                "Sources/App/Resources/Localizable.xcstrings",
-                "Sources/App/Assets.xcassets",
-                "Sources/App/PrivacyInfo.xcprivacy",
+                .folderReference(path: "Sources/MacApp/Resources/Fonts"),
+                "Sources/MacApp/Resources/menu-bar.svg",
+                "Sources/MacApp/Resources/Localizable.xcstrings",
+                "Sources/MacApp/Assets.xcassets",
+                "Sources/MacApp/PrivacyInfo.xcprivacy",
             ],
             scripts: [
                 .post(
@@ -117,6 +173,9 @@ let project = Project(
             ],
             dependencies: [
                 .target(name: "ClipKittyRust"),
+                .target(name: "ClipKittyShared"),
+                .target(name: "ClipKittyAppleServices"),
+                .target(name: "ClipKittyMacPlatform"),
                 .sdk(name: "SystemConfiguration", type: .framework),
                 .external(name: "STTextKitPlus"),
                 .external(name: "SparkleUpdater"),
@@ -133,7 +192,7 @@ let project = Project(
                     .debug(name: "Debug", settings: [
                         "CODE_SIGN_STYLE": "Automatic",
                         "CODE_SIGN_IDENTITY": "Apple Development",
-                        "CODE_SIGN_ENTITLEMENTS": "Sources/App/ClipKitty.debug.entitlements",
+                        "CODE_SIGN_ENTITLEMENTS": "Sources/MacApp/ClipKitty.debug.entitlements",
                         "CK_BUILD_CHANNEL": "Debug",
                         "SWIFT_ACTIVE_COMPILATION_CONDITIONS": "ENABLE_SYNC",
                         // Weak-link Sparkle frameworks so app runs without them
@@ -142,7 +201,7 @@ let project = Project(
                     .release(name: "Release", settings: [
                         "CODE_SIGN_STYLE": "Automatic",
                         "CODE_SIGN_IDENTITY": "Apple Development",
-                        "CODE_SIGN_ENTITLEMENTS": "Sources/App/ClipKitty.oss.entitlements",
+                        "CODE_SIGN_ENTITLEMENTS": "Sources/MacApp/ClipKitty.oss.entitlements",
                         "CK_BUILD_CHANNEL": "Release",
                         "SWIFT_ACTIVE_COMPILATION_CONDITIONS": "ENABLE_SYNC",
                         // Weak-link Sparkle frameworks so app runs without them
@@ -151,7 +210,7 @@ let project = Project(
                     .release(name: .configuration("SparkleRelease"), settings: [
                         "CODE_SIGN_STYLE": "Automatic",
                         "CODE_SIGN_IDENTITY": "Apple Development",
-                        "CODE_SIGN_ENTITLEMENTS": "Sources/App/ClipKitty.sparkle.entitlements",
+                        "CODE_SIGN_ENTITLEMENTS": "Sources/MacApp/ClipKitty.sparkle.entitlements",
                         "CK_BUILD_CHANNEL": "Sparkle",
                         "SWIFT_ACTIVE_COMPILATION_CONDITIONS": "SPARKLE_RELEASE ENABLE_SYNC",
                         // Sparkle configuration - only set for SparkleRelease
@@ -164,7 +223,7 @@ let project = Project(
                     .release(name: .configuration("AppStore"), settings: [
                         "CODE_SIGN_STYLE": "Automatic",
                         "CODE_SIGN_IDENTITY": "Apple Development",
-                        "CODE_SIGN_ENTITLEMENTS": "Sources/App/ClipKitty.appstore.entitlements",
+                        "CODE_SIGN_ENTITLEMENTS": "Sources/MacApp/ClipKitty.appstore.entitlements",
                         "CK_BUILD_CHANNEL": "AppStore",
                         "SWIFT_ACTIVE_COMPILATION_CONDITIONS": "APP_STORE ENABLE_SYNC",
                         // Weak-link Sparkle frameworks so app runs without them
@@ -187,6 +246,9 @@ let project = Project(
             dependencies: [
                 .target(name: "ClipKitty"),
                 .target(name: "ClipKittyRust"),
+                .target(name: "ClipKittyShared"),
+                .target(name: "ClipKittyAppleServices"),
+                .target(name: "ClipKittyMacPlatform"),
             ],
             settings: .settings(
                 base: [
@@ -238,6 +300,34 @@ let project = Project(
             environmentVariables: [
                 "CLIPKITTY_APP_PATH": "$(BUILT_PRODUCTS_DIR)/ClipKitty.app",
             ]
+        ),
+
+        // MARK: ClipKittyiOSSmokeTest — compile-time proof that the shared chain builds for iOS
+        // This target exists solely to catch macOS leakage into shared/services code.
+        // It imports all shared modules and builds for iOS; it is never shipped.
+        .target(
+            name: "ClipKittyiOSSmokeTest",
+            destinations: .iOS,
+            product: .app,
+            bundleId: "com.eviljuliette.clipkitty.ios-smoke-test",
+            deploymentTargets: .iOS("26.0"),
+            sources: ["Sources/iOSSmokeTest/**"],
+            dependencies: [
+                .target(name: "ClipKittyRust"),
+                .target(name: "ClipKittyShared"),
+                .target(name: "ClipKittyAppleServices"),
+            ],
+            settings: .settings(
+                base: [
+                    "OTHER_LDFLAGS": .array(["$(inherited)", "-lpurr"]),
+                    "LIBRARY_SEARCH_PATHS": .array([
+                        "$(inherited)",
+                        "$(PROJECT_DIR)/Sources/ClipKittyRust/ios-device",
+                        "$(PROJECT_DIR)/Sources/ClipKittyRust/ios-simulator",
+                    ]),
+                    "CODE_SIGNING_ALLOWED": "NO",
+                ]
+            )
         ),
     ],
     schemes: [
@@ -335,10 +425,16 @@ let project = Project(
                 configuration: "Debug"
             )
         ),
+        // iOS smoke test — builds the shared chain for iOS to catch macOS leakage
+        .scheme(
+            name: "ClipKittyiOSSmokeTest",
+            shared: true,
+            buildAction: .buildAction(targets: [.target("ClipKittyiOSSmokeTest")])
+        ),
     ],
     additionalFiles: [
-        "Sources/App/ClipKitty.oss.entitlements",
-        "Sources/App/ClipKitty.debug.entitlements",
-        "Sources/App/ClipKitty.sparkle.entitlements",
+        "Sources/MacApp/ClipKitty.oss.entitlements",
+        "Sources/MacApp/ClipKitty.debug.entitlements",
+        "Sources/MacApp/ClipKitty.sparkle.entitlements",
     ]
 )
