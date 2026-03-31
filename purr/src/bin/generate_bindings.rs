@@ -11,7 +11,9 @@
 //! │ Outputs (paths match Project.swift):                                        │
 //! │   Sources/ClipKittyRust/purrFFI.h             ← C header                    │
 //! │   Sources/ClipKittyRust/module.modulemap      ← Clang module map            │
-//! │   Sources/ClipKittyRust/libpurr.a             ← Universal static lib        │
+//! │   Sources/ClipKittyRust/libpurr.a             ← macOS universal static lib  │
+//! │   Sources/ClipKittyRust/ios-device/libpurr.a  ← iOS device (aarch64)        │
+//! │   Sources/ClipKittyRust/ios-simulator/libpurr.a ← iOS simulator (aarch64)   │
 //! │   Sources/ClipKittyRustWrapper/purr.swift     ← Swift bindings              │
 //! │                                                                             │
 //! │ Manual file (not generated):                                                │
@@ -85,22 +87,24 @@ fn main() {
     )
     .expect("Write modulemap");
 
-    // Build universal static library
-    println!("Building static library...");
+    // Build static libraries for all platforms
+    println!("Building static libraries...");
     let installed_targets = installed_rust_targets();
-    let preferred_targets = ["aarch64-apple-darwin", "x86_64-apple-darwin"];
-    let available_targets: Vec<&str> = preferred_targets
+
+    // macOS universal binary
+    let macos_targets = ["aarch64-apple-darwin", "x86_64-apple-darwin"];
+    let available_macos: Vec<&str> = macos_targets
         .iter()
         .copied()
         .filter(|target| installed_targets.iter().any(|installed| installed == target))
         .collect();
 
-    for target in &available_targets {
+    for target in &available_macos {
         run_cmd("cargo", &["build", "--release", "--target", target], &rust_dir);
     }
 
     let output_lib = swift_dest.join("libpurr.a");
-    match available_targets.as_slice() {
+    match available_macos.as_slice() {
         [single_target] => {
             let lib = target_dir.join(format!("{single_target}/release/libpurr.a"));
             fs::copy(lib, &output_lib).expect("Copy static lib");
@@ -120,13 +124,55 @@ fn main() {
                 ],
                 &rust_dir,
             );
-            println!("Created universal static library");
+            println!("Created universal macOS static library");
         }
         _ => {
             fs::copy(target_dir.join("release/libpurr.a"), &output_lib)
                 .expect("Copy host static lib");
             println!("Copied host-arch static library");
         }
+    }
+
+    // iOS device (aarch64-apple-ios)
+    let ios_device_target = "aarch64-apple-ios";
+    if installed_targets.iter().any(|t| t == ios_device_target) {
+        println!("Building iOS device static library...");
+        let ios_env = ios_cross_env("iphoneos");
+        run_cmd_with_env(
+            "cargo",
+            &["build", "--release", "--target", ios_device_target],
+            &rust_dir,
+            &ios_env,
+        );
+        let ios_device_dir = swift_dest.join("ios-device");
+        fs::create_dir_all(&ios_device_dir).expect("Create ios-device dir");
+        fs::copy(
+            target_dir.join(format!("{ios_device_target}/release/libpurr.a")),
+            ios_device_dir.join("libpurr.a"),
+        )
+        .expect("Copy iOS device static lib");
+        println!("Copied iOS device static library");
+    }
+
+    // iOS simulator (aarch64-apple-ios-sim)
+    let ios_sim_target = "aarch64-apple-ios-sim";
+    if installed_targets.iter().any(|t| t == ios_sim_target) {
+        println!("Building iOS simulator static library...");
+        let ios_env = ios_cross_env("iphonesimulator");
+        run_cmd_with_env(
+            "cargo",
+            &["build", "--release", "--target", ios_sim_target],
+            &rust_dir,
+            &ios_env,
+        );
+        let ios_sim_dir = swift_dest.join("ios-simulator");
+        fs::create_dir_all(&ios_sim_dir).expect("Create ios-simulator dir");
+        fs::copy(
+            target_dir.join(format!("{ios_sim_target}/release/libpurr.a")),
+            ios_sim_dir.join("libpurr.a"),
+        )
+        .expect("Copy iOS simulator static lib");
+        println!("Copied iOS simulator static library");
     }
 
     println!("Done! Bindings regenerated successfully.");
@@ -137,21 +183,158 @@ fn main() {
     );
     println!("  - {}/purrFFI.h", swift_dest.display());
     println!("  - {}/module.modulemap", swift_dest.display());
-    println!("  - {}/libpurr.a", swift_dest.display());
+    println!("  - {}/libpurr.a (macOS universal)", swift_dest.display());
+    if installed_targets.iter().any(|t| t == ios_device_target) {
+        println!("  - {}/ios-device/libpurr.a", swift_dest.display());
+    }
+    if installed_targets.iter().any(|t| t == ios_sim_target) {
+        println!("  - {}/ios-simulator/libpurr.a", swift_dest.display());
+    }
     println!();
     println!("Note: ClipKittyRust.swift is a manually maintained file (not generated).");
 }
 
 fn run_cmd(program: &str, args: &[&str], dir: &PathBuf) {
-    let status = Command::new(program)
-        .args(args)
-        .current_dir(dir)
+    run_cmd_with_env(program, args, dir, &[]);
+}
+
+fn run_cmd_with_env(program: &str, args: &[&str], dir: &PathBuf, env_vars: &[(String, String)]) {
+    let mut cmd = Command::new(program);
+    cmd.args(args).current_dir(dir);
+
+    if !env_vars.is_empty() {
+        // Start from the current environment, then apply overrides.
+        // Remove Nix-injected vars that conflict with iOS cross-compilation.
+        let mut env: std::collections::HashMap<String, String> = env::vars().collect();
+        // NIX_CFLAGS_COMPILE and NIX_LDFLAGS inject macOS-specific flags
+        env.remove("NIX_CFLAGS_COMPILE");
+        env.remove("NIX_LDFLAGS");
+        for (key, value) in env_vars {
+            env.insert(key.clone(), value.clone());
+        }
+        cmd.env_clear().envs(env);
+    }
+
+    let status = cmd
         .status()
         .unwrap_or_else(|e| panic!("Failed to run {}: {}", program, e));
 
     if !status.success() {
         panic!("{} failed with status: {}", program, status);
     }
+}
+
+/// Resolve cross-compilation environment variables for an iOS SDK.
+/// Uses `/usr/bin/xcrun` to find the SDK path and set CC/AR for C dependencies
+/// that cargo builds from source. Forces `DEVELOPER_DIR` to the real Xcode
+/// installation so it works inside Nix shells (which may override DEVELOPER_DIR
+/// to point to a macOS-only SDK).
+fn ios_cross_env(sdk: &str) -> Vec<(String, String)> {
+    let xcrun = "/usr/bin/xcrun";
+
+    // Resolve the real Xcode developer dir. Inside Nix shells, DEVELOPER_DIR
+    // may point to a macOS-only SDK that lacks iOS platforms. We need the
+    // actual Xcode installation for iOS cross-compilation.
+    let xcode_dev_dir = resolve_xcode_developer_dir();
+
+    let sdk_path = Command::new(xcrun)
+        .env("DEVELOPER_DIR", &xcode_dev_dir)
+        .args(["--sdk", sdk, "--show-sdk-path"])
+        .output()
+        .ok()
+        .filter(|o| o.status.success())
+        .map(|o| String::from_utf8_lossy(&o.stdout).trim().to_string())
+        .unwrap_or_else(|| panic!("Failed to resolve {} SDK path via xcrun", sdk));
+
+    let cc = Command::new(xcrun)
+        .env("DEVELOPER_DIR", &xcode_dev_dir)
+        .args(["--sdk", sdk, "--find", "clang"])
+        .output()
+        .ok()
+        .filter(|o| o.status.success())
+        .map(|o| String::from_utf8_lossy(&o.stdout).trim().to_string())
+        .unwrap_or_else(|| panic!("Failed to find clang for {} SDK via xcrun", sdk));
+
+    let ar = Command::new(xcrun)
+        .env("DEVELOPER_DIR", &xcode_dev_dir)
+        .args(["--sdk", sdk, "--find", "ar"])
+        .output()
+        .ok()
+        .filter(|o| o.status.success())
+        .map(|o| String::from_utf8_lossy(&o.stdout).trim().to_string())
+        .unwrap_or_else(|| panic!("Failed to find ar for {} SDK via xcrun", sdk));
+
+    let deployment_target = "17.0";
+
+    let (rust_target, cargo_target_upper) = match sdk {
+        "iphoneos" => ("aarch64-apple-ios", "AARCH64_APPLE_IOS"),
+        "iphonesimulator" => ("aarch64-apple-ios-sim", "AARCH64_APPLE_IOS_SIM"),
+        _ => panic!("Unsupported iOS SDK: {sdk}"),
+    };
+
+    // Build a CC wrapper command that forces the correct SDK and target.
+    // This is necessary because inside Nix shells, CC points to a Nix-wrapped
+    // clang that hardcodes macOS sysroot/target flags.
+    let cc_flags = format!(
+        "-isysroot {sdk_path} -target {target} -miphoneos-version-min={deployment_target}",
+        target = if sdk == "iphoneos" {
+            "arm64-apple-ios17.0"
+        } else {
+            "arm64-apple-ios17.0-simulator"
+        },
+    );
+
+    vec![
+        // Override CC/AR at the target-specific level (cargo uses these for build scripts)
+        (format!("CC_{}", rust_target.replace('-', "_")), cc.clone()),
+        (format!("AR_{}", rust_target.replace('-', "_")), ar.clone()),
+        (
+            format!("CFLAGS_{}", rust_target.replace('-', "_")),
+            cc_flags.clone(),
+        ),
+        // Also set the cargo linker override — this bypasses Nix's cc wrapper
+        (
+            format!("CARGO_TARGET_{cargo_target_upper}_LINKER"),
+            cc.clone(),
+        ),
+        // Plain CC/AR for build scripts that don't check target-specific vars
+        ("CC".into(), cc),
+        ("AR".into(), ar),
+        ("CFLAGS".into(), cc_flags),
+        ("SDKROOT".into(), sdk_path),
+        ("DEVELOPER_DIR".into(), xcode_dev_dir),
+        (
+            "IPHONEOS_DEPLOYMENT_TARGET".into(),
+            deployment_target.into(),
+        ),
+    ]
+}
+
+/// Find the real Xcode developer directory, bypassing any DEVELOPER_DIR
+/// override (e.g. from Nix shells that point to a macOS-only SDK).
+fn resolve_xcode_developer_dir() -> String {
+    // Try common Xcode locations first — faster than spawning a process and
+    // works even when xcode-select itself respects the overridden DEVELOPER_DIR.
+    let candidates = [
+        "/Applications/Xcode.app/Contents/Developer",
+        "/Applications/Xcode-beta.app/Contents/Developer",
+    ];
+    for path in &candidates {
+        let ios_platform = format!("{path}/Platforms/iPhoneOS.platform");
+        if std::path::Path::new(&ios_platform).exists() {
+            return path.to_string();
+        }
+    }
+
+    // Fallback: ask xcode-select with a clean DEVELOPER_DIR
+    Command::new("/usr/bin/xcode-select")
+        .arg("-p")
+        .env_remove("DEVELOPER_DIR")
+        .output()
+        .ok()
+        .filter(|o| o.status.success())
+        .map(|o| String::from_utf8_lossy(&o.stdout).trim().to_string())
+        .unwrap_or_else(|| candidates[0].to_string())
 }
 
 fn installed_rust_targets() -> Vec<String> {
@@ -172,7 +355,7 @@ fn installed_rust_targets() -> Vec<String> {
                 .filter_map(|e| e.ok())
                 .filter(|e| e.path().join("lib").is_dir())
                 .filter_map(|e| e.file_name().into_string().ok())
-                .filter(|name| name.contains("-apple-darwin"))
+                .filter(|name| name.contains("-apple-"))
                 .collect();
         }
     }

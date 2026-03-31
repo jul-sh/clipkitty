@@ -1,5 +1,4 @@
 import AppKit
-import Carbon
 import ClipKittyMacPlatform
 import ClipKittyShared
 @preconcurrency import CoreGraphics
@@ -7,20 +6,6 @@ import Foundation
 #if SPARKLE_RELEASE
     import SparkleUpdater
 #endif
-
-// MARK: - HotKey AppKit Extensions
-
-extension HotKey {
-    /// Modifier mask for NSMenuItem
-    var modifierMask: NSEvent.ModifierFlags {
-        var mask: NSEvent.ModifierFlags = []
-        if modifiers & UInt32(controlKey) != 0 { mask.insert(.control) }
-        if modifiers & UInt32(optionKey) != 0 { mask.insert(.option) }
-        if modifiers & UInt32(shiftKey) != 0 { mask.insert(.shift) }
-        if modifiers & UInt32(cmdKey) != 0 { mask.insert(.command) }
-        return mask
-    }
-}
 
 enum PasteMode {
     case noPermission

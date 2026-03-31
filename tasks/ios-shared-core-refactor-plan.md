@@ -745,78 +745,69 @@ The refactor is successful when all of the following are true:
 
 ## Worklog
 
-### Implementation Summary (2026-03-31)
+### Pass 1: Structural Extraction (2026-03-31)
 
-All workstreams (W1–W7) implemented in a single coordinated pass. Build succeeds, all tests pass.
+Workstreams W1–W4, W6–W7 completed. W5 partial. macOS build and all 122 unit tests pass.
+
+#### Completed
+
+**W1 — Target Graph** — Added `ClipKittyShared`, `ClipKittyAppleServices`, `ClipKittyMacPlatform` in `Project.swift`. App and test targets depend on all three.
+
+**W2 — Rust Wrapper** — Removed `import AppKit` from `ClipKittyRust.swift` (was unused).
+
+**W3 — Shared Settings Boundary** — `HotKey` data model in Shared (portable `keyCode`/`modifiers` only). `PasteboardMonitor.FilterConfiguration` replaces `AppSettings.shared`. `BrowserViewModel` takes injected closures.
+
+**W4 — Browser Extraction** — `BrowserSession`, `BrowserStoreClient` (protocol), `BrowserViewModel` moved to Shared. `BrowserAction` enum bridges to app-layer `BrowserActionItem`.
+
+**W6 — Apple Services** — `SyncEngine`, `ImageDescriptionGenerator`, `LinkMetadataFetcher`, `PreviewLoader`, `ImageIngestService` moved to AppleServices. AppKit replaced with CoreGraphics/ImageIO.
+
+**W7 — macOS Platform Isolation** — `PasteboardMonitor`, `PasteService`, `PasteboardProtocol`, `AppActivationService`, `HotKeyManager`, `LaunchAtLogin`, `FontManager`, `AccessibilityPermissionMonitor` moved to MacPlatform.
+
+#### Partial
+
+**W5 — ClipboardStore Decomposition** — Services extracted to AppleServices, but `ClipboardStore` itself remains as the composition root/facade in the app target. The plan called for splitting into `StoreBootstrapper`, `SearchSessionService`, `IngestionCoordinator`, etc. Deferred because the iOS-shareable surface is already clean via `BrowserStoreClient` protocol + `ClipboardRepository`.
+
+#### Tradeoffs from Pass 1
+
+1. **FloatingPanelController stays in App** — depends on ClipboardStore, AppSettings, SnackbarCoordinator. Would create circular deps in MacPlatform.
+2. **AppSettings.shared persists** — singleton stays in app; shared code uses closures/injected values.
+3. **BrowserAction vs BrowserActionItem** — dual representation; semantic enum in Shared, UI item in App with a `.browserAction` bridge.
+
+---
+
+### Pass 2: iOS Readiness & HotKey Cleanup (2026-03-31)
+
+Made the shared chain genuinely iOS-buildable with compile-time proof.
 
 #### What was done
 
-**W1 — Target Graph Extraction**
-- Added 3 new library targets in `Project.swift`: `ClipKittyShared`, `ClipKittyAppleServices`, `ClipKittyMacPlatform`
-- Created source roots: `Sources/Shared/`, `Sources/AppleServices/`, `Sources/MacPlatform/`
-- App target depends on all three libraries. Tests depend on all libraries.
-- AppleServices gets `ENABLE_SYNC` compilation conditions across all build configs.
+**HotKey split** — `Sources/Shared/HotKey.swift` now contains only the portable data model (`keyCode`, `modifiers`, `init`). Mac-specific behavior moved to `Sources/MacPlatform/HotKey+Mac.swift`:
+- `.default` (Option+Space — macOS convention)
+- `displayString` (⌃⌥⇧⌘ symbols via Carbon constants)
+- `keyEquivalent` (NSMenuItem concept)
+- `modifierMask` (NSEvent.ModifierFlags — moved from `Settings.swift`)
 
-**W2 — Rust Wrapper Cleanup**
-- Removed `import AppKit` from `Sources/ClipKittyRustWrapper/ClipKittyRust.swift` — replaced with `import Foundation`. No AppKit types were actually used (NSRange is Foundation).
+**Rust iOS build pipeline** — Extended `generate_bindings.rs` to cross-compile `libpurr.a` for iOS:
+- `flake.nix`: added `aarch64-apple-ios` and `aarch64-apple-ios-sim` Rust targets
+- `generate_bindings.rs`: builds iOS device and simulator static libraries alongside macOS universal binary
+- Outputs: `Sources/ClipKittyRust/ios-device/libpurr.a`, `Sources/ClipKittyRust/ios-simulator/libpurr.a`
+- Resolved Nix/Xcode toolchain conflict: iOS cross-compilation uses Xcode's clang/ar via `DEVELOPER_DIR` override and target-specific cargo env vars, bypassing Nix's CC wrapper
 
-**W3 — Shared Settings/Environment Boundary**
-- Extracted `HotKey` struct into `Sources/Shared/HotKey.swift` (platform-independent, uses raw UInt32 modifier constants instead of Carbon symbols).
-- `modifierMask` (NSEvent.ModifierFlags) stays as an extension in `Sources/App/Settings.swift`.
-- `PasteboardMonitor.FilterConfiguration` replaces direct `AppSettings.shared` reads — injected as a closure from the composition root.
-- `BrowserViewModel` takes `shouldGenerateLinkPreviews` closure instead of reaching into `AppSettings.shared`.
+**Multi-platform targets** — `ClipKittyRustFFI`, `ClipKittyRust`, `ClipKittyShared`, `ClipKittyAppleServices` now declare `destinations: [.mac, .iPhone]` with `deploymentTargets: .multiplatform(iOS: "17.0", macOS: "14.0")`.
 
-**W4 — Browser Feature Extraction**
-- Moved to `Sources/Shared/`: `BrowserSession.swift`, `BrowserStoreClient.swift` (protocol only), `BrowserViewModel.swift`.
-- Removed `import AppKit` from BrowserViewModel — no AppKit types were actually used.
-- Introduced `BrowserViewModel.BrowserAction` enum (shared semantic actions) to replace the app-layer `BrowserActionItem` in the shared interface.
-- `BrowserActionItem` stays in app with a `.browserAction` bridge property.
-- Concrete `ClipboardStoreBrowserClient` adapter stays in `Sources/App/Browser/BrowserStoreClient.swift`.
-
-**W5 — ClipboardStore Decomposition (Partial)**
-- Image ingestion moved to `ImageIngestService` in AppleServices (was already extracted, just moved targets).
-- Image description generation, link metadata fetching, preview loading all moved to AppleServices.
-- Sync engine moved to AppleServices.
-- ClipboardStore remains as the composition root / facade for the macOS app. Full decomposition into separate search/mutation/ingestion services deferred — the current shape already enables iOS reuse through the shared `BrowserStoreClient` protocol.
-
-**W6 — Apple Shared Services Extraction**
-- Moved to `Sources/AppleServices/`: `SyncEngine.swift`, `ImageDescriptionGenerator.swift`, `LinkMetadataFetcher.swift`, `PreviewLoader.swift`, `ImageIngestService.swift`.
-- Removed AppKit from `LinkMetadataFetcher` — replaced NSImage/NSBitmapImageRep with CoreGraphics/ImageIO.
-- Removed AppKit from `ImageIngestService` — replaced with CoreGraphics.
-- All types made `public` with proper memberwise inits.
-
-**W7 — macOS Platform Isolation**
-- Moved to `Sources/MacPlatform/`: `PasteboardMonitor.swift`, `PasteService.swift`, `PasteboardProtocol.swift`, `AppActivationService.swift`, `HotKeyManager.swift`, `LaunchAtLogin.swift`, `FontManager.swift`, `AccessibilityPermissionMonitor.swift`.
-- `FloatingPanelController` stays in app target (depends on ClipboardStore, AppSettings, etc — would create circular dependency).
-- All types made `public`.
-- `FontManager.registerFonts()` uses `Bundle.main` instead of `Bundle.module` since font resources live in the app bundle.
-
-**Shared notification types**
-- Extracted `NotificationKind`, `NudgeKind`, `InfoKind`, `SnackbarItem` into `Sources/Shared/NotificationTypes.swift`.
-- Removed duplicates from `Sources/App/Snackbar.swift`.
-
-#### Tradeoffs
-
-1. **FloatingPanelController stays in App** — It depends on ClipboardStore, AppSettings, SnackbarCoordinator, and multiple view types. Moving it to MacPlatform would create circular dependencies. A future iOS app doesn't need it anyway.
-
-2. **ClipboardStore not fully decomposed** — The plan called for splitting into StoreBootstrapper, SearchSessionService, IngestionCoordinator, etc. ClipboardStore remains as a facade, but the iOS-shareable surface is already clean: `BrowserStoreClient` protocol + `ClipboardRepository`. Full decomposition would add complexity without unlocking new reuse.
-
-3. **AppSettings.shared still exists** — The singleton persists in the app target. Shared code no longer reads it directly (uses closures/injected values instead). A full protocol-based settings abstraction was overkill at this stage.
-
-4. **HotKey uses raw UInt32 constants** — Carbon `optionKey`/`cmdKey` etc. are not available in shared code. The shared `HotKey` struct uses their literal values (0x0800, 0x0100, etc.) instead.
-
-5. **BrowserAction vs BrowserActionItem** — Two representations of the same concept. `BrowserAction` in shared is pure semantics; `BrowserActionItem` in app adds UI labels/icons and AppSettings-dependent logic. The bridge is a single computed property.
-
-6. **SnackbarScheduler stays in App** — `LiveSnackbarEnvironment` uses `AppSettings.shared` and `LaunchAtLogin.shared`. The pure `evaluateSnackbar` function could move to Shared but the value is minimal since the scheduler itself is macOS-specific UX.
-
-#### Blockers encountered
-
-- None. All workstreams completed without blockers.
+**iOS smoke test target** — `ClipKittyiOSSmokeTest` is a minimal iOS app that imports `ClipKittyRust`, `ClipKittyShared`, and `ClipKittyAppleServices`. It exists solely to catch macOS leakage at compile time. If any shared target accidentally imports AppKit, this target will fail to build.
 
 #### Verification
 
-- `xcodebuild build CODE_SIGNING_ALLOWED=NO` — **BUILD SUCCEEDED**
-- `xcodebuild test CODE_SIGNING_ALLOWED=NO` — **TEST SUCCEEDED** (all unit tests pass)
-- ClipKittyShared compiles without AppKit ✓
-- ClipKittyAppleServices compiles without AppKit ✓
-- ClipKittyMacPlatform compiles independently ✓
+- macOS build: **BUILD SUCCEEDED** ✓
+- macOS tests: **122 tests, 0 failures** ✓
+- iOS smoke test (`xcodebuild -target ClipKittyiOSSmokeTest -sdk iphoneos`): **BUILD SUCCEEDED** ✓
+- Shared/AppleServices source: zero `import AppKit` ✓
+- `HotKey` in Shared: portable data model only, no Carbon/AppKit ✓
+- Rust `libpurr.a` built for: macOS universal, iOS device (aarch64), iOS simulator (aarch64) ✓
+
+#### Remaining work for a future iOS app
+
+1. **iOS app target** — `ClipKittyiOSSmokeTest` proves the chain compiles but is a stub. A real iOS app needs a full SwiftUI shell, navigation, and platform-specific clipboard/paste integration.
+2. **ClipboardStore decomposition** — The facade remains macOS-specific. An iOS app would need its own composition root using `BrowserStoreClient` protocol + `ClipboardRepository`.
+3. **W8 (iOS scaffold)** — Explicitly deferred per the original plan.

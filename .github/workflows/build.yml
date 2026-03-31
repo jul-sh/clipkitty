@@ -169,6 +169,14 @@ jobs:
           cd DerivedData/Build/Products/AppStore
           zip -r "$GITHUB_WORKSPACE/ClipKitty-AppStore.zip" ClipKitty.app
 
+      - name: Build iOS Smoke Test
+        run: |
+          xcodebuild build \
+            -target ClipKittyiOSSmokeTest \
+            -sdk iphoneos \
+            CODE_SIGNING_ALLOWED=NO \
+            ONLY_ACTIVE_ARCH=YES
+
       - name: Run UI Tests
         run: |
           set +e

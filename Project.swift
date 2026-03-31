@@ -32,10 +32,10 @@ let project = Project(
         // SYNC: Header comes from purr/src/bin/generate_bindings.rs → purrFFI.h
         .target(
             name: "ClipKittyRustFFI",
-            destinations: .macOS,
+            destinations: [.mac, .iPhone],
             product: .staticLibrary,
             bundleId: "com.eviljuliette.clipkitty.rustffi",
-            deploymentTargets: .macOS("14.0"),
+            deploymentTargets: .multiplatform(iOS: "17.0", macOS: "14.0"),
             sources: ["Sources/ClipKittyRust/ClipKittyRustFFI.c"],
             headers: .headers(
                 public: ["Sources/ClipKittyRust/purrFFI.h"]
@@ -51,10 +51,10 @@ let project = Project(
         // MARK: ClipKittyRust — Swift wrapper (UniFFI-generated + manual)
         .target(
             name: "ClipKittyRust",
-            destinations: .macOS,
+            destinations: [.mac, .iPhone],
             product: .staticLibrary,
             bundleId: "com.eviljuliette.clipkitty.rust",
-            deploymentTargets: .macOS("14.0"),
+            deploymentTargets: .multiplatform(iOS: "17.0", macOS: "14.0"),
             sources: ["Sources/ClipKittyRustWrapper/**"],
             dependencies: [
                 .target(name: "ClipKittyRustFFI"),
@@ -70,10 +70,10 @@ let project = Project(
         // MARK: ClipKittyShared — Cross-platform Swift library (no AppKit)
         .target(
             name: "ClipKittyShared",
-            destinations: .macOS,
+            destinations: [.mac, .iPhone],
             product: .staticLibrary,
             bundleId: "com.eviljuliette.clipkitty.shared",
-            deploymentTargets: .macOS("14.0"),
+            deploymentTargets: .multiplatform(iOS: "17.0", macOS: "14.0"),
             sources: ["Sources/Shared/**"],
             dependencies: [
                 .target(name: "ClipKittyRust"),
@@ -83,10 +83,10 @@ let project = Project(
         // MARK: ClipKittyAppleServices — Cross-Apple services (no AppKit)
         .target(
             name: "ClipKittyAppleServices",
-            destinations: .macOS,
+            destinations: [.mac, .iPhone],
             product: .staticLibrary,
             bundleId: "com.eviljuliette.clipkitty.appleservices",
-            deploymentTargets: .macOS("14.0"),
+            deploymentTargets: .multiplatform(iOS: "17.0", macOS: "14.0"),
             sources: ["Sources/AppleServices/**"],
             dependencies: [
                 .target(name: "ClipKittyRust"),
@@ -301,6 +301,34 @@ let project = Project(
                 "CLIPKITTY_APP_PATH": "$(BUILT_PRODUCTS_DIR)/ClipKitty.app",
             ]
         ),
+
+        // MARK: ClipKittyiOSSmokeTest — compile-time proof that the shared chain builds for iOS
+        // This target exists solely to catch macOS leakage into shared/services code.
+        // It imports all shared modules and builds for iOS; it is never shipped.
+        .target(
+            name: "ClipKittyiOSSmokeTest",
+            destinations: .iOS,
+            product: .app,
+            bundleId: "com.eviljuliette.clipkitty.ios-smoke-test",
+            deploymentTargets: .iOS("17.0"),
+            sources: ["Sources/iOSSmokeTest/**"],
+            dependencies: [
+                .target(name: "ClipKittyRust"),
+                .target(name: "ClipKittyShared"),
+                .target(name: "ClipKittyAppleServices"),
+            ],
+            settings: .settings(
+                base: [
+                    "OTHER_LDFLAGS": .array(["$(inherited)", "-lpurr"]),
+                    "LIBRARY_SEARCH_PATHS": .array([
+                        "$(inherited)",
+                        "$(PROJECT_DIR)/Sources/ClipKittyRust/ios-device",
+                        "$(PROJECT_DIR)/Sources/ClipKittyRust/ios-simulator",
+                    ]),
+                    "CODE_SIGNING_ALLOWED": "NO",
+                ]
+            )
+        ),
     ],
     schemes: [
         // Main development scheme
@@ -396,6 +424,12 @@ let project = Project(
                 [.testableTarget(target: .target("ClipKittyUITests"))],
                 configuration: "Debug"
             )
+        ),
+        // iOS smoke test — builds the shared chain for iOS to catch macOS leakage
+        .scheme(
+            name: "ClipKittyiOSSmokeTest",
+            shared: true,
+            buildAction: .buildAction(targets: [.target("ClipKittyiOSSmokeTest")])
         ),
     ],
     additionalFiles: [

@@ -31,6 +31,8 @@ Sources/ClipKittyRust/purr.swift
 Sources/ClipKittyRust/purrFFI.h
 Sources/ClipKittyRust/module.modulemap
 Sources/ClipKittyRust/*.a
+Sources/ClipKittyRust/ios-device/
+Sources/ClipKittyRust/ios-simulator/
 Sources/ClipKittyRustWrapper/purr.swift
 Sources/ClipKittyRustWrapper/purrFFI.h
 Sources/ClipKittyRustWrapper/purrFFI.modulemap
