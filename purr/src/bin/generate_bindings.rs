@@ -87,93 +87,81 @@ fn main() {
     )
     .expect("Write modulemap");
 
-    // Build static libraries for all platforms
+    // Build static libraries for all platforms.
+    // All targets are provided by the Nix shell (flake.nix) — if any are
+    // missing, the build should fail loudly rather than silently skip.
     println!("Building static libraries...");
+
+    let required_targets = [
+        "aarch64-apple-darwin",
+        "x86_64-apple-darwin",
+        "aarch64-apple-ios",
+        "aarch64-apple-ios-sim",
+    ];
     let installed_targets = installed_rust_targets();
+    for target in &required_targets {
+        assert!(
+            installed_targets.iter().any(|t| t == target),
+            "Required Rust target {target} is not installed. \
+             Run inside `nix develop` or add it to flake.nix targets."
+        );
+    }
 
     // macOS universal binary
-    let macos_targets = ["aarch64-apple-darwin", "x86_64-apple-darwin"];
-    let available_macos: Vec<&str> = macos_targets
-        .iter()
-        .copied()
-        .filter(|target| installed_targets.iter().any(|installed| installed == target))
-        .collect();
-
-    for target in &available_macos {
+    for target in &["aarch64-apple-darwin", "x86_64-apple-darwin"] {
         run_cmd("cargo", &["build", "--release", "--target", target], &rust_dir);
     }
-
     let output_lib = swift_dest.join("libpurr.a");
-    match available_macos.as_slice() {
-        [single_target] => {
-            let lib = target_dir.join(format!("{single_target}/release/libpurr.a"));
-            fs::copy(lib, &output_lib).expect("Copy static lib");
-            println!("Copied single-arch static library for {single_target}");
-        }
-        [first_target, second_target] => {
-            let first_lib = target_dir.join(format!("{first_target}/release/libpurr.a"));
-            let second_lib = target_dir.join(format!("{second_target}/release/libpurr.a"));
-            run_cmd(
-                "lipo",
-                &[
-                    "-create",
-                    &first_lib.to_string_lossy(),
-                    &second_lib.to_string_lossy(),
-                    "-output",
-                    &output_lib.to_string_lossy(),
-                ],
-                &rust_dir,
-            );
-            println!("Created universal macOS static library");
-        }
-        _ => {
-            fs::copy(target_dir.join("release/libpurr.a"), &output_lib)
-                .expect("Copy host static lib");
-            println!("Copied host-arch static library");
-        }
-    }
+    run_cmd(
+        "lipo",
+        &[
+            "-create",
+            &target_dir
+                .join("aarch64-apple-darwin/release/libpurr.a")
+                .to_string_lossy(),
+            &target_dir
+                .join("x86_64-apple-darwin/release/libpurr.a")
+                .to_string_lossy(),
+            "-output",
+            &output_lib.to_string_lossy(),
+        ],
+        &rust_dir,
+    );
+    println!("Created universal macOS static library");
 
     // iOS device (aarch64-apple-ios)
-    let ios_device_target = "aarch64-apple-ios";
-    if installed_targets.iter().any(|t| t == ios_device_target) {
-        println!("Building iOS device static library...");
-        let ios_env = ios_cross_env("iphoneos");
-        run_cmd_with_env(
-            "cargo",
-            &["build", "--release", "--target", ios_device_target],
-            &rust_dir,
-            &ios_env,
-        );
-        let ios_device_dir = swift_dest.join("ios-device");
-        fs::create_dir_all(&ios_device_dir).expect("Create ios-device dir");
-        fs::copy(
-            target_dir.join(format!("{ios_device_target}/release/libpurr.a")),
-            ios_device_dir.join("libpurr.a"),
-        )
-        .expect("Copy iOS device static lib");
-        println!("Copied iOS device static library");
-    }
+    println!("Building iOS device static library...");
+    run_cmd_with_env(
+        "cargo",
+        &["build", "--release", "--target", "aarch64-apple-ios"],
+        &rust_dir,
+        &ios_cross_env("iphoneos"),
+    );
+    let ios_device_dir = swift_dest.join("ios-device");
+    fs::create_dir_all(&ios_device_dir).expect("Create ios-device dir");
+    fs::copy(
+        target_dir.join("aarch64-apple-ios/release/libpurr.a"),
+        ios_device_dir.join("libpurr.a"),
+    )
+    .expect("Copy iOS device static lib");
+    println!("Copied iOS device static library");
 
     // iOS simulator (aarch64-apple-ios-sim)
-    let ios_sim_target = "aarch64-apple-ios-sim";
-    if installed_targets.iter().any(|t| t == ios_sim_target) {
-        println!("Building iOS simulator static library...");
-        let ios_env = ios_cross_env("iphonesimulator");
-        run_cmd_with_env(
-            "cargo",
-            &["build", "--release", "--target", ios_sim_target],
-            &rust_dir,
-            &ios_env,
-        );
-        let ios_sim_dir = swift_dest.join("ios-simulator");
-        fs::create_dir_all(&ios_sim_dir).expect("Create ios-simulator dir");
-        fs::copy(
-            target_dir.join(format!("{ios_sim_target}/release/libpurr.a")),
-            ios_sim_dir.join("libpurr.a"),
-        )
-        .expect("Copy iOS simulator static lib");
-        println!("Copied iOS simulator static library");
-    }
+    println!("Building iOS simulator static library...");
+    run_cmd_with_env(
+        "cargo",
+        &["build", "--release", "--target", "aarch64-apple-ios-sim"],
+        &rust_dir,
+        &ios_cross_env("iphonesimulator"),
+    );
+    let ios_sim_dir = swift_dest.join("ios-simulator");
+    fs::create_dir_all(&ios_sim_dir).expect("Create ios-simulator dir");
+    fs::copy(
+        target_dir.join("aarch64-apple-ios-sim/release/libpurr.a"),
+        ios_sim_dir.join("libpurr.a"),
+    )
+    .expect("Copy iOS simulator static lib");
+    println!("Copied iOS simulator static library");
 
     println!("Done! Bindings regenerated successfully.");
     println!("Generated files:");
@@ -184,12 +172,8 @@ fn main() {
     println!("  - {}/purrFFI.h", swift_dest.display());
     println!("  - {}/module.modulemap", swift_dest.display());
     println!("  - {}/libpurr.a (macOS universal)", swift_dest.display());
-    if installed_targets.iter().any(|t| t == ios_device_target) {
-        println!("  - {}/ios-device/libpurr.a", swift_dest.display());
-    }
-    if installed_targets.iter().any(|t| t == ios_sim_target) {
-        println!("  - {}/ios-simulator/libpurr.a", swift_dest.display());
-    }
+    println!("  - {}/ios-device/libpurr.a", swift_dest.display());
+    println!("  - {}/ios-simulator/libpurr.a", swift_dest.display());
     println!();
     println!("Note: ClipKittyRust.swift is a manually maintained file (not generated).");
 }
