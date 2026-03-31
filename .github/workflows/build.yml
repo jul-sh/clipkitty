@@ -171,6 +171,7 @@ jobs:
 
       - name: Run UI Tests
         run: |
+          set +e
           xcodebuild test \
             -workspace ClipKitty.xcworkspace \
             -scheme ClipKittyUITests \
@@ -181,7 +182,29 @@ jobs:
             -authenticationKeyID "${{ steps.xcode-auth.outputs.key_id }}" \
             -authenticationKeyIssuerID "${{ steps.xcode-auth.outputs.issuer_id }}" \
             -skip-testing:ClipKittyUITests/ClipKittyUITests/testRecordIntroVideo \
-            -skip-testing:ClipKittyUITests/ClipKittyUITests/testTakeMarketingScreenshots
+            -skip-testing:ClipKittyUITests/ClipKittyUITests/testTakeMarketingScreenshots \
+            -resultBundlePath TestResults.xcresult \
+            2>&1 | tee xcodebuild-test.log
+          TEST_EXIT=$?
+          echo "::group::Test Summary"
+          grep -E "(Test Case|Test Suite|passed|failed|error:|Failing tests:)" xcodebuild-test.log || true
+          echo "::endgroup::"
+          if [ -d TestResults.xcresult ]; then
+            echo "::group::xcresulttool Summary"
+            xcrun xcresulttool get test-results summary --path TestResults.xcresult 2>/dev/null || true
+            echo "::endgroup::"
+          fi
+          exit $TEST_EXIT
+
+      - name: Upload Test Results
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: TestResults
+          path: |
+            TestResults.xcresult
+            xcodebuild-test.log
+          if-no-files-found: ignore
 
       - name: Create Virtual Retina Display
         run: |
