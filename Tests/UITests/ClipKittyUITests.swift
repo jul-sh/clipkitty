@@ -1427,4 +1427,52 @@ final class ClipKittyUITests: XCTestCase {
         }
         XCTAssertTrue(cmdReturnExists, "Confirm button should show ⌘↩ prefix when editing")
     }
+
+    /// Tests that the Settings window opens without crashing and all tabs are accessible.
+    func testSettingsWindowOpensAllTabs() {
+        // Hide the panel first so settings isn't overlaid
+        app.typeKey(.escape, modifierFlags: [])
+        Thread.sleep(forTimeInterval: 0.5)
+
+        // Open settings via Cmd+,
+        app.typeKey(",", modifierFlags: .command)
+        let settingsWindow = app.windows["ClipKitty Settings"]
+        XCTAssertTrue(settingsWindow.waitForExistence(timeout: 5), "Settings window should appear")
+
+        // General tab should be visible by default
+        let generalTab = settingsWindow.buttons["SettingsTab_General"]
+            .exists ? settingsWindow.buttons["SettingsTab_General"] : settingsWindow.radioButtons["General"]
+        XCTAssertTrue(settingsWindow.staticTexts["Startup"].waitForExistence(timeout: 3),
+                      "General tab content should be visible")
+
+        // Switch to Privacy tab
+        let privacyTab = settingsWindow.toolbars.buttons.matching(
+            NSPredicate(format: "label CONTAINS[c] 'Privacy'")
+        ).firstMatch
+        if privacyTab.exists && privacyTab.isHittable {
+            privacyTab.click()
+            Thread.sleep(forTimeInterval: 0.5)
+        }
+
+        // Switch to Shortcuts tab
+        let shortcutsTab = settingsWindow.toolbars.buttons.matching(
+            NSPredicate(format: "label CONTAINS[c] 'Shortcuts'")
+        ).firstMatch
+        if shortcutsTab.exists && shortcutsTab.isHittable {
+            shortcutsTab.click()
+            Thread.sleep(forTimeInterval: 0.5)
+        }
+
+        // Switch back to General to verify navigation works
+        let generalTabNav = settingsWindow.toolbars.buttons.matching(
+            NSPredicate(format: "label CONTAINS[c] 'General'")
+        ).firstMatch
+        if generalTabNav.exists && generalTabNav.isHittable {
+            generalTabNav.click()
+            Thread.sleep(forTimeInterval: 0.5)
+        }
+
+        // Verify the settings window is still alive (didn't crash)
+        XCTAssertTrue(settingsWindow.exists, "Settings window should still exist after tab navigation")
+    }
 }

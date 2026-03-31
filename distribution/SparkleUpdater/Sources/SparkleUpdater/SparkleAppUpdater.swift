@@ -117,13 +117,19 @@ final class SilentUpdateDriver: NSObject, SPUUserDriver, SPUUpdaterDelegate {
     func showUpdaterError(_ error: Error, acknowledgement: @escaping () -> Void) {
         log.error("Updater error: \(error.localizedDescription)")
         forceInstall = false
-        updateCheckState = .idle
-        if updateCheckFailingSince == nil {
+
+        if updateChannel == .beta {
+            // Beta users opted in to early feedback — surface errors immediately.
+            updateCheckState = .checkFailed
+        } else if updateCheckFailingSince == nil {
+            updateCheckState = .idle
             updateCheckFailingSince = Date()
         } else if let since = updateCheckFailingSince,
                   Date().timeIntervalSince(since) > 14 * 24 * 60 * 60
         {
             updateCheckState = .checkFailed
+        } else {
+            updateCheckState = .idle
         }
         acknowledgement()
     }

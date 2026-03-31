@@ -299,7 +299,7 @@ intro-video: video-data
 # Each locale gets its own video database and output video file.
 intro-video-localized:
 	@rm -f /tmp/clipkitty_screenshot_locale.txt
-	@for locale in $(SCREENSHOT_LOCALES); do \
+	@set -e; for locale in $(SCREENSHOT_LOCALES); do \
 		echo "=== Recording intro video for $$locale ==="; \
 		echo "$$locale" > /tmp/clipkitty_screenshot_locale.txt; \
 		if [ "$$locale" = "en" ]; then \

@@ -1,17 +1,28 @@
 import AppKit
 import SwiftUI
+import CloudKit
+import OSLog
 
 struct GeneralSettingsView: View {
     @ObservedObject private var settings = AppSettings.shared
     @ObservedObject private var launchAtLogin = LaunchAtLogin.shared
     @State private var showClearConfirmation = false
     @State private var attestationURL: URL?
+    @State private var isICloudAvailable = true
+    @State private var iCloudStatusMessage: String? = nil
+    @State private var logsCopied = false
 
     let store: ClipboardStore
     #if SPARKLE_RELEASE
         var onInstallUpdate: (() -> Void)? = nil
         var onCheckForUpdates: (() -> Void)? = nil
     #endif
+
+    private static let relativeDateFormatter: RelativeDateTimeFormatter = {
+        let formatter = RelativeDateTimeFormatter()
+        formatter.unitsStyle = .abbreviated
+        return formatter
+    }()
 
     private let minDatabaseSizeGB = 0.5
     private let maxDatabaseSizeGB = 64.0
@@ -70,9 +81,32 @@ struct GeneralSettingsView: View {
                 }
             }
 
+
             #if !APP_STORE
                 Section(String(localized: "Paste Items")) {
                     PasteItemsSettingView()
+                }
+            #endif
+
+            #if ENABLE_SYNC
+                Section(String(localized: "iCloud Sync")) {
+                    Toggle(String(localized: "Sync clipboard history across devices"), isOn: $settings.syncEnabled)
+                        .disabled(!isICloudAvailable)
+
+                    if !isICloudAvailable, let message = iCloudStatusMessage {
+                        Text(message)
+                            .font(.subheadline)
+                            .foregroundStyle(.secondary)
+                    }
+
+                    if settings.syncEnabled {
+                        HStack {
+                            syncStatusIcon
+                            Text(syncStatusText)
+                                .foregroundStyle(.secondary)
+                        }
+                        .font(.subheadline)
+                    }
                 }
             #endif
 
@@ -121,57 +155,74 @@ struct GeneralSettingsView: View {
 
             #if SPARKLE_RELEASE
                 Section(String(localized: "Updates")) {
-                    switch settings.updateCheckState {
-                    case .checkFailed:
-                        HStack {
-                            Label(
-                                String(localized: "Unable to check for updates."),
-                                systemImage: "exclamationmark.triangle"
-                            )
-                            Spacer()
-                            Button(String(localized: "Download")) {
-                                NSWorkspace.shared.open(
-                                    URL(
-                                        string:
-                                        "https://github.com/jul-sh/clipkitty/releases/latest"
-                                    )!
-                                )
-                            }
-                        }
-                    case .available:
-                        HStack {
-                            Label(
-                                String(localized: "A new version of ClipKitty is available."),
-                                systemImage: "arrow.down.circle"
-                            )
-                            Spacer()
-                            Button(String(localized: "Install")) {
-                                onInstallUpdate?()
-                            }
-                        }
-                    case .checking:
-                        HStack(spacing: 6) {
-                            ProgressView()
-                                .controlSize(.small)
-                            Text(String(localized: "Checking for updates…"))
+                    HStack {
+                        Text(String(localized: "Status:"))
+                        Spacer()
+                        switch settings.updateCheckState {
+                        case .idle:
+                            Text(String(localized: "Up to date"))
                                 .foregroundStyle(.secondary)
-                        }
-                    case .downloading:
-                        HStack(spacing: 6) {
-                            ProgressView()
-                                .controlSize(.small)
+                        case .checking:
+                            HStack(spacing: 6) {
+                                ProgressView()
+                                    .controlSize(.small)
+                                Text(String(localized: "Checking…"))
+                                    .foregroundStyle(.secondary)
+                            }
+                        case .downloading:
                             Text(String(localized: "Downloading update…"))
                                 .foregroundStyle(.secondary)
-                        }
-                    case .installing:
-                        HStack(spacing: 6) {
-                            ProgressView()
-                                .controlSize(.small)
+                        case .installing:
                             Text(String(localized: "Installing update…"))
                                 .foregroundStyle(.secondary)
+                        case .available:
+                            HStack(spacing: 6) {
+                                Text(String(localized: "Update available"))
+                                    .fontWeight(.semibold)
+                                Button(String(localized: "Install")) {
+                                    onInstallUpdate?()
+                                }
+                                .buttonStyle(.borderedProminent)
+                            }
+                        case .checkFailed:
+                            HStack(spacing: 6) {
+                                Label(
+                                    String(localized: "Check failed"),
+                                    systemImage: "exclamationmark.triangle"
+                                )
+                                Button(String(localized: "Download")) {
+                                    NSWorkspace.shared.open(
+                                        URL(
+                                            string:
+                                            "https://github.com/jul-sh/clipkitty/releases/latest"
+                                        )!
+                                    )
+                                }
+                            }
                         }
-                    case .idle:
-                        EmptyView()
+                    }
+
+                    if let lastChecked = settings.lastUpdateCheckDate {
+                        HStack(spacing: 4) {
+                            switch settings.lastUpdateCheckResult {
+                            case .idle:
+                                Text(String(localized: "Up to date, as of"))
+                            case .available:
+                                Text(String(localized: "Update available, as of"))
+                            case .downloading:
+                                Text(String(localized: "Downloading update, as of"))
+                            case .installing:
+                                Text(String(localized: "Installing update, as of"))
+                            case .checkFailed:
+                                Text(String(localized: "Check failed, as of"))
+                            case .checking:
+                                EmptyView()
+                            }
+
+                            Text(lastChecked, style: .date)
+                            Text(lastChecked, style: .time)
+                        }
+                        .foregroundStyle(.secondary)
                     }
 
                     Toggle(
@@ -227,6 +278,11 @@ struct GeneralSettingsView: View {
                                 )
                             }
                         }
+
+                        Button(logsCopied ? String(localized: "Logs Copied!") : String(localized: "Copy Recent Logs")) {
+                            copyRecentLogs()
+                        }
+                        .disabled(logsCopied)
                     }
                 }
             #endif
@@ -247,6 +303,9 @@ struct GeneralSettingsView: View {
             }
             .task {
                 await checkAttestation()
+                #if ENABLE_SYNC
+                await checkICloudAccountStatus()
+                #endif
             }
         }
         .formStyle(.grouped)
@@ -300,6 +359,104 @@ struct GeneralSettingsView: View {
             rounded = (value * 10).rounded() / 10
         }
         return min(max(rounded, minDatabaseSizeGB), maxDatabaseSizeGB)
+    }
+
+    #if ENABLE_SYNC
+        @ViewBuilder
+        private var syncStatusIcon: some View {
+            if let engine = store.syncEngine {
+                switch engine.status {
+                case .idle:
+                    Image(systemName: "icloud").foregroundStyle(.secondary)
+                case .connecting:
+                    ProgressView().controlSize(.small)
+                case .syncing:
+                    ProgressView().controlSize(.small)
+                case .synced:
+                    Image(systemName: "checkmark.icloud").foregroundStyle(.green)
+                case .error:
+                    Image(systemName: "exclamationmark.icloud").foregroundStyle(.orange)
+                case .temporarilyUnavailable:
+                    Image(systemName: "clock.badge.exclamationmark").foregroundStyle(.orange)
+                case .unavailable:
+                    Image(systemName: "xmark.icloud").foregroundStyle(.red)
+                }
+            } else {
+                Image(systemName: "icloud.slash").foregroundStyle(.secondary)
+            }
+        }
+
+        private var syncStatusText: String {
+            guard let engine = store.syncEngine else {
+                return String(localized: "Not running")
+            }
+            switch engine.status {
+            case .idle:
+                return String(localized: "Waiting to sync")
+            case .connecting:
+                return String(localized: "Connecting to iCloud…")
+            case .syncing:
+                return String(localized: "Syncing…")
+            case let .synced(lastSync):
+                let relative = Self.relativeDateFormatter.localizedString(for: lastSync, relativeTo: Date())
+                return String(localized: "Synced \(relative)")
+            case let .error(message):
+                return String(localized: "Error: \(message)")
+            case .temporarilyUnavailable:
+                return String(localized: "iCloud temporarily unavailable")
+            case .unavailable:
+                return String(localized: "iCloud not available")
+            }
+        }
+
+        private func checkICloudAccountStatus() async {
+            do {
+                let status = try await CKContainer.default().accountStatus()
+                switch status {
+                case .available:
+                    isICloudAvailable = true
+                case .noAccount:
+                    isICloudAvailable = false
+                    iCloudStatusMessage = String(localized: "iCloud account not found. Please log in to enable sync.")
+                case .restricted:
+                    isICloudAvailable = false
+                    iCloudStatusMessage = String(localized: "iCloud access is restricted on this machine.")
+                case .couldNotDetermine:
+                    isICloudAvailable = false
+                    iCloudStatusMessage = String(localized: "Could not determine iCloud account status.")
+                case .temporarilyUnavailable:
+                    isICloudAvailable = false
+                    iCloudStatusMessage = String(localized: "iCloud temporarily unavailable. Please try again later.")
+                @unknown default:
+                    isICloudAvailable = false
+                }
+            } catch {
+                isICloudAvailable = false
+                iCloudStatusMessage = String(localized: "Error checking iCloud status: \(error.localizedDescription)")
+            }
+        }
+    #endif
+
+    private func copyRecentLogs() {
+        do {
+            let store = try OSLogStore(scope: .currentProcessIdentifier)
+            let since = store.position(date: Date().addingTimeInterval(-3600))
+            let entries = try store.getEntries(at: since)
+                .compactMap { $0 as? OSLogEntryLog }
+                .map { "[\($0.date.formatted(.iso8601))] [\($0.category)] \($0.composedMessage)" }
+                .joined(separator: "\n")
+
+            let header = "ClipKitty \(appVersion) (\(buildNumber)) \(buildChannel) — logs from last hour"
+            NSPasteboard.general.clearContents()
+            NSPasteboard.general.setString("\(header)\n\n\(entries)", forType: .string)
+            logsCopied = true
+            DispatchQueue.main.asyncAfter(deadline: .now() + 2) {
+                logsCopied = false
+            }
+        } catch {
+            NSPasteboard.general.clearContents()
+            NSPasteboard.general.setString("Failed to read logs: \(error.localizedDescription)", forType: .string)
+        }
     }
 
     private func checkAttestation() async {

@@ -295,10 +295,8 @@ impl LinkMetadataState {
 }
 
 /// A single file entry within a file clipboard item.
-/// Each file gets its own row in `file_items` with an independent ID for status tracking.
 #[derive(Debug, Clone, PartialEq, uniffi::Record)]
 pub struct FileEntry {
-    pub file_item_id: i64,
     pub path: String,
     pub filename: String,
     pub file_size: u64,
@@ -427,7 +425,7 @@ pub struct RowDecoration {
 /// Decoration payload for a single row-decoration request result.
 #[derive(Debug, Clone, PartialEq, uniffi::Record)]
 pub struct RowDecorationResult {
-    pub item_id: i64,
+    pub item_id: String,
     pub decoration: Option<RowDecoration>,
 }
 
@@ -449,7 +447,7 @@ pub struct PreviewPayload {
 /// Lightweight item metadata for list display
 #[derive(Debug, Clone, PartialEq, uniffi::Record)]
 pub struct ItemMetadata {
-    pub item_id: i64,
+    pub item_id: String,
     pub icon: ItemIcon,
     pub snippet: String,
     pub source_app: Option<String>,
@@ -496,6 +494,117 @@ pub struct ClipboardItem {
     pub content: ClipboardContent,
 }
 
+// ═══════════════════════════════════════════════════════════════════════════════
+// SYNC TYPES (exposed to Swift for SyncEngine)
+// ═══════════════════════════════════════════════════════════════════════════════
+
+/// A serialized sync event ready for CloudKit transport.
+#[cfg(feature = "sync")]
+#[derive(Debug, Clone, PartialEq, uniffi::Record)]
+pub struct SyncEventRecord {
+    pub event_id: String,
+    pub item_id: String,
+    pub origin_device_id: String,
+    pub schema_version: u32,
+    pub recorded_at: i64,
+    pub payload_type: String,
+    pub payload_data: String,
+}
+
+/// A serialized sync snapshot ready for CloudKit transport.
+#[cfg(feature = "sync")]
+#[derive(Debug, Clone, PartialEq, uniffi::Record)]
+pub struct SyncSnapshotRecord {
+    pub item_id: String,
+    pub snapshot_revision: u64,
+    pub schema_version: u32,
+    pub covers_through_event: Option<String>,
+    pub aggregate_data: String,
+}
+
+/// Result of applying a remote event.
+#[cfg(feature = "sync")]
+#[derive(Debug, Clone, PartialEq, uniffi::Enum)]
+pub enum SyncApplyOutcome {
+    Applied,
+    Ignored,
+    Deferred,
+    Forked { forked_snapshot_data: String },
+}
+
+/// Result of applying a batch of remote events.
+#[cfg(feature = "sync")]
+#[derive(Debug, Clone, PartialEq, uniffi::Record)]
+pub struct SyncBatchResult {
+    pub events_applied: u64,
+    pub events_ignored: u64,
+    pub events_deferred: u64,
+    pub events_forked: u64,
+    pub snapshots_applied: u64,
+    pub needs_full_resync: bool,
+}
+
+/// Device sync state.
+#[cfg(feature = "sync")]
+#[derive(Debug, Clone, PartialEq, uniffi::Record)]
+pub struct SyncDeviceState {
+    pub device_id: String,
+    pub zone_change_token: Option<Vec<u8>>,
+    pub needs_full_resync: bool,
+    pub index_dirty: bool,
+}
+
+/// Outcome of a compaction run.
+#[cfg(feature = "sync")]
+#[derive(Debug, Clone, PartialEq, uniffi::Record)]
+pub struct CompactionResult {
+    pub items_compacted: u64,
+    pub events_purged: u64,
+    pub tombstones_purged: u64,
+}
+
+/// Outcome of applying a downloaded batch of remote changes.
+/// Determines whether the CloudKit zone change token should be advanced.
+#[cfg(feature = "sync")]
+#[derive(Debug, Clone, PartialEq, uniffi::Enum)]
+pub enum SyncDownloadBatchOutcome {
+    Applied {
+        events_applied: u64,
+        snapshots_applied: u64,
+    },
+    PartialFailure {
+        applied_count: u64,
+        failed_count: u64,
+        should_retry: bool,
+    },
+    FullResyncRequired,
+}
+
+/// Whether a checkpoint has been replicated to CloudKit.
+#[cfg(feature = "sync")]
+#[derive(Debug, Clone, PartialEq, uniffi::Enum)]
+pub enum SyncCheckpointState {
+    Absent,
+    LocalOnly {
+        covers_through_event: String,
+    },
+    Uploaded {
+        covers_through_event: String,
+        uploaded_at: i64,
+    },
+}
+
+/// Result of a full resync operation (checkpoints + tail events).
+#[cfg(feature = "sync")]
+#[derive(Debug, Clone, PartialEq, uniffi::Record)]
+pub struct SyncFullResyncResult {
+    pub checkpoints_applied: u64,
+    pub tail_events_applied: u64,
+    pub tail_events_ignored: u64,
+    pub tail_events_deferred: u64,
+    pub tail_events_forked: u64,
+}
+
 /// Error type for ClipKitty operations
 #[derive(Debug, Clone, Error, PartialEq, uniffi::Error)]
 pub enum ClipKittyError {
@@ -540,19 +649,19 @@ pub trait ClipboardStoreApi: Send + Sync {
     /// Called on-demand for visible items in the list view.
     fn compute_row_decorations(
         &self,
-        item_ids: Vec<i64>,
+        item_ids: Vec<String>,
         query: String,
     ) -> Result<Vec<RowDecorationResult>, ClipKittyError>;
 
     /// Load the preview payload for a single item given the search query.
     fn load_preview_payload(
         &self,
-        item_id: i64,
+        item_id: String,
         query: String,
     ) -> Result<Option<PreviewPayload>, ClipKittyError>;
 
     /// Fetch full items by IDs for preview pane
-    fn fetch_by_ids(&self, item_ids: Vec<i64>) -> Result<Vec<ClipboardItem>, ClipKittyError>;
+    fn fetch_by_ids(&self, item_ids: Vec<String>) -> Result<Vec<ClipboardItem>, ClipKittyError>;
 
     /// Get the database size in bytes
     fn database_size(&self) -> i64;
@@ -561,13 +670,13 @@ pub trait ClipboardStoreApi: Send + Sync {
     // Write Operations
     // ─────────────────────────────────────────────────────────────────────────────
 
-    /// Save a text item. Returns new item ID, or 0 if duplicate.
+    /// Save a text item. Returns new item's stable ID, or empty string if duplicate.
     fn save_text(
         &self,
         text: String,
         source_app: Option<String>,
         source_app_bundle_id: Option<String>,
-    ) -> Result<i64, ClipKittyError>;
+    ) -> Result<String, ClipKittyError>;
 
     /// Save an image item. Thumbnail should be generated by Swift (HEIC not supported by Rust).
     fn save_image(
@@ -577,9 +686,9 @@ pub trait ClipboardStoreApi: Send + Sync {
         source_app: Option<String>,
         source_app_bundle_id: Option<String>,
         is_animated: bool,
-    ) -> Result<i64, ClipKittyError>;
+    ) -> Result<String, ClipKittyError>;
 
-    /// Save a file item. Returns new item ID, or 0 if duplicate.
+    /// Save a file item. Returns new item's stable ID, or empty string if duplicate.
     #[allow(clippy::too_many_arguments)]
     fn save_file(
         &self,
@@ -591,9 +700,9 @@ pub trait ClipboardStoreApi: Send + Sync {
         thumbnail: Option<Vec<u8>>,
         source_app: Option<String>,
         source_app_bundle_id: Option<String>,
-    ) -> Result<i64, ClipKittyError>;
+    ) -> Result<String, ClipKittyError>;
 
-    /// Save multiple file items as a single grouped entry. Returns new item ID, or 0 if duplicate.
+    /// Save multiple file items as a single grouped entry. Returns new item's stable ID, or empty string if duplicate.
     #[allow(clippy::too_many_arguments)]
     fn save_files(
         &self,
@@ -605,12 +714,12 @@ pub trait ClipboardStoreApi: Send + Sync {
         thumbnail: Option<Vec<u8>>,
         source_app: Option<String>,
         source_app_bundle_id: Option<String>,
-    ) -> Result<i64, ClipKittyError>;
+    ) -> Result<String, ClipKittyError>;
 
     /// Update link metadata (called from Swift after LPMetadataProvider fetch)
     fn update_link_metadata(
         &self,
-        item_id: i64,
+        item_id: String,
         title: Option<String>,
         description: Option<String>,
         image_data: Option<Vec<u8>>,
@@ -619,28 +728,28 @@ pub trait ClipboardStoreApi: Send + Sync {
     /// Update image description and re-index
     fn update_image_description(
         &self,
-        item_id: i64,
+        item_id: String,
         description: String,
     ) -> Result<(), ClipKittyError>;
 
     /// Update text item content in-place and re-index
-    fn update_text_item(&self, item_id: i64, text: String) -> Result<(), ClipKittyError>;
+    fn update_text_item(&self, item_id: String, text: String) -> Result<(), ClipKittyError>;
 
     /// Update item timestamp to now
-    fn update_timestamp(&self, item_id: i64) -> Result<(), ClipKittyError>;
+    fn update_timestamp(&self, item_id: String) -> Result<(), ClipKittyError>;
 
     /// Add a tag to an item. Idempotent.
-    fn add_tag(&self, item_id: i64, tag: ItemTag) -> Result<(), ClipKittyError>;
+    fn add_tag(&self, item_id: String, tag: ItemTag) -> Result<(), ClipKittyError>;
 
     /// Remove a tag from an item.
-    fn remove_tag(&self, item_id: i64, tag: ItemTag) -> Result<(), ClipKittyError>;
+    fn remove_tag(&self, item_id: String, tag: ItemTag) -> Result<(), ClipKittyError>;
 
     // ─────────────────────────────────────────────────────────────────────────────
     // Delete Operations
     // ─────────────────────────────────────────────────────────────────────────────
 
     /// Delete an item by ID from both database and index
-    fn delete_item(&self, item_id: i64) -> Result<(), ClipKittyError>;
+    fn delete_item(&self, item_id: String) -> Result<(), ClipKittyError>;
 
     /// Clear all items from database and index
     fn clear(&self) -> Result<(), ClipKittyError>;
@@ -664,5 +773,15 @@ impl From<crate::database::DatabaseError> for ClipKittyError {
 impl From<crate::indexer::IndexerError> for ClipKittyError {
     fn from(e: crate::indexer::IndexerError) -> Self {
         ClipKittyError::IndexError(e.to_string())
+    }
+}
+
+#[cfg(feature = "sync")]
+impl From<purr_sync::SyncError> for ClipKittyError {
+    fn from(e: purr_sync::SyncError) -> Self {
+        match e {
+            purr_sync::SyncError::InconsistentData(msg) => ClipKittyError::DataInconsistency(msg),
+            other => ClipKittyError::DatabaseError(other.to_string()),
+        }
     }
 }

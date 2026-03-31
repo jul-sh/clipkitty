@@ -88,7 +88,7 @@ struct DisplayRow: Equatable, Identifiable {
     let metadata: ItemMetadata
     let rowDecoration: RowDecoration?
 
-    var id: Int64 {
+    var id: String {
         metadata.itemId
     }
 }
@@ -112,11 +112,11 @@ struct SelectedItemState: Equatable {
 
 enum SelectionState {
     case none
-    case loading(itemId: Int64, origin: SelectionOrigin)
+    case loading(itemId: String, origin: SelectionOrigin)
     case selected(SelectedItemState)
-    case failed(itemId: Int64, origin: SelectionOrigin)
+    case failed(itemId: String, origin: SelectionOrigin)
 
-    var itemId: Int64? {
+    var itemId: String? {
         switch self {
         case .none:
             return nil
@@ -184,7 +184,7 @@ enum DeleteMutation {
 }
 
 struct DeleteTransaction {
-    var deletedItemIds: [Int64]
+    var deletedItemIds: [String]
     let snapshot: BrowserContentState
     let selectionSnapshot: SelectionState
 }
@@ -195,9 +195,11 @@ enum TagMutation {
 }
 
 struct TagMutationTransaction {
-    let itemId: Int64
+    let itemId: String
     let tag: ItemTag
     let shouldInclude: Bool
+    let snapshot: BrowserContentState
+    let selectionSnapshot: SelectionState
 }
 
 struct ClearTransaction {
@@ -212,9 +214,9 @@ struct ActionFailure {
 struct EditState {
     enum Focus: Equatable {
         case idle
-        case focused(itemId: Int64)
+        case focused(itemId: String)
     }
 
     var focus: Focus = .idle
-    var pendingEdits: [Int64: String] = [:]
+    var pendingEdits: [String: String] = [:]
 }

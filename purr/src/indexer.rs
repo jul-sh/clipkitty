@@ -23,8 +23,9 @@ use chrono::Utc;
 use tokio_util::sync::CancellationToken;
 
 /// Index version - bump this when schema changes to trigger automatic rebuild.
-/// History: v3 = initial trigram, v4 = content_words WithFreqsAndPositions
-pub const INDEX_VERSION: &str = "v5";
+/// History: v3 = initial trigram, v4 = content_words WithFreqsAndPositions,
+///          v5 = previous i64 item_id, v6 = string item_id
+pub const INDEX_VERSION: &str = "v6";
 
 const CHUNK_TARGET_BYTES: usize = 16 * 1024;
 const CHUNK_OVERLAP_BYTES: usize = 2 * 1024;
@@ -511,7 +512,9 @@ struct PhaseTwoRun {
 
 #[derive(Debug, Clone, Copy, PartialEq)]
 struct CollapsedDocAddress {
-    item_id: i64,
+    /// Term ordinal of the item_id string in the segment's fast field dictionary.
+    /// Used as a cheap collapse key — unique within a segment.
+    item_id_ord: u64,
     doc_address: DocAddress,
 }
 
@@ -521,7 +524,7 @@ impl Ord for CollapsedDocAddress {
     fn cmp(&self, other: &Self) -> Ordering {
         self.doc_address
             .cmp(&other.doc_address)
-            .then_with(|| self.item_id.cmp(&other.item_id))
+            .then_with(|| self.item_id_ord.cmp(&other.item_id_ord))
     }
 }
 
@@ -546,21 +549,22 @@ struct CollapsedTopDocs {
 // chunks are collapsed before we materialize stored docs or build the Phase 2 head.
 struct CollapsedTopDocsSegmentCollector {
     segment_ord: u32,
-    item_id_reader: tantivy::fastfield::Column<i64>,
+    item_id_ords: tantivy::fastfield::Column<u64>,
     timestamp_reader: tantivy::fastfield::Column<i64>,
     parent_len_reader: tantivy::fastfield::Column<i64>,
     now: i64,
-    docs_by_item: HashMap<i64, CollapsedDocHit>,
+    docs_by_item: HashMap<u64, CollapsedDocHit>,
 }
 
 impl CollapsedTopDocsSegmentCollector {
     fn new(segment_ord: u32, segment_reader: &SegmentReader, now: i64) -> tantivy::Result<Self> {
+        let item_id_str_col = segment_reader
+            .fast_fields()
+            .str("item_id")?
+            .expect("item_id str fast field");
         Ok(Self {
             segment_ord,
-            item_id_reader: segment_reader
-                .fast_fields()
-                .i64("item_id")
-                .expect("item_id fast field"),
+            item_id_ords: item_id_str_col.ords().clone(),
             timestamp_reader: segment_reader
                 .fast_fields()
                 .i64("timestamp")
@@ -579,21 +583,21 @@ impl SegmentCollector for CollapsedTopDocsSegmentCollector {
     type Fruit = Vec<CollapsedDocHit>;
 
     fn collect(&mut self, doc: DocId, score: Score) {
-        let item_id = self.item_id_reader.first(doc).unwrap_or(0);
+        let item_id_ord = self.item_id_ords.first(doc).unwrap_or(0);
         let timestamp = self.timestamp_reader.first(doc).unwrap_or(0);
         let parent_len = self.parent_len_reader.first(doc).unwrap_or(0).max(0) as usize;
         let blended = PhaseOneBlendedScore::decode(score, timestamp, parent_len, self.now);
         let hit = CollapsedDocHit {
             score: blended,
             address: CollapsedDocAddress {
-                item_id,
+                item_id_ord,
                 doc_address: DocAddress::new(self.segment_ord, doc),
             },
         };
-        match self.docs_by_item.get(&item_id) {
+        match self.docs_by_item.get(&item_id_ord) {
             Some(existing) if !collapsed_hit_is_better(&hit, existing) => {}
             _ => {
-                self.docs_by_item.insert(item_id, hit);
+                self.docs_by_item.insert(item_id_ord, hit);
             }
         }
     }
@@ -629,21 +633,18 @@ impl Collector for CollapsedTopDocs {
         &self,
         segment_fruits: Vec<<Self::Child as SegmentCollector>::Fruit>,
     ) -> tantivy::Result<Self::Fruit> {
-        let mut best_by_item: HashMap<i64, CollapsedDocHit> = HashMap::new();
+        // item_id_ord is unique within a segment but may differ across segments
+        // for the same item_id string. Cross-segment duplicates are rare (only
+        // between insert and merge) and are deduplicated after candidate_from_doc
+        // reads the stored string item_id.
+        let mut all_hits: Vec<CollapsedDocHit> = Vec::new();
         for segment_hits in segment_fruits {
-            for hit in segment_hits {
-                match best_by_item.get(&hit.address.item_id) {
-                    Some(existing) if !collapsed_hit_is_better(&hit, existing) => {}
-                    _ => {
-                        best_by_item.insert(hit.address.item_id, hit);
-                    }
-                }
-            }
+            all_hits.extend(segment_hits);
         }
 
         let mut top_docs: TopNComputer<PhaseOneBlendedScore, CollapsedDocAddress> =
             TopNComputer::new(self.limit);
-        for hit in best_by_item.into_values() {
+        for hit in all_hits {
             top_docs.push(hit.score, hit.address);
         }
 
@@ -751,6 +752,7 @@ pub struct Indexer {
 }
 
 #[cfg(test)]
+#[allow(dead_code)]
 pub(crate) mod test_support {
     use once_cell::sync::Lazy;
     use parking_lot::Mutex;
@@ -883,7 +885,15 @@ impl Indexer {
 
     fn build_schema() -> Schema {
         let mut builder = Schema::builder();
-        builder.add_i64_field("item_id", STORED | FAST | INDEXED);
+        builder.add_text_field("item_id", TextOptions::default()
+            .set_indexing_options(
+                TextFieldIndexing::default()
+                    .set_tokenizer("raw")
+                    .set_index_option(IndexRecordOption::Basic),
+            )
+            .set_stored()
+            .set_fast(None),
+        );
 
         // Content field with trigram tokenization
         let text_field_indexing = TextFieldIndexing::default()
@@ -924,14 +934,14 @@ impl Indexer {
     fn add_search_unit_document(
         &self,
         writer: &IndexWriter,
-        item_id: i64,
+        item_id: &str,
         content: &str,
         timestamp: i64,
         parent_len: usize,
         chunk: Option<ChunkSlice>,
     ) -> IndexerResult<()> {
         let mut doc = tantivy::TantivyDocument::default();
-        doc.add_i64(self.item_id_field, item_id);
+        doc.add_text(self.item_id_field, item_id);
         doc.add_text(self.content_field, content);
         doc.add_text(self.content_words_field, content);
         doc.add_i64(self.timestamp_field, timestamp);
@@ -955,12 +965,12 @@ impl Indexer {
     }
 
     /// Add or update a document in the index
-    pub fn add_document(&self, id: i64, content: &str, timestamp: i64) -> IndexerResult<()> {
+    pub fn add_document(&self, id: &str, content: &str, timestamp: i64) -> IndexerResult<()> {
         let writer = self.writer.read();
         let parent_len = content.len();
 
         // Delete existing document with same ID (upsert semantics)
-        let id_term = tantivy::Term::from_field_i64(self.item_id_field, id);
+        let id_term = tantivy::Term::from_field_text(self.item_id_field, id);
         writer.delete_term(id_term);
 
         if parent_len > CHUNK_PARENT_THRESHOLD_BYTES {
@@ -987,9 +997,9 @@ impl Indexer {
         Ok(())
     }
 
-    pub fn delete_document(&self, id: i64) -> IndexerResult<()> {
+    pub fn delete_document(&self, id: &str) -> IndexerResult<()> {
         let writer = self.writer.read();
-        let id_term = tantivy::Term::from_field_i64(self.item_id_field, id);
+        let id_term = tantivy::Term::from_field_text(self.item_id_field, id);
         writer.delete_term(id_term);
         Ok(())
     }
@@ -1183,8 +1193,9 @@ impl Indexer {
     ) -> SearchCandidate {
         let item_id = doc
             .get_first(self.item_id_field)
-            .and_then(|value| value.as_i64())
-            .unwrap_or(0);
+            .and_then(|value| value.as_str())
+            .unwrap_or("")
+            .to_string();
         let timestamp = doc
             .get_first(self.timestamp_field)
             .and_then(|value| value.as_i64())
@@ -1259,9 +1270,13 @@ impl Indexer {
             let last_score = top_docs.last().map(|hit| hit.score);
             let top_doc_count = top_docs.len();
             let mut batch_collapsed = Vec::with_capacity(top_doc_count);
+            let mut seen_ids = HashSet::with_capacity(top_doc_count);
             for hit in top_docs {
                 let doc: tantivy::TantivyDocument = searcher.doc(hit.doc_address)?;
-                batch_collapsed.push(self.candidate_from_doc(&doc, hit.score));
+                let candidate = self.candidate_from_doc(&doc, hit.score);
+                if seen_ids.insert(candidate.id.clone()) {
+                    batch_collapsed.push(candidate);
+                }
             }
 
             collapsed = batch_collapsed;
@@ -1712,7 +1727,7 @@ mod tests {
 
     fn whole_candidate(id: i64, score: f32) -> SearchCandidate {
         SearchCandidate::new(
-            id,
+            id.to_string(),
             0,
             PhaseOneBlendedScore::from_raw(score),
             SearchMatchContext::WholeItem(WholeItemMatchContext::new(
@@ -1724,7 +1739,7 @@ mod tests {
 
     fn chunk_candidate(id: i64, score: f32, parent_len: usize) -> SearchCandidate {
         SearchCandidate::new(
-            id,
+            id.to_string(),
             0,
             PhaseOneBlendedScore::from_raw(score),
             SearchMatchContext::Chunk(ChunkMatchContext::new(
@@ -1740,8 +1755,8 @@ mod tests {
     #[test]
     fn test_phrase_query_works_with_position_fix() {
         let indexer = Indexer::new_in_memory().unwrap();
-        indexer.add_document(1, "hello world", 1000).unwrap();
-        indexer.add_document(2, "shell output log", 1000).unwrap();
+        indexer.add_document("1", "hello world", 1000).unwrap();
+        indexer.add_document("2", "shell output log", 1000).unwrap();
         indexer.commit().unwrap();
 
         let reader = indexer.reader.read();
@@ -1767,11 +1782,11 @@ mod tests {
     fn test_delete_document() {
         let indexer = Indexer::new_in_memory().unwrap();
 
-        indexer.add_document(1, "Hello World", 1000).unwrap();
+        indexer.add_document("1", "Hello World", 1000).unwrap();
         indexer.commit().unwrap();
         assert_eq!(indexer.num_docs(), 1);
 
-        indexer.delete_document(1).unwrap();
+        indexer.delete_document("1").unwrap();
         indexer.commit().unwrap();
         assert_eq!(indexer.num_docs(), 0);
     }
@@ -1780,12 +1795,12 @@ mod tests {
     fn test_upsert_semantics() {
         let indexer = Indexer::new_in_memory().unwrap();
 
-        indexer.add_document(1, "Hello World", 1000).unwrap();
+        indexer.add_document("1", "Hello World", 1000).unwrap();
         indexer.commit().unwrap();
         assert_eq!(indexer.num_docs(), 1);
 
         // Update same ID - should replace, not duplicate
-        indexer.add_document(1, "Updated content", 2000).unwrap();
+        indexer.add_document("1", "Updated content", 2000).unwrap();
         indexer.commit().unwrap();
         assert_eq!(indexer.num_docs(), 1);
     }
@@ -1796,7 +1811,7 @@ mod tests {
 
         for i in 0..10 {
             indexer
-                .add_document(i, &format!("Item {}", i), i * 1000)
+                .add_document(&i.to_string(), &format!("Item {}", i), i * 1000)
                 .unwrap();
         }
         indexer.commit().unwrap();
@@ -1811,19 +1826,19 @@ mod tests {
         // "teh" (transposition of "the") should recall a doc containing "the"
         let indexer = Indexer::new_in_memory().unwrap();
         indexer
-            .add_document(1, "the quick brown fox", 1000)
+            .add_document("1", "the quick brown fox", 1000)
             .unwrap();
-        indexer.add_document(2, "a slow red dog", 1000).unwrap();
+        indexer.add_document("2", "a slow red dog", 1000).unwrap();
         indexer.commit().unwrap();
 
         let results = indexer.search("teh", 10).unwrap();
-        let ids: Vec<i64> = results.iter().map(|c| c.id).collect();
+        let ids: Vec<String> = results.iter().map(|c| c.id.clone()).collect();
         assert!(
-            ids.contains(&1),
+            ids.contains(&"1".to_string()),
             "transposition 'teh' should recall doc with 'the', got {:?}",
             ids
         );
-        assert!(!ids.contains(&2));
+        assert!(!ids.contains(&"2".to_string()));
     }
 
     #[test]
@@ -1831,18 +1846,18 @@ mod tests {
         // "form react" where "form" is a transposition of "from"
         let indexer = Indexer::new_in_memory().unwrap();
         indexer
-            .add_document(1, "import Button from react", 1000)
+            .add_document("1", "import Button from react", 1000)
             .unwrap();
         indexer
-            .add_document(2, "html form element submit", 1000)
+            .add_document("2", "html form element submit", 1000)
             .unwrap();
         indexer.commit().unwrap();
 
         let results = indexer.search("form react", 10).unwrap();
-        let ids: Vec<i64> = results.iter().map(|c| c.id).collect();
+        let ids: Vec<String> = results.iter().map(|c| c.id.clone()).collect();
         // Doc 1 should be recalled: "from" matches via transposition, "react" matches exact
         assert!(
-            ids.contains(&1),
+            ids.contains(&"1".to_string()),
             "'form react' should recall doc with 'from react', got {:?}",
             ids
         );
@@ -1853,15 +1868,15 @@ mod tests {
         // Variant trigrams that duplicate originals shouldn't cause issues
         let indexer = Indexer::new_in_memory().unwrap();
         indexer
-            .add_document(1, "and also other things", 1000)
+            .add_document("1", "and also other things", 1000)
             .unwrap();
         indexer.commit().unwrap();
 
         // "adn" transpositions: "dan", "and" — "and" trigram already exists in doc
         let results = indexer.search("adn", 10).unwrap();
-        let ids: Vec<i64> = results.iter().map(|c| c.id).collect();
+        let ids: Vec<String> = results.iter().map(|c| c.id.clone()).collect();
         assert!(
-            ids.contains(&1),
+            ids.contains(&"1".to_string()),
             "'adn' should recall doc with 'and', got {:?}",
             ids
         );
@@ -1874,50 +1889,50 @@ mod tests {
         // "tast" (substitution typo of "test") has zero trigram overlap:
         // tast → [tas, ast], test → [tes, est]. FuzzyTermQuery catches it.
         let indexer = Indexer::new_in_memory().unwrap();
-        indexer.add_document(1, "run the test suite", 1000).unwrap();
-        indexer.add_document(2, "a slow red dog", 1000).unwrap();
+        indexer.add_document("1", "run the test suite", 1000).unwrap();
+        indexer.add_document("2", "a slow red dog", 1000).unwrap();
         indexer.commit().unwrap();
 
         let results = indexer.search("tast", 10).unwrap();
-        let ids: Vec<i64> = results.iter().map(|c| c.id).collect();
+        let ids: Vec<String> = results.iter().map(|c| c.id.clone()).collect();
         assert!(
-            ids.contains(&1),
+            ids.contains(&"1".to_string()),
             "substitution 'tast' should recall doc with 'test', got {:?}",
             ids
         );
-        assert!(!ids.contains(&2));
+        assert!(!ids.contains(&"2".to_string()));
     }
 
     #[test]
     fn test_insertion_typo_recall() {
         // "tesst" (insertion typo of "test")
         let indexer = Indexer::new_in_memory().unwrap();
-        indexer.add_document(1, "run the test suite", 1000).unwrap();
-        indexer.add_document(2, "a slow red dog", 1000).unwrap();
+        indexer.add_document("1", "run the test suite", 1000).unwrap();
+        indexer.add_document("2", "a slow red dog", 1000).unwrap();
         indexer.commit().unwrap();
 
         let results = indexer.search("tesst", 10).unwrap();
-        let ids: Vec<i64> = results.iter().map(|c| c.id).collect();
+        let ids: Vec<String> = results.iter().map(|c| c.id.clone()).collect();
         assert!(
-            ids.contains(&1),
+            ids.contains(&"1".to_string()),
             "insertion 'tesst' should recall doc with 'test', got {:?}",
             ids
         );
-        assert!(!ids.contains(&2));
+        assert!(!ids.contains(&"2".to_string()));
     }
 
     #[test]
     fn test_deletion_typo_recall() {
         // "tst" (deletion typo of "test")
         let indexer = Indexer::new_in_memory().unwrap();
-        indexer.add_document(1, "run the test suite", 1000).unwrap();
-        indexer.add_document(2, "a slow red dog", 1000).unwrap();
+        indexer.add_document("1", "run the test suite", 1000).unwrap();
+        indexer.add_document("2", "a slow red dog", 1000).unwrap();
         indexer.commit().unwrap();
 
         let results = indexer.search("tst", 10).unwrap();
-        let ids: Vec<i64> = results.iter().map(|c| c.id).collect();
+        let ids: Vec<String> = results.iter().map(|c| c.id.clone()).collect();
         assert!(
-            ids.contains(&1),
+            ids.contains(&"1".to_string()),
             "deletion 'tst' should recall doc with 'test', got {:?}",
             ids
         );
@@ -1928,21 +1943,21 @@ mod tests {
         // "quikc brown" — substitution typo in "quick"
         let indexer = Indexer::new_in_memory().unwrap();
         indexer
-            .add_document(1, "the quick brown fox jumps", 1000)
+            .add_document("1", "the quick brown fox jumps", 1000)
             .unwrap();
         indexer
-            .add_document(2, "a slow red dog sleeps", 1000)
+            .add_document("2", "a slow red dog sleeps", 1000)
             .unwrap();
         indexer.commit().unwrap();
 
         let results = indexer.search("quikc brown", 10).unwrap();
-        let ids: Vec<i64> = results.iter().map(|c| c.id).collect();
+        let ids: Vec<String> = results.iter().map(|c| c.id.clone()).collect();
         assert!(
-            ids.contains(&1),
+            ids.contains(&"1".to_string()),
             "'quikc brown' should recall doc with 'quick brown', got {:?}",
             ids
         );
-        assert!(!ids.contains(&2));
+        assert!(!ids.contains(&"2".to_string()));
     }
 
     #[test]
@@ -1950,21 +1965,21 @@ mod tests {
         // Exact match still works through the trigram pathway
         let indexer = Indexer::new_in_memory().unwrap();
         indexer
-            .add_document(1, "hello world greeting", 1000)
+            .add_document("1", "hello world greeting", 1000)
             .unwrap();
         indexer
-            .add_document(2, "goodbye universe farewell", 1000)
+            .add_document("2", "goodbye universe farewell", 1000)
             .unwrap();
         indexer.commit().unwrap();
 
         let results = indexer.search("hello", 10).unwrap();
-        let ids: Vec<i64> = results.iter().map(|c| c.id).collect();
+        let ids: Vec<String> = results.iter().map(|c| c.id.clone()).collect();
         assert!(
-            ids.contains(&1),
+            ids.contains(&"1".to_string()),
             "exact 'hello' should recall doc 1, got {:?}",
             ids
         );
-        assert!(!ids.contains(&2));
+        assert!(!ids.contains(&"2".to_string()));
     }
 
     #[test]
@@ -1973,12 +1988,12 @@ mod tests {
         let repeated_marker = "needlechunk ";
         let content =
             repeated_marker.repeat((CHUNK_PARENT_THRESHOLD_BYTES / repeated_marker.len()) + 4096);
-        indexer.add_document(1, &content, 1000).unwrap();
+        indexer.add_document("1", &content, 1000).unwrap();
         indexer.commit().unwrap();
 
         let results = indexer.search("needlechunk", 20).unwrap();
-        let ids: Vec<i64> = results.iter().map(|candidate| candidate.id).collect();
-        assert_eq!(ids, vec![1], "chunk matches should collapse to one parent");
+        let ids: Vec<String> = results.iter().map(|candidate| candidate.id.clone()).collect();
+        assert_eq!(ids, vec!["1"], "chunk matches should collapse to one parent");
         assert!(matches!(
             results[0].match_context(),
             SearchMatchContext::Chunk(_)
@@ -2017,7 +2032,7 @@ mod tests {
         let head = PhaseOneAdmissionPolicy::select_phase_two_head(&candidates).into_indices();
         assert_eq!(head.len(), PhaseOneAdmissionPolicy::REGULAR_HEAD_LIMIT);
         assert!(
-            head.iter().all(|&index| candidates[index].id != 999),
+            head.iter().all(|&index| candidates[index].id != "999"),
             "large parent should stay out of the bounded phase-two head when regular matches fill it"
         );
         assert!(head
@@ -2038,9 +2053,9 @@ mod tests {
         ];
 
         let head = PhaseOneAdmissionPolicy::select_phase_two_head(&candidates).into_indices();
-        let head_ids: Vec<i64> = head.iter().map(|&index| candidates[index].id).collect();
+        let head_ids: Vec<String> = head.iter().map(|&index| candidates[index].id.clone()).collect();
         assert_eq!(head_ids.len(), 5);
-        assert_eq!(head_ids, vec![1, 2, 100, 101, 102]);
+        assert_eq!(head_ids, vec!["1", "2", "100", "101", "102"]);
     }
 
     // ── Short-word query recall bug ───────────────────────────────
@@ -2062,44 +2077,44 @@ mod tests {
         let indexer = Indexer::new_in_memory().unwrap();
         indexer
             .add_document(
-                1,
+                "1",
                 "A a B b C c D d E e F f G g H h I i J j K k L l M m N n O o P p Q q R r S s T t U u V v W w X x Y y Z z",
                 1000,
             )
             .unwrap();
         indexer
-            .add_document(2, "unrelated content here", 1000)
+            .add_document("2", "unrelated content here", 1000)
             .unwrap();
         indexer.commit().unwrap();
 
         let results = indexer.search("A a B b", 10).unwrap();
-        let ids: Vec<i64> = results.iter().map(|c| c.id).collect();
+        let ids: Vec<String> = results.iter().map(|c| c.id.clone()).collect();
         assert!(
-            ids.contains(&1),
+            ids.contains(&"1".to_string()),
             "query 'A a B b' with all single-char words should recall the matching item, got {:?}",
             ids
         );
-        assert!(!ids.contains(&2));
+        assert!(!ids.contains(&"2".to_string()));
     }
 
     #[test]
     fn test_two_char_words_long_query_recall() {
         let indexer = Indexer::new_in_memory().unwrap();
-        indexer.add_document(1, "ab cd ef gh ij kl", 1000).unwrap();
+        indexer.add_document("1", "ab cd ef gh ij kl", 1000).unwrap();
         indexer
-            .add_document(2, "ab xx cd yy ef zz gh", 1000)
+            .add_document("2", "ab xx cd yy ef zz gh", 1000)
             .unwrap();
         indexer.commit().unwrap();
 
         let results = indexer.search("ab cd ef gh", 10).unwrap();
-        let ids: Vec<i64> = results.iter().map(|candidate| candidate.id).collect();
+        let ids: Vec<String> = results.iter().map(|candidate| candidate.id.clone()).collect();
         assert!(
-            ids.contains(&1),
+            ids.contains(&"1".to_string()),
             "query 'ab cd ef gh' should recall the exact short-word sequence, got {:?}",
             ids
         );
         assert!(
-            !ids.contains(&2),
+            !ids.contains(&"2".to_string()),
             "query 'ab cd ef gh' should not recall scattered short words, got {:?}",
             ids
         );
@@ -2110,20 +2125,20 @@ mod tests {
         let indexer = Indexer::new_in_memory().unwrap();
         indexer
             .add_document(
-                1,
+                "1",
                 "to be thinking carefully about the tradeoffs before deciding or not today",
                 1000,
             )
             .unwrap();
         indexer
-            .add_document(2, "to something be something else", 1000)
+            .add_document("2", "to something be something else", 1000)
             .unwrap();
         indexer.commit().unwrap();
 
         let results = indexer.search("to be or not", 10).unwrap();
-        let ids: Vec<i64> = results.iter().map(|candidate| candidate.id).collect();
+        let ids: Vec<String> = results.iter().map(|candidate| candidate.id.clone()).collect();
         assert!(
-            ids.contains(&1),
+            ids.contains(&"1".to_string()),
             "query 'to be or not' should recall dense short-word clusters with a gap, got {:?}",
             ids
         );
@@ -2134,7 +2149,7 @@ mod tests {
         let indexer = Indexer::new_in_memory().unwrap();
         indexer
             .add_document(
-                1,
+                "1",
                 "to something be something unrelated or something not",
                 1000,
             )
@@ -2142,7 +2157,7 @@ mod tests {
         indexer.commit().unwrap();
 
         let results = indexer.search("to be or not", 10).unwrap();
-        let ids: Vec<i64> = results.iter().map(|candidate| candidate.id).collect();
+        let ids: Vec<String> = results.iter().map(|candidate| candidate.id.clone()).collect();
         assert!(
             ids.is_empty(),
             "query 'to be or not' should not recall scattered short words without adjacent pairs, got {:?}",

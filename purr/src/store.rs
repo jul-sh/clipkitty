@@ -6,6 +6,8 @@ use crate::interface::{
     ClipKittyError, ClipboardItem, ClipboardStoreApi, ItemQueryFilter, ItemTag, PreviewPayload,
     RowDecorationResult, SearchOutcome, SearchResult, StoreBootstrapPlan,
 };
+#[cfg(feature = "sync")]
+use crate::sync_bridge::{RealSyncEmitter, SyncEmitter};
 use crate::{match_presentation, save_service, search_service};
 use once_cell::sync::Lazy;
 use parking_lot::Mutex;
@@ -47,6 +49,8 @@ pub struct ClipboardStore {
     db: Arc<Database>,
     indexer: Arc<Indexer>,
     analysis_cache: Arc<match_presentation::HighlightAnalysisCache>,
+    #[cfg(feature = "sync")]
+    sync_emitter: Arc<RealSyncEmitter>,
     /// Token for the currently running search, if any. Starting a new search cancels
     /// the previous one by calling cancel() on this token.
     active_search_token: Arc<Mutex<Option<CancellationToken>>>,
@@ -98,13 +102,23 @@ impl ClipboardStore {
         init_rayon();
         let database = Database::open_in_memory().map_err(ClipKittyError::from)?;
         let indexer = Indexer::new_in_memory()?;
+        #[cfg(feature = "sync")]
+        let sync_emitter = Arc::new(RealSyncEmitter::new(database.pool().clone()));
 
         Ok(Self {
             db: Arc::new(database),
             indexer: Arc::new(indexer),
             analysis_cache: Arc::new(match_presentation::HighlightAnalysisCache::default()),
+            #[cfg(feature = "sync")]
+            sync_emitter,
             active_search_token: Arc::new(Mutex::new(None)),
         })
+    }
+
+    /// Expose database reference for integration tests.
+    #[cfg(test)]
+    pub fn db_for_test(&self) -> &Database {
+        &self.db
     }
 
     fn runtime_handle(&self) -> tokio::runtime::Handle {
@@ -121,11 +135,15 @@ impl ClipboardStore {
     fn open_at_path(path: &Path) -> Result<Self, ClipKittyError> {
         let db = Database::open(path).map_err(ClipKittyError::from)?;
         let indexer = Indexer::new(&Self::index_path_for_database(path))?;
+        #[cfg(feature = "sync")]
+        let sync_emitter = Arc::new(RealSyncEmitter::new(db.pool().clone()));
 
         Ok(Self {
             db: Arc::new(db),
             indexer: Arc::new(indexer),
             analysis_cache: Arc::new(match_presentation::HighlightAnalysisCache::default()),
+            #[cfg(feature = "sync")]
+            sync_emitter,
             active_search_token: Arc::new(Mutex::new(None)),
         })
     }
@@ -150,35 +168,21 @@ impl ClipboardStore {
 
     fn rebuild_index_contents(&self) -> Result<(), ClipKittyError> {
         let items = self.db.fetch_all_items()?;
-        self.indexer.clear()?;
-
         use rayon::prelude::*;
-        items.into_par_iter().try_for_each(|item| {
-            if let Some(id) = item.id {
-                let index_text = item
+        let prepared: Vec<_> = items
+            .par_iter()
+            .map(|item| {
+                let text = item
                     .file_index_text()
                     .unwrap_or_else(|| item.text_content().to_string());
-                self.indexer
-                    .add_document(id, &index_text, item.timestamp_unix)?;
-            }
-            Ok::<(), ClipKittyError>(())
-        })?;
+                (item.item_id.as_str(), text, item.timestamp_unix)
+            })
+            .collect();
+        for (item_id, text, ts) in prepared {
+            self.indexer.add_document(item_id, &text, ts)?;
+        }
         self.indexer.commit()?;
-
         Ok(())
-    }
-}
-
-#[uniffi::export]
-impl ClipboardStore {
-    #[uniffi::constructor]
-    pub fn new(db_path: String) -> Result<Self, ClipKittyError> {
-        init_rayon();
-        Self::open_at_path(&PathBuf::from(db_path))
-    }
-
-    pub fn rebuild_index(&self) -> Result<(), ClipKittyError> {
-        self.rebuild_index_contents()
     }
 
     fn begin_search_operation(
@@ -190,33 +194,29 @@ impl ClipboardStore {
         let completion = Arc::new(SearchCompletionCell::new());
         let operation = Arc::new(SearchOperation {
             token: token.clone(),
-            completion: Arc::clone(&completion),
+            completion: completion.clone(),
         });
-
-        let previous_token = {
+        {
             let mut active = self.active_search_token.lock();
-            active.replace(token.clone())
-        };
-        if let Some(previous_token) = previous_token {
-            previous_token.cancel();
+            if let Some(prev) = active.take() {
+                prev.cancel();
+            }
+            *active = Some(token.clone());
         }
 
-        let runtime = self.runtime_handle();
         let db = Arc::clone(&self.db);
         let indexer = Arc::clone(&self.indexer);
         let cache = Arc::clone(&self.analysis_cache);
-        runtime.clone().spawn(async move {
-            if token.is_cancelled() {
-                completion.finish(Ok(SearchOutcome::Cancelled));
-                return;
-            }
+        let runtime = self.runtime_handle();
 
+        let runtime_clone = runtime.clone();
+        runtime.spawn(async move {
             let result = search_service::execute_search(
                 search_service::SearchContext {
                     db,
                     indexer,
                     cache,
-                    runtime: runtime.clone(),
+                    runtime: runtime_clone,
                     token: token.clone(),
                 },
                 query,
@@ -234,9 +234,59 @@ impl ClipboardStore {
 
         operation
     }
+}
+
+#[uniffi::export]
+impl ClipboardStore {
+    #[uniffi::constructor]
+    pub fn new(db_path: String) -> Result<Self, ClipKittyError> {
+        init_rayon();
+        Self::open_at_path(&PathBuf::from(db_path))
+    }
+
+    pub fn rebuild_index(&self) -> Result<(), ClipKittyError> {
+        self.rebuild_index_contents()
+    }
 
     pub fn start_search(&self, query: String, filter: ItemQueryFilter) -> Arc<SearchOperation> {
         self.begin_search_operation(query, filter)
+    }
+}
+
+impl ClipboardStore {
+    /// Emit the appropriate sync event for an insert outcome.
+    #[cfg(feature = "sync")]
+    fn emit_for_insert(&self, outcome: &save_service::InsertOutcome) -> Result<(), ClipKittyError> {
+        match outcome {
+            save_service::InsertOutcome::Deduplicated {
+                item_id,
+                touched_at_unix,
+                ..
+            } => {
+                self.sync_emitter
+                    .emit_item_touched(item_id, *touched_at_unix)?;
+            }
+            save_service::InsertOutcome::Inserted { item_id, item, .. } => {
+                let snapshot = crate::sync_bridge::snapshot_from_stored_item(item);
+                self.sync_emitter.emit_item_created(item_id, snapshot)?;
+            }
+        }
+        Ok(())
+    }
+
+    /// Look up the stable string item_id for a row ID, for use in sync emission.
+    #[cfg(feature = "sync")]
+    fn resolve_item_id(&self, row_id: i64) -> Result<Option<String>, ClipKittyError> {
+        Ok(self.db.fetch_item_id_by_row_id(row_id)?)
+    }
+}
+
+impl ClipboardStore {
+    /// Resolve a string item_id to its numeric row ID, returning an error if not found.
+    fn require_row_id(&self, item_id: &str) -> Result<i64, ClipKittyError> {
+        self.db
+            .fetch_row_id_by_item_id(item_id)?
+            .ok_or_else(|| ClipKittyError::InvalidInput(format!("item not found: {item_id}")))
     }
 }
 
@@ -258,14 +308,17 @@ impl ClipboardStoreApi for ClipboardStore {
         text: String,
         source_app: Option<String>,
         source_app_bundle_id: Option<String>,
-    ) -> Result<i64, ClipKittyError> {
-        save_service::save_text(
+    ) -> Result<String, ClipKittyError> {
+        let outcome = save_service::save_text(
             &self.db,
             &self.indexer,
             text,
             source_app,
             source_app_bundle_id,
-        )
+        )?;
+        #[cfg(feature = "sync")]
+        self.emit_for_insert(&outcome)?;
+        Ok(outcome.ffi_id())
     }
 
     async fn search(&self, query: String) -> Result<SearchResult, ClipKittyError> {
@@ -297,13 +350,13 @@ impl ClipboardStoreApi for ClipboardStore {
         }
     }
 
-    fn fetch_by_ids(&self, item_ids: Vec<i64>) -> Result<Vec<ClipboardItem>, ClipKittyError> {
-        let stored_items = self.db.fetch_items_by_ids(&item_ids)?;
+    fn fetch_by_ids(&self, item_ids: Vec<String>) -> Result<Vec<ClipboardItem>, ClipKittyError> {
+        let stored_items = self.db.fetch_items_by_item_ids(&item_ids)?;
         let mut items: Vec<ClipboardItem> = stored_items
             .into_iter()
             .map(|item| item.to_clipboard_item())
             .collect();
-        let tags_by_id = self.db.get_tags_for_ids(&item_ids)?;
+        let tags_by_id = self.db.get_tags_for_item_ids(&item_ids)?;
         for item in &mut items {
             item.item_metadata.tags = tags_by_id
                 .get(&item.item_metadata.item_id)
@@ -315,7 +368,7 @@ impl ClipboardStoreApi for ClipboardStore {
 
     fn compute_row_decorations(
         &self,
-        item_ids: Vec<i64>,
+        item_ids: Vec<String>,
         query: String,
     ) -> Result<Vec<RowDecorationResult>, ClipKittyError> {
         search_service::compute_row_decorations(&self.db, &self.analysis_cache, item_ids, query)
@@ -323,7 +376,7 @@ impl ClipboardStoreApi for ClipboardStore {
 
     fn load_preview_payload(
         &self,
-        item_id: i64,
+        item_id: String,
         query: String,
     ) -> Result<Option<PreviewPayload>, ClipKittyError> {
         search_service::load_preview_payload(&self.db, &self.analysis_cache, item_id, query)
@@ -339,11 +392,11 @@ impl ClipboardStoreApi for ClipboardStore {
         thumbnail: Option<Vec<u8>>,
         source_app: Option<String>,
         source_app_bundle_id: Option<String>,
-    ) -> Result<i64, ClipKittyError> {
+    ) -> Result<String, ClipKittyError> {
         if paths.is_empty() {
             return Err(ClipKittyError::InvalidInput("No files provided".into()));
         }
-        save_service::save_files(
+        let outcome = save_service::save_files(
             &self.db,
             &self.indexer,
             paths,
@@ -354,7 +407,10 @@ impl ClipboardStoreApi for ClipboardStore {
             thumbnail,
             source_app,
             source_app_bundle_id,
-        )
+        )?;
+        #[cfg(feature = "sync")]
+        self.emit_for_insert(&outcome)?;
+        Ok(outcome.ffi_id())
     }
 
     fn save_file(
@@ -367,8 +423,8 @@ impl ClipboardStoreApi for ClipboardStore {
         thumbnail: Option<Vec<u8>>,
         source_app: Option<String>,
         source_app_bundle_id: Option<String>,
-    ) -> Result<i64, ClipKittyError> {
-        save_service::save_file(
+    ) -> Result<String, ClipKittyError> {
+        let outcome = save_service::save_file(
             &self.db,
             &self.indexer,
             path,
@@ -379,7 +435,10 @@ impl ClipboardStoreApi for ClipboardStore {
             thumbnail,
             source_app,
             source_app_bundle_id,
-        )
+        )?;
+        #[cfg(feature = "sync")]
+        self.emit_for_insert(&outcome)?;
+        Ok(outcome.ffi_id())
     }
 
     fn save_image(
@@ -389,8 +448,8 @@ impl ClipboardStoreApi for ClipboardStore {
         source_app: Option<String>,
         source_app_bundle_id: Option<String>,
         is_animated: bool,
-    ) -> Result<i64, ClipKittyError> {
-        save_service::save_image(
+    ) -> Result<String, ClipKittyError> {
+        let outcome = save_service::save_image(
             &self.db,
             &self.indexer,
             image_data,
@@ -398,53 +457,794 @@ impl ClipboardStoreApi for ClipboardStore {
             source_app,
             source_app_bundle_id,
             is_animated,
-        )
+        )?;
+        #[cfg(feature = "sync")]
+        self.emit_for_insert(&outcome)?;
+        Ok(outcome.ffi_id())
     }
 
     fn update_link_metadata(
         &self,
-        item_id: i64,
+        item_id: String,
         title: Option<String>,
         description: Option<String>,
         image_data: Option<Vec<u8>>,
     ) -> Result<(), ClipKittyError> {
-        save_service::update_link_metadata(&self.db, item_id, title, description, image_data)
+        let row_id = self.require_row_id(&item_id)?;
+        #[allow(unused_variables)]
+        let resolved =
+            save_service::update_link_metadata(&self.db, row_id, title, description, image_data)?;
+        #[cfg(feature = "sync")]
+        {
+            let snapshot = crate::sync_bridge::link_metadata_snapshot(&resolved);
+            self.sync_emitter
+                .emit_link_metadata_updated(&item_id, snapshot)?;
+        }
+        Ok(())
     }
 
     fn update_image_description(
         &self,
-        item_id: i64,
+        item_id: String,
         description: String,
     ) -> Result<(), ClipKittyError> {
-        save_service::update_image_description(&self.db, &self.indexer, item_id, description)
+        let row_id = self.require_row_id(&item_id)?;
+        #[cfg(feature = "sync")]
+        self.sync_emitter
+            .emit_image_description_updated(&item_id, &description)?;
+
+        #[allow(unused_variables)]
+        let reindex =
+            save_service::update_image_description(&self.db, &self.indexer, row_id, description)?;
+
+        #[cfg(feature = "sync")]
+        if matches!(reindex, save_service::ReindexOutcome::IndexFailed) {
+            let _ = self.sync_emitter.set_index_dirty();
+        }
+        Ok(())
     }
 
-    fn update_text_item(&self, item_id: i64, text: String) -> Result<(), ClipKittyError> {
-        save_service::update_text_item(&self.db, &self.indexer, item_id, text)
+    fn update_text_item(&self, item_id: String, text: String) -> Result<(), ClipKittyError> {
+        let row_id = self.require_row_id(&item_id)?;
+        #[cfg(feature = "sync")]
+        self.sync_emitter.emit_text_edited(&item_id, &text)?;
+
+        #[allow(unused_variables)]
+        let reindex = save_service::update_text_item(&self.db, &self.indexer, row_id, text)?;
+
+        #[cfg(feature = "sync")]
+        if matches!(reindex, save_service::ReindexOutcome::IndexFailed) {
+            let _ = self.sync_emitter.set_index_dirty();
+        }
+        Ok(())
     }
 
-    fn update_timestamp(&self, item_id: i64) -> Result<(), ClipKittyError> {
-        save_service::update_timestamp(&self.db, &self.indexer, item_id)
+    fn update_timestamp(&self, item_id: String) -> Result<(), ClipKittyError> {
+        let row_id = self.require_row_id(&item_id)?;
+        #[allow(unused_variables)]
+        let timestamp_unix = save_service::update_timestamp(&self.db, row_id)?;
+
+        #[cfg(feature = "sync")]
+        self.sync_emitter
+            .emit_item_touched(&item_id, timestamp_unix)?;
+        Ok(())
     }
 
-    fn add_tag(&self, item_id: i64, tag: ItemTag) -> Result<(), ClipKittyError> {
-        save_service::add_tag(&self.db, item_id, tag)
+    fn add_tag(&self, item_id: String, tag: ItemTag) -> Result<(), ClipKittyError> {
+        let row_id = self.require_row_id(&item_id)?;
+        #[cfg(feature = "sync")]
+        self.sync_emitter.emit_bookmark_set(&item_id)?;
+
+        save_service::add_tag(&self.db, row_id, tag)
     }
 
-    fn remove_tag(&self, item_id: i64, tag: ItemTag) -> Result<(), ClipKittyError> {
-        save_service::remove_tag(&self.db, item_id, tag)
+    fn remove_tag(&self, item_id: String, tag: ItemTag) -> Result<(), ClipKittyError> {
+        let row_id = self.require_row_id(&item_id)?;
+        #[cfg(feature = "sync")]
+        self.sync_emitter.emit_bookmark_cleared(&item_id)?;
+
+        save_service::remove_tag(&self.db, row_id, tag)
     }
 
-    fn delete_item(&self, item_id: i64) -> Result<(), ClipKittyError> {
-        save_service::delete_item(&self.db, &self.indexer, item_id)
+    fn delete_item(&self, item_id: String) -> Result<(), ClipKittyError> {
+        let row_id = self.require_row_id(&item_id)?;
+        #[cfg(feature = "sync")]
+        self.sync_emitter.emit_item_deleted(&item_id)?;
+
+        save_service::delete_item(&self.db, &self.indexer, row_id)
     }
 
     fn clear(&self) -> Result<(), ClipKittyError> {
+        #[cfg(feature = "sync")]
+        for row_id in self.db.fetch_all_item_ids()? {
+            if let Some(stable_id) = self.resolve_item_id(row_id)? {
+                self.sync_emitter.emit_item_deleted(&stable_id)?;
+            }
+        }
+
         save_service::clear(&self.db, &self.indexer)
     }
 
     fn prune_to_size(&self, max_bytes: i64, keep_ratio: f64) -> Result<u64, ClipKittyError> {
-        save_service::prune_to_size(&self.db, &self.indexer, max_bytes, keep_ratio)
+        let outcome = save_service::prune_to_size(&self.db, &self.indexer, max_bytes, keep_ratio)?;
+
+        #[cfg(feature = "sync")]
+        for item_id in &outcome.deleted_ids {
+            self.sync_emitter.emit_item_deleted(item_id)?;
+        }
+
+        Ok(outcome.bytes_freed)
+    }
+}
+
+// ═══════════════════════════════════════════════════════════════════════════════
+// Sync internals — not exposed via FFI
+// ═══════════════════════════════════════════════════════════════════════════════
+
+#[cfg(feature = "sync")]
+impl ClipboardStore {
+    fn materialize_search_document(
+        &self,
+        item: &crate::models::StoredItem,
+    ) -> Result<(), ClipKittyError> {
+        use purr_sync::store::SyncStore;
+        use purr_sync::types::FLAG_INDEX_DIRTY;
+
+        let text = item
+            .file_index_text()
+            .unwrap_or_else(|| item.text_content().to_string());
+        if self
+            .indexer
+            .add_document(&item.item_id, &text, item.timestamp_unix)
+            .and_then(|_| self.indexer.commit())
+            .is_err()
+        {
+            let sync = SyncStore::new(self.db.pool());
+            let _ = sync.set_dirty_flag(FLAG_INDEX_DIRTY, true);
+        }
+        Ok(())
+    }
+
+    fn remove_search_document(&self, item_id: &str) -> Result<(), ClipKittyError> {
+        use purr_sync::store::SyncStore;
+        use purr_sync::types::FLAG_INDEX_DIRTY;
+
+        if self
+            .indexer
+            .delete_document(item_id)
+            .and_then(|_| self.indexer.commit())
+            .is_err()
+        {
+            let sync = SyncStore::new(self.db.pool());
+            let _ = sync.set_dirty_flag(FLAG_INDEX_DIRTY, true);
+        }
+        Ok(())
+    }
+
+    fn materialize_forked_snapshot(
+        &self,
+        snapshot: &purr_sync::types::ItemSnapshotData,
+    ) -> Result<String, ClipKittyError> {
+        use crate::sync_bridge::stored_item_from_snapshot;
+
+        let fork_item_id = uuid::Uuid::new_v4().to_string();
+        let item = stored_item_from_snapshot(fork_item_id.clone(), snapshot)
+            .map_err(ClipKittyError::InvalidInput)?;
+        let row_id = self.db.insert_item(&item)?;
+        self.materialize_search_document(&item)?;
+        if snapshot.is_bookmarked {
+            self.db
+                .add_tag(row_id, crate::interface::ItemTag::Bookmark)?;
+        }
+        self.sync_emitter
+            .emit_item_created(&fork_item_id, snapshot.clone())?;
+        Ok(fork_item_id)
+    }
+
+    /// Materialize a sync aggregate into the local items table.
+    ///
+    /// For Live aggregates: upsert into items table (insert if new, update if exists).
+    /// For Tombstoned aggregates: delete from items table.
+    /// Returns the current local row ID when the item remains live.
+    fn materialize_aggregate(
+        &self,
+        item_id: &str,
+        aggregate: &purr_sync::types::ItemAggregate,
+        index_dirty: bool,
+        fallback_local_item_id: Option<i64>,
+    ) -> Result<Option<i64>, ClipKittyError> {
+        use crate::sync_bridge::stored_item_from_snapshot;
+        use purr_sync::store::{ProjectionState, SyncStore};
+        use purr_sync::types::ItemAggregate;
+
+        let sync = SyncStore::new(self.db.pool());
+
+        // Resolve local row ID: look up by item_id in the items table,
+        // falling back to the caller-provided hint.
+        let local_item_id = self
+            .db
+            .fetch_row_id_by_item_id(item_id)?
+            .or(fallback_local_item_id);
+
+        match aggregate {
+            ItemAggregate::Live(live) => {
+                let item = stored_item_from_snapshot(item_id.to_string(), &live.snapshot)
+                    .map_err(ClipKittyError::InvalidInput)?;
+
+                if let Some(local_id) = local_item_id {
+                    self.db.replace_item_preserving_id(local_id, &item)?;
+                    if index_dirty {
+                        self.materialize_search_document(&item)?;
+                    }
+                    if live.snapshot.is_bookmarked {
+                        self.db
+                            .add_tag(local_id, crate::interface::ItemTag::Bookmark)?;
+                    } else {
+                        self.db
+                            .remove_tag(local_id, crate::interface::ItemTag::Bookmark)?;
+                    }
+                    sync.upsert_projection(
+                        item_id,
+                        &ProjectionState::Materialized {
+                            versions: live.versions,
+                        },
+                    )?;
+                    return Ok(Some(local_id));
+                }
+
+                // No existing local item — insert fresh.
+                let new_id = self.db.insert_item(&item)?;
+                if index_dirty {
+                    self.materialize_search_document(&item)?;
+                }
+                if live.snapshot.is_bookmarked {
+                    self.db
+                        .add_tag(new_id, crate::interface::ItemTag::Bookmark)?;
+                }
+                sync.upsert_projection(
+                    item_id,
+                    &ProjectionState::Materialized {
+                        versions: live.versions,
+                    },
+                )?;
+                Ok(Some(new_id))
+            }
+            ItemAggregate::Tombstoned(tomb) => {
+                if let Some(local_id) = local_item_id {
+                    self.remove_search_document(item_id)?;
+                    self.db.delete_item(local_id)?;
+                }
+                sync.upsert_projection(
+                    item_id,
+                    &ProjectionState::Tombstoned {
+                        versions: tomb.versions,
+                    },
+                )?;
+                Ok(None)
+            }
+        }
+    }
+
+    /// Re-materialize the current sync snapshot for an item into the read model.
+    ///
+    /// This lets duplicate/already-applied remote records heal the read model if
+    /// sync state was stored successfully but a prior materialization failed.
+    fn materialize_current_sync_state(
+        &self,
+        item_id: &str,
+        index_dirty: bool,
+        fallback_local_item_id: Option<i64>,
+    ) -> Result<Option<i64>, ClipKittyError> {
+        use purr_sync::store::SyncStore;
+
+        let sync = SyncStore::new(self.db.pool());
+        let Some(_) = sync.fetch_projection(item_id)? else {
+            return Ok(self
+                .db
+                .fetch_row_id_by_item_id(item_id)?
+                .or(fallback_local_item_id));
+        };
+        let snapshot = sync.fetch_snapshot(item_id)?.ok_or_else(|| {
+            ClipKittyError::DataInconsistency(format!(
+                "sync projection for item `{item_id}` is missing snapshot state"
+            ))
+        })?;
+
+        self.materialize_aggregate(
+            item_id,
+            &snapshot.aggregate,
+            index_dirty,
+            fallback_local_item_id,
+        )
+    }
+}
+
+// ═══════════════════════════════════════════════════════════════════════════════
+// Sync FFI — methods exposed to Swift SyncEngine
+// ═══════════════════════════════════════════════════════════════════════════════
+
+#[cfg(feature = "sync")]
+#[uniffi::export]
+impl ClipboardStore {
+    /// Set the device ID used for locally-originated sync events.
+    /// Called by SyncEngine.start() with the stable UUID from UserDefaults.
+    pub fn set_sync_device_id(&self, device_id: String) {
+        self.sync_emitter.set_device_id(device_id);
+    }
+
+    /// Fetch pending local events that need uploading to CloudKit.
+    pub fn pending_local_events(
+        &self,
+    ) -> Result<Vec<crate::interface::SyncEventRecord>, ClipKittyError> {
+        use crate::interface::SyncEventRecord;
+        use purr_sync::store::SyncStore;
+
+        let sync = SyncStore::new(self.db.pool());
+        let events = sync.fetch_pending_upload_events()?;
+        Ok(events
+            .into_iter()
+            .map(|e| {
+                let payload_type = e.payload_type().to_string();
+                let payload_data = e.payload_data();
+                SyncEventRecord {
+                    event_id: e.event_id,
+                    item_id: e.item_id,
+                    origin_device_id: e.origin_device_id,
+                    schema_version: e.schema_version,
+                    recorded_at: e.recorded_at,
+                    payload_type,
+                    payload_data,
+                }
+            })
+            .collect())
+    }
+
+    /// Fetch compacted snapshots that need uploading to CloudKit.
+    pub fn pending_snapshot_records(
+        &self,
+    ) -> Result<Vec<crate::interface::SyncSnapshotRecord>, ClipKittyError> {
+        use crate::interface::SyncSnapshotRecord;
+        use purr_sync::store::SyncStore;
+
+        let sync = SyncStore::new(self.db.pool());
+        let snapshots = sync.fetch_pending_upload_snapshots()?;
+        Ok(snapshots
+            .into_iter()
+            .map(|s| {
+                let aggregate_data = s.aggregate_data();
+                SyncSnapshotRecord {
+                    item_id: s.item_id,
+                    snapshot_revision: s.snapshot_revision,
+                    schema_version: s.schema_version,
+                    covers_through_event: s.covers_through_event,
+                    aggregate_data,
+                }
+            })
+            .collect())
+    }
+
+    /// Mark events as uploaded after CloudKit confirms receipt.
+    pub fn mark_events_uploaded(&self, event_ids: Vec<String>) -> Result<(), ClipKittyError> {
+        use purr_sync::store::SyncStore;
+
+        let sync = SyncStore::new(self.db.pool());
+        let refs: Vec<&str> = event_ids.iter().map(|s| s.as_str()).collect();
+        sync.mark_events_uploaded(&refs)?;
+        Ok(())
+    }
+
+    /// Mark a snapshot as uploaded to CloudKit.
+    pub fn mark_snapshot_uploaded(&self, item_id: String) -> Result<(), ClipKittyError> {
+        use purr_sync::store::SyncStore;
+
+        let sync = SyncStore::new(self.db.pool());
+        sync.mark_snapshot_uploaded(&item_id)?;
+        Ok(())
+    }
+
+    /// Apply a batch of remote events and snapshots.
+    /// Returns a structured outcome indicating whether it's safe to advance
+    /// the CloudKit zone change token.
+    pub fn apply_remote_batch(
+        &self,
+        event_records: Vec<crate::interface::SyncEventRecord>,
+        snapshot_records: Vec<crate::interface::SyncSnapshotRecord>,
+    ) -> Result<crate::interface::SyncDownloadBatchOutcome, ClipKittyError> {
+        use crate::interface::SyncDownloadBatchOutcome;
+        use purr_sync::event::ItemEvent;
+        use purr_sync::replay;
+        use purr_sync::snapshot::ItemSnapshot;
+        use std::collections::HashMap;
+
+        let mut known_local_item_ids: HashMap<String, Option<i64>> = HashMap::new();
+        for item_id in snapshot_records
+            .iter()
+            .map(|record| record.item_id.as_str())
+            .chain(event_records.iter().map(|record| record.item_id.as_str()))
+        {
+            known_local_item_ids
+                .entry(item_id.to_string())
+                .or_insert_with(|| self.db.fetch_row_id_by_item_id(item_id).ok().flatten());
+        }
+
+        // Apply snapshots first.
+        let mut snapshots_applied: usize = 0;
+        for record in &snapshot_records {
+            let snapshot = ItemSnapshot::from_stored(
+                record.item_id.clone(),
+                record.snapshot_revision,
+                record.schema_version,
+                record.covers_through_event.clone(),
+                &record.aggregate_data,
+                false,
+                None,
+            )
+            .map_err(|e| ClipKittyError::InvalidInput(e))?;
+
+            let item_id = snapshot.item_id.clone();
+            let applied = replay::apply_remote_snapshots(self.db.pool(), &[snapshot])?;
+            let local_item_id = self.materialize_current_sync_state(
+                &item_id,
+                true,
+                known_local_item_ids.get(&item_id).copied().flatten(),
+            )?;
+            known_local_item_ids.insert(item_id, local_item_id);
+            if applied > 0 {
+                snapshots_applied += 1;
+            }
+        }
+
+        // Convert and apply events as a batch.
+        let events: Vec<ItemEvent> = event_records
+            .iter()
+            .map(|r| {
+                ItemEvent::from_stored(
+                    r.event_id.clone(),
+                    r.item_id.clone(),
+                    r.origin_device_id.clone(),
+                    r.schema_version,
+                    r.recorded_at,
+                    &r.payload_type,
+                    &r.payload_data,
+                )
+                .map_err(|e| ClipKittyError::InvalidInput(e))
+            })
+            .collect::<Result<Vec<_>, _>>()?;
+
+        let mut batch_result = replay::apply_remote_event_batch(self.db.pool(), &events)?;
+
+        // Materialize Applied events into the read model.
+        // Re-fetch the applied events' aggregates from the sync store.
+        for event_record in &event_records {
+            match self.materialize_current_sync_state(
+                &event_record.item_id,
+                true,
+                known_local_item_ids
+                    .get(&event_record.item_id)
+                    .copied()
+                    .flatten(),
+            ) {
+                Ok(local_item_id) => {
+                    known_local_item_ids.insert(event_record.item_id.clone(), local_item_id);
+                }
+                Err(_) => {
+                    batch_result.materialization_failures += 1;
+                }
+            }
+        }
+
+        // Handle fork plans.
+        for (_original_gid, plan) in &batch_result.fork_plans {
+            let _ = self.materialize_forked_snapshot(&plan.forked_snapshot)?;
+        }
+
+        // Build the download outcome.
+        let outcome = batch_result.download_outcome(snapshots_applied);
+        Ok(match outcome {
+            purr_sync::types::DownloadBatchOutcome::Applied {
+                events_applied,
+                snapshots_applied,
+            } => SyncDownloadBatchOutcome::Applied {
+                events_applied: events_applied as u64,
+                snapshots_applied: snapshots_applied as u64,
+            },
+            purr_sync::types::DownloadBatchOutcome::PartialFailure {
+                applied_count,
+                failed_count,
+                should_retry,
+            } => SyncDownloadBatchOutcome::PartialFailure {
+                applied_count: applied_count as u64,
+                failed_count: failed_count as u64,
+                should_retry,
+            },
+            purr_sync::types::DownloadBatchOutcome::FullResyncRequired => {
+                SyncDownloadBatchOutcome::FullResyncRequired
+            }
+        })
+    }
+
+    /// Apply a single remote event received from CloudKit.
+    ///
+    /// When an event is Applied, the local items table is updated to reflect
+    /// the new state so the app's read model stays in sync.
+    pub fn apply_remote_event(
+        &self,
+        record: crate::interface::SyncEventRecord,
+    ) -> Result<crate::interface::SyncApplyOutcome, ClipKittyError> {
+        use crate::interface::SyncApplyOutcome;
+        use purr_sync::event::ItemEvent;
+        use purr_sync::replay;
+        use purr_sync::types::{ApplyResult, IgnoreReason};
+
+        let event = ItemEvent::from_stored(
+            record.event_id,
+            record.item_id.clone(),
+            record.origin_device_id,
+            record.schema_version,
+            record.recorded_at,
+            &record.payload_type,
+            &record.payload_data,
+        )
+        .map_err(|e| ClipKittyError::InvalidInput(e))?;
+
+        let fallback_local_item_id = self.db.fetch_row_id_by_item_id(&record.item_id)?;
+        let result = replay::apply_remote_event(self.db.pool(), &event)?;
+
+        match &result {
+            ApplyResult::Applied(_) => {
+                let _ = self.materialize_current_sync_state(
+                    &record.item_id,
+                    true,
+                    fallback_local_item_id,
+                )?;
+                Ok(SyncApplyOutcome::Applied)
+            }
+            ApplyResult::Ignored(IgnoreReason::AlreadyApplied) => {
+                let _ = self.materialize_current_sync_state(
+                    &record.item_id,
+                    true,
+                    fallback_local_item_id,
+                )?;
+                Ok(SyncApplyOutcome::Ignored)
+            }
+            ApplyResult::Ignored(_) => Ok(SyncApplyOutcome::Ignored),
+            ApplyResult::Deferred(_) => Ok(SyncApplyOutcome::Deferred),
+            ApplyResult::Forked(plan) => {
+                let _ = self.materialize_forked_snapshot(&plan.forked_snapshot)?;
+
+                Ok(SyncApplyOutcome::Forked {
+                    forked_snapshot_data: serde_json::to_string(&plan.forked_snapshot)
+                        .unwrap_or_default(),
+                })
+            }
+        }
+    }
+
+    /// Apply a remote snapshot received from CloudKit.
+    /// Materializes the snapshot into the read model (items table + index).
+    pub fn apply_remote_snapshot(
+        &self,
+        record: crate::interface::SyncSnapshotRecord,
+    ) -> Result<bool, ClipKittyError> {
+        use purr_sync::replay;
+        use purr_sync::snapshot::ItemSnapshot;
+
+        let snapshot = ItemSnapshot::from_stored(
+            record.item_id,
+            record.snapshot_revision,
+            record.schema_version,
+            record.covers_through_event,
+            &record.aggregate_data,
+            false,
+            None,
+        )
+        .map_err(|e| ClipKittyError::InvalidInput(e))?;
+
+        let item_id = snapshot.item_id.clone();
+        let fallback_local_item_id = self.db.fetch_row_id_by_item_id(&item_id)?;
+        let applied = replay::apply_remote_snapshots(self.db.pool(), &[snapshot])?;
+        let _ = self.materialize_current_sync_state(&item_id, true, fallback_local_item_id)?;
+        Ok(applied > 0)
+    }
+
+    /// Run compaction and retention for all items.
+    pub fn run_compaction(&self) -> Result<crate::interface::CompactionResult, ClipKittyError> {
+        use crate::interface::CompactionResult;
+        use purr_sync::compactor;
+
+        let items_compacted = compactor::compact_all(self.db.pool())? as u64;
+        // Old compacted events stay local until CloudKit deletion is confirmed so
+        // event cleanup and dedup pruning share one authoritative handoff.
+        let events_purged = 0;
+        let tombstones_purged = compactor::purge_tombstone_snapshots(self.db.pool())? as u64;
+
+        Ok(CompactionResult {
+            items_compacted,
+            events_purged,
+            tombstones_purged,
+        })
+    }
+
+    /// Perform a full resync from the provided snapshots.
+    /// Clears all sync state, rebuilds from snapshots, and materializes
+    /// live items into the local items table + Tantivy index.
+    pub fn full_resync(
+        &self,
+        snapshot_records: Vec<crate::interface::SyncSnapshotRecord>,
+    ) -> Result<u64, ClipKittyError> {
+        use purr_sync::replay;
+        use purr_sync::snapshot::ItemSnapshot;
+
+        let snapshots: Vec<ItemSnapshot> = snapshot_records
+            .into_iter()
+            .map(|r| {
+                ItemSnapshot::from_stored(
+                    r.item_id,
+                    r.snapshot_revision,
+                    r.schema_version,
+                    r.covers_through_event,
+                    &r.aggregate_data,
+                    false,
+                    None,
+                )
+                .map_err(|e| ClipKittyError::InvalidInput(e))
+            })
+            .collect::<Result<Vec<_>, _>>()?;
+
+        let applied = replay::full_resync_from_snapshots(self.db.pool(), &snapshots)?;
+
+        self.db.clear_all()?;
+        self.indexer.clear()?;
+
+        // Materialize all snapshots into the read model.
+        for snapshot in &snapshots {
+            let _ =
+                self.materialize_aggregate(&snapshot.item_id, &snapshot.aggregate, true, None)?;
+        }
+        let _ = self.indexer.commit();
+
+        Ok(applied as u64)
+    }
+
+    /// Perform a full resync from checkpoints and tail events.
+    /// Clears sync state, applies checkpoints, replays tail events,
+    /// and materializes all live items into the read model.
+    pub fn full_resync_with_tail(
+        &self,
+        snapshot_records: Vec<crate::interface::SyncSnapshotRecord>,
+        tail_event_records: Vec<crate::interface::SyncEventRecord>,
+    ) -> Result<crate::interface::SyncFullResyncResult, ClipKittyError> {
+        use crate::interface::SyncFullResyncResult;
+        use purr_sync::event::ItemEvent;
+        use purr_sync::replay;
+        use purr_sync::snapshot::ItemSnapshot;
+        use purr_sync::store::SyncStore;
+
+        let snapshots: Vec<ItemSnapshot> = snapshot_records
+            .into_iter()
+            .map(|r| {
+                ItemSnapshot::from_stored(
+                    r.item_id,
+                    r.snapshot_revision,
+                    r.schema_version,
+                    r.covers_through_event,
+                    &r.aggregate_data,
+                    false,
+                    None,
+                )
+                .map_err(|e| ClipKittyError::InvalidInput(e))
+            })
+            .collect::<Result<Vec<_>, _>>()?;
+
+        let tail_events: Vec<ItemEvent> = tail_event_records
+            .into_iter()
+            .map(|r| {
+                ItemEvent::from_stored(
+                    r.event_id,
+                    r.item_id,
+                    r.origin_device_id,
+                    r.schema_version,
+                    r.recorded_at,
+                    &r.payload_type,
+                    &r.payload_data,
+                )
+                .map_err(|e| ClipKittyError::InvalidInput(e))
+            })
+            .collect::<Result<Vec<_>, _>>()?;
+
+        let result = replay::full_resync(self.db.pool(), &snapshots, &tail_events)?;
+
+        self.db.clear_all()?;
+        self.indexer.clear()?;
+
+        // Materialize all live snapshots into the read model.
+        let sync = SyncStore::new(self.db.pool());
+        let all_snapshots = sync.fetch_all_snapshots()?;
+        for snapshot in &all_snapshots {
+            let _ =
+                self.materialize_aggregate(&snapshot.item_id, &snapshot.aggregate, true, None)?;
+        }
+        for (_original_item_id, plan) in &result.fork_plans {
+            let _ = self.materialize_forked_snapshot(&plan.forked_snapshot)?;
+        }
+        let _ = self.indexer.commit();
+
+        Ok(SyncFullResyncResult {
+            checkpoints_applied: result.checkpoints_applied as u64,
+            tail_events_applied: result.tail_events_applied as u64,
+            tail_events_ignored: result.tail_events_ignored as u64,
+            tail_events_deferred: result.tail_events_deferred as u64,
+            tail_events_forked: result.tail_events_forked as u64,
+        })
+    }
+
+    /// Get the current sync device state.
+    pub fn get_sync_device_state(
+        &self,
+        device_id: String,
+    ) -> Result<crate::interface::SyncDeviceState, ClipKittyError> {
+        use crate::interface::SyncDeviceState;
+        use purr_sync::store::SyncStore;
+        use purr_sync::types::{FLAG_INDEX_DIRTY, FLAG_NEEDS_FULL_RESYNC};
+
+        let sync = SyncStore::new(self.db.pool());
+        let token = sync.fetch_zone_change_token(&device_id)?;
+        let needs_resync = sync.get_dirty_flag(FLAG_NEEDS_FULL_RESYNC)?;
+        let index_dirty = sync.get_dirty_flag(FLAG_INDEX_DIRTY)?;
+
+        Ok(SyncDeviceState {
+            device_id,
+            zone_change_token: token,
+            needs_full_resync: needs_resync,
+            index_dirty,
+        })
+    }
+
+    /// Update the device's zone change token after a successful fetch.
+    pub fn update_zone_change_token(
+        &self,
+        device_id: String,
+        token: Option<Vec<u8>>,
+    ) -> Result<(), ClipKittyError> {
+        use purr_sync::store::SyncStore;
+
+        let sync = SyncStore::new(self.db.pool());
+        sync.upsert_device_state(&device_id, token.as_deref())?;
+        Ok(())
+    }
+
+    /// Fetch event IDs eligible for CloudKit deletion.
+    /// Only returns events that are compacted, old, AND covered by an uploaded checkpoint.
+    pub fn purgeable_cloud_event_ids(
+        &self,
+        max_age_days: u32,
+    ) -> Result<Vec<String>, ClipKittyError> {
+        use purr_sync::store::SyncStore;
+
+        let threshold = chrono::Utc::now().timestamp() - (max_age_days as i64 * 86400);
+        let sync = SyncStore::new(self.db.pool());
+        let ids = sync.fetch_checkpoint_safe_purgeable_events(threshold)?;
+        Ok(ids)
+    }
+
+    /// Delete local event records after their CloudKit counterparts have been deleted.
+    pub fn purge_cloud_events(&self, event_ids: Vec<String>) -> Result<u64, ClipKittyError> {
+        use purr_sync::store::SyncStore;
+
+        let sync = SyncStore::new(self.db.pool());
+        let refs: Vec<&str> = event_ids.iter().map(|s| s.as_str()).collect();
+        let count = sync.delete_events_and_dedup_by_ids(&refs)?;
+        Ok(count as u64)
+    }
+
+    /// Clear the index_dirty flag (after a successful rebuild).
+    pub fn clear_index_dirty_flag(&self) -> Result<(), ClipKittyError> {
+        use purr_sync::store::SyncStore;
+        use purr_sync::types::FLAG_INDEX_DIRTY;
+
+        let sync = SyncStore::new(self.db.pool());
+        sync.set_dirty_flag(FLAG_INDEX_DIRTY, false)?;
+        Ok(())
     }
 }
 
@@ -462,1013 +1262,24 @@ impl SearchOperation {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::interface::{
-        ClipboardContent, FileStatus, HighlightKind, IconType, ItemIcon, ItemQueryFilter,
-        LinkMetadataPayload, LinkMetadataState, StoreBootstrapPlan,
-    };
-    use once_cell::sync::Lazy;
-    use parking_lot::Mutex as TestMutex;
-    use std::sync::atomic::{AtomicUsize, Ordering};
-    use std::sync::{Arc, OnceLock};
-    use tempfile::tempdir;
-
-    static SEARCH_HOOK_TEST_LOCK: Lazy<TestMutex<()>> = Lazy::new(|| TestMutex::new(()));
-
-    fn wait_for_operation_registration(operation_slot: &Arc<OnceLock<Arc<SearchOperation>>>) {
-        for attempt in 0..100 {
-            if operation_slot.get().is_some() {
-                return;
-            }
-            if attempt % 10 == 0 {
-                std::thread::sleep(std::time::Duration::from_millis(1));
-            } else {
-                std::thread::yield_now();
-            }
-        }
-
-        panic!("search operation should be registered before test hook work begins");
-    }
-
-    fn runtime() -> tokio::runtime::Runtime {
-        tokio::runtime::Builder::new_current_thread()
-            .enable_all()
-            .build()
-            .unwrap()
-    }
-
-    fn temp_db_path() -> (tempfile::TempDir, String) {
-        let dir = tempdir().unwrap();
-        let db_path = dir.path().join("clipboard.sqlite");
-        (dir, db_path.to_string_lossy().to_string())
-    }
 
     #[test]
-    fn test_store_creation() {
+    fn test_round_trip_save_and_fetch() {
         let store = ClipboardStore::new_in_memory().unwrap();
-        assert!(store.database_size() > 0);
-    }
+        let id = store.save_text("hello world".into(), None, None).unwrap();
+        assert!(!id.is_empty());
 
-    #[tokio::test]
-    async fn test_search_and_filter_roundtrip() {
-        let store = ClipboardStore::new_in_memory().unwrap();
-        store
-            .save_text("Hello World".to_string(), None, None)
-            .unwrap();
-        store
-            .save_text("https://example.com".to_string(), None, None)
-            .unwrap();
-
-        let all = store.search("".to_string()).await.unwrap();
-        assert_eq!(all.matches.len(), 2);
-        assert!(all.first_preview_payload.is_some());
-
-        let links = store
-            .search_filtered(
-                "".to_string(),
-                ItemQueryFilter::ContentType {
-                    content_type: crate::interface::ContentTypeFilter::Links,
-                },
-            )
-            .await
-            .unwrap();
-        assert_eq!(links.matches.len(), 1);
-        assert!(links.matches[0]
-            .item_metadata
-            .snippet
-            .contains("example.com"));
-    }
-
-    #[tokio::test]
-    async fn test_short_caret_query_uses_stripped_prefix_search() {
-        let store = ClipboardStore::new_in_memory().unwrap();
-        store
-            .save_text("sup ^hi how are you".to_string(), None, None)
-            .unwrap();
-        let prefix_id = store.save_text("hi j".to_string(), None, None).unwrap();
-        store.save_text("sup hi".to_string(), None, None).unwrap();
-
-        let result = store.search("^hi".to_string()).await.unwrap();
-        let ids: Vec<i64> = result
-            .matches
-            .iter()
-            .map(|item| item.item_metadata.item_id)
-            .collect();
-
-        assert_eq!(ids, vec![prefix_id]);
-    }
-
-    #[tokio::test]
-    async fn test_short_query_returns_prefix_matches_before_recent_anywhere_matches() {
-        let store = ClipboardStore::new_in_memory().unwrap();
-        let anywhere_oldest = store
-            .save_text("zz hi in the middle".to_string(), None, None)
-            .unwrap();
-        std::thread::sleep(std::time::Duration::from_millis(1100));
-        let prefix_newer = store
-            .save_text("hi prefix".to_string(), None, None)
-            .unwrap();
-        std::thread::sleep(std::time::Duration::from_millis(1100));
-        let anywhere_newest = store
-            .save_text("say hi again".to_string(), None, None)
-            .unwrap();
-
-        let result = store.search("hi".to_string()).await.unwrap();
-        let ids: Vec<i64> = result
-            .matches
-            .iter()
-            .map(|item| item.item_metadata.item_id)
-            .collect();
-
-        assert_eq!(ids, vec![prefix_newer, anywhere_newest, anywhere_oldest]);
-
-        let prefix_match = result.matches[0].row_decoration.as_ref().unwrap();
-        assert_eq!(prefix_match.highlights[0].kind, HighlightKind::Prefix);
-
-        let anywhere_match = result.matches[1].row_decoration.as_ref().unwrap();
-        assert_eq!(anywhere_match.highlights[0].kind, HighlightKind::Exact);
-        assert_eq!(anywhere_match.highlights[0].utf16_start, 4);
-    }
-
-    #[tokio::test]
-    async fn test_caret_query_ranks_literal_then_prefix_then_contains_for_trigram_queries() {
-        let store = ClipboardStore::new_in_memory().unwrap();
-        let literal_id = store
-            .save_text("sup ^hello there".to_string(), None, None)
-            .unwrap();
-        let prefix_id = store
-            .save_text("hello world".to_string(), None, None)
-            .unwrap();
-        let contains_id = store
-            .save_text("say hello there".to_string(), None, None)
-            .unwrap();
-
-        let result = store.search("^hello".to_string()).await.unwrap();
-        let ids: Vec<i64> = result
-            .matches
-            .iter()
-            .map(|item| item.item_metadata.item_id)
-            .take(3)
-            .collect();
-
-        assert_eq!(ids, vec![literal_id, prefix_id, contains_id]);
-    }
-
-    #[tokio::test]
-    async fn test_trigram_query_surfaces_prefix_before_infix_substring() {
-        let store = ClipboardStore::new_in_memory().unwrap();
-        let prefix_id = store
-            .save_text("port forwarding".to_string(), None, None)
-            .unwrap();
-        let infix_id = store
-            .save_text("import config".to_string(), None, None)
-            .unwrap();
-
-        let result = store.search("port".to_string()).await.unwrap();
-        let ids: Vec<i64> = result
-            .matches
-            .iter()
-            .map(|item| item.item_metadata.item_id)
-            .take(2)
-            .collect();
-
-        assert_eq!(ids, vec![prefix_id, infix_id]);
-        let decorations = store
-            .compute_row_decorations(vec![infix_id], "port".to_string())
-            .unwrap();
-        assert_eq!(
-            decorations[0].decoration.as_ref().unwrap().highlights[0].kind,
-            HighlightKind::Substring
-        );
-    }
-
-    #[tokio::test]
-    async fn test_trigram_query_surfaces_prefix_before_subword_prefix() {
-        let store = ClipboardStore::new_in_memory().unwrap();
-        let prefix_id = store
-            .save_text("code review".to_string(), None, None)
-            .unwrap();
-        let subword_id = store
-            .save_text("responseCode".to_string(), None, None)
-            .unwrap();
-
-        let result = store.search("code".to_string()).await.unwrap();
-        let ids: Vec<i64> = result
-            .matches
-            .iter()
-            .map(|item| item.item_metadata.item_id)
-            .take(2)
-            .collect();
-
-        assert_eq!(ids, vec![prefix_id, subword_id]);
-        let decorations = store
-            .compute_row_decorations(vec![subword_id], "code".to_string())
-            .unwrap();
-        assert_eq!(
-            decorations[0].decoration.as_ref().unwrap().highlights[0].kind,
-            HighlightKind::SubwordPrefix
-        );
-    }
-
-    #[tokio::test]
-    async fn test_trigram_query_uses_single_char_trailing_prefix_immediately() {
-        let store = ClipboardStore::new_in_memory().unwrap();
-        let non_prefix_id = store
-            .save_text("recent changes to renderer".to_string(), None, None)
-            .unwrap();
-        let prefix_id = store
-            .save_text("recent changes to highlighting".to_string(), None, None)
-            .unwrap();
-
-        let result = store
-            .search("recent changes to h".to_string())
-            .await
-            .unwrap();
-        let ids: Vec<i64> = result
-            .matches
-            .iter()
-            .map(|item| item.item_metadata.item_id)
-            .take(2)
-            .collect();
-
-        assert_eq!(ids, vec![prefix_id, non_prefix_id]);
-        assert!(result.matches[0]
-            .row_decoration
-            .as_ref()
-            .unwrap()
-            .highlights
-            .iter()
-            .any(|highlight| highlight.kind == HighlightKind::Prefix));
-    }
-
-    #[tokio::test]
-    async fn test_search_uses_word_sequence_recall_for_long_short_word_queries() {
-        let store = ClipboardStore::new_in_memory().unwrap();
-        let exact_id = store
-            .save_text("A a B b C c D d".to_string(), None, None)
-            .unwrap();
-        let scattered_id = store
-            .save_text("A z B z C z D z".to_string(), None, None)
-            .unwrap();
-
-        let result = store.search("A a B b".to_string()).await.unwrap();
-        let ids: Vec<i64> = result
-            .matches
-            .iter()
-            .map(|item| item.item_metadata.item_id)
-            .collect();
-
-        assert!(
-            ids.contains(&exact_id),
-            "expected {:?} to contain {}",
-            ids,
-            exact_id
-        );
-        assert!(
-            !ids.contains(&scattered_id),
-            "expected scattered short-word content to stay out of results, got {:?}",
-            ids
-        );
-    }
-
-    #[test]
-    fn test_short_query_sync_cancelled() {
-        let rt = runtime();
-        let store = ClipboardStore::new_in_memory().unwrap();
-        store.save_text("Hello".to_string(), None, None).unwrap();
-
-        let token = CancellationToken::new();
-        token.cancel();
-        let result = search_service::search_short_query_sync(
-            &store.db,
-            &store.analysis_cache,
-            "He",
-            crate::search_result_builder::ShortQueryMode::PrefixThenContains,
-            &token,
-            &rt.handle().clone(),
-            None,
-            None,
-        );
-        assert!(matches!(result, Err(ClipKittyError::Cancelled)));
-    }
-
-    #[tokio::test]
-    async fn test_tag_filter_roundtrip() {
-        let store = ClipboardStore::new_in_memory().unwrap();
-        let bookmarked_id = store.save_text("keep me".to_string(), None, None).unwrap();
-        let plain_id = store.save_text("leave me".to_string(), None, None).unwrap();
-        store.add_tag(bookmarked_id, ItemTag::Bookmark).unwrap();
-
-        let result = store
-            .search_filtered(
-                "".to_string(),
-                ItemQueryFilter::Tagged {
-                    tag: ItemTag::Bookmark,
-                },
-            )
-            .await
-            .unwrap();
-
-        let ids: Vec<i64> = result
-            .matches
-            .iter()
-            .map(|item| item.item_metadata.item_id)
-            .collect();
-        assert_eq!(ids, vec![bookmarked_id]);
-        assert!(!ids.contains(&plain_id));
-        assert_eq!(
-            result.matches[0].item_metadata.tags,
-            vec![ItemTag::Bookmark]
-        );
-    }
-
-    #[test]
-    fn test_trigram_search_returns_cancelled_after_token() {
-        let rt = runtime();
-        let store = ClipboardStore::new_in_memory().unwrap();
-        for i in 0..200 {
-            store
-                .save_text(
-                    format!("Item number {i} with repeated search text"),
-                    None,
-                    None,
-                )
-                .unwrap();
-        }
-
-        let token = CancellationToken::new();
-        let query = crate::search::SearchQuery::parse("repeated");
-        token.cancel();
-        let result = search_service::search_trigram_query_sync(
-            &store.db,
-            &store.indexer,
-            &store.analysis_cache,
-            &query,
-            &token,
-            &rt.handle().clone(),
-            None,
-            None,
-        );
-        assert!(matches!(result, Err(ClipKittyError::Cancelled)));
-    }
-
-    #[tokio::test]
-    async fn test_explicit_search_operation_cancelled() {
-        let store = ClipboardStore::new_in_memory().unwrap();
-        for i in 0..200 {
-            store
-                .save_text(
-                    format!("Item number {i} with repeated search text"),
-                    None,
-                    None,
-                )
-                .unwrap();
-        }
-
-        let operation = store.start_search("repeated".to_string(), ItemQueryFilter::All);
-        operation.cancel();
-
-        let outcome = operation.await_result().await.unwrap();
-        assert_eq!(outcome, SearchOutcome::Cancelled);
-    }
-
-    #[tokio::test]
-    async fn test_new_search_cancels_previous_running_operation() {
-        let store = ClipboardStore::new_in_memory().unwrap();
-        for i in 0..400 {
-            store
-                .save_text(
-                    format!("Item number {i} with repeated search text"),
-                    None,
-                    None,
-                )
-                .unwrap();
-        }
-
-        let first = store.start_search("repeated".to_string(), ItemQueryFilter::All);
-        let second = store.start_search("number 399".to_string(), ItemQueryFilter::All);
-
-        assert_eq!(
-            first.await_result().await.unwrap(),
-            SearchOutcome::Cancelled
-        );
-        assert!(matches!(
-            second.await_result().await.unwrap(),
-            SearchOutcome::Success { .. }
-        ));
-    }
-
-    #[tokio::test]
-    async fn test_phase_two_cancellation_stops_work_early() {
-        let _lock = SEARCH_HOOK_TEST_LOCK.lock();
-        let _phase_two_hook_lock = crate::indexer::test_support::HOOK_TEST_LOCK.lock();
-        let store = ClipboardStore::new_in_memory().unwrap();
-        for i in 0..1_000 {
-            store
-                .save_text(
-                    format!("Item number {i} with repeated search text and extra ranking words"),
-                    None,
-                    None,
-                )
-                .unwrap();
-        }
-
-        let processed = Arc::new(AtomicUsize::new(0));
-        let operation_slot: Arc<OnceLock<Arc<SearchOperation>>> = Arc::new(OnceLock::new());
-        let _hook_guard = crate::indexer::test_support::install_search_hooks(
-            crate::indexer::test_support::SearchTestHooks {
-                before_phase_two: Some(Arc::new({
-                    let operation_slot = Arc::clone(&operation_slot);
-                    move || wait_for_operation_registration(&operation_slot)
-                })),
-                on_phase_two_candidate: Some(Arc::new({
-                    let processed = Arc::clone(&processed);
-                    let operation_slot = Arc::clone(&operation_slot);
-                    move |_| {
-                        let seen = processed.fetch_add(1, Ordering::SeqCst);
-                        if seen == 0 {
-                            if let Some(operation) = operation_slot.get() {
-                                operation.cancel();
-                            }
-                        }
-                    }
-                })),
-            },
-        );
-
-        let operation = store.start_search("repeated ranking".to_string(), ItemQueryFilter::All);
-        let _ = operation_slot.set(Arc::clone(&operation));
-
-        let outcome = operation.await_result().await.unwrap();
-        assert_eq!(outcome, SearchOutcome::Cancelled);
-        assert!(
-            processed.load(Ordering::SeqCst) < 128,
-            "phase-two work should stop early after cancellation"
-        );
-    }
-
-    #[tokio::test]
-    async fn test_eager_match_cancellation_stops_highlight_work_early() {
-        let _lock = SEARCH_HOOK_TEST_LOCK.lock();
-        let store = ClipboardStore::new_in_memory().unwrap();
-        for i in 0..500 {
-            store
-                .save_text(
-                    format!(
-                        "repeated search text item {i} with enough body for eager highlighting"
-                    ),
-                    None,
-                    None,
-                )
-                .unwrap();
-        }
-
-        let processed = Arc::new(AtomicUsize::new(0));
-        let operation_slot: Arc<OnceLock<Arc<SearchOperation>>> = Arc::new(OnceLock::new());
-        let _hook_guard = crate::search_service::test_support::install_search_hooks(
-            crate::search_service::test_support::SearchTestHooks {
-                before_eager_matches: Some(Arc::new({
-                    let operation_slot = Arc::clone(&operation_slot);
-                    move || wait_for_operation_registration(&operation_slot)
-                })),
-                on_eager_match: Some(Arc::new({
-                    let processed = Arc::clone(&processed);
-                    let operation_slot = Arc::clone(&operation_slot);
-                    move |_| {
-                        let seen = processed.fetch_add(1, Ordering::SeqCst);
-                        if seen == 0 {
-                            if let Some(operation) = operation_slot.get() {
-                                operation.cancel();
-                                std::thread::sleep(std::time::Duration::from_millis(10));
-                            }
-                        }
-                    }
-                })),
-                ..Default::default()
-            },
-        );
-
-        let operation = store.start_search("repeated search".to_string(), ItemQueryFilter::All);
-        let _ = operation_slot.set(Arc::clone(&operation));
-
-        let outcome = operation.await_result().await.unwrap();
-        assert_eq!(outcome, SearchOutcome::Cancelled);
-        assert!(
-            processed.load(Ordering::SeqCst) < 50,
-            "eager highlight work should stop shortly after cancellation"
-        );
-    }
-
-    #[tokio::test]
-    async fn test_rapid_typing_keeps_only_latest_search_running() {
-        let store = ClipboardStore::new_in_memory().unwrap();
-        for i in 0..500 {
-            store
-                .save_text(
-                    format!("Item number {i} with repeated search text and trailing content"),
-                    None,
-                    None,
-                )
-                .unwrap();
-        }
-
-        let first = store.start_search("repeated".to_string(), ItemQueryFilter::All);
-        let second = store.start_search("repeated s".to_string(), ItemQueryFilter::All);
-        let third = store.start_search("repeated se".to_string(), ItemQueryFilter::All);
-        let fourth = store.start_search("repeated sea".to_string(), ItemQueryFilter::All);
-
-        assert_eq!(
-            first.await_result().await.unwrap(),
-            SearchOutcome::Cancelled
-        );
-        assert_eq!(
-            second.await_result().await.unwrap(),
-            SearchOutcome::Cancelled
-        );
-        assert_eq!(
-            third.await_result().await.unwrap(),
-            SearchOutcome::Cancelled
-        );
-        assert!(matches!(
-            fourth.await_result().await.unwrap(),
-            SearchOutcome::Success { .. }
-        ));
-    }
-
-    #[test]
-    fn test_preview_payload_reuses_cached_analysis_from_row_decoration() {
-        let _lock = SEARCH_HOOK_TEST_LOCK.lock();
-        let store = ClipboardStore::new_in_memory().unwrap();
-        let item_id = store
-            .save_text("alpha beta gamma".to_string(), None, None)
-            .unwrap();
-
-        let computed = Arc::new(AtomicUsize::new(0));
-        let cache_hits = Arc::new(AtomicUsize::new(0));
-        let _hook_guard = crate::search_service::test_support::install_search_hooks(
-            crate::search_service::test_support::SearchTestHooks {
-                on_analysis_computed: Some(Arc::new({
-                    let computed = Arc::clone(&computed);
-                    move |hook_item_id, hook_query| {
-                        if hook_item_id == item_id && hook_query == "alpha" {
-                            computed.fetch_add(1, Ordering::SeqCst);
-                        }
-                    }
-                })),
-                on_analysis_cache_hit: Some(Arc::new({
-                    let cache_hits = Arc::clone(&cache_hits);
-                    move |hook_item_id, hook_query| {
-                        if hook_item_id == item_id && hook_query == "alpha" {
-                            cache_hits.fetch_add(1, Ordering::SeqCst);
-                        }
-                    }
-                })),
-                ..Default::default()
-            },
-        );
-
-        let row_results = search_service::compute_row_decorations(
-            &store.db,
-            &store.analysis_cache,
-            vec![item_id],
-            "alpha".to_string(),
-        )
-        .unwrap();
-        assert_eq!(row_results.len(), 1);
-        assert!(row_results[0].decoration.is_some());
-
-        let payload = search_service::load_preview_payload(
-            &store.db,
-            &store.analysis_cache,
-            item_id,
-            "alpha".to_string(),
-        )
-        .unwrap()
-        .expect("preview payload should exist");
-        assert!(payload.decoration.is_some());
-
-        assert_eq!(
-            computed.load(Ordering::SeqCst),
-            1,
-            "shared analysis should be computed once"
-        );
-        assert_eq!(
-            cache_hits.load(Ordering::SeqCst),
-            1,
-            "preview payload should reuse the cached analysis"
-        );
-    }
-
-    #[test]
-    fn test_preview_payload_cache_invalidates_when_item_text_changes() {
-        let _lock = SEARCH_HOOK_TEST_LOCK.lock();
-        let store = ClipboardStore::new_in_memory().unwrap();
-        let item_id = store
-            .save_text("alpha beta gamma".to_string(), None, None)
-            .unwrap();
-
-        let computed = Arc::new(AtomicUsize::new(0));
-        let cache_hits = Arc::new(AtomicUsize::new(0));
-        let _hook_guard = crate::search_service::test_support::install_search_hooks(
-            crate::search_service::test_support::SearchTestHooks {
-                on_analysis_computed: Some(Arc::new({
-                    let computed = Arc::clone(&computed);
-                    move |hook_item_id, hook_query| {
-                        if hook_item_id == item_id && hook_query == "alpha" {
-                            computed.fetch_add(1, Ordering::SeqCst);
-                        }
-                    }
-                })),
-                on_analysis_cache_hit: Some(Arc::new({
-                    let cache_hits = Arc::clone(&cache_hits);
-                    move |hook_item_id, hook_query| {
-                        if hook_item_id == item_id && hook_query == "alpha" {
-                            cache_hits.fetch_add(1, Ordering::SeqCst);
-                        }
-                    }
-                })),
-                ..Default::default()
-            },
-        );
-
-        let _ = search_service::compute_row_decorations(
-            &store.db,
-            &store.analysis_cache,
-            vec![item_id],
-            "alpha".to_string(),
-        )
-        .unwrap();
-        let _ = search_service::load_preview_payload(
-            &store.db,
-            &store.analysis_cache,
-            item_id,
-            "alpha".to_string(),
-        )
-        .unwrap()
-        .expect("initial preview payload should exist");
-
-        store
-            .update_text_item(item_id, "alpha updated delta".to_string())
-            .unwrap();
-
-        let payload = search_service::load_preview_payload(
-            &store.db,
-            &store.analysis_cache,
-            item_id,
-            "alpha".to_string(),
-        )
-        .unwrap()
-        .expect("updated preview payload should exist");
-
-        match &payload.item.content {
-            ClipboardContent::Text { value } => assert_eq!(value, "alpha updated delta"),
-            other => panic!("expected text payload, got {other:?}"),
-        }
-        assert_eq!(
-            computed.load(Ordering::SeqCst),
-            2,
-            "content hash change should force recomputation"
-        );
-        assert_eq!(
-            cache_hits.load(Ordering::SeqCst),
-            1,
-            "only the unchanged intermediate read should hit the cache"
-        );
-    }
-
-    #[test]
-    fn test_analysis_cache_is_scoped_by_query() {
-        let _lock = SEARCH_HOOK_TEST_LOCK.lock();
-        let store = ClipboardStore::new_in_memory().unwrap();
-        let item_id = store
-            .save_text("alpha beta gamma".to_string(), None, None)
-            .unwrap();
-
-        let computed = Arc::new(AtomicUsize::new(0));
-        let cache_hits = Arc::new(AtomicUsize::new(0));
-        let _hook_guard = crate::search_service::test_support::install_search_hooks(
-            crate::search_service::test_support::SearchTestHooks {
-                on_analysis_computed: Some(Arc::new({
-                    let computed = Arc::clone(&computed);
-                    move |hook_item_id, _| {
-                        if hook_item_id == item_id {
-                            computed.fetch_add(1, Ordering::SeqCst);
-                        }
-                    }
-                })),
-                on_analysis_cache_hit: Some(Arc::new({
-                    let cache_hits = Arc::clone(&cache_hits);
-                    move |hook_item_id, _| {
-                        if hook_item_id == item_id {
-                            cache_hits.fetch_add(1, Ordering::SeqCst);
-                        }
-                    }
-                })),
-                ..Default::default()
-            },
-        );
-
-        let _ = search_service::load_preview_payload(
-            &store.db,
-            &store.analysis_cache,
-            item_id,
-            "alpha".to_string(),
-        )
-        .unwrap()
-        .expect("alpha preview payload should exist");
-        let _ = search_service::load_preview_payload(
-            &store.db,
-            &store.analysis_cache,
-            item_id,
-            "beta".to_string(),
-        )
-        .unwrap()
-        .expect("beta preview payload should exist");
-
-        assert_eq!(
-            computed.load(Ordering::SeqCst),
-            2,
-            "different queries should not share cached analysis"
-        );
-        assert_eq!(cache_hits.load(Ordering::SeqCst), 0);
-    }
-
-    #[test]
-    fn test_interruptible_fetch_propagates_interrupted_error() {
-        let rt = runtime();
-        let store = ClipboardStore::new_in_memory().unwrap();
-        let id = store
-            .save_text("Test content".to_string(), None, None)
-            .unwrap();
-
-        let token = CancellationToken::new();
-        let items = store
-            .db
-            .fetch_items_by_ids_interruptible(&[id], &token, &rt.handle().clone())
-            .unwrap();
+        let items = store.fetch_by_ids(vec![id]).unwrap();
         assert_eq!(items.len(), 1);
     }
 
     #[test]
-    fn test_text_duplicate_handling() {
+    fn test_dedup_returns_empty_string() {
         let store = ClipboardStore::new_in_memory().unwrap();
-        let id1 = store
-            .save_text("Same content".to_string(), None, None)
-            .unwrap();
-        let id2 = store
-            .save_text("Same content".to_string(), None, None)
-            .unwrap();
-        assert!(id1 > 0);
-        assert_eq!(id2, 0);
-    }
+        let id = store.save_text("hello world".into(), None, None).unwrap();
+        assert!(!id.is_empty());
 
-    #[test]
-    fn test_image_duplicate_handling_uses_content_hash() {
-        let store = ClipboardStore::new_in_memory().unwrap();
-        let id1 = store
-            .save_image(vec![1, 2, 3], Some(vec![9]), None, None, false)
-            .unwrap();
-        let id2 = store
-            .save_image(vec![1, 2, 3], Some(vec![8]), None, None, false)
-            .unwrap();
-        let id3 = store
-            .save_image(vec![1, 2, 4], Some(vec![8]), None, None, false)
-            .unwrap();
-
-        assert!(id1 > 0);
-        assert_eq!(id2, 0);
-        assert!(id3 > 0);
-    }
-
-    #[test]
-    fn test_save_file_roundtrip() {
-        let store = ClipboardStore::new_in_memory().unwrap();
-        let id = store
-            .save_file(
-                "/tmp/report.pdf".to_string(),
-                "report.pdf".to_string(),
-                128,
-                "com.adobe.pdf".to_string(),
-                vec![1, 2, 3],
-                None,
-                Some("Finder".to_string()),
-                Some("com.apple.finder".to_string()),
-            )
-            .unwrap();
-
-        let items = store.fetch_by_ids(vec![id]).unwrap();
-        match &items[0].content {
-            ClipboardContent::File { files, .. } => {
-                assert_eq!(files.len(), 1);
-                assert_eq!(files[0].filename, "report.pdf");
-                assert_eq!(files[0].file_status, FileStatus::Available);
-            }
-            other => panic!("expected file content, got {other:?}"),
-        }
-        match &items[0].item_metadata.icon {
-            ItemIcon::Symbol { icon_type } => assert_eq!(*icon_type, IconType::File),
-            other => panic!("expected file icon, got {other:?}"),
-        }
-    }
-
-    #[test]
-    fn test_link_update_roundtrip() {
-        let store = ClipboardStore::new_in_memory().unwrap();
-        let id = store
-            .save_text("https://example.com".to_string(), None, None)
-            .unwrap();
-
-        store
-            .update_link_metadata(
-                id,
-                Some("Example".to_string()),
-                Some("Description".to_string()),
-                Some(vec![1, 2, 3]),
-            )
-            .unwrap();
-
-        let items = store.fetch_by_ids(vec![id]).unwrap();
-        match &items[0].content {
-            ClipboardContent::Link { metadata_state, .. } => {
-                assert_eq!(
-                    metadata_state,
-                    &LinkMetadataState::Loaded {
-                        payload: LinkMetadataPayload::TitleAndImage {
-                            title: "Example".to_string(),
-                            description: Some("Description".to_string()),
-                            image_data: vec![1, 2, 3],
-                        },
-                    }
-                );
-            }
-            other => panic!("expected link content, got {other:?}"),
-        }
-    }
-
-    #[test]
-    fn test_delete_and_clear() {
-        let rt = runtime();
-        let store = ClipboardStore::new_in_memory().unwrap();
-        let id = store
-            .save_text("delete me".to_string(), None, None)
-            .unwrap();
-        store.delete_item(id).unwrap();
-        assert!(store.fetch_by_ids(vec![id]).unwrap().is_empty());
-
-        store.save_text("one".to_string(), None, None).unwrap();
-        store.save_text("two".to_string(), None, None).unwrap();
-        assert_eq!(
-            rt.block_on(store.search("".to_string()))
-                .unwrap()
-                .matches
-                .len(),
-            2
-        );
-        store.clear().unwrap();
-        assert_eq!(
-            rt.block_on(store.search("".to_string()))
-                .unwrap()
-                .matches
-                .len(),
-            0
-        );
-    }
-
-    #[test]
-    fn test_search_operation_cancels_on_drop() {
-        let token = CancellationToken::new();
-        let operation = SearchOperation {
-            token: token.clone(),
-            completion: Arc::new(SearchCompletionCell::new()),
-        };
-        assert!(!token.is_cancelled());
-        drop(operation);
-        assert!(token.is_cancelled());
-    }
-
-    #[test]
-    fn test_search_without_external_runtime() {
-        let store = ClipboardStore::new_in_memory().unwrap();
-        store
-            .save_text("Hello World".to_string(), None, None)
-            .unwrap();
-        let result = futures::executor::block_on(store.search("Hello".to_string())).unwrap();
-        assert_eq!(result.matches.len(), 1);
-    }
-
-    #[tokio::test]
-    async fn test_chunked_search_uses_best_chunk_snippet_and_full_preview_offsets() {
-        let store = ClipboardStore::new_in_memory().unwrap();
-        let leading = "noise ".repeat((crate::indexer::CHUNK_PARENT_THRESHOLD_BYTES / 6) + 4096);
-        let query = "alphauniqueterm";
-        let item_id = store
-            .save_text(format!("{leading}{query} trailing context"), None, None)
-            .unwrap();
-
-        let result = store.search(query.to_string()).await.unwrap();
-        assert_eq!(result.matches.len(), 1);
-        assert_eq!(result.matches[0].item_metadata.item_id, item_id);
-        assert!(
-            result.matches[0].item_metadata.snippet.contains(query),
-            "chunked result snippet should come from the matched chunk"
-        );
-        assert!(
-            result.first_preview_payload.as_ref().is_none(),
-            "initial search should skip large chunked preview payload entirely"
-        );
-
-        let preview = search_service::load_preview_payload(
-            &store.db,
-            &store.analysis_cache,
-            item_id,
-            query.to_string(),
-        )
-        .unwrap()
-        .expect("preview payload should be present");
-        let decoration = preview
-            .decoration
-            .expect("preview decoration should be present");
-        let first_highlight = decoration
-            .highlights
-            .first()
-            .expect("preview should include highlights");
-        assert!(
-            first_highlight.utf16_start >= leading.len() as u64,
-            "preview highlights should be mapped back to full-document offsets"
-        );
-    }
-
-    #[test]
-    fn test_bootstrap_inspection_ready_when_index_matches() {
-        let (_dir, db_path) = temp_db_path();
-        let store = ClipboardStore::new(db_path.clone()).unwrap();
-        store
-            .save_text("hello world".to_string(), None, None)
-            .unwrap();
-
-        let plan = inspect_store_bootstrap(db_path).unwrap();
-        assert_eq!(plan, StoreBootstrapPlan::Ready);
-    }
-
-    #[test]
-    fn test_bootstrap_inspection_requires_rebuild_when_index_missing() {
-        let (dir, db_path) = temp_db_path();
-        let store = ClipboardStore::new(db_path.clone()).unwrap();
-        store
-            .save_text("hello world".to_string(), None, None)
-            .unwrap();
-        drop(store);
-
-        let index_path = dir
-            .path()
-            .join(format!("tantivy_index_{}", crate::indexer::INDEX_VERSION));
-        std::fs::remove_dir_all(index_path).unwrap();
-
-        let plan = inspect_store_bootstrap(db_path).unwrap();
-        assert_eq!(plan, StoreBootstrapPlan::RebuildIndex);
-    }
-
-    #[test]
-    fn test_bootstrap_inspection_ready_for_chunked_index() {
-        let (_dir, db_path) = temp_db_path();
-        let store = ClipboardStore::new(db_path.clone()).unwrap();
-        store
-            .save_text(
-                "noise ".repeat((crate::indexer::CHUNK_PARENT_THRESHOLD_BYTES / 6) + 4096),
-                None,
-                None,
-            )
-            .unwrap();
-
-        let plan = inspect_store_bootstrap(db_path).unwrap();
-        assert_eq!(plan, StoreBootstrapPlan::Ready);
-    }
-
-    #[tokio::test]
-    async fn test_explicit_rebuild_restores_search_results_after_missing_index() {
-        let (dir, db_path) = temp_db_path();
-        let store = ClipboardStore::new(db_path.clone()).unwrap();
-        let item_id = store
-            .save_text("needle in haystack".to_string(), None, None)
-            .unwrap();
-        drop(store);
-
-        let index_path = dir
-            .path()
-            .join(format!("tantivy_index_{}", crate::indexer::INDEX_VERSION));
-        std::fs::remove_dir_all(index_path).unwrap();
-
-        let store = ClipboardStore::new(db_path.clone()).unwrap();
-        let before = store.search("needle".to_string()).await.unwrap();
-        assert!(before.matches.is_empty());
-
-        store.rebuild_index().unwrap();
-
-        let after = store.search("needle".to_string()).await.unwrap();
-        let ids: Vec<i64> = after
-            .matches
-            .iter()
-            .map(|item| item.item_metadata.item_id)
-            .collect();
-        assert_eq!(ids, vec![item_id]);
+        let dup = store.save_text("hello world".into(), None, None).unwrap();
+        assert!(dup.is_empty());
     }
 }

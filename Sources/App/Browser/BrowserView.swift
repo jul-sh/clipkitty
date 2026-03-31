@@ -122,7 +122,7 @@ struct BrowserView: View {
                     displayVersion: displayVersion,
                     focusSearchField: focusSearchField
                 )
-                .frame(width: 324)
+                .frame(width: AppSettings.shared.scaled(324))
 
                 Divider()
 

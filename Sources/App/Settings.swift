@@ -79,7 +79,7 @@ enum PasteMode {
 
 #if SPARKLE_RELEASE
     /// State of update checking
-    enum UpdateCheckState: Equatable {
+    enum UpdateCheckState: String, Codable, Equatable {
         case idle
         case checking
         case downloading
@@ -142,6 +142,12 @@ final class AppSettings: ObservableObject {
 
     #if SPARKLE_RELEASE
         @Published var updateCheckState: UpdateCheckState = .idle
+        @Published var lastUpdateCheckDate: Date? {
+            didSet { save() }
+        }
+        @Published var lastUpdateCheckResult: UpdateCheckState = .idle {
+            didSet { save() }
+        }
         @Published var autoInstallUpdates: Bool {
             didSet { save() }
         }
@@ -198,6 +204,17 @@ final class AppSettings: ObservableObject {
     /// The date the app was first launched (for time-gating the launch-at-login prompt)
     let firstLaunchDate: Date
 
+    #if ENABLE_SYNC
+        /// Whether iCloud sync is enabled
+        @Published var syncEnabled: Bool {
+            didSet { save() }
+        }
+    #endif
+
+    /// Scale factor for browser text and panel dimensions, derived from system accessibility text size.
+    /// Minimum is 1.0 (system default), maximum is capped at 1.5.
+    @Published var textScale: CGFloat
+
     /// Bundle IDs of apps whose clipboard content should be ignored
     @Published var ignoredAppBundleIds: Set<String> {
         didSet { save() }
@@ -218,10 +235,16 @@ final class AppSettings: ObservableObject {
     private let firstLaunchDateKey = "firstLaunchDate"
     private let lastInfoDismissDateKey = "lastInfoDismissDate"
     private let lastNudgeInteractionDateKey = "lastNudgeInteractionDate"
+    #if ENABLE_SYNC
+        private let syncEnabledKey = "syncEnabled"
+    #endif
+    private var textScaleObserver: Any?
     private let ignoredAppBundleIdsKey = "ignoredAppBundleIds"
     #if SPARKLE_RELEASE
         private let autoInstallUpdatesKey = "autoInstallUpdates"
         private let updateChannelKey = "updateChannel"
+        private let lastUpdateCheckDateKey = "lastUpdateCheckDate"
+        private let lastUpdateCheckResultKey = "lastUpdateCheckResult"
     #endif
 
     /// Flag to prevent save() calls during initialization (didSet triggers before init completes)
@@ -251,6 +274,9 @@ final class AppSettings: ObservableObject {
             autoInstallUpdates = defaults.object(forKey: autoInstallUpdatesKey) as? Bool ?? true
             let storedUpdateChannel = defaults.string(forKey: updateChannelKey)
             updateChannel = storedUpdateChannel.flatMap(UpdateChannel.init(rawValue:)) ?? .stable
+            lastUpdateCheckDate = defaults.object(forKey: lastUpdateCheckDateKey) as? Date
+            let storedResult = defaults.string(forKey: lastUpdateCheckResultKey)
+            lastUpdateCheckResult = storedResult.flatMap(UpdateCheckState.init(rawValue:)) ?? .idle
         #endif
 
         launchAtLoginPromptDismissed = defaults.bool(forKey: launchAtLoginPromptDismissedKey)
@@ -265,10 +291,18 @@ final class AppSettings: ObservableObject {
             defaults.set(firstLaunchDate, forKey: firstLaunchDateKey)
         }
 
+        // Sync - default to disabled (user opts in via Settings)
+        #if ENABLE_SYNC
+            syncEnabled = defaults.object(forKey: syncEnabledKey) as? Bool ?? false
+        #endif
+
         // Privacy settings - default to enabled for user protection
         ignoreConfidentialContent = defaults.object(forKey: ignoreConfidentialKey) as? Bool ?? true
         ignoreTransientContent = defaults.object(forKey: ignoreTransientKey) as? Bool ?? true
         generateLinkPreviews = defaults.object(forKey: generateLinkPreviewsKey) as? Bool ?? true
+
+        // Text scale from system accessibility setting
+        textScale = Self.systemTextScale()
 
         // Load ignored app bundle IDs
         if let storedIds = defaults.stringArray(forKey: ignoredAppBundleIdsKey) {
@@ -286,6 +320,37 @@ final class AppSettings: ObservableObject {
 
         // Mark initialization complete - save() calls are now allowed
         isInitializing = false
+
+        // Observe system text size changes (Accessibility > Display > Text Size)
+        textScaleObserver = NotificationCenter.default.addObserver(
+            forName: NSNotification.Name("NSPreferredContentSizeCategoryDidChangeNotification"),
+            object: nil, queue: .main
+        ) { [weak self] _ in
+            MainActor.assumeIsolated {
+                self?.textScale = Self.systemTextScale()
+            }
+        }
+    }
+
+    /// Maps system accessibility text size to a scale factor (1.0–1.5)
+    private static func systemTextScale() -> CGFloat {
+        let category = UserDefaults.standard.string(forKey: "UIPreferredContentSizeCategoryName")
+            ?? "UICTContentSizeCategoryL"
+        // Scale proportionally to iOS body font sizes (baseline: L = 17pt, cap: a11y L = 33pt)
+        let scale: CGFloat = switch category {
+        case "UICTContentSizeCategoryXS", "UICTContentSizeCategoryS",
+             "UICTContentSizeCategoryM", "UICTContentSizeCategoryL":
+            1.0
+        case "UICTContentSizeCategoryXL":
+            1.12  // 19/17
+        case "UICTContentSizeCategoryXXL":
+            1.24  // 21/17
+        case "UICTContentSizeCategoryXXXL":
+            1.35  // 23/17
+        default:
+            1.5   // a11y M and above
+        }
+        return min(scale, 1.5)
     }
 
     private func save() {
@@ -303,13 +368,19 @@ final class AppSettings: ObservableObject {
         defaults.set(lastInfoDismissDate, forKey: lastInfoDismissDateKey)
         defaults.set(lastNudgeInteractionDate, forKey: lastNudgeInteractionDateKey)
         defaults.set(hasCompletedOnboarding, forKey: hasCompletedOnboardingKey)
+        #if ENABLE_SYNC
+            defaults.set(syncEnabled, forKey: syncEnabledKey)
+        #endif
         defaults.set(ignoreConfidentialContent, forKey: ignoreConfidentialKey)
         defaults.set(ignoreTransientContent, forKey: ignoreTransientKey)
         defaults.set(generateLinkPreviews, forKey: generateLinkPreviewsKey)
+        // textScale is derived from system accessibility setting, not persisted
         defaults.set(Array(ignoredAppBundleIds).sorted(), forKey: ignoredAppBundleIdsKey)
         #if SPARKLE_RELEASE
             defaults.set(autoInstallUpdates, forKey: autoInstallUpdatesKey)
             defaults.set(updateChannel.rawValue, forKey: updateChannelKey)
+            defaults.set(lastUpdateCheckDate, forKey: lastUpdateCheckDateKey)
+            defaults.set(lastUpdateCheckResult.rawValue, forKey: lastUpdateCheckResultKey)
         #endif
     }
 
@@ -326,5 +397,10 @@ final class AppSettings: ObservableObject {
     func isAppIgnored(bundleId: String?) -> Bool {
         guard let bundleId else { return false }
         return ignoredAppBundleIds.contains(bundleId)
+    }
+
+    /// Returns the given size multiplied by the current text scale factor.
+    func scaled(_ size: CGFloat) -> CGFloat {
+        size * textScale
     }
 }

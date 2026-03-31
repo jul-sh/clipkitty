@@ -1,7 +1,4 @@
-ClipKitty ist da.
+NEU: iCloud-Synchronisierung; synchronisiere optional deine Zwischenablage-History über alle deine Macs.
 
-- Unbegrenzte Zwischenablage-History — nichts läuft ab, nichts wird abgeschnitten
-- Sofortige Fuzzy-Suche über dein gesamtes Archiv
-- Vollständiger mehrzeiliger Vorschaubereich für Code, Text und Links
-- Tastaturgesteuert: Wahltaste+Leertaste zum Öffnen, Eingabetaste zum Einfügen
-- Vollständig privat — deine Daten verlassen deinen Mac nie
+- Aktiviere iCloud Sync in den Einstellungen, um deine Clips geräteübergreifend zu synchronisieren
+- Nutzt deinen privaten iCloud-Container ohne Drittanbieter-Server

@@ -127,24 +127,33 @@ let project = Project(
                     "LIBRARY_SEARCH_PATHS": .array(["$(inherited)", "$(PROJECT_DIR)/Sources/ClipKittyRust"]),
                     "SWIFT_EMIT_LOC_STRINGS": "YES",
                     "LOCALIZATION_PREFERS_STRING_CATALOGS": "YES",
+                    "DEVELOPMENT_TEAM": "ANBBV7LQ2P",
                 ],
                 configurations: [
                     .debug(name: "Debug", settings: [
-                        "CODE_SIGN_ENTITLEMENTS": "Sources/App/ClipKitty.oss.entitlements",
+                        "CODE_SIGN_STYLE": "Automatic",
+                        "CODE_SIGN_IDENTITY": "Apple Development",
+                        "CODE_SIGN_ENTITLEMENTS": "Sources/App/ClipKitty.debug.entitlements",
                         "CK_BUILD_CHANNEL": "Debug",
+                        "SWIFT_ACTIVE_COMPILATION_CONDITIONS": "ENABLE_SYNC",
                         // Weak-link Sparkle frameworks so app runs without them
-                        "OTHER_LDFLAGS": .array(["$(inherited)", "-lpurr", "-weak_framework", "SparkleUpdater", "-weak_framework", "Sparkle"]),
+                        "OTHER_LDFLAGS": .array(["$(inherited)", "-weak_framework", "SparkleUpdater", "-weak_framework", "Sparkle"]),
                     ]),
                     .release(name: "Release", settings: [
+                        "CODE_SIGN_STYLE": "Automatic",
+                        "CODE_SIGN_IDENTITY": "Apple Development",
                         "CODE_SIGN_ENTITLEMENTS": "Sources/App/ClipKitty.oss.entitlements",
                         "CK_BUILD_CHANNEL": "Release",
+                        "SWIFT_ACTIVE_COMPILATION_CONDITIONS": "ENABLE_SYNC",
                         // Weak-link Sparkle frameworks so app runs without them
-                        "OTHER_LDFLAGS": .array(["$(inherited)", "-lpurr", "-weak_framework", "SparkleUpdater", "-weak_framework", "Sparkle"]),
+                        "OTHER_LDFLAGS": .array(["$(inherited)", "-weak_framework", "SparkleUpdater", "-weak_framework", "Sparkle"]),
                     ]),
                     .release(name: .configuration("SparkleRelease"), settings: [
-                        "CODE_SIGN_ENTITLEMENTS": "Sources/App/ClipKitty.oss.entitlements",
+                        "CODE_SIGN_STYLE": "Automatic",
+                        "CODE_SIGN_IDENTITY": "Developer ID Application",
+                        "CODE_SIGN_ENTITLEMENTS": "Sources/App/ClipKitty.sparkle.entitlements",
                         "CK_BUILD_CHANNEL": "Sparkle",
-                        "SWIFT_ACTIVE_COMPILATION_CONDITIONS": "SPARKLE_RELEASE",
+                        "SWIFT_ACTIVE_COMPILATION_CONDITIONS": "SPARKLE_RELEASE ENABLE_SYNC",
                         // Sparkle configuration - only set for SparkleRelease
                         "SPARKLE_FEED_URL": "https://jul-sh.github.io/clipkitty/appcast.xml",
                         "SPARKLE_PUBLIC_KEY": "9VqfSPPY2Gr8QTYDLa99yJXAFWnHw5aybSbKaYDyCq0=",
@@ -153,11 +162,13 @@ let project = Project(
                         "SPARKLE_INSTALLER_SERVICE": "YES",
                     ]),
                     .release(name: .configuration("AppStore"), settings: [
+                        "CODE_SIGN_STYLE": "Automatic",
+                        "CODE_SIGN_IDENTITY": "Apple Distribution",
                         "CODE_SIGN_ENTITLEMENTS": "Sources/App/ClipKitty.appstore.entitlements",
                         "CK_BUILD_CHANNEL": "AppStore",
-                        "SWIFT_ACTIVE_COMPILATION_CONDITIONS": "APP_STORE",
+                        "SWIFT_ACTIVE_COMPILATION_CONDITIONS": "APP_STORE ENABLE_SYNC",
                         // Weak-link Sparkle frameworks so app runs without them
-                        "OTHER_LDFLAGS": .array(["$(inherited)", "-lpurr", "-weak_framework", "SparkleUpdater", "-weak_framework", "Sparkle"]),
+                        "OTHER_LDFLAGS": .array(["$(inherited)", "-weak_framework", "SparkleUpdater", "-weak_framework", "Sparkle"]),
                     ]),
                 ]
             )
@@ -254,7 +265,7 @@ let project = Project(
 
                         echo "Rust changed: $STORED_HASH -> $CURRENT_HASH"
                         if [ -x "Scripts/run-in-nix.sh" ]; then
-                            Scripts/run-in-nix.sh -c "cd purr && cargo run --release --bin generate-bindings"
+                            Scripts/run-in-nix.sh -c "cd purr && MACOSX_DEPLOYMENT_TARGET=14.0 cargo run --release --bin generate-bindings"
                             mkdir -p .make && echo "$CURRENT_HASH" > "$MARKER"
                         fi
                         """,
@@ -311,7 +322,7 @@ let project = Project(
 
                         echo "Rust changed: $STORED_HASH -> $CURRENT_HASH"
                         if [ -x "Scripts/run-in-nix.sh" ]; then
-                            Scripts/run-in-nix.sh -c "cd purr && cargo run --release --bin generate-bindings"
+                            Scripts/run-in-nix.sh -c "cd purr && MACOSX_DEPLOYMENT_TARGET=14.0 cargo run --release --bin generate-bindings"
                             mkdir -p .make && echo "$CURRENT_HASH" > "$MARKER"
                         fi
                         """,
@@ -327,5 +338,7 @@ let project = Project(
     ],
     additionalFiles: [
         "Sources/App/ClipKitty.oss.entitlements",
+        "Sources/App/ClipKitty.debug.entitlements",
+        "Sources/App/ClipKitty.sparkle.entitlements",
     ]
 )

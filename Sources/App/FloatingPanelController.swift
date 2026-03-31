@@ -1,5 +1,6 @@
 import AppKit
 import ClipKittyRust
+import Combine
 import SwiftUI
 
 enum PanelMode {
@@ -43,6 +44,8 @@ final class FloatingPanelController: NSObject, NSWindowDelegate {
     /// Initial search query to pre-fill (for CI screenshots)
     var initialSearchQuery: String?
 
+    private var textScaleCancellable: AnyCancellable?
+
     init(
         store: ClipboardStore,
         mode: PanelMode = .production,
@@ -66,6 +69,20 @@ final class FloatingPanelController: NSObject, NSWindowDelegate {
         }
 
         setupPanel()
+
+        textScaleCancellable = AppSettings.shared.$textScale
+            .dropFirst()
+            .sink { [weak self] _ in
+                self?.handleTextScaleChange()
+            }
+    }
+
+    private func handleTextScaleChange() {
+        panel.setContentSize(Self.oversizedPanelSize)
+        updatePanelContent()
+        if case .visible = panelState {
+            centerPanel()
+        }
     }
 
     private func setupPanel() {
@@ -190,7 +207,16 @@ final class FloatingPanelController: NSObject, NSWindowDelegate {
 
     // MARK: - Animation
 
-    private static let panelSize = NSSize(width: 778, height: 518)
+    private static let basePanelSize = NSSize(width: 778, height: 518)
+    private static var panelSize: NSSize {
+        let s = AppSettings.shared.textScale
+        var size = NSSize(width: basePanelSize.width * s, height: basePanelSize.height * s)
+        if let screen = NSScreen.main?.visibleFrame {
+            size.width = min(size.width, screen.width - 40)
+            size.height = min(size.height, screen.height - 40)
+        }
+        return size
+    }
     private static let animationScale: CGFloat = 1.05
     private static var animationMargin: CGFloat {
         ceil(max(panelSize.width, panelSize.height) * (animationScale - 1) / 2) + 2
@@ -326,7 +352,7 @@ final class FloatingPanelController: NSObject, NSWindowDelegate {
         panel.setFrameOrigin(NSPoint(x: x, y: y))
     }
 
-    private func selectItem(itemId: Int64, content: ClipboardContent) {
+    private func selectItem(itemId: String, content: ClipboardContent) {
         store.paste(itemId: itemId, content: content)
         #if !APP_STORE
             let targetApp = hide()
@@ -341,7 +367,7 @@ final class FloatingPanelController: NSObject, NSWindowDelegate {
         #endif
     }
 
-    private func copyOnlyItem(itemId: Int64, content: ClipboardContent) {
+    private func copyOnlyItem(itemId: String, content: ClipboardContent) {
         store.paste(itemId: itemId, content: content)
         hide()
         snackbarWindow.showNotification(.passive(message: String(localized: "Copied"), iconSystemName: "checkmark.circle.fill"))

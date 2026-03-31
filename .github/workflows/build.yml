@@ -431,6 +431,25 @@ jobs:
           lfs: true
           fetch-depth: 0
 
+      - name: Decrypt secrets
+        run: |
+          brew install age
+          echo "$AGE_SECRET_KEY" > /tmp/age-key.txt
+          chmod 600 /tmp/age-key.txt
+          for f in secrets/*.age; do
+            name=$(basename "$f" .age)
+            value=$(age -d -i /tmp/age-key.txt "$f")
+            echo "::add-mask::$value"
+            {
+              echo "${name}<<AGEDELIM"
+              echo "$value"
+              echo "AGEDELIM"
+            } >> "$GITHUB_OUTPUT"
+          done
+          rm -f /tmp/age-key.txt
+        env:
+          AGE_SECRET_KEY: ${{ secrets.AGE_SECRET_KEY }}
+
       - name: Setup Swift
         uses: swift-actions/setup-swift@v2
         with:
@@ -456,6 +475,9 @@ jobs:
 
       - name: Build App
         run: make build UNIVERSAL=1
+
+      - name: Generate Localized Demo Databases
+        run: ./distribution/patch-demo-items.sh
 
       - name: Create Virtual Retina Display
         run: |

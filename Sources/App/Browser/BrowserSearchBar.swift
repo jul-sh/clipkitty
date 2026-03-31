@@ -2,6 +2,7 @@ import ClipKittyRust
 import SwiftUI
 
 struct BrowserSearchBar<FilterPopoverContent: View>: View {
+    @ObservedObject private var settings = AppSettings.shared
     @Environment(\.colorScheme) private var colorScheme
     @Binding var searchText: String
     let filterLabel: String
@@ -25,11 +26,11 @@ struct BrowserSearchBar<FilterPopoverContent: View>: View {
         HStack(spacing: 8) {
             Image(systemName: "magnifyingglass")
                 .foregroundStyle(.secondary)
-                .font(.custom(FontManager.sansSerif, size: 17).weight(.medium))
+                .font(.custom(FontManager.sansSerif, size: settings.scaled(17)).weight(.medium))
 
             TextField("Clipboard History Search", text: $searchText)
                 .textFieldStyle(.plain)
-                .font(.custom(FontManager.sansSerif, size: 17))
+                .font(.custom(FontManager.sansSerif, size: settings.scaled(17)))
                 .tint(.primary)
                 .focused(focusTarget, equals: .search)
                 .id(colorScheme)
