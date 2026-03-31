@@ -370,15 +370,15 @@ final class ClipboardStore {
         refresh()
     }
 
-    func startSearch(query: String, filter: ItemQueryFilter) -> ClipboardSearchOperation {
+    func startSearch(query: String, filter: ItemQueryFilter, presentation: ListPresentationProfile) -> ClipboardSearchOperation {
         guard let repository else {
             return MissingRepositorySearchOperation()
         }
-        return repository.startSearch(query: query, filter: filter)
+        return repository.startSearch(query: query, filter: filter, presentation: presentation)
     }
 
     func search(query: String, filter: ItemQueryFilter) async throws -> SearchResult {
-        switch await startSearch(query: query, filter: filter).awaitOutcome() {
+        switch await startSearch(query: query, filter: filter, presentation: .compactRow).awaitOutcome() {
         case let .success(searchResult):
             return searchResult
         case .cancelled:
@@ -397,9 +397,9 @@ final class ClipboardStore {
         return await previewLoader.fetchItem(id: id)
     }
 
-    func loadRowDecorations(itemIds: [String], query: String) async -> [RowDecorationResult] {
+    func loadListDecorations(itemIds: [String], query: String, presentation: ListPresentationProfile) async -> [ListDecorationResult] {
         guard let repository else { return [] }
-        return await repository.computeRowDecorations(itemIds: itemIds, query: query)
+        return await repository.computeListDecorations(itemIds: itemIds, query: query, presentation: presentation)
     }
 
     func loadPreviewPayload(itemId: String, query: String) async -> PreviewPayload? {
@@ -503,7 +503,7 @@ final class ClipboardStore {
             return
         }
 
-        let operation = repository.startSearch(query: query, filter: queryFilter)
+        let operation = repository.startSearch(query: query, filter: queryFilter, presentation: .compactRow)
         let observer = Task { [weak self] in
             let outcome = await operation.awaitOutcome()
             await MainActor.run {
