@@ -131,7 +131,7 @@ let project = Project(
                 ],
                 configurations: [
                     .debug(name: "Debug", settings: [
-                        "CODE_SIGN_ENTITLEMENTS": "Sources/App/ClipKitty.oss.entitlements",
+                        "CODE_SIGN_ENTITLEMENTS": "Sources/App/ClipKitty.debug.entitlements",
                         "CODE_SIGN_STYLE": "Manual",
                         "CODE_SIGN_IDENTITY": "Apple Development",
                         "PROVISIONING_PROFILE_SPECIFIER": "ClipKitty Mac Development",
@@ -340,5 +340,6 @@ let project = Project(
     ],
     additionalFiles: [
         "Sources/App/ClipKitty.oss.entitlements",
+        "Sources/App/ClipKitty.debug.entitlements",
     ]
 )
