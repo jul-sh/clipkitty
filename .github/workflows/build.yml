@@ -131,9 +131,13 @@ jobs:
 
       - name: Build App (SparkleRelease)
         run: make build CONFIGURATION=SparkleRelease UNIVERSAL=1
+        env:
+          AGE_SECRET_KEY: ${{ secrets.AGE_SECRET_KEY }}
 
       - name: Build App (AppStore)
         run: make build CONFIGURATION=AppStore UNIVERSAL=1
+        env:
+          AGE_SECRET_KEY: ${{ secrets.AGE_SECRET_KEY }}
 
       - name: Create AppStore Archive
         run: |
@@ -186,12 +190,14 @@ jobs:
 
           # Sign the outer app (must come last)
           codesign --force --options runtime --timestamp --sign "Developer ID Application" \
-            --entitlements Sources/App/ClipKitty.oss.entitlements \
+            --entitlements Sources/App/ClipKitty.sparkle.entitlements \
             "$APP"
           codesign --verify --deep --strict "$APP"
 
           ./distribution/build-dmg.sh "$APP" ClipKitty.dmg
           codesign --force --sign "Developer ID Application" ClipKitty.dmg
+        env:
+          AGE_SECRET_KEY: ${{ secrets.AGE_SECRET_KEY }}
 
       # 2. Notarize with Apple
       - name: Notarize DMG
@@ -475,6 +481,8 @@ jobs:
 
       - name: Build App
         run: make build UNIVERSAL=1
+        env:
+          AGE_SECRET_KEY: ${{ secrets.AGE_SECRET_KEY }}
 
       - name: Generate Localized Demo Databases
         run: ./distribution/patch-demo-items.sh
