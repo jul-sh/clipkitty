@@ -1,6 +1,7 @@
-import XCTest
-import ServiceManagement
 @testable import ClipKitty
+@testable import ClipKittyMacPlatform
+import ServiceManagement
+import XCTest
 
 @MainActor
 final class LaunchAtLoginTests: XCTestCase {

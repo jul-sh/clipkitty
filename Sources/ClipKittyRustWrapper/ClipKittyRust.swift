@@ -2,7 +2,7 @@
 // Manual extensions for UniFFI-generated types from purr
 // Provides: Date conversions, UTType mappings, Identifiable/Sendable conformances
 
-import AppKit
+import Foundation
 import Foundation
 import UniformTypeIdentifiers
 

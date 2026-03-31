@@ -1,4 +1,5 @@
 @testable import ClipKitty
+@testable import ClipKittyAppleServices
 import ClipKittyRust
 import CloudKit
 import Observation
