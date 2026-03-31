@@ -211,6 +211,11 @@ final class AppSettings: ObservableObject {
         }
     #endif
 
+    /// Scale factor for browser text and panel dimensions (1.0 = default)
+    @Published var textScale: CGFloat {
+        didSet { save() }
+    }
+
     /// Bundle IDs of apps whose clipboard content should be ignored
     @Published var ignoredAppBundleIds: Set<String> {
         didSet { save() }
@@ -234,6 +239,7 @@ final class AppSettings: ObservableObject {
     #if ENABLE_SYNC
         private let syncEnabledKey = "syncEnabled"
     #endif
+    private let textScaleKey = "textScale"
     private let ignoredAppBundleIdsKey = "ignoredAppBundleIds"
     #if SPARKLE_RELEASE
         private let autoInstallUpdatesKey = "autoInstallUpdates"
@@ -296,6 +302,13 @@ final class AppSettings: ObservableObject {
         ignoreTransientContent = defaults.object(forKey: ignoreTransientKey) as? Bool ?? true
         generateLinkPreviews = defaults.object(forKey: generateLinkPreviewsKey) as? Bool ?? true
 
+        // Text scale
+        if let stored = defaults.object(forKey: textScaleKey) as? Double {
+            textScale = CGFloat(stored)
+        } else {
+            textScale = 1.0
+        }
+
         // Load ignored app bundle IDs
         if let storedIds = defaults.stringArray(forKey: ignoredAppBundleIdsKey) {
             ignoredAppBundleIds = Set(storedIds)
@@ -335,6 +348,7 @@ final class AppSettings: ObservableObject {
         defaults.set(ignoreConfidentialContent, forKey: ignoreConfidentialKey)
         defaults.set(ignoreTransientContent, forKey: ignoreTransientKey)
         defaults.set(generateLinkPreviews, forKey: generateLinkPreviewsKey)
+        defaults.set(Double(textScale), forKey: textScaleKey)
         defaults.set(Array(ignoredAppBundleIds).sorted(), forKey: ignoredAppBundleIdsKey)
         #if SPARKLE_RELEASE
             defaults.set(autoInstallUpdates, forKey: autoInstallUpdatesKey)
@@ -357,5 +371,10 @@ final class AppSettings: ObservableObject {
     func isAppIgnored(bundleId: String?) -> Bool {
         guard let bundleId else { return false }
         return ignoredAppBundleIds.contains(bundleId)
+    }
+
+    /// Returns the given size multiplied by the current text scale factor.
+    func scaled(_ size: CGFloat) -> CGFloat {
+        size * textScale
     }
 }
