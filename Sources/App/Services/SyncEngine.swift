@@ -161,7 +161,7 @@
         convenience init(store: ClipKittyRust.ClipboardStore) {
             self.init(
                 store: store,
-                cloud: CloudKitSyncTransport(containerIdentifier: "iCloud.com.clipkitty")
+                cloud: CloudKitSyncTransport(containerIdentifier: "iCloud.com.eviljuliette.clipkitty")
             )
         }
 

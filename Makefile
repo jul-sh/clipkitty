@@ -74,12 +74,17 @@ provisioning: api-key
 	@./distribution/setup-dev-provisioning.sh
 
 # Build using xcodebuild
-build: signing provisioning
+# Debug/Release use Automatic signing; SparkleRelease/AppStore use Manual (CI)
+build: api-key
 	@echo "Building $(APP_NAME) ($(CONFIGURATION))..."
 	@xcodebuild -workspace $(APP_NAME).xcworkspace \
 		-scheme $(APP_NAME) \
 		-configuration $(CONFIGURATION) \
 		-derivedDataPath $(DERIVED_DATA) \
+		-allowProvisioningUpdates \
+		-authenticationKeyPath $(API_KEY_DIR)/AuthKey.p8 \
+		-authenticationKeyID $$($(SCRIPT_DIR)/distribution/read-secret.sh NOTARY_KEY_ID) \
+		-authenticationKeyIssuerID $$($(SCRIPT_DIR)/distribution/read-secret.sh NOTARY_ISSUER_ID) \
 		MARKETING_VERSION=$(VERSION) \
 		CURRENT_PROJECT_VERSION=$(BUILD_NUMBER) \
 		ONLY_ACTIVE_ARCH=$(if $(UNIVERSAL),NO,YES) \
@@ -92,7 +97,8 @@ sign:
 		--sign "$(SIGNING_IDENTITY)" \
 		"$(DERIVED_DATA)/Build/Products/$(CONFIGURATION)/$(APP_NAME).app"
 
-# Build, kill any running instance, and open the app.
+# Build, kill any running instance, and open the app (uses Debug for development signing).
+run: CONFIGURATION := Debug
 run: all
 	@echo "Closing existing $(APP_NAME)..."
 	@pkill -x $(APP_NAME) 2>/dev/null || true
