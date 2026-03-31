@@ -247,7 +247,7 @@ jobs:
 
           # Sign the outer app (must come last)
           codesign --force --options runtime --timestamp --sign "Developer ID Application" \
-            --entitlements Sources/App/ClipKitty.sparkle.entitlements \
+            --entitlements Sources/MacApp/ClipKitty.sparkle.entitlements \
             "$APP"
           codesign --verify --deep --strict "$APP"
 

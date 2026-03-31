@@ -149,13 +149,13 @@ let project = Project(
                 "SUAutomaticallyUpdate": "$(SPARKLE_AUTO_UPDATE)",
                 "SUEnableInstallerLauncherService": "$(SPARKLE_INSTALLER_SERVICE)",
             ]),
-            sources: ["Sources/App/**"],
+            sources: ["Sources/MacApp/**"],
             resources: [
-                .folderReference(path: "Sources/App/Resources/Fonts"),
-                "Sources/App/Resources/menu-bar.svg",
-                "Sources/App/Resources/Localizable.xcstrings",
-                "Sources/App/Assets.xcassets",
-                "Sources/App/PrivacyInfo.xcprivacy",
+                .folderReference(path: "Sources/MacApp/Resources/Fonts"),
+                "Sources/MacApp/Resources/menu-bar.svg",
+                "Sources/MacApp/Resources/Localizable.xcstrings",
+                "Sources/MacApp/Assets.xcassets",
+                "Sources/MacApp/PrivacyInfo.xcprivacy",
             ],
             scripts: [
                 .post(
@@ -192,7 +192,7 @@ let project = Project(
                     .debug(name: "Debug", settings: [
                         "CODE_SIGN_STYLE": "Automatic",
                         "CODE_SIGN_IDENTITY": "Apple Development",
-                        "CODE_SIGN_ENTITLEMENTS": "Sources/App/ClipKitty.debug.entitlements",
+                        "CODE_SIGN_ENTITLEMENTS": "Sources/MacApp/ClipKitty.debug.entitlements",
                         "CK_BUILD_CHANNEL": "Debug",
                         "SWIFT_ACTIVE_COMPILATION_CONDITIONS": "ENABLE_SYNC",
                         // Weak-link Sparkle frameworks so app runs without them
@@ -201,7 +201,7 @@ let project = Project(
                     .release(name: "Release", settings: [
                         "CODE_SIGN_STYLE": "Automatic",
                         "CODE_SIGN_IDENTITY": "Apple Development",
-                        "CODE_SIGN_ENTITLEMENTS": "Sources/App/ClipKitty.oss.entitlements",
+                        "CODE_SIGN_ENTITLEMENTS": "Sources/MacApp/ClipKitty.oss.entitlements",
                         "CK_BUILD_CHANNEL": "Release",
                         "SWIFT_ACTIVE_COMPILATION_CONDITIONS": "ENABLE_SYNC",
                         // Weak-link Sparkle frameworks so app runs without them
@@ -210,7 +210,7 @@ let project = Project(
                     .release(name: .configuration("SparkleRelease"), settings: [
                         "CODE_SIGN_STYLE": "Automatic",
                         "CODE_SIGN_IDENTITY": "Apple Development",
-                        "CODE_SIGN_ENTITLEMENTS": "Sources/App/ClipKitty.sparkle.entitlements",
+                        "CODE_SIGN_ENTITLEMENTS": "Sources/MacApp/ClipKitty.sparkle.entitlements",
                         "CK_BUILD_CHANNEL": "Sparkle",
                         "SWIFT_ACTIVE_COMPILATION_CONDITIONS": "SPARKLE_RELEASE ENABLE_SYNC",
                         // Sparkle configuration - only set for SparkleRelease
@@ -223,7 +223,7 @@ let project = Project(
                     .release(name: .configuration("AppStore"), settings: [
                         "CODE_SIGN_STYLE": "Automatic",
                         "CODE_SIGN_IDENTITY": "Apple Development",
-                        "CODE_SIGN_ENTITLEMENTS": "Sources/App/ClipKitty.appstore.entitlements",
+                        "CODE_SIGN_ENTITLEMENTS": "Sources/MacApp/ClipKitty.appstore.entitlements",
                         "CK_BUILD_CHANNEL": "AppStore",
                         "SWIFT_ACTIVE_COMPILATION_CONDITIONS": "APP_STORE ENABLE_SYNC",
                         // Weak-link Sparkle frameworks so app runs without them
@@ -433,8 +433,8 @@ let project = Project(
         ),
     ],
     additionalFiles: [
-        "Sources/App/ClipKitty.oss.entitlements",
-        "Sources/App/ClipKitty.debug.entitlements",
-        "Sources/App/ClipKitty.sparkle.entitlements",
+        "Sources/MacApp/ClipKitty.oss.entitlements",
+        "Sources/MacApp/ClipKitty.debug.entitlements",
+        "Sources/MacApp/ClipKitty.sparkle.entitlements",
     ]
 )
