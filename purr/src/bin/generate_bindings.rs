@@ -248,7 +248,7 @@ fn ios_cross_env(sdk: &str) -> Vec<(String, String)> {
         .map(|o| String::from_utf8_lossy(&o.stdout).trim().to_string())
         .unwrap_or_else(|| panic!("Failed to find ar for {} SDK via xcrun", sdk));
 
-    let deployment_target = "17.0";
+    let deployment_target = "26.0";
 
     let (rust_target, cargo_target_upper) = match sdk {
         "iphoneos" => ("aarch64-apple-ios", "AARCH64_APPLE_IOS"),
@@ -262,9 +262,9 @@ fn ios_cross_env(sdk: &str) -> Vec<(String, String)> {
     let cc_flags = format!(
         "-isysroot {sdk_path} -target {target} -miphoneos-version-min={deployment_target}",
         target = if sdk == "iphoneos" {
-            "arm64-apple-ios17.0"
+            "arm64-apple-ios26.0"
         } else {
-            "arm64-apple-ios17.0-simulator"
+            "arm64-apple-ios26.0-simulator"
         },
     );
 

@@ -1,6 +1,7 @@
 # Swift / Xcode
 .build/
 .make/
+build/
 .swiftpm/
 *.xcodeproj/
 *.xcworkspace/

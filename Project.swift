@@ -35,7 +35,7 @@ let project = Project(
             destinations: [.mac, .iPhone],
             product: .staticLibrary,
             bundleId: "com.eviljuliette.clipkitty.rustffi",
-            deploymentTargets: .multiplatform(iOS: "17.0", macOS: "14.0"),
+            deploymentTargets: .multiplatform(iOS: "26.0", macOS: "14.0"),
             sources: ["Sources/ClipKittyRust/ClipKittyRustFFI.c"],
             headers: .headers(
                 public: ["Sources/ClipKittyRust/purrFFI.h"]
@@ -54,7 +54,7 @@ let project = Project(
             destinations: [.mac, .iPhone],
             product: .staticLibrary,
             bundleId: "com.eviljuliette.clipkitty.rust",
-            deploymentTargets: .multiplatform(iOS: "17.0", macOS: "14.0"),
+            deploymentTargets: .multiplatform(iOS: "26.0", macOS: "14.0"),
             sources: ["Sources/ClipKittyRustWrapper/**"],
             dependencies: [
                 .target(name: "ClipKittyRustFFI"),
@@ -73,7 +73,7 @@ let project = Project(
             destinations: [.mac, .iPhone],
             product: .staticLibrary,
             bundleId: "com.eviljuliette.clipkitty.shared",
-            deploymentTargets: .multiplatform(iOS: "17.0", macOS: "14.0"),
+            deploymentTargets: .multiplatform(iOS: "26.0", macOS: "14.0"),
             sources: ["Sources/Shared/**"],
             dependencies: [
                 .target(name: "ClipKittyRust"),
@@ -86,7 +86,7 @@ let project = Project(
             destinations: [.mac, .iPhone],
             product: .staticLibrary,
             bundleId: "com.eviljuliette.clipkitty.appleservices",
-            deploymentTargets: .multiplatform(iOS: "17.0", macOS: "14.0"),
+            deploymentTargets: .multiplatform(iOS: "26.0", macOS: "14.0"),
             sources: ["Sources/AppleServices/**"],
             dependencies: [
                 .target(name: "ClipKittyRust"),
@@ -310,7 +310,7 @@ let project = Project(
             destinations: .iOS,
             product: .app,
             bundleId: "com.eviljuliette.clipkitty.ios-smoke-test",
-            deploymentTargets: .iOS("17.0"),
+            deploymentTargets: .iOS("26.0"),
             sources: ["Sources/iOSSmokeTest/**"],
             dependencies: [
                 .target(name: "ClipKittyRust"),
