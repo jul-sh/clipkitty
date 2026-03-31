@@ -167,7 +167,9 @@ jobs:
             -derivedDataPath DerivedData \
             -skip-testing:ClipKittyUITests/ClipKittyUITests/testRecordIntroVideo \
             -skip-testing:ClipKittyUITests/ClipKittyUITests/testTakeMarketingScreenshots \
-            CODE_SIGNING_ALLOWED=NO
+            CODE_SIGN_STYLE=Manual \
+            CODE_SIGN_IDENTITY="Developer ID Application" \
+            DEVELOPMENT_TEAM=ANBBV7LQ2P
 
       - name: Create Virtual Retina Display
         run: |
