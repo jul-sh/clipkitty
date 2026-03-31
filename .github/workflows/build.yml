@@ -104,12 +104,19 @@ jobs:
         with:
           swift-version: "6.2"
 
-      # 1. Install Apple Certificate for Signing
-      - name: Install Apple Certificate
+      # 1. Install Apple Certificates for Signing
+      - name: Install Developer ID Certificate
         uses: apple-actions/import-codesign-certs@v3
         with:
           p12-file-base64: ${{ steps.secrets.outputs.MACOS_P12_BASE64 }}
           p12-password: ${{ steps.secrets.outputs.MACOS_P12_PASSWORD }}
+
+      - name: Install Apple Development Certificate
+        uses: apple-actions/import-codesign-certs@v3
+        with:
+          p12-file-base64: ${{ steps.secrets.outputs.MAC_DEV_P12_BASE64 }}
+          p12-password: ${{ steps.secrets.outputs.MAC_DEV_P12_PASSWORD }}
+          create-keychain: false
 
       - name: Install Nix
         uses: DeterminateSystems/nix-installer-action@main
