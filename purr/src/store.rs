@@ -802,6 +802,63 @@ impl ClipboardStore {
         self.sync_emitter.set_device_id(device_id);
     }
 
+    /// Backfill sync events for items that exist in the database but have no
+    /// corresponding entries in `sync_events`. This handles the case where a
+    /// user enables iCloud sync after already having clipboard history.
+    ///
+    /// Returns the number of items backfilled.
+    pub fn backfill_existing_items(&self) -> Result<u64, ClipKittyError> {
+        use purr_sync::store::SyncStore;
+
+        let sync = SyncStore::new(self.db.pool());
+
+        // Find item_ids present in `items` but absent from `sync_events`.
+        let conn = self.db.pool().get()?;
+        let mut stmt = conn.prepare(
+            r#"SELECT i.item_id
+               FROM items i
+               LEFT JOIN sync_events se ON i.item_id = se.item_id
+               LEFT JOIN sync_snapshots ss ON i.item_id = ss.item_id
+               WHERE se.event_id IS NULL AND ss.item_id IS NULL"#,
+        )?;
+        let orphan_item_ids: Vec<String> = stmt
+            .query_map([], |row| row.get(0))?
+            .collect::<Result<Vec<_>, _>>()?;
+        drop(stmt);
+        drop(conn);
+
+        if orphan_item_ids.is_empty() {
+            return Ok(0);
+        }
+
+        // Fetch full StoredItems for the orphans.
+        let items = self.db.fetch_items_by_item_ids(&orphan_item_ids)?;
+
+        // Look up bookmark state for each item.
+        let row_ids: Vec<i64> = items.iter().filter_map(|i| i.id).collect();
+        let tags_map = self.db.get_tags_for_ids(&row_ids)?;
+
+        let mut count: u64 = 0;
+        for item in &items {
+            let snapshot = {
+                let mut s = crate::sync_bridge::snapshot_from_stored_item(item);
+                if let Some(id) = item.id {
+                    if let Some(tags) = tags_map.get(&id) {
+                        s.is_bookmarked = tags
+                            .iter()
+                            .any(|t| matches!(t, crate::interface::ItemTag::Bookmark));
+                    }
+                }
+                s
+            };
+            self.sync_emitter
+                .emit_item_created(&item.item_id, snapshot)?;
+            count += 1;
+        }
+
+        Ok(count)
+    }
+
     /// Fetch pending local events that need uploading to CloudKit.
     pub fn pending_local_events(
         &self,
