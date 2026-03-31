@@ -81,6 +81,8 @@ jobs:
 
       - name: Build App (Release)
         run: make build CONFIGURATION=Release UNIVERSAL=1
+        env:
+          AGE_SECRET_KEY: ${{ secrets.AGE_SECRET_KEY }}
 
       - name: Generate Performance Database
         run: |

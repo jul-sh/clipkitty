@@ -73,33 +73,26 @@ api-key:
 provisioning: api-key
 	@./distribution/setup-dev-provisioning.sh
 
+# Extra xcodebuild settings (pass-through for CI overrides)
+XCODE_SETTINGS ?=
+
 # Build using xcodebuild
 # Automatic signing with API key auth locally; CI provides its own signing identity
 build:
 	@echo "Building $(APP_NAME) ($(CONFIGURATION))..."
-	@if [ -f "$(API_KEY_DIR)/AuthKey.p8" ]; then \
-		xcodebuild -workspace $(APP_NAME).xcworkspace \
-			-scheme $(APP_NAME) \
-			-configuration $(CONFIGURATION) \
-			-derivedDataPath $(DERIVED_DATA) \
-			-allowProvisioningUpdates \
-			-authenticationKeyPath $(API_KEY_DIR)/AuthKey.p8 \
-			-authenticationKeyID $$($(SCRIPT_DIR)/distribution/read-secret.sh NOTARY_KEY_ID) \
-			-authenticationKeyIssuerID $$($(SCRIPT_DIR)/distribution/read-secret.sh NOTARY_ISSUER_ID) \
-			MARKETING_VERSION=$(VERSION) \
-			CURRENT_PROJECT_VERSION=$(BUILD_NUMBER) \
-			ONLY_ACTIVE_ARCH=$(if $(UNIVERSAL),NO,YES) \
-			build; \
-	else \
-		xcodebuild -workspace $(APP_NAME).xcworkspace \
-			-scheme $(APP_NAME) \
-			-configuration $(CONFIGURATION) \
-			-derivedDataPath $(DERIVED_DATA) \
-			MARKETING_VERSION=$(VERSION) \
-			CURRENT_PROJECT_VERSION=$(BUILD_NUMBER) \
-			ONLY_ACTIVE_ARCH=$(if $(UNIVERSAL),NO,YES) \
-			build; \
-	fi
+	@xcodebuild -workspace $(APP_NAME).xcworkspace \
+		-scheme $(APP_NAME) \
+		-configuration $(CONFIGURATION) \
+		-derivedDataPath $(DERIVED_DATA) \
+		-allowProvisioningUpdates \
+		-authenticationKeyPath $(API_KEY_DIR)/AuthKey.p8 \
+		-authenticationKeyID $$($(SCRIPT_DIR)/distribution/read-secret.sh NOTARY_KEY_ID) \
+		-authenticationKeyIssuerID $$($(SCRIPT_DIR)/distribution/read-secret.sh NOTARY_ISSUER_ID) \
+		MARKETING_VERSION=$(VERSION) \
+		CURRENT_PROJECT_VERSION=$(BUILD_NUMBER) \
+		ONLY_ACTIVE_ARCH=$(if $(UNIVERSAL),NO,YES) \
+		$(XCODE_SETTINGS) \
+		build
 
 # Sign the built app (for distribution)
 sign:
