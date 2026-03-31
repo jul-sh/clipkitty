@@ -155,12 +155,12 @@ jobs:
           AGE_SECRET_KEY: ${{ secrets.AGE_SECRET_KEY }}
 
       - name: Build App (SparkleRelease)
-        run: make build CONFIGURATION=SparkleRelease UNIVERSAL=1 XCODE_SETTINGS="CODE_SIGNING_ALLOWED=NO"
+        run: make build CONFIGURATION=SparkleRelease UNIVERSAL=1 SKIP_SIGNING=1
         env:
           AGE_SECRET_KEY: ${{ secrets.AGE_SECRET_KEY }}
 
       - name: Build App (AppStore)
-        run: make build CONFIGURATION=AppStore UNIVERSAL=1 XCODE_SETTINGS="CODE_SIGNING_ALLOWED=NO"
+        run: make build CONFIGURATION=AppStore UNIVERSAL=1 SKIP_SIGNING=1
         env:
           AGE_SECRET_KEY: ${{ secrets.AGE_SECRET_KEY }}
 
@@ -177,10 +177,7 @@ jobs:
             -scheme ClipKittyUITests \
             -destination "platform=macOS" \
             -derivedDataPath DerivedData \
-            -allowProvisioningUpdates \
-            -authenticationKeyPath "${{ steps.xcode-auth.outputs.key_path }}" \
-            -authenticationKeyID "${{ steps.xcode-auth.outputs.key_id }}" \
-            -authenticationKeyIssuerID "${{ steps.xcode-auth.outputs.issuer_id }}" \
+            CODE_SIGNING_ALLOWED=NO \
             -skip-testing:ClipKittyUITests/ClipKittyUITests/testRecordIntroVideo \
             -skip-testing:ClipKittyUITests/ClipKittyUITests/testTakeMarketingScreenshots \
             -resultBundlePath TestResults.xcresult \
@@ -216,8 +213,10 @@ jobs:
 
       - name: Generate Marketing Screenshots
         run: |
-          make -C distribution marketing-screenshots-localized UNIVERSAL=1
+          make -C distribution marketing-screenshots-localized UNIVERSAL=1 SKIP_SIGNING=1
           ls -lh marketing/*/screenshot_*.png
+        env:
+          AGE_SECRET_KEY: ${{ secrets.AGE_SECRET_KEY }}
 
       - name: Teardown Virtual Display
         if: always()
@@ -537,7 +536,7 @@ jobs:
           AGE_SECRET_KEY: ${{ secrets.AGE_SECRET_KEY }}
 
       - name: Build App
-        run: make build UNIVERSAL=1 XCODE_SETTINGS="CODE_SIGNING_ALLOWED=NO"
+        run: make build UNIVERSAL=1 SKIP_SIGNING=1
         env:
           AGE_SECRET_KEY: ${{ secrets.AGE_SECRET_KEY }}
 
@@ -553,7 +552,9 @@ jobs:
           sleep 5
 
       - name: Generate Localized Intro Videos
-        run: make -C distribution intro-video-localized UNIVERSAL=1
+        run: make -C distribution intro-video-localized UNIVERSAL=1 SKIP_SIGNING=1
+        env:
+          AGE_SECRET_KEY: ${{ secrets.AGE_SECRET_KEY }}
 
       - name: Teardown Virtual Display
         if: always()
@@ -674,7 +675,8 @@ jobs:
           make -C distribution appstore-publish \
             VERSION="${VERSION}" \
             BUILD_NUMBER="${COMMIT_COUNT}" \
-            UNIVERSAL=1
+            UNIVERSAL=1 \
+            SKIP_SIGNING=1
         env:
           AGE_SECRET_KEY: ${{ secrets.AGE_SECRET_KEY }}
 
