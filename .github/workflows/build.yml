@@ -165,16 +165,9 @@ jobs:
             -scheme ClipKittyUITests \
             -destination "platform=macOS" \
             -derivedDataPath DerivedData \
-            -allowProvisioningUpdates \
-            -authenticationKeyPath .make/keys/AuthKey.p8 \
-            -authenticationKeyID "$KEY_ID" \
-            -authenticationKeyIssuerID "$ISSUER_ID" \
             -skip-testing:ClipKittyUITests/ClipKittyUITests/testRecordIntroVideo \
-            -skip-testing:ClipKittyUITests/ClipKittyUITests/testTakeMarketingScreenshots
-        env:
-          AGE_SECRET_KEY: ${{ secrets.AGE_SECRET_KEY }}
-          KEY_ID: ${{ steps.secrets.outputs.NOTARY_KEY_ID }}
-          ISSUER_ID: ${{ steps.secrets.outputs.NOTARY_ISSUER_ID }}
+            -skip-testing:ClipKittyUITests/ClipKittyUITests/testTakeMarketingScreenshots \
+            CODE_SIGNING_ALLOWED=NO
 
       - name: Create Virtual Retina Display
         run: |
