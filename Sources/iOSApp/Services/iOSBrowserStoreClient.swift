@@ -38,6 +38,8 @@ final class iOSBrowserStoreClient: BrowserStoreClient {
     private let repository: ClipboardRepository
     private let previewLoader: PreviewLoader
 
+    let listPresentationProfile: ListPresentationProfile = .card
+
     init(repository: ClipboardRepository, previewLoader: PreviewLoader) {
         self.repository = repository
         self.previewLoader = previewLoader
@@ -84,5 +86,9 @@ final class iOSBrowserStoreClient: BrowserStoreClient {
 
     func updateTextItem(itemId: String, text: String) async -> Result<Void, ClipboardError> {
         await repository.updateTextItem(itemId: itemId, text: text)
+    }
+
+    func formatExcerpt(content: String) -> String {
+        repository.store.formatExcerpt(content: content, presentation: listPresentationProfile)
     }
 }

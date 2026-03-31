@@ -80,7 +80,7 @@ struct HomeFeedView: View {
             }
 
         case .loaded:
-            if viewModel.displayRows.isEmpty {
+            if filteredRows.isEmpty {
                 emptyStateView
             } else {
                 scrollableFeed
@@ -98,7 +98,7 @@ struct HomeFeedView: View {
     private var scrollableFeed: some View {
         ScrollView {
             LazyVStack(spacing: 12) {
-                ForEach(viewModel.displayRows) { row in
+                ForEach(filteredRows) { row in
                     CardView(
                         row: row,
                         previewItemId: $previewItemId,
@@ -110,6 +110,14 @@ struct HomeFeedView: View {
                 }
             }
             .padding(.vertical, 12)
+        }
+    }
+
+    /// Filter out file items — iPhone app doesn't support file sharing.
+    private var filteredRows: [DisplayRow] {
+        viewModel.displayRows.filter { row in
+            if case .symbol(.file) = row.metadata.icon { return false }
+            return true
         }
     }
 

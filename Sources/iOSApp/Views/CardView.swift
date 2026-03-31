@@ -11,6 +11,8 @@ struct CardView: View {
     @Environment(BrowserViewModel.self) private var viewModel
     @Environment(AppState.self) private var appState
 
+    @State private var isShareLoading = false
+
     private var metadata: ItemMetadata { row.metadata }
     private var isBookmarked: Bool { metadata.tags.contains(.bookmark) }
 
@@ -111,15 +113,8 @@ struct CardView: View {
             }
 
         case .file:
-            HStack(spacing: 8) {
-                Image(systemName: "doc")
-                    .font(.title3)
-                    .foregroundStyle(.secondary)
-                Text(metadata.snippet)
-                    .font(.subheadline)
-                    .lineLimit(2)
-                    .foregroundStyle(.primary)
-            }
+            // File items are filtered out of the iOS feed
+            EmptyView()
 
         case .color:
             // Fallback for symbol-based color (shouldn't normally hit this path)
@@ -206,9 +201,12 @@ struct CardView: View {
             )
         }
 
-        ShareLink(item: metadata.snippet) {
-            Label("Share", systemImage: "square.and.arrow.up")
+        Button {
+            shareItem()
+        } label: {
+            Label(isShareLoading ? "Loading…" : "Share", systemImage: "square.and.arrow.up")
         }
+        .disabled(isShareLoading)
 
         Button(role: .destructive) {
             viewModel.deleteItem(itemId: metadata.itemId)
@@ -216,6 +214,17 @@ struct CardView: View {
             appState.showToast(.deleted)
         } label: {
             Label("Delete", systemImage: "trash")
+        }
+    }
+
+    // MARK: - Share
+
+    private func shareItem() {
+        isShareLoading = true
+        Task {
+            defer { isShareLoading = false }
+            guard let item = await appState.storeClient.fetchItem(id: metadata.itemId) else { return }
+            SharePresenter.present(item: item)
         }
     }
 
@@ -249,7 +258,7 @@ struct CardView: View {
             case .link: return "Link"
             case .image: return "Image"
             case .color: return "Color"
-            case .file: return "File"
+            case .file: return "File" // Filtered out of iOS feed
             }
         case .colorSwatch:
             return "Color"

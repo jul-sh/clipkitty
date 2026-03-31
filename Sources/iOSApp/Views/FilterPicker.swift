@@ -11,12 +11,11 @@ struct FilterPicker: View {
             return .bookmarks
         }
         switch viewModel.contentTypeFilter {
-        case .all: return .all
+        case .all, .files: return .all
         case .text: return .text
         case .images: return .images
         case .links: return .links
         case .colors: return .colors
-        case .files: return .files
         }
     }
 
@@ -65,9 +64,6 @@ struct FilterPicker: View {
         case .colors:
             viewModel.setTagFilter(nil)
             viewModel.setContentTypeFilter(.colors)
-        case .files:
-            viewModel.setTagFilter(nil)
-            viewModel.setContentTypeFilter(.files)
         }
     }
 }
@@ -79,7 +75,6 @@ private enum FilterOption: String, CaseIterable, Identifiable {
     case images
     case links
     case colors
-    case files
 
     var id: String { rawValue }
 
@@ -91,7 +86,6 @@ private enum FilterOption: String, CaseIterable, Identifiable {
         case .images: return "Images"
         case .links: return "Links"
         case .colors: return "Colors"
-        case .files: return "Files"
         }
     }
 
@@ -103,7 +97,6 @@ private enum FilterOption: String, CaseIterable, Identifiable {
         case .images: return "photo"
         case .links: return "link"
         case .colors: return "paintpalette"
-        case .files: return "doc"
         }
     }
 }

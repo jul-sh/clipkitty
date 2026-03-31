@@ -20,13 +20,13 @@ final class BrowserViewModelTests: XCTestCase {
         let staleResponse = BrowserSearchResponse(
             request: SearchRequest(text: "", filter: .all),
             items: [makeMatch(id: "1", snippet: "stale")],
-            firstItem: nil,
+            firstPreviewPayload: nil,
             totalCount: 1
         )
         let freshResponse = BrowserSearchResponse(
             request: SearchRequest(text: "", filter: .all),
             items: [makeMatch(id: "2", snippet: "fresh")],
-            firstItem: nil,
+            firstPreviewPayload: nil,
             totalCount: 1
         )
 
@@ -49,7 +49,7 @@ final class BrowserViewModelTests: XCTestCase {
         client.enqueueSearchResponse(BrowserSearchResponse(
             request: SearchRequest(text: "", filter: .all),
             items: [makeMatch(id: "1", snippet: "one"), makeMatch(id: "2", snippet: "two")],
-            firstItem: nil,
+            firstPreviewPayload: nil,
             totalCount: 2
         ))
 
@@ -621,7 +621,7 @@ final class BrowserViewModelTests: XCTestCase {
         ))
         await flushMainActor()
 
-        viewModel.loadRowDecorationsForItems(["1"])
+        viewModel.loadListDecorationsForItems(["1"])
         await flushMainActor()
 
         viewModel.updateSearchText("al")
@@ -636,19 +636,19 @@ final class BrowserViewModelTests: XCTestCase {
         await flushMainActor()
         await flushMainActor()
 
-        let staleRowDecoration = RowDecoration(
+        let staleListDecoration = ListDecoration(
             text: "alpha beta",
             highlights: [Utf16HighlightRange(utf16Start: 0, utf16End: 1, kind: .exact)],
             lineNumber: 1
         )
-        client.resumeRowDecorations(
+        client.resumeListDecorations(
             itemIds: ["1"],
             query: "a",
-            with: [RowDecorationResult(itemId: "1", decoration: staleRowDecoration)]
+            with: [ListDecorationResult(itemId: "1", decoration: staleListDecoration)]
         )
         await flushMainActor()
 
-        XCTAssertNil(viewModel.rowDecorationsByItemId["1"])
+        XCTAssertNil(viewModel.listDecorationsByItemId["1"])
         XCTAssertEqual(viewModel.previewDecoration?.highlights.first?.utf16End, 2)
     }
 
@@ -657,7 +657,7 @@ final class BrowserViewModelTests: XCTestCase {
         client.enqueueSearchResponse(BrowserSearchResponse(
             request: SearchRequest(text: "", filter: .all),
             items: [makeMatch(id: "1", snippet: "one"), makeMatch(id: "2", snippet: "two")],
-            firstItem: nil,
+            firstPreviewPayload: nil,
             totalCount: 2
         ))
         client.deleteResult = .failure(.databaseOperationFailed(
@@ -696,7 +696,7 @@ final class BrowserViewModelTests: XCTestCase {
         client.enqueueSearchResponse(BrowserSearchResponse(
             request: SearchRequest(text: "", filter: .all),
             items: [makeMatch(id: "1", snippet: "one"), makeMatch(id: "2", snippet: "two")],
-            firstItem: nil,
+            firstPreviewPayload: nil,
             totalCount: 2
         ))
         client.clearResult = .failure(.databaseOperationFailed(
@@ -771,7 +771,7 @@ final class BrowserViewModelTests: XCTestCase {
         client.enqueueSearchResponse(BrowserSearchResponse(
             request: SearchRequest(text: "", filter: .all),
             items: [makeMatch(id: "1", snippet: "one")],
-            firstItem: nil,
+            firstPreviewPayload: nil,
             totalCount: 1
         ))
 
@@ -802,7 +802,7 @@ final class BrowserViewModelTests: XCTestCase {
         client.enqueueSearchResponse(BrowserSearchResponse(
             request: SearchRequest(text: "", filter: .all),
             items: [makeMatch(id: "1", snippet: "one")],
-            firstItem: nil,
+            firstPreviewPayload: nil,
             totalCount: 1
         ))
 
@@ -837,7 +837,7 @@ final class BrowserViewModelTests: XCTestCase {
                 makeMatch(id: "1", snippet: "one", tags: [.bookmark]),
                 makeMatch(id: "2", snippet: "two", tags: [.bookmark]),
             ],
-            firstItem: nil,
+            firstPreviewPayload: nil,
             totalCount: 2
         ))
 
@@ -870,7 +870,7 @@ final class BrowserViewModelTests: XCTestCase {
                 makeMatch(id: "2", snippet: "two"),
                 makeMatch(id: "3", snippet: "three"),
             ],
-            firstItem: nil,
+            firstPreviewPayload: nil,
             totalCount: 3
         ))
 
@@ -902,7 +902,7 @@ final class BrowserViewModelTests: XCTestCase {
         client.enqueueSearchResponse(BrowserSearchResponse(
             request: SearchRequest(text: "", filter: .all),
             items: [makeMatch(id: "1", snippet: "one"), makeMatch(id: "2", snippet: "two")],
-            firstItem: nil,
+            firstPreviewPayload: nil,
             totalCount: 2
         ))
 
@@ -938,7 +938,7 @@ final class BrowserViewModelTests: XCTestCase {
         client.enqueueSearchResponse(BrowserSearchResponse(
             request: SearchRequest(text: "", filter: .all),
             items: [makeMatch(id: "1", snippet: "one")],
-            firstItem: nil,
+            firstPreviewPayload: nil,
             totalCount: 1
         ))
 
@@ -970,7 +970,7 @@ final class BrowserViewModelTests: XCTestCase {
         client.enqueueSearchResponse(BrowserSearchResponse(
             request: SearchRequest(text: "", filter: .all),
             items: [makeMatch(id: "1", snippet: "original text")],
-            firstItem: nil,
+            firstPreviewPayload: nil,
             totalCount: 1
         ))
 
@@ -1006,7 +1006,7 @@ final class BrowserViewModelTests: XCTestCase {
         client.enqueueSearchResponse(BrowserSearchResponse(
             request: SearchRequest(text: "", filter: .all),
             items: [makeMatch(id: "1", snippet: "original text")],
-            firstItem: nil,
+            firstPreviewPayload: nil,
             totalCount: 1
         ))
 
@@ -1057,7 +1057,7 @@ final class BrowserViewModelTests: XCTestCase {
         client.enqueueSearchResponse(BrowserSearchResponse(
             request: SearchRequest(text: "", filter: .all),
             items: [makeMatch(id: "1", snippet: "hello")],
-            firstItem: nil,
+            firstPreviewPayload: nil,
             totalCount: 1
         ))
 
@@ -1081,7 +1081,7 @@ final class BrowserViewModelTests: XCTestCase {
         client.enqueueSearchResponse(BrowserSearchResponse(
             request: SearchRequest(text: "", filter: .all),
             items: [makeMatch(id: "1", snippet: "hello")],
-            firstItem: nil,
+            firstPreviewPayload: nil,
             totalCount: 1
         ))
 
@@ -1107,7 +1107,7 @@ final class BrowserViewModelTests: XCTestCase {
         client.enqueueSearchResponse(BrowserSearchResponse(
             request: SearchRequest(text: "", filter: .all),
             items: [makeMatch(id: "1", snippet: "hello")],
-            firstItem: nil,
+            firstPreviewPayload: nil,
             totalCount: 1
         ))
 
@@ -1134,7 +1134,7 @@ final class BrowserViewModelTests: XCTestCase {
         client.enqueueSearchResponse(BrowserSearchResponse(
             request: SearchRequest(text: "", filter: .all),
             items: [makeMatch(id: "1", snippet: "hello")],
-            firstItem: nil,
+            firstPreviewPayload: nil,
             totalCount: 1
         ))
 
@@ -1168,7 +1168,7 @@ final class BrowserViewModelTests: XCTestCase {
                 makeMatch(id: "2", snippet: "two"),
                 makeMatch(id: "3", snippet: "three"),
             ],
-            firstItem: nil,
+            firstPreviewPayload: nil,
             totalCount: 3
         ))
 
@@ -1200,7 +1200,7 @@ final class BrowserViewModelTests: XCTestCase {
         client.enqueueSearchResponse(BrowserSearchResponse(
             request: SearchRequest(text: "", filter: .all),
             items: [makeMatch(id: "1", snippet: "one"), makeMatch(id: "2", snippet: "two")],
-            firstItem: nil,
+            firstPreviewPayload: nil,
             totalCount: 2
         ))
 
@@ -1260,7 +1260,7 @@ final class BrowserViewModelTests: XCTestCase {
         client.enqueueSearchResponse(BrowserSearchResponse(
             request: SearchRequest(text: "", filter: .all),
             items: [makeMatch(id: "1", snippet: "one"), makeMatch(id: "2", snippet: "two")],
-            firstItem: nil,
+            firstPreviewPayload: nil,
             totalCount: 2
         ))
 
@@ -1357,7 +1357,7 @@ final class BrowserViewModelTests: XCTestCase {
         client.enqueueSearchResponse(BrowserSearchResponse(
             request: SearchRequest(text: "", filter: .all),
             items: [makeMatch(id: "1", snippet: "one"), makeMatch(id: "2", snippet: "two")],
-            firstItem: nil,
+            firstPreviewPayload: nil,
             totalCount: 2
         ))
 
@@ -1394,7 +1394,7 @@ final class BrowserViewModelTests: XCTestCase {
         client.enqueueSearchResponse(BrowserSearchResponse(
             request: SearchRequest(text: "", filter: .all),
             items: [makeMatch(id: "1", snippet: "one"), makeMatch(id: "2", snippet: "two")],
-            firstItem: nil,
+            firstPreviewPayload: nil,
             totalCount: 2
         ))
         client.deleteResult = .failure(.databaseOperationFailed(
@@ -1445,7 +1445,7 @@ final class BrowserViewModelTests: XCTestCase {
                 timestampUnix: 0,
                 tags: tags
             ),
-            rowDecoration: nil
+            listDecoration: nil
         )
     }
 
@@ -1505,7 +1505,7 @@ private extension BrowserSearchResponse {
 
 @MainActor
 private final class MockBrowserStoreClient: BrowserStoreClient {
-    struct RowDecorationRequest: Hashable {
+    struct ListDecorationRequest: Hashable {
         let itemIds: [String]
         let query: String
     }
@@ -1514,6 +1514,8 @@ private final class MockBrowserStoreClient: BrowserStoreClient {
         let itemId: String
         let query: String
     }
+
+    let listPresentationProfile: ListPresentationProfile = .compactRow
 
     private var pendingSearchResponses: [BrowserSearchResponse] = []
     private var searchContinuations: [CheckedContinuation<BrowserSearchOutcome, Never>] = []
@@ -1524,12 +1526,12 @@ private final class MockBrowserStoreClient: BrowserStoreClient {
     var updateTextResult: Result<Void, ClipboardError> = .success(())
     var updatedTexts: [(itemId: String, text: String)] = []
     var startedSearchRequests: [SearchRequest] = []
-    var loadRowDecorationRequests: [RowDecorationRequest] = []
+    var loadListDecorationRequests: [ListDecorationRequest] = []
     var loadPreviewDecorationRequests: [PreviewDecorationRequest] = []
-    var rowDecorationsByQuery: [String: [String: RowDecoration]] = [:]
+    var listDecorationsByQuery: [String: [String: ListDecoration]] = [:]
     var previewPayloadsByQuery: [String: [String: PreviewPayload]] = [:]
     private var fetchContinuations: [String: [CheckedContinuation<ClipboardItem?, Never>]] = [:]
-    private var rowDecorationContinuations: [RowDecorationRequest: [CheckedContinuation<[RowDecorationResult], Never>]] = [:]
+    private var listDecorationContinuations: [ListDecorationRequest: [CheckedContinuation<[ListDecorationResult], Never>]] = [:]
     private var previewPayloadContinuations: [PreviewDecorationRequest: [CheckedContinuation<PreviewPayload?, Never>]] = [:]
 
     func startSearch(request: SearchRequest) -> BrowserSearchOperation {
@@ -1562,19 +1564,23 @@ private final class MockBrowserStoreClient: BrowserStoreClient {
         }
     }
 
-    func loadRowDecorations(itemIds: [String], query: String) async -> [RowDecorationResult] {
-        let request = RowDecorationRequest(itemIds: itemIds, query: query)
-        loadRowDecorationRequests.append(request)
+    func loadListDecorations(itemIds: [String], query: String, presentation: ListPresentationProfile) async -> [ListDecorationResult] {
+        let request = ListDecorationRequest(itemIds: itemIds, query: query)
+        loadListDecorationRequests.append(request)
 
-        if let decorationsByItemId = rowDecorationsByQuery[query] {
+        if let decorationsByItemId = listDecorationsByQuery[query] {
             return itemIds.map { itemId in
-                RowDecorationResult(itemId: itemId, decoration: decorationsByItemId[itemId])
+                ListDecorationResult(itemId: itemId, decoration: decorationsByItemId[itemId])
             }
         }
 
         return await withCheckedContinuation { continuation in
-            rowDecorationContinuations[request, default: []].append(continuation)
+            listDecorationContinuations[request, default: []].append(continuation)
         }
+    }
+
+    func formatExcerpt(content: String) -> String {
+        String(content.prefix(200))
     }
 
     func loadPreviewPayload(itemId: String, query: String) async -> PreviewPayload? {
@@ -1625,9 +1631,9 @@ private final class MockBrowserStoreClient: BrowserStoreClient {
         fetchContinuations.removeValue(forKey: id)?.forEach { $0.resume(returning: item) }
     }
 
-    func resumeRowDecorations(itemIds: [String], query: String, with results: [RowDecorationResult]) {
-        let request = RowDecorationRequest(itemIds: itemIds, query: query)
-        rowDecorationContinuations.removeValue(forKey: request)?.forEach { $0.resume(returning: results) }
+    func resumeListDecorations(itemIds: [String], query: String, with results: [ListDecorationResult]) {
+        let request = ListDecorationRequest(itemIds: itemIds, query: query)
+        listDecorationContinuations.removeValue(forKey: request)?.forEach { $0.resume(returning: results) }
     }
 
     func resumePreviewPayload(itemId: String, query: String, with payload: PreviewPayload?) {

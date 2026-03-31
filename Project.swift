@@ -358,6 +358,35 @@ let project = Project(
             )
         ),
 
+        // MARK: ClipKittyiOSTests — iOS integration tests
+        .target(
+            name: "ClipKittyiOSTests",
+            destinations: .iOS,
+            product: .unitTests,
+            bundleId: "com.eviljuliette.clipkitty.ios.tests",
+            deploymentTargets: .iOS("26.0"),
+            sources: ["Tests/iOSTests/**"],
+            dependencies: [
+                .target(name: "ClipKittyiOS"),
+                .target(name: "ClipKittyRust"),
+                .target(name: "ClipKittyShared"),
+                .target(name: "ClipKittyAppleServices"),
+            ],
+            settings: .settings(
+                base: [
+                    "OTHER_LDFLAGS": .array(["$(inherited)", "-lpurr"]),
+                    "LIBRARY_SEARCH_PATHS[sdk=iphoneos*]": .array([
+                        "$(inherited)",
+                        "$(PROJECT_DIR)/Sources/ClipKittyRust/ios-device",
+                    ]),
+                    "LIBRARY_SEARCH_PATHS[sdk=iphonesimulator*]": .array([
+                        "$(inherited)",
+                        "$(PROJECT_DIR)/Sources/ClipKittyRust/ios-simulator",
+                    ]),
+                ]
+            )
+        ),
+
         // MARK: ClipKittyiOSSmokeTest — compile-time proof that the shared chain builds for iOS
         // This target exists solely to catch macOS leakage into shared/services code.
         // It imports all shared modules and builds for iOS; it is never shipped.
@@ -489,6 +518,10 @@ let project = Project(
             name: "ClipKittyiOS",
             shared: true,
             buildAction: .buildAction(targets: [.target("ClipKittyiOS")]),
+            testAction: .targets(
+                [.testableTarget(target: .target("ClipKittyiOSTests"))],
+                configuration: "Debug"
+            ),
             runAction: .runAction(
                 configuration: "Debug",
                 executable: .target("ClipKittyiOS")

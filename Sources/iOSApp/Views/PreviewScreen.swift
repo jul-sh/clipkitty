@@ -84,8 +84,10 @@ struct PreviewScreen: View {
             imageContent(data: data, description: description)
         case let .color(value):
             colorContent(value: value)
-        case let .file(_, files):
-            fileContent(files: files)
+        case .file:
+            Text("File items are not supported on iPhone.")
+                .font(.subheadline)
+                .foregroundStyle(.secondary)
         }
     }
 
@@ -220,31 +222,6 @@ struct PreviewScreen: View {
         return Color(red: r, green: g, blue: b, opacity: a)
     }
 
-    // MARK: - File Content
-
-    @ViewBuilder
-    private func fileContent(files: [FileEntry]) -> some View {
-        VStack(alignment: .leading, spacing: 8) {
-            ForEach(files, id: \.path) { file in
-                HStack {
-                    Image(systemName: "doc")
-                    VStack(alignment: .leading, spacing: 2) {
-                        Text(file.filename)
-                            .font(.body)
-                        HStack(spacing: 8) {
-                            Text(formatFileSize(file.fileSize))
-                            Text(file.uti)
-                        }
-                        .font(.caption)
-                        .foregroundStyle(.secondary)
-                    }
-                    Spacer()
-                }
-                .padding(.vertical, 4)
-            }
-        }
-    }
-
     // MARK: - Metadata Section
 
     @ViewBuilder
@@ -313,7 +290,7 @@ struct PreviewScreen: View {
                 }
 
                 Button {
-                    presentShareSheet(for: item)
+                    SharePresenter.present(item: item)
                 } label: {
                     Label("Share", systemImage: "square.and.arrow.up")
                 }
@@ -345,58 +322,4 @@ struct PreviewScreen: View {
         }
     }
 
-    private func shareItems(for item: ClipboardItem) -> [Any] {
-        switch item.content {
-        case let .text(value):
-            return [value]
-        case let .link(url, _):
-            if let linkURL = URL(string: url) {
-                return [linkURL]
-            }
-            return [url]
-        case let .image(data, _, _):
-            if let uiImage = UIImage(data: data) {
-                return [uiImage]
-            }
-            return [item.itemMetadata.snippet]
-        case let .color(value):
-            return [value]
-        case let .file(displayName, _):
-            return [displayName]
-        }
-    }
-
-    private func presentShareSheet(for item: ClipboardItem) {
-        let items = shareItems(for: item)
-        let activityVC = UIActivityViewController(activityItems: items, applicationActivities: nil)
-        guard let windowScene = UIApplication.shared.connectedScenes
-            .compactMap({ $0 as? UIWindowScene }).first,
-            let rootVC = windowScene.windows.first?.rootViewController
-        else { return }
-        // Find the topmost presented controller
-        var presenter = rootVC
-        while let presented = presenter.presentedViewController {
-            presenter = presented
-        }
-        activityVC.popoverPresentationController?.sourceView = presenter.view
-        presenter.present(activityVC, animated: true)
-    }
-}
-
-// MARK: - File Size Formatting
-
-private func formatFileSize(_ bytes: UInt64) -> String {
-    let units = ["B", "KB", "MB", "GB", "TB"]
-    var size = Double(bytes)
-    var unitIndex = 0
-
-    while size >= 1024, unitIndex < units.count - 1 {
-        size /= 1024
-        unitIndex += 1
-    }
-
-    if unitIndex == 0 {
-        return "\(bytes) B"
-    }
-    return String(format: "%.1f %@", size, units[unitIndex])
 }
