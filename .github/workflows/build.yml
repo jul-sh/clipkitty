@@ -104,26 +104,12 @@ jobs:
         with:
           swift-version: "6.2"
 
-      # 1. Install Apple Certificates for Signing
-      - name: Install Developer ID Certificate
+      # 1. Install Apple Certificate for Signing
+      - name: Install Apple Certificate
         uses: apple-actions/import-codesign-certs@v3
         with:
           p12-file-base64: ${{ steps.secrets.outputs.MACOS_P12_BASE64 }}
           p12-password: ${{ steps.secrets.outputs.MACOS_P12_PASSWORD }}
-
-      - name: Install Apple Development Certificate
-        uses: apple-actions/import-codesign-certs@v3
-        with:
-          p12-file-base64: ${{ steps.secrets.outputs.MAC_DEV_P12_BASE64 }}
-          p12-password: ${{ steps.secrets.outputs.MAC_DEV_P12_PASSWORD }}
-          keychain: dev_signing
-
-      - name: Install Apple Distribution Certificate
-        uses: apple-actions/import-codesign-certs@v3
-        with:
-          p12-file-base64: ${{ steps.secrets.outputs.APPSTORE_APP_CERT_BASE64 }}
-          p12-password: ${{ steps.secrets.outputs.P12_PASSWORD }}
-          keychain: dist_signing
 
       - name: Install Nix
         uses: DeterminateSystems/nix-installer-action@main
@@ -166,10 +152,7 @@ jobs:
             -destination "platform=macOS" \
             -derivedDataPath DerivedData \
             -skip-testing:ClipKittyUITests/ClipKittyUITests/testRecordIntroVideo \
-            -skip-testing:ClipKittyUITests/ClipKittyUITests/testTakeMarketingScreenshots \
-            CODE_SIGN_STYLE=Manual \
-            CODE_SIGN_IDENTITY="Developer ID Application" \
-            DEVELOPMENT_TEAM=ANBBV7LQ2P
+            -skip-testing:ClipKittyUITests/ClipKittyUITests/testTakeMarketingScreenshots
 
       - name: Create Virtual Retina Display
         run: |
