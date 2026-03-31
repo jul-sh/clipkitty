@@ -73,6 +73,9 @@ api-key:
 provisioning: api-key
 	@./distribution/setup-dev-provisioning.sh
 
+# Extra xcodebuild settings (pass-through for CI overrides)
+XCODE_SETTINGS ?=
+
 # Build using xcodebuild
 # Debug/Release use Automatic signing; SparkleRelease/AppStore use Manual (CI)
 build: api-key
@@ -88,6 +91,7 @@ build: api-key
 		MARKETING_VERSION=$(VERSION) \
 		CURRENT_PROJECT_VERSION=$(BUILD_NUMBER) \
 		ONLY_ACTIVE_ARCH=$(if $(UNIVERSAL),NO,YES) \
+		$(XCODE_SETTINGS) \
 		build
 
 # Sign the built app (for distribution)
