@@ -116,7 +116,14 @@ jobs:
         with:
           p12-file-base64: ${{ steps.secrets.outputs.MAC_DEV_P12_BASE64 }}
           p12-password: ${{ steps.secrets.outputs.MAC_DEV_P12_PASSWORD }}
-          create-keychain: false
+          keychain: dev_signing
+
+      - name: Fix keychain search list
+        run: |
+          security list-keychains -d user -s \
+            ~/Library/Keychains/signing_temp.keychain-db \
+            ~/Library/Keychains/dev_signing.keychain-db \
+            ~/Library/Keychains/login.keychain-db
 
       - name: Install Nix
         uses: DeterminateSystems/nix-installer-action@main
