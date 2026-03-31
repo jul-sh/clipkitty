@@ -28,6 +28,8 @@
     <array>
         <string>iCloud.com.clipkitty</string>
     </array>
+    <key>com.apple.developer.icloud-container-environment</key>
+    <string>Production</string>
 
     <!-- Hardware: camera/microphone/location are omitted; no sensor access. -->
 
