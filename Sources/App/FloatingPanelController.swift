@@ -210,7 +210,12 @@ final class FloatingPanelController: NSObject, NSWindowDelegate {
     private static let basePanelSize = NSSize(width: 778, height: 518)
     private static var panelSize: NSSize {
         let s = AppSettings.shared.textScale
-        return NSSize(width: basePanelSize.width * s, height: basePanelSize.height * s)
+        var size = NSSize(width: basePanelSize.width * s, height: basePanelSize.height * s)
+        if let screen = NSScreen.main?.visibleFrame {
+            size.width = min(size.width, screen.width - 40)
+            size.height = min(size.height, screen.height - 40)
+        }
+        return size
     }
     private static let animationScale: CGFloat = 1.05
     private static var animationMargin: CGFloat {
