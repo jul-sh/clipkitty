@@ -211,10 +211,9 @@ final class AppSettings: ObservableObject {
         }
     #endif
 
-    /// Scale factor for browser text and panel dimensions (1.0 = default)
-    @Published var textScale: CGFloat {
-        didSet { save() }
-    }
+    /// Scale factor for browser text and panel dimensions, derived from system accessibility text size.
+    /// Minimum is 1.0 (system default), maximum is capped at 1.5.
+    @Published var textScale: CGFloat
 
     /// Bundle IDs of apps whose clipboard content should be ignored
     @Published var ignoredAppBundleIds: Set<String> {
@@ -239,7 +238,7 @@ final class AppSettings: ObservableObject {
     #if ENABLE_SYNC
         private let syncEnabledKey = "syncEnabled"
     #endif
-    private let textScaleKey = "textScale"
+    private var textScaleObserver: Any?
     private let ignoredAppBundleIdsKey = "ignoredAppBundleIds"
     #if SPARKLE_RELEASE
         private let autoInstallUpdatesKey = "autoInstallUpdates"
@@ -302,12 +301,8 @@ final class AppSettings: ObservableObject {
         ignoreTransientContent = defaults.object(forKey: ignoreTransientKey) as? Bool ?? true
         generateLinkPreviews = defaults.object(forKey: generateLinkPreviewsKey) as? Bool ?? true
 
-        // Text scale
-        if let stored = defaults.object(forKey: textScaleKey) as? Double {
-            textScale = CGFloat(stored)
-        } else {
-            textScale = 1.0
-        }
+        // Text scale from system accessibility setting
+        textScale = Self.systemTextScale()
 
         // Load ignored app bundle IDs
         if let storedIds = defaults.stringArray(forKey: ignoredAppBundleIdsKey) {
@@ -325,6 +320,44 @@ final class AppSettings: ObservableObject {
 
         // Mark initialization complete - save() calls are now allowed
         isInitializing = false
+
+        // Observe system text size changes (Accessibility > Display > Text Size)
+        textScaleObserver = NotificationCenter.default.addObserver(
+            forName: NSNotification.Name("NSPreferredContentSizeCategoryDidChangeNotification"),
+            object: nil, queue: .main
+        ) { [weak self] _ in
+            MainActor.assumeIsolated {
+                self?.textScale = Self.systemTextScale()
+            }
+        }
+    }
+
+    /// Maps system accessibility text size to a scale factor (1.0–1.5)
+    private static func systemTextScale() -> CGFloat {
+        let category = UserDefaults.standard.string(forKey: "UIPreferredContentSizeCategoryName")
+            ?? "UICTContentSizeCategoryL"
+        let scale: CGFloat = switch category {
+        case "UICTContentSizeCategoryXS", "UICTContentSizeCategoryS",
+             "UICTContentSizeCategoryM", "UICTContentSizeCategoryL":
+            1.0
+        case "UICTContentSizeCategoryXL":
+            1.1
+        case "UICTContentSizeCategoryXXL":
+            1.2
+        case "UICTContentSizeCategoryXXXL":
+            1.3
+        case "UICTContentSizeCategoryAccessibilityM":
+            1.35
+        case "UICTContentSizeCategoryAccessibilityL":
+            1.4
+        case "UICTContentSizeCategoryAccessibilityXL",
+             "UICTContentSizeCategoryAccessibilityXXL",
+             "UICTContentSizeCategoryAccessibilityXXXL":
+            1.5
+        default:
+            1.0
+        }
+        return min(scale, 1.5)
     }
 
     private func save() {
@@ -348,7 +381,7 @@ final class AppSettings: ObservableObject {
         defaults.set(ignoreConfidentialContent, forKey: ignoreConfidentialKey)
         defaults.set(ignoreTransientContent, forKey: ignoreTransientKey)
         defaults.set(generateLinkPreviews, forKey: generateLinkPreviewsKey)
-        defaults.set(Double(textScale), forKey: textScaleKey)
+        // textScale is derived from system accessibility setting, not persisted
         defaults.set(Array(ignoredAppBundleIds).sorted(), forKey: ignoredAppBundleIdsKey)
         #if SPARKLE_RELEASE
             defaults.set(autoInstallUpdates, forKey: autoInstallUpdatesKey)

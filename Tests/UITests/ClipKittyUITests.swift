@@ -1442,8 +1442,7 @@ final class ClipKittyUITests: XCTestCase {
         // General tab should be visible by default
         let generalTab = settingsWindow.buttons["SettingsTab_General"]
             .exists ? settingsWindow.buttons["SettingsTab_General"] : settingsWindow.radioButtons["General"]
-        XCTAssertTrue(settingsWindow.staticTexts["Startup"].waitForExistence(timeout: 3)
-                      || settingsWindow.staticTexts["Appearance"].waitForExistence(timeout: 3),
+        XCTAssertTrue(settingsWindow.staticTexts["Startup"].waitForExistence(timeout: 3),
                       "General tab content should be visible")
 
         // Switch to Privacy tab

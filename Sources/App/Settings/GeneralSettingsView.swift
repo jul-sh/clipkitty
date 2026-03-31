@@ -81,22 +81,6 @@ struct GeneralSettingsView: View {
                 }
             }
 
-            Section(String(localized: "Appearance")) {
-                LabeledContent(String(localized: "Text Size")) {
-                    HStack(spacing: 8) {
-                        Slider(value: $settings.textScale, in: 1.0...1.5, step: 0.05)
-                            .frame(maxWidth: .infinity)
-                        Text("\(Int(settings.textScale * 100))%")
-                            .foregroundStyle(.secondary)
-                            .frame(width: 50, alignment: .trailing)
-                    }
-                    .frame(maxWidth: .infinity)
-                }
-
-                Text(String(localized: "Adjusts text size and window dimensions proportionally."))
-                    .font(.subheadline)
-                    .foregroundStyle(.secondary)
-            }
 
             #if !APP_STORE
                 Section(String(localized: "Paste Items")) {
