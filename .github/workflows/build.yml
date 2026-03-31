@@ -129,6 +129,17 @@ jobs:
       - name: Generate Xcode Project
         run: make generate
 
+      - name: Prepare Xcode Authentication
+        id: xcode-auth
+        run: |
+          mkdir -p .make/keys
+          ./distribution/read-secret.sh NOTARY_KEY_BASE64 | base64 --decode > .make/keys/AuthKey.p8
+          echo "key_id=$(./distribution/read-secret.sh NOTARY_KEY_ID)" >> "$GITHUB_OUTPUT"
+          echo "issuer_id=$(./distribution/read-secret.sh NOTARY_ISSUER_ID)" >> "$GITHUB_OUTPUT"
+          echo "key_path=$(pwd)/.make/keys/AuthKey.p8" >> "$GITHUB_OUTPUT"
+        env:
+          AGE_SECRET_KEY: ${{ secrets.AGE_SECRET_KEY }}
+
       - name: Build App (SparkleRelease)
         run: make build CONFIGURATION=SparkleRelease UNIVERSAL=1 XCODE_SETTINGS="CODE_SIGNING_ALLOWED=NO"
         env:
@@ -151,6 +162,10 @@ jobs:
             -scheme ClipKittyUITests \
             -destination "platform=macOS" \
             -derivedDataPath DerivedData \
+            -allowProvisioningUpdates \
+            -authenticationKeyPath "${{ steps.xcode-auth.outputs.key_path }}" \
+            -authenticationKeyID "${{ steps.xcode-auth.outputs.key_id }}" \
+            -authenticationKeyIssuerID "${{ steps.xcode-auth.outputs.issuer_id }}" \
             -skip-testing:ClipKittyUITests/ClipKittyUITests/testRecordIntroVideo \
             -skip-testing:ClipKittyUITests/ClipKittyUITests/testTakeMarketingScreenshots
 
