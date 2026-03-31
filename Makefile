@@ -27,7 +27,7 @@ SIGNING_IDENTITY ?= $(shell security find-identity -v -p codesigning 2>/dev/null
 RUST_MARKER := .make/rust.marker
 RUST_LIB := Sources/ClipKittyRust/libpurr.a
 
-.PHONY: all clean rust rust-force generate build signing sign list-identities run run-perf test unittest uitest rust-test perf-test perf-db perf-bench
+.PHONY: all clean rust rust-force generate build signing api-key provisioning sign list-identities run run-perf test unittest uitest rust-test perf-test perf-db perf-bench
 
 all: rust generate build
 
@@ -56,12 +56,25 @@ generate:
 	@echo "Generating Xcode project..."
 	@tuist generate --no-open
 
-# Ensure Developer ID signing certificate is available
+# Ensure signing certificates are available in keychain
 signing:
 	@./distribution/setup-dev-signing.sh
 
+# Decrypt App Store Connect API key for automatic provisioning
+API_KEY_DIR := $(SCRIPT_DIR)/.make/keys
+api-key:
+	@mkdir -p $(API_KEY_DIR)
+	@if [ ! -f "$(API_KEY_DIR)/AuthKey.p8" ]; then \
+		echo "Decrypting API key for provisioning..."; \
+		./distribution/read-secret.sh NOTARY_KEY_BASE64 | base64 --decode > "$(API_KEY_DIR)/AuthKey.p8"; \
+	fi
+
+# Ensure Mac Development provisioning profile is installed
+provisioning: api-key
+	@./distribution/setup-dev-provisioning.sh
+
 # Build using xcodebuild
-build: signing
+build: signing provisioning
 	@echo "Building $(APP_NAME) ($(CONFIGURATION))..."
 	@xcodebuild -workspace $(APP_NAME).xcworkspace \
 		-scheme $(APP_NAME) \
