@@ -336,26 +336,19 @@ final class AppSettings: ObservableObject {
     private static func systemTextScale() -> CGFloat {
         let category = UserDefaults.standard.string(forKey: "UIPreferredContentSizeCategoryName")
             ?? "UICTContentSizeCategoryL"
+        // Scale proportionally to iOS body font sizes (baseline: L = 17pt, cap: a11y L = 33pt)
         let scale: CGFloat = switch category {
         case "UICTContentSizeCategoryXS", "UICTContentSizeCategoryS",
              "UICTContentSizeCategoryM", "UICTContentSizeCategoryL":
             1.0
         case "UICTContentSizeCategoryXL":
-            1.1
+            1.12  // 19/17
         case "UICTContentSizeCategoryXXL":
-            1.2
+            1.24  // 21/17
         case "UICTContentSizeCategoryXXXL":
-            1.3
-        case "UICTContentSizeCategoryAccessibilityM":
-            1.35
-        case "UICTContentSizeCategoryAccessibilityL":
-            1.4
-        case "UICTContentSizeCategoryAccessibilityXL",
-             "UICTContentSizeCategoryAccessibilityXXL",
-             "UICTContentSizeCategoryAccessibilityXXXL":
-            1.5
+            1.35  // 23/17
         default:
-            1.0
+            1.5   // a11y M and above
         }
         return min(scale, 1.5)
     }
