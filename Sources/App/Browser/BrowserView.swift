@@ -225,9 +225,9 @@ struct BrowserView: View {
                 return handleCommandNumberShortcut(number) ? nil : event
             }
 
-            // ⌘⌫ — delete selected item
+            // ⌘- — delete selected item
             let modifiers = event.modifierFlags.intersection(.deviceIndependentFlagsMask)
-            if modifiers == .command, event.keyCode == 51 {
+            if modifiers == .command, event.keyCode == 27 {
                 if viewModel.selectedItem != nil {
                     viewModel.deleteSelectedItem()
                     return nil
@@ -308,9 +308,9 @@ private extension View {
         let radius = systemWindowCornerRadius
         if #available(macOS 26.0, *) {
             if let radius {
-                self.glassEffect(.regular.interactive(), in: .rect(cornerRadius: radius, style: .continuous))
+                glassEffect(.regular.interactive(), in: .rect(cornerRadius: radius, style: .continuous))
             } else {
-                self.glassEffect(.regular.interactive(), in: .rect)
+                glassEffect(.regular.interactive(), in: .rect)
             }
         } else {
             if let radius {

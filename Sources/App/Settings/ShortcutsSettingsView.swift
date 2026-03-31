@@ -54,7 +54,7 @@ struct ShortcutsSettingsView: View {
                 HStack {
                     Text(String(localized: "Delete Item"))
                     Spacer()
-                    Text("⌘⌫")
+                    Text("⌘-")
                         .frame(minWidth: 100)
                         .padding(.horizontal, 8)
                         .padding(.vertical, 4)
