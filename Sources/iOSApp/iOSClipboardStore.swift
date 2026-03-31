@@ -169,7 +169,7 @@ final class iOSClipboardStore: ObservableObject {
         #endif
     }
 
-    // MARK: - Public API (read-only browsing)
+    // MARK: - Public API
 
     func startSearch(query: String, filter: ItemQueryFilter) -> ClipboardSearchOperation? {
         repository?.startSearch(query: query, filter: filter)
@@ -185,6 +185,22 @@ final class iOSClipboardStore: ObservableObject {
 
     func loadPreviewPayload(itemId: String, query: String) async -> PreviewPayload? {
         await repository?.loadPreviewPayload(itemId: itemId, query: query)
+    }
+
+    // MARK: - Write (paste from iOS clipboard)
+
+    func saveText(text: String) async -> Bool {
+        guard let repo = repository else { return false }
+        let result = await repo.saveText(text: text)
+        if case .success = result { contentRevision += 1 }
+        return result.isSuccess
+    }
+
+    func saveImage(imageData: Data) async -> Bool {
+        guard let repo = repository else { return false }
+        let result = await repo.saveImage(imageData: imageData)
+        if case .success = result { contentRevision += 1 }
+        return result.isSuccess
     }
 
     func addTag(itemId: String, tag: ItemTag) async -> Bool {

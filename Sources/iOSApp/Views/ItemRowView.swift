@@ -8,82 +8,121 @@ struct ItemRowView: View {
 
     var body: some View {
         HStack(spacing: 12) {
-            iconView
-                .frame(width: 36, height: 36)
+            // Thumbnail / icon (only for images and colors)
+            thumbnailView
 
-            VStack(alignment: .leading, spacing: 3) {
-                displayText
-                    .lineLimit(2)
+            VStack(alignment: .leading, spacing: 4) {
+                // Top line: content type + time ago
+                HStack(spacing: 0) {
+                    Text(contentTypeLabel)
+                        .font(.subheadline.weight(.medium))
+                        .foregroundStyle(.primary)
 
-                HStack(spacing: 6) {
-                    if metadata.tags.contains(.bookmark) {
-                        Image(systemName: "bookmark.fill")
-                            .font(.caption2)
-                            .foregroundStyle(.orange)
-                    }
+                    Text("  ")
 
                     Text(timeAgo(from: metadata.timestampUnix))
-                        .font(.caption)
-                        .foregroundStyle(.tertiary)
+                        .font(.subheadline)
+                        .foregroundStyle(.secondary)
+
+                    Spacer(minLength: 4)
+
+                    // Source app badge
+                    if metadata.tags.contains(.bookmark) {
+                        Image(systemName: "bookmark.fill")
+                            .font(.caption)
+                            .foregroundStyle(.orange)
+                    }
 
                     if let bundleId = metadata.sourceAppBundleId,
                        !bundleId.isEmpty
                     {
-                        Text(appName(from: bundleId))
-                            .font(.caption)
-                            .foregroundStyle(.tertiary)
+                        sourceAppBadge(bundleId: bundleId)
                     }
                 }
-            }
 
-            Spacer(minLength: 0)
+                // Content preview
+                displayText
+                    .lineLimit(3)
+            }
         }
-        .padding(.vertical, 4)
+        .padding(.vertical, 6)
     }
 
-    // MARK: - Icon
+    // MARK: - Content Type
+
+    private var contentTypeLabel: String {
+        switch metadata.icon {
+        case .thumbnail: return "Image"
+        case .colorSwatch: return "Color"
+        case let .symbol(iconType):
+            switch iconType {
+            case .text: return "Text"
+            case .link: return "Link"
+            case .image: return "Image"
+            case .color: return "Color"
+            case .file: return "File"
+            }
+        }
+    }
+
+    // MARK: - Thumbnail
 
     @ViewBuilder
-    private var iconView: some View {
+    private var thumbnailView: some View {
         switch metadata.icon {
         case let .thumbnail(bytes):
             if let uiImage = UIImage(data: Data(bytes)) {
                 Image(uiImage: uiImage)
                     .resizable()
                     .aspectRatio(contentMode: .fill)
-                    .frame(width: 36, height: 36)
+                    .frame(width: 40, height: 40)
                     .clipShape(RoundedRectangle(cornerRadius: 6))
-            } else {
-                fallbackIcon
             }
 
         case let .colorSwatch(rgba):
-            let color = colorFromRGBA(rgba)
             RoundedRectangle(cornerRadius: 6)
-                .fill(color)
+                .fill(colorFromRGBA(rgba))
+                .frame(width: 40, height: 40)
                 .overlay(
                     RoundedRectangle(cornerRadius: 6)
                         .strokeBorder(.quaternary, lineWidth: 0.5)
                 )
 
-        case let .symbol(iconType):
-            Image(systemName: sfSymbolName(for: iconType))
-                .font(.system(size: 16))
-                .foregroundStyle(.secondary)
-                .frame(width: 36, height: 36)
-                .background(Color(.tertiarySystemFill))
-                .clipShape(RoundedRectangle(cornerRadius: 6))
+        case .symbol:
+            EmptyView()
         }
     }
 
+    // MARK: - Source App Badge
+
     @ViewBuilder
-    private var fallbackIcon: some View {
-        Image(systemName: "doc")
-            .font(.system(size: 16))
-            .foregroundStyle(.secondary)
-            .frame(width: 36, height: 36)
-            .background(Color(.tertiarySystemFill))
-            .clipShape(RoundedRectangle(cornerRadius: 6))
+    private func sourceAppBadge(bundleId: String) -> some View {
+        let icon = sourceAppIcon(bundleId: bundleId)
+        if let icon {
+            Image(systemName: icon)
+                .font(.caption)
+                .foregroundStyle(.secondary)
+                .frame(width: 20, height: 20)
+                .background(Color(.tertiarySystemFill))
+                .clipShape(RoundedRectangle(cornerRadius: 4))
+        }
+    }
+
+    private func sourceAppIcon(bundleId: String) -> String? {
+        let id = bundleId.lowercased()
+        if id.contains("safari") { return "safari" }
+        if id.contains("mail") { return "envelope" }
+        if id.contains("notes") { return "note.text" }
+        if id.contains("messages") { return "message" }
+        if id.contains("slack") { return "number" }
+        if id.contains("terminal") || id.contains("iterm") {
+            return "terminal"
+        }
+        if id.contains("xcode") { return "hammer" }
+        if id.contains("finder") { return "folder" }
+        if id.contains("textedit") { return "doc.text" }
+        if id.contains("preview") { return "eye" }
+        return nil
     }
 
     // MARK: - Display Text
@@ -95,7 +134,7 @@ struct ItemRowView: View {
         } else {
             Text(metadata.snippet)
                 .font(.subheadline)
-                .foregroundStyle(.primary)
+                .foregroundStyle(.secondary)
         }
     }
 
@@ -107,9 +146,8 @@ struct ItemRowView: View {
         if highlights.isEmpty {
             Text(text)
                 .font(.subheadline)
-                .foregroundStyle(.primary)
+                .foregroundStyle(.secondary)
         } else {
-            // Build an attributed string with highlights
             let attributed = buildHighlightedString(
                 text: text,
                 highlights: highlights
@@ -124,6 +162,7 @@ struct ItemRowView: View {
         highlights: [Utf16HighlightRange]
     ) -> AttributedString {
         var result = AttributedString(text)
+        result.foregroundColor = .secondary
 
         for highlight in highlights {
             let start = Int(highlight.utf16Start)
@@ -149,7 +188,7 @@ struct ItemRowView: View {
             let range = rangeStart ..< rangeEnd
             guard let attrRange = Range(range, in: result) else { continue }
 
-            result[attrRange].foregroundColor = .accentColor
+            result[attrRange].foregroundColor = .primary
             result[attrRange].font = .subheadline.bold()
         }
 
@@ -157,16 +196,6 @@ struct ItemRowView: View {
     }
 
     // MARK: - Helpers
-
-    private func sfSymbolName(for iconType: IconType) -> String {
-        switch iconType {
-        case .text: return "doc.text"
-        case .link: return "link"
-        case .image: return "photo"
-        case .color: return "paintpalette"
-        case .file: return "folder"
-        }
-    }
 
     private func colorFromRGBA(_ rgba: UInt32) -> Color {
         let r = Double((rgba >> 24) & 0xFF) / 255.0
@@ -181,13 +210,5 @@ struct ItemRowView: View {
         let formatter = RelativeDateTimeFormatter()
         formatter.unitsStyle = .abbreviated
         return formatter.localizedString(for: date, relativeTo: Date())
-    }
-
-    private func appName(from bundleId: String) -> String {
-        let components = bundleId.split(separator: ".")
-        if let last = components.last {
-            return String(last)
-        }
-        return bundleId
     }
 }

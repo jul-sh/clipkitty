@@ -141,6 +141,28 @@ final class ClipboardRepository {
         return nil
     }
 
+    func saveText(text: String) async -> Result<String, ClipboardError> {
+        await runRepositoryOperation("saveText", on: store) { store in
+            try store.saveText(
+                text: text,
+                sourceApp: nil,
+                sourceAppBundleId: nil
+            )
+        }
+    }
+
+    func saveImage(imageData: Data) async -> Result<String, ClipboardError> {
+        await runRepositoryOperation("saveImage", on: store) { store in
+            try store.saveImage(
+                imageData: imageData,
+                thumbnail: nil,
+                sourceApp: nil,
+                sourceAppBundleId: nil,
+                isAnimated: false
+            )
+        }
+    }
+
     func addTag(
         itemId: String,
         tag: ItemTag

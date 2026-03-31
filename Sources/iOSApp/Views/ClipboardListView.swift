@@ -1,5 +1,6 @@
 import ClipKittyRust
 import SwiftUI
+import UIKit
 
 @MainActor
 @Observable
@@ -12,6 +13,7 @@ final class ClipboardListViewModel {
     var totalCount: Int = 0
     var isSearching = false
     var errorMessage: String?
+    var isSearchBarVisible = false
 
     // Row decorations cache
     var rowDecorations: [String: RowDecoration] = [:]
@@ -23,6 +25,21 @@ final class ClipboardListViewModel {
 
     init(store: iOSClipboardStore) {
         self.store = store
+    }
+
+    var filterLabel: String {
+        switch filter {
+        case .all: return "Clipboard"
+        case let .contentType(contentFilter):
+            switch contentFilter {
+            case .text: return "Text"
+            case .images: return "Images"
+            case .links: return "Links"
+            case .colors: return "Colors"
+            case .files: return "Files"
+            }
+        case .tagged: return "Saved"
+        }
     }
 
     func onAppear() {
@@ -42,6 +59,20 @@ final class ClipboardListViewModel {
 
     func setFilter(_ filter: ItemQueryFilter) {
         self.filter = filter
+        performSearch()
+    }
+
+    func toggleSearchBar() {
+        isSearchBarVisible.toggle()
+        if !isSearchBarVisible {
+            searchText = ""
+            performSearch()
+        }
+    }
+
+    func dismissSearch() {
+        isSearchBarVisible = false
+        searchText = ""
         performSearch()
     }
 
@@ -141,30 +172,54 @@ final class ClipboardListViewModel {
         }
         performSearch()
     }
+
+    /// Read from the iOS clipboard and save locally.
+    func pasteFromClipboard() async -> Bool {
+        let pasteboard = UIPasteboard.general
+
+        if let text = pasteboard.string, !text.isEmpty {
+            return await store.saveText(text: text)
+        }
+
+        if let image = pasteboard.image,
+           let data = image.pngData()
+        {
+            return await store.saveImage(imageData: data)
+        }
+
+        if let url = pasteboard.url {
+            return await store.saveText(text: url.absoluteString)
+        }
+
+        return false
+    }
 }
 
 struct ClipboardListView: View {
     @EnvironmentObject private var store: iOSClipboardStore
     @State private var viewModel: ClipboardListViewModel?
-    @State private var searchText = ""
+    @State private var showPastedToast = false
+    @State private var showEmptyClipboardToast = false
+    @State private var showSettings = false
 
     var body: some View {
         NavigationStack {
             Group {
                 if let viewModel {
-                    clipboardList(viewModel: viewModel)
+                    clipboardContent(viewModel: viewModel)
                 } else {
                     ProgressView()
                 }
             }
-            .navigationTitle("ClipKitty")
-            .searchable(
-                text: $searchText,
-                placement: .navigationBarDrawer(displayMode: .always),
-                prompt: "Search clipboard history"
-            )
-            .onChange(of: searchText) { _, newValue in
-                viewModel?.updateSearch(text: newValue)
+            .navigationBarTitleDisplayMode(.inline)
+            .toolbar {
+                ToolbarItem(placement: .topBarTrailing) {
+                    menuButton
+                }
+            }
+            .sheet(isPresented: $showSettings) {
+                iOSSettingsView()
+                    .environmentObject(store)
             }
         }
         .onAppear {
@@ -179,31 +234,83 @@ struct ClipboardListView: View {
     }
 
     @ViewBuilder
-    private func clipboardList(viewModel: ClipboardListViewModel) -> some View {
-        VStack(spacing: 0) {
-            FilterBar(
-                currentFilter: viewModel.filter,
-                onFilterChanged: { viewModel.setFilter($0) }
-            )
+    private var menuButton: some View {
+        Menu {
+            #if ENABLE_SYNC
+                Label {
+                    switch store.syncStatus {
+                    case .synced: Text("iCloud Synced")
+                    case .syncing: Text("Syncing...")
+                    case .error: Text("Sync Error")
+                    case .unavailable: Text("iCloud Unavailable")
+                    default: Text("iCloud Sync")
+                    }
+                } icon: {
+                    switch store.syncStatus {
+                    case .synced:
+                        Image(systemName: "checkmark.icloud")
+                    case .syncing:
+                        Image(systemName: "arrow.triangle.2.circlepath.icloud")
+                    case .error:
+                        Image(systemName: "exclamationmark.icloud")
+                    case .unavailable:
+                        Image(systemName: "xmark.icloud")
+                    default:
+                        Image(systemName: "icloud")
+                    }
+                }
+            #endif
 
+            Divider()
+
+            Button {
+                showSettings = true
+            } label: {
+                Label("Settings", systemImage: "gear")
+            }
+
+            Button(role: .destructive) {
+                Task {
+                    _ = await store.clearAll()
+                    viewModel?.performSearch()
+                }
+            } label: {
+                Label("Clear All", systemImage: "trash")
+            }
+        } label: {
+            Image(systemName: "ellipsis.circle")
+                .font(.body)
+        }
+    }
+
+    @ViewBuilder
+    private func clipboardContent(
+        viewModel: ClipboardListViewModel
+    ) -> some View {
+        VStack(spacing: 0) {
+            // Main content
             if let error = viewModel.errorMessage {
+                Spacer()
                 ContentUnavailableView(
                     "Error",
                     systemImage: "exclamationmark.triangle",
                     description: Text(error)
                 )
+                Spacer()
             } else if viewModel.items.isEmpty && !viewModel.isSearching {
+                Spacer()
                 if viewModel.searchText.isEmpty {
                     ContentUnavailableView(
                         "No Clipboard History",
                         systemImage: "doc.on.clipboard",
                         description: Text(
-                            "Items copied on your Mac will appear here via iCloud sync."
+                            "Items copied on your Mac will appear here via iCloud sync.\nTap + to add from this device's clipboard."
                         )
                     )
                 } else {
                     ContentUnavailableView.search(text: viewModel.searchText)
                 }
+                Spacer()
             } else {
                 List {
                     ForEach(viewModel.items, id: \.itemMetadata.itemId) {
@@ -217,7 +324,10 @@ struct ClipboardListView: View {
                                 searchQuery: viewModel.searchText
                             )
                         }
-                        .swipeActions(edge: .trailing, allowsFullSwipe: true) {
+                        .swipeActions(
+                            edge: .trailing,
+                            allowsFullSwipe: true
+                        ) {
                             Button(role: .destructive) {
                                 Task {
                                     await viewModel.deleteItem(
@@ -256,107 +366,223 @@ struct ClipboardListView: View {
                 .navigationDestination(for: String.self) { itemId in
                     ClipboardDetailView(itemId: itemId)
                 }
-                .overlay(alignment: .top) {
-                    if viewModel.isSearching {
-                        ProgressView()
-                            .padding(8)
-                    }
-                }
                 .refreshable {
                     viewModel.performSearch()
                 }
             }
+
+            // Search bar (when visible)
+            if viewModel.isSearchBarVisible {
+                searchBar(viewModel: viewModel)
+            }
+
+            // Bottom toolbar
+            bottomToolbar(viewModel: viewModel)
+        }
+        .overlay(alignment: .top) {
+            if showPastedToast {
+                toastBanner(
+                    message: "Added from clipboard",
+                    icon: "checkmark.circle.fill"
+                )
+            } else if showEmptyClipboardToast {
+                toastBanner(
+                    message: "Nothing on clipboard",
+                    icon: "clipboard"
+                )
+            }
         }
     }
-}
 
-// MARK: - Filter Bar
+    // MARK: - Bottom Toolbar
 
-struct FilterBar: View {
-    let currentFilter: ItemQueryFilter
-    let onFilterChanged: (ItemQueryFilter) -> Void
+    @ViewBuilder
+    private func bottomToolbar(
+        viewModel: ClipboardListViewModel
+    ) -> some View {
+        HStack(spacing: 0) {
+            // Search button
+            Button {
+                withAnimation(.easeInOut(duration: 0.2)) {
+                    viewModel.toggleSearchBar()
+                }
+            } label: {
+                Image(systemName: "magnifyingglass")
+                    .font(.system(size: 17))
+                    .frame(width: 44, height: 44)
+                    .contentShape(Rectangle())
+            }
+            .foregroundStyle(
+                viewModel.isSearchBarVisible ? .primary : .secondary
+            )
 
-    private struct FilterOption: Identifiable {
-        let id: String
-        let label: String
-        let icon: String
-        let filter: ItemQueryFilter
+            Spacer()
+
+            // Filter picker
+            Menu {
+                filterMenuContent(viewModel: viewModel)
+            } label: {
+                HStack(spacing: 4) {
+                    Image(systemName: "clock.arrow.circlepath")
+                        .font(.system(size: 14))
+                    Text(viewModel.filterLabel)
+                        .font(.subheadline)
+                    Image(systemName: "chevron.up.chevron.down")
+                        .font(.system(size: 10))
+                }
+                .foregroundStyle(.secondary)
+                .frame(height: 44)
+                .contentShape(Rectangle())
+            }
+
+            Spacer()
+
+            // Add from clipboard button
+            Button {
+                Task {
+                    let success = await viewModel.pasteFromClipboard()
+                    if success {
+                        viewModel.performSearch()
+                        showPastedToast = true
+                        try? await Task.sleep(for: .seconds(1.5))
+                        showPastedToast = false
+                    } else {
+                        showEmptyClipboardToast = true
+                        try? await Task.sleep(for: .seconds(1.5))
+                        showEmptyClipboardToast = false
+                    }
+                }
+            } label: {
+                Image(systemName: "plus")
+                    .font(.system(size: 17))
+                    .frame(width: 44, height: 44)
+                    .contentShape(Rectangle())
+            }
+            .foregroundStyle(.secondary)
+        }
+        .padding(.horizontal, 12)
+        .background(Color(.secondarySystemBackground))
     }
 
-    private let options: [FilterOption] = [
-        FilterOption(id: "all", label: "All", icon: "tray.full", filter: .all),
-        FilterOption(
-            id: "text",
-            label: "Text",
-            icon: "doc.text",
-            filter: .contentType(filter: .text)
-        ),
-        FilterOption(
-            id: "images",
-            label: "Images",
-            icon: "photo",
-            filter: .contentType(filter: .images)
-        ),
-        FilterOption(
-            id: "links",
-            label: "Links",
-            icon: "link",
-            filter: .contentType(filter: .links)
-        ),
-        FilterOption(
-            id: "colors",
-            label: "Colors",
-            icon: "paintpalette",
-            filter: .contentType(filter: .colors)
-        ),
-        FilterOption(
-            id: "files",
-            label: "Files",
-            icon: "folder",
-            filter: .contentType(filter: .files)
-        ),
-        FilterOption(
-            id: "bookmarks",
-            label: "Saved",
-            icon: "bookmark",
-            filter: .tagged(tag: .bookmark)
-        ),
-    ]
+    // MARK: - Search Bar
 
-    var body: some View {
-        ScrollView(.horizontal, showsIndicators: false) {
-            HStack(spacing: 8) {
-                ForEach(options) { option in
-                    Button {
-                        onFilterChanged(option.filter)
-                    } label: {
-                        Label(option.label, systemImage: option.icon)
-                            .font(.subheadline)
-                            .padding(.horizontal, 12)
-                            .padding(.vertical, 6)
-                            .background(
-                                isSelected(option.filter)
-                                    ? Color.accentColor.opacity(0.15)
-                                    : Color(.secondarySystemFill)
-                            )
-                            .foregroundStyle(
-                                isSelected(option.filter)
-                                    ? Color.accentColor
-                                    : .primary
-                            )
-                            .clipShape(Capsule())
-                    }
-                    .buttonStyle(.plain)
+    @ViewBuilder
+    private func searchBar(
+        viewModel: ClipboardListViewModel
+    ) -> some View {
+        HStack(spacing: 8) {
+            Image(systemName: "magnifyingglass")
+                .font(.system(size: 15))
+                .foregroundStyle(.secondary)
+
+            let binding = Binding<String>(
+                get: { viewModel.searchText },
+                set: { viewModel.updateSearch(text: $0) }
+            )
+            TextField("Search", text: binding)
+                .textFieldStyle(.plain)
+                .submitLabel(.search)
+
+            if !viewModel.searchText.isEmpty {
+                Button {
+                    viewModel.updateSearch(text: "")
+                } label: {
+                    Image(systemName: "xmark.circle.fill")
+                        .font(.system(size: 15))
+                        .foregroundStyle(.tertiary)
                 }
             }
-            .padding(.horizontal)
-            .padding(.vertical, 8)
+
+            Button {
+                withAnimation(.easeInOut(duration: 0.2)) {
+                    viewModel.dismissSearch()
+                }
+            } label: {
+                Image(systemName: "xmark")
+                    .font(.system(size: 13, weight: .semibold))
+                    .foregroundStyle(.secondary)
+                    .frame(width: 28, height: 28)
+                    .background(Color(.tertiarySystemFill))
+                    .clipShape(Circle())
+            }
         }
-        .background(Color(.systemBackground))
+        .padding(.horizontal, 12)
+        .padding(.vertical, 8)
+        .background(Color(.secondarySystemBackground))
+        .transition(.move(edge: .bottom).combined(with: .opacity))
     }
 
-    private func isSelected(_ filter: ItemQueryFilter) -> Bool {
-        // Compare by string representation since ItemQueryFilter may not conform to Equatable
-        String(describing: currentFilter) == String(describing: filter)
+    // MARK: - Filter Menu
+
+    @ViewBuilder
+    private func filterMenuContent(
+        viewModel: ClipboardListViewModel
+    ) -> some View {
+        Button {
+            viewModel.setFilter(.all)
+        } label: {
+            Label("Clipboard", systemImage: "doc.on.clipboard")
+        }
+
+        Divider()
+
+        Button {
+            viewModel.setFilter(.contentType(filter: .text))
+        } label: {
+            Label("Text", systemImage: "doc.text")
+        }
+
+        Button {
+            viewModel.setFilter(.contentType(filter: .images))
+        } label: {
+            Label("Images", systemImage: "photo")
+        }
+
+        Button {
+            viewModel.setFilter(.contentType(filter: .links))
+        } label: {
+            Label("Links", systemImage: "link")
+        }
+
+        Button {
+            viewModel.setFilter(.contentType(filter: .colors))
+        } label: {
+            Label("Colors", systemImage: "paintpalette")
+        }
+
+        Button {
+            viewModel.setFilter(.contentType(filter: .files))
+        } label: {
+            Label("Files", systemImage: "folder")
+        }
+
+        Divider()
+
+        Button {
+            viewModel.setFilter(.tagged(tag: .bookmark))
+        } label: {
+            Label("Saved", systemImage: "bookmark")
+        }
+    }
+
+    // MARK: - Toast
+
+    @ViewBuilder
+    private func toastBanner(message: String, icon: String) -> some View {
+        HStack(spacing: 8) {
+            Image(systemName: icon)
+                .font(.subheadline)
+            Text(message)
+                .font(.subheadline)
+        }
+        .padding(.horizontal, 16)
+        .padding(.vertical, 10)
+        .background(.ultraThinMaterial)
+        .clipShape(Capsule())
+        .shadow(radius: 4)
+        .padding(.top, 8)
+        .transition(.move(edge: .top).combined(with: .opacity))
+        .animation(.easeInOut, value: showPastedToast)
+        .animation(.easeInOut, value: showEmptyClipboardToast)
     }
 }
