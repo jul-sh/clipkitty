@@ -23,7 +23,7 @@
         private static let zoneName = "ClipKittySync"
         private static let subscriptionID = "clipkitty-sync-changes"
         private static let compactionInterval: TimeInterval = 300
-        private static let blobBundleFieldName = "blobBundleAsset"
+        // blobBundleFieldName is now in BlobBundleCodec
         private static let cloudCleanupAgeDays: UInt32 = 30
 
         @ObservationIgnored
@@ -94,7 +94,7 @@
         convenience init(store: ClipKittyRust.ClipboardStore) {
             self.init(
                 store: store,
-                cloud: iOSCloudKitTransport(
+                cloud: CloudKitTransport(
                     containerIdentifier: "iCloud.com.eviljuliette.clipkitty"
                 )
             )
@@ -272,7 +272,7 @@
                 }
 
                 // Convert + apply
-                let (eventRecords, snapshotRecords) = try convertCloudKitRecords(changes)
+                let (eventRecords, snapshotRecords) = try BlobBundleCodec.convertCloudKitRecords(changes)
                 let batchOutcome = try store.applyRemoteBatch(
                     eventRecords: eventRecords,
                     snapshotRecords: snapshotRecords
@@ -372,7 +372,7 @@
                     record["recordedAt"] = event.recordedAt as CKRecordValue
                     record["payloadType"] = event.payloadType as CKRecordValue
 
-                    if let tempURL = try configureJSONField(
+                    if let tempURL = try BlobBundleCodec.configureJSONField(
                         event.payloadData,
                         on: record,
                         field: .payloadData
@@ -430,7 +430,7 @@
                     ) as CKRecordValue
                     record["coversThroughEvent"] =
                         snapshot.coversThroughEvent as CKRecordValue?
-                    if let tempURL = try configureJSONField(
+                    if let tempURL = try BlobBundleCodec.configureJSONField(
                         snapshot.aggregateData,
                         on: record,
                         field: .aggregateData
@@ -536,7 +536,7 @@
                         record["schemaVersion"] as? Int64 ?? 1
                     ),
                     coversThroughEvent: record["coversThroughEvent"] as? String,
-                    aggregateData: rehydratedJSONString(
+                    aggregateData: BlobBundleCodec.rehydratedJSONString(
                         for: record,
                         field: .aggregateData
                     )
@@ -553,7 +553,7 @@
                     ),
                     recordedAt: record["recordedAt"] as? Int64 ?? 0,
                     payloadType: record["payloadType"] as? String ?? "",
-                    payloadData: rehydratedJSONString(
+                    payloadData: BlobBundleCodec.rehydratedJSONString(
                         for: record,
                         field: .payloadData
                     )
@@ -569,81 +569,6 @@
             try store.clearIndexDirtyFlag()
             try store.updateZoneChangeToken(deviceId: deviceId, token: nil)
             onContentChanged?()
-        }
-
-        // MARK: - CKRecord Conversion
-
-        private func convertCloudKitRecords(
-            _ changes: SyncZoneChangeResult
-        ) throws -> ([SyncEventRecord], [SyncSnapshotRecord]) {
-            let eventRecords: [SyncEventRecord] = try changes.events.map { record in
-                try SyncEventRecord(
-                    eventId: record.recordID.recordName,
-                    itemId: record["itemId"] as? String ?? "",
-                    originDeviceId: record["originDeviceId"] as? String ?? "",
-                    schemaVersion: UInt32(
-                        record["schemaVersion"] as? Int64 ?? 1
-                    ),
-                    recordedAt: record["recordedAt"] as? Int64 ?? 0,
-                    payloadType: record["payloadType"] as? String ?? "",
-                    payloadData: rehydratedJSONString(
-                        for: record,
-                        field: .payloadData
-                    )
-                )
-            }
-
-            let snapshotRecords: [SyncSnapshotRecord] = try changes.snapshots.map {
-                record in
-                try SyncSnapshotRecord(
-                    itemId: record.recordID.recordName,
-                    snapshotRevision: UInt64(
-                        record["snapshotRevision"] as? Int64 ?? 0
-                    ),
-                    schemaVersion: UInt32(
-                        record["schemaVersion"] as? Int64 ?? 1
-                    ),
-                    coversThroughEvent: record["coversThroughEvent"] as? String,
-                    aggregateData: rehydratedJSONString(
-                        for: record,
-                        field: .aggregateData
-                    )
-                )
-            }
-
-            return (eventRecords, snapshotRecords)
-        }
-
-        // MARK: - CKAsset / Blob Bundle Helpers
-
-        private func configureJSONField(
-            _ jsonString: String,
-            on record: CKRecord,
-            field: CloudRecordJSONField
-        ) throws -> URL? {
-            if let (strippedJSON, bundle) = BlobBundleCodec.extractBase64Bundle(
-                from: jsonString
-            ) {
-                record[field.recordFieldName] = strippedJSON as CKRecordValue
-                let bundleURL = try BlobBundleCodec.writeBlobBundle(bundle)
-                record[Self.blobBundleFieldName] = CKAsset(fileURL: bundleURL)
-                return bundleURL
-            }
-            record[field.recordFieldName] = jsonString as CKRecordValue
-            return nil
-        }
-
-        private func rehydratedJSONString(
-            for record: CKRecord,
-            field: CloudRecordJSONField
-        ) throws -> String {
-            let jsonString = record[field.recordFieldName] as? String ?? "{}"
-            guard let asset = record[Self.blobBundleFieldName] as? CKAsset else {
-                return jsonString
-            }
-
-            let bundle = try BlobBundleCodec.readBlobBundle(from: asset)
-            return try BlobBundleCodec.inject(blobBundle: bundle, into: jsonString)
         }
 
         // MARK: - Account Change Observer
@@ -668,192 +593,6 @@
         }
     }
 
-    // MARK: - CloudKit Transport (iOS)
-
-    final class iOSCloudKitTransport: SyncCloudTransport {
-        private let container: CKContainer
-
-        private var database: CKDatabase {
-            container.privateCloudDatabase
-        }
-
-        init(containerIdentifier: String) {
-            container = CKContainer(identifier: containerIdentifier)
-        }
-
-        func accountStatus() async throws -> CKAccountStatus {
-            try await container.accountStatus()
-        }
-
-        func ensureZoneExists(_ zone: CKRecordZone) async throws {
-            _ = try await database.modifyRecordZones(
-                saving: [zone],
-                deleting: []
-            )
-        }
-
-        func saveSubscription(
-            _ subscription: CKDatabaseSubscription
-        ) async throws {
-            _ = try await database.save(subscription)
-        }
-
-        func fetchZoneChanges(
-            in zoneID: CKRecordZone.ID,
-            since changeToken: CKServerChangeToken?
-        ) async -> SyncZoneChangeResult {
-            var result = SyncZoneChangeResult()
-
-            let config = CKFetchRecordZoneChangesOperation.ZoneConfiguration()
-            config.previousServerChangeToken = changeToken
-
-            let operation = CKFetchRecordZoneChangesOperation(
-                recordZoneIDs: [zoneID],
-                configurationsByRecordZoneID: [zoneID: config]
-            )
-
-            return await withCheckedContinuation { continuation in
-                operation.recordWasChangedBlock = { _, fetchResult in
-                    switch fetchResult {
-                    case let .success(record):
-                        if record.recordType == "ItemEvent" {
-                            result.events.append(record)
-                        } else if record.recordType == "ItemSnapshot" {
-                            result.snapshots.append(record)
-                        }
-                    case .failure:
-                        break
-                    }
-                }
-
-                operation.recordZoneFetchResultBlock = {
-                    _,
-                    fetchResult in
-                    switch fetchResult {
-                    case let .success((token, _, _)):
-                        result.newToken = token
-                    case let .failure(error):
-                        if let ckError = error as? CKError,
-                           ckError.code == .changeTokenExpired
-                        {
-                            result.tokenExpired = true
-                        } else {
-                            result.fetchError = error
-                        }
-                    }
-                }
-
-                operation.fetchRecordZoneChangesResultBlock = { _ in
-                    continuation.resume(returning: result)
-                }
-
-                database.add(operation)
-            }
-        }
-
-        func saveRecords(
-            _ records: [CKRecord],
-            savePolicy: CKModifyRecordsOperation.RecordSavePolicy
-        ) async -> SyncRecordSaveResult {
-            var result = SyncRecordSaveResult()
-
-            let operation = CKModifyRecordsOperation(
-                recordsToSave: records,
-                recordIDsToDelete: nil
-            )
-            operation.savePolicy = savePolicy
-            operation.isAtomic = false
-
-            return await withCheckedContinuation { continuation in
-                operation.perRecordSaveBlock = { recordID, saveResult in
-                    switch saveResult {
-                    case .success:
-                        result.savedRecordIDs.append(recordID)
-                    case let .failure(error):
-                        result.perRecordErrors[recordID] = error
-                    }
-                }
-
-                operation.modifyRecordsResultBlock = { opResult in
-                    if case let .failure(error) = opResult {
-                        result.operationError = error
-                    }
-                    continuation.resume(returning: result)
-                }
-
-                database.add(operation)
-            }
-        }
-
-        func deleteRecords(
-            _ recordIDs: [CKRecord.ID]
-        ) async -> SyncRecordDeleteResult {
-            var result = SyncRecordDeleteResult()
-
-            let operation = CKModifyRecordsOperation(
-                recordsToSave: nil,
-                recordIDsToDelete: recordIDs
-            )
-            operation.isAtomic = false
-
-            return await withCheckedContinuation { continuation in
-                operation.perRecordDeleteBlock = { recordID, deleteResult in
-                    switch deleteResult {
-                    case .success:
-                        result.deletedRecordIDs.append(recordID)
-                    case let .failure(error):
-                        result.perRecordErrors[recordID] = error
-                    }
-                }
-
-                operation.modifyRecordsResultBlock = { opResult in
-                    if case let .failure(error) = opResult {
-                        result.operationError = error
-                    }
-                    continuation.resume(returning: result)
-                }
-
-                database.add(operation)
-            }
-        }
-
-        func fetchAllRecords(
-            ofType recordType: String,
-            in zoneID: CKRecordZone.ID
-        ) async throws -> [CKRecord] {
-            var allRecords: [CKRecord] = []
-            var cursor: CKQueryOperation.Cursor?
-
-            let query = CKQuery(
-                recordType: recordType,
-                predicate: NSPredicate(value: true)
-            )
-
-            let (results, queryCursor) = try await database.records(
-                matching: query,
-                inZoneWith: zoneID
-            )
-            for (_, result) in results {
-                if case let .success(record) = result {
-                    allRecords.append(record)
-                }
-            }
-            cursor = queryCursor
-
-            while let currentCursor = cursor {
-                let (moreResults, moreCursor) = try await database.records(
-                    continuingMatchFrom: currentCursor
-                )
-                for (_, result) in moreResults {
-                    if case let .success(record) = result {
-                        allRecords.append(record)
-                    }
-                }
-                cursor = moreCursor
-            }
-
-            return allRecords
-        }
-    }
+    // CloudKitTransport is now in Sources/Shared/CloudKitTransport.swift
 
 #endif
