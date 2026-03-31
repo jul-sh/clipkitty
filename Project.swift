@@ -150,7 +150,7 @@ let project = Project(
                     ]),
                     .release(name: .configuration("SparkleRelease"), settings: [
                         "CODE_SIGN_STYLE": "Automatic",
-                        "CODE_SIGN_IDENTITY": "Developer ID Application",
+                        "CODE_SIGN_IDENTITY": "Apple Development",
                         "CODE_SIGN_ENTITLEMENTS": "Sources/App/ClipKitty.sparkle.entitlements",
                         "CK_BUILD_CHANNEL": "Sparkle",
                         "SWIFT_ACTIVE_COMPILATION_CONDITIONS": "SPARKLE_RELEASE ENABLE_SYNC",
@@ -163,7 +163,7 @@ let project = Project(
                     ]),
                     .release(name: .configuration("AppStore"), settings: [
                         "CODE_SIGN_STYLE": "Automatic",
-                        "CODE_SIGN_IDENTITY": "Apple Distribution",
+                        "CODE_SIGN_IDENTITY": "Apple Development",
                         "CODE_SIGN_ENTITLEMENTS": "Sources/App/ClipKitty.appstore.entitlements",
                         "CK_BUILD_CHANNEL": "AppStore",
                         "SWIFT_ACTIVE_COMPILATION_CONDITIONS": "APP_STORE ENABLE_SYNC",
