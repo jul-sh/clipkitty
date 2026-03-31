@@ -259,7 +259,7 @@
                 )
             )
             registerAccountChangeObserverIfNeeded()
-            logger.info("SyncEngine starting for device \(deviceId)")
+            logger.info("SyncEngine starting for device \(self.deviceId)")
 
             coordinatorTask = Task.detached(priority: .utility) { [weak self] in
                 guard let self else { return }
