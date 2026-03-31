@@ -227,9 +227,9 @@ struct BrowserView: View {
                 return handleCommandNumberShortcut(number) ? nil : event
             }
 
-            // ⌘⌫ — delete selected item
+            // ⌘- — delete selected item
             let modifiers = event.modifierFlags.intersection(.deviceIndependentFlagsMask)
-            if modifiers == .command, event.keyCode == 51 {
+            if modifiers == .command, event.keyCode == 27 {
                 if viewModel.selectedItem != nil {
                     viewModel.deleteSelectedItem()
                     return nil
