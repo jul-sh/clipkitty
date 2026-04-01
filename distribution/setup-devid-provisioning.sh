@@ -104,19 +104,23 @@ echo "Found bundle ID: $BUNDLE_ID_RESOURCE"
 JWT=$(generate_jwt)
 AUTH="Authorization: Bearer $JWT"
 
-ENCODED_NAME=$(ruby -e 'require "cgi"; puts CGI.escape(ARGV[0])' "$PROFILE_NAME")
-EXISTING_PROFILE_IDS=$(curl -s -H "$AUTH" "$API/profiles?filter[name]=$ENCODED_NAME&limit=200" | \
+echo "Checking for existing profiles named '$PROFILE_NAME'..."
+EXISTING_PROFILE_IDS=$(curl -s -H "$AUTH" "$API/profiles?limit=200" | \
     ruby -rjson -e '
 d = JSON.parse(STDIN.read)["data"]
-d.each { |p| puts p["id"] } if d
-' 2>/dev/null || true)
+d.select { |p| p["attributes"]["name"] == ARGV[0] }.each { |p| puts p["id"] }
+' "$PROFILE_NAME" 2>/dev/null || true)
 
 if [ -n "$EXISTING_PROFILE_IDS" ]; then
     echo "$EXISTING_PROFILE_IDS" | while read -r pid; do
         [ -n "$pid" ] || continue
         echo "Deleting existing profile: $pid"
-        curl -s -H "$AUTH" -X DELETE "$API/profiles/$pid" >/dev/null
+        JWT_DEL=$(generate_jwt)
+        curl -s -H "Authorization: Bearer $JWT_DEL" -X DELETE "$API/profiles/$pid" >/dev/null
     done
+    echo "Deleted existing profiles"
+else
+    echo "No existing profiles found"
 fi
 
 # 4. Create Developer ID provisioning profile
