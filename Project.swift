@@ -321,7 +321,7 @@ let project = Project(
             ]),
             sources: ["Sources/iOSApp/**"],
             resources: [
-                "Sources/iOSApp/Assets.xcassets/**",
+                "AppIcon.icon",
                 "Sources/iOSApp/Resources/Fonts/**",
             ],
             dependencies: [
