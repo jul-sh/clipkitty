@@ -8,6 +8,7 @@ use std::hash::{Hash, Hasher};
 
 use crate::interface::{
     ClipboardContent, ClipboardItem, FileEntry, FileStatus, ItemIcon, ItemMetadata,
+    ListPresentationProfile,
 };
 #[cfg(test)]
 use crate::interface::{IconType, LinkMetadataPayload, LinkMetadataState};
@@ -246,6 +247,22 @@ impl StoredItem {
             item_id: self.item_id.clone(),
             icon: self.item_icon(),
             snippet: self.display_text(SNIPPET_CONTEXT_CHARS * 2),
+            source_app: self.source_app.clone(),
+            source_app_bundle_id: self.source_app_bundle_id.clone(),
+            timestamp_unix: self.timestamp_unix,
+            tags: Vec::new(),
+        }
+    }
+
+    /// Convert to ItemMetadata using a presentation-profile-aware snippet.
+    pub fn to_metadata_for_profile(&self, profile: ListPresentationProfile) -> ItemMetadata {
+        ItemMetadata {
+            item_id: self.item_id.clone(),
+            icon: self.item_icon(),
+            snippet: crate::search::generate_preview_for_profile(
+                self.text_content(),
+                profile,
+            ),
             source_app: self.source_app.clone(),
             source_app_bundle_id: self.source_app_bundle_id.clone(),
             timestamp_unix: self.timestamp_unix,

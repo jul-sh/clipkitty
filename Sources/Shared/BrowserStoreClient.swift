@@ -15,6 +15,7 @@ public protocol BrowserSearchOperation: AnyObject {
 
 @MainActor
 public protocol BrowserStoreClient: AnyObject {
+    var listPresentationProfile: ListPresentationProfile { get }
     func startSearch(request: SearchRequest) -> BrowserSearchOperation
     func fetchItem(id: String) async -> ClipboardItem?
     func loadListDecorations(itemIds: [String], query: String, presentation: ListPresentationProfile) async -> [ListDecorationResult]
@@ -25,4 +26,5 @@ public protocol BrowserStoreClient: AnyObject {
     func delete(itemId: String) async -> Result<Void, ClipboardError>
     func clear() async -> Result<Void, ClipboardError>
     func updateTextItem(itemId: String, text: String) async -> Result<Void, ClipboardError>
+    func formatExcerpt(content: String) -> String
 }

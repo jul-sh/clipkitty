@@ -355,7 +355,7 @@ public final class BrowserViewModel {
 
         listDecorationTasks[key] = Task { [weak self] in
             guard let self else { return }
-            let results = await self.client.loadListDecorations(itemIds: itemIdsNeedingDecoration, query: request.text, presentation: .compactRow)
+            let results = await self.client.loadListDecorations(itemIds: itemIdsNeedingDecoration, query: request.text, presentation: self.client.listPresentationProfile)
             await MainActor.run {
                 defer { self.listDecorationTasks[key] = nil }
                 guard self.queryGeneration == generation,
@@ -535,7 +535,7 @@ public final class BrowserViewModel {
 
         let currentItem = selectedItemState.item
         let updatedContent = ClipboardContent.text(value: editedText)
-        let updatedSnippet = editedText
+        let updatedSnippet = client.formatExcerpt(content: editedText)
         let updatedMetadata = ItemMetadata(
             itemId: currentItem.itemMetadata.itemId,
             icon: currentItem.itemMetadata.icon,
