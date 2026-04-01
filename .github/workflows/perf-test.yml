@@ -80,7 +80,9 @@ jobs:
         run: make generate
 
       - name: Build App (Release)
-        run: make build CONFIGURATION=Release UNIVERSAL=1
+        run: make build CONFIGURATION=Release UNIVERSAL=1 SKIP_SIGNING=1
+        env:
+          AGE_SECRET_KEY: ${{ secrets.AGE_SECRET_KEY }}
 
       - name: Generate Performance Database
         run: |

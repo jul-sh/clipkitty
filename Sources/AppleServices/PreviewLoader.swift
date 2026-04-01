@@ -15,11 +15,11 @@ public final class PreviewLoader {
         self.linkMetadataFetcher = linkMetadataFetcher ?? LinkMetadataFetcher()
     }
 
-    public func fetchItem(id: Int64) async -> ClipboardItem? {
+    public func fetchItem(id: String) async -> ClipboardItem? {
         await repository.fetchItem(id: id)
     }
 
-    public func refreshLinkMetadata(url: String, itemId: Int64) async -> ClipboardItem? {
+    public func refreshLinkMetadata(url: String, itemId: String) async -> ClipboardItem? {
         guard let metadata = await linkMetadataFetcher.fetchMetadata(for: url, itemId: itemId) else {
             _ = await repository.updateLinkMetadata(
                 itemId: itemId,
