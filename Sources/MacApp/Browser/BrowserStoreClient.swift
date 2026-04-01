@@ -36,6 +36,8 @@ private final class ClipboardStoreBrowserSearchOperation: BrowserSearchOperation
 final class ClipboardStoreBrowserClient: BrowserStoreClient {
     private let store: ClipboardStore
 
+    let listPresentationProfile: ListPresentationProfile = .compactRow
+
     init(store: ClipboardStore) {
         self.store = store
     }
@@ -81,5 +83,9 @@ final class ClipboardStoreBrowserClient: BrowserStoreClient {
 
     func updateTextItem(itemId: String, text: String) async -> Result<Void, ClipboardError> {
         await store.updateTextItem(itemId: itemId, text: text)
+    }
+
+    func formatExcerpt(content: String) -> String {
+        store.formatExcerpt(content: content, presentation: listPresentationProfile)
     }
 }

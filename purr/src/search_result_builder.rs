@@ -59,6 +59,7 @@ impl<'a> SearchResultAssembler<'a> {
             1000,
             content_type_filter.as_ref(),
             tag_filter.as_ref(),
+            self.presentation,
         )?;
         self.hydrate_item_metadata_tags(&mut items)?;
         let first_preview_payload = self.presentation().load_first_preview_payload(
@@ -178,7 +179,7 @@ impl<'a> SearchResultAssembler<'a> {
         }
 
         let ids: Vec<&str> = candidates.iter().map(|candidate| candidate.id.as_str()).collect();
-        let metadata_rows = self.db.fetch_search_item_metadata_by_string_ids(&ids)?;
+        let metadata_rows = self.db.fetch_search_item_metadata_by_string_ids(&ids, self.presentation)?;
         if self.token.is_cancelled() {
             return Err(ClipKittyError::Cancelled);
         }
@@ -289,7 +290,7 @@ impl<'a> SearchResultAssembler<'a> {
             .iter()
             .filter_map(|id| {
                 item_map.get(id).map(|item| ItemMatch {
-                    item_metadata: item.to_metadata(),
+                    item_metadata: item.to_metadata_for_profile(self.presentation),
                     list_decoration: Some(presentation.list_decoration_for_item(
                         &item.item_id,
                         item.content.text_content(),

@@ -407,6 +407,11 @@ final class ClipboardStore {
         return await repository.loadPreviewPayload(itemId: itemId, query: query)
     }
 
+    func formatExcerpt(content: String, presentation: ListPresentationProfile) -> String {
+        guard let repository else { return String(content.prefix(200)) }
+        return repository.store.formatExcerpt(content: content, presentation: presentation)
+    }
+
     /// Fetch link metadata using LinkPresentation and persist to database
     /// Returns the updated item if successful
     func fetchLinkMetadata(url: String, itemId: String) async -> ClipboardItem? {

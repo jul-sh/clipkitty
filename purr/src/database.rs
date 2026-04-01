@@ -5,10 +5,10 @@
 
 use crate::interface::{
     ClipboardContent, ContentTypeFilter, FileEntry, FileStatus, ItemIcon, ItemMetadata, ItemTag,
-    LinkMetadataState,
+    LinkMetadataState, ListPresentationProfile,
 };
 use crate::models::StoredItem;
-use crate::search::{generate_preview, SNIPPET_CONTEXT_CHARS};
+use crate::search::{generate_preview_for_profile, SNIPPET_CONTEXT_CHARS};
 use chrono::{DateTime, TimeZone, Utc};
 use r2d2::{Pool, PooledConnection};
 use r2d2_sqlite::SqliteConnectionManager;
@@ -55,6 +55,21 @@ const GENERATED_ITEM_ID_SQL: &str = r#"lower(
     substr(hex(randomblob(2)),2) || '-' ||
     hex(randomblob(6))
 )"#;
+
+/// Intermediate row with raw content prefix — snippet formatting deferred to caller.
+struct RawBrowseMetadata {
+    item_metadata: ItemMetadata,
+    content_prefix: String,
+}
+
+/// Intermediate row for search metadata — snippet formatting deferred to caller.
+struct RawSearchItemMetadata {
+    row_id: i64,
+    content_hash: String,
+    db_type: String,
+    item_metadata: ItemMetadata,
+    content_prefix: String,
+}
 
 #[derive(Debug, Clone)]
 pub(crate) struct SearchItemMetadata {
@@ -628,6 +643,7 @@ impl Database {
         limit: usize,
         filter: Option<&ContentTypeFilter>,
         tag: Option<&ItemTag>,
+        presentation: ListPresentationProfile,
     ) -> DatabaseResult<(Vec<ItemMetadata>, u64)> {
         let conn = self.get_conn()?;
 
@@ -663,7 +679,7 @@ impl Database {
         };
 
         let mut stmt = conn.prepare(&sql)?;
-        let items = if let Some(ts) = before_timestamp {
+        let raw_items = if let Some(ts) = before_timestamp {
             let ts_str = ts.format("%Y-%m-%d %H:%M:%S%.f").to_string();
             let mut param_values: Vec<rusqlite::types::Value> = vec![ts_str.into()];
             if let Some(tag) = tag {
@@ -672,7 +688,7 @@ impl Database {
             param_values.push((limit as i64).into());
             stmt.query_map(
                 rusqlite::params_from_iter(param_values),
-                Self::row_to_metadata,
+                Self::row_to_raw_browse_metadata,
             )?
             .collect::<Result<Vec<_>, _>>()?
         } else {
@@ -683,10 +699,19 @@ impl Database {
             param_values.push((limit as i64).into());
             stmt.query_map(
                 rusqlite::params_from_iter(param_values),
-                Self::row_to_metadata,
+                Self::row_to_raw_browse_metadata,
             )?
             .collect::<Result<Vec<_>, _>>()?
         };
+
+        let items = raw_items
+            .into_iter()
+            .map(|raw| {
+                let mut metadata = raw.item_metadata;
+                metadata.snippet = generate_preview_for_profile(&raw.content_prefix, presentation);
+                metadata
+            })
+            .collect();
 
         Ok((items, total_count))
     }
@@ -733,6 +758,7 @@ impl Database {
     pub(crate) fn fetch_search_item_metadata_by_string_ids(
         &self,
         item_ids: &[&str],
+        presentation: ListPresentationProfile,
     ) -> DatabaseResult<Vec<SearchItemMetadata>> {
         if item_ids.is_empty() {
             return Ok(Vec::new());
@@ -750,12 +776,26 @@ impl Database {
             .iter()
             .map(|&id| rusqlite::types::Value::from(id.to_string()))
             .collect();
-        let items: Vec<SearchItemMetadata> = stmt
+        let raw_items: Vec<RawSearchItemMetadata> = stmt
             .query_map(
                 rusqlite::params_from_iter(params),
-                Self::row_to_search_item_metadata,
+                Self::row_to_raw_search_item_metadata,
             )?
             .collect::<Result<Vec<_>, _>>()?;
+
+        let items: Vec<SearchItemMetadata> = raw_items
+            .into_iter()
+            .map(|raw| {
+                let mut metadata = raw.item_metadata;
+                metadata.snippet = generate_preview_for_profile(&raw.content_prefix, presentation);
+                SearchItemMetadata {
+                    row_id: raw.row_id,
+                    content_hash: raw.content_hash,
+                    db_type: raw.db_type,
+                    item_metadata: metadata,
+                }
+            })
+            .collect();
 
         let id_to_item: std::collections::HashMap<String, SearchItemMetadata> = items
             .into_iter()
@@ -1380,8 +1420,8 @@ impl Database {
         Ok(())
     }
 
-    /// Convert a database row to lightweight ItemMetadata
-    fn row_to_metadata(row: &rusqlite::Row) -> rusqlite::Result<ItemMetadata> {
+    /// Convert a database row to raw browse metadata — snippet formatting deferred to caller.
+    fn row_to_raw_browse_metadata(row: &rusqlite::Row) -> rusqlite::Result<RawBrowseMetadata> {
         let _id: i64 = row.get(0)?;
         let content: String = row.get(1)?;
         let content_type: Option<String> = row.get(2)?;
@@ -1396,20 +1436,24 @@ impl Database {
         let db_type = content_type.as_deref().unwrap_or("text");
 
         let icon = ItemIcon::from_database(db_type, color_rgba, thumbnail);
-        let snippet = generate_preview(&content, SNIPPET_CONTEXT_CHARS * 2);
 
-        Ok(ItemMetadata {
-            item_id,
-            icon,
-            snippet,
-            source_app,
-            source_app_bundle_id,
-            timestamp_unix: timestamp.timestamp(),
-            tags: Vec::new(),
+        Ok(RawBrowseMetadata {
+            content_prefix: content,
+            item_metadata: ItemMetadata {
+                item_id,
+                icon,
+                snippet: String::new(),
+                source_app,
+                source_app_bundle_id,
+                timestamp_unix: timestamp.timestamp(),
+                tags: Vec::new(),
+            },
         })
     }
 
-    fn row_to_search_item_metadata(row: &rusqlite::Row) -> rusqlite::Result<SearchItemMetadata> {
+    fn row_to_raw_search_item_metadata(
+        row: &rusqlite::Row,
+    ) -> rusqlite::Result<RawSearchItemMetadata> {
         let row_id: i64 = row.get(0)?;
         let content_hash: String = row.get(1)?;
         let content_prefix: String = row.get(2)?;
@@ -1425,16 +1469,16 @@ impl Database {
 
         let timestamp = parse_db_timestamp(&timestamp_str);
         let icon = ItemIcon::from_database(&db_type, color_rgba, thumbnail);
-        let snippet = generate_preview(&content_prefix, SNIPPET_CONTEXT_CHARS * 2);
 
-        Ok(SearchItemMetadata {
+        Ok(RawSearchItemMetadata {
             row_id,
             content_hash,
             db_type,
+            content_prefix,
             item_metadata: ItemMetadata {
                 item_id,
                 icon,
-                snippet,
+                snippet: String::new(),
                 source_app,
                 source_app_bundle_id,
                 timestamp_unix: timestamp.timestamp(),
@@ -1522,13 +1566,15 @@ mod tests {
         let content = format!("{}Hello world", " \n\t".repeat(2_000));
         seed_base_item(&db, "text", &content, None);
 
-        let (items, total_count) = db.fetch_item_metadata(None, 1, None, None).unwrap();
+        let (items, total_count) = db
+            .fetch_item_metadata(None, 1, None, None, ListPresentationProfile::CompactRow)
+            .unwrap();
 
         assert_eq!(total_count, 1);
         assert_eq!(items.len(), 1);
         assert_eq!(
             items[0].snippet,
-            generate_preview(&content, SNIPPET_CONTEXT_CHARS * 2)
+            generate_preview_for_profile(&content, ListPresentationProfile::CompactRow)
         );
     }
 
