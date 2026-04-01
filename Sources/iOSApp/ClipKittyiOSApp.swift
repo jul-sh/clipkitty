@@ -13,6 +13,7 @@ final class AppState {
     let viewModel: BrowserViewModel
 
     var toastMessage: ToastMessage?
+    var toastAction: (() -> Void)?
     var contentRevision: Int = 0
 
     init() {
@@ -36,16 +37,16 @@ final class AppState {
             onSelect: { _, content in
                 clipboardService.copy(content: content)
                 HapticFeedback.copy()
-                toastBox.showToast?(.copied)
+                toastBox.showToast?(.copied, nil)
             },
             onCopyOnly: { _, content in
                 clipboardService.copy(content: content)
                 HapticFeedback.copy()
-                toastBox.showToast?(.copied)
+                toastBox.showToast?(.copied, nil)
             },
             onDismiss: {},
-            showSnackbarNotification: { kind, _ in
-                toastBox.showToast?(.notification(kind))
+            showSnackbarNotification: { kind, action in
+                toastBox.showToast?(.notification(kind), action)
             },
             dismissSnackbarNotification: {
                 toastBox.dismissToast?()
@@ -53,20 +54,29 @@ final class AppState {
         )
 
         // Wire the box to self after all stored properties are initialized
-        toastBox.showToast = { [weak self] message in
-            self?.showToast(message)
+        toastBox.showToast = { [weak self] message, action in
+            self?.showToast(message, action: action)
         }
         toastBox.dismissToast = { [weak self] in
-            self?.toastMessage = nil
+            withAnimation(.bouncy) {
+                self?.toastMessage = nil
+                self?.toastAction = nil
+            }
         }
     }
 
-    func showToast(_ message: ToastMessage) {
-        toastMessage = message
+    func showToast(_ message: ToastMessage, action: (() -> Void)? = nil) {
+        withAnimation(.bouncy) {
+            toastMessage = message
+            toastAction = action
+        }
         Task { @MainActor in
             try? await Task.sleep(for: .seconds(message.duration))
             if toastMessage == message {
-                toastMessage = nil
+                withAnimation(.bouncy) {
+                    toastMessage = nil
+                    toastAction = nil
+                }
             }
         }
     }
@@ -124,6 +134,16 @@ enum ToastMessage: Equatable {
         }
     }
 
+    var actionTitle: String? {
+        switch self {
+        case let .notification(kind):
+            if case let .actionable(_, _, title) = kind { return title }
+            return nil
+        default:
+            return nil
+        }
+    }
+
     var duration: TimeInterval {
         switch self {
         case .copied, .bookmarked, .unbookmarked, .saved, .deleted, .addSucceeded:
@@ -138,13 +158,17 @@ enum ToastMessage: Equatable {
 
 @MainActor
 private final class ToastCallbackBox {
-    var showToast: ((ToastMessage) -> Void)?
+    var showToast: ((ToastMessage, (() -> Void)?) -> Void)?
     var dismissToast: (() -> Void)?
 }
 
 @main
 struct ClipKittyiOSApp: App {
     @State private var appState = AppState()
+
+    init() {
+        FontManager.registerFonts()
+    }
 
     var body: some Scene {
         WindowGroup {

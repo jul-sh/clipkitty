@@ -84,7 +84,7 @@ struct CardView: View {
         switch iconType {
         case .text:
             Text(metadata.snippet)
-                .font(.subheadline.monospaced())
+                .font(.custom(FontManager.mono, size: 15))
                 .lineLimit(8)
                 .foregroundStyle(.primary)
 
@@ -96,7 +96,7 @@ struct CardView: View {
                         .foregroundStyle(.blue)
                 }
                 Text(metadata.snippet)
-                    .font(.subheadline)
+                    .font(.custom(FontManager.sansSerif, size: 15))
                     .lineLimit(3)
                     .foregroundStyle(.primary)
             }
@@ -107,7 +107,7 @@ struct CardView: View {
                     .font(.title3)
                     .foregroundStyle(.secondary)
                 Text(metadata.snippet)
-                    .font(.subheadline)
+                    .font(.custom(FontManager.sansSerif, size: 15))
                     .lineLimit(3)
                     .foregroundStyle(.primary)
             }
@@ -119,7 +119,7 @@ struct CardView: View {
         case .color:
             // Fallback for symbol-based color (shouldn't normally hit this path)
             Text(metadata.snippet)
-                .font(.subheadline.monospaced())
+                .font(.custom(FontManager.mono, size: 15))
                 .foregroundStyle(.primary)
         }
     }
@@ -135,7 +135,7 @@ struct CardView: View {
                 )
 
             Text(hexStringFromRGBA(rgba))
-                .font(.subheadline.monospaced())
+                .font(.custom(FontManager.mono, size: 15))
                 .foregroundStyle(.primary)
         }
     }
@@ -154,7 +154,7 @@ struct CardView: View {
                     .font(.title3)
                     .foregroundStyle(.secondary)
                 Text(metadata.snippet)
-                    .font(.subheadline)
+                    .font(.custom(FontManager.sansSerif, size: 15))
                     .foregroundStyle(.primary)
             }
         }
@@ -211,7 +211,6 @@ struct CardView: View {
         Button(role: .destructive) {
             viewModel.deleteItem(itemId: metadata.itemId)
             HapticFeedback.destructive()
-            appState.showToast(.deleted)
         } label: {
             Label("Delete", systemImage: "trash")
         }

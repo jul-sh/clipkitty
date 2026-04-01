@@ -37,7 +37,7 @@ final class iOSClipboardService {
         if let url = pasteboard.url {
             return ("link", url)
         }
-        if let string = pasteboard.string {
+        if let string = pasteboard.string, !string.isEmpty {
             return ("text", string)
         }
         return nil

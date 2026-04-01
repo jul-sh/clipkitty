@@ -23,8 +23,9 @@ struct HomeFeedView: View {
                     isSearchActive: $isSearchActive
                 )
             }
-            .overlay(alignment: .top) {
+            .overlay(alignment: .bottom) {
                 toastOverlay
+                    .padding(.bottom, 80)
             }
             .navigationDestination(item: $previewItemId) { itemId in
                 PreviewScreen(itemId: itemId)
@@ -167,17 +168,33 @@ struct HomeFeedView: View {
     @ViewBuilder
     private var toastOverlay: some View {
         if let toast = appState.toastMessage {
-            HStack(spacing: 8) {
-                Image(systemName: toast.iconSystemName)
-                Text(toast.text)
-                    .font(.subheadline.weight(.medium))
+            GlassEffectContainer {
+                HStack(spacing: 10) {
+                    Image(systemName: toast.iconSystemName)
+                        .font(.subheadline.weight(.medium))
+                    Text(toast.text)
+                        .font(.subheadline.weight(.medium))
+
+                    if let actionTitle = toast.actionTitle, let action = appState.toastAction {
+                        Button {
+                            action()
+                            withAnimation(.bouncy) {
+                                appState.toastMessage = nil
+                                appState.toastAction = nil
+                            }
+                        } label: {
+                            Text(actionTitle)
+                                .font(.subheadline.weight(.semibold))
+                                .foregroundStyle(.tint)
+                        }
+                        .buttonStyle(.plain)
+                    }
+                }
+                .padding(.horizontal, 16)
+                .frame(height: 44)
+                .glassEffect(.regular.interactive(), in: .capsule)
             }
-            .padding(.horizontal, 16)
-            .padding(.vertical, 10)
-            .background(.ultraThinMaterial, in: Capsule())
-            .padding(.top, 8)
-            .transition(.move(edge: .top).combined(with: .opacity))
-            .animation(.spring(duration: 0.3), value: appState.toastMessage)
+            .transition(.move(edge: .bottom).combined(with: .opacity))
         }
     }
 

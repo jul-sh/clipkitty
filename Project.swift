@@ -320,6 +320,10 @@ let project = Project(
                 "UILaunchScreen": ["UIColorName": ""],
             ]),
             sources: ["Sources/iOSApp/**"],
+            resources: [
+                "Sources/iOSApp/Assets.xcassets/**",
+                "Sources/iOSApp/Resources/Fonts/**",
+            ],
             dependencies: [
                 .target(name: "ClipKittyRust"),
                 .target(name: "ClipKittyShared"),

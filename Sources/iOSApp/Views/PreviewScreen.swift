@@ -96,7 +96,7 @@ struct PreviewScreen: View {
     @ViewBuilder
     private func textContent(_ value: String) -> some View {
         Text(value)
-            .font(.body)
+            .font(.custom(FontManager.mono, size: 16))
             .textSelection(.enabled)
             .frame(maxWidth: .infinity, alignment: .leading)
     }
@@ -190,7 +190,7 @@ struct PreviewScreen: View {
                 .frame(height: 200)
 
             Text(value)
-                .font(.title2.monospaced())
+                .font(.custom(FontManager.mono, size: 22))
                 .textSelection(.enabled)
         }
     }

@@ -300,7 +300,7 @@ struct BottomControlBar: View {
     private var filterLabel: String {
         if viewModel.selectedTagFilter == .bookmark { return "Bookmarks" }
         switch viewModel.contentTypeFilter {
-        case .all: return "Clipboard"
+        case .all: return "All"
         case .text: return "Text"
         case .images: return "Images"
         case .links: return "Links"
@@ -416,7 +416,7 @@ private enum FilterOption: CaseIterable, Hashable {
 
     var title: String {
         switch self {
-        case .all: return "Clipboard"
+        case .all: return "All"
         case .bookmarks: return "Bookmarks"
         case .text: return "Text"
         case .images: return "Images"
