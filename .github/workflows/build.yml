@@ -160,7 +160,7 @@ jobs:
           AGE_SECRET_KEY: ${{ secrets.AGE_SECRET_KEY }}
 
       - name: Build App (SparkleRelease)
-        run: make build CONFIGURATION=SparkleRelease UNIVERSAL=1 CI_SIGNING_IDENTITY="Developer ID Application" CI_SIGNING_STYLE=Manual
+        run: make build CONFIGURATION=SparkleRelease UNIVERSAL=1 CI_SIGNING_IDENTITY="Developer ID Application" CI_SIGNING_STYLE=Manual CI_PROVISIONING_PROFILE="ClipKitty Developer ID"
         env:
           AGE_SECRET_KEY: ${{ secrets.AGE_SECRET_KEY }}
 
