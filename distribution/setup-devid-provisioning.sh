@@ -100,20 +100,23 @@ if [ -z "$BUNDLE_ID_RESOURCE" ]; then
 fi
 echo "Found bundle ID: $BUNDLE_ID_RESOURCE"
 
-# 3. Delete existing profile with same name (if expired/invalid)
+# 3. Delete ALL existing profiles with the same name
 JWT=$(generate_jwt)
 AUTH="Authorization: Bearer $JWT"
 
 ENCODED_NAME=$(ruby -e 'require "cgi"; puts CGI.escape(ARGV[0])' "$PROFILE_NAME")
-EXISTING_PROFILE_ID=$(curl -s -H "$AUTH" "$API/profiles?filter[name]=$ENCODED_NAME" | \
+EXISTING_PROFILE_IDS=$(curl -s -H "$AUTH" "$API/profiles?filter[name]=$ENCODED_NAME&limit=200" | \
     ruby -rjson -e '
 d = JSON.parse(STDIN.read)["data"]
-puts d[0]["id"] if d && !d.empty?
+d.each { |p| puts p["id"] } if d
 ' 2>/dev/null || true)
 
-if [ -n "$EXISTING_PROFILE_ID" ]; then
-    echo "Deleting existing profile..."
-    curl -s -H "$AUTH" -X DELETE "$API/profiles/$EXISTING_PROFILE_ID" >/dev/null
+if [ -n "$EXISTING_PROFILE_IDS" ]; then
+    echo "$EXISTING_PROFILE_IDS" | while read -r pid; do
+        [ -n "$pid" ] || continue
+        echo "Deleting existing profile: $pid"
+        curl -s -H "$AUTH" -X DELETE "$API/profiles/$pid" >/dev/null
+    done
 fi
 
 # 4. Create Developer ID provisioning profile
