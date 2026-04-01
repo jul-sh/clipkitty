@@ -305,7 +305,7 @@ let project = Project(
         // MARK: ClipKittyiOS — iPhone app
         .target(
             name: "ClipKittyiOS",
-            destinations: .iOS,
+            destinations: [.iPhone],
             product: .app,
             bundleId: "com.eviljuliette.clipkitty.ios",
             deploymentTargets: .iOS("26.0"),
@@ -317,6 +317,7 @@ let project = Project(
                 "CFBundleVersion": "$(CURRENT_PROJECT_VERSION)",
                 "ITSAppUsesNonExemptEncryption": false,
                 "NSHumanReadableCopyright": "Copyright © 2025 ClipKitty. All rights reserved.",
+                "UILaunchScreen": ["UIColorName": ""],
             ]),
             sources: ["Sources/iOSApp/**"],
             dependencies: [

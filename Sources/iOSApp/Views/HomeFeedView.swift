@@ -7,8 +7,6 @@ struct HomeFeedView: View {
     @Environment(BrowserViewModel.self) private var viewModel
 
     @State private var isSearchActive = false
-    @State private var isFilterPickerPresented = false
-    @State private var isAddFlowPresented = false
     @State private var previewItemId: String?
     @State private var editItemId: String?
     @State private var hasAppeared = false
@@ -22,9 +20,7 @@ struct HomeFeedView: View {
                     }
 
                 BottomControlBar(
-                    isSearchActive: $isSearchActive,
-                    isFilterPickerPresented: $isFilterPickerPresented,
-                    isAddFlowPresented: $isAddFlowPresented
+                    isSearchActive: $isSearchActive
                 )
             }
             .overlay(alignment: .top) {
@@ -32,15 +28,6 @@ struct HomeFeedView: View {
             }
             .navigationDestination(item: $previewItemId) { itemId in
                 PreviewScreen(itemId: itemId)
-            }
-            .sheet(isPresented: $isSearchActive) {
-                SearchOverlay(isPresented: $isSearchActive)
-            }
-            .sheet(isPresented: $isFilterPickerPresented) {
-                FilterPicker()
-            }
-            .sheet(isPresented: $isAddFlowPresented) {
-                AddFlowView()
             }
             .sheet(isPresented: Binding(
                 get: { editItemId != nil },
