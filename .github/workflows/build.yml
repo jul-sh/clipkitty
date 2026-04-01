@@ -147,9 +147,9 @@ jobs:
         id: xcode-auth
         run: |
           mkdir -p .make/keys
-          ./distribution/read-secret.sh NOTARY_KEY_BASE64 | base64 --decode > .make/keys/AuthKey.p8
-          echo "key_id=$(./distribution/read-secret.sh NOTARY_KEY_ID)" >> "$GITHUB_OUTPUT"
-          echo "issuer_id=$(./distribution/read-secret.sh NOTARY_ISSUER_ID)" >> "$GITHUB_OUTPUT"
+          ./distribution/asc-auth.sh private-key-b64 | base64 --decode > .make/keys/AuthKey.p8
+          echo "key_id=$(./distribution/asc-auth.sh key-id)" >> "$GITHUB_OUTPUT"
+          echo "issuer_id=$(./distribution/asc-auth.sh issuer-id)" >> "$GITHUB_OUTPUT"
           echo "key_path=$(pwd)/.make/keys/AuthKey.p8" >> "$GITHUB_OUTPUT"
         env:
           AGE_SECRET_KEY: ${{ secrets.AGE_SECRET_KEY }}
@@ -670,9 +670,9 @@ jobs:
       - name: Prepare API Key for Automatic Signing
         run: |
           mkdir -p .make/keys
-          echo "$NOTARY_KEY_BASE64" | base64 --decode > .make/keys/AuthKey.p8
+          ./distribution/asc-auth.sh private-key-b64 | base64 --decode > .make/keys/AuthKey.p8
         env:
-          NOTARY_KEY_BASE64: ${{ steps.secrets.outputs.NOTARY_KEY_BASE64 }}
+          AGE_SECRET_KEY: ${{ secrets.AGE_SECRET_KEY }}
 
       - name: Build and Publish to App Store Connect
         run: |
