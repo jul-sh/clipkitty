@@ -242,9 +242,24 @@ jobs:
         run: |
           chmod +x distribution/build-dmg.sh
 
-          # xcodebuild already signed the app with Developer ID + embedded provisioning profile.
-          # Verify the signature before packaging.
+          # xcodebuild signed the main app with Developer ID, but nested Sparkle
+          # framework binaries retain their original (non-Developer ID) signatures.
+          # Re-sign all nested executables/dylibs with our Developer ID identity
+          # so notarization passes.
           APP="DerivedData/Build/Products/SparkleRelease/ClipKitty.app"
+          if [ -d "$APP/Contents/Frameworks" ]; then
+            find "$APP/Contents/Frameworks" \( -name "*.app" -o -name "*.xpc" -o -name "*.framework" \) -print0 | while IFS= read -r -d '' bundle; do
+              codesign --force --options runtime --timestamp --sign "Developer ID Application" "$bundle"
+            done
+            find "$APP/Contents/Frameworks" \( -type f -perm +111 -o -name "*.dylib" \) -not -path "*.framework/Versions/*" -print0 | while IFS= read -r -d '' binary; do
+              codesign --force --options runtime --timestamp --sign "Developer ID Application" "$binary"
+            done
+          fi
+
+          # Re-sign the outer app (preserves entitlements + provisioning profile)
+          codesign --force --options runtime --timestamp --sign "Developer ID Application" \
+            --entitlements Sources/MacApp/ClipKitty.sparkle.entitlements \
+            "$APP"
           codesign --verify --deep --strict "$APP"
           echo "Verified: $(codesign -d -vv "$APP" 2>&1 | grep Authority | head -1)"
 
