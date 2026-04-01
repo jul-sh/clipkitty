@@ -33,7 +33,7 @@ enum PasteMode {
 
 #if SPARKLE_RELEASE
     /// State of update checking
-    enum UpdateCheckState: Equatable {
+    enum UpdateCheckState: String, Codable, Equatable {
         case idle
         case checking
         case downloading
@@ -96,6 +96,12 @@ final class AppSettings: ObservableObject {
 
     #if SPARKLE_RELEASE
         @Published var updateCheckState: UpdateCheckState = .idle
+        @Published var lastUpdateCheckDate: Date? {
+            didSet { save() }
+        }
+        @Published var lastUpdateCheckResult: UpdateCheckState = .idle {
+            didSet { save() }
+        }
         @Published var autoInstallUpdates: Bool {
             didSet { save() }
         }
@@ -152,6 +158,13 @@ final class AppSettings: ObservableObject {
     /// The date the app was first launched (for time-gating the launch-at-login prompt)
     let firstLaunchDate: Date
 
+    #if ENABLE_SYNC
+        /// Whether iCloud sync is enabled
+        @Published var syncEnabled: Bool {
+            didSet { save() }
+        }
+    #endif
+
     /// Scale factor for browser text and panel dimensions, derived from system accessibility text size.
     /// Minimum is 1.0 (system default), maximum is capped at 1.5.
     @Published var textScale: CGFloat
@@ -176,11 +189,16 @@ final class AppSettings: ObservableObject {
     private let firstLaunchDateKey = "firstLaunchDate"
     private let lastInfoDismissDateKey = "lastInfoDismissDate"
     private let lastNudgeInteractionDateKey = "lastNudgeInteractionDate"
+    #if ENABLE_SYNC
+        private let syncEnabledKey = "syncEnabled"
+    #endif
     private var textScaleObserver: Any?
     private let ignoredAppBundleIdsKey = "ignoredAppBundleIds"
     #if SPARKLE_RELEASE
         private let autoInstallUpdatesKey = "autoInstallUpdates"
         private let updateChannelKey = "updateChannel"
+        private let lastUpdateCheckDateKey = "lastUpdateCheckDate"
+        private let lastUpdateCheckResultKey = "lastUpdateCheckResult"
     #endif
 
     /// Flag to prevent save() calls during initialization (didSet triggers before init completes)
@@ -210,6 +228,9 @@ final class AppSettings: ObservableObject {
             autoInstallUpdates = defaults.object(forKey: autoInstallUpdatesKey) as? Bool ?? true
             let storedUpdateChannel = defaults.string(forKey: updateChannelKey)
             updateChannel = storedUpdateChannel.flatMap(UpdateChannel.init(rawValue:)) ?? .stable
+            lastUpdateCheckDate = defaults.object(forKey: lastUpdateCheckDateKey) as? Date
+            let storedResult = defaults.string(forKey: lastUpdateCheckResultKey)
+            lastUpdateCheckResult = storedResult.flatMap(UpdateCheckState.init(rawValue:)) ?? .idle
         #endif
 
         launchAtLoginPromptDismissed = defaults.bool(forKey: launchAtLoginPromptDismissedKey)
@@ -223,6 +244,11 @@ final class AppSettings: ObservableObject {
             firstLaunchDate = Date()
             defaults.set(firstLaunchDate, forKey: firstLaunchDateKey)
         }
+
+        // Sync - default to disabled (user opts in via Settings)
+        #if ENABLE_SYNC
+            syncEnabled = defaults.object(forKey: syncEnabledKey) as? Bool ?? false
+        #endif
 
         // Privacy settings - default to enabled for user protection
         ignoreConfidentialContent = defaults.object(forKey: ignoreConfidentialKey) as? Bool ?? true
@@ -296,6 +322,9 @@ final class AppSettings: ObservableObject {
         defaults.set(lastInfoDismissDate, forKey: lastInfoDismissDateKey)
         defaults.set(lastNudgeInteractionDate, forKey: lastNudgeInteractionDateKey)
         defaults.set(hasCompletedOnboarding, forKey: hasCompletedOnboardingKey)
+        #if ENABLE_SYNC
+            defaults.set(syncEnabled, forKey: syncEnabledKey)
+        #endif
         defaults.set(ignoreConfidentialContent, forKey: ignoreConfidentialKey)
         defaults.set(ignoreTransientContent, forKey: ignoreTransientKey)
         defaults.set(generateLinkPreviews, forKey: generateLinkPreviewsKey)
@@ -304,6 +333,8 @@ final class AppSettings: ObservableObject {
         #if SPARKLE_RELEASE
             defaults.set(autoInstallUpdates, forKey: autoInstallUpdatesKey)
             defaults.set(updateChannel.rawValue, forKey: updateChannelKey)
+            defaults.set(lastUpdateCheckDate, forKey: lastUpdateCheckDateKey)
+            defaults.set(lastUpdateCheckResult.rawValue, forKey: lastUpdateCheckResultKey)
         #endif
     }
 

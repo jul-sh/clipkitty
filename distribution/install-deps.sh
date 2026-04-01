@@ -28,13 +28,12 @@ for dep in "${DEPS[@]}"; do
     fi
 done
 
-# Install ASC CLI (from custom tap)
+# Install ASC CLI
 if command -v asc &> /dev/null; then
     echo "✓ asc (already installed)"
 else
     echo "Installing asc (App Store Connect CLI)..."
-    brew tap rudrankriyam/tap
-    brew install rudrankriyam/tap/asc
+    brew install asc
 fi
 
 echo ""

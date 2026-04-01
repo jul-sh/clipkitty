@@ -1,7 +1,4 @@
-Conheça o ClipKitty.
+NOVO: Sincronização iCloud; sincronize opcionalmente seu histórico de área de transferência em todos os seus Macs.
 
-- Histórico de área de transferência ilimitado — nada expira, nada é cortado
-- Busca aproximada instantânea em todo o seu arquivo
-- Painel de visualização multilinha completo para código, texto e links
-- Controlado pelo teclado: Option+Espaço para abrir, Return para colar
-- Completamente privado — seus dados nunca saem do seu Mac
+- Ative o iCloud Sync nas configurações para manter seus clips sincronizados entre dispositivos
+- Utiliza seu contêiner privado do iCloud sem servidores de terceiros

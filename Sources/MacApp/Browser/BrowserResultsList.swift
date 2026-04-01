@@ -8,8 +8,8 @@ struct BrowserResultsList: View {
     let focusSearchField: () -> Void
 
     private let matchDataPrefetchBuffer = 20
-    @State private var lastItemsSignature: [Int64] = []
-    @State private var contextMenuItemId: Int64?
+    @State private var lastItemsSignature: [String] = []
+    @State private var contextMenuItemId: String?
 
     var body: some View {
         ScrollViewReader { proxy in
@@ -92,7 +92,7 @@ struct BrowserResultsList: View {
         }
     }
 
-    private func indexForItem(_ itemId: Int64?) -> Int? {
+    private func indexForItem(_ itemId: String?) -> Int? {
         viewModel.indexOfItem(itemId)
     }
 
