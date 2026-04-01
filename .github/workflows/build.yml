@@ -244,15 +244,20 @@ jobs:
 
           # xcodebuild signed the main app with Developer ID, but nested Sparkle
           # framework binaries retain their original (non-Developer ID) signatures.
-          # Re-sign all nested executables/dylibs with our Developer ID identity
-          # so notarization passes.
+          # Re-sign inside-out: deepest nested items first, then frameworks, then app.
           APP="DerivedData/Build/Products/SparkleRelease/ClipKitty.app"
           if [ -d "$APP/Contents/Frameworks" ]; then
-            find "$APP/Contents/Frameworks" \( -name "*.app" -o -name "*.xpc" -o -name "*.framework" \) -print0 | while IFS= read -r -d '' bundle; do
+            # Sign individual executables and dylibs first (deepest items)
+            find "$APP/Contents/Frameworks" \( -type f -perm +111 -o -name "*.dylib" \) | while read -r binary; do
+              codesign --force --options runtime --timestamp --sign "Developer ID Application" "$binary"
+            done
+            # Sign nested bundles (XPC services, apps) inside frameworks
+            find "$APP/Contents/Frameworks" -depth \( -name "*.xpc" -o -name "*.app" \) | while read -r bundle; do
               codesign --force --options runtime --timestamp --sign "Developer ID Application" "$bundle"
             done
-            find "$APP/Contents/Frameworks" \( -type f -perm +111 -o -name "*.dylib" \) -not -path "*.framework/Versions/*" -print0 | while IFS= read -r -d '' binary; do
-              codesign --force --options runtime --timestamp --sign "Developer ID Application" "$binary"
+            # Sign the frameworks themselves
+            find "$APP/Contents/Frameworks" -maxdepth 1 -name "*.framework" | while read -r framework; do
+              codesign --force --options runtime --timestamp --sign "Developer ID Application" "$framework"
             done
           fi
 
