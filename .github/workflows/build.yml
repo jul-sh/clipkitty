@@ -305,8 +305,10 @@ jobs:
 
       # 3. Staple Notarization (Required for offline Gatekeeper approval)
       #    Apple's CDN can occasionally lag behind even after "Accepted" status.
-      #    Staple both the .app inside the DMG and the DMG itself, so Gatekeeper
-      #    passes offline after the user drag-installs the app.
+      #    We staple the .app inside the DMG so Gatekeeper passes offline after
+      #    the user drag-installs. This requires converting the DMG to read-write,
+      #    stapling, then converting back — which changes the DMG hash, so we
+      #    re-sign and re-notarize the final DMG.
       - name: Staple Notarization
         run: |
           staple_with_retry() {
@@ -334,8 +336,29 @@ jobs:
           mv ClipKitty-stapled.dmg ClipKitty.dmg
           rm ClipKitty-rw.dmg
 
-          # Staple the outer DMG
+          # Re-sign and re-notarize the rebuilt DMG (hash changed after modification)
+          codesign --force --sign "Developer ID Application" ClipKitty.dmg
+
+          echo "$NOTARY_KEY_BASE64" | base64 --decode > auth_key_staple.p8
+          xcrun notarytool submit ClipKitty.dmg \
+            --key auth_key_staple.p8 \
+            --key-id "$NOTARY_KEY_ID" \
+            --issuer "$NOTARY_ISSUER_ID" \
+            --wait --output-format json | tee notarization_staple.json
+          rm -f auth_key_staple.p8
+
+          STATUS=$(python3 -c "import json,sys; print(json.load(sys.stdin)['status'])" < notarization_staple.json)
+          if [ "$STATUS" != "Accepted" ]; then
+            echo "::error::Re-notarization of stapled DMG failed: $STATUS"
+            exit 1
+          fi
+
+          # Now staple the outer DMG
           staple_with_retry ClipKitty.dmg
+        env:
+          NOTARY_KEY_BASE64: ${{ steps.secrets.outputs.NOTARY_KEY_BASE64 }}
+          NOTARY_KEY_ID: ${{ steps.secrets.outputs.NOTARY_KEY_ID }}
+          NOTARY_ISSUER_ID: ${{ steps.secrets.outputs.NOTARY_ISSUER_ID }}
 
       - name: Install Sparkle CLI Tools
         if: github.event_name == 'push' && (github.ref == 'refs/heads/main' || github.ref == 'refs/heads/release')
