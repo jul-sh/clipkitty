@@ -104,19 +104,13 @@ public extension FileStatus {
 // MARK: - Protocol Conformances
 
 extension ClipboardItem: Identifiable {
-    public var id: String {
-        itemMetadata.itemId
-    }
+    public var id: Int64 { itemMetadata.itemId }
 }
 
 extension ItemMetadata: Identifiable {
-    public var id: String {
-        itemId
-    }
+    public var id: Int64 { itemId }
 }
 
 extension ItemMatch: Identifiable {
-    public var id: String {
-        itemMetadata.itemId
-    }
+    public var id: Int64 { itemMetadata.itemId }
 }

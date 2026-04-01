@@ -104,26 +104,12 @@ jobs:
         with:
           swift-version: "6.2"
 
-      # 1. Install Apple Certificates for Signing
-      - name: Install Developer ID Certificate
+      # 1. Install Apple Certificate for Signing
+      - name: Install Apple Certificate
         uses: apple-actions/import-codesign-certs@v3
         with:
           p12-file-base64: ${{ steps.secrets.outputs.MACOS_P12_BASE64 }}
           p12-password: ${{ steps.secrets.outputs.MACOS_P12_PASSWORD }}
-
-      - name: Install Apple Development Certificate
-        uses: apple-actions/import-codesign-certs@v3
-        with:
-          p12-file-base64: ${{ steps.secrets.outputs.MAC_DEV_P12_BASE64 }}
-          p12-password: ${{ steps.secrets.outputs.MAC_DEV_P12_PASSWORD }}
-          keychain: dev_signing
-
-      - name: Fix keychain search list
-        run: |
-          security list-keychains -d user -s \
-            ~/Library/Keychains/signing_temp.keychain-db \
-            ~/Library/Keychains/dev_signing.keychain-db \
-            ~/Library/Keychains/login.keychain-db
 
       - name: Install Nix
         uses: DeterminateSystems/nix-installer-action@main
@@ -143,26 +129,11 @@ jobs:
       - name: Generate Xcode Project
         run: make generate
 
-      - name: Prepare Xcode Authentication
-        id: xcode-auth
-        run: |
-          mkdir -p .make/keys
-          ./distribution/read-secret.sh NOTARY_KEY_BASE64 | base64 --decode > .make/keys/AuthKey.p8
-          echo "key_id=$(./distribution/read-secret.sh NOTARY_KEY_ID)" >> "$GITHUB_OUTPUT"
-          echo "issuer_id=$(./distribution/read-secret.sh NOTARY_ISSUER_ID)" >> "$GITHUB_OUTPUT"
-          echo "key_path=$(pwd)/.make/keys/AuthKey.p8" >> "$GITHUB_OUTPUT"
-        env:
-          AGE_SECRET_KEY: ${{ secrets.AGE_SECRET_KEY }}
-
       - name: Build App (SparkleRelease)
-        run: make build CONFIGURATION=SparkleRelease UNIVERSAL=1 SKIP_SIGNING=1
-        env:
-          AGE_SECRET_KEY: ${{ secrets.AGE_SECRET_KEY }}
+        run: make build CONFIGURATION=SparkleRelease UNIVERSAL=1
 
       - name: Build App (AppStore)
-        run: make build CONFIGURATION=AppStore UNIVERSAL=1 SKIP_SIGNING=1
-        env:
-          AGE_SECRET_KEY: ${{ secrets.AGE_SECRET_KEY }}
+        run: make build CONFIGURATION=AppStore UNIVERSAL=1
 
       - name: Create AppStore Archive
         run: |
@@ -179,37 +150,13 @@ jobs:
 
       - name: Run UI Tests
         run: |
-          set +e
           xcodebuild test \
             -workspace ClipKitty.xcworkspace \
             -scheme ClipKittyUITests \
             -destination "platform=macOS" \
             -derivedDataPath DerivedData \
-            CODE_SIGNING_ALLOWED=NO \
             -skip-testing:ClipKittyUITests/ClipKittyUITests/testRecordIntroVideo \
-            -skip-testing:ClipKittyUITests/ClipKittyUITests/testTakeMarketingScreenshots \
-            -resultBundlePath TestResults.xcresult \
-            2>&1 | tee xcodebuild-test.log
-          TEST_EXIT=$?
-          echo "::group::Test Summary"
-          grep -E "(Test Case|Test Suite|passed|failed|error:|Failing tests:)" xcodebuild-test.log || true
-          echo "::endgroup::"
-          if [ -d TestResults.xcresult ]; then
-            echo "::group::xcresulttool Summary"
-            xcrun xcresulttool get test-results summary --path TestResults.xcresult 2>/dev/null || true
-            echo "::endgroup::"
-          fi
-          exit $TEST_EXIT
-
-      - name: Upload Test Results
-        if: always()
-        uses: actions/upload-artifact@v4
-        with:
-          name: TestResults
-          path: |
-            TestResults.xcresult
-            xcodebuild-test.log
-          if-no-files-found: ignore
+            -skip-testing:ClipKittyUITests/ClipKittyUITests/testTakeMarketingScreenshots
 
       - name: Create Virtual Retina Display
         run: |
@@ -221,10 +168,8 @@ jobs:
 
       - name: Generate Marketing Screenshots
         run: |
-          make -C distribution marketing-screenshots-localized UNIVERSAL=1 SKIP_SIGNING=1
+          make -C distribution marketing-screenshots-localized UNIVERSAL=1
           ls -lh marketing/*/screenshot_*.png
-        env:
-          AGE_SECRET_KEY: ${{ secrets.AGE_SECRET_KEY }}
 
       - name: Teardown Virtual Display
         if: always()
@@ -237,6 +182,8 @@ jobs:
         run: |
           chmod +x distribution/build-dmg.sh
 
+          make build CONFIGURATION=SparkleRelease UNIVERSAL=1
+
           # Sign nested frameworks/bundles first (inside-out for Sparkle, XPC services, etc.)
           APP="DerivedData/Build/Products/SparkleRelease/ClipKitty.app"
           if [ -d "$APP/Contents/Frameworks" ]; then
@@ -247,14 +194,12 @@ jobs:
 
           # Sign the outer app (must come last)
           codesign --force --options runtime --timestamp --sign "Developer ID Application" \
-            --entitlements Sources/MacApp/ClipKitty.sparkle.entitlements \
+            --entitlements Sources/MacApp/ClipKitty.oss.entitlements \
             "$APP"
           codesign --verify --deep --strict "$APP"
 
           ./distribution/build-dmg.sh "$APP" ClipKitty.dmg
           codesign --force --sign "Developer ID Application" ClipKitty.dmg
-        env:
-          AGE_SECRET_KEY: ${{ secrets.AGE_SECRET_KEY }}
 
       # 2. Notarize with Apple
       - name: Notarize DMG
@@ -536,17 +481,8 @@ jobs:
       - name: Generate Xcode Project
         run: make generate
 
-      - name: Prepare API Key for Automatic Signing
-        run: |
-          mkdir -p .make/keys
-          ./distribution/read-secret.sh NOTARY_KEY_BASE64 | base64 --decode > .make/keys/AuthKey.p8
-        env:
-          AGE_SECRET_KEY: ${{ secrets.AGE_SECRET_KEY }}
-
       - name: Build App
-        run: make build UNIVERSAL=1 SKIP_SIGNING=1
-        env:
-          AGE_SECRET_KEY: ${{ secrets.AGE_SECRET_KEY }}
+        run: make build UNIVERSAL=1
 
       - name: Generate Localized Demo Databases
         run: ./distribution/patch-demo-items.sh
@@ -560,9 +496,7 @@ jobs:
           sleep 5
 
       - name: Generate Localized Intro Videos
-        run: make -C distribution intro-video-localized UNIVERSAL=1 SKIP_SIGNING=1
-        env:
-          AGE_SECRET_KEY: ${{ secrets.AGE_SECRET_KEY }}
+        run: make -C distribution intro-video-localized UNIVERSAL=1
 
       - name: Teardown Virtual Display
         if: always()
@@ -667,13 +601,6 @@ jobs:
           name: assets
           path: .
 
-      - name: Prepare API Key for Automatic Signing
-        run: |
-          mkdir -p .make/keys
-          echo "$NOTARY_KEY_BASE64" | base64 --decode > .make/keys/AuthKey.p8
-        env:
-          NOTARY_KEY_BASE64: ${{ steps.secrets.outputs.NOTARY_KEY_BASE64 }}
-
       - name: Build and Publish to App Store Connect
         run: |
           BASE_VERSION=$(grep 'MARKETING_VERSION' Project.swift | head -1 | sed 's/.*"\(.*\)".*/\1/')
@@ -683,8 +610,7 @@ jobs:
           make -C distribution appstore-publish \
             VERSION="${VERSION}" \
             BUILD_NUMBER="${COMMIT_COUNT}" \
-            UNIVERSAL=1 \
-            SKIP_SIGNING=1
+            UNIVERSAL=1
         env:
           AGE_SECRET_KEY: ${{ secrets.AGE_SECRET_KEY }}
 

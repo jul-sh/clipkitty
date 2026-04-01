@@ -20,8 +20,6 @@ pub(crate) mod search_admission;
 mod search_result_builder;
 mod search_service;
 mod store;
-#[cfg(feature = "sync")]
-pub(crate) mod sync_bridge;
 
 pub use interface::*;
 pub use store::{inspect_store_bootstrap, ClipboardStore, SearchOperation};

@@ -62,7 +62,7 @@ impl<'a> SearchResultAssembler<'a> {
         )?;
         self.hydrate_item_metadata_tags(&mut items)?;
         let first_preview_payload = self.presentation().load_first_preview_payload(
-            items.first().map(|item| item.item_id.as_str()),
+            items.first().map(|item| item.item_id),
             "",
             self.token,
             self.runtime,
@@ -90,7 +90,7 @@ impl<'a> SearchResultAssembler<'a> {
         let total_count = matches.len() as u64;
         self.hydrate_item_match_tags(&mut matches)?;
         let first_preview_payload = self.presentation().load_first_preview_payload(
-            matches.first().map(|item| item.item_metadata.item_id.as_str()),
+            matches.first().map(|item| item.item_metadata.item_id),
             query,
             self.token,
             self.runtime,
@@ -177,8 +177,8 @@ impl<'a> SearchResultAssembler<'a> {
             return Ok(Vec::new());
         }
 
-        let ids: Vec<&str> = candidates.iter().map(|candidate| candidate.id.as_str()).collect();
-        let metadata_rows = self.db.fetch_search_item_metadata_by_string_ids(&ids)?;
+        let ids: Vec<i64> = candidates.iter().map(|candidate| candidate.id).collect();
+        let metadata_rows = self.db.fetch_search_item_metadata_by_ids(&ids)?;
         if self.token.is_cancelled() {
             return Err(ClipKittyError::Cancelled);
         }
@@ -186,7 +186,7 @@ impl<'a> SearchResultAssembler<'a> {
         let tagged_ids = if let Some(tag) = tag {
             Some(
                 self.db
-                    .filter_string_ids_by_tag(&ids, tag)?
+                    .filter_ids_by_tag(&ids, tag)?
                     .into_iter()
                     .collect::<HashSet<_>>(),
             )
@@ -194,14 +194,14 @@ impl<'a> SearchResultAssembler<'a> {
             None
         };
 
-        let metadata_map: HashMap<String, SearchItemMetadata> = metadata_rows
+        let metadata_map: HashMap<i64, SearchItemMetadata> = metadata_rows
             .into_iter()
             .filter(|metadata| match &tagged_ids {
                 Some(tagged_ids) => tagged_ids.contains(&metadata.item_metadata.item_id),
                 None => true,
             })
             .filter(|metadata| metadata_matches_filter(metadata, filter))
-            .map(|metadata| (metadata.item_metadata.item_id.clone(), metadata))
+            .map(|metadata| (metadata.item_metadata.item_id, metadata))
             .collect();
 
         let few_results = metadata_map.len() <= EAGER_SHORT_RESULT_LIMIT;
@@ -219,7 +219,7 @@ impl<'a> SearchResultAssembler<'a> {
             };
             presentation.cache_match_context(
                 query.raw_text(),
-                &candidate.id,
+                candidate.id,
                 metadata.content_hash.clone(),
                 candidate.match_context(),
                 candidate.scoring_phase(),
@@ -227,7 +227,7 @@ impl<'a> SearchResultAssembler<'a> {
 
             let mut item_metadata = metadata.item_metadata.clone();
             presentation.apply_match_context_snippet(
-                &candidate.id,
+                candidate.id,
                 query.raw_text(),
                 &mut item_metadata,
                 candidate.match_context(),
@@ -244,7 +244,7 @@ impl<'a> SearchResultAssembler<'a> {
                     item_metadata,
                     list_decoration: Some(
                         presentation.list_decoration_for_cached_match(
-                            &candidate.id,
+                            candidate.id,
                             query.raw_text(),
                             self.presentation,
                         ),
@@ -291,7 +291,7 @@ impl<'a> SearchResultAssembler<'a> {
                 item_map.get(id).map(|item| ItemMatch {
                     item_metadata: item.to_metadata(),
                     list_decoration: Some(presentation.list_decoration_for_item(
-                        &item.item_id,
+                        *id,
                         item.content.text_content(),
                         query,
                         self.presentation,
@@ -302,11 +302,11 @@ impl<'a> SearchResultAssembler<'a> {
     }
 
     fn hydrate_item_match_tags(&self, matches: &mut [ItemMatch]) -> Result<(), ClipKittyError> {
-        let ids: Vec<String> = matches
+        let ids: Vec<i64> = matches
             .iter()
-            .map(|item| item.item_metadata.item_id.clone())
+            .map(|item| item.item_metadata.item_id)
             .collect();
-        let tags_by_id = self.db.get_tags_for_item_ids(&ids)?;
+        let tags_by_id = self.db.get_tags_for_ids(&ids)?;
         for item in matches {
             item.item_metadata.tags = tags_by_id
                 .get(&item.item_metadata.item_id)
@@ -317,8 +317,8 @@ impl<'a> SearchResultAssembler<'a> {
     }
 
     fn hydrate_item_metadata_tags(&self, items: &mut [ItemMetadata]) -> Result<(), ClipKittyError> {
-        let ids: Vec<String> = items.iter().map(|item| item.item_id.clone()).collect();
-        let tags_by_id = self.db.get_tags_for_item_ids(&ids)?;
+        let ids: Vec<i64> = items.iter().map(|item| item.item_id).collect();
+        let tags_by_id = self.db.get_tags_for_ids(&ids)?;
         for item in items {
             item.tags = tags_by_id.get(&item.item_id).cloned().unwrap_or_default();
         }

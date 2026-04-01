@@ -1,7 +1,8 @@
-import ClipKittyRust
 import XCTest
+import ClipKittyRust
 
 final class MultiFileTests: XCTestCase {
+
     // MARK: - Rust Store Integration
 
     private func makeStore() throws -> ClipKittyRust.ClipboardStore {
@@ -27,12 +28,12 @@ final class MultiFileTests: XCTestCase {
             sourceApp: "Finder",
             sourceAppBundleId: "com.apple.finder"
         )
-        XCTAssertFalse(id.isEmpty, "New multi-file entry should return a stable ID")
+        XCTAssertGreaterThan(id, 0, "New multi-file entry should return positive ID")
 
         let items = try store.fetchByIds(itemIds: [id])
         XCTAssertEqual(items.count, 1)
 
-        guard case let .file(displayName, files) = items[0].content else {
+        guard case .file(let displayName, let files) = items[0].content else {
             XCTFail("Expected File content, got \(items[0].content)")
             return
         }
@@ -59,10 +60,10 @@ final class MultiFileTests: XCTestCase {
             sourceApp: nil,
             sourceAppBundleId: nil
         )
-        XCTAssertFalse(id.isEmpty)
+        XCTAssertGreaterThan(id, 0)
 
         let items = try store.fetchByIds(itemIds: [id])
-        guard case let .file(displayName, files) = items[0].content else {
+        guard case .file(let displayName, let files) = items[0].content else {
             XCTFail("Expected File content")
             return
         }
@@ -87,7 +88,7 @@ final class MultiFileTests: XCTestCase {
             sourceApp: nil,
             sourceAppBundleId: nil
         )
-        XCTAssertFalse(id1.isEmpty)
+        XCTAssertGreaterThan(id1, 0)
 
         let id2 = try store.saveFiles(
             paths: ["/tmp/a.txt", "/tmp/b.txt"],
@@ -99,7 +100,7 @@ final class MultiFileTests: XCTestCase {
             sourceApp: nil,
             sourceAppBundleId: nil
         )
-        XCTAssertTrue(id2.isEmpty, "Duplicate multi-file should return an empty ID")
+        XCTAssertEqual(id2, 0, "Duplicate multi-file should return 0")
     }
 
     func testSaveFilesDedupOrderIndependent() throws {
@@ -115,7 +116,7 @@ final class MultiFileTests: XCTestCase {
             sourceApp: nil,
             sourceAppBundleId: nil
         )
-        XCTAssertFalse(id1.isEmpty)
+        XCTAssertGreaterThan(id1, 0)
 
         // Same files, reversed order
         let id2 = try store.saveFiles(
@@ -128,7 +129,7 @@ final class MultiFileTests: XCTestCase {
             sourceApp: nil,
             sourceAppBundleId: nil
         )
-        XCTAssertTrue(id2.isEmpty, "Same files in different order should deduplicate")
+        XCTAssertEqual(id2, 0, "Same files in different order should deduplicate")
     }
 
     // MARK: - Display name generation
@@ -234,7 +235,7 @@ final class MultiFileTests: XCTestCase {
         )
 
         let items = try store.fetchByIds(itemIds: [id])
-        guard case let .file(_, files) = items[0].content else {
+        guard case .file(_, let files) = items[0].content else {
             XCTFail("Expected File content")
             return
         }

@@ -24,37 +24,27 @@ fi
 # Repo-managed temp keychains are disposable. Never try to unlock a stale one.
 delete_temp_keychain "$KEYCHAIN_PATH"
 
-# Remove any stale/locked temp keychains (from this or other projects) that would
-# cause errSecInternalComponent during codesign.
-purge_stale_temp_keychains
-
-if all_codesigning_identities_available "Developer ID Application" "Apple Development"; then
-    echo "Developer ID and Apple Development certificates already available"
+if all_codesigning_identities_available "Developer ID Application"; then
+    echo "Developer ID certificate already available"
     exit 0
 fi
 
 KEYCHAIN_PASSWORD=$(openssl rand -hex 16)
 P12_PATH=$(mktemp "${TMPDIR:-/tmp}/clipkitty-dev-cert.XXXXXX.p12")
-DEV_P12_PATH=$(mktemp "${TMPDIR:-/tmp}/clipkitty-apple-dev-cert.XXXXXX.p12")
 
 cleanup() {
-    rm -f "$P12_PATH" "$DEV_P12_PATH"
+    rm -f "$P12_PATH"
 }
 
 trap cleanup EXIT
 
-create_unlocked_temp_keychain "$KEYCHAIN_PATH" "$KEYCHAIN_PASSWORD"
-
-# Import Developer ID certificate
 P12_PASS=$("$SCRIPT_DIR/read-secret.sh" MACOS_P12_PASSWORD)
 "$SCRIPT_DIR/read-secret.sh" MACOS_P12_BASE64 | base64 --decode > "$P12_PATH"
-security import "$P12_PATH" -k "$KEYCHAIN_PATH" -P "$P12_PASS" \
-    -T /usr/bin/codesign -T /usr/bin/productbuild
 
-# Import Apple Development certificate (needed for CloudKit entitlements)
-DEV_P12_PASS=$("$SCRIPT_DIR/read-secret.sh" MAC_DEV_P12_PASSWORD)
-"$SCRIPT_DIR/read-secret.sh" MAC_DEV_P12_BASE64 | base64 --decode > "$DEV_P12_PATH"
-security import "$DEV_P12_PATH" -k "$KEYCHAIN_PATH" -P "$DEV_P12_PASS" \
+create_unlocked_temp_keychain "$KEYCHAIN_PATH" "$KEYCHAIN_PASSWORD"
+
+# Import certificate
+security import "$P12_PATH" -k "$KEYCHAIN_PATH" -P "$P12_PASS" \
     -T /usr/bin/codesign -T /usr/bin/productbuild
 
 # Allow codesign to access keys without prompt

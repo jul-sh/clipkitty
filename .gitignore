@@ -51,8 +51,7 @@ marketing/
 *.dmg
 
 # Rust build artifacts
-target/
-purr-sync/target/
+purr/target/
 
 # Log files
 *.log

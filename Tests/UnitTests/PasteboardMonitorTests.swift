@@ -26,7 +26,7 @@ final class PasteboardMonitorTests: XCTestCase {
         )
 
         XCTAssertEqual(mode, .deepIdle)
-        XCTAssertEqual(mode.intervalMilliseconds, PasteboardMonitor.PollingMode.deepIdle.intervalMilliseconds)
+        XCTAssertEqual(mode.intervalMilliseconds, 2_000)
     }
 
     func testLowPowerModeDowngradesActiveToIdle() {
@@ -51,7 +51,7 @@ final class PasteboardMonitorTests: XCTestCase {
             workspace: workspace,
             filterConfiguration: { PasteboardMonitor.FilterConfiguration(isAppIgnored: { _ in false }, ignoreConfidentialContent: true, ignoreTransientContent: true) }
         ) { content in
-            guard case let .text(text, _, _) = content else {
+            guard case .text(let text, _, _) = content else {
                 return XCTFail("Expected text detection")
             }
             XCTAssertEqual(text, "hello")

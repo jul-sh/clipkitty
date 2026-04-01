@@ -26,10 +26,7 @@ if [ ! -f "$SECRET_PATH" ]; then
 fi
 
 KEYCHAIN_SERVICE="keytap"
-# Use project-specific account to avoid cross-project key collisions.
-# Different projects have different age recipients, so each needs its own cached key.
-PROJECT_NAME="$(basename "$PROJECT_ROOT")"
-KEYCHAIN_ACCOUNT="AGE_SECRET_KEY_${PROJECT_NAME}"
+KEYCHAIN_ACCOUNT="AGE_SECRET_KEY"
 
 # Try to read the age key from macOS Keychain (silent fail if locked or missing)
 try_keychain() {
@@ -48,9 +45,9 @@ cache_to_keychain() {
 if [ -n "${AGE_SECRET_KEY:-}" ]; then
     # CI path: use the env var directly
     echo "$AGE_SECRET_KEY" | age -d -i - "$SECRET_PATH"
-elif AGE_KEY="$(try_keychain)" && echo "$AGE_KEY" | age -d -i - "$SECRET_PATH" 2>/dev/null; then
-    # Keychain hit and key matches recipients — output already produced above
-    :
+elif AGE_KEY="$(try_keychain)"; then
+    # Keychain hit: decrypt using the cached key
+    echo "$AGE_KEY" | age -d -i - "$SECRET_PATH"
 elif command -v keytap &>/dev/null; then
     # First run / keychain locked: get key from keytap, decrypt, and cache
     AGE_KEY="$(keytap reveal clipkitty --format age)"

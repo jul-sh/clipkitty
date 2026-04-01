@@ -1,4 +1,7 @@
-NUEVO: Sincronización iCloud; sincroniza opcionalmente tu historial de portapapeles en todos tus Macs.
+Presentamos ClipKitty.
 
-- Activa iCloud Sync en los ajustes para mantener tus clips sincronizados entre dispositivos
-- Utiliza tu contenedor privado de iCloud sin servidores de terceros
+- Historial de portapapeles ilimitado — nada caduca, nada se trunca
+- Búsqueda aproximada instantánea en todo tu archivo
+- Panel de vista previa multilínea para código, texto y enlaces
+- Controlado por teclado: Opción+Espacio para abrir, Retorno para pegar
+- Completamente privado — tus datos nunca salen de tu Mac

@@ -4,8 +4,8 @@ import SwiftUI
 
 struct ContentView: View {
     let store: ClipboardStore
-    let onSelect: (String, ClipboardContent) -> Void
-    let onCopyOnly: (String, ClipboardContent) -> Void
+    let onSelect: (Int64, ClipboardContent) -> Void
+    let onCopyOnly: (Int64, ClipboardContent) -> Void
     let onDismiss: () -> Void
     let showSnackbarNotification: (NotificationKind, (() -> Void)?) -> Void
     let dismissSnackbarNotification: () -> Void
@@ -15,8 +15,8 @@ struct ContentView: View {
 
     init(
         store: ClipboardStore,
-        onSelect: @escaping (String, ClipboardContent) -> Void,
-        onCopyOnly: @escaping (String, ClipboardContent) -> Void,
+        onSelect: @escaping (Int64, ClipboardContent) -> Void,
+        onCopyOnly: @escaping (Int64, ClipboardContent) -> Void,
         onDismiss: @escaping () -> Void,
         showSnackbarNotification: @escaping (NotificationKind, (() -> Void)?) -> Void,
         dismissSnackbarNotification: @escaping () -> Void,
