@@ -27,7 +27,7 @@ SIGNING_IDENTITY ?= $(shell security find-identity -v -p codesigning 2>/dev/null
 RUST_MARKER := .make/rust.marker
 RUST_LIB := Sources/ClipKittyRust/libpurr.a
 
-.PHONY: all clean rust rust-force generate build signing api-key provisioning sign list-identities run run-perf test unittest uitest rust-test perf-test perf-db perf-bench
+.PHONY: all clean rust rust-force generate build signing api-key provisioning provisioning-secrets sign list-identities run run-perf test unittest uitest rust-test perf-test perf-db perf-bench
 
 all: rust generate build
 
@@ -66,12 +66,16 @@ api-key:
 	@mkdir -p $(API_KEY_DIR)
 	@if [ ! -f "$(API_KEY_DIR)/AuthKey.p8" ]; then \
 		echo "Decrypting API key for provisioning..."; \
-		./distribution/read-secret.sh NOTARY_KEY_BASE64 | base64 --decode > "$(API_KEY_DIR)/AuthKey.p8"; \
+		./distribution/asc-auth.sh private-key-b64 | base64 --decode > "$(API_KEY_DIR)/AuthKey.p8"; \
 	fi
 
 # Ensure Mac Development provisioning profile is installed
 provisioning: api-key
 	@./distribution/setup-dev-provisioning.sh
+
+# Refresh the encrypted provisioning profile secrets from App Store Connect.
+provisioning-secrets:
+	@./distribution/regenerate-provisioning-secrets.sh
 
 # Build using xcodebuild with automatic signing
 # CI sets SKIP_SIGNING=1 because ephemeral runners can't register devices
@@ -84,8 +88,8 @@ build: api-key
 		-derivedDataPath $(DERIVED_DATA) \
 		-allowProvisioningUpdates \
 		-authenticationKeyPath $(API_KEY_DIR)/AuthKey.p8 \
-		-authenticationKeyID $$($(SCRIPT_DIR)/distribution/read-secret.sh NOTARY_KEY_ID) \
-		-authenticationKeyIssuerID $$($(SCRIPT_DIR)/distribution/read-secret.sh NOTARY_ISSUER_ID) \
+		-authenticationKeyID $$($(SCRIPT_DIR)/distribution/asc-auth.sh key-id) \
+		-authenticationKeyIssuerID $$($(SCRIPT_DIR)/distribution/asc-auth.sh issuer-id) \
 		MARKETING_VERSION=$(VERSION) \
 		CURRENT_PROJECT_VERSION=$(BUILD_NUMBER) \
 		ONLY_ACTIVE_ARCH=$(if $(UNIVERSAL),NO,YES) \
