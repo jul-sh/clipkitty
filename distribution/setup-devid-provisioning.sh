@@ -67,7 +67,8 @@ echo "Looking for Developer ID Application certificate..."
 CERT_ID=$(curl -s -H "$AUTH" "$API/certificates?limit=200" | \
     ruby -rjson -e '
 d = JSON.parse(STDIN.read)["data"]
-cert = d.find { |c| c["attributes"]["certificateType"] == "DEVELOPER_ID_APPLICATION" }
+# Match both DEVELOPER_ID_APPLICATION and DEVELOPER_ID_APPLICATION_G2
+cert = d.find { |c| c["attributes"]["certificateType"].start_with?("DEVELOPER_ID_APPLICATION") }
 if cert
     puts cert["id"]
 else
@@ -142,7 +143,7 @@ PROFILE_CONTENT=$(echo "$PROFILE_RESP" | ruby -rjson -e 'puts JSON.parse(STDIN.r
 
 if [ -z "$PROFILE_CONTENT" ]; then
     echo "Error creating Developer ID profile:" >&2
-    echo "$PROFILE_RESP" | ruby -rjson -e 'puts JSON.parse(STDIN.read).to_json' 2>/dev/null >&2
+    echo "$PROFILE_RESP" >&2
     exit 1
 fi
 
