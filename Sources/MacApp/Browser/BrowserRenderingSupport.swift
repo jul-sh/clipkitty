@@ -135,9 +135,9 @@ struct FilePreviewView: View {
     var body: some View {
         ScrollView(.vertical, showsIndicators: true) {
             VStack(spacing: 0) {
-                ForEach(Array(files.enumerated()), id: \.offset) { _, file in
+                ForEach(Array(files.enumerated()), id: \.offset) { offset, file in
                     fileRow(file)
-                    if file.fileItemId != files.last?.fileItemId {
+                    if offset != files.indices.last {
                         Divider().padding(.leading, 52)
                     }
                 }
@@ -338,8 +338,8 @@ struct TextPreviewView: NSViewRepresentable {
     private static let maxAutoScaleCharacters = 4096
     private static let maxAutoScaleLines = 14
 
-    static var textCache: [Int64: String] = [:]
-    let itemId: Int64
+    static var textCache: [String: String] = [:]
+    let itemId: String
     let fontName: String
     let fontSize: CGFloat
     var highlights: [Utf16HighlightRange] = []
@@ -1013,7 +1013,7 @@ struct TextPreviewView: NSViewRepresentable {
         private static let maxKvoReScrollAttempts = 2
 
         // Edit tracking
-        var currentItemId: Int64 = 0
+        var currentItemId: String = ""
         var lastRenderedText: String?
         var isEditing = false
         var onTextChange: ((String) -> Void)?
@@ -1022,7 +1022,7 @@ struct TextPreviewView: NSViewRepresentable {
             usageBoundsObservation?.invalidate()
         }
 
-        fileprivate func prepareForDisplayedItemChange(to itemId: Int64, in textView: PreviewTextView) {
+        fileprivate func prepareForDisplayedItemChange(to itemId: String, in textView: PreviewTextView) {
             scrollGeneration += 1
             clearUsageBoundsRecentering()
             clearViewportRetry()

@@ -190,17 +190,17 @@ struct BrowserPreviewPane: View {
         }
     }
 
-    private func previewIdentity(itemId: Int64) -> String {
+    private func previewIdentity(itemId: String) -> String {
         // Only tie the view identity to the item itself. If we include matchData properties,
         // SwiftUI will completely destroy and recreate the heavy NSTextView and TextKit 2
         // hierarchy on every keystroke. This bypasses the optimized highlight diffing logic
         // in `updateNSView` and causes 100% CPU hangs during rapid typing.
-        return String(itemId)
+        return itemId
     }
 
     private func previewHighlightDebugLabel(
         text: String,
-        itemId: Int64,
+        itemId: String,
         previewState: SelectedPreviewState
     ) -> String {
         let state: String

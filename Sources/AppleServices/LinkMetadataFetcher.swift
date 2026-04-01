@@ -7,12 +7,12 @@ import ImageIO
 @MainActor
 public final class LinkMetadataFetcher {
     /// In-flight fetch tasks keyed by item ID (prevents duplicate fetches)
-    private var activeFetches: [Int64: Task<FetchedLinkMetadata?, Never>] = [:]
+    private var activeFetches: [String: Task<FetchedLinkMetadata?, Never>] = [:]
 
     public init() {}
 
     /// Fetch metadata for a URL, caching by item ID to prevent duplicate requests
-    public func fetchMetadata(for url: String, itemId: Int64) async -> FetchedLinkMetadata? {
+    public func fetchMetadata(for url: String, itemId: String) async -> FetchedLinkMetadata? {
         // Return if already fetching
         if let existingTask = activeFetches[itemId] {
             return await existingTask.value
@@ -44,7 +44,7 @@ public final class LinkMetadataFetcher {
     }
 
     /// Cancel any in-flight fetch for an item
-    public func cancelFetch(for itemId: Int64) {
+    public func cancelFetch(for itemId: String) {
         activeFetches[itemId]?.cancel()
         activeFetches.removeValue(forKey: itemId)
     }
@@ -117,7 +117,7 @@ public final class LinkMetadataFetcher {
     }
 }
 
-public enum FetchedLinkMetadata: Sendable, Equatable {
+public enum FetchedLinkMetadata: Equatable {
     case titleOnly(title: String, description: String?)
     case imageOnly(imageData: Data, description: String?)
     case titleAndImage(title: String, imageData: Data, description: String?)

@@ -97,13 +97,21 @@ else
 fi
 
 echo "Starting UI test (will signal when ready)..."
+# Clean stale codesign temp files that cause "invalid or unsupported format for signature"
+# errors. These .cstemp files are left behind when a previous codesign is interrupted, and
+# xcodebuild's parallel CopySwiftLibs + CodeSign can race to produce them.
+# Nuke the entire UITests runner to force a fresh copy of system frameworks.
+rm -rf "$PROJECT_ROOT/DerivedData/Build/Products/Debug/ClipKittyUITests-Runner.app" 2>/dev/null || true
+find "$PROJECT_ROOT/DerivedData" -name "*.cstemp" -delete 2>/dev/null || true
+
 # Run the test in background - it will create a marker file when demo starts
 cd "$PROJECT_ROOT"
 xcodebuild test \
-    -project ClipKitty.xcodeproj \
+    -workspace ClipKitty.xcworkspace \
     -scheme ClipKittyUITests \
     -destination 'platform=macOS' \
     -derivedDataPath DerivedData \
+    ${SKIP_SIGNING:+CODE_SIGNING_ALLOWED=NO} \
     -only-testing:ClipKittyUITests/ClipKittyUITests/$TEST_NAME \
     2>&1 | grep -E "(Test Case|passed|failed)" &
 TEST_PID=$!

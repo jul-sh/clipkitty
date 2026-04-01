@@ -3,6 +3,8 @@ La plupart des gestionnaires de presse-papiers suppriment votre historique au bo
 Historique Illimité — Aucun plafond, aucune limite. Si vous l'avez copié il y a un an, il est toujours là. Texte, images, liens, couleurs ; rien n'expire, rien n'est tronqué.
 Aperçus Multilignes — Voyez exactement ce que vous allez coller dans un volet d'aperçu dédié.
 Recherche Instantanée — Trouvez n'importe quel extrait en quelques millisecondes, que vous filtriez dix éléments ou dix millions. Conçu pour ceux qui copient beaucoup et ont besoin de tout retrouver.
+SYNCHRONISATION iCLOUD
+Synchronisez optionnellement votre historique de presse-papiers sur tous vos Mac. Activez iCloud Sync dans les réglages et vos clips vous suivent d'une machine à l'autre.
 Flux de travail au clavier. — Optimisé pour la rapidité avec un accès par ⌥Space.
-Sécurisé et Confidentiel — Vos données ne quittent jamais votre machine. ClipKitty fonctionne entièrement en local, sans synchronisation cloud, sans télémétrie et sans abonnement.
+Sécurisé et Confidentiel; vos données ne quittent jamais votre machine par défaut. ClipKitty fonctionne entièrement en local, sans télémétrie et sans abonnement. La synchronisation iCloud optionnelle utilise exclusivement votre conteneur iCloud privé.
 Transparent et Ouvert. — Licence permissive avec code source disponible publiquement. Soutenez le développement en achetant via l'App Store.

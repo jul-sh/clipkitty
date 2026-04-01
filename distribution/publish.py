@@ -57,6 +57,16 @@ def decrypt_secret(name):
     return r.stdout.strip()
 
 
+def read_asc_auth(field):
+    r = subprocess.run(
+        [os.path.join(SCRIPT_DIR, "asc-auth.sh"), field],
+        capture_output=True, text=True,
+    )
+    if r.returncode != 0:
+        sys.exit(f"Error resolving ASC auth field {field}: {r.stderr.strip()}")
+    return r.stdout.strip()
+
+
 def main():
     parser = argparse.ArgumentParser(description="Publish to App Store Connect")
     parser.add_argument("--dry-run", action="store_true", help="Preview without uploading")
@@ -75,9 +85,9 @@ def main():
     # --- Decrypt secrets ---
 
     print("Decrypting secrets...")
-    asc_key_id = decrypt_secret("APPSTORE_KEY_ID")
-    asc_issuer_id = decrypt_secret("NOTARY_ISSUER_ID")
-    asc_private_key_b64 = decrypt_secret("NOTARY_KEY_BASE64")
+    asc_key_id = read_asc_auth("key-id")
+    asc_issuer_id = read_asc_auth("issuer-id")
+    asc_private_key_b64 = read_asc_auth("private-key-b64")
 
     # --- Set up auth ---
     # xcrun altool requires the key at ~/.private_keys/AuthKey_<ID>.p8
