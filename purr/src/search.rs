@@ -204,8 +204,7 @@ fn limit_preview_highlights(
                 .iter()
                 .enumerate()
                 .filter_map(|(index, highlight)| {
-                    (highlight.end >= window_start && highlight.start <= window_end)
-                        .then_some(index)
+                    (highlight.end >= window_start && highlight.start <= window_end).then_some(index)
                 })
                 .collect();
 

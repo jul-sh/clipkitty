@@ -40,9 +40,6 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate {
     private var statusMenu: NSMenu?
     private var cancellables = Set<AnyCancellable>()
     private var snackbarCoordinator: SnackbarCoordinator!
-    #if ENABLE_SYNC
-        private var syncPreferenceController: SyncPreferenceController?
-    #endif
     #if SPARKLE_RELEASE
         private var updater: SparkleAppUpdater?
     #endif
@@ -72,9 +69,6 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate {
         case .simulatedDatabase:
             store = ClipboardStore(screenshotMode: true)
         }
-        #if ENABLE_SYNC
-            configureSyncPreferenceController()
-        #endif
 
         snackbarCoordinator = SnackbarCoordinator(store: store)
         snackbarCoordinator.syncWithSystem()
@@ -106,7 +100,6 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate {
             let sparkleUpdater = SparkleAppUpdater()
             sparkleUpdater.start { state in
                 // Convert SparkleUpdater.UpdateCheckState to app's UpdateCheckState
-                let prevState = AppSettings.shared.updateCheckState
                 switch state {
                 case .idle: AppSettings.shared.updateCheckState = .idle
                 case .checking: AppSettings.shared.updateCheckState = .checking
@@ -114,11 +107,6 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate {
                 case .installing: AppSettings.shared.updateCheckState = .installing
                 case .available: AppSettings.shared.updateCheckState = .available
                 case .checkFailed: AppSettings.shared.updateCheckState = .checkFailed
-                }
-
-                if prevState == .checking && state != .checking {
-                    AppSettings.shared.lastUpdateCheckDate = Date()
-                    AppSettings.shared.lastUpdateCheckResult = AppSettings.shared.updateCheckState
                 }
             }
             updater = sparkleUpdater
@@ -330,39 +318,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate {
     func applicationWillTerminate(_: Notification) {
         store.stopMonitoring()
         hotKeyManager.unregister()
-        #if ENABLE_SYNC
-            syncPreferenceController?.unbind()
-            syncPreferenceController = nil
-            store.stopSyncEngine()
-        #endif
     }
-
-    #if ENABLE_SYNC
-        private func configureSyncPreferenceController() {
-            let controller = SyncPreferenceController(
-                applySyncEnabled: { [weak self] enabled in
-                    self?.store.setSyncEnabled(enabled)
-                },
-                registerForRemoteNotifications: {
-                    NSApplication.shared.registerForRemoteNotifications()
-                }
-            )
-            controller.bind(
-                initialValue: AppSettings.shared.syncEnabled,
-                changes: AppSettings.shared.$syncEnabled
-            )
-            syncPreferenceController = controller
-        }
-
-        nonisolated func application(
-            _: NSApplication,
-            didReceiveRemoteNotification _: [String: Any]
-        ) {
-            Task { @MainActor in
-                store.syncEngine?.handleRemoteNotification()
-            }
-        }
-    #endif
 
     func applicationSupportsSecureRestorableState(_: NSApplication) -> Bool {
         true

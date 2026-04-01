@@ -138,28 +138,6 @@ private struct QuickStartPageView: View {
                 )
                 .padding(.horizontal, 16)
                 .padding(.vertical, 12)
-
-                #if ENABLE_SYNC
-                    Divider()
-                        .padding(.horizontal, 16)
-
-                    // iCloud Sync row
-                    HStack {
-                        VStack(alignment: .leading, spacing: 2) {
-                            Text("iCloud Sync")
-                                .font(.system(size: 13, weight: .medium))
-                            Text("Sync clipboard history across your devices")
-                                .font(.system(size: 11))
-                                .foregroundStyle(.secondary)
-                        }
-                        Spacer()
-                        Toggle("", isOn: $settings.syncEnabled)
-                            .labelsHidden()
-                            .toggleStyle(.switch)
-                    }
-                    .padding(.horizontal, 16)
-                    .padding(.vertical, 12)
-                #endif
             }
             .background(.ultraThickMaterial, in: RoundedRectangle(cornerRadius: 12))
             .overlay(

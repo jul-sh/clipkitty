@@ -38,9 +38,6 @@ fn main() {
     println!("Building Rust library...");
     run_cmd("cargo", &["build", "--release"], &rust_dir);
 
-    let dylib_path = target_dir.join("release/libpurr.dylib");
-    let generated_dir = rust_dir.join("generated");
-
     println!("Generating Swift bindings...");
     run_cmd(
         "cargo",
@@ -50,18 +47,18 @@ fn main() {
             "uniffi-bindgen",
             "generate",
             "--library",
-            &dylib_path.to_string_lossy(),
+            "target/release/libpurr.dylib",
             "--language",
             "swift",
             "--out-dir",
-            &generated_dir.to_string_lossy(),
+            "generated",
         ],
         &rust_dir,
     );
 
     let swift_dest = project_root.join("Sources/ClipKittyRust");
     let wrapper_dest = project_root.join("Sources/ClipKittyRustWrapper");
-    let generated = generated_dir;
+    let generated = rust_dir.join("generated");
 
     // Read and fix Swift 6 concurrency + module import
     println!("Copying generated Swift file...");

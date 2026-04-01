@@ -47,31 +47,31 @@ final class ClipboardStoreBrowserClient: BrowserStoreClient {
         )
     }
 
-    func fetchItem(id: String) async -> ClipboardItem? {
+    func fetchItem(id: Int64) async -> ClipboardItem? {
         await store.fetchItem(id: id)
     }
 
-    func loadListDecorations(itemIds: [String], query: String, presentation: ListPresentationProfile) async -> [ListDecorationResult] {
+    func loadListDecorations(itemIds: [Int64], query: String, presentation: ListPresentationProfile) async -> [ListDecorationResult] {
         await store.loadListDecorations(itemIds: itemIds, query: query, presentation: presentation)
     }
 
-    func loadPreviewPayload(itemId: String, query: String) async -> PreviewPayload? {
+    func loadPreviewPayload(itemId: Int64, query: String) async -> PreviewPayload? {
         await store.loadPreviewPayload(itemId: itemId, query: query)
     }
 
-    func fetchLinkMetadata(url: String, itemId: String) async -> ClipboardItem? {
+    func fetchLinkMetadata(url: String, itemId: Int64) async -> ClipboardItem? {
         await store.fetchLinkMetadata(url: url, itemId: itemId)
     }
 
-    func addTag(itemId: String, tag: ItemTag) async -> Result<Void, ClipboardError> {
+    func addTag(itemId: Int64, tag: ItemTag) async -> Result<Void, ClipboardError> {
         await store.addTag(itemId: itemId, tag: tag)
     }
 
-    func removeTag(itemId: String, tag: ItemTag) async -> Result<Void, ClipboardError> {
+    func removeTag(itemId: Int64, tag: ItemTag) async -> Result<Void, ClipboardError> {
         await store.removeTag(itemId: itemId, tag: tag)
     }
 
-    func delete(itemId: String) async -> Result<Void, ClipboardError> {
+    func delete(itemId: Int64) async -> Result<Void, ClipboardError> {
         await store.deleteItem(itemId: itemId)
     }
 
@@ -79,7 +79,7 @@ final class ClipboardStoreBrowserClient: BrowserStoreClient {
         await store.clearAll()
     }
 
-    func updateTextItem(itemId: String, text: String) async -> Result<Void, ClipboardError> {
+    func updateTextItem(itemId: Int64, text: String) async -> Result<Void, ClipboardError> {
         await store.updateTextItem(itemId: itemId, text: text)
     }
 }

@@ -14,7 +14,6 @@ use tokio_util::sync::CancellationToken;
 use crate::interface::{ContentTypeFilter, ItemTag};
 
 #[cfg(test)]
-#[allow(unused_imports)]
 pub(crate) mod test_support {
     pub(crate) use crate::match_presentation::test_support::*;
 }
@@ -93,7 +92,7 @@ pub(crate) async fn execute_search(
 pub(crate) fn compute_list_decorations(
     db: &Database,
     cache: &HighlightAnalysisCache,
-    item_ids: Vec<String>,
+    item_ids: Vec<i64>,
     query: String,
     presentation: ListPresentationProfile,
 ) -> Result<Vec<ListDecorationResult>, ClipKittyError> {
@@ -103,14 +102,13 @@ pub(crate) fn compute_list_decorations(
 pub(crate) fn load_preview_payload(
     db: &Database,
     cache: &HighlightAnalysisCache,
-    item_id: String,
+    item_id: i64,
     query: String,
 ) -> Result<Option<PreviewPayload>, ClipKittyError> {
     MatchPresentation::new(db, cache).load_preview_payload(item_id, query)
 }
 
 #[cfg(test)]
-#[allow(dead_code)]
 pub(crate) fn search_short_query_sync(
     db: &Database,
     cache: &HighlightAnalysisCache,
@@ -126,7 +124,6 @@ pub(crate) fn search_short_query_sync(
 }
 
 #[cfg(test)]
-#[allow(dead_code)]
 pub(crate) fn search_trigram_query_sync(
     db: &Database,
     indexer: &Indexer,

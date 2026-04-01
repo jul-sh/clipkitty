@@ -33,32 +33,11 @@ pub enum DatabaseError {
 }
 
 pub type DatabaseResult<T> = Result<T, DatabaseError>;
-
-#[cfg(feature = "sync")]
-impl From<purr_sync::SyncError> for DatabaseError {
-    fn from(e: purr_sync::SyncError) -> Self {
-        match e {
-            purr_sync::SyncError::Sqlite(e) => DatabaseError::Sqlite(e),
-            purr_sync::SyncError::Pool(e) => DatabaseError::Pool(e),
-            purr_sync::SyncError::InconsistentData(msg) => DatabaseError::InconsistentData(msg),
-        }
-    }
-}
-
 const SEARCH_METADATA_PREFIX_CHARS: usize = SNIPPET_CONTEXT_CHARS * 4;
 const BROWSE_METADATA_PREFIX_CHARS: usize = SNIPPET_CONTEXT_CHARS * 8;
-const GENERATED_ITEM_ID_SQL: &str = r#"lower(
-    hex(randomblob(4)) || '-' ||
-    hex(randomblob(2)) || '-4' ||
-    substr(hex(randomblob(2)),2) || '-' ||
-    substr('89ab', abs(random()) % 4 + 1, 1) ||
-    substr(hex(randomblob(2)),2) || '-' ||
-    hex(randomblob(6))
-)"#;
 
 #[derive(Debug, Clone)]
 pub(crate) struct SearchItemMetadata {
-    pub(crate) row_id: i64,
     pub(crate) content_hash: String,
     pub(crate) db_type: String,
     pub(crate) item_metadata: ItemMetadata,
@@ -70,128 +49,6 @@ fn parse_db_timestamp(timestamp_str: &str) -> DateTime<Utc> {
         .or_else(|_| chrono::NaiveDateTime::parse_from_str(timestamp_str, "%Y-%m-%d %H:%M:%S"))
         .map(|dt| Utc.from_utc_datetime(&dt))
         .unwrap_or_else(|_| Utc::now())
-}
-
-fn table_column_not_null(
-    conn: &rusqlite::Connection,
-    table: &str,
-    column: &str,
-) -> DatabaseResult<bool> {
-    let pragma = format!("PRAGMA table_info({table})");
-    let mut stmt = conn.prepare(&pragma)?;
-    let mut rows = stmt.query([])?;
-    while let Some(row) = rows.next()? {
-        let name: String = row.get(1)?;
-        if name == column {
-            let not_null: i64 = row.get(3)?;
-            return Ok(not_null != 0);
-        }
-    }
-    Ok(false)
-}
-
-fn repair_item_ids(conn: &rusqlite::Connection) -> DatabaseResult<()> {
-    let sql = format!(
-        r#"
-        WITH duplicate_rows AS (
-            SELECT id
-            FROM (
-                SELECT
-                    id,
-                    item_id,
-                    ROW_NUMBER() OVER (PARTITION BY item_id ORDER BY id) AS ordinal
-                FROM items
-                WHERE item_id IS NOT NULL AND item_id != ''
-            )
-            WHERE ordinal > 1
-        )
-        UPDATE items
-        SET item_id = {GENERATED_ITEM_ID_SQL}
-        WHERE item_id IS NULL
-           OR item_id = ''
-           OR id IN (SELECT id FROM duplicate_rows);
-        "#
-    );
-    conn.execute_batch(&sql)?;
-    Ok(())
-}
-
-fn enforce_non_null_item_ids(conn: &rusqlite::Connection) -> DatabaseResult<()> {
-    if table_column_not_null(conn, "items", "item_id")? {
-        return Ok(());
-    }
-
-    conn.execute_batch("PRAGMA foreign_keys=OFF;")?;
-
-    let migration_result = (|| -> DatabaseResult<()> {
-        let tx = conn.unchecked_transaction()?;
-        let sql = format!(
-            r#"
-            CREATE TABLE items_new (
-                id INTEGER PRIMARY KEY AUTOINCREMENT,
-                item_id TEXT NOT NULL,
-                contentType TEXT NOT NULL,
-                contentHash TEXT NOT NULL,
-                content TEXT NOT NULL,
-                timestamp TEXT NOT NULL,
-                sourceApp TEXT,
-                sourceAppBundleId TEXT,
-                thumbnail BLOB,
-                colorRgba INTEGER
-            );
-
-            INSERT INTO items_new (
-                id,
-                item_id,
-                contentType,
-                contentHash,
-                content,
-                timestamp,
-                sourceApp,
-                sourceAppBundleId,
-                thumbnail,
-                colorRgba
-            )
-            SELECT
-                id,
-                COALESCE(NULLIF(item_id, ''), {GENERATED_ITEM_ID_SQL}),
-                contentType,
-                contentHash,
-                content,
-                timestamp,
-                sourceApp,
-                sourceAppBundleId,
-                thumbnail,
-                colorRgba
-            FROM items;
-
-            DROP TABLE items;
-            ALTER TABLE items_new RENAME TO items;
-
-            CREATE INDEX IF NOT EXISTS idx_items_hash ON items(contentHash);
-            CREATE INDEX IF NOT EXISTS idx_items_timestamp ON items(timestamp);
-            CREATE INDEX IF NOT EXISTS idx_items_content_prefix ON items(content COLLATE NOCASE);
-            "#
-        );
-        tx.execute_batch(&sql)?;
-        tx.commit()?;
-        Ok(())
-    })();
-
-    let restore_result = conn.execute_batch("PRAGMA foreign_keys=ON;");
-    restore_result?;
-    migration_result?;
-
-    let mut stmt = conn.prepare("PRAGMA foreign_key_check")?;
-    let mut rows = stmt.query([])?;
-    if let Some(row) = rows.next()? {
-        let table: String = row.get(0)?;
-        return Err(DatabaseError::InconsistentData(format!(
-            "foreign key violation after items migration in table `{table}`"
-        )));
-    }
-
-    Ok(())
 }
 
 /// Thread-safe database wrapper using connection pooling
@@ -247,13 +104,8 @@ impl Database {
     }
 
     /// Get a connection from the pool
-    pub(crate) fn get_conn(&self) -> DatabaseResult<PooledConnection<SqliteConnectionManager>> {
+    fn get_conn(&self) -> DatabaseResult<PooledConnection<SqliteConnectionManager>> {
         Ok(self.pool.get()?)
-    }
-
-    /// Expose the connection pool for subsystems that manage their own SQL.
-    pub fn pool(&self) -> &Pool<SqliteConnectionManager> {
-        &self.pool
     }
 
     /// Set up the database schema (normalized: items + child tables)
@@ -264,7 +116,6 @@ impl Database {
             r#"
             CREATE TABLE IF NOT EXISTS items (
                 id INTEGER PRIMARY KEY AUTOINCREMENT,
-                item_id TEXT NOT NULL,
                 contentType TEXT NOT NULL,
                 contentHash TEXT NOT NULL,
                 content TEXT NOT NULL,
@@ -327,23 +178,6 @@ impl Database {
             [],
         );
 
-        // Migration: Add item_id column to existing items tables
-        let _ = conn.execute("ALTER TABLE items ADD COLUMN item_id TEXT", []);
-
-        // Repair missing / duplicate logical IDs before enforcing storage invariants.
-        repair_item_ids(&conn)?;
-        enforce_non_null_item_ids(&conn)?;
-
-        // Unique index on item_id
-        conn.execute(
-            "CREATE UNIQUE INDEX IF NOT EXISTS idx_items_item_id ON items(item_id)",
-            [],
-        )?;
-
-        // ── Sync tables (delegated to purr-sync) ──────────────────────
-        #[cfg(feature = "sync")]
-        purr_sync::schema::setup_sync_schema(&conn)?;
-
         Ok(())
     }
 
@@ -362,21 +196,6 @@ impl Database {
         Ok(count as u64)
     }
 
-    /// Look up the stable string item_id for a given numeric row ID.
-    pub fn fetch_item_id_by_row_id(&self, row_id: i64) -> DatabaseResult<Option<String>> {
-        let conn = self.get_conn()?;
-        let result = conn.query_row(
-            "SELECT item_id FROM items WHERE id = ?1",
-            [row_id],
-            |row| row.get(0),
-        );
-        match result {
-            Ok(id) => Ok(Some(id)),
-            Err(rusqlite::Error::QueryReturnedNoRows) => Ok(None),
-            Err(e) => Err(e.into()),
-        }
-    }
-
     /// Insert a new clipboard item using a transaction.
     /// Inserts into `items` + the appropriate child table(s).
     /// Returns the item ID.
@@ -384,13 +203,18 @@ impl Database {
         let conn = self.get_conn()?;
         let tx = conn.unchecked_transaction()?;
 
-        let (timestamp_str, content_type, content_text) = Self::base_item_fields(item);
+        let timestamp = Utc
+            .timestamp_opt(item.timestamp_unix, 0)
+            .single()
+            .unwrap_or_else(Utc::now);
+        let timestamp_str = timestamp.format("%Y-%m-%d %H:%M:%S%.f").to_string();
+        let content_type = item.content.database_type();
+        let content_text = item.content.text_content().to_string();
 
         tx.execute(
-            r#"INSERT INTO items (item_id, contentType, contentHash, content, timestamp, sourceApp, sourceAppBundleId, thumbnail, colorRgba)
-               VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9)"#,
+            r#"INSERT INTO items (contentType, contentHash, content, timestamp, sourceApp, sourceAppBundleId, thumbnail, colorRgba)
+               VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8)"#,
             params![
-                item.item_id,
                 content_type,
                 item.content_hash,
                 content_text,
@@ -402,75 +226,7 @@ impl Database {
             ],
         )?;
         let item_id = tx.last_insert_rowid();
-        Self::write_child_rows(&tx, item_id, item)?;
 
-        tx.commit()?;
-        Ok(item_id)
-    }
-
-    /// Replace an existing clipboard item while preserving its local row ID.
-    pub fn replace_item_preserving_id(
-        &self,
-        item_id: i64,
-        item: &StoredItem,
-    ) -> DatabaseResult<()> {
-        let conn = self.get_conn()?;
-        let tx = conn.unchecked_transaction()?;
-        let (timestamp_str, content_type, content_text) = Self::base_item_fields(item);
-
-        tx.execute(
-            r#"UPDATE items
-               SET contentType = ?1,
-                   contentHash = ?2,
-                   content = ?3,
-                   timestamp = ?4,
-                   sourceApp = ?5,
-                   sourceAppBundleId = ?6,
-                   thumbnail = ?7,
-                   colorRgba = ?8
-               WHERE id = ?9"#,
-            params![
-                content_type,
-                item.content_hash,
-                content_text,
-                timestamp_str,
-                item.source_app,
-                item.source_app_bundle_id,
-                item.thumbnail,
-                item.color_rgba,
-                item_id,
-            ],
-        )?;
-
-        tx.execute("DELETE FROM text_items WHERE itemId = ?1", params![item_id])?;
-        tx.execute(
-            "DELETE FROM image_items WHERE itemId = ?1",
-            params![item_id],
-        )?;
-        tx.execute("DELETE FROM link_items WHERE itemId = ?1", params![item_id])?;
-        tx.execute("DELETE FROM file_items WHERE itemId = ?1", params![item_id])?;
-        Self::write_child_rows(&tx, item_id, item)?;
-
-        tx.commit()?;
-        Ok(())
-    }
-
-    fn base_item_fields(item: &StoredItem) -> (String, String, String) {
-        let timestamp = Utc
-            .timestamp_opt(item.timestamp_unix, 0)
-            .single()
-            .unwrap_or_else(Utc::now);
-        let timestamp_str = timestamp.format("%Y-%m-%d %H:%M:%S%.f").to_string();
-        let content_type = item.content.database_type().to_string();
-        let content_text = item.content.text_content().to_string();
-        (timestamp_str, content_type, content_text)
-    }
-
-    fn write_child_rows(
-        tx: &rusqlite::Transaction<'_>,
-        item_id: i64,
-        item: &StoredItem,
-    ) -> DatabaseResult<()> {
         match &item.content {
             ClipboardContent::Text { value } | ClipboardContent::Color { value } => {
                 tx.execute(
@@ -492,7 +248,14 @@ impl Database {
                 url,
                 metadata_state,
             } => {
-                let (title, description, _) = metadata_state.to_database_fields();
+                let (title, description, image_data) = metadata_state.to_database_fields();
+                // Store link preview image as items.thumbnail
+                if image_data.is_some() {
+                    tx.execute(
+                        "UPDATE items SET thumbnail = ?1 WHERE id = ?2",
+                        params![image_data, item_id],
+                    )?;
+                }
                 tx.execute(
                     "INSERT INTO link_items (itemId, url, title, description) VALUES (?1, ?2, ?3, ?4)",
                     params![item_id, url, title, description],
@@ -518,14 +281,15 @@ impl Database {
             }
         }
 
-        Ok(())
+        tx.commit()?;
+        Ok(item_id)
     }
 
     /// Find an existing item by content hash
     pub fn find_by_hash(&self, hash: &str) -> DatabaseResult<Option<StoredItem>> {
         let conn = self.get_conn()?;
         let result = conn.query_row(
-            "SELECT id, contentType, contentHash, content, timestamp, sourceApp, sourceAppBundleId, thumbnail, colorRgba, item_id FROM items WHERE contentHash = ?1 LIMIT 1",
+            "SELECT id, contentType, contentHash, content, timestamp, sourceApp, sourceAppBundleId, thumbnail, colorRgba FROM items WHERE contentHash = ?1 LIMIT 1",
             [hash],
             Self::row_to_base_item,
         );
@@ -650,13 +414,13 @@ impl Database {
 
         let sql = if before_timestamp.is_some() {
             format!(
-                r#"SELECT id, substr(ltrim(content, char(9) || char(10) || char(13) || ' '), 1, {}), contentType, timestamp, sourceApp, sourceAppBundleId, thumbnail, colorRgba, item_id
+                r#"SELECT id, substr(ltrim(content, char(9) || char(10) || char(13) || ' '), 1, {}), contentType, timestamp, sourceApp, sourceAppBundleId, thumbnail, colorRgba
                    FROM items WHERE timestamp < ? {} {} ORDER BY timestamp DESC LIMIT ?"#,
                 BROWSE_METADATA_PREFIX_CHARS, type_filter_clause_and, tag_clause_and
             )
         } else {
             format!(
-                r#"SELECT id, substr(ltrim(content, char(9) || char(10) || char(13) || ' '), 1, {}), contentType, timestamp, sourceApp, sourceAppBundleId, thumbnail, colorRgba, item_id
+                r#"SELECT id, substr(ltrim(content, char(9) || char(10) || char(13) || ' '), 1, {}), contentType, timestamp, sourceApp, sourceAppBundleId, thumbnail, colorRgba
                    FROM items {} {} ORDER BY timestamp DESC LIMIT ?"#,
                 BROWSE_METADATA_PREFIX_CHARS, type_filter_clause, tag_clause_where
             )
@@ -700,7 +464,7 @@ impl Database {
         let conn = self.get_conn()?;
         let placeholders = ids.iter().map(|_| "?").collect::<Vec<_>>().join(",");
         let sql = format!(
-            "SELECT id, contentType, contentHash, content, timestamp, sourceApp, sourceAppBundleId, thumbnail, colorRgba, item_id FROM items WHERE id IN ({})",
+            "SELECT id, contentType, contentHash, content, timestamp, sourceApp, sourceAppBundleId, thumbnail, colorRgba FROM items WHERE id IN ({})",
             placeholders
         );
 
@@ -729,27 +493,24 @@ impl Database {
             .collect())
     }
 
-    /// Fetch lightweight search result metadata by string item_ids, preserving order.
-    pub(crate) fn fetch_search_item_metadata_by_string_ids(
+    /// Fetch lightweight search result metadata by IDs, preserving order.
+    pub(crate) fn fetch_search_item_metadata_by_ids(
         &self,
-        item_ids: &[&str],
+        ids: &[i64],
     ) -> DatabaseResult<Vec<SearchItemMetadata>> {
-        if item_ids.is_empty() {
+        if ids.is_empty() {
             return Ok(Vec::new());
         }
 
         let conn = self.get_conn()?;
-        let placeholders = item_ids.iter().map(|_| "?").collect::<Vec<_>>().join(",");
+        let placeholders = ids.iter().map(|_| "?").collect::<Vec<_>>().join(",");
         let sql = format!(
-            "SELECT id, contentHash, substr(content, 1, {}), contentType, timestamp, sourceApp, sourceAppBundleId, thumbnail, colorRgba, item_id FROM items WHERE item_id IN ({})",
+            "SELECT id, contentHash, substr(content, 1, {}), contentType, timestamp, sourceApp, sourceAppBundleId, thumbnail, colorRgba FROM items WHERE id IN ({})",
             SEARCH_METADATA_PREFIX_CHARS,
             placeholders
         );
         let mut stmt = conn.prepare(&sql)?;
-        let params: Vec<rusqlite::types::Value> = item_ids
-            .iter()
-            .map(|&id| rusqlite::types::Value::from(id.to_string()))
-            .collect();
+        let params: Vec<rusqlite::types::Value> = ids.iter().map(|&id| id.into()).collect();
         let items: Vec<SearchItemMetadata> = stmt
             .query_map(
                 rusqlite::params_from_iter(params),
@@ -757,44 +518,15 @@ impl Database {
             )?
             .collect::<Result<Vec<_>, _>>()?;
 
-        let id_to_item: std::collections::HashMap<String, SearchItemMetadata> = items
+        let id_to_item: std::collections::HashMap<i64, SearchItemMetadata> = items
             .into_iter()
-            .map(|item| (item.item_metadata.item_id.clone(), item))
+            .map(|item| (item.item_metadata.item_id, item))
             .collect();
 
-        Ok(item_ids
+        Ok(ids
             .iter()
-            .filter_map(|id| id_to_item.get(*id).cloned())
+            .filter_map(|id| id_to_item.get(id).cloned())
             .collect())
-    }
-
-    /// Filter string item_ids by tag, returning those that have the tag.
-    pub(crate) fn filter_string_ids_by_tag(
-        &self,
-        item_ids: &[&str],
-        tag: ItemTag,
-    ) -> DatabaseResult<Vec<String>> {
-        if item_ids.is_empty() {
-            return Ok(Vec::new());
-        }
-
-        let conn = self.get_conn()?;
-        let placeholders = item_ids.iter().map(|_| "?").collect::<Vec<_>>().join(",");
-        let sql = format!(
-            "SELECT i.item_id FROM items i INNER JOIN item_tags t ON i.id = t.itemId WHERE t.tag = ? AND i.item_id IN ({})",
-            placeholders
-        );
-        let mut params: Vec<rusqlite::types::Value> = vec![tag.database_str().to_string().into()];
-        params.extend(
-            item_ids
-                .iter()
-                .map(|&id| rusqlite::types::Value::from(id.to_string())),
-        );
-        let mut stmt = conn.prepare(&sql)?;
-        let result: Vec<String> = stmt
-            .query_map(rusqlite::params_from_iter(params), |row| row.get(0))?
-            .collect::<Result<Vec<_>, _>>()?;
-        Ok(result)
     }
 
     /// Fetch items by IDs with SQLite C-level interrupt support.
@@ -822,7 +554,7 @@ impl Database {
 
         let placeholders = ids.iter().map(|_| "?").collect::<Vec<_>>().join(",");
         let sql = format!(
-            "SELECT id, contentType, contentHash, content, timestamp, sourceApp, sourceAppBundleId, thumbnail, colorRgba, item_id FROM items WHERE id IN ({})",
+            "SELECT id, contentType, contentHash, content, timestamp, sourceApp, sourceAppBundleId, thumbnail, colorRgba FROM items WHERE id IN ({})",
             placeholders
         );
 
@@ -867,7 +599,7 @@ impl Database {
     pub fn fetch_all_items(&self) -> DatabaseResult<Vec<StoredItem>> {
         let conn = self.get_conn()?;
         let mut stmt = conn.prepare(
-            "SELECT id, contentType, contentHash, content, timestamp, sourceApp, sourceAppBundleId, thumbnail, colorRgba, item_id FROM items ORDER BY timestamp DESC"
+            "SELECT id, contentType, contentHash, content, timestamp, sourceApp, sourceAppBundleId, thumbnail, colorRgba FROM items ORDER BY timestamp DESC"
         )?;
         let mut items = stmt
             .query_map([], Self::row_to_base_item)?
@@ -883,19 +615,8 @@ impl Database {
         Ok(items)
     }
 
-    /// Fetch all item IDs, ordered by recency.
-    pub fn fetch_all_item_ids(&self) -> DatabaseResult<Vec<i64>> {
-        let conn = self.get_conn()?;
-        let mut stmt = conn.prepare("SELECT id FROM items ORDER BY timestamp DESC")?;
-        let ids = stmt
-            .query_map([], |row| row.get(0))?
-            .collect::<Result<Vec<i64>, _>>()?;
-        Ok(ids)
-    }
-
-    /// Get IDs that would be pruned (for index deletion before database prune).
-    /// Returns (row_id, item_id) pairs so callers can delete from both DB and search index.
-    pub fn get_prunable_ids(&self, max_bytes: i64, keep_ratio: f64) -> DatabaseResult<Vec<(i64, String)>> {
+    /// Get IDs that would be pruned (for index deletion before database prune)
+    pub fn get_prunable_ids(&self, max_bytes: i64, keep_ratio: f64) -> DatabaseResult<Vec<i64>> {
         let current_size = self.database_size()?;
         if current_size <= max_bytes {
             return Ok(Vec::new());
@@ -916,11 +637,9 @@ impl Database {
         let items_to_delete =
             std::cmp::max(100, ((current_size - target_size) / avg_item_size) as usize);
 
-        let mut stmt = conn.prepare("SELECT id, item_id FROM items ORDER BY timestamp ASC LIMIT ?1")?;
-        let ids: Vec<(i64, String)> = stmt
-            .query_map([items_to_delete as i64], |row| {
-                Ok((row.get(0)?, row.get(1)?))
-            })?
+        let mut stmt = conn.prepare("SELECT id FROM items ORDER BY timestamp ASC LIMIT ?1")?;
+        let ids: Vec<i64> = stmt
+            .query_map([items_to_delete as i64], |row| row.get(0))?
             .collect::<Result<Vec<_>, _>>()?;
 
         Ok(ids)
@@ -1123,91 +842,6 @@ impl Database {
         Ok(map)
     }
 
-    /// Resolve a string item_id to its numeric row ID.
-    pub fn fetch_row_id_by_item_id(&self, item_id: &str) -> DatabaseResult<Option<i64>> {
-        let conn = self.get_conn()?;
-        let result = conn.query_row(
-            "SELECT id FROM items WHERE item_id = ?1",
-            [item_id],
-            |row| row.get(0),
-        );
-        match result {
-            Ok(id) => Ok(Some(id)),
-            Err(rusqlite::Error::QueryReturnedNoRows) => Ok(None),
-            Err(e) => Err(e.into()),
-        }
-    }
-
-    /// Fetch full items by string item_ids, preserving the order of the input IDs.
-    pub fn fetch_items_by_item_ids(&self, item_ids: &[String]) -> DatabaseResult<Vec<StoredItem>> {
-        if item_ids.is_empty() {
-            return Ok(Vec::new());
-        }
-
-        let conn = self.get_conn()?;
-        let placeholders = item_ids.iter().map(|_| "?").collect::<Vec<_>>().join(",");
-        let sql = format!(
-            "SELECT id, contentType, contentHash, content, timestamp, sourceApp, sourceAppBundleId, thumbnail, colorRgba, item_id FROM items WHERE item_id IN ({})",
-            placeholders
-        );
-
-        let mut stmt = conn.prepare(&sql)?;
-        let params: Vec<rusqlite::types::Value> =
-            item_ids.iter().map(|id| id.clone().into()).collect();
-        let mut items: Vec<StoredItem> = stmt
-            .query_map(rusqlite::params_from_iter(params), Self::row_to_base_item)?
-            .collect::<Result<Vec<_>, _>>()?;
-
-        for item in &mut items {
-            if let Some(id) = item.id {
-                Self::populate_child_content(&conn, item, id)?;
-            }
-        }
-
-        let id_to_item: std::collections::HashMap<String, StoredItem> = items
-            .into_iter()
-            .map(|item| (item.item_id.clone(), item))
-            .collect();
-
-        Ok(item_ids
-            .iter()
-            .filter_map(|id| id_to_item.get(id).cloned())
-            .collect())
-    }
-
-    /// Get tags for items keyed by string item_id.
-    pub fn get_tags_for_item_ids(
-        &self,
-        item_ids: &[String],
-    ) -> DatabaseResult<std::collections::HashMap<String, Vec<ItemTag>>> {
-        if item_ids.is_empty() {
-            return Ok(std::collections::HashMap::new());
-        }
-
-        let conn = self.get_conn()?;
-        let placeholders = item_ids.iter().map(|_| "?").collect::<Vec<_>>().join(",");
-        let sql = format!(
-            "SELECT i.item_id, t.tag FROM item_tags t JOIN items i ON i.id = t.itemId WHERE i.item_id IN ({}) ORDER BY t.tag",
-            placeholders
-        );
-        let mut stmt = conn.prepare(&sql)?;
-        let params: Vec<rusqlite::types::Value> =
-            item_ids.iter().map(|id| id.clone().into()).collect();
-        let rows = stmt.query_map(rusqlite::params_from_iter(params), |row| {
-            Ok((row.get::<_, String>(0)?, row.get::<_, String>(1)?))
-        })?;
-
-        let mut map: std::collections::HashMap<String, Vec<ItemTag>> =
-            std::collections::HashMap::new();
-        for row in rows {
-            let (id, tag) = row?;
-            let tag = ItemTag::from_database_str(&tag).map_err(DatabaseError::InconsistentData)?;
-            map.entry(id).or_default().push(tag);
-        }
-
-        Ok(map)
-    }
-
     pub fn filter_ids_by_tag(&self, ids: &[i64], tag: ItemTag) -> DatabaseResult<Vec<i64>> {
         if ids.is_empty() {
             return Ok(Vec::new());
@@ -1240,7 +874,6 @@ impl Database {
         let source_app_bundle_id: Option<String> = row.get(6)?;
         let thumbnail: Option<Vec<u8>> = row.get(7)?;
         let color_rgba: Option<u32> = row.get(8)?;
-        let item_id: String = row.get(9)?;
 
         let timestamp = parse_db_timestamp(&timestamp_str);
 
@@ -1269,7 +902,6 @@ impl Database {
 
         Ok(StoredItem {
             id: Some(id),
-            item_id,
             content,
             content_hash,
             timestamp_unix: timestamp.timestamp(),
@@ -1349,17 +981,19 @@ impl Database {
             ClipboardContent::File { display_name, .. } => {
                 let display_name = display_name.clone();
                 let mut stmt = conn.prepare(
-                    "SELECT path, filename, fileSize, uti, bookmarkData, fileStatus FROM file_items WHERE itemId = ?1 ORDER BY ordinal"
+                    "SELECT id, path, filename, fileSize, uti, bookmarkData, fileStatus FROM file_items WHERE itemId = ?1 ORDER BY ordinal"
                 )?;
                 let files: Vec<FileEntry> = stmt
                     .query_map([item_id], |row| {
-                        let path: String = row.get(0)?;
-                        let filename: String = row.get(1)?;
-                        let file_size: i64 = row.get(2)?;
-                        let uti: String = row.get(3)?;
-                        let bookmark_data: Vec<u8> = row.get(4)?;
-                        let file_status_str: String = row.get(5)?;
+                        let file_item_id: i64 = row.get(0)?;
+                        let path: String = row.get(1)?;
+                        let filename: String = row.get(2)?;
+                        let file_size: i64 = row.get(3)?;
+                        let uti: String = row.get(4)?;
+                        let bookmark_data: Vec<u8> = row.get(5)?;
+                        let file_status_str: String = row.get(6)?;
                         Ok(FileEntry {
+                            file_item_id,
                             path,
                             filename,
                             file_size: file_size as u64,
@@ -1382,7 +1016,7 @@ impl Database {
 
     /// Convert a database row to lightweight ItemMetadata
     fn row_to_metadata(row: &rusqlite::Row) -> rusqlite::Result<ItemMetadata> {
-        let _id: i64 = row.get(0)?;
+        let id: i64 = row.get(0)?;
         let content: String = row.get(1)?;
         let content_type: Option<String> = row.get(2)?;
         let timestamp_str: String = row.get(3)?;
@@ -1390,7 +1024,6 @@ impl Database {
         let source_app_bundle_id: Option<String> = row.get(5)?;
         let thumbnail: Option<Vec<u8>> = row.get(6)?;
         let color_rgba: Option<u32> = row.get(7)?;
-        let item_id: String = row.get(8)?;
 
         let timestamp = parse_db_timestamp(&timestamp_str);
         let db_type = content_type.as_deref().unwrap_or("text");
@@ -1399,7 +1032,7 @@ impl Database {
         let snippet = generate_preview(&content, SNIPPET_CONTEXT_CHARS * 2);
 
         Ok(ItemMetadata {
-            item_id,
+            item_id: id,
             icon,
             snippet,
             source_app,
@@ -1410,7 +1043,7 @@ impl Database {
     }
 
     fn row_to_search_item_metadata(row: &rusqlite::Row) -> rusqlite::Result<SearchItemMetadata> {
-        let row_id: i64 = row.get(0)?;
+        let id: i64 = row.get(0)?;
         let content_hash: String = row.get(1)?;
         let content_prefix: String = row.get(2)?;
         let db_type = row
@@ -1421,18 +1054,16 @@ impl Database {
         let source_app_bundle_id: Option<String> = row.get(6)?;
         let thumbnail: Option<Vec<u8>> = row.get(7)?;
         let color_rgba: Option<u32> = row.get(8)?;
-        let item_id: String = row.get(9)?;
 
         let timestamp = parse_db_timestamp(&timestamp_str);
         let icon = ItemIcon::from_database(&db_type, color_rgba, thumbnail);
         let snippet = generate_preview(&content_prefix, SNIPPET_CONTEXT_CHARS * 2);
 
         Ok(SearchItemMetadata {
-            row_id,
             content_hash,
             db_type,
             item_metadata: ItemMetadata {
-                item_id,
+                item_id: id,
                 icon,
                 snippet,
                 source_app,
@@ -1451,7 +1082,6 @@ unsafe impl Sync for Database {}
 #[cfg(test)]
 mod tests {
     use super::*;
-    use tempfile::NamedTempFile;
 
     fn seed_base_item(
         db: &Database,
@@ -1460,10 +1090,9 @@ mod tests {
         thumbnail: Option<Vec<u8>>,
     ) -> i64 {
         let conn = db.get_conn().unwrap();
-        let item_id = uuid::Uuid::new_v4().to_string();
         conn.execute(
-            "INSERT INTO items (item_id, contentType, contentHash, content, timestamp, thumbnail) VALUES (?1, ?2, ?3, ?4, '2026-01-01 00:00:00', ?5)",
-            params![item_id, content_type, format!("hash-{content_type}-{content}"), content, thumbnail],
+            "INSERT INTO items (contentType, contentHash, content, timestamp, thumbnail) VALUES (?1, ?2, ?3, '2026-01-01 00:00:00', ?4)",
+            params![content_type, format!("hash-{content_type}-{content}"), content, thumbnail],
         )
         .unwrap();
         conn.last_insert_rowid()
@@ -1530,123 +1159,5 @@ mod tests {
             items[0].snippet,
             generate_preview(&content, SNIPPET_CONTEXT_CHARS * 2)
         );
-    }
-
-    #[test]
-    fn test_new_schema_requires_non_null_item_id() {
-        let db = Database::open_in_memory().unwrap();
-        let conn = db.get_conn().unwrap();
-        assert!(table_column_not_null(&conn, "items", "item_id").unwrap());
-    }
-
-    #[test]
-    fn test_legacy_items_table_without_item_id_is_migrated() {
-        let temp = NamedTempFile::new().unwrap();
-        {
-            let conn = rusqlite::Connection::open(temp.path()).unwrap();
-            conn.execute_batch(
-                r#"
-                PRAGMA foreign_keys=ON;
-                CREATE TABLE items (
-                    id INTEGER PRIMARY KEY AUTOINCREMENT,
-                    contentType TEXT NOT NULL,
-                    contentHash TEXT NOT NULL,
-                    content TEXT NOT NULL,
-                    timestamp TEXT NOT NULL,
-                    sourceApp TEXT,
-                    sourceAppBundleId TEXT,
-                    thumbnail BLOB,
-                    colorRgba INTEGER
-                );
-                CREATE TABLE text_items (
-                    itemId INTEGER PRIMARY KEY REFERENCES items(id) ON DELETE CASCADE,
-                    value TEXT NOT NULL
-                );
-                INSERT INTO items (id, contentType, contentHash, content, timestamp)
-                VALUES (1, 'text', 'hash-text-legacy', 'legacy text', '2026-01-01 00:00:00');
-                INSERT INTO text_items (itemId, value) VALUES (1, 'legacy text');
-                "#,
-            )
-            .unwrap();
-        }
-
-        let db = Database::open(temp.path()).unwrap();
-        let conn = db.get_conn().unwrap();
-        assert!(table_column_not_null(&conn, "items", "item_id").unwrap());
-
-        let item_ids: Vec<String> = {
-            let mut stmt = conn.prepare("SELECT item_id FROM items ORDER BY id").unwrap();
-            stmt.query_map([], |row| row.get(0))
-                .unwrap()
-                .collect::<Result<Vec<_>, _>>()
-                .unwrap()
-        };
-        drop(conn);
-
-        assert_eq!(item_ids.len(), 1);
-        assert!(!item_ids[0].is_empty());
-        let items = db.fetch_items_by_item_ids(&item_ids).unwrap();
-        assert_eq!(items.len(), 1);
-        assert_eq!(items[0].content.text_content(), "legacy text");
-    }
-
-    #[test]
-    fn test_nullable_and_duplicate_item_ids_are_repaired() {
-        let temp = NamedTempFile::new().unwrap();
-        {
-            let conn = rusqlite::Connection::open(temp.path()).unwrap();
-            conn.execute_batch(
-                r#"
-                PRAGMA foreign_keys=ON;
-                CREATE TABLE items (
-                    id INTEGER PRIMARY KEY AUTOINCREMENT,
-                    item_id TEXT,
-                    contentType TEXT NOT NULL,
-                    contentHash TEXT NOT NULL,
-                    content TEXT NOT NULL,
-                    timestamp TEXT NOT NULL,
-                    sourceApp TEXT,
-                    sourceAppBundleId TEXT,
-                    thumbnail BLOB,
-                    colorRgba INTEGER
-                );
-                CREATE TABLE text_items (
-                    itemId INTEGER PRIMARY KEY REFERENCES items(id) ON DELETE CASCADE,
-                    value TEXT NOT NULL
-                );
-                INSERT INTO items (id, item_id, contentType, contentHash, content, timestamp)
-                VALUES
-                    (1, 'duplicate-id', 'text', 'hash-1', 'first', '2026-01-01 00:00:00'),
-                    (2, 'duplicate-id', 'text', 'hash-2', 'second', '2026-01-01 00:00:01'),
-                    (3, NULL, 'text', 'hash-3', 'third', '2026-01-01 00:00:02');
-                INSERT INTO text_items (itemId, value)
-                VALUES (1, 'first'), (2, 'second'), (3, 'third');
-                "#,
-            )
-            .unwrap();
-        }
-
-        let db = Database::open(temp.path()).unwrap();
-        let conn = db.get_conn().unwrap();
-        assert!(table_column_not_null(&conn, "items", "item_id").unwrap());
-
-        let item_ids: Vec<String> = {
-            let mut stmt = conn.prepare("SELECT item_id FROM items ORDER BY id").unwrap();
-            stmt.query_map([], |row| row.get(0))
-                .unwrap()
-                .collect::<Result<Vec<_>, _>>()
-                .unwrap()
-        };
-        drop(conn);
-
-        assert_eq!(item_ids.len(), 3);
-        assert_eq!(
-            item_ids.iter().cloned().collect::<std::collections::HashSet<_>>().len(),
-            3
-        );
-        assert!(item_ids.iter().all(|item_id| !item_id.is_empty()));
-
-        let items = db.fetch_items_by_item_ids(&item_ids).unwrap();
-        assert_eq!(items.len(), 3);
     }
 }
