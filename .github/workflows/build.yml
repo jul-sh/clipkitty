@@ -154,8 +154,13 @@ jobs:
         env:
           AGE_SECRET_KEY: ${{ secrets.AGE_SECRET_KEY }}
 
+      - name: Install Developer ID Provisioning Profile
+        run: ./distribution/setup-devid-provisioning.sh
+        env:
+          AGE_SECRET_KEY: ${{ secrets.AGE_SECRET_KEY }}
+
       - name: Build App (SparkleRelease)
-        run: make build CONFIGURATION=SparkleRelease UNIVERSAL=1 CI_SIGNING_IDENTITY="Developer ID Application"
+        run: make build CONFIGURATION=SparkleRelease UNIVERSAL=1 CI_SIGNING_IDENTITY="Developer ID Application" CI_SIGNING_STYLE=Manual
         env:
           AGE_SECRET_KEY: ${{ secrets.AGE_SECRET_KEY }}
 
