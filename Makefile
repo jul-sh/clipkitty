@@ -73,9 +73,11 @@ api-key:
 provisioning: api-key
 	@./distribution/setup-dev-provisioning.sh
 
-# Build using xcodebuild with automatic signing
-# CI sets SKIP_SIGNING=1 because ephemeral runners can't register devices
-# for provisioning profiles. CI re-signs for distribution after building.
+# Build using xcodebuild with automatic signing.
+# CI_SIGNING_IDENTITY overrides the project's signing identity for distribution
+# builds (e.g. "Developer ID Application"). xcodebuild resolves the matching
+# provisioning profile automatically via -allowProvisioningUpdates.
+# SKIP_SIGNING=1 disables signing entirely (for tests, screenshots, etc.).
 build: api-key
 	@echo "Building $(APP_NAME) ($(CONFIGURATION))..."
 	@xcodebuild -workspace $(APP_NAME).xcworkspace \
@@ -90,6 +92,8 @@ build: api-key
 		CURRENT_PROJECT_VERSION=$(BUILD_NUMBER) \
 		ONLY_ACTIVE_ARCH=$(if $(UNIVERSAL),NO,YES) \
 		$(if $(SKIP_SIGNING),CODE_SIGNING_ALLOWED=NO,) \
+		$(if $(CI_SIGNING_IDENTITY),CODE_SIGN_IDENTITY=$(CI_SIGNING_IDENTITY),) \
+		$(if $(CI_SIGNING_IDENTITY),ENABLE_HARDENED_RUNTIME=YES,) \
 		build
 
 # Sign the built app (for distribution)
