@@ -46,22 +46,10 @@ pub struct VideoScene {
 /// Order matches the video flow. Used by both the UI test and ranking tests.
 /// Note: the "fast" scene's target is an image item in the base DB, not here.
 pub const VIDEO_SCENES: &[VideoScene] = &[
-    VideoScene {
-        query: "welcome clipkitty",
-        target: &SCENE_WELCOME,
-    },
-    VideoScene {
-        query: "copy once find forever",
-        target: &SCENE_FIND_FOREVER,
-    },
-    VideoScene {
-        query: "Multi-line preview",
-        target: &SCENE_MULTILINE,
-    },
-    VideoScene {
-        query: "secure private",
-        target: &SCENE_SECURE_PRIVATE,
-    },
+    VideoScene { query: "welcome clipkitty", target: &SCENE_WELCOME },
+    VideoScene { query: "copy once find forever", target: &SCENE_FIND_FOREVER },
+    VideoScene { query: "Multi-line preview", target: &SCENE_MULTILINE },
+    VideoScene { query: "secure private", target: &SCENE_SECURE_PRIVATE },
 ];
 
 pub const VIDEO_ITEMS: &[DemoItem] = &[

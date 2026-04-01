@@ -1,5 +1,6 @@
 import AppKit
 @testable import ClipKitty
+@testable import ClipKittyMacPlatform
 import XCTest
 
 @MainActor
@@ -25,7 +26,7 @@ final class PasteboardMonitorTests: XCTestCase {
         )
 
         XCTAssertEqual(mode, .deepIdle)
-        XCTAssertEqual(mode.intervalMilliseconds, PasteboardMonitor.PollingMode.deepIdle.intervalMilliseconds)
+        XCTAssertEqual(mode.intervalMilliseconds, 2_000)
     }
 
     func testLowPowerModeDowngradesActiveToIdle() {
@@ -45,8 +46,12 @@ final class PasteboardMonitorTests: XCTestCase {
         let workspace = MockWorkspace()
         let detected = expectation(description: "text detected")
 
-        let monitor = PasteboardMonitor(pasteboard: pasteboard, workspace: workspace) { content in
-            guard case let .text(text, _, _) = content else {
+        let monitor = PasteboardMonitor(
+            pasteboard: pasteboard,
+            workspace: workspace,
+            filterConfiguration: { PasteboardMonitor.FilterConfiguration(isAppIgnored: { _ in false }, ignoreConfidentialContent: true, ignoreTransientContent: true) }
+        ) { content in
+            guard case .text(let text, _, _) = content else {
                 return XCTFail("Expected text detection")
             }
             XCTAssertEqual(text, "hello")
@@ -70,7 +75,11 @@ final class PasteboardMonitorTests: XCTestCase {
         let workspace = MockWorkspace()
         var detectionCount = 0
 
-        let monitor = PasteboardMonitor(pasteboard: pasteboard, workspace: workspace) { _ in
+        let monitor = PasteboardMonitor(
+            pasteboard: pasteboard,
+            workspace: workspace,
+            filterConfiguration: { PasteboardMonitor.FilterConfiguration(isAppIgnored: { _ in false }, ignoreConfidentialContent: true, ignoreTransientContent: true) }
+        ) { _ in
             detectionCount += 1
         }
 

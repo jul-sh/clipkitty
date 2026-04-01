@@ -1,7 +1,8 @@
 use crate::database::Database;
 use crate::indexer::Indexer;
 use crate::interface::{
-    ClipKittyError, ItemMatch, ItemQueryFilter, PreviewPayload, RowDecorationResult, SearchResult,
+    ClipKittyError, ItemMatch, ItemQueryFilter, ListDecorationResult, ListPresentationProfile,
+    PreviewPayload, SearchResult,
 };
 use crate::match_presentation::{HighlightAnalysisCache, MatchPresentation};
 use crate::search;
@@ -13,7 +14,6 @@ use tokio_util::sync::CancellationToken;
 use crate::interface::{ContentTypeFilter, ItemTag};
 
 #[cfg(test)]
-#[allow(unused_imports)]
 pub(crate) mod test_support {
     pub(crate) use crate::match_presentation::test_support::*;
 }
@@ -24,6 +24,7 @@ pub(crate) struct SearchContext {
     pub(crate) cache: Arc<HighlightAnalysisCache>,
     pub(crate) runtime: tokio::runtime::Handle,
     pub(crate) token: CancellationToken,
+    pub(crate) presentation: ListPresentationProfile,
 }
 
 pub(crate) async fn execute_search(
@@ -36,12 +37,15 @@ pub(crate) async fn execute_search(
         return Err(ClipKittyError::Cancelled);
     }
 
+    let presentation = context.presentation;
+
     if parsed_query.raw_text().is_empty() {
         return SearchResultAssembler::new(
             &context.db,
             &context.cache,
             &context.token,
             &context.runtime,
+            presentation,
         )
         .build_empty_query_result(filter);
     }
@@ -52,6 +56,7 @@ pub(crate) async fn execute_search(
         cache,
         runtime,
         token,
+        presentation,
     } = context;
     let parsed_query_owned = parsed_query.clone();
     let filter_copy = filter;
@@ -70,6 +75,7 @@ pub(crate) async fn execute_search(
             filter_copy,
             &token_for_closure,
             &runtime_for_closure,
+            presentation,
         )
     });
 
@@ -79,30 +85,30 @@ pub(crate) async fn execute_search(
         Err(_join_error) => return Err(ClipKittyError::Cancelled),
     };
 
-    SearchResultAssembler::new(&db, &cache, &token, &runtime)
+    SearchResultAssembler::new(&db, &cache, &token, &runtime, presentation)
         .build_search_result(parsed_query.raw_text(), matches)
 }
 
-pub(crate) fn compute_row_decorations(
+pub(crate) fn compute_list_decorations(
     db: &Database,
     cache: &HighlightAnalysisCache,
-    item_ids: Vec<String>,
+    item_ids: Vec<i64>,
     query: String,
-) -> Result<Vec<RowDecorationResult>, ClipKittyError> {
-    MatchPresentation::new(db, cache).compute_row_decorations(item_ids, query)
+    presentation: ListPresentationProfile,
+) -> Result<Vec<ListDecorationResult>, ClipKittyError> {
+    MatchPresentation::new(db, cache).compute_list_decorations(item_ids, query, presentation)
 }
 
 pub(crate) fn load_preview_payload(
     db: &Database,
     cache: &HighlightAnalysisCache,
-    item_id: String,
+    item_id: i64,
     query: String,
 ) -> Result<Option<PreviewPayload>, ClipKittyError> {
     MatchPresentation::new(db, cache).load_preview_payload(item_id, query)
 }
 
 #[cfg(test)]
-#[allow(dead_code)]
 pub(crate) fn search_short_query_sync(
     db: &Database,
     cache: &HighlightAnalysisCache,
@@ -113,12 +119,11 @@ pub(crate) fn search_short_query_sync(
     filter: Option<&ContentTypeFilter>,
     tag: Option<ItemTag>,
 ) -> Result<Vec<ItemMatch>, ClipKittyError> {
-    SearchResultAssembler::new(db, cache, token, runtime)
+    SearchResultAssembler::new(db, cache, token, runtime, ListPresentationProfile::CompactRow)
         .search_short_query(query, mode, filter, tag)
 }
 
 #[cfg(test)]
-#[allow(dead_code)]
 pub(crate) fn search_trigram_query_sync(
     db: &Database,
     indexer: &Indexer,
@@ -129,7 +134,7 @@ pub(crate) fn search_trigram_query_sync(
     filter: Option<&ContentTypeFilter>,
     tag: Option<ItemTag>,
 ) -> Result<Vec<ItemMatch>, ClipKittyError> {
-    SearchResultAssembler::new(db, cache, token, runtime)
+    SearchResultAssembler::new(db, cache, token, runtime, ListPresentationProfile::CompactRow)
         .search_trigram_query(indexer, query, filter, tag)
 }
 
@@ -141,8 +146,9 @@ fn execute_search_sync(
     filter: ItemQueryFilter,
     token: &CancellationToken,
     runtime: &tokio::runtime::Handle,
+    presentation: ListPresentationProfile,
 ) -> Result<Vec<ItemMatch>, ClipKittyError> {
-    let assembler = SearchResultAssembler::new(db, cache, token, runtime);
+    let assembler = SearchResultAssembler::new(db, cache, token, runtime, presentation);
     let (content_type_filter, tag_filter) = crate::search_result_builder::split_filter(filter);
 
     if uses_short_query_path(parsed_query) {

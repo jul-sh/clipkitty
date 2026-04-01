@@ -1,7 +1,8 @@
-import ClipKittyRust
 import XCTest
+import ClipKittyRust
 
 final class EditablePreviewTests: XCTestCase {
+
     // MARK: - Test Helpers
 
     private func makeStore() throws -> ClipKittyRust.ClipboardStore {
@@ -23,7 +24,7 @@ final class EditablePreviewTests: XCTestCase {
             sourceApp: "TestApp",
             sourceAppBundleId: "com.test.app"
         )
-        XCTAssertFalse(originalId.isEmpty)
+        XCTAssertGreaterThan(originalId, 0)
 
         // Save edited text (different content)
         let editedId = try store.saveText(
@@ -31,7 +32,7 @@ final class EditablePreviewTests: XCTestCase {
             sourceApp: "ClipKitty",
             sourceAppBundleId: "com.eviljuliette.clipkitty"
         )
-        XCTAssertFalse(editedId.isEmpty)
+        XCTAssertGreaterThan(editedId, 0)
         XCTAssertNotEqual(editedId, originalId, "Edited text should create new item with different ID")
 
         // Verify both items exist
@@ -63,7 +64,7 @@ final class EditablePreviewTests: XCTestCase {
         XCTAssertEqual(items[0].content.textContent, originalText, "Original item content should be preserved")
     }
 
-    func testSaveEditedTextDuplicateReturnsEmptyId() throws {
+    func testSaveEditedTextDuplicateReturnsZero() throws {
         let store = try makeStore()
 
         // Save original
@@ -80,7 +81,7 @@ final class EditablePreviewTests: XCTestCase {
             sourceApp: "ClipKitty",
             sourceAppBundleId: "com.eviljuliette.clipkitty"
         )
-        XCTAssertTrue(duplicateId.isEmpty, "Duplicate content should return an empty ID")
+        XCTAssertEqual(duplicateId, 0, "Duplicate content should return 0")
     }
 
     func testSaveEditedTextSetsClipKittyAsSource() throws {
@@ -113,9 +114,9 @@ final class EditablePreviewTests: XCTestCase {
 
         // Rust auto-detects color format
         switch items[0].content {
-        case let .color(value):
+        case .color(let value):
             XCTAssertEqual(value, "#FF5733", "Color value should be preserved")
-        case let .text(value):
+        case .text(let value):
             // Also acceptable if color detection happens differently
             XCTAssertEqual(value, "#FF5733", "Text value should be preserved")
         default:
@@ -167,9 +168,9 @@ final class EditablePreviewTests: XCTestCase {
             sourceAppBundleId: "com.eviljuliette.clipkitty"
         )
 
-        XCTAssertFalse(id1.isEmpty)
-        XCTAssertFalse(id2.isEmpty)
-        XCTAssertFalse(id3.isEmpty)
+        XCTAssertGreaterThan(id1, 0)
+        XCTAssertGreaterThan(id2, 0)
+        XCTAssertGreaterThan(id3, 0)
         XCTAssertNotEqual(id1, id2)
         XCTAssertNotEqual(id2, id3)
         XCTAssertNotEqual(id1, id3)
@@ -182,7 +183,7 @@ final class EditablePreviewTests: XCTestCase {
     func testSaveEmptyTextIsRejected() throws {
         let store = try makeStore()
 
-        // Empty text should not create an item (or should return an empty ID)
+        // Empty text should not create an item (or return 0)
         // Note: The actual behavior depends on Rust implementation
         // This test documents expected behavior
         let id = try store.saveText(
@@ -191,9 +192,9 @@ final class EditablePreviewTests: XCTestCase {
             sourceAppBundleId: "com.eviljuliette.clipkitty"
         )
 
-        // Empty text should either return an empty ID or throw
+        // Empty text should either return 0 or throw
         // If it returns a valid ID, verify the behavior
-        if !id.isEmpty {
+        if id > 0 {
             let items = try store.fetchByIds(itemIds: [id])
             // If stored, it should be retrievable
             XCTAssertEqual(items.count, 1)
@@ -211,7 +212,7 @@ final class EditablePreviewTests: XCTestCase {
         )
 
         // Whitespace-only should be treated as valid text
-        if !id.isEmpty {
+        if id > 0 {
             let items = try store.fetchByIds(itemIds: [id])
             XCTAssertEqual(items.count, 1)
         }
@@ -232,9 +233,9 @@ final class EditablePreviewTests: XCTestCase {
 
         // Rust auto-detects URLs
         switch items[0].content {
-        case let .link(url, _):
+        case .link(let url, _):
             XCTAssertEqual(url, "https://github.com/example/repo", "URL should be preserved")
-        case let .text(value):
+        case .text(let value):
             // Some implementations may keep it as text
             XCTAssertEqual(value, "https://github.com/example/repo")
         default:

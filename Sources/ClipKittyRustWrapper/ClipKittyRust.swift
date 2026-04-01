@@ -2,7 +2,7 @@
 // Manual extensions for UniFFI-generated types from purr
 // Provides: Date conversions, UTType mappings, Identifiable/Sendable conformances
 
-import AppKit
+import Foundation
 import Foundation
 import UniformTypeIdentifiers
 
@@ -104,19 +104,13 @@ public extension FileStatus {
 // MARK: - Protocol Conformances
 
 extension ClipboardItem: Identifiable {
-    public var id: String {
-        itemMetadata.itemId
-    }
+    public var id: Int64 { itemMetadata.itemId }
 }
 
 extension ItemMetadata: Identifiable {
-    public var id: String {
-        itemId
-    }
+    public var id: Int64 { itemId }
 }
 
 extension ItemMatch: Identifiable {
-    public var id: String {
-        itemMetadata.itemId
-    }
+    public var id: Int64 { itemMetadata.itemId }
 }

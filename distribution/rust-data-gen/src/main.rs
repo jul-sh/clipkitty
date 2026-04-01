@@ -9,11 +9,11 @@
 use anyhow::{Context, Result};
 use chrono::Utc;
 use clap::Parser;
+use purr::{ClipboardStore, ClipboardStoreApi};
+use purr::content_detection::parse_color_to_rgba;
 use futures::StreamExt;
 use image::GenericImageView;
 use indicatif::{ProgressBar, ProgressStyle};
-use purr::content_detection::parse_color_to_rgba;
-use purr::{ClipboardStore, ClipboardStoreApi};
 use rand::prelude::*;
 use rand::rngs::StdRng;
 use rusqlite::params;
@@ -24,8 +24,8 @@ use std::collections::hash_map::DefaultHasher;
 use std::fs;
 use std::hash::{Hash, Hasher};
 use std::path::PathBuf;
-use std::sync::atomic::{AtomicUsize, Ordering};
 use std::sync::Arc;
+use std::sync::atomic::{AtomicUsize, Ordering};
 use tokio::sync::Semaphore;
 
 #[derive(Parser, Debug)]
@@ -73,6 +73,8 @@ struct Args {
 // DATA GENERATION HELPERS (self-contained, no feature flags needed in core)
 // ─────────────────────────────────────────────────────────────────────────────
 
+
+
 /// Generate a WebP thumbnail from image data
 fn generate_thumbnail(image_data: &[u8], max_size: u32) -> Option<Vec<u8>> {
     let img = image::load_from_memory(image_data).ok()?;
@@ -96,9 +98,7 @@ fn generate_thumbnail(image_data: &[u8], max_size: u32) -> Option<Vec<u8>> {
 
     let mut buf = Vec::new();
     let mut cursor = std::io::Cursor::new(&mut buf);
-    thumbnail
-        .write_to(&mut cursor, image::ImageFormat::WebP)
-        .ok()?;
+    thumbnail.write_to(&mut cursor, image::ImageFormat::WebP).ok()?;
 
     Some(buf)
 }
@@ -106,8 +106,8 @@ fn generate_thumbnail(image_data: &[u8], max_size: u32) -> Option<Vec<u8>> {
 /// Set item timestamp directly via SQL (for synthetic data generation)
 fn set_timestamp_direct(db_path: &str, item_id: i64, timestamp_unix: i64) -> Result<()> {
     let conn = rusqlite::Connection::open(db_path)?;
-    let timestamp =
-        chrono::DateTime::from_timestamp(timestamp_unix, 0).unwrap_or_else(|| chrono::Utc::now());
+    let timestamp = chrono::DateTime::from_timestamp(timestamp_unix, 0)
+        .unwrap_or_else(|| chrono::Utc::now());
     let timestamp_str = timestamp.format("%Y-%m-%d %H:%M:%S%.f").to_string();
     conn.execute(
         "UPDATE items SET timestamp = ?1 WHERE id = ?2",
@@ -116,38 +116,16 @@ fn set_timestamp_direct(db_path: &str, item_id: i64, timestamp_unix: i64) -> Res
     Ok(())
 }
 
-/// Set item timestamp by string item_id (UUID) via SQL
-fn set_timestamp_by_item_id(db_path: &str, item_id: &str, timestamp_unix: i64) -> Result<()> {
-    let conn = rusqlite::Connection::open(db_path)?;
-    let timestamp =
-        chrono::DateTime::from_timestamp(timestamp_unix, 0).unwrap_or_else(|| chrono::Utc::now());
-    let timestamp_str = timestamp.format("%Y-%m-%d %H:%M:%S%.f").to_string();
-    conn.execute(
-        "UPDATE items SET timestamp = ?1 WHERE item_id = ?2",
-        params![timestamp_str, item_id],
-    )?;
-    Ok(())
-}
-
 /// Compress an image file to HEIC format using macOS `sips`.
 /// Resizes so the longest side is at most `max_dimension` pixels.
-fn compress_to_heic(
-    image_path: &std::path::Path,
-    max_dimension: u32,
-    quality: u32,
-) -> Option<Vec<u8>> {
+fn compress_to_heic(image_path: &std::path::Path, max_dimension: u32, quality: u32) -> Option<Vec<u8>> {
     let temp_output = std::env::temp_dir().join("clipkitty_heic_temp.heic");
 
     let output = std::process::Command::new("sips")
         .args([
-            "-s",
-            "format",
-            "heic",
-            "-s",
-            "formatOptions",
-            &quality.to_string(),
-            "-Z",
-            &max_dimension.to_string(),
+            "-s", "format", "heic",
+            "-s", "formatOptions", &quality.to_string(),
+            "-Z", &max_dimension.to_string(),
         ])
         .arg(image_path)
         .args(["--out"])
@@ -176,8 +154,7 @@ fn image_exists(db_path: &str, description: &str, locale: &str) -> bool {
         "SELECT 1 FROM image_items WHERE description = ?1 AND locale = ?2 LIMIT 1",
         params![description, locale],
         |_| Ok(()),
-    )
-    .is_ok()
+    ).is_ok()
 }
 
 /// Ensure the locale column exists in the image_items table.
@@ -192,20 +169,14 @@ fn ensure_locale_column(db_path: &str) -> Result<()> {
         |row| {
             let count: i64 = row.get(0)?;
             Ok(count > 0)
-        },
+        }
     )?;
 
     if !column_exists {
         // Add the locale column with a default value
-        conn.execute(
-            "ALTER TABLE image_items ADD COLUMN locale TEXT DEFAULT 'en'",
-            [],
-        )?;
+        conn.execute("ALTER TABLE image_items ADD COLUMN locale TEXT DEFAULT 'en'", [])?;
         // Create an index for efficient locale-based queries
-        conn.execute(
-            "CREATE INDEX IF NOT EXISTS idx_image_locale ON image_items(locale)",
-            [],
-        )?;
+        conn.execute("CREATE INDEX IF NOT EXISTS idx_image_locale ON image_items(locale)", [])?;
     }
 
     Ok(())
@@ -235,14 +206,12 @@ fn save_image_direct(
     let content_hash = hasher.finish().to_string();
     let thumbnail = thumbnail.or_else(|| generate_thumbnail(&image_data, 64));
 
-    let item_uuid = uuid::Uuid::new_v4().to_string();
     let tx = conn.unchecked_transaction()?;
 
     tx.execute(
-        r#"INSERT INTO items (item_id, contentType, contentHash, content, timestamp, sourceApp, sourceAppBundleId, thumbnail)
-           VALUES (?1, 'image', ?2, ?3, ?4, ?5, ?6, ?7)"#,
+        r#"INSERT INTO items (contentType, contentHash, content, timestamp, sourceApp, sourceAppBundleId, thumbnail)
+           VALUES ('image', ?1, ?2, ?3, ?4, ?5, ?6)"#,
         params![
-            item_uuid,
             content_hash,
             description,
             timestamp_str,
@@ -330,42 +299,36 @@ async fn call_gemini(api_key: &str, prompt: &str) -> Result<Vec<String>> {
     });
 
     let client = reqwest::Client::new();
-    let response = client.post(&url).json(&request_body).send().await?;
+    let response = client
+        .post(&url)
+        .json(&request_body)
+        .send()
+        .await?;
 
     let status = response.status();
     if !status.is_success() {
         let err_text = response.text().await?;
-        return Err(anyhow::anyhow!(
-            "Gemini API error ({}): {}",
-            status,
-            err_text
-        ));
+        return Err(anyhow::anyhow!("Gemini API error ({}): {}", status, err_text));
     }
 
     let resp_text = response.text().await?;
-    let res_json: serde_json::Value =
-        serde_json::from_str(&resp_text).context("Failed to parse outer JSON")?;
+    let res_json: serde_json::Value = serde_json::from_str(&resp_text).context("Failed to parse outer JSON")?;
     let text = res_json["candidates"][0]["content"]["parts"][0]["text"]
         .as_str()
         .context("Missing text in Gemini response candidate")?;
 
-    let gemini_res: GeminiResponse =
-        serde_json::from_str(text).context("Failed to parse inner responseSchema JSON")?;
+    let gemini_res: GeminiResponse = serde_json::from_str(text).context("Failed to parse inner responseSchema JSON")?;
     Ok(gemini_res.items)
 }
 
 fn pick_weighted<'a, T, F>(items: &'a [T], weight_fn: F) -> &'a T
-where
-    F: Fn(&T) -> u32,
-{
+where F: Fn(&T) -> u32 {
     let total_weight: u32 = items.iter().map(&weight_fn).sum();
     let mut rng = rand::thread_rng();
     let mut r = rng.gen_range(0..total_weight.max(1));
     for item in items {
         let w = weight_fn(item);
-        if r < w {
-            return item;
-        }
+        if r < w { return item; }
         r -= w;
     }
     items.first().expect("Empty collection")
@@ -405,10 +368,10 @@ fn generate_timestamp(item_index: usize, now: i64) -> i64 {
     now - age_seconds
 }
 
+use demo_data::DEMO_ITEMS;
 use demo_data::localized::{get_localized_demo_items, get_localized_image_keywords};
 use demo_data::video::VIDEO_ITEMS;
 use demo_data::video_localized::get_localized_video_items;
-use demo_data::DEMO_ITEMS;
 
 /// Source images with keyword captions (mirrors Vision framework output)
 /// Format: (filename, keywords, source_app, bundle_id, time_offset_seconds)
@@ -492,9 +455,9 @@ fn find_id_by_hash(db_path: &str, content_hash: &str) -> Option<i64> {
         "SELECT id FROM items WHERE contentHash = ?1",
         params![content_hash],
         |row| row.get(0),
-    )
-    .ok()
+    ).ok()
 }
+
 
 /// Delete English demo items from the database (used before inserting localized versions)
 fn delete_english_demo_items(db_path: &str) -> Result<()> {
@@ -507,13 +470,11 @@ fn delete_english_demo_items(db_path: &str) -> Result<()> {
         let content_hash = hasher.finish().to_string();
 
         // Get the item ID first
-        let item_id: Option<i64> = conn
-            .query_row(
-                "SELECT id FROM items WHERE contentHash = ?1",
-                params![content_hash],
-                |row| row.get(0),
-            )
-            .ok();
+        let item_id: Option<i64> = conn.query_row(
+            "SELECT id FROM items WHERE contentHash = ?1",
+            params![content_hash],
+            |row| row.get(0),
+        ).ok();
 
         if let Some(id) = item_id {
             // Delete from text_items first (foreign key)
@@ -526,22 +487,24 @@ fn delete_english_demo_items(db_path: &str) -> Result<()> {
     // Also delete by pattern for items that might have slightly different content
     // (e.g., older versions of ClipKitty bullet points with different wording)
     let patterns = [
-        "ClipKitty\n• Copy it once%",                  // ClipKitty bullet points
-        "Apartment walkthrough notes:%",               // Apartment notes
-        "# Deploy API server to production%",          // Deploy command
-        "The quick brown fox jumps over the lazy dog", // Greeting text
-        "#!/bin/bash\nset -euo pipefail%",             // Code comment/script
-        "https://developer.apple.com/documentation%",  // URL
-        "%riverside_park_picnic_directions.txt",       // File path
-        "%driver_config.yaml",                         // File path
-        "%river_animation_keyframes.css",              // File path
-        "%README.md",                                  // File path
-        "%catalog_api_response.json",                  // File path
+        "ClipKitty\n• Copy it once%",                      // ClipKitty bullet points
+        "Apartment walkthrough notes:%",                    // Apartment notes
+        "# Deploy API server to production%",               // Deploy command
+        "The quick brown fox jumps over the lazy dog",     // Greeting text
+        "#!/bin/bash\nset -euo pipefail%",                 // Code comment/script
+        "https://developer.apple.com/documentation%",       // URL
+        "%riverside_park_picnic_directions.txt",            // File path
+        "%driver_config.yaml",                              // File path
+        "%river_animation_keyframes.css",                   // File path
+        "%README.md",                                       // File path
+        "%catalog_api_response.json",                       // File path
     ];
 
     for pattern in patterns {
         // Find all matching item IDs
-        let mut stmt = conn.prepare("SELECT itemId FROM text_items WHERE value LIKE ?1")?;
+        let mut stmt = conn.prepare(
+            "SELECT itemId FROM text_items WHERE value LIKE ?1"
+        )?;
         let item_ids: Vec<i64> = stmt
             .query_map(params![pattern], |row| row.get(0))?
             .filter_map(|r| r.ok())
@@ -591,9 +554,7 @@ fn insert_demo_items(store: &ClipboardStore, db_path: &str, locale: Option<&str>
             let kitty_path = base_path.join("../../marketing/assets/kitty.jpg");
 
             // All supported locales (including English)
-            let all_locales = [
-                "en", "es", "zh-Hans", "zh-Hant", "ja", "ko", "fr", "de", "pt-BR", "ru",
-            ];
+            let all_locales = ["en", "es", "zh-Hans", "zh-Hant", "ja", "ko", "fr", "de", "pt-BR", "ru"];
 
             for locale_code in all_locales.iter() {
                 // Insert kitty image for this locale
@@ -604,8 +565,7 @@ fn insert_demo_items(store: &ClipboardStore, db_path: &str, locale: Option<&str>
                 if !image_exists(db_path, kitty_keywords, locale_code) {
                     if let Ok(raw_data) = fs::read(&kitty_path) {
                         let thumbnail = generate_thumbnail(&raw_data, 64);
-                        let image_data =
-                            compress_to_heic(&kitty_path, 1500, 60).unwrap_or(raw_data);
+                        let image_data = compress_to_heic(&kitty_path, 1500, 60).unwrap_or(raw_data);
                         if let Ok(id) = save_image_direct(
                             db_path,
                             image_data,
@@ -616,17 +576,14 @@ fn insert_demo_items(store: &ClipboardStore, db_path: &str, locale: Option<&str>
                             locale_code,
                         ) {
                             if id > 0 {
-                                let _ = set_timestamp_direct(db_path, id, now - 5);
-                                // Most recent demo item
+                                let _ = set_timestamp_direct(db_path, id, now - 5); // Most recent demo item
                             }
                         }
                     }
                 }
 
                 // Insert source images for this locale
-                for (filename, default_keywords, source_app, bundle_id, offset) in
-                    SOURCE_IMAGES.iter()
-                {
+                for (filename, default_keywords, source_app, bundle_id, offset) in SOURCE_IMAGES.iter() {
                     let keywords = get_localized_image_keywords(locale_code, filename)
                         .unwrap_or(*default_keywords);
 
@@ -644,8 +601,7 @@ fn insert_demo_items(store: &ClipboardStore, db_path: &str, locale: Option<&str>
                     let image_path = source_images_dir.join(&resolved_filename);
                     if let Ok(raw_data) = fs::read(&image_path) {
                         let thumbnail = generate_thumbnail(&raw_data, 64);
-                        let image_data =
-                            compress_to_heic(&image_path, 1500, 60).unwrap_or(raw_data);
+                        let image_data = compress_to_heic(&image_path, 1500, 60).unwrap_or(raw_data);
                         if let Ok(id) = save_image_direct(
                             db_path,
                             image_data,
@@ -664,7 +620,7 @@ fn insert_demo_items(store: &ClipboardStore, db_path: &str, locale: Option<&str>
                     }
                 }
             }
-        }
+        },
         Some(loc) => {
             // Localized generation: Replace text items only (images already exist from base)
 
@@ -703,7 +659,9 @@ fn insert_video_items(store: &ClipboardStore, db_path: &str, locale: Option<&str
 
     // Delete the existing ClipKitty bullet-point item (it occupies the first position)
     let conn = rusqlite::Connection::open(db_path)?;
-    let mut stmt = conn.prepare("SELECT itemId FROM text_items WHERE value LIKE 'ClipKitty\n%'")?;
+    let mut stmt = conn.prepare(
+        "SELECT itemId FROM text_items WHERE value LIKE 'ClipKitty\n%'"
+    )?;
     let item_ids: Vec<i64> = stmt
         .query_map([], |row| row.get(0))?
         .filter_map(|r| r.ok())
@@ -771,7 +729,9 @@ fn reclassify_colors(db_path: &str) -> Result<usize> {
     let conn = rusqlite::Connection::open(db_path)?;
 
     // Fetch all text items
-    let mut stmt = conn.prepare("SELECT id, content FROM items WHERE contentType = 'text'")?;
+    let mut stmt = conn.prepare(
+        "SELECT id, content FROM items WHERE contentType = 'text'"
+    )?;
 
     let text_items: Vec<(i64, String)> = stmt
         .query_map([], |row| Ok((row.get(0)?, row.get(1)?)))?
@@ -797,23 +757,13 @@ fn reclassify_colors(db_path: &str) -> Result<usize> {
 async fn main() -> Result<()> {
     let args = Args::parse();
 
-    let abs_db_path = std::env::current_dir()?
-        .join(&args.db_path)
-        .to_str()
-        .unwrap()
-        .to_string();
-    let store =
-        Arc::new(ClipboardStore::new(abs_db_path.clone()).context("Failed to open database")?);
+    let abs_db_path = std::env::current_dir()?.join(&args.db_path).to_str().unwrap().to_string();
+    let store = Arc::new(ClipboardStore::new(abs_db_path.clone()).context("Failed to open database")?);
 
     // Demo-only mode: skip AI generation, just insert demo items
     if args.demo_only {
         let locale_str = args.locale.as_deref();
-        println!(
-            "Inserting demo items{}...",
-            locale_str
-                .map(|l| format!(" for locale '{}'", l))
-                .unwrap_or_default()
-        );
+        println!("Inserting demo items{}...", locale_str.map(|l| format!(" for locale '{}'", l)).unwrap_or_default());
         insert_demo_items(&store, &abs_db_path, locale_str)?;
         println!("Demo items inserted.");
         return Ok(());
@@ -822,12 +772,8 @@ async fn main() -> Result<()> {
     // Video-only mode: insert video-specific items for intro video
     if args.video_only {
         let locale_str = args.locale.as_deref();
-        println!(
-            "Inserting video items{}...",
-            locale_str
-                .map(|l| format!(" for locale '{}'", l))
-                .unwrap_or_default()
-        );
+        println!("Inserting video items{}...",
+            locale_str.map(|l| format!(" for locale '{}'", l)).unwrap_or_default());
         insert_video_items(&store, &abs_db_path, locale_str)?;
         // Write search queries for the UI test to read
         write_video_queries(locale_str)?;
@@ -855,26 +801,15 @@ async fn main() -> Result<()> {
         .progress_chars("#>-"));
 
     let semaphore = Arc::new(Semaphore::new(args.concurrency));
-    let api_key = Arc::new(
-        args.api_key
-            .or_else(|| std::env::var("GEMINI_API_KEY").ok())
-            .context("Missing API Key")?,
-    );
+    let api_key = Arc::new(args.api_key.or_else(|| std::env::var("GEMINI_API_KEY").ok()).context("Missing API Key")?);
     let taxonomy = Arc::new(taxonomy);
     let item_counter = Arc::new(AtomicUsize::new(0));
     let now = Utc::now().timestamp();
 
     let stream = futures::stream::unfold(0, |state| {
-        if state >= target_total {
-            return futures::future::ready(None);
-        }
+        if state >= target_total { return futures::future::ready(None); }
         let tier = pick_weighted(&[("short", 20), ("medium", 60), ("long", 20)], |i| i.1).0;
-        let batch_size = match tier {
-            "long" => 2,
-            "medium" => 8,
-            _ => 15,
-        }
-        .min(target_total - state);
+        let batch_size = match tier { "long" => 2, "medium" => 8, _ => 15 }.min(target_total - state);
         futures::future::ready(Some(((tier, batch_size), state + batch_size)))
     });
 
@@ -899,30 +834,19 @@ async fn main() -> Result<()> {
                 match call_gemini(&key, &prompt).await {
                     Ok(items) => {
                         for content in items {
-                            let valid_apps: Vec<_> = tax
-                                .apps
-                                .iter()
-                                .filter(|a| category.apps.contains(&a.name))
-                                .collect();
+                            let valid_apps: Vec<_> = tax.apps.iter().filter(|a| category.apps.contains(&a.name)).collect();
                             let app = pick_weighted(&valid_apps, |a| a.weight);
-                            if let Ok(id) = st.save_text(
-                                content,
-                                Some(app.name.clone()),
-                                Some(app.bundle_id.clone()),
-                            ) {
-                                if !id.is_empty() {
+                            if let Ok(id) = st.save_text(content, Some(app.name.clone()), Some(app.bundle_id.clone())) {
+                                if id > 0 {
                                     let item_index = counter.fetch_add(1, Ordering::Relaxed);
                                     let timestamp = generate_timestamp(item_index, now);
-                                    let _ = set_timestamp_by_item_id(&db, &id, timestamp);
+                                    let _ = set_timestamp_direct(&db, id, timestamp);
                                     bar.inc(1);
-                                    bar.set_message(format!(
-                                        "{} ({})",
-                                        category.category_type, tier
-                                    ));
+                                    bar.set_message(format!("{} ({})", category.category_type, tier));
                                 }
                             }
                         }
-                    }
+                    },
                     Err(e) => {
                         bar.println(format!("Gemini batch failed: {}", e));
                     }
