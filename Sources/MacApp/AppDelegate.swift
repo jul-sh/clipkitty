@@ -113,7 +113,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate {
                 case .downloading: AppSettings.shared.updateCheckState = .downloading
                 case .installing: AppSettings.shared.updateCheckState = .installing
                 case .available: AppSettings.shared.updateCheckState = .available
-                case .checkFailed: AppSettings.shared.updateCheckState = .checkFailed
+                case .checkFailed(let msg): AppSettings.shared.updateCheckState = .checkFailed(errorMessage: msg)
                 }
 
                 if prevState == .checking && state != .checking {

@@ -12,7 +12,7 @@ public enum UpdateCheckState: Equatable, Sendable {
     case downloading
     case installing
     case available
-    case checkFailed
+    case checkFailed(errorMessage: String)
 }
 
 public enum UpdateChannel: String, Codable, Sendable {
@@ -118,16 +118,18 @@ final class SilentUpdateDriver: NSObject, SPUUserDriver, SPUUpdaterDelegate {
         log.error("Updater error: \(error.localizedDescription)")
         forceInstall = false
 
+        let message = error.localizedDescription
+
         if updateChannel == .beta {
             // Beta users opted in to early feedback — surface errors immediately.
-            updateCheckState = .checkFailed
+            updateCheckState = .checkFailed(errorMessage: message)
         } else if updateCheckFailingSince == nil {
             updateCheckState = .idle
             updateCheckFailingSince = Date()
         } else if let since = updateCheckFailingSince,
                   Date().timeIntervalSince(since) > 14 * 24 * 60 * 60
         {
-            updateCheckState = .checkFailed
+            updateCheckState = .checkFailed(errorMessage: message)
         } else {
             updateCheckState = .idle
         }
