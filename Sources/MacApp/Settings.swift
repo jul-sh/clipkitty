@@ -33,13 +33,51 @@ enum PasteMode {
 
 #if SPARKLE_RELEASE
     /// State of update checking
-    enum UpdateCheckState: String, Codable, Equatable {
+    enum UpdateCheckState: Codable, Equatable {
         case idle
         case checking
         case downloading
         case installing
         case available
-        case checkFailed
+        case checkFailed(errorMessage: String)
+
+        /// Tag used for Codable round-tripping
+        private enum Tag: String, Codable {
+            case idle, checking, downloading, installing, available, checkFailed
+        }
+
+        private enum CodingKeys: String, CodingKey {
+            case tag, errorMessage
+        }
+
+        init(from decoder: Decoder) throws {
+            let container = try decoder.container(keyedBy: CodingKeys.self)
+            let tag = try container.decode(Tag.self, forKey: .tag)
+            switch tag {
+            case .idle: self = .idle
+            case .checking: self = .checking
+            case .downloading: self = .downloading
+            case .installing: self = .installing
+            case .available: self = .available
+            case .checkFailed:
+                let message = try container.decodeIfPresent(String.self, forKey: .errorMessage) ?? ""
+                self = .checkFailed(errorMessage: message)
+            }
+        }
+
+        func encode(to encoder: Encoder) throws {
+            var container = encoder.container(keyedBy: CodingKeys.self)
+            switch self {
+            case .idle: try container.encode(Tag.idle, forKey: .tag)
+            case .checking: try container.encode(Tag.checking, forKey: .tag)
+            case .downloading: try container.encode(Tag.downloading, forKey: .tag)
+            case .installing: try container.encode(Tag.installing, forKey: .tag)
+            case .available: try container.encode(Tag.available, forKey: .tag)
+            case .checkFailed(let message):
+                try container.encode(Tag.checkFailed, forKey: .tag)
+                try container.encode(message, forKey: .errorMessage)
+            }
+        }
     }
 #endif
 
@@ -229,8 +267,13 @@ final class AppSettings: ObservableObject {
             let storedUpdateChannel = defaults.string(forKey: updateChannelKey)
             updateChannel = storedUpdateChannel.flatMap(UpdateChannel.init(rawValue:)) ?? .stable
             lastUpdateCheckDate = defaults.object(forKey: lastUpdateCheckDateKey) as? Date
-            let storedResult = defaults.string(forKey: lastUpdateCheckResultKey)
-            lastUpdateCheckResult = storedResult.flatMap(UpdateCheckState.init(rawValue:)) ?? .idle
+            if let resultData = defaults.data(forKey: lastUpdateCheckResultKey),
+               let decoded = try? JSONDecoder().decode(UpdateCheckState.self, from: resultData)
+            {
+                lastUpdateCheckResult = decoded
+            } else {
+                lastUpdateCheckResult = .idle
+            }
         #endif
 
         launchAtLoginPromptDismissed = defaults.bool(forKey: launchAtLoginPromptDismissedKey)
@@ -334,7 +377,9 @@ final class AppSettings: ObservableObject {
             defaults.set(autoInstallUpdates, forKey: autoInstallUpdatesKey)
             defaults.set(updateChannel.rawValue, forKey: updateChannelKey)
             defaults.set(lastUpdateCheckDate, forKey: lastUpdateCheckDateKey)
-            defaults.set(lastUpdateCheckResult.rawValue, forKey: lastUpdateCheckResultKey)
+            if let resultData = try? JSONEncoder().encode(lastUpdateCheckResult) {
+                defaults.set(resultData, forKey: lastUpdateCheckResultKey)
+            }
         #endif
     }
 

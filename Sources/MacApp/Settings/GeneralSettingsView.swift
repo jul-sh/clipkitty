@@ -186,13 +186,20 @@ struct GeneralSettingsView: View {
                                 }
                                 .buttonStyle(.borderedProminent)
                             }
-                        case .checkFailed:
-                            HStack(spacing: 6) {
+                        case .checkFailed(let errorMessage):
+                            VStack(alignment: .trailing, spacing: 6) {
                                 Label(
-                                    String(localized: "Check failed"),
+                                    String(localized: "Update check failed"),
                                     systemImage: "exclamationmark.triangle"
                                 )
-                                Button(String(localized: "Download")) {
+                                .foregroundStyle(.orange)
+
+                                Text(errorMessage)
+                                    .font(.subheadline)
+                                    .foregroundStyle(.secondary)
+                                    .multilineTextAlignment(.trailing)
+
+                                Button(String(localized: "View Releases on GitHub")) {
                                     NSWorkspace.shared.open(
                                         URL(
                                             string:
@@ -200,6 +207,7 @@ struct GeneralSettingsView: View {
                                         )!
                                     )
                                 }
+                                .font(.subheadline)
                             }
                         }
                     }
@@ -216,7 +224,7 @@ struct GeneralSettingsView: View {
                             case .installing:
                                 Text(String(localized: "Installing update, as of"))
                             case .checkFailed:
-                                Text(String(localized: "Check failed, as of"))
+                                Text(String(localized: "Update check failed, as of"))
                             case .checking:
                                 EmptyView()
                             }
