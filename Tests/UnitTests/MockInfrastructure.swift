@@ -1,6 +1,5 @@
 import AppKit
 @testable import ClipKitty
-@testable import ClipKittyMacPlatform
 import Foundation
 
 // MARK: - Mock Pasteboard
@@ -48,7 +47,7 @@ final class MockPasteboard: PasteboardProtocol {
         return true
     }
 
-    func declareTypes(_ newTypes: [NSPasteboard.PasteboardType], owner newOwner: Any?) -> Int {
+    func declareTypes(_ newTypes: [NSPasteboard.PasteboardType], owner _: Any?) -> Int {
         declaredTypes = newTypes
         changeCount += 1
         return changeCount
@@ -76,7 +75,8 @@ final class MockPasteboard: PasteboardProtocol {
     func readFileURLs() -> [URL] {
         fileURLReadCount += 1
         guard let fileURL = storage[.fileURL] as? String,
-              let url = URL(string: fileURL) else {
+              let url = URL(string: fileURL)
+        else {
             return []
         }
         return [url]
@@ -192,11 +192,11 @@ final class MockFileManager: FileManagerProtocol {
         return attrs
     }
 
-    func createDirectory(at url: URL, withIntermediateDirectories: Bool, attributes attrs: [FileAttributeKey: Any]?) throws {
+    func createDirectory(at url: URL, withIntermediateDirectories _: Bool, attributes _: [FileAttributeKey: Any]?) throws {
         directories[url.path] = []
     }
 
-    func urls(for directory: FileManager.SearchPathDirectory, in domainMask: FileManager.SearchPathDomainMask) -> [URL] {
+    func urls(for directory: FileManager.SearchPathDirectory, in _: FileManager.SearchPathDomainMask) -> [URL] {
         return searchPaths[directory] ?? []
     }
 

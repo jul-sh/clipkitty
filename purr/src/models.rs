@@ -8,7 +8,6 @@ use std::hash::{Hash, Hasher};
 
 use crate::interface::{
     ClipboardContent, ClipboardItem, FileEntry, FileStatus, ItemIcon, ItemMetadata,
-    ListPresentationProfile,
 };
 #[cfg(test)]
 use crate::interface::{IconType, LinkMetadataPayload, LinkMetadataState};
@@ -22,7 +21,6 @@ use sha2::{Digest, Sha256};
 #[derive(Debug, Clone, PartialEq)]
 pub struct StoredItem {
     pub id: Option<i64>,
-    pub item_id: String,
     pub content: ClipboardContent,
     pub content_hash: String,
     pub timestamp_unix: i64,
@@ -50,7 +48,6 @@ impl StoredItem {
         };
         Self {
             id: None,
-            item_id: uuid::Uuid::new_v4().to_string(),
             content,
             content_hash,
             timestamp_unix: chrono::Utc::now().timestamp(),
@@ -73,7 +70,6 @@ impl StoredItem {
         let content_hash = Self::hash_bytes(&image_data);
         Self {
             id: None,
-            item_id: uuid::Uuid::new_v4().to_string(),
             content: ClipboardContent::Image {
                 data: image_data,
                 description: "Image".to_string(),
@@ -167,8 +163,10 @@ impl StoredItem {
 
         let display_name = format!("{} {}", type_prefix, items_summary);
 
+        // Build FileEntry vec (file_item_id=0 since not yet inserted)
         let files: Vec<FileEntry> = (0..file_count)
             .map(|i| FileEntry {
+                file_item_id: 0,
                 path: paths[i].clone(),
                 filename: filenames[i].clone(),
                 file_size: file_sizes[i],
@@ -180,7 +178,6 @@ impl StoredItem {
 
         Self {
             id: None,
-            item_id: uuid::Uuid::new_v4().to_string(),
             content: ClipboardContent::File {
                 display_name,
                 files,
@@ -244,25 +241,9 @@ impl StoredItem {
     pub fn to_metadata(&self) -> ItemMetadata {
         use crate::search::SNIPPET_CONTEXT_CHARS;
         ItemMetadata {
-            item_id: self.item_id.clone(),
+            item_id: self.id.unwrap_or(0),
             icon: self.item_icon(),
             snippet: self.display_text(SNIPPET_CONTEXT_CHARS * 2),
-            source_app: self.source_app.clone(),
-            source_app_bundle_id: self.source_app_bundle_id.clone(),
-            timestamp_unix: self.timestamp_unix,
-            tags: Vec::new(),
-        }
-    }
-
-    /// Convert to ItemMetadata using a presentation-profile-aware snippet.
-    pub fn to_metadata_for_profile(&self, profile: ListPresentationProfile) -> ItemMetadata {
-        ItemMetadata {
-            item_id: self.item_id.clone(),
-            icon: self.item_icon(),
-            snippet: crate::search::generate_preview_for_profile(
-                self.text_content(),
-                profile,
-            ),
             source_app: self.source_app.clone(),
             source_app_bundle_id: self.source_app_bundle_id.clone(),
             timestamp_unix: self.timestamp_unix,

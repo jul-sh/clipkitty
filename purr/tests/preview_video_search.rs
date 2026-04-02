@@ -6,7 +6,7 @@
 //! - Scene 2 (0:08-0:14): Color swatches "#" -> "#f", then image "cat"
 //! - Scene 3 (0:14-0:20): Typo forgiveness "rivresid" finds "Riverside"
 
-use purr::{ClipboardItem, ClipboardStore, ClipboardStoreApi, ListPresentationProfile};
+use purr::{ClipboardItem, ClipboardStore, ClipboardStoreApi};
 use tempfile::TempDir;
 
 fn get_content_text(item: &ClipboardItem) -> String {
@@ -45,11 +45,11 @@ fn create_ranking_test_store(items: Vec<&str>) -> (ClipboardStore, TempDir) {
 
 /// Get search result contents in order
 async fn search_contents(store: &ClipboardStore, query: &str) -> Vec<String> {
-    let result = store.search(query.to_string(), ListPresentationProfile::CompactRow).await.unwrap();
-    let ids: Vec<String> = result
+    let result = store.search(query.to_string()).await.unwrap();
+    let ids: Vec<i64> = result
         .matches
         .iter()
-        .map(|m| m.item_metadata.item_id.clone())
+        .map(|m| m.item_metadata.item_id)
         .collect();
     let items = store.fetch_by_ids(ids).unwrap();
     items.iter().map(get_content_text).collect()
@@ -119,16 +119,16 @@ async fn ranking_recency_breaks_ties_for_equal_matches() {
 
     // Verify all 3 were inserted (not deduplicated)
     assert!(
-        !id1.is_empty() && !id2.is_empty() && !id3.is_empty(),
+        id1 > 0 && id2 > 0 && id3 > 0,
         "All items should be inserted"
     );
 
     // Search for "hello " - all 3 have equal quantized Tantivy scores
-    let result = store.search("hello ".to_string(), ListPresentationProfile::CompactRow).await.unwrap();
-    let ids: Vec<String> = result
+    let result = store.search("hello ".to_string()).await.unwrap();
+    let ids: Vec<i64> = result
         .matches
         .iter()
-        .map(|m| m.item_metadata.item_id.clone())
+        .map(|m| m.item_metadata.item_id)
         .collect();
     let items = store.fetch_by_ids(ids.clone()).unwrap();
     let contents: Vec<String> = items.iter().map(get_content_text).collect();
@@ -143,11 +143,11 @@ async fn ranking_recency_breaks_ties_for_equal_matches() {
 
     // Verify deterministic ordering - with distinct timestamps, results should be stable
     for _ in 0..3 {
-        let result2 = store.search("hello ".to_string(), ListPresentationProfile::CompactRow).await.unwrap();
-        let ids2: Vec<String> = result2
+        let result2 = store.search("hello ".to_string()).await.unwrap();
+        let ids2: Vec<i64> = result2
             .matches
             .iter()
-            .map(|m| m.item_metadata.item_id.clone())
+            .map(|m| m.item_metadata.item_id)
             .collect();
         assert_eq!(ids, ids2, "Search ordering should be deterministic");
     }
@@ -574,11 +574,11 @@ tee: gateway_42235.log: Transport endpoint is not connected
 
     let (store, _temp) = create_ranking_test_store(vec![content]);
 
-    let result = store.search(query.to_string(), ListPresentationProfile::CompactRow).await.unwrap();
-    let ids: Vec<String> = result
+    let result = store.search(query.to_string()).await.unwrap();
+    let ids: Vec<i64> = result
         .matches
         .iter()
-        .map(|m| m.item_metadata.item_id.clone())
+        .map(|m| m.item_metadata.item_id)
         .collect();
     let items = store.fetch_by_ids(ids).unwrap();
     let contents: Vec<String> = items.iter().map(get_content_text).collect();

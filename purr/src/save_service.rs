@@ -4,71 +4,13 @@ use crate::interface::{ClipKittyError, ItemTag, LinkMetadataPayload, LinkMetadat
 use crate::models::StoredItem;
 use chrono::Utc;
 
-// ═══════════════════════════════════════════════════════════════════════════════
-// Outcome types — callers use these to decide what sync events to emit.
-// ═══════════════════════════════════════════════════════════════════════════════
-
-/// Outcome of a save operation that may deduplicate.
-#[allow(dead_code)]
-pub(crate) enum InsertOutcome {
-    /// A duplicate was found; the existing item was touched.
-    Deduplicated {
-        existing_id: i64,
-        item_id: String,
-        touched_at_unix: i64,
-    },
-    /// A new item was inserted.
-    Inserted {
-        new_id: i64,
-        item_id: String,
-        item: StoredItem,
-    },
-}
-
-impl InsertOutcome {
-    /// Return the FFI-facing item_id (empty string for dedupe, stable item_id for new).
-    pub(crate) fn ffi_id(&self) -> String {
-        match self {
-            InsertOutcome::Deduplicated { .. } => String::new(),
-            InsertOutcome::Inserted { item_id, .. } => item_id.clone(),
-        }
-    }
-}
-
-/// Outcome of a re-indexing operation.
-pub(crate) enum ReindexOutcome {
-    /// Indexing succeeded.
-    Indexed,
-    /// Indexing failed; the search index is now stale.
-    IndexFailed,
-}
-
-/// Resolved link metadata fields after normalization.
-#[allow(dead_code)]
-pub(crate) struct ResolvedLinkMetadata {
-    pub title: Option<String>,
-    pub description: Option<String>,
-    pub image_data: Option<Vec<u8>>,
-}
-
-/// Outcome of a prune operation.
-#[allow(dead_code)]
-pub(crate) struct PruneOutcome {
-    pub deleted_ids: Vec<String>,
-    pub bytes_freed: u64,
-}
-
-// ═══════════════════════════════════════════════════════════════════════════════
-// Save operations — pure local mutations (DB + indexer).
-// ═══════════════════════════════════════════════════════════════════════════════
-
 pub(crate) fn save_text(
     db: &Database,
     indexer: &Indexer,
     text: String,
     source_app: Option<String>,
     source_app_bundle_id: Option<String>,
-) -> Result<InsertOutcome, ClipKittyError> {
+) -> Result<i64, ClipKittyError> {
     let item = StoredItem::new_text(text, source_app, source_app_bundle_id);
     dedupe_or_insert_and_index(db, indexer, item)
 }
@@ -85,7 +27,7 @@ pub(crate) fn save_file(
     thumbnail: Option<Vec<u8>>,
     source_app: Option<String>,
     source_app_bundle_id: Option<String>,
-) -> Result<InsertOutcome, ClipKittyError> {
+) -> Result<i64, ClipKittyError> {
     let item = StoredItem::new_file(
         path,
         filename,
@@ -111,7 +53,7 @@ pub(crate) fn save_files(
     thumbnail: Option<Vec<u8>>,
     source_app: Option<String>,
     source_app_bundle_id: Option<String>,
-) -> Result<InsertOutcome, ClipKittyError> {
+) -> Result<i64, ClipKittyError> {
     let item = StoredItem::new_files(
         paths,
         filenames,
@@ -133,7 +75,7 @@ pub(crate) fn save_image(
     source_app: Option<String>,
     source_app_bundle_id: Option<String>,
     is_animated: bool,
-) -> Result<InsertOutcome, ClipKittyError> {
+) -> Result<i64, ClipKittyError> {
     if image_data.is_empty() {
         return Err(ClipKittyError::InvalidInput("Empty image data".into()));
     }
@@ -154,7 +96,7 @@ pub(crate) fn update_link_metadata(
     title: Option<String>,
     description: Option<String>,
     image_data: Option<Vec<u8>>,
-) -> Result<ResolvedLinkMetadata, ClipKittyError> {
+) -> Result<(), ClipKittyError> {
     let title = title.and_then(non_empty);
     let description = description.and_then(non_empty);
     let state = match (title, description, image_data) {
@@ -178,19 +120,13 @@ pub(crate) fn update_link_metadata(
         },
     };
     let (title, description, image_data) = state.to_database_fields();
-
     db.update_link_metadata(
         item_id,
         title.as_deref(),
         description.as_deref(),
         image_data.as_deref(),
     )?;
-
-    Ok(ResolvedLinkMetadata {
-        title,
-        description,
-        image_data,
-    })
+    Ok(())
 }
 
 pub(crate) fn update_image_description(
@@ -198,18 +134,13 @@ pub(crate) fn update_image_description(
     indexer: &Indexer,
     item_id: i64,
     description: String,
-) -> Result<ReindexOutcome, ClipKittyError> {
+) -> Result<(), ClipKittyError> {
     db.update_image_description(item_id, &description)?;
     if let Some(item) = get_stored_item(db, item_id)? {
-        if indexer
-            .add_document(&item.item_id, &description, item.timestamp_unix)
-            .is_err()
-        {
-            return Ok(ReindexOutcome::IndexFailed);
-        }
-        let _ = indexer.commit();
+        indexer.add_document(item_id, &description, item.timestamp_unix)?;
+        indexer.commit()?;
     }
-    Ok(ReindexOutcome::Indexed)
+    Ok(())
 }
 
 pub(crate) fn update_text_item(
@@ -217,26 +148,28 @@ pub(crate) fn update_text_item(
     indexer: &Indexer,
     item_id: i64,
     text: String,
-) -> Result<ReindexOutcome, ClipKittyError> {
+) -> Result<(), ClipKittyError> {
     let content_hash = StoredItem::hash_string(&text);
-
     db.update_text_item(item_id, &text, &content_hash)?;
     if let Some(item) = get_stored_item(db, item_id)? {
-        if indexer
-            .add_document(&item.item_id, &text, item.timestamp_unix)
-            .is_err()
-        {
-            return Ok(ReindexOutcome::IndexFailed);
-        }
-        let _ = indexer.commit();
+        indexer.add_document(item_id, &text, item.timestamp_unix)?;
+        indexer.commit()?;
     }
-    Ok(ReindexOutcome::Indexed)
+    Ok(())
 }
 
-pub(crate) fn update_timestamp(db: &Database, item_id: i64) -> Result<i64, ClipKittyError> {
+pub(crate) fn update_timestamp(
+    db: &Database,
+    indexer: &Indexer,
+    item_id: i64,
+) -> Result<(), ClipKittyError> {
     let now = Utc::now();
     db.update_timestamp(item_id, now)?;
-    Ok(now.timestamp())
+    if let Some(item) = get_stored_item(db, item_id)? {
+        indexer.add_document(item_id, item.text_content(), now.timestamp())?;
+        indexer.commit()?;
+    }
+    Ok(())
 }
 
 pub(crate) fn add_tag(db: &Database, item_id: i64, tag: ItemTag) -> Result<(), ClipKittyError> {
@@ -254,14 +187,9 @@ pub(crate) fn delete_item(
     indexer: &Indexer,
     item_id: i64,
 ) -> Result<(), ClipKittyError> {
-    // Fetch the string item_id before deleting from DB (needed for index deletion).
-    let string_item_id = get_stored_item(db, item_id)?
-        .map(|item| item.item_id);
     db.delete_item(item_id)?;
-    if let Some(sid) = string_item_id {
-        indexer.delete_document(&sid)?;
-        indexer.commit()?;
-    }
+    indexer.delete_document(item_id)?;
+    indexer.commit()?;
     Ok(())
 }
 
@@ -276,58 +204,37 @@ pub(crate) fn prune_to_size(
     indexer: &Indexer,
     max_bytes: i64,
     keep_ratio: f64,
-) -> Result<PruneOutcome, ClipKittyError> {
-    let prunable = db.get_prunable_ids(max_bytes, keep_ratio)?;
-
-    for (_row_id, item_id) in &prunable {
-        indexer.delete_document(item_id)?;
+) -> Result<u64, ClipKittyError> {
+    let deleted_ids = db.get_prunable_ids(max_bytes, keep_ratio)?;
+    for id in &deleted_ids {
+        indexer.delete_document(*id)?;
     }
-    if !prunable.is_empty() {
+    if !deleted_ids.is_empty() {
         indexer.commit()?;
     }
-    let deleted_ids: Vec<String> = prunable.into_iter().map(|(_, item_id)| item_id).collect();
-    let bytes_freed = db.prune_to_size(max_bytes, keep_ratio)? as u64;
-    Ok(PruneOutcome {
-        deleted_ids,
-        bytes_freed,
-    })
+    Ok(db.prune_to_size(max_bytes, keep_ratio)? as u64)
 }
-
-// ═══════════════════════════════════════════════════════════════════════════════
-// Internal helpers
-// ═══════════════════════════════════════════════════════════════════════════════
 
 fn dedupe_or_insert_and_index(
     db: &Database,
     indexer: &Indexer,
     item: StoredItem,
-) -> Result<InsertOutcome, ClipKittyError> {
+) -> Result<i64, ClipKittyError> {
     if let Some(existing) = db.find_by_hash(&item.content_hash)? {
         if let Some(id) = existing.id {
             let now = Utc::now();
             db.update_timestamp(id, now)?;
-            indexer.add_document(&existing.item_id, &index_text(&existing), now.timestamp())?;
+            indexer.add_document(id, &index_text(&existing), now.timestamp())?;
             indexer.commit()?;
-
-            return Ok(InsertOutcome::Deduplicated {
-                existing_id: id,
-                item_id: existing.item_id.clone(),
-                touched_at_unix: now.timestamp(),
-            });
+            return Ok(0);
         }
     }
 
     let index_text = index_text(&item);
-    let stable_item_id = item.item_id.clone();
     let id = db.insert_item(&item)?;
-    indexer.add_document(&item.item_id, &index_text, item.timestamp_unix)?;
+    indexer.add_document(id, &index_text, item.timestamp_unix)?;
     indexer.commit()?;
-
-    Ok(InsertOutcome::Inserted {
-        new_id: id,
-        item_id: stable_item_id,
-        item,
-    })
+    Ok(id)
 }
 
 fn get_stored_item(db: &Database, item_id: i64) -> Result<Option<StoredItem>, ClipKittyError> {

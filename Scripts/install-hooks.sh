@@ -87,19 +87,6 @@ if [ \$LINT_ERRORS -eq 1 ]; then
 fi
 
 echo -e \"\${GREEN}✓ No hardcoded UI strings found\${NC}\"
-
-# --- Check localization catalog completeness ---
-SCRIPT_DIR_ROOT=\"\$(cd \"\$(dirname \"\$0\")/../..\" && pwd)\"
-LOCALIZATION_SCRIPT=\"\$SCRIPT_DIR_ROOT/Scripts/check-localization.sh\"
-
-if [ -x \"\$LOCALIZATION_SCRIPT\" ]; then
-    STAGED_FOR_L10N=\$(git diff --cached --name-only --diff-filter=ACM | grep -E '\.swift\$' || true)
-    if [ -n \"\$STAGED_FOR_L10N\" ]; then
-        \"\$LOCALIZATION_SCRIPT\" \$STAGED_FOR_L10N || exit 1
-    fi
-else
-    echo -e \"\${YELLOW}Warning: Scripts/check-localization.sh not found, skipping localization check\${NC}\"
-fi
 "
 HOOK
 
