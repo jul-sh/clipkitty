@@ -27,7 +27,7 @@ SIGNING_IDENTITY ?= $(shell security find-identity -v -p codesigning 2>/dev/null
 RUST_MARKER := .make/rust.marker
 RUST_LIB := Sources/ClipKittyRust/libpurr.a
 
-.PHONY: all clean rust rust-force generate build signing sign list-identities run run-perf test unittest uitest rust-test perf-test perf-db perf-bench
+.PHONY: all clean rust rust-force generate build sign list-identities run run-perf test unittest uitest rust-test perf-test perf-db perf-bench
 
 all: rust generate build
 
@@ -56,12 +56,8 @@ generate:
 	@echo "Generating Xcode project..."
 	@tuist generate --no-open
 
-# Ensure Developer ID signing certificate is available
-signing:
-	@./distribution/setup-dev-signing.sh
-
 # Build using xcodebuild
-build: signing
+build:
 	@echo "Building $(APP_NAME) ($(CONFIGURATION))..."
 	@xcodebuild -workspace $(APP_NAME).xcworkspace \
 		-scheme $(APP_NAME) \

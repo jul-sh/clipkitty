@@ -140,14 +140,6 @@ jobs:
           cd DerivedData/Build/Products/AppStore
           zip -r "$GITHUB_WORKSPACE/ClipKitty-AppStore.zip" ClipKitty.app
 
-      - name: Build iOS Smoke Test
-        run: |
-          xcodebuild build \
-            -target ClipKittyiOSSmokeTest \
-            -sdk iphoneos \
-            CODE_SIGNING_ALLOWED=NO \
-            ONLY_ACTIVE_ARCH=YES
-
       - name: Run UI Tests
         run: |
           xcodebuild test \
@@ -194,7 +186,7 @@ jobs:
 
           # Sign the outer app (must come last)
           codesign --force --options runtime --timestamp --sign "Developer ID Application" \
-            --entitlements Sources/MacApp/ClipKitty.oss.entitlements \
+            --entitlements Sources/App/ClipKitty.oss.entitlements \
             "$APP"
           codesign --verify --deep --strict "$APP"
 
@@ -439,25 +431,6 @@ jobs:
           lfs: true
           fetch-depth: 0
 
-      - name: Decrypt secrets
-        run: |
-          brew install age
-          echo "$AGE_SECRET_KEY" > /tmp/age-key.txt
-          chmod 600 /tmp/age-key.txt
-          for f in secrets/*.age; do
-            name=$(basename "$f" .age)
-            value=$(age -d -i /tmp/age-key.txt "$f")
-            echo "::add-mask::$value"
-            {
-              echo "${name}<<AGEDELIM"
-              echo "$value"
-              echo "AGEDELIM"
-            } >> "$GITHUB_OUTPUT"
-          done
-          rm -f /tmp/age-key.txt
-        env:
-          AGE_SECRET_KEY: ${{ secrets.AGE_SECRET_KEY }}
-
       - name: Setup Swift
         uses: swift-actions/setup-swift@v2
         with:
@@ -483,9 +456,6 @@ jobs:
 
       - name: Build App
         run: make build UNIVERSAL=1
-
-      - name: Generate Localized Demo Databases
-        run: ./distribution/patch-demo-items.sh
 
       - name: Create Virtual Retina Display
         run: |

@@ -32,3 +32,30 @@ prepend_keychain_to_search_list() {
     existing=$(security list-keychains -d user | tr -d '" ' | tr '\n' ' ')
     security list-keychains -d user -s "$keychain_path" $existing
 }
+
+# Remove stale temporary keychains from the search list.
+# Locked temp keychains (from this or other projects) cause errSecInternalComponent
+# failures because macOS prompts for passwords during codesign.
+purge_stale_temp_keychains() {
+    local keychains
+    keychains=$(security list-keychains -d user | tr -d '" ')
+    local clean_list=()
+    for kc in $keychains; do
+        # Keep the login keychain and any system keychains
+        case "$kc" in
+            */login.keychain*|/Library/*)
+                clean_list+=("$kc")
+                ;;
+            *)
+                # Test if we can access it without prompting
+                if security show-keychain-info "$kc" >/dev/null 2>&1; then
+                    clean_list+=("$kc")
+                else
+                    echo "Removing stale keychain from search list: $(basename "$kc")"
+                    security delete-keychain "$kc" 2>/dev/null || true
+                fi
+                ;;
+        esac
+    done
+    security list-keychains -d user -s "${clean_list[@]}"
+}

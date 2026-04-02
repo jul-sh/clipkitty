@@ -1,8 +1,7 @@
-import XCTest
 import ClipKittyRust
+import XCTest
 
 final class MultiFileTests: XCTestCase {
-
     // MARK: - Rust Store Integration
 
     private func makeStore() throws -> ClipKittyRust.ClipboardStore {
@@ -33,7 +32,7 @@ final class MultiFileTests: XCTestCase {
         let items = try store.fetchByIds(itemIds: [id])
         XCTAssertEqual(items.count, 1)
 
-        guard case .file(let displayName, let files) = items[0].content else {
+        guard case let .file(displayName, files) = items[0].content else {
             XCTFail("Expected File content, got \(items[0].content)")
             return
         }
@@ -63,7 +62,7 @@ final class MultiFileTests: XCTestCase {
         XCTAssertGreaterThan(id, 0)
 
         let items = try store.fetchByIds(itemIds: [id])
-        guard case .file(let displayName, let files) = items[0].content else {
+        guard case let .file(displayName, files) = items[0].content else {
             XCTFail("Expected File content")
             return
         }
@@ -235,7 +234,7 @@ final class MultiFileTests: XCTestCase {
         )
 
         let items = try store.fetchByIds(itemIds: [id])
-        guard case .file(_, let files) = items[0].content else {
+        guard case let .file(_, files) = items[0].content else {
             XCTFail("Expected File content")
             return
         }

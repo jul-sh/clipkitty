@@ -1,8 +1,7 @@
-import XCTest
 import ClipKittyRust
+import XCTest
 
 final class EditablePreviewTests: XCTestCase {
-
     // MARK: - Test Helpers
 
     private func makeStore() throws -> ClipKittyRust.ClipboardStore {
@@ -114,9 +113,9 @@ final class EditablePreviewTests: XCTestCase {
 
         // Rust auto-detects color format
         switch items[0].content {
-        case .color(let value):
+        case let .color(value):
             XCTAssertEqual(value, "#FF5733", "Color value should be preserved")
-        case .text(let value):
+        case let .text(value):
             // Also acceptable if color detection happens differently
             XCTAssertEqual(value, "#FF5733", "Text value should be preserved")
         default:
@@ -233,9 +232,9 @@ final class EditablePreviewTests: XCTestCase {
 
         // Rust auto-detects URLs
         switch items[0].content {
-        case .link(let url, _):
+        case let .link(url, _):
             XCTAssertEqual(url, "https://github.com/example/repo", "URL should be preserved")
-        case .text(let value):
+        case let .text(value):
             // Some implementations may keep it as text
             XCTAssertEqual(value, "https://github.com/example/repo")
         default:
