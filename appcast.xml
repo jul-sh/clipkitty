@@ -5,13 +5,13 @@
     <link>https://jul-sh.github.io/clipkitty/appcast.xml</link>
     <language>en</language>
     <item>
-      <title>ClipKitty 1.11.1129 Beta</title>
-      <sparkle:version>1.11.1129</sparkle:version>
-      <sparkle:shortVersionString>1.11.1129</sparkle:shortVersionString>
+      <title>ClipKitty 1.11.1130 Beta</title>
+      <sparkle:version>1.11.1130</sparkle:version>
+      <sparkle:shortVersionString>1.11.1130</sparkle:shortVersionString>
       <sparkle:minimumSystemVersion>14.0</sparkle:minimumSystemVersion>
       <sparkle:channel>beta</sparkle:channel>
-      <pubDate>Thu, 02 Apr 2026 20:52:36 +0000</pubDate>
-      <enclosure url="https://github.com/jul-sh/clipkitty/releases/download/v1.11.1129-beta/ClipKitty.dmg" type="application/octet-stream" sparkle:edSignature="5C79TL/A939/NDITxBY1NmRrKhMQ5JTqwZLGyUYKULbTyWZnV8Wn32SFwSWtk7r1kfXbHDHi1ucin5G+dM4LCQ==" length="15072622"/>
+      <pubDate>Thu, 02 Apr 2026 22:47:57 +0000</pubDate>
+      <enclosure url="https://github.com/jul-sh/clipkitty/releases/download/v1.11.1130-beta/ClipKitty.dmg" type="application/octet-stream" sparkle:edSignature="hRLI2xyMCcHb9PhEwNIZLIZcsZKd4iH5rze6COZaBeohG2FsbM2747N3Ef/7RzEKyj5gQNtSXNJZ9D7NHAhrBg==" length="15093501"/>
     </item>
     <item>
       <title>ClipKitty 1.11.1153</title>
