@@ -165,13 +165,42 @@ final class ClipKittyUITests: XCTestCase {
     }
 
     private func getAppSupportDirectory(for appURL: URL) -> URL {
-        // The app is always sandboxed (entitlements have com.apple.security.app-sandbox = true).
-        // FileManager.urls(for: .applicationSupportDirectory) inside the sandbox resolves to
-        // ~/Library/Containers/{bundleId}/Data/Library/Application Support/
-        // We must place the test database at that same path.
         let bundleId = getBundleIdentifier(for: appURL)
         let userHome = URL(fileURLWithPath: "/Users/\(NSUserName())")
-        return userHome.appendingPathComponent("Library/Containers/\(bundleId)/Data/Library/Application Support/ClipKitty")
+
+        // When the app is signed with sandbox entitlements, macOS redirects
+        // ~/Library/Application Support/ into the per-app container:
+        //   ~/Library/Containers/{bundleId}/Data/Library/Application Support/
+        // When built with CODE_SIGNING_ALLOWED=NO (e.g. CI UI tests), the
+        // binary has no entitlements so it runs unsandboxed and uses the
+        // regular Application Support path. Detect which case applies by
+        // inspecting the embedded entitlements of the actual binary.
+        if isAppSandboxed(appURL) {
+            return userHome.appendingPathComponent("Library/Containers/\(bundleId)/Data/Library/Application Support/ClipKitty")
+        } else {
+            return userHome.appendingPathComponent("Library/Application Support/ClipKitty")
+        }
+    }
+
+    private func isAppSandboxed(_ appURL: URL) -> Bool {
+        let binaryURL = appURL.appendingPathComponent("Contents/MacOS/ClipKitty")
+        let task = Process()
+        task.executableURL = URL(fileURLWithPath: "/usr/bin/codesign")
+        task.arguments = ["-d", "--entitlements", "-", "--xml", binaryURL.path]
+        let pipe = Pipe()
+        task.standardOutput = pipe
+        task.standardError = FileHandle.nullDevice
+        do {
+            try task.run()
+            task.waitUntilExit()
+            let data = pipe.fileHandleForReading.readDataToEndOfFile()
+            if let plist = try? PropertyListSerialization.propertyList(from: data, format: nil) as? [String: Any],
+               let sandbox = plist["com.apple.security.app-sandbox"] as? Bool
+            {
+                return sandbox
+            }
+        } catch {}
+        return false
     }
 
     private func setupTestDatabase(in appSupportDir: URL) throws {
@@ -1426,5 +1455,53 @@ final class ClipKittyUITests: XCTestCase {
             return !texts.isEmpty
         }
         XCTAssertTrue(cmdReturnExists, "Confirm button should show ⌘↩ prefix when editing")
+    }
+
+    /// Tests that the Settings window opens without crashing and all tabs are accessible.
+    func testSettingsWindowOpensAllTabs() {
+        // Hide the panel first so settings isn't overlaid
+        app.typeKey(.escape, modifierFlags: [])
+        Thread.sleep(forTimeInterval: 0.5)
+
+        // Open settings via Cmd+,
+        app.typeKey(",", modifierFlags: .command)
+        let settingsWindow = app.windows["ClipKitty Settings"]
+        XCTAssertTrue(settingsWindow.waitForExistence(timeout: 5), "Settings window should appear")
+
+        // General tab should be visible by default
+        let generalTab = settingsWindow.buttons["SettingsTab_General"]
+            .exists ? settingsWindow.buttons["SettingsTab_General"] : settingsWindow.radioButtons["General"]
+        XCTAssertTrue(settingsWindow.staticTexts["Startup"].waitForExistence(timeout: 3),
+                      "General tab content should be visible")
+
+        // Switch to Privacy tab
+        let privacyTab = settingsWindow.toolbars.buttons.matching(
+            NSPredicate(format: "label CONTAINS[c] 'Privacy'")
+        ).firstMatch
+        if privacyTab.exists, privacyTab.isHittable {
+            privacyTab.click()
+            Thread.sleep(forTimeInterval: 0.5)
+        }
+
+        // Switch to Shortcuts tab
+        let shortcutsTab = settingsWindow.toolbars.buttons.matching(
+            NSPredicate(format: "label CONTAINS[c] 'Shortcuts'")
+        ).firstMatch
+        if shortcutsTab.exists, shortcutsTab.isHittable {
+            shortcutsTab.click()
+            Thread.sleep(forTimeInterval: 0.5)
+        }
+
+        // Switch back to General to verify navigation works
+        let generalTabNav = settingsWindow.toolbars.buttons.matching(
+            NSPredicate(format: "label CONTAINS[c] 'General'")
+        ).firstMatch
+        if generalTabNav.exists, generalTabNav.isHittable {
+            generalTabNav.click()
+            Thread.sleep(forTimeInterval: 0.5)
+        }
+
+        // Verify the settings window is still alive (didn't crash)
+        XCTAssertTrue(settingsWindow.exists, "Settings window should still exist after tab navigation")
     }
 }

@@ -11,6 +11,7 @@ import sqlite3
 import sys
 import csv
 import json
+import uuid
 from datetime import datetime, timedelta
 from pathlib import Path
 
@@ -130,10 +131,11 @@ def main():
             continue
 
         # Insert into items table with proper timestamp
+        item_uuid = str(uuid.uuid4())
         cursor.execute("""
-            INSERT INTO items (contentType, contentHash, content, timestamp, sourceApp, sourceAppBundleId, thumbnail)
-            VALUES ('image', ?, ?, ?, ?, ?, ?)
-        """, (content_hash, description, timestamp_str, source_app, bundle_id, thumbnail_data))
+            INSERT INTO items (item_id, contentType, contentHash, content, timestamp, sourceApp, sourceAppBundleId, thumbnail)
+            VALUES (?, 'image', ?, ?, ?, ?, ?, ?)
+        """, (item_uuid, content_hash, description, timestamp_str, source_app, bundle_id, thumbnail_data))
 
         item_id = cursor.lastrowid
 

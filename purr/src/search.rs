@@ -9,7 +9,8 @@
 use crate::indexer::Indexer;
 use crate::interface::ClipKittyError;
 use crate::interface::{
-    HighlightKind, ItemMatch, ItemMetadata, PreviewDecoration, RowDecoration, Utf16HighlightRange,
+    HighlightKind, ItemMatch, ItemMetadata, ListDecoration, ListPresentationProfile,
+    PreviewDecoration, Utf16HighlightRange,
 };
 use crate::ranking::{
     does_word_match, does_word_match_fast, does_word_match_fast_raw, prefix_match_for_query_word,
@@ -24,6 +25,45 @@ pub(crate) const MIN_TRIGRAM_QUERY_LEN: usize = 3;
 
 /// Context chars to include before/after match in snippet
 pub(crate) const SNIPPET_CONTEXT_CHARS: usize = 200;
+
+// ─────────────────────────────────────────────────────────────────────────────
+// Excerpt policy — profile-driven formatting
+// ─────────────────────────────────────────────────────────────────────────────
+
+/// How whitespace is treated during snippet normalization.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub(crate) enum WhitespaceMode {
+    /// Collapse all whitespace (newlines, tabs, runs of spaces) into a single space.
+    CollapseAll,
+    /// Preserve single line breaks; collapse runs of 3+ newlines into 2; collapse
+    /// tabs and horizontal whitespace runs into a single space.
+    PreserveLineBreaks,
+}
+
+/// Controls how excerpts are formatted for a given presentation profile.
+#[derive(Debug, Clone, Copy)]
+pub(crate) struct ExcerptPolicy {
+    pub(crate) whitespace_mode: WhitespaceMode,
+    pub(crate) max_chars: usize,
+    pub(crate) context_chars: usize,
+}
+
+impl ExcerptPolicy {
+    pub(crate) fn for_profile(profile: ListPresentationProfile) -> Self {
+        match profile {
+            ListPresentationProfile::CompactRow => Self {
+                whitespace_mode: WhitespaceMode::CollapseAll,
+                max_chars: SNIPPET_CONTEXT_CHARS * 2, // 400
+                context_chars: SNIPPET_CONTEXT_CHARS,  // 200
+            },
+            ListPresentationProfile::Card => Self {
+                whitespace_mode: WhitespaceMode::PreserveLineBreaks,
+                max_chars: SNIPPET_CONTEXT_CHARS * 4, // 800
+                context_chars: SNIPPET_CONTEXT_CHARS * 2, // 400
+            },
+        }
+    }
+}
 
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub(crate) enum SearchQuery {
@@ -164,7 +204,8 @@ fn limit_preview_highlights(
                 .iter()
                 .enumerate()
                 .filter_map(|(index, highlight)| {
-                    (highlight.end >= window_start && highlight.start <= window_end).then_some(index)
+                    (highlight.end >= window_start && highlight.start <= window_end)
+                        .then_some(index)
                 })
                 .collect();
 
@@ -517,14 +558,35 @@ pub(crate) fn generate_snippet(
     highlights: &[HighlightRange],
     max_len: usize,
 ) -> (String, Vec<HighlightRange>, u64) {
+    let policy = ExcerptPolicy {
+        whitespace_mode: WhitespaceMode::CollapseAll,
+        max_chars: max_len,
+        context_chars: SNIPPET_CONTEXT_CHARS,
+    };
+    generate_snippet_with_policy(content, highlights, &policy)
+}
+
+/// Generate a text snippet using a presentation-profile-driven policy.
+pub(crate) fn generate_snippet_with_policy(
+    content: &str,
+    highlights: &[HighlightRange],
+    policy: &ExcerptPolicy,
+) -> (String, Vec<HighlightRange>, u64) {
+    let max_len = policy.max_chars;
     let content_char_len = content.chars().count();
 
     if highlights.is_empty() {
-        let preview = normalize_snippet(content, 0, content_char_len, max_len);
+        let (preview, _) = normalize_snippet_with_mapping_ws(
+            content,
+            0,
+            content_char_len,
+            max_len,
+            policy.whitespace_mode,
+        );
         return (preview, Vec::new(), 0);
     }
 
-    let density_window = SNIPPET_CONTEXT_CHARS as u64;
+    let density_window = policy.context_chars as u64;
     let center_idx = find_densest_highlight(highlights, density_window).unwrap_or(0);
     let center_highlight = &highlights[center_idx];
     let match_start_char = center_highlight.start as usize;
@@ -541,7 +603,7 @@ pub(crate) fn generate_snippet(
     let remaining_space = max_len.saturating_sub(match_char_len);
 
     let context_before = (remaining_space / 2)
-        .min(SNIPPET_CONTEXT_CHARS)
+        .min(policy.context_chars)
         .min(match_start_char);
     let context_after =
         (remaining_space - context_before).min(content_char_len.saturating_sub(match_end_char));
@@ -574,11 +636,12 @@ pub(crate) fn generate_snippet(
             0
         });
     let effective_max_len = max_len.saturating_sub(ellipsis_reserve);
-    let (normalized_snippet, pos_map) = normalize_snippet_with_mapping(
+    let (normalized_snippet, pos_map) = normalize_snippet_with_mapping_ws(
         content,
         snippet_start_char,
         snippet_end_char,
         effective_max_len,
+        policy.whitespace_mode,
     );
 
     let truncated_from_start = snippet_start_char > 0;
@@ -618,13 +681,18 @@ pub(crate) fn generate_snippet(
     (final_snippet, adjusted_highlights, line_number)
 }
 
-/// Create row decoration from full-content scalar highlights.
-pub(crate) fn create_row_decoration(content: &str, highlights: &[HighlightRange]) -> RowDecoration {
-    let max_len = SNIPPET_CONTEXT_CHARS * 2;
-    let (text, adjusted_highlights, line_number) = generate_snippet(content, highlights, max_len);
+/// Create list decoration from full-content scalar highlights, using a presentation profile.
+pub(crate) fn create_list_decoration(
+    content: &str,
+    highlights: &[HighlightRange],
+    profile: ListPresentationProfile,
+) -> ListDecoration {
+    let policy = ExcerptPolicy::for_profile(profile);
+    let (text, adjusted_highlights, line_number) =
+        generate_snippet_with_policy(content, highlights, &policy);
     let highlights = scalar_highlights_to_utf16(&text, &adjusted_highlights);
 
-    RowDecoration {
+    ListDecoration {
         text,
         highlights,
         line_number,
@@ -679,7 +747,7 @@ pub(crate) fn create_preview_decoration_with_char_offset(
 pub(crate) fn create_lazy_item_match_with_metadata(item_metadata: ItemMetadata) -> ItemMatch {
     ItemMatch {
         item_metadata,
-        row_decoration: None,
+        list_decoration: None,
     }
 }
 
@@ -835,13 +903,17 @@ fn compute_word_match_highlights(content: &str, query: &str) -> Vec<HighlightRan
         .collect()
 }
 
-/// Compute row decoration for an item given a query.
-pub(crate) fn compute_row_decoration(content: &str, query: &str) -> RowDecoration {
+/// Compute list decoration for an item given a query and presentation profile.
+pub(crate) fn compute_list_decoration(
+    content: &str,
+    query: &str,
+    profile: ListPresentationProfile,
+) -> ListDecoration {
     let trimmed = query.trim();
     if trimmed.is_empty() {
-        let max_len = SNIPPET_CONTEXT_CHARS * 2;
-        let (text, _, _) = generate_snippet(content, &[], max_len);
-        return RowDecoration {
+        let policy = ExcerptPolicy::for_profile(profile);
+        let (text, _, _) = generate_snippet_with_policy(content, &[], &policy);
+        return ListDecoration {
             text,
             highlights: Vec::new(),
             line_number: 0,
@@ -850,7 +922,7 @@ pub(crate) fn compute_row_decoration(content: &str, query: &str) -> RowDecoratio
 
     let analysis =
         analyze_content_for_query(content, trimmed).expect("non-empty query should analyze");
-    create_row_decoration(content, &analysis.highlights)
+    create_list_decoration(content, &analysis.highlights, profile)
 }
 
 /// Tokenize text into tokens with char offsets.
@@ -889,11 +961,12 @@ pub(crate) fn is_word_token(token: &str) -> bool {
     token.starts_with(|c: char| c.is_alphanumeric())
 }
 
-fn normalize_snippet_with_mapping(
+fn normalize_snippet_with_mapping_ws(
     content: &str,
     start: usize,
     end: usize,
     max_chars: usize,
+    ws_mode: WhitespaceMode,
 ) -> (String, Vec<usize>) {
     if end <= start {
         return (String::new(), vec![0]);
@@ -902,6 +975,7 @@ fn normalize_snippet_with_mapping(
     let mut result = String::with_capacity(max_chars);
     let mut pos_map = Vec::with_capacity(end - start + 1);
     let mut last_was_space = false;
+    let mut consecutive_newlines: usize = 0;
     let mut norm_idx = 0;
 
     for ch in content.chars().skip(start).take(end - start) {
@@ -911,27 +985,61 @@ fn normalize_snippet_with_mapping(
             continue;
         }
 
-        let ch = match ch {
-            '\n' | '\t' | '\r' => ' ',
-            c => c,
-        };
-
-        if ch == ' ' {
-            if last_was_space {
-                continue;
+        match ws_mode {
+            WhitespaceMode::CollapseAll => {
+                let ch = match ch {
+                    '\n' | '\t' | '\r' => ' ',
+                    c => c,
+                };
+                if ch == ' ' {
+                    if last_was_space {
+                        continue;
+                    }
+                    last_was_space = true;
+                } else {
+                    last_was_space = false;
+                }
+                result.push(ch);
+                norm_idx += 1;
             }
-            last_was_space = true;
-        } else {
-            last_was_space = false;
+            WhitespaceMode::PreserveLineBreaks => {
+                if ch == '\n' {
+                    consecutive_newlines += 1;
+                    last_was_space = false;
+                    // Collapse 3+ newlines into 2 (one blank line)
+                    if consecutive_newlines <= 2 {
+                        result.push('\n');
+                        norm_idx += 1;
+                    }
+                    continue;
+                }
+                if ch == '\r' {
+                    // Skip carriage returns entirely
+                    continue;
+                }
+                consecutive_newlines = 0;
+                let ch = match ch {
+                    '\t' => ' ',
+                    c => c,
+                };
+                if ch == ' ' {
+                    if last_was_space {
+                        continue;
+                    }
+                    last_was_space = true;
+                } else {
+                    last_was_space = false;
+                }
+                result.push(ch);
+                norm_idx += 1;
+            }
         }
-
-        result.push(ch);
-        norm_idx += 1;
     }
 
     pos_map.push(norm_idx);
 
-    if result.ends_with(' ') {
+    // Trim trailing whitespace
+    while result.ends_with(' ') || result.ends_with('\n') {
         result.pop();
     }
 
@@ -942,15 +1050,29 @@ fn map_position(orig_pos: usize, pos_map: &[usize]) -> Option<usize> {
     pos_map.get(orig_pos).copied()
 }
 
-fn normalize_snippet(content: &str, start: usize, end: usize, max_chars: usize) -> String {
-    normalize_snippet_with_mapping(content, start, end, max_chars).0
-}
-
-/// Generate a preview from content (no highlights, starts from beginning)
+/// Generate a preview from content (no highlights, starts from beginning).
+/// Uses CollapseAll whitespace mode (compact row behavior).
 pub fn generate_preview(content: &str, max_chars: usize) -> String {
     let trimmed = content.trim_start();
     let (preview, _, _) = generate_snippet(trimmed, &[], max_chars);
     preview
+}
+
+/// Generate a preview using a presentation profile's excerpt policy.
+pub fn generate_preview_for_profile(
+    content: &str,
+    profile: ListPresentationProfile,
+) -> String {
+    let trimmed = content.trim_start();
+    let policy = ExcerptPolicy::for_profile(profile);
+    let (preview, _, _) = generate_snippet_with_policy(trimmed, &[], &policy);
+    preview
+}
+
+/// Format a snippet for optimistic updates (e.g. after an edit).
+/// Exposed via UniFFI so Swift doesn't need to invent its own truncation.
+pub fn format_excerpt(content: &str, profile: ListPresentationProfile) -> String {
+    generate_preview_for_profile(content, profile)
 }
 
 #[cfg(test)]
@@ -1539,7 +1661,7 @@ error: Build failed due to failed dependency";
         );
         assert_eq!(preview.initial_scroll_highlight_index, Some(0));
 
-        let row = compute_row_decoration(content, "func");
+        let row = compute_list_decoration(content, "func", ListPresentationProfile::CompactRow);
         assert!(row.text.contains("func top level"));
     }
 
