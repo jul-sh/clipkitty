@@ -5,6 +5,7 @@
 # Default behavior:
 #   - Ensures the bundle has iCloud capability enabled
 #   - Regenerates the Mac Development profile secret for the current Mac
+#   - Regenerates the Developer ID profile secret for DMG/Sparkle distribution
 #   - Regenerates the Mac App Store profile secret for CI/distribution
 #
 # Existing certificate secrets stay in place; they are still valid through 2027.
@@ -20,6 +21,7 @@ source "$SCRIPT_DIR/asc-auth.sh"
 
 BUNDLE_IDENTIFIER="com.eviljuliette.clipkitty"
 DEV_PROFILE_NAME="ClipKitty Mac Development"
+DEVELOPER_ID_PROFILE_NAME="ClipKitty Developer ID"
 APPSTORE_PROFILE_NAME="ClipKitty Mac App Store"
 PRIMARY_ICLOUD_CONTAINER="iCloud.com.eviljuliette.clipkitty"
 # ASC's iCloud capability setting still uses the legacy XCODE_6 marker for
@@ -28,6 +30,7 @@ PRIMARY_ICLOUD_CONTAINER="iCloud.com.eviljuliette.clipkitty"
 ICLOUD_SETTINGS='[{"key":"ICLOUD_VERSION","options":[{"key":"XCODE_6","enabled":true}]}]'
 
 REGENERATE_DEV=1
+REGENERATE_DEVELOPER_ID=1
 REGENERATE_APPSTORE=1
 DEVICE_NAME=""
 
@@ -36,9 +39,10 @@ usage() {
 Usage: ./distribution/regenerate-provisioning-secrets.sh [options]
 
 Options:
-  --dev-only          Regenerate only the Mac Development profile secret
-  --appstore-only     Regenerate only the Mac App Store profile secret
-  --device-name NAME  Override the name used when registering the local Mac
+  --dev-only              Regenerate only the Mac Development profile secret
+  --developer-id-only     Regenerate only the Developer ID profile secret
+  --appstore-only         Regenerate only the Mac App Store profile secret
+  --device-name NAME      Override the name used when registering the local Mac
 EOF
     exit 1
 }
@@ -47,11 +51,19 @@ while [ "$#" -gt 0 ]; do
     case "$1" in
         --dev-only)
             REGENERATE_DEV=1
+            REGENERATE_DEVELOPER_ID=0
+            REGENERATE_APPSTORE=0
+            shift
+            ;;
+        --developer-id-only)
+            REGENERATE_DEV=0
+            REGENERATE_DEVELOPER_ID=1
             REGENERATE_APPSTORE=0
             shift
             ;;
         --appstore-only)
             REGENERATE_DEV=0
+            REGENERATE_DEVELOPER_ID=0
             REGENERATE_APPSTORE=1
             shift
             ;;
@@ -363,6 +375,40 @@ regenerate_dev_profile() {
     echo "Updated MAC_DEV_PROVISIONING_PROFILE_BASE64.age"
 }
 
+regenerate_developer_id_profile() {
+    local certificates_json devid_serial devid_cert_id profile_json new_profile_id profile_path
+
+    echo "Regenerating Developer ID profile secret..."
+    certificates_json="$(asc_json certificates list --paginate)"
+    devid_serial="$(secret_p12_serial MACOS_P12_BASE64 MACOS_P12_PASSWORD)"
+    devid_cert_id="$(certificate_id_for_serial "$certificates_json" "$devid_serial")"
+
+    if [ -z "$devid_cert_id" ]; then
+        echo "Error: Could not find Developer ID Application certificate for serial $devid_serial in App Store Connect" >&2
+        exit 1
+    fi
+
+    delete_profiles_named "$DEVELOPER_ID_PROFILE_NAME" MAC_APP_DIRECT
+
+    profile_json="$(asc_json profiles create \
+        --name "$DEVELOPER_ID_PROFILE_NAME" \
+        --profile-type MAC_APP_DIRECT \
+        --bundle "$BUNDLE_RESOURCE_ID" \
+        --certificate "$devid_cert_id")"
+
+    new_profile_id="$(profile_id "$profile_json")"
+    profile_path="$TMP_DIR/developer-id.provisionprofile"
+    download_profile_to "$new_profile_id" "$profile_path"
+
+    if ! profile_contains_icloud_container "$profile_path"; then
+        echo "Error: Regenerated Developer ID profile is still missing $PRIMARY_ICLOUD_CONTAINER" >&2
+        exit 1
+    fi
+
+    base64 < "$profile_path" | "$SCRIPT_DIR/write-secret.sh" DEVELOPER_ID_PROVISION_PROFILE_BASE64 >/dev/null
+    echo "Updated DEVELOPER_ID_PROVISION_PROFILE_BASE64.age"
+}
+
 regenerate_appstore_profile() {
     local certificates_json appstore_serial appstore_cert_id profile_json new_profile_id profile_path
 
@@ -402,6 +448,10 @@ ensure_icloud_capability "$BUNDLE_RESOURCE_ID"
 
 if [ "$REGENERATE_DEV" -eq 1 ]; then
     regenerate_dev_profile
+fi
+
+if [ "$REGENERATE_DEVELOPER_ID" -eq 1 ]; then
+    regenerate_developer_id_profile
 fi
 
 if [ "$REGENERATE_APPSTORE" -eq 1 ]; then

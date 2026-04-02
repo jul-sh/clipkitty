@@ -237,8 +237,14 @@ jobs:
         run: |
           chmod +x distribution/build-dmg.sh
 
-          # Sign nested frameworks/bundles first (inside-out for Sparkle, XPC services, etc.)
           APP="DerivedData/Build/Products/SparkleRelease/ClipKitty.app"
+
+          # Embed Developer ID provisioning profile (required for CloudKit entitlements)
+          ./distribution/read-secret.sh DEVELOPER_ID_PROVISION_PROFILE_BASE64 \
+            | base64 --decode \
+            > "$APP/Contents/embedded.provisionprofile"
+
+          # Sign nested frameworks/bundles first (inside-out for Sparkle, XPC services, etc.)
           if [ -d "$APP/Contents/Frameworks" ]; then
             find "$APP/Contents/Frameworks" \( -type f -perm +111 -o -name "*.dylib" \) | while read -r binary; do
               codesign --force --options runtime --timestamp --sign "Developer ID Application" "$binary"
