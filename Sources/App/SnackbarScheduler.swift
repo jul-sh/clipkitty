@@ -25,9 +25,6 @@ protocol SnackbarEnvironment {
     var isLaunchAtLoginDismissed: Bool { get }
     var firstLaunchDate: Date { get }
     var minimumUseDuration: TimeInterval { get }
-
-    // Update nudge conditions
-    var isUpdateAvailable: Bool { get }
 }
 
 // MARK: - Pure decision function
@@ -53,10 +50,6 @@ func evaluateSnackbar(_ env: SnackbarEnvironment) -> SnackbarDecision {
     }
 
     // 4. Evaluate nudges in priority order
-    if env.isUpdateAvailable {
-        return .show(.nudge(.updateAvailable))
-    }
-
     if evaluateLaunchAtLoginNudge(env) {
         return .show(.nudge(.launchAtLogin))
     }
@@ -96,13 +89,4 @@ struct LiveSnackbarEnvironment: SnackbarEnvironment {
     var isLaunchAtLoginDismissed: Bool { AppSettings.shared.launchAtLoginPromptDismissed }
     var firstLaunchDate: Date { AppSettings.shared.firstLaunchDate }
     var minimumUseDuration: TimeInterval { 3 * 24 * 60 * 60 }
-
-    var isUpdateAvailable: Bool {
-        #if SPARKLE_RELEASE
-            guard !AppSettings.shared.autoInstallUpdates else { return false }
-            return AppSettings.shared.updateCheckState == .available
-        #else
-            return false
-        #endif
-    }
 }

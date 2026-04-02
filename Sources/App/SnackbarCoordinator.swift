@@ -39,8 +39,6 @@ final class SnackbarCoordinator {
         switch kind {
         case .launchAtLogin:
             AppSettings.shared.launchAtLoginPromptDismissed = true
-        case .updateAvailable:
-            break
         }
     }
 

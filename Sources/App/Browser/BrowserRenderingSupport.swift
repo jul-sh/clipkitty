@@ -960,47 +960,6 @@ struct TextPreviewView: NSViewRepresentable {
         }
     }
 
-    private func refreshHighlightDisplay(textView: NSTextView) {
-        textView.layoutSubtreeIfNeeded()
-        textView.setNeedsDisplay(textView.visibleRect)
-        textView.displayIfNeeded()
-
-        if let scrollView = textView.enclosingScrollView {
-            scrollView.contentView.setNeedsDisplay(scrollView.contentView.bounds)
-            scrollView.displayIfNeeded()
-        }
-    }
-
-    private func applyHighlightAttributes(
-        highlights: [Utf16HighlightRange],
-        to textView: NSTextView
-    ) {
-        guard let textStorage = textView.textStorage else { return }
-
-        let fullRange = NSRange(location: 0, length: textStorage.length)
-        textStorage.beginEditing()
-        if fullRange.length > 0 {
-            textStorage.removeAttribute(.backgroundColor, range: fullRange)
-            textStorage.removeAttribute(.underlineStyle, range: fullRange)
-        }
-
-        for highlight in highlights {
-            let nsRange = highlight.nsRange
-            guard nsRange.location != NSNotFound,
-                  nsRange.location + nsRange.length <= textStorage.length
-            else {
-                continue
-            }
-            textStorage.addAttributes(
-                HighlightStyler.attributes(for: highlight.kind),
-                range: nsRange
-            )
-        }
-        textStorage.endEditing()
-
-        refreshHighlightDisplay(textView: textView)
-    }
-
     private func documentHeight(for textView: NSTextView) -> CGFloat {
         guard let tlm = textView.textLayoutManager else { return 0 }
 

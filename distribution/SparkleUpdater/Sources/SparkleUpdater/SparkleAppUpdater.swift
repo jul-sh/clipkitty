@@ -44,7 +44,7 @@ final class SilentUpdateDriver: NSObject, SPUUserDriver, SPUUpdaterDelegate {
 
     /// Whether auto-install is enabled
     var autoInstallUpdates: Bool {
-        get { UserDefaults.standard.object(forKey: "autoInstallUpdates") as? Bool ?? false }
+        get { UserDefaults.standard.object(forKey: "autoInstallUpdates") as? Bool ?? true }
         set { UserDefaults.standard.set(newValue, forKey: "autoInstallUpdates") }
     }
 

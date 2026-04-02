@@ -108,9 +108,6 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate {
                 }
             }
             updater = sparkleUpdater
-            snackbarCoordinator.onInstallUpdate = { [weak sparkleUpdater] in
-                sparkleUpdater?.installUpdate()
-            }
             AppSettings.shared.$autoInstallUpdates
                 .dropFirst()
                 .sink { [weak sparkleUpdater] enabled in
