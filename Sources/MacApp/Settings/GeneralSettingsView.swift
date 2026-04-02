@@ -412,6 +412,16 @@ struct GeneralSettingsView: View {
         }
 
         private func checkICloudAccountStatus() async {
+            // CKContainer.default() throws an unrecoverable ObjC exception when
+            // the com.apple.application-identifier entitlement is missing (e.g.
+            // unsigned UI test builds with CODE_SIGNING_ALLOWED=NO). Guard against
+            // this by checking the entitlement at runtime first.
+            guard Self.hasApplicationIdentifierEntitlement else {
+                isICloudAvailable = false
+                iCloudStatusMessage = String(localized: "iCloud is not available in this build configuration.")
+                return
+            }
+
             do {
                 let status = try await CKContainer.default().accountStatus()
                 switch status {
@@ -437,6 +447,24 @@ struct GeneralSettingsView: View {
                 iCloudStatusMessage = String(localized: "Error checking iCloud status: \(error.localizedDescription)")
             }
         }
+
+        /// Check whether the running binary has the application-identifier entitlement
+        /// that CloudKit requires. Returns false for unsigned/ad-hoc signed binaries.
+        private static let hasApplicationIdentifierEntitlement: Bool = {
+            var code: SecStaticCode?
+            guard SecStaticCodeCreateWithPath(
+                Bundle.main.bundleURL as CFURL, [], &code
+            ) == errSecSuccess, let code else { return false }
+
+            var info: CFDictionary?
+            guard SecCodeCopySigningInformation(
+                code, SecCSFlags(rawValue: kSecCSSigningInformation), &info
+            ) == errSecSuccess, let info = info as? [String: Any] else { return false }
+
+            guard let entitlements = info[kSecCodeInfoEntitlementsDict as String] as? [String: Any]
+            else { return false }
+            return entitlements["com.apple.application-identifier"] != nil
+        }()
     #endif
 
     private func copyRecentLogs() {
