@@ -27,7 +27,7 @@ final class MultiFileTests: XCTestCase {
             sourceApp: "Finder",
             sourceAppBundleId: "com.apple.finder"
         )
-        XCTAssertGreaterThan(id, 0, "New multi-file entry should return positive ID")
+        XCTAssertFalse(id.isEmpty, "New multi-file entry should return a stable ID")
 
         let items = try store.fetchByIds(itemIds: [id])
         XCTAssertEqual(items.count, 1)
@@ -59,7 +59,7 @@ final class MultiFileTests: XCTestCase {
             sourceApp: nil,
             sourceAppBundleId: nil
         )
-        XCTAssertGreaterThan(id, 0)
+        XCTAssertFalse(id.isEmpty)
 
         let items = try store.fetchByIds(itemIds: [id])
         guard case let .file(displayName, files) = items[0].content else {
@@ -87,7 +87,7 @@ final class MultiFileTests: XCTestCase {
             sourceApp: nil,
             sourceAppBundleId: nil
         )
-        XCTAssertGreaterThan(id1, 0)
+        XCTAssertFalse(id1.isEmpty)
 
         let id2 = try store.saveFiles(
             paths: ["/tmp/a.txt", "/tmp/b.txt"],
@@ -99,7 +99,7 @@ final class MultiFileTests: XCTestCase {
             sourceApp: nil,
             sourceAppBundleId: nil
         )
-        XCTAssertEqual(id2, 0, "Duplicate multi-file should return 0")
+        XCTAssertTrue(id2.isEmpty, "Duplicate multi-file should return an empty ID")
     }
 
     func testSaveFilesDedupOrderIndependent() throws {
@@ -115,7 +115,7 @@ final class MultiFileTests: XCTestCase {
             sourceApp: nil,
             sourceAppBundleId: nil
         )
-        XCTAssertGreaterThan(id1, 0)
+        XCTAssertFalse(id1.isEmpty)
 
         // Same files, reversed order
         let id2 = try store.saveFiles(
@@ -128,7 +128,7 @@ final class MultiFileTests: XCTestCase {
             sourceApp: nil,
             sourceAppBundleId: nil
         )
-        XCTAssertEqual(id2, 0, "Same files in different order should deduplicate")
+        XCTAssertTrue(id2.isEmpty, "Same files in different order should deduplicate")
     }
 
     // MARK: - Display name generation

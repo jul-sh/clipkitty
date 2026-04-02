@@ -16,10 +16,15 @@
           inherit system overlays;
         };
 
-        # Rust toolchain with both ARM and x86_64 targets for universal binaries
+        # Rust toolchain with macOS (universal) and iOS (device + simulator) targets
         rustToolchain = pkgs.rust-bin.stable.latest.default.override {
           extensions = [ "rust-src" "rust-std" ];
-          targets = [ "aarch64-apple-darwin" "x86_64-apple-darwin" ];
+          targets = [
+            "aarch64-apple-darwin"
+            "x86_64-apple-darwin"
+            "aarch64-apple-ios"
+            "aarch64-apple-ios-sim"
+          ];
         };
 
         # App Store Connect CLI (pre-built binary)
