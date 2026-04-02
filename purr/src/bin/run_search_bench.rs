@@ -85,7 +85,7 @@ async fn main() {
     for query in &queries {
         for _ in 0..args.warmup {
             let _ = store
-                .search(query.clone())
+                .search(query.clone(), purr::ListPresentationProfile::CompactRow)
                 .await
                 .expect("warmup search failed");
         }
@@ -95,7 +95,7 @@ async fn main() {
         for _ in 0..args.iterations {
             let start = Instant::now();
             let result = store
-                .search(query.clone())
+                .search(query.clone(), purr::ListPresentationProfile::CompactRow)
                 .await
                 .expect("benchmark search failed");
             let elapsed = start.elapsed().as_micros();

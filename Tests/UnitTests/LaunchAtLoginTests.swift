@@ -1,4 +1,5 @@
 @testable import ClipKitty
+@testable import ClipKittyMacPlatform
 import ServiceManagement
 import XCTest
 

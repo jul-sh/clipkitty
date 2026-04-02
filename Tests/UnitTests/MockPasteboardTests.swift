@@ -1,5 +1,6 @@
 import AppKit
 @testable import ClipKitty
+@testable import ClipKittyMacPlatform
 import XCTest
 
 /// Tests for MockPasteboard to ensure it correctly mimics NSPasteboard behavior.

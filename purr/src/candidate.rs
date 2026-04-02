@@ -120,7 +120,7 @@ pub enum ScoringPhase {
 /// An item-level search candidate produced after collapsing matching units.
 #[derive(Debug, Clone)]
 pub struct SearchCandidate {
-    pub id: i64,
+    pub id: String,
     pub timestamp: i64,
     /// Structured Phase 1 score (word matches, proximity, recency, BM25).
     pub(crate) phase_one_score: crate::search_admission::PhaseOneBlendedScore,
@@ -130,7 +130,7 @@ pub struct SearchCandidate {
 
 impl SearchCandidate {
     pub(crate) fn new(
-        id: i64,
+        id: String,
         timestamp: i64,
         phase_one_score: crate::search_admission::PhaseOneBlendedScore,
         match_context: SearchMatchContext,
