@@ -1,1 +1,1 @@
-clipboard,history,copy,paste,manager,search,unlimited,OCR,image,sync,icloud,keyboard,snippets
+clipboard,history,copy,paste,manager,search,unlimited,OCR,image,screenshot,keyboard,snippets,text

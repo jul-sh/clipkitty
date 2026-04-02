@@ -3,8 +3,6 @@ Die meisten Zwischenablage-Manager löschen deinen Verlauf nach wenigen Tagen od
 Unbegrenzter Verlauf — Keine Obergrenzen, keine Limits. Hast du etwas vor einem Jahr kopiert, ist es immer noch da. Text, Bilder, Links, Farben — nichts läuft ab, nichts wird abgeschnitten.
 Mehrzeilige Vorschau — Sieh genau, was du einfügen wirst, in einem eigenen Vorschaubereich.
 Sofortige Suche — Finde jeden Eintrag in Millisekunden, egal ob du zehn oder zehn Millionen Einträge durchsuchst. Entwickelt für alle, die viel kopieren und es wiederfinden müssen.
-iCLOUD-SYNCHRONISIERUNG
-Synchronisiere optional deine Zwischenablage-History über alle deine Macs. Aktiviere iCloud Sync in den Einstellungen und deine Clips folgen dir von Gerät zu Gerät.
 Tastaturgesteuerter Workflow. — Optimiert für Geschwindigkeit mit ⌥Space-Zugriff.
-Sicher & Privat; deine Daten verlassen standardmäßig nie deinen Rechner. ClipKitty arbeitet vollständig lokal, ohne Telemetrie und ohne Abonnements. Die optionale iCloud-Synchronisierung nutzt ausschließlich deinen privaten iCloud-Container.
+Sicher & Privat — Deine Daten verlassen nie deinen Rechner. ClipKitty arbeitet vollständig lokal, ohne Cloud-Synchronisation, ohne Telemetrie und ohne Abonnements.
 Transparent und Offen. — Freizügige Lizenz mit öffentlich verfügbarem Quellcode. Unterstütze die Entwicklung durch einen Kauf im App Store.

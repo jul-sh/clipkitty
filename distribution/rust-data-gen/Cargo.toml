@@ -21,4 +21,3 @@ image = { version = "*", default-features = false, features = ["jpeg", "png", "g
 futures = "*"
 csv = "1.3"
 once_cell = "1.19"
-uuid = { version = "*", features = ["v4"] }

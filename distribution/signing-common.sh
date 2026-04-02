@@ -17,9 +17,11 @@ delete_temp_keychain() {
 create_unlocked_temp_keychain() {
     local keychain_path=$1
     local keychain_password=$2
+    local timeout_seconds=${3:-3600}
+
     delete_temp_keychain "$keychain_path"
     security create-keychain -p "$keychain_password" "$keychain_path"
-    security set-keychain-settings "$keychain_path"
+    security set-keychain-settings -t "$timeout_seconds" "$keychain_path"
     security unlock-keychain -p "$keychain_password" "$keychain_path"
 }
 

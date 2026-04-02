@@ -1,8 +1,7 @@
 use crate::candidate::{ScoringPhase, SearchMatchContext};
 use crate::database::{Database, SearchItemMetadata};
 use crate::interface::{
-    ClipKittyError, ClipboardItem, ItemMetadata, ListDecoration, ListDecorationResult,
-    ListPresentationProfile, PreviewPayload,
+    ClipKittyError, ClipboardItem, ItemMetadata, PreviewPayload, RowDecoration, RowDecorationResult,
 };
 use crate::models::StoredItem;
 use crate::search::{self, HighlightAnalysis};
@@ -13,7 +12,6 @@ use std::sync::Arc;
 use tokio_util::sync::CancellationToken;
 
 #[cfg(test)]
-#[allow(dead_code)]
 pub(crate) mod test_support {
     use once_cell::sync::Lazy;
     use parking_lot::Mutex;
@@ -23,8 +21,8 @@ pub(crate) mod test_support {
     pub(crate) struct SearchTestHooks {
         pub(crate) before_eager_matches: Option<Arc<dyn Fn() + Send + Sync>>,
         pub(crate) on_eager_match: Option<Arc<dyn Fn(usize) + Send + Sync>>,
-        pub(crate) on_analysis_cache_hit: Option<Arc<dyn Fn(String, String) + Send + Sync>>,
-        pub(crate) on_analysis_computed: Option<Arc<dyn Fn(String, String) + Send + Sync>>,
+        pub(crate) on_analysis_cache_hit: Option<Arc<dyn Fn(i64, String) + Send + Sync>>,
+        pub(crate) on_analysis_computed: Option<Arc<dyn Fn(i64, String) + Send + Sync>>,
     }
 
     static HOOKS: Lazy<Mutex<SearchTestHooks>> =
@@ -57,17 +55,17 @@ pub(crate) mod test_support {
         }
     }
 
-    pub(crate) fn on_analysis_cache_hit(item_id: &str, query: &str) {
+    pub(crate) fn on_analysis_cache_hit(item_id: i64, query: &str) {
         let callback = HOOKS.lock().on_analysis_cache_hit.clone();
         if let Some(callback) = callback {
-            callback(item_id.to_string(), query.to_string());
+            callback(item_id, query.to_string());
         }
     }
 
-    pub(crate) fn on_analysis_computed(item_id: &str, query: &str) {
+    pub(crate) fn on_analysis_computed(item_id: i64, query: &str) {
         let callback = HOOKS.lock().on_analysis_computed.clone();
         if let Some(callback) = callback {
-            callback(item_id.to_string(), query.to_string());
+            callback(item_id, query.to_string());
         }
     }
 }
@@ -224,8 +222,8 @@ impl CachedMatchContext {
 #[derive(Default)]
 struct HighlightAnalysisCacheState {
     query_order: VecDeque<String>,
-    entries_by_query: HashMap<String, HashMap<String, CachedHighlightAnalysis>>,
-    match_contexts_by_query: HashMap<String, HashMap<String, CachedMatchContext>>,
+    entries_by_query: HashMap<String, HashMap<i64, CachedHighlightAnalysis>>,
+    match_contexts_by_query: HashMap<String, HashMap<i64, CachedMatchContext>>,
 }
 
 #[derive(Default)]
@@ -268,7 +266,7 @@ impl HighlightAnalysisCache {
     pub(crate) fn get(
         &self,
         query: &str,
-        item_id: &str,
+        item_id: i64,
         content: &str,
     ) -> Option<Arc<HighlightAnalysis>> {
         let query_key = Self::normalized_query(query)?;
@@ -277,12 +275,12 @@ impl HighlightAnalysisCache {
         let cached = state
             .entries_by_query
             .get_mut(&query_key)
-            .and_then(|entries| match entries.get(item_id) {
+            .and_then(|entries| match entries.get(&item_id) {
                 Some(entry) if entry.content_hash == content_hash => {
                     Some(Arc::clone(&entry.analysis))
                 }
                 Some(_) => {
-                    entries.remove(item_id);
+                    entries.remove(&item_id);
                     None
                 }
                 None => None,
@@ -296,7 +294,7 @@ impl HighlightAnalysisCache {
     pub(crate) fn insert(
         &self,
         query: &str,
-        item_id: &str,
+        item_id: i64,
         content: &str,
         analysis: Arc<HighlightAnalysis>,
     ) {
@@ -307,11 +305,11 @@ impl HighlightAnalysisCache {
         let mut state = self.state.lock();
         Self::touch_query(&mut state, &query_key);
         let entries = state.entries_by_query.entry(query_key).or_default();
-        if !entries.contains_key(item_id) && entries.len() >= MAX_CACHED_ITEMS_PER_QUERY {
+        if !entries.contains_key(&item_id) && entries.len() >= MAX_CACHED_ITEMS_PER_QUERY {
             return;
         }
         entries.insert(
-            item_id.to_string(),
+            item_id,
             CachedHighlightAnalysis {
                 content_hash,
                 analysis,
@@ -322,14 +320,14 @@ impl HighlightAnalysisCache {
     pub(crate) fn get_match_context(
         &self,
         query: &str,
-        item_id: &str,
+        item_id: i64,
     ) -> Option<CachedMatchContext> {
         let query_key = Self::normalized_query(query)?;
         let mut state = self.state.lock();
         let cached = state
             .match_contexts_by_query
             .get(&query_key)
-            .and_then(|entries| entries.get(item_id).cloned());
+            .and_then(|entries| entries.get(&item_id).cloned());
         if cached.is_some() {
             Self::touch_query(&mut state, &query_key);
         }
@@ -339,7 +337,7 @@ impl HighlightAnalysisCache {
     pub(crate) fn insert_match_context(
         &self,
         query: &str,
-        item_id: &str,
+        item_id: i64,
         parent_content_hash: String,
         match_context: &SearchMatchContext,
         scoring_phase: ScoringPhase,
@@ -350,11 +348,11 @@ impl HighlightAnalysisCache {
         let mut state = self.state.lock();
         Self::touch_query(&mut state, &query_key);
         let entries = state.match_contexts_by_query.entry(query_key).or_default();
-        if !entries.contains_key(item_id) && entries.len() >= MAX_CACHED_ITEMS_PER_QUERY {
+        if !entries.contains_key(&item_id) && entries.len() >= MAX_CACHED_ITEMS_PER_QUERY {
             return;
         }
         entries.insert(
-            item_id.to_string(),
+            item_id,
             CachedMatchContext::from_search_match_context(
                 parent_content_hash,
                 match_context,
@@ -366,7 +364,7 @@ impl HighlightAnalysisCache {
     pub(crate) fn set_match_context_analysis(
         &self,
         query: &str,
-        item_id: &str,
+        item_id: i64,
         analysis: Arc<HighlightAnalysis>,
     ) {
         let Some(query_key) = Self::normalized_query(query) else {
@@ -376,7 +374,7 @@ impl HighlightAnalysisCache {
         let Some(entries) = state.match_contexts_by_query.get_mut(&query_key) else {
             return;
         };
-        if let Some(entry) = entries.get_mut(item_id) {
+        if let Some(entry) = entries.get_mut(&item_id) {
             entry.set_analysis(analysis);
             Self::touch_query(&mut state, &query_key);
         }
@@ -398,65 +396,57 @@ impl<'a> MatchPresentation<'a> {
         Self { db, cache }
     }
 
-    pub(crate) fn compute_list_decorations(
+    pub(crate) fn compute_row_decorations(
         &self,
-        item_ids: Vec<String>,
+        item_ids: Vec<i64>,
         query: String,
-        profile: ListPresentationProfile,
-    ) -> Result<Vec<ListDecorationResult>, ClipKittyError> {
+    ) -> Result<Vec<RowDecorationResult>, ClipKittyError> {
         if item_ids.is_empty() {
             return Ok(Vec::new());
         }
 
-        let id_refs: Vec<&str> = item_ids.iter().map(|s| s.as_str()).collect();
-        let metadata_rows = self.db.fetch_search_item_metadata_by_string_ids(&id_refs, profile)?;
-        let metadata_map: HashMap<String, SearchItemMetadata> = metadata_rows
+        let metadata_rows = self.db.fetch_search_item_metadata_by_ids(&item_ids)?;
+        let metadata_map: HashMap<i64, SearchItemMetadata> = metadata_rows
             .into_iter()
-            .map(|metadata| (metadata.item_metadata.item_id.clone(), metadata))
+            .map(|metadata| (metadata.item_metadata.item_id, metadata))
             .collect();
-        // Find items not in match-context cache (need full content for highlighting).
-        let missing_row_ids: Vec<i64> = item_ids
+        let missing_ids: Vec<i64> = item_ids
             .iter()
+            .copied()
             .filter(|id| {
-                let Some(metadata) = metadata_map.get(id.as_str()) else {
+                let Some(metadata) = metadata_map.get(id) else {
                     return true;
                 };
-                match self.cache.get_match_context(&query, id.as_str()) {
+                match self.cache.get_match_context(&query, *id) {
                     Some(context) => !context.matches_parent_hash(&metadata.content_hash),
                     None => true,
                 }
             })
-            .filter_map(|id| metadata_map.get(id.as_str()).map(|m| m.row_id))
             .collect();
-        let items = self.db.fetch_items_by_ids(&missing_row_ids)?;
-        let item_map: HashMap<String, StoredItem> = items
+        let items = self.db.fetch_items_by_ids(&missing_ids)?;
+        let item_map: HashMap<i64, StoredItem> = items
             .into_iter()
-            .map(|item| (item.item_id.clone(), item))
+            .filter_map(|item| item.id.map(|id| (id, item)))
             .collect();
 
         use rayon::prelude::*;
         Ok(item_ids
             .par_iter()
             .map(|id| {
-                let cached_context = metadata_map.get(id.as_str()).and_then(|metadata| {
+                let cached_context = metadata_map.get(id).and_then(|metadata| {
                     self.cache
-                        .get_match_context(&query, id.as_str())
+                        .get_match_context(&query, *id)
                         .filter(|context| context.matches_parent_hash(&metadata.content_hash))
                 });
                 let decoration = if cached_context.is_some() {
-                    Some(self.list_decoration_for_cached_match(id, &query, profile))
+                    Some(self.row_decoration_for_cached_match(*id, &query))
                 } else {
                     item_map.get(id).map(|item| {
-                        self.list_decoration_for_item(
-                            id,
-                            item.content.text_content(),
-                            &query,
-                            profile,
-                        )
+                        self.row_decoration_for_item(*id, item.content.text_content(), &query)
                     })
                 };
-                ListDecorationResult {
-                    item_id: id.clone(),
+                RowDecorationResult {
+                    item_id: *id,
                     decoration,
                 }
             })
@@ -465,17 +455,14 @@ impl<'a> MatchPresentation<'a> {
 
     pub(crate) fn load_preview_payload(
         &self,
-        item_id: String,
+        item_id: i64,
         query: String,
     ) -> Result<Option<PreviewPayload>, ClipKittyError> {
-        let Some(row_id) = self.db.fetch_row_id_by_item_id(&item_id)? else {
-            return Ok(None);
-        };
-        let Some(item) = self.db.fetch_items_by_ids(&[row_id])?.into_iter().next() else {
+        let Some(item) = self.db.fetch_items_by_ids(&[item_id])?.into_iter().next() else {
             return Ok(None);
         };
         Ok(Some(self.preview_payload_from_stored_item(
-            &item_id,
+            item_id,
             item,
             &query,
             PreviewLoadMode::ExplicitPreview,
@@ -484,33 +471,30 @@ impl<'a> MatchPresentation<'a> {
 
     pub(crate) fn load_first_preview_payload(
         &self,
-        first_item_id: Option<&str>,
+        first_item_id: Option<i64>,
         query: &str,
         token: &CancellationToken,
         runtime: &tokio::runtime::Handle,
     ) -> Result<Option<PreviewPayload>, ClipKittyError> {
-        let Some(first_item_id_str) = first_item_id else {
-            return Ok(None);
-        };
-        let Some(row_id) = self.db.fetch_row_id_by_item_id(first_item_id_str)? else {
+        let Some(first_item_id) = first_item_id else {
             return Ok(None);
         };
         if matches!(
-            self.cache.get_match_context(query, first_item_id_str),
+            self.cache.get_match_context(query, first_item_id),
             Some(CachedMatchContext::ChunkRegion { .. })
         ) {
             return Ok(None);
         }
         let item = self
             .db
-            .fetch_items_by_ids_interruptible(&[row_id], token, runtime)?
+            .fetch_items_by_ids_interruptible(&[first_item_id], token, runtime)?
             .into_iter()
             .next();
         let Some(item) = item else {
             return Ok(None);
         };
         Ok(Some(self.preview_payload_from_stored_item(
-            first_item_id_str,
+            first_item_id,
             item,
             query,
             PreviewLoadMode::InitialSearch,
@@ -520,7 +504,7 @@ impl<'a> MatchPresentation<'a> {
     pub(crate) fn cache_match_context(
         &self,
         query: &str,
-        item_id: &str,
+        item_id: i64,
         parent_content_hash: String,
         match_context: &SearchMatchContext,
         scoring_phase: ScoringPhase,
@@ -536,39 +520,35 @@ impl<'a> MatchPresentation<'a> {
 
     pub(crate) fn apply_match_context_snippet(
         &self,
-        item_id: &str,
+        item_id: i64,
         query: &str,
         item_metadata: &mut ItemMetadata,
         match_context: &SearchMatchContext,
-        profile: ListPresentationProfile,
     ) {
         if matches!(match_context, SearchMatchContext::Chunk(_)) {
             item_metadata.snippet = self
                 .analysis_for_cached_match_context(item_id, query)
                 .map(|(context, analysis)| {
-                    search::create_list_decoration(
-                        context.content(),
-                        &analysis.highlights,
-                        profile,
-                    )
-                    .text
+                    search::create_row_decoration(context.content(), &analysis.highlights).text
                 })
                 .unwrap_or_else(|| {
-                    search::generate_preview_for_profile(match_context.content(), profile)
+                    search::generate_preview(
+                        match_context.content(),
+                        search::SNIPPET_CONTEXT_CHARS * 2,
+                    )
                 });
         }
     }
 
-    pub(crate) fn list_decoration_for_cached_match(
+    pub(crate) fn row_decoration_for_cached_match(
         &self,
-        item_id: &str,
+        item_id: i64,
         query: &str,
-        profile: ListPresentationProfile,
-    ) -> ListDecoration {
+    ) -> RowDecoration {
         if let Some((context, analysis)) = self.analysis_for_cached_match_context(item_id, query) {
-            search::create_list_decoration(context.content(), &analysis.highlights, profile)
+            search::create_row_decoration(context.content(), &analysis.highlights)
         } else {
-            ListDecoration {
+            RowDecoration {
                 text: String::new(),
                 highlights: Vec::new(),
                 line_number: 0,
@@ -576,23 +556,22 @@ impl<'a> MatchPresentation<'a> {
         }
     }
 
-    pub(crate) fn list_decoration_for_item(
+    pub(crate) fn row_decoration_for_item(
         &self,
-        item_id: &str,
+        item_id: i64,
         content: &str,
         query: &str,
-        profile: ListPresentationProfile,
-    ) -> ListDecoration {
+    ) -> RowDecoration {
         if let Some(analysis) = self.analysis_for_item(item_id, content, query) {
-            search::create_list_decoration(content, &analysis.highlights, profile)
+            search::create_row_decoration(content, &analysis.highlights)
         } else {
-            search::compute_list_decoration(content, query, profile)
+            search::compute_row_decoration(content, query)
         }
     }
 
     fn preview_payload_from_stored_item(
         &self,
-        item_id: &str,
+        item_id: i64,
         stored_item: StoredItem,
         query: &str,
         mode: PreviewLoadMode,
@@ -642,7 +621,7 @@ impl<'a> MatchPresentation<'a> {
 
     fn preview_decoration_for_item(
         &self,
-        item_id: &str,
+        item_id: i64,
         item: &ClipboardItem,
         query: &str,
     ) -> Option<crate::interface::PreviewDecoration> {
@@ -654,7 +633,7 @@ impl<'a> MatchPresentation<'a> {
 
     fn analysis_for_item(
         &self,
-        item_id: &str,
+        item_id: i64,
         content: &str,
         query: &str,
     ) -> Option<Arc<HighlightAnalysis>> {
@@ -675,7 +654,7 @@ impl<'a> MatchPresentation<'a> {
 
     fn analysis_for_cached_match_context(
         &self,
-        item_id: &str,
+        item_id: i64,
         query: &str,
     ) -> Option<(CachedMatchContext, Arc<HighlightAnalysis>)> {
         let context = self.cache.get_match_context(query, item_id)?;
@@ -709,7 +688,7 @@ fn hydrate_clipboard_item_tags(
     db: &Database,
     item: &mut ClipboardItem,
 ) -> Result<(), ClipKittyError> {
-    let tags_by_id = db.get_tags_for_item_ids(&[item.item_metadata.item_id.clone()])?;
+    let tags_by_id = db.get_tags_for_ids(&[item.item_metadata.item_id])?;
     item.item_metadata.tags = tags_by_id
         .get(&item.item_metadata.item_id)
         .cloned()

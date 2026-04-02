@@ -111,17 +111,6 @@ impl ItemTag {
     }
 }
 
-/// Presentation profile for list surfaces.
-///
-/// Selects how Rust formats excerpts (snippets) for the calling UI.
-/// Compact rows collapse all whitespace into a single line; cards preserve
-/// meaningful line breaks for multiline display.
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, uniffi::Enum)]
-pub enum ListPresentationProfile {
-    CompactRow,
-    Card,
-}
-
 /// Mutually exclusive search filters for the browser.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, uniffi::Enum)]
 pub enum ItemQueryFilter {
@@ -306,8 +295,10 @@ impl LinkMetadataState {
 }
 
 /// A single file entry within a file clipboard item.
+/// Each file gets its own row in `file_items` with an independent ID for status tracking.
 #[derive(Debug, Clone, PartialEq, uniffi::Record)]
 pub struct FileEntry {
+    pub file_item_id: i64,
     pub path: String,
     pub filename: String,
     pub file_size: u64,
@@ -399,38 +390,45 @@ pub struct Utf16HighlightRange {
     pub kind: HighlightKind,
 }
 
-/// Snippet decoration data for list surfaces (compact rows and cards).
+/// Snippet decoration data for list rows.
 ///
 /// # Display Contract: Two-layer truncation with ellipsis
 ///
 /// Both Rust and Swift may truncate, each adding their own ellipsis.
 ///
-/// ## What Rust does (first pass):
-/// - **CompactRow**: Newlines/tabs/returns → single spaces; consecutive spaces collapsed (up to 400 chars)
-/// - **Card**: Preserves meaningful line breaks; collapses pathological whitespace (up to 800 chars)
+/// ## What Rust does (first pass - up to 400 chars):
+/// - **Whitespace normalization**: Newlines, tabs, carriage returns → single spaces; consecutive spaces collapsed
 /// - **Truncation ellipsis**: Prefixes "…" if truncated from start, suffixes "…" if truncated from end
 /// - **Highlight adjustment**: Indices account for normalization AND leading ellipsis prefix (+1 if present)
 ///
-/// ## What Swift does (second pass):
-/// - CompactRow: windows `text` to ~50 characters, centered on `highlights[0]`
-/// - Card: clamps to N visible lines (e.g. 8 on iPhone)
+/// ## What Swift does (second pass - ~50 visible chars):
+/// - Windows `text` to ~50 characters, centered on `highlights[0]`
 /// - Adds "…" prefix if window start > 0, adds "…" suffix if window end < text length
 /// - Adjusts highlight indices: subtracts window start, adds 1 if Swift added prefix ellipsis
+///
+/// ## Example flow:
+/// ```text
+/// Original (500 chars):  "prefix...\n\n  code with    spaces and MATCH suffix..."
+/// Rust output (70 chars): "…code with spaces and MATCH suffix…"  (normalized, truncated both ends)
+/// Rust highlights: [25, 30] (adjusted for normalization +1 for leading ellipsis)
+/// Swift windows (50 chars): "…paces and MATCH suffix…"  (further truncated, ellipsis on both ends)
+/// Swift highlights: adjusted for window, +1 for Swift's prefix ellipsis
+/// ```
 #[derive(Debug, Clone, PartialEq, Default, uniffi::Record)]
-pub struct ListDecoration {
-    /// Snippet text. CompactRow: whitespace-normalized single line. Card: multiline-friendly.
+pub struct RowDecoration {
+    /// Snippet text with whitespace normalized, "…" prefix if Rust truncated from start, "…" suffix if Rust truncated from end
     pub text: String,
-    /// Highlight ranges into `text`, adjusted for normalization and leading ellipsis prefix.
+    /// Highlight ranges into `text`, adjusted for normalization and Rust's leading ellipsis prefix.
     pub highlights: Vec<Utf16HighlightRange>,
     /// 1-indexed line number where the match occurs in the original content
     pub line_number: u64,
 }
 
-/// Decoration payload for a single list-decoration request result.
+/// Decoration payload for a single row-decoration request result.
 #[derive(Debug, Clone, PartialEq, uniffi::Record)]
-pub struct ListDecorationResult {
-    pub item_id: String,
-    pub decoration: Option<ListDecoration>,
+pub struct RowDecorationResult {
+    pub item_id: i64,
+    pub decoration: Option<RowDecoration>,
 }
 
 /// Preview-only highlight decoration for the full item content.
@@ -451,7 +449,7 @@ pub struct PreviewPayload {
 /// Lightweight item metadata for list display
 #[derive(Debug, Clone, PartialEq, uniffi::Record)]
 pub struct ItemMetadata {
-    pub item_id: String,
+    pub item_id: i64,
     pub icon: ItemIcon,
     pub snippet: String,
     pub source_app: Option<String>,
@@ -464,8 +462,8 @@ pub struct ItemMetadata {
 #[derive(Debug, Clone, PartialEq, uniffi::Record)]
 pub struct ItemMatch {
     pub item_metadata: ItemMetadata,
-    /// List decoration data. None for lazy results - call compute_list_decorations to populate.
-    pub list_decoration: Option<ListDecoration>,
+    /// Row decoration data. None for lazy results - call compute_row_decorations to populate.
+    pub row_decoration: Option<RowDecoration>,
 }
 
 /// Search result container
@@ -496,117 +494,6 @@ pub enum StoreBootstrapPlan {
 pub struct ClipboardItem {
     pub item_metadata: ItemMetadata,
     pub content: ClipboardContent,
-}
-
-// ═══════════════════════════════════════════════════════════════════════════════
-// SYNC TYPES (exposed to Swift for SyncEngine)
-// ═══════════════════════════════════════════════════════════════════════════════
-
-/// A serialized sync event ready for CloudKit transport.
-#[cfg(feature = "sync")]
-#[derive(Debug, Clone, PartialEq, uniffi::Record)]
-pub struct SyncEventRecord {
-    pub event_id: String,
-    pub item_id: String,
-    pub origin_device_id: String,
-    pub schema_version: u32,
-    pub recorded_at: i64,
-    pub payload_type: String,
-    pub payload_data: String,
-}
-
-/// A serialized sync snapshot ready for CloudKit transport.
-#[cfg(feature = "sync")]
-#[derive(Debug, Clone, PartialEq, uniffi::Record)]
-pub struct SyncSnapshotRecord {
-    pub item_id: String,
-    pub snapshot_revision: u64,
-    pub schema_version: u32,
-    pub covers_through_event: Option<String>,
-    pub aggregate_data: String,
-}
-
-/// Result of applying a remote event.
-#[cfg(feature = "sync")]
-#[derive(Debug, Clone, PartialEq, uniffi::Enum)]
-pub enum SyncApplyOutcome {
-    Applied,
-    Ignored,
-    Deferred,
-    Forked { forked_snapshot_data: String },
-}
-
-/// Result of applying a batch of remote events.
-#[cfg(feature = "sync")]
-#[derive(Debug, Clone, PartialEq, uniffi::Record)]
-pub struct SyncBatchResult {
-    pub events_applied: u64,
-    pub events_ignored: u64,
-    pub events_deferred: u64,
-    pub events_forked: u64,
-    pub snapshots_applied: u64,
-    pub needs_full_resync: bool,
-}
-
-/// Device sync state.
-#[cfg(feature = "sync")]
-#[derive(Debug, Clone, PartialEq, uniffi::Record)]
-pub struct SyncDeviceState {
-    pub device_id: String,
-    pub zone_change_token: Option<Vec<u8>>,
-    pub needs_full_resync: bool,
-    pub index_dirty: bool,
-}
-
-/// Outcome of a compaction run.
-#[cfg(feature = "sync")]
-#[derive(Debug, Clone, PartialEq, uniffi::Record)]
-pub struct CompactionResult {
-    pub items_compacted: u64,
-    pub events_purged: u64,
-    pub tombstones_purged: u64,
-}
-
-/// Outcome of applying a downloaded batch of remote changes.
-/// Determines whether the CloudKit zone change token should be advanced.
-#[cfg(feature = "sync")]
-#[derive(Debug, Clone, PartialEq, uniffi::Enum)]
-pub enum SyncDownloadBatchOutcome {
-    Applied {
-        events_applied: u64,
-        snapshots_applied: u64,
-    },
-    PartialFailure {
-        applied_count: u64,
-        failed_count: u64,
-        should_retry: bool,
-    },
-    FullResyncRequired,
-}
-
-/// Whether a checkpoint has been replicated to CloudKit.
-#[cfg(feature = "sync")]
-#[derive(Debug, Clone, PartialEq, uniffi::Enum)]
-pub enum SyncCheckpointState {
-    Absent,
-    LocalOnly {
-        covers_through_event: String,
-    },
-    Uploaded {
-        covers_through_event: String,
-        uploaded_at: i64,
-    },
-}
-
-/// Result of a full resync operation (checkpoints + tail events).
-#[cfg(feature = "sync")]
-#[derive(Debug, Clone, PartialEq, uniffi::Record)]
-pub struct SyncFullResyncResult {
-    pub checkpoints_applied: u64,
-    pub tail_events_applied: u64,
-    pub tail_events_ignored: u64,
-    pub tail_events_deferred: u64,
-    pub tail_events_forked: u64,
 }
 
 /// Error type for ClipKitty operations
@@ -640,38 +527,32 @@ pub trait ClipboardStoreApi: Send + Sync {
     // ─────────────────────────────────────────────────────────────────────────────
 
     /// Search for items. Empty query returns all recent items.
-    async fn search(
-        &self,
-        query: String,
-        presentation: ListPresentationProfile,
-    ) -> Result<SearchResult, ClipKittyError>;
+    async fn search(&self, query: String) -> Result<SearchResult, ClipKittyError>;
 
     /// Search with a typed filter scope.
     async fn search_filtered(
         &self,
         query: String,
         filter: ItemQueryFilter,
-        presentation: ListPresentationProfile,
     ) -> Result<SearchResult, ClipKittyError>;
 
-    /// Compute list decorations for multiple items given the search query.
+    /// Compute row decorations for multiple items given the search query.
     /// Called on-demand for visible items in the list view.
-    fn compute_list_decorations(
+    fn compute_row_decorations(
         &self,
-        item_ids: Vec<String>,
+        item_ids: Vec<i64>,
         query: String,
-        presentation: ListPresentationProfile,
-    ) -> Result<Vec<ListDecorationResult>, ClipKittyError>;
+    ) -> Result<Vec<RowDecorationResult>, ClipKittyError>;
 
     /// Load the preview payload for a single item given the search query.
     fn load_preview_payload(
         &self,
-        item_id: String,
+        item_id: i64,
         query: String,
     ) -> Result<Option<PreviewPayload>, ClipKittyError>;
 
     /// Fetch full items by IDs for preview pane
-    fn fetch_by_ids(&self, item_ids: Vec<String>) -> Result<Vec<ClipboardItem>, ClipKittyError>;
+    fn fetch_by_ids(&self, item_ids: Vec<i64>) -> Result<Vec<ClipboardItem>, ClipKittyError>;
 
     /// Get the database size in bytes
     fn database_size(&self) -> i64;
@@ -680,13 +561,13 @@ pub trait ClipboardStoreApi: Send + Sync {
     // Write Operations
     // ─────────────────────────────────────────────────────────────────────────────
 
-    /// Save a text item. Returns new item's stable ID, or empty string if duplicate.
+    /// Save a text item. Returns new item ID, or 0 if duplicate.
     fn save_text(
         &self,
         text: String,
         source_app: Option<String>,
         source_app_bundle_id: Option<String>,
-    ) -> Result<String, ClipKittyError>;
+    ) -> Result<i64, ClipKittyError>;
 
     /// Save an image item. Thumbnail should be generated by Swift (HEIC not supported by Rust).
     fn save_image(
@@ -696,9 +577,9 @@ pub trait ClipboardStoreApi: Send + Sync {
         source_app: Option<String>,
         source_app_bundle_id: Option<String>,
         is_animated: bool,
-    ) -> Result<String, ClipKittyError>;
+    ) -> Result<i64, ClipKittyError>;
 
-    /// Save a file item. Returns new item's stable ID, or empty string if duplicate.
+    /// Save a file item. Returns new item ID, or 0 if duplicate.
     #[allow(clippy::too_many_arguments)]
     fn save_file(
         &self,
@@ -710,9 +591,9 @@ pub trait ClipboardStoreApi: Send + Sync {
         thumbnail: Option<Vec<u8>>,
         source_app: Option<String>,
         source_app_bundle_id: Option<String>,
-    ) -> Result<String, ClipKittyError>;
+    ) -> Result<i64, ClipKittyError>;
 
-    /// Save multiple file items as a single grouped entry. Returns new item's stable ID, or empty string if duplicate.
+    /// Save multiple file items as a single grouped entry. Returns new item ID, or 0 if duplicate.
     #[allow(clippy::too_many_arguments)]
     fn save_files(
         &self,
@@ -724,12 +605,12 @@ pub trait ClipboardStoreApi: Send + Sync {
         thumbnail: Option<Vec<u8>>,
         source_app: Option<String>,
         source_app_bundle_id: Option<String>,
-    ) -> Result<String, ClipKittyError>;
+    ) -> Result<i64, ClipKittyError>;
 
     /// Update link metadata (called from Swift after LPMetadataProvider fetch)
     fn update_link_metadata(
         &self,
-        item_id: String,
+        item_id: i64,
         title: Option<String>,
         description: Option<String>,
         image_data: Option<Vec<u8>>,
@@ -738,28 +619,28 @@ pub trait ClipboardStoreApi: Send + Sync {
     /// Update image description and re-index
     fn update_image_description(
         &self,
-        item_id: String,
+        item_id: i64,
         description: String,
     ) -> Result<(), ClipKittyError>;
 
     /// Update text item content in-place and re-index
-    fn update_text_item(&self, item_id: String, text: String) -> Result<(), ClipKittyError>;
+    fn update_text_item(&self, item_id: i64, text: String) -> Result<(), ClipKittyError>;
 
     /// Update item timestamp to now
-    fn update_timestamp(&self, item_id: String) -> Result<(), ClipKittyError>;
+    fn update_timestamp(&self, item_id: i64) -> Result<(), ClipKittyError>;
 
     /// Add a tag to an item. Idempotent.
-    fn add_tag(&self, item_id: String, tag: ItemTag) -> Result<(), ClipKittyError>;
+    fn add_tag(&self, item_id: i64, tag: ItemTag) -> Result<(), ClipKittyError>;
 
     /// Remove a tag from an item.
-    fn remove_tag(&self, item_id: String, tag: ItemTag) -> Result<(), ClipKittyError>;
+    fn remove_tag(&self, item_id: i64, tag: ItemTag) -> Result<(), ClipKittyError>;
 
     // ─────────────────────────────────────────────────────────────────────────────
     // Delete Operations
     // ─────────────────────────────────────────────────────────────────────────────
 
     /// Delete an item by ID from both database and index
-    fn delete_item(&self, item_id: String) -> Result<(), ClipKittyError>;
+    fn delete_item(&self, item_id: i64) -> Result<(), ClipKittyError>;
 
     /// Clear all items from database and index
     fn clear(&self) -> Result<(), ClipKittyError>;
@@ -783,15 +664,5 @@ impl From<crate::database::DatabaseError> for ClipKittyError {
 impl From<crate::indexer::IndexerError> for ClipKittyError {
     fn from(e: crate::indexer::IndexerError) -> Self {
         ClipKittyError::IndexError(e.to_string())
-    }
-}
-
-#[cfg(feature = "sync")]
-impl From<purr_sync::SyncError> for ClipKittyError {
-    fn from(e: purr_sync::SyncError) -> Self {
-        match e {
-            purr_sync::SyncError::InconsistentData(msg) => ClipKittyError::DataInconsistency(msg),
-            other => ClipKittyError::DatabaseError(other.to_string()),
-        }
     }
 }

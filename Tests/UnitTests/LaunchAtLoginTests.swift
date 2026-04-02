@@ -1,5 +1,4 @@
 @testable import ClipKitty
-@testable import ClipKittyMacPlatform
 import ServiceManagement
 import XCTest
 
@@ -40,7 +39,6 @@ final class LaunchAtLoginTests: XCTestCase {
 
 @MainActor
 final class SnackbarSchedulerTests: XCTestCase {
-
     // MARK: - Nudge tests (migrated from LaunchAtLoginPromptStateMachineTests)
 
     func testFreshInstallAboveTimeGate() {
@@ -158,9 +156,9 @@ private struct MockSnackbarEnvironment: SnackbarEnvironment {
 
     var isLaunchAtLoginSystemEnabled: Bool = false
     var isLaunchAtLoginDismissed: Bool = false
-    var firstLaunchDate: Date = Date.distantPast
+    var firstLaunchDate: Date = .distantPast
     var minimumUseDuration: TimeInterval = 3600
-    var now: Date = Date()
+    var now: Date = .init()
 }
 
 private final class MockLaunchAtLoginService: LaunchAtLoginServiceProtocol {

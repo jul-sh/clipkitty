@@ -111,7 +111,6 @@ xcodebuild test \
     -scheme ClipKittyUITests \
     -destination 'platform=macOS' \
     -derivedDataPath DerivedData \
-    ${SKIP_SIGNING:+CODE_SIGNING_ALLOWED=NO} \
     -only-testing:ClipKittyUITests/ClipKittyUITests/$TEST_NAME \
     2>&1 | grep -E "(Test Case|passed|failed)" &
 TEST_PID=$!

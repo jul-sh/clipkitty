@@ -3,7 +3,7 @@
 
 # Paths to include
 included:
-  - Sources/MacApp
+  - Sources/App
 
 # Paths to exclude
 excluded:
