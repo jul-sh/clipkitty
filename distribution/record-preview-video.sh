@@ -60,10 +60,9 @@ echo ""
 # Set up code signing (needed for stable TCC permissions across builds)
 "$SCRIPT_DIR/setup-dev-signing.sh"
 
-# Get screen dimensions for recording
-SCREEN_WIDTH=$(system_profiler SPDisplaysDataType | grep Resolution | head -1 | awk '{print $2}')
-SCREEN_HEIGHT=$(system_profiler SPDisplaysDataType | grep Resolution | head -1 | awk '{print $4}')
-echo "Screen resolution: ${SCREEN_WIDTH}x${SCREEN_HEIGHT}"
+# Log screen dimensions (informational only)
+SCREEN_RES=$(system_profiler SPDisplaysDataType 2>/dev/null | grep -i "Resolution" | head -1 | sed 's/.*: //' || echo "unknown")
+echo "Screen resolution: ${SCREEN_RES:-unknown}"
 
 
 # Close ClipKitty if it's running to ensure a clean state
@@ -100,6 +99,7 @@ set +e
 xcodebuild test \
     -workspace ClipKitty.xcworkspace \
     -scheme ClipKittyUITests \
+    -testPlan ClipKittyVideoRecording \
     -destination 'platform=macOS' \
     -derivedDataPath DerivedData \
     -resultBundlePath "$RESULT_BUNDLE" \
