@@ -17,11 +17,11 @@ final class IntentTests: XCTestCase {
         let dbPath = tempDir.appendingPathComponent("test.db").path
         store = try! ClipKittyRust.ClipboardStore(dbPath: dbPath)
         repository = ClipboardRepository(store: store)
-        IntentAppContainer._testRepository = repository
+        IntentAppContainer.testRepositoryOverride = repository
     }
 
     override func tearDown() {
-        IntentAppContainer._testRepository = nil
+        IntentAppContainer.testRepositoryOverride = nil
         repository = nil
         store = nil
         if let tempDir {

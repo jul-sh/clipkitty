@@ -6,6 +6,7 @@ import UIKit
 struct PreviewScreen: View {
     let itemId: String
 
+    @Environment(AppContainer.self) private var container
     @Environment(BrowserViewModel.self) private var viewModel
     @Environment(AppState.self) private var appState
     @Environment(HapticsClient.self) private var haptics
@@ -258,7 +259,7 @@ struct PreviewScreen: View {
         ToolbarItemGroup(placement: .primaryAction) {
             Button {
                 guard let item = viewModel.selectedItemState?.item else { return }
-                appState.container.clipboardService.copy(content: item.content)
+                container.clipboardService.copy(content: item.content)
                 haptics.fire(.copy)
                 appState.showToast(.copied)
             } label: {

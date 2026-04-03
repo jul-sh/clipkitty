@@ -5,6 +5,7 @@ import SwiftUI
 
 struct BottomControlBar: View {
     @Binding var isSearchActive: Bool
+    @Environment(AppContainer.self) private var container
     @Environment(AppState.self) private var appState
     @Environment(BrowserViewModel.self) private var viewModel
     @Environment(HapticsClient.self) private var haptics
@@ -361,41 +362,37 @@ struct BottomControlBar: View {
     // MARK: - Paste clipboard
 
     private func pasteClipboard() async {
-        guard let clipboard = appState.container.clipboardService.readCurrentClipboard() else {
+        guard let content = container.clipboardService.readCurrentClipboard() else {
             appState.showToast(.addFailed(String(localized: "Clipboard is empty")))
             return
         }
 
         let result: Result<String, ClipboardError>
 
-        switch clipboard.type {
-        case "image":
-            guard let image = clipboard.content as? UIImage,
-                  let data = image.pngData()
-            else {
+        switch content {
+        case let .image(image):
+            guard let data = image.pngData() else {
                 appState.showToast(.addFailed(String(localized: "Could not read image data")))
                 return
             }
             let thumbnail = image.preparingThumbnail(of: CGSize(width: 200, height: 200))?.jpegData(
                 compressionQuality: 0.7
             )
-            result = await appState.container.repository.saveImage(
+            result = await container.repository.saveImage(
                 imageData: data,
                 thumbnail: thumbnail,
                 sourceApp: "Pasteboard",
                 sourceAppBundleId: nil,
                 isAnimated: false
             )
-        case "link":
-            let urlString = (clipboard.content as? URL)?.absoluteString ?? "\(clipboard.content)"
-            result = await appState.container.repository.saveText(
-                text: urlString,
+        case let .link(url):
+            result = await container.repository.saveText(
+                text: url.absoluteString,
                 sourceApp: "Pasteboard",
                 sourceAppBundleId: nil
             )
-        default:
-            let text = "\(clipboard.content)"
-            result = await appState.container.repository.saveText(
+        case let .text(text):
+            result = await container.repository.saveText(
                 text: text,
                 sourceApp: "Pasteboard",
                 sourceAppBundleId: nil
@@ -428,7 +425,7 @@ struct BottomControlBar: View {
             )
         }()
 
-        let result = await appState.container.repository.saveImage(
+        let result = await container.repository.saveImage(
             imageData: data,
             thumbnail: thumbnail,
             sourceApp: "Photos",

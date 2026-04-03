@@ -2,6 +2,7 @@ import ClipKittyShared
 import SwiftUI
 
 struct TextComposerView: View {
+    @Environment(AppContainer.self) private var container
     @Environment(AppState.self) private var appState
     @Environment(HapticsClient.self) private var haptics
     @Environment(\.dismiss) private var dismiss
@@ -17,16 +18,16 @@ struct TextComposerView: View {
             TextEditor(text: $text)
                 .font(.body)
                 .padding()
-                .navigationTitle("New Text")
+                .navigationTitle(String(localized: "New Text"))
                 .navigationBarTitleDisplayMode(.inline)
                 .toolbar {
                     ToolbarItem(placement: .cancellationAction) {
-                        Button("Cancel") {
+                        Button(String(localized: "Cancel")) {
                             dismiss()
                         }
                     }
                     ToolbarItem(placement: .confirmationAction) {
-                        Button("Save") {
+                        Button(String(localized: "Save")) {
                             Task { await saveText() }
                         }
                         .disabled(!canSave)
@@ -39,7 +40,7 @@ struct TextComposerView: View {
         let trimmed = text.trimmingCharacters(in: .whitespacesAndNewlines)
         guard !trimmed.isEmpty else { return }
 
-        let result = await appState.container.repository.saveText(
+        let result = await container.repository.saveText(
             text: trimmed,
             sourceApp: "Manual",
             sourceAppBundleId: nil

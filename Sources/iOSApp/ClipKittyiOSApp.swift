@@ -16,12 +16,16 @@ enum AppLaunchState {
 @MainActor
 @Observable
 final class AppState {
-    let container: AppContainer
+    private let container: AppContainer
     let viewModel: BrowserViewModel
 
-    var toastMessage: ToastMessage?
-    var toastAction: (() -> Void)?
+    var toast: ToastState = .init()
     var contentRevision: Int = 0
+
+    struct ToastState {
+        var message: ToastMessage?
+        var action: (() -> Void)?
+    }
 
     init(container: AppContainer) {
         self.container = container
@@ -58,23 +62,20 @@ final class AppState {
         }
         toastBox.dismissToast = { [weak self] in
             withAnimation(.bouncy) {
-                self?.toastMessage = nil
-                self?.toastAction = nil
+                self?.toast = .init()
             }
         }
     }
 
     func showToast(_ message: ToastMessage, action: (() -> Void)? = nil) {
         withAnimation(.bouncy) {
-            toastMessage = message
-            toastAction = action
+            toast = ToastState(message: message, action: action)
         }
         Task { @MainActor in
             try? await Task.sleep(for: .seconds(message.duration))
-            if toastMessage == message {
+            if toast.message == message {
                 withAnimation(.bouncy) {
-                    toastMessage = nil
-                    toastAction = nil
+                    toast = .init()
                 }
             }
         }
@@ -146,6 +147,9 @@ enum ToastMessage: Equatable {
     }
 }
 
+/// Captures toast callbacks for BrowserViewModel closures that are set during init,
+/// before `self` is available. BrowserViewModel stores callbacks as `private let`,
+/// so they must be provided at construction time — this box bridges that gap.
 @MainActor
 private final class ToastCallbackBox {
     var showToast: ((ToastMessage, (() -> Void)?) -> Void)?
@@ -189,7 +193,7 @@ struct ClipKittyiOSApp: App {
         appState: AppState,
         router: AppRouter
     ) -> some View {
-        let base = RootTabView()
+        let base = RootView()
             .environment(container)
             .environment(appState)
             .environment(appState.viewModel)

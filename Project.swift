@@ -340,6 +340,7 @@ let project = Project(
                 .target(name: "ClipKittyRust"),
                 .target(name: "ClipKittyShared"),
                 .target(name: "ClipKittyAppleServices"),
+                .target(name: "ClipKittyShare"),
             ],
             settings: .settings(
                 base: [
@@ -360,11 +361,13 @@ let project = Project(
                     .debug(name: "Debug", settings: [
                         "CODE_SIGN_STYLE": "Automatic",
                         "CODE_SIGN_IDENTITY": "Apple Development",
+                        "CODE_SIGN_ENTITLEMENTS": "Sources/iOSApp/ClipKittyiOS.entitlements",
                         "SWIFT_ACTIVE_COMPILATION_CONDITIONS": "ENABLE_SYNC",
                     ]),
                     .release(name: "Release", settings: [
                         "CODE_SIGN_STYLE": "Automatic",
                         "CODE_SIGN_IDENTITY": "Apple Development",
+                        "CODE_SIGN_ENTITLEMENTS": "Sources/iOSApp/ClipKittyiOS.entitlements",
                         "SWIFT_ACTIVE_COMPILATION_CONDITIONS": "ENABLE_SYNC",
                     ]),
                     .release(name: .configuration("SparkleRelease"), settings: [:]),
@@ -373,6 +376,69 @@ let project = Project(
                         "CODE_SIGN_IDENTITY": "Apple Development",
                         "CODE_SIGN_ENTITLEMENTS": "Sources/iOSApp/ClipKittyiOS.appstore.entitlements",
                         "SWIFT_ACTIVE_COMPILATION_CONDITIONS": "APP_STORE ENABLE_SYNC",
+                    ]),
+                ]
+            )
+        ),
+
+        // MARK: ClipKittyShare — iOS Share Extension
+
+        .target(
+            name: "ClipKittyShare",
+            destinations: [.iPhone],
+            product: .appExtension,
+            bundleId: "com.eviljuliette.clipkitty.share",
+            deploymentTargets: .iOS("26.0"),
+            infoPlist: .extendingDefault(with: [
+                "CFBundleDisplayName": "ClipKitty",
+                "CFBundleShortVersionString": "$(MARKETING_VERSION)",
+                "CFBundleVersion": "$(CURRENT_PROJECT_VERSION)",
+                "NSExtension": [
+                    "NSExtensionPointIdentifier": "com.apple.share-services",
+                    "NSExtensionPrincipalClass": "$(PRODUCT_MODULE_NAME).ShareViewController",
+                    "NSExtensionAttributes": [
+                        "NSExtensionActivationRule": [
+                            "NSExtensionActivationSupportsText": true,
+                            "NSExtensionActivationSupportsWebURLWithMaxCount": 1,
+                            "NSExtensionActivationSupportsImageWithMaxCount": 1,
+                        ],
+                    ],
+                ],
+            ]),
+            sources: ["Sources/ShareExtension/**"],
+            dependencies: [
+                .target(name: "ClipKittyRust"),
+                .target(name: "ClipKittyShared"),
+            ],
+            settings: .settings(
+                base: [
+                    "OTHER_LDFLAGS": .array(["$(inherited)", "-lpurr"]),
+                    "LIBRARY_SEARCH_PATHS[sdk=iphoneos*]": .array([
+                        "$(inherited)",
+                        "$(PROJECT_DIR)/Sources/ClipKittyRust/ios-device",
+                    ]),
+                    "LIBRARY_SEARCH_PATHS[sdk=iphonesimulator*]": .array([
+                        "$(inherited)",
+                        "$(PROJECT_DIR)/Sources/ClipKittyRust/ios-simulator",
+                    ]),
+                    "DEVELOPMENT_TEAM": "ANBBV7LQ2P",
+                ],
+                configurations: [
+                    .debug(name: "Debug", settings: [
+                        "CODE_SIGN_STYLE": "Automatic",
+                        "CODE_SIGN_IDENTITY": "Apple Development",
+                        "CODE_SIGN_ENTITLEMENTS": "Sources/ShareExtension/ClipKittyShare.entitlements",
+                    ]),
+                    .release(name: "Release", settings: [
+                        "CODE_SIGN_STYLE": "Automatic",
+                        "CODE_SIGN_IDENTITY": "Apple Development",
+                        "CODE_SIGN_ENTITLEMENTS": "Sources/ShareExtension/ClipKittyShare.entitlements",
+                    ]),
+                    .release(name: .configuration("SparkleRelease"), settings: [:]),
+                    .release(name: .configuration("AppStore"), settings: [
+                        "CODE_SIGN_STYLE": "Automatic",
+                        "CODE_SIGN_IDENTITY": "Apple Development",
+                        "CODE_SIGN_ENTITLEMENTS": "Sources/ShareExtension/ClipKittyShare.entitlements",
                     ]),
                 ]
             )
@@ -559,7 +625,10 @@ let project = Project(
         .scheme(
             name: "ClipKittyiOS",
             shared: true,
-            buildAction: .buildAction(targets: [.target("ClipKittyiOS")]),
+            buildAction: .buildAction(targets: [
+                .target("ClipKittyiOS"),
+                .target("ClipKittyShare"),
+            ]),
             testAction: .targets(
                 [.testableTarget(target: .target("ClipKittyiOSTests"))],
                 configuration: "Debug"

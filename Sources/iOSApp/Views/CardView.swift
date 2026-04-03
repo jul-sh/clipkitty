@@ -8,6 +8,7 @@ struct CardView: View {
     @Binding var previewItemId: String?
     @Binding var editItemId: String?
 
+    @Environment(AppContainer.self) private var container
     @Environment(BrowserViewModel.self) private var viewModel
     @Environment(AppState.self) private var appState
     @Environment(HapticsClient.self) private var haptics
@@ -226,7 +227,10 @@ struct CardView: View {
         isShareLoading = true
         Task {
             defer { isShareLoading = false }
-            guard let item = await appState.container.storeClient.fetchItem(id: metadata.itemId) else { return }
+            guard let item = await container.storeClient.fetchItem(id: metadata.itemId) else {
+                appState.showToast(.addFailed(String(localized: "Could not load item")))
+                return
+            }
             SharePresenter.present(item: item)
         }
     }

@@ -5,23 +5,15 @@ import SwiftUI
 @MainActor
 @Observable
 final class AppRouter {
-    enum Tab {
-        case library
-        case settings
-    }
-
     enum DeepLink {
         case search(query: String)
         case newItem
     }
 
-    var selectedTab: Tab = .library
-
-    /// Pending deep link to apply once the library tab is visible.
+    /// Pending deep link to apply once the view is visible.
     var pendingDeepLink: DeepLink?
 
     func handle(_ deepLink: DeepLink) {
-        selectedTab = .library
         pendingDeepLink = deepLink
     }
 

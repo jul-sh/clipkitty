@@ -11,6 +11,7 @@ struct HomeFeedView: View {
     @State private var previewItemId: String?
     @State private var editItemId: String?
     @State private var hasAppeared = false
+    @State private var showSettings = false
 
     var body: some View {
         NavigationStack {
@@ -28,8 +29,22 @@ struct HomeFeedView: View {
                 toastOverlay
                     .padding(.bottom, 80)
             }
+            .navigationTitle("ClipKitty")
+            .navigationBarTitleDisplayMode(.inline)
             .navigationDestination(item: $previewItemId) { itemId in
                 PreviewScreen(itemId: itemId)
+            }
+            .toolbar {
+                ToolbarItem(placement: .topBarTrailing) {
+                    Button {
+                        showSettings = true
+                    } label: {
+                        Image(systemName: "gearshape")
+                    }
+                }
+            }
+            .sheet(isPresented: $showSettings) {
+                SettingsScreen()
             }
             .sheet(isPresented: Binding(
                 get: { editItemId != nil },
@@ -123,15 +138,13 @@ struct HomeFeedView: View {
                     }
                     .tint(.orange)
 
-                    if case .symbol(.text) = row.metadata.icon {
-                        Button {
-                            editItemId = row.metadata.itemId
-                            haptics.fire(.selection)
-                        } label: {
-                            Label("Edit", systemImage: "pencil")
-                        }
-                        .tint(.blue)
+                    Button {
+                        previewItemId = row.metadata.itemId
+                        haptics.fire(.selection)
+                    } label: {
+                        Label("Preview", systemImage: "eye")
                     }
+                    .tint(.blue)
                 }
                 .listRowSeparator(.hidden)
                 .listRowInsets(EdgeInsets(top: 6, leading: 0, bottom: 6, trailing: 0))
@@ -208,20 +221,19 @@ struct HomeFeedView: View {
 
     @ViewBuilder
     private var toastOverlay: some View {
-        if let toast = appState.toastMessage {
+        if let message = appState.toast.message {
             GlassEffectContainer {
                 HStack(spacing: 10) {
-                    Image(systemName: toast.iconSystemName)
+                    Image(systemName: message.iconSystemName)
                         .font(.subheadline.weight(.medium))
-                    Text(toast.text)
+                    Text(message.text)
                         .font(.subheadline.weight(.medium))
 
-                    if let actionTitle = toast.actionTitle, let action = appState.toastAction {
+                    if let actionTitle = message.actionTitle, let action = appState.toast.action {
                         Button {
                             action()
                             withAnimation(.bouncy) {
-                                appState.toastMessage = nil
-                                appState.toastAction = nil
+                                appState.toast = .init()
                             }
                         } label: {
                             Text(actionTitle)

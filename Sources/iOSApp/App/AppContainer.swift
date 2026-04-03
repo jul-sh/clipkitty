@@ -34,9 +34,15 @@ final class AppContainer {
     }
 
     static func bootstrap(databasePath customPath: String? = nil) -> Result<AppContainer, BootstrapError> {
+        // Migrate legacy Application Support database to App Group container
+        // before resolving the path, so existing users keep their data.
+        if customPath == nil {
+            DatabasePath.migrateIfNeeded()
+        }
+
         let dbPath: String
         do {
-            dbPath = try customPath ?? databasePath()
+            dbPath = try customPath ?? DatabasePath.resolve()
         } catch {
             return .failure(.databasePathFailed(error.localizedDescription))
         }
@@ -83,14 +89,4 @@ final class AppContainer {
         }
     }
 
-    private static func databasePath() throws -> String {
-        let appSupport = FileManager.default.urls(
-            for: .applicationSupportDirectory,
-            in: .userDomainMask
-        ).first!
-
-        let appDir = appSupport.appendingPathComponent("ClipKitty", isDirectory: true)
-        try FileManager.default.createDirectory(at: appDir, withIntermediateDirectories: true)
-        return appDir.appendingPathComponent("clipboard.db").path
-    }
 }

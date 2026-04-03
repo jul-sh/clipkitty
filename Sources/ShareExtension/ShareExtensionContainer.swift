@@ -2,11 +2,10 @@ import ClipKittyRust
 import ClipKittyShared
 import Foundation
 
-/// Provides a shared ClipboardRepository for App Intents.
-/// Intents may run in an extension process, so this uses a minimal bootstrap
-/// without UI services.
+/// Provides a shared ClipboardRepository for the Share Extension.
+/// Mirrors `IntentAppContainer` — lightweight bootstrap without UI services.
 @MainActor
-enum IntentAppContainer {
+enum ShareExtensionContainer {
     private static var _repository: ClipboardRepository?
 
     /// Test-only override. When set, `repository` returns this instead of

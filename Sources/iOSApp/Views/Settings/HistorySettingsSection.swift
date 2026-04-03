@@ -2,6 +2,7 @@ import ClipKittyShared
 import SwiftUI
 
 struct HistorySettingsSection: View {
+    @Environment(AppContainer.self) private var container
     @Environment(AppState.self) private var appState
 
     @State private var databaseSizeText: String = "Calculating..."
@@ -53,7 +54,7 @@ struct HistorySettingsSection: View {
     }
 
     private func loadDatabaseSize() async {
-        let result = await appState.container.repository.databaseSize()
+        let result = await container.repository.databaseSize()
         switch result {
         case let .success(bytes):
             databaseSizeText = Utilities.formatBytes(bytes)
@@ -64,7 +65,7 @@ struct HistorySettingsSection: View {
 
     private func clearHistory() async {
         historyAction = .clearing
-        let result = await appState.container.storeClient.clear()
+        let result = await container.storeClient.clear()
         switch result {
         case .success:
             historyAction = .idle
