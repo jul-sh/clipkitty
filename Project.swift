@@ -316,7 +316,7 @@ let project = Project(
             name: "ClipKittyiOS",
             destinations: [.iPhone],
             product: .app,
-            bundleId: "com.eviljuliette.clipkitty.ios",
+            bundleId: "com.eviljuliette.clipkitty",
             deploymentTargets: .iOS("26.0"),
             infoPlist: .extendingDefault(with: [
                 "CFBundleDisplayName": "ClipKitty",
@@ -325,6 +325,7 @@ let project = Project(
                 "CFBundleShortVersionString": "$(MARKETING_VERSION)",
                 "CFBundleVersion": "$(CURRENT_PROJECT_VERSION)",
                 "ITSAppUsesNonExemptEncryption": false,
+                "LSApplicationCategoryType": "public.app-category.utilities",
                 "NSHumanReadableCopyright": "Copyright © 2025 ClipKitty. All rights reserved.",
                 "UILaunchScreen": ["UIColorName": ""],
             ]),
@@ -332,6 +333,8 @@ let project = Project(
             resources: [
                 "AppIcon.icon",
                 "Sources/iOSApp/Resources/Fonts/**",
+                "Sources/iOSApp/Resources/Localizable.xcstrings",
+                "Sources/iOSApp/PrivacyInfo.xcprivacy",
             ],
             dependencies: [
                 .target(name: "ClipKittyRust"),
@@ -350,6 +353,8 @@ let project = Project(
                         "$(PROJECT_DIR)/Sources/ClipKittyRust/ios-simulator",
                     ]),
                     "DEVELOPMENT_TEAM": "ANBBV7LQ2P",
+                    "SWIFT_EMIT_LOC_STRINGS": "YES",
+                    "LOCALIZATION_PREFERS_STRING_CATALOGS": "YES",
                 ],
                 configurations: [
                     .debug(name: "Debug", settings: [
@@ -366,6 +371,7 @@ let project = Project(
                     .release(name: .configuration("AppStore"), settings: [
                         "CODE_SIGN_STYLE": "Automatic",
                         "CODE_SIGN_IDENTITY": "Apple Development",
+                        "CODE_SIGN_ENTITLEMENTS": "Sources/iOSApp/ClipKittyiOS.appstore.entitlements",
                         "SWIFT_ACTIVE_COMPILATION_CONDITIONS": "APP_STORE ENABLE_SYNC",
                     ]),
                 ]
@@ -378,7 +384,7 @@ let project = Project(
             name: "ClipKittyiOSTests",
             destinations: .iOS,
             product: .unitTests,
-            bundleId: "com.eviljuliette.clipkitty.ios.tests",
+            bundleId: "com.eviljuliette.clipkitty.tests.ios",
             deploymentTargets: .iOS("26.0"),
             sources: ["Tests/iOSTests/**"],
             dependencies: [
@@ -389,6 +395,7 @@ let project = Project(
             ],
             settings: .settings(
                 base: [
+                    "SWIFT_ACTIVE_COMPILATION_CONDITIONS": "ENABLE_SYNC",
                     "OTHER_LDFLAGS": .array(["$(inherited)", "-lpurr"]),
                     "LIBRARY_SEARCH_PATHS[sdk=iphoneos*]": .array([
                         "$(inherited)",
@@ -430,6 +437,25 @@ let project = Project(
                         "$(PROJECT_DIR)/Sources/ClipKittyRust/ios-simulator",
                     ]),
                     "CODE_SIGNING_ALLOWED": "NO",
+                ]
+            )
+        ),
+
+        // MARK: ClipKittyiOSUITests — iOS UI tests (marketing screenshots)
+
+        .target(
+            name: "ClipKittyiOSUITests",
+            destinations: .iOS,
+            product: .uiTests,
+            bundleId: "com.eviljuliette.clipkitty.uitests.ios",
+            deploymentTargets: .iOS("26.0"),
+            sources: ["Tests/iOSUITests/**"],
+            dependencies: [
+                .target(name: "ClipKittyiOS"),
+            ],
+            settings: .settings(
+                base: [
+                    "DEVELOPMENT_TEAM": "ANBBV7LQ2P",
                 ]
             )
         ),
@@ -541,6 +567,32 @@ let project = Project(
             runAction: .runAction(
                 configuration: "Debug",
                 executable: .target("ClipKittyiOS")
+            )
+        ),
+        // iOS App Store scheme
+        .scheme(
+            name: "ClipKittyiOS-AppStore",
+            shared: true,
+            buildAction: .buildAction(targets: [.target("ClipKittyiOS")]),
+            runAction: .runAction(
+                configuration: .configuration("AppStore"),
+                executable: .target("ClipKittyiOS")
+            ),
+            archiveAction: .archiveAction(configuration: .configuration("AppStore"))
+        ),
+        // iOS UI tests scheme (marketing screenshots)
+        .scheme(
+            name: "ClipKittyiOSUITests",
+            shared: true,
+            buildAction: .buildAction(
+                targets: [
+                    .target("ClipKittyiOSUITests"),
+                    .target("ClipKittyiOS"),
+                ]
+            ),
+            testAction: .targets(
+                [.testableTarget(target: .target("ClipKittyiOSUITests"))],
+                configuration: "Debug"
             )
         ),
         // iOS smoke test — builds the shared chain for iOS to catch macOS leakage

@@ -4,7 +4,7 @@ Historial Ilimitado — Sin topes, sin límites. Si lo copiaste hace un año, si
 Vistas Multilínea — Ve exactamente lo que vas a pegar en un panel de vista previa dedicado.
 Búsqueda Instantánea — Encuentra cualquier fragmento en milisegundos, ya sea que busques entre diez elementos o diez millones. Pensado para quienes copian muchas cosas y necesitan volver a encontrarlas.
 SINCRONIZACIÓN iCLOUD
-Sincroniza opcionalmente tu historial de portapapeles en todos tus Macs. Activa iCloud Sync en los ajustes y tus clips te seguirán de un equipo a otro.
-Flujo de trabajo con teclado. — Optimizado para la velocidad con acceso mediante ⌥Space.
+Sincroniza opcionalmente tu historial de portapapeles en todos tus dispositivos. Activa iCloud Sync en los ajustes y tus clips te seguirán de un dispositivo a otro.
+FUNCIONA COMO ESPERAS — En Mac: ⌥Space para abrir, flechas para navegar, Return para pegar, ⌘1-9 para saltar a cualquier elemento. En iPhone: toca para copiar, desliza para gestionar. Filtra por tipo o busca en todo.
 Seguro y Privado; tus datos nunca salen de tu equipo por defecto. ClipKitty funciona completamente en el dispositivo, sin telemetría y sin suscripciones. La sincronización opcional con iCloud utiliza exclusivamente tu contenedor privado de iCloud.
 Transparente y Abierto. — Licencia permisiva con código fuente disponible públicamente. Apoya el desarrollo comprando a través del App Store.

@@ -12,19 +12,24 @@ RED='\033[0;31m'
 GREEN='\033[0;32m'
 NC='\033[0m'
 
-CATALOG="Sources/MacApp/Resources/Localizable.xcstrings"
+MAC_CATALOG="Sources/MacApp/Resources/Localizable.xcstrings"
+IOS_CATALOG="Sources/iOSApp/Resources/Localizable.xcstrings"
 
-if [ ! -f "$CATALOG" ]; then
-    echo -e "${RED}Localization catalog not found: $CATALOG${NC}"
+if [ ! -f "$MAC_CATALOG" ] && [ ! -f "$IOS_CATALOG" ]; then
+    echo -e "${RED}No localization catalog found${NC}"
     exit 1
 fi
 
-# Build set of catalog keys (one per line)
+# Build set of catalog keys from all available catalogs (one per line)
 CATALOG_KEYS=$(python3 -c "
-import json, sys
-with open('$CATALOG') as f:
-    data = json.load(f)
-for key in data['strings']:
+import json, sys, os
+keys = set()
+for path in ['$MAC_CATALOG', '$IOS_CATALOG']:
+    if os.path.isfile(path):
+        with open(path) as f:
+            data = json.load(f)
+        keys.update(data['strings'].keys())
+for key in sorted(keys):
     print(key)
 ")
 
@@ -68,14 +73,17 @@ if [ ${#MISSING[@]} -gt 0 ]; then
     echo -e "${RED}║  Missing localization catalog entries!                     ║${NC}"
     echo -e "${RED}╚════════════════════════════════════════════════════════════╝${NC}"
     echo ""
-    echo "The following strings are used in code but missing from:"
-    echo "  $CATALOG"
+    echo "The following strings are used in code but missing from any localization catalog:"
+    echo "  $MAC_CATALOG"
+    echo "  $IOS_CATALOG"
     echo ""
     for entry in "${MISSING[@]}"; do
         echo "  - $entry"
     done
     echo ""
-    echo "To fix: add each missing key to $CATALOG with translations for all supported languages."
+    echo "To fix: add each missing key to the appropriate catalog with translations for all supported languages."
+    echo "  Mac strings: $MAC_CATALOG"
+    echo "  iOS strings: $IOS_CATALOG"
     echo ""
     echo "The catalog is a JSON file. For each missing key, add an entry under \"strings\" like:"
     echo ""

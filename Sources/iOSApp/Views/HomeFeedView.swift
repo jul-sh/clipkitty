@@ -5,6 +5,7 @@ import SwiftUI
 struct HomeFeedView: View {
     @Environment(AppState.self) private var appState
     @Environment(BrowserViewModel.self) private var viewModel
+    @Environment(HapticsClient.self) private var haptics
 
     @State private var isSearchActive = false
     @State private var previewItemId: String?
@@ -84,21 +85,61 @@ struct HomeFeedView: View {
     }
 
     private var scrollableFeed: some View {
-        ScrollView {
-            LazyVStack(spacing: 12) {
-                ForEach(filteredRows) { row in
-                    CardView(
-                        row: row,
-                        previewItemId: $previewItemId,
-                        editItemId: $editItemId
-                    )
-                    .onAppear {
-                        loadDecorationsIfNeeded(for: row)
+        List {
+            ForEach(filteredRows) { row in
+                CardView(
+                    row: row,
+                    previewItemId: $previewItemId,
+                    editItemId: $editItemId
+                )
+                .onAppear {
+                    loadDecorationsIfNeeded(for: row)
+                }
+                .swipeActions(edge: .trailing, allowsFullSwipe: false) {
+                    Button(role: .destructive) {
+                        viewModel.deleteItem(itemId: row.metadata.itemId)
+                        haptics.fire(.destructive)
+                        appState.showToast(.deleted)
+                    } label: {
+                        Label("Delete", systemImage: "trash")
+                    }
+
+                    Button {
+                        let isBookmarked = row.metadata.tags.contains(.bookmark)
+                        if isBookmarked {
+                            viewModel.removeTag(.bookmark, fromItem: row.metadata.itemId)
+                            appState.showToast(.unbookmarked)
+                        } else {
+                            viewModel.addTag(.bookmark, toItem: row.metadata.itemId)
+                            appState.showToast(.bookmarked)
+                        }
+                        haptics.fire(.selection)
+                    } label: {
+                        let isBookmarked = row.metadata.tags.contains(.bookmark)
+                        Label(
+                            isBookmarked ? "Unbookmark" : "Bookmark",
+                            systemImage: isBookmarked ? "bookmark.slash" : "bookmark"
+                        )
+                    }
+                    .tint(.orange)
+
+                    if case .symbol(.text) = row.metadata.icon {
+                        Button {
+                            editItemId = row.metadata.itemId
+                            haptics.fire(.selection)
+                        } label: {
+                            Label("Edit", systemImage: "pencil")
+                        }
+                        .tint(.blue)
                     }
                 }
+                .listRowSeparator(.hidden)
+                .listRowInsets(EdgeInsets(top: 6, leading: 0, bottom: 6, trailing: 0))
+                .listRowBackground(Color.clear)
             }
-            .padding(.vertical, 12)
         }
+        .listStyle(.plain)
+        .scrollContentBackground(.hidden)
     }
 
     /// Filter out file items — iPhone app doesn't support file sharing.
@@ -126,18 +167,18 @@ struct HomeFeedView: View {
                 Image(systemName: "magnifyingglass")
                     .font(.system(size: 40))
                     .foregroundStyle(.secondary)
-                Text("No results found")
+                Text("No results found", comment: "Empty state title when search returns no matches")
                     .font(.title3.weight(.semibold))
-                Text("Try adjusting your search or filters")
+                Text("Try adjusting your search or filters", comment: "Empty state subtitle for search")
                     .font(.subheadline)
                     .foregroundStyle(.secondary)
             } else {
                 Image(systemName: "clipboard")
                     .font(.system(size: 40))
                     .foregroundStyle(.secondary)
-                Text("No items yet")
+                Text("No items yet", comment: "Empty state title when clipboard history is empty")
                     .font(.title3.weight(.semibold))
-                Text("Copy something to get started, or tap + to add manually")
+                Text("Copy something to get started, or tap + to add manually", comment: "Empty state subtitle")
                     .font(.subheadline)
                     .foregroundStyle(.secondary)
                     .multilineTextAlignment(.center)
@@ -154,7 +195,7 @@ struct HomeFeedView: View {
             Image(systemName: "exclamationmark.triangle")
                 .font(.system(size: 40))
                 .foregroundStyle(.secondary)
-            Text("Something went wrong")
+            Text("Something went wrong", comment: "Error state title")
                 .font(.title3.weight(.semibold))
             Text(message)
                 .font(.subheadline)

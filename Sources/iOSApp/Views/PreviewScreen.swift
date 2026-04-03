@@ -8,6 +8,7 @@ struct PreviewScreen: View {
 
     @Environment(BrowserViewModel.self) private var viewModel
     @Environment(AppState.self) private var appState
+    @Environment(HapticsClient.self) private var haptics
     @Environment(\.dismiss) private var dismiss
 
     @State private var showDeleteConfirmation = false
@@ -18,26 +19,26 @@ struct PreviewScreen: View {
             if let selectedItemState = viewModel.selectedItemState {
                 contentView(for: selectedItemState.item)
             } else {
-                ProgressView("Loading...")
+                ProgressView(String(localized: "Loading..."))
             }
         }
         .navigationTitle(navigationTitle)
         .navigationBarTitleDisplayMode(.inline)
         .toolbar { toolbarContent }
-        .alert("Delete Item", isPresented: $showDeleteConfirmation) {
-            Button("Delete", role: .destructive) {
+        .alert(String(localized: "Delete Item"), isPresented: $showDeleteConfirmation) {
+            Button(String(localized: "Delete"), role: .destructive) {
                 viewModel.deleteItem(itemId: itemId)
-                HapticFeedback.destructive()
+                haptics.fire(.destructive)
                 appState.showToast(.deleted)
                 dismiss()
             }
-            Button("Cancel", role: .cancel) {}
+            Button(String(localized: "Cancel"), role: .cancel) {}
         } message: {
-            Text("Are you sure you want to delete this item? This cannot be undone.")
+            Text("Are you sure you want to delete this item? This cannot be undone.", comment: "Delete confirmation message")
         }
         .sheet(isPresented: $showEditSheet) {
             if let item = viewModel.selectedItemState?.item,
-               case let .text(value) = item.content
+               case .text = item.content
             {
                 EditView(itemId: itemId)
             }
@@ -50,13 +51,13 @@ struct PreviewScreen: View {
     // MARK: - Navigation Title
 
     private var navigationTitle: String {
-        guard let item = viewModel.selectedItemState?.item else { return "Detail" }
+        guard let item = viewModel.selectedItemState?.item else { return String(localized: "Detail") }
         switch item.content {
-        case .text: return "Text"
-        case .link: return "Link"
-        case .image: return "Image"
-        case .color: return "Color"
-        case .file: return "File"
+        case .text: return String(localized: "Text")
+        case .link: return String(localized: "Link")
+        case .image: return String(localized: "Image")
+        case .color: return String(localized: "Color")
+        case .file: return String(localized: "File")
         }
     }
 
@@ -85,7 +86,7 @@ struct PreviewScreen: View {
         case let .color(value):
             colorContent(value: value)
         case .file:
-            Text("File items are not supported on iPhone.")
+            Text("File items are not supported on iPhone.", comment: "Unsupported content type message")
                 .font(.subheadline)
                 .foregroundStyle(.secondary)
         }
@@ -222,21 +223,21 @@ struct PreviewScreen: View {
 
     private func metadataSection(for item: ClipboardItem) -> some View {
         VStack(alignment: .leading, spacing: 8) {
-            Text("Details")
+            Text("Details", comment: "Section header for item metadata")
                 .font(.headline)
 
-            LabeledContent("Type", value: navigationTitle)
+            LabeledContent(String(localized: "Type"), value: navigationTitle)
 
             if let sourceApp = item.itemMetadata.sourceApp {
-                LabeledContent("Source", value: sourceApp)
+                LabeledContent(String(localized: "Source"), value: sourceApp)
             }
 
-            LabeledContent("Time") {
+            LabeledContent(String(localized: "Time")) {
                 Text(formattedDate(from: item.itemMetadata.timestampUnix))
             }
 
-            LabeledContent("Bookmarked") {
-                Text(isBookmarked(item) ? "Yes" : "No")
+            LabeledContent(String(localized: "Bookmarked")) {
+                Text(isBookmarked(item) ? String(localized: "Yes") : String(localized: "No"))
             }
         }
         .font(.subheadline)
@@ -257,8 +258,8 @@ struct PreviewScreen: View {
         ToolbarItemGroup(placement: .primaryAction) {
             Button {
                 guard let item = viewModel.selectedItemState?.item else { return }
-                appState.clipboardService.copy(content: item.content)
-                HapticFeedback.copy()
+                appState.container.clipboardService.copy(content: item.content)
+                haptics.fire(.copy)
                 appState.showToast(.copied)
             } label: {
                 Image(systemName: "doc.on.doc")
@@ -279,7 +280,7 @@ struct PreviewScreen: View {
                     toggleBookmark(for: item)
                 } label: {
                     Label(
-                        isBookmarked(item) ? "Remove Bookmark" : "Bookmark",
+                        isBookmarked(item) ? String(localized: "Remove Bookmark") : String(localized: "Bookmark"),
                         systemImage: isBookmarked(item) ? "bookmark.slash" : "bookmark"
                     )
                 }
@@ -287,13 +288,13 @@ struct PreviewScreen: View {
                 Button {
                     SharePresenter.present(item: item)
                 } label: {
-                    Label("Share", systemImage: "square.and.arrow.up")
+                    Label(String(localized: "Share"), systemImage: "square.and.arrow.up")
                 }
 
                 Button(role: .destructive) {
                     showDeleteConfirmation = true
                 } label: {
-                    Label("Delete", systemImage: "trash")
+                    Label(String(localized: "Delete"), systemImage: "trash")
                 }
             }
         }
@@ -308,11 +309,11 @@ struct PreviewScreen: View {
     private func toggleBookmark(for item: ClipboardItem) {
         if isBookmarked(item) {
             viewModel.removeTag(.bookmark, fromItem: item.itemMetadata.itemId)
-            HapticFeedback.selection()
+            haptics.fire(.selection)
             appState.showToast(.unbookmarked)
         } else {
             viewModel.addTag(.bookmark, toItem: item.itemMetadata.itemId)
-            HapticFeedback.selection()
+            haptics.fire(.selection)
             appState.showToast(.bookmarked)
         }
     }

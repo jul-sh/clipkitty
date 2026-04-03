@@ -10,6 +10,7 @@ struct CardView: View {
 
     @Environment(BrowserViewModel.self) private var viewModel
     @Environment(AppState.self) private var appState
+    @Environment(HapticsClient.self) private var haptics
 
     @State private var isShareLoading = false
 
@@ -26,18 +27,16 @@ struct CardView: View {
             metadataLine
             contentPreview
         }
-        .padding(14)
-        .frame(maxWidth: .infinity, alignment: .leading)
-        .background(.regularMaterial, in: RoundedRectangle(cornerRadius: 14, style: .continuous))
+        .cardSurface()
         .padding(.horizontal, 16)
         .contentShape(RoundedRectangle(cornerRadius: 14, style: .continuous))
         .accessibilityElement(children: .combine)
         .accessibilityLabel(accessibilityCardLabel)
-        .accessibilityHint("Double tap to copy")
+        .accessibilityHint(String(localized: "Double tap to copy"))
         .accessibilityAddTraits(.isButton)
         .onTapGesture {
             viewModel.copyOnlyItem(itemId: metadata.itemId)
-            HapticFeedback.copy()
+            haptics.fire(.copy)
         }
         .contextMenu { contextMenuActions }
     }
@@ -171,22 +170,22 @@ struct CardView: View {
     private var contextMenuActions: some View {
         Button {
             viewModel.copyOnlyItem(itemId: metadata.itemId)
-            HapticFeedback.copy()
+            haptics.fire(.copy)
         } label: {
-            Label("Copy", systemImage: "doc.on.doc")
+            Label(String(localized: "Copy"), systemImage: "doc.on.doc")
         }
 
         Button {
             previewItemId = metadata.itemId
         } label: {
-            Label("Preview", systemImage: "eye")
+            Label(String(localized: "Preview"), systemImage: "eye")
         }
 
         if case .symbol(.text) = metadata.icon {
             Button {
                 editItemId = metadata.itemId
             } label: {
-                Label("Edit", systemImage: "pencil")
+                Label(String(localized: "Edit"), systemImage: "pencil")
             }
         }
 
@@ -198,10 +197,10 @@ struct CardView: View {
                 viewModel.addTag(.bookmark, toItem: metadata.itemId)
                 appState.showToast(.bookmarked)
             }
-            HapticFeedback.selection()
+            haptics.fire(.selection)
         } label: {
             Label(
-                isBookmarked ? "Remove Bookmark" : "Bookmark",
+                isBookmarked ? String(localized: "Remove Bookmark") : String(localized: "Bookmark"),
                 systemImage: isBookmarked ? "bookmark.slash" : "bookmark"
             )
         }
@@ -209,15 +208,15 @@ struct CardView: View {
         Button {
             shareItem()
         } label: {
-            Label(isShareLoading ? "Loading…" : "Share", systemImage: "square.and.arrow.up")
+            Label(isShareLoading ? String(localized: "Loading…") : String(localized: "Share"), systemImage: "square.and.arrow.up")
         }
         .disabled(isShareLoading)
 
         Button(role: .destructive) {
             viewModel.deleteItem(itemId: metadata.itemId)
-            HapticFeedback.destructive()
+            haptics.fire(.destructive)
         } label: {
-            Label("Delete", systemImage: "trash")
+            Label(String(localized: "Delete"), systemImage: "trash")
         }
     }
 
@@ -227,7 +226,7 @@ struct CardView: View {
         isShareLoading = true
         Task {
             defer { isShareLoading = false }
-            guard let item = await appState.storeClient.fetchItem(id: metadata.itemId) else { return }
+            guard let item = await appState.container.storeClient.fetchItem(id: metadata.itemId) else { return }
             SharePresenter.present(item: item)
         }
     }
@@ -258,16 +257,16 @@ struct CardView: View {
         switch metadata.icon {
         case let .symbol(iconType):
             switch iconType {
-            case .text: return "Text"
-            case .link: return "Link"
-            case .image: return "Image"
-            case .color: return "Color"
-            case .file: return "File" // Filtered out of iOS feed
+            case .text: return String(localized: "Text")
+            case .link: return String(localized: "Link")
+            case .image: return String(localized: "Image")
+            case .color: return String(localized: "Color")
+            case .file: return String(localized: "File")
             }
         case .colorSwatch:
-            return "Color"
+            return String(localized: "Color")
         case .thumbnail:
-            return "Image"
+            return String(localized: "Image")
         }
     }
 

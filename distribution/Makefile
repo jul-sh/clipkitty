@@ -11,6 +11,9 @@ NIX_SHELL := $(PROJECT_ROOT)/Scripts/run-in-nix.sh -c
 APP_NAME := ClipKitty
 DERIVED_DATA := $(PROJECT_ROOT)/DerivedData
 
+# API key directory for automatic provisioning (shared with root Makefile)
+API_KEY_DIR := $(PROJECT_ROOT)/.make/keys
+
 # Build configuration: Release or AppStore (differ only in signing)
 CONFIGURATION ?= Release
 
@@ -32,7 +35,9 @@ SCREENSHOT_LOCALES := en es zh-Hans zh-Hant ja ko fr de pt-BR ru
 .PHONY: dmg appstore appstore-local appstore-publish publish icon-png \
         synthetic-data run-synthetic marketing marketing-screenshots \
         marketing-screenshots-capture marketing-screenshots-localized \
-        intro-video intro-video-localized video-data screenshot
+        intro-video intro-video-localized video-data screenshot \
+        api-key ios-appstore ios-publish ios-appstore-publish \
+        ios-marketing-screenshots-localized
 
 # Build DMG installer
 dmg:
@@ -319,3 +324,94 @@ intro-video-localized:
 	done
 	@rm -f /tmp/clipkitty_screenshot_locale.txt
 	@echo "All localized intro videos complete!"
+
+# ============================================================================
+# iOS App Store Submission
+# ============================================================================
+# Usage:
+#   make -C distribution ios-appstore VERSION=1.11.0 BUILD_NUMBER=123
+#   make -C distribution ios-appstore-publish VERSION=1.11.0 BUILD_NUMBER=123
+#
+# The iOS pipeline uses xcodebuild archive + exportArchive to produce an IPA.
+# Automatic provisioning via ASC API key handles cert + profile management.
+# ============================================================================
+
+# Decrypt App Store Connect API key for automatic provisioning
+api-key:
+	@mkdir -p $(API_KEY_DIR)
+	@if [ ! -f "$(API_KEY_DIR)/AuthKey.p8" ]; then \
+		echo "Decrypting API key for provisioning..."; \
+		$(DIST_DIR)/asc-auth.sh private-key-b64 | base64 --decode > "$(API_KEY_DIR)/AuthKey.p8"; \
+	fi
+
+IOS_BUNDLE_ID := com.eviljuliette.clipkitty
+IOS_ARCHIVE_PATH = $(DERIVED_DATA)/ClipKittyiOS.xcarchive
+IOS_IPA_PATH = $(PROJECT_ROOT)/ClipKittyiOS.ipa
+IOS_SCREENSHOT_LOCALES := $(SCREENSHOT_LOCALES)
+
+# Build iOS archive and export IPA for App Store
+ios-appstore: api-key
+	@echo "Archiving ClipKittyiOS (AppStore)..."
+	@xcodebuild archive \
+		-workspace $(PROJECT_ROOT)/$(APP_NAME).xcworkspace \
+		-scheme ClipKittyiOS-AppStore \
+		-archivePath $(IOS_ARCHIVE_PATH) \
+		-destination "generic/platform=iOS" \
+		-allowProvisioningUpdates \
+		-authenticationKeyPath $(API_KEY_DIR)/AuthKey.p8 \
+		-authenticationKeyID $$($(DIST_DIR)/asc-auth.sh key-id) \
+		-authenticationKeyIssuerID $$($(DIST_DIR)/asc-auth.sh issuer-id) \
+		MARKETING_VERSION=$(VERSION) \
+		CURRENT_PROJECT_VERSION=$(BUILD_NUMBER) \
+		$(if $(SKIP_SIGNING),,)
+	@echo "Exporting IPA..."
+	@xcodebuild -exportArchive \
+		-archivePath $(IOS_ARCHIVE_PATH) \
+		-exportOptionsPlist $(DIST_DIR)/ExportOptions-iOS.plist \
+		-exportPath $(PROJECT_ROOT) \
+		-allowProvisioningUpdates \
+		-authenticationKeyPath $(API_KEY_DIR)/AuthKey.p8 \
+		-authenticationKeyID $$($(DIST_DIR)/asc-auth.sh key-id) \
+		-authenticationKeyIssuerID $$($(DIST_DIR)/asc-auth.sh issuer-id)
+	@echo "IPA exported: $(IOS_IPA_PATH)"
+
+# Publish iOS app to App Store Connect (metadata + binary)
+ios-publish:
+	@$(DIST_DIR)/publish.py --platform ios $(PUBLISH_FLAGS) $(if $(VERSION),--version $(VERSION),)
+
+# Combined: Build + Publish iOS to App Store Connect
+ios-appstore-publish: ios-appstore ios-publish
+
+# ============================================================================
+# iOS Marketing Screenshots (Simulator)
+# ============================================================================
+
+# Capture localized iOS screenshots for all supported locales.
+# Runs XCUITests on iPhone 16 Pro Max simulator.
+ios-marketing-screenshots-localized:
+	@rm -f /tmp/clipkitty_ios_screenshot_locale.txt
+	@for locale in $(IOS_SCREENSHOT_LOCALES); do \
+		echo "Capturing iOS screenshots for $$locale..."; \
+		mkdir -p $(PROJECT_ROOT)/marketing-ios/$$locale; \
+		echo "$$locale" > /tmp/clipkitty_ios_screenshot_locale.txt; \
+		xcodebuild test \
+			-workspace $(PROJECT_ROOT)/$(APP_NAME).xcworkspace \
+			-scheme ClipKittyiOSUITests \
+			-destination "platform=iOS Simulator,name=iPhone 16 Pro Max" \
+			-derivedDataPath $(DERIVED_DATA) \
+			$(if $(SKIP_SIGNING),CODE_SIGNING_ALLOWED=NO,) \
+			-only-testing:ClipKittyiOSUITests/ClipKittyiOSScreenshotTests/testTakeMarketingScreenshots \
+			2>&1 | grep -E "(Test Case|passed|failed)" || true; \
+		if [ "$$locale" = "en" ]; then \
+			cp /tmp/clipkitty_ios_marketing_1_history.png $(PROJECT_ROOT)/marketing-ios/$$locale/screenshot_1.png 2>/dev/null || true; \
+			cp /tmp/clipkitty_ios_marketing_2_search.png $(PROJECT_ROOT)/marketing-ios/$$locale/screenshot_2.png 2>/dev/null || true; \
+			cp /tmp/clipkitty_ios_marketing_3_filter.png $(PROJECT_ROOT)/marketing-ios/$$locale/screenshot_3.png 2>/dev/null || true; \
+		else \
+			cp /tmp/clipkitty_ios_$${locale}_marketing_1_history.png $(PROJECT_ROOT)/marketing-ios/$$locale/screenshot_1.png 2>/dev/null || true; \
+			cp /tmp/clipkitty_ios_$${locale}_marketing_2_search.png $(PROJECT_ROOT)/marketing-ios/$$locale/screenshot_2.png 2>/dev/null || true; \
+			cp /tmp/clipkitty_ios_$${locale}_marketing_3_filter.png $(PROJECT_ROOT)/marketing-ios/$$locale/screenshot_3.png 2>/dev/null || true; \
+		fi; \
+		echo "  $$locale iOS screenshots saved to marketing-ios/$$locale/"; \
+	done
+	@rm -f /tmp/clipkitty_ios_screenshot_locale.txt
+	@echo "All localized iOS screenshots complete!"

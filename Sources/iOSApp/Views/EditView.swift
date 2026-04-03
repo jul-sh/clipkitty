@@ -22,24 +22,24 @@ struct EditView: View {
         NavigationStack {
             Group {
                 if isLoading {
-                    ProgressView("Loading...")
+                    ProgressView(String(localized: "Loading..."))
                 } else {
                     TextEditor(text: $text)
                         .font(.body)
                         .padding()
                 }
             }
-            .navigationTitle("Edit")
+            .navigationTitle(String(localized: "Edit"))
             .navigationBarTitleDisplayMode(.inline)
             .toolbar {
                 ToolbarItem(placement: .cancellationAction) {
-                    Button("Cancel") {
+                    Button(String(localized: "Cancel")) {
                         viewModel.discardCurrentEdit()
                         dismiss()
                     }
                 }
                 ToolbarItem(placement: .confirmationAction) {
-                    Button("Save") {
+                    Button(String(localized: "Save")) {
                         viewModel.commitCurrentEdit()
                         appState.showToast(.saved)
                         dismiss()
@@ -59,7 +59,7 @@ struct EditView: View {
     }
 
     private func loadFullText() async {
-        if let item = await appState.storeClient.fetchItem(id: itemId),
+        if let item = await appState.container.storeClient.fetchItem(id: itemId),
            case let .text(value) = item.content
         {
             originalText = value

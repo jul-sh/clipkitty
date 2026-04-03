@@ -177,6 +177,52 @@ jobs:
             CODE_SIGNING_ALLOWED=NO \
             ONLY_ACTIVE_ARCH=YES
 
+      - name: Build iOS App (AppStore)
+        run: |
+          BASE_VERSION=$(grep 'MARKETING_VERSION' Project.swift | head -1 | sed 's/.*"\(.*\)".*/\1/')
+          IFS='.' read -r major minor _patch <<< "$BASE_VERSION"
+          COMMIT_COUNT=$(git rev-list --count HEAD)
+          VERSION="${major}.${minor}.${COMMIT_COUNT}"
+          xcodebuild build \
+            -workspace ClipKitty.xcworkspace \
+            -scheme ClipKittyiOS-AppStore \
+            -derivedDataPath DerivedData \
+            -destination "generic/platform=iOS" \
+            -allowProvisioningUpdates \
+            -authenticationKeyPath ${{ steps.xcode-auth.outputs.key_path }} \
+            -authenticationKeyID ${{ steps.xcode-auth.outputs.key_id }} \
+            -authenticationKeyIssuerID ${{ steps.xcode-auth.outputs.issuer_id }} \
+            MARKETING_VERSION="$VERSION" \
+            CURRENT_PROJECT_VERSION="$COMMIT_COUNT" \
+            CODE_SIGNING_ALLOWED=NO
+
+      - name: Generate iOS Marketing Screenshots
+        run: |
+          for locale in en es zh-Hans zh-Hant ja ko fr de pt-BR ru; do
+            echo "Capturing iOS screenshots for $locale..."
+            mkdir -p marketing-ios/$locale
+            echo "$locale" > /tmp/clipkitty_ios_screenshot_locale.txt
+            xcodebuild test \
+              -workspace ClipKitty.xcworkspace \
+              -scheme ClipKittyiOSUITests \
+              -destination "platform=iOS Simulator,name=iPhone 16 Pro Max" \
+              -derivedDataPath DerivedData \
+              CODE_SIGNING_ALLOWED=NO \
+              -only-testing:ClipKittyiOSUITests/ClipKittyiOSScreenshotTests/testTakeMarketingScreenshots \
+              2>&1 | grep -E "(Test Case|passed|failed)" || true
+            if [ "$locale" = "en" ]; then
+              cp /tmp/clipkitty_ios_marketing_1_history.png marketing-ios/$locale/screenshot_1.png 2>/dev/null || true
+              cp /tmp/clipkitty_ios_marketing_2_search.png marketing-ios/$locale/screenshot_2.png 2>/dev/null || true
+              cp /tmp/clipkitty_ios_marketing_3_filter.png marketing-ios/$locale/screenshot_3.png 2>/dev/null || true
+            else
+              cp /tmp/clipkitty_ios_${locale}_marketing_1_history.png marketing-ios/$locale/screenshot_1.png 2>/dev/null || true
+              cp /tmp/clipkitty_ios_${locale}_marketing_2_search.png marketing-ios/$locale/screenshot_2.png 2>/dev/null || true
+              cp /tmp/clipkitty_ios_${locale}_marketing_3_filter.png marketing-ios/$locale/screenshot_3.png 2>/dev/null || true
+            fi
+          done
+          rm -f /tmp/clipkitty_ios_screenshot_locale.txt
+          ls -lh marketing-ios/*/screenshot_*.png 2>/dev/null || echo "No iOS screenshots generated (expected on first run)"
+
       - name: Run UI Tests
         run: |
           set +e
@@ -413,6 +459,13 @@ jobs:
           path: |
             icon.png
             marketing/*/screenshot_*.png
+
+      - name: Upload iOS Screenshot Artifacts
+        uses: actions/upload-artifact@v4
+        with:
+          name: ios-assets
+          path: marketing-ios/*/screenshot_*.png
+          if-no-files-found: ignore
 
       - name: Deploy to gh-pages
         if: github.event_name == 'push' && (github.ref == 'refs/heads/main' || github.ref == 'refs/heads/release')
@@ -704,3 +757,89 @@ jobs:
       - name: Cleanup
         if: always()
         run: rm -f "$GITHUB_WORKSPACE/ClipKitty.provisionprofile"
+
+  # Upload iOS app to App Store Connect
+  ios-appstore:
+    runs-on: macos-26
+    needs: build
+    if: github.event_name == 'push' && (github.ref_name == 'main' || github.ref_name == 'release')
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      - name: Decrypt secrets
+        id: secrets
+        run: |
+          brew install age
+          echo "$AGE_SECRET_KEY" > /tmp/age-key.txt
+          chmod 600 /tmp/age-key.txt
+          for f in secrets/*.age; do
+            name=$(basename "$f" .age)
+            value=$(age -d -i /tmp/age-key.txt "$f")
+            echo "::add-mask::$value"
+            {
+              echo "${name}<<AGEDELIM"
+              echo "$value"
+              echo "AGEDELIM"
+            } >> "$GITHUB_OUTPUT"
+          done
+          rm -f /tmp/age-key.txt
+        env:
+          AGE_SECRET_KEY: ${{ secrets.AGE_SECRET_KEY }}
+
+      - name: Setup Swift
+        uses: swift-actions/setup-swift@v2
+        with:
+          swift-version: "6.2"
+
+      - name: Install Apple WWDR Intermediate Certificate
+        run: |
+          curl -sLo "$RUNNER_TEMP/AppleWWDRCAG3.cer" https://www.apple.com/certificateauthority/AppleWWDRCAG3.cer
+          sudo security add-trusted-cert -d -r unspecified -k /Library/Keychains/System.keychain "$RUNNER_TEMP/AppleWWDRCAG3.cer"
+
+      - name: Install Nix
+        uses: DeterminateSystems/nix-installer-action@main
+
+      - name: Install Tuist
+        run: |
+          brew tap tuist/tuist
+          brew install --formula tuist
+          tuist version
+
+      - name: Install Distribution Dependencies
+        run: ./distribution/install-deps.sh
+
+      - name: Download iOS screenshots
+        uses: actions/download-artifact@v4
+        with:
+          name: ios-assets
+          path: marketing-ios
+        continue-on-error: true
+
+      - name: Prepare API Key
+        run: |
+          mkdir -p .make/keys
+          ./distribution/asc-auth.sh private-key-b64 | base64 --decode > .make/keys/AuthKey.p8
+        env:
+          AGE_SECRET_KEY: ${{ secrets.AGE_SECRET_KEY }}
+
+      - name: Build Rust Core
+        run: make rust
+
+      - name: Generate Xcode Project
+        run: make generate
+
+      - name: Build and Publish iOS to App Store Connect
+        run: |
+          BASE_VERSION=$(grep 'MARKETING_VERSION' Project.swift | head -1 | sed 's/.*"\(.*\)".*/\1/')
+          IFS='.' read -r major minor _patch <<< "$BASE_VERSION"
+          COMMIT_COUNT=$(git rev-list --count HEAD)
+          VERSION="${major}.${minor}.${COMMIT_COUNT}"
+          make -C distribution ios-appstore-publish \
+            VERSION="${VERSION}" \
+            BUILD_NUMBER="${COMMIT_COUNT}"
+        env:
+          AGE_SECRET_KEY: ${{ secrets.AGE_SECRET_KEY }}

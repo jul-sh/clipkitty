@@ -1,4 +1,4 @@
-NEW: iCloud Sync; optionally sync your clipboard history across all your Macs.
+NEW: iCloud Sync; optionally sync your clipboard history across all your devices.
 
 - Enable iCloud Sync in settings to keep your clips in sync across devices
 - Uses your private iCloud container with no third-party servers
