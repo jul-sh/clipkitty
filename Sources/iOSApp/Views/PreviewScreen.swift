@@ -75,6 +75,8 @@ struct PreviewScreen: View {
                 metadataSection(for: item)
             }
             .cardSurface()
+            .contentShape(.interaction, Rectangle())
+            .textSelection(.enabled)
             .padding(.horizontal, 16)
             .padding(.top, 8)
         }
