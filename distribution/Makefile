@@ -389,11 +389,20 @@ ios-appstore-publish: ios-appstore ios-publish
 # Capture localized iOS screenshots for all supported locales.
 # Runs XCUITests on iPhone 16 Pro Max simulator.
 ios-marketing-screenshots-localized:
-	@rm -f /tmp/clipkitty_ios_screenshot_locale.txt
+	@rm -f /tmp/clipkitty_ios_screenshot_locale.txt /tmp/clipkitty_ios_screenshot_db.txt
 	@for locale in $(IOS_SCREENSHOT_LOCALES); do \
 		echo "Capturing iOS screenshots for $$locale..."; \
 		mkdir -p $(PROJECT_ROOT)/marketing-ios/$$locale; \
 		echo "$$locale" > /tmp/clipkitty_ios_screenshot_locale.txt; \
+		if [ "$$locale" = "en" ]; then \
+			echo "SyntheticData.sqlite" > /tmp/clipkitty_ios_screenshot_db.txt; \
+		else \
+			if [ -f "$(DIST_DIR)/SyntheticData_$$locale.sqlite" ]; then \
+				echo "SyntheticData_$$locale.sqlite" > /tmp/clipkitty_ios_screenshot_db.txt; \
+			else \
+				echo "SyntheticData.sqlite" > /tmp/clipkitty_ios_screenshot_db.txt; \
+			fi; \
+		fi; \
 		xcodebuild test \
 			-workspace $(PROJECT_ROOT)/$(APP_NAME).xcworkspace \
 			-scheme ClipKittyiOSUITests \
@@ -413,5 +422,5 @@ ios-marketing-screenshots-localized:
 		fi; \
 		echo "  $$locale iOS screenshots saved to marketing-ios/$$locale/"; \
 	done
-	@rm -f /tmp/clipkitty_ios_screenshot_locale.txt
+	@rm -f /tmp/clipkitty_ios_screenshot_locale.txt /tmp/clipkitty_ios_screenshot_db.txt
 	@echo "All localized iOS screenshots complete!"

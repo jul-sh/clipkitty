@@ -1,0 +1,26 @@
+{
+  "configurations" : [
+    {
+      "id" : "8B2E4C5A-7D9F-4A1B-B3C6-5E8F0A2D1C9B",
+      "name" : "Configuration 1",
+      "options" : {
+
+      }
+    }
+  ],
+  "defaultOptions" : {
+    "testTimeoutsEnabled" : false,
+    "uiTestingScreenshotsLifetime" : "keepAlways",
+    "preferredScreenCaptureFormat" : "screenRecording"
+  },
+  "testTargets" : [
+    {
+      "target" : {
+        "containerPath" : "container:ClipKitty.xcodeproj",
+        "identifier" : "ClipKittyUITests",
+        "name" : "ClipKittyUITests"
+      }
+    }
+  ],
+  "version" : 1
+}

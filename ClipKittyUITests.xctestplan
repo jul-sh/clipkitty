@@ -1,0 +1,24 @@
+{
+  "configurations" : [
+    {
+      "id" : "6A8F8E2A-4B5C-4D3E-9F1A-2B7C8D9E0F1A",
+      "name" : "Configuration 1",
+      "options" : {
+
+      }
+    }
+  ],
+  "defaultOptions" : {
+    "testTimeoutsEnabled" : false
+  },
+  "testTargets" : [
+    {
+      "target" : {
+        "containerPath" : "container:ClipKitty.xcodeproj",
+        "identifier" : "ClipKittyUITests",
+        "name" : "ClipKittyUITests"
+      }
+    }
+  ],
+  "version" : 1
+}

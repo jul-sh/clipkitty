@@ -616,8 +616,11 @@ let project = Project(
                     ),
                 ]
             ),
-            testAction: .targets(
-                [.testableTarget(target: .target("ClipKittyUITests"))],
+            testAction: .testPlans(
+                [
+                    .relativeToRoot("ClipKittyUITests.xctestplan"),
+                    .relativeToRoot("ClipKittyVideoRecording.xctestplan"),
+                ],
                 configuration: "Debug"
             )
         ),
