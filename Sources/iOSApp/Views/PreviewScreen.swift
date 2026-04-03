@@ -276,24 +276,12 @@ struct PreviewScreen: View {
                     .buttonStyle(.plain)
                     .glassEffect(.regular.interactive(), in: .circle)
 
-                    // Center capsule: Bookmark, Copy, Edit
+                    // Center capsule: Bookmark, Edit, Copy
                     HStack(spacing: 0) {
                         Button {
                             toggleBookmark(for: item)
                         } label: {
                             Image(systemName: isBookmarked(item) ? "bookmark.slash" : "bookmark")
-                                .font(.body.weight(.medium))
-                                .frame(width: 52, height: 52)
-                                .contentShape(Rectangle())
-                        }
-                        .buttonStyle(.plain)
-
-                        Button {
-                            container.clipboardService.copy(content: item.content)
-                            haptics.fire(.copy)
-                            appState.showToast(.copied)
-                        } label: {
-                            Image(systemName: "doc.on.doc")
                                 .font(.body.weight(.medium))
                                 .frame(width: 52, height: 52)
                                 .contentShape(Rectangle())
@@ -311,6 +299,18 @@ struct PreviewScreen: View {
                             }
                             .buttonStyle(.plain)
                         }
+
+                        Button {
+                            container.clipboardService.copy(content: item.content)
+                            haptics.fire(.copy)
+                            appState.showToast(.copied)
+                        } label: {
+                            Image(systemName: "doc.on.doc")
+                                .font(.body.weight(.medium))
+                                .frame(width: 52, height: 52)
+                                .contentShape(Rectangle())
+                        }
+                        .buttonStyle(.plain)
                     }
                     .glassEffect(.regular.interactive(), in: .capsule)
 
