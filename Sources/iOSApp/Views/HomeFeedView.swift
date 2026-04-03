@@ -110,34 +110,7 @@ struct HomeFeedView: View {
                 .onAppear {
                     loadDecorationsIfNeeded(for: row)
                 }
-                .swipeActions(edge: .trailing, allowsFullSwipe: false) {
-                    Button(role: .destructive) {
-                        viewModel.deleteItem(itemId: row.metadata.itemId)
-                        haptics.fire(.destructive)
-                        appState.showToast(.deleted)
-                    } label: {
-                        Label("Delete", systemImage: "trash")
-                    }
-
-                    Button {
-                        let isBookmarked = row.metadata.tags.contains(.bookmark)
-                        if isBookmarked {
-                            viewModel.removeTag(.bookmark, fromItem: row.metadata.itemId)
-                            appState.showToast(.unbookmarked)
-                        } else {
-                            viewModel.addTag(.bookmark, toItem: row.metadata.itemId)
-                            appState.showToast(.bookmarked)
-                        }
-                        haptics.fire(.selection)
-                    } label: {
-                        let isBookmarked = row.metadata.tags.contains(.bookmark)
-                        Label(
-                            isBookmarked ? "Unbookmark" : "Bookmark",
-                            systemImage: isBookmarked ? "bookmark.slash" : "bookmark"
-                        )
-                    }
-                    .tint(.orange)
-
+                .swipeActions(edge: .trailing, allowsFullSwipe: true) {
                     Button {
                         previewItemId = row.metadata.itemId
                         haptics.fire(.selection)

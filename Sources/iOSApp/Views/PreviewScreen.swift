@@ -256,46 +256,42 @@ struct PreviewScreen: View {
 
     @ToolbarContentBuilder
     private var toolbarContent: some ToolbarContent {
-        ToolbarItemGroup(placement: .primaryAction) {
-            Button {
-                guard let item = viewModel.selectedItemState?.item else { return }
-                container.clipboardService.copy(content: item.content)
-                haptics.fire(.copy)
-                appState.showToast(.copied)
-            } label: {
-                Image(systemName: "doc.on.doc")
-            }
-
-            if let item = viewModel.selectedItemState?.item, case .text = item.content {
-                Button {
-                    showEditSheet = true
-                } label: {
-                    Image(systemName: "pencil")
-                }
-            }
-        }
-
-        ToolbarItemGroup(placement: .secondaryAction) {
+        ToolbarItemGroup(placement: .bottomBar) {
             if let item = viewModel.selectedItemState?.item {
+                Spacer()
+
+                Button {
+                    container.clipboardService.copy(content: item.content)
+                    haptics.fire(.copy)
+                    appState.showToast(.copied)
+                } label: {
+                    Image(systemName: "doc.on.doc")
+                }
+
+                if case .text = item.content {
+                    Button {
+                        showEditSheet = true
+                    } label: {
+                        Image(systemName: "pencil")
+                    }
+                }
+
                 Button {
                     toggleBookmark(for: item)
                 } label: {
-                    Label(
-                        isBookmarked(item) ? String(localized: "Remove Bookmark") : String(localized: "Bookmark"),
-                        systemImage: isBookmarked(item) ? "bookmark.slash" : "bookmark"
-                    )
+                    Image(systemName: isBookmarked(item) ? "bookmark.slash" : "bookmark")
                 }
 
                 Button {
                     SharePresenter.present(item: item)
                 } label: {
-                    Label(String(localized: "Share"), systemImage: "square.and.arrow.up")
+                    Image(systemName: "square.and.arrow.up")
                 }
 
                 Button(role: .destructive) {
                     showDeleteConfirmation = true
                 } label: {
-                    Label(String(localized: "Delete"), systemImage: "trash")
+                    Image(systemName: "trash")
                 }
             }
         }

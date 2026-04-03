@@ -8,11 +8,17 @@ struct CardSurface: ViewModifier {
             .padding(14)
             .frame(maxWidth: .infinity, alignment: .leading)
             .background(.regularMaterial, in: RoundedRectangle(cornerRadius: 14, style: .continuous))
+            .overlay {
+                if colorScheme == .dark {
+                    RoundedRectangle(cornerRadius: 14, style: .continuous)
+                        .strokeBorder(.white.opacity(0.08), lineWidth: 0.5)
+                }
+            }
             .shadow(
                 color: colorScheme == .light
                     ? .black.opacity(0.08)
-                    : .white.opacity(0.04),
-                radius: colorScheme == .light ? 4 : 8,
+                    : .white.opacity(0.06),
+                radius: colorScheme == .light ? 4 : 10,
                 y: colorScheme == .light ? 2 : 0
             )
     }
