@@ -1,10 +1,10 @@
 {
   "beta": {
-    "length": 15093494,
-    "published_at": "2026-04-03T05:06:37.706365+00:00",
-    "signature": "PKlwpPu6dFvS8bHCol+7/hAnV/xI18yI/BJsRkwRItcwnVcQ65MHgSRWNWfv6mBtY9pQj52XLzEMrFclfJe3DA==",
-    "url": "https://github.com/jul-sh/clipkitty/releases/download/v1.12.1131-beta/ClipKitty.dmg",
-    "version": "1.12.1131"
+    "length": 15093533,
+    "published_at": "2026-04-03T06:55:16.082093+00:00",
+    "signature": "rgRaYwQzLi1DM+bv+AQORbyb2zA/RyLjUig1Q1sIimM6nd+VBIT5UWQM04GE+DsgnUsdwj6zYx27fiQ9K4aEBA==",
+    "url": "https://github.com/jul-sh/clipkitty/releases/download/v1.12.1132-beta/ClipKitty.dmg",
+    "version": "1.12.1132"
   },
   "stable": {
     "length": 14322922,
