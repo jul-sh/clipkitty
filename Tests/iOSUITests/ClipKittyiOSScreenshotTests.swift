@@ -2,28 +2,34 @@ import XCTest
 
 /// Marketing screenshot generator for the iOS App Store listing.
 ///
-/// Captures three screenshots on iPhone 16 Pro Max (6.7-inch, 1290×2796):
+/// Captures three screenshots on iPhone 17 Pro Max (6.7-inch, 1290×2796):
 ///   1. History feed — the main clipboard history view
 ///   2. Search — search bar active with a query
 ///   3. Filter — filtered by a content type
 ///
 /// Locale is read from `/tmp/clipkitty_ios_screenshot_locale.txt`.
+/// Database filename is read from `/tmp/clipkitty_ios_screenshot_db.txt`.
 /// Screenshots are written to `/tmp/clipkitty_ios_{locale}_marketing_{n}_{name}.png`.
 final class ClipKittyiOSScreenshotTests: XCTestCase {
 
     private var app: XCUIApplication!
     private var locale: String!
 
+    private static let localeConfigFile = "clipkitty_ios_screenshot_locale.txt"
+    private static let dbConfigFile = "clipkitty_ios_screenshot_db.txt"
+
     override func setUpWithError() throws {
         continueAfterFailure = false
 
-        locale = (try? String(contentsOfFile: "/tmp/clipkitty_ios_screenshot_locale.txt", encoding: .utf8))?
-            .trimmingCharacters(in: .whitespacesAndNewlines) ?? "en"
+        locale = readTempConfig(Self.localeConfigFile, defaultValue: "en") ?? "en"
+
+        let screenshotDBPath = try setupTestDatabase()
 
         app = XCUIApplication()
+        app.launchEnvironment["CLIPKITTY_SCREENSHOT_DB"] = screenshotDBPath
 
         // Set the UI language for this locale
-        app.launchArguments += ["-AppleLanguages", "(\(locale))"]
+        app.launchArguments += ["-AppleLanguages", "(\(locale!))"]
         app.launchArguments += ["-AppleLocale", locale]
         app.launch()
 
@@ -78,6 +84,65 @@ final class ClipKittyiOSScreenshotTests: XCTestCase {
 
         let filterScreenshot = app.screenshot()
         saveScreenshot(filterScreenshot, index: 3, name: "filter")
+    }
+
+    // MARK: - Database Setup
+
+    /// Copies the locale-appropriate SyntheticData.sqlite to a temp path and returns
+    /// the path for the app to use via `CLIPKITTY_SCREENSHOT_DB` environment variable.
+    private func setupTestDatabase() throws -> String {
+        let projectRoot = URL(fileURLWithPath: #filePath)
+            .deletingLastPathComponent()  // iOSUITests/
+            .deletingLastPathComponent()  // Tests/
+            .deletingLastPathComponent()  // project root
+
+        let databaseFilename = readTempConfig(Self.dbConfigFile, defaultValue: "SyntheticData.sqlite") ?? "SyntheticData.sqlite"
+        let sqliteSourceURL = projectRoot.appendingPathComponent("distribution/\(databaseFilename)")
+
+        guard FileManager.default.fileExists(atPath: sqliteSourceURL.path) else {
+            XCTFail("\(databaseFilename) not found at: \(sqliteSourceURL.path). Run 'git lfs pull' and 'make -C distribution synthetic-data'.")
+            return ""
+        }
+
+        // Guard against Git LFS pointer files
+        let fileSize = (try? FileManager.default.attributesOfItem(atPath: sqliteSourceURL.path)[.size] as? Int) ?? 0
+        if fileSize < 1024 {
+            let headerData = FileManager.default.contents(atPath: sqliteSourceURL.path).flatMap { data in
+                String(data: data.prefix(64), encoding: .utf8)
+            }
+            if headerData?.contains("git-lfs.github.com") == true {
+                XCTFail("Git LFS pointer not resolved for \(databaseFilename). Run 'git lfs pull' first.")
+                return ""
+            }
+            XCTFail("\(databaseFilename) is too small (\(fileSize) bytes) — likely corrupt or an LFS pointer.")
+            return ""
+        }
+
+        // Copy to a temp location the app can read
+        let targetPath = "/tmp/clipkitty_ios_screenshot.sqlite"
+        try? FileManager.default.removeItem(atPath: targetPath)
+        // Also remove WAL/SHM companions
+        try? FileManager.default.removeItem(atPath: targetPath + "-wal")
+        try? FileManager.default.removeItem(atPath: targetPath + "-shm")
+        try FileManager.default.copyItem(atPath: sqliteSourceURL.path, toPath: targetPath)
+
+        let copiedSize = (try? FileManager.default.attributesOfItem(atPath: targetPath)[.size] as? Int) ?? 0
+        XCTAssertGreaterThan(copiedSize, 1024,
+                             "Copied database is too small (\(copiedSize) bytes). Target: \(targetPath)")
+
+        return targetPath
+    }
+
+    // MARK: - Helpers
+
+    private func readTempConfig(_ filename: String, defaultValue: String? = nil) -> String? {
+        if let content = try? String(contentsOfFile: "/tmp/\(filename)", encoding: .utf8) {
+            let trimmed = content.trimmingCharacters(in: .whitespacesAndNewlines)
+            if !trimmed.isEmpty {
+                return trimmed
+            }
+        }
+        return defaultValue
     }
 
     private func saveScreenshot(_ screenshot: XCUIScreenshot, index: Int, name: String) {

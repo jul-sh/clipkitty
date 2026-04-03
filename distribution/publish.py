@@ -283,6 +283,9 @@ def main():
             locale_to_loc_id[locale] = loc["id"]
 
         screenshot_count = 0
+        if not os.path.isdir(marketing_dir):
+            print(f"  Warning: marketing directory not found: {marketing_dir}")
+            print(f"  No screenshots will be uploaded for {platform_name}.")
         if os.path.isdir(marketing_dir):
             for entry in sorted(os.listdir(marketing_dir)):
                 src_dir = os.path.join(marketing_dir, entry)
@@ -297,6 +300,7 @@ def main():
                     continue
                 pngs = sorted(glob.glob(os.path.join(src_dir, "screenshot_*.png")))
                 if not pngs:
+                    print(f"  Warning: no screenshots found in {src_dir}")
                     continue
 
                 for device_type in platform_config["screenshot_device_types"]:

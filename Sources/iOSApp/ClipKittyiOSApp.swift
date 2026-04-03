@@ -218,7 +218,8 @@ struct ClipKittyiOSApp: App {
     }
 
     private func performBootstrap() {
-        switch AppContainer.bootstrap() {
+        let customPath = ProcessInfo.processInfo.environment["CLIPKITTY_SCREENSHOT_DB"]
+        switch AppContainer.bootstrap(databasePath: customPath) {
         case let .success(container):
             let appState = AppState(container: container)
             let router = AppRouter()
