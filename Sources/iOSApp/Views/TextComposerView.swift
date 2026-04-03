@@ -3,7 +3,7 @@ import SwiftUI
 
 struct TextComposerView: View {
     @Environment(AppContainer.self) private var container
-    @Environment(AppState.self) private var appState
+    @Environment(SceneState.self) private var sceneState
     @Environment(HapticsClient.self) private var haptics
     @Environment(\.dismiss) private var dismiss
 
@@ -49,12 +49,12 @@ struct TextComposerView: View {
         switch result {
         case .success:
             haptics.fire(.success)
-            appState.showToast(.addSucceeded)
-            appState.refreshFeed()
+            sceneState.showToast(.addSucceeded)
+            sceneState.refreshFeed()
             dismiss()
         case let .failure(error):
             haptics.fire(.destructive)
-            appState.showToast(.addFailed(error.localizedDescription))
+            sceneState.showToast(.addFailed(error.localizedDescription))
         }
     }
 }

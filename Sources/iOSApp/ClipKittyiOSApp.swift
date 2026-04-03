@@ -7,153 +7,8 @@ import SwiftUI
 
 enum AppLaunchState {
     case launching
-    case ready(AppContainer, AppState, AppRouter)
+    case ready(AppContainer)
     case failed(String)
-}
-
-// MARK: - App State (UI coordinator)
-
-@MainActor
-@Observable
-final class AppState {
-    private let container: AppContainer
-    let viewModel: BrowserViewModel
-
-    var toast: ToastState = .init()
-    var contentRevision: Int = 0
-
-    struct ToastState {
-        var message: ToastMessage?
-        var action: (() -> Void)?
-    }
-
-    init(container: AppContainer) {
-        self.container = container
-
-        // Use a box to capture toast callback — wired after init via the box
-        let toastBox = ToastCallbackBox()
-        let clipboardService = container.clipboardService
-        let haptics = container.haptics
-
-        viewModel = BrowserViewModel(
-            client: container.storeClient,
-            onSelect: { _, content in
-                clipboardService.copy(content: content)
-                haptics.fire(.copy)
-                toastBox.showToast?(.copied, nil)
-            },
-            onCopyOnly: { _, content in
-                clipboardService.copy(content: content)
-                haptics.fire(.copy)
-                toastBox.showToast?(.copied, nil)
-            },
-            onDismiss: {},
-            showSnackbarNotification: { kind, action in
-                toastBox.showToast?(.notification(kind), action)
-            },
-            dismissSnackbarNotification: {
-                toastBox.dismissToast?()
-            }
-        )
-
-        // Wire the box to self after all stored properties are initialized
-        toastBox.showToast = { [weak self] message, action in
-            self?.showToast(message, action: action)
-        }
-        toastBox.dismissToast = { [weak self] in
-            withAnimation(.bouncy) {
-                self?.toast = .init()
-            }
-        }
-    }
-
-    func showToast(_ message: ToastMessage, action: (() -> Void)? = nil) {
-        withAnimation(.bouncy) {
-            toast = ToastState(message: message, action: action)
-        }
-        Task { @MainActor in
-            try? await Task.sleep(for: .seconds(message.duration))
-            if toast.message == message {
-                withAnimation(.bouncy) {
-                    toast = .init()
-                }
-            }
-        }
-    }
-
-    func refreshFeed() {
-        contentRevision += 1
-        viewModel.handlePanelVisibilityChange(true, contentRevision: contentRevision)
-    }
-}
-
-// MARK: - Toast Message
-
-enum ToastMessage: Equatable {
-    case copied
-    case bookmarked
-    case unbookmarked
-    case saved
-    case deleted
-    case addSucceeded
-    case addFailed(String)
-    case notification(NotificationKind)
-
-    var text: String {
-        switch self {
-        case .copied: return String(localized: "Copied to clipboard")
-        case .bookmarked: return String(localized: "Bookmarked")
-        case .unbookmarked: return String(localized: "Removed bookmark")
-        case .saved: return String(localized: "Saved")
-        case .deleted: return String(localized: "Deleted")
-        case .addSucceeded: return String(localized: "Added")
-        case let .addFailed(reason): return String(localized: "Failed: \(reason)")
-        case let .notification(kind): return kind.message
-        }
-    }
-
-    var iconSystemName: String {
-        switch self {
-        case .copied: return "doc.on.doc"
-        case .bookmarked: return "bookmark.fill"
-        case .unbookmarked: return "bookmark.slash"
-        case .saved: return "checkmark.circle"
-        case .deleted: return "trash"
-        case .addSucceeded: return "plus.circle"
-        case .addFailed: return "exclamationmark.triangle"
-        case let .notification(kind): return kind.iconSystemName
-        }
-    }
-
-    var actionTitle: String? {
-        switch self {
-        case let .notification(kind):
-            if case let .actionable(_, _, title) = kind { return title }
-            return nil
-        default:
-            return nil
-        }
-    }
-
-    var duration: TimeInterval {
-        switch self {
-        case .copied, .bookmarked, .unbookmarked, .saved, .deleted, .addSucceeded:
-            return 1.5
-        case .addFailed:
-            return 3.0
-        case let .notification(kind):
-            return kind.duration
-        }
-    }
-}
-
-/// Captures toast callbacks for BrowserViewModel closures that are set during init,
-/// before `self` is available. BrowserViewModel stores callbacks as `private let`,
-/// so they must be provided at construction time — this box bridges that gap.
-@MainActor
-private final class ToastCallbackBox {
-    var showToast: ((ToastMessage, (() -> Void)?) -> Void)?
-    var dismissToast: (() -> Void)?
 }
 
 // MARK: - App Entry Point
@@ -161,7 +16,6 @@ private final class ToastCallbackBox {
 @main
 struct ClipKittyiOSApp: App {
     @State private var launchState: AppLaunchState = .launching
-    @Environment(\.scenePhase) private var scenePhase
 
     #if ENABLE_SYNC
         @State private var syncCoordinator: iOSSyncCoordinator?
@@ -178,8 +32,8 @@ struct ClipKittyiOSApp: App {
                 ProgressView("Loading ClipKitty...")
                     .onAppear { performBootstrap() }
 
-            case let .ready(container, appState, router):
-                rootView(container: container, appState: appState, router: router)
+            case let .ready(container):
+                sceneRoot(container: container)
 
             case let .failed(message):
                 bootstrapFailureView(message: message)
@@ -188,56 +42,27 @@ struct ClipKittyiOSApp: App {
     }
 
     @ViewBuilder
-    private func rootView(
-        container: AppContainer,
-        appState: AppState,
-        router: AppRouter
-    ) -> some View {
-        let base = RootView()
-            .environment(container)
-            .environment(appState)
-            .environment(appState.viewModel)
-            .environment(router)
-            .environment(container.settings)
-            .environment(container.haptics)
-            .onOpenURL { router.handleURL($0) }
-
+    private func sceneRoot(container: AppContainer) -> some View {
         #if ENABLE_SYNC
-            if let coordinator = syncCoordinator {
-                base
-                    .environment(coordinator)
-                    .onChange(of: scenePhase) { _, newPhase in
-                        coordinator.handleScenePhaseChange(newPhase)
-                    }
-            } else {
-                base
-            }
+            SceneRoot(container: container, syncCoordinator: syncCoordinator)
         #else
-            base
+            SceneRoot(container: container)
         #endif
     }
 
     private func performBootstrap() {
         switch AppContainer.bootstrap() {
         case let .success(container):
-            let appState = AppState(container: container)
-            let router = AppRouter()
-
             #if ENABLE_SYNC
                 let coordinator = iOSSyncCoordinator(
                     store: container.store,
                     enabled: container.settings.syncEnabled,
-                    onContentChanged: { [weak appState] in
-                        appState?.refreshFeed()
-                    }
+                    onContentChanged: {}
                 )
                 syncCoordinator = coordinator
-                if container.settings.syncEnabled {
-                    coordinator.handleScenePhaseChange(.active)
-                }
             #endif
 
-            launchState = .ready(container, appState, router)
+            launchState = .ready(container)
         case let .failure(error):
             launchState = .failed(error.localizedDescription)
         }

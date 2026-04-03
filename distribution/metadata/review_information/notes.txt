@@ -1,4 +1,4 @@
-ClipKitty is a clipboard history manager that saves everything you copy and lets you quickly find and re-use it. It is available on Mac and iPhone.
+ClipKitty is a clipboard history manager that saves everything you copy and lets you quickly find and re-use it. It is available on Mac, iPhone, and iPad.
 
 HOW TO TEST (macOS):
 
@@ -17,7 +17,17 @@ HOW TO TEST (iPhone):
 4. Tap any item to preview it. Swipe left on an item for quick actions (delete, bookmark, edit).
 5. Use the search bar (magnifying glass) to find items. Use the filter pill to filter by type (text, images, links, colors).
 
+HOW TO TEST (iPad):
+
+1. Launch ClipKitty. The app displays a native two-pane layout: clip list on the left, preview on the right.
+2. Copy some text in another app, then return to ClipKitty. The copied item appears in the feed.
+3. Tap the + button to add items manually (paste from clipboard, compose text, or import a photo).
+4. Tap any item in the list to see its full preview in the right pane. Swipe left on an item for quick actions.
+5. Use keyboard shortcuts: ⌘F to search, ⌘, to open Settings, Return to copy the selected item.
+6. Test multi-window: drag ClipKitty from the dock to open a second instance in Split View or Slide Over.
+7. Hover over items with a pointer (trackpad or mouse) to verify hover effects.
+
 NOTES:
 - The app has no account system and no login. All data is stored locally by default.
-- Optional iCloud Sync (enabled in Settings) syncs clipboard history across your Mac and iPhone.
+- Optional iCloud Sync (enabled in Settings) syncs clipboard history across your Mac, iPhone, and iPad.
 - On first launch, clipboard history will be empty — you need to copy content to populate it.

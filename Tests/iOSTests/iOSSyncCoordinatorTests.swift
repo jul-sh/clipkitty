@@ -133,7 +133,7 @@
 
         // MARK: - setSyncEnabled transitions
 
-        func testEnableFromDisabledCreatesEngineAndStarts() {
+        func testEnableFromDisabledCreatesEngineAndStartsWhenSceneActive() {
             let coordinator = iOSSyncCoordinator(
                 store: store,
                 enabled: false,
@@ -142,6 +142,8 @@
             )
             XCTAssertTrue(createdEngines.isEmpty)
 
+            // A scene must be active for setSyncEnabled to start the engine
+            coordinator.handleScenePhaseChange(.active)
             coordinator.setSyncEnabled(true)
 
             XCTAssertEqual(createdEngines.count, 1)
@@ -226,6 +228,8 @@
             )
             let firstEngine = latestEngine!
 
+            // Activate a scene so re-enable actually starts the new engine
+            coordinator.handleScenePhaseChange(.active)
             coordinator.setSyncEnabled(false)
             coordinator.setSyncEnabled(true)
 
@@ -257,6 +261,7 @@
                 engineFactory: spyFactory()
             )
 
+            coordinator.handleScenePhaseChange(.active)
             coordinator.handleScenePhaseChange(.background)
 
             XCTAssertEqual(latestEngine?.stopCallCount, 1)
@@ -270,6 +275,7 @@
                 engineFactory: spyFactory()
             )
 
+            coordinator.handleScenePhaseChange(.active)
             coordinator.handleScenePhaseChange(.inactive)
 
             XCTAssertEqual(latestEngine?.stopCallCount, 1)
@@ -304,6 +310,76 @@
 
             XCTAssertEqual(latestEngine?.startCallCount, 2)
             XCTAssertEqual(latestEngine?.stopCallCount, 1)
+        }
+
+        // MARK: - Multi-window scene tracking
+
+        func testSecondSceneBackgroundDoesNotStopEngine() {
+            let coordinator = iOSSyncCoordinator(
+                store: store,
+                enabled: true,
+                onContentChanged: {},
+                engineFactory: spyFactory()
+            )
+
+            let scene1 = UUID()
+            let scene2 = UUID()
+
+            coordinator.handleScenePhaseChange(.active, sceneId: scene1)
+            coordinator.handleScenePhaseChange(.active, sceneId: scene2)
+            coordinator.handleScenePhaseChange(.background, sceneId: scene2)
+
+            XCTAssertEqual(latestEngine?.stopCallCount, 0, "Engine should keep running while scene1 is still active")
+        }
+
+        func testAllScenesBackgroundStopsEngine() {
+            let coordinator = iOSSyncCoordinator(
+                store: store,
+                enabled: true,
+                onContentChanged: {},
+                engineFactory: spyFactory()
+            )
+
+            let scene1 = UUID()
+            let scene2 = UUID()
+
+            coordinator.handleScenePhaseChange(.active, sceneId: scene1)
+            coordinator.handleScenePhaseChange(.active, sceneId: scene2)
+            coordinator.handleScenePhaseChange(.background, sceneId: scene1)
+            coordinator.handleScenePhaseChange(.background, sceneId: scene2)
+
+            XCTAssertEqual(latestEngine?.stopCallCount, 1)
+        }
+
+        func testActiveInactiveBackgroundStopsOnlyOnce() {
+            let coordinator = iOSSyncCoordinator(
+                store: store,
+                enabled: true,
+                onContentChanged: {},
+                engineFactory: spyFactory()
+            )
+
+            let scene = UUID()
+            coordinator.handleScenePhaseChange(.active, sceneId: scene)
+            coordinator.handleScenePhaseChange(.inactive, sceneId: scene)
+            coordinator.handleScenePhaseChange(.background, sceneId: scene)
+
+            XCTAssertEqual(latestEngine?.stopCallCount, 1, "Engine should stop only once for active→inactive→background")
+        }
+
+        func testContentChangeIncrementsRevision() {
+            let coordinator = iOSSyncCoordinator(
+                store: store,
+                enabled: true,
+                onContentChanged: {},
+                engineFactory: spyFactory()
+            )
+
+            XCTAssertEqual(coordinator.contentChangeRevision, 0)
+            latestEngine?.onContentChanged?()
+            XCTAssertEqual(coordinator.contentChangeRevision, 1)
+            latestEngine?.onContentChanged?()
+            XCTAssertEqual(coordinator.contentChangeRevision, 2)
         }
 
         // MARK: - Remote notification

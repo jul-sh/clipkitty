@@ -33,7 +33,7 @@ let project = Project(
         // SYNC: Header comes from purr/src/bin/generate_bindings.rs → purrFFI.h
         .target(
             name: "ClipKittyRustFFI",
-            destinations: [.mac, .iPhone],
+            destinations: [.mac, .iPhone, .iPad],
             product: .staticLibrary,
             bundleId: "com.eviljuliette.clipkitty.rustffi",
             deploymentTargets: .multiplatform(iOS: "26.0", macOS: "14.0"),
@@ -53,7 +53,7 @@ let project = Project(
 
         .target(
             name: "ClipKittyRust",
-            destinations: [.mac, .iPhone],
+            destinations: [.mac, .iPhone, .iPad],
             product: .staticLibrary,
             bundleId: "com.eviljuliette.clipkitty.rust",
             deploymentTargets: .multiplatform(iOS: "26.0", macOS: "14.0"),
@@ -73,7 +73,7 @@ let project = Project(
 
         .target(
             name: "ClipKittyShared",
-            destinations: [.mac, .iPhone],
+            destinations: [.mac, .iPhone, .iPad],
             product: .staticLibrary,
             bundleId: "com.eviljuliette.clipkitty.shared",
             deploymentTargets: .multiplatform(iOS: "26.0", macOS: "14.0"),
@@ -87,7 +87,7 @@ let project = Project(
 
         .target(
             name: "ClipKittyAppleServices",
-            destinations: [.mac, .iPhone],
+            destinations: [.mac, .iPhone, .iPad],
             product: .staticLibrary,
             bundleId: "com.eviljuliette.clipkitty.appleservices",
             deploymentTargets: .multiplatform(iOS: "26.0", macOS: "14.0"),
@@ -314,7 +314,7 @@ let project = Project(
 
         .target(
             name: "ClipKittyiOS",
-            destinations: [.iPhone],
+            destinations: [.iPhone, .iPad],
             product: .app,
             bundleId: "com.eviljuliette.clipkitty",
             deploymentTargets: .iOS("26.0"),
@@ -328,6 +328,15 @@ let project = Project(
                 "LSApplicationCategoryType": "public.app-category.utilities",
                 "NSHumanReadableCopyright": "Copyright © 2025 ClipKitty. All rights reserved.",
                 "UILaunchScreen": ["UIColorName": ""],
+                "UIApplicationSceneManifest": [
+                    "UIApplicationSupportsMultipleScenes": true,
+                ],
+                "UISupportedInterfaceOrientations~ipad": [
+                    "UIInterfaceOrientationPortrait",
+                    "UIInterfaceOrientationPortraitUpsideDown",
+                    "UIInterfaceOrientationLandscapeLeft",
+                    "UIInterfaceOrientationLandscapeRight",
+                ],
             ]),
             sources: ["Sources/iOSApp/**"],
             resources: [
@@ -385,7 +394,7 @@ let project = Project(
 
         .target(
             name: "ClipKittyShare",
-            destinations: [.iPhone],
+            destinations: [.iPhone, .iPad],
             product: .appExtension,
             bundleId: "com.eviljuliette.clipkitty.share",
             deploymentTargets: .iOS("26.0"),

@@ -37,7 +37,8 @@ SCREENSHOT_LOCALES := en es zh-Hans zh-Hant ja ko fr de pt-BR ru
         marketing-screenshots-capture marketing-screenshots-localized \
         intro-video intro-video-localized video-data screenshot \
         api-key ios-appstore ios-publish ios-appstore-publish \
-        ios-marketing-screenshots-localized
+        ios-marketing-screenshots-localized \
+        ipad-marketing-screenshots-localized
 
 # Build DMG installer
 dmg:
@@ -389,11 +390,16 @@ ios-appstore-publish: ios-appstore ios-publish
 # Capture localized iOS screenshots for all supported locales.
 # Runs XCUITests on iPhone 16 Pro Max simulator.
 ios-marketing-screenshots-localized:
-	@rm -f /tmp/clipkitty_ios_screenshot_locale.txt
+	@rm -f /tmp/clipkitty_ios_screenshot_locale.txt /tmp/clipkitty_ios_screenshot_db.txt
 	@for locale in $(IOS_SCREENSHOT_LOCALES); do \
 		echo "Capturing iOS screenshots for $$locale..."; \
 		mkdir -p $(PROJECT_ROOT)/marketing-ios/$$locale; \
 		echo "$$locale" > /tmp/clipkitty_ios_screenshot_locale.txt; \
+		if [ "$$locale" = "en" ]; then \
+			echo "SyntheticData.sqlite" > /tmp/clipkitty_ios_screenshot_db.txt; \
+		else \
+			echo "SyntheticData_$$locale.sqlite" > /tmp/clipkitty_ios_screenshot_db.txt; \
+		fi; \
 		xcodebuild test \
 			-workspace $(PROJECT_ROOT)/$(APP_NAME).xcworkspace \
 			-scheme ClipKittyiOSUITests \
@@ -413,5 +419,44 @@ ios-marketing-screenshots-localized:
 		fi; \
 		echo "  $$locale iOS screenshots saved to marketing-ios/$$locale/"; \
 	done
-	@rm -f /tmp/clipkitty_ios_screenshot_locale.txt
+	@rm -f /tmp/clipkitty_ios_screenshot_locale.txt /tmp/clipkitty_ios_screenshot_db.txt
 	@echo "All localized iOS screenshots complete!"
+
+# ============================================================================
+# iPad Marketing Screenshots (Simulator)
+# ============================================================================
+
+# Capture localized iPad screenshots for all supported locales.
+# Runs XCUITests on iPad Pro 13-inch simulator.
+ipad-marketing-screenshots-localized:
+	@rm -f /tmp/clipkitty_ios_screenshot_locale.txt /tmp/clipkitty_ios_screenshot_db.txt
+	@for locale in $(IOS_SCREENSHOT_LOCALES); do \
+		echo "Capturing iPad screenshots for $$locale..."; \
+		mkdir -p $(PROJECT_ROOT)/marketing-ipad/$$locale; \
+		echo "$$locale" > /tmp/clipkitty_ios_screenshot_locale.txt; \
+		if [ "$$locale" = "en" ]; then \
+			echo "SyntheticData.sqlite" > /tmp/clipkitty_ios_screenshot_db.txt; \
+		else \
+			echo "SyntheticData_$$locale.sqlite" > /tmp/clipkitty_ios_screenshot_db.txt; \
+		fi; \
+		xcodebuild test \
+			-workspace $(PROJECT_ROOT)/$(APP_NAME).xcworkspace \
+			-scheme ClipKittyiOSUITests \
+			-destination "platform=iOS Simulator,name=iPad Pro 13-inch (M5)" \
+			-derivedDataPath $(DERIVED_DATA) \
+			$(if $(SKIP_SIGNING),CODE_SIGNING_ALLOWED=NO,) \
+			-only-testing:ClipKittyiOSUITests/ClipKittyiOSScreenshotTests/testTakeIPadMarketingScreenshots \
+			2>&1 | grep -E "(Test Case|passed|failed)" || true; \
+		if [ "$$locale" = "en" ]; then \
+			cp /tmp/clipkitty_ipad_marketing_1_split_view.png $(PROJECT_ROOT)/marketing-ipad/$$locale/screenshot_1.png 2>/dev/null || true; \
+			cp /tmp/clipkitty_ipad_marketing_2_search.png $(PROJECT_ROOT)/marketing-ipad/$$locale/screenshot_2.png 2>/dev/null || true; \
+			cp /tmp/clipkitty_ipad_marketing_3_filter.png $(PROJECT_ROOT)/marketing-ipad/$$locale/screenshot_3.png 2>/dev/null || true; \
+		else \
+			cp /tmp/clipkitty_ipad_$${locale}_marketing_1_split_view.png $(PROJECT_ROOT)/marketing-ipad/$$locale/screenshot_1.png 2>/dev/null || true; \
+			cp /tmp/clipkitty_ipad_$${locale}_marketing_2_search.png $(PROJECT_ROOT)/marketing-ipad/$$locale/screenshot_2.png 2>/dev/null || true; \
+			cp /tmp/clipkitty_ipad_$${locale}_marketing_3_filter.png $(PROJECT_ROOT)/marketing-ipad/$$locale/screenshot_3.png 2>/dev/null || true; \
+		fi; \
+		echo "  $$locale iPad screenshots saved to marketing-ipad/$$locale/"; \
+	done
+	@rm -f /tmp/clipkitty_ios_screenshot_locale.txt /tmp/clipkitty_ios_screenshot_db.txt
+	@echo "All localized iPad screenshots complete!"

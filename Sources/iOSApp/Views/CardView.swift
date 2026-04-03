@@ -5,15 +5,16 @@ import UIKit
 
 struct CardView: View {
     let row: DisplayRow
-    @Binding var previewItemId: String?
-    @Binding var editItemId: String?
 
     @Environment(AppContainer.self) private var container
     @Environment(BrowserViewModel.self) private var viewModel
-    @Environment(AppState.self) private var appState
+    @Environment(SceneState.self) private var sceneState
     @Environment(HapticsClient.self) private var haptics
+    @Environment(\.horizontalSizeClass) private var sizeClass
+    @Environment(\.windowScene) private var windowScene
 
     @State private var isShareLoading = false
+    @State private var cardAnchorView: UIView?
 
     private var metadata: ItemMetadata {
         row.metadata
@@ -33,13 +34,19 @@ struct CardView: View {
         .contentShape(RoundedRectangle(cornerRadius: 14, style: .continuous))
         .accessibilityElement(children: .combine)
         .accessibilityLabel(accessibilityCardLabel)
-        .accessibilityHint(String(localized: "Double tap to copy"))
+        .accessibilityHint(sizeClass == .regular
+            ? String(localized: "Double tap to select")
+            : String(localized: "Double tap to copy"))
         .accessibilityAddTraits(.isButton)
-        .onTapGesture {
-            viewModel.copyOnlyItem(itemId: metadata.itemId)
-            haptics.fire(.copy)
-            appState.showToast(.copied)
+        .if(sizeClass != .regular) { view in
+            // Compact: tap-to-copy (preserves iPhone behavior).
+            // Haptics + toast are handled by the BrowserViewModel's onCopyOnly callback.
+            view.onTapGesture {
+                viewModel.copyOnlyItem(itemId: metadata.itemId)
+            }
         }
+        .hoverEffect(.highlight)
+        .background { ShareAnchorView { cardAnchorView = $0 } }
         .contextMenu { contextMenuActions }
     }
 
@@ -119,8 +126,15 @@ struct CardView: View {
             }
 
         case .file:
-            // File items are filtered out of the iOS feed
-            EmptyView()
+            HStack(spacing: 8) {
+                Image(systemName: "doc")
+                    .font(.title3)
+                    .foregroundStyle(.secondary)
+                Text(metadata.snippet)
+                    .font(.custom(FontManager.sansSerif, size: 15))
+                    .lineLimit(3)
+                    .foregroundStyle(.primary)
+            }
 
         case .color:
             // Fallback for symbol-based color (shouldn't normally hit this path)
@@ -172,21 +186,28 @@ struct CardView: View {
     private var contextMenuActions: some View {
         Button {
             viewModel.copyOnlyItem(itemId: metadata.itemId)
-            haptics.fire(.copy)
-            appState.showToast(.copied)
         } label: {
             Label(String(localized: "Copy"), systemImage: "doc.on.doc")
         }
 
         Button {
-            previewItemId = metadata.itemId
+            if sizeClass == .regular {
+                sceneState.detailSelection = .selected(itemId: metadata.itemId)
+            } else {
+                sceneState.previewItemId = metadata.itemId
+            }
         } label: {
-            Label(String(localized: "Preview"), systemImage: "eye")
+            Label(
+                sizeClass == .regular
+                    ? String(localized: "Select")
+                    : String(localized: "Preview"),
+                systemImage: sizeClass == .regular ? "sidebar.right" : "eye"
+            )
         }
 
         if case .symbol(.text) = metadata.icon {
             Button {
-                editItemId = metadata.itemId
+                sceneState.modalRoute = .edit(itemId: metadata.itemId)
             } label: {
                 Label(String(localized: "Edit"), systemImage: "pencil")
             }
@@ -195,10 +216,10 @@ struct CardView: View {
         Button {
             if isBookmarked {
                 viewModel.removeTag(.bookmark, fromItem: metadata.itemId)
-                appState.showToast(.unbookmarked)
+                sceneState.showToast(.unbookmarked)
             } else {
                 viewModel.addTag(.bookmark, toItem: metadata.itemId)
-                appState.showToast(.bookmarked)
+                sceneState.showToast(.bookmarked)
             }
             haptics.fire(.selection)
         } label: {
@@ -230,10 +251,10 @@ struct CardView: View {
         Task {
             defer { isShareLoading = false }
             guard let item = await container.storeClient.fetchItem(id: metadata.itemId) else {
-                appState.showToast(.addFailed(String(localized: "Could not load item")))
+                sceneState.showToast(.addFailed(String(localized: "Could not load item")))
                 return
             }
-            SharePresenter.present(item: item)
+            SharePresenter.present(item: item, in: windowScene, sourceView: cardAnchorView)
         }
     }
 
@@ -303,5 +324,18 @@ struct CardView: View {
         let g = (rgba >> 16) & 0xFF
         let b = (rgba >> 8) & 0xFF
         return String(format: "#%02X%02X%02X", r, g, b)
+    }
+}
+
+// MARK: - Conditional View Modifier
+
+private extension View {
+    @ViewBuilder
+    func `if`(_ condition: Bool, transform: (Self) -> some View) -> some View {
+        if condition {
+            transform(self)
+        } else {
+            self
+        }
     }
 }

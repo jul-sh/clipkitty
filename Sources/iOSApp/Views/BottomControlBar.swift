@@ -6,25 +6,20 @@ import SwiftUI
 struct BottomControlBar: View {
     @Binding var isSearchActive: Bool
     @Environment(AppContainer.self) private var container
-    @Environment(AppState.self) private var appState
+    @Environment(SceneState.self) private var sceneState
     @Environment(BrowserViewModel.self) private var viewModel
     @Environment(HapticsClient.self) private var haptics
 
     @State private var searchText: String = ""
     @State private var selectedPhoto: PhotosPickerItem?
-    @State private var createFlow: CreateFlow = .none
-    @State private var isFilterExpanded = false
-
-    private enum CreateFlow: Equatable {
-        case none
-        case menuExpanded
-        case composingText
-        case importingPhoto
-        case importingPasteboard
-    }
+    @State private var isImportingPhoto = false
 
     private var isAddExpanded: Bool {
-        createFlow == .menuExpanded
+        sceneState.chromeState == .addMenuExpanded
+    }
+
+    private var isFilterExpanded: Bool {
+        sceneState.chromeState == .filterExpanded
     }
     @FocusState private var isSearchFocused: Bool
     @Namespace private var barNamespace
@@ -38,8 +33,7 @@ struct BottomControlBar: View {
                     .ignoresSafeArea()
                     .onTapGesture {
                         withAnimation(.bouncy) {
-                            createFlow = .none
-                            isFilterExpanded = false
+                            sceneState.chromeState = .idle
                         }
                     }
                     .frame(maxWidth: .infinity, maxHeight: .infinity)
@@ -77,18 +71,14 @@ struct BottomControlBar: View {
             .padding(.bottom, 8)
         }
         .photosPicker(
-            isPresented: Binding(
-                get: { createFlow == .importingPhoto },
-                set: { if !$0 { createFlow = .none } }
-            ),
+            isPresented: $isImportingPhoto,
             selection: $selectedPhoto,
             matching: .images
         )
-        .sheet(isPresented: Binding(
-            get: { createFlow == .composingText },
-            set: { if !$0 { createFlow = .none } }
-        )) {
-            TextComposerView()
+        .onChange(of: viewModel.searchText) { _, externalValue in
+            if searchText != externalValue {
+                searchText = externalValue
+            }
         }
         .onChange(of: selectedPhoto) { _, newItem in
             guard let newItem else { return }
@@ -101,8 +91,7 @@ struct BottomControlBar: View {
     private var searchButton: some View {
         Button {
             withAnimation(.bouncy) {
-                createFlow = .none
-                isFilterExpanded = false
+                sceneState.chromeState = .searching
                 isSearchActive = true
             }
             isSearchFocused = true
@@ -158,7 +147,7 @@ struct BottomControlBar: View {
                             applyFilter(option)
                             haptics.fire(.selection)
                             withAnimation(.bouncy) {
-                                isFilterExpanded = false
+                                sceneState.chromeState = .idle
                             }
                         } label: {
                             HStack(spacing: 8) {
@@ -183,8 +172,7 @@ struct BottomControlBar: View {
             } else {
                 Button {
                     withAnimation(.bouncy) {
-                        createFlow = .none
-                        isFilterExpanded = true
+                        sceneState.chromeState = .filterExpanded
                     }
                 } label: {
                     HStack(spacing: 6) {
@@ -213,8 +201,8 @@ struct BottomControlBar: View {
         VStack(spacing: 12) {
             if isAddExpanded {
                 Button {
-                    withAnimation(.bouncy) { createFlow = .none }
-                    createFlow = .importingPhoto
+                    withAnimation(.bouncy) { sceneState.chromeState = .idle }
+                    isImportingPhoto = true
                 } label: {
                     Image(systemName: "photo.badge.plus")
                         .font(.body.weight(.medium))
@@ -226,8 +214,8 @@ struct BottomControlBar: View {
                 .glassEffectID("add_photo", in: barNamespace)
 
                 Button {
-                    withAnimation(.bouncy) { createFlow = .none }
-                    createFlow = .composingText
+                    withAnimation(.bouncy) { sceneState.chromeState = .idle }
+                    sceneState.modalRoute = .compose
                 } label: {
                     Image(systemName: "square.and.pencil")
                         .font(.body.weight(.medium))
@@ -239,7 +227,7 @@ struct BottomControlBar: View {
                 .glassEffectID("add_text", in: barNamespace)
 
                 Button {
-                    withAnimation(.bouncy) { createFlow = .none }
+                    withAnimation(.bouncy) { sceneState.chromeState = .idle }
                     Task { await pasteClipboard() }
                 } label: {
                     Image(systemName: "doc.on.clipboard")
@@ -254,8 +242,7 @@ struct BottomControlBar: View {
 
             Button {
                 withAnimation(.bouncy) {
-                    isFilterExpanded = false
-                    createFlow = isAddExpanded ? .none : .menuExpanded
+                    sceneState.chromeState = isAddExpanded ? .idle : .addMenuExpanded
                 }
             } label: {
                 Image(systemName: isAddExpanded ? "xmark" : "plus")
@@ -363,7 +350,7 @@ struct BottomControlBar: View {
 
     private func pasteClipboard() async {
         guard let content = container.clipboardService.readCurrentClipboard() else {
-            appState.showToast(.addFailed(String(localized: "Clipboard is empty")))
+            sceneState.showToast(.addFailed(String(localized: "Clipboard is empty")))
             return
         }
 
@@ -372,7 +359,7 @@ struct BottomControlBar: View {
         switch content {
         case let .image(image):
             guard let data = image.pngData() else {
-                appState.showToast(.addFailed(String(localized: "Could not read image data")))
+                sceneState.showToast(.addFailed(String(localized: "Could not read image data")))
                 return
             }
             let thumbnail = image.preparingThumbnail(of: CGSize(width: 200, height: 200))?.jpegData(
@@ -402,11 +389,11 @@ struct BottomControlBar: View {
         switch result {
         case .success:
             haptics.fire(.success)
-            appState.showToast(.addSucceeded)
-            appState.refreshFeed()
+            sceneState.showToast(.addSucceeded)
+            sceneState.refreshFeed()
         case let .failure(error):
             haptics.fire(.destructive)
-            appState.showToast(.addFailed(error.localizedDescription))
+            sceneState.showToast(.addFailed(error.localizedDescription))
         }
     }
 
@@ -414,7 +401,7 @@ struct BottomControlBar: View {
 
     private func importPhoto(from item: PhotosPickerItem) async {
         guard let data = try? await item.loadTransferable(type: Data.self) else {
-            appState.showToast(.addFailed(String(localized: "Could not load photo")))
+            sceneState.showToast(.addFailed(String(localized: "Could not load photo")))
             return
         }
 
@@ -436,11 +423,11 @@ struct BottomControlBar: View {
         switch result {
         case .success:
             haptics.fire(.success)
-            appState.showToast(.addSucceeded)
-            appState.refreshFeed()
+            sceneState.showToast(.addSucceeded)
+            sceneState.refreshFeed()
         case let .failure(error):
             haptics.fire(.destructive)
-            appState.showToast(.addFailed(error.localizedDescription))
+            sceneState.showToast(.addFailed(error.localizedDescription))
         }
     }
 }
