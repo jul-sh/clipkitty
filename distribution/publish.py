@@ -1,13 +1,14 @@
 #!/usr/bin/env python3
-"""Publish built .pkg and all metadata/screenshots to App Store Connect.
+"""Publish built .pkg/.ipa and all metadata/screenshots to App Store Connect.
 
 Prerequisites:
-  - ClipKitty.pkg exists at PROJECT_ROOT (run `make -C distribution appstore` first)
+  - ClipKitty.pkg (macOS) or ClipKittyiOS.ipa (iOS) exists at PROJECT_ROOT
   - keytap installed (via nix devShell), or AGE_SECRET_KEY env var
   - asc CLI installed (run distribution/install-deps.sh)
 
 Usage:
   ./distribution/publish.py
+  ./distribution/publish.py --platform ios --app-id 123456789
   ./distribution/publish.py --dry-run
   ./distribution/publish.py --metadata-only
 
@@ -29,10 +30,26 @@ SCRIPT_DIR = os.path.dirname(os.path.abspath(__file__))
 PROJECT_ROOT = os.path.dirname(SCRIPT_DIR)
 SECRETS_DIR = os.path.join(PROJECT_ROOT, "secrets")
 
-APP_ID = "6759137247"
-PKG_PATH = os.path.join(PROJECT_ROOT, "ClipKitty.pkg")
-METADATA_DIR = os.path.join(SCRIPT_DIR, "metadata")
-MARKETING_DIR = os.path.join(PROJECT_ROOT, "marketing")
+PLATFORMS = {
+    "macos": {
+        "app_id": "6759137247",
+        "altool_type": "osx",
+        "asc_platform": "MAC_OS",
+        "pkg_name": "ClipKitty.pkg",
+        "metadata_dir_name": "metadata",
+        "marketing_dir_name": "marketing",
+        "screenshot_device_types": ["APP_DESKTOP"],
+    },
+    "ios": {
+        "app_id": "6759137247",  # Same universal app as macOS
+        "altool_type": "ios",
+        "asc_platform": "IOS",
+        "pkg_name": "ClipKittyiOS.ipa",
+        "metadata_dir_name": "metadata",  # Shared metadata (same app listing)
+        "marketing_dir_name": "marketing-ios",
+        "screenshot_device_types": ["IPHONE_67"],
+    },
+}
 
 LOCALE_MAP = {
     "en": "en-US", "es": "es-ES", "de": "de-DE", "fr": "fr-FR",
@@ -57,6 +74,7 @@ def decrypt_secret(name):
     return r.stdout.strip()
 
 
+
 def read_asc_auth(field):
     r = subprocess.run(
         [os.path.join(SCRIPT_DIR, "asc-auth.sh"), field],
@@ -67,20 +85,39 @@ def read_asc_auth(field):
     return r.stdout.strip()
 
 
+def resolve_app_id(platform_config, app_id_override):
+    """Resolve the app ID: --app-id flag overrides platform config."""
+    return app_id_override or platform_config["app_id"]
+
+
 def main():
     parser = argparse.ArgumentParser(description="Publish to App Store Connect")
     parser.add_argument("--dry-run", action="store_true", help="Preview without uploading")
     parser.add_argument("--metadata-only", action="store_true", help="Skip binary upload")
     parser.add_argument("--version", help="Version string (e.g., 1.8.8) for auto-creating App Store version")
+    parser.add_argument(
+        "--platform", choices=["macos", "ios"], default="macos",
+        help="Target platform (default: macos)",
+    )
+    parser.add_argument(
+        "--app-id", default=None,
+        help="Override the App Store Connect app ID",
+    )
     args = parser.parse_args()
+
+    platform_config = PLATFORMS[args.platform]
+    app_id = resolve_app_id(platform_config, args.app_id)
+    pkg_path = os.path.join(PROJECT_ROOT, platform_config["pkg_name"])
+    metadata_dir = os.path.join(SCRIPT_DIR, platform_config["metadata_dir_name"])
+    marketing_dir = os.path.join(PROJECT_ROOT, platform_config["marketing_dir_name"])
 
     # --- Validate prerequisites ---
 
     if not shutil.which("asc"):
         sys.exit("Error: asc CLI not found. Run: distribution/install-deps.sh")
 
-    if not args.metadata_only and not os.path.isfile(PKG_PATH):
-        sys.exit(f"Error: {PKG_PATH} not found. Run: make -C distribution appstore")
+    if not args.metadata_only and not os.path.isfile(pkg_path):
+        sys.exit(f"Error: {pkg_path} not found. Run: make -C distribution appstore")
 
     # --- Decrypt secrets ---
 
@@ -126,11 +163,11 @@ def main():
         if not args.metadata_only:
             print("\n=== Uploading binary ===")
             if args.dry_run:
-                print(f"[dry-run] Would upload: {PKG_PATH}")
+                print(f"[dry-run] Would upload: {pkg_path}")
             else:
                 run([
-                    "xcrun", "altool", "--upload-package", PKG_PATH,
-                    "--type", "osx",
+                    "xcrun", "altool", "--upload-package", pkg_path,
+                    "--type", platform_config["altool_type"],
                     "--apiKey", asc_key_id,
                     "--apiIssuer", asc_issuer_id,
                 ])
@@ -143,7 +180,7 @@ def main():
         # Find the editable App Store version
         r = run(
             ["asc", "versions", "list",
-             "--app", APP_ID, "--platform", "MAC_OS",
+             "--app", app_id, "--platform", platform_config["asc_platform"],
              "--state", "PREPARE_FOR_SUBMISSION"],
             capture=True, check=False,
         )
@@ -170,7 +207,7 @@ def main():
                 print(f"Creating new App Store version {args.version}...")
                 r = run(
                     ["asc", "versions", "create",
-                     "--app", APP_ID, "--platform", "MAC_OS",
+                     "--app", app_id, "--platform", platform_config["asc_platform"],
                      "--version", args.version, "--release-type", "MANUAL"],
                     capture=True, check=False,
                 )
@@ -197,19 +234,19 @@ def main():
         # asc migrate import requires a screenshots/ dir to exist even if empty.
         import_dir = tempfile.mkdtemp()
         import_metadata = os.path.join(import_dir, "metadata")
-        shutil.copytree(METADATA_DIR, import_metadata)
+        shutil.copytree(metadata_dir, import_metadata)
         os.makedirs(os.path.join(import_dir, "screenshots"), exist_ok=True)
 
         import_cmd = [
             "asc", "migrate", "import",
-            "--app", APP_ID,
+            "--app", app_id,
             "--version-id", version_id,
             "--fastlane-dir", import_dir,
         ]
 
         if args.dry_run:
             print(f"\n[dry-run] Would import metadata to version {version_id}:")
-            print(f"  Metadata: {METADATA_DIR}")
+            print(f"  Metadata: {metadata_dir}")
             run(import_cmd + ["--dry-run"])
         else:
             r = run(import_cmd, check=False, capture=True)
@@ -246,9 +283,9 @@ def main():
             locale_to_loc_id[locale] = loc["id"]
 
         screenshot_count = 0
-        if os.path.isdir(MARKETING_DIR):
-            for entry in sorted(os.listdir(MARKETING_DIR)):
-                src_dir = os.path.join(MARKETING_DIR, entry)
+        if os.path.isdir(marketing_dir):
+            for entry in sorted(os.listdir(marketing_dir)):
+                src_dir = os.path.join(marketing_dir, entry)
                 if not os.path.isdir(src_dir):
                     continue
                 asc_locale = LOCALE_MAP.get(entry)
@@ -262,42 +299,43 @@ def main():
                 if not pngs:
                     continue
 
-                # Delete existing screenshots before uploading new ones to avoid duplicates
-                print(f"  Deleting existing screenshots for {asc_locale}...")
-                if args.dry_run:
-                    print(f"    [dry-run] Would delete existing screenshots")
-                else:
-                    r = run(
-                        ["asc", "screenshots", "list",
-                         "--version-localization", loc_id,
-                         "--device-type", "APP_DESKTOP"],
-                        capture=True, check=False,
-                    )
-                    if r.returncode == 0:
-                        existing = json.loads(r.stdout)
-                        existing_list = existing.get("data", existing) if isinstance(existing, dict) else existing
-                        for screenshot in existing_list:
-                            screenshot_id = screenshot.get("id")
-                            if screenshot_id:
-                                run(
-                                    ["asc", "screenshots", "delete",
-                                     "--id", screenshot_id, "--confirm"],
-                                    check=False,
-                                )
+                for device_type in platform_config["screenshot_device_types"]:
+                    # Delete existing screenshots before uploading new ones to avoid duplicates
+                    print(f"  Deleting existing {device_type} screenshots for {asc_locale}...")
+                    if args.dry_run:
+                        print(f"    [dry-run] Would delete existing screenshots")
+                    else:
+                        r = run(
+                            ["asc", "screenshots", "list",
+                             "--version-localization", loc_id,
+                             "--device-type", device_type],
+                            capture=True, check=False,
+                        )
+                        if r.returncode == 0:
+                            existing = json.loads(r.stdout)
+                            existing_list = existing.get("data", existing) if isinstance(existing, dict) else existing
+                            for screenshot in existing_list:
+                                screenshot_id = screenshot.get("id")
+                                if screenshot_id:
+                                    run(
+                                        ["asc", "screenshots", "delete",
+                                         "--id", screenshot_id, "--confirm"],
+                                        check=False,
+                                    )
 
-                print(f"  Uploading {len(pngs)} screenshots for {asc_locale}...")
-                if args.dry_run:
-                    for png in pngs:
-                        print(f"    [dry-run] {os.path.basename(png)}")
-                else:
-                    for png in pngs:
-                        run([
-                            "asc", "screenshots", "upload",
-                            "--version-localization", loc_id,
-                            "--device-type", "APP_DESKTOP",
-                            "--path", png,
-                        ])
-                screenshot_count += len(pngs)
+                    print(f"  Uploading {len(pngs)} {device_type} screenshots for {asc_locale}...")
+                    if args.dry_run:
+                        for png in pngs:
+                            print(f"    [dry-run] {os.path.basename(png)}")
+                    else:
+                        for png in pngs:
+                            run([
+                                "asc", "screenshots", "upload",
+                                "--version-localization", loc_id,
+                                "--device-type", device_type,
+                                "--path", png,
+                            ])
+                    screenshot_count += len(pngs)
 
         print(f"Total screenshots uploaded: {screenshot_count}")
 

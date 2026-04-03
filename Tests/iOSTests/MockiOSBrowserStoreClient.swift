@@ -8,7 +8,7 @@ final class MockiOSBrowserStoreClient: BrowserStoreClient {
 
     private var pendingSearchResponses: [BrowserSearchResponse] = []
     private var searchContinuations: [CheckedContinuation<BrowserSearchOutcome, Never>] = []
-    private var fetchContinuations: [String: [CheckedContinuation<ClipboardItem?, Never>]] = []
+    private var fetchContinuations: [String: [CheckedContinuation<ClipboardItem?, Never>]] = [:]
 
     var addTagResult: Result<Void, ClipboardError> = .success(())
     var removeTagResult: Result<Void, ClipboardError> = .success(())

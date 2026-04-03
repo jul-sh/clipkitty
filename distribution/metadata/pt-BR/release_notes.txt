@@ -1,4 +1,4 @@
-NOVO: Sincronização iCloud; sincronize opcionalmente seu histórico de área de transferência em todos os seus Macs.
+NOVO: Sincronização iCloud; sincronize opcionalmente seu histórico de área de transferência em todos os seus dispositivos.
 
 - Ative o iCloud Sync nas configurações para manter seus clips sincronizados entre dispositivos
 - Utiliza seu contêiner privado do iCloud sem servidores de terceiros

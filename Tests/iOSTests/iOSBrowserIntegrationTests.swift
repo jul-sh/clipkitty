@@ -35,7 +35,7 @@ final class iOSBrowserIntegrationTests: XCTestCase {
             totalCount: 2
         ))
 
-        viewModel.handleContentRevisionChange(1, isPanelVisible: true)
+        viewModel.handlePanelVisibilityChange(true, contentRevision: 1)
         await flushMainActor()
 
         XCTAssertEqual(viewModel.itemIds, ["2", "1"])
@@ -145,7 +145,7 @@ final class iOSBrowserIntegrationTests: XCTestCase {
 
         // Apply bookmark filter — triggers new search
         client.enqueueSearchResponse(BrowserSearchResponse(
-            request: SearchRequest(text: "", filter: .tag(.bookmark)),
+            request: SearchRequest(text: "", filter: .tagged(tag: .bookmark)),
             items: [makeMatch(id: "1", snippet: "Bookmarked", tags: [.bookmark])],
             firstPreviewPayload: nil,
             totalCount: 1
@@ -266,13 +266,17 @@ final class iOSBrowserIntegrationTests: XCTestCase {
         viewModel.addTag(.bookmark, toItem: "1")
         await flushMainActor()
 
-        XCTAssertEqual(client.addedTags, [("1", .bookmark)])
+        XCTAssertEqual(client.addedTags.count, 1)
+        XCTAssertEqual(client.addedTags.first?.0, "1")
+        XCTAssertEqual(client.addedTags.first?.1, .bookmark)
 
         // Remove bookmark
         viewModel.removeTag(.bookmark, fromItem: "1")
         await flushMainActor()
 
-        XCTAssertEqual(client.removedTags, [("1", .bookmark)])
+        XCTAssertEqual(client.removedTags.count, 1)
+        XCTAssertEqual(client.removedTags.first?.0, "1")
+        XCTAssertEqual(client.removedTags.first?.1, .bookmark)
     }
 
     // MARK: - Helpers

@@ -1,4 +1,4 @@
-NUEVO: Sincronización iCloud; sincroniza opcionalmente tu historial de portapapeles en todos tus Macs.
+NUEVO: Sincronización iCloud; sincroniza opcionalmente tu historial de portapapeles en todos tus dispositivos.
 
 - Activa iCloud Sync en los ajustes para mantener tus clips sincronizados entre dispositivos
 - Utiliza tu contenedor privado de iCloud sin servidores de terceros

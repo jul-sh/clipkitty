@@ -5,6 +5,7 @@ import SwiftUI
 struct EditView: View {
     let itemId: String
 
+    @Environment(AppContainer.self) private var container
     @Environment(BrowserViewModel.self) private var viewModel
     @Environment(AppState.self) private var appState
     @Environment(\.dismiss) private var dismiss
@@ -22,24 +23,24 @@ struct EditView: View {
         NavigationStack {
             Group {
                 if isLoading {
-                    ProgressView("Loading...")
+                    ProgressView(String(localized: "Loading..."))
                 } else {
                     TextEditor(text: $text)
                         .font(.body)
                         .padding()
                 }
             }
-            .navigationTitle("Edit")
+            .navigationTitle(String(localized: "Edit"))
             .navigationBarTitleDisplayMode(.inline)
             .toolbar {
                 ToolbarItem(placement: .cancellationAction) {
-                    Button("Cancel") {
+                    Button(String(localized: "Cancel")) {
                         viewModel.discardCurrentEdit()
                         dismiss()
                     }
                 }
                 ToolbarItem(placement: .confirmationAction) {
-                    Button("Save") {
+                    Button(String(localized: "Save")) {
                         viewModel.commitCurrentEdit()
                         appState.showToast(.saved)
                         dismiss()
@@ -59,14 +60,14 @@ struct EditView: View {
     }
 
     private func loadFullText() async {
-        if let item = await appState.storeClient.fetchItem(id: itemId),
+        if let item = await container.storeClient.fetchItem(id: itemId),
            case let .text(value) = item.content
         {
             originalText = value
             text = value
             viewModel.onEditingStateChange(true, for: itemId)
         } else {
-            // Fallback — item not found or not text, dismiss
+            appState.showToast(.addFailed(String(localized: "Item not found")))
             dismiss()
         }
         isLoading = false

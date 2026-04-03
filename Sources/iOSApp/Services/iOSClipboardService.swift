@@ -3,6 +3,16 @@ import Foundation
 import UIKit
 import UniformTypeIdentifiers
 
+// MARK: - Clipboard Reading Result
+
+enum PasteboardContent {
+    case image(UIImage)
+    case link(URL)
+    case text(String)
+}
+
+// MARK: - Clipboard Service
+
 @MainActor
 final class iOSClipboardService {
     func copy(content: ClipboardContent) {
@@ -29,16 +39,16 @@ final class iOSClipboardService {
         }
     }
 
-    func readCurrentClipboard() -> (type: String, content: Any)? {
+    func readCurrentClipboard() -> PasteboardContent? {
         let pasteboard = UIPasteboard.general
         if let image = pasteboard.image {
-            return ("image", image)
+            return .image(image)
         }
         if let url = pasteboard.url {
-            return ("link", url)
+            return .link(url)
         }
         if let string = pasteboard.string, !string.isEmpty {
-            return ("text", string)
+            return .text(string)
         }
         return nil
     }
