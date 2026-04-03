@@ -865,17 +865,9 @@ final class ClipKittyUITests: XCTestCase {
         app.typeKey(.upArrow, modifierFlags: [])
         Thread.sleep(forTimeInterval: 0.3)
 
-        // Signal that the demo is ready to start (shell script will start recording)
-        try? "start".write(toFile: "/tmp/clipkitty_demo_start.txt", atomically: true, encoding: .utf8)
-
-        // Wait for recording to start
-        let recordingStartedPath = "/tmp/clipkitty_recording_started.txt"
-        var waitCount = 0
-        while !FileManager.default.fileExists(atPath: recordingStartedPath), waitCount < 20 {
-            Thread.sleep(forTimeInterval: 0.5)
-            waitCount += 1
-        }
-        try? FileManager.default.removeItem(atPath: recordingStartedPath)
+        // Brief pause to let the panel settle before demo scenes begin.
+        // (Xcode records the screen automatically into the xcresult bundle.)
+        Thread.sleep(forTimeInterval: 0.5)
 
         /// Helper to type with natural delays
         func typeSlowly(_ text: String, delay: TimeInterval = 0.05) {
@@ -942,8 +934,7 @@ final class ClipKittyUITests: XCTestCase {
         clearSearch()
         Thread.sleep(forTimeInterval: 0.5)
 
-        // Signal that the demo is finished
-        try? "stop".write(toFile: "/tmp/clipkitty_demo_stop.txt", atomically: true, encoding: .utf8)
+        // Demo finished — the xcresult screen recording ends when the test returns.
     }
 
     /// Captures multiple screenshot states for marketing materials.
