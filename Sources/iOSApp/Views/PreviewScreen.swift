@@ -25,7 +25,10 @@ struct PreviewScreen: View {
         }
         .navigationTitle(navigationTitle)
         .navigationBarTitleDisplayMode(.inline)
-        .toolbar { toolbarContent }
+        .toolbar(.hidden, for: .bottomBar)
+        .safeAreaInset(edge: .bottom) {
+            actionBar
+        }
         .alert(String(localized: "Delete Item"), isPresented: $showDeleteConfirmation) {
             Button(String(localized: "Delete"), role: .destructive) {
                 viewModel.deleteItem(itemId: itemId)
@@ -71,7 +74,9 @@ struct PreviewScreen: View {
                 Divider()
                 metadataSection(for: item)
             }
-            .padding()
+            .cardSurface()
+            .padding(.horizontal, 16)
+            .padding(.top, 8)
         }
     }
 
@@ -254,46 +259,76 @@ struct PreviewScreen: View {
 
     // MARK: - Toolbar
 
-    @ToolbarContentBuilder
-    private var toolbarContent: some ToolbarContent {
-        ToolbarItemGroup(placement: .bottomBar) {
-            if let item = viewModel.selectedItemState?.item {
-                Spacer()
-
-                Button {
-                    container.clipboardService.copy(content: item.content)
-                    haptics.fire(.copy)
-                    appState.showToast(.copied)
-                } label: {
-                    Image(systemName: "doc.on.doc")
-                }
-
-                if case .text = item.content {
+    @ViewBuilder
+    private var actionBar: some View {
+        if let item = viewModel.selectedItemState?.item {
+            GlassEffectContainer(spacing: 20) {
+                HStack(spacing: 20) {
+                    // Left circle: Share
                     Button {
-                        showEditSheet = true
+                        SharePresenter.present(item: item)
                     } label: {
-                        Image(systemName: "pencil")
+                        Image(systemName: "square.and.arrow.up")
+                            .font(.body.weight(.medium))
+                            .frame(width: 52, height: 52)
+                            .contentShape(Circle())
                     }
-                }
+                    .buttonStyle(.plain)
+                    .glassEffect(.regular.interactive(), in: .circle)
 
-                Button {
-                    toggleBookmark(for: item)
-                } label: {
-                    Image(systemName: isBookmarked(item) ? "bookmark.slash" : "bookmark")
-                }
+                    // Center capsule: Bookmark, Copy, Edit
+                    HStack(spacing: 0) {
+                        Button {
+                            toggleBookmark(for: item)
+                        } label: {
+                            Image(systemName: isBookmarked(item) ? "bookmark.slash" : "bookmark")
+                                .font(.body.weight(.medium))
+                                .frame(width: 52, height: 52)
+                                .contentShape(Rectangle())
+                        }
+                        .buttonStyle(.plain)
 
-                Button {
-                    SharePresenter.present(item: item)
-                } label: {
-                    Image(systemName: "square.and.arrow.up")
-                }
+                        Button {
+                            container.clipboardService.copy(content: item.content)
+                            haptics.fire(.copy)
+                            appState.showToast(.copied)
+                        } label: {
+                            Image(systemName: "doc.on.doc")
+                                .font(.body.weight(.medium))
+                                .frame(width: 52, height: 52)
+                                .contentShape(Rectangle())
+                        }
+                        .buttonStyle(.plain)
 
-                Button(role: .destructive) {
-                    showDeleteConfirmation = true
-                } label: {
-                    Image(systemName: "trash")
+                        if case .text = item.content {
+                            Button {
+                                showEditSheet = true
+                            } label: {
+                                Image(systemName: "pencil")
+                                    .font(.body.weight(.medium))
+                                    .frame(width: 52, height: 52)
+                                    .contentShape(Rectangle())
+                            }
+                            .buttonStyle(.plain)
+                        }
+                    }
+                    .glassEffect(.regular.interactive(), in: .capsule)
+
+                    // Right circle: Delete
+                    Button(role: .destructive) {
+                        showDeleteConfirmation = true
+                    } label: {
+                        Image(systemName: "trash")
+                            .font(.body.weight(.medium))
+                            .frame(width: 52, height: 52)
+                            .contentShape(Circle())
+                    }
+                    .buttonStyle(.plain)
+                    .glassEffect(.regular.interactive(), in: .circle)
                 }
             }
+            .padding(.horizontal, 16)
+            .padding(.bottom, 8)
         }
     }
 

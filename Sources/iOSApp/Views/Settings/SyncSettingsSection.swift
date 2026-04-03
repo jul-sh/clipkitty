@@ -7,6 +7,13 @@
         @Environment(iOSSettingsStore.self) private var settings
         @Environment(iOSSyncCoordinator.self) private var syncCoordinator
 
+        /// Tracks the last known sync date so we can suppress brief "Syncing" flashes.
+        @State private var lastSyncDate: Date?
+
+        /// Threshold below which a new "syncing" state is suppressed in favor of
+        /// continuing to show the "synced" label.
+        private static let syncingSuppressionInterval: TimeInterval = 10
+
         var body: some View {
             @Bindable var settings = settings
 
@@ -18,11 +25,16 @@
 
                 statusRow
             }
+            .onChange(of: syncCoordinator.status) { _, newStatus in
+                if case let .synced(date) = newStatus {
+                    lastSyncDate = date
+                }
+            }
         }
 
         @ViewBuilder
         private var statusRow: some View {
-            switch syncCoordinator.status {
+            switch displayStatus {
             case .idle:
                 LabeledContent("Status", value: "Off")
             case .connecting:
@@ -45,8 +57,13 @@
                 }
             case let .synced(lastSync):
                 LabeledContent("Status") {
-                    Text("Synced \(lastSync, style: .relative) ago")
-                        .foregroundStyle(.secondary)
+                    if -lastSync.timeIntervalSinceNow < 60 {
+                        Text("Synced just now")
+                            .foregroundStyle(.secondary)
+                    } else {
+                        Text("Synced \(lastSync, style: .relative) ago")
+                            .foregroundStyle(.secondary)
+                    }
                 }
             case let .error(message):
                 LabeledContent("Status") {
@@ -64,6 +81,19 @@
                         .foregroundStyle(.secondary)
                 }
             }
+        }
+
+        /// Returns the status to display, suppressing brief `.syncing` flashes when
+        /// we synced very recently.
+        private var displayStatus: SyncEngine.SyncStatus {
+            let actual = syncCoordinator.status
+            if case .syncing = actual,
+               let last = lastSyncDate,
+               -last.timeIntervalSinceNow < Self.syncingSuppressionInterval
+            {
+                return .synced(lastSync: last)
+            }
+            return actual
         }
     }
 
