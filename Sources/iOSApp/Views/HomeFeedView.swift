@@ -25,10 +25,6 @@ struct HomeFeedView: View {
                     isSearchActive: $isSearchActive
                 )
             }
-            .overlay(alignment: .bottom) {
-                toastOverlay
-                    .padding(.bottom, 80)
-            }
             .navigationTitle("ClipKitty")
             .navigationBarTitleDisplayMode(.inline)
             .navigationDestination(item: $previewItemId) { itemId in
@@ -65,6 +61,10 @@ struct HomeFeedView: View {
             .onChange(of: appState.contentRevision) { _, newValue in
                 viewModel.handlePanelVisibilityChange(true, contentRevision: newValue)
             }
+        }
+        .overlay(alignment: .bottom) {
+            toastOverlay
+                .padding(.bottom, 80)
         }
     }
 

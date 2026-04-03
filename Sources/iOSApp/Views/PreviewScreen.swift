@@ -115,21 +115,15 @@ struct PreviewScreen: View {
                 linkMetadata(payload: payload)
             }
 
-            if let linkURL = URL(string: url) {
-                Link(destination: linkURL) {
-                    HStack {
-                        Image(systemName: "safari")
-                        Text(url)
-                            .lineLimit(2)
+            Text(url)
+                .font(.subheadline)
+                .foregroundStyle(.blue)
+                .textSelection(.enabled)
+                .onTapGesture {
+                    if let linkURL = URL(string: url) {
+                        UIApplication.shared.open(linkURL)
                     }
-                    .font(.subheadline)
-                    .foregroundStyle(.blue)
                 }
-            } else {
-                Text(url)
-                    .font(.subheadline)
-                    .textSelection(.enabled)
-            }
         }
     }
 
