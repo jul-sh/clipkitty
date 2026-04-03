@@ -202,14 +202,21 @@ jobs:
             echo "Capturing iOS screenshots for $locale..."
             mkdir -p marketing-ios/$locale
             echo "$locale" > /tmp/clipkitty_ios_screenshot_locale.txt
+            echo "SyntheticData.sqlite" > /tmp/clipkitty_ios_screenshot_db.txt
             xcodebuild test \
               -workspace ClipKitty.xcworkspace \
               -scheme ClipKittyiOSUITests \
-              -destination "platform=iOS Simulator,name=iPhone 16 Pro Max" \
+              -destination "platform=iOS Simulator,name=iPhone 17 Pro Max" \
               -derivedDataPath DerivedData \
               CODE_SIGNING_ALLOWED=NO \
               -only-testing:ClipKittyiOSUITests/ClipKittyiOSScreenshotTests/testTakeMarketingScreenshots \
-              2>&1 | grep -E "(Test Case|passed|failed)" || true
+              2>&1 | tee /tmp/clipkitty_ios_screenshot_test.log | grep -E "(Test Case|passed|failed)" || true
+            if grep -q "Test.*passed" /tmp/clipkitty_ios_screenshot_test.log; then
+              echo "  Test passed for $locale"
+            else
+              echo "::warning::iOS screenshot test did not pass for $locale"
+              tail -30 /tmp/clipkitty_ios_screenshot_test.log
+            fi
             if [ "$locale" = "en" ]; then
               cp /tmp/clipkitty_ios_marketing_1_history.png marketing-ios/$locale/screenshot_1.png 2>/dev/null || true
               cp /tmp/clipkitty_ios_marketing_2_search.png marketing-ios/$locale/screenshot_2.png 2>/dev/null || true
@@ -220,8 +227,9 @@ jobs:
               cp /tmp/clipkitty_ios_${locale}_marketing_3_filter.png marketing-ios/$locale/screenshot_3.png 2>/dev/null || true
             fi
           done
-          rm -f /tmp/clipkitty_ios_screenshot_locale.txt
-          ls -lh marketing-ios/*/screenshot_*.png 2>/dev/null || echo "No iOS screenshots generated (expected on first run)"
+          rm -f /tmp/clipkitty_ios_screenshot_locale.txt /tmp/clipkitty_ios_screenshot_db.txt
+          echo "Generated iOS screenshots:"
+          ls -lh marketing-ios/*/screenshot_*.png 2>/dev/null || echo "::warning::No iOS screenshots were generated"
 
       - name: Run UI Tests
         run: |
