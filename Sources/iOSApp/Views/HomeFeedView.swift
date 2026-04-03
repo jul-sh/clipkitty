@@ -5,11 +5,13 @@ import SwiftUI
 struct HomeFeedView: View {
     @Environment(AppState.self) private var appState
     @Environment(BrowserViewModel.self) private var viewModel
+    @Environment(HapticsClient.self) private var haptics
 
     @State private var isSearchActive = false
     @State private var previewItemId: String?
     @State private var editItemId: String?
     @State private var hasAppeared = false
+    @State private var showSettings = false
 
     var body: some View {
         NavigationStack {
@@ -27,8 +29,22 @@ struct HomeFeedView: View {
                 toastOverlay
                     .padding(.bottom, 80)
             }
+            .navigationTitle("ClipKitty")
+            .navigationBarTitleDisplayMode(.inline)
             .navigationDestination(item: $previewItemId) { itemId in
                 PreviewScreen(itemId: itemId)
+            }
+            .toolbar {
+                ToolbarItem(placement: .topBarTrailing) {
+                    Button {
+                        showSettings = true
+                    } label: {
+                        Image(systemName: "gearshape")
+                    }
+                }
+            }
+            .sheet(isPresented: $showSettings) {
+                SettingsScreen()
             }
             .sheet(isPresented: Binding(
                 get: { editItemId != nil },
@@ -84,21 +100,32 @@ struct HomeFeedView: View {
     }
 
     private var scrollableFeed: some View {
-        ScrollView {
-            LazyVStack(spacing: 12) {
-                ForEach(filteredRows) { row in
-                    CardView(
-                        row: row,
-                        previewItemId: $previewItemId,
-                        editItemId: $editItemId
-                    )
-                    .onAppear {
-                        loadDecorationsIfNeeded(for: row)
-                    }
+        List {
+            ForEach(filteredRows) { row in
+                CardView(
+                    row: row,
+                    previewItemId: $previewItemId,
+                    editItemId: $editItemId
+                )
+                .onAppear {
+                    loadDecorationsIfNeeded(for: row)
                 }
+                .swipeActions(edge: .trailing, allowsFullSwipe: true) {
+                    Button {
+                        previewItemId = row.metadata.itemId
+                        haptics.fire(.selection)
+                    } label: {
+                        Label("Preview", systemImage: "eye")
+                    }
+                    .tint(.blue)
+                }
+                .listRowSeparator(.hidden)
+                .listRowInsets(EdgeInsets(top: 6, leading: 0, bottom: 6, trailing: 0))
+                .listRowBackground(Color.clear)
             }
-            .padding(.vertical, 12)
         }
+        .listStyle(.plain)
+        .scrollContentBackground(.hidden)
     }
 
     /// Filter out file items — iPhone app doesn't support file sharing.
@@ -126,18 +153,18 @@ struct HomeFeedView: View {
                 Image(systemName: "magnifyingglass")
                     .font(.system(size: 40))
                     .foregroundStyle(.secondary)
-                Text("No results found")
+                Text("No results found", comment: "Empty state title when search returns no matches")
                     .font(.title3.weight(.semibold))
-                Text("Try adjusting your search or filters")
+                Text("Try adjusting your search or filters", comment: "Empty state subtitle for search")
                     .font(.subheadline)
                     .foregroundStyle(.secondary)
             } else {
                 Image(systemName: "clipboard")
                     .font(.system(size: 40))
                     .foregroundStyle(.secondary)
-                Text("No items yet")
+                Text("No items yet", comment: "Empty state title when clipboard history is empty")
                     .font(.title3.weight(.semibold))
-                Text("Copy something to get started, or tap + to add manually")
+                Text("Copy something to get started, or tap + to add manually", comment: "Empty state subtitle")
                     .font(.subheadline)
                     .foregroundStyle(.secondary)
                     .multilineTextAlignment(.center)
@@ -154,7 +181,7 @@ struct HomeFeedView: View {
             Image(systemName: "exclamationmark.triangle")
                 .font(.system(size: 40))
                 .foregroundStyle(.secondary)
-            Text("Something went wrong")
+            Text("Something went wrong", comment: "Error state title")
                 .font(.title3.weight(.semibold))
             Text(message)
                 .font(.subheadline)
@@ -167,20 +194,19 @@ struct HomeFeedView: View {
 
     @ViewBuilder
     private var toastOverlay: some View {
-        if let toast = appState.toastMessage {
+        if let message = appState.toast.message {
             GlassEffectContainer {
                 HStack(spacing: 10) {
-                    Image(systemName: toast.iconSystemName)
+                    Image(systemName: message.iconSystemName)
                         .font(.subheadline.weight(.medium))
-                    Text(toast.text)
+                    Text(message.text)
                         .font(.subheadline.weight(.medium))
 
-                    if let actionTitle = toast.actionTitle, let action = appState.toastAction {
+                    if let actionTitle = message.actionTitle, let action = appState.toast.action {
                         Button {
                             action()
                             withAnimation(.bouncy) {
-                                appState.toastMessage = nil
-                                appState.toastAction = nil
+                                appState.toast = .init()
                             }
                         } label: {
                             Text(actionTitle)

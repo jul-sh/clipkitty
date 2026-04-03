@@ -10,10 +10,10 @@ LIVE PREVIEW PANE
 See complete content before you paste. Multi-line text, full code blocks, image thumbnails, color swatches—all visible at a glance. No truncation, no waiting for hover tooltips.
 
 iCLOUD SYNC
-Optionally sync your clipboard history across all your Macs. Enable iCloud Sync in settings and your clips follow you from machine to machine.
+Optionally sync your clipboard history across all your devices. Enable iCloud Sync in settings and your clips follow you from device to device.
 
-KEYBOARD-FIRST DESIGN
-⌥Space to open, arrow keys to navigate, Return to paste. ⌘1-9 to jump to any of the first 9 items. Filter by type or search across everything.
+WORKS HOW YOU EXPECT
+On Mac: ⌥Space to open, arrow keys to navigate, Return to paste, ⌘1-9 to jump to any item. On iPhone: tap to copy, swipe to manage. Filter by type or search across everything.
 
 PRIVACY-FIRST
 Runs 100% on-device by default with zero telemetry. No accounts, no third-party servers. Optional iCloud Sync uses only your private iCloud container; no one else can access it. Open source (GPL-3.0) with code available publicly.
