@@ -479,15 +479,8 @@ jobs:
 
   # Generate localized intro videos for App Store previews.
   # Runs only on pushes to main/release or manual dispatch (not on PRs).
-  #
-  # LIMITATION: macOS screen recording (screencapture) requires TCC Screen
-  # Recording permission, which cannot be granted non-interactively in CI.
-  # GitHub Actions runners do not have this permission and there is no
-  # supported way to enable it headlessly. This job will build the app,
-  # prepare the localized video databases, and attempt the recording, but
-  # the screencapture step is expected to produce blank/empty output or
-  # fail on CI runners. It is primarily useful for self-hosted runners
-  # where Screen Recording permission has been pre-granted.
+  # Uses Xcode's built-in UI test screen recording (xcresult bundle) which
+  # does not require TCC Screen Recording permission.
   intro-videos:
     runs-on: macos-26
     needs: build
