@@ -174,9 +174,9 @@ final class iOSBrowserIntegrationTests: XCTestCase {
         XCTAssertEqual(viewModel.itemIds, ["1", "2"])
     }
 
-    // MARK: - File items filtered from iOS display rows
+    // MARK: - File items filtered from iPhone display rows only
 
-    func testFileItemsFilteredFromDisplayRows() async {
+    func testFileItemsFilteredOnIPhone() async {
         let client = MockiOSBrowserStoreClient()
 
         client.enqueueSearchResponse(BrowserSearchResponse(
@@ -194,16 +194,27 @@ final class iOSBrowserIntegrationTests: XCTestCase {
         viewModel.onAppear(initialSearchQuery: "")
         await flushMainActor()
 
-        // ViewModel sees all items
+        // ViewModel sees all items regardless of device
         XCTAssertEqual(viewModel.itemIds, ["1", "2", "3"])
 
-        // iOS HomeFeedView filteredRows logic: exclude .file icons
-        let filteredRows = viewModel.displayRows.filter { row in
-            if case .symbol(.file) = row.metadata.icon { return false }
-            return true
+        // iPhone compact mode filters out file items
+        let isPhone = UIDevice.current.userInterfaceIdiom == .phone
+        let filteredRows: [DisplayRow]
+        if isPhone {
+            filteredRows = viewModel.displayRows.filter { row in
+                if case .symbol(.file) = row.metadata.icon { return false }
+                return true
+            }
+        } else {
+            // iPad in compact mode (Split View narrow) keeps file items
+            filteredRows = viewModel.displayRows
         }
 
-        XCTAssertEqual(filteredRows.map(\.id), ["1", "3"])
+        if isPhone {
+            XCTAssertEqual(filteredRows.map(\.id), ["1", "3"])
+        } else {
+            XCTAssertEqual(filteredRows.map(\.id), ["1", "2", "3"])
+        }
     }
 
     // MARK: - Card presentation profile

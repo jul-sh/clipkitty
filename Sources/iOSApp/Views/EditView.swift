@@ -7,7 +7,7 @@ struct EditView: View {
 
     @Environment(AppContainer.self) private var container
     @Environment(BrowserViewModel.self) private var viewModel
-    @Environment(AppState.self) private var appState
+    @Environment(SceneState.self) private var sceneState
     @Environment(\.dismiss) private var dismiss
 
     @State private var text: String = ""
@@ -42,7 +42,7 @@ struct EditView: View {
                 ToolbarItem(placement: .confirmationAction) {
                     Button(String(localized: "Save")) {
                         viewModel.commitCurrentEdit()
-                        appState.showToast(.saved)
+                        sceneState.showToast(.saved)
                         dismiss()
                     }
                     .disabled(!hasChanges)
@@ -67,7 +67,7 @@ struct EditView: View {
             text = value
             viewModel.onEditingStateChange(true, for: itemId)
         } else {
-            appState.showToast(.addFailed(String(localized: "Item not found")))
+            sceneState.showToast(.addFailed(String(localized: "Item not found")))
             dismiss()
         }
         isLoading = false

@@ -2,18 +2,17 @@ import ClipKittyRust
 import ClipKittyShared
 import SwiftUI
 
-struct HomeFeedView: View {
-    @Environment(AppState.self) private var appState
+/// iPhone-style single-column navigation shell. Preserves all existing compact behavior.
+struct CompactShell: View {
+    @Environment(SceneState.self) private var sceneState
     @Environment(BrowserViewModel.self) private var viewModel
     @Environment(HapticsClient.self) private var haptics
 
-    @State private var isSearchActive = false
-    @State private var previewItemId: String?
-    @State private var editItemId: String?
     @State private var hasAppeared = false
-    @State private var showSettings = false
 
     var body: some View {
+        @Bindable var sceneState = sceneState
+
         NavigationStack {
             ZStack(alignment: .bottom) {
                 feedContent
@@ -22,32 +21,34 @@ struct HomeFeedView: View {
                     }
 
                 BottomControlBar(
-                    isSearchActive: $isSearchActive
+                    isSearchActive: Binding(
+                        get: { sceneState.chromeState == .searching },
+                        set: { sceneState.chromeState = $0 ? .searching : .idle }
+                    )
                 )
             }
             .navigationTitle("ClipKitty")
             .navigationBarTitleDisplayMode(.inline)
-            .navigationDestination(item: $previewItemId) { itemId in
+            .navigationDestination(item: $sceneState.previewItemId) { itemId in
                 PreviewScreen(itemId: itemId)
             }
             .toolbar {
                 ToolbarItem(placement: .topBarTrailing) {
                     Button {
-                        showSettings = true
+                        sceneState.modalRoute = .settings
                     } label: {
                         Image(systemName: "gearshape")
                     }
                 }
             }
-            .sheet(isPresented: $showSettings) {
-                SettingsScreen()
-            }
-            .sheet(isPresented: Binding(
-                get: { editItemId != nil },
-                set: { if !$0 { editItemId = nil } }
-            )) {
-                if let itemId = editItemId {
+            .sheet(item: $sceneState.modalRoute) { route in
+                switch route {
+                case .settings:
+                    SettingsScreen()
+                case let .edit(itemId):
                     EditView(itemId: itemId)
+                case .compose:
+                    TextComposerView()
                 }
             }
             .onAppear {
@@ -55,11 +56,15 @@ struct HomeFeedView: View {
                 hasAppeared = true
                 viewModel.onAppear(
                     initialSearchQuery: "",
-                    contentRevision: appState.contentRevision
+                    contentRevision: sceneState.contentRevision
                 )
+                consumePendingDeepLink()
             }
-            .onChange(of: appState.contentRevision) { _, newValue in
+            .onChange(of: sceneState.contentRevision) { _, newValue in
                 viewModel.handlePanelVisibilityChange(true, contentRevision: newValue)
+            }
+            .onChange(of: sceneState.router.pendingDeepLink) { _, _ in
+                consumePendingDeepLink()
             }
         }
         .overlay(alignment: .bottom) {
@@ -102,17 +107,13 @@ struct HomeFeedView: View {
     private var scrollableFeed: some View {
         List {
             ForEach(filteredRows) { row in
-                CardView(
-                    row: row,
-                    previewItemId: $previewItemId,
-                    editItemId: $editItemId
-                )
+                CardView(row: row)
                 .onAppear {
                     loadDecorationsIfNeeded(for: row)
                 }
                 .swipeActions(edge: .trailing, allowsFullSwipe: true) {
                     Button {
-                        previewItemId = row.metadata.itemId
+                        sceneState.previewItemId = row.metadata.itemId
                         haptics.fire(.selection)
                     } label: {
                         Label("Preview", systemImage: "eye")
@@ -128,12 +129,16 @@ struct HomeFeedView: View {
         .scrollContentBackground(.hidden)
     }
 
-    /// Filter out file items — iPhone app doesn't support file sharing.
+    /// Filter out file items on iPhone — compact mode on phone doesn't support file sharing.
+    /// iPad in compact mode (Split View narrow) still supports files.
     private var filteredRows: [DisplayRow] {
-        viewModel.displayRows.filter { row in
-            if case .symbol(.file) = row.metadata.icon { return false }
-            return true
+        if UIDevice.current.userInterfaceIdiom == .phone {
+            return viewModel.displayRows.filter { row in
+                if case .symbol(.file) = row.metadata.icon { return false }
+                return true
+            }
         }
+        return viewModel.displayRows
     }
 
     private var loadingView: some View {
@@ -194,7 +199,7 @@ struct HomeFeedView: View {
 
     @ViewBuilder
     private var toastOverlay: some View {
-        if let message = appState.toast.message {
+        if let message = sceneState.toast.message {
             GlassEffectContainer {
                 HStack(spacing: 10) {
                     Image(systemName: message.iconSystemName)
@@ -202,11 +207,11 @@ struct HomeFeedView: View {
                     Text(message.text)
                         .font(.subheadline.weight(.medium))
 
-                    if let actionTitle = message.actionTitle, let action = appState.toast.action {
+                    if let actionTitle = message.actionTitle, let action = sceneState.toast.action {
                         Button {
                             action()
                             withAnimation(.bouncy) {
-                                appState.toast = .init()
+                                sceneState.toast = .init()
                             }
                         } label: {
                             Text(actionTitle)
@@ -235,11 +240,25 @@ struct HomeFeedView: View {
             viewModel.loadListDecorationsForItems([row.id])
         }
     }
+
+    private func consumePendingDeepLink() {
+        guard let deepLink = sceneState.router.pendingDeepLink else { return }
+        sceneState.modalRoute = nil
+        sceneState.previewItemId = nil
+        switch deepLink {
+        case let .search(query):
+            sceneState.chromeState = .searching
+            viewModel.updateSearchText(query)
+        case .newItem:
+            sceneState.modalRoute = .compose
+        }
+        sceneState.router.pendingDeepLink = nil
+    }
 }
 
 // MARK: - QueryLoadPhase spinner helper
 
-private extension QueryLoadPhase {
+extension QueryLoadPhase {
     var isSpinnerVisible: Bool {
         guard case let .running(spinnerVisible) = self else { return false }
         return spinnerVisible

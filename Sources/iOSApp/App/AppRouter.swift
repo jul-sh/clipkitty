@@ -5,7 +5,7 @@ import SwiftUI
 @MainActor
 @Observable
 final class AppRouter {
-    enum DeepLink {
+    enum DeepLink: Equatable {
         case search(query: String)
         case newItem
     }

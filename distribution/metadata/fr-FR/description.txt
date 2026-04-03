@@ -5,6 +5,6 @@ Aperçus Multilignes — Voyez exactement ce que vous allez coller dans un volet
 Recherche Instantanée — Trouvez n'importe quel extrait en quelques millisecondes, que vous filtriez dix éléments ou dix millions. Conçu pour ceux qui copient beaucoup et ont besoin de tout retrouver.
 SYNCHRONISATION iCLOUD
 Synchronisez optionnellement votre historique de presse-papiers sur tous vos appareils. Activez iCloud Sync dans les réglages et vos clips vous suivent d'un appareil à l'autre.
-FONCTIONNE COMME PRÉVU — Sur Mac : ⌥Space pour ouvrir, touches fléchées pour naviguer, Return pour coller, ⌘1-9 pour accéder à n'importe quel élément. Sur iPhone : touchez pour copier, balayez pour gérer. Filtrez par type ou recherchez partout.
+FONCTIONNE COMME PRÉVU — Sur Mac : ⌥Space pour ouvrir, touches fléchées pour naviguer, Return pour coller, ⌘1-9 pour accéder à n'importe quel élément. Sur iPhone : touchez pour copier, balayez pour gérer. Sur iPad : disposition native à deux panneaux avec raccourcis clavier complets, prise en charge multi-fenêtres et effets de survol au pointeur. Filtrez par type ou recherchez partout.
 Sécurisé et Confidentiel; vos données ne quittent jamais votre machine par défaut. ClipKitty fonctionne entièrement en local, sans télémétrie et sans abonnement. La synchronisation iCloud optionnelle utilise exclusivement votre conteneur iCloud privé.
 Transparent et Ouvert. — Licence permissive avec code source disponible publiquement. Soutenez le développement en achetant via l'App Store.

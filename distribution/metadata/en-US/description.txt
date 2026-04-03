@@ -13,7 +13,7 @@ iCLOUD SYNC
 Optionally sync your clipboard history across all your devices. Enable iCloud Sync in settings and your clips follow you from device to device.
 
 WORKS HOW YOU EXPECT
-On Mac: ⌥Space to open, arrow keys to navigate, Return to paste, ⌘1-9 to jump to any item. On iPhone: tap to copy, swipe to manage. Filter by type or search across everything.
+On Mac: ⌥Space to open, arrow keys to navigate, Return to paste, ⌘1-9 to jump to any item. On iPhone: tap to copy, swipe to manage. On iPad: native two-pane layout with keyboard shortcuts (⌘F, ⌘C, ⌘B, ⌘Delete, Return), multi-window support, and pointer hover effects. Filter by type or search across everything.
 
 PRIVACY-FIRST
 Runs 100% on-device by default with zero telemetry. No accounts, no third-party servers. Optional iCloud Sync uses only your private iCloud container; no one else can access it. Open source (GPL-3.0) with code available publicly.

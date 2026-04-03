@@ -22,7 +22,8 @@ final class AppContainer {
         storeClient: iOSBrowserStoreClient,
         clipboardService: iOSClipboardService,
         settings: iOSSettingsStore,
-        haptics: HapticsClient
+        haptics: HapticsClient,
+        isScreenshotMode: Bool
     ) {
         self.store = store
         self.repository = repository
@@ -31,18 +32,28 @@ final class AppContainer {
         self.clipboardService = clipboardService
         self.settings = settings
         self.haptics = haptics
+        self.isScreenshotMode = isScreenshotMode
     }
 
+    /// Whether the app was launched in screenshot/simulated-database mode.
+    let isScreenshotMode: Bool
+
     static func bootstrap(databasePath customPath: String? = nil) -> Result<AppContainer, BootstrapError> {
+        let screenshotMode = ProcessInfo.processInfo.arguments.contains("--use-simulated-db")
+
         // Migrate legacy Application Support database to App Group container
         // before resolving the path, so existing users keep their data.
-        if customPath == nil {
+        if customPath == nil && !screenshotMode {
             DatabasePath.migrateIfNeeded()
         }
 
         let dbPath: String
         do {
-            dbPath = try customPath ?? DatabasePath.resolve()
+            if screenshotMode {
+                dbPath = try screenshotDatabasePath()
+            } else {
+                dbPath = try customPath ?? DatabasePath.resolve()
+            }
         } catch {
             return .failure(.databasePathFailed(error.localizedDescription))
         }
@@ -71,8 +82,29 @@ final class AppContainer {
             storeClient: storeClient,
             clipboardService: clipboardService,
             settings: settings,
-            haptics: haptics
+            haptics: haptics,
+            isScreenshotMode: screenshotMode
         ))
+    }
+
+    /// Returns the path to the screenshot database.
+    ///
+    /// The path is read from the `CLIPKITTY_DB_PATH` environment variable (set by
+    /// UI tests) so the XCUITest runner can point the AUT at a known fixture file.
+    /// Falls back to `clipboard-screenshot.db` in Application Support.
+    private static func screenshotDatabasePath() throws -> String {
+        if let envPath = ProcessInfo.processInfo.environment["CLIPKITTY_DB_PATH"],
+           FileManager.default.fileExists(atPath: envPath)
+        {
+            return envPath
+        }
+
+        guard let appSupport = FileManager.default.urls(for: .applicationSupportDirectory, in: .userDomainMask).first else {
+            throw NSError(domain: "AppContainer", code: 1, userInfo: [NSLocalizedDescriptionKey: "Application Support unavailable"])
+        }
+        let dir = appSupport.appendingPathComponent("ClipKitty", isDirectory: true)
+        try FileManager.default.createDirectory(at: dir, withIntermediateDirectories: true)
+        return dir.appendingPathComponent("clipboard-screenshot.db").path
     }
 
     enum BootstrapError: LocalizedError {

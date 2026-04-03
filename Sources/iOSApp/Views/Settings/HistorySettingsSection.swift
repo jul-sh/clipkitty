@@ -3,7 +3,7 @@ import SwiftUI
 
 struct HistorySettingsSection: View {
     @Environment(AppContainer.self) private var container
-    @Environment(AppState.self) private var appState
+    @Environment(SceneState.self) private var sceneState
 
     @State private var databaseSizeText: String = "Calculating..."
     @State private var historyAction: HistoryAction = .idle
@@ -69,7 +69,7 @@ struct HistorySettingsSection: View {
         switch result {
         case .success:
             historyAction = .idle
-            appState.refreshFeed()
+            sceneState.refreshFeed()
             await loadDatabaseSize()
         case let .failure(error):
             historyAction = .failed(error.localizedDescription)

@@ -33,7 +33,20 @@ final class iOSClipboardService {
                 pasteboard.image = image
             }
         case let .file(_, files):
-            if let first = files.first {
+            // Write accessible file URLs to the pasteboard. Files are stored
+            // by path reference, not inline data. If the file no longer exists
+            // at its recorded path (e.g. captured on another device), we fall
+            // back to copying the filename as a string.
+            let fileURLs: [URL] = files.compactMap { file in
+                let url = URL(fileURLWithPath: file.path)
+                guard FileManager.default.fileExists(atPath: url.path) else {
+                    return nil
+                }
+                return url
+            }
+            if !fileURLs.isEmpty {
+                pasteboard.urls = fileURLs
+            } else if let first = files.first {
                 pasteboard.string = first.filename
             }
         }
