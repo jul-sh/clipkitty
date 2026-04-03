@@ -38,6 +38,7 @@ struct CardView: View {
         .onTapGesture {
             viewModel.copyOnlyItem(itemId: metadata.itemId)
             haptics.fire(.copy)
+            appState.showToast(.copied)
         }
         .contextMenu { contextMenuActions }
     }
@@ -172,6 +173,7 @@ struct CardView: View {
         Button {
             viewModel.copyOnlyItem(itemId: metadata.itemId)
             haptics.fire(.copy)
+            appState.showToast(.copied)
         } label: {
             Label(String(localized: "Copy"), systemImage: "doc.on.doc")
         }
