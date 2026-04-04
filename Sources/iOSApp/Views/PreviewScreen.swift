@@ -1,3 +1,4 @@
+import ClipKittyAppleServices
 import ClipKittyRust
 import ClipKittyShared
 import SwiftUI
@@ -110,76 +111,33 @@ struct PreviewScreen: View {
     // MARK: - Link Content
 
     private func linkContent(url: String, metadataState: LinkMetadataState) -> some View {
-        VStack(alignment: .leading, spacing: 12) {
-            if case let .loaded(payload) = metadataState {
-                linkMetadata(payload: payload)
-            }
+        VStack(alignment: .leading, spacing: 16) {
+            LinkPreviewView(url: url, metadataState: metadataState)
+                .frame(maxWidth: .infinity)
 
-            if let linkURL = URL(string: url) {
-                Link(destination: linkURL) {
-                    HStack {
-                        Image(systemName: "safari")
-                        Text(url)
-                            .lineLimit(2)
-                    }
-                    .font(.subheadline)
-                    .foregroundStyle(.blue)
-                }
-            } else {
-                Text(url)
-                    .font(.subheadline)
-                    .textSelection(.enabled)
-            }
-        }
-    }
-
-    @ViewBuilder
-    private func linkMetadata(payload: LinkMetadataPayload) -> some View {
-        switch payload {
-        case let .titleOnly(title, description):
-            VStack(alignment: .leading, spacing: 6) {
-                Text(title).font(.headline)
-                if let description { Text(description).font(.subheadline).foregroundStyle(.secondary) }
-            }
-        case let .imageOnly(imageData, description):
-            VStack(alignment: .leading, spacing: 6) {
-                linkImage(data: imageData)
-                if let description { Text(description).font(.subheadline).foregroundStyle(.secondary) }
-            }
-        case let .titleAndImage(title, imageData, description):
-            VStack(alignment: .leading, spacing: 6) {
-                linkImage(data: imageData)
-                Text(title).font(.headline)
-                if let description { Text(description).font(.subheadline).foregroundStyle(.secondary) }
-            }
-        }
-    }
-
-    @ViewBuilder
-    private func linkImage(data: Data) -> some View {
-        if let uiImage = UIImage(data: data) {
-            Image(uiImage: uiImage)
-                .resizable()
-                .aspectRatio(contentMode: .fit)
-                .frame(maxHeight: 200)
-                .clipShape(RoundedRectangle(cornerRadius: 10))
+            Text(url)
+                .font(.custom(FontManager.mono, size: 12))
+                .foregroundStyle(.secondary)
+                .textSelection(.enabled)
+                .frame(maxWidth: .infinity, alignment: .leading)
         }
     }
 
     // MARK: - Image Content
 
     private func imageContent(data: Data, description: String) -> some View {
-        VStack(alignment: .leading, spacing: 12) {
+        VStack(spacing: 8) {
             if let uiImage = UIImage(data: data) {
                 Image(uiImage: uiImage)
                     .resizable()
                     .aspectRatio(contentMode: .fit)
-                    .clipShape(RoundedRectangle(cornerRadius: 10))
+                    .frame(maxWidth: .infinity)
             }
             if !description.isEmpty {
                 Text(description)
-                    .font(.subheadline)
+                    .font(.callout)
                     .foregroundStyle(.secondary)
+                    .frame(maxWidth: .infinity, alignment: .leading)
             }
         }
     }
