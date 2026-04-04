@@ -1,4 +1,5 @@
 import AppKit
+import ClipKittyAppleServices
 import ClipKittyMacPlatform
 import ClipKittyRust
 import ClipKittyShared
@@ -1134,71 +1135,6 @@ struct TextPreviewView: NSViewRepresentable {
             lastRenderedText = text
             onTextChange(text)
         }
-    }
-}
-
-// MARK: - Link Preview (LPLinkView)
-
-import LinkPresentation
-
-/// Native link preview using LPLinkView
-struct LinkPreviewView: NSViewRepresentable {
-    let url: String
-    let metadataState: LinkMetadataState
-
-    func makeNSView(context _: Context) -> LPLinkView {
-        let linkView = LPLinkView()
-        if let metadata = buildMetadata() {
-            linkView.metadata = metadata
-        }
-        return linkView
-    }
-
-    func updateNSView(_ linkView: LPLinkView, context: Context) {
-        guard context.coordinator.lastURL != url ||
-            context.coordinator.lastMetadataState != metadataState
-        else {
-            return
-        }
-        context.coordinator.lastURL = url
-        context.coordinator.lastMetadataState = metadataState
-
-        if let metadata = buildMetadata() {
-            linkView.metadata = metadata
-        }
-    }
-
-    private func buildMetadata() -> LPLinkMetadata? {
-        guard let urlObj = URL(string: url) else { return nil }
-        let metadata = LPLinkMetadata()
-        metadata.originalURL = urlObj
-        metadata.url = urlObj
-
-        if case let .loaded(payload) = metadataState {
-            switch payload {
-            case let .titleOnly(title, _):
-                metadata.title = title
-            case let .imageOnly(imageData, _):
-                if let nsImage = NSImage(data: imageData) {
-                    metadata.imageProvider = NSItemProvider(object: nsImage)
-                }
-            case let .titleAndImage(title, imageData, _):
-                metadata.title = title
-                if let nsImage = NSImage(data: imageData) {
-                    metadata.imageProvider = NSItemProvider(object: nsImage)
-                }
-            }
-        }
-        return metadata
-    }
-
-    func makeCoordinator() -> Coordinator {
-        Coordinator()
-    }
-
-    class Coordinator {
-        var lastURL: String?
-        var lastMetadataState: LinkMetadataState?
     }
 }
 
