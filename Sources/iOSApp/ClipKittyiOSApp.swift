@@ -85,6 +85,49 @@ final class AppState {
         contentRevision += 1
         viewModel.handlePanelVisibilityChange(true, contentRevision: contentRevision)
     }
+
+    func autoAddFromClipboard() async {
+        guard container.settings.autoAddFromClipboard else { return }
+        guard let content = container.clipboardService.readCurrentClipboard() else { return }
+
+        let result: Result<String, ClipboardError>
+
+        switch content {
+        case let .image(image):
+            guard let data = image.pngData() else { return }
+            let thumbnail = image.preparingThumbnail(of: CGSize(width: 200, height: 200))?.jpegData(
+                compressionQuality: 0.7
+            )
+            result = await container.repository.saveImage(
+                imageData: data,
+                thumbnail: thumbnail,
+                sourceApp: "Pasteboard",
+                sourceAppBundleId: nil,
+                isAnimated: false
+            )
+        case let .link(url):
+            result = await container.repository.saveText(
+                text: url.absoluteString,
+                sourceApp: "Pasteboard",
+                sourceAppBundleId: nil
+            )
+        case let .text(text):
+            result = await container.repository.saveText(
+                text: text,
+                sourceApp: "Pasteboard",
+                sourceAppBundleId: nil
+            )
+        }
+
+        switch result {
+        case .success:
+            container.haptics.fire(.success)
+            showToast(.addSucceeded)
+            refreshFeed()
+        case .failure:
+            break
+        }
+    }
 }
 
 // MARK: - Toast Message
@@ -201,6 +244,11 @@ struct ClipKittyiOSApp: App {
             .environment(container.settings)
             .environment(container.haptics)
             .onOpenURL { router.handleURL($0) }
+            .onChange(of: scenePhase) { _, newPhase in
+                if newPhase == .active {
+                    Task { await appState.autoAddFromClipboard() }
+                }
+            }
 
         #if ENABLE_SYNC
             if let coordinator = syncCoordinator {

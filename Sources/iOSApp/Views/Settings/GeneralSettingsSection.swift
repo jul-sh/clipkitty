@@ -9,6 +9,7 @@ struct GeneralSettingsSection: View {
         Section("General") {
             Toggle("Haptic Feedback", isOn: $settings.hapticsEnabled)
             Toggle("Generate Link Previews", isOn: $settings.generateLinkPreviews)
+            Toggle("Auto-Add from Clipboard", isOn: $settings.autoAddFromClipboard)
         }
     }
 }
