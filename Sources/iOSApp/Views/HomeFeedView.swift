@@ -25,10 +25,6 @@ struct HomeFeedView: View {
                     isSearchActive: $isSearchActive
                 )
             }
-            .overlay(alignment: .bottom) {
-                toastOverlay
-                    .padding(.bottom, 80)
-            }
             .navigationTitle("ClipKitty")
             .navigationBarTitleDisplayMode(.inline)
             .navigationDestination(item: $previewItemId) { itemId in
@@ -189,38 +185,6 @@ struct HomeFeedView: View {
                 .multilineTextAlignment(.center)
                 .padding(.horizontal, 32)
             Spacer()
-        }
-    }
-
-    @ViewBuilder
-    private var toastOverlay: some View {
-        if let message = appState.toast.message {
-            GlassEffectContainer {
-                HStack(spacing: 10) {
-                    Image(systemName: message.iconSystemName)
-                        .font(.subheadline.weight(.medium))
-                    Text(message.text)
-                        .font(.subheadline.weight(.medium))
-
-                    if let actionTitle = message.actionTitle, let action = appState.toast.action {
-                        Button {
-                            action()
-                            withAnimation(.bouncy) {
-                                appState.toast = .init()
-                            }
-                        } label: {
-                            Text(actionTitle)
-                                .font(.subheadline.weight(.semibold))
-                                .foregroundStyle(.tint)
-                        }
-                        .buttonStyle(.plain)
-                    }
-                }
-                .padding(.horizontal, 16)
-                .frame(height: 44)
-                .glassEffect(.regular.interactive(), in: .capsule)
-            }
-            .transition(.move(edge: .bottom).combined(with: .opacity))
         }
     }
 
