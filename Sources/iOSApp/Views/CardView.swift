@@ -19,6 +19,14 @@ struct CardView: View {
         row.metadata
     }
 
+    /// Display text matching Mac semantics: prefer listDecoration text, fall back to snippet
+    private var displayText: String {
+        if let rowText = row.listDecoration?.text, !rowText.isEmpty {
+            return rowText
+        }
+        return metadata.snippet
+    }
+
     private var isBookmarked: Bool {
         metadata.tags.contains(.bookmark)
     }
@@ -89,21 +97,19 @@ struct CardView: View {
     private func symbolContentPreview(iconType: IconType) -> some View {
         switch iconType {
         case .text:
-            Text(metadata.snippet)
+            Text(displayText)
                 .font(.custom(FontManager.mono, size: 15))
                 .lineLimit(8)
                 .foregroundStyle(.primary)
 
         case .link:
-            VStack(alignment: .leading, spacing: 4) {
-                if let domain = parseDomain(from: metadata.snippet) {
-                    Text(domain)
-                        .font(.caption.weight(.medium))
-                        .foregroundStyle(.blue)
-                }
-                Text(metadata.snippet)
+            HStack(spacing: 8) {
+                Image(systemName: "globe")
+                    .font(.title3)
+                    .foregroundStyle(.secondary)
+                Text(displayText)
                     .font(.custom(FontManager.sansSerif, size: 15))
-                    .lineLimit(3)
+                    .lineLimit(2)
                     .foregroundStyle(.primary)
             }
 
@@ -112,9 +118,9 @@ struct CardView: View {
                 Image(systemName: "photo")
                     .font(.title3)
                     .foregroundStyle(.secondary)
-                Text(metadata.snippet)
+                Text(displayText)
                     .font(.custom(FontManager.sansSerif, size: 15))
-                    .lineLimit(3)
+                    .lineLimit(2)
                     .foregroundStyle(.primary)
             }
 
@@ -124,7 +130,7 @@ struct CardView: View {
 
         case .color:
             // Fallback for symbol-based color (shouldn't normally hit this path)
-            Text(metadata.snippet)
+            Text(displayText)
                 .font(.custom(FontManager.mono, size: 15))
                 .foregroundStyle(.primary)
         }
@@ -148,21 +154,23 @@ struct CardView: View {
 
     @ViewBuilder
     private func thumbnailPreview(bytes: Data) -> some View {
-        if let uiImage = UIImage(data: bytes) {
-            Image(uiImage: uiImage)
-                .resizable()
-                .aspectRatio(contentMode: .fit)
-                .frame(maxHeight: 200)
-                .clipShape(RoundedRectangle(cornerRadius: 8, style: .continuous))
-        } else {
-            HStack(spacing: 8) {
+        HStack(spacing: 8) {
+            if let uiImage = UIImage(data: bytes) {
+                Image(uiImage: uiImage)
+                    .resizable()
+                    .aspectRatio(contentMode: .fill)
+                    .frame(width: 40, height: 40)
+                    .clipShape(RoundedRectangle(cornerRadius: 6, style: .continuous))
+            } else {
                 Image(systemName: "photo")
                     .font(.title3)
                     .foregroundStyle(.secondary)
-                Text(metadata.snippet)
-                    .font(.custom(FontManager.sansSerif, size: 15))
-                    .foregroundStyle(.primary)
+                    .frame(width: 40, height: 40)
             }
+            Text(displayText)
+                .font(.custom(FontManager.sansSerif, size: 15))
+                .lineLimit(2)
+                .foregroundStyle(.primary)
         }
     }
 
@@ -281,13 +289,6 @@ struct CardView: View {
         let formatter = RelativeDateTimeFormatter()
         formatter.unitsStyle = .abbreviated
         return formatter.localizedString(for: date, relativeTo: Date())
-    }
-
-    private func parseDomain(from urlString: String) -> String? {
-        guard let url = URL(string: urlString),
-              let host = url.host
-        else { return nil }
-        return host
     }
 
     private func colorFromRGBA(_ rgba: UInt32) -> Color {
