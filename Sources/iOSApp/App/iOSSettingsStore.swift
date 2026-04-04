@@ -14,6 +14,10 @@ final class iOSSettingsStore {
         didSet { save() }
     }
 
+    var autoAddFromClipboard: Bool {
+        didSet { save() }
+    }
+
     #if ENABLE_SYNC
         var syncEnabled: Bool {
             didSet { save() }
@@ -24,6 +28,7 @@ final class iOSSettingsStore {
 
     private let hapticsEnabledKey = "iOSHapticsEnabled"
     private let generateLinkPreviewsKey = "iOSGenerateLinkPreviews"
+    private let autoAddFromClipboardKey = "iOSAutoAddFromClipboard"
     #if ENABLE_SYNC
         private let syncEnabledKey = "iOSSyncEnabled"
     #endif
@@ -41,6 +46,7 @@ final class iOSSettingsStore {
 
         hapticsEnabled = defaults.object(forKey: hapticsEnabledKey) as? Bool ?? true
         generateLinkPreviews = defaults.object(forKey: generateLinkPreviewsKey) as? Bool ?? true
+        autoAddFromClipboard = defaults.object(forKey: autoAddFromClipboardKey) as? Bool ?? false
 
         #if ENABLE_SYNC
             syncEnabled = defaults.object(forKey: syncEnabledKey) as? Bool ?? false
@@ -53,6 +59,7 @@ final class iOSSettingsStore {
         guard !isInitializing else { return }
         defaults.set(hapticsEnabled, forKey: hapticsEnabledKey)
         defaults.set(generateLinkPreviews, forKey: generateLinkPreviewsKey)
+        defaults.set(autoAddFromClipboard, forKey: autoAddFromClipboardKey)
         #if ENABLE_SYNC
             defaults.set(syncEnabled, forKey: syncEnabledKey)
         #endif

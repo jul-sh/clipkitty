@@ -363,7 +363,6 @@ struct BottomControlBar: View {
 
     private func pasteClipboard() async {
         guard let content = container.clipboardService.readCurrentClipboard() else {
-            appState.showToast(.addFailed(String(localized: "Clipboard is empty")))
             return
         }
 
