@@ -86,7 +86,7 @@ The search system has a few hard requirements:
 - it has to return one clipboard item per result, even if the internal search representation is more granular
 - it has to show useful snippets, previews, and highlights, not just IDs and scores
 
-Those requirements pull against each other. The naive approach is: every time the user types, scan every clipboard item, compute a fuzzy score against the full text, and sort the results. That works for 100 items. It stops working at 100,000 items, and it really stops working when some items are hundreds of kilobytes or megabytes long.
+Those requirements pull against each other. The naive approach is: every time the user types, scan every clipboard item, compute a fuzzy score against the full text, and sort the results. That works for 100 items. It stops working with thousands of items, and it really stops working when some items are hundreds of kilobytes or megabytes long.
 
 ClipKitty solves that by splitting search into cheap recall and expensive judgment:
 
