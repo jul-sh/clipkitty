@@ -27,7 +27,7 @@ ClipKitty stores everything. Finds it in milliseconds; whether you have 100 item
 ## Features
 
 * **Unlimited History**: No caps, no expiration. Text, images, files, colors; everything preserved in full, forever.
-* **Fuzzy Search That Scales**: Type "improt" and find "import". Type "dockr prodction" and find "docker push production". All under 50ms; even with millions of items.
+* **Fuzzy Search That Scales**: Type "improt" and find "import". Type "dockr prodction" and find "docker push production". All in milliseconds; even with millions of items.
 * **Live Preview Pane**: See full content instantly as you navigate. Multi-line text, code blocks, images; no truncation, no waiting on tooltips.
 * **OCR & Smart Search**: Search text inside images and screenshots. AI-powered descriptions make visual content searchable.
 * **Keyboard-First**: `⌥Space` to open, arrow keys to navigate, `Return` to paste. `⌘1-9` for quick access.
