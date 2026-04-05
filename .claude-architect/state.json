@@ -1,0 +1,34 @@
+{
+  "active": true,
+  "phase": "implementing",
+  "plan_file": "tasks/on-iphone-ipad-for-search-ensure-highlights-computed-in-rust.md",
+  "task_description": "On iPhone/iPad for search, ensure highlights (computed in Rust) render correctly. Also rearchitect preview so it's a TextKit 2 renderer (reuse from Mac if it makes sense). That way there will be no separate edit mode needed, all that's needed is save and cancel buttons if the user starts editing.",
+  "round": 2,
+  "max_rounds": 10,
+  "supervised": false,
+  "codex_session_id": null,
+  "adhoc_review_instructions": null,
+  "review_history": [
+    {
+      "round": 1,
+      "verdict": "REJECT",
+      "issues": [
+        "Save does not restore authoritative search truth",
+        "Preview/edit state refactor not implemented (Phase 5)",
+        "Color preview bypasses TextKit 2",
+        "Card image rows missing highlights",
+        "iOS regression coverage insufficient"
+      ]
+    },
+    {
+      "round": 2,
+      "verdict": "REJECT",
+      "issues": [
+        "Convenience booleans/pendingEdits shim still present",
+        "editFocus referenced in macOS tests",
+        "No UI-level tests for highlight rendering"
+      ]
+    }
+  ],
+  "started_at": "2026-04-04T00:01:36Z"
+}

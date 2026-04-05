@@ -21,7 +21,12 @@ struct BrowserResultsList: View {
                         isSelected: row.metadata.itemId == viewModel.selectedItemId,
                         isContextMenuTargeted: row.metadata.itemId == contextMenuItemId,
                         hasUserNavigated: viewModel.hasUserNavigated,
-                        hasPendingEdit: viewModel.hasPendingEdit(for: row.metadata.itemId),
+                        hasPendingEdit: {
+                            if case let .dirty(dirtyId, _) = viewModel.editSession, dirtyId == row.metadata.itemId {
+                                return true
+                            }
+                            return false
+                        }(),
                         onTap: {
                             viewModel.select(itemId: row.metadata.itemId, origin: .user)
                             focusSearchField()

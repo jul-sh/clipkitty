@@ -248,7 +248,7 @@ let project = Project(
             bundleId: "com.eviljuliette.clipkitty.tests",
             deploymentTargets: .macOS("14.0"),
             sources: .sourceFilesList(globs: [
-                .glob("Tests/**", excluding: ["Tests/UITests/**"]),
+                .glob("Tests/**", excluding: ["Tests/UITests/**", "Tests/iOSTests/**"]),
             ]),
             dependencies: [
                 .target(name: "ClipKitty"),

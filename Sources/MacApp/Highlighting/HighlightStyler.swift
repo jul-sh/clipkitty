@@ -1,8 +1,13 @@
 import AppKit
 import ClipKittyRust
+import ClipKittyShared
 import SwiftUI
 
-/// Shared highlighting logic for list rows and file previews using UI-native UTF-16 ranges.
+/// macOS-specific highlight styling that bridges the shared cross-platform
+/// highlight appearance to AppKit's NSColor and NSAttributedString attributes.
+///
+/// SwiftUI colors and underline policy are sourced from the shared
+/// `HighlightAppearance` so both platforms stay in sync.
 enum HighlightStyler {
     struct Appearance {
         let nsBackgroundColor: NSColor
@@ -10,47 +15,15 @@ enum HighlightStyler {
         let underlineStyle: NSUnderlineStyle?
     }
 
-    // MARK: - Colors (shared between NSTextView and SwiftUI)
+    // MARK: - Colors (derived from shared HighlightAppearance)
 
     static func appearance(for kind: HighlightKind) -> Appearance {
-        switch kind {
-        case .exact, .prefix:
-            Appearance(
-                nsBackgroundColor: NSColor.yellow.withAlphaComponent(0.4),
-                swiftBackgroundColor: Color.yellow.opacity(0.4),
-                underlineStyle: nil
-            )
-        case .prefixTail:
-            Appearance(
-                nsBackgroundColor: NSColor.yellow.withAlphaComponent(0.16),
-                swiftBackgroundColor: Color.yellow.opacity(0.16),
-                underlineStyle: nil
-            )
-        case .subwordPrefix:
-            Appearance(
-                nsBackgroundColor: NSColor.yellow.withAlphaComponent(0.28),
-                swiftBackgroundColor: Color.yellow.opacity(0.28),
-                underlineStyle: nil
-            )
-        case .substring:
-            Appearance(
-                nsBackgroundColor: NSColor.orange.withAlphaComponent(0.2),
-                swiftBackgroundColor: Color.orange.opacity(0.2),
-                underlineStyle: nil
-            )
-        case .fuzzy:
-            Appearance(
-                nsBackgroundColor: NSColor.orange.withAlphaComponent(0.3),
-                swiftBackgroundColor: Color.orange.opacity(0.3),
-                underlineStyle: nil
-            )
-        case .subsequence:
-            Appearance(
-                nsBackgroundColor: NSColor.orange.withAlphaComponent(0.2),
-                swiftBackgroundColor: Color.orange.opacity(0.2),
-                underlineStyle: .single
-            )
-        }
+        let shared = HighlightAppearance.style(for: kind)
+        return Appearance(
+            nsBackgroundColor: NSColor(shared.backgroundColor),
+            swiftBackgroundColor: shared.backgroundColor,
+            underlineStyle: shared.underlineStyle ? .single : nil
+        )
     }
 
     static func nsColor(for kind: HighlightKind) -> NSColor {
@@ -80,21 +53,17 @@ enum HighlightStyler {
 
     // MARK: - Rendering Attributes (for TextKit 2 TextPreviewView)
 
-    /// Rendering attributes for a highlight kind.
-    /// Applied via `NSTextLayoutManager.setRenderingAttributes(_:for:)` to style
-    /// highlights without mutating NSTextContentStorage.
     static func renderingAttributes(for kind: HighlightKind) -> [NSAttributedString.Key: Any] {
         attributes(for: kind)
     }
 
-    // MARK: - SwiftUI Text Support
+    // MARK: - SwiftUI Text Support (delegates to shared builder)
 
-    /// Split text into prefix/match/suffix for the three-part HStack layout.
     static func splitText(
         _ text: String,
         highlight: Utf16HighlightRange
     ) -> (prefix: String, match: String, suffix: String) {
-        guard let range = stringRange(
+        guard let range = HighlightRangeConverter.stringRange(
             utf16Start: Int(highlight.utf16Start),
             utf16End: Int(highlight.utf16End),
             in: text
@@ -108,7 +77,6 @@ enum HighlightStyler {
         return (prefix, match, suffix)
     }
 
-    /// Check if a highlight falls within the suffix region.
     static func highlightInSuffix(
         _ highlight: Utf16HighlightRange,
         suffixStartUtf16Offset: Int,
@@ -118,7 +86,6 @@ enum HighlightStyler {
         return start >= suffixStartUtf16Offset && start < suffixStartUtf16Offset + suffixUtf16Count
     }
 
-    /// Apply multiple highlights to suffix text as AttributedString.
     static func attributedSuffix(
         _ suffix: String,
         suffixStartUtf16Offset: Int,
@@ -133,16 +100,14 @@ enum HighlightStyler {
         _ text: String,
         highlights: [Utf16HighlightRange]
     ) -> AttributedString {
-        var attributed = AttributedString(text)
-        apply(highlights: highlights, to: &attributed, utf16Offset: 0)
-        return attributed
+        HighlightAttributedStringBuilder.attributedText(text, highlights: highlights)
     }
 
     static func attributedFragment(
         _ text: String,
         kind: HighlightKind
     ) -> AttributedString {
-        attributedText(text, highlights: [
+        HighlightAttributedStringBuilder.attributedText(text, highlights: [
             Utf16HighlightRange(
                 utf16Start: 0,
                 utf16End: UInt64(text.utf16.count),
@@ -155,16 +120,7 @@ enum HighlightStyler {
         in text: String,
         highlights: [Utf16HighlightRange]
     ) -> [String] {
-        highlights.compactMap { highlight in
-            guard let range = stringRange(
-                utf16Start: Int(highlight.utf16Start),
-                utf16End: Int(highlight.utf16End),
-                in: text
-            ) else {
-                return nil
-            }
-            return String(text[range])
-        }
+        HighlightAttributedStringBuilder.fragments(in: text, highlights: highlights)
     }
 
     static func exactHighlights(
@@ -212,7 +168,7 @@ enum HighlightStyler {
             let relativeStart = Int(highlight.utf16Start) - utf16Offset
             let relativeEnd = Int(highlight.utf16End) - utf16Offset
 
-            guard let range = stringRange(
+            guard let range = HighlightRangeConverter.stringRange(
                 utf16Start: relativeStart,
                 utf16End: relativeEnd,
                 in: text
@@ -229,26 +185,6 @@ enum HighlightStyler {
                 attributed[attrStart ..< attrEnd].underlineStyle = .single
             }
         }
-    }
-
-    private static func stringRange(
-        utf16Start: Int,
-        utf16End: Int,
-        in text: String
-    ) -> Range<String.Index>? {
-        guard utf16Start >= 0, utf16End >= utf16Start, utf16End <= text.utf16.count else {
-            return nil
-        }
-
-        let utf16 = text.utf16
-        let start = utf16.index(utf16.startIndex, offsetBy: utf16Start)
-        let end = utf16.index(utf16.startIndex, offsetBy: utf16End)
-        guard let stringStart = String.Index(start, within: text),
-              let stringEnd = String.Index(end, within: text)
-        else {
-            return nil
-        }
-        return stringStart ..< stringEnd
     }
 
     private static func mergeOverlapping(_ highlights: [Utf16HighlightRange]) -> [Utf16HighlightRange] {

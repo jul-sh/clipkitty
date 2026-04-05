@@ -77,7 +77,12 @@ struct BrowserPreviewPane: View {
         let item = content.item
         switch item.content {
         case .text, .color:
-            let previewText = viewModel.pendingEdits[item.itemMetadata.itemId] ?? item.content.textContent
+            let previewText: String = {
+                if case let .dirty(dirtyId, draft) = viewModel.editSession, dirtyId == item.itemMetadata.itemId {
+                    return draft
+                }
+                return item.content.textContent
+            }()
             let decoration = previewDecoration(for: content)
             let _ = { TextPreviewView.textCache[item.itemMetadata.itemId] = previewText }()
             TextPreviewView(
@@ -106,7 +111,7 @@ struct BrowserPreviewPane: View {
                     viewModel.confirmSelection()
                 },
                 onCmdK: {
-                    guard viewModel.previewInteractionMode == .browsing else { return }
+                    guard case .inactive = viewModel.editSession else { return }
                     viewModel.openActionsOverlay(highlight: .index(0))
                 },
                 onSave: {
@@ -114,7 +119,7 @@ struct BrowserPreviewPane: View {
                     focusSearchField()
                 },
                 onEscape: {
-                    if viewModel.hasPendingEdit(for: item.itemMetadata.itemId) {
+                    if case let .dirty(dirtyId, _) = viewModel.editSession, dirtyId == item.itemMetadata.itemId {
                         viewModel.discardCurrentEdit()
                     }
                     focusSearchField()
@@ -227,11 +232,9 @@ struct BrowserPreviewPane: View {
     }
 
     private func metadataFooter(for item: ClipboardItem) -> some View {
-        let mode = viewModel.previewInteractionMode
-
         return HStack(spacing: 12) {
-            switch mode {
-            case .editing:
+            switch viewModel.editSession {
+            case .dirty:
                 // Edit mode: show Discard, Save, and confirm buttons
                 Button {
                     viewModel.discardCurrentEdit()
@@ -274,7 +277,7 @@ struct BrowserPreviewPane: View {
                 .buttonStyle(.plain)
                 .fixedSize()
 
-            case .previewing:
+            case .focused:
                 // Preview focused but not yet edited — Cmd+K is not active here
                 Spacer(minLength: 0)
 
@@ -289,7 +292,7 @@ struct BrowserPreviewPane: View {
                 .buttonStyle(.plain)
                 .fixedSize()
 
-            case .browsing:
+            case .inactive:
                 // Normal mode: show metadata and paste button
                 Label(item.timeAgo, systemImage: "clock")
                     .lineLimit(1)
