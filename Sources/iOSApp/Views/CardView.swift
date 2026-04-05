@@ -6,7 +6,6 @@ import UIKit
 struct CardView: View {
     let row: DisplayRow
     @Binding var previewItemId: String?
-    @Binding var editItemId: String?
 
     @Environment(AppContainer.self) private var container
     @Environment(BrowserViewModel.self) private var viewModel
@@ -19,12 +18,14 @@ struct CardView: View {
         row.metadata
     }
 
-    /// Display text matching Mac semantics: prefer listDecoration text, fall back to snippet
+    /// Display text from Rust list decoration when available, falling back to metadata snippet.
     private var displayText: String {
-        if let rowText = row.listDecoration?.text, !rowText.isEmpty {
-            return rowText
-        }
-        return metadata.snippet
+        row.listDecoration?.text ?? metadata.snippet
+    }
+
+    /// Highlights from Rust list decoration, empty when no decoration is available.
+    private var displayHighlights: [Utf16HighlightRange] {
+        row.listDecoration?.highlights ?? []
     }
 
     private var isBookmarked: Bool {
@@ -94,23 +95,32 @@ struct CardView: View {
     }
 
     @ViewBuilder
+    private func highlightedText(_ text: String, highlights: [Utf16HighlightRange], font: Font) -> some View {
+        if highlights.isEmpty {
+            Text(text)
+                .font(font)
+                .foregroundStyle(.primary)
+        } else {
+            Text(HighlightAttributedStringBuilder.attributedText(text, highlights: highlights))
+                .font(font)
+                .foregroundStyle(.primary)
+        }
+    }
+
+    @ViewBuilder
     private func symbolContentPreview(iconType: IconType) -> some View {
         switch iconType {
         case .text:
-            Text(displayText)
-                .font(.custom(FontManager.mono, size: 15))
+            highlightedText(displayText, highlights: displayHighlights, font: .custom(FontManager.mono, size: 15))
                 .lineLimit(8)
-                .foregroundStyle(.primary)
 
         case .link:
             HStack(spacing: 8) {
                 Image(systemName: "globe")
                     .font(.title3)
                     .foregroundStyle(.secondary)
-                Text(displayText)
-                    .font(.custom(FontManager.sansSerif, size: 15))
+                highlightedText(displayText, highlights: displayHighlights, font: .custom(FontManager.sansSerif, size: 15))
                     .lineLimit(2)
-                    .foregroundStyle(.primary)
             }
 
         case .image:
@@ -118,10 +128,8 @@ struct CardView: View {
                 Image(systemName: "photo")
                     .font(.title3)
                     .foregroundStyle(.secondary)
-                Text(displayText)
-                    .font(.custom(FontManager.sansSerif, size: 15))
+                highlightedText(displayText, highlights: displayHighlights, font: .custom(FontManager.sansSerif, size: 15))
                     .lineLimit(2)
-                    .foregroundStyle(.primary)
             }
 
         case .file:
@@ -130,9 +138,7 @@ struct CardView: View {
 
         case .color:
             // Fallback for symbol-based color (shouldn't normally hit this path)
-            Text(displayText)
-                .font(.custom(FontManager.mono, size: 15))
-                .foregroundStyle(.primary)
+            highlightedText(displayText, highlights: displayHighlights, font: .custom(FontManager.mono, size: 15))
         }
     }
 
@@ -146,9 +152,11 @@ struct CardView: View {
                         .strokeBorder(.primary.opacity(0.1), lineWidth: 1)
                 )
 
-            Text(hexStringFromRGBA(rgba))
-                .font(.custom(FontManager.mono, size: 15))
-                .foregroundStyle(.primary)
+            highlightedText(
+                displayHighlights.isEmpty ? hexStringFromRGBA(rgba) : displayText,
+                highlights: displayHighlights,
+                font: .custom(FontManager.mono, size: 15)
+            )
         }
     }
 
@@ -167,10 +175,8 @@ struct CardView: View {
                     .foregroundStyle(.secondary)
                     .frame(width: 40, height: 40)
             }
-            Text(displayText)
-                .font(.custom(FontManager.sansSerif, size: 15))
+            highlightedText(displayText, highlights: displayHighlights, font: .custom(FontManager.sansSerif, size: 15))
                 .lineLimit(2)
-                .foregroundStyle(.primary)
         }
     }
 
@@ -194,7 +200,7 @@ struct CardView: View {
 
         if case .symbol(.text) = metadata.icon {
             Button {
-                editItemId = metadata.itemId
+                previewItemId = metadata.itemId
             } label: {
                 Label(String(localized: "Edit"), systemImage: "pencil")
             }

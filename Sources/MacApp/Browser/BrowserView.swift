@@ -37,7 +37,7 @@ struct BrowserView: View {
                 filterLabel: filterLabel,
                 searchSpinnerVisible: viewModel.searchSpinnerVisible,
                 selectedItemAvailable: viewModel.selectedItem != nil,
-                hasPendingEdit: viewModel.selectedItemHasPendingEdit,
+                hasPendingEdit: { if case .dirty = viewModel.editSession { return true }; return false }(),
                 isFilterPopoverPresented: Binding(
                     get: {
                         if case .filter = viewModel.overlayState {

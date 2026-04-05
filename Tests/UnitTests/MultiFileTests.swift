@@ -186,11 +186,11 @@ final class MultiFileTests: XCTestCase {
         )
 
         // Find by primary filename
-        let result1 = try await store.search(query: "report")
+        let result1 = try await store.search(query: "report", presentation: .compactRow)
         XCTAssertFalse(result1.matches.isEmpty, "Should find by primary filename")
 
         // Find by additional filename
-        let result2 = try await store.search(query: "summary")
+        let result2 = try await store.search(query: "summary", presentation: .compactRow)
         XCTAssertFalse(result2.matches.isEmpty, "Should find by additional filename")
     }
 

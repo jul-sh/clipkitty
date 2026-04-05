@@ -261,17 +261,18 @@ public struct ActionFailure {
     }
 }
 
-public struct EditState {
-    public enum Focus: Equatable {
-        case idle
-        case focused(itemId: String)
-    }
+/// Sum type representing the valid preview-edit session states.
+///
+/// This replaces the previous product-type `EditState` (focus + pendingEdits map)
+/// to make invalid states unrepresentable. Call sites should pattern-match directly
+/// on this enum rather than using derived booleans.
+public enum PreviewEditSession: Equatable {
+    /// No editing activity.
+    case inactive
 
-    public var focus: Focus = .idle
-    public var pendingEdits: [String: String] = [:]
+    /// User has focused the text surface but not yet changed text.
+    case focused(itemId: String)
 
-    public init(focus: Focus = .idle, pendingEdits: [String: String] = [:]) {
-        self.focus = focus
-        self.pendingEdits = pendingEdits
-    }
+    /// User has unsaved edits. The draft text lives inside the editing state.
+    case dirty(itemId: String, draft: String)
 }

@@ -14,12 +14,13 @@ struct PreviewScreen: View {
     @Environment(\.dismiss) private var dismiss
 
     @State private var showDeleteConfirmation = false
-    @State private var showEditSheet = false
+
+    private let isUITestPreviewDebugEnabled = CommandLine.arguments.contains("--use-simulated-db")
 
     var body: some View {
         Group {
             if let selectedItemState = viewModel.selectedItemState {
-                contentView(for: selectedItemState.item)
+                contentView(for: selectedItemState)
             } else {
                 ProgressView(String(localized: "Loading..."))
             }
@@ -41,13 +42,6 @@ struct PreviewScreen: View {
         } message: {
             Text("Are you sure you want to delete this item? This cannot be undone.", comment: "Delete confirmation message")
         }
-        .sheet(isPresented: $showEditSheet) {
-            if let item = viewModel.selectedItemState?.item,
-               case .text = item.content
-            {
-                EditView(itemId: itemId)
-            }
-        }
         .onAppear {
             viewModel.select(itemId: itemId, origin: .user)
         }
@@ -66,93 +60,155 @@ struct PreviewScreen: View {
         }
     }
 
+    // MARK: - Preview Decoration
+
+    private func previewDecoration(for content: SelectedItemState) -> PreviewDecoration? {
+        switch content.previewState {
+        case .plain, .loadingDecoration(previous: nil):
+            return nil
+        case let .loadingDecoration(previous: .some(decoration)), let .highlighted(decoration):
+            return decoration
+        }
+    }
+
+    private var isDirty: Bool {
+        if case let .dirty(dirtyId, _) = viewModel.editSession, dirtyId == itemId {
+            return true
+        }
+        return false
+    }
+
     // MARK: - Content
 
-    private func contentView(for item: ClipboardItem) -> some View {
-        ScrollView {
-            VStack(alignment: .leading, spacing: 20) {
-                contentSection(for: item)
-                Divider()
-                metadataSection(for: item)
+    private func contentView(for selectedItemState: SelectedItemState) -> some View {
+        ZStack {
+            contentSection(for: selectedItemState)
+            if case .loadingDecoration = selectedItemState.previewState,
+               viewModel.previewSpinnerVisible
+            {
+                ProgressView()
             }
-            .cardSurface()
-            .padding(.horizontal, 16)
-            .padding(.top, 8)
         }
+        .overlay(alignment: .topLeading) {
+            if isUITestPreviewDebugEnabled {
+                Color.clear
+                    .frame(width: 1, height: 1)
+                    .allowsHitTesting(false)
+                    .accessibilityElement(children: .ignore)
+                    .accessibilityLabel(previewHighlightDebugLabel(
+                        for: selectedItemState
+                    ))
+                    .accessibilityIdentifier("PreviewHighlightDebug")
+            }
+        }
+    }
+
+    private func previewHighlightDebugLabel(for content: SelectedItemState) -> String {
+        let text = content.item.content.textContent
+        let itemId = content.item.itemMetadata.itemId
+        let state: String
+        let fragments: [String]
+
+        switch content.previewState {
+        case .plain:
+            state = "plain"
+            fragments = []
+        case .loadingDecoration(previous: nil):
+            state = "loading-decoration"
+            fragments = []
+        case let .loadingDecoration(previous: .some(decoration)):
+            state = "loading-decoration-stale"
+            fragments = HighlightAttributedStringBuilder.fragments(in: text, highlights: decoration.highlights)
+        case let .highlighted(decoration):
+            state = "highlighted"
+            fragments = HighlightAttributedStringBuilder.fragments(in: text, highlights: decoration.highlights)
+        }
+
+        let joinedFragments = fragments.isEmpty ? "none" : fragments.joined(separator: "|")
+        return "item=\(itemId);state=\(state);highlights=\(joinedFragments)"
     }
 
     @ViewBuilder
-    private func contentSection(for item: ClipboardItem) -> some View {
+    private func contentSection(for selectedItemState: SelectedItemState) -> some View {
+        let item = selectedItemState.item
         switch item.content {
         case let .text(value):
-            textContent(value)
-        case let .link(url, metadataState):
-            linkContent(url: url, metadataState: metadataState)
-        case let .image(data, description, _):
-            imageContent(data: data, description: description)
+            let previewText: String = {
+                if case let .dirty(dirtyId, draft) = viewModel.editSession, dirtyId == item.itemMetadata.itemId {
+                    return draft
+                }
+                return value
+            }()
+            let decoration = isDirty ? nil : previewDecoration(for: selectedItemState)
+            TextPreviewView(
+                itemId: item.itemMetadata.itemId,
+                text: previewText,
+                highlights: decoration?.highlights ?? [],
+                initialScrollHighlightIndex: decoration?.initialScrollHighlightIndex,
+                isEditable: true,
+                onTextChange: { newText in
+                    viewModel.onTextEdit(newText, for: item.itemMetadata.itemId, originalText: value)
+                },
+                onEditingStateChange: { editing in
+                    viewModel.onEditingStateChange(editing, for: item.itemMetadata.itemId)
+                }
+            )
         case let .color(value):
-            colorContent(value: value)
+            let decoration = isDirty ? nil : previewDecoration(for: selectedItemState)
+            VStack(spacing: 0) {
+                // Color swatch at top
+                RoundedRectangle(cornerRadius: 16)
+                    .fill(color(from: value))
+                    .frame(height: 120)
+                    .padding(.horizontal, 16)
+                    .padding(.top, 8)
+
+                // Color value text in TextKit 2 renderer (supports highlights + editing)
+                TextPreviewView(
+                    itemId: item.itemMetadata.itemId,
+                    text: value,
+                    highlights: decoration?.highlights ?? [],
+                    initialScrollHighlightIndex: decoration?.initialScrollHighlightIndex,
+                    isEditable: false
+                )
+            }
+        case let .link(url, metadataState):
+            let decoration = previewDecoration(for: selectedItemState)
+            ScrollView {
+                VStack(alignment: .leading, spacing: 20) {
+                    linkContent(url: url, metadataState: metadataState, highlights: decoration?.highlights ?? [])
+                    Divider()
+                    metadataSection(for: item)
+                }
+                .cardSurface()
+                .padding(.horizontal, 16)
+                .padding(.top, 8)
+            }
+        case let .image(data, description, _):
+            let decoration = previewDecoration(for: selectedItemState)
+            ScrollView {
+                VStack(alignment: .leading, spacing: 20) {
+                    imageContent(data: data, description: description, highlights: decoration?.highlights ?? [])
+                    Divider()
+                    metadataSection(for: item)
+                }
+                .cardSurface()
+                .padding(.horizontal, 16)
+                .padding(.top, 8)
+            }
         case .file:
-            Text("File items are not supported on iPhone.", comment: "Unsupported content type message")
-                .font(.subheadline)
-                .foregroundStyle(.secondary)
-        }
-    }
-
-    // MARK: - Text Content
-
-    private func textContent(_ value: String) -> some View {
-        Text(value)
-            .font(.custom(FontManager.mono, size: 16))
-            .textSelection(.enabled)
-            .frame(maxWidth: .infinity, alignment: .leading)
-    }
-
-    // MARK: - Link Content
-
-    private func linkContent(url: String, metadataState: LinkMetadataState) -> some View {
-        VStack(alignment: .leading, spacing: 16) {
-            LinkPreviewView(url: url, metadataState: metadataState)
-                .frame(maxWidth: .infinity)
-
-            Text(url)
-                .font(.custom(FontManager.mono, size: 12))
-                .foregroundStyle(.secondary)
-                .textSelection(.enabled)
-                .frame(maxWidth: .infinity, alignment: .leading)
-        }
-    }
-
-    // MARK: - Image Content
-
-    private func imageContent(data: Data, description: String) -> some View {
-        VStack(spacing: 8) {
-            if let uiImage = UIImage(data: data) {
-                Image(uiImage: uiImage)
-                    .resizable()
-                    .aspectRatio(contentMode: .fit)
-                    .frame(maxWidth: .infinity)
+            ScrollView {
+                VStack(alignment: .leading, spacing: 20) {
+                    Text("File items are not supported on iPhone.", comment: "Unsupported content type message")
+                        .font(.subheadline)
+                        .foregroundStyle(.secondary)
+                    Divider()
+                    metadataSection(for: item)
+                }
+                .cardSurface()
+                .padding(.horizontal, 16)
+                .padding(.top, 8)
             }
-            if !description.isEmpty {
-                Text(description)
-                    .font(.callout)
-                    .foregroundStyle(.secondary)
-                    .frame(maxWidth: .infinity, alignment: .leading)
-            }
-        }
-    }
-
-    // MARK: - Color Content
-
-    private func colorContent(value: String) -> some View {
-        VStack(alignment: .leading, spacing: 12) {
-            RoundedRectangle(cornerRadius: 16)
-                .fill(color(from: value))
-                .frame(height: 200)
-
-            Text(value)
-                .font(.custom(FontManager.mono, size: 22))
-                .textSelection(.enabled)
         }
     }
 
@@ -181,6 +237,55 @@ struct PreviewScreen: View {
         }
 
         return Color(red: r, green: g, blue: b, opacity: a)
+    }
+
+    // MARK: - Link Content
+
+    private func linkContent(url: String, metadataState: LinkMetadataState, highlights: [Utf16HighlightRange]) -> some View {
+        VStack(alignment: .leading, spacing: 16) {
+            LinkPreviewView(url: url, metadataState: metadataState)
+                .frame(maxWidth: .infinity)
+
+            if highlights.isEmpty {
+                Text(url)
+                    .font(.custom(FontManager.mono, size: 12))
+                    .foregroundStyle(.secondary)
+                    .textSelection(.enabled)
+                    .frame(maxWidth: .infinity, alignment: .leading)
+            } else {
+                Text(HighlightAttributedStringBuilder.attributedText(url, highlights: highlights))
+                    .font(.custom(FontManager.mono, size: 12))
+                    .foregroundStyle(.secondary)
+                    .textSelection(.enabled)
+                    .frame(maxWidth: .infinity, alignment: .leading)
+            }
+        }
+    }
+
+    // MARK: - Image Content
+
+    private func imageContent(data: Data, description: String, highlights: [Utf16HighlightRange]) -> some View {
+        VStack(spacing: 8) {
+            if let uiImage = UIImage(data: data) {
+                Image(uiImage: uiImage)
+                    .resizable()
+                    .aspectRatio(contentMode: .fit)
+                    .frame(maxWidth: .infinity)
+            }
+            if !description.isEmpty {
+                if highlights.isEmpty {
+                    Text(description)
+                        .font(.callout)
+                        .foregroundStyle(.secondary)
+                        .frame(maxWidth: .infinity, alignment: .leading)
+                } else {
+                    Text(HighlightAttributedStringBuilder.attributedText(description, highlights: highlights))
+                        .font(.callout)
+                        .foregroundStyle(.secondary)
+                        .frame(maxWidth: .infinity, alignment: .leading)
+                }
+            }
+        }
     }
 
     // MARK: - Metadata Section
@@ -215,78 +320,101 @@ struct PreviewScreen: View {
         return formatter.string(from: date)
     }
 
-    // MARK: - Toolbar
+    // MARK: - Action Bar
 
     @ViewBuilder
     private var actionBar: some View {
         if let item = viewModel.selectedItemState?.item {
-            GlassEffectContainer(spacing: 20) {
-                HStack(spacing: 20) {
-                    // Left circle: Share
-                    Button {
-                        SharePresenter.present(item: item)
-                    } label: {
-                        Image(systemName: "square.and.arrow.up")
-                            .font(.body.weight(.medium))
-                            .frame(width: 52, height: 52)
-                            .contentShape(Circle())
-                    }
-                    .buttonStyle(.plain)
-                    .glassEffect(.regular.interactive(), in: .circle)
-
-                    // Center capsule: Bookmark, Edit, Copy
-                    HStack(spacing: 0) {
+            if isDirty {
+                // Dirty state: show Save and Cancel only
+                GlassEffectContainer(spacing: 20) {
+                    HStack(spacing: 20) {
                         Button {
-                            toggleBookmark(for: item)
+                            viewModel.discardCurrentEdit()
                         } label: {
-                            Image(systemName: isBookmarked(item) ? "bookmark.slash" : "bookmark")
+                            Text(String(localized: "Cancel"))
                                 .font(.body.weight(.medium))
-                                .frame(width: 52, height: 52)
-                                .contentShape(Rectangle())
+                                .frame(height: 52)
+                                .padding(.horizontal, 20)
+                                .contentShape(Capsule())
                         }
                         .buttonStyle(.plain)
+                        .glassEffect(.regular.interactive(), in: .capsule)
 
-                        if case .text = item.content {
+                        Button {
+                            viewModel.commitCurrentEdit()
+                            appState.showToast(.saved)
+                        } label: {
+                            Text(String(localized: "Save"))
+                                .font(.body.weight(.semibold))
+                                .frame(height: 52)
+                                .padding(.horizontal, 20)
+                                .contentShape(Capsule())
+                        }
+                        .buttonStyle(.plain)
+                        .glassEffect(.regular.interactive(), in: .capsule)
+                    }
+                }
+                .padding(.horizontal, 16)
+                .padding(.bottom, 8)
+            } else {
+                // Normal state: standard action bar
+                GlassEffectContainer(spacing: 20) {
+                    HStack(spacing: 20) {
+                        // Left circle: Share
+                        Button {
+                            SharePresenter.present(item: item)
+                        } label: {
+                            Image(systemName: "square.and.arrow.up")
+                                .font(.body.weight(.medium))
+                                .frame(width: 52, height: 52)
+                                .contentShape(Circle())
+                        }
+                        .buttonStyle(.plain)
+                        .glassEffect(.regular.interactive(), in: .circle)
+
+                        // Center capsule: Bookmark, Copy
+                        HStack(spacing: 0) {
                             Button {
-                                showEditSheet = true
+                                toggleBookmark(for: item)
                             } label: {
-                                Image(systemName: "pencil")
+                                Image(systemName: isBookmarked(item) ? "bookmark.slash" : "bookmark")
+                                    .font(.body.weight(.medium))
+                                    .frame(width: 52, height: 52)
+                                    .contentShape(Rectangle())
+                            }
+                            .buttonStyle(.plain)
+
+                            Button {
+                                container.clipboardService.copy(content: item.content)
+                                haptics.fire(.copy)
+                                appState.showToast(.copied)
+                            } label: {
+                                Image(systemName: "doc.on.doc")
                                     .font(.body.weight(.medium))
                                     .frame(width: 52, height: 52)
                                     .contentShape(Rectangle())
                             }
                             .buttonStyle(.plain)
                         }
+                        .glassEffect(.regular.interactive(), in: .capsule)
 
-                        Button {
-                            container.clipboardService.copy(content: item.content)
-                            haptics.fire(.copy)
-                            appState.showToast(.copied)
+                        // Right circle: Delete
+                        Button(role: .destructive) {
+                            showDeleteConfirmation = true
                         } label: {
-                            Image(systemName: "doc.on.doc")
+                            Image(systemName: "trash")
                                 .font(.body.weight(.medium))
                                 .frame(width: 52, height: 52)
-                                .contentShape(Rectangle())
+                                .contentShape(Circle())
                         }
                         .buttonStyle(.plain)
+                        .glassEffect(.regular.interactive(), in: .circle)
                     }
-                    .glassEffect(.regular.interactive(), in: .capsule)
-
-                    // Right circle: Delete
-                    Button(role: .destructive) {
-                        showDeleteConfirmation = true
-                    } label: {
-                        Image(systemName: "trash")
-                            .font(.body.weight(.medium))
-                            .frame(width: 52, height: 52)
-                            .contentShape(Circle())
-                    }
-                    .buttonStyle(.plain)
-                    .glassEffect(.regular.interactive(), in: .circle)
                 }
+                .padding(.horizontal, 16)
+                .padding(.bottom, 8)
             }
-            .padding(.horizontal, 16)
-            .padding(.bottom, 8)
         }
     }
 

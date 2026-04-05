@@ -998,7 +998,7 @@ final class BrowserViewModelTests: XCTestCase {
         XCTAssertEqual(client.updatedTexts.count, 1)
         XCTAssertEqual(client.updatedTexts.first?.itemId, "1")
         XCTAssertEqual(client.updatedTexts.first?.text, "edited text")
-        XCTAssertFalse(viewModel.hasPendingEdit(for: "1"))
+        XCTAssertEqual(viewModel.editSession, .inactive)
     }
 
     func testDiscardEditClearsPendingState() async {
@@ -1028,9 +1028,7 @@ final class BrowserViewModelTests: XCTestCase {
         viewModel.discardCurrentEdit()
         await flushMainActor()
 
-        XCTAssertFalse(viewModel.hasPendingEdit(for: "1"))
-        XCTAssertFalse(viewModel.isEditingPreview)
-        XCTAssertEqual(viewModel.editFocus, .idle)
+        XCTAssertEqual(viewModel.editSession, .inactive)
     }
 
     func testEditRevertedToOriginalClearsPendingEdit() {
@@ -1043,16 +1041,16 @@ final class BrowserViewModelTests: XCTestCase {
         )
 
         viewModel.onTextEdit("edited", for: "1", originalText: "original")
-        XCTAssertTrue(viewModel.hasPendingEdit(for: "1"))
+        XCTAssertEqual(viewModel.editSession, .dirty(itemId: "1", draft: "edited"))
 
         viewModel.onTextEdit("original", for: "1", originalText: "original")
 
-        XCTAssertFalse(viewModel.hasPendingEdit(for: "1"))
+        XCTAssertEqual(viewModel.editSession, .focused(itemId: "1"))
     }
 
-    // MARK: - PreviewInteractionMode
+    // MARK: - Edit Session States
 
-    func testPreviewInteractionModeIsBrowsingByDefault() async {
+    func testEditSessionIsInactiveByDefault() async {
         let client = MockBrowserStoreClient()
         client.enqueueSearchResponse(BrowserSearchResponse(
             request: SearchRequest(text: "", filter: .all),
@@ -1073,36 +1071,10 @@ final class BrowserViewModelTests: XCTestCase {
         client.resumeFetch(id: "1", with: makeItem(id: "1", text: "hello"))
         await flushMainActor()
 
-        XCTAssertEqual(viewModel.previewInteractionMode, .browsing)
+        XCTAssertEqual(viewModel.editSession, .inactive)
     }
 
-    func testPreviewInteractionModeIsPreviewingWhenFocusedWithoutEdits() async {
-        let client = MockBrowserStoreClient()
-        client.enqueueSearchResponse(BrowserSearchResponse(
-            request: SearchRequest(text: "", filter: .all),
-            items: [makeMatch(id: "1", snippet: "hello")],
-            firstPreviewPayload: nil,
-            totalCount: 1
-        ))
-
-        let viewModel = BrowserViewModel(
-            client: client,
-            onSelect: { _, _ in },
-            onCopyOnly: { _, _ in },
-            onDismiss: {}
-        )
-
-        viewModel.onAppear(initialSearchQuery: "")
-        await flushMainActor()
-        client.resumeFetch(id: "1", with: makeItem(id: "1", text: "hello"))
-        await flushMainActor()
-
-        viewModel.onEditingStateChange(true, for: "1")
-
-        XCTAssertEqual(viewModel.previewInteractionMode, .previewing(itemId: "1"))
-    }
-
-    func testPreviewInteractionModeIsEditingWhenPendingEditsExist() async {
+    func testEditSessionIsFocusedWhenEditingWithoutChanges() async {
         let client = MockBrowserStoreClient()
         client.enqueueSearchResponse(BrowserSearchResponse(
             request: SearchRequest(text: "", filter: .all),
@@ -1124,12 +1096,11 @@ final class BrowserViewModelTests: XCTestCase {
         await flushMainActor()
 
         viewModel.onEditingStateChange(true, for: "1")
-        viewModel.onTextEdit("hello world", for: "1", originalText: "hello")
 
-        XCTAssertEqual(viewModel.previewInteractionMode, .editing(itemId: "1"))
+        XCTAssertEqual(viewModel.editSession, .focused(itemId: "1"))
     }
 
-    func testPreviewInteractionModeReturnsToBrowsingAfterDiscard() async {
+    func testEditSessionIsDirtyWhenTextChanged() async {
         let client = MockBrowserStoreClient()
         client.enqueueSearchResponse(BrowserSearchResponse(
             request: SearchRequest(text: "", filter: .all),
@@ -1152,11 +1123,38 @@ final class BrowserViewModelTests: XCTestCase {
 
         viewModel.onEditingStateChange(true, for: "1")
         viewModel.onTextEdit("hello world", for: "1", originalText: "hello")
-        XCTAssertEqual(viewModel.previewInteractionMode, .editing(itemId: "1"))
+
+        XCTAssertEqual(viewModel.editSession, .dirty(itemId: "1", draft: "hello world"))
+    }
+
+    func testEditSessionReturnsToInactiveAfterDiscard() async {
+        let client = MockBrowserStoreClient()
+        client.enqueueSearchResponse(BrowserSearchResponse(
+            request: SearchRequest(text: "", filter: .all),
+            items: [makeMatch(id: "1", snippet: "hello")],
+            firstPreviewPayload: nil,
+            totalCount: 1
+        ))
+
+        let viewModel = BrowserViewModel(
+            client: client,
+            onSelect: { _, _ in },
+            onCopyOnly: { _, _ in },
+            onDismiss: {}
+        )
+
+        viewModel.onAppear(initialSearchQuery: "")
+        await flushMainActor()
+        client.resumeFetch(id: "1", with: makeItem(id: "1", text: "hello"))
+        await flushMainActor()
+
+        viewModel.onEditingStateChange(true, for: "1")
+        viewModel.onTextEdit("hello world", for: "1", originalText: "hello")
+        XCTAssertEqual(viewModel.editSession, .dirty(itemId: "1", draft: "hello world"))
 
         viewModel.discardCurrentEdit()
 
-        XCTAssertEqual(viewModel.previewInteractionMode, .browsing)
+        XCTAssertEqual(viewModel.editSession, .inactive)
     }
 
     func testMoveSelectionNavigatesList() async {
