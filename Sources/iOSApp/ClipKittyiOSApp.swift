@@ -7,7 +7,7 @@ import SwiftUI
 
 enum AppLaunchState {
     case launching
-    case ready(AppContainer, AppState, AppRouter)
+    case ready(AppContainer, AppState)
     case failed(String)
 }
 
@@ -221,8 +221,8 @@ struct ClipKittyiOSApp: App {
                 ProgressView("Loading ClipKitty...")
                     .onAppear { performBootstrap() }
 
-            case let .ready(container, appState, router):
-                rootView(container: container, appState: appState, router: router)
+            case let .ready(container, appState):
+                rootView(container: container, appState: appState)
 
             case let .failed(message):
                 bootstrapFailureView(message: message)
@@ -233,17 +233,14 @@ struct ClipKittyiOSApp: App {
     @ViewBuilder
     private func rootView(
         container: AppContainer,
-        appState: AppState,
-        router: AppRouter
+        appState: AppState
     ) -> some View {
         let base = RootView()
             .environment(container)
             .environment(appState)
             .environment(appState.viewModel)
-            .environment(router)
             .environment(container.settings)
             .environment(container.haptics)
-            .onOpenURL { router.handleURL($0) }
             .onChange(of: scenePhase) { _, newPhase in
                 if newPhase == .active {
                     Task { await appState.autoAddFromClipboard() }
@@ -270,8 +267,6 @@ struct ClipKittyiOSApp: App {
         switch AppContainer.bootstrap(databasePath: customPath) {
         case let .success(container):
             let appState = AppState(container: container)
-            let router = AppRouter()
-
             #if ENABLE_SYNC
                 let coordinator = iOSSyncCoordinator(
                     store: container.store,
@@ -286,7 +281,7 @@ struct ClipKittyiOSApp: App {
                 }
             #endif
 
-            launchState = .ready(container, appState, router)
+            launchState = .ready(container, appState)
         case let .failure(error):
             launchState = .failed(error.localizedDescription)
         }
