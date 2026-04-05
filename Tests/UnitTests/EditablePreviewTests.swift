@@ -140,7 +140,7 @@ final class EditablePreviewTests: XCTestCase {
         )
 
         // Search should return edited item first (newest)
-        let results = try await store.search(query: "")
+        let results = try await store.search(query: "", presentation: .compactRow)
         XCTAssertFalse(results.matches.isEmpty, "Should have results")
         XCTAssertEqual(results.matches[0].itemMetadata.itemId, editedId, "Edited item should be first (most recent)")
     }

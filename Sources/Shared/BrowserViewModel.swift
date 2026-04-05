@@ -83,7 +83,7 @@ public final class BrowserViewModel {
     public private(set) var selectionState: SelectionState = .none
     public private(set) var overlayState: OverlayState = .none
     public private(set) var mutationState: MutationState = .idle
-    public private(set) var editState: EditState = .init()
+    public private(set) var editSession: PreviewEditSession = .inactive
     public private(set) var listDecorationsByItemId: [String: ListDecoration] = [:]
     private var previewPayloadsByItemId: [String: PreviewPayload] = [:]
     public private(set) var hasUserNavigated = false
@@ -180,12 +180,13 @@ public final class BrowserViewModel {
         return failure.message
     }
 
-    public var editFocus: EditState.Focus {
-        editState.focus
-    }
-
-    public var pendingEdits: [String: String] {
-        editState.pendingEdits
+    /// Draft text for the currently-editing item, if any.
+    /// Callers should prefer matching `editSession` directly.
+    public var draftText: (itemId: String, text: String)? {
+        if case let .dirty(itemId, draft) = editSession {
+            return (itemId, draft)
+        }
+        return nil
     }
 
     public func onAppear(initialSearchQuery: String, contentRevision: Int = 0) {
@@ -218,7 +219,7 @@ public final class BrowserViewModel {
         listDecorationsByItemId.removeAll()
         overlayState = .none
         mutationState = .idle
-        editState = .init()
+        editSession = .inactive
         // Preserve displayed content so the fresh search can enter `.loading(previous:)`
         // instead of flashing the empty state while the new results are loading.
         hasAppliedInitialSearch = false
@@ -306,8 +307,13 @@ public final class BrowserViewModel {
         os_signpost(.begin, log: poi, name: "select", signpostID: signpostID, "itemId=%{public}s origin=%{public}s", itemId, String(describing: origin))
         defer { os_signpost(.end, log: poi, name: "select", signpostID: signpostID) }
 
-        if case let .focused(focusedId) = editState.focus, focusedId != itemId {
-            editState.focus = .idle
+        switch editSession {
+        case let .focused(focusedId) where focusedId != itemId:
+            editSession = .inactive
+        case let .dirty(dirtyId, _) where dirtyId != itemId:
+            editSession = .inactive
+        default:
+            break
         }
         // Don't set .loading here — loadSelectedItem() resolves from cache synchronously
         // on the common path (arrow key navigation), so .loading would be immediately
@@ -489,44 +495,50 @@ public final class BrowserViewModel {
     }
 
     public func effectiveContent(for item: ClipboardItem) -> ClipboardContent {
-        if let editedText = editState.pendingEdits[item.itemMetadata.itemId] {
-            return .text(value: editedText)
+        if case let .dirty(dirtyId, draft) = editSession, dirtyId == item.itemMetadata.itemId {
+            return .text(value: draft)
         }
         return item.content
     }
 
     public func onTextEdit(_ newText: String, for itemId: String, originalText: String) {
         if newText == originalText {
-            editState.pendingEdits.removeValue(forKey: itemId)
+            // Text matches original — drop back to focused (not dirty)
+            editSession = .focused(itemId: itemId)
         } else {
-            editState.pendingEdits[itemId] = newText
+            editSession = .dirty(itemId: itemId, draft: newText)
         }
     }
 
     public func onEditingStateChange(_ isEditing: Bool, for itemId: String) {
         if isEditing {
-            editState.focus = .focused(itemId: itemId)
-        } else if case let .focused(id) = editState.focus, id == itemId {
-            editState.focus = .idle
+            // Only transition to focused if not already dirty for this item
+            if case let .dirty(dirtyId, _) = editSession, dirtyId == itemId {
+                return
+            }
+            editSession = .focused(itemId: itemId)
+        } else {
+            switch editSession {
+            case let .focused(focusedId) where focusedId == itemId:
+                editSession = .inactive
+            default:
+                break
+            }
         }
     }
 
     public func discardCurrentEdit() {
-        if let id = selectedItemId {
-            editState.pendingEdits.removeValue(forKey: id)
-        }
-        editState.focus = .idle
+        editSession = .inactive
     }
 
     public func commitCurrentEdit() {
-        guard let id = selectedItemId,
-              let editedText = editState.pendingEdits.removeValue(forKey: id),
+        guard case let .dirty(id, editedText) = editSession,
               !editedText.isEmpty
         else {
-            editState.focus = .idle
+            editSession = .inactive
             return
         }
-        editState.focus = .idle
+        editSession = .inactive
 
         guard let selectedItemState else {
             showSnackbarNotification(.passive(message: String(localized: "Saved"), iconSystemName: "checkmark.circle.fill"), nil)
@@ -560,44 +572,25 @@ public final class BrowserViewModel {
             updatedFirstItem: updatedItem
         )
 
+        // Invalidate stale decoration caches for this item
+        listDecorationsByItemId.removeValue(forKey: id)
+        previewPayloadsByItemId[id] = PreviewPayload(item: updatedItem, decoration: nil)
+
         showSnackbarNotification(.passive(message: String(localized: "Saved"), iconSystemName: "checkmark.circle.fill"), nil)
 
         Task { [weak self] in
             guard let self else { return }
             _ = await self.client.updateTextItem(itemId: id, text: editedText)
+            // Resubmit the active search so Rust re-evaluates whether this item
+            // still matches, re-ranks it, and emits fresh highlight ranges.
+            if !self.searchText.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty {
+                self.submitSearch(text: self.searchText, filter: self.contentState.request.filter)
+            }
         }
     }
 
-    public enum PreviewInteractionMode: Equatable {
-        case browsing
-        case previewing(itemId: String)
-        case editing(itemId: String)
-    }
-
-    public var previewInteractionMode: PreviewInteractionMode {
-        guard let id = selectedItemId else { return .browsing }
-        if editState.pendingEdits[id] != nil {
-            return .editing(itemId: id)
-        }
-        if editState.focus == .focused(itemId: id) {
-            return .previewing(itemId: id)
-        }
-        return .browsing
-    }
-
-    public var selectedItemHasPendingEdit: Bool {
-        guard let id = selectedItemId else { return false }
-        return editState.pendingEdits[id] != nil
-    }
-
-    public var isEditingPreview: Bool {
-        guard let id = selectedItemId else { return false }
-        return editState.focus == .focused(itemId: id) || editState.pendingEdits[id] != nil
-    }
-
-    public func hasPendingEdit(for itemId: String) -> Bool {
-        editState.pendingEdits[itemId] != nil
-    }
+    // Call sites should match `editSession` directly instead of
+    // using derived booleans. PreviewInteractionMode has been removed.
 
     /// Semantic browser actions (platform-independent).
     public enum BrowserAction {
@@ -1703,9 +1696,10 @@ public final class BrowserViewModel {
         guard let response = currentResponse else { return }
         let updatedItems = response.items.map { itemMatch in
             guard itemMatch.itemMetadata.itemId == itemId else { return itemMatch }
+            // Clear stale list decoration — Rust will recompute on next search
             return ItemMatch(
                 itemMetadata: updatedMetadata,
-                listDecoration: itemMatch.listDecoration
+                listDecoration: nil
             )
         }
         let firstPreviewPayload: PreviewPayload? = {
@@ -1714,9 +1708,10 @@ public final class BrowserViewModel {
             else {
                 return response.firstPreviewPayload
             }
+            // Clear stale preview decoration — Rust will recompute on next load
             let updatedPayload = PreviewPayload(
                 item: updatedFirstItem,
-                decoration: currentFirstPreviewPayload.decoration
+                decoration: nil
             )
             previewPayloadsByItemId[itemId] = updatedPayload
             return updatedPayload
@@ -1771,14 +1766,17 @@ public final class BrowserViewModel {
 
     private func clearInactiveEdits() {
         guard let selectedItemId else {
-            editState.pendingEdits.removeAll()
-            editState.focus = .idle
+            editSession = .inactive
             return
         }
 
-        editState.pendingEdits = editState.pendingEdits.filter { $0.key == selectedItemId }
-        if case let .focused(focusedId) = editState.focus, focusedId != selectedItemId {
-            editState.focus = .idle
+        switch editSession {
+        case let .focused(focusedId) where focusedId != selectedItemId:
+            editSession = .inactive
+        case let .dirty(dirtyId, _) where dirtyId != selectedItemId:
+            editSession = .inactive
+        default:
+            break
         }
     }
 

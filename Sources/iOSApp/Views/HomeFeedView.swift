@@ -9,7 +9,6 @@ struct HomeFeedView: View {
 
     @State private var isSearchActive = false
     @State private var previewItemId: String?
-    @State private var editItemId: String?
     @State private var hasAppeared = false
     @State private var showSettings = false
 
@@ -41,14 +40,6 @@ struct HomeFeedView: View {
             }
             .sheet(isPresented: $showSettings) {
                 SettingsScreen()
-            }
-            .sheet(isPresented: Binding(
-                get: { editItemId != nil },
-                set: { if !$0 { editItemId = nil } }
-            )) {
-                if let itemId = editItemId {
-                    EditView(itemId: itemId)
-                }
             }
             .onAppear {
                 guard !hasAppeared else { return }
@@ -100,8 +91,7 @@ struct HomeFeedView: View {
             ForEach(filteredRows) { row in
                 CardView(
                     row: row,
-                    previewItemId: $previewItemId,
-                    editItemId: $editItemId
+                    previewItemId: $previewItemId
                 )
                 .onAppear {
                     loadDecorationsIfNeeded(for: row)
