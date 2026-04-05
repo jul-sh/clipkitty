@@ -3,7 +3,7 @@ import ClipKittyRust
 import ClipKittyShared
 import Foundation
 
-/// Owns all app-scoped services. Created once at launch; shared by UI and App Intents.
+/// Owns all app-scoped services. Created once at launch.
 @MainActor
 @Observable
 final class AppContainer {
