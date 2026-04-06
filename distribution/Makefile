@@ -382,6 +382,7 @@ ios-appstore-publish: ios-appstore ios-publish
 # Capture localized iOS screenshots for all supported locales.
 # Runs XCUITests on iPhone 16 Pro Max simulator.
 ios-marketing-screenshots-localized:
+	@$(DIST_DIR)/patch-demo-items.sh
 	@rm -f /tmp/clipkitty_ios_screenshot_locale.txt /tmp/clipkitty_ios_screenshot_db.txt
 	@for locale in $(IOS_SCREENSHOT_LOCALES); do \
 		echo "Capturing iOS screenshots for $$locale..."; \
