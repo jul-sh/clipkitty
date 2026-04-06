@@ -350,29 +350,20 @@ IOS_IPA_PATH = $(PROJECT_ROOT)/ClipKittyiOS.ipa
 IOS_SCREENSHOT_LOCALES := $(SCREENSHOT_LOCALES)
 
 # Build iOS archive and export IPA for App Store
-ios-appstore: api-key
+ios-appstore:
 	@echo "Archiving ClipKittyiOS (AppStore)..."
 	@xcodebuild archive \
 		-workspace $(PROJECT_ROOT)/$(APP_NAME).xcworkspace \
 		-scheme ClipKittyiOS-AppStore \
 		-archivePath $(IOS_ARCHIVE_PATH) \
 		-destination "generic/platform=iOS" \
-		-allowProvisioningUpdates \
-		-authenticationKeyPath $(API_KEY_DIR)/AuthKey.p8 \
-		-authenticationKeyID $$($(DIST_DIR)/asc-auth.sh key-id) \
-		-authenticationKeyIssuerID $$($(DIST_DIR)/asc-auth.sh issuer-id) \
 		MARKETING_VERSION=$(VERSION) \
-		CURRENT_PROJECT_VERSION=$(BUILD_NUMBER) \
-		$(if $(SKIP_SIGNING),,)
+		CURRENT_PROJECT_VERSION=$(BUILD_NUMBER)
 	@echo "Exporting IPA..."
 	@xcodebuild -exportArchive \
 		-archivePath $(IOS_ARCHIVE_PATH) \
 		-exportOptionsPlist $(DIST_DIR)/ExportOptions-iOS.plist \
-		-exportPath $(PROJECT_ROOT) \
-		-allowProvisioningUpdates \
-		-authenticationKeyPath $(API_KEY_DIR)/AuthKey.p8 \
-		-authenticationKeyID $$($(DIST_DIR)/asc-auth.sh key-id) \
-		-authenticationKeyIssuerID $$($(DIST_DIR)/asc-auth.sh issuer-id)
+		-exportPath $(PROJECT_ROOT)
 	@echo "IPA exported: $(IOS_IPA_PATH)"
 
 # Publish iOS app to App Store Connect (metadata + binary)

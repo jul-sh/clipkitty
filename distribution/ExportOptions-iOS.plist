@@ -8,5 +8,16 @@
 	<string>upload</string>
 	<key>teamID</key>
 	<string>ANBBV7LQ2P</string>
+	<key>signingStyle</key>
+	<string>manual</string>
+	<key>signingCertificate</key>
+	<string>Apple Distribution</string>
+	<key>provisioningProfiles</key>
+	<dict>
+		<key>com.eviljuliette.clipkitty</key>
+		<string>ClipKitty iOS AppStore</string>
+		<key>com.eviljuliette.clipkitty.share</key>
+		<string>ClipKitty Share AppStore</string>
+	</dict>
 </dict>
 </plist>

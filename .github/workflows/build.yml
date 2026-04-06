@@ -801,6 +801,28 @@ jobs:
           curl -sLo "$RUNNER_TEMP/AppleWWDRCAG3.cer" https://www.apple.com/certificateauthority/AppleWWDRCAG3.cer
           sudo security add-trusted-cert -d -r unspecified -k /Library/Keychains/System.keychain "$RUNNER_TEMP/AppleWWDRCAG3.cer"
 
+      - name: Install iOS Distribution Certificate
+        uses: apple-actions/import-codesign-certs@v3
+        with:
+          p12-file-base64: ${{ steps.secrets.outputs.IOS_DIST_CERT_BASE64 }}
+          p12-password: ${{ steps.secrets.outputs.IOS_DIST_P12_PASSWORD }}
+          keychain: ios_signing
+
+      - name: Fix keychain search list
+        run: |
+          security list-keychains -d user -s \
+            ~/Library/Keychains/ios_signing.keychain-db \
+            ~/Library/Keychains/login.keychain-db
+
+      - name: Install iOS Provisioning Profiles
+        run: |
+          mkdir -p ~/Library/MobileDevice/Provisioning\ Profiles
+          echo "$APP_PROFILE" | base64 --decode > ~/Library/MobileDevice/Provisioning\ Profiles/clipkitty-ios.mobileprovision
+          echo "$SHARE_PROFILE" | base64 --decode > ~/Library/MobileDevice/Provisioning\ Profiles/clipkitty-share.mobileprovision
+        env:
+          APP_PROFILE: ${{ steps.secrets.outputs.IOS_APPSTORE_PROFILE_BASE64 }}
+          SHARE_PROFILE: ${{ steps.secrets.outputs.IOS_SHARE_PROFILE_BASE64 }}
+
       - name: Install Nix
         uses: DeterminateSystems/nix-installer-action@main
 
@@ -844,3 +866,9 @@ jobs:
             BUILD_NUMBER="${COMMIT_COUNT}"
         env:
           AGE_SECRET_KEY: ${{ secrets.AGE_SECRET_KEY }}
+
+      - name: Cleanup
+        if: always()
+        run: |
+          rm -f ~/Library/MobileDevice/Provisioning\ Profiles/clipkitty-ios.mobileprovision
+          rm -f ~/Library/MobileDevice/Provisioning\ Profiles/clipkitty-share.mobileprovision
