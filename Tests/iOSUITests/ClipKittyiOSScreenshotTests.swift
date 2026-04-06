@@ -11,7 +11,6 @@ import XCTest
 /// Database filename is read from `/tmp/clipkitty_ios_screenshot_db.txt`.
 /// Screenshots are written to `/tmp/clipkitty_ios_{locale}_marketing_{n}_{name}.png`.
 final class ClipKittyiOSScreenshotTests: XCTestCase {
-
     private var app: XCUIApplication!
     private var locale: String!
 
@@ -37,22 +36,23 @@ final class ClipKittyiOSScreenshotTests: XCTestCase {
         sleep(3)
     }
 
-    func testTakeMarketingScreenshots() throws {
+    func testTakeMarketingScreenshots() {
         // Screenshot 1: History feed (default state)
         let feedScreenshot = app.screenshot()
         saveScreenshot(feedScreenshot, index: 1, name: "history")
 
-        // Screenshot 2: Search active
-        // Tap the search button (magnifying glass)
+        // Screenshot 2: Fuzzy search in action (typo-tolerant: "dockr"→docker, "prodction"→production)
         let searchButton = app.buttons["Search"]
         if searchButton.waitForExistence(timeout: 5) {
             searchButton.tap()
             sleep(1)
 
-            // Type a search query
+            // Dismiss the iOS keyboard "slide to type" tutorial if it appears
+            dismissKeyboardTutorial()
+
             let searchField = app.textFields["Search"]
             if searchField.waitForExistence(timeout: 3) {
-                searchField.typeText("clipboard")
+                searchField.typeText("dockr push prodction")
                 sleep(2)
             }
         }
@@ -92,9 +92,9 @@ final class ClipKittyiOSScreenshotTests: XCTestCase {
     /// the path for the app to use via `CLIPKITTY_SCREENSHOT_DB` environment variable.
     private func setupTestDatabase() throws -> String {
         let projectRoot = URL(fileURLWithPath: #filePath)
-            .deletingLastPathComponent()  // iOSUITests/
-            .deletingLastPathComponent()  // Tests/
-            .deletingLastPathComponent()  // project root
+            .deletingLastPathComponent() // iOSUITests/
+            .deletingLastPathComponent() // Tests/
+            .deletingLastPathComponent() // project root
 
         let databaseFilename = readTempConfig(Self.dbConfigFile, defaultValue: "SyntheticData.sqlite") ?? "SyntheticData.sqlite"
         let sqliteSourceURL = projectRoot.appendingPathComponent("distribution/\(databaseFilename)")
@@ -131,6 +131,18 @@ final class ClipKittyiOSScreenshotTests: XCTestCase {
                              "Copied database is too small (\(copiedSize) bytes). Target: \(targetPath)")
 
         return targetPath
+    }
+
+    // MARK: - Keyboard Tutorial
+
+    /// Dismiss the iOS keyboard's "slide to type" onboarding overlay if it appears.
+    /// The overlay has a "Continue" button that must be tapped to reveal the normal keyboard.
+    private func dismissKeyboardTutorial() {
+        let continueButton = app.buttons["Continue"]
+        if continueButton.waitForExistence(timeout: 2) {
+            continueButton.tap()
+            sleep(1)
+        }
     }
 
     // MARK: - Helpers

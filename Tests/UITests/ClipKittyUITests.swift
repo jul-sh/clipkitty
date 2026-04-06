@@ -982,21 +982,18 @@ final class ClipKittyUITests: XCTestCase {
         searchField.typeKey(.delete, modifierFlags: [])
         Thread.sleep(forTimeInterval: 0.3)
         let filterButton = app.buttons["FilterDropdown"]
-        // Apply the Images filter
+        // Apply the Images filter (use accessibility identifier, not localized label)
         filterButton.click()
         Thread.sleep(forTimeInterval: 0.5)
-        let imagesOption = app.buttons["Images"]
+        let imagesOption = app.buttons["Filter_images"]
         XCTAssertTrue(imagesOption.waitForExistence(timeout: 3), "Images option should appear in dropdown")
         imagesOption.click()
         Thread.sleep(forTimeInterval: 0.5)
         // Re-open dropdown, then hover over Images to get highlight
         filterButton.click()
         Thread.sleep(forTimeInterval: 0.5)
-        // After applying Images filter, the filter button itself shows "Images" as label,
-        // so we need to find the menu option specifically (the second Images button)
-        let imagesButtons = app.buttons.matching(identifier: "Images").allElementsBoundByIndex
-        XCTAssertGreaterThanOrEqual(imagesButtons.count, 2, "Should have filter button and menu option")
-        let imagesOptionAgain = imagesButtons.count >= 2 ? imagesButtons[1] : imagesButtons[0]
+        let imagesOptionAgain = app.buttons["Filter_images"]
+        XCTAssertTrue(imagesOptionAgain.waitForExistence(timeout: 3), "Images option should appear in dropdown")
         imagesOptionAgain.hover()
         Thread.sleep(forTimeInterval: 0.3)
         saveScreenshot(name: "marketing_3_filter")

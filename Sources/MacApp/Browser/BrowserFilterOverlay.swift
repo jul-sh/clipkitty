@@ -32,7 +32,8 @@ struct BrowserFilterOverlay: View {
                         viewModel.setTagFilter(nil)
                         viewModel.setContentTypeFilter(firstOption.0)
                     },
-                    isSelected: viewModel.selectedTagFilter == nil && viewModel.contentTypeFilter == firstOption.0
+                    isSelected: viewModel.selectedTagFilter == nil && viewModel.contentTypeFilter == firstOption.0,
+                    identifier: "Filter_\(firstOption.0)"
                 )
             }
 
@@ -50,7 +51,8 @@ struct BrowserFilterOverlay: View {
                         viewModel.setTagFilter(.bookmark)
                     }
                 },
-                isSelected: viewModel.selectedTagFilter == .bookmark
+                isSelected: viewModel.selectedTagFilter == .bookmark,
+                identifier: "Filter_Bookmarks"
             )
 
             Divider().padding(.horizontal, 4).padding(.vertical, 1)
@@ -66,7 +68,8 @@ struct BrowserFilterOverlay: View {
                         viewModel.setTagFilter(nil)
                         viewModel.setContentTypeFilter(option)
                     },
-                    isSelected: viewModel.selectedTagFilter == nil && viewModel.contentTypeFilter == option
+                    isSelected: viewModel.selectedTagFilter == nil && viewModel.contentTypeFilter == option,
+                    identifier: "Filter_\(option)"
                 )
             }
         }
@@ -152,7 +155,8 @@ struct BrowserFilterOverlay: View {
         systemImageName: String,
         index: Int,
         action: @escaping () -> Void,
-        isSelected: Bool
+        isSelected: Bool,
+        identifier: String? = nil
     ) -> some View {
         let isHighlighted: Bool
         if case let .index(highlightedIndex) = highlight {
@@ -166,6 +170,7 @@ struct BrowserFilterOverlay: View {
             systemImageName: systemImageName,
             isHighlighted: isHighlighted,
             isSelected: isSelected,
+            identifier: identifier,
             onHover: { isHovered in
                 if isHovered {
                     viewModel.setFilterOverlayState(.index(index))
@@ -197,6 +202,7 @@ private struct FilterRowButton: View {
     let systemImageName: String
     let isHighlighted: Bool
     let isSelected: Bool
+    var identifier: String? = nil
     let onHover: (Bool) -> Void
     let action: () -> Void
 
@@ -225,6 +231,7 @@ private struct FilterRowButton: View {
             .contentShape(RoundedRectangle(cornerRadius: 7))
         }
         .buttonStyle(.plain)
+        .accessibilityIdentifier(identifier ?? label)
         .onHover { onHover($0) }
     }
 }
