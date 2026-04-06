@@ -797,7 +797,9 @@ impl ClipboardStore {
 #[uniffi::export]
 impl ClipboardStore {
     /// Set the device ID used for locally-originated sync events.
-    /// Called by SyncEngine.start() with the stable UUID from UserDefaults.
+    ///
+    /// Should be called as early as possible (at store initialization) so that
+    /// all emitted events carry the correct device attribution from the start.
     pub fn set_sync_device_id(&self, device_id: String) {
         self.sync_emitter.set_device_id(device_id);
     }

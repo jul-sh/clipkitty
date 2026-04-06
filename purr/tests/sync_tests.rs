@@ -1421,6 +1421,20 @@ mod write_path_tests {
             .collect();
         assert_eq!(touch_events.len(), 1);
     }
+
+    #[test]
+    fn events_use_device_id_when_set_before_save() {
+        let (store, _dir) = test_store();
+
+        // Setting device ID before any saves (mirrors app startup flow).
+        store.set_sync_device_id("device-abc-123".to_string());
+
+        store.save_text("after device id".to_string(), None, None).unwrap();
+
+        let pending = store.pending_local_events().unwrap();
+        assert_eq!(pending.len(), 1);
+        assert_eq!(pending[0].origin_device_id, "device-abc-123");
+    }
 }
 
 // ═══════════════════════════════════════════════════════════════════════════════

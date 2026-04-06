@@ -190,6 +190,21 @@
             var lastCloudCleanupDate: Date?
         }
 
+        // MARK: - Device ID
+
+        /// Resolve (or create) the stable device identifier from UserDefaults.
+        /// Called early during store initialization so events are attributed correctly
+        /// even before the sync engine is started.
+        public static func resolveDeviceId(userDefaults: UserDefaults = .standard) -> String {
+            let key = "clipkitty.sync.deviceId"
+            if let existing = userDefaults.string(forKey: key) {
+                return existing
+            }
+            let newId = UUID().uuidString
+            userDefaults.set(newId, forKey: key)
+            return newId
+        }
+
         // MARK: - Init
 
         public convenience init(store: ClipKittyRust.ClipboardStore) {
@@ -215,15 +230,7 @@
             self.now = now
 
             // Use a stable device identifier.
-            if let deviceId {
-                self.deviceId = deviceId
-            } else if let existing = userDefaults.string(forKey: "clipkitty.sync.deviceId") {
-                self.deviceId = existing
-            } else {
-                let newId = UUID().uuidString
-                userDefaults.set(newId, forKey: "clipkitty.sync.deviceId")
-                self.deviceId = newId
-            }
+            self.deviceId = deviceId ?? Self.resolveDeviceId(userDefaults: userDefaults)
 
             let lastCloudCleanupDate = userDefaults.object(
                 forKey: "clipkitty.sync.lastCloudCleanup"
@@ -252,11 +259,7 @@
                 )
             )
             registerAccountChangeObserverIfNeeded()
-            let deviceId = self.deviceId
             logger.info("SyncEngine starting for device \(deviceId)")
-
-            // Set the Rust-side device ID so events are attributed correctly.
-            store.setSyncDeviceId(deviceId: deviceId)
 
             coordinatorTask = Task.detached(priority: .utility) { [weak self] in
                 guard let self else { return }
