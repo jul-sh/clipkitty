@@ -372,10 +372,11 @@ let project = Project(
                     ]),
                     .release(name: .configuration("SparkleRelease"), settings: [:]),
                     .release(name: .configuration("AppStore"), settings: [
-                        "CODE_SIGN_STYLE": "Automatic",
-                        "CODE_SIGN_IDENTITY": "Apple Development",
+                        "CODE_SIGN_STYLE": "Manual",
+                        "CODE_SIGN_IDENTITY": "Apple Distribution",
                         "CODE_SIGN_ENTITLEMENTS": "Sources/iOSApp/ClipKittyiOS.appstore.entitlements",
                         "SWIFT_ACTIVE_COMPILATION_CONDITIONS": "APP_STORE ENABLE_SYNC",
+                        "PROVISIONING_PROFILE_SPECIFIER": "ClipKitty iOS AppStore",
                     ]),
                 ]
             )
@@ -436,9 +437,10 @@ let project = Project(
                     ]),
                     .release(name: .configuration("SparkleRelease"), settings: [:]),
                     .release(name: .configuration("AppStore"), settings: [
-                        "CODE_SIGN_STYLE": "Automatic",
-                        "CODE_SIGN_IDENTITY": "Apple Development",
+                        "CODE_SIGN_STYLE": "Manual",
+                        "CODE_SIGN_IDENTITY": "Apple Distribution",
                         "CODE_SIGN_ENTITLEMENTS": "Sources/ShareExtension/ClipKittyShare.entitlements",
+                        "PROVISIONING_PROFILE_SPECIFIER": "ClipKitty Share AppStore",
                     ]),
                 ]
             )
