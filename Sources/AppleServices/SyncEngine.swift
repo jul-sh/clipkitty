@@ -195,7 +195,7 @@
         /// Resolve (or create) the stable device identifier from UserDefaults.
         /// Called early during store initialization so events are attributed correctly
         /// even before the sync engine is started.
-        static func resolveDeviceId(userDefaults: UserDefaults = .standard) -> String {
+        public static func resolveDeviceId(userDefaults: UserDefaults = .standard) -> String {
             let key = "clipkitty.sync.deviceId"
             if let existing = userDefaults.string(forKey: key) {
                 return existing
@@ -259,7 +259,7 @@
                 )
             )
             registerAccountChangeObserverIfNeeded()
-            logger.info("SyncEngine starting for device \(self.deviceId)")
+            logger.info("SyncEngine starting for device \(deviceId)")
 
             coordinatorTask = Task.detached(priority: .utility) { [weak self] in
                 guard let self else { return }
