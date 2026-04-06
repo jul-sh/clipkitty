@@ -125,26 +125,25 @@ xcrun xcresulttool export attachments \
     --path "$RESULT_BUNDLE" \
     --output-path "$ATTACHMENTS_DIR"
 
-# Find the screen recording .mov in the exported attachments
+# Find the screen recording video (.mov or .mp4) in the exported attachments
 RAW_VIDEO=""
 if [ -f "$ATTACHMENTS_DIR/manifest.json" ]; then
-    # Parse manifest.json to find the .mov screen recording
     RAW_VIDEO=$(python3 -c "
 import json, sys, os
 manifest = json.load(open('$ATTACHMENTS_DIR/manifest.json'))
 for test in manifest:
     for att in test.get('attachments', []):
         fname = att.get('exportedFileName', '')
-        if fname.endswith('.mov'):
+        if fname.endswith('.mov') or fname.endswith('.mp4'):
             print(os.path.join('$ATTACHMENTS_DIR', fname))
             sys.exit(0)
 print('')
 ")
 fi
 
-# Fallback: find any .mov in the directory
+# Fallback: find any video file in the directory
 if [ -z "$RAW_VIDEO" ] || [ ! -f "$RAW_VIDEO" ]; then
-    RAW_VIDEO=$(find "$ATTACHMENTS_DIR" -name "*.mov" -type f | head -1)
+    RAW_VIDEO=$(find "$ATTACHMENTS_DIR" \( -name "*.mov" -o -name "*.mp4" \) -type f | head -1)
 fi
 
 if [ -z "$RAW_VIDEO" ] || [ ! -f "$RAW_VIDEO" ]; then
