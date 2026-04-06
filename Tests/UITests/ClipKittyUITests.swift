@@ -2,6 +2,8 @@ import XCTest
 
 final class ClipKittyUITests: XCTestCase {
     var app: XCUIApplication!
+    /// Wall-clock time when setUp started; used to compute the skip offset for video trimming.
+    private var setUpStartTime = Date()
 
     private static let localeConfigFile = "clipkitty_screenshot_locale.txt"
     private static let dbConfigFile = "clipkitty_screenshot_db.txt"
@@ -109,6 +111,7 @@ final class ClipKittyUITests: XCTestCase {
     }
 
     override func setUpWithError() throws {
+        setUpStartTime = Date()
         continueAfterFailure = false
 
         let appURL = try locateAppBundle()
@@ -869,8 +872,14 @@ final class ClipKittyUITests: XCTestCase {
         // (Xcode records the screen automatically into the xcresult bundle.)
         Thread.sleep(forTimeInterval: 0.5)
 
+        // Write elapsed time so the post-processing script can skip the setup portion.
+        let setupElapsed = Date().timeIntervalSince(setUpStartTime)
+        try? String(format: "%.1f", setupElapsed)
+            .write(toFile: "/tmp/clipkitty_video_start_offset.txt",
+                   atomically: true, encoding: .utf8)
+
         /// Helper to type with natural delays
-        func typeSlowly(_ text: String, delay: TimeInterval = 0.05) {
+        func typeSlowly(_ text: String, delay: TimeInterval = 0.025) {
             for char in text {
                 searchField.typeText(String(char))
                 Thread.sleep(forTimeInterval: delay)
