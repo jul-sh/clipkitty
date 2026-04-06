@@ -189,18 +189,30 @@ if $HAS_FFMPEG; then
         echo "No window bounds file found, using full screen"
     fi
 
+    # Check for start-offset file (written by the UI test when setup finishes
+    # and demo scenes begin). This lets us skip the setup portion of the recording.
+    OFFSET_FILE="/tmp/clipkitty_video_start_offset.txt"
+    START_OFFSET="0"
+    if [ -f "$OFFSET_FILE" ]; then
+        START_OFFSET=$(cat "$OFFSET_FILE")
+        echo "Skipping ${START_OFFSET}s of setup (offset from UI test)"
+        rm -f "$OFFSET_FILE"
+    fi
+
     # Post-process:
+    # - Skip setup portion (-ss)
     # - Crop to window bounds (if available)
-    # - Cap duration at App Store limit
+    # - Cap duration at App Store limit (30s max after skipping setup)
     # - Ensure proper encoding for App Store (H.264)
     # - Scale to App Store dimensions (2880x1800)
-    TRIM_DURATION=$DURATION
-    [ "$TRIM_DURATION" -gt "$MAX_DURATION" ] 2>/dev/null && TRIM_DURATION=$MAX_DURATION
-    [ "$TRIM_DURATION" -gt 30 ] && TRIM_DURATION=30
-    echo "Trimming to ${TRIM_DURATION}s (raw: ${DURATION}s, limit: 30s)"
-    ffmpeg -y -i "$RAW_VIDEO" \
+    CONTENT_DURATION=$(echo "$DURATION - $START_OFFSET" | bc)
+    TRIM_DURATION=$CONTENT_DURATION
+    [ "$(echo "$TRIM_DURATION > $MAX_DURATION" | bc)" -eq 1 ] 2>/dev/null && TRIM_DURATION=$MAX_DURATION
+    [ "$(echo "$TRIM_DURATION > 30" | bc)" -eq 1 ] && TRIM_DURATION=30
+    echo "Trimming to ${TRIM_DURATION}s (raw: ${DURATION}s, offset: ${START_OFFSET}s, limit: 30s)"
+    ffmpeg -y -ss "$START_OFFSET" -i "$RAW_VIDEO" \
         -t $TRIM_DURATION \
-        -vf "${CROP_FILTER}scale=2880:1800:force_original_aspect_ratio=decrease,pad=2880:1800:(ow-iw)/2:(oh-ih)/2:color=gray" \
+        -vf "${CROP_FILTER}scale=2880:1800:force_original_aspect_ratio=decrease,pad=2880:1800:(ow-iw)/2:(oh-ih)/2:color=0xC0C0C0" \
         -c:v libx264 -preset slow -crf 18 -profile:v high -level 4.0 \
         -pix_fmt yuv420p \
         -movflags +faststart \
