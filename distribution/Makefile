@@ -295,10 +295,11 @@ video-data:
 # Record intro video using video-specific database
 intro-video: video-data
 	@echo "Recording intro video..."
-	@$(DIST_DIR)/record-preview-video.sh \
-		--db SyntheticData_video.sqlite \
-		--output intro_video.mov \
-		--duration 30
+	@$(DIST_DIR)/prepare-screenshot-environment.sh \
+		"$(DIST_DIR)/record-preview-video.sh \
+			--db SyntheticData_video.sqlite \
+			--output intro_video.mov \
+			--duration 30"
 	@echo "Intro video saved!"
 
 # Generate video databases for all locales and record localized intro videos.
@@ -316,10 +317,11 @@ intro-video-localized:
 		$(NIX_SHELL) "cd $(DIST_DIR)/rust-data-gen && cargo run --release -- --video-only --locale $$locale --db-path ../SyntheticData_video.sqlite"; \
 		python3 $(DIST_DIR)/inject-images.py $(DIST_DIR)/SyntheticData_video.sqlite $$locale; \
 		mkdir -p $(PROJECT_ROOT)/marketing/$$locale; \
-		$(DIST_DIR)/record-preview-video.sh \
-			--db SyntheticData_video.sqlite \
-			--output $$locale/intro_video.mov \
-			--duration 30; \
+		$(DIST_DIR)/prepare-screenshot-environment.sh \
+			"$(DIST_DIR)/record-preview-video.sh \
+				--db SyntheticData_video.sqlite \
+				--output $$locale/intro_video.mov \
+				--duration 30"; \
 		echo "  $$locale video saved to marketing/$$locale/intro_video.mov"; \
 	done
 	@rm -f /tmp/clipkitty_screenshot_locale.txt
