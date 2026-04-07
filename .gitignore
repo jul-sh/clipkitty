@@ -6,6 +6,7 @@ build/
 *.xcodeproj/
 *.xcworkspace/
 DerivedData/
+.deriveddata/
 DerivedDataTests/
 perf_traces/
 *.xcresult/
@@ -44,6 +45,12 @@ screenshot-*.png
 
 # Marketing screenshots (generated in CI by ImageMagick)
 marketing/
+marketing_*.png
+
+# Generated assets
+AppIcon.icns
+Assets.car
+icon.png
 
 # macOS
 .DS_Store
