@@ -45,6 +45,7 @@ let project = Project(
                 base: [
                     "HEADER_SEARCH_PATHS": .array(["$(inherited)", "$(PROJECT_DIR)/Sources/ClipKittyRust"]),
                     "MODULEMAP_FILE": "$(PROJECT_DIR)/Sources/ClipKittyRust/module.modulemap",
+                    "SKIP_INSTALL": "YES",
                 ]
             )
         ),
@@ -65,6 +66,7 @@ let project = Project(
                 base: [
                     // UniFFI-generated code not yet compatible with Swift 6 strict concurrency
                     "SWIFT_VERSION": "5.0",
+                    "SKIP_INSTALL": "YES",
                 ]
             )
         ),
@@ -80,7 +82,12 @@ let project = Project(
             sources: ["Sources/Shared/**"],
             dependencies: [
                 .target(name: "ClipKittyRust"),
-            ]
+            ],
+            settings: .settings(
+                base: [
+                    "SKIP_INSTALL": "YES",
+                ]
+            )
         ),
 
         // MARK: ClipKittyAppleServices — Cross-Apple services (no AppKit)
@@ -97,6 +104,9 @@ let project = Project(
                 .target(name: "ClipKittyShared"),
             ],
             settings: .settings(
+                base: [
+                    "SKIP_INSTALL": "YES",
+                ],
                 configurations: [
                     .debug(name: "Debug", settings: [
                         "SWIFT_ACTIVE_COMPILATION_CONDITIONS": "ENABLE_SYNC",
@@ -125,7 +135,12 @@ let project = Project(
             sources: ["Sources/MacPlatform/**"],
             dependencies: [
                 .target(name: "ClipKittyShared"),
-            ]
+            ],
+            settings: .settings(
+                base: [
+                    "SKIP_INSTALL": "YES",
+                ]
+            )
         ),
 
         // MARK: ClipKitty — macOS app
