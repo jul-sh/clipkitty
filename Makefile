@@ -25,6 +25,9 @@ SIGNING_IDENTITY ?= $(shell security find-identity -v -p codesigning 2>/dev/null
 
 # Shared Rust target dir — lives in .git so it's shared across worktrees,
 # survives reboots, and is excluded from Spotlight/Time Machine.
+# Safe to share: cargo tracks source hashes internally, so switching between
+# worktrees with different Rust code triggers a rebuild of changed crates
+# while reusing unchanged dependencies.
 CARGO_TARGET_DIR := $(abspath $(shell git rev-parse --git-common-dir 2>/dev/null))/cargo-target
 export CARGO_TARGET_DIR
 
