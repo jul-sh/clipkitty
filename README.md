@@ -48,20 +48,18 @@ ClipKitty stores everything. Finds it in milliseconds; whether you have 100 item
 
 ### Hardened Build
 
-All ClipKitty builds already run inside the macOS App Sandbox. The **Hardened** variant goes further by removing two entitlements: network access and filesystem access. macOS then enforces those constraints at the kernel level; the app literally cannot open a socket or touch a file outside its container.
+The default build include a few convinience features, that you may want to disable in security sensitive settings:
 
-That breaks a few features, which are compiled out of the hardened binary entirely:
+- **Link previews**; fetches metadata over the network to show a nice preview
+- **iCloud sync**; sends clipboard data to Apple's CloudKit
+- **Auto-updates**; phones home to check for new versions, and auto installs them
+- **File clipboard capture**; requires files system access
 
-- **Link previews**; needs network to fetch metadata
-- **iCloud sync**; needs network + CloudKit entitlement
-- **Auto-updates**; needs network to check for new versions, so you can audit a version and stick to it
-- **File clipboard capture**; needs filesystem access to read copied files
+You can already disable most of these in settings. The **Hardened** variant goes further. It compiles the code out entirely, then removes the network and filesystem entitlements from the macOS App Sandbox so the OS enforces those constraints at the kernel level. The app cannot open a socket or touch a file outside its container, even if a bug or exploit tried to. You can [verify](VERIFY.md) both layers yourself.
 
-Everything else works identically: text, images, colors, search, keyboard shortcuts.
+Because auto-updates are gone, you can audit a specific version and stick to it. Everything else works identically: text, images, colors, search, keyboard shortcuts.
 
-This is defense in depth. The code for these features is compiled out of the binary; it does not exist. But even if it did, macOS App Sandbox would block it because the entitlements are not there. You can [verify](VERIFY.md) both layers yourself.
-
-The hardened build uses a separate bundle ID (`com.eviljuliette.clipkitty.hardened`), which means macOS gives it its own sandbox container. Your clipboard history does not carry over between hardened and non-hardened installs, in either direction. This is intentional; the two builds are security-isolated from each other.
+The hardened build uses a separate bundle ID (`com.eviljuliette.clipkitty.hardened`), which means macOS gives it its own sandbox container. Your clipboard history does not carry over between hardened and non-hardened installs, in either direction. This is intentional; the two builds are isolated from each other.
 
 Download `ClipKitty-Hardened.zip` from [GitHub Releases](https://github.com/jul-sh/clipkitty/releases).
 
