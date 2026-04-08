@@ -32,7 +32,7 @@ echo "https://github.com/jul-sh/clipkitty/attestations/sha256:$HASH"
 You can also verify the hardened build's entitlements contain no network or file access:
 
 ```bash
-codesign -d --entitlements - /Applications/ClipKitty\ Hardened.app
+codesign -d --entitlements - /Applications/ClipKitty.app
 ```
 
 The output should show only `com.apple.security.app-sandbox` — no `network.client`, no `icloud`, no `files.user-selected`.

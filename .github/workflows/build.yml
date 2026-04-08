@@ -277,11 +277,14 @@ jobs:
           fi
           echo "✓ No update settings"
 
-          # Assert no Files filter string (compiled out via ENABLE_FILE_CLIPBOARD_ITEMS)
-          # The localized "Files" filter is only added to filterOptions when enabled
-          if strings "$BINARY" | grep -q "^Files$"; then
-            echo "WARN: 'Files' string found (may be coincidental, checking context)"
+          # Assert no file clipboard filter (compiled out via ENABLE_FILE_CLIPBOARD_ITEMS)
+          # The ".files" ContentTypeFilter case and "Files" localized string are only
+          # included in filterOptions when ENABLE_FILE_CLIPBOARD_ITEMS is set.
+          if strings "$BINARY" | grep -q "ENABLE_FILE_CLIPBOARD_ITEMS"; then
+            echo "FAIL: file clipboard compile flag found in hardened binary"
+            exit 1
           fi
+          echo "✓ No file clipboard support"
 
           echo "Hardened feature surface verified."
 
