@@ -87,47 +87,78 @@ fn main() {
     )
     .expect("Write modulemap");
 
-    // Build static libraries for all platforms.
-    // All targets are provided by the Nix shell (flake.nix) — if any are
-    // missing, the build should fail loudly rather than silently skip.
-    println!("Building static libraries...");
+    // Build static libraries.
+    //
+    // UNIVERSAL=1 (CI/release): macOS universal binary (aarch64 + x86_64 via lipo)
+    // Without UNIVERSAL (dev): macOS host arch only (skips x86_64 build + lipo)
+    // iOS device + simulator are always built.
+    let universal = env::var("UNIVERSAL").map_or(false, |v| v == "1");
 
-    let required_targets = [
-        "aarch64-apple-darwin",
-        "x86_64-apple-darwin",
-        "aarch64-apple-ios",
-        "aarch64-apple-ios-sim",
-    ];
+    println!("Building static libraries{}...", if universal { " (universal)" } else { "" });
+
+    let output_lib = swift_dest.join("libpurr.a");
+
+    // --- macOS ---
+    if universal {
+        let mac_targets = ["aarch64-apple-darwin", "x86_64-apple-darwin"];
+        let installed_targets = installed_rust_targets();
+        for target in &mac_targets {
+            assert!(
+                installed_targets.iter().any(|t| t == target),
+                "Required Rust target {target} is not installed. \
+                 Run inside `nix develop` or add it to flake.nix targets."
+            );
+        }
+
+        for target in &mac_targets {
+            run_cmd("cargo", &["build", "--release", "--target", target], &rust_dir);
+        }
+        run_cmd(
+            "lipo",
+            &[
+                "-create",
+                &target_dir
+                    .join("aarch64-apple-darwin/release/libpurr.a")
+                    .to_string_lossy(),
+                &target_dir
+                    .join("x86_64-apple-darwin/release/libpurr.a")
+                    .to_string_lossy(),
+                "-output",
+                &output_lib.to_string_lossy(),
+            ],
+            &rust_dir,
+        );
+        println!("Created universal macOS static library");
+    } else {
+        let host_target = env::consts::ARCH;
+        let rust_target = match host_target {
+            "aarch64" => "aarch64-apple-darwin",
+            "x86_64" => "x86_64-apple-darwin",
+            _ => panic!("Unsupported host architecture: {host_target}"),
+        };
+        run_cmd(
+            "cargo",
+            &["build", "--release", "--target", rust_target],
+            &rust_dir,
+        );
+        fs::copy(
+            target_dir.join(format!("{rust_target}/release/libpurr.a")),
+            &output_lib,
+        )
+        .expect("Copy host static lib");
+        println!("Built macOS static library ({rust_target} only)");
+    }
+
+    // --- iOS (always built) ---
+    let ios_targets = ["aarch64-apple-ios", "aarch64-apple-ios-sim"];
     let installed_targets = installed_rust_targets();
-    for target in &required_targets {
+    for target in &ios_targets {
         assert!(
             installed_targets.iter().any(|t| t == target),
             "Required Rust target {target} is not installed. \
              Run inside `nix develop` or add it to flake.nix targets."
         );
     }
-
-    // macOS universal binary
-    for target in &["aarch64-apple-darwin", "x86_64-apple-darwin"] {
-        run_cmd("cargo", &["build", "--release", "--target", target], &rust_dir);
-    }
-    let output_lib = swift_dest.join("libpurr.a");
-    run_cmd(
-        "lipo",
-        &[
-            "-create",
-            &target_dir
-                .join("aarch64-apple-darwin/release/libpurr.a")
-                .to_string_lossy(),
-            &target_dir
-                .join("x86_64-apple-darwin/release/libpurr.a")
-                .to_string_lossy(),
-            "-output",
-            &output_lib.to_string_lossy(),
-        ],
-        &rust_dir,
-    );
-    println!("Created universal macOS static library");
 
     // iOS device (aarch64-apple-ios)
     println!("Building iOS device static library...");
@@ -171,7 +202,11 @@ fn main() {
     );
     println!("  - {}/purrFFI.h", swift_dest.display());
     println!("  - {}/module.modulemap", swift_dest.display());
-    println!("  - {}/libpurr.a (macOS universal)", swift_dest.display());
+    if universal {
+        println!("  - {}/libpurr.a (macOS universal)", swift_dest.display());
+    } else {
+        println!("  - {}/libpurr.a (host arch only)", swift_dest.display());
+    }
     println!("  - {}/ios-device/libpurr.a", swift_dest.display());
     println!("  - {}/ios-simulator/libpurr.a", swift_dest.display());
     println!();
