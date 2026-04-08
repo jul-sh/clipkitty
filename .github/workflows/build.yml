@@ -375,14 +375,7 @@ jobs:
 
       - name: Install Sparkle CLI Tools
         if: github.event_name == 'push' && (github.ref == 'refs/heads/main' || github.ref == 'refs/heads/release')
-        run: |
-          SPARKLE_VERSION="2.9.0"
-          SPARKLE_SHA256="01e0f0ebf6614061ea816d414de50f937d64ffa6822ad572243031ca3676fe19"
-          curl -sL "https://github.com/sparkle-project/Sparkle/releases/download/${SPARKLE_VERSION}/Sparkle-${SPARKLE_VERSION}.tar.xz" -o /tmp/sparkle.tar.xz
-          echo "${SPARKLE_SHA256}  /tmp/sparkle.tar.xz" | shasum -a 256 --check
-          mkdir -p /tmp/sparkle
-          tar -xf /tmp/sparkle.tar.xz -C /tmp/sparkle
-          echo "/tmp/sparkle/bin" >> "$GITHUB_PATH"
+        run: ./Scripts/install-sparkle-cli.sh
 
       - name: Sign DMG with EdDSA
         if: github.event_name == 'push' && (github.ref == 'refs/heads/main' || github.ref == 'refs/heads/release')
@@ -663,6 +656,7 @@ jobs:
         run: |
           nix profile install --no-update-lock-file --inputs-from . nixpkgs#age
           nix profile install --no-update-lock-file .#tuist
+          nix profile install --no-update-lock-file .#asc
           tuist version
 
       - name: Decrypt secrets
@@ -756,6 +750,9 @@ jobs:
         env:
           AGE_SECRET_KEY: ${{ secrets.AGE_SECRET_KEY }}
 
+      - name: Verify lockfiles unchanged
+        run: git diff --exit-code Cargo.lock flake.lock Package.resolved Tuist/Package.resolved distribution/SparkleUpdater/Package.resolved
+
       - name: Attest App Store Build Provenance
         uses: actions/attest-build-provenance@e8998f949152b193b063cb0ec769d69d929409be # v2
         with:
@@ -786,6 +783,7 @@ jobs:
         run: |
           nix profile install --no-update-lock-file --inputs-from . nixpkgs#age
           nix profile install --no-update-lock-file .#tuist
+          nix profile install --no-update-lock-file .#asc
           tuist version
 
       - name: Decrypt secrets
