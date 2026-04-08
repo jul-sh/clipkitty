@@ -181,7 +181,7 @@ appstore-publish:
 # Marketing Assets (Screenshots & Preview Video)
 # ============================================================================
 # Prerequisites:
-#   1. ffmpeg: brew install ffmpeg
+#   1. ffmpeg (available in the Nix dev shell: nix develop)
 #   2. Synthetic data with demo items: make -C distribution synthetic-data
 #
 # Usage:

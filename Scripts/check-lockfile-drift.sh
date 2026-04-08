@@ -8,9 +8,10 @@ set -euo pipefail
 LOCKFILES=(
   Cargo.lock
   flake.lock
-  Package.resolved
   Tuist/Package.resolved
   distribution/SparkleUpdater/Package.resolved
+  # Note: root Package.resolved is Xcode-generated stray state, not authoritative.
+  # The authoritative Swift lockfiles are Tuist/ and distribution/SparkleUpdater/.
 )
 
 ERRORS=0
