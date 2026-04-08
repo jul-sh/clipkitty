@@ -47,9 +47,12 @@
         '';
       in
       {
+        packages.tuist = pkgs.tuist;
+
         devShells.default = pkgs.mkShell {
           buildInputs = [
             rustToolchain
+            pkgs.tuist
             pkgs.swiftlint
             pkgs.swiftformat
             pkgs.ffmpeg
