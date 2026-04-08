@@ -21,3 +21,9 @@ debug = false
 
 [profile.dev]
 opt-level = 1
+
+[profile.dev-release]
+inherits = "release"
+lto = "thin"
+codegen-units = 16
+incremental = true
