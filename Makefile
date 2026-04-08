@@ -23,6 +23,11 @@ DERIVED_DATA := $(SCRIPT_DIR)/DerivedData
 # Signing identity: auto-detects Developer ID cert, falls back to ad-hoc (-)
 SIGNING_IDENTITY ?= $(shell security find-identity -v -p codesigning 2>/dev/null | grep -q "Developer ID Application" && echo "Developer ID Application" || echo "-")
 
+# Shared Rust target dir — lives in .git so it's shared across worktrees,
+# survives reboots, and is excluded from Spotlight/Time Machine.
+CARGO_TARGET_DIR := $(abspath $(shell git rev-parse --git-common-dir 2>/dev/null))/cargo-target
+export CARGO_TARGET_DIR
+
 # Rust build marker and outputs
 RUST_MARKER := .make/rust.marker
 RUST_LIB := Sources/ClipKittyRust/libpurr.a

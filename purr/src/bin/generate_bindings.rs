@@ -28,7 +28,11 @@ use std::process::Command;
 fn main() {
     let rust_dir = PathBuf::from(env!("CARGO_MANIFEST_DIR"));
     let project_root = rust_dir.parent().expect("No parent directory");
-    let target_dir = project_root.join("target");
+
+    // Use CARGO_TARGET_DIR if set (shared across worktrees), else default.
+    let target_dir = env::var("CARGO_TARGET_DIR")
+        .map(PathBuf::from)
+        .unwrap_or_else(|_| project_root.join("target"));
 
     // Keep the Rust artifacts aligned with the app's supported macOS floor.
     let deployment_target =

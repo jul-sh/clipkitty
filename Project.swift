@@ -568,6 +568,7 @@ let project = Project(
 
                         echo "Rust changed: $STORED_HASH -> $CURRENT_HASH"
                         if [ -x "Scripts/run-in-nix.sh" ]; then
+                            export CARGO_TARGET_DIR="$(realpath "$(git rev-parse --git-common-dir)")/cargo-target"
                             Scripts/run-in-nix.sh -c "cd purr && MACOSX_DEPLOYMENT_TARGET=14.0 cargo run --release --bin generate-bindings"
                             mkdir -p .make && echo "$CURRENT_HASH" > "$MARKER"
                         fi
@@ -625,6 +626,7 @@ let project = Project(
 
                         echo "Rust changed: $STORED_HASH -> $CURRENT_HASH"
                         if [ -x "Scripts/run-in-nix.sh" ]; then
+                            export CARGO_TARGET_DIR="$(realpath "$(git rev-parse --git-common-dir)")/cargo-target"
                             Scripts/run-in-nix.sh -c "cd purr && MACOSX_DEPLOYMENT_TARGET=14.0 cargo run --release --bin generate-bindings"
                             mkdir -p .make && echo "$CURRENT_HASH" > "$MARKER"
                         fi
