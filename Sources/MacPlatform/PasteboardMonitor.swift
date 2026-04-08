@@ -254,6 +254,12 @@ public final class PasteboardMonitor {
                     return
                 }
             }
+        #else
+            // When file clipboard items are disabled, skip file-bearing pasteboards
+            // entirely to avoid capturing file paths as text strings.
+            if availableTypes.contains(.fileURL) || availableTypes.contains(Self.legacyFileNamesType) {
+                return
+            }
         #endif
 
         if availableTypes.contains(Self.gifType), let gifData = pasteboard.data(forType: Self.gifType) {
