@@ -639,6 +639,9 @@ jobs:
         if: always()
         run: kill "$(cat /tmp/retina-display.pid 2>/dev/null)" 2>/dev/null || true
 
+      - name: Verify lockfiles unchanged after build
+        run: ./Scripts/check-lockfile-drift.sh
+
       - name: Upload Intro Videos
         uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4
         with:
@@ -881,6 +884,9 @@ jobs:
             LOCKED=1
         env:
           AGE_SECRET_KEY: ${{ secrets.AGE_SECRET_KEY }}
+
+      - name: Verify lockfiles unchanged after build
+        run: ./Scripts/check-lockfile-drift.sh
 
       - name: Cleanup
         if: always()

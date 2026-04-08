@@ -137,6 +137,9 @@ jobs:
             echo "max_duration=0" >> "$GITHUB_OUTPUT"
           fi
 
+      - name: Verify lockfiles unchanged after build
+        run: ./Scripts/check-lockfile-drift.sh
+
       - name: Upload Trace Artifacts
         if: always()
         uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4
