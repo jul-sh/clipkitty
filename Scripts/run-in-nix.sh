@@ -26,7 +26,7 @@ fi
 
 # Try nix, fall back to docker
 if command -v nix >/dev/null 2>&1; then
-  exec nix develop --experimental-features 'nix-command flakes' "$ROOT_DIR#default" "${CMD_ARGS[@]}"
+  exec nix develop --no-update-lock-file --experimental-features 'nix-command flakes' "$ROOT_DIR#default" "${CMD_ARGS[@]}"
 elif command -v docker >/dev/null 2>&1; then
   DOCKER_ARGS=(-v "$ROOT_DIR:/app" -w /app)
   [ $# -eq 0 ] && DOCKER_ARGS+=(-it)

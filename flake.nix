@@ -56,6 +56,9 @@
             pkgs.swiftlint
             pkgs.swiftformat
             pkgs.ffmpeg
+            pkgs.age
+            pkgs.cmark-gfm
+            pkgs.cargo-deny
             keytap.packages.${system}.default
             asc
           ];
