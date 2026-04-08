@@ -133,8 +133,7 @@ jobs:
 
       - name: Install Tuist
         run: |
-          brew tap tuist/tuist
-          brew install --formula tuist
+          nix profile install .#tuist
           tuist version
 
       - name: Build Rust Core
@@ -586,8 +585,7 @@ jobs:
 
       - name: Install Tuist
         run: |
-          brew tap tuist/tuist
-          brew install --formula tuist
+          nix profile install .#tuist
           tuist version
 
       - name: Build Rust Core
@@ -714,8 +712,7 @@ jobs:
 
       - name: Install Tuist
         run: |
-          brew tap tuist/tuist
-          brew install --formula tuist
+          nix profile install .#tuist
           tuist version
 
       - name: Install Distribution Dependencies
@@ -828,8 +825,7 @@ jobs:
 
       - name: Install Tuist
         run: |
-          brew tap tuist/tuist
-          brew install --formula tuist
+          nix profile install .#tuist
           tuist version
 
       - name: Install Distribution Dependencies
