@@ -67,10 +67,10 @@ rust-force:
 
 # Resolve dependencies and generate Xcode project from Tuist manifest
 generate:
+	@rm -rf Tuist/.build/tuist-derived
 	@echo "Resolving dependencies..."
 	@tuist install
 	@echo "Generating Xcode project..."
-	@rm -rf Tuist/.build/tuist-derived
 	@tuist generate --no-open
 
 # Ensure signing certificates are available in keychain
