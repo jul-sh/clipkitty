@@ -48,7 +48,7 @@ ClipKitty stores everything. Finds it in milliseconds; whether you have 100 item
 
 ### Hardened Build
 
-All ClipKitty builds already run inside the macOS App Sandbox. The **Hardened** variant goes further by removing two entitlements: network access and filesystem access. macOS then enforces those constraints at the kernel level; the app literally cannot open a socket or touch a file outside its container.
+All ClipKitty builds already run inside the macOS App Sandbox. The **Hardened** variant goes further by removing two entitlements: network access and filesystem access. macOS then enforces those constraints at the kernel level; the app literally cannot open a socket or touch a file outside its container. It also never auto-updates, so you can audit a version and stick to it.
 
 That breaks a few features, which are compiled out of the hardened binary entirely:
 
