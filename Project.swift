@@ -119,11 +119,17 @@ enum MacBuildVariant: CaseIterable {
             .map(\.compileCondition).sorted().joined(separator: " ")
     }
 
-    // MARK: Sparkle — owned exclusively by the .sparkle variant
+    /// Flags for ClipKittyShared (cross-platform: link previews)
+    var sharedCompilationConditions: String {
+        capabilities.intersection([.linkPreviews])
+            .map(\.compileCondition).sorted().joined(separator: " ")
+    }
+
+    // MARK: Sparkle — linked exclusively by the .sparkle variant
 
     /// Sparkle linker flags. Only .sparkle links Sparkle; others get nothing.
-    /// SparkleUpdater is NOT a target dependency — it's only built via
-    /// scheme-level buildAction targets in sparkle-related schemes.
+    /// SparkleUpdater is a target dependency (for build graph ordering) but
+    /// linking is controlled entirely here via per-config OTHER_LDFLAGS.
     var sparkleLinkerFlags: [String] {
         switch self {
         case .sparkle:
@@ -213,6 +219,18 @@ enum MacBuildVariant: CaseIterable {
 
     func appleServicesConfiguration() -> Configuration {
         let conditions = appleServicesCompilationConditions
+        let settings: SettingsDictionary = conditions.isEmpty ? [:] : [
+            "SWIFT_ACTIVE_COMPILATION_CONDITIONS": .string(conditions),
+        ]
+        if isRelease {
+            return .release(name: configurationName, settings: settings)
+        } else {
+            return .debug(name: configurationName, settings: settings)
+        }
+    }
+
+    func sharedConfiguration() -> Configuration {
+        let conditions = sharedCompilationConditions
         let settings: SettingsDictionary = conditions.isEmpty ? [:] : [
             "SWIFT_ACTIVE_COMPILATION_CONDITIONS": .string(conditions),
         ]
@@ -436,7 +454,8 @@ let project = Project(
             settings: .settings(
                 base: [
                     "SKIP_INSTALL": "YES",
-                ]
+                ],
+                configurations: MacBuildVariant.allCases.map { $0.sharedConfiguration() }
             )
         ),
 
