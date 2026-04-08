@@ -48,7 +48,7 @@ ClipKitty stores everything. Finds it in milliseconds; whether you have 100 item
 
 ### Hardened Build
 
-I ship a **Hardened** variant for environments where "probably fine" is not a serious security model. Think corporate research machines, regulated fleets, or air-gapped setups where every entitlement is a liability.
+I ship a **Hardened** variant for environments where "probably fine" is not a serious security model. Think corporate research machines, regulated fleets, or any setup where every entitlement is a liability.
 
 - **No network access** — no link previews, no remote attestation, no auto-updates
 - **No iCloud/CloudKit sync** — clipboard history stays on the machine
