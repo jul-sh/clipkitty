@@ -56,6 +56,7 @@ create_unlocked_temp_keychain "$KEYCHAIN_PATH" "$KEYCHAIN_PASSWORD"
 if ! security find-certificate -c "Apple Worldwide Developer Relations Certification Authority" /Library/Keychains/System.keychain >/dev/null 2>&1; then
     WWDR_CERT=$(mktemp "${TMPDIR:-/tmp}/clipkitty-wwdr.XXXXXX.cer")
     curl -sLo "$WWDR_CERT" https://www.apple.com/certificateauthority/AppleWWDRCAG3.cer
+    echo "dcf21878c77f4198e4b4614f03d696d89c66c66008d4244e1b99161aac91601f  $WWDR_CERT" | shasum -a 256 --check
     sudo security add-trusted-cert -d -r unspecified -k /Library/Keychains/System.keychain "$WWDR_CERT"
 fi
 

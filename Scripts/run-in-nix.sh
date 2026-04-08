@@ -31,7 +31,7 @@ elif command -v docker >/dev/null 2>&1; then
   DOCKER_ARGS=(-v "$ROOT_DIR:/app" -w /app)
   [ $# -eq 0 ] && DOCKER_ARGS+=(-it)
   exec docker run --rm "${DOCKER_ARGS[@]}" nixos/nix \
-    nix develop --experimental-features 'nix-command flakes' .#default "${CMD_ARGS[@]//$ROOT_DIR/\/app}"
+    nix develop --no-update-lock-file --experimental-features 'nix-command flakes' .#default "${CMD_ARGS[@]//$ROOT_DIR/\/app}"
 else
   echo "Error: Neither nix nor docker is available." >&2
   exit 1

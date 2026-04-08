@@ -19,6 +19,7 @@ CONFIGURATION ?= Release
 
 # Pass LOCKED=1 in CI to enforce Cargo.lock (adds --locked to cargo commands)
 CARGO_LOCKED := $(if $(filter 1,$(LOCKED)),--locked,)
+export LOCKED
 
 # DerivedData location for deterministic output paths
 DERIVED_DATA := $(SCRIPT_DIR)/DerivedData

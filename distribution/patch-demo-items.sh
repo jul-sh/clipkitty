@@ -22,7 +22,7 @@ echo "Patching synthetic data with demo items..."
 
 # Step 1: Ensure base database has demo text items (no images)
 echo "Refreshing base database with demo text items..."
-"$PROJECT_ROOT/Scripts/run-in-nix.sh" -c "cd '$SCRIPT_DIR/rust-data-gen' && cargo run ${CARGO_LOCKED:+--locked} --release -- --demo-only --db-path ../SyntheticData.sqlite"
+"$PROJECT_ROOT/Scripts/run-in-nix.sh" -c "cd '$SCRIPT_DIR/rust-data-gen' && cargo run ${LOCKED:+--locked} --release -- --demo-only --db-path ../SyntheticData.sqlite"
 
 # Step 2: Remove any images from base DB (keep it text-only)
 echo "Stripping images from base database..."
@@ -37,7 +37,7 @@ for locale in "${LOCALES[@]}"; do
         # Copy base DB for non-English locales
         cp "$SCRIPT_DIR/SyntheticData.sqlite" "$SCRIPT_DIR/$db_name"
         # Replace English text items with localized ones
-        "$PROJECT_ROOT/Scripts/run-in-nix.sh" -c "cd '$SCRIPT_DIR/rust-data-gen' && cargo run ${CARGO_LOCKED:+--locked} --release -- --demo-only --locale $locale --db-path ../$db_name"
+        "$PROJECT_ROOT/Scripts/run-in-nix.sh" -c "cd '$SCRIPT_DIR/rust-data-gen' && cargo run ${LOCKED:+--locked} --release -- --demo-only --locale $locale --db-path ../$db_name"
     fi
 
     # Inject images for this locale

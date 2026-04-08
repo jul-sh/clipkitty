@@ -10,6 +10,7 @@ NIX_SHELL := $(PROJECT_ROOT)/Scripts/run-in-nix.sh -c
 
 # Pass LOCKED=1 in CI to enforce Cargo.lock (adds --locked to cargo commands)
 CARGO_LOCKED := $(if $(filter 1,$(LOCKED)),--locked,)
+export LOCKED
 
 APP_NAME := ClipKitty
 DERIVED_DATA := $(PROJECT_ROOT)/DerivedData
