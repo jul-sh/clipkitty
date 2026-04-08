@@ -34,6 +34,9 @@ jobs:
         with:
           lfs: true
 
+      - name: Verify pinned actions
+        run: ./Scripts/check-pinned-actions.sh
+
       - name: Install Nix
         uses: DeterminateSystems/nix-installer-action@b66b36319cc6fde4ea85edd583b088c65d6b8710 # main 2026-04-08
 

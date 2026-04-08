@@ -19,6 +19,9 @@ jobs:
         with:
           fetch-depth: 0
 
+      - name: Verify pinned actions
+        run: ./Scripts/check-pinned-actions.sh
+
       - name: Find target commit and sync release
         run: |
           git config user.name "github-actions[bot]"
