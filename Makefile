@@ -31,7 +31,15 @@ CARGO_TARGET_DIR := $(dir $(abspath $(shell git rev-parse --git-common-dir 2>/de
 export CARGO_TARGET_DIR
 
 # Rust build marker and outputs
+# Separate markers for universal vs host-only builds so switching UNIVERSAL
+# correctly triggers a rebuild instead of reusing a mismatched libpurr.a.
+ifeq ($(UNIVERSAL),1)
+RUST_MARKER := .make/rust-universal.marker
+RUST_STALE_MARKER := .make/rust.marker
+else
 RUST_MARKER := .make/rust.marker
+RUST_STALE_MARKER := .make/rust-universal.marker
+endif
 RUST_LIB := Sources/ClipKittyRust/libpurr.a
 
 .PHONY: all clean rust rust-force rust-cache-clean rust-cache-maybe-clean generate build signing api-key provisioning provisioning-secrets sign list-identities run run-perf test unittest uitest rust-test perf-test perf-db perf-bench
@@ -44,6 +52,7 @@ $(RUST_MARKER): $(shell git ls-files purr 2>/dev/null)
 	@echo "Building Rust core..."
 	@$(NIX_SHELL) "cd purr && MACOSX_DEPLOYMENT_TARGET=14.0 UNIVERSAL=$(UNIVERSAL) cargo run --release --bin generate-bindings"
 	@mkdir -p .make
+	@rm -f $(RUST_STALE_MARKER)
 	@touch $(RUST_MARKER)
 	@git rev-parse HEAD:purr > .make/rust-tree-hash 2>/dev/null || true
 
@@ -61,6 +70,7 @@ generate:
 	@echo "Resolving dependencies..."
 	@tuist install
 	@echo "Generating Xcode project..."
+	@rm -rf Tuist/.build/tuist-derived
 	@tuist generate --no-open
 
 # Ensure signing certificates are available in keychain
