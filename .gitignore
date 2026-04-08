@@ -1,4 +1,5 @@
 # Swift / Xcode
+Package.resolved  # Xcode-generated stray state; authoritative lockfiles are Tuist/ and distribution/SparkleUpdater/
 .build/
 .make/
 build/

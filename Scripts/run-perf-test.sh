@@ -132,7 +132,7 @@ if [ "$SKIP_DB_GEN" = false ]; then
     if [ ! -f "$PERF_DB" ] || ! compgen -G "$PERF_FIXTURE_DIR/tantivy_index_*" > /dev/null; then
         echo ">>> Generating performance test database and index..."
         # Use native Rust code to ensure schema compatibility
-        "$PROJECT_ROOT/Scripts/run-in-nix.sh" -c "cd purr && cargo run --release --bin generate-perf-db"
+        "$PROJECT_ROOT/Scripts/run-in-nix.sh" -c "cd purr && cargo run ${LOCKED:+--locked} --release --bin generate-perf-db"
     else
         echo ">>> Using existing performance database and index"
     fi

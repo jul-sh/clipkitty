@@ -2,6 +2,7 @@
 name = "purr-sync"
 version = "0.1.0"
 edition = "2021"
+publish = false
 
 [dependencies]
 rusqlite = { version = "*", features = ["bundled", "modern_sqlite"] }

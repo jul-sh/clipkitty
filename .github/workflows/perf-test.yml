@@ -30,14 +30,27 @@ jobs:
 
     steps:
       - name: Checkout
-        uses: actions/checkout@v4
+        uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5 # v4
         with:
           lfs: true
+
+      - name: Verify pinned actions
+        run: ./Scripts/check-pinned-actions.sh
+
+      - name: Install Nix
+        uses: DeterminateSystems/nix-installer-action@b66b36319cc6fde4ea85edd583b088c65d6b8710 # main 2026-04-08
+        with:
+          source-tag: v3.17.3
+
+      - name: Install CI tools from Nix
+        run: |
+          nix profile install --no-update-lock-file --inputs-from . nixpkgs#age
+          nix profile install --no-update-lock-file .#tuist
+          tuist version
 
       - name: Decrypt secrets
         id: secrets
         run: |
-          brew install age
           echo "$AGE_SECRET_KEY" > /tmp/age-key.txt
           chmod 600 /tmp/age-key.txt
           for f in secrets/*.age; do
@@ -55,39 +68,34 @@ jobs:
           AGE_SECRET_KEY: ${{ secrets.AGE_SECRET_KEY }}
 
       - name: Setup Swift
-        uses: swift-actions/setup-swift@v2
+        uses: swift-actions/setup-swift@7ca6abe6b3b0e8b5421b88be48feee39cbf52c6a # v2
         with:
           swift-version: "6.2"
 
       - name: Install Apple Certificate
-        uses: apple-actions/import-codesign-certs@v3
+        uses: apple-actions/import-codesign-certs@63fff01cd422d4b7b855d40ca1e9d34d2de9427d # v3
         with:
           p12-file-base64: ${{ steps.secrets.outputs.MACOS_P12_BASE64 }}
           p12-password: ${{ steps.secrets.outputs.MACOS_P12_PASSWORD }}
 
-      - name: Install Nix
-        uses: DeterminateSystems/nix-installer-action@main
-
-      - name: Install Dependencies
-        run: |
-          brew tap tuist/tuist
-          brew install --formula tuist
-
       - name: Build Rust Core
-        run: make rust
+        run: make rust LOCKED=1
 
       - name: Generate Xcode Project
         run: make generate
 
+      - name: Verify lockfiles unchanged
+        run: ./Scripts/check-lockfile-drift.sh
+
       - name: Build App (Release)
-        run: make build CONFIGURATION=Release UNIVERSAL=1 SKIP_SIGNING=1
+        run: make build CONFIGURATION=Release UNIVERSAL=1 SKIP_SIGNING=1 LOCKED=1
         env:
           AGE_SECRET_KEY: ${{ secrets.AGE_SECRET_KEY }}
 
       - name: Generate Performance Database
         run: |
           # Use native Rust code to ensure schema compatibility
-          ./Scripts/run-in-nix.sh -c "cd purr && cargo run --release --bin generate-perf-db"
+          ./Scripts/run-in-nix.sh -c "cd purr && cargo run --locked --release --bin generate-perf-db"
 
       - name: Run Performance Tests
         id: perf-test
@@ -131,9 +139,12 @@ jobs:
             echo "max_duration=0" >> "$GITHUB_OUTPUT"
           fi
 
+      - name: Verify lockfiles unchanged after build
+        run: ./Scripts/check-lockfile-drift.sh
+
       - name: Upload Trace Artifacts
         if: always()
-        uses: actions/upload-artifact@v4
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4
         with:
           name: performance-traces
           path: |
@@ -144,7 +155,7 @@ jobs:
 
       - name: Comment PR with Results
         if: github.event_name == 'pull_request' && always()
-        uses: actions/github-script@v7
+        uses: actions/github-script@f28e40c7f34bde8b3046d885e986cb6290c5673b # v7
         with:
           script: |
             const fs = require('fs');

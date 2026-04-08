@@ -44,7 +44,7 @@ if [[ ! -x "$GENERATE_KEYS" ]]; then
 fi
 
 if ! command -v age &>/dev/null; then
-    echo "Error: age CLI not found. Install with: brew install age"
+    echo "Error: age CLI not found. Enter the Nix dev shell (nix develop) or run: nix profile install nixpkgs#age"
     exit 1
 fi
 

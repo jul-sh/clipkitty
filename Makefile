@@ -17,6 +17,10 @@ BUILD_NUMBER ?= $(VERSION)
 # Build configuration: Debug, Release (DMG), or AppStore (sandboxed)
 CONFIGURATION ?= Release
 
+# Pass LOCKED=1 in CI to enforce Cargo.lock (adds --locked to cargo commands)
+CARGO_LOCKED := $(if $(filter 1,$(LOCKED)),--locked,)
+export LOCKED
+
 # DerivedData location for deterministic output paths
 DERIVED_DATA := $(SCRIPT_DIR)/DerivedData
 
@@ -50,7 +54,7 @@ all: rust generate build
 # This marker is shared with Xcode pre-build actions for consistency
 $(RUST_MARKER): $(shell git ls-files purr 2>/dev/null)
 	@echo "Building Rust core..."
-	@$(NIX_SHELL) "cd purr && MACOSX_DEPLOYMENT_TARGET=14.0 UNIVERSAL=$(UNIVERSAL) cargo run --release --bin generate-bindings"
+	@$(NIX_SHELL) "cd purr && MACOSX_DEPLOYMENT_TARGET=14.0 UNIVERSAL=$(UNIVERSAL) cargo run $(CARGO_LOCKED) --release --bin generate-bindings"
 	@mkdir -p .make
 	@rm -f $(RUST_STALE_MARKER)
 	@touch $(RUST_MARKER)
@@ -208,7 +212,7 @@ test: rust-test unittest uitest
 # Run Rust tests
 rust-test:
 	@echo "Running Rust tests..."
-	@$(NIX_SHELL) "cd purr && cargo test"
+	@$(NIX_SHELL) "cd purr && cargo test $(CARGO_LOCKED)"
 
 # Run Swift unit tests (requires workspace for STTextKitPlus dependency)
 # Usage: make unittest [TEST=testName]
@@ -242,13 +246,13 @@ list-identities:
 # Generate the synthetic benchmark database and matching index
 perf-db:
 	@echo "Generating performance test database..."
-	@$(NIX_SHELL) "cd purr && cargo run --release --bin generate-perf-db"
+	@$(NIX_SHELL) "cd purr && cargo run $(CARGO_LOCKED) --release --bin generate-perf-db"
 
 # Run the maintained Rust search benchmark runner
 # Usage: make perf-bench [BENCH_ARGS="--iterations 20 --warmup 5 --query function"]
 perf-bench: perf-db
 	@echo "Running search benchmark..."
-	@$(NIX_SHELL) "cd purr && cargo run --release --bin run_search_bench -- $(BENCH_ARGS)"
+	@$(NIX_SHELL) "cd purr && cargo run $(CARGO_LOCKED) --release --bin run_search_bench -- $(BENCH_ARGS)"
 
 # Run performance tests with Instruments tracing
 # Usage: make perf-test [PERF_ARGS="--skip-build --fail-on-hangs"]

@@ -1,6 +1,7 @@
 #!/bin/bash
-# Installs Homebrew dependencies for ClipKitty development
-# Skips packages that are already installed
+# Local Homebrew fallback for ClipKitty development dependencies.
+# CI uses Nix (see flake.nix); this script is for local dev without Nix.
+# Skips packages that are already installed.
 
 set -e
 
@@ -8,7 +9,6 @@ DEPS=(
     age           # For decrypting secrets (provisioning profile, API keys)
     create-dmg    # For building DMG installers
     ffmpeg        # For video recording and processing
-    cliclick      # For UI automation in preview video recording
 )
 
 echo "=== Installing ClipKitty Dependencies ==="

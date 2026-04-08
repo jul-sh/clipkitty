@@ -8,6 +8,10 @@ DIST_DIR := $(abspath $(dir $(lastword $(MAKEFILE_LIST))))
 # Use Nix wrapper for Rust commands only (Swift needs native Xcode tools)
 NIX_SHELL := $(PROJECT_ROOT)/Scripts/run-in-nix.sh -c
 
+# Pass LOCKED=1 in CI to enforce Cargo.lock (adds --locked to cargo commands)
+CARGO_LOCKED := $(if $(filter 1,$(LOCKED)),--locked,)
+export LOCKED
+
 APP_NAME := ClipKitty
 DERIVED_DATA := $(PROJECT_ROOT)/DerivedData
 
@@ -177,7 +181,7 @@ appstore-publish:
 # Marketing Assets (Screenshots & Preview Video)
 # ============================================================================
 # Prerequisites:
-#   1. ffmpeg: brew install ffmpeg
+#   1. ffmpeg (available in the Nix dev shell: nix develop)
 #   2. Synthetic data with demo items: make -C distribution synthetic-data
 #
 # Usage:
@@ -191,7 +195,7 @@ appstore-publish:
 # Run distribution/patch-demo-items.sh after to add demo-specific items
 synthetic-data:
 	@echo "Generating synthetic data..."
-	@$(NIX_SHELL) "cd $(PROJECT_ROOT) && cargo run -p rust-data-gen --release -- --db-path $(DIST_DIR)/SyntheticData.sqlite"
+	@$(NIX_SHELL) "cd $(PROJECT_ROOT) && cargo run $(CARGO_LOCKED) -p rust-data-gen --release -- --db-path $(DIST_DIR)/SyntheticData.sqlite"
 	@echo "Synthetic data generated at distribution/SyntheticData.sqlite"
 	@echo "Run ./distribution/patch-demo-items.sh to add demo items"
 
@@ -287,7 +291,7 @@ marketing: marketing-screenshots-localized
 video-data:
 	@echo "Generating video database..."
 	@cp $(DIST_DIR)/SyntheticData.sqlite $(DIST_DIR)/SyntheticData_video.sqlite
-	@$(NIX_SHELL) "cd $(PROJECT_ROOT) && cargo run -p rust-data-gen --release -- --video-only --db-path $(DIST_DIR)/SyntheticData_video.sqlite"
+	@$(NIX_SHELL) "cd $(PROJECT_ROOT) && cargo run $(CARGO_LOCKED) -p rust-data-gen --release -- --video-only --db-path $(DIST_DIR)/SyntheticData_video.sqlite"
 	@echo "Injecting images into video database..."
 	@python3 $(DIST_DIR)/inject-images.py $(DIST_DIR)/SyntheticData_video.sqlite en
 	@echo "Video database generated at distribution/SyntheticData_video.sqlite"
@@ -314,7 +318,7 @@ intro-video-localized:
 		else \
 			cp $(DIST_DIR)/SyntheticData_$$locale.sqlite $(DIST_DIR)/SyntheticData_video.sqlite; \
 		fi; \
-		$(NIX_SHELL) "cd $(PROJECT_ROOT) && cargo run -p rust-data-gen --release -- --video-only --locale $$locale --db-path $(DIST_DIR)/SyntheticData_video.sqlite"; \
+		$(NIX_SHELL) "cd $(PROJECT_ROOT) && cargo run $(CARGO_LOCKED) -p rust-data-gen --release -- --video-only --locale $$locale --db-path $(DIST_DIR)/SyntheticData_video.sqlite"; \
 		python3 $(DIST_DIR)/inject-images.py $(DIST_DIR)/SyntheticData_video.sqlite $$locale; \
 		mkdir -p $(PROJECT_ROOT)/marketing/$$locale; \
 		$(DIST_DIR)/prepare-screenshot-environment.sh \

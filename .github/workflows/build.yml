@@ -19,12 +19,25 @@ jobs:
 
     steps:
       - name: Checkout
-        uses: actions/checkout@v4
+        uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5 # v4
         with:
           lfs: true
 
+      - name: Install Nix
+        uses: DeterminateSystems/nix-installer-action@b66b36319cc6fde4ea85edd583b088c65d6b8710 # main 2026-04-08
+        with:
+          source-tag: v3.17.3
+
+      - name: Verify lockfile integrity
+        run: |
+          ./Scripts/check-pinned-actions.sh
+          ./Scripts/check-lockfile-drift.sh
+
+      - name: Run Rust supply chain scan
+        run: ./Scripts/run-in-nix.sh -c "cargo deny check"
+
       - name: Run Rust library tests
-        run: cargo test --manifest-path purr/Cargo.toml --lib
+        run: ./Scripts/run-in-nix.sh -c "cargo test --manifest-path purr/Cargo.toml --lib --locked"
 
   build:
     needs: rust-tests
@@ -34,7 +47,7 @@ jobs:
 
     steps:
       - name: Checkout
-        uses: actions/checkout@v4
+        uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5 # v4
         with:
           lfs: true
           fetch-depth: 0  # Full history for commit count versioning
@@ -44,10 +57,22 @@ jobs:
           defaults write -g AppleShowScrollBars -string WhenScrolling
           killall cfprefsd || true
 
+      - name: Install Nix
+        uses: DeterminateSystems/nix-installer-action@b66b36319cc6fde4ea85edd583b088c65d6b8710 # main 2026-04-08
+        with:
+          source-tag: v3.17.3
+
+      - name: Install CI tools from Nix
+        run: |
+          # Install tools from flake-locked nixpkgs (pinned via flake.lock)
+          nix profile install --no-update-lock-file --inputs-from . nixpkgs#age
+          nix profile install --no-update-lock-file --inputs-from . nixpkgs#cmark-gfm
+          nix profile install --no-update-lock-file .#tuist
+          tuist version
+
       - name: Decrypt secrets
         id: secrets
         run: |
-          brew install age
           echo "$AGE_SECRET_KEY" > /tmp/age-key.txt
           chmod 600 /tmp/age-key.txt
           for f in secrets/*.age; do
@@ -100,19 +125,19 @@ jobs:
           echo "Final release version: $VERSION"
 
       - name: Setup Swift
-        uses: swift-actions/setup-swift@v2
+        uses: swift-actions/setup-swift@7ca6abe6b3b0e8b5421b88be48feee39cbf52c6a # v2
         with:
           swift-version: "6.2"
 
       # 1. Install Apple Certificates for Signing
       - name: Install Developer ID Certificate
-        uses: apple-actions/import-codesign-certs@v3
+        uses: apple-actions/import-codesign-certs@63fff01cd422d4b7b855d40ca1e9d34d2de9427d # v3
         with:
           p12-file-base64: ${{ steps.secrets.outputs.MACOS_P12_BASE64 }}
           p12-password: ${{ steps.secrets.outputs.MACOS_P12_PASSWORD }}
 
       - name: Install Apple Development Certificate
-        uses: apple-actions/import-codesign-certs@v3
+        uses: apple-actions/import-codesign-certs@63fff01cd422d4b7b855d40ca1e9d34d2de9427d # v3
         with:
           p12-file-base64: ${{ steps.secrets.outputs.MAC_DEV_P12_BASE64 }}
           p12-password: ${{ steps.secrets.outputs.MAC_DEV_P12_PASSWORD }}
@@ -125,22 +150,14 @@ jobs:
             ~/Library/Keychains/dev_signing.keychain-db \
             ~/Library/Keychains/login.keychain-db
 
-      - name: Install Nix
-        uses: DeterminateSystems/nix-installer-action@main
-
-      - name: Install Distribution Dependencies
-        run: ./distribution/install-deps.sh
-
-      - name: Install Tuist
-        run: |
-          nix profile install .#tuist
-          tuist version
-
       - name: Build Rust Core
-        run: make rust UNIVERSAL=1
+        run: make rust UNIVERSAL=1 LOCKED=1
 
       - name: Generate Xcode Project
         run: make generate
+
+      - name: Verify lockfiles unchanged
+        run: ./Scripts/check-lockfile-drift.sh
 
       - name: Prepare Xcode Authentication
         id: xcode-auth
@@ -154,12 +171,12 @@ jobs:
           AGE_SECRET_KEY: ${{ secrets.AGE_SECRET_KEY }}
 
       - name: Build App (SparkleRelease)
-        run: make build CONFIGURATION=SparkleRelease UNIVERSAL=1 SKIP_SIGNING=1
+        run: make build CONFIGURATION=SparkleRelease UNIVERSAL=1 SKIP_SIGNING=1 LOCKED=1
         env:
           AGE_SECRET_KEY: ${{ secrets.AGE_SECRET_KEY }}
 
       - name: Build App (AppStore)
-        run: make build CONFIGURATION=AppStore UNIVERSAL=1 SKIP_SIGNING=1
+        run: make build CONFIGURATION=AppStore UNIVERSAL=1 SKIP_SIGNING=1 LOCKED=1
         env:
           AGE_SECRET_KEY: ${{ secrets.AGE_SECRET_KEY }}
 
@@ -231,6 +248,8 @@ jobs:
           ls -lh marketing-ios/*/screenshot_*.png 2>/dev/null || echo "::warning::No iOS screenshots were generated"
 
       - name: Run UI Tests
+        env:
+          LOCKED: "1"
         run: |
           set +e
           xcodebuild test \
@@ -256,7 +275,7 @@ jobs:
 
       - name: Upload Test Results
         if: always()
-        uses: actions/upload-artifact@v4
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4
         with:
           name: TestResults
           path: |
@@ -274,7 +293,7 @@ jobs:
 
       - name: Generate Marketing Screenshots
         run: |
-          make -C distribution marketing-screenshots-localized UNIVERSAL=1 SKIP_SIGNING=1
+          make -C distribution marketing-screenshots-localized UNIVERSAL=1 SKIP_SIGNING=1 LOCKED=1
           ls -lh marketing/*/screenshot_*.png
         env:
           AGE_SECRET_KEY: ${{ secrets.AGE_SECRET_KEY }}
@@ -362,12 +381,7 @@ jobs:
 
       - name: Install Sparkle CLI Tools
         if: github.event_name == 'push' && (github.ref == 'refs/heads/main' || github.ref == 'refs/heads/release')
-        run: |
-          SPARKLE_VERSION="2.9.0"
-          curl -sL "https://github.com/sparkle-project/Sparkle/releases/download/${SPARKLE_VERSION}/Sparkle-${SPARKLE_VERSION}.tar.xz" -o /tmp/sparkle.tar.xz
-          mkdir -p /tmp/sparkle
-          tar -xf /tmp/sparkle.tar.xz -C /tmp/sparkle
-          echo "/tmp/sparkle/bin" >> "$GITHUB_PATH"
+        run: ./Scripts/install-sparkle-cli.sh
 
       - name: Sign DMG with EdDSA
         if: github.event_name == 'push' && (github.ref == 'refs/heads/main' || github.ref == 'refs/heads/release')
@@ -382,8 +396,11 @@ jobs:
         env:
           SPARKLE_EDDSA_KEY: ${{ steps.secrets.outputs.SPARKLE_EDDSA_KEY }}
 
+      - name: Verify lockfiles unchanged before attestation
+        run: ./Scripts/check-lockfile-drift.sh
+
       - name: Attest Build Provenance
-        uses: actions/attest-build-provenance@v2
+        uses: actions/attest-build-provenance@e8998f949152b193b063cb0ec769d69d929409be # v2
         with:
           subject-path: |
             ClipKitty.dmg
@@ -448,19 +465,19 @@ jobs:
           HOMEBREW_TAP_TOKEN: ${{ steps.secrets.outputs.HOMEBREW_TAP_TOKEN }}
 
       - name: Upload Artifacts
-        uses: actions/upload-artifact@v4
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4
         with:
           name: ClipKitty-Builds
           path: ClipKitty.dmg
 
       - name: Upload AppStore Build
-        uses: actions/upload-artifact@v4
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4
         with:
           name: ClipKitty-AppStore
           path: ClipKitty-AppStore.zip
 
       - name: Upload Screenshot Artifacts
-        uses: actions/upload-artifact@v4
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4
         with:
           name: assets
           path: |
@@ -468,7 +485,7 @@ jobs:
             marketing/*/screenshot_*.png
 
       - name: Upload iOS Screenshot Artifacts
-        uses: actions/upload-artifact@v4
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4
         with:
           name: ios-assets
           path: marketing-ios/*/screenshot_*.png
@@ -516,8 +533,7 @@ jobs:
             xmllint --noout appcast.xml
           fi
 
-          # Generate landing page from README.md
-          brew install cmark-gfm 2>/dev/null || true
+          # Generate landing page from README.md (cmark-gfm installed via Nix)
           "$GITHUB_WORKSPACE/distribution/generate-landing-page.sh" > index.html
 
           git add icon.png marketing_1.png marketing_2.png marketing_3.png index.html
@@ -548,14 +564,25 @@ jobs:
 
     steps:
       - name: Checkout
-        uses: actions/checkout@v4
+        uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5 # v4
         with:
           lfs: true
           fetch-depth: 0
 
+      - name: Install Nix
+        uses: DeterminateSystems/nix-installer-action@b66b36319cc6fde4ea85edd583b088c65d6b8710 # main 2026-04-08
+        with:
+          source-tag: v3.17.3
+
+      - name: Install CI tools from Nix
+        run: |
+          nix profile install --no-update-lock-file --inputs-from . nixpkgs#age
+          nix profile install --no-update-lock-file --inputs-from . nixpkgs#ffmpeg
+          nix profile install --no-update-lock-file .#tuist
+          tuist version
+
       - name: Decrypt secrets
         run: |
-          brew install age
           echo "$AGE_SECRET_KEY" > /tmp/age-key.txt
           chmod 600 /tmp/age-key.txt
           for f in secrets/*.age; do
@@ -573,26 +600,18 @@ jobs:
           AGE_SECRET_KEY: ${{ secrets.AGE_SECRET_KEY }}
 
       - name: Setup Swift
-        uses: swift-actions/setup-swift@v2
+        uses: swift-actions/setup-swift@7ca6abe6b3b0e8b5421b88be48feee39cbf52c6a # v2
         with:
           swift-version: "6.2"
 
-      - name: Install Nix
-        uses: DeterminateSystems/nix-installer-action@main
-
-      - name: Install Distribution Dependencies
-        run: ./distribution/install-deps.sh
-
-      - name: Install Tuist
-        run: |
-          nix profile install .#tuist
-          tuist version
-
       - name: Build Rust Core
-        run: make rust UNIVERSAL=1
+        run: make rust UNIVERSAL=1 LOCKED=1
 
       - name: Generate Xcode Project
         run: make generate
+
+      - name: Verify lockfiles unchanged
+        run: ./Scripts/check-lockfile-drift.sh
 
       - name: Prepare API Key for Automatic Signing
         run: |
@@ -602,12 +621,12 @@ jobs:
           AGE_SECRET_KEY: ${{ secrets.AGE_SECRET_KEY }}
 
       - name: Build App
-        run: make build UNIVERSAL=1 SKIP_SIGNING=1
+        run: make build UNIVERSAL=1 SKIP_SIGNING=1 LOCKED=1
         env:
           AGE_SECRET_KEY: ${{ secrets.AGE_SECRET_KEY }}
 
       - name: Generate Localized Demo Databases
-        run: ./distribution/patch-demo-items.sh
+        run: LOCKED=1 ./distribution/patch-demo-items.sh
 
       - name: Create Virtual Retina Display
         run: |
@@ -618,7 +637,7 @@ jobs:
           sleep 5
 
       - name: Generate Localized Intro Videos
-        run: make -C distribution intro-video-localized UNIVERSAL=1 SKIP_SIGNING=1
+        run: make -C distribution intro-video-localized UNIVERSAL=1 SKIP_SIGNING=1 LOCKED=1
         env:
           AGE_SECRET_KEY: ${{ secrets.AGE_SECRET_KEY }}
 
@@ -626,8 +645,11 @@ jobs:
         if: always()
         run: kill "$(cat /tmp/retina-display.pid 2>/dev/null)" 2>/dev/null || true
 
+      - name: Verify lockfiles unchanged after build
+        run: ./Scripts/check-lockfile-drift.sh
+
       - name: Upload Intro Videos
-        uses: actions/upload-artifact@v4
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4
         with:
           name: intro-videos
           path: marketing/*/intro_video.mov
@@ -640,14 +662,25 @@ jobs:
 
     steps:
       - name: Checkout
-        uses: actions/checkout@v4
+        uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5 # v4
         with:
           fetch-depth: 0  # Full history for commit count versioning
+
+      - name: Install Nix
+        uses: DeterminateSystems/nix-installer-action@b66b36319cc6fde4ea85edd583b088c65d6b8710 # main 2026-04-08
+        with:
+          source-tag: v3.17.3
+
+      - name: Install CI tools from Nix
+        run: |
+          nix profile install --no-update-lock-file --inputs-from . nixpkgs#age
+          nix profile install --no-update-lock-file .#tuist
+          nix profile install --no-update-lock-file .#asc
+          tuist version
 
       - name: Decrypt secrets
         id: secrets
         run: |
-          brew install age
           echo "$AGE_SECRET_KEY" > /tmp/age-key.txt
           chmod 600 /tmp/age-key.txt
           for f in secrets/*.age; do
@@ -665,23 +698,24 @@ jobs:
           AGE_SECRET_KEY: ${{ secrets.AGE_SECRET_KEY }}
 
       - name: Setup Swift
-        uses: swift-actions/setup-swift@v2
+        uses: swift-actions/setup-swift@7ca6abe6b3b0e8b5421b88be48feee39cbf52c6a # v2
         with:
           swift-version: "6.2"
 
       - name: Install Apple WWDR Intermediate Certificate
         run: |
           curl -sLo "$RUNNER_TEMP/AppleWWDRCAG3.cer" https://www.apple.com/certificateauthority/AppleWWDRCAG3.cer
+          echo "dcf21878c77f4198e4b4614f03d696d89c66c66008d4244e1b99161aac91601f  $RUNNER_TEMP/AppleWWDRCAG3.cer" | shasum -a 256 --check
           sudo security add-trusted-cert -d -r unspecified -k /Library/Keychains/System.keychain "$RUNNER_TEMP/AppleWWDRCAG3.cer"
 
       - name: Install App Store Installer Certificate
-        uses: apple-actions/import-codesign-certs@v3
+        uses: apple-actions/import-codesign-certs@63fff01cd422d4b7b855d40ca1e9d34d2de9427d # v3
         with:
           p12-file-base64: ${{ steps.secrets.outputs.APPSTORE_CERT_BASE64 }}
           p12-password: ${{ steps.secrets.outputs.P12_PASSWORD }}
 
       - name: Install App Store Application Certificate
-        uses: apple-actions/import-codesign-certs@v3
+        uses: apple-actions/import-codesign-certs@63fff01cd422d4b7b855d40ca1e9d34d2de9427d # v3
         with:
           p12-file-base64: ${{ steps.secrets.outputs.APPSTORE_APP_CERT_BASE64 }}
           p12-password: ${{ steps.secrets.outputs.P12_PASSWORD }}
@@ -707,19 +741,8 @@ jobs:
             ~/Library/Keychains/app_signing.keychain-db \
             ~/Library/Keychains/login.keychain-db
 
-      - name: Install Nix
-        uses: DeterminateSystems/nix-installer-action@main
-
-      - name: Install Tuist
-        run: |
-          nix profile install .#tuist
-          tuist version
-
-      - name: Install Distribution Dependencies
-        run: ./distribution/install-deps.sh
-
       - name: Download marketing screenshots
-        uses: actions/download-artifact@v4
+        uses: actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093 # v4
         with:
           name: assets
           path: .
@@ -741,12 +764,16 @@ jobs:
             VERSION="${VERSION}" \
             BUILD_NUMBER="${COMMIT_COUNT}" \
             UNIVERSAL=1 \
-            SKIP_SIGNING=1
+            SKIP_SIGNING=1 \
+            LOCKED=1
         env:
           AGE_SECRET_KEY: ${{ secrets.AGE_SECRET_KEY }}
 
+      - name: Verify lockfiles unchanged
+        run: ./Scripts/check-lockfile-drift.sh
+
       - name: Attest App Store Build Provenance
-        uses: actions/attest-build-provenance@v2
+        uses: actions/attest-build-provenance@e8998f949152b193b063cb0ec769d69d929409be # v2
         with:
           subject-path: |
             ClipKitty.pkg
@@ -764,14 +791,25 @@ jobs:
 
     steps:
       - name: Checkout
-        uses: actions/checkout@v4
+        uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5 # v4
         with:
           fetch-depth: 0
+
+      - name: Install Nix
+        uses: DeterminateSystems/nix-installer-action@b66b36319cc6fde4ea85edd583b088c65d6b8710 # main 2026-04-08
+        with:
+          source-tag: v3.17.3
+
+      - name: Install CI tools from Nix
+        run: |
+          nix profile install --no-update-lock-file --inputs-from . nixpkgs#age
+          nix profile install --no-update-lock-file .#tuist
+          nix profile install --no-update-lock-file .#asc
+          tuist version
 
       - name: Decrypt secrets
         id: secrets
         run: |
-          brew install age
           echo "$AGE_SECRET_KEY" > /tmp/age-key.txt
           chmod 600 /tmp/age-key.txt
           for f in secrets/*.age; do
@@ -789,17 +827,18 @@ jobs:
           AGE_SECRET_KEY: ${{ secrets.AGE_SECRET_KEY }}
 
       - name: Setup Swift
-        uses: swift-actions/setup-swift@v2
+        uses: swift-actions/setup-swift@7ca6abe6b3b0e8b5421b88be48feee39cbf52c6a # v2
         with:
           swift-version: "6.2"
 
       - name: Install Apple WWDR Intermediate Certificate
         run: |
           curl -sLo "$RUNNER_TEMP/AppleWWDRCAG3.cer" https://www.apple.com/certificateauthority/AppleWWDRCAG3.cer
+          echo "dcf21878c77f4198e4b4614f03d696d89c66c66008d4244e1b99161aac91601f  $RUNNER_TEMP/AppleWWDRCAG3.cer" | shasum -a 256 --check
           sudo security add-trusted-cert -d -r unspecified -k /Library/Keychains/System.keychain "$RUNNER_TEMP/AppleWWDRCAG3.cer"
 
       - name: Install iOS Distribution Certificate
-        uses: apple-actions/import-codesign-certs@v3
+        uses: apple-actions/import-codesign-certs@63fff01cd422d4b7b855d40ca1e9d34d2de9427d # v3
         with:
           p12-file-base64: ${{ steps.secrets.outputs.IOS_DIST_CERT_BASE64 }}
           p12-password: ${{ steps.secrets.outputs.IOS_DIST_P12_PASSWORD }}
@@ -820,19 +859,8 @@ jobs:
           APP_PROFILE: ${{ steps.secrets.outputs.IOS_APPSTORE_PROFILE_BASE64 }}
           SHARE_PROFILE: ${{ steps.secrets.outputs.IOS_SHARE_PROFILE_BASE64 }}
 
-      - name: Install Nix
-        uses: DeterminateSystems/nix-installer-action@main
-
-      - name: Install Tuist
-        run: |
-          nix profile install .#tuist
-          tuist version
-
-      - name: Install Distribution Dependencies
-        run: ./distribution/install-deps.sh
-
       - name: Download iOS screenshots
-        uses: actions/download-artifact@v4
+        uses: actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093 # v4
         with:
           name: ios-assets
           path: marketing-ios
@@ -846,10 +874,13 @@ jobs:
           AGE_SECRET_KEY: ${{ secrets.AGE_SECRET_KEY }}
 
       - name: Build Rust Core
-        run: make rust
+        run: make rust LOCKED=1
 
       - name: Generate Xcode Project
         run: make generate
+
+      - name: Verify lockfiles unchanged
+        run: ./Scripts/check-lockfile-drift.sh
 
       - name: Build and Publish iOS to App Store Connect
         run: |
@@ -859,9 +890,13 @@ jobs:
           VERSION="${major}.${minor}.${COMMIT_COUNT}"
           make -C distribution ios-appstore-publish \
             VERSION="${VERSION}" \
-            BUILD_NUMBER="${COMMIT_COUNT}"
+            BUILD_NUMBER="${COMMIT_COUNT}" \
+            LOCKED=1
         env:
           AGE_SECRET_KEY: ${{ secrets.AGE_SECRET_KEY }}
+
+      - name: Verify lockfiles unchanged after build
+        run: ./Scripts/check-lockfile-drift.sh
 
       - name: Cleanup
         if: always()

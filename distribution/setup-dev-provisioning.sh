@@ -7,7 +7,7 @@
 #   ./distribution/setup-dev-provisioning.sh
 #
 # Requires:
-#   - asc CLI (`./distribution/install-deps.sh`)
+#   - asc CLI (enter the Nix dev shell: `nix develop`)
 #   - age secrets for ASC auth and MAC_DEV_P12_*
 
 set -euo pipefail
@@ -73,7 +73,7 @@ fi
 
 if ! command -v asc >/dev/null 2>&1; then
     echo "Error: asc CLI is required to regenerate the Mac Development provisioning profile." >&2
-    echo "Run ./distribution/install-deps.sh and try again." >&2
+    echo "Enter the Nix dev shell (nix develop) or run: nix profile install .#asc" >&2
     exit 1
 fi
 
