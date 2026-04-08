@@ -138,7 +138,7 @@ jobs:
           tuist version
 
       - name: Build Rust Core
-        run: make rust
+        run: make rust UNIVERSAL=1
 
       - name: Generate Xcode Project
         run: make generate
@@ -591,7 +591,7 @@ jobs:
           tuist version
 
       - name: Build Rust Core
-        run: make rust
+        run: make rust UNIVERSAL=1
 
       - name: Generate Xcode Project
         run: make generate
