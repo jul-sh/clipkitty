@@ -39,7 +39,7 @@ let project = Project(
             deploymentTargets: .multiplatform(iOS: "26.0", macOS: "14.0"),
             sources: ["Sources/ClipKittyRust/ClipKittyRustFFI.c"],
             headers: .headers(
-                public: ["Sources/ClipKittyRust/purrFFI.h"]
+                project: ["Sources/ClipKittyRust/purrFFI.h"]
             ),
             settings: .settings(
                 base: [
