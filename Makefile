@@ -32,7 +32,7 @@ export CARGO_TARGET_DIR
 RUST_MARKER := .make/rust.marker
 RUST_LIB := Sources/ClipKittyRust/libpurr.a
 
-.PHONY: all clean rust rust-force generate build signing api-key provisioning provisioning-secrets sign list-identities run run-perf test unittest uitest rust-test perf-test perf-db perf-bench
+.PHONY: all clean rust rust-force rust-cache-clean rust-cache-maybe-clean generate build signing api-key provisioning provisioning-secrets sign list-identities run run-perf test unittest uitest rust-test perf-test perf-db perf-bench
 
 all: rust generate build
 
@@ -46,7 +46,7 @@ $(RUST_MARKER): $(shell git ls-files purr 2>/dev/null)
 	@git rev-parse HEAD:purr > .make/rust-tree-hash 2>/dev/null || true
 
 # Also rebuild if the output library is missing
-rust: $(RUST_MARKER)
+rust: $(RUST_MARKER) rust-cache-maybe-clean
 	@test -f $(RUST_LIB) || (rm -f $(RUST_MARKER) && $(MAKE) $(RUST_MARKER))
 
 # Force rebuild Rust (ignore marker)
@@ -139,6 +139,32 @@ run-perf: all perf-db
 clean:
 	@rm -rf .make DerivedData
 	@tuist clean 2>/dev/null || true
+
+# Remove Rust build artifacts not accessed in 30+ days from the shared cache.
+# Runs automatically during rust builds at most once per week.
+RUST_CACHE_SENTINEL := $(CARGO_TARGET_DIR)/.last-cache-clean
+
+rust-cache-clean:
+	@for d in purr/target target; do \
+		if [ -d "$$d" ]; then \
+			echo "Removing legacy $$d (now using shared $(CARGO_TARGET_DIR))..."; \
+			rm -rf "$$d"; \
+		fi; \
+	done
+	@if [ -d "$(CARGO_TARGET_DIR)" ]; then \
+		echo "Cleaning Rust cache (files unused for 30+ days)..."; \
+		find "$(CARGO_TARGET_DIR)" -type f -atime +30 -not -name .last-cache-clean -delete; \
+		find "$(CARGO_TARGET_DIR)" -type d -empty -delete; \
+	fi
+	@mkdir -p "$(CARGO_TARGET_DIR)"
+	@touch "$(RUST_CACHE_SENTINEL)"
+
+# Auto-clean if sentinel is older than 7 days (or missing)
+rust-cache-maybe-clean:
+	@if [ ! -f "$(RUST_CACHE_SENTINEL)" ] || \
+	    [ -n "$$(find "$(RUST_CACHE_SENTINEL)" -mtime +7 2>/dev/null)" ]; then \
+		$(MAKE) rust-cache-clean; \
+	fi
 
 # Run UI tests
 # Usage: make uitest [TEST=testName]
