@@ -29,7 +29,7 @@ jobs:
       - name: Verify lockfile integrity
         run: |
           ./Scripts/check-pinned-actions.sh
-          git diff --exit-code flake.lock Cargo.lock Tuist/Package.resolved Package.resolved
+          ./Scripts/check-lockfile-drift.sh
 
       - name: Run Rust supply chain scan
         run: ./Scripts/run-in-nix.sh -c "cargo deny check"
@@ -153,7 +153,7 @@ jobs:
         run: make generate
 
       - name: Verify lockfiles unchanged
-        run: git diff --exit-code Cargo.lock flake.lock Package.resolved Tuist/Package.resolved distribution/SparkleUpdater/Package.resolved
+        run: ./Scripts/check-lockfile-drift.sh
 
       - name: Prepare Xcode Authentication
         id: xcode-auth
@@ -393,7 +393,7 @@ jobs:
           SPARKLE_EDDSA_KEY: ${{ steps.secrets.outputs.SPARKLE_EDDSA_KEY }}
 
       - name: Verify lockfiles unchanged before attestation
-        run: git diff --exit-code Cargo.lock flake.lock Package.resolved Tuist/Package.resolved distribution/SparkleUpdater/Package.resolved
+        run: ./Scripts/check-lockfile-drift.sh
 
       - name: Attest Build Provenance
         uses: actions/attest-build-provenance@e8998f949152b193b063cb0ec769d69d929409be # v2
@@ -605,7 +605,7 @@ jobs:
         run: make generate
 
       - name: Verify lockfiles unchanged
-        run: git diff --exit-code Cargo.lock flake.lock Package.resolved Tuist/Package.resolved distribution/SparkleUpdater/Package.resolved
+        run: ./Scripts/check-lockfile-drift.sh
 
       - name: Prepare API Key for Automatic Signing
         run: |
@@ -759,7 +759,7 @@ jobs:
           AGE_SECRET_KEY: ${{ secrets.AGE_SECRET_KEY }}
 
       - name: Verify lockfiles unchanged
-        run: git diff --exit-code Cargo.lock flake.lock Package.resolved Tuist/Package.resolved distribution/SparkleUpdater/Package.resolved
+        run: ./Scripts/check-lockfile-drift.sh
 
       - name: Attest App Store Build Provenance
         uses: actions/attest-build-provenance@e8998f949152b193b063cb0ec769d69d929409be # v2
@@ -867,7 +867,7 @@ jobs:
         run: make generate
 
       - name: Verify lockfiles unchanged
-        run: git diff --exit-code Cargo.lock flake.lock Package.resolved Tuist/Package.resolved distribution/SparkleUpdater/Package.resolved
+        run: ./Scripts/check-lockfile-drift.sh
 
       - name: Build and Publish iOS to App Store Connect
         run: |

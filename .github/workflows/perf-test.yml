@@ -83,7 +83,7 @@ jobs:
         run: make generate
 
       - name: Verify lockfiles unchanged
-        run: git diff --exit-code Cargo.lock flake.lock Package.resolved Tuist/Package.resolved distribution/SparkleUpdater/Package.resolved
+        run: ./Scripts/check-lockfile-drift.sh
 
       - name: Build App (Release)
         run: make build CONFIGURATION=Release UNIVERSAL=1 SKIP_SIGNING=1 LOCKED=1
