@@ -60,6 +60,8 @@ That breaks a few features, which are compiled out of the hardened binary entire
 
 Everything else works identically: text, images, colors, search, keyboard shortcuts.
 
+This is defense in depth. The code for these features is compiled out of the binary; it does not exist. But even if it did, macOS App Sandbox would block it because the entitlements are not there. You can [verify](VERIFY.md) both layers yourself.
+
 The hardened build uses a separate bundle ID (`com.eviljuliette.clipkitty.hardened`), which means macOS gives it its own sandbox container. Your clipboard history does not carry over between hardened and non-hardened installs, in either direction. This is intentional; the two builds are security-isolated from each other.
 
 Download `ClipKitty-Hardened.zip` from [GitHub Releases](https://github.com/jul-sh/clipkitty/releases).

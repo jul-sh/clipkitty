@@ -35,7 +35,9 @@ You can also verify the hardened build's entitlements contain no network or file
 codesign -d --entitlements - /Applications/ClipKitty.app
 ```
 
-What you want to see is basically nothing except `com.apple.security.app-sandbox`. No `network.client`, no `icloud`, no `files.user-selected`. That is the whole point of the hardened build: fewer entitlements, fewer ways for the app to do something you did not ask it to do.
+What you want to see is basically nothing except `com.apple.security.app-sandbox`. No `network.client`, no `icloud`, no `files.user-selected`.
+
+This gives you defense in depth. First, the code that does network requests and filesystem access is compiled out of the hardened binary; it does not exist. Second, even if it did, macOS App Sandbox would block it at the kernel level because the entitlements are not there. Both layers have to fail for the app to do something you did not ask it to do.
 
 Open the URL. If an attestation exists, you'll see the exact commit that produced your binary. From there you can browse the exact source code used for that build.
 
