@@ -11,7 +11,7 @@ struct GeneralSettingsView: View {
     @ObservedObject private var settings = AppSettings.shared
     @ObservedObject private var launchAtLogin = LaunchAtLogin.shared
     @State private var showClearConfirmation = false
-    #if ENABLE_REMOTE_ATTESTATION
+    #if ENABLE_BUILD_ATTESTATION_LINK
         @State private var attestationURL: URL?
     #endif
     @State private var isICloudAvailable = true
@@ -299,7 +299,7 @@ struct GeneralSettingsView: View {
                         .foregroundStyle(.secondary)
                 }
 
-                #if ENABLE_REMOTE_ATTESTATION
+                #if ENABLE_BUILD_ATTESTATION_LINK
                     if let url = attestationURL {
                         LabeledContent(String(localized: "Build Attestation")) {
                             Link(destination: url) {
@@ -310,7 +310,7 @@ struct GeneralSettingsView: View {
                 #endif
             }
             .task {
-                #if ENABLE_REMOTE_ATTESTATION
+                #if ENABLE_BUILD_ATTESTATION_LINK
                     await checkAttestation()
                 #endif
                 #if ENABLE_ICLOUD_SYNC
@@ -497,7 +497,7 @@ struct GeneralSettingsView: View {
         }
     }
 
-    #if ENABLE_REMOTE_ATTESTATION
+    #if ENABLE_BUILD_ATTESTATION_LINK
     private func checkAttestation() async {
         guard let hash = binaryHash else { return }
         let rekorURL = URL(string: "https://rekor.sigstore.dev/api/v1/index/retrieve")!

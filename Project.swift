@@ -10,7 +10,7 @@ enum Capability: String, CaseIterable {
     case linkPreviews        // ENABLE_LINK_PREVIEWS
     case iCloudSync          // ENABLE_ICLOUD_SYNC
     case sparkleUpdates      // ENABLE_SPARKLE_UPDATES
-    case remoteAttestation   // ENABLE_REMOTE_ATTESTATION
+    case buildAttestationLink   // ENABLE_BUILD_ATTESTATION_LINK
     case hardened            // CLIPKITTY_HARDENED
 
     var compileCondition: String {
@@ -20,7 +20,7 @@ enum Capability: String, CaseIterable {
         case .linkPreviews:       return "ENABLE_LINK_PREVIEWS"
         case .iCloudSync:         return "ENABLE_ICLOUD_SYNC"
         case .sparkleUpdates:     return "ENABLE_SPARKLE_UPDATES"
-        case .remoteAttestation:  return "ENABLE_REMOTE_ATTESTATION"
+        case .buildAttestationLink:  return "ENABLE_BUILD_ATTESTATION_LINK"
         case .hardened:           return "CLIPKITTY_HARDENED"
         }
     }
@@ -92,10 +92,10 @@ enum MacBuildVariant: CaseIterable {
 
     var capabilities: Set<Capability> {
         switch self {
-        case .debug:    return [.syntheticPaste, .fileClipboardItems, .linkPreviews, .iCloudSync, .remoteAttestation]
-        case .release:  return [.syntheticPaste, .fileClipboardItems, .linkPreviews, .iCloudSync, .remoteAttestation]
-        case .sparkle:  return [.syntheticPaste, .fileClipboardItems, .linkPreviews, .iCloudSync, .remoteAttestation, .sparkleUpdates]
-        case .appStore: return [.fileClipboardItems, .linkPreviews, .iCloudSync, .remoteAttestation]
+        case .debug:    return [.syntheticPaste, .fileClipboardItems, .linkPreviews, .iCloudSync, .buildAttestationLink]
+        case .release:  return [.syntheticPaste, .fileClipboardItems, .linkPreviews, .iCloudSync, .buildAttestationLink]
+        case .sparkle:  return [.syntheticPaste, .fileClipboardItems, .linkPreviews, .iCloudSync, .buildAttestationLink, .sparkleUpdates]
+        case .appStore: return [.fileClipboardItems, .linkPreviews, .iCloudSync, .buildAttestationLink]
         case .hardened: return [.syntheticPaste, .hardened]
         }
     }
@@ -125,31 +125,58 @@ enum MacBuildVariant: CaseIterable {
             .map(\.compileCondition).sorted().joined(separator: " ")
     }
 
-    // MARK: Sparkle — linked exclusively by the .sparkle variant
+    // MARK: Target Name — which macOS app target this variant builds
 
-    /// Sparkle linker flags. Only .sparkle links Sparkle; others get nothing.
-    /// SparkleUpdater is a target dependency (for build graph ordering) but
-    /// linking is controlled entirely here via per-config OTHER_LDFLAGS.
-    var sparkleLinkerFlags: [String] {
+    /// The Sparkle variant builds its own target (ClipKittySpark) that depends on
+    /// SparkleUpdater. All other variants build the plain ClipKitty target which
+    /// has no Sparkle in its dependency graph at all.
+    var macAppTargetName: String {
         switch self {
-        case .sparkle:
-            return ["-framework", "SparkleUpdater", "-framework", "Sparkle"]
-        case .debug, .release, .appStore, .hardened:
-            return []
+        case .sparkle: return "ClipKittySpark"
+        case .debug, .release, .appStore, .hardened: return "ClipKitty"
         }
     }
 
-    var sparkleBuildSettings: SettingsDictionary {
-        switch self {
-        case .sparkle: return [
-            "SPARKLE_FEED_URL": "https://jul-sh.github.io/clipkitty/appcast.xml",
-            "SPARKLE_PUBLIC_KEY": "9VqfSPPY2Gr8QTYDLa99yJXAFWnHw5aybSbKaYDyCq0=",
-            "SPARKLE_AUTO_CHECK": "YES",
-            "SPARKLE_AUTO_UPDATE": "YES",
-            "SPARKLE_INSTALLER_SERVICE": "YES",
-        ]
-        case .debug, .release, .appStore, .hardened: return [:]
+    /// Whether this variant requires SparkleUpdater in the target dependency graph.
+    var requiresSparkle: Bool {
+        capabilities.contains(.sparkleUpdates)
+    }
+
+    /// Additional target-level dependencies for this variant's target.
+    var additionalTargetDependencies: [TargetDependency] {
+        if requiresSparkle {
+            return [.external(name: "SparkleUpdater")]
         }
+        return []
+    }
+
+    /// Additional target-level base build settings (e.g. Sparkle feed config).
+    var additionalTargetBaseSettings: SettingsDictionary {
+        if requiresSparkle {
+            return [
+                "PRODUCT_NAME": "ClipKitty",
+                "SPARKLE_FEED_URL": "https://jul-sh.github.io/clipkitty/appcast.xml",
+                "SPARKLE_PUBLIC_KEY": "9VqfSPPY2Gr8QTYDLa99yJXAFWnHw5aybSbKaYDyCq0=",
+                "SPARKLE_AUTO_CHECK": "YES",
+                "SPARKLE_AUTO_UPDATE": "YES",
+                "SPARKLE_INSTALLER_SERVICE": "YES",
+            ]
+        }
+        return [:]
+    }
+
+    /// Additional Info.plist entries for this variant's target.
+    var additionalInfoPlistEntries: [String: Plist.Value] {
+        if requiresSparkle {
+            return [
+                "SUFeedURL": "$(SPARKLE_FEED_URL)",
+                "SUPublicEDKey": "$(SPARKLE_PUBLIC_KEY)",
+                "SUEnableAutomaticChecks": "$(SPARKLE_AUTO_CHECK)",
+                "SUAutomaticallyUpdate": "$(SPARKLE_AUTO_UPDATE)",
+                "SUEnableInstallerLauncherService": "$(SPARKLE_INSTALLER_SERVICE)",
+            ]
+        }
+        return [:]
     }
 
     // MARK: Scheme — derived from the variant
@@ -159,7 +186,7 @@ enum MacBuildVariant: CaseIterable {
         switch self {
         case .debug: return nil  // Uses the main "ClipKitty" scheme
         case .release: return nil  // Built via main scheme with CONFIGURATION=Release
-        case .sparkle: return nil  // Built via main scheme with CONFIGURATION=SparkleRelease
+        case .sparkle: return "ClipKittySpark"  // Separate target with Sparkle dependency
         case .appStore: return "ClipKitty-AppStore"
         case .hardened: return "ClipKitty-Hardened"
         }
@@ -168,13 +195,17 @@ enum MacBuildVariant: CaseIterable {
     /// Generate a dedicated scheme for this variant, if it needs one.
     func scheme() -> Scheme? {
         guard let name = schemeName else { return nil }
+        let target = macAppTargetName
         return .scheme(
             name: name,
             shared: true,
-            buildAction: .buildAction(targets: [.target("ClipKitty")]),
+            buildAction: .buildAction(
+                targets: [.target(target)],
+                preActions: [rustPreBuildAction(target: target)]
+            ),
             runAction: .runAction(
                 configuration: configurationName,
-                executable: .target("ClipKitty")
+                executable: .target(target)
             ),
             archiveAction: .archiveAction(configuration: configurationName)
         )
@@ -199,16 +230,8 @@ enum MacBuildVariant: CaseIterable {
             "SWIFT_ACTIVE_COMPILATION_CONDITIONS": .string(macAppCompilationConditions),
         ]
 
-        // Sparkle build settings (only populated for .sparkle)
-        settings.merge(sparkleBuildSettings) { _, new in new }
-
         // Bundle ID / display name override (e.g. hardened)
         settings.merge(bundleIdOverride) { _, new in new }
-
-        // Sparkle linker flags — only .sparkle gets framework links
-        if !sparkleLinkerFlags.isEmpty {
-            settings["OTHER_LDFLAGS"] = .array(["$(inherited)"] + sparkleLinkerFlags)
-        }
 
         if isRelease {
             return .release(name: configurationName, settings: settings)
@@ -378,6 +401,136 @@ enum IOSBuildVariant: CaseIterable {
     }
 }
 
+// MARK: - Shared Scheme Components
+
+/// Rust pre-build action shared across all macOS app schemes.
+/// Detects purr/ changes via git tree hash and rebuilds bindings when needed.
+private let rustPreBuildScript = """
+# Use git tree hash to detect purr/ changes (fast, handles branches/rebases)
+cd "$PROJECT_DIR"
+MARKER=".make/rust-tree-hash"
+LIB="Sources/ClipKittyRust/libpurr.a"
+CURRENT_HASH=$(git rev-parse HEAD:purr 2>/dev/null || echo "unknown")
+STORED_HASH=$(cat "$MARKER" 2>/dev/null || echo "none")
+
+if [ -f "$LIB" ] && [ "$CURRENT_HASH" = "$STORED_HASH" ]; then
+    echo "Rust bindings up to date (tree hash: ${CURRENT_HASH:0:8}), skipping."
+    exit 0
+fi
+
+echo "Rust changed: $STORED_HASH -> $CURRENT_HASH"
+if [ -x "Scripts/run-in-nix.sh" ]; then
+    export CARGO_TARGET_DIR="$(dirname "$(realpath "$(git rev-parse --git-common-dir)")")/target"
+    Scripts/run-in-nix.sh -c "cd purr && MACOSX_DEPLOYMENT_TARGET=14.0 cargo run ${LOCKED:+--locked} --release --bin generate-bindings"
+    mkdir -p .make && echo "$CURRENT_HASH" > "$MARKER"
+fi
+"""
+
+/// Creates a Rust pre-build execution action targeting the given app target.
+func rustPreBuildAction(target: String) -> ExecutionAction {
+    .executionAction(
+        title: "Build Rust Core",
+        scriptText: rustPreBuildScript,
+        target: .target(target)
+    )
+}
+
+// MARK: - macOS App Target Factory
+
+/// Shared Info.plist entries for all macOS app targets.
+private let macAppInfoPlist: [String: Plist.Value] = [
+    "CFBundleDisplayName": "ClipKitty",
+    "CFBundleIconName": "AppIcon",
+    "CFBundleIconFile": "AppIcon",
+    "CFBundleDevelopmentRegion": "en",
+    "CFBundleShortVersionString": "$(MARKETING_VERSION)",
+    "CFBundleVersion": "$(CURRENT_PROJECT_VERSION)",
+    "CKBuildChannel": "$(CK_BUILD_CHANNEL)",
+    "ITSAppUsesNonExemptEncryption": false,
+    "LSApplicationCategoryType": "public.app-category.utilities",
+    "LSMinimumSystemVersion": "14.0",
+    "NSHumanReadableCopyright": "Copyright © 2025 ClipKitty. All rights reserved.",
+]
+
+/// Shared base build settings for all macOS app targets.
+private let macAppBaseSettings: SettingsDictionary = [
+    "OTHER_LDFLAGS": .array(["$(inherited)", "-lpurr"]),
+    "LIBRARY_SEARCH_PATHS": .array(["$(inherited)", "$(PROJECT_DIR)/Sources/ClipKittyRust"]),
+    "SWIFT_EMIT_LOC_STRINGS": "YES",
+    "LOCALIZATION_PREFERS_STRING_CATALOGS": "YES",
+    "DEVELOPMENT_TEAM": "ANBBV7LQ2P",
+]
+
+/// Shared source and resource paths for all macOS app targets.
+private let macAppSources: SourceFilesList = ["Sources/MacApp/**"]
+private let macAppResources: ResourceFileElements = [
+    .folderReference(path: "Sources/MacApp/Resources/Fonts"),
+    "Sources/MacApp/Resources/menu-bar.svg",
+    "Sources/MacApp/Resources/Localizable.xcstrings",
+    "Sources/MacApp/Assets.xcassets",
+    "Sources/MacApp/PrivacyInfo.xcprivacy",
+]
+
+/// Shared dependencies for all macOS app targets (no Sparkle).
+private let macAppCoreDependencies: [TargetDependency] = [
+    .target(name: "ClipKittyRust"),
+    .target(name: "ClipKittyShared"),
+    .target(name: "ClipKittyAppleServices"),
+    .target(name: "ClipKittyMacPlatform"),
+    .sdk(name: "SystemConfiguration", type: .framework),
+    .external(name: "STTextKitPlus"),
+]
+
+/// Creates macOS app targets, one per distinct `macAppTargetName`.
+///
+/// Variants are grouped by target name. Each group produces one Tuist target
+/// whose configurations come from its member variants. This is how Sparkle
+/// stays out of non-Sparkle targets: the enum's `requiresSparkle` /
+/// `additionalTargetDependencies` / `additionalTargetBaseSettings` drive
+/// everything — no hardcoded Sparkle knowledge lives here.
+func makeMacAppTargets() -> [Target] {
+    // Group variants by target name, preserving allCases order
+    var groups: [(name: String, variants: [MacBuildVariant])] = []
+    for variant in MacBuildVariant.allCases {
+        let name = variant.macAppTargetName
+        if let idx = groups.firstIndex(where: { $0.name == name }) {
+            groups[idx].variants.append(variant)
+        } else {
+            groups.append((name: name, variants: [variant]))
+        }
+    }
+
+    return groups.map { group in
+        let representative = group.variants[0]
+
+        var infoPlist = macAppInfoPlist
+        for (key, value) in representative.additionalInfoPlistEntries {
+            infoPlist[key] = value
+        }
+
+        var baseSettings = macAppBaseSettings
+        for (key, value) in representative.additionalTargetBaseSettings {
+            baseSettings[key] = value
+        }
+
+        return Target.target(
+            name: group.name,
+            destinations: .macOS,
+            product: .app,
+            bundleId: "com.eviljuliette.clipkitty",
+            deploymentTargets: .macOS("14.0"),
+            infoPlist: .extendingDefault(with: infoPlist),
+            sources: macAppSources,
+            resources: macAppResources,
+            dependencies: macAppCoreDependencies + representative.additionalTargetDependencies,
+            settings: .settings(
+                base: baseSettings,
+                configurations: group.variants.map { $0.macAppConfiguration() }
+            )
+        )
+    }
+}
+
 // MARK: - Build Configurations
 
 let configurations: [Configuration] = MacBuildVariant.allCases.map { $0.projectConfiguration() }
@@ -500,80 +653,7 @@ let project = Project(
             )
         ),
 
-        // MARK: ClipKitty — macOS app
-
-        .target(
-            name: "ClipKitty",
-            destinations: .macOS,
-            product: .app,
-            bundleId: "com.eviljuliette.clipkitty",
-            deploymentTargets: .macOS("14.0"),
-            infoPlist: .extendingDefault(with: [
-                "CFBundleDisplayName": "ClipKitty",
-                "CFBundleIconName": "AppIcon",
-                "CFBundleIconFile": "AppIcon",
-                "CFBundleDevelopmentRegion": "en",
-                "CFBundleShortVersionString": "$(MARKETING_VERSION)",
-                "CFBundleVersion": "$(CURRENT_PROJECT_VERSION)",
-                "CKBuildChannel": "$(CK_BUILD_CHANNEL)",
-                "ITSAppUsesNonExemptEncryption": false,
-                "LSApplicationCategoryType": "public.app-category.utilities",
-                "LSMinimumSystemVersion": "14.0",
-                "NSHumanReadableCopyright": "Copyright © 2025 ClipKitty. All rights reserved.",
-                // Sparkle keys use build settings so they're empty for non-Sparkle builds
-                "SUFeedURL": "$(SPARKLE_FEED_URL)",
-                "SUPublicEDKey": "$(SPARKLE_PUBLIC_KEY)",
-                "SUEnableAutomaticChecks": "$(SPARKLE_AUTO_CHECK)",
-                "SUAutomaticallyUpdate": "$(SPARKLE_AUTO_UPDATE)",
-                "SUEnableInstallerLauncherService": "$(SPARKLE_INSTALLER_SERVICE)",
-            ]),
-            sources: ["Sources/MacApp/**"],
-            resources: [
-                .folderReference(path: "Sources/MacApp/Resources/Fonts"),
-                "Sources/MacApp/Resources/menu-bar.svg",
-                "Sources/MacApp/Resources/Localizable.xcstrings",
-                "Sources/MacApp/Assets.xcassets",
-                "Sources/MacApp/PrivacyInfo.xcprivacy",
-            ],
-            scripts: [
-                // Sparkle frameworks are copied to all configs because SparkleUpdater is a
-                // target dependency (needed so Tuist includes it in the build graph). Only
-                // SparkleRelease actually links Sparkle; strip the unused framework files
-                // from all other configs to keep bundles clean.
-                .post(
-                    script: """
-                    if [ "$CONFIGURATION" != "SparkleRelease" ]; then
-                        rm -rf "$BUILT_PRODUCTS_DIR/$FRAMEWORKS_FOLDER_PATH/Sparkle.framework"
-                        rm -rf "$BUILT_PRODUCTS_DIR/$FRAMEWORKS_FOLDER_PATH/SparkleUpdater.framework"
-                    fi
-                    """,
-                    name: "Remove unused Sparkle frameworks",
-                    basedOnDependencyAnalysis: false
-                ),
-            ],
-            dependencies: [
-                .target(name: "ClipKittyRust"),
-                .target(name: "ClipKittyShared"),
-                .target(name: "ClipKittyAppleServices"),
-                .target(name: "ClipKittyMacPlatform"),
-                .sdk(name: "SystemConfiguration", type: .framework),
-                .external(name: "STTextKitPlus"),
-                // SparkleUpdater must be a target dependency so Tuist includes it in the
-                // build graph. Actual linking is controlled per-config via OTHER_LDFLAGS:
-                // only .sparkle links Sparkle; all others get zero Sparkle in otool -L.
-                .external(name: "SparkleUpdater"),
-            ],
-            settings: .settings(
-                base: [
-                    "OTHER_LDFLAGS": .array(["$(inherited)", "-lpurr"]),
-                    "LIBRARY_SEARCH_PATHS": .array(["$(inherited)", "$(PROJECT_DIR)/Sources/ClipKittyRust"]),
-                    "SWIFT_EMIT_LOC_STRINGS": "YES",
-                    "LOCALIZATION_PREFERS_STRING_CATALOGS": "YES",
-                    "DEVELOPMENT_TEAM": "ANBBV7LQ2P",
-                ],
-                configurations: MacBuildVariant.allCases.map { $0.macAppConfiguration() }
-            )
-        ),
+    ] + makeMacAppTargets() + [
 
         // MARK: ClipKittyTests — Unit tests
 
@@ -811,32 +891,7 @@ let project = Project(
             shared: true,
             buildAction: .buildAction(
                 targets: [.target("ClipKitty")],
-                preActions: [
-                    .executionAction(
-                        title: "Build Rust Core",
-                        scriptText: """
-                        # Use git tree hash to detect purr/ changes (fast, handles branches/rebases)
-                        cd "$PROJECT_DIR"
-                        MARKER=".make/rust-tree-hash"
-                        LIB="Sources/ClipKittyRust/libpurr.a"
-                        CURRENT_HASH=$(git rev-parse HEAD:purr 2>/dev/null || echo "unknown")
-                        STORED_HASH=$(cat "$MARKER" 2>/dev/null || echo "none")
-
-                        if [ -f "$LIB" ] && [ "$CURRENT_HASH" = "$STORED_HASH" ]; then
-                            echo "Rust bindings up to date (tree hash: ${CURRENT_HASH:0:8}), skipping."
-                            exit 0
-                        fi
-
-                        echo "Rust changed: $STORED_HASH -> $CURRENT_HASH"
-                        if [ -x "Scripts/run-in-nix.sh" ]; then
-                            export CARGO_TARGET_DIR="$(dirname "$(realpath "$(git rev-parse --git-common-dir)")")/target"
-                            Scripts/run-in-nix.sh -c "cd purr && MACOSX_DEPLOYMENT_TARGET=14.0 cargo run ${LOCKED:+--locked} --release --bin generate-bindings"
-                            mkdir -p .make && echo "$CURRENT_HASH" > "$MARKER"
-                        fi
-                        """,
-                        target: .target("ClipKitty")
-                    ),
-                ]
+                preActions: [rustPreBuildAction(target: "ClipKitty")]
             ),
             testAction: .targets(
                 [
@@ -859,32 +914,7 @@ let project = Project(
                     .target("ClipKittyUITests"),
                     .target("ClipKitty"),
                 ],
-                preActions: [
-                    .executionAction(
-                        title: "Build Rust Core",
-                        scriptText: """
-                        # Use git tree hash to detect purr/ changes (fast, handles branches/rebases)
-                        cd "$PROJECT_DIR"
-                        MARKER=".make/rust-tree-hash"
-                        LIB="Sources/ClipKittyRust/libpurr.a"
-                        CURRENT_HASH=$(git rev-parse HEAD:purr 2>/dev/null || echo "unknown")
-                        STORED_HASH=$(cat "$MARKER" 2>/dev/null || echo "none")
-
-                        if [ -f "$LIB" ] && [ "$CURRENT_HASH" = "$STORED_HASH" ]; then
-                            echo "Rust bindings up to date (tree hash: ${CURRENT_HASH:0:8}), skipping."
-                            exit 0
-                        fi
-
-                        echo "Rust changed: $STORED_HASH -> $CURRENT_HASH"
-                        if [ -x "Scripts/run-in-nix.sh" ]; then
-                            export CARGO_TARGET_DIR="$(dirname "$(realpath "$(git rev-parse --git-common-dir)")")/target"
-                            Scripts/run-in-nix.sh -c "cd purr && MACOSX_DEPLOYMENT_TARGET=14.0 cargo run ${LOCKED:+--locked} --release --bin generate-bindings"
-                            mkdir -p .make && echo "$CURRENT_HASH" > "$MARKER"
-                        fi
-                        """,
-                        target: .target("ClipKitty")
-                    ),
-                ]
+                preActions: [rustPreBuildAction(target: "ClipKitty")]
             ),
             testAction: .testPlans(
                 [

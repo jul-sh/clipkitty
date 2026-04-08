@@ -82,6 +82,14 @@ cd clipkitty
 make
 ```
 
+Build a specific variant by setting `CONFIGURATION`:
+
+```bash
+make all CONFIGURATION=SparkleRelease  # With auto-update support
+make all CONFIGURATION=Hardened        # Hardened (no network/files/sync)
+make -C distribution hardened          # Hardened signed DMG
+```
+
 Requires macOS 15+ and Swift 6.2+.
 
 ### How Search Works

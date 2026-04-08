@@ -253,38 +253,80 @@ jobs:
 
       - name: Verify Hardened Feature Surface
         run: |
-          BINARY="DerivedData/Build/Products/Hardened/ClipKitty.app/Contents/MacOS/ClipKitty"
+          APP="DerivedData/Build/Products/Hardened/ClipKitty.app"
+          BINARY="$APP/Contents/MacOS/ClipKitty"
           echo "=== Hardened feature surface assertions ==="
 
-          # Assert no link preview UI strings (compiled out via ENABLE_LINK_PREVIEWS)
-          if strings "$BINARY" | grep -qi "Generate link previews"; then
-            echo "FAIL: link preview settings string found in hardened binary"
-            exit 1
-          fi
-          echo "✓ No link preview settings"
+          # --- Binary-level checks (compiled-out code paths) ---
 
-          # Assert no iCloud sync UI strings (compiled out via ENABLE_ICLOUD_SYNC)
-          if strings "$BINARY" | grep -qi "iCloud Sync"; then
-            echo "FAIL: iCloud sync settings string found in hardened binary"
+          # Assert link preview code is compiled out (ENABLE_LINK_PREVIEWS)
+          if strings "$BINARY" | grep -q "refreshLinkMetadata"; then
+            echo "FAIL: link preview method 'refreshLinkMetadata' found in hardened binary"
             exit 1
           fi
-          echo "✓ No iCloud sync settings"
+          echo "✓ No link preview code in binary"
 
-          # Assert no Sparkle updater UI strings (compiled out via ENABLE_SPARKLE_UPDATES)
-          if strings "$BINARY" | grep -qi "Check for Updates"; then
-            echo "FAIL: update settings string found in hardened binary"
+          # Assert iCloud sync code is compiled out (ENABLE_ICLOUD_SYNC)
+          if strings "$BINARY" | grep -q "SyncEngine"; then
+            echo "FAIL: SyncEngine found in hardened binary"
             exit 1
           fi
-          echo "✓ No update settings"
+          echo "✓ No iCloud sync code in binary"
 
-          # Assert no file clipboard filter (compiled out via ENABLE_FILE_CLIPBOARD_ITEMS)
-          # The ".files" ContentTypeFilter case and "Files" localized string are only
-          # included in filterOptions when ENABLE_FILE_CLIPBOARD_ITEMS is set.
-          if strings "$BINARY" | grep -q "ENABLE_FILE_CLIPBOARD_ITEMS"; then
-            echo "FAIL: file clipboard compile flag found in hardened binary"
+          # Assert Sparkle updater code is compiled out (ENABLE_SPARKLE_UPDATES)
+          if strings "$BINARY" | grep -q "SPUUpdater"; then
+            echo "FAIL: Sparkle updater class found in hardened binary"
             exit 1
           fi
-          echo "✓ No file clipboard support"
+          echo "✓ No Sparkle update code in binary"
+
+          # Assert file clipboard code is compiled out (ENABLE_FILE_CLIPBOARD_ITEMS)
+          if strings "$BINARY" | grep -q "saveFileItems"; then
+            echo "FAIL: file clipboard method 'saveFileItems' found in hardened binary"
+            exit 1
+          fi
+          echo "✓ No file clipboard code in binary"
+
+          # Assert build attestation link code is compiled out (ENABLE_BUILD_ATTESTATION_LINK)
+          if strings "$BINARY" | grep -q "checkAttestation"; then
+            echo "FAIL: build attestation link method 'checkAttestation' found in hardened binary"
+            exit 1
+          fi
+          echo "✓ No build attestation link code in binary"
+
+          # --- Build settings checks (Info.plist) ---
+
+          # Verify bundle ID is hardened-specific (separate sandbox container)
+          BUNDLE_ID=$(defaults read "$APP/Contents/Info" CFBundleIdentifier 2>/dev/null || echo "")
+          if [ "$BUNDLE_ID" != "com.eviljuliette.clipkitty.hardened" ]; then
+            echo "FAIL: CFBundleIdentifier is '$BUNDLE_ID', expected 'com.eviljuliette.clipkitty.hardened'"
+            exit 1
+          fi
+          echo "✓ Bundle ID: com.eviljuliette.clipkitty.hardened"
+
+          # Verify build channel is Hardened
+          CHANNEL=$(defaults read "$APP/Contents/Info" CKBuildChannel 2>/dev/null || echo "")
+          if [ "$CHANNEL" != "Hardened" ]; then
+            echo "FAIL: CKBuildChannel is '$CHANNEL', expected 'Hardened'"
+            exit 1
+          fi
+          echo "✓ Build channel: Hardened"
+
+          # Verify no Sparkle feed URL in Info.plist
+          FEED=$(defaults read "$APP/Contents/Info" SUFeedURL 2>/dev/null || echo "")
+          if [ -n "$FEED" ]; then
+            echo "FAIL: SUFeedURL found in hardened Info.plist: $FEED"
+            exit 1
+          fi
+          echo "✓ No Sparkle feed URL in Info.plist"
+
+          # Verify display name is correct
+          DISPLAY_NAME=$(defaults read "$APP/Contents/Info" CFBundleDisplayName 2>/dev/null || echo "")
+          if [ "$DISPLAY_NAME" != "ClipKitty Hardened" ]; then
+            echo "FAIL: CFBundleDisplayName is '$DISPLAY_NAME', expected 'ClipKitty Hardened'"
+            exit 1
+          fi
+          echo "✓ Display name: ClipKitty Hardened"
 
           echo "Hardened feature surface verified."
 
