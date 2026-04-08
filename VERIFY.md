@@ -35,7 +35,7 @@ You can also verify the hardened build's entitlements contain no network or file
 codesign -d --entitlements - /Applications/ClipKitty.app
 ```
 
-The output should show only `com.apple.security.app-sandbox` — no `network.client`, no `icloud`, no `files.user-selected`.
+What you want to see is basically nothing except `com.apple.security.app-sandbox`. No `network.client`, no `icloud`, no `files.user-selected`. That is the whole point of the hardened build: fewer entitlements, fewer ways for the app to do something you did not ask it to do.
 
 Open the URL. If an attestation exists, you'll see the exact commit that produced your binary. From there you can browse the exact source code used for that build.
 

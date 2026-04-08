@@ -48,14 +48,14 @@ ClipKitty stores everything. Finds it in milliseconds; whether you have 100 item
 
 ### Hardened Build
 
-For security-sensitive environments (corporate research, air-gapped networks), ClipKitty ships a **Hardened** variant with a minimal attack surface:
+I ship a **Hardened** variant for environments where "probably fine" is not a serious security model. Think corporate research machines, regulated fleets, or air-gapped setups where every entitlement is a liability.
 
 - **No network access** — no link previews, no remote attestation, no auto-updates
-- **No iCloud/CloudKit sync** — clipboard data stays strictly local
+- **No iCloud/CloudKit sync** — clipboard history stays on the machine
 - **No file clipboard capture** — only text, images, colors, and links are captured
 - **Sandboxed** — runs in macOS App Sandbox with no file or network entitlements
 
-Download `ClipKitty-Hardened.zip` from [GitHub Releases](https://github.com/jul-sh/clipkitty/releases). All disabled features are compiled out at build time, not just hidden behind settings.
+Download `ClipKitty-Hardened.zip` from [GitHub Releases](https://github.com/jul-sh/clipkitty/releases). The important detail is that these features are not "off" in settings. They are removed at build time, so the binary simply has less stuff in it.
 
 ## Getting Started
 
@@ -82,7 +82,7 @@ cd clipkitty
 make
 ```
 
-Build a specific variant by setting `CONFIGURATION`:
+Build a specific variant by setting `CONFIGURATION`. If you want the hardened one, you are building a different binary with different capabilities, not the same app with a few checkboxes unchecked.
 
 ```bash
 make all CONFIGURATION=SparkleRelease  # With auto-update support
