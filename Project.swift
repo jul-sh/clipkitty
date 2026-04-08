@@ -1,5 +1,31 @@
 import ProjectDescription
 
+// MARK: - Capability Model
+
+/// Each capability maps to a compile condition and controls what code is included.
+/// Variants declare the set of capabilities they support; everything else is derived.
+enum Capability: String, CaseIterable {
+    case syntheticPaste      // ENABLE_SYNTHETIC_PASTE
+    case fileClipboardItems  // ENABLE_FILE_CLIPBOARD_ITEMS
+    case linkPreviews        // ENABLE_LINK_PREVIEWS
+    case iCloudSync          // ENABLE_ICLOUD_SYNC
+    case sparkleUpdates      // ENABLE_SPARKLE_UPDATES
+    case remoteAttestation   // ENABLE_REMOTE_ATTESTATION
+    case hardened            // CLIPKITTY_HARDENED
+
+    var compileCondition: String {
+        switch self {
+        case .syntheticPaste:     return "ENABLE_SYNTHETIC_PASTE"
+        case .fileClipboardItems: return "ENABLE_FILE_CLIPBOARD_ITEMS"
+        case .linkPreviews:       return "ENABLE_LINK_PREVIEWS"
+        case .iCloudSync:         return "ENABLE_ICLOUD_SYNC"
+        case .sparkleUpdates:     return "ENABLE_SPARKLE_UPDATES"
+        case .remoteAttestation:  return "ENABLE_REMOTE_ATTESTATION"
+        case .hardened:           return "CLIPKITTY_HARDENED"
+        }
+    }
+}
+
 // MARK: - Build Variant Model
 
 // All macOS build configuration is derived from this enum via exhaustive switches.
@@ -12,6 +38,8 @@ enum MacBuildVariant: CaseIterable {
     case sparkle
     case appStore
     case hardened
+
+    // MARK: Core Identity
 
     var configurationName: ConfigurationName {
         switch self {
@@ -29,8 +57,6 @@ enum MacBuildVariant: CaseIterable {
         case .release, .sparkle, .appStore, .hardened: return true
         }
     }
-
-    // MARK: Identity
 
     var buildChannel: String {
         switch self {
@@ -52,8 +78,6 @@ enum MacBuildVariant: CaseIterable {
         }
     }
 
-    // MARK: Entitlements
-
     var entitlementsPath: String {
         switch self {
         case .debug: return "Sources/MacApp/ClipKitty.debug.entitlements"
@@ -64,100 +88,48 @@ enum MacBuildVariant: CaseIterable {
         }
     }
 
-    // MARK: Capability Flags
+    // MARK: Capabilities — the single source of truth for what each variant can do
 
-    var enableSyntheticPaste: Bool {
+    var capabilities: Set<Capability> {
         switch self {
-        case .debug, .release, .sparkle, .hardened: return true
-        case .appStore: return false
+        case .debug:    return [.syntheticPaste, .fileClipboardItems, .linkPreviews, .iCloudSync, .remoteAttestation]
+        case .release:  return [.syntheticPaste, .fileClipboardItems, .linkPreviews, .iCloudSync, .remoteAttestation]
+        case .sparkle:  return [.syntheticPaste, .fileClipboardItems, .linkPreviews, .iCloudSync, .remoteAttestation, .sparkleUpdates]
+        case .appStore: return [.fileClipboardItems, .linkPreviews, .iCloudSync, .remoteAttestation]
+        case .hardened: return [.syntheticPaste, .hardened]
         }
     }
 
-    var enableFileClipboardItems: Bool {
-        switch self {
-        case .debug, .release, .sparkle, .appStore: return true
-        case .hardened: return false
-        }
-    }
-
-    var enableLinkPreviews: Bool {
-        switch self {
-        case .debug, .release, .sparkle, .appStore: return true
-        case .hardened: return false
-        }
-    }
-
-    var enableICloudSync: Bool {
-        switch self {
-        case .debug, .release, .sparkle, .appStore: return true
-        case .hardened: return false
-        }
-    }
-
-    var enableSparkleUpdates: Bool {
-        switch self {
-        case .sparkle: return true
-        case .debug, .release, .appStore, .hardened: return false
-        }
-    }
-
-    var enableRemoteAttestation: Bool {
-        switch self {
-        case .debug, .release, .sparkle, .appStore: return true
-        case .hardened: return false
-        }
-    }
-
-    var isHardened: Bool {
-        switch self {
-        case .hardened: return true
-        case .debug, .release, .sparkle, .appStore: return false
-        }
-    }
-
-    // MARK: Compilation Conditions (per target layer)
+    // MARK: Compilation Conditions (derived from capabilities, per target layer)
 
     /// Flags for the main macOS app target (all capabilities)
     var macAppCompilationConditions: String {
-        var flags: [String] = []
-        if enableSyntheticPaste { flags.append("ENABLE_SYNTHETIC_PASTE") }
-        if enableFileClipboardItems { flags.append("ENABLE_FILE_CLIPBOARD_ITEMS") }
-        if enableLinkPreviews { flags.append("ENABLE_LINK_PREVIEWS") }
-        if enableICloudSync { flags.append("ENABLE_ICLOUD_SYNC") }
-        if enableSparkleUpdates { flags.append("ENABLE_SPARKLE_UPDATES") }
-        if enableRemoteAttestation { flags.append("ENABLE_REMOTE_ATTESTATION") }
-        if isHardened { flags.append("CLIPKITTY_HARDENED") }
-        return flags.joined(separator: " ")
+        capabilities.map(\.compileCondition).sorted().joined(separator: " ")
     }
 
     /// Flags for ClipKittyAppleServices (cross-platform: sync + link previews)
     var appleServicesCompilationConditions: String {
-        var flags: [String] = []
-        if enableLinkPreviews { flags.append("ENABLE_LINK_PREVIEWS") }
-        if enableICloudSync { flags.append("ENABLE_ICLOUD_SYNC") }
-        return flags.joined(separator: " ")
+        capabilities.intersection([.linkPreviews, .iCloudSync])
+            .map(\.compileCondition).sorted().joined(separator: " ")
     }
 
     /// Flags for ClipKittyMacPlatform (file clipboard + synthetic paste)
     var macPlatformCompilationConditions: String {
-        var flags: [String] = []
-        if enableSyntheticPaste { flags.append("ENABLE_SYNTHETIC_PASTE") }
-        if enableFileClipboardItems { flags.append("ENABLE_FILE_CLIPBOARD_ITEMS") }
-        return flags.joined(separator: " ")
+        capabilities.intersection([.syntheticPaste, .fileClipboardItems])
+            .map(\.compileCondition).sorted().joined(separator: " ")
     }
 
-    // MARK: Sparkle
+    // MARK: Sparkle — owned exclusively by the .sparkle variant
 
-    /// Sparkle linker flags for OTHER_LDFLAGS. Per-config OTHER_LDFLAGS overrides
-    /// Tuist's auto-link, so actual Sparkle linking is controlled entirely here.
+    /// Sparkle linker flags. Only .sparkle links Sparkle; others get nothing.
+    /// SparkleUpdater is NOT a target dependency — it's only built via
+    /// scheme-level buildAction targets in sparkle-related schemes.
     var sparkleLinkerFlags: [String] {
         switch self {
         case .sparkle:
             return ["-framework", "SparkleUpdater", "-framework", "Sparkle"]
-        case .debug, .release, .appStore:
-            return ["-weak_framework", "SparkleUpdater", "-weak_framework", "Sparkle"]
-        case .hardened:
-            return []  // No Sparkle linkage — hardened must have zero Sparkle references
+        case .debug, .release, .appStore, .hardened:
+            return []
         }
     }
 
@@ -172,6 +144,34 @@ enum MacBuildVariant: CaseIterable {
         ]
         case .debug, .release, .appStore, .hardened: return [:]
         }
+    }
+
+    // MARK: Scheme — derived from the variant
+
+    /// Scheme name. nil means this variant uses the main "ClipKitty" scheme.
+    var schemeName: String? {
+        switch self {
+        case .debug: return nil  // Uses the main "ClipKitty" scheme
+        case .release: return nil  // Built via main scheme with CONFIGURATION=Release
+        case .sparkle: return nil  // Built via main scheme with CONFIGURATION=SparkleRelease
+        case .appStore: return "ClipKitty-AppStore"
+        case .hardened: return "ClipKitty-Hardened"
+        }
+    }
+
+    /// Generate a dedicated scheme for this variant, if it needs one.
+    func scheme() -> Scheme? {
+        guard let name = schemeName else { return nil }
+        return .scheme(
+            name: name,
+            shared: true,
+            buildAction: .buildAction(targets: [.target("ClipKitty")]),
+            runAction: .runAction(
+                configuration: configurationName,
+                executable: .target("ClipKitty")
+            ),
+            archiveAction: .archiveAction(configuration: configurationName)
+        )
     }
 
     // MARK: Configuration Builders
@@ -193,13 +193,13 @@ enum MacBuildVariant: CaseIterable {
             "SWIFT_ACTIVE_COMPILATION_CONDITIONS": .string(macAppCompilationConditions),
         ]
 
-        // Merge Sparkle build settings
+        // Sparkle build settings (only populated for .sparkle)
         settings.merge(sparkleBuildSettings) { _, new in new }
 
-        // Merge bundle ID override for hardened
+        // Bundle ID / display name override (e.g. hardened)
         settings.merge(bundleIdOverride) { _, new in new }
 
-        // Sparkle linker flags
+        // Sparkle linker flags — only .sparkle gets framework links
         if !sparkleLinkerFlags.isEmpty {
             settings["OTHER_LDFLAGS"] = .array(["$(inherited)"] + sparkleLinkerFlags)
         }
@@ -517,17 +517,18 @@ let project = Project(
                 "Sources/MacApp/PrivacyInfo.xcprivacy",
             ],
             scripts: [
+                // Sparkle frameworks are copied to all configs because SparkleUpdater is a
+                // target dependency (needed so Tuist includes it in the build graph). Only
+                // SparkleRelease actually links Sparkle; strip the unused framework files
+                // from all other configs to keep bundles clean.
                 .post(
                     script: """
-                    # Strip Sparkle frameworks from non-SparkleRelease builds.
-                    # Debug/Release/AppStore use weak linking, so they run without the frameworks.
-                    # Hardened doesn't link Sparkle at all, but strip anyway for cleanliness.
                     if [ "$CONFIGURATION" != "SparkleRelease" ]; then
                         rm -rf "$BUILT_PRODUCTS_DIR/$FRAMEWORKS_FOLDER_PATH/Sparkle.framework"
                         rm -rf "$BUILT_PRODUCTS_DIR/$FRAMEWORKS_FOLDER_PATH/SparkleUpdater.framework"
                     fi
                     """,
-                    name: "Strip Sparkle from non-SparkleRelease builds",
+                    name: "Remove unused Sparkle frameworks",
                     basedOnDependencyAnalysis: false
                 ),
             ],
@@ -538,6 +539,9 @@ let project = Project(
                 .target(name: "ClipKittyMacPlatform"),
                 .sdk(name: "SystemConfiguration", type: .framework),
                 .external(name: "STTextKitPlus"),
+                // SparkleUpdater must be a target dependency so Tuist includes it in the
+                // build graph. Actual linking is controlled per-config via OTHER_LDFLAGS:
+                // only .sparkle links Sparkle; all others get zero Sparkle in otool -L.
                 .external(name: "SparkleUpdater"),
             ],
             settings: .settings(
@@ -826,28 +830,7 @@ let project = Project(
                 executable: .target("ClipKitty")
             )
         ),
-        // App Store scheme
-        .scheme(
-            name: "ClipKitty-AppStore",
-            shared: true,
-            buildAction: .buildAction(targets: [.target("ClipKitty")]),
-            runAction: .runAction(
-                configuration: .configuration("AppStore"),
-                executable: .target("ClipKitty")
-            ),
-            archiveAction: .archiveAction(configuration: .configuration("AppStore"))
-        ),
-        // Hardened scheme — security-sensitive environments (no network, no files, no sync)
-        .scheme(
-            name: "ClipKitty-Hardened",
-            shared: true,
-            buildAction: .buildAction(targets: [.target("ClipKitty")]),
-            runAction: .runAction(
-                configuration: .configuration("Hardened"),
-                executable: .target("ClipKitty")
-            ),
-            archiveAction: .archiveAction(configuration: .configuration("Hardened"))
-        ),
+    ] + MacBuildVariant.allCases.compactMap { $0.scheme() } + [
         // UI tests scheme
         .scheme(
             name: "ClipKittyUITests",
