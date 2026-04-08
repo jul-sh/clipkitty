@@ -23,12 +23,11 @@ DERIVED_DATA := $(SCRIPT_DIR)/DerivedData
 # Signing identity: auto-detects Developer ID cert, falls back to ad-hoc (-)
 SIGNING_IDENTITY ?= $(shell security find-identity -v -p codesigning 2>/dev/null | grep -q "Developer ID Application" && echo "Developer ID Application" || echo "-")
 
-# Shared Rust target dir — lives in .git so it's shared across worktrees,
-# survives reboots, and is excluded from Spotlight/Time Machine.
+# Shared Rust target dir — always resolves to main worktree's target/.
 # Safe to share: cargo tracks source hashes internally, so switching between
 # worktrees with different Rust code triggers a rebuild of changed crates
 # while reusing unchanged dependencies.
-CARGO_TARGET_DIR := $(abspath $(shell git rev-parse --git-common-dir 2>/dev/null))/cargo-target
+CARGO_TARGET_DIR := $(dir $(abspath $(shell git rev-parse --git-common-dir 2>/dev/null)))target
 export CARGO_TARGET_DIR
 
 # Rust build marker and outputs
@@ -148,7 +147,7 @@ clean:
 RUST_CACHE_SENTINEL := $(CARGO_TARGET_DIR)/.last-cache-clean
 
 rust-cache-clean:
-	@for d in purr/target target; do \
+	@for d in purr/target .git/cargo-target; do \
 		if [ -d "$$d" ]; then \
 			echo "Removing legacy $$d (now using shared $(CARGO_TARGET_DIR))..."; \
 			rm -rf "$$d"; \
