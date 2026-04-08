@@ -137,6 +137,7 @@ clean:
 
 # Clean stale Rust build artifacts (keeps recent work)
 clean-rust:
+	@rm -rf purr/target
 	@./Scripts/clean-cargo-cache.sh
 
 # Run UI tests
