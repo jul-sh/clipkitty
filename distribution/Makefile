@@ -191,7 +191,7 @@ appstore-publish:
 # Run distribution/patch-demo-items.sh after to add demo-specific items
 synthetic-data:
 	@echo "Generating synthetic data..."
-	@$(NIX_SHELL) "cd $(DIST_DIR)/rust-data-gen && cargo run --release -- --db-path ../SyntheticData.sqlite"
+	@$(NIX_SHELL) "cd $(PROJECT_ROOT) && cargo run -p rust-data-gen --release -- --db-path $(DIST_DIR)/SyntheticData.sqlite"
 	@echo "Synthetic data generated at distribution/SyntheticData.sqlite"
 	@echo "Run ./distribution/patch-demo-items.sh to add demo items"
 
@@ -287,7 +287,7 @@ marketing: marketing-screenshots-localized
 video-data:
 	@echo "Generating video database..."
 	@cp $(DIST_DIR)/SyntheticData.sqlite $(DIST_DIR)/SyntheticData_video.sqlite
-	@$(NIX_SHELL) "cd $(DIST_DIR)/rust-data-gen && cargo run --release -- --video-only --db-path ../SyntheticData_video.sqlite"
+	@$(NIX_SHELL) "cd $(PROJECT_ROOT) && cargo run -p rust-data-gen --release -- --video-only --db-path $(DIST_DIR)/SyntheticData_video.sqlite"
 	@echo "Injecting images into video database..."
 	@python3 $(DIST_DIR)/inject-images.py $(DIST_DIR)/SyntheticData_video.sqlite en
 	@echo "Video database generated at distribution/SyntheticData_video.sqlite"
@@ -314,7 +314,7 @@ intro-video-localized:
 		else \
 			cp $(DIST_DIR)/SyntheticData_$$locale.sqlite $(DIST_DIR)/SyntheticData_video.sqlite; \
 		fi; \
-		$(NIX_SHELL) "cd $(DIST_DIR)/rust-data-gen && cargo run --release -- --video-only --locale $$locale --db-path ../SyntheticData_video.sqlite"; \
+		$(NIX_SHELL) "cd $(PROJECT_ROOT) && cargo run -p rust-data-gen --release -- --video-only --locale $$locale --db-path $(DIST_DIR)/SyntheticData_video.sqlite"; \
 		python3 $(DIST_DIR)/inject-images.py $(DIST_DIR)/SyntheticData_video.sqlite $$locale; \
 		mkdir -p $(PROJECT_ROOT)/marketing/$$locale; \
 		$(DIST_DIR)/prepare-screenshot-environment.sh \
