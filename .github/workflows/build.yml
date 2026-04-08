@@ -25,6 +25,8 @@ jobs:
 
       - name: Install Nix
         uses: DeterminateSystems/nix-installer-action@b66b36319cc6fde4ea85edd583b088c65d6b8710 # main 2026-04-08
+        with:
+          source-tag: v3.17.3
 
       - name: Verify lockfile integrity
         run: |
@@ -57,6 +59,8 @@ jobs:
 
       - name: Install Nix
         uses: DeterminateSystems/nix-installer-action@b66b36319cc6fde4ea85edd583b088c65d6b8710 # main 2026-04-08
+        with:
+          source-tag: v3.17.3
 
       - name: Install CI tools from Nix
         run: |
@@ -567,6 +571,8 @@ jobs:
 
       - name: Install Nix
         uses: DeterminateSystems/nix-installer-action@b66b36319cc6fde4ea85edd583b088c65d6b8710 # main 2026-04-08
+        with:
+          source-tag: v3.17.3
 
       - name: Install CI tools from Nix
         run: |
@@ -662,6 +668,8 @@ jobs:
 
       - name: Install Nix
         uses: DeterminateSystems/nix-installer-action@b66b36319cc6fde4ea85edd583b088c65d6b8710 # main 2026-04-08
+        with:
+          source-tag: v3.17.3
 
       - name: Install CI tools from Nix
         run: |
@@ -789,6 +797,8 @@ jobs:
 
       - name: Install Nix
         uses: DeterminateSystems/nix-installer-action@b66b36319cc6fde4ea85edd583b088c65d6b8710 # main 2026-04-08
+        with:
+          source-tag: v3.17.3
 
       - name: Install CI tools from Nix
         run: |
