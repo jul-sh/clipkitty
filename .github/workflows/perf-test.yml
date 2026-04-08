@@ -86,7 +86,7 @@ jobs:
         run: git diff --exit-code Cargo.lock flake.lock Package.resolved Tuist/Package.resolved distribution/SparkleUpdater/Package.resolved
 
       - name: Build App (Release)
-        run: make build CONFIGURATION=Release UNIVERSAL=1 SKIP_SIGNING=1
+        run: make build CONFIGURATION=Release UNIVERSAL=1 SKIP_SIGNING=1 LOCKED=1
         env:
           AGE_SECRET_KEY: ${{ secrets.AGE_SECRET_KEY }}
 

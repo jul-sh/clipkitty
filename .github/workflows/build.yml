@@ -167,12 +167,12 @@ jobs:
           AGE_SECRET_KEY: ${{ secrets.AGE_SECRET_KEY }}
 
       - name: Build App (SparkleRelease)
-        run: make build CONFIGURATION=SparkleRelease UNIVERSAL=1 SKIP_SIGNING=1
+        run: make build CONFIGURATION=SparkleRelease UNIVERSAL=1 SKIP_SIGNING=1 LOCKED=1
         env:
           AGE_SECRET_KEY: ${{ secrets.AGE_SECRET_KEY }}
 
       - name: Build App (AppStore)
-        run: make build CONFIGURATION=AppStore UNIVERSAL=1 SKIP_SIGNING=1
+        run: make build CONFIGURATION=AppStore UNIVERSAL=1 SKIP_SIGNING=1 LOCKED=1
         env:
           AGE_SECRET_KEY: ${{ secrets.AGE_SECRET_KEY }}
 
@@ -244,6 +244,8 @@ jobs:
           ls -lh marketing-ios/*/screenshot_*.png 2>/dev/null || echo "::warning::No iOS screenshots were generated"
 
       - name: Run UI Tests
+        env:
+          LOCKED: "1"
         run: |
           set +e
           xcodebuild test \
@@ -389,6 +391,9 @@ jobs:
           echo "file_length=$FILE_LENGTH" >> "$GITHUB_OUTPUT"
         env:
           SPARKLE_EDDSA_KEY: ${{ steps.secrets.outputs.SPARKLE_EDDSA_KEY }}
+
+      - name: Verify lockfiles unchanged before attestation
+        run: git diff --exit-code Cargo.lock flake.lock Package.resolved Tuist/Package.resolved distribution/SparkleUpdater/Package.resolved
 
       - name: Attest Build Provenance
         uses: actions/attest-build-provenance@e8998f949152b193b063cb0ec769d69d929409be # v2
@@ -610,7 +615,7 @@ jobs:
           AGE_SECRET_KEY: ${{ secrets.AGE_SECRET_KEY }}
 
       - name: Build App
-        run: make build UNIVERSAL=1 SKIP_SIGNING=1
+        run: make build UNIVERSAL=1 SKIP_SIGNING=1 LOCKED=1
         env:
           AGE_SECRET_KEY: ${{ secrets.AGE_SECRET_KEY }}
 
