@@ -61,9 +61,11 @@ final class ClipboardStoreBrowserClient: BrowserStoreClient {
         await store.loadPreviewPayload(itemId: itemId, query: query)
     }
 
+    #if ENABLE_LINK_PREVIEWS
     func fetchLinkMetadata(url: String, itemId: String) async -> ClipboardItem? {
         await store.fetchLinkMetadata(url: url, itemId: itemId)
     }
+    #endif
 
     func addTag(itemId: String, tag: ItemTag) async -> Result<Void, ClipboardError> {
         await store.addTag(itemId: itemId, tag: tag)

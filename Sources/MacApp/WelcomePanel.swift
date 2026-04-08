@@ -139,7 +139,7 @@ private struct QuickStartPageView: View {
                 .padding(.horizontal, 16)
                 .padding(.vertical, 12)
 
-                #if ENABLE_SYNC
+                #if ENABLE_ICLOUD_SYNC
                     Divider()
                         .padding(.horizontal, 16)
 

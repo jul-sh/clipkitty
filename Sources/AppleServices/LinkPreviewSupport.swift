@@ -1,3 +1,4 @@
+#if ENABLE_LINK_PREVIEWS
 import ClipKittyRust
 import LinkPresentation
 import SwiftUI
@@ -133,4 +134,5 @@ public struct LinkPreviewView: NSViewRepresentable {
         var lastMetadataState: LinkMetadataState?
     }
 }
-#endif
+#endif // canImport
+#endif // ENABLE_LINK_PREVIEWS

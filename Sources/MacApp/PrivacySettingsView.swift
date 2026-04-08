@@ -64,16 +64,18 @@ struct PrivacySettingsView: View {
                 IgnoredAppsListView()
             }
 
-            Section(String(localized: "Network")) {
-                Toggle(isOn: $settings.generateLinkPreviews) {
-                    VStack(alignment: .leading, spacing: 2) {
-                        Text(String(localized: "Show link previews"))
-                        Text(String(localized: "Downloads web content. May trigger tracking links."))
-                            .font(.subheadline)
-                            .foregroundStyle(.secondary)
+            #if ENABLE_LINK_PREVIEWS
+                Section(String(localized: "Network")) {
+                    Toggle(isOn: $settings.generateLinkPreviews) {
+                        VStack(alignment: .leading, spacing: 2) {
+                            Text(String(localized: "Show link previews"))
+                            Text(String(localized: "Downloads web content. May trigger tracking links."))
+                                .font(.subheadline)
+                                .foregroundStyle(.secondary)
+                        }
                     }
                 }
-            }
+            #endif
         }
         .formStyle(.grouped)
     }

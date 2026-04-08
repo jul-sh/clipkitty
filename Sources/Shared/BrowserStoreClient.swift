@@ -20,7 +20,9 @@ public protocol BrowserStoreClient: AnyObject {
     func fetchItem(id: String) async -> ClipboardItem?
     func loadListDecorations(itemIds: [String], query: String, presentation: ListPresentationProfile) async -> [ListDecorationResult]
     func loadPreviewPayload(itemId: String, query: String) async -> PreviewPayload?
+    #if ENABLE_LINK_PREVIEWS
     func fetchLinkMetadata(url: String, itemId: String) async -> ClipboardItem?
+    #endif
     func addTag(itemId: String, tag: ItemTag) async -> Result<Void, ClipboardError>
     func removeTag(itemId: String, tag: ItemTag) async -> Result<Void, ClipboardError>
     func delete(itemId: String) async -> Result<Void, ClipboardError>

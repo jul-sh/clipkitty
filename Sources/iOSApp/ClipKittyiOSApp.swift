@@ -206,7 +206,7 @@ struct ClipKittyiOSApp: App {
     @State private var launchState: AppLaunchState = .launching
     @Environment(\.scenePhase) private var scenePhase
 
-    #if ENABLE_SYNC
+    #if ENABLE_ICLOUD_SYNC
         @State private var syncCoordinator: iOSSyncCoordinator?
     #endif
 
@@ -247,7 +247,7 @@ struct ClipKittyiOSApp: App {
                 }
             }
 
-        #if ENABLE_SYNC
+        #if ENABLE_ICLOUD_SYNC
             if let coordinator = syncCoordinator {
                 base
                     .environment(coordinator)
@@ -267,7 +267,7 @@ struct ClipKittyiOSApp: App {
         switch AppContainer.bootstrap(databasePath: customPath) {
         case let .success(container):
             let appState = AppState(container: container)
-            #if ENABLE_SYNC
+            #if ENABLE_ICLOUD_SYNC
                 let coordinator = iOSSyncCoordinator(
                     store: container.store,
                     enabled: container.settings.syncEnabled,

@@ -46,6 +46,17 @@ ClipKitty stores everything. Finds it in milliseconds; whether you have 100 item
 1. Download the latest DMG from [GitHub Releases](https://github.com/jul-sh/clipkitty/releases).
 2. Drag ClipKitty to your Applications folder.
 
+### Hardened Build
+
+For security-sensitive environments (corporate research, air-gapped networks), ClipKitty ships a **Hardened** variant with a minimal attack surface:
+
+- **No network access** — no link previews, no remote attestation, no auto-updates
+- **No iCloud/CloudKit sync** — clipboard data stays strictly local
+- **No file clipboard capture** — only text, images, colors, and links are captured
+- **Sandboxed** — runs in macOS App Sandbox with no file or network entitlements
+
+Download `ClipKitty-Hardened.zip` from [GitHub Releases](https://github.com/jul-sh/clipkitty/releases). All disabled features are compiled out at build time, not just hidden behind settings.
+
 ## Getting Started
 
 1. Press **⌥Space** to open your clipboard history.

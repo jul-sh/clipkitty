@@ -1,18 +1,368 @@
 import ProjectDescription
 
+// MARK: - Build Variant Model
+
+// All macOS build configuration is derived from this enum via exhaustive switches.
+// To add a new variant, add a case here and the compiler will guide you through
+// every property that needs a value.
+
+enum MacBuildVariant: CaseIterable {
+    case debug
+    case release
+    case sparkle
+    case appStore
+    case hardened
+
+    var configurationName: ConfigurationName {
+        switch self {
+        case .debug: return "Debug"
+        case .release: return "Release"
+        case .sparkle: return .configuration("SparkleRelease")
+        case .appStore: return .configuration("AppStore")
+        case .hardened: return .configuration("Hardened")
+        }
+    }
+
+    var isRelease: Bool {
+        switch self {
+        case .debug: return false
+        case .release, .sparkle, .appStore, .hardened: return true
+        }
+    }
+
+    // MARK: Identity
+
+    var buildChannel: String {
+        switch self {
+        case .debug: return "Debug"
+        case .release: return "Release"
+        case .sparkle: return "Sparkle"
+        case .appStore: return "AppStore"
+        case .hardened: return "Hardened"
+        }
+    }
+
+    var bundleIdOverride: SettingsDictionary {
+        switch self {
+        case .hardened: return [
+            "PRODUCT_BUNDLE_IDENTIFIER": "com.eviljuliette.clipkitty.hardened",
+            "INFOPLIST_KEY_CFBundleDisplayName": "ClipKitty Hardened",
+        ]
+        case .debug, .release, .sparkle, .appStore: return [:]
+        }
+    }
+
+    // MARK: Entitlements
+
+    var entitlementsPath: String {
+        switch self {
+        case .debug: return "Sources/MacApp/ClipKitty.debug.entitlements"
+        case .release: return "Sources/MacApp/ClipKitty.oss.entitlements"
+        case .sparkle: return "Sources/MacApp/ClipKitty.sparkle.entitlements"
+        case .appStore: return "Sources/MacApp/ClipKitty.appstore.entitlements"
+        case .hardened: return "Sources/MacApp/ClipKitty.hardened.entitlements"
+        }
+    }
+
+    // MARK: Capability Flags
+
+    var enableSyntheticPaste: Bool {
+        switch self {
+        case .debug, .release, .sparkle, .hardened: return true
+        case .appStore: return false
+        }
+    }
+
+    var enableFileClipboardItems: Bool {
+        switch self {
+        case .debug, .release, .sparkle, .appStore: return true
+        case .hardened: return false
+        }
+    }
+
+    var enableLinkPreviews: Bool {
+        switch self {
+        case .debug, .release, .sparkle, .appStore: return true
+        case .hardened: return false
+        }
+    }
+
+    var enableICloudSync: Bool {
+        switch self {
+        case .debug, .release, .sparkle, .appStore: return true
+        case .hardened: return false
+        }
+    }
+
+    var enableSparkleUpdates: Bool {
+        switch self {
+        case .sparkle: return true
+        case .debug, .release, .appStore, .hardened: return false
+        }
+    }
+
+    var enableRemoteAttestation: Bool {
+        switch self {
+        case .debug, .release, .sparkle, .appStore: return true
+        case .hardened: return false
+        }
+    }
+
+    var isHardened: Bool {
+        switch self {
+        case .hardened: return true
+        case .debug, .release, .sparkle, .appStore: return false
+        }
+    }
+
+    // MARK: Compilation Conditions (per target layer)
+
+    /// Flags for the main macOS app target (all capabilities)
+    var macAppCompilationConditions: String {
+        var flags: [String] = []
+        if enableSyntheticPaste { flags.append("ENABLE_SYNTHETIC_PASTE") }
+        if enableFileClipboardItems { flags.append("ENABLE_FILE_CLIPBOARD_ITEMS") }
+        if enableLinkPreviews { flags.append("ENABLE_LINK_PREVIEWS") }
+        if enableICloudSync { flags.append("ENABLE_ICLOUD_SYNC") }
+        if enableSparkleUpdates { flags.append("ENABLE_SPARKLE_UPDATES") }
+        if enableRemoteAttestation { flags.append("ENABLE_REMOTE_ATTESTATION") }
+        if isHardened { flags.append("CLIPKITTY_HARDENED") }
+        return flags.joined(separator: " ")
+    }
+
+    /// Flags for ClipKittyAppleServices (cross-platform: sync + link previews)
+    var appleServicesCompilationConditions: String {
+        var flags: [String] = []
+        if enableLinkPreviews { flags.append("ENABLE_LINK_PREVIEWS") }
+        if enableICloudSync { flags.append("ENABLE_ICLOUD_SYNC") }
+        return flags.joined(separator: " ")
+    }
+
+    /// Flags for ClipKittyMacPlatform (file clipboard + synthetic paste)
+    var macPlatformCompilationConditions: String {
+        var flags: [String] = []
+        if enableSyntheticPaste { flags.append("ENABLE_SYNTHETIC_PASTE") }
+        if enableFileClipboardItems { flags.append("ENABLE_FILE_CLIPBOARD_ITEMS") }
+        return flags.joined(separator: " ")
+    }
+
+    // MARK: Sparkle
+
+    /// Sparkle linker flags for OTHER_LDFLAGS. Per-config OTHER_LDFLAGS overrides
+    /// Tuist's auto-link, so actual Sparkle linking is controlled entirely here.
+    var sparkleLinkerFlags: [String] {
+        switch self {
+        case .sparkle:
+            return ["-framework", "SparkleUpdater", "-framework", "Sparkle"]
+        case .debug, .release, .appStore:
+            return ["-weak_framework", "SparkleUpdater", "-weak_framework", "Sparkle"]
+        case .hardened:
+            return []  // No Sparkle linkage — hardened must have zero Sparkle references
+        }
+    }
+
+    var sparkleBuildSettings: SettingsDictionary {
+        switch self {
+        case .sparkle: return [
+            "SPARKLE_FEED_URL": "https://jul-sh.github.io/clipkitty/appcast.xml",
+            "SPARKLE_PUBLIC_KEY": "9VqfSPPY2Gr8QTYDLa99yJXAFWnHw5aybSbKaYDyCq0=",
+            "SPARKLE_AUTO_CHECK": "YES",
+            "SPARKLE_AUTO_UPDATE": "YES",
+            "SPARKLE_INSTALLER_SERVICE": "YES",
+        ]
+        case .debug, .release, .appStore, .hardened: return [:]
+        }
+    }
+
+    // MARK: Configuration Builders
+
+    func projectConfiguration() -> Configuration {
+        if isRelease {
+            return .release(name: configurationName, settings: [:])
+        } else {
+            return .debug(name: configurationName, settings: [:])
+        }
+    }
+
+    func macAppConfiguration() -> Configuration {
+        var settings: SettingsDictionary = [
+            "CODE_SIGN_STYLE": "Automatic",
+            "CODE_SIGN_IDENTITY": "Apple Development",
+            "CODE_SIGN_ENTITLEMENTS": .string(entitlementsPath),
+            "CK_BUILD_CHANNEL": .string(buildChannel),
+            "SWIFT_ACTIVE_COMPILATION_CONDITIONS": .string(macAppCompilationConditions),
+        ]
+
+        // Merge Sparkle build settings
+        settings.merge(sparkleBuildSettings) { _, new in new }
+
+        // Merge bundle ID override for hardened
+        settings.merge(bundleIdOverride) { _, new in new }
+
+        // Sparkle linker flags
+        if !sparkleLinkerFlags.isEmpty {
+            settings["OTHER_LDFLAGS"] = .array(["$(inherited)"] + sparkleLinkerFlags)
+        }
+
+        if isRelease {
+            return .release(name: configurationName, settings: settings)
+        } else {
+            return .debug(name: configurationName, settings: settings)
+        }
+    }
+
+    func appleServicesConfiguration() -> Configuration {
+        let conditions = appleServicesCompilationConditions
+        let settings: SettingsDictionary = conditions.isEmpty ? [:] : [
+            "SWIFT_ACTIVE_COMPILATION_CONDITIONS": .string(conditions),
+        ]
+        if isRelease {
+            return .release(name: configurationName, settings: settings)
+        } else {
+            return .debug(name: configurationName, settings: settings)
+        }
+    }
+
+    func macPlatformConfiguration() -> Configuration {
+        let conditions = macPlatformCompilationConditions
+        let settings: SettingsDictionary = conditions.isEmpty ? [:] : [
+            "SWIFT_ACTIVE_COMPILATION_CONDITIONS": .string(conditions),
+        ]
+        if isRelease {
+            return .release(name: configurationName, settings: settings)
+        } else {
+            return .debug(name: configurationName, settings: settings)
+        }
+    }
+
+    func uiTestsConfiguration() -> Configuration {
+        let settings: SettingsDictionary = [
+            "CODE_SIGN_STYLE": "Manual",
+            "CODE_SIGN_IDENTITY": "Developer ID Application",
+            "DEVELOPMENT_TEAM": "ANBBV7LQ2P",
+        ]
+        if isRelease {
+            return .release(name: configurationName, settings: settings)
+        } else {
+            return .debug(name: configurationName, settings: settings)
+        }
+    }
+}
+
+// MARK: - iOS Build Variant Model
+
+// iOS variants are simpler: Debug, Release, SparkleRelease (no-op), AppStore.
+// Hardened is macOS-only but must be declared so SPM dependencies build.
+
+enum IOSBuildVariant: CaseIterable {
+    case debug
+    case release
+    case sparkle   // no-op config (maps to Release settings)
+    case appStore
+    case hardened  // no-op config for SPM compat
+
+    var configurationName: ConfigurationName {
+        switch self {
+        case .debug: return "Debug"
+        case .release: return "Release"
+        case .sparkle: return .configuration("SparkleRelease")
+        case .appStore: return .configuration("AppStore")
+        case .hardened: return .configuration("Hardened")
+        }
+    }
+
+    var isRelease: Bool {
+        switch self {
+        case .debug: return false
+        case .release, .sparkle, .appStore, .hardened: return true
+        }
+    }
+
+    /// iOS always gets sync and link previews (no hardened iOS variant)
+    var compilationConditions: String {
+        switch self {
+        case .debug, .release:
+            return "ENABLE_ICLOUD_SYNC ENABLE_LINK_PREVIEWS"
+        case .sparkle, .hardened:
+            return ""  // no-op configs
+        case .appStore:
+            return "ENABLE_ICLOUD_SYNC ENABLE_LINK_PREVIEWS"
+        }
+    }
+
+    func iOSAppConfiguration() -> Configuration {
+        let settings: SettingsDictionary
+        switch self {
+        case .debug:
+            settings = [
+                "CODE_SIGN_STYLE": "Automatic",
+                "CODE_SIGN_IDENTITY": "Apple Development",
+                "CODE_SIGN_ENTITLEMENTS": "Sources/iOSApp/ClipKittyiOS.entitlements",
+                "SWIFT_ACTIVE_COMPILATION_CONDITIONS": .string(compilationConditions),
+            ]
+        case .release:
+            settings = [
+                "CODE_SIGN_STYLE": "Automatic",
+                "CODE_SIGN_IDENTITY": "Apple Development",
+                "CODE_SIGN_ENTITLEMENTS": "Sources/iOSApp/ClipKittyiOS.entitlements",
+                "SWIFT_ACTIVE_COMPILATION_CONDITIONS": .string(compilationConditions),
+            ]
+        case .sparkle, .hardened:
+            settings = [:]
+        case .appStore:
+            settings = [
+                "CODE_SIGN_STYLE": "Manual",
+                "CODE_SIGN_IDENTITY": "Apple Distribution",
+                "CODE_SIGN_ENTITLEMENTS": "Sources/iOSApp/ClipKittyiOS.appstore.entitlements",
+                "SWIFT_ACTIVE_COMPILATION_CONDITIONS": .string(compilationConditions),
+                "PROVISIONING_PROFILE_SPECIFIER": "ClipKitty iOS AppStore",
+            ]
+        }
+
+        if isRelease {
+            return .release(name: configurationName, settings: settings)
+        } else {
+            return .debug(name: configurationName, settings: settings)
+        }
+    }
+
+    func shareExtensionConfiguration() -> Configuration {
+        let settings: SettingsDictionary
+        switch self {
+        case .debug:
+            settings = [
+                "CODE_SIGN_STYLE": "Automatic",
+                "CODE_SIGN_IDENTITY": "Apple Development",
+                "CODE_SIGN_ENTITLEMENTS": "Sources/ShareExtension/ClipKittyShare.entitlements",
+            ]
+        case .release:
+            settings = [
+                "CODE_SIGN_STYLE": "Automatic",
+                "CODE_SIGN_IDENTITY": "Apple Development",
+                "CODE_SIGN_ENTITLEMENTS": "Sources/ShareExtension/ClipKittyShare.entitlements",
+            ]
+        case .sparkle, .hardened:
+            settings = [:]
+        case .appStore:
+            settings = [
+                "CODE_SIGN_STYLE": "Manual",
+                "CODE_SIGN_IDENTITY": "Apple Distribution",
+                "CODE_SIGN_ENTITLEMENTS": "Sources/ShareExtension/ClipKittyShare.entitlements",
+                "PROVISIONING_PROFILE_SPECIFIER": "ClipKitty Share AppStore",
+            ]
+        }
+
+        if isRelease {
+            return .release(name: configurationName, settings: settings)
+        } else {
+            return .debug(name: configurationName, settings: settings)
+        }
+    }
+}
+
 // MARK: - Build Configurations
 
-// Debug:          for development (no Sparkle)
-// Release:        for DMG distribution without Sparkle (plain release build)
-// SparkleRelease: for DMG distribution with Sparkle auto-updates
-// AppStore:       for App Store (no Sparkle, different signing)
-
-let configurations: [Configuration] = [
-    .debug(name: "Debug", settings: [:]),
-    .release(name: "Release", settings: [:]),
-    .release(name: .configuration("SparkleRelease"), settings: [:]),
-    .release(name: .configuration("AppStore"), settings: [:]),
-]
+let configurations: [Configuration] = MacBuildVariant.allCases.map { $0.projectConfiguration() }
 
 // MARK: - Project
 
@@ -107,20 +457,7 @@ let project = Project(
                 base: [
                     "SKIP_INSTALL": "YES",
                 ],
-                configurations: [
-                    .debug(name: "Debug", settings: [
-                        "SWIFT_ACTIVE_COMPILATION_CONDITIONS": "ENABLE_SYNC",
-                    ]),
-                    .release(name: "Release", settings: [
-                        "SWIFT_ACTIVE_COMPILATION_CONDITIONS": "ENABLE_SYNC",
-                    ]),
-                    .release(name: .configuration("SparkleRelease"), settings: [
-                        "SWIFT_ACTIVE_COMPILATION_CONDITIONS": "ENABLE_SYNC",
-                    ]),
-                    .release(name: .configuration("AppStore"), settings: [
-                        "SWIFT_ACTIVE_COMPILATION_CONDITIONS": "ENABLE_SYNC",
-                    ]),
-                ]
+                configurations: MacBuildVariant.allCases.map { $0.appleServicesConfiguration() }
             )
         ),
 
@@ -139,7 +476,8 @@ let project = Project(
             settings: .settings(
                 base: [
                     "SKIP_INSTALL": "YES",
-                ]
+                ],
+                configurations: MacBuildVariant.allCases.map { $0.macPlatformConfiguration() }
             )
         ),
 
@@ -163,7 +501,7 @@ let project = Project(
                 "LSApplicationCategoryType": "public.app-category.utilities",
                 "LSMinimumSystemVersion": "14.0",
                 "NSHumanReadableCopyright": "Copyright © 2025 ClipKitty. All rights reserved.",
-                // Sparkle keys use build settings so they're empty for AppStore
+                // Sparkle keys use build settings so they're empty for non-Sparkle builds
                 "SUFeedURL": "$(SPARKLE_FEED_URL)",
                 "SUPublicEDKey": "$(SPARKLE_PUBLIC_KEY)",
                 "SUEnableAutomaticChecks": "$(SPARKLE_AUTO_CHECK)",
@@ -181,8 +519,9 @@ let project = Project(
             scripts: [
                 .post(
                     script: """
-                    # Strip Sparkle frameworks from non-SparkleRelease builds
-                    # The binary uses weak linking so it runs without them
+                    # Strip Sparkle frameworks from non-SparkleRelease builds.
+                    # Debug/Release/AppStore use weak linking, so they run without the frameworks.
+                    # Hardened doesn't link Sparkle at all, but strip anyway for cleanliness.
                     if [ "$CONFIGURATION" != "SparkleRelease" ]; then
                         rm -rf "$BUILT_PRODUCTS_DIR/$FRAMEWORKS_FOLDER_PATH/Sparkle.framework"
                         rm -rf "$BUILT_PRODUCTS_DIR/$FRAMEWORKS_FOLDER_PATH/SparkleUpdater.framework"
@@ -209,48 +548,7 @@ let project = Project(
                     "LOCALIZATION_PREFERS_STRING_CATALOGS": "YES",
                     "DEVELOPMENT_TEAM": "ANBBV7LQ2P",
                 ],
-                configurations: [
-                    .debug(name: "Debug", settings: [
-                        "CODE_SIGN_STYLE": "Automatic",
-                        "CODE_SIGN_IDENTITY": "Apple Development",
-                        "CODE_SIGN_ENTITLEMENTS": "Sources/MacApp/ClipKitty.debug.entitlements",
-                        "CK_BUILD_CHANNEL": "Debug",
-                        "SWIFT_ACTIVE_COMPILATION_CONDITIONS": "ENABLE_SYNC",
-                        // Weak-link Sparkle frameworks so app runs without them
-                        "OTHER_LDFLAGS": .array(["$(inherited)", "-weak_framework", "SparkleUpdater", "-weak_framework", "Sparkle"]),
-                    ]),
-                    .release(name: "Release", settings: [
-                        "CODE_SIGN_STYLE": "Automatic",
-                        "CODE_SIGN_IDENTITY": "Apple Development",
-                        "CODE_SIGN_ENTITLEMENTS": "Sources/MacApp/ClipKitty.oss.entitlements",
-                        "CK_BUILD_CHANNEL": "Release",
-                        "SWIFT_ACTIVE_COMPILATION_CONDITIONS": "ENABLE_SYNC",
-                        // Weak-link Sparkle frameworks so app runs without them
-                        "OTHER_LDFLAGS": .array(["$(inherited)", "-weak_framework", "SparkleUpdater", "-weak_framework", "Sparkle"]),
-                    ]),
-                    .release(name: .configuration("SparkleRelease"), settings: [
-                        "CODE_SIGN_STYLE": "Automatic",
-                        "CODE_SIGN_IDENTITY": "Apple Development",
-                        "CODE_SIGN_ENTITLEMENTS": "Sources/MacApp/ClipKitty.sparkle.entitlements",
-                        "CK_BUILD_CHANNEL": "Sparkle",
-                        "SWIFT_ACTIVE_COMPILATION_CONDITIONS": "SPARKLE_RELEASE ENABLE_SYNC",
-                        // Sparkle configuration - only set for SparkleRelease
-                        "SPARKLE_FEED_URL": "https://jul-sh.github.io/clipkitty/appcast.xml",
-                        "SPARKLE_PUBLIC_KEY": "9VqfSPPY2Gr8QTYDLa99yJXAFWnHw5aybSbKaYDyCq0=",
-                        "SPARKLE_AUTO_CHECK": "YES",
-                        "SPARKLE_AUTO_UPDATE": "YES",
-                        "SPARKLE_INSTALLER_SERVICE": "YES",
-                    ]),
-                    .release(name: .configuration("AppStore"), settings: [
-                        "CODE_SIGN_STYLE": "Automatic",
-                        "CODE_SIGN_IDENTITY": "Apple Development",
-                        "CODE_SIGN_ENTITLEMENTS": "Sources/MacApp/ClipKitty.appstore.entitlements",
-                        "CK_BUILD_CHANNEL": "AppStore",
-                        "SWIFT_ACTIVE_COMPILATION_CONDITIONS": "APP_STORE ENABLE_SYNC",
-                        // Weak-link Sparkle frameworks so app runs without them
-                        "OTHER_LDFLAGS": .array(["$(inherited)", "-weak_framework", "SparkleUpdater", "-weak_framework", "Sparkle"]),
-                    ]),
-                ]
+                configurations: MacBuildVariant.allCases.map { $0.macAppConfiguration() }
             )
         ),
 
@@ -297,28 +595,7 @@ let project = Project(
                 .target(name: "ClipKitty"),
             ],
             settings: .settings(
-                configurations: [
-                    .debug(name: "Debug", settings: [
-                        "CODE_SIGN_STYLE": "Manual",
-                        "CODE_SIGN_IDENTITY": "Developer ID Application",
-                        "DEVELOPMENT_TEAM": "ANBBV7LQ2P",
-                    ]),
-                    .release(name: "Release", settings: [
-                        "CODE_SIGN_STYLE": "Manual",
-                        "CODE_SIGN_IDENTITY": "Developer ID Application",
-                        "DEVELOPMENT_TEAM": "ANBBV7LQ2P",
-                    ]),
-                    .release(name: .configuration("SparkleRelease"), settings: [
-                        "CODE_SIGN_STYLE": "Manual",
-                        "CODE_SIGN_IDENTITY": "Developer ID Application",
-                        "DEVELOPMENT_TEAM": "ANBBV7LQ2P",
-                    ]),
-                    .release(name: .configuration("AppStore"), settings: [
-                        "CODE_SIGN_STYLE": "Manual",
-                        "CODE_SIGN_IDENTITY": "Developer ID Application",
-                        "DEVELOPMENT_TEAM": "ANBBV7LQ2P",
-                    ]),
-                ]
+                configurations: MacBuildVariant.allCases.map { $0.uiTestsConfiguration() }
             ),
             environmentVariables: [
                 "CLIPKITTY_APP_PATH": "$(BUILT_PRODUCTS_DIR)/ClipKitty.app",
@@ -372,28 +649,7 @@ let project = Project(
                     "SWIFT_EMIT_LOC_STRINGS": "YES",
                     "LOCALIZATION_PREFERS_STRING_CATALOGS": "YES",
                 ],
-                configurations: [
-                    .debug(name: "Debug", settings: [
-                        "CODE_SIGN_STYLE": "Automatic",
-                        "CODE_SIGN_IDENTITY": "Apple Development",
-                        "CODE_SIGN_ENTITLEMENTS": "Sources/iOSApp/ClipKittyiOS.entitlements",
-                        "SWIFT_ACTIVE_COMPILATION_CONDITIONS": "ENABLE_SYNC",
-                    ]),
-                    .release(name: "Release", settings: [
-                        "CODE_SIGN_STYLE": "Automatic",
-                        "CODE_SIGN_IDENTITY": "Apple Development",
-                        "CODE_SIGN_ENTITLEMENTS": "Sources/iOSApp/ClipKittyiOS.entitlements",
-                        "SWIFT_ACTIVE_COMPILATION_CONDITIONS": "ENABLE_SYNC",
-                    ]),
-                    .release(name: .configuration("SparkleRelease"), settings: [:]),
-                    .release(name: .configuration("AppStore"), settings: [
-                        "CODE_SIGN_STYLE": "Manual",
-                        "CODE_SIGN_IDENTITY": "Apple Distribution",
-                        "CODE_SIGN_ENTITLEMENTS": "Sources/iOSApp/ClipKittyiOS.appstore.entitlements",
-                        "SWIFT_ACTIVE_COMPILATION_CONDITIONS": "APP_STORE ENABLE_SYNC",
-                        "PROVISIONING_PROFILE_SPECIFIER": "ClipKitty iOS AppStore",
-                    ]),
-                ]
+                configurations: IOSBuildVariant.allCases.map { $0.iOSAppConfiguration() }
             )
         ),
 
@@ -439,25 +695,7 @@ let project = Project(
                     ]),
                     "DEVELOPMENT_TEAM": "ANBBV7LQ2P",
                 ],
-                configurations: [
-                    .debug(name: "Debug", settings: [
-                        "CODE_SIGN_STYLE": "Automatic",
-                        "CODE_SIGN_IDENTITY": "Apple Development",
-                        "CODE_SIGN_ENTITLEMENTS": "Sources/ShareExtension/ClipKittyShare.entitlements",
-                    ]),
-                    .release(name: "Release", settings: [
-                        "CODE_SIGN_STYLE": "Automatic",
-                        "CODE_SIGN_IDENTITY": "Apple Development",
-                        "CODE_SIGN_ENTITLEMENTS": "Sources/ShareExtension/ClipKittyShare.entitlements",
-                    ]),
-                    .release(name: .configuration("SparkleRelease"), settings: [:]),
-                    .release(name: .configuration("AppStore"), settings: [
-                        "CODE_SIGN_STYLE": "Manual",
-                        "CODE_SIGN_IDENTITY": "Apple Distribution",
-                        "CODE_SIGN_ENTITLEMENTS": "Sources/ShareExtension/ClipKittyShare.entitlements",
-                        "PROVISIONING_PROFILE_SPECIFIER": "ClipKitty Share AppStore",
-                    ]),
-                ]
+                configurations: IOSBuildVariant.allCases.map { $0.shareExtensionConfiguration() }
             )
         ),
 
@@ -478,7 +716,7 @@ let project = Project(
             ],
             settings: .settings(
                 base: [
-                    "SWIFT_ACTIVE_COMPILATION_CONDITIONS": "ENABLE_SYNC",
+                    "SWIFT_ACTIVE_COMPILATION_CONDITIONS": "ENABLE_ICLOUD_SYNC ENABLE_LINK_PREVIEWS",
                     "OTHER_LDFLAGS": .array(["$(inherited)", "-lpurr"]),
                     "LIBRARY_SEARCH_PATHS[sdk=iphoneos*]": .array([
                         "$(inherited)",
@@ -599,6 +837,17 @@ let project = Project(
             ),
             archiveAction: .archiveAction(configuration: .configuration("AppStore"))
         ),
+        // Hardened scheme — security-sensitive environments (no network, no files, no sync)
+        .scheme(
+            name: "ClipKitty-Hardened",
+            shared: true,
+            buildAction: .buildAction(targets: [.target("ClipKitty")]),
+            runAction: .runAction(
+                configuration: .configuration("Hardened"),
+                executable: .target("ClipKitty")
+            ),
+            archiveAction: .archiveAction(configuration: .configuration("Hardened"))
+        ),
         // UI tests scheme
         .scheme(
             name: "ClipKittyUITests",
@@ -697,5 +946,6 @@ let project = Project(
         "Sources/MacApp/ClipKitty.oss.entitlements",
         "Sources/MacApp/ClipKitty.debug.entitlements",
         "Sources/MacApp/ClipKitty.sparkle.entitlements",
+        "Sources/MacApp/ClipKitty.hardened.entitlements",
     ]
 )

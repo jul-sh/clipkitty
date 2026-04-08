@@ -170,8 +170,10 @@ struct BrowserPreviewPane: View {
             let highlights = previewDecoration(for: content)?.highlights ?? []
             ScrollView(.vertical, showsIndicators: true) {
                 VStack(alignment: .leading, spacing: 16) {
+                    #if ENABLE_LINK_PREVIEWS
                     LinkPreviewView(url: url, metadataState: metadataState)
                         .frame(maxWidth: .infinity)
+                    #endif
 
                     if highlights.isEmpty {
                         Text(url)

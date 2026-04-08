@@ -22,6 +22,21 @@ HASH=$(shasum -a 256 ~/Downloads/ClipKitty.dmg | cut -d' ' -f1)
 echo "https://github.com/jul-sh/clipkitty/attestations/sha256:$HASH"
 ```
 
+## Verify the Hardened Build
+
+```bash
+HASH=$(shasum -a 256 ~/Downloads/ClipKitty-Hardened.zip | cut -d' ' -f1)
+echo "https://github.com/jul-sh/clipkitty/attestations/sha256:$HASH"
+```
+
+You can also verify the hardened build's entitlements contain no network or file access:
+
+```bash
+codesign -d --entitlements - /Applications/ClipKitty\ Hardened.app
+```
+
+The output should show only `com.apple.security.app-sandbox` — no `network.client`, no `icloud`, no `files.user-selected`.
+
 Open the URL. If an attestation exists, you'll see the exact commit that produced your binary. From there you can browse the exact source code used for that build.
 
 ## Further Reading

@@ -18,7 +18,7 @@ DERIVED_DATA := $(PROJECT_ROOT)/DerivedData
 # API key directory for automatic provisioning (shared with root Makefile)
 API_KEY_DIR := $(PROJECT_ROOT)/.make/keys
 
-# Build configuration: Release or AppStore (differ only in signing)
+# Build configuration: Release, AppStore, or Hardened
 CONFIGURATION ?= Release
 
 # Path to the built app bundle (inside DerivedData)
@@ -36,7 +36,7 @@ PROVISIONING_PROFILE ?=
 # All supported screenshot locales (App Store top 10)
 SCREENSHOT_LOCALES := en es zh-Hans zh-Hant ja ko fr de pt-BR ru
 
-.PHONY: dmg appstore appstore-local appstore-publish publish icon-png \
+.PHONY: dmg hardened appstore appstore-local appstore-publish publish icon-png \
         synthetic-data run-synthetic marketing marketing-screenshots \
         marketing-screenshots-capture marketing-screenshots-localized \
         intro-video intro-video-localized video-data screenshot \
@@ -53,6 +53,21 @@ dmg:
 		"$(APP_PATH)"
 	@echo "Building DMG installer..."
 	@$(DIST_DIR)/build-dmg.sh "$(APP_PATH)" "$(PROJECT_ROOT)/$(APP_NAME).dmg"
+
+# Build Hardened DMG (no network, no file access, no sync — for security-sensitive environments)
+hardened:
+	@$(MAKE) -C $(PROJECT_ROOT) all CONFIGURATION=Hardened \
+		$(if $(VERSION),VERSION=$(VERSION),) \
+		$(if $(BUILD_NUMBER),BUILD_NUMBER=$(BUILD_NUMBER),) \
+		$(if $(UNIVERSAL),UNIVERSAL=$(UNIVERSAL),)
+	@echo "Signing hardened build for distribution..."
+	@codesign --force --options runtime \
+		--sign "$(SIGNING_IDENTITY)" \
+		--entitlements $(PROJECT_ROOT)/Sources/MacApp/ClipKitty.hardened.entitlements \
+		"$(DERIVED_DATA)/Build/Products/Hardened/$(APP_NAME).app"
+	@echo "Building Hardened DMG installer..."
+	@$(DIST_DIR)/build-dmg.sh "$(DERIVED_DATA)/Build/Products/Hardened/$(APP_NAME).app" \
+		"$(PROJECT_ROOT)/$(APP_NAME)-Hardened.dmg"
 
 # Export app icon as PNG (for README, gh-pages, etc.)
 ICTOOL := /Applications/Xcode.app/Contents/Applications/Icon\ Composer.app/Contents/Executables/ictool

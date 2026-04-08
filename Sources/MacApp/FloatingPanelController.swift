@@ -356,7 +356,7 @@ final class FloatingPanelController: NSObject, NSWindowDelegate {
 
     private func selectItem(itemId: String, content: ClipboardContent) {
         store.paste(itemId: itemId, content: content)
-        #if !APP_STORE
+        #if ENABLE_SYNTHETIC_PASTE
             let targetApp = hide()
             if case .autoPaste = AppSettings.shared.pasteMode {
                 activationService.simulatePaste(to: targetApp)

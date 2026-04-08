@@ -17,7 +17,7 @@ public final class AppActivationService {
         app.activate()
     }
 
-    #if !APP_STORE
+    #if ENABLE_SYNTHETIC_PASTE
         public func simulatePaste(to targetApp: NSRunningApplication?) {
             guard let targetApp, !targetApp.isTerminated else {
                 return

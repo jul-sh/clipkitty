@@ -139,7 +139,7 @@ final class ClipboardStore {
     private let fileManager: FileManagerProtocol
     private var previewLoader: PreviewLoader?
     @ObservationIgnored private var pasteboardMonitor: PasteboardMonitor!
-    #if ENABLE_SYNC
+    #if ENABLE_ICLOUD_SYNC
         private enum SyncRuntime {
             case waitingForBootstrap(enabled: Bool)
             case disabled(store: ClipKittyRust.ClipboardStore)
@@ -251,7 +251,7 @@ final class ClipboardStore {
             lifecycle = .ready
             refresh()
             pruneIfNeeded()
-            #if ENABLE_SYNC
+            #if ENABLE_ICLOUD_SYNC
                 initializeSyncRuntime(with: rustStore)
             #endif
         } catch {
@@ -279,7 +279,7 @@ final class ClipboardStore {
                 self.lifecycle = .ready
                 self.refresh()
                 self.pruneIfNeeded()
-                #if ENABLE_SYNC
+                #if ENABLE_ICLOUD_SYNC
                     self.initializeSyncRuntime(with: runtime.store)
                 #endif
             } catch {
@@ -412,16 +412,18 @@ final class ClipboardStore {
         return repository.store.formatExcerpt(content: content, presentation: presentation)
     }
 
-    /// Fetch link metadata using LinkPresentation and persist to database
-    /// Returns the updated item if successful
-    func fetchLinkMetadata(url: String, itemId: String) async -> ClipboardItem? {
-        guard let previewLoader else { return nil }
-        let item = await previewLoader.refreshLinkMetadata(url: url, itemId: itemId)
-        if item != nil {
-            invalidateContent()
+    #if ENABLE_LINK_PREVIEWS
+        /// Fetch link metadata using LinkPresentation and persist to database
+        /// Returns the updated item if successful
+        func fetchLinkMetadata(url: String, itemId: String) async -> ClipboardItem? {
+            guard let previewLoader else { return nil }
+            let item = await previewLoader.refreshLinkMetadata(url: url, itemId: itemId)
+            if item != nil {
+                invalidateContent()
+            }
+            return item
         }
-        return item
-    }
+    #endif
 
     // MARK: - Refresh
 
@@ -439,7 +441,7 @@ final class ClipboardStore {
 
     // MARK: - Sync Engine
 
-    #if ENABLE_SYNC
+    #if ENABLE_ICLOUD_SYNC
         private func initializeSyncRuntime(with rustStore: ClipKittyRust.ClipboardStore) {
             let enabled: Bool
             switch syncRuntime {
@@ -569,8 +571,10 @@ final class ClipboardStore {
                 sourceApp: sourceApp,
                 sourceAppBundleID: sourceAppBundleId
             )
-        case let .files(urls, sourceApp, sourceAppBundleId):
-            saveFileItems(urls: urls, sourceApp: sourceApp, sourceAppBundleID: sourceAppBundleId)
+        #if ENABLE_FILE_CLIPBOARD_ITEMS
+            case let .files(urls, sourceApp, sourceAppBundleId):
+                saveFileItems(urls: urls, sourceApp: sourceApp, sourceAppBundleID: sourceAppBundleId)
+        #endif
         }
     }
 
@@ -584,10 +588,12 @@ final class ClipboardStore {
             case let .success(itemId):
                 self.invalidateContent()
 
-                if !itemId.isEmpty, URL(string: text) != nil, text.hasPrefix("http") {
-                    guard AppSettings.shared.generateLinkPreviews else { return }
-                    _ = await self.fetchLinkMetadata(url: text, itemId: itemId)
-                }
+                #if ENABLE_LINK_PREVIEWS
+                    if !itemId.isEmpty, URL(string: text) != nil, text.hasPrefix("http") {
+                        guard AppSettings.shared.generateLinkPreviews else { return }
+                        _ = await self.fetchLinkMetadata(url: text, itemId: itemId)
+                    }
+                #endif
 
             case let .failure(error):
                 ErrorReporter.report(error, showToast: false)
@@ -852,6 +858,7 @@ final class ClipboardStore {
 
     // MARK: - File Items
 
+    #if ENABLE_FILE_CLIPBOARD_ITEMS
     private func saveFileItems(
         urls: [URL],
         sourceApp: String? = nil,
@@ -912,6 +919,7 @@ final class ClipboardStore {
             }
         }
     }
+    #endif
 
     // MARK: - Actions
 
@@ -922,10 +930,12 @@ final class ClipboardStore {
             return
         }
 
-        if case let .file(_, files) = content {
-            pasteFiles(files: files, itemId: itemId)
-            return
-        }
+        #if ENABLE_FILE_CLIPBOARD_ITEMS
+            if case let .file(_, files) = content {
+                pasteFiles(files: files, itemId: itemId)
+                return
+            }
+        #endif
 
         pasteboardMonitor.acknowledgeLocalWrite(changeCount: pasteService.writeText(content.textContent))
 
@@ -1029,6 +1039,7 @@ final class ClipboardStore {
         return gifData as Data
     }
 
+    #if ENABLE_FILE_CLIPBOARD_ITEMS
     private func pasteFiles(files: [FileEntry], itemId: String) {
         // Resolve each file's bookmark to get current URL
         var resolvedURLs: [URL] = []
@@ -1047,6 +1058,7 @@ final class ClipboardStore {
             await self?.updateItemTimestamp(id: itemId)
         }
     }
+    #endif
 
     private func updateItemTimestamp(id: String) async {
         guard let repository else { return }

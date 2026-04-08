@@ -14,7 +14,7 @@ SCRIPT_DIR := $(abspath $(dir $(lastword $(MAKEFILE_LIST))))
 VERSION ?= 1.0.0
 BUILD_NUMBER ?= $(VERSION)
 
-# Build configuration: Debug, Release (DMG), or AppStore (sandboxed)
+# Build configuration: Debug, Release (DMG), SparkleRelease, AppStore (sandboxed), or Hardened
 CONFIGURATION ?= Release
 
 # Pass LOCKED=1 in CI to enforce Cargo.lock (adds --locked to cargo commands)

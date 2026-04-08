@@ -1,4 +1,4 @@
-#if ENABLE_SYNC
+#if ENABLE_ICLOUD_SYNC
 
     import ClipKittyAppleServices
     import SwiftUI

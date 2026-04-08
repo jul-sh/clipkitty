@@ -64,9 +64,11 @@ final class iOSBrowserStoreClient: BrowserStoreClient {
         await repository.loadPreviewPayload(itemId: itemId, query: query)
     }
 
+    #if ENABLE_LINK_PREVIEWS
     func fetchLinkMetadata(url: String, itemId: String) async -> ClipboardItem? {
         await previewLoader.refreshLinkMetadata(url: url, itemId: itemId)
     }
+    #endif
 
     func addTag(itemId: String, tag: ItemTag) async -> Result<Void, ClipboardError> {
         await repository.addTag(itemId: itemId, tag: tag)

@@ -180,10 +180,51 @@ jobs:
         env:
           AGE_SECRET_KEY: ${{ secrets.AGE_SECRET_KEY }}
 
+      - name: Build App (Hardened)
+        run: make build CONFIGURATION=Hardened UNIVERSAL=1 SKIP_SIGNING=1
+        env:
+          AGE_SECRET_KEY: ${{ secrets.AGE_SECRET_KEY }}
+
       - name: Create AppStore Archive
         run: |
           cd DerivedData/Build/Products/AppStore
           zip -r "$GITHUB_WORKSPACE/ClipKitty-AppStore.zip" ClipKitty.app
+
+      - name: Create Hardened Archive
+        run: |
+          cd DerivedData/Build/Products/Hardened
+          zip -r "$GITHUB_WORKSPACE/ClipKitty-Hardened.zip" ClipKitty.app
+
+      - name: Verify Hardened Entitlements
+        run: |
+          ENT="Sources/MacApp/ClipKitty.hardened.entitlements"
+          echo "=== Hardened entitlements file ==="
+          cat "$ENT"
+          # Verify sandbox is present in source entitlements
+          plutil -extract com.apple.security.app-sandbox raw "$ENT" | grep -q true
+          # Verify no network entitlement
+          ! grep -q "network.client" "$ENT"
+          # Verify no iCloud entitlements
+          ! grep -q "icloud" "$ENT"
+          # Verify no file entitlements
+          ! grep -q "files.user-selected" "$ENT"
+          # Verify hardened build settings reference the correct entitlements file
+          xcodebuild -workspace ClipKitty.xcworkspace -scheme ClipKitty-Hardened \
+            -configuration Hardened -showBuildSettings 2>/dev/null \
+            | grep CODE_SIGN_ENTITLEMENTS | grep -q "hardened.entitlements"
+          echo "Hardened entitlements verified."
+
+      - name: Verify Hardened Binary Linkage
+        run: |
+          BINARY="DerivedData/Build/Products/Hardened/ClipKitty.app/Contents/MacOS/ClipKitty"
+          echo "=== Hardened binary linkage ==="
+          otool -L "$BINARY"
+          # Verify no Sparkle framework references
+          if otool -L "$BINARY" | grep -qi sparkle; then
+            echo "FAIL: Sparkle found in hardened binary linkage"
+            exit 1
+          fi
+          echo "No Sparkle linkage in hardened binary."
 
       - name: Build iOS Smoke Test
         run: |
@@ -405,6 +446,7 @@ jobs:
           subject-path: |
             ClipKitty.dmg
             DerivedData/Build/Products/SparkleRelease/ClipKitty.app/Contents/MacOS/ClipKitty
+            ClipKitty-Hardened.zip
 
       - name: Create Channel Release
         if: github.event_name == 'push' && (github.ref == 'refs/heads/main' || github.ref == 'refs/heads/release')
@@ -417,6 +459,7 @@ jobs:
             --generate-notes
             --target "$GITHUB_SHA"
             ClipKitty.dmg
+            ClipKitty-Hardened.zip
           )
 
           if [ "${{ steps.resolve-version.outputs.channel }}" = "beta" ]; then

@@ -1,5 +1,7 @@
-import CoreGraphics
 import Foundation
+
+#if ENABLE_LINK_PREVIEWS
+import CoreGraphics
 import ImageIO
 @preconcurrency import LinkPresentation
 
@@ -116,6 +118,7 @@ public final class LinkMetadataFetcher {
         return jpegData as Data
     }
 }
+#endif
 
 public enum FetchedLinkMetadata: Equatable {
     case titleOnly(title: String, description: String?)
