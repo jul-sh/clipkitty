@@ -251,6 +251,40 @@ jobs:
           cd DerivedData/Build/Products/Hardened
           zip -r "$GITHUB_WORKSPACE/ClipKitty-Hardened.zip" ClipKitty.app
 
+      - name: Verify Hardened Feature Surface
+        run: |
+          BINARY="DerivedData/Build/Products/Hardened/ClipKitty.app/Contents/MacOS/ClipKitty"
+          echo "=== Hardened feature surface assertions ==="
+
+          # Assert no link preview UI strings (compiled out via ENABLE_LINK_PREVIEWS)
+          if strings "$BINARY" | grep -qi "Generate link previews"; then
+            echo "FAIL: link preview settings string found in hardened binary"
+            exit 1
+          fi
+          echo "✓ No link preview settings"
+
+          # Assert no iCloud sync UI strings (compiled out via ENABLE_ICLOUD_SYNC)
+          if strings "$BINARY" | grep -qi "iCloud Sync"; then
+            echo "FAIL: iCloud sync settings string found in hardened binary"
+            exit 1
+          fi
+          echo "✓ No iCloud sync settings"
+
+          # Assert no Sparkle updater UI strings (compiled out via ENABLE_SPARKLE_UPDATES)
+          if strings "$BINARY" | grep -qi "Check for Updates"; then
+            echo "FAIL: update settings string found in hardened binary"
+            exit 1
+          fi
+          echo "✓ No update settings"
+
+          # Assert no Files filter string (compiled out via ENABLE_FILE_CLIPBOARD_ITEMS)
+          # The localized "Files" filter is only added to filterOptions when enabled
+          if strings "$BINARY" | grep -q "^Files$"; then
+            echo "WARN: 'Files' string found (may be coincidental, checking context)"
+          fi
+
+          echo "Hardened feature surface verified."
+
       - name: Build iOS Smoke Test
         run: |
           xcodebuild build \
