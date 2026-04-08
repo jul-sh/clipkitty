@@ -48,19 +48,19 @@ ClipKitty stores everything. Finds it in milliseconds; whether you have 100 item
 
 ### Hardened Build
 
-All ClipKitty builds already run inside the macOS App Sandbox. The **Hardened** variant goes further by removing two entitlements: network access and filesystem access. macOS then enforces those constraints at the kernel level — the app literally cannot open a socket or touch a file outside its container.
+All ClipKitty builds already run inside the macOS App Sandbox. The **Hardened** variant goes further by removing two entitlements: network access and filesystem access. macOS then enforces those constraints at the kernel level; the app literally cannot open a socket or touch a file outside its container.
 
 That breaks a few features, which are compiled out of the hardened binary entirely:
 
-- **Link previews** — needs network to fetch metadata
-- **iCloud sync** — needs network + CloudKit entitlement
-- **Auto-updates** — needs network to check for new versions
-- **Remote attestation** — needs network to verify build provenance
-- **File clipboard capture** — needs filesystem access to read copied files
+- **Link previews**; needs network to fetch metadata
+- **iCloud sync**; needs network + CloudKit entitlement
+- **Auto-updates**; needs network to check for new versions
+- **Remote attestation**; needs network to verify build provenance
+- **File clipboard capture**; needs filesystem access to read copied files
 
 Everything else works identically: text, images, colors, search, keyboard shortcuts.
 
-The hardened build uses a separate bundle ID (`com.eviljuliette.clipkitty.hardened`), which means macOS gives it its own sandbox container. Your clipboard history does not carry over between hardened and non-hardened installs, in either direction. This is intentional — the two builds are security-isolated from each other.
+The hardened build uses a separate bundle ID (`com.eviljuliette.clipkitty.hardened`), which means macOS gives it its own sandbox container. Your clipboard history does not carry over between hardened and non-hardened installs, in either direction. This is intentional; the two builds are security-isolated from each other.
 
 Download `ClipKitty-Hardened.zip` from [GitHub Releases](https://github.com/jul-sh/clipkitty/releases).
 
