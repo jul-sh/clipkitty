@@ -190,28 +190,48 @@ jobs:
           cd DerivedData/Build/Products/AppStore
           zip -r "$GITHUB_WORKSPACE/ClipKitty-AppStore.zip" ClipKitty.app
 
-      - name: Create Hardened Archive
+      - name: Sign Hardened App
         run: |
-          cd DerivedData/Build/Products/Hardened
-          zip -r "$GITHUB_WORKSPACE/ClipKitty-Hardened.zip" ClipKitty.app
+          APP="DerivedData/Build/Products/Hardened/ClipKitty.app"
+
+          # Hardened has no nested Sparkle frameworks to sign, but sign
+          # any nested binaries for completeness (e.g. XPC services)
+          if [ -d "$APP/Contents/Frameworks" ]; then
+            find "$APP/Contents/Frameworks" \( -type f -perm +111 -o -name "*.dylib" \) | while read -r binary; do
+              codesign --force --options runtime --timestamp --sign "Developer ID Application" "$binary"
+            done
+          fi
+
+          # Sign the outer app with hardened entitlements
+          codesign --force --options runtime --timestamp --sign "Developer ID Application" \
+            --entitlements Sources/MacApp/ClipKitty.hardened.entitlements \
+            "$APP"
+          codesign --verify --deep --strict "$APP"
 
       - name: Verify Hardened Entitlements
         run: |
-          ENT="Sources/MacApp/ClipKitty.hardened.entitlements"
-          echo "=== Hardened entitlements file ==="
-          cat "$ENT"
-          # Verify sandbox is present in source entitlements
-          plutil -extract com.apple.security.app-sandbox raw "$ENT" | grep -q true
+          APP="DerivedData/Build/Products/Hardened/ClipKitty.app"
+          echo "=== Hardened entitlements (from signed app) ==="
+          codesign -d --entitlements - "$APP" 2>&1
+          # Extract entitlements XML and verify contents
+          ENT_XML=$(codesign -d --entitlements - "$APP" 2>&1)
+          # Verify sandbox is present
+          echo "$ENT_XML" | grep -q "app-sandbox"
           # Verify no network entitlement
-          ! grep -q "network.client" "$ENT"
+          if echo "$ENT_XML" | grep -q "network.client"; then
+            echo "FAIL: network.client entitlement found in hardened app"
+            exit 1
+          fi
           # Verify no iCloud entitlements
-          ! grep -q "icloud" "$ENT"
+          if echo "$ENT_XML" | grep -qi "icloud\|cloudkit"; then
+            echo "FAIL: iCloud/CloudKit entitlement found in hardened app"
+            exit 1
+          fi
           # Verify no file entitlements
-          ! grep -q "files.user-selected" "$ENT"
-          # Verify hardened build settings reference the correct entitlements file
-          xcodebuild -workspace ClipKitty.xcworkspace -scheme ClipKitty-Hardened \
-            -configuration Hardened -showBuildSettings 2>/dev/null \
-            | grep CODE_SIGN_ENTITLEMENTS | grep -q "hardened.entitlements"
+          if echo "$ENT_XML" | grep -q "files.user-selected"; then
+            echo "FAIL: file read entitlement found in hardened app"
+            exit 1
+          fi
           echo "Hardened entitlements verified."
 
       - name: Verify Hardened Binary Linkage
@@ -225,6 +245,11 @@ jobs:
             exit 1
           fi
           echo "No Sparkle linkage in hardened binary."
+
+      - name: Create Hardened Archive
+        run: |
+          cd DerivedData/Build/Products/Hardened
+          zip -r "$GITHUB_WORKSPACE/ClipKitty-Hardened.zip" ClipKitty.app
 
       - name: Build iOS Smoke Test
         run: |
@@ -518,6 +543,12 @@ jobs:
         with:
           name: ClipKitty-AppStore
           path: ClipKitty-AppStore.zip
+
+      - name: Upload Hardened Build
+        uses: actions/upload-artifact@v4
+        with:
+          name: ClipKitty-Hardened
+          path: ClipKitty-Hardened.zip
 
       - name: Upload Screenshot Artifacts
         uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4
