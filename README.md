@@ -55,7 +55,6 @@ That breaks a few features, which are compiled out of the hardened binary entire
 - **Link previews**; needs network to fetch metadata
 - **iCloud sync**; needs network + CloudKit entitlement
 - **Auto-updates**; needs network to check for new versions, so you can audit a version and stick to it
-- **Remote attestation**; needs network to verify build provenance
 - **File clipboard capture**; needs filesystem access to read copied files
 
 Everything else works identically: text, images, colors, search, keyboard shortcuts.
