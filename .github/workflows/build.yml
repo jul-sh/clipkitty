@@ -194,15 +194,7 @@ jobs:
         run: |
           APP="DerivedData/Build/Products/Hardened/ClipKitty.app"
 
-          # Hardened has no nested Sparkle frameworks to sign, but sign
-          # any nested binaries for completeness (e.g. XPC services)
-          if [ -d "$APP/Contents/Frameworks" ]; then
-            find "$APP/Contents/Frameworks" \( -type f -perm +111 -o -name "*.dylib" \) | while read -r binary; do
-              codesign --force --options runtime --timestamp --sign "Developer ID Application" "$binary"
-            done
-          fi
-
-          # Sign the outer app with hardened entitlements
+          # Sign the app with hardened entitlements
           codesign --force --options runtime --timestamp --sign "Developer ID Application" \
             --entitlements Sources/MacApp/ClipKitty.hardened.entitlements \
             "$APP"
