@@ -3,7 +3,7 @@ import ClipKittyMacPlatform
 import ClipKittyShared
 @preconcurrency import CoreGraphics
 import Foundation
-#if SPARKLE_RELEASE
+#if ENABLE_SPARKLE_UPDATES
     import SparkleUpdater
 #endif
 
@@ -31,7 +31,7 @@ enum PasteMode {
     }
 }
 
-#if SPARKLE_RELEASE
+#if ENABLE_SPARKLE_UPDATES
     /// State of update checking
     enum UpdateCheckState: Codable, Equatable {
         case idle
@@ -96,7 +96,7 @@ final class AppSettings: ObservableObject {
         didSet { save() }
     }
 
-    #if !APP_STORE
+    #if ENABLE_SYNTHETIC_PASTE
         /// Check if the app can post synthetic keyboard events (e.g. Cmd+V for direct paste)
         /// Uses the permission monitor for reactive updates.
         var hasPostEventPermission: Bool {
@@ -132,7 +132,7 @@ final class AppSettings: ObservableObject {
         }
     #endif
 
-    #if SPARKLE_RELEASE
+    #if ENABLE_SPARKLE_UPDATES
         @Published var updateCheckState: UpdateCheckState = .idle
         @Published var lastUpdateCheckDate: Date? {
             didSet { save() }
@@ -168,10 +168,12 @@ final class AppSettings: ObservableObject {
         didSet { save() }
     }
 
-    /// Whether to generate link previews by fetching web content
-    @Published var generateLinkPreviews: Bool {
-        didSet { save() }
-    }
+    #if ENABLE_LINK_PREVIEWS
+        /// Whether to generate link previews by fetching web content
+        @Published var generateLinkPreviews: Bool {
+            didSet { save() }
+        }
+    #endif
 
     /// Whether the launch-at-login prompt has been dismissed (one-shot)
     @Published var launchAtLoginPromptDismissed: Bool {
@@ -196,7 +198,7 @@ final class AppSettings: ObservableObject {
     /// The date the app was first launched (for time-gating the launch-at-login prompt)
     let firstLaunchDate: Date
 
-    #if ENABLE_SYNC
+    #if ENABLE_ICLOUD_SYNC
         /// Whether iCloud sync is enabled
         @Published var syncEnabled: Bool {
             didSet { save() }
@@ -216,23 +218,25 @@ final class AppSettings: ObservableObject {
     private let hotKeyKey = "hotKey"
     private let maxDbSizeKey = "maxDatabaseSizeGB"
     private let launchAtLoginKey = "launchAtLogin"
-    #if !APP_STORE
+    #if ENABLE_SYNTHETIC_PASTE
         private let autoPasteKey = "autoPasteEnabled"
     #endif
     private let ignoreConfidentialKey = "ignoreConfidentialContent"
     private let ignoreTransientKey = "ignoreTransientContent"
-    private let generateLinkPreviewsKey = "generateLinkPreviews"
+    #if ENABLE_LINK_PREVIEWS
+        private let generateLinkPreviewsKey = "generateLinkPreviews"
+    #endif
     private let launchAtLoginPromptDismissedKey = "launchAtLoginPromptDismissed"
     private let hasCompletedOnboardingKey = "hasCompletedOnboarding"
     private let firstLaunchDateKey = "firstLaunchDate"
     private let lastInfoDismissDateKey = "lastInfoDismissDate"
     private let lastNudgeInteractionDateKey = "lastNudgeInteractionDate"
-    #if ENABLE_SYNC
+    #if ENABLE_ICLOUD_SYNC
         private let syncEnabledKey = "syncEnabled"
     #endif
     private var textScaleObserver: Any?
     private let ignoredAppBundleIdsKey = "ignoredAppBundleIds"
-    #if SPARKLE_RELEASE
+    #if ENABLE_SPARKLE_UPDATES
         private let autoInstallUpdatesKey = "autoInstallUpdates"
         private let updateChannelKey = "updateChannel"
         private let lastUpdateCheckDateKey = "lastUpdateCheckDate"
@@ -259,10 +263,10 @@ final class AppSettings: ObservableObject {
         }
 
         launchAtLoginEnabled = defaults.bool(forKey: launchAtLoginKey)
-        #if !APP_STORE
+        #if ENABLE_SYNTHETIC_PASTE
             autoPasteEnabled = defaults.object(forKey: autoPasteKey) as? Bool ?? true
         #endif
-        #if SPARKLE_RELEASE
+        #if ENABLE_SPARKLE_UPDATES
             autoInstallUpdates = defaults.object(forKey: autoInstallUpdatesKey) as? Bool ?? true
             let storedUpdateChannel = defaults.string(forKey: updateChannelKey)
             updateChannel = storedUpdateChannel.flatMap(UpdateChannel.init(rawValue:)) ?? .stable
@@ -289,14 +293,16 @@ final class AppSettings: ObservableObject {
         }
 
         // Sync - default to disabled (user opts in via Settings)
-        #if ENABLE_SYNC
+        #if ENABLE_ICLOUD_SYNC
             syncEnabled = defaults.object(forKey: syncEnabledKey) as? Bool ?? false
         #endif
 
         // Privacy settings - default to enabled for user protection
         ignoreConfidentialContent = defaults.object(forKey: ignoreConfidentialKey) as? Bool ?? true
         ignoreTransientContent = defaults.object(forKey: ignoreTransientKey) as? Bool ?? true
-        generateLinkPreviews = defaults.object(forKey: generateLinkPreviewsKey) as? Bool ?? true
+        #if ENABLE_LINK_PREVIEWS
+            generateLinkPreviews = defaults.object(forKey: generateLinkPreviewsKey) as? Bool ?? true
+        #endif
 
         // Text scale from system accessibility setting
         textScale = Self.systemTextScale()
@@ -358,22 +364,24 @@ final class AppSettings: ObservableObject {
         }
         defaults.set(maxDatabaseSizeGB, forKey: maxDbSizeKey)
         defaults.set(launchAtLoginEnabled, forKey: launchAtLoginKey)
-        #if !APP_STORE
+        #if ENABLE_SYNTHETIC_PASTE
             defaults.set(autoPasteEnabled, forKey: autoPasteKey)
         #endif
         defaults.set(launchAtLoginPromptDismissed, forKey: launchAtLoginPromptDismissedKey)
         defaults.set(lastInfoDismissDate, forKey: lastInfoDismissDateKey)
         defaults.set(lastNudgeInteractionDate, forKey: lastNudgeInteractionDateKey)
         defaults.set(hasCompletedOnboarding, forKey: hasCompletedOnboardingKey)
-        #if ENABLE_SYNC
+        #if ENABLE_ICLOUD_SYNC
             defaults.set(syncEnabled, forKey: syncEnabledKey)
         #endif
         defaults.set(ignoreConfidentialContent, forKey: ignoreConfidentialKey)
         defaults.set(ignoreTransientContent, forKey: ignoreTransientKey)
-        defaults.set(generateLinkPreviews, forKey: generateLinkPreviewsKey)
+        #if ENABLE_LINK_PREVIEWS
+            defaults.set(generateLinkPreviews, forKey: generateLinkPreviewsKey)
+        #endif
         // textScale is derived from system accessibility setting, not persisted
         defaults.set(Array(ignoredAppBundleIds).sorted(), forKey: ignoredAppBundleIdsKey)
-        #if SPARKLE_RELEASE
+        #if ENABLE_SPARKLE_UPDATES
             defaults.set(autoInstallUpdates, forKey: autoInstallUpdatesKey)
             defaults.set(updateChannel.rawValue, forKey: updateChannelKey)
             defaults.set(lastUpdateCheckDate, forKey: lastUpdateCheckDateKey)

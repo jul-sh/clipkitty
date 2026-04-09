@@ -4,7 +4,9 @@ import Foundation
 public enum DetectedPasteboardContent {
     case text(text: String, sourceApp: String?, sourceAppBundleId: String?)
     case image(data: Data, isAnimated: Bool, sourceApp: String?, sourceAppBundleId: String?)
-    case files(urls: [URL], sourceApp: String?, sourceAppBundleId: String?)
+    #if ENABLE_FILE_CLIPBOARD_ITEMS
+        case files(urls: [URL], sourceApp: String?, sourceAppBundleId: String?)
+    #endif
 }
 
 @MainActor
@@ -244,13 +246,21 @@ public final class PasteboardMonitor {
 
         let sourceApp = sourceApplication?.localizedName
 
-        if availableTypes.contains(.fileURL) || availableTypes.contains(Self.legacyFileNamesType) {
-            let fileURLs = pasteboard.readFileURLs()
-            if !fileURLs.isEmpty {
-                onDetection(.files(urls: fileURLs, sourceApp: sourceApp, sourceAppBundleId: sourceAppBundleID))
+        #if ENABLE_FILE_CLIPBOARD_ITEMS
+            if availableTypes.contains(.fileURL) || availableTypes.contains(Self.legacyFileNamesType) {
+                let fileURLs = pasteboard.readFileURLs()
+                if !fileURLs.isEmpty {
+                    onDetection(.files(urls: fileURLs, sourceApp: sourceApp, sourceAppBundleId: sourceAppBundleID))
+                    return
+                }
+            }
+        #else
+            // When file clipboard items are disabled, skip file-bearing pasteboards
+            // entirely to avoid capturing file paths as text strings.
+            if availableTypes.contains(.fileURL) || availableTypes.contains(Self.legacyFileNamesType) {
                 return
             }
-        }
+        #endif
 
         if availableTypes.contains(Self.gifType), let gifData = pasteboard.data(forType: Self.gifType) {
             onDetection(.image(data: gifData, isAnimated: true, sourceApp: sourceApp, sourceAppBundleId: sourceAppBundleID))

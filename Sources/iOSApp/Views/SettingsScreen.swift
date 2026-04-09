@@ -7,7 +7,7 @@ struct SettingsScreen: View {
         NavigationStack {
             Form {
                 GeneralSettingsSection()
-                #if ENABLE_SYNC
+                #if ENABLE_ICLOUD_SYNC
                     SyncSettingsSection()
                 #endif
                 HistorySettingsSection()

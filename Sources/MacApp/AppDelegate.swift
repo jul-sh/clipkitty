@@ -4,7 +4,7 @@ import ClipKittyRust
 import ClipKittyShared
 import Combine
 import SwiftUI
-#if SPARKLE_RELEASE
+#if ENABLE_SPARKLE_UPDATES
     import SparkleUpdater
 #endif
 
@@ -40,10 +40,10 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate {
     private var statusMenu: NSMenu?
     private var cancellables = Set<AnyCancellable>()
     private var snackbarCoordinator: SnackbarCoordinator!
-    #if ENABLE_SYNC
+    #if ENABLE_ICLOUD_SYNC
         private var syncPreferenceController: SyncPreferenceController?
     #endif
-    #if SPARKLE_RELEASE
+    #if ENABLE_SPARKLE_UPDATES
         private var updater: SparkleAppUpdater?
     #endif
 
@@ -72,7 +72,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate {
         case .simulatedDatabase:
             store = ClipboardStore(screenshotMode: true)
         }
-        #if ENABLE_SYNC
+        #if ENABLE_ICLOUD_SYNC
             configureSyncPreferenceController()
         #endif
 
@@ -102,7 +102,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate {
 
         setupMenuBar()
 
-        #if SPARKLE_RELEASE
+        #if ENABLE_SPARKLE_UPDATES
             let sparkleUpdater = SparkleAppUpdater()
             sparkleUpdater.start { state in
                 // Convert SparkleUpdater.UpdateCheckState to app's UpdateCheckState
@@ -236,7 +236,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate {
 
     @objc private func openSettings() {
         if settingsWindow == nil {
-            #if SPARKLE_RELEASE
+            #if ENABLE_SPARKLE_UPDATES
                 let settingsView = SettingsView(
                     store: store,
                     onHotKeyChanged: { [weak self] hotKey in
@@ -330,14 +330,14 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate {
     func applicationWillTerminate(_: Notification) {
         store.stopMonitoring()
         hotKeyManager.unregister()
-        #if ENABLE_SYNC
+        #if ENABLE_ICLOUD_SYNC
             syncPreferenceController?.unbind()
             syncPreferenceController = nil
             store.stopSyncEngine()
         #endif
     }
 
-    #if ENABLE_SYNC
+    #if ENABLE_ICLOUD_SYNC
         private func configureSyncPreferenceController() {
             let controller = SyncPreferenceController(
                 applySyncEnabled: { [weak self] enabled in

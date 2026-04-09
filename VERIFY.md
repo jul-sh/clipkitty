@@ -22,6 +22,23 @@ HASH=$(shasum -a 256 ~/Downloads/ClipKitty.dmg | cut -d' ' -f1)
 echo "https://github.com/jul-sh/clipkitty/attestations/sha256:$HASH"
 ```
 
+## Verify the Hardened Build
+
+```bash
+HASH=$(shasum -a 256 ~/Downloads/ClipKitty-Hardened.zip | cut -d' ' -f1)
+echo "https://github.com/jul-sh/clipkitty/attestations/sha256:$HASH"
+```
+
+You can also verify the hardened build's entitlements contain no network or file access:
+
+```bash
+codesign -d --entitlements - /Applications/ClipKitty.app
+```
+
+What you want to see is basically nothing except `com.apple.security.app-sandbox`. No `network.client`, no `icloud`, no `files.user-selected`.
+
+This gives you defense in depth. First, the code that does network requests and filesystem access is compiled out of the hardened binary; it does not exist. Second, even if it did, macOS App Sandbox would block it at the kernel level because the entitlements are not there. Both layers have to fail for the app to do something you did not ask it to do.
+
 Open the URL. If an attestation exists, you'll see the exact commit that produced your binary. From there you can browse the exact source code used for that build.
 
 ## Further Reading

@@ -14,12 +14,20 @@ SCRIPT_DIR := $(abspath $(dir $(lastword $(MAKEFILE_LIST))))
 VERSION ?= 1.0.0
 BUILD_NUMBER ?= $(VERSION)
 
-# Build configuration: Debug, Release (DMG), or AppStore (sandboxed)
+# Build configuration: Debug, Release (DMG), SparkleRelease, AppStore (sandboxed), or Hardened
 CONFIGURATION ?= Release
 
 # Pass LOCKED=1 in CI to enforce Cargo.lock (adds --locked to cargo commands)
 CARGO_LOCKED := $(if $(filter 1,$(LOCKED)),--locked,)
 export LOCKED
+
+# Scheme derivation: SparkleRelease builds the ClipKittySpark target (which owns
+# the Sparkle dependency). All other configurations use the plain ClipKitty target.
+ifeq ($(CONFIGURATION),SparkleRelease)
+SCHEME := ClipKittySpark
+else
+SCHEME := $(APP_NAME)
+endif
 
 # DerivedData location for deterministic output paths
 DERIVED_DATA := $(SCRIPT_DIR)/DerivedData
@@ -102,9 +110,9 @@ provisioning-secrets:
 # CI sets SKIP_SIGNING=1 because ephemeral runners can't register devices
 # for provisioning profiles. CI re-signs for distribution after building.
 build: api-key
-	@echo "Building $(APP_NAME) ($(CONFIGURATION))..."
+	@echo "Building $(APP_NAME) ($(CONFIGURATION), scheme: $(SCHEME))..."
 	@xcodebuild -workspace $(APP_NAME).xcworkspace \
-		-scheme $(APP_NAME) \
+		-scheme $(SCHEME) \
 		-configuration $(CONFIGURATION) \
 		-derivedDataPath $(DERIVED_DATA) \
 		-allowProvisioningUpdates \

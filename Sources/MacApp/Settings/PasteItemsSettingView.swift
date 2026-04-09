@@ -2,7 +2,7 @@ import AppKit
 import ClipKittyMacPlatform
 import SwiftUI
 
-#if !APP_STORE
+#if ENABLE_SYNTHETIC_PASTE
 
     /// Selection for paste item behavior
     enum PasteItemsSelection: String, CaseIterable {

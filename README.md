@@ -46,6 +46,23 @@ ClipKitty stores everything. Finds it in milliseconds; whether you have 100 item
 1. Download the latest DMG from [GitHub Releases](https://github.com/jul-sh/clipkitty/releases).
 2. Drag ClipKitty to your Applications folder.
 
+### Hardened Build
+
+The default build include a few convinience features, that you may want to disable in security sensitive settings:
+
+- **Link previews**; fetches metadata over the network to show a nice preview
+- **iCloud sync**; sends clipboard data to Apple's CloudKit
+- **Auto-updates**; phones home to check for new versions, and auto installs them
+- **File clipboard capture**; requires files system access
+
+You can already disable most of these in settings. The **Hardened** variant goes further. It compiles the code out entirely, then removes the network and filesystem entitlements from the macOS App Sandbox so the OS enforces those constraints at the kernel level. The app cannot open a socket or touch a file outside its container, even if a bug or exploit tried to. You can [verify](VERIFY.md) both layers yourself.
+
+Because auto-updates are gone, you can audit a specific version and stick to it. Everything else works identically: text, images, colors, search, keyboard shortcuts.
+
+The hardened build uses a separate bundle ID (`com.eviljuliette.clipkitty.hardened`), which means macOS gives it its own sandbox container. Your clipboard history does not carry over between hardened and non-hardened installs, in either direction. This is intentional; the two builds are isolated from each other.
+
+Download `ClipKitty-Hardened.zip` from [GitHub Releases](https://github.com/jul-sh/clipkitty/releases).
+
 ## Getting Started
 
 1. Press **⌥Space** to open your clipboard history.
@@ -69,6 +86,14 @@ ClipKitty stores everything. Finds it in milliseconds; whether you have 100 item
 git clone https://github.com/jul-sh/clipkitty
 cd clipkitty
 make
+```
+
+Build a specific variant by setting `CONFIGURATION`. If you want the hardened one, you are building a different binary with different capabilities, not the same app with a few checkboxes unchecked.
+
+```bash
+make all CONFIGURATION=SparkleRelease  # With auto-update support
+make all CONFIGURATION=Hardened        # Hardened (no network/files/sync)
+make -C distribution hardened          # Hardened signed DMG
 ```
 
 Requires macOS 15+ and Swift 6.2+.

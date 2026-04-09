@@ -18,14 +18,19 @@ struct BrowserView: View {
         case actionsDropdown
     }
 
-    private static let filterOptions: [(ContentTypeFilter, String)] = [
-        (.all, String(localized: "All")),
-        (.text, String(localized: "Text")),
-        (.images, String(localized: "Images")),
-        (.links, String(localized: "Links")),
-        (.colors, String(localized: "Colors")),
-        (.files, String(localized: "Files")),
-    ]
+    private static let filterOptions: [(ContentTypeFilter, String)] = {
+        var options: [(ContentTypeFilter, String)] = [
+            (.all, String(localized: "All")),
+            (.text, String(localized: "Text")),
+            (.images, String(localized: "Images")),
+            (.links, String(localized: "Links")),
+            (.colors, String(localized: "Colors")),
+        ]
+        #if ENABLE_FILE_CLIPBOARD_ITEMS
+            options.append((.files, String(localized: "Files")))
+        #endif
+        return options
+    }()
 
     var body: some View {
         VStack(spacing: 0) {

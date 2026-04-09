@@ -17,7 +17,7 @@ struct SettingsView: View {
 
     let store: ClipboardStore
     let onHotKeyChanged: (HotKey) -> Void
-    #if SPARKLE_RELEASE
+    #if ENABLE_SPARKLE_UPDATES
         var onInstallUpdate: (() -> Void)? = nil
         var onCheckForUpdates: (() -> Void)? = nil
     #endif
@@ -49,7 +49,7 @@ struct SettingsView: View {
     }
 
     private var generalSettingsView: GeneralSettingsView {
-        #if SPARKLE_RELEASE
+        #if ENABLE_SPARKLE_UPDATES
             GeneralSettingsView(
                 store: store,
                 onInstallUpdate: onInstallUpdate,

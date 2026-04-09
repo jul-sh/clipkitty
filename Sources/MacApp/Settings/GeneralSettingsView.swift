@@ -1,7 +1,9 @@
 import AppKit
 import ClipKittyMacPlatform
 import ClipKittyShared
-import CloudKit
+#if ENABLE_ICLOUD_SYNC
+    import CloudKit
+#endif
 import SwiftUI
 import OSLog
 
@@ -9,13 +11,15 @@ struct GeneralSettingsView: View {
     @ObservedObject private var settings = AppSettings.shared
     @ObservedObject private var launchAtLogin = LaunchAtLogin.shared
     @State private var showClearConfirmation = false
-    @State private var attestationURL: URL?
+    #if ENABLE_BUILD_ATTESTATION_LINK
+        @State private var attestationURL: URL?
+    #endif
     @State private var isICloudAvailable = true
     @State private var iCloudStatusMessage: String? = nil
     @State private var logsCopied = false
 
     let store: ClipboardStore
-    #if SPARKLE_RELEASE
+    #if ENABLE_SPARKLE_UPDATES
         var onInstallUpdate: (() -> Void)? = nil
         var onCheckForUpdates: (() -> Void)? = nil
     #endif
@@ -39,15 +43,7 @@ struct GeneralSettingsView: View {
     }
 
     private var buildChannel: String {
-        #if APP_STORE
-            return "AppStore"
-        #elseif SPARKLE_RELEASE
-            return "Sparkle"
-        #elseif DEBUG
-            return "Debug"
-        #else
-            return "Release"
-        #endif
+        Bundle.main.object(forInfoDictionaryKey: "CKBuildChannel") as? String ?? "Unknown"
     }
 
     private var binaryHash: String? {
@@ -84,13 +80,13 @@ struct GeneralSettingsView: View {
             }
 
 
-            #if !APP_STORE
+            #if ENABLE_SYNTHETIC_PASTE
                 Section(String(localized: "Paste Items")) {
                     PasteItemsSettingView()
                 }
             #endif
 
-            #if ENABLE_SYNC
+            #if ENABLE_ICLOUD_SYNC
                 Section(String(localized: "iCloud Sync")) {
                     Toggle(String(localized: "Sync clipboard history across devices"), isOn: $settings.syncEnabled)
                         .disabled(!isICloudAvailable)
@@ -155,7 +151,7 @@ struct GeneralSettingsView: View {
                 }
             }
 
-            #if SPARKLE_RELEASE
+            #if ENABLE_SPARKLE_UPDATES
                 Section(String(localized: "Updates")) {
                     HStack {
                         Text(String(localized: "Status:"))
@@ -303,18 +299,22 @@ struct GeneralSettingsView: View {
                         .foregroundStyle(.secondary)
                 }
 
-                if let url = attestationURL {
-                    LabeledContent(String(localized: "Build Attestation")) {
-                        Link(destination: url) {
-                            Label(String(localized: "Verify"), systemImage: "checkmark.seal")
+                #if ENABLE_BUILD_ATTESTATION_LINK
+                    if let url = attestationURL {
+                        LabeledContent(String(localized: "Build Attestation")) {
+                            Link(destination: url) {
+                                Label(String(localized: "Verify"), systemImage: "checkmark.seal")
+                            }
                         }
                     }
-                }
+                #endif
             }
             .task {
-                await checkAttestation()
-                #if ENABLE_SYNC
-                await checkICloudAccountStatus()
+                #if ENABLE_BUILD_ATTESTATION_LINK
+                    await checkAttestation()
+                #endif
+                #if ENABLE_ICLOUD_SYNC
+                    await checkICloudAccountStatus()
                 #endif
             }
         }
@@ -371,7 +371,7 @@ struct GeneralSettingsView: View {
         return min(max(rounded, minDatabaseSizeGB), maxDatabaseSizeGB)
     }
 
-    #if ENABLE_SYNC
+    #if ENABLE_ICLOUD_SYNC
         @ViewBuilder
         private var syncStatusIcon: some View {
             if let engine = store.syncEngine {
@@ -497,6 +497,7 @@ struct GeneralSettingsView: View {
         }
     }
 
+    #if ENABLE_BUILD_ATTESTATION_LINK
     private func checkAttestation() async {
         guard let hash = binaryHash else { return }
         let rekorURL = URL(string: "https://rekor.sigstore.dev/api/v1/index/retrieve")!
@@ -519,4 +520,5 @@ struct GeneralSettingsView: View {
             // No attestation available
         }
     }
+    #endif
 }

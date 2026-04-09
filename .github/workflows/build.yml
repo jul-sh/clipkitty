@@ -180,10 +180,147 @@ jobs:
         env:
           AGE_SECRET_KEY: ${{ secrets.AGE_SECRET_KEY }}
 
+      - name: Build App (Hardened)
+        run: make build CONFIGURATION=Hardened UNIVERSAL=1 SKIP_SIGNING=1
+        env:
+          AGE_SECRET_KEY: ${{ secrets.AGE_SECRET_KEY }}
+
       - name: Create AppStore Archive
         run: |
           cd DerivedData/Build/Products/AppStore
           zip -r "$GITHUB_WORKSPACE/ClipKitty-AppStore.zip" ClipKitty.app
+
+      - name: Sign Hardened App
+        run: |
+          APP="DerivedData/Build/Products/Hardened/ClipKitty.app"
+
+          # Sign the app with hardened entitlements
+          codesign --force --options runtime --timestamp --sign "Developer ID Application" \
+            --entitlements Sources/MacApp/ClipKitty.hardened.entitlements \
+            "$APP"
+          codesign --verify --deep --strict "$APP"
+
+      - name: Verify Hardened Entitlements
+        run: |
+          APP="DerivedData/Build/Products/Hardened/ClipKitty.app"
+          echo "=== Hardened entitlements (from signed app) ==="
+          codesign -d --entitlements - "$APP" 2>&1
+          # Extract entitlements XML and verify contents
+          ENT_XML=$(codesign -d --entitlements - "$APP" 2>&1)
+          # Verify sandbox is present
+          echo "$ENT_XML" | grep -q "app-sandbox"
+          # Verify no network entitlement
+          if echo "$ENT_XML" | grep -q "network.client"; then
+            echo "FAIL: network.client entitlement found in hardened app"
+            exit 1
+          fi
+          # Verify no iCloud entitlements
+          if echo "$ENT_XML" | grep -qi "icloud\|cloudkit"; then
+            echo "FAIL: iCloud/CloudKit entitlement found in hardened app"
+            exit 1
+          fi
+          # Verify no file entitlements
+          if echo "$ENT_XML" | grep -q "files.user-selected"; then
+            echo "FAIL: file read entitlement found in hardened app"
+            exit 1
+          fi
+          echo "Hardened entitlements verified."
+
+      - name: Verify Hardened Binary Linkage
+        run: |
+          BINARY="DerivedData/Build/Products/Hardened/ClipKitty.app/Contents/MacOS/ClipKitty"
+          echo "=== Hardened binary linkage ==="
+          otool -L "$BINARY"
+          # Verify no Sparkle framework references
+          if otool -L "$BINARY" | grep -qi sparkle; then
+            echo "FAIL: Sparkle found in hardened binary linkage"
+            exit 1
+          fi
+          echo "No Sparkle linkage in hardened binary."
+
+      - name: Create Hardened Archive
+        run: |
+          cd DerivedData/Build/Products/Hardened
+          zip -r "$GITHUB_WORKSPACE/ClipKitty-Hardened.zip" ClipKitty.app
+
+      - name: Verify Hardened Feature Surface
+        run: |
+          APP="DerivedData/Build/Products/Hardened/ClipKitty.app"
+          BINARY="$APP/Contents/MacOS/ClipKitty"
+          echo "=== Hardened feature surface assertions ==="
+
+          # --- Binary-level checks (compiled-out code paths) ---
+
+          # Assert link preview code is compiled out (ENABLE_LINK_PREVIEWS)
+          if strings "$BINARY" | grep -q "refreshLinkMetadata"; then
+            echo "FAIL: link preview method 'refreshLinkMetadata' found in hardened binary"
+            exit 1
+          fi
+          echo "✓ No link preview code in binary"
+
+          # Assert iCloud sync code is compiled out (ENABLE_ICLOUD_SYNC)
+          if strings "$BINARY" | grep -q "SyncEngine"; then
+            echo "FAIL: SyncEngine found in hardened binary"
+            exit 1
+          fi
+          echo "✓ No iCloud sync code in binary"
+
+          # Assert Sparkle updater code is compiled out (ENABLE_SPARKLE_UPDATES)
+          if strings "$BINARY" | grep -q "SPUUpdater"; then
+            echo "FAIL: Sparkle updater class found in hardened binary"
+            exit 1
+          fi
+          echo "✓ No Sparkle update code in binary"
+
+          # Assert file clipboard code is compiled out (ENABLE_FILE_CLIPBOARD_ITEMS)
+          if strings "$BINARY" | grep -q "saveFileItems"; then
+            echo "FAIL: file clipboard method 'saveFileItems' found in hardened binary"
+            exit 1
+          fi
+          echo "✓ No file clipboard code in binary"
+
+          # Assert build attestation link code is compiled out (ENABLE_BUILD_ATTESTATION_LINK)
+          if strings "$BINARY" | grep -q "checkAttestation"; then
+            echo "FAIL: build attestation link method 'checkAttestation' found in hardened binary"
+            exit 1
+          fi
+          echo "✓ No build attestation link code in binary"
+
+          # --- Build settings checks (Info.plist) ---
+
+          # Verify bundle ID is hardened-specific (separate sandbox container)
+          BUNDLE_ID=$(defaults read "$APP/Contents/Info" CFBundleIdentifier 2>/dev/null || echo "")
+          if [ "$BUNDLE_ID" != "com.eviljuliette.clipkitty.hardened" ]; then
+            echo "FAIL: CFBundleIdentifier is '$BUNDLE_ID', expected 'com.eviljuliette.clipkitty.hardened'"
+            exit 1
+          fi
+          echo "✓ Bundle ID: com.eviljuliette.clipkitty.hardened"
+
+          # Verify build channel is Hardened
+          CHANNEL=$(defaults read "$APP/Contents/Info" CKBuildChannel 2>/dev/null || echo "")
+          if [ "$CHANNEL" != "Hardened" ]; then
+            echo "FAIL: CKBuildChannel is '$CHANNEL', expected 'Hardened'"
+            exit 1
+          fi
+          echo "✓ Build channel: Hardened"
+
+          # Verify no Sparkle feed URL in Info.plist
+          FEED=$(defaults read "$APP/Contents/Info" SUFeedURL 2>/dev/null || echo "")
+          if [ -n "$FEED" ]; then
+            echo "FAIL: SUFeedURL found in hardened Info.plist: $FEED"
+            exit 1
+          fi
+          echo "✓ No Sparkle feed URL in Info.plist"
+
+          # Verify display name is correct
+          DISPLAY_NAME=$(defaults read "$APP/Contents/Info" CFBundleDisplayName 2>/dev/null || echo "")
+          if [ "$DISPLAY_NAME" != "ClipKitty Hardened" ]; then
+            echo "FAIL: CFBundleDisplayName is '$DISPLAY_NAME', expected 'ClipKitty Hardened'"
+            exit 1
+          fi
+          echo "✓ Display name: ClipKitty Hardened"
+
+          echo "Hardened feature surface verified."
 
       - name: Build iOS Smoke Test
         run: |
@@ -405,6 +542,7 @@ jobs:
           subject-path: |
             ClipKitty.dmg
             DerivedData/Build/Products/SparkleRelease/ClipKitty.app/Contents/MacOS/ClipKitty
+            ClipKitty-Hardened.zip
 
       - name: Create Channel Release
         if: github.event_name == 'push' && (github.ref == 'refs/heads/main' || github.ref == 'refs/heads/release')
@@ -417,6 +555,7 @@ jobs:
             --generate-notes
             --target "$GITHUB_SHA"
             ClipKitty.dmg
+            ClipKitty-Hardened.zip
           )
 
           if [ "${{ steps.resolve-version.outputs.channel }}" = "beta" ]; then
@@ -475,6 +614,12 @@ jobs:
         with:
           name: ClipKitty-AppStore
           path: ClipKitty-AppStore.zip
+
+      - name: Upload Hardened Build
+        uses: actions/upload-artifact@v4
+        with:
+          name: ClipKitty-Hardened
+          path: ClipKitty-Hardened.zip
 
       - name: Upload Screenshot Artifacts
         uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4

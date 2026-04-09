@@ -9,7 +9,9 @@ private let poi = OSLog(subsystem: "com.eviljuliette.clipkitty", category: .poin
 @Observable
 public final class BrowserViewModel {
     private let client: BrowserStoreClient
+    #if ENABLE_LINK_PREVIEWS
     private let shouldGenerateLinkPreviews: @MainActor () -> Bool
+    #endif
     private let onSelect: (String, ClipboardContent) -> Void
     private let onCopyOnly: (String, ClipboardContent) -> Void
     private let onDismiss: () -> Void
@@ -68,13 +70,17 @@ public final class BrowserViewModel {
 
     private var searchExecution: SearchExecution = .idle
     private var previewTask: Task<Void, Never>?
+    #if ENABLE_LINK_PREVIEWS
     private var metadataTask: Task<Void, Never>?
+    #endif
     private var listDecorationTasks: [String: Task<Void, Never>] = [:]
     private var pendingDeleteTask: Task<Void, Never>?
     private var pendingTagSettleTask: Task<Void, Never>?
     private var queryGeneration = 0
     private var previewGeneration = 0
+    #if ENABLE_LINK_PREVIEWS
     private var metadataGeneration = 0
+    #endif
     private var hasAppliedInitialSearch = false
     private var latestKnownContentRevision = 0
     private var lastLoadedContentRevision: Int?
@@ -95,7 +101,9 @@ public final class BrowserViewModel {
 
     public init(
         client: BrowserStoreClient,
+        #if ENABLE_LINK_PREVIEWS
         shouldGenerateLinkPreviews: @escaping @MainActor () -> Bool = { true },
+        #endif
         onSelect: @escaping (String, ClipboardContent) -> Void,
         onCopyOnly: @escaping (String, ClipboardContent) -> Void,
         onDismiss: @escaping () -> Void,
@@ -103,7 +111,9 @@ public final class BrowserViewModel {
         dismissSnackbarNotification: @escaping () -> Void = {}
     ) {
         self.client = client
+        #if ENABLE_LINK_PREVIEWS
         self.shouldGenerateLinkPreviews = shouldGenerateLinkPreviews
+        #endif
         self.onSelect = onSelect
         self.onCopyOnly = onCopyOnly
         self.onDismiss = onDismiss
@@ -199,8 +209,10 @@ public final class BrowserViewModel {
         searchExecution.cancel()
         previewTask?.cancel()
         previewTask = nil
+        #if ENABLE_LINK_PREVIEWS
         metadataTask?.cancel()
         metadataTask = nil
+        #endif
         listDecorationTasks.values.forEach { $0.cancel() }
         listDecorationTasks.removeAll()
         pendingDeleteTask?.cancel()
@@ -209,7 +221,9 @@ public final class BrowserViewModel {
         pendingTagSettleTask = nil
         queryGeneration += 1
         previewGeneration += 1
+        #if ENABLE_LINK_PREVIEWS
         metadataGeneration += 1
+        #endif
         latestKnownContentRevision = contentRevision
         lastLoadedContentRevision = nil
         previewSpinnerVisible = false
@@ -878,7 +892,9 @@ public final class BrowserViewModel {
         defer { os_signpost(.end, log: poi, name: "loadSelectedItem", signpostID: signpostID) }
 
         previewTask?.cancel()
+        #if ENABLE_LINK_PREVIEWS
         metadataTask?.cancel()
+        #endif
         previewGeneration += 1
         let generation = previewGeneration
         let request = contentState.request
@@ -894,7 +910,9 @@ public final class BrowserViewModel {
                 previousDecoration: carriedPreviewDecoration(for: itemId)
             )))
             prefetchAdjacentItems(around: itemId)
+            #if ENABLE_LINK_PREVIEWS
             maybeRefreshLinkMetadata(for: firstPreviewPayload.item, generation: generation)
+            #endif
             previewSpinnerVisible = false
             guard !previewPayloadSatisfiesDecorationRequirement(firstPreviewPayload, for: request) else {
                 return
@@ -912,7 +930,9 @@ public final class BrowserViewModel {
                 previousDecoration: carriedPreviewDecoration(for: itemId)
             )))
             prefetchAdjacentItems(around: itemId)
+            #if ENABLE_LINK_PREVIEWS
             maybeRefreshLinkMetadata(for: cachedPreviewPayload.item, generation: generation)
+            #endif
             previewSpinnerVisible = false
             guard !previewPayloadSatisfiesDecorationRequirement(cachedPreviewPayload, for: request) else {
                 return
@@ -944,7 +964,9 @@ public final class BrowserViewModel {
                 request: request
             )))
             prefetchAdjacentItems(around: itemId)
+            #if ENABLE_LINK_PREVIEWS
             maybeRefreshLinkMetadata(for: cachedItem, generation: generation)
+            #endif
             previewSpinnerVisible = false
             guard requiresPreviewDecoration(for: cachedItem, request: request) else {
                 return
@@ -990,7 +1012,9 @@ public final class BrowserViewModel {
                     request: request
                 )))
                 self.prefetchAdjacentItems(around: itemId)
+                #if ENABLE_LINK_PREVIEWS
                 self.maybeRefreshLinkMetadata(for: item, generation: generation)
+                #endif
 
                 guard self.requiresPreviewDecoration(for: item, request: request) else {
                     self.previewSpinnerVisible = false
@@ -1047,11 +1071,14 @@ public final class BrowserViewModel {
                     )))
                 }
                 self.prefetchAdjacentItems(around: itemId)
+                #if ENABLE_LINK_PREVIEWS
                 self.maybeRefreshLinkMetadata(for: payload.item, generation: generation)
+                #endif
             }
         }
     }
 
+    #if ENABLE_LINK_PREVIEWS
     private func maybeRefreshLinkMetadata(for item: ClipboardItem, generation: Int) {
         guard case let .link(url, metadataState) = item.content,
               case .pending = metadataState,
@@ -1107,6 +1134,7 @@ public final class BrowserViewModel {
             }
         }
     }
+    #endif
 
     private let prefetchRadius = 5
 
