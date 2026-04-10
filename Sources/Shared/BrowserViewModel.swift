@@ -9,9 +9,7 @@ private let poi = OSLog(subsystem: "com.eviljuliette.clipkitty", category: .poin
 @Observable
 public final class BrowserViewModel {
     private let client: BrowserStoreClient
-    #if ENABLE_LINK_PREVIEWS
-        private let shouldGenerateLinkPreviews: @MainActor () -> Bool
-    #endif
+    private let shouldGenerateLinkPreviews: @MainActor () -> Bool
     private let onSelect: (String, ClipboardContent) -> Void
     private let onCopyOnly: (String, ClipboardContent) -> Void
     private let onDismiss: () -> Void
@@ -99,41 +97,23 @@ public final class BrowserViewModel {
     public private(set) var displayRows: [DisplayRow] = []
     private var itemIndexById: [String: Int] = [:]
 
-    #if ENABLE_LINK_PREVIEWS
-        public init(
-            client: BrowserStoreClient,
-            shouldGenerateLinkPreviews: @escaping @MainActor () -> Bool = { true },
-            onSelect: @escaping (String, ClipboardContent) -> Void,
-            onCopyOnly: @escaping (String, ClipboardContent) -> Void,
-            onDismiss: @escaping () -> Void,
-            showSnackbarNotification: @escaping (NotificationKind, (() -> Void)?) -> Void = { _, _ in },
-            dismissSnackbarNotification: @escaping () -> Void = {}
-        ) {
-            self.client = client
-            self.shouldGenerateLinkPreviews = shouldGenerateLinkPreviews
-            self.onSelect = onSelect
-            self.onCopyOnly = onCopyOnly
-            self.onDismiss = onDismiss
-            self.showSnackbarNotification = showSnackbarNotification
-            self.dismissSnackbarNotification = dismissSnackbarNotification
-        }
-    #else
-        public init(
-            client: BrowserStoreClient,
-            onSelect: @escaping (String, ClipboardContent) -> Void,
-            onCopyOnly: @escaping (String, ClipboardContent) -> Void,
-            onDismiss: @escaping () -> Void,
-            showSnackbarNotification: @escaping (NotificationKind, (() -> Void)?) -> Void = { _, _ in },
-            dismissSnackbarNotification: @escaping () -> Void = {}
-        ) {
-            self.client = client
-            self.onSelect = onSelect
-            self.onCopyOnly = onCopyOnly
-            self.onDismiss = onDismiss
-            self.showSnackbarNotification = showSnackbarNotification
-            self.dismissSnackbarNotification = dismissSnackbarNotification
-        }
-    #endif
+    public init(
+        client: BrowserStoreClient,
+        shouldGenerateLinkPreviews: @escaping @MainActor () -> Bool = { true },
+        onSelect: @escaping (String, ClipboardContent) -> Void,
+        onCopyOnly: @escaping (String, ClipboardContent) -> Void,
+        onDismiss: @escaping () -> Void,
+        showSnackbarNotification: @escaping (NotificationKind, (() -> Void)?) -> Void = { _, _ in },
+        dismissSnackbarNotification: @escaping () -> Void = {}
+    ) {
+        self.client = client
+        self.shouldGenerateLinkPreviews = shouldGenerateLinkPreviews
+        self.onSelect = onSelect
+        self.onCopyOnly = onCopyOnly
+        self.onDismiss = onDismiss
+        self.showSnackbarNotification = showSnackbarNotification
+        self.dismissSnackbarNotification = dismissSnackbarNotification
+    }
 
     public var searchText: String {
         contentState.request.text
