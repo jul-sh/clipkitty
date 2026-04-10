@@ -235,7 +235,7 @@ ios-appstore-uitest:
 ios-smoke-build:
 	@$(MAKE) rust
 	@echo "Building iOS smoke test app with Bazel..."
-	@$(BAZEL) build $(BAZEL_BUILD_FLAGS) --config=ios_device //:ClipKittyiOSSmokeTest
+	@$(BAZEL) build $(BAZEL_BUILD_FLAGS) --config=ios_sim //:ClipKittyiOSSmokeTest
 
 list-identities:
 	@echo "Available signing identities:"
