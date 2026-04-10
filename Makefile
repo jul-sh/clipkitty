@@ -6,7 +6,7 @@ APP_NAME := ClipKitty
 SCRIPT_DIR := $(abspath $(dir $(lastword $(MAKEFILE_LIST))))
 BUILD_PRODUCTS := $(SCRIPT_DIR)/Build/Products
 READ_BUILD_SETTING := $(SCRIPT_DIR)/Scripts/read-build-setting.sh
-BAZEL ?= nix shell --no-update-lock-file --inputs-from . nixpkgs#bazelisk -c bazelisk
+BAZEL ?= nix shell --no-update-lock-file --inputs-from . nixpkgs#bazelisk -- bazelisk
 NIX_SHELL := ./Scripts/run-in-nix.sh -c
 
 CONFIGURATION ?= Release
