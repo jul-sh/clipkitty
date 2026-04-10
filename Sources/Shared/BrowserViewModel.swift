@@ -10,7 +10,7 @@ private let poi = OSLog(subsystem: "com.eviljuliette.clipkitty", category: .poin
 public final class BrowserViewModel {
     private let client: BrowserStoreClient
     #if ENABLE_LINK_PREVIEWS
-    private let shouldGenerateLinkPreviews: @MainActor () -> Bool
+        private let shouldGenerateLinkPreviews: @MainActor () -> Bool
     #endif
     private let onSelect: (String, ClipboardContent) -> Void
     private let onCopyOnly: (String, ClipboardContent) -> Void
@@ -71,7 +71,7 @@ public final class BrowserViewModel {
     private var searchExecution: SearchExecution = .idle
     private var previewTask: Task<Void, Never>?
     #if ENABLE_LINK_PREVIEWS
-    private var metadataTask: Task<Void, Never>?
+        private var metadataTask: Task<Void, Never>?
     #endif
     private var listDecorationTasks: [String: Task<Void, Never>] = [:]
     private var pendingDeleteTask: Task<Void, Never>?
@@ -79,7 +79,7 @@ public final class BrowserViewModel {
     private var queryGeneration = 0
     private var previewGeneration = 0
     #if ENABLE_LINK_PREVIEWS
-    private var metadataGeneration = 0
+        private var metadataGeneration = 0
     #endif
     private var hasAppliedInitialSearch = false
     private var latestKnownContentRevision = 0
@@ -99,27 +99,41 @@ public final class BrowserViewModel {
     public private(set) var displayRows: [DisplayRow] = []
     private var itemIndexById: [String: Int] = [:]
 
-    public init(
-        client: BrowserStoreClient,
-        #if ENABLE_LINK_PREVIEWS
-        shouldGenerateLinkPreviews: @escaping @MainActor () -> Bool = { true },
-        #endif
-        onSelect: @escaping (String, ClipboardContent) -> Void,
-        onCopyOnly: @escaping (String, ClipboardContent) -> Void,
-        onDismiss: @escaping () -> Void,
-        showSnackbarNotification: @escaping (NotificationKind, (() -> Void)?) -> Void = { _, _ in },
-        dismissSnackbarNotification: @escaping () -> Void = {}
-    ) {
-        self.client = client
-        #if ENABLE_LINK_PREVIEWS
-        self.shouldGenerateLinkPreviews = shouldGenerateLinkPreviews
-        #endif
-        self.onSelect = onSelect
-        self.onCopyOnly = onCopyOnly
-        self.onDismiss = onDismiss
-        self.showSnackbarNotification = showSnackbarNotification
-        self.dismissSnackbarNotification = dismissSnackbarNotification
-    }
+    #if ENABLE_LINK_PREVIEWS
+        public init(
+            client: BrowserStoreClient,
+            shouldGenerateLinkPreviews: @escaping @MainActor () -> Bool = { true },
+            onSelect: @escaping (String, ClipboardContent) -> Void,
+            onCopyOnly: @escaping (String, ClipboardContent) -> Void,
+            onDismiss: @escaping () -> Void,
+            showSnackbarNotification: @escaping (NotificationKind, (() -> Void)?) -> Void = { _, _ in },
+            dismissSnackbarNotification: @escaping () -> Void = {}
+        ) {
+            self.client = client
+            self.shouldGenerateLinkPreviews = shouldGenerateLinkPreviews
+            self.onSelect = onSelect
+            self.onCopyOnly = onCopyOnly
+            self.onDismiss = onDismiss
+            self.showSnackbarNotification = showSnackbarNotification
+            self.dismissSnackbarNotification = dismissSnackbarNotification
+        }
+    #else
+        public init(
+            client: BrowserStoreClient,
+            onSelect: @escaping (String, ClipboardContent) -> Void,
+            onCopyOnly: @escaping (String, ClipboardContent) -> Void,
+            onDismiss: @escaping () -> Void,
+            showSnackbarNotification: @escaping (NotificationKind, (() -> Void)?) -> Void = { _, _ in },
+            dismissSnackbarNotification: @escaping () -> Void = {}
+        ) {
+            self.client = client
+            self.onSelect = onSelect
+            self.onCopyOnly = onCopyOnly
+            self.onDismiss = onDismiss
+            self.showSnackbarNotification = showSnackbarNotification
+            self.dismissSnackbarNotification = dismissSnackbarNotification
+        }
+    #endif
 
     public var searchText: String {
         contentState.request.text
@@ -210,8 +224,8 @@ public final class BrowserViewModel {
         previewTask?.cancel()
         previewTask = nil
         #if ENABLE_LINK_PREVIEWS
-        metadataTask?.cancel()
-        metadataTask = nil
+            metadataTask?.cancel()
+            metadataTask = nil
         #endif
         listDecorationTasks.values.forEach { $0.cancel() }
         listDecorationTasks.removeAll()
@@ -222,7 +236,7 @@ public final class BrowserViewModel {
         queryGeneration += 1
         previewGeneration += 1
         #if ENABLE_LINK_PREVIEWS
-        metadataGeneration += 1
+            metadataGeneration += 1
         #endif
         latestKnownContentRevision = contentRevision
         lastLoadedContentRevision = nil
@@ -893,7 +907,7 @@ public final class BrowserViewModel {
 
         previewTask?.cancel()
         #if ENABLE_LINK_PREVIEWS
-        metadataTask?.cancel()
+            metadataTask?.cancel()
         #endif
         previewGeneration += 1
         let generation = previewGeneration
@@ -911,7 +925,7 @@ public final class BrowserViewModel {
             )))
             prefetchAdjacentItems(around: itemId)
             #if ENABLE_LINK_PREVIEWS
-            maybeRefreshLinkMetadata(for: firstPreviewPayload.item, generation: generation)
+                maybeRefreshLinkMetadata(for: firstPreviewPayload.item, generation: generation)
             #endif
             previewSpinnerVisible = false
             guard !previewPayloadSatisfiesDecorationRequirement(firstPreviewPayload, for: request) else {
@@ -931,7 +945,7 @@ public final class BrowserViewModel {
             )))
             prefetchAdjacentItems(around: itemId)
             #if ENABLE_LINK_PREVIEWS
-            maybeRefreshLinkMetadata(for: cachedPreviewPayload.item, generation: generation)
+                maybeRefreshLinkMetadata(for: cachedPreviewPayload.item, generation: generation)
             #endif
             previewSpinnerVisible = false
             guard !previewPayloadSatisfiesDecorationRequirement(cachedPreviewPayload, for: request) else {
@@ -965,7 +979,7 @@ public final class BrowserViewModel {
             )))
             prefetchAdjacentItems(around: itemId)
             #if ENABLE_LINK_PREVIEWS
-            maybeRefreshLinkMetadata(for: cachedItem, generation: generation)
+                maybeRefreshLinkMetadata(for: cachedItem, generation: generation)
             #endif
             previewSpinnerVisible = false
             guard requiresPreviewDecoration(for: cachedItem, request: request) else {
@@ -1013,7 +1027,7 @@ public final class BrowserViewModel {
                 )))
                 self.prefetchAdjacentItems(around: itemId)
                 #if ENABLE_LINK_PREVIEWS
-                self.maybeRefreshLinkMetadata(for: item, generation: generation)
+                    self.maybeRefreshLinkMetadata(for: item, generation: generation)
                 #endif
 
                 guard self.requiresPreviewDecoration(for: item, request: request) else {
@@ -1072,68 +1086,68 @@ public final class BrowserViewModel {
                 }
                 self.prefetchAdjacentItems(around: itemId)
                 #if ENABLE_LINK_PREVIEWS
-                self.maybeRefreshLinkMetadata(for: payload.item, generation: generation)
+                    self.maybeRefreshLinkMetadata(for: payload.item, generation: generation)
                 #endif
             }
         }
     }
 
     #if ENABLE_LINK_PREVIEWS
-    private func maybeRefreshLinkMetadata(for item: ClipboardItem, generation: Int) {
-        guard case let .link(url, metadataState) = item.content,
-              case .pending = metadataState,
-              shouldGenerateLinkPreviews()
-        else {
-            return
-        }
+        private func maybeRefreshLinkMetadata(for item: ClipboardItem, generation: Int) {
+            guard case let .link(url, metadataState) = item.content,
+                  case .pending = metadataState,
+                  shouldGenerateLinkPreviews()
+            else {
+                return
+            }
 
-        metadataTask?.cancel()
-        metadataGeneration += 1
-        let metadataRequest = metadataGeneration
+            metadataTask?.cancel()
+            metadataGeneration += 1
+            let metadataRequest = metadataGeneration
 
-        metadataTask = Task { [weak self] in
-            guard let self else { return }
-            let updatedItem = await self.client.fetchLinkMetadata(url: url, itemId: item.itemMetadata.itemId)
-            await MainActor.run {
-                guard self.previewGeneration == generation,
-                      self.metadataGeneration == metadataRequest,
-                      self.selectedItemId == item.itemMetadata.itemId,
-                      let updatedItem,
-                      let selectedItemState = self.selectedItemState
-                else {
-                    return
+            metadataTask = Task { [weak self] in
+                guard let self else { return }
+                let updatedItem = await self.client.fetchLinkMetadata(url: url, itemId: item.itemMetadata.itemId)
+                await MainActor.run {
+                    guard self.previewGeneration == generation,
+                          self.metadataGeneration == metadataRequest,
+                          self.selectedItemId == item.itemMetadata.itemId,
+                          let updatedItem,
+                          let selectedItemState = self.selectedItemState
+                    else {
+                        return
+                    }
+
+                    let currentTags = self.selectedItem?.itemMetadata.tags ?? updatedItem.itemMetadata.tags
+                    let mergedPreviewMetadata = ItemMetadata(
+                        itemId: updatedItem.itemMetadata.itemId,
+                        icon: updatedItem.itemMetadata.icon,
+                        snippet: updatedItem.itemMetadata.snippet,
+                        sourceApp: updatedItem.itemMetadata.sourceApp,
+                        sourceAppBundleId: updatedItem.itemMetadata.sourceAppBundleId,
+                        timestampUnix: updatedItem.itemMetadata.timestampUnix,
+                        tags: currentTags
+                    )
+                    let mergedPreviewItem = ClipboardItem(itemMetadata: mergedPreviewMetadata, content: updatedItem.content)
+                    let updatedPreviewPayload = PreviewPayload(
+                        item: mergedPreviewItem,
+                        decoration: self.cachedPreviewPayloadDecoration(for: selectedItemState)
+                    )
+                    self.cachePreviewPayload(updatedPreviewPayload)
+
+                    self.setDisplayedSelection(.selected(SelectedItemState(
+                        item: mergedPreviewItem,
+                        origin: selectedItemState.origin,
+                        previewState: selectedItemState.previewState
+                    )))
+                    self.updateDisplayedResponseForItem(
+                        itemId: updatedItem.itemMetadata.itemId,
+                        updatedMetadata: mergedPreviewMetadata,
+                        updatedFirstItem: mergedPreviewItem
+                    )
                 }
-
-                let currentTags = self.selectedItem?.itemMetadata.tags ?? updatedItem.itemMetadata.tags
-                let mergedPreviewMetadata = ItemMetadata(
-                    itemId: updatedItem.itemMetadata.itemId,
-                    icon: updatedItem.itemMetadata.icon,
-                    snippet: updatedItem.itemMetadata.snippet,
-                    sourceApp: updatedItem.itemMetadata.sourceApp,
-                    sourceAppBundleId: updatedItem.itemMetadata.sourceAppBundleId,
-                    timestampUnix: updatedItem.itemMetadata.timestampUnix,
-                    tags: currentTags
-                )
-                let mergedPreviewItem = ClipboardItem(itemMetadata: mergedPreviewMetadata, content: updatedItem.content)
-                let updatedPreviewPayload = PreviewPayload(
-                    item: mergedPreviewItem,
-                    decoration: self.cachedPreviewPayloadDecoration(for: selectedItemState)
-                )
-                self.cachePreviewPayload(updatedPreviewPayload)
-
-                self.setDisplayedSelection(.selected(SelectedItemState(
-                    item: mergedPreviewItem,
-                    origin: selectedItemState.origin,
-                    previewState: selectedItemState.previewState
-                )))
-                self.updateDisplayedResponseForItem(
-                    itemId: updatedItem.itemMetadata.itemId,
-                    updatedMetadata: mergedPreviewMetadata,
-                    updatedFirstItem: mergedPreviewItem
-                )
             }
         }
-    }
     #endif
 
     private let prefetchRadius = 5

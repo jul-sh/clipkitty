@@ -1,0 +1,61 @@
+load("@build_bazel_rules_swift//swift:swift_library.bzl", "swift_library")
+load("//:bazel/clipkitty_build_settings.bzl", "swift_defines")
+
+package(default_visibility = ["//visibility:public"])
+
+config_setting(
+    name = "ios_device_arm64",
+    values = {
+        "apple_platform_type": "ios",
+        "cpu": "ios_arm64",
+    },
+)
+
+config_setting(
+    name = "ios_simulator_arm64",
+    values = {
+        "apple_platform_type": "ios",
+        "cpu": "ios_sim_arm64",
+    },
+)
+
+config_setting(
+    name = "ios_simulator_x86_64",
+    values = {
+        "apple_platform_type": "ios",
+        "cpu": "ios_x86_64",
+    },
+)
+
+cc_import(
+    name = "purr_prebuilt",
+    tags = ["manual"],
+    static_library = select({
+        ":ios_device_arm64": "//:Sources/ClipKittyRust/ios-device/libpurr.a",
+        ":ios_simulator_arm64": "//:Sources/ClipKittyRust/ios-simulator/libpurr.a",
+        ":ios_simulator_x86_64": "//:Sources/ClipKittyRust/ios-simulator/libpurr.a",
+        "//conditions:default": "//:Sources/ClipKittyRust/libpurr.a",
+    }),
+)
+
+objc_library(
+    name = "ClipKittyRustFFI",
+    srcs = ["//:Sources/ClipKittyRust/ClipKittyRustFFI.c"],
+    hdrs = ["//:Sources/ClipKittyRust/purrFFI.h"],
+    enable_modules = True,
+    module_name = "ClipKittyRustFFI",
+    tags = ["manual"],
+    deps = [":purr_prebuilt"],
+)
+
+swift_library(
+    name = "ClipKittyRust",
+    srcs = ["//:rust_wrapper_srcs"],
+    copts = swift_defines([], swift_version = "5"),
+    module_name = "ClipKittyRust",
+    tags = ["manual"],
+    deps = [
+        ":ClipKittyRustFFI",
+        ":purr_prebuilt",
+    ],
+)

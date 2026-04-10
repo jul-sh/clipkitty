@@ -1,0 +1,49 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+<plist version="1.0">
+<dict>
+  <key>BAZEL_TEST_PRODUCT_MODULE_NAME</key>
+  <dict>
+    <key>ProductModuleName</key>
+    <string>BAZEL_TEST_PRODUCT_MODULE_NAME</string>
+    <key>TestBundlePath</key>
+    <string>BAZEL_TEST_BUNDLE_PATH</string>
+    <key>IsAppHostedTestBundle</key>
+    <BAZEL_TEST_HOST_BASED/>
+    <key>TestHostPath</key>
+    <string>BAZEL_TEST_HOST_PATH</string>
+    <key>TestHostBundleIdentifier</key>
+    <string>BAZEL_TEST_HOST_BUNDLE_IDENTIFIER</string>
+    <key>IsUITestBundle</key>
+    <true/>
+    <key>IsXCTRunnerHostedTestBundle</key>
+    <true/>
+    <key>UITargetAppPath</key>
+    <string>BAZEL_TARGET_APP_PATH</string>
+    <key>DependentProductPaths</key>
+    <array>
+      <string>BAZEL_TARGET_APP_PATH</string>
+      <string>BAZEL_TEST_BUNDLE_PATH</string>
+      <string>BAZEL_TEST_HOST_PATH</string>
+    </array>
+    <key>TestingEnvironmentVariables</key>
+    <dict>
+      <key>DYLD_FRAMEWORK_PATH</key>
+      <string>BAZEL_DYLD_FRAMEWORK_PATH</string>
+      <key>DYLD_LIBRARY_PATH</key>
+      <string>BAZEL_DYLD_LIBRARY_PATH</string>
+      <key>__XCODE_BUILT_PRODUCTS_DIR_PATHS</key>
+      <string>/DUMMY_SRCROOT/</string>
+      <key>XCInjectBundleInto</key>
+      <string>BAZEL_TEST_HOST_BINARY</string>
+      BAZEL_TEST_ENVIRONMENT
+    </dict>
+    <key>SystemAttachmentLifetime</key>
+    <string>keepAlways</string>
+    <key>UserAttachmentLifetime</key>
+    <string>keepAlways</string>
+BAZEL_SKIP_TEST_SECTION
+BAZEL_ONLY_TEST_SECTION
+  </dict>
+</dict>
+</plist>

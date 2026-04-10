@@ -2,7 +2,7 @@
 # Prepares macOS environment for taking clean screenshots
 # Sets a neutral desktop background, hides other windows, and restores state afterward
 # Usage: ./distribution/prepare-screenshot-environment.sh <command>
-# Example: ./distribution/prepare-screenshot-environment.sh "xcodebuild test ..."
+# Example: ./distribution/prepare-screenshot-environment.sh "make uitest TEST=ClipKittyUITests/testTakeMarketingScreenshots"
 
 set -e
 

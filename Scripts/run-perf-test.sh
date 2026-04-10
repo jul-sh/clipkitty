@@ -35,8 +35,9 @@ set -e
 # Configuration
 SCRIPT_DIR="$(cd "$(dirname "$0")" && pwd)"
 PROJECT_ROOT="$(dirname "$SCRIPT_DIR")"
-DERIVED_DATA="$PROJECT_ROOT/DerivedData"
-APP_PATH="$DERIVED_DATA/Build/Products/Debug/ClipKitty.app"
+BUILD_PRODUCTS="$PROJECT_ROOT/Build/Products"
+CONFIGURATION="${CONFIGURATION:-Release}"
+APP_PATH="${CLIPKITTY_APP_PATH:-$BUILD_PRODUCTS/$CONFIGURATION/ClipKitty.app}"
 BUNDLE_ID="com.eviljuliette.clipkitty"
 
 # Defaults
@@ -108,11 +109,11 @@ echo ""
 # Create output directory
 mkdir -p "$OUTPUT_DIR"
 
-# Step 1: Build Release
+# Step 1: Build app
 if [ "$SKIP_BUILD" = false ]; then
-    echo ">>> Building app (Release)..."
+    echo ">>> Building app ($CONFIGURATION)..."
     cd "$PROJECT_ROOT"
-    make all CONFIGURATION=Release
+    make build CONFIGURATION="$CONFIGURATION"
     echo "    Build complete."
 else
     echo ">>> Skipping build (--skip-build)"

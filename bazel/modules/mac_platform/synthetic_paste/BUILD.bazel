@@ -1,0 +1,13 @@
+load("@build_bazel_rules_swift//swift:swift_library.bzl", "swift_library")
+load("//:bazel/clipkitty_build_settings.bzl", "swift_defines")
+
+package(default_visibility = ["//visibility:public"])
+
+swift_library(
+    name = "ClipKittyMacPlatform",
+    srcs = ["//:mac_platform_srcs"],
+    copts = swift_defines(["ENABLE_SYNTHETIC_PASTE"]),
+    module_name = "ClipKittyMacPlatform",
+    tags = ["manual"],
+    deps = ["//bazel/modules/shared/base:ClipKittyShared"],
+)

@@ -4,6 +4,12 @@
 
 PROJECT_ROOT := $(abspath $(dir $(lastword $(MAKEFILE_LIST)))/..)
 DIST_DIR := $(abspath $(dir $(lastword $(MAKEFILE_LIST))))
+ROOT_MAKE := $(MAKE) -C $(PROJECT_ROOT)
+BUILD_PRODUCTS := $(PROJECT_ROOT)/Build/Products
+READ_BUILD_SETTING := $(PROJECT_ROOT)/Scripts/read-build-setting.sh
+RESOLVE_RELEASE_VERSION := $(PROJECT_ROOT)/Scripts/resolve-release-version.sh
+BAZEL ?= nix shell --no-update-lock-file --inputs-from $(PROJECT_ROOT) nixpkgs#bazelisk -c bazelisk
+BAZEL_ARGS ?=
 
 # Use Nix wrapper for Rust commands only (Swift needs native Xcode tools)
 NIX_SHELL := $(PROJECT_ROOT)/Scripts/run-in-nix.sh -c
@@ -13,16 +19,19 @@ CARGO_LOCKED := $(if $(filter 1,$(LOCKED)),--locked,)
 export LOCKED
 
 APP_NAME := ClipKitty
-DERIVED_DATA := $(PROJECT_ROOT)/DerivedData
 
 # API key directory for automatic provisioning (shared with root Makefile)
 API_KEY_DIR := $(PROJECT_ROOT)/.make/keys
 
 # Build configuration: Release, AppStore, or Hardened
 CONFIGURATION ?= Release
+VERSION ?= $(shell $(READ_BUILD_SETTING) MARKETING_VERSION)
+BUILD_NUMBER ?= $(shell $(READ_BUILD_SETTING) CURRENT_PROJECT_VERSION)
+EMBED_LABEL := ClipKitty_$(VERSION)_build_$(BUILD_NUMBER)
+BAZEL_BUILD_FLAGS := --embed_label="$(EMBED_LABEL)" $(BAZEL_ARGS)
 
-# Path to the built app bundle (inside DerivedData)
-APP_PATH = $(DERIVED_DATA)/Build/Products/$(CONFIGURATION)/$(APP_NAME).app
+# Path to the built app bundle (materialized from Bazel)
+APP_PATH = $(BUILD_PRODUCTS)/$(CONFIGURATION)/$(APP_NAME).app
 
 # Signing identities
 SIGNING_IDENTITY ?= $(shell security find-identity -v -p codesigning 2>/dev/null | grep -q "Developer ID Application" && echo "Developer ID Application" || echo "-")
@@ -45,7 +54,7 @@ SCREENSHOT_LOCALES := en es zh-Hans zh-Hant ja ko fr de pt-BR ru
 
 # Build DMG installer
 dmg:
-	@$(MAKE) -C $(PROJECT_ROOT) all CONFIGURATION=$(CONFIGURATION)
+	@$(ROOT_MAKE) build CONFIGURATION=$(CONFIGURATION) VERSION=$(VERSION) BUILD_NUMBER=$(BUILD_NUMBER)
 	@echo "Signing for distribution..."
 	@codesign --force --options runtime \
 		--sign "$(SIGNING_IDENTITY)" \
@@ -56,7 +65,7 @@ dmg:
 
 # Build Hardened DMG (no network, no file access, no sync — for security-sensitive environments)
 hardened:
-	@$(MAKE) -C $(PROJECT_ROOT) all CONFIGURATION=Hardened \
+	@$(ROOT_MAKE) build CONFIGURATION=Hardened \
 		$(if $(VERSION),VERSION=$(VERSION),) \
 		$(if $(BUILD_NUMBER),BUILD_NUMBER=$(BUILD_NUMBER),) \
 		$(if $(UNIVERSAL),UNIVERSAL=$(UNIVERSAL),)
@@ -64,9 +73,9 @@ hardened:
 	@codesign --force --options runtime \
 		--sign "$(SIGNING_IDENTITY)" \
 		--entitlements $(PROJECT_ROOT)/Sources/MacApp/ClipKitty.hardened.entitlements \
-		"$(DERIVED_DATA)/Build/Products/Hardened/$(APP_NAME).app"
+		"$(BUILD_PRODUCTS)/Hardened/$(APP_NAME).app"
 	@echo "Building Hardened DMG installer..."
-	@$(DIST_DIR)/build-dmg.sh "$(DERIVED_DATA)/Build/Products/Hardened/$(APP_NAME).app" \
+	@$(DIST_DIR)/build-dmg.sh "$(BUILD_PRODUCTS)/Hardened/$(APP_NAME).app" \
 		"$(PROJECT_ROOT)/$(APP_NAME)-Hardened.dmg"
 
 # Export app icon as PNG (for README, gh-pages, etc.)
@@ -96,27 +105,27 @@ icon-png:
 
 # Build and sign for App Store (always uses AppStore configuration = sandboxed)
 appstore:
-	@$(MAKE) -C $(PROJECT_ROOT) all CONFIGURATION=AppStore \
+	@$(ROOT_MAKE) build CONFIGURATION=AppStore \
 		$(if $(VERSION),VERSION=$(VERSION),) \
 		$(if $(BUILD_NUMBER),BUILD_NUMBER=$(BUILD_NUMBER),)
 	@if [ -n "$(PROVISIONING_PROFILE)" ]; then \
 		echo "Embedding provisioning profile..."; \
-		cp "$(PROVISIONING_PROFILE)" "$(DERIVED_DATA)/Build/Products/AppStore/$(APP_NAME).app/Contents/embedded.provisionprofile"; \
+		cp "$(PROVISIONING_PROFILE)" "$(BUILD_PRODUCTS)/AppStore/$(APP_NAME).app/Contents/embedded.provisionprofile"; \
 	fi
 	@echo "Re-signing for App Store distribution..."
 	@codesign --force --options runtime \
 		--sign "$(APPSTORE_SIGNING_IDENTITY)" \
 		--entitlements $(PROJECT_ROOT)/Sources/MacApp/ClipKitty.appstore.entitlements \
-		"$(DERIVED_DATA)/Build/Products/AppStore/$(APP_NAME).app"
+		"$(BUILD_PRODUCTS)/AppStore/$(APP_NAME).app"
 	@echo "Creating installer package..."
 	@rm -f "$(PROJECT_ROOT)/$(APP_NAME).pkg"
-	@productbuild --component "$(DERIVED_DATA)/Build/Products/AppStore/$(APP_NAME).app" /Applications \
+	@productbuild --component "$(BUILD_PRODUCTS)/AppStore/$(APP_NAME).app" /Applications \
 		--sign "$(INSTALLER_IDENTITY)" \
 		"$(PROJECT_ROOT)/$(APP_NAME).pkg"
 	@echo "Installer package created: $(PROJECT_ROOT)/$(APP_NAME).pkg"
 
 # Build + sign + package for App Store locally (no upload)
-# Auto-resolves version from Project.swift + git commit count (same as CI).
+# Auto-resolves version from Bazel build settings + git commit count (same as CI).
 # Usage: make -C distribution appstore-local [VERSION=x.y.z]
 appstore-local:
 	@$(DIST_DIR)/setup-signing.sh; \
@@ -128,11 +137,10 @@ appstore-local:
 		PROV="$(PROJECT_ROOT)/ClipKitty.provisionprofile"; \
 	fi; \
 	if [ -z "$(VERSION)" ]; then \
-		BASE=$$(grep 'MARKETING_VERSION' "$(PROJECT_ROOT)/Project.swift" | head -1 | sed 's/.*"\(.*\)".*/\1/'); \
-		AUTO_VERSION="$$BASE"; \
+		AUTO_VERSION="$$( $(RESOLVE_RELEASE_VERSION) version )"; \
 		echo "Auto-resolved version: $$AUTO_VERSION"; \
 	fi; \
-	AUTO_BUILD=$$(git -C "$(PROJECT_ROOT)" rev-list --count HEAD); \
+	AUTO_BUILD="$$( $(RESOLVE_RELEASE_VERSION) build-number )"; \
 	echo "Build number: $$AUTO_BUILD"; \
 	$(MAKE) appstore \
 		$${PROV:+PROVISIONING_PROFILE=$$PROV} \
@@ -219,26 +227,21 @@ CONTAINER_APP_SUPPORT := ~/Library/Containers/com.eviljuliette.clipkitty/Data/Li
 
 # Open app with synthetic data for manual testing
 run-synthetic:
-	@$(MAKE) -C $(PROJECT_ROOT) all CONFIGURATION=Debug
+	@$(ROOT_MAKE) build CONFIGURATION=Debug VERSION=$(VERSION) BUILD_NUMBER=$(BUILD_NUMBER)
 	@echo "Setting up synthetic data..."
 	@mkdir -p $(CONTAINER_APP_SUPPORT)
 	@rm -f $(CONTAINER_APP_SUPPORT)/clipboard-screenshot.sqlite*
 	@rm -rf $(CONTAINER_APP_SUPPORT)/tantivy_index*
 	@cp $(DIST_DIR)/SyntheticData.sqlite $(CONTAINER_APP_SUPPORT)/clipboard-screenshot.sqlite
 	@echo "Launching app with synthetic data..."
-	@open "$(DERIVED_DATA)/Build/Products/Debug/$(APP_NAME).app" --args --use-simulated-db
+	@open "$(BUILD_PRODUCTS)/Debug/$(APP_NAME).app" --args --use-simulated-db
 
 # Capture marketing screenshots via UI test (with clean environment, uses AppStore config)
 # Screenshots are captured at 16:10 aspect ratio and upscaled to 2880×1800 by the test.
 marketing-screenshots-capture:
 	@$(DIST_DIR)/patch-demo-items.sh
-	@$(MAKE) -C $(PROJECT_ROOT) all CONFIGURATION=AppStore
-	@codesign --force --options runtime \
-		--sign "$(SIGNING_IDENTITY)" \
-		--entitlements $(PROJECT_ROOT)/Sources/MacApp/ClipKitty.appstore.entitlements \
-		"$(DERIVED_DATA)/Build/Products/AppStore/$(APP_NAME).app"
 	@echo "Capturing marketing screenshots..."
-	@$(DIST_DIR)/prepare-screenshot-environment.sh 'cd $(PROJECT_ROOT) && xcodebuild test -scheme ClipKittyUITests -configuration AppStore -destination "platform=macOS" -derivedDataPath DerivedData $(if $(SKIP_SIGNING),CODE_SIGNING_ALLOWED=NO,) -only-testing:ClipKittyUITests/ClipKittyUITests/testTakeMarketingScreenshots 2>&1 | grep -E "(Test Case|passed|failed)" || true'
+	@$(DIST_DIR)/prepare-screenshot-environment.sh '$(ROOT_MAKE) mac-appstore-uitest VERSION=$(VERSION) BUILD_NUMBER=$(BUILD_NUMBER) TEST=ClipKittyUITests/testTakeMarketingScreenshots BAZEL_ARGS=--test_output=streamed'
 	@mkdir -p $(PROJECT_ROOT)/marketing/en
 	@cp /tmp/clipkitty_marketing_1_history.png $(PROJECT_ROOT)/marketing/en/screenshot_1.png
 	@cp /tmp/clipkitty_marketing_2_search.png $(PROJECT_ROOT)/marketing/en/screenshot_2.png
@@ -259,11 +262,6 @@ screenshot: marketing-screenshots-capture
 # Note: All databases share the same images (with locale column); only text items differ per locale.
 marketing-screenshots-localized:
 	@$(DIST_DIR)/patch-demo-items.sh
-	@$(MAKE) -C $(PROJECT_ROOT) all CONFIGURATION=AppStore
-	@codesign --force --options runtime \
-		--sign "$(SIGNING_IDENTITY)" \
-		--entitlements $(PROJECT_ROOT)/Sources/MacApp/ClipKitty.appstore.entitlements \
-		"$(DERIVED_DATA)/Build/Products/AppStore/$(APP_NAME).app"
 	@rm -f /tmp/clipkitty_screenshot_locale.txt
 	@rm -f /tmp/clipkitty_screenshot_db.txt
 	@for locale in $(SCREENSHOT_LOCALES); do \
@@ -276,14 +274,11 @@ marketing-screenshots-localized:
 			echo "SyntheticData_$$locale.sqlite" > /tmp/clipkitty_screenshot_db.txt; \
 		fi; \
 		$(DIST_DIR)/prepare-screenshot-environment.sh \
-			"cd $(PROJECT_ROOT) && xcodebuild test \
-				-scheme ClipKittyUITests \
-				-configuration AppStore \
-				-destination \"platform=macOS\" \
-				-derivedDataPath DerivedData \
-				$(if $(SKIP_SIGNING),CODE_SIGNING_ALLOWED=NO,) \
-				-only-testing:ClipKittyUITests/ClipKittyUITests/testTakeMarketingScreenshots \
-				2>&1 | grep -E '(Test Case|passed|failed)' || true"; \
+			"$(ROOT_MAKE) mac-appstore-uitest \
+				VERSION=$(VERSION) \
+				BUILD_NUMBER=$(BUILD_NUMBER) \
+				TEST=ClipKittyUITests/testTakeMarketingScreenshots \
+				BAZEL_ARGS=--test_output=streamed"; \
 		if [ "$$locale" = "en" ]; then \
 			cp /tmp/clipkitty_marketing_1_history.png $(PROJECT_ROOT)/marketing/$$locale/screenshot_1.png; \
 			cp /tmp/clipkitty_marketing_2_search.png $(PROJECT_ROOT)/marketing/$$locale/screenshot_2.png; \
@@ -353,7 +348,7 @@ intro-video-localized:
 #   make -C distribution ios-appstore VERSION=1.11.0 BUILD_NUMBER=123
 #   make -C distribution ios-appstore-publish VERSION=1.11.0 BUILD_NUMBER=123
 #
-# The iOS pipeline uses xcodebuild archive + exportArchive to produce an IPA.
+# The iOS pipeline builds the App Store IPA with Bazel and uploads it via ASC.
 # Automatic provisioning via ASC API key handles cert + profile management.
 # ============================================================================
 
@@ -366,25 +361,16 @@ api-key:
 	fi
 
 IOS_BUNDLE_ID := com.eviljuliette.clipkitty
-IOS_ARCHIVE_PATH = $(DERIVED_DATA)/ClipKittyiOS.xcarchive
 IOS_IPA_PATH = $(PROJECT_ROOT)/ClipKittyiOS.ipa
 IOS_SCREENSHOT_LOCALES := $(SCREENSHOT_LOCALES)
 
-# Build iOS archive and export IPA for App Store
+# Build iOS IPA for App Store with Bazel
 ios-appstore:
-	@echo "Archiving ClipKittyiOS (AppStore)..."
-	@xcodebuild archive \
-		-workspace $(PROJECT_ROOT)/$(APP_NAME).xcworkspace \
-		-scheme ClipKittyiOS-AppStore \
-		-archivePath $(IOS_ARCHIVE_PATH) \
-		-destination "generic/platform=iOS" \
-		MARKETING_VERSION=$(VERSION) \
-		CURRENT_PROJECT_VERSION=$(BUILD_NUMBER)
-	@echo "Exporting IPA..."
-	@xcodebuild -exportArchive \
-		-archivePath $(IOS_ARCHIVE_PATH) \
-		-exportOptionsPlist $(DIST_DIR)/ExportOptions-iOS.plist \
-		-exportPath $(PROJECT_ROOT)
+	@echo "Building iOS App Store IPA with Bazel..."
+	@$(ROOT_MAKE) rust
+	@$(BAZEL) build $(BAZEL_BUILD_FLAGS) --config=ios_device //:ClipKittyiOSAppStore
+	@IPA_ARTIFACT="$$( $(BAZEL) cquery $(BAZEL_BUILD_FLAGS) --config=ios_device --output=files //:ClipKittyiOSAppStore | tail -n 1 )"; \
+	cp "$$IPA_ARTIFACT" "$(IOS_IPA_PATH)"
 	@echo "IPA exported: $(IOS_IPA_PATH)"
 
 # Publish iOS app to App Store Connect (metadata + binary)
@@ -416,14 +402,11 @@ ios-marketing-screenshots-localized:
 				echo "SyntheticData.sqlite" > /tmp/clipkitty_ios_screenshot_db.txt; \
 			fi; \
 		fi; \
-		xcodebuild test \
-			-workspace $(PROJECT_ROOT)/$(APP_NAME).xcworkspace \
-			-scheme ClipKittyiOSUITests \
-			-destination "platform=iOS Simulator,name=iPhone 16 Pro Max" \
-			-derivedDataPath $(DERIVED_DATA) \
-			$(if $(SKIP_SIGNING),CODE_SIGNING_ALLOWED=NO,) \
-			-only-testing:ClipKittyiOSUITests/ClipKittyiOSScreenshotTests/testTakeMarketingScreenshots \
-			2>&1 | grep -E "(Test Case|passed|failed)" || true; \
+		$(ROOT_MAKE) ios-appstore-uitest \
+			VERSION=$(VERSION) \
+			BUILD_NUMBER=$(BUILD_NUMBER) \
+			TEST=ClipKittyiOSScreenshotTests/testTakeMarketingScreenshots \
+			BAZEL_ARGS=--test_output=streamed; \
 		if [ "$$locale" = "en" ]; then \
 			cp /tmp/clipkitty_ios_marketing_1_history.png $(PROJECT_ROOT)/marketing-ios/$$locale/screenshot_1.png 2>/dev/null || true; \
 			cp /tmp/clipkitty_ios_marketing_2_search.png $(PROJECT_ROOT)/marketing-ios/$$locale/screenshot_2.png 2>/dev/null || true; \

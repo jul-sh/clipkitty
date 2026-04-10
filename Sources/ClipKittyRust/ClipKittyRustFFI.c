@@ -11,9 +11,9 @@
 // │ Sources/ClipKittyRust/libpurr.a            ← Static library (auto-built)    │
 // │ Sources/ClipKittyRust/module.modulemap     ← Module map (auto-generated)    │
 // │                                                                             │
-// │ Project.swift links:                                                        │
-// │   - ClipKittyRustFFI target → this file + purrFFI.h                         │
-// │   - linkerSettings → libpurr                                                │
+// │ Bazel links:                                                                │
+// │   - cc_library(ClipKittyRustFFI) → this file + purrFFI.h                    │
+// │   - apple targets depend on the prebuilt libpurr static archive             │
 // └─────────────────────────────────────────────────────────────────────────────┘
 
 #include "purrFFI.h"

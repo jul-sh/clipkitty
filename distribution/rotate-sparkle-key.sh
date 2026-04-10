@@ -3,7 +3,7 @@ set -euo pipefail
 
 SCRIPT_DIR="$(cd "$(dirname "$0")" && pwd)"
 PROJECT_ROOT="$(cd "$SCRIPT_DIR/.." && pwd)"
-PROJECT_FILE="$PROJECT_ROOT/Project.swift"
+SETTINGS_FILE="$PROJECT_ROOT/bazel/clipkitty_build_settings.bzl"
 SECRETS_DIR="$PROJECT_ROOT/secrets"
 RECIPIENTS="$SECRETS_DIR/age-recipients.txt"
 
@@ -14,8 +14,8 @@ usage() {
     echo ""
     echo "Rotates the Sparkle EdDSA signing key:"
     echo "  1. Generates a new Ed25519 key pair"
-    echo "  2. Moves current SUPublicEDKey → SUOldPublicEDKey in Project.swift"
-    echo "  3. Sets new public key as SUPublicEDKey"
+    echo "  2. Moves current SPARKLE_PUBLIC_KEY → SPARKLE_OLD_PUBLIC_KEY in bazel/clipkitty_build_settings.bzl"
+    echo "  3. Sets new public key as SPARKLE_PUBLIC_KEY"
     echo "  4. Encrypts new private key to secrets/SPARKLE_EDDSA_KEY.age"
     echo ""
     echo "Prerequisites:"
@@ -48,10 +48,10 @@ if ! command -v age &>/dev/null; then
     exit 1
 fi
 
-# Get current public key from Project.swift
-CURRENT_KEY=$(grep 'SUPublicEDKey' "$PROJECT_FILE" | head -1 | sed 's/.*"\(.*\)".*/\1/' | tr -d ' ')
+# Get current public key from Bazel build settings
+CURRENT_KEY=$(grep '^SPARKLE_PUBLIC_KEY = ' "$SETTINGS_FILE" | head -1 | sed 's/.*"\(.*\)".*/\1/' | tr -d ' ')
 if [[ -z "$CURRENT_KEY" ]]; then
-    echo "Error: Could not find SUPublicEDKey in $PROJECT_FILE"
+    echo "Error: Could not find SPARKLE_PUBLIC_KEY in $SETTINGS_FILE"
     exit 1
 fi
 echo "Current public key: $CURRENT_KEY"
@@ -69,25 +69,27 @@ age -R "$RECIPIENTS" -o "$SECRETS_DIR/SPARKLE_EDDSA_KEY.age" < "$TEMP_KEY"
 rm -f "$TEMP_KEY"
 echo "Private key encrypted to secrets/SPARKLE_EDDSA_KEY.age"
 
-# Update Project.swift: move current key to SUOldPublicEDKey, set new key
-if grep -q 'SUOldPublicEDKey' "$PROJECT_FILE"; then
-    # Update existing SUOldPublicEDKey
-    sed -i '' "s|\"SUOldPublicEDKey\":.*|\"SUOldPublicEDKey\": \"$CURRENT_KEY\",|" "$PROJECT_FILE"
-else
-    # Add SUOldPublicEDKey after SUPublicEDKey
-    sed -i '' "/\"SUPublicEDKey\"/a\\
-                \"SUOldPublicEDKey\": \"$CURRENT_KEY\"," "$PROJECT_FILE"
-fi
+# Update Bazel build settings: move current key to SPARKLE_OLD_PUBLIC_KEY, set new key
+escape_sed_replacement() {
+    printf '%s' "$1" | sed -e 's/[&|\\]/\\&/g'
+}
 
-# Update SUPublicEDKey with new key
-sed -i '' "s|\"SUPublicEDKey\":.*|\"SUPublicEDKey\": \"$NEW_KEY\",|" "$PROJECT_FILE"
+CURRENT_KEY_ESCAPED=$(escape_sed_replacement "$CURRENT_KEY")
+NEW_KEY_ESCAPED=$(escape_sed_replacement "$NEW_KEY")
+
+sed -i '' \
+    "s|^SPARKLE_OLD_PUBLIC_KEY = \".*\"$|SPARKLE_OLD_PUBLIC_KEY = \"$CURRENT_KEY_ESCAPED\"|" \
+    "$SETTINGS_FILE"
+sed -i '' \
+    "s|^SPARKLE_PUBLIC_KEY = \".*\"$|SPARKLE_PUBLIC_KEY = \"$NEW_KEY_ESCAPED\"|" \
+    "$SETTINGS_FILE"
 
 echo ""
 echo "Key rotation complete!"
-echo "  Old key (SUOldPublicEDKey): $CURRENT_KEY"
-echo "  New key (SUPublicEDKey):    $NEW_KEY"
+echo "  Old key (SPARKLE_OLD_PUBLIC_KEY): $CURRENT_KEY"
+echo "  New key (SPARKLE_PUBLIC_KEY):     $NEW_KEY"
 echo ""
 echo "Next steps:"
 echo "  1. Build and test the app with the new keys"
-echo "  2. Commit the changes to Project.swift and secrets/SPARKLE_EDDSA_KEY.age"
+echo "  2. Commit the changes to bazel/clipkitty_build_settings.bzl and secrets/SPARKLE_EDDSA_KEY.age"
 echo "  3. After a release with the new key, the old key can eventually be removed"
