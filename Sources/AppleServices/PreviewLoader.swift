@@ -9,17 +9,19 @@ public final class PreviewLoader {
         private let linkMetadataFetcher: LinkMetadataFetcher
     #endif
 
-    public init(
-        repository: ClipboardRepository
-        #if ENABLE_LINK_PREVIEWS
-            , linkMetadataFetcher: LinkMetadataFetcher? = nil
-        #endif
-    ) {
-        self.repository = repository
-        #if ENABLE_LINK_PREVIEWS
+    #if ENABLE_LINK_PREVIEWS
+        public init(
+            repository: ClipboardRepository,
+            linkMetadataFetcher: LinkMetadataFetcher? = nil
+        ) {
+            self.repository = repository
             self.linkMetadataFetcher = linkMetadataFetcher ?? LinkMetadataFetcher()
-        #endif
-    }
+        }
+    #else
+        public init(repository: ClipboardRepository) {
+            self.repository = repository
+        }
+    #endif
 
     public func fetchItem(id: String) async -> ClipboardItem? {
         await repository.fetchItem(id: id)

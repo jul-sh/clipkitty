@@ -68,13 +68,17 @@ enum MacBuildVariant: CaseIterable {
         }
     }
 
-    var bundleIdOverride: SettingsDictionary {
+    var bundleIdentifier: String {
         switch self {
-        case .hardened: return [
-            "PRODUCT_BUNDLE_IDENTIFIER": "com.eviljuliette.clipkitty.hardened",
-            "INFOPLIST_KEY_CFBundleDisplayName": "ClipKitty Hardened",
-        ]
-        case .debug, .release, .sparkle, .appStore: return [:]
+        case .hardened: return "com.eviljuliette.clipkitty.hardened"
+        case .debug, .release, .sparkle, .appStore: return "com.eviljuliette.clipkitty"
+        }
+    }
+
+    var displayName: String {
+        switch self {
+        case .hardened: return "ClipKitty Hardened"
+        case .debug, .release, .sparkle, .appStore: return "ClipKitty"
         }
     }
 
@@ -222,16 +226,16 @@ enum MacBuildVariant: CaseIterable {
     }
 
     func macAppConfiguration() -> Configuration {
-        var settings: SettingsDictionary = [
+        let settings: SettingsDictionary = [
             "CODE_SIGN_STYLE": "Automatic",
             "CODE_SIGN_IDENTITY": "Apple Development",
             "CODE_SIGN_ENTITLEMENTS": .string(entitlementsPath),
+            "PRODUCT_BUNDLE_IDENTIFIER": .string(bundleIdentifier),
+            "CK_BUNDLE_IDENTIFIER": .string(bundleIdentifier),
             "CK_BUILD_CHANNEL": .string(buildChannel),
+            "CK_DISPLAY_NAME": .string(displayName),
             "SWIFT_ACTIVE_COMPILATION_CONDITIONS": .string(macAppCompilationConditions),
         ]
-
-        // Bundle ID / display name override (e.g. hardened)
-        settings.merge(bundleIdOverride) { _, new in new }
 
         if isRelease {
             return .release(name: configurationName, settings: settings)
@@ -439,7 +443,8 @@ func rustPreBuildAction(target: String) -> ExecutionAction {
 
 /// Shared Info.plist entries for all macOS app targets.
 private let macAppInfoPlist: [String: Plist.Value] = [
-    "CFBundleDisplayName": "ClipKitty",
+    "CFBundleDisplayName": "$(CK_DISPLAY_NAME)",
+    "CFBundleIdentifier": "$(CK_BUNDLE_IDENTIFIER)",
     "CFBundleIconName": "AppIcon",
     "CFBundleIconFile": "AppIcon",
     "CFBundleDevelopmentRegion": "en",
@@ -513,6 +518,19 @@ func makeMacAppTargets() -> [Target] {
             baseSettings[key] = value
         }
 
+        // Every target must define ALL project-level configurations so Xcode
+        // can resolve build settings for any configuration name. For variants
+        // outside this group, emit a placeholder configuration with empty
+        // settings (inherits project defaults).
+        let configurations = MacBuildVariant.allCases.map { variant -> Configuration in
+            if group.variants.contains(where: { $0 == variant }) {
+                return variant.macAppConfiguration()
+            }
+            return variant.isRelease
+                ? .release(name: variant.configurationName, settings: [:])
+                : .debug(name: variant.configurationName, settings: [:])
+        }
+
         return Target.target(
             name: group.name,
             destinations: .macOS,
@@ -525,7 +543,7 @@ func makeMacAppTargets() -> [Target] {
             dependencies: macAppCoreDependencies + representative.additionalTargetDependencies,
             settings: .settings(
                 base: baseSettings,
-                configurations: group.variants.map { $0.macAppConfiguration() }
+                configurations: configurations
             )
         )
     }
