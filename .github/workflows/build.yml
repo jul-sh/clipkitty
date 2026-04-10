@@ -399,8 +399,10 @@ jobs:
             > "$APP/Contents/embedded.provisionprofile"
 
           # Sign nested frameworks/bundles first (inside-out for Sparkle, XPC services, etc.)
+          # Ensure all binaries have executable permissions (Bazel zip extraction may strip them)
           if [ -d "$APP/Contents/Frameworks" ]; then
-            find "$APP/Contents/Frameworks" \( -type f -perm +111 -o -name "*.dylib" \) | while read -r binary; do
+            find "$APP/Contents/Frameworks" -type f \( -name "*.dylib" -o -path "*/MacOS/*" \) -exec chmod +x {} \;
+            find "$APP/Contents/Frameworks" -type f \( -perm +111 -o -name "*.dylib" \) | while read -r binary; do
               codesign --force --options runtime --timestamp --sign "Developer ID Application" "$binary"
             done
           fi
