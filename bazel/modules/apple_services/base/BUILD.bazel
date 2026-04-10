@@ -4,7 +4,7 @@ package(default_visibility = ["//visibility:public"])
 
 swift_library(
     name = "ClipKittyAppleServices",
-    srcs = ["//:apple_services_srcs"],
+    srcs = ["//:apple_services_base_srcs"],
     module_name = "ClipKittyAppleServices",
     tags = ["manual"],
     deps = [

@@ -30,6 +30,14 @@ filegroup(
 )
 
 filegroup(
+    name = "apple_services_base_srcs",
+    srcs = glob(
+        ["Sources/AppleServices/**/*.swift"],
+        exclude = ["Sources/AppleServices/SyncEngine.swift"],
+    ),
+)
+
+filegroup(
     name = "mac_platform_srcs",
     srcs = glob(["Sources/MacPlatform/**/*.swift"]),
 )
