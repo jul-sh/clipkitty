@@ -27,6 +27,7 @@ jobs:
         uses: DeterminateSystems/nix-installer-action@b66b36319cc6fde4ea85edd583b088c65d6b8710 # main 2026-04-08
         with:
           source-tag: v3.17.3
+          flakehub: false
 
       - name: Verify lockfile integrity
         run: |
@@ -61,6 +62,7 @@ jobs:
         uses: DeterminateSystems/nix-installer-action@b66b36319cc6fde4ea85edd583b088c65d6b8710 # main 2026-04-08
         with:
           source-tag: v3.17.3
+          flakehub: false
 
       - name: Install CI tools from Nix
         run: |
@@ -94,7 +96,7 @@ jobs:
         if: github.ref == 'refs/heads/main' || github.ref == 'refs/heads/release' || (github.event_name == 'pull_request' && (github.base_ref == 'main' || github.base_ref == 'release'))
         run: |
           TARGET_BRANCH="${GITHUB_BASE_REF:-${GITHUB_REF#refs/heads/}}"
-          BASE_VERSION=$(grep 'MARKETING_VERSION' Project.swift | head -1 | sed 's/.*"\(.*\)".*/\1/')
+          BASE_VERSION=$(grep '"MARKETING_VERSION":' Project.swift | head -1 | sed 's/.*: *"\(.*\)".*/\1/')
           echo "Base version from Project.swift: $BASE_VERSION"
 
           # Extract major.minor from Project.swift, use commit count as patch
@@ -181,7 +183,7 @@ jobs:
           AGE_SECRET_KEY: ${{ secrets.AGE_SECRET_KEY }}
 
       - name: Build App (Hardened)
-        run: make build CONFIGURATION=Hardened UNIVERSAL=1 SKIP_SIGNING=1
+        run: make build CONFIGURATION=Hardened UNIVERSAL=1 SKIP_SIGNING=1 LOCKED=1
         env:
           AGE_SECRET_KEY: ${{ secrets.AGE_SECRET_KEY }}
 
@@ -249,74 +251,69 @@ jobs:
           BINARY="$APP/Contents/MacOS/ClipKitty"
           echo "=== Hardened feature surface assertions ==="
 
+          PLIST="$APP/Contents/Info.plist"
+
+          fail() { echo "FAIL: $1"; echo "## Hardened Verification Failed" >> "$GITHUB_STEP_SUMMARY"; echo "$1" >> "$GITHUB_STEP_SUMMARY"; exit 1; }
+
           # --- Binary-level checks (compiled-out code paths) ---
 
           # Assert link preview code is compiled out (ENABLE_LINK_PREVIEWS)
           if strings "$BINARY" | grep -q "refreshLinkMetadata"; then
-            echo "FAIL: link preview method 'refreshLinkMetadata' found in hardened binary"
-            exit 1
+            fail "link preview method 'refreshLinkMetadata' found in hardened binary"
           fi
           echo "✓ No link preview code in binary"
 
           # Assert iCloud sync code is compiled out (ENABLE_ICLOUD_SYNC)
           if strings "$BINARY" | grep -q "SyncEngine"; then
-            echo "FAIL: SyncEngine found in hardened binary"
-            exit 1
+            fail "SyncEngine found in hardened binary"
           fi
           echo "✓ No iCloud sync code in binary"
 
           # Assert Sparkle updater code is compiled out (ENABLE_SPARKLE_UPDATES)
           if strings "$BINARY" | grep -q "SPUUpdater"; then
-            echo "FAIL: Sparkle updater class found in hardened binary"
-            exit 1
+            fail "Sparkle updater class found in hardened binary"
           fi
           echo "✓ No Sparkle update code in binary"
 
           # Assert file clipboard code is compiled out (ENABLE_FILE_CLIPBOARD_ITEMS)
           if strings "$BINARY" | grep -q "saveFileItems"; then
-            echo "FAIL: file clipboard method 'saveFileItems' found in hardened binary"
-            exit 1
+            fail "file clipboard method 'saveFileItems' found in hardened binary"
           fi
           echo "✓ No file clipboard code in binary"
 
           # Assert build attestation link code is compiled out (ENABLE_BUILD_ATTESTATION_LINK)
           if strings "$BINARY" | grep -q "checkAttestation"; then
-            echo "FAIL: build attestation link method 'checkAttestation' found in hardened binary"
-            exit 1
+            fail "build attestation link method 'checkAttestation' found in hardened binary"
           fi
           echo "✓ No build attestation link code in binary"
 
           # --- Build settings checks (Info.plist) ---
 
           # Verify bundle ID is hardened-specific (separate sandbox container)
-          BUNDLE_ID=$(defaults read "$APP/Contents/Info" CFBundleIdentifier 2>/dev/null || echo "")
+          BUNDLE_ID=$(/usr/libexec/PlistBuddy -c "Print :CFBundleIdentifier" "$PLIST" 2>/dev/null || echo "")
           if [ "$BUNDLE_ID" != "com.eviljuliette.clipkitty.hardened" ]; then
-            echo "FAIL: CFBundleIdentifier is '$BUNDLE_ID', expected 'com.eviljuliette.clipkitty.hardened'"
-            exit 1
+            fail "CFBundleIdentifier is '$BUNDLE_ID', expected 'com.eviljuliette.clipkitty.hardened'"
           fi
           echo "✓ Bundle ID: com.eviljuliette.clipkitty.hardened"
 
           # Verify build channel is Hardened
-          CHANNEL=$(defaults read "$APP/Contents/Info" CKBuildChannel 2>/dev/null || echo "")
+          CHANNEL=$(/usr/libexec/PlistBuddy -c "Print :CKBuildChannel" "$PLIST" 2>/dev/null || echo "")
           if [ "$CHANNEL" != "Hardened" ]; then
-            echo "FAIL: CKBuildChannel is '$CHANNEL', expected 'Hardened'"
-            exit 1
+            fail "CKBuildChannel is '$CHANNEL', expected 'Hardened'"
           fi
           echo "✓ Build channel: Hardened"
 
           # Verify no Sparkle feed URL in Info.plist
-          FEED=$(defaults read "$APP/Contents/Info" SUFeedURL 2>/dev/null || echo "")
+          FEED=$(/usr/libexec/PlistBuddy -c "Print :SUFeedURL" "$PLIST" 2>/dev/null || echo "")
           if [ -n "$FEED" ]; then
-            echo "FAIL: SUFeedURL found in hardened Info.plist: $FEED"
-            exit 1
+            fail "SUFeedURL found in hardened Info.plist: $FEED"
           fi
           echo "✓ No Sparkle feed URL in Info.plist"
 
           # Verify display name is correct
-          DISPLAY_NAME=$(defaults read "$APP/Contents/Info" CFBundleDisplayName 2>/dev/null || echo "")
+          DISPLAY_NAME=$(/usr/libexec/PlistBuddy -c "Print :CFBundleDisplayName" "$PLIST" 2>/dev/null || echo "")
           if [ "$DISPLAY_NAME" != "ClipKitty Hardened" ]; then
-            echo "FAIL: CFBundleDisplayName is '$DISPLAY_NAME', expected 'ClipKitty Hardened'"
-            exit 1
+            fail "CFBundleDisplayName is '$DISPLAY_NAME', expected 'ClipKitty Hardened'"
           fi
           echo "✓ Display name: ClipKitty Hardened"
 
@@ -332,7 +329,7 @@ jobs:
 
       - name: Build iOS App (AppStore)
         run: |
-          BASE_VERSION=$(grep 'MARKETING_VERSION' Project.swift | head -1 | sed 's/.*"\(.*\)".*/\1/')
+          BASE_VERSION=$(grep '"MARKETING_VERSION":' Project.swift | head -1 | sed 's/.*: *"\(.*\)".*/\1/')
           IFS='.' read -r major minor _patch <<< "$BASE_VERSION"
           COMMIT_COUNT=$(git rev-list --count HEAD)
           VERSION="${major}.${minor}.${COMMIT_COUNT}"
@@ -419,6 +416,7 @@ jobs:
             TestResults.xcresult
             xcodebuild-test.log
           if-no-files-found: ignore
+
 
       - name: Create Virtual Retina Display
         run: |
@@ -616,7 +614,7 @@ jobs:
           path: ClipKitty-AppStore.zip
 
       - name: Upload Hardened Build
-        uses: actions/upload-artifact@v4
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4
         with:
           name: ClipKitty-Hardened
           path: ClipKitty-Hardened.zip
@@ -718,6 +716,7 @@ jobs:
         uses: DeterminateSystems/nix-installer-action@b66b36319cc6fde4ea85edd583b088c65d6b8710 # main 2026-04-08
         with:
           source-tag: v3.17.3
+          flakehub: false
 
       - name: Install CI tools from Nix
         run: |
@@ -815,6 +814,7 @@ jobs:
         uses: DeterminateSystems/nix-installer-action@b66b36319cc6fde4ea85edd583b088c65d6b8710 # main 2026-04-08
         with:
           source-tag: v3.17.3
+          flakehub: false
 
       - name: Install CI tools from Nix
         run: |
@@ -901,7 +901,7 @@ jobs:
 
       - name: Build and Publish to App Store Connect
         run: |
-          BASE_VERSION=$(grep 'MARKETING_VERSION' Project.swift | head -1 | sed 's/.*"\(.*\)".*/\1/')
+          BASE_VERSION=$(grep '"MARKETING_VERSION":' Project.swift | head -1 | sed 's/.*: *"\(.*\)".*/\1/')
           IFS='.' read -r major minor _patch <<< "$BASE_VERSION"
           COMMIT_COUNT=$(git rev-list --count HEAD)
           VERSION="${major}.${minor}.${COMMIT_COUNT}"
@@ -944,6 +944,7 @@ jobs:
         uses: DeterminateSystems/nix-installer-action@b66b36319cc6fde4ea85edd583b088c65d6b8710 # main 2026-04-08
         with:
           source-tag: v3.17.3
+          flakehub: false
 
       - name: Install CI tools from Nix
         run: |
@@ -1029,7 +1030,7 @@ jobs:
 
       - name: Build and Publish iOS to App Store Connect
         run: |
-          BASE_VERSION=$(grep 'MARKETING_VERSION' Project.swift | head -1 | sed 's/.*"\(.*\)".*/\1/')
+          BASE_VERSION=$(grep '"MARKETING_VERSION":' Project.swift | head -1 | sed 's/.*: *"\(.*\)".*/\1/')
           IFS='.' read -r major minor _patch <<< "$BASE_VERSION"
           COMMIT_COUNT=$(git rev-list --count HEAD)
           VERSION="${major}.${minor}.${COMMIT_COUNT}"
