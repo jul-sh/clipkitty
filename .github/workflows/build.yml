@@ -322,9 +322,6 @@ jobs:
       - name: Build iOS Smoke Test
         run: make ios-smoke-build VERSION="$VERSION" BUILD_NUMBER="$BUILD_NUMBER" LOCKED=1
 
-      - name: Build iOS App (AppStore)
-        run: make -C distribution ios-appstore VERSION="$VERSION" BUILD_NUMBER="$BUILD_NUMBER" LOCKED=1
-
       - name: Generate iOS Marketing Screenshots
         run: |
           make -C distribution ios-marketing-screenshots-localized VERSION="$VERSION" BUILD_NUMBER="$BUILD_NUMBER" LOCKED=1
