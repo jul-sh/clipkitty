@@ -133,9 +133,11 @@ final class ClipKittyUITests: XCTestCase {
 
         // Wait for the search field — it's always present regardless of how
         // the accessibility system classifies the NSPanel (window vs dialog).
+        // The timeout must accommodate Tantivy index rebuilds which happen on
+        // every test run (the setup deletes the index for a clean slate).
         let searchField = app.textFields["SearchField"]
         XCTAssertTrue(
-            searchField.waitForExistence(timeout: 15),
+            searchField.waitForExistence(timeout: 60),
             "App UI did not appear. Hierarchy: \(app.debugDescription)"
         )
         Thread.sleep(forTimeInterval: 0.5)
@@ -234,11 +236,12 @@ final class ClipKittyUITests: XCTestCase {
         Thread.sleep(forTimeInterval: 0.2)
 
         try? FileManager.default.removeItem(at: targetURL)
-        // Keep existing Tantivy index — if the test database is unchanged between
-        // runs the index is still valid, avoiding a slow async rebuild that races
-        // with UI test interactions and causes stochastic "database operation
-        // failed: search" failures (~70% of the time on CI).
-        //
+        // Remove all Tantivy index versions so the app rebuilds from scratch
+        if let contents = try? FileManager.default.contentsOfDirectory(at: appSupportDir, includingPropertiesForKeys: nil) {
+            for item in contents where item.lastPathComponent.hasPrefix("tantivy_index_") {
+                try? FileManager.default.removeItem(at: item)
+            }
+        }
         // SQLite WAL files: handle both hyphen (-wal) and dot (.wal) naming conventions
         try? FileManager.default.removeItem(at: URL(fileURLWithPath: targetURL.path + "-wal"))
         try? FileManager.default.removeItem(at: URL(fileURLWithPath: targetURL.path + "-shm"))

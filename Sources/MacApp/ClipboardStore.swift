@@ -264,16 +264,16 @@ final class ClipboardStore {
 
     /// Slow path: rebuild index on a background thread.
     private func openWithRebuild(dbPath: String) {
-        bootstrapTask = Task.detached(priority: .userInitiated) {
+        let rebuildTask = Task.detached(priority: .userInitiated) {
             let rustStore = try ClipKittyRust.ClipboardStore(dbPath: dbPath)
             try rustStore.rebuildIndex()
             let repository = ClipboardRepository(store: rustStore)
             return StoreRuntime(store: rustStore, repository: repository)
         }
 
-        Task {
+        bootstrapTask = Task {
             do {
-                let runtime = try await bootstrapTask!.value
+                let runtime = try await rebuildTask.value
                 self.repository = runtime.repository
                 self.previewLoader = PreviewLoader(repository: runtime.repository)
                 self.lifecycle = .ready
@@ -282,11 +282,13 @@ final class ClipboardStore {
                 #if ENABLE_ICLOUD_SYNC
                     self.initializeSyncRuntime(with: runtime.store)
                 #endif
+                return runtime
             } catch {
                 let dbError = ClipboardError.databaseInitFailed(underlying: error)
                 ErrorReporter.reportCritical(dbError)
                 self.lifecycle = .failed(dbError.localizedDescription)
                 self.state = .error(dbError.localizedDescription)
+                throw dbError
             }
         }
     }
@@ -859,66 +861,66 @@ final class ClipboardStore {
     // MARK: - File Items
 
     #if ENABLE_FILE_CLIPBOARD_ITEMS
-    private func saveFileItems(
-        urls: [URL],
-        sourceApp: String? = nil,
-        sourceAppBundleID: String? = nil
-    ) {
-        let sourceApp = sourceApp ?? workspace.frontmostApplication?.localizedName
-        let sourceAppBundleID = sourceAppBundleID ?? workspace.frontmostApplication?.bundleIdentifier
+        private func saveFileItems(
+            urls: [URL],
+            sourceApp: String? = nil,
+            sourceAppBundleID: String? = nil
+        ) {
+            let sourceApp = sourceApp ?? workspace.frontmostApplication?.localizedName
+            let sourceAppBundleID = sourceAppBundleID ?? workspace.frontmostApplication?.bundleIdentifier
 
-        guard let repository else { return }
-        Task {
-            // Collect file metadata (CPU-bound, safe to run on any thread)
-            var paths: [String] = []
-            var filenames: [String] = []
-            var fileSizes: [UInt64] = []
-            var utis: [String] = []
-            var bookmarkDataList: [Data] = []
+            guard let repository else { return }
+            Task {
+                // Collect file metadata (CPU-bound, safe to run on any thread)
+                var paths: [String] = []
+                var filenames: [String] = []
+                var fileSizes: [UInt64] = []
+                var utis: [String] = []
+                var bookmarkDataList: [Data] = []
 
-            for url in urls {
-                guard url.isFileURL else { continue }
+                for url in urls {
+                    guard url.isFileURL else { continue }
 
-                paths.append(url.path)
-                filenames.append(url.lastPathComponent)
+                    paths.append(url.path)
+                    filenames.append(url.lastPathComponent)
 
-                let resourceValues = try? url.resourceValues(forKeys: [.isDirectoryKey, .fileSizeKey])
-                fileSizes.append(UInt64(resourceValues?.fileSize ?? 0))
+                    let resourceValues = try? url.resourceValues(forKeys: [.isDirectoryKey, .fileSizeKey])
+                    fileSizes.append(UInt64(resourceValues?.fileSize ?? 0))
 
-                let isDirectory = resourceValues?.isDirectory == true
-                if isDirectory {
-                    utis.append("public.folder")
-                } else {
-                    utis.append(UTType(filenameExtension: url.pathExtension)?.identifier ?? "public.item")
+                    let isDirectory = resourceValues?.isDirectory == true
+                    if isDirectory {
+                        utis.append("public.folder")
+                    } else {
+                        utis.append(UTType(filenameExtension: url.pathExtension)?.identifier ?? "public.item")
+                    }
+
+                    // NOTE: Bookmark data is always empty in sandboxed mode (App Store build).
+                    // Security-scoped bookmarks require user-initiated file selection via NSOpenPanel.
+                    // For clipboard monitoring, we use direct file paths which are accessible while the app is running.
+                    bookmarkDataList.append(Data())
                 }
 
-                // NOTE: Bookmark data is always empty in sandboxed mode (App Store build).
-                // Security-scoped bookmarks require user-initiated file selection via NSOpenPanel.
-                // For clipboard monitoring, we use direct file paths which are accessible while the app is running.
-                bookmarkDataList.append(Data())
-            }
+                guard !paths.isEmpty else { return }
 
-            guard !paths.isEmpty else { return }
+                let result = await repository.saveFiles(
+                    paths: paths,
+                    filenames: filenames,
+                    fileSizes: fileSizes,
+                    utis: utis,
+                    bookmarkDataList: bookmarkDataList,
+                    thumbnail: nil,
+                    sourceApp: sourceApp,
+                    sourceAppBundleId: sourceAppBundleID
+                )
 
-            let result = await repository.saveFiles(
-                paths: paths,
-                filenames: filenames,
-                fileSizes: fileSizes,
-                utis: utis,
-                bookmarkDataList: bookmarkDataList,
-                thumbnail: nil,
-                sourceApp: sourceApp,
-                sourceAppBundleId: sourceAppBundleID
-            )
-
-            switch result {
-            case .success:
-                self.invalidateContent()
-            case let .failure(error):
-                ErrorReporter.report(error, showToast: false)
+                switch result {
+                case .success:
+                    self.invalidateContent()
+                case let .failure(error):
+                    ErrorReporter.report(error, showToast: false)
+                }
             }
         }
-    }
     #endif
 
     // MARK: - Actions
@@ -1040,24 +1042,24 @@ final class ClipboardStore {
     }
 
     #if ENABLE_FILE_CLIPBOARD_ITEMS
-    private func pasteFiles(files: [FileEntry], itemId: String) {
-        // Resolve each file's bookmark to get current URL
-        var resolvedURLs: [URL] = []
-        for file in files {
-            // Use stored path directly (no bookmark data in sandboxed mode)
-            resolvedURLs.append(URL(fileURLWithPath: file.path))
+        private func pasteFiles(files: [FileEntry], itemId: String) {
+            // Resolve each file's bookmark to get current URL
+            var resolvedURLs: [URL] = []
+            for file in files {
+                // Use stored path directly (no bookmark data in sandboxed mode)
+                resolvedURLs.append(URL(fileURLWithPath: file.path))
+            }
+
+            guard !resolvedURLs.isEmpty else { return }
+
+            // Write to pasteboard with both modern and legacy types for broad compatibility.
+            // Finder requires NSFilenamesPboardType for file paste; other apps use public.file-url.
+            pasteboardMonitor.acknowledgeLocalWrite(changeCount: pasteService.writeFiles(resolvedURLs))
+
+            Task { [weak self] in
+                await self?.updateItemTimestamp(id: itemId)
+            }
         }
-
-        guard !resolvedURLs.isEmpty else { return }
-
-        // Write to pasteboard with both modern and legacy types for broad compatibility.
-        // Finder requires NSFilenamesPboardType for file paste; other apps use public.file-url.
-        pasteboardMonitor.acknowledgeLocalWrite(changeCount: pasteService.writeFiles(resolvedURLs))
-
-        Task { [weak self] in
-            await self?.updateItemTimestamp(id: itemId)
-        }
-    }
     #endif
 
     private func updateItemTimestamp(id: String) async {
