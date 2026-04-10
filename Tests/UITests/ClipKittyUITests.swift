@@ -234,12 +234,11 @@ final class ClipKittyUITests: XCTestCase {
         Thread.sleep(forTimeInterval: 0.2)
 
         try? FileManager.default.removeItem(at: targetURL)
-        // Remove all Tantivy index versions so the app rebuilds from scratch
-        if let contents = try? FileManager.default.contentsOfDirectory(at: appSupportDir, includingPropertiesForKeys: nil) {
-            for item in contents where item.lastPathComponent.hasPrefix("tantivy_index_") {
-                try? FileManager.default.removeItem(at: item)
-            }
-        }
+        // Keep existing Tantivy index — if the test database is unchanged between
+        // runs the index is still valid, avoiding a slow async rebuild that races
+        // with UI test interactions and causes stochastic "database operation
+        // failed: search" failures (~70% of the time on CI).
+        //
         // SQLite WAL files: handle both hyphen (-wal) and dot (.wal) naming conventions
         try? FileManager.default.removeItem(at: URL(fileURLWithPath: targetURL.path + "-wal"))
         try? FileManager.default.removeItem(at: URL(fileURLWithPath: targetURL.path + "-shm"))
