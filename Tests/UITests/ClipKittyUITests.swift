@@ -207,10 +207,15 @@ final class ClipKittyUITests: XCTestCase {
     }
 
     private func setupTestDatabase(in appSupportDir: URL) throws {
-        let projectRoot = URL(fileURLWithPath: #filePath)
-            .deletingLastPathComponent()
-            .deletingLastPathComponent()
-            .deletingLastPathComponent()
+        let projectRoot: URL
+        if let envRoot = ProcessInfo.processInfo.environment["CLIPKITTY_PROJECT_ROOT"] {
+            projectRoot = URL(fileURLWithPath: envRoot)
+        } else {
+            projectRoot = URL(fileURLWithPath: #filePath)
+                .deletingLastPathComponent()
+                .deletingLastPathComponent()
+                .deletingLastPathComponent()
+        }
 
         // Read the database filename from temp file (written by Makefile)
         // If it exists, use that filename; otherwise fall back to "SyntheticData.sqlite"

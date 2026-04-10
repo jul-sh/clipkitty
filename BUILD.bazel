@@ -367,7 +367,6 @@ macos_unit_test(
     name = "ClipKittyTests",
     bundle_id = "com.eviljuliette.clipkitty.tests",
     minimum_os_version = MACOS_MINIMUM_OS,
-    test_host = ":ClipKitty",
     deps = [":ClipKittyTests_lib"],
 )
 
@@ -416,7 +415,6 @@ ios_unit_test(
     bundle_id = "com.eviljuliette.clipkitty.tests.ios",
     minimum_os_version = IOS_MINIMUM_OS,
     runner = "//bazel/runners:ios_unit_runner",
-    test_host = ":ClipKittyiOSTestHost",
     deps = [":ClipKittyiOSTests_lib"],
 )
 

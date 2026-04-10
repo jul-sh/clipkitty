@@ -660,7 +660,7 @@
         "bzlTransitiveDigest": "vZfYYEtfSLrXzkDsHeLXVDaXfioO9fyVxhZWVZ4msKU=",
         "usagesDigest": "96vXEWan8+jGaBay3UXbxhLzz8EfBYrAycBjUG10ZW8=",
         "recordedFileInputs": {
-          "@@//Package.resolved": "c31aa1fa604579f40a9f3481e2aa3c6972f581ca166cfbf21238537fd90c2e9c"
+          "@@//Package.resolved": "bdbef21d1df52be287705ee9e11a27c361869b8973905cb119bf8795c474c92e"
         },
         "recordedDirentsInputs": {},
         "envVariables": {},
@@ -699,9 +699,9 @@
             "repoRuleId": "@@rules_swift_package_manager+//swiftpkg/internal:swift_package.bzl%swift_package",
             "attributes": {
               "bazel_package_name": "swiftpkg_sparkle",
-              "commit": "21d8df80440b1ca3b65fa82e40782f1e5a9e6ba2",
+              "commit": "066e75a8b3e99962685d6a90cdd5293ebffd9261",
               "remote": "https://github.com/sparkle-project/Sparkle.git",
-              "version": "2.9.0",
+              "version": "2.9.1",
               "env": {},
               "env_inherit": [],
               "cached_json_directory": "",

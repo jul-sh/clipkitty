@@ -204,27 +204,27 @@ unittest:
 uitest:
 	@$(MAKE) rust
 	@echo "Running macOS UI tests with Bazel..."
-	@$(BAZEL) test $(BAZEL_BUILD_FLAGS) //:ClipKittyUITests $(if $(TEST),--test_filter=$(TEST),)
+	@$(BAZEL) test $(BAZEL_BUILD_FLAGS) --spawn_strategy=local --test_timeout=600 --test_env=BUILD_WORKSPACE_DIRECTORY="$(SCRIPT_DIR)" //:ClipKittyUITests $(if $(TEST),--test_filter=$(TEST),)
 
 mac-appstore-uitest:
 	@$(MAKE) rust
 	@echo "Running App Store macOS UI tests with Bazel..."
-	@$(BAZEL) test $(BAZEL_BUILD_FLAGS) //:ClipKittyAppStoreUITests $(if $(TEST),--test_filter=$(TEST),)
+	@$(BAZEL) test $(BAZEL_BUILD_FLAGS) --spawn_strategy=local --test_timeout=600 --test_env=BUILD_WORKSPACE_DIRECTORY="$(SCRIPT_DIR)" //:ClipKittyAppStoreUITests $(if $(TEST),--test_filter=$(TEST),)
 
 ios-unittest:
 	@$(MAKE) rust
 	@echo "Running iOS unit tests with Bazel..."
-	@$(BAZEL) test $(BAZEL_BUILD_FLAGS) --config=ios_sim //:ClipKittyiOSTests $(if $(TEST),--test_filter=$(TEST),)
+	@$(BAZEL) test $(BAZEL_BUILD_FLAGS) --spawn_strategy=local --config=ios_sim //:ClipKittyiOSTests $(if $(TEST),--test_filter=$(TEST),)
 
 ios-uitest:
 	@$(MAKE) rust
 	@echo "Running iOS UI tests with Bazel..."
-	@$(BAZEL) test $(BAZEL_BUILD_FLAGS) --config=ios_sim //:ClipKittyiOSUITests $(if $(TEST),--test_filter=$(TEST),)
+	@$(BAZEL) test $(BAZEL_BUILD_FLAGS) --spawn_strategy=local --test_timeout=600 --config=ios_sim //:ClipKittyiOSUITests $(if $(TEST),--test_filter=$(TEST),)
 
 ios-appstore-uitest:
 	@$(MAKE) rust
 	@echo "Running App Store iOS UI tests with Bazel..."
-	@$(BAZEL) test $(BAZEL_BUILD_FLAGS) --config=ios_sim //:ClipKittyiOSAppStoreUITests $(if $(TEST),--test_filter=$(TEST),)
+	@$(BAZEL) test $(BAZEL_BUILD_FLAGS) --spawn_strategy=local --test_timeout=600 --config=ios_sim //:ClipKittyiOSAppStoreUITests $(if $(TEST),--test_filter=$(TEST),)
 
 ios-smoke-build:
 	@$(MAKE) rust

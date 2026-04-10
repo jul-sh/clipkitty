@@ -331,6 +331,9 @@ jobs:
           echo "Generated iOS screenshots:"
           ls -lh marketing-ios/*/screenshot_*.png 2>/dev/null || echo "::warning::No iOS screenshots were generated"
 
+      - name: Enable Developer Mode
+        run: sudo DevToolsSecurity -enable
+
       - name: Run UI Tests
         env:
           LOCKED: "1"

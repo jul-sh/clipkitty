@@ -413,6 +413,12 @@ for SINGLE_TEST_ENV in ${TEST_ENV//,/ }; do
   XCTESTRUN_ENV+="<key>$(escape "$key")</key><string>$(escape "$value")</string>"
 done
 
+# Expose the workspace root so tests can locate data files when #filePath
+# produces relative paths (Bazel compiles with relative source paths).
+if [[ -n "${BUILD_WORKSPACE_DIRECTORY:-}" ]]; then
+  XCTESTRUN_ENV+="<key>CLIPKITTY_PROJECT_ROOT</key><string>$(escape "$BUILD_WORKSPACE_DIRECTORY")</string>"
+fi
+
 TEST_FILTER="%(test_filter)s"
 XCTESTRUN_SKIP_TEST_SECTION=""
 XCTESTRUN_ONLY_TEST_SECTION=""
