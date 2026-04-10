@@ -8,10 +8,17 @@ DIST_DIR := $(abspath $(dir $(lastword $(MAKEFILE_LIST))))
 # Use Nix wrapper for Rust commands only (Swift needs native Xcode tools)
 NIX_SHELL := $(PROJECT_ROOT)/Scripts/run-in-nix.sh -c
 
+# Pass LOCKED=1 in CI to enforce Cargo.lock (adds --locked to cargo commands)
+CARGO_LOCKED := $(if $(filter 1,$(LOCKED)),--locked,)
+export LOCKED
+
 APP_NAME := ClipKitty
 DERIVED_DATA := $(PROJECT_ROOT)/DerivedData
 
-# Build configuration: Release or AppStore (differ only in signing)
+# API key directory for automatic provisioning (shared with root Makefile)
+API_KEY_DIR := $(PROJECT_ROOT)/.make/keys
+
+# Build configuration: Release, AppStore, or Hardened
 CONFIGURATION ?= Release
 
 # Path to the built app bundle (inside DerivedData)
@@ -29,10 +36,12 @@ PROVISIONING_PROFILE ?=
 # All supported screenshot locales (App Store top 10)
 SCREENSHOT_LOCALES := en es zh-Hans zh-Hant ja ko fr de pt-BR ru
 
-.PHONY: dmg appstore appstore-local appstore-publish publish icon-png \
+.PHONY: dmg hardened appstore appstore-local appstore-publish publish icon-png \
         synthetic-data run-synthetic marketing marketing-screenshots \
         marketing-screenshots-capture marketing-screenshots-localized \
-        intro-video intro-video-localized video-data screenshot
+        intro-video intro-video-localized video-data screenshot \
+        api-key ios-appstore ios-publish ios-appstore-publish \
+        ios-marketing-screenshots-localized
 
 # Build DMG installer
 dmg:
@@ -40,10 +49,25 @@ dmg:
 	@echo "Signing for distribution..."
 	@codesign --force --options runtime \
 		--sign "$(SIGNING_IDENTITY)" \
-		--entitlements $(PROJECT_ROOT)/Sources/App/ClipKitty.oss.entitlements \
+		--entitlements $(PROJECT_ROOT)/Sources/MacApp/ClipKitty.oss.entitlements \
 		"$(APP_PATH)"
 	@echo "Building DMG installer..."
 	@$(DIST_DIR)/build-dmg.sh "$(APP_PATH)" "$(PROJECT_ROOT)/$(APP_NAME).dmg"
+
+# Build Hardened DMG (no network, no file access, no sync — for security-sensitive environments)
+hardened:
+	@$(MAKE) -C $(PROJECT_ROOT) all CONFIGURATION=Hardened \
+		$(if $(VERSION),VERSION=$(VERSION),) \
+		$(if $(BUILD_NUMBER),BUILD_NUMBER=$(BUILD_NUMBER),) \
+		$(if $(UNIVERSAL),UNIVERSAL=$(UNIVERSAL),)
+	@echo "Signing hardened build for distribution..."
+	@codesign --force --options runtime \
+		--sign "$(SIGNING_IDENTITY)" \
+		--entitlements $(PROJECT_ROOT)/Sources/MacApp/ClipKitty.hardened.entitlements \
+		"$(DERIVED_DATA)/Build/Products/Hardened/$(APP_NAME).app"
+	@echo "Building Hardened DMG installer..."
+	@$(DIST_DIR)/build-dmg.sh "$(DERIVED_DATA)/Build/Products/Hardened/$(APP_NAME).app" \
+		"$(PROJECT_ROOT)/$(APP_NAME)-Hardened.dmg"
 
 # Export app icon as PNG (for README, gh-pages, etc.)
 ICTOOL := /Applications/Xcode.app/Contents/Applications/Icon\ Composer.app/Contents/Executables/ictool
@@ -82,7 +106,7 @@ appstore:
 	@echo "Re-signing for App Store distribution..."
 	@codesign --force --options runtime \
 		--sign "$(APPSTORE_SIGNING_IDENTITY)" \
-		--entitlements $(PROJECT_ROOT)/Sources/App/ClipKitty.appstore.entitlements \
+		--entitlements $(PROJECT_ROOT)/Sources/MacApp/ClipKitty.appstore.entitlements \
 		"$(DERIVED_DATA)/Build/Products/AppStore/$(APP_NAME).app"
 	@echo "Creating installer package..."
 	@rm -f "$(PROJECT_ROOT)/$(APP_NAME).pkg"
@@ -172,7 +196,7 @@ appstore-publish:
 # Marketing Assets (Screenshots & Preview Video)
 # ============================================================================
 # Prerequisites:
-#   1. ffmpeg: brew install ffmpeg
+#   1. ffmpeg (available in the Nix dev shell: nix develop)
 #   2. Synthetic data with demo items: make -C distribution synthetic-data
 #
 # Usage:
@@ -186,7 +210,7 @@ appstore-publish:
 # Run distribution/patch-demo-items.sh after to add demo-specific items
 synthetic-data:
 	@echo "Generating synthetic data..."
-	@$(NIX_SHELL) "cd $(DIST_DIR)/rust-data-gen && cargo run --release -- --db-path ../SyntheticData.sqlite"
+	@$(NIX_SHELL) "cd $(PROJECT_ROOT) && cargo run $(CARGO_LOCKED) -p rust-data-gen --release -- --db-path $(DIST_DIR)/SyntheticData.sqlite"
 	@echo "Synthetic data generated at distribution/SyntheticData.sqlite"
 	@echo "Run ./distribution/patch-demo-items.sh to add demo items"
 
@@ -211,10 +235,10 @@ marketing-screenshots-capture:
 	@$(MAKE) -C $(PROJECT_ROOT) all CONFIGURATION=AppStore
 	@codesign --force --options runtime \
 		--sign "$(SIGNING_IDENTITY)" \
-		--entitlements $(PROJECT_ROOT)/Sources/App/ClipKitty.appstore.entitlements \
+		--entitlements $(PROJECT_ROOT)/Sources/MacApp/ClipKitty.appstore.entitlements \
 		"$(DERIVED_DATA)/Build/Products/AppStore/$(APP_NAME).app"
 	@echo "Capturing marketing screenshots..."
-	@$(DIST_DIR)/prepare-screenshot-environment.sh 'cd $(PROJECT_ROOT) && xcodebuild test -scheme ClipKittyUITests -configuration AppStore -destination "platform=macOS" -derivedDataPath DerivedData -only-testing:ClipKittyUITests/ClipKittyUITests/testTakeMarketingScreenshots 2>&1 | grep -E "(Test Case|passed|failed)" || true'
+	@$(DIST_DIR)/prepare-screenshot-environment.sh 'cd $(PROJECT_ROOT) && xcodebuild test -scheme ClipKittyUITests -configuration AppStore -destination "platform=macOS" -derivedDataPath DerivedData $(if $(SKIP_SIGNING),CODE_SIGNING_ALLOWED=NO,) -only-testing:ClipKittyUITests/ClipKittyUITests/testTakeMarketingScreenshots 2>&1 | grep -E "(Test Case|passed|failed)" || true'
 	@mkdir -p $(PROJECT_ROOT)/marketing/en
 	@cp /tmp/clipkitty_marketing_1_history.png $(PROJECT_ROOT)/marketing/en/screenshot_1.png
 	@cp /tmp/clipkitty_marketing_2_search.png $(PROJECT_ROOT)/marketing/en/screenshot_2.png
@@ -238,7 +262,7 @@ marketing-screenshots-localized:
 	@$(MAKE) -C $(PROJECT_ROOT) all CONFIGURATION=AppStore
 	@codesign --force --options runtime \
 		--sign "$(SIGNING_IDENTITY)" \
-		--entitlements $(PROJECT_ROOT)/Sources/App/ClipKitty.appstore.entitlements \
+		--entitlements $(PROJECT_ROOT)/Sources/MacApp/ClipKitty.appstore.entitlements \
 		"$(DERIVED_DATA)/Build/Products/AppStore/$(APP_NAME).app"
 	@rm -f /tmp/clipkitty_screenshot_locale.txt
 	@rm -f /tmp/clipkitty_screenshot_db.txt
@@ -257,6 +281,7 @@ marketing-screenshots-localized:
 				-configuration AppStore \
 				-destination \"platform=macOS\" \
 				-derivedDataPath DerivedData \
+				$(if $(SKIP_SIGNING),CODE_SIGNING_ALLOWED=NO,) \
 				-only-testing:ClipKittyUITests/ClipKittyUITests/testTakeMarketingScreenshots \
 				2>&1 | grep -E '(Test Case|passed|failed)' || true"; \
 		if [ "$$locale" = "en" ]; then \
@@ -281,7 +306,7 @@ marketing: marketing-screenshots-localized
 video-data:
 	@echo "Generating video database..."
 	@cp $(DIST_DIR)/SyntheticData.sqlite $(DIST_DIR)/SyntheticData_video.sqlite
-	@$(NIX_SHELL) "cd $(DIST_DIR)/rust-data-gen && cargo run --release -- --video-only --db-path ../SyntheticData_video.sqlite"
+	@$(NIX_SHELL) "cd $(PROJECT_ROOT) && cargo run $(CARGO_LOCKED) -p rust-data-gen --release -- --video-only --db-path $(DIST_DIR)/SyntheticData_video.sqlite"
 	@echo "Injecting images into video database..."
 	@python3 $(DIST_DIR)/inject-images.py $(DIST_DIR)/SyntheticData_video.sqlite en
 	@echo "Video database generated at distribution/SyntheticData_video.sqlite"
@@ -289,17 +314,18 @@ video-data:
 # Record intro video using video-specific database
 intro-video: video-data
 	@echo "Recording intro video..."
-	@$(DIST_DIR)/record-preview-video.sh \
-		--db SyntheticData_video.sqlite \
-		--output intro_video.mov \
-		--duration 30
+	@$(DIST_DIR)/prepare-screenshot-environment.sh \
+		"$(DIST_DIR)/record-preview-video.sh \
+			--db SyntheticData_video.sqlite \
+			--output intro_video.mov \
+			--duration 30"
 	@echo "Intro video saved!"
 
 # Generate video databases for all locales and record localized intro videos.
 # Each locale gets its own video database and output video file.
 intro-video-localized:
 	@rm -f /tmp/clipkitty_screenshot_locale.txt
-	@for locale in $(SCREENSHOT_LOCALES); do \
+	@set -e; for locale in $(SCREENSHOT_LOCALES); do \
 		echo "=== Recording intro video for $$locale ==="; \
 		echo "$$locale" > /tmp/clipkitty_screenshot_locale.txt; \
 		if [ "$$locale" = "en" ]; then \
@@ -307,14 +333,107 @@ intro-video-localized:
 		else \
 			cp $(DIST_DIR)/SyntheticData_$$locale.sqlite $(DIST_DIR)/SyntheticData_video.sqlite; \
 		fi; \
-		$(NIX_SHELL) "cd $(DIST_DIR)/rust-data-gen && cargo run --release -- --video-only --locale $$locale --db-path ../SyntheticData_video.sqlite"; \
+		$(NIX_SHELL) "cd $(PROJECT_ROOT) && cargo run $(CARGO_LOCKED) -p rust-data-gen --release -- --video-only --locale $$locale --db-path $(DIST_DIR)/SyntheticData_video.sqlite"; \
 		python3 $(DIST_DIR)/inject-images.py $(DIST_DIR)/SyntheticData_video.sqlite $$locale; \
 		mkdir -p $(PROJECT_ROOT)/marketing/$$locale; \
-		$(DIST_DIR)/record-preview-video.sh \
-			--db SyntheticData_video.sqlite \
-			--output $$locale/intro_video.mov \
-			--duration 30; \
+		$(DIST_DIR)/prepare-screenshot-environment.sh \
+			"$(DIST_DIR)/record-preview-video.sh \
+				--db SyntheticData_video.sqlite \
+				--output $$locale/intro_video.mov \
+				--duration 30"; \
 		echo "  $$locale video saved to marketing/$$locale/intro_video.mov"; \
 	done
 	@rm -f /tmp/clipkitty_screenshot_locale.txt
 	@echo "All localized intro videos complete!"
+
+# ============================================================================
+# iOS App Store Submission
+# ============================================================================
+# Usage:
+#   make -C distribution ios-appstore VERSION=1.11.0 BUILD_NUMBER=123
+#   make -C distribution ios-appstore-publish VERSION=1.11.0 BUILD_NUMBER=123
+#
+# The iOS pipeline uses xcodebuild archive + exportArchive to produce an IPA.
+# Automatic provisioning via ASC API key handles cert + profile management.
+# ============================================================================
+
+# Decrypt App Store Connect API key for automatic provisioning
+api-key:
+	@mkdir -p $(API_KEY_DIR)
+	@if [ ! -f "$(API_KEY_DIR)/AuthKey.p8" ]; then \
+		echo "Decrypting API key for provisioning..."; \
+		$(DIST_DIR)/asc-auth.sh private-key-b64 | base64 --decode > "$(API_KEY_DIR)/AuthKey.p8"; \
+	fi
+
+IOS_BUNDLE_ID := com.eviljuliette.clipkitty
+IOS_ARCHIVE_PATH = $(DERIVED_DATA)/ClipKittyiOS.xcarchive
+IOS_IPA_PATH = $(PROJECT_ROOT)/ClipKittyiOS.ipa
+IOS_SCREENSHOT_LOCALES := $(SCREENSHOT_LOCALES)
+
+# Build iOS archive and export IPA for App Store
+ios-appstore:
+	@echo "Archiving ClipKittyiOS (AppStore)..."
+	@xcodebuild archive \
+		-workspace $(PROJECT_ROOT)/$(APP_NAME).xcworkspace \
+		-scheme ClipKittyiOS-AppStore \
+		-archivePath $(IOS_ARCHIVE_PATH) \
+		-destination "generic/platform=iOS" \
+		MARKETING_VERSION=$(VERSION) \
+		CURRENT_PROJECT_VERSION=$(BUILD_NUMBER)
+	@echo "Exporting IPA..."
+	@xcodebuild -exportArchive \
+		-archivePath $(IOS_ARCHIVE_PATH) \
+		-exportOptionsPlist $(DIST_DIR)/ExportOptions-iOS.plist \
+		-exportPath $(PROJECT_ROOT)
+	@echo "IPA exported: $(IOS_IPA_PATH)"
+
+# Publish iOS app to App Store Connect (metadata + binary)
+ios-publish:
+	@$(DIST_DIR)/publish.py --platform ios $(PUBLISH_FLAGS) $(if $(VERSION),--version $(VERSION),)
+
+# Combined: Build + Publish iOS to App Store Connect
+ios-appstore-publish: ios-appstore ios-publish
+
+# ============================================================================
+# iOS Marketing Screenshots (Simulator)
+# ============================================================================
+
+# Capture localized iOS screenshots for all supported locales.
+# Runs XCUITests on iPhone 16 Pro Max simulator.
+ios-marketing-screenshots-localized:
+	@$(DIST_DIR)/patch-demo-items.sh
+	@rm -f /tmp/clipkitty_ios_screenshot_locale.txt /tmp/clipkitty_ios_screenshot_db.txt
+	@for locale in $(IOS_SCREENSHOT_LOCALES); do \
+		echo "Capturing iOS screenshots for $$locale..."; \
+		mkdir -p $(PROJECT_ROOT)/marketing-ios/$$locale; \
+		echo "$$locale" > /tmp/clipkitty_ios_screenshot_locale.txt; \
+		if [ "$$locale" = "en" ]; then \
+			echo "SyntheticData.sqlite" > /tmp/clipkitty_ios_screenshot_db.txt; \
+		else \
+			if [ -f "$(DIST_DIR)/SyntheticData_$$locale.sqlite" ]; then \
+				echo "SyntheticData_$$locale.sqlite" > /tmp/clipkitty_ios_screenshot_db.txt; \
+			else \
+				echo "SyntheticData.sqlite" > /tmp/clipkitty_ios_screenshot_db.txt; \
+			fi; \
+		fi; \
+		xcodebuild test \
+			-workspace $(PROJECT_ROOT)/$(APP_NAME).xcworkspace \
+			-scheme ClipKittyiOSUITests \
+			-destination "platform=iOS Simulator,name=iPhone 16 Pro Max" \
+			-derivedDataPath $(DERIVED_DATA) \
+			$(if $(SKIP_SIGNING),CODE_SIGNING_ALLOWED=NO,) \
+			-only-testing:ClipKittyiOSUITests/ClipKittyiOSScreenshotTests/testTakeMarketingScreenshots \
+			2>&1 | grep -E "(Test Case|passed|failed)" || true; \
+		if [ "$$locale" = "en" ]; then \
+			cp /tmp/clipkitty_ios_marketing_1_history.png $(PROJECT_ROOT)/marketing-ios/$$locale/screenshot_1.png 2>/dev/null || true; \
+			cp /tmp/clipkitty_ios_marketing_2_search.png $(PROJECT_ROOT)/marketing-ios/$$locale/screenshot_2.png 2>/dev/null || true; \
+			cp /tmp/clipkitty_ios_marketing_3_filter.png $(PROJECT_ROOT)/marketing-ios/$$locale/screenshot_3.png 2>/dev/null || true; \
+		else \
+			cp /tmp/clipkitty_ios_$${locale}_marketing_1_history.png $(PROJECT_ROOT)/marketing-ios/$$locale/screenshot_1.png 2>/dev/null || true; \
+			cp /tmp/clipkitty_ios_$${locale}_marketing_2_search.png $(PROJECT_ROOT)/marketing-ios/$$locale/screenshot_2.png 2>/dev/null || true; \
+			cp /tmp/clipkitty_ios_$${locale}_marketing_3_filter.png $(PROJECT_ROOT)/marketing-ios/$$locale/screenshot_3.png 2>/dev/null || true; \
+		fi; \
+		echo "  $$locale iOS screenshots saved to marketing-ios/$$locale/"; \
+	done
+	@rm -f /tmp/clipkitty_ios_screenshot_locale.txt /tmp/clipkitty_ios_screenshot_db.txt
+	@echo "All localized iOS screenshots complete!"

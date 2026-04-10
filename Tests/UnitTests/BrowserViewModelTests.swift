@@ -1,5 +1,6 @@
 @testable import ClipKitty
 import ClipKittyRust
+@testable import ClipKittyShared
 import XCTest
 
 @MainActor
@@ -18,14 +19,14 @@ final class BrowserViewModelTests: XCTestCase {
 
         let staleResponse = BrowserSearchResponse(
             request: SearchRequest(text: "", filter: .all),
-            items: [makeMatch(id: 1, snippet: "stale")],
-            firstItem: nil,
+            items: [makeMatch(id: "1", snippet: "stale")],
+            firstPreviewPayload: nil,
             totalCount: 1
         )
         let freshResponse = BrowserSearchResponse(
             request: SearchRequest(text: "", filter: .all),
-            items: [makeMatch(id: 2, snippet: "fresh")],
-            firstItem: nil,
+            items: [makeMatch(id: "2", snippet: "fresh")],
+            firstPreviewPayload: nil,
             totalCount: 1
         )
 
@@ -39,16 +40,16 @@ final class BrowserViewModelTests: XCTestCase {
         client.resumeSearch(with: freshResponse)
         await flushMainActor()
 
-        XCTAssertEqual(viewModel.itemIds, [2])
-        XCTAssertEqual(viewModel.selectedItemId, 2)
+        XCTAssertEqual(viewModel.itemIds, ["2"])
+        XCTAssertEqual(viewModel.selectedItemId, "2")
     }
 
     func testStalePreviewCompletionDoesNotOverwriteNewerSelection() async {
         let client = MockBrowserStoreClient()
         client.enqueueSearchResponse(BrowserSearchResponse(
             request: SearchRequest(text: "", filter: .all),
-            items: [makeMatch(id: 1, snippet: "one"), makeMatch(id: 2, snippet: "two")],
-            firstItem: nil,
+            items: [makeMatch(id: "1", snippet: "one"), makeMatch(id: "2", snippet: "two")],
+            firstPreviewPayload: nil,
             totalCount: 2
         ))
 
@@ -62,28 +63,28 @@ final class BrowserViewModelTests: XCTestCase {
         viewModel.onAppear(initialSearchQuery: "")
         await flushMainActor()
 
-        XCTAssertEqual(viewModel.selectedItemId, 1)
+        XCTAssertEqual(viewModel.selectedItemId, "1")
 
-        viewModel.select(itemId: 2, origin: .user)
+        viewModel.select(itemId: "2", origin: .user)
         await flushMainActor()
 
-        client.resumeFetch(id: 1, with: makeItem(id: 1, text: "first"))
+        client.resumeFetch(id: "1", with: makeItem(id: "1", text: "first"))
         await flushMainActor()
         XCTAssertNil(viewModel.selectedItem)
 
-        client.resumeFetch(id: 2, with: makeItem(id: 2, text: "second"))
+        client.resumeFetch(id: "2", with: makeItem(id: "2", text: "second"))
         await flushMainActor()
 
-        XCTAssertEqual(viewModel.selectedItem?.itemMetadata.itemId, 2)
+        XCTAssertEqual(viewModel.selectedItem?.itemMetadata.itemId, "2")
     }
 
     func testDisplayResetKeepsPreviousResultsVisible() async {
         let client = MockBrowserStoreClient()
-        let firstItem = makeItem(id: 1, text: "first")
-        let secondItem = makeItem(id: 2, text: "second")
+        let firstItem = makeItem(id: "1", text: "first")
+        let secondItem = makeItem(id: "2", text: "second")
         client.enqueueSearchResponse(BrowserSearchResponse(
             request: SearchRequest(text: "", filter: .all),
-            items: [makeMatch(id: 1, snippet: "first")],
+            items: [makeMatch(id: "1", snippet: "first")],
             firstItem: firstItem,
             totalCount: 1
         ))
@@ -98,8 +99,8 @@ final class BrowserViewModelTests: XCTestCase {
         viewModel.onAppear(initialSearchQuery: "")
         await flushMainActor()
 
-        XCTAssertEqual(viewModel.itemIds, [1])
-        XCTAssertEqual(viewModel.selectedItemId, 1)
+        XCTAssertEqual(viewModel.itemIds, ["1"])
+        XCTAssertEqual(viewModel.selectedItemId, "1")
 
         viewModel.handleDisplayReset(initialSearchQuery: "")
         await flushMainActor()
@@ -108,29 +109,29 @@ final class BrowserViewModelTests: XCTestCase {
             return XCTFail("Expected display reset to preserve stale results while refreshing")
         }
         XCTAssertEqual(request, SearchRequest(text: "", filter: .all))
-        XCTAssertEqual(previous?.response.items.map(\.itemMetadata.itemId), [1])
-        XCTAssertEqual(viewModel.itemIds, [1])
-        XCTAssertEqual(viewModel.selectedItemId, 1)
+        XCTAssertEqual(previous?.response.items.map(\.itemMetadata.itemId), ["1"])
+        XCTAssertEqual(viewModel.itemIds, ["1"])
+        XCTAssertEqual(viewModel.selectedItemId, "1")
 
         client.resumeSearch(with: BrowserSearchResponse(
             request: SearchRequest(text: "", filter: .all),
-            items: [makeMatch(id: 2, snippet: "second")],
+            items: [makeMatch(id: "2", snippet: "second")],
             firstItem: secondItem,
             totalCount: 1
         ))
         await flushMainActor()
 
-        XCTAssertEqual(viewModel.itemIds, [2])
-        XCTAssertEqual(viewModel.selectedItemId, 2)
+        XCTAssertEqual(viewModel.itemIds, ["2"])
+        XCTAssertEqual(viewModel.selectedItemId, "2")
     }
 
     func testHiddenContentRevisionRefreshKeepsPreviousResultsVisible() async {
         let client = MockBrowserStoreClient()
-        let firstItem = makeItem(id: 1, text: "first")
-        let secondItem = makeItem(id: 2, text: "second")
+        let firstItem = makeItem(id: "1", text: "first")
+        let secondItem = makeItem(id: "2", text: "second")
         client.enqueueSearchResponse(BrowserSearchResponse(
             request: SearchRequest(text: "", filter: .all),
-            items: [makeMatch(id: 1, snippet: "first")],
+            items: [makeMatch(id: "1", snippet: "first")],
             firstItem: firstItem,
             totalCount: 1
         ))
@@ -145,8 +146,8 @@ final class BrowserViewModelTests: XCTestCase {
         viewModel.onAppear(initialSearchQuery: "")
         await flushMainActor()
 
-        XCTAssertEqual(viewModel.itemIds, [1])
-        XCTAssertEqual(viewModel.selectedItemId, 1)
+        XCTAssertEqual(viewModel.itemIds, ["1"])
+        XCTAssertEqual(viewModel.selectedItemId, "1")
 
         viewModel.handleContentRevisionChange(1, isPanelVisible: false)
         await flushMainActor()
@@ -160,27 +161,27 @@ final class BrowserViewModelTests: XCTestCase {
             return XCTFail("Expected a background refresh while hidden")
         }
         XCTAssertEqual(request, SearchRequest(text: "", filter: .all))
-        XCTAssertEqual(previous?.response.items.map(\.itemMetadata.itemId), [1])
+        XCTAssertEqual(previous?.response.items.map(\.itemMetadata.itemId), ["1"])
 
         client.resumeSearch(with: BrowserSearchResponse(
             request: SearchRequest(text: "", filter: .all),
-            items: [makeMatch(id: 2, snippet: "second"), makeMatch(id: 1, snippet: "first")],
+            items: [makeMatch(id: "2", snippet: "second"), makeMatch(id: "1", snippet: "first")],
             firstItem: secondItem,
             totalCount: 2
         ))
         await flushMainActor()
 
-        XCTAssertEqual(viewModel.itemIds, [2, 1])
-        XCTAssertEqual(viewModel.selectedItemId, 2)
+        XCTAssertEqual(viewModel.itemIds, ["2", "1"])
+        XCTAssertEqual(viewModel.selectedItemId, "2")
     }
 
     func testVisibleContentRevisionWaitsUntilPanelIsShownAgain() async {
         let client = MockBrowserStoreClient()
-        let firstItem = makeItem(id: 1, text: "first")
-        let secondItem = makeItem(id: 2, text: "second")
+        let firstItem = makeItem(id: "1", text: "first")
+        let secondItem = makeItem(id: "2", text: "second")
         client.enqueueSearchResponse(BrowserSearchResponse(
             request: SearchRequest(text: "", filter: .all),
-            items: [makeMatch(id: 1, snippet: "first")],
+            items: [makeMatch(id: "1", snippet: "first")],
             firstItem: firstItem,
             totalCount: 1
         ))
@@ -199,7 +200,7 @@ final class BrowserViewModelTests: XCTestCase {
         await flushMainActor()
 
         XCTAssertEqual(client.startedSearchRequests.count, 1)
-        XCTAssertEqual(viewModel.itemIds, [1])
+        XCTAssertEqual(viewModel.itemIds, ["1"])
 
         viewModel.handlePanelVisibilityChange(false, contentRevision: 1)
         viewModel.handlePanelVisibilityChange(true, contentRevision: 1)
@@ -210,26 +211,26 @@ final class BrowserViewModelTests: XCTestCase {
             return XCTFail("Expected reveal refresh to preserve stale results")
         }
         XCTAssertEqual(request, SearchRequest(text: "", filter: .all))
-        XCTAssertEqual(previous?.response.items.map(\.itemMetadata.itemId), [1])
+        XCTAssertEqual(previous?.response.items.map(\.itemMetadata.itemId), ["1"])
 
         client.resumeSearch(with: BrowserSearchResponse(
             request: SearchRequest(text: "", filter: .all),
-            items: [makeMatch(id: 2, snippet: "second")],
+            items: [makeMatch(id: "2", snippet: "second")],
             firstItem: secondItem,
             totalCount: 1
         ))
         await flushMainActor()
 
-        XCTAssertEqual(viewModel.itemIds, [2])
-        XCTAssertEqual(viewModel.selectedItemId, 2)
+        XCTAssertEqual(viewModel.itemIds, ["2"])
+        XCTAssertEqual(viewModel.selectedItemId, "2")
     }
 
     func testPanelShowDoesNotDuplicateHiddenRefreshAlreadyInFlight() async {
         let client = MockBrowserStoreClient()
-        let firstItem = makeItem(id: 1, text: "first")
+        let firstItem = makeItem(id: "1", text: "first")
         client.enqueueSearchResponse(BrowserSearchResponse(
             request: SearchRequest(text: "", filter: .all),
-            items: [makeMatch(id: 1, snippet: "first")],
+            items: [makeMatch(id: "1", snippet: "first")],
             firstItem: firstItem,
             totalCount: 1
         ))
@@ -256,11 +257,11 @@ final class BrowserViewModelTests: XCTestCase {
 
     func testSelectedPreviewHighlightsRefreshWhenQueryChangesWithoutNavigation() async {
         let client = MockBrowserStoreClient()
-        let item = makeItem(id: 1, text: "alpha beta")
+        let item = makeItem(id: "1", text: "alpha beta")
         let firstDecoration = makePreviewDecoration(highlightStart: 0, highlightEnd: 1)
         let refinedDecoration = makePreviewDecoration(highlightStart: 0, highlightEnd: 2)
         client.previewPayloadsByQuery = [
-            "a": [1: makePreviewPayload(item: item, decoration: firstDecoration)],
+            "a": ["1": makePreviewPayload(item: item, decoration: firstDecoration)],
         ]
 
         let viewModel = BrowserViewModel(
@@ -276,14 +277,14 @@ final class BrowserViewModelTests: XCTestCase {
 
         client.resumeSearch(with: BrowserSearchResponse(
             request: SearchRequest(text: "a", filter: .all),
-            items: [makeMatch(id: 1, snippet: "alpha beta")],
+            items: [makeMatch(id: "1", snippet: "alpha beta")],
             firstItem: item,
             totalCount: 1
         ))
         await flushMainActor()
         await flushMainActor()
 
-        XCTAssertEqual(viewModel.selectedItemId, 1)
+        XCTAssertEqual(viewModel.selectedItemId, "1")
         XCTAssertEqual(viewModel.previewDecoration, firstDecoration)
 
         viewModel.updateSearchText("al")
@@ -292,7 +293,7 @@ final class BrowserViewModelTests: XCTestCase {
 
         client.resumeSearch(with: BrowserSearchResponse(
             request: SearchRequest(text: "al", filter: .all),
-            items: [makeMatch(id: 1, snippet: "alpha beta")],
+            items: [makeMatch(id: "1", snippet: "alpha beta")],
             firstItem: item,
             totalCount: 1
         ))
@@ -302,7 +303,7 @@ final class BrowserViewModelTests: XCTestCase {
         guard case let .selected(selectedItemState) = viewModel.selection else {
             return XCTFail("Expected selected item to stay visible while fresh highlights load")
         }
-        XCTAssertEqual(selectedItemState.item.itemMetadata.itemId, 1)
+        XCTAssertEqual(selectedItemState.item.itemMetadata.itemId, "1")
         guard case let .loadingDecoration(previous: .some(staleDecoration)) = selectedItemState.previewState else {
             return XCTFail("Expected stale highlights while updated preview payload is pending")
         }
@@ -310,21 +311,21 @@ final class BrowserViewModelTests: XCTestCase {
         XCTAssertEqual(viewModel.previewDecoration, firstDecoration)
 
         client.resumePreviewPayload(
-            itemId: 1,
+            itemId: "1",
             query: "al",
             with: makePreviewPayload(item: item, decoration: refinedDecoration)
         )
         await flushMainActor()
         await flushMainActor()
 
-        XCTAssertEqual(viewModel.selectedItemId, 1)
+        XCTAssertEqual(viewModel.selectedItemId, "1")
         XCTAssertEqual(viewModel.previewDecoration, refinedDecoration)
         XCTAssertEqual(client.loadPreviewDecorationRequests.map(\.query), ["a", "al"])
     }
 
     func testActiveTextQueryKeepsSelectionVisibleWhilePreviewPayloadArrives() async {
         let client = MockBrowserStoreClient()
-        let item = makeItem(id: 1, text: "alpha beta")
+        let item = makeItem(id: "1", text: "alpha beta")
         let decoration = makePreviewDecoration(highlightStart: 0, highlightEnd: 1)
 
         let viewModel = BrowserViewModel(
@@ -340,7 +341,7 @@ final class BrowserViewModelTests: XCTestCase {
 
         client.resumeSearch(with: BrowserSearchResponse(
             request: SearchRequest(text: "a", filter: .all),
-            items: [makeMatch(id: 1, snippet: "alpha beta")],
+            items: [makeMatch(id: "1", snippet: "alpha beta")],
             firstItem: item,
             totalCount: 1
         ))
@@ -349,28 +350,28 @@ final class BrowserViewModelTests: XCTestCase {
         guard case let .selected(selectedItemState) = viewModel.selection else {
             return XCTFail("Expected selected item to stay visible before preview payload arrives")
         }
-        XCTAssertEqual(selectedItemState.item.itemMetadata.itemId, 1)
+        XCTAssertEqual(selectedItemState.item.itemMetadata.itemId, "1")
         guard case .loadingDecoration(previous: nil) = selectedItemState.previewState else {
             return XCTFail("Expected plain content with highlights still loading")
         }
-        XCTAssertEqual(viewModel.selectedItem?.itemMetadata.itemId, 1)
+        XCTAssertEqual(viewModel.selectedItem?.itemMetadata.itemId, "1")
         XCTAssertNil(viewModel.previewDecoration)
 
         client.resumePreviewPayload(
-            itemId: 1,
+            itemId: "1",
             query: "a",
             with: makePreviewPayload(item: item, decoration: decoration)
         )
         await flushMainActor()
         await flushMainActor()
 
-        XCTAssertEqual(viewModel.selectedItem?.itemMetadata.itemId, 1)
+        XCTAssertEqual(viewModel.selectedItem?.itemMetadata.itemId, "1")
         XCTAssertEqual(viewModel.previewDecoration, decoration)
     }
 
     func testDecoratedFirstPreviewPayloadAvoidsFollowupPreviewLoad() async {
         let client = MockBrowserStoreClient()
-        let item = makeItem(id: 1, text: "alpha beta")
+        let item = makeItem(id: "1", text: "alpha beta")
         let decoration = makePreviewDecoration(highlightStart: 0, highlightEnd: 2)
 
         let viewModel = BrowserViewModel(
@@ -386,25 +387,25 @@ final class BrowserViewModelTests: XCTestCase {
 
         client.resumeSearch(with: BrowserSearchResponse(
             request: SearchRequest(text: "al", filter: .all),
-            items: [makeMatch(id: 1, snippet: "alpha beta")],
+            items: [makeMatch(id: "1", snippet: "alpha beta")],
             firstPreviewPayload: makePreviewPayload(item: item, decoration: decoration),
             totalCount: 1
         ))
         await flushMainActor()
         await flushMainActor()
 
-        XCTAssertEqual(viewModel.selectedItem?.itemMetadata.itemId, 1)
+        XCTAssertEqual(viewModel.selectedItem?.itemMetadata.itemId, "1")
         XCTAssertEqual(viewModel.previewDecoration, decoration)
         XCTAssertTrue(client.loadPreviewDecorationRequests.isEmpty)
     }
 
     func testQueryChangeDoesNotReuseUndecoratedBrowsePreviewForHighlightedText() async {
         let client = MockBrowserStoreClient()
-        let item = makeItem(id: 1, text: "alpha beta")
+        let item = makeItem(id: "1", text: "alpha beta")
         let decoration = makePreviewDecoration(highlightStart: 0, highlightEnd: 2)
         client.enqueueSearchResponse(BrowserSearchResponse(
             request: SearchRequest(text: "", filter: .all),
-            items: [makeMatch(id: 1, snippet: "alpha beta")],
+            items: [makeMatch(id: "1", snippet: "alpha beta")],
             firstItem: item,
             totalCount: 1
         ))
@@ -418,7 +419,7 @@ final class BrowserViewModelTests: XCTestCase {
 
         viewModel.onAppear(initialSearchQuery: "")
         await flushMainActor()
-        XCTAssertEqual(viewModel.selectedItem?.itemMetadata.itemId, 1)
+        XCTAssertEqual(viewModel.selectedItem?.itemMetadata.itemId, "1")
         XCTAssertNil(viewModel.previewDecoration)
 
         viewModel.updateSearchText("al")
@@ -427,12 +428,12 @@ final class BrowserViewModelTests: XCTestCase {
         guard case let .selected(staleSelection) = viewModel.selection else {
             return XCTFail("Expected selected item to stay visible while search results are pending")
         }
-        XCTAssertEqual(staleSelection.item.itemMetadata.itemId, 1)
+        XCTAssertEqual(staleSelection.item.itemMetadata.itemId, "1")
         guard case .loadingDecoration(previous: nil) = staleSelection.previewState else {
             return XCTFail("Expected stale preview content to remain visible while fresh highlights load")
         }
-        XCTAssertEqual(viewModel.selectedItemId, 1)
-        XCTAssertEqual(viewModel.selectedItem?.itemMetadata.itemId, 1)
+        XCTAssertEqual(viewModel.selectedItemId, "1")
+        XCTAssertEqual(viewModel.selectedItem?.itemMetadata.itemId, "1")
         XCTAssertNil(viewModel.previewDecoration)
 
         try? await Task.sleep(for: .milliseconds(75))
@@ -440,7 +441,7 @@ final class BrowserViewModelTests: XCTestCase {
 
         client.resumeSearch(with: BrowserSearchResponse(
             request: SearchRequest(text: "al", filter: .all),
-            items: [makeMatch(id: 1, snippet: "alpha beta")],
+            items: [makeMatch(id: "1", snippet: "alpha beta")],
             firstItem: item,
             totalCount: 1
         ))
@@ -449,29 +450,29 @@ final class BrowserViewModelTests: XCTestCase {
         guard case let .selected(selectedItemState) = viewModel.selection else {
             return XCTFail("Expected selected item to stay visible while highlighted preview payload is pending")
         }
-        XCTAssertEqual(selectedItemState.item.itemMetadata.itemId, 1)
+        XCTAssertEqual(selectedItemState.item.itemMetadata.itemId, "1")
         guard case .loadingDecoration(previous: nil) = selectedItemState.previewState else {
             return XCTFail("Expected plain content with highlights still loading")
         }
-        XCTAssertEqual(viewModel.selectedItem?.itemMetadata.itemId, 1)
+        XCTAssertEqual(viewModel.selectedItem?.itemMetadata.itemId, "1")
         XCTAssertNil(viewModel.previewDecoration)
         XCTAssertEqual(client.loadPreviewDecorationRequests.map(\.query), ["al"])
 
         client.resumePreviewPayload(
-            itemId: 1,
+            itemId: "1",
             query: "al",
             with: makePreviewPayload(item: item, decoration: decoration)
         )
         await flushMainActor()
         await flushMainActor()
 
-        XCTAssertEqual(viewModel.selectedItem?.itemMetadata.itemId, 1)
+        XCTAssertEqual(viewModel.selectedItem?.itemMetadata.itemId, "1")
         XCTAssertEqual(viewModel.previewDecoration, decoration)
     }
 
     func testStalePreviewDecorationCompletionDoesNotOverwriteNewQuery() async {
         let client = MockBrowserStoreClient()
-        let item = makeItem(id: 1, text: "alpha beta")
+        let item = makeItem(id: "1", text: "alpha beta")
         let staleDecoration = makePreviewDecoration(highlightStart: 0, highlightEnd: 1)
         let freshDecoration = makePreviewDecoration(highlightStart: 6, highlightEnd: 10)
 
@@ -487,7 +488,7 @@ final class BrowserViewModelTests: XCTestCase {
         await flushMainActor()
         client.resumeSearch(with: BrowserSearchResponse(
             request: SearchRequest(text: "a", filter: .all),
-            items: [makeMatch(id: 1, snippet: "alpha beta")],
+            items: [makeMatch(id: "1", snippet: "alpha beta")],
             firstItem: item,
             totalCount: 1
         ))
@@ -498,14 +499,14 @@ final class BrowserViewModelTests: XCTestCase {
         await flushMainActor()
         client.resumeSearch(with: BrowserSearchResponse(
             request: SearchRequest(text: "be", filter: .all),
-            items: [makeMatch(id: 1, snippet: "alpha beta")],
+            items: [makeMatch(id: "1", snippet: "alpha beta")],
             firstItem: item,
             totalCount: 1
         ))
         await flushMainActor()
 
         client.resumePreviewPayload(
-            itemId: 1,
+            itemId: "1",
             query: "a",
             with: makePreviewPayload(item: item, decoration: staleDecoration)
         )
@@ -513,7 +514,7 @@ final class BrowserViewModelTests: XCTestCase {
         XCTAssertNil(viewModel.previewDecoration)
 
         client.resumePreviewPayload(
-            itemId: 1,
+            itemId: "1",
             query: "be",
             with: makePreviewPayload(item: item, decoration: freshDecoration)
         )
@@ -525,7 +526,7 @@ final class BrowserViewModelTests: XCTestCase {
 
     func testUndecoratedFreshPreviewClearsStaleHighlight() async {
         let client = MockBrowserStoreClient()
-        let item = makeItem(id: 1, text: "hello_arrr")
+        let item = makeItem(id: "1", text: "hello_arrr")
         let staleDecoration = makePreviewDecoration(highlightStart: 0, highlightEnd: 6)
 
         let viewModel = BrowserViewModel(
@@ -540,14 +541,14 @@ final class BrowserViewModelTests: XCTestCase {
         await flushMainActor()
         client.resumeSearch(with: BrowserSearchResponse(
             request: SearchRequest(text: "hello", filter: .all),
-            items: [makeMatch(id: 1, snippet: "hello_arrr")],
+            items: [makeMatch(id: "1", snippet: "hello_arrr")],
             firstItem: item,
             totalCount: 1
         ))
         await flushMainActor()
 
         client.resumePreviewPayload(
-            itemId: 1,
+            itemId: "1",
             query: "hello",
             with: makePreviewPayload(item: item, decoration: staleDecoration)
         )
@@ -561,28 +562,28 @@ final class BrowserViewModelTests: XCTestCase {
         guard case let .selected(staleSelection) = viewModel.selection else {
             return XCTFail("Expected stale selection while new search is pending")
         }
-        XCTAssertEqual(staleSelection.item.itemMetadata.itemId, 1)
+        XCTAssertEqual(staleSelection.item.itemMetadata.itemId, "1")
         XCTAssertEqual(viewModel.previewDecoration, staleDecoration)
 
         try? await Task.sleep(for: .milliseconds(75))
         await flushMainActor()
         client.resumeSearch(with: BrowserSearchResponse(
             request: SearchRequest(text: "hello_arr", filter: .all),
-            items: [makeMatch(id: 1, snippet: "hello_arrr")],
+            items: [makeMatch(id: "1", snippet: "hello_arrr")],
             firstItem: item,
             totalCount: 1
         ))
         await flushMainActor()
 
         client.resumePreviewPayload(
-            itemId: 1,
+            itemId: "1",
             query: "hello_arr",
             with: makePreviewPayload(item: item, decoration: nil)
         )
         await flushMainActor()
         await flushMainActor()
 
-        XCTAssertEqual(viewModel.selectedItem?.itemMetadata.itemId, 1)
+        XCTAssertEqual(viewModel.selectedItem?.itemMetadata.itemId, "1")
         XCTAssertNil(viewModel.previewDecoration)
         guard case let .selected(selectedItemState) = viewModel.selection else {
             return XCTFail("Expected selected item after fresh preview load")
@@ -594,9 +595,9 @@ final class BrowserViewModelTests: XCTestCase {
 
     func testStaleRowDecorationCompletionDoesNotMutateCurrentQueryOrPreview() async {
         let client = MockBrowserStoreClient()
-        let item = makeItem(id: 1, text: "alpha beta")
+        let item = makeItem(id: "1", text: "alpha beta")
         client.previewPayloadsByQuery = [
-            "al": [1: makePreviewPayload(
+            "al": ["1": makePreviewPayload(
                 item: item,
                 decoration: makePreviewDecoration(highlightStart: 0, highlightEnd: 2)
             )],
@@ -614,13 +615,13 @@ final class BrowserViewModelTests: XCTestCase {
         await flushMainActor()
         client.resumeSearch(with: BrowserSearchResponse(
             request: SearchRequest(text: "a", filter: .all),
-            items: [makeMatch(id: 1, snippet: "alpha beta")],
+            items: [makeMatch(id: "1", snippet: "alpha beta")],
             firstItem: item,
             totalCount: 1
         ))
         await flushMainActor()
 
-        viewModel.loadRowDecorationsForItems([1])
+        viewModel.loadListDecorationsForItems(["1"])
         await flushMainActor()
 
         viewModel.updateSearchText("al")
@@ -628,26 +629,26 @@ final class BrowserViewModelTests: XCTestCase {
         await flushMainActor()
         client.resumeSearch(with: BrowserSearchResponse(
             request: SearchRequest(text: "al", filter: .all),
-            items: [makeMatch(id: 1, snippet: "alpha beta")],
+            items: [makeMatch(id: "1", snippet: "alpha beta")],
             firstItem: item,
             totalCount: 1
         ))
         await flushMainActor()
         await flushMainActor()
 
-        let staleRowDecoration = RowDecoration(
+        let staleListDecoration = ListDecoration(
             text: "alpha beta",
             highlights: [Utf16HighlightRange(utf16Start: 0, utf16End: 1, kind: .exact)],
             lineNumber: 1
         )
-        client.resumeRowDecorations(
-            itemIds: [1],
+        client.resumeListDecorations(
+            itemIds: ["1"],
             query: "a",
-            with: [RowDecorationResult(itemId: 1, decoration: staleRowDecoration)]
+            with: [ListDecorationResult(itemId: "1", decoration: staleListDecoration)]
         )
         await flushMainActor()
 
-        XCTAssertNil(viewModel.rowDecorationsByItemId[1])
+        XCTAssertNil(viewModel.listDecorationsByItemId["1"])
         XCTAssertEqual(viewModel.previewDecoration?.highlights.first?.utf16End, 2)
     }
 
@@ -655,8 +656,8 @@ final class BrowserViewModelTests: XCTestCase {
         let client = MockBrowserStoreClient()
         client.enqueueSearchResponse(BrowserSearchResponse(
             request: SearchRequest(text: "", filter: .all),
-            items: [makeMatch(id: 1, snippet: "one"), makeMatch(id: 2, snippet: "two")],
-            firstItem: nil,
+            items: [makeMatch(id: "1", snippet: "one"), makeMatch(id: "2", snippet: "two")],
+            firstPreviewPayload: nil,
             totalCount: 2
         ))
         client.deleteResult = .failure(.databaseOperationFailed(
@@ -673,7 +674,7 @@ final class BrowserViewModelTests: XCTestCase {
 
         viewModel.onAppear(initialSearchQuery: "")
         await flushMainActor()
-        client.resumeFetch(id: 1, with: makeItem(id: 1, text: "first"))
+        client.resumeFetch(id: "1", with: makeItem(id: "1", text: "first"))
         await flushMainActor()
 
         viewModel.deleteSelectedItem()
@@ -681,9 +682,9 @@ final class BrowserViewModelTests: XCTestCase {
         try? await Task.sleep(for: .milliseconds(3100))
         await flushMainActor()
 
-        XCTAssertEqual(viewModel.itemIds, [1, 2])
-        XCTAssertEqual(viewModel.selectedItemId, 1)
-        XCTAssertEqual(viewModel.selectedItem?.itemMetadata.itemId, 1)
+        XCTAssertEqual(viewModel.itemIds, ["1", "2"])
+        XCTAssertEqual(viewModel.selectedItemId, "1")
+        XCTAssertEqual(viewModel.selectedItem?.itemMetadata.itemId, "1")
 
         guard case .failed = viewModel.mutationState else {
             return XCTFail("Expected failed mutation after delete rollback")
@@ -694,8 +695,8 @@ final class BrowserViewModelTests: XCTestCase {
         let client = MockBrowserStoreClient()
         client.enqueueSearchResponse(BrowserSearchResponse(
             request: SearchRequest(text: "", filter: .all),
-            items: [makeMatch(id: 1, snippet: "one"), makeMatch(id: 2, snippet: "two")],
-            firstItem: nil,
+            items: [makeMatch(id: "1", snippet: "one"), makeMatch(id: "2", snippet: "two")],
+            firstPreviewPayload: nil,
             totalCount: 2
         ))
         client.clearResult = .failure(.databaseOperationFailed(
@@ -712,15 +713,15 @@ final class BrowserViewModelTests: XCTestCase {
 
         viewModel.onAppear(initialSearchQuery: "")
         await flushMainActor()
-        client.resumeFetch(id: 1, with: makeItem(id: 1, text: "first"))
+        client.resumeFetch(id: "1", with: makeItem(id: "1", text: "first"))
         await flushMainActor()
 
         viewModel.clearAll()
         await flushMainActor()
         await flushMainActor()
 
-        XCTAssertEqual(viewModel.itemIds, [1, 2])
-        XCTAssertEqual(viewModel.selectedItemId, 1)
+        XCTAssertEqual(viewModel.itemIds, ["1", "2"])
+        XCTAssertEqual(viewModel.selectedItemId, "1")
 
         guard case .failed = viewModel.mutationState else {
             return XCTFail("Expected failed mutation after clear rollback")
@@ -769,8 +770,8 @@ final class BrowserViewModelTests: XCTestCase {
         let client = MockBrowserStoreClient()
         client.enqueueSearchResponse(BrowserSearchResponse(
             request: SearchRequest(text: "", filter: .all),
-            items: [makeMatch(id: 1, snippet: "one")],
-            firstItem: nil,
+            items: [makeMatch(id: "1", snippet: "one")],
+            firstPreviewPayload: nil,
             totalCount: 1
         ))
 
@@ -783,7 +784,7 @@ final class BrowserViewModelTests: XCTestCase {
 
         viewModel.onAppear(initialSearchQuery: "")
         await flushMainActor()
-        client.resumeFetch(id: 1, with: makeItem(id: 1, text: "first"))
+        client.resumeFetch(id: "1", with: makeItem(id: "1", text: "first"))
         await flushMainActor()
 
         viewModel.addTagToSelectedItem(.bookmark)
@@ -800,8 +801,8 @@ final class BrowserViewModelTests: XCTestCase {
         ))
         client.enqueueSearchResponse(BrowserSearchResponse(
             request: SearchRequest(text: "", filter: .all),
-            items: [makeMatch(id: 1, snippet: "one")],
-            firstItem: nil,
+            items: [makeMatch(id: "1", snippet: "one")],
+            firstPreviewPayload: nil,
             totalCount: 1
         ))
 
@@ -814,7 +815,7 @@ final class BrowserViewModelTests: XCTestCase {
 
         viewModel.onAppear(initialSearchQuery: "")
         await flushMainActor()
-        client.resumeFetch(id: 1, with: makeItem(id: 1, text: "first"))
+        client.resumeFetch(id: "1", with: makeItem(id: "1", text: "first"))
         await flushMainActor()
 
         viewModel.addTagToSelectedItem(.bookmark)
@@ -833,10 +834,10 @@ final class BrowserViewModelTests: XCTestCase {
         client.enqueueSearchResponse(BrowserSearchResponse(
             request: SearchRequest(text: "", filter: .tagged(tag: .bookmark)),
             items: [
-                makeMatch(id: 1, snippet: "one", tags: [.bookmark]),
-                makeMatch(id: 2, snippet: "two", tags: [.bookmark]),
+                makeMatch(id: "1", snippet: "one", tags: [.bookmark]),
+                makeMatch(id: "2", snippet: "two", tags: [.bookmark]),
             ],
-            firstItem: nil,
+            firstPreviewPayload: nil,
             totalCount: 2
         ))
 
@@ -849,15 +850,15 @@ final class BrowserViewModelTests: XCTestCase {
 
         viewModel.setTagFilter(.bookmark)
         await flushMainActor()
-        client.resumeFetch(id: 1, with: makeItem(id: 1, text: "first", tags: [.bookmark]))
+        client.resumeFetch(id: "1", with: makeItem(id: "1", text: "first", tags: [.bookmark]))
         await flushMainActor()
 
         viewModel.removeTagFromSelectedItem(.bookmark)
         await flushMainActor()
 
-        XCTAssertEqual(viewModel.itemIds, [2])
-        XCTAssertEqual(viewModel.selectedItemId, 2)
-        XCTAssertFalse(viewModel.itemIds.contains(1))
+        XCTAssertEqual(viewModel.itemIds, ["2"])
+        XCTAssertEqual(viewModel.selectedItemId, "2")
+        XCTAssertFalse(viewModel.itemIds.contains("1"))
     }
 
     func testDeleteOptimisticallyRemovesAndAdvancesSelection() async {
@@ -865,11 +866,11 @@ final class BrowserViewModelTests: XCTestCase {
         client.enqueueSearchResponse(BrowserSearchResponse(
             request: SearchRequest(text: "", filter: .all),
             items: [
-                makeMatch(id: 1, snippet: "one"),
-                makeMatch(id: 2, snippet: "two"),
-                makeMatch(id: 3, snippet: "three"),
+                makeMatch(id: "1", snippet: "one"),
+                makeMatch(id: "2", snippet: "two"),
+                makeMatch(id: "3", snippet: "three"),
             ],
-            firstItem: nil,
+            firstPreviewPayload: nil,
             totalCount: 3
         ))
 
@@ -882,14 +883,14 @@ final class BrowserViewModelTests: XCTestCase {
 
         viewModel.onAppear(initialSearchQuery: "")
         await flushMainActor()
-        client.resumeFetch(id: 1, with: makeItem(id: 1, text: "first"))
+        client.resumeFetch(id: "1", with: makeItem(id: "1", text: "first"))
         await flushMainActor()
 
         viewModel.deleteSelectedItem()
         await flushMainActor()
 
-        XCTAssertEqual(viewModel.itemIds, [2, 3])
-        XCTAssertEqual(viewModel.selectedItemId, 2)
+        XCTAssertEqual(viewModel.itemIds, ["2", "3"])
+        XCTAssertEqual(viewModel.selectedItemId, "2")
 
         guard case .deleting(.pending(_)) = viewModel.mutationState else {
             return XCTFail("Expected pending delete mutation")
@@ -900,8 +901,8 @@ final class BrowserViewModelTests: XCTestCase {
         let client = MockBrowserStoreClient()
         client.enqueueSearchResponse(BrowserSearchResponse(
             request: SearchRequest(text: "", filter: .all),
-            items: [makeMatch(id: 1, snippet: "one"), makeMatch(id: 2, snippet: "two")],
-            firstItem: nil,
+            items: [makeMatch(id: "1", snippet: "one"), makeMatch(id: "2", snippet: "two")],
+            firstPreviewPayload: nil,
             totalCount: 2
         ))
 
@@ -914,7 +915,7 @@ final class BrowserViewModelTests: XCTestCase {
 
         viewModel.onAppear(initialSearchQuery: "")
         await flushMainActor()
-        client.resumeFetch(id: 1, with: makeItem(id: 1, text: "first"))
+        client.resumeFetch(id: "1", with: makeItem(id: "1", text: "first"))
         await flushMainActor()
 
         viewModel.deleteSelectedItem()
@@ -923,9 +924,9 @@ final class BrowserViewModelTests: XCTestCase {
         viewModel.undoPendingDelete()
         await flushMainActor()
 
-        XCTAssertEqual(viewModel.itemIds, [1, 2])
-        XCTAssertEqual(viewModel.selectedItemId, 1)
-        XCTAssertEqual(viewModel.selectedItem?.itemMetadata.itemId, 1)
+        XCTAssertEqual(viewModel.itemIds, ["1", "2"])
+        XCTAssertEqual(viewModel.selectedItemId, "1")
+        XCTAssertEqual(viewModel.selectedItem?.itemMetadata.itemId, "1")
 
         guard case .idle = viewModel.mutationState else {
             return XCTFail("Expected idle mutation after undo")
@@ -936,8 +937,8 @@ final class BrowserViewModelTests: XCTestCase {
         let client = MockBrowserStoreClient()
         client.enqueueSearchResponse(BrowserSearchResponse(
             request: SearchRequest(text: "", filter: .all),
-            items: [makeMatch(id: 1, snippet: "one")],
-            firstItem: nil,
+            items: [makeMatch(id: "1", snippet: "one")],
+            firstPreviewPayload: nil,
             totalCount: 1
         ))
 
@@ -950,7 +951,7 @@ final class BrowserViewModelTests: XCTestCase {
 
         viewModel.onAppear(initialSearchQuery: "")
         await flushMainActor()
-        client.resumeFetch(id: 1, with: makeItem(id: 1, text: "first"))
+        client.resumeFetch(id: "1", with: makeItem(id: "1", text: "first"))
         await flushMainActor()
 
         viewModel.deleteSelectedItem()
@@ -968,8 +969,8 @@ final class BrowserViewModelTests: XCTestCase {
         let client = MockBrowserStoreClient()
         client.enqueueSearchResponse(BrowserSearchResponse(
             request: SearchRequest(text: "", filter: .all),
-            items: [makeMatch(id: 1, snippet: "original text")],
-            firstItem: nil,
+            items: [makeMatch(id: "1", snippet: "original text")],
+            firstPreviewPayload: nil,
             totalCount: 1
         ))
 
@@ -982,10 +983,10 @@ final class BrowserViewModelTests: XCTestCase {
 
         viewModel.onAppear(initialSearchQuery: "")
         await flushMainActor()
-        client.resumeFetch(id: 1, with: makeItem(id: 1, text: "original text"))
+        client.resumeFetch(id: "1", with: makeItem(id: "1", text: "original text"))
         await flushMainActor()
 
-        viewModel.onTextEdit("edited text", for: 1, originalText: "original text")
+        viewModel.onTextEdit("edited text", for: "1", originalText: "original text")
         viewModel.commitCurrentEdit()
         await flushMainActor()
 
@@ -995,17 +996,17 @@ final class BrowserViewModelTests: XCTestCase {
         XCTAssertEqual(value, "edited text")
         XCTAssertTrue(viewModel.contentState.items.first?.itemMetadata.snippet.contains("edited") == true)
         XCTAssertEqual(client.updatedTexts.count, 1)
-        XCTAssertEqual(client.updatedTexts.first?.itemId, 1)
+        XCTAssertEqual(client.updatedTexts.first?.itemId, "1")
         XCTAssertEqual(client.updatedTexts.first?.text, "edited text")
-        XCTAssertFalse(viewModel.hasPendingEdit(for: 1))
+        XCTAssertEqual(viewModel.editSession, .inactive)
     }
 
     func testDiscardEditClearsPendingState() async {
         let client = MockBrowserStoreClient()
         client.enqueueSearchResponse(BrowserSearchResponse(
             request: SearchRequest(text: "", filter: .all),
-            items: [makeMatch(id: 1, snippet: "original text")],
-            firstItem: nil,
+            items: [makeMatch(id: "1", snippet: "original text")],
+            firstPreviewPayload: nil,
             totalCount: 1
         ))
 
@@ -1018,18 +1019,16 @@ final class BrowserViewModelTests: XCTestCase {
 
         viewModel.onAppear(initialSearchQuery: "")
         await flushMainActor()
-        client.resumeFetch(id: 1, with: makeItem(id: 1, text: "original text"))
+        client.resumeFetch(id: "1", with: makeItem(id: "1", text: "original text"))
         await flushMainActor()
 
-        viewModel.onTextEdit("edited text", for: 1, originalText: "original text")
-        viewModel.onEditingStateChange(true, for: 1)
+        viewModel.onTextEdit("edited text", for: "1", originalText: "original text")
+        viewModel.onEditingStateChange(true, for: "1")
 
         viewModel.discardCurrentEdit()
         await flushMainActor()
 
-        XCTAssertFalse(viewModel.hasPendingEdit(for: 1))
-        XCTAssertFalse(viewModel.isEditingPreview)
-        XCTAssertEqual(viewModel.editFocus, .idle)
+        XCTAssertEqual(viewModel.editSession, .inactive)
     }
 
     func testEditRevertedToOriginalClearsPendingEdit() {
@@ -1041,22 +1040,22 @@ final class BrowserViewModelTests: XCTestCase {
             onDismiss: {}
         )
 
-        viewModel.onTextEdit("edited", for: 1, originalText: "original")
-        XCTAssertTrue(viewModel.hasPendingEdit(for: 1))
+        viewModel.onTextEdit("edited", for: "1", originalText: "original")
+        XCTAssertEqual(viewModel.editSession, .dirty(itemId: "1", draft: "edited"))
 
-        viewModel.onTextEdit("original", for: 1, originalText: "original")
+        viewModel.onTextEdit("original", for: "1", originalText: "original")
 
-        XCTAssertFalse(viewModel.hasPendingEdit(for: 1))
+        XCTAssertEqual(viewModel.editSession, .focused(itemId: "1"))
     }
 
-    // MARK: - PreviewInteractionMode
+    // MARK: - Edit Session States
 
-    func testPreviewInteractionModeIsBrowsingByDefault() async {
+    func testEditSessionIsInactiveByDefault() async {
         let client = MockBrowserStoreClient()
         client.enqueueSearchResponse(BrowserSearchResponse(
             request: SearchRequest(text: "", filter: .all),
-            items: [makeMatch(id: 1, snippet: "hello")],
-            firstItem: nil,
+            items: [makeMatch(id: "1", snippet: "hello")],
+            firstPreviewPayload: nil,
             totalCount: 1
         ))
 
@@ -1069,18 +1068,18 @@ final class BrowserViewModelTests: XCTestCase {
 
         viewModel.onAppear(initialSearchQuery: "")
         await flushMainActor()
-        client.resumeFetch(id: 1, with: makeItem(id: 1, text: "hello"))
+        client.resumeFetch(id: "1", with: makeItem(id: "1", text: "hello"))
         await flushMainActor()
 
-        XCTAssertEqual(viewModel.previewInteractionMode, .browsing)
+        XCTAssertEqual(viewModel.editSession, .inactive)
     }
 
-    func testPreviewInteractionModeIsPreviewingWhenFocusedWithoutEdits() async {
+    func testEditSessionIsFocusedWhenEditingWithoutChanges() async {
         let client = MockBrowserStoreClient()
         client.enqueueSearchResponse(BrowserSearchResponse(
             request: SearchRequest(text: "", filter: .all),
-            items: [makeMatch(id: 1, snippet: "hello")],
-            firstItem: nil,
+            items: [makeMatch(id: "1", snippet: "hello")],
+            firstPreviewPayload: nil,
             totalCount: 1
         ))
 
@@ -1093,20 +1092,20 @@ final class BrowserViewModelTests: XCTestCase {
 
         viewModel.onAppear(initialSearchQuery: "")
         await flushMainActor()
-        client.resumeFetch(id: 1, with: makeItem(id: 1, text: "hello"))
+        client.resumeFetch(id: "1", with: makeItem(id: "1", text: "hello"))
         await flushMainActor()
 
-        viewModel.onEditingStateChange(true, for: 1)
+        viewModel.onEditingStateChange(true, for: "1")
 
-        XCTAssertEqual(viewModel.previewInteractionMode, .previewing(itemId: 1))
+        XCTAssertEqual(viewModel.editSession, .focused(itemId: "1"))
     }
 
-    func testPreviewInteractionModeIsEditingWhenPendingEditsExist() async {
+    func testEditSessionIsDirtyWhenTextChanged() async {
         let client = MockBrowserStoreClient()
         client.enqueueSearchResponse(BrowserSearchResponse(
             request: SearchRequest(text: "", filter: .all),
-            items: [makeMatch(id: 1, snippet: "hello")],
-            firstItem: nil,
+            items: [makeMatch(id: "1", snippet: "hello")],
+            firstPreviewPayload: nil,
             totalCount: 1
         ))
 
@@ -1119,21 +1118,21 @@ final class BrowserViewModelTests: XCTestCase {
 
         viewModel.onAppear(initialSearchQuery: "")
         await flushMainActor()
-        client.resumeFetch(id: 1, with: makeItem(id: 1, text: "hello"))
+        client.resumeFetch(id: "1", with: makeItem(id: "1", text: "hello"))
         await flushMainActor()
 
-        viewModel.onEditingStateChange(true, for: 1)
-        viewModel.onTextEdit("hello world", for: 1, originalText: "hello")
+        viewModel.onEditingStateChange(true, for: "1")
+        viewModel.onTextEdit("hello world", for: "1", originalText: "hello")
 
-        XCTAssertEqual(viewModel.previewInteractionMode, .editing(itemId: 1))
+        XCTAssertEqual(viewModel.editSession, .dirty(itemId: "1", draft: "hello world"))
     }
 
-    func testPreviewInteractionModeReturnsToBrowsingAfterDiscard() async {
+    func testEditSessionReturnsToInactiveAfterDiscard() async {
         let client = MockBrowserStoreClient()
         client.enqueueSearchResponse(BrowserSearchResponse(
             request: SearchRequest(text: "", filter: .all),
-            items: [makeMatch(id: 1, snippet: "hello")],
-            firstItem: nil,
+            items: [makeMatch(id: "1", snippet: "hello")],
+            firstPreviewPayload: nil,
             totalCount: 1
         ))
 
@@ -1146,16 +1145,16 @@ final class BrowserViewModelTests: XCTestCase {
 
         viewModel.onAppear(initialSearchQuery: "")
         await flushMainActor()
-        client.resumeFetch(id: 1, with: makeItem(id: 1, text: "hello"))
+        client.resumeFetch(id: "1", with: makeItem(id: "1", text: "hello"))
         await flushMainActor()
 
-        viewModel.onEditingStateChange(true, for: 1)
-        viewModel.onTextEdit("hello world", for: 1, originalText: "hello")
-        XCTAssertEqual(viewModel.previewInteractionMode, .editing(itemId: 1))
+        viewModel.onEditingStateChange(true, for: "1")
+        viewModel.onTextEdit("hello world", for: "1", originalText: "hello")
+        XCTAssertEqual(viewModel.editSession, .dirty(itemId: "1", draft: "hello world"))
 
         viewModel.discardCurrentEdit()
 
-        XCTAssertEqual(viewModel.previewInteractionMode, .browsing)
+        XCTAssertEqual(viewModel.editSession, .inactive)
     }
 
     func testMoveSelectionNavigatesList() async {
@@ -1163,11 +1162,11 @@ final class BrowserViewModelTests: XCTestCase {
         client.enqueueSearchResponse(BrowserSearchResponse(
             request: SearchRequest(text: "", filter: .all),
             items: [
-                makeMatch(id: 1, snippet: "one"),
-                makeMatch(id: 2, snippet: "two"),
-                makeMatch(id: 3, snippet: "three"),
+                makeMatch(id: "1", snippet: "one"),
+                makeMatch(id: "2", snippet: "two"),
+                makeMatch(id: "3", snippet: "three"),
             ],
-            firstItem: nil,
+            firstPreviewPayload: nil,
             totalCount: 3
         ))
 
@@ -1181,16 +1180,16 @@ final class BrowserViewModelTests: XCTestCase {
         viewModel.onAppear(initialSearchQuery: "")
         await flushMainActor()
 
-        XCTAssertEqual(viewModel.selectedItemId, 1)
+        XCTAssertEqual(viewModel.selectedItemId, "1")
 
         viewModel.moveSelection(by: 1)
-        XCTAssertEqual(viewModel.selectedItemId, 2)
+        XCTAssertEqual(viewModel.selectedItemId, "2")
 
         viewModel.moveSelection(by: 1)
-        XCTAssertEqual(viewModel.selectedItemId, 3)
+        XCTAssertEqual(viewModel.selectedItemId, "3")
 
         viewModel.moveSelection(by: 1)
-        XCTAssertEqual(viewModel.selectedItemId, 3)
+        XCTAssertEqual(viewModel.selectedItemId, "3")
     }
 
     func testClearSuccessEmptiesAllState() async {
@@ -1198,8 +1197,8 @@ final class BrowserViewModelTests: XCTestCase {
         client.clearResult = .success(())
         client.enqueueSearchResponse(BrowserSearchResponse(
             request: SearchRequest(text: "", filter: .all),
-            items: [makeMatch(id: 1, snippet: "one"), makeMatch(id: 2, snippet: "two")],
-            firstItem: nil,
+            items: [makeMatch(id: "1", snippet: "one"), makeMatch(id: "2", snippet: "two")],
+            firstPreviewPayload: nil,
             totalCount: 2
         ))
 
@@ -1212,7 +1211,7 @@ final class BrowserViewModelTests: XCTestCase {
 
         viewModel.onAppear(initialSearchQuery: "")
         await flushMainActor()
-        client.resumeFetch(id: 1, with: makeItem(id: 1, text: "first"))
+        client.resumeFetch(id: "1", with: makeItem(id: "1", text: "first"))
         await flushMainActor()
 
         viewModel.clearAll()
@@ -1232,10 +1231,10 @@ final class BrowserViewModelTests: XCTestCase {
 
     func testPreviewLoadsOnInitialSearchWithFirstItem() async {
         let client = MockBrowserStoreClient()
-        let item = makeItem(id: 1, text: "selected text")
+        let item = makeItem(id: "1", text: "selected text")
         client.enqueueSearchResponse(BrowserSearchResponse(
             request: SearchRequest(text: "", filter: .all),
-            items: [makeMatch(id: 1, snippet: "selected text")],
+            items: [makeMatch(id: "1", snippet: "selected text")],
             firstItem: item,
             totalCount: 1
         ))
@@ -1250,16 +1249,16 @@ final class BrowserViewModelTests: XCTestCase {
         viewModel.onAppear(initialSearchQuery: "")
         await flushMainActor()
 
-        XCTAssertEqual(viewModel.selectedItemId, 1)
-        XCTAssertEqual(viewModel.selectedItem?.itemMetadata.itemId, 1)
+        XCTAssertEqual(viewModel.selectedItemId, "1")
+        XCTAssertEqual(viewModel.selectedItem?.itemMetadata.itemId, "1")
     }
 
     func testSelectionChangeTriggersPreviewLoad() async {
         let client = MockBrowserStoreClient()
         client.enqueueSearchResponse(BrowserSearchResponse(
             request: SearchRequest(text: "", filter: .all),
-            items: [makeMatch(id: 1, snippet: "one"), makeMatch(id: 2, snippet: "two")],
-            firstItem: nil,
+            items: [makeMatch(id: "1", snippet: "one"), makeMatch(id: "2", snippet: "two")],
+            firstPreviewPayload: nil,
             totalCount: 2
         ))
 
@@ -1272,28 +1271,28 @@ final class BrowserViewModelTests: XCTestCase {
 
         viewModel.onAppear(initialSearchQuery: "")
         await flushMainActor()
-        client.resumeFetch(id: 1, with: makeItem(id: 1, text: "first"))
+        client.resumeFetch(id: "1", with: makeItem(id: "1", text: "first"))
         await flushMainActor()
 
-        viewModel.select(itemId: 2, origin: .user)
+        viewModel.select(itemId: "2", origin: .user)
         await flushMainActor()
-        client.resumeFetch(id: 2, with: makeItem(id: 2, text: "second"))
+        client.resumeFetch(id: "2", with: makeItem(id: "2", text: "second"))
         await flushMainActor()
 
-        XCTAssertEqual(viewModel.selectedItem?.itemMetadata.itemId, 2)
+        XCTAssertEqual(viewModel.selectedItem?.itemMetadata.itemId, "2")
     }
 
     func testConfirmSelectionFiresCallback() async {
         let client = MockBrowserStoreClient()
-        let item = makeItem(id: 1, text: "selected text")
+        let item = makeItem(id: "1", text: "selected text")
         client.enqueueSearchResponse(BrowserSearchResponse(
             request: SearchRequest(text: "", filter: .all),
-            items: [makeMatch(id: 1, snippet: "selected text")],
+            items: [makeMatch(id: "1", snippet: "selected text")],
             firstItem: item,
             totalCount: 1
         ))
 
-        var selectedId: Int64?
+        var selectedId: String?
         var selectedContent: ClipboardContent?
         let viewModel = BrowserViewModel(
             client: client,
@@ -1310,7 +1309,7 @@ final class BrowserViewModelTests: XCTestCase {
 
         viewModel.confirmSelection()
 
-        XCTAssertEqual(selectedId, 1)
+        XCTAssertEqual(selectedId, "1")
         guard case let .text(value)? = selectedContent else {
             return XCTFail("Expected text content in onSelect callback")
         }
@@ -1319,15 +1318,15 @@ final class BrowserViewModelTests: XCTestCase {
 
     func testCopyOnlyFiresCallback() async {
         let client = MockBrowserStoreClient()
-        let item = makeItem(id: 1, text: "selected text")
+        let item = makeItem(id: "1", text: "selected text")
         client.enqueueSearchResponse(BrowserSearchResponse(
             request: SearchRequest(text: "", filter: .all),
-            items: [makeMatch(id: 1, snippet: "selected text")],
+            items: [makeMatch(id: "1", snippet: "selected text")],
             firstItem: item,
             totalCount: 1
         ))
 
-        var copiedId: Int64?
+        var copiedId: String?
         var copiedContent: ClipboardContent?
         let viewModel = BrowserViewModel(
             client: client,
@@ -1344,7 +1343,7 @@ final class BrowserViewModelTests: XCTestCase {
 
         viewModel.copyOnlySelection()
 
-        XCTAssertEqual(copiedId, 1)
+        XCTAssertEqual(copiedId, "1")
         guard case let .text(value)? = copiedContent else {
             return XCTFail("Expected text content in onCopyOnly callback")
         }
@@ -1355,8 +1354,8 @@ final class BrowserViewModelTests: XCTestCase {
         let client = MockBrowserStoreClient()
         client.enqueueSearchResponse(BrowserSearchResponse(
             request: SearchRequest(text: "", filter: .all),
-            items: [makeMatch(id: 1, snippet: "one"), makeMatch(id: 2, snippet: "two")],
-            firstItem: nil,
+            items: [makeMatch(id: "1", snippet: "one"), makeMatch(id: "2", snippet: "two")],
+            firstPreviewPayload: nil,
             totalCount: 2
         ))
 
@@ -1369,13 +1368,13 @@ final class BrowserViewModelTests: XCTestCase {
 
         viewModel.onAppear(initialSearchQuery: "")
         await flushMainActor()
-        client.resumeFetch(id: 1, with: makeItem(id: 1, text: "first"))
+        client.resumeFetch(id: "1", with: makeItem(id: "1", text: "first"))
         await flushMainActor()
 
         viewModel.deleteSelectedItem()
         await flushMainActor()
 
-        viewModel.select(itemId: 2, origin: .user)
+        viewModel.select(itemId: "2", origin: .user)
         viewModel.deleteSelectedItem()
         await flushMainActor()
 
@@ -1385,15 +1384,15 @@ final class BrowserViewModelTests: XCTestCase {
         guard case let .deleting(.pending(transaction)) = viewModel.mutationState else {
             return XCTFail("Expected batch delete to be pending")
         }
-        XCTAssertEqual(transaction.deletedItemIds, [1, 2])
+        XCTAssertEqual(transaction.deletedItemIds, ["1", "2"])
     }
 
     func testDismissMutationFailureClearsState() async {
         let client = MockBrowserStoreClient()
         client.enqueueSearchResponse(BrowserSearchResponse(
             request: SearchRequest(text: "", filter: .all),
-            items: [makeMatch(id: 1, snippet: "one"), makeMatch(id: 2, snippet: "two")],
-            firstItem: nil,
+            items: [makeMatch(id: "1", snippet: "one"), makeMatch(id: "2", snippet: "two")],
+            firstPreviewPayload: nil,
             totalCount: 2
         ))
         client.deleteResult = .failure(.databaseOperationFailed(
@@ -1410,7 +1409,7 @@ final class BrowserViewModelTests: XCTestCase {
 
         viewModel.onAppear(initialSearchQuery: "")
         await flushMainActor()
-        client.resumeFetch(id: 1, with: makeItem(id: 1, text: "first"))
+        client.resumeFetch(id: "1", with: makeItem(id: "1", text: "first"))
         await flushMainActor()
 
         viewModel.deleteSelectedItem()
@@ -1433,7 +1432,7 @@ final class BrowserViewModelTests: XCTestCase {
         }
     }
 
-    private func makeMatch(id: Int64, snippet: String, tags: [ItemTag] = []) -> ItemMatch {
+    private func makeMatch(id: String, snippet: String, tags: [ItemTag] = []) -> ItemMatch {
         ItemMatch(
             itemMetadata: ItemMetadata(
                 itemId: id,
@@ -1444,11 +1443,11 @@ final class BrowserViewModelTests: XCTestCase {
                 timestampUnix: 0,
                 tags: tags
             ),
-            rowDecoration: nil
+            listDecoration: nil
         )
     }
 
-    private func makeItem(id: Int64, text: String, tags: [ItemTag] = []) -> ClipboardItem {
+    private func makeItem(id: String, text: String, tags: [ItemTag] = []) -> ClipboardItem {
         ClipboardItem(
             itemMetadata: ItemMetadata(
                 itemId: id,
@@ -1504,15 +1503,17 @@ private extension BrowserSearchResponse {
 
 @MainActor
 private final class MockBrowserStoreClient: BrowserStoreClient {
-    struct RowDecorationRequest: Hashable {
-        let itemIds: [Int64]
+    struct ListDecorationRequest: Hashable {
+        let itemIds: [String]
         let query: String
     }
 
     struct PreviewDecorationRequest: Hashable {
-        let itemId: Int64
+        let itemId: String
         let query: String
     }
+
+    let listPresentationProfile: ListPresentationProfile = .compactRow
 
     private var pendingSearchResponses: [BrowserSearchResponse] = []
     private var searchContinuations: [CheckedContinuation<BrowserSearchOutcome, Never>] = []
@@ -1521,14 +1522,14 @@ private final class MockBrowserStoreClient: BrowserStoreClient {
     var deleteResult: Result<Void, ClipboardError> = .success(())
     var clearResult: Result<Void, ClipboardError> = .success(())
     var updateTextResult: Result<Void, ClipboardError> = .success(())
-    var updatedTexts: [(itemId: Int64, text: String)] = []
+    var updatedTexts: [(itemId: String, text: String)] = []
     var startedSearchRequests: [SearchRequest] = []
-    var loadRowDecorationRequests: [RowDecorationRequest] = []
+    var loadListDecorationRequests: [ListDecorationRequest] = []
     var loadPreviewDecorationRequests: [PreviewDecorationRequest] = []
-    var rowDecorationsByQuery: [String: [Int64: RowDecoration]] = [:]
-    var previewPayloadsByQuery: [String: [Int64: PreviewPayload]] = [:]
-    private var fetchContinuations: [Int64: [CheckedContinuation<ClipboardItem?, Never>]] = [:]
-    private var rowDecorationContinuations: [RowDecorationRequest: [CheckedContinuation<[RowDecorationResult], Never>]] = [:]
+    var listDecorationsByQuery: [String: [String: ListDecoration]] = [:]
+    var previewPayloadsByQuery: [String: [String: PreviewPayload]] = [:]
+    private var fetchContinuations: [String: [CheckedContinuation<ClipboardItem?, Never>]] = [:]
+    private var listDecorationContinuations: [ListDecorationRequest: [CheckedContinuation<[ListDecorationResult], Never>]] = [:]
     private var previewPayloadContinuations: [PreviewDecorationRequest: [CheckedContinuation<PreviewPayload?, Never>]] = [:]
 
     func startSearch(request: SearchRequest) -> BrowserSearchOperation {
@@ -1548,7 +1549,7 @@ private final class MockBrowserStoreClient: BrowserStoreClient {
         }
     }
 
-    func fetchItem(id: Int64) async -> ClipboardItem? {
+    func fetchItem(id: String) async -> ClipboardItem? {
         await withTaskCancellationHandler {
             await withCheckedContinuation { continuation in
                 fetchContinuations[id, default: []].append(continuation)
@@ -1561,22 +1562,26 @@ private final class MockBrowserStoreClient: BrowserStoreClient {
         }
     }
 
-    func loadRowDecorations(itemIds: [Int64], query: String) async -> [RowDecorationResult] {
-        let request = RowDecorationRequest(itemIds: itemIds, query: query)
-        loadRowDecorationRequests.append(request)
+    func loadListDecorations(itemIds: [String], query: String, presentation _: ListPresentationProfile) async -> [ListDecorationResult] {
+        let request = ListDecorationRequest(itemIds: itemIds, query: query)
+        loadListDecorationRequests.append(request)
 
-        if let decorationsByItemId = rowDecorationsByQuery[query] {
+        if let decorationsByItemId = listDecorationsByQuery[query] {
             return itemIds.map { itemId in
-                RowDecorationResult(itemId: itemId, decoration: decorationsByItemId[itemId])
+                ListDecorationResult(itemId: itemId, decoration: decorationsByItemId[itemId])
             }
         }
 
         return await withCheckedContinuation { continuation in
-            rowDecorationContinuations[request, default: []].append(continuation)
+            listDecorationContinuations[request, default: []].append(continuation)
         }
     }
 
-    func loadPreviewPayload(itemId: Int64, query: String) async -> PreviewPayload? {
+    func formatExcerpt(content: String) -> String {
+        String(content.prefix(200))
+    }
+
+    func loadPreviewPayload(itemId: String, query: String) async -> PreviewPayload? {
         let request = PreviewDecorationRequest(itemId: itemId, query: query)
         loadPreviewDecorationRequests.append(request)
 
@@ -1595,19 +1600,19 @@ private final class MockBrowserStoreClient: BrowserStoreClient {
         }
     }
 
-    func fetchLinkMetadata(url _: String, itemId _: Int64) async -> ClipboardItem? {
+    func fetchLinkMetadata(url _: String, itemId _: String) async -> ClipboardItem? {
         nil
     }
 
-    func addTag(itemId _: Int64, tag _: ItemTag) async -> Result<Void, ClipboardError> {
+    func addTag(itemId _: String, tag _: ItemTag) async -> Result<Void, ClipboardError> {
         addTagResult
     }
 
-    func removeTag(itemId _: Int64, tag _: ItemTag) async -> Result<Void, ClipboardError> {
+    func removeTag(itemId _: String, tag _: ItemTag) async -> Result<Void, ClipboardError> {
         removeTagResult
     }
 
-    func delete(itemId _: Int64) async -> Result<Void, ClipboardError> {
+    func delete(itemId _: String) async -> Result<Void, ClipboardError> {
         deleteResult
     }
 
@@ -1615,21 +1620,21 @@ private final class MockBrowserStoreClient: BrowserStoreClient {
         clearResult
     }
 
-    func updateTextItem(itemId: Int64, text: String) async -> Result<Void, ClipboardError> {
+    func updateTextItem(itemId: String, text: String) async -> Result<Void, ClipboardError> {
         updatedTexts.append((itemId: itemId, text: text))
         return updateTextResult
     }
 
-    func resumeFetch(id: Int64, with item: ClipboardItem?) {
+    func resumeFetch(id: String, with item: ClipboardItem?) {
         fetchContinuations.removeValue(forKey: id)?.forEach { $0.resume(returning: item) }
     }
 
-    func resumeRowDecorations(itemIds: [Int64], query: String, with results: [RowDecorationResult]) {
-        let request = RowDecorationRequest(itemIds: itemIds, query: query)
-        rowDecorationContinuations.removeValue(forKey: request)?.forEach { $0.resume(returning: results) }
+    func resumeListDecorations(itemIds: [String], query: String, with results: [ListDecorationResult]) {
+        let request = ListDecorationRequest(itemIds: itemIds, query: query)
+        listDecorationContinuations.removeValue(forKey: request)?.forEach { $0.resume(returning: results) }
     }
 
-    func resumePreviewPayload(itemId: Int64, query: String, with payload: PreviewPayload?) {
+    func resumePreviewPayload(itemId: String, query: String, with payload: PreviewPayload?) {
         let request = PreviewDecorationRequest(itemId: itemId, query: query)
         previewPayloadContinuations.removeValue(forKey: request)?.forEach { $0.resume(returning: payload) }
     }

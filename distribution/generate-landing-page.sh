@@ -1,6 +1,6 @@
 #!/bin/bash
 # Generates the landing page (index.html) from README.md
-# Requires: cmark-gfm (brew install cmark-gfm)
+# Requires: cmark-gfm (available via Nix dev shell, or: brew install cmark-gfm)
 # Input:  README.md (project root)
 # Output: stdout (pipe to index.html)
 
@@ -11,7 +11,7 @@ PROJECT_ROOT="$(dirname "$SCRIPT_DIR")"
 README="$PROJECT_ROOT/README.md"
 
 if ! command -v cmark-gfm &>/dev/null; then
-    echo "Error: cmark-gfm is required. Install with: brew install cmark-gfm" >&2
+    echo "Error: cmark-gfm is required. Use Nix dev shell or: brew install cmark-gfm" >&2
     exit 1
 fi
 

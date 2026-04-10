@@ -17,6 +17,7 @@ let packageSettings = PackageSettings(
             .release(name: "Release"),
             .release(name: .configuration("SparkleRelease")),
             .release(name: .configuration("AppStore")),
+            .release(name: .configuration("Hardened")),
         ]
     )
 )

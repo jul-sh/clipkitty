@@ -1,10 +1,13 @@
 # Swift / Xcode
+Package.resolved  # Xcode-generated stray state; authoritative lockfiles are Tuist/ and distribution/SparkleUpdater/
 .build/
 .make/
+build/
 .swiftpm/
 *.xcodeproj/
 *.xcworkspace/
 DerivedData/
+.deriveddata/
 DerivedDataTests/
 perf_traces/
 *.xcresult/
@@ -31,6 +34,8 @@ Sources/ClipKittyRust/purr.swift
 Sources/ClipKittyRust/purrFFI.h
 Sources/ClipKittyRust/module.modulemap
 Sources/ClipKittyRust/*.a
+Sources/ClipKittyRust/ios-device/
+Sources/ClipKittyRust/ios-simulator/
 Sources/ClipKittyRustWrapper/purr.swift
 Sources/ClipKittyRustWrapper/purrFFI.h
 Sources/ClipKittyRustWrapper/purrFFI.modulemap
@@ -41,6 +46,12 @@ screenshot-*.png
 
 # Marketing screenshots (generated in CI by ImageMagick)
 marketing/
+marketing_*.png
+
+# Generated assets
+AppIcon.icns
+Assets.car
+icon.png
 
 # macOS
 .DS_Store
@@ -48,7 +59,8 @@ marketing/
 *.dmg
 
 # Rust build artifacts
-purr/target/
+target/
+purr-sync/target/
 
 # Log files
 *.log
@@ -60,7 +72,7 @@ purr/target/
 
 # Data Generation and Indexing
 tantivy_index*/
-Sources/App/tantivy_index*/
+Sources/MacApp/tantivy_index*/
 distribution/tantivy_index*/
 distribution/data-gen/progress_rust.json
 
@@ -83,3 +95,6 @@ distribution/SyntheticData_*.sqlite
 
 # Task tracking
 tasks/
+
+# Claude architect state
+.claude-architect/

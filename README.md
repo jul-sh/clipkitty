@@ -4,7 +4,7 @@
 
 **Never lose what you copied.**
 
-Unlimited history • Instant fuzzy search • Live preview • Private & offline
+Unlimited history • Instant fuzzy search • Live preview • iCloud Sync • Private by default
 
 <img src="https://raw.githubusercontent.com/jul-sh/clipkitty/gh-pages/marketing_1.png" alt="ClipKitty clipboard history" width="820">
 <img src="https://raw.githubusercontent.com/jul-sh/clipkitty/gh-pages/marketing_2.png" alt="ClipKitty fuzzy search" width="820">
@@ -20,18 +20,19 @@ ClipKitty stores everything. Finds it in milliseconds; whether you have 100 item
 
 | | ClipKitty |
 |---|---|
-| **vs Maccy** | Same simplicity, no limits. Maccy caps at 999 items and slows past 200. ClipKitty scales to millions. And with live preview you never have to wait for tooltips to see what you're pasting. |
-| **vs Raycast** | Same speed, better search, no expiration. Raycast doesn't save long clips; it's free tier expires after 3 months. ClipKitty preserves everything forever and finds it faster with smarter, typo tolerant search. |
-| **vs Paste** | Same utility, no subscription. Paste charges $30/year. ClipKitty is free on GitHub or pay once on the App Store. |
+| **vs Maccy** | Same simplicity, no limits. Maccy caps at 200 items and makes you wait on tooltips to view your history. ClipKitty scales to millions, comes with instant live preview, and syncs securely via iCloud. |
+| **vs Raycast** | Same speed, better search, no expiration. Raycast doesn't save long clips and offers limited search only. Its free tier expires after 3 months; sync requires a paid subscription. ClipKitty preserves everything forever, syncs via iCloud for free, and finds items more reliably with smarter, typo tolerant search. |
+| **vs Paste** | Same utility, no subscription. Paste charges $30/year. You own ClipKitty outright. Plus ClipKitty ships with an intuitive list with instant live preview, vs paste's horizontal carousel. |
 
 ## Features
 
 * **Unlimited History**: No caps, no expiration. Text, images, files, colors; everything preserved in full, forever.
-* **Fuzzy Search That Scales**: Type "improt" and find "import". Type "dockr prodction" and find "docker push production". All under 50ms; even with millions of items.
+* **Fuzzy Search That Scales**: Type "improt" and find "import". Type "dockr prodction" and find "docker push production". All in milliseconds; even with millions of items.
 * **Live Preview Pane**: See full content instantly as you navigate. Multi-line text, code blocks, images; no truncation, no waiting on tooltips.
 * **OCR & Smart Search**: Search text inside images and screenshots. AI-powered descriptions make visual content searchable.
 * **Keyboard-First**: `⌥Space` to open, arrow keys to navigate, `Return` to paste. `⌘1-9` for quick access.
-* **Privacy-First**: 100% on-device and offline. No telemetry, no cloud sync, no accounts.
+* **iCloud Sync**: Optionally sync your clipboard history across all your Macs via iCloud. Enable it in settings when you want your history everywhere.
+* **Privacy-First**: 100% on-device by default. No telemetry, no accounts. Optional iCloud Sync uses only your private iCloud container.
 * **Secure & Attested**: Don't take my word for it. Source code is fully open source and auditable. Builds are attested: you can [verify](VERIFY.md) the app was built from the public source code.
 
 ## Installation
@@ -44,6 +45,23 @@ ClipKitty stores everything. Finds it in milliseconds; whether you have 100 item
 
 1. Download the latest DMG from [GitHub Releases](https://github.com/jul-sh/clipkitty/releases).
 2. Drag ClipKitty to your Applications folder.
+
+### Hardened Build
+
+The default build include a few convinience features, that you may want to disable in security sensitive settings:
+
+- **Link previews**; fetches metadata over the network to show a nice preview
+- **iCloud sync**; sends clipboard data to Apple's CloudKit
+- **Auto-updates**; phones home to check for new versions, and auto installs them
+- **File clipboard capture**; requires files system access
+
+You can already disable most of these in settings. The **Hardened** variant goes further. It compiles the code out entirely, then removes the network and filesystem entitlements from the macOS App Sandbox so the OS enforces those constraints at the kernel level. The app cannot open a socket or touch a file outside its container, even if a bug or exploit tried to. You can [verify](VERIFY.md) both layers yourself.
+
+Because auto-updates are gone, you can audit a specific version and stick to it. Everything else works identically: text, images, colors, search, keyboard shortcuts.
+
+The hardened build uses a separate bundle ID (`com.eviljuliette.clipkitty.hardened`), which means macOS gives it its own sandbox container. Your clipboard history does not carry over between hardened and non-hardened installs, in either direction. This is intentional; the two builds are isolated from each other.
+
+Download `ClipKitty-Hardened.zip` from [GitHub Releases](https://github.com/jul-sh/clipkitty/releases).
 
 ## Getting Started
 
@@ -70,6 +88,14 @@ cd clipkitty
 make
 ```
 
+Build a specific variant by setting `CONFIGURATION`. If you want the hardened one, you are building a different binary with different capabilities, not the same app with a few checkboxes unchecked.
+
+```bash
+make all CONFIGURATION=SparkleRelease  # With auto-update support
+make all CONFIGURATION=Hardened        # Hardened (no network/files/sync)
+make -C distribution hardened          # Hardened signed DMG
+```
+
 Requires macOS 15+ and Swift 6.2+.
 
 ### How Search Works
@@ -85,7 +111,7 @@ The search system has a few hard requirements:
 - it has to return one clipboard item per result, even if the internal search representation is more granular
 - it has to show useful snippets, previews, and highlights, not just IDs and scores
 
-Those requirements pull against each other. The naive approach is: every time the user types, scan every clipboard item, compute a fuzzy score against the full text, and sort the results. That works for 100 items. It stops working at 100,000 items, and it really stops working when some items are hundreds of kilobytes or megabytes long.
+Those requirements pull against each other. The naive approach is: every time the user types, scan every clipboard item, compute a fuzzy score against the full text, and sort the results. That works for 100 items. It stops working with thousands of items, and it really stops working when some items are hundreds of kilobytes or megabytes long.
 
 ClipKitty solves that by splitting search into cheap recall and expensive judgment:
 

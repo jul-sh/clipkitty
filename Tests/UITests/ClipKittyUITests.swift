@@ -2,6 +2,8 @@ import XCTest
 
 final class ClipKittyUITests: XCTestCase {
     var app: XCUIApplication!
+    /// Wall-clock time when setUp started; used to compute the skip offset for video trimming.
+    private var setUpStartTime = Date()
 
     private static let localeConfigFile = "clipkitty_screenshot_locale.txt"
     private static let dbConfigFile = "clipkitty_screenshot_db.txt"
@@ -109,6 +111,7 @@ final class ClipKittyUITests: XCTestCase {
     }
 
     override func setUpWithError() throws {
+        setUpStartTime = Date()
         continueAfterFailure = false
 
         let appURL = try locateAppBundle()
@@ -165,13 +168,42 @@ final class ClipKittyUITests: XCTestCase {
     }
 
     private func getAppSupportDirectory(for appURL: URL) -> URL {
-        // The app is always sandboxed (entitlements have com.apple.security.app-sandbox = true).
-        // FileManager.urls(for: .applicationSupportDirectory) inside the sandbox resolves to
-        // ~/Library/Containers/{bundleId}/Data/Library/Application Support/
-        // We must place the test database at that same path.
         let bundleId = getBundleIdentifier(for: appURL)
         let userHome = URL(fileURLWithPath: "/Users/\(NSUserName())")
-        return userHome.appendingPathComponent("Library/Containers/\(bundleId)/Data/Library/Application Support/ClipKitty")
+
+        // When the app is signed with sandbox entitlements, macOS redirects
+        // ~/Library/Application Support/ into the per-app container:
+        //   ~/Library/Containers/{bundleId}/Data/Library/Application Support/
+        // When built with CODE_SIGNING_ALLOWED=NO (e.g. CI UI tests), the
+        // binary has no entitlements so it runs unsandboxed and uses the
+        // regular Application Support path. Detect which case applies by
+        // inspecting the embedded entitlements of the actual binary.
+        if isAppSandboxed(appURL) {
+            return userHome.appendingPathComponent("Library/Containers/\(bundleId)/Data/Library/Application Support/ClipKitty")
+        } else {
+            return userHome.appendingPathComponent("Library/Application Support/ClipKitty")
+        }
+    }
+
+    private func isAppSandboxed(_ appURL: URL) -> Bool {
+        let binaryURL = appURL.appendingPathComponent("Contents/MacOS/ClipKitty")
+        let task = Process()
+        task.executableURL = URL(fileURLWithPath: "/usr/bin/codesign")
+        task.arguments = ["-d", "--entitlements", "-", "--xml", binaryURL.path]
+        let pipe = Pipe()
+        task.standardOutput = pipe
+        task.standardError = FileHandle.nullDevice
+        do {
+            try task.run()
+            task.waitUntilExit()
+            let data = pipe.fileHandleForReading.readDataToEndOfFile()
+            if let plist = try? PropertyListSerialization.propertyList(from: data, format: nil) as? [String: Any],
+               let sandbox = plist["com.apple.security.app-sandbox"] as? Bool
+            {
+                return sandbox
+            }
+        } catch {}
+        return false
     }
 
     private func setupTestDatabase(in appSupportDir: URL) throws {
@@ -836,20 +868,18 @@ final class ClipKittyUITests: XCTestCase {
         app.typeKey(.upArrow, modifierFlags: [])
         Thread.sleep(forTimeInterval: 0.3)
 
-        // Signal that the demo is ready to start (shell script will start recording)
-        try? "start".write(toFile: "/tmp/clipkitty_demo_start.txt", atomically: true, encoding: .utf8)
+        // Brief pause to let the panel settle before demo scenes begin.
+        // (Xcode records the screen automatically into the xcresult bundle.)
+        Thread.sleep(forTimeInterval: 0.5)
 
-        // Wait for recording to start
-        let recordingStartedPath = "/tmp/clipkitty_recording_started.txt"
-        var waitCount = 0
-        while !FileManager.default.fileExists(atPath: recordingStartedPath), waitCount < 20 {
-            Thread.sleep(forTimeInterval: 0.5)
-            waitCount += 1
-        }
-        try? FileManager.default.removeItem(atPath: recordingStartedPath)
+        // Write elapsed time so the post-processing script can skip the setup portion.
+        let setupElapsed = Date().timeIntervalSince(setUpStartTime)
+        try? String(format: "%.1f", setupElapsed)
+            .write(toFile: "/tmp/clipkitty_video_start_offset.txt",
+                   atomically: true, encoding: .utf8)
 
         /// Helper to type with natural delays
-        func typeSlowly(_ text: String, delay: TimeInterval = 0.05) {
+        func typeSlowly(_ text: String, delay: TimeInterval = 0.025) {
             for char in text {
                 searchField.typeText(String(char))
                 Thread.sleep(forTimeInterval: delay)
@@ -913,8 +943,7 @@ final class ClipKittyUITests: XCTestCase {
         clearSearch()
         Thread.sleep(forTimeInterval: 0.5)
 
-        // Signal that the demo is finished
-        try? "stop".write(toFile: "/tmp/clipkitty_demo_stop.txt", atomically: true, encoding: .utf8)
+        // Demo finished — the xcresult screen recording ends when the test returns.
     }
 
     /// Captures multiple screenshot states for marketing materials.
@@ -953,21 +982,18 @@ final class ClipKittyUITests: XCTestCase {
         searchField.typeKey(.delete, modifierFlags: [])
         Thread.sleep(forTimeInterval: 0.3)
         let filterButton = app.buttons["FilterDropdown"]
-        // Apply the Images filter
+        // Apply the Images filter (use accessibility identifier, not localized label)
         filterButton.click()
         Thread.sleep(forTimeInterval: 0.5)
-        let imagesOption = app.buttons["Images"]
+        let imagesOption = app.buttons["Filter_images"]
         XCTAssertTrue(imagesOption.waitForExistence(timeout: 3), "Images option should appear in dropdown")
         imagesOption.click()
         Thread.sleep(forTimeInterval: 0.5)
         // Re-open dropdown, then hover over Images to get highlight
         filterButton.click()
         Thread.sleep(forTimeInterval: 0.5)
-        // After applying Images filter, the filter button itself shows "Images" as label,
-        // so we need to find the menu option specifically (the second Images button)
-        let imagesButtons = app.buttons.matching(identifier: "Images").allElementsBoundByIndex
-        XCTAssertGreaterThanOrEqual(imagesButtons.count, 2, "Should have filter button and menu option")
-        let imagesOptionAgain = imagesButtons.count >= 2 ? imagesButtons[1] : imagesButtons[0]
+        let imagesOptionAgain = app.buttons["Filter_images"]
+        XCTAssertTrue(imagesOptionAgain.waitForExistence(timeout: 3), "Images option should appear in dropdown")
         imagesOptionAgain.hover()
         Thread.sleep(forTimeInterval: 0.3)
         saveScreenshot(name: "marketing_3_filter")
@@ -1426,5 +1452,53 @@ final class ClipKittyUITests: XCTestCase {
             return !texts.isEmpty
         }
         XCTAssertTrue(cmdReturnExists, "Confirm button should show ⌘↩ prefix when editing")
+    }
+
+    /// Tests that the Settings window opens without crashing and all tabs are accessible.
+    func testSettingsWindowOpensAllTabs() {
+        // Hide the panel first so settings isn't overlaid
+        app.typeKey(.escape, modifierFlags: [])
+        Thread.sleep(forTimeInterval: 0.5)
+
+        // Open settings via Cmd+,
+        app.typeKey(",", modifierFlags: .command)
+        let settingsWindow = app.windows["ClipKitty Settings"]
+        XCTAssertTrue(settingsWindow.waitForExistence(timeout: 5), "Settings window should appear")
+
+        // General tab should be visible by default
+        let generalTab = settingsWindow.buttons["SettingsTab_General"]
+            .exists ? settingsWindow.buttons["SettingsTab_General"] : settingsWindow.radioButtons["General"]
+        XCTAssertTrue(settingsWindow.staticTexts["Startup"].waitForExistence(timeout: 3),
+                      "General tab content should be visible")
+
+        // Switch to Privacy tab
+        let privacyTab = settingsWindow.toolbars.buttons.matching(
+            NSPredicate(format: "label CONTAINS[c] 'Privacy'")
+        ).firstMatch
+        if privacyTab.exists, privacyTab.isHittable {
+            privacyTab.click()
+            Thread.sleep(forTimeInterval: 0.5)
+        }
+
+        // Switch to Shortcuts tab
+        let shortcutsTab = settingsWindow.toolbars.buttons.matching(
+            NSPredicate(format: "label CONTAINS[c] 'Shortcuts'")
+        ).firstMatch
+        if shortcutsTab.exists, shortcutsTab.isHittable {
+            shortcutsTab.click()
+            Thread.sleep(forTimeInterval: 0.5)
+        }
+
+        // Switch back to General to verify navigation works
+        let generalTabNav = settingsWindow.toolbars.buttons.matching(
+            NSPredicate(format: "label CONTAINS[c] 'General'")
+        ).firstMatch
+        if generalTabNav.exists, generalTabNav.isHittable {
+            generalTabNav.click()
+            Thread.sleep(forTimeInterval: 0.5)
+        }
+
+        // Verify the settings window is still alive (didn't crash)
+        XCTAssertTrue(settingsWindow.exists, "Settings window should still exist after tab navigation")
     }
 }

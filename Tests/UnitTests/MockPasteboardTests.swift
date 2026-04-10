@@ -1,11 +1,11 @@
-import XCTest
 import AppKit
 @testable import ClipKitty
+@testable import ClipKittyMacPlatform
+import XCTest
 
 /// Tests for MockPasteboard to ensure it correctly mimics NSPasteboard behavior.
 /// These tests verify the mock infrastructure works before using it in other tests.
 final class MockPasteboardTests: XCTestCase {
-
     // MARK: - Basic Operations
 
     func testInitialState() {
@@ -139,7 +139,7 @@ final class MockPasteboardTests: XCTestCase {
         XCTAssertEqual(pasteboard.data(forType: .tiff), Data([1, 2, 3]))
     }
 
-    func testTypesReturnsStoredKeys() {
+    func testTypesReturnsStoredKeys() throws {
         let pasteboard = MockPasteboard()
         pasteboard.setString("text", forType: .string)
         pasteboard.setData(Data([1]), forType: .tiff)
@@ -147,8 +147,8 @@ final class MockPasteboardTests: XCTestCase {
         let types = pasteboard.types()
 
         XCTAssertNotNil(types)
-        XCTAssertTrue(types!.contains(.string))
-        XCTAssertTrue(types!.contains(.tiff))
+        XCTAssertTrue(try XCTUnwrap(types?.contains(.string)))
+        XCTAssertTrue(try XCTUnwrap(types?.contains(.tiff)))
     }
 
     // MARK: - Protocol Conformance
