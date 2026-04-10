@@ -255,6 +255,10 @@ if [[ -z "$TEST_HOST_APP" ]]; then
 fi
 TEST_HOST_NAME=$(basename_without_extension "$TEST_HOST_APP")
 chmod -R 777 "$TEST_HOST_APP"
+# Re-sign the test host app (and any nested bundles) with ad-hoc identity
+# to strip restrictive entitlements (e.g. App Sandbox without get-task-allow)
+# that would prevent the app from being launched by the test runner.
+codesign --force --deep --timestamp=none --sign - "$TEST_HOST_APP" >/dev/null 2>&1
 
 TEST_BUNDLE_INFO_PLIST="$TEST_TMP_DIR/$TEST_BUNDLE_NAME.xctest/Contents/Info.plist"
 TEST_BUNDLE_ID=$(read_plist_string "CFBundleIdentifier" "$TEST_BUNDLE_INFO_PLIST")
