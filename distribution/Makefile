@@ -8,7 +8,7 @@ ROOT_MAKE := $(MAKE) -C $(PROJECT_ROOT)
 BUILD_PRODUCTS := $(PROJECT_ROOT)/Build/Products
 READ_BUILD_SETTING := $(PROJECT_ROOT)/Scripts/read-build-setting.sh
 RESOLVE_RELEASE_VERSION := $(PROJECT_ROOT)/Scripts/resolve-release-version.sh
-BAZEL ?= nix shell --no-update-lock-file --inputs-from $(PROJECT_ROOT) nixpkgs#bazelisk -- bazelisk
+BAZEL ?= $(PROJECT_ROOT)/Scripts/run-bazel.sh
 BAZEL_ARGS ?=
 
 # Use Nix wrapper for Rust commands only (Swift needs native Xcode tools)
