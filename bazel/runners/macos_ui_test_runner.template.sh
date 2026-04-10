@@ -245,9 +245,16 @@ if [[ -z "$TEST_HOST_PATH" ]]; then
   exit 1
 fi
 
-TEST_HOST_NAME=$(basename_without_extension "$TEST_HOST_PATH")
 copy_bundle "$TEST_HOST_PATH" "$TEST_TMP_DIR"
-chmod -R 777 "$TEST_TMP_DIR/$TEST_HOST_NAME.app"
+# When the test host is a zip, the app inside may have a different name
+# (bundle_name vs Bazel target name). Discover the actual .app directory.
+TEST_HOST_APP=$(find "$TEST_TMP_DIR" -maxdepth 1 -name "*.app" -print -quit)
+if [[ -z "$TEST_HOST_APP" ]]; then
+  echo "error: no .app bundle found after extracting test host" >&2
+  exit 1
+fi
+TEST_HOST_NAME=$(basename_without_extension "$TEST_HOST_APP")
+chmod -R 777 "$TEST_HOST_APP"
 
 TEST_BUNDLE_INFO_PLIST="$TEST_TMP_DIR/$TEST_BUNDLE_NAME.xctest/Contents/Info.plist"
 TEST_BUNDLE_ID=$(read_plist_string "CFBundleIdentifier" "$TEST_BUNDLE_INFO_PLIST")
