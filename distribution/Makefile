@@ -28,7 +28,7 @@ CONFIGURATION ?= Release
 VERSION ?= $(shell $(READ_BUILD_SETTING) MARKETING_VERSION)
 BUILD_NUMBER ?= $(shell $(READ_BUILD_SETTING) CURRENT_PROJECT_VERSION)
 EMBED_LABEL := ClipKitty_$(VERSION)_build_$(BUILD_NUMBER)
-BAZEL_BUILD_FLAGS := --embed_label="$(EMBED_LABEL)" $(BAZEL_ARGS)
+BAZEL_BUILD_FLAGS := --embed_label="$(EMBED_LABEL)" -c opt $(BAZEL_ARGS)
 
 # Path to the built app bundle (materialized from Bazel)
 APP_PATH = $(BUILD_PRODUCTS)/$(CONFIGURATION)/$(APP_NAME).app

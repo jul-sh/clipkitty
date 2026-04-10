@@ -14,7 +14,6 @@ VERSION ?= $(shell $(READ_BUILD_SETTING) MARKETING_VERSION)
 BUILD_NUMBER ?= $(shell $(READ_BUILD_SETTING) CURRENT_PROJECT_VERSION)
 EMBED_LABEL := ClipKitty_$(VERSION)_build_$(BUILD_NUMBER)
 BAZEL_ARGS ?=
-BAZEL_BUILD_FLAGS := --embed_label="$(EMBED_LABEL)" $(BAZEL_ARGS)
 
 # Pass LOCKED=1 in CI to enforce Cargo.lock (adds --locked to cargo commands)
 CARGO_LOCKED := $(if $(filter 1,$(LOCKED)),--locked,)
@@ -28,25 +27,32 @@ ifeq ($(CONFIGURATION),Debug)
 BAZEL_TARGET := //:ClipKitty
 BUILD_SUBDIR := Debug
 APP_PATH := $(BUILD_PRODUCTS)/Debug/$(APP_NAME).app
+BAZEL_COMPILATION_MODE := fastbuild
 else ifeq ($(CONFIGURATION),Release)
 BAZEL_TARGET := //:ClipKittyRelease
 BUILD_SUBDIR := Release
 APP_PATH := $(BUILD_PRODUCTS)/Release/$(APP_NAME).app
+BAZEL_COMPILATION_MODE := opt
 else ifeq ($(CONFIGURATION),SparkleRelease)
 BAZEL_TARGET := //:ClipKittySpark
 BUILD_SUBDIR := SparkleRelease
 APP_PATH := $(BUILD_PRODUCTS)/SparkleRelease/$(APP_NAME).app
+BAZEL_COMPILATION_MODE := opt
 else ifeq ($(CONFIGURATION),AppStore)
 BAZEL_TARGET := //:ClipKittyAppStore
 BUILD_SUBDIR := AppStore
 APP_PATH := $(BUILD_PRODUCTS)/AppStore/$(APP_NAME).app
+BAZEL_COMPILATION_MODE := opt
 else ifeq ($(CONFIGURATION),Hardened)
 BAZEL_TARGET := //:ClipKittyHardened
 BUILD_SUBDIR := Hardened
 APP_PATH := $(BUILD_PRODUCTS)/Hardened/$(APP_NAME).app
+BAZEL_COMPILATION_MODE := opt
 else
 $(error Unsupported CONFIGURATION '$(CONFIGURATION)')
 endif
+
+BAZEL_BUILD_FLAGS := --embed_label="$(EMBED_LABEL)" -c $(BAZEL_COMPILATION_MODE) $(BAZEL_ARGS)
 
 # Rust build marker and outputs
 ifeq ($(UNIVERSAL),1)
