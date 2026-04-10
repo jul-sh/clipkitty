@@ -1,7 +1,4 @@
-Introducing ClipKitty.
+NEW: iCloud Sync; optionally sync your clipboard history across all your devices.
 
-- Unlimited clipboard history — nothing expires, nothing gets truncated
-- Instant fuzzy search across your entire archive
-- Full multi-line preview pane for code, text, and links
-- Keyboard-driven: Option+Space to open, Return to paste
-- Completely private — your data never leaves your Mac
+- Enable iCloud Sync in settings to keep your clips in sync across devices
+- Uses your private iCloud container with no third-party servers

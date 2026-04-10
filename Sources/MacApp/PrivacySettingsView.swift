@@ -1,0 +1,243 @@
+import AppKit
+import SwiftUI
+
+/// Represents an app that can be ignored
+struct IgnoredApp: Identifiable, Hashable {
+    let id: String // bundle ID
+    let name: String
+    let icon: NSImage?
+
+    init(bundleId: String, name: String, icon: NSImage?) {
+        id = bundleId
+        self.name = name
+        self.icon = icon
+    }
+
+    /// Create from a bundle ID by looking up app info
+    static func fromBundleId(_ bundleId: String) -> IgnoredApp {
+        if let appURL = NSWorkspace.shared.urlForApplication(withBundleIdentifier: bundleId),
+           let bundle = Bundle(url: appURL)
+        {
+            let name = bundle.object(forInfoDictionaryKey: "CFBundleName") as? String
+                ?? bundle.object(forInfoDictionaryKey: "CFBundleDisplayName") as? String
+                ?? appURL.deletingPathExtension().lastPathComponent
+            let icon = NSWorkspace.shared.icon(forFile: appURL.path)
+            return IgnoredApp(bundleId: bundleId, name: name, icon: icon)
+        }
+        // Fallback for apps that can't be found
+        return IgnoredApp(bundleId: bundleId, name: bundleId, icon: nil)
+    }
+}
+
+struct PrivacySettingsView: View {
+    @ObservedObject private var settings = AppSettings.shared
+
+    var body: some View {
+        Form {
+            Section(String(localized: "Content Filtering")) {
+                Toggle(isOn: $settings.ignoreConfidentialContent) {
+                    VStack(alignment: .leading, spacing: 2) {
+                        Text(String(localized: "Don't save passwords"))
+                        Text(String(localized: "Excludes passwords and sensitive data."))
+                            .font(.subheadline)
+                            .foregroundStyle(.secondary)
+                    }
+                }
+
+                Toggle(isOn: $settings.ignoreTransientContent) {
+                    VStack(alignment: .leading, spacing: 2) {
+                        Text(String(localized: "Don't save temporary data"))
+                        Text(String(localized: "Excludes transient content from other apps."))
+                            .font(.subheadline)
+                            .foregroundStyle(.secondary)
+                    }
+                }
+
+                VStack(alignment: .leading, spacing: 4) {
+                    Text(String(localized: "Excluded Apps"))
+                    Text(String(localized: "Content from these apps won't be saved."))
+                        .font(.subheadline)
+                        .foregroundStyle(.secondary)
+                }
+                .padding(.bottom, 4)
+
+                IgnoredAppsListView()
+            }
+
+            #if ENABLE_LINK_PREVIEWS
+                Section(String(localized: "Network")) {
+                    Toggle(isOn: $settings.generateLinkPreviews) {
+                        VStack(alignment: .leading, spacing: 2) {
+                            Text(String(localized: "Show link previews"))
+                            Text(String(localized: "Downloads web content. May trigger tracking links."))
+                                .font(.subheadline)
+                                .foregroundStyle(.secondary)
+                        }
+                    }
+                }
+            #endif
+        }
+        .formStyle(.grouped)
+    }
+}
+
+struct IgnoredAppsListView: View {
+    @ObservedObject private var settings = AppSettings.shared
+    @State private var listState: AppListState = .empty
+
+    private enum AppListState: Equatable {
+        case empty
+        case populated(apps: [IgnoredApp], selectedId: String?)
+
+        var apps: [IgnoredApp] {
+            switch self {
+            case .empty: return []
+            case let .populated(apps, _): return apps
+            }
+        }
+
+        var selectedId: String? {
+            switch self {
+            case .empty: return nil
+            case let .populated(_, id): return id
+            }
+        }
+
+        mutating func setApps(_ apps: [IgnoredApp]) {
+            if apps.isEmpty {
+                self = .empty
+            } else {
+                // Preserve selection if still valid
+                let currentId = selectedId
+                let validId = currentId.flatMap { id in apps.contains { $0.id == id } ? id : nil }
+                self = .populated(apps: apps, selectedId: validId)
+            }
+        }
+
+        mutating func select(_ id: String?) {
+            guard case let .populated(apps, _) = self else { return }
+            self = .populated(apps: apps, selectedId: id)
+        }
+    }
+
+    private var selectedIdBinding: Binding<String?> {
+        Binding(
+            get: { listState.selectedId },
+            set: { listState.select($0) }
+        )
+    }
+
+    var body: some View {
+        VStack(spacing: 0) {
+            // List of ignored apps
+            switch listState {
+            case .empty:
+                Text(String(localized: "No apps excluded"))
+                    .foregroundStyle(.secondary)
+                    .frame(maxWidth: .infinity, minHeight: 60)
+            case let .populated(apps, _):
+                List(selection: selectedIdBinding) {
+                    ForEach(apps) { app in
+                        HStack(spacing: 10) {
+                            if let icon = app.icon {
+                                Image(nsImage: icon)
+                                    .resizable()
+                                    .frame(width: 24, height: 24)
+                            } else {
+                                Image(systemName: "app.fill")
+                                    .frame(width: 24, height: 24)
+                                    .foregroundStyle(.secondary)
+                            }
+                            Text(app.name)
+                            Spacer()
+                        }
+                        .tag(app.id)
+                        .contentShape(Rectangle())
+                    }
+                }
+                .listStyle(.plain)
+                .frame(minHeight: 80, maxHeight: 160)
+            }
+
+            // Add/Remove buttons
+            HStack(spacing: 0) {
+                Button(action: addApp) {
+                    Image(systemName: "plus")
+                        .frame(width: 24, height: 20)
+                }
+                .buttonStyle(.borderless)
+                .accessibilityLabel(String(localized: "Add app to exclude"))
+
+                Divider()
+                    .frame(height: 16)
+
+                Button(action: removeSelectedApp) {
+                    Image(systemName: "minus")
+                        .frame(width: 24, height: 20)
+                }
+                .buttonStyle(.borderless)
+                .accessibilityLabel(String(localized: "Remove selected app"))
+                .disabled({
+                    if case .populated(_, .some) = listState { return false }
+                    return true
+                }())
+
+                Spacer()
+            }
+            .padding(.horizontal, 4)
+            .padding(.vertical, 4)
+        }
+        .background(Color(nsColor: .controlBackgroundColor))
+        .cornerRadius(6)
+        .overlay(
+            RoundedRectangle(cornerRadius: 6)
+                .stroke(Color(nsColor: .separatorColor), lineWidth: 1)
+        )
+        .onAppear {
+            refreshIgnoredApps()
+        }
+        .onChange(of: settings.ignoredAppBundleIds) { _, _ in
+            refreshIgnoredApps()
+        }
+    }
+
+    private func refreshIgnoredApps() {
+        let apps = settings.ignoredAppBundleIds
+            .map { IgnoredApp.fromBundleId($0) }
+            .sorted { $0.name.localizedCaseInsensitiveCompare($1.name) == .orderedAscending }
+        listState.setApps(apps)
+    }
+
+    private func addApp() {
+        let panel = NSOpenPanel()
+        panel.title = String(localized: "Select App to Exclude")
+        panel.canChooseFiles = true
+        panel.canChooseDirectories = false
+        panel.allowsMultipleSelection = true
+        panel.allowedContentTypes = [.application]
+        panel.directoryURL = URL(fileURLWithPath: "/Applications")
+
+        // Run modal on main thread to ensure proper display
+        let response = panel.runModal()
+        guard response == .OK else { return }
+
+        for url in panel.urls {
+            if let bundle = Bundle(url: url),
+               let bundleId = bundle.bundleIdentifier
+            {
+                settings.addIgnoredApp(bundleId: bundleId)
+            }
+        }
+    }
+
+    private func removeSelectedApp() {
+        guard case let .populated(_, selectedId?) = listState else { return }
+        settings.removeIgnoredApp(bundleId: selectedId)
+        listState.select(nil)
+    }
+}
+
+#Preview {
+    PrivacySettingsView()
+        .frame(width: 420, height: 400)
+}

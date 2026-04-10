@@ -47,7 +47,7 @@ final class HighlightRangeTests: XCTestCase {
         let text = "🎉 Celebrate! 🎊 This is a party 🎈 with Files everywhere"
         _ = try store.saveText(text: text, sourceApp: "Test", sourceAppBundleId: "com.test")
 
-        let results = try await store.search(query: "Files")
+        let results = try await store.search(query: "Files", presentation: .compactRow)
         guard let itemId = results.matches.first?.itemMetadata.itemId else {
             return XCTFail("Expected search result")
         }
@@ -71,7 +71,7 @@ final class HighlightRangeTests: XCTestCase {
 
         _ = try store.saveText(text: text, sourceApp: "Test", sourceAppBundleId: "com.test")
 
-        let results = try await store.search(query: "Files")
+        let results = try await store.search(query: "Files", presentation: .compactRow)
         guard let itemId = results.matches.first?.itemMetadata.itemId else {
             return XCTFail("Expected search result")
         }
@@ -93,7 +93,7 @@ final class HighlightRangeTests: XCTestCase {
         let text = "caf\u{0065}\u{0301} r\u{0065}\u{0301}sum\u{0065}\u{0301} hello world"
         _ = try store.saveText(text: text, sourceApp: "Test", sourceAppBundleId: "com.test")
 
-        let results = try await store.search(query: "hello")
+        let results = try await store.search(query: "hello", presentation: .compactRow)
         guard let itemId = results.matches.first?.itemMetadata.itemId else {
             return XCTFail("Expected search result")
         }
@@ -112,7 +112,7 @@ final class HighlightRangeTests: XCTestCase {
         let text = "alpha beta gamma beta delta"
         _ = try store.saveText(text: text, sourceApp: "Test", sourceAppBundleId: "com.test")
 
-        let results = try await store.search(query: "beta")
+        let results = try await store.search(query: "beta", presentation: .compactRow)
         guard let itemId = results.matches.first?.itemMetadata.itemId else {
             return XCTFail("Expected search result")
         }
