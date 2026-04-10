@@ -1,10 +1,7 @@
 .build
 .make
-ClipKitty.xcodeproj
-ClipKitty.xcworkspace
 Derived
 DerivedData
-Tuist
 bazel-bin
 bazel-clipkitty
 bazel-out
