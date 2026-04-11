@@ -86,6 +86,41 @@ final class AppState {
         viewModel.handlePanelVisibilityChange(true, contentRevision: contentRevision)
     }
 
+    func processPendingShareItems() async -> Int {
+        let pending = PendingShareQueue.dequeueAll()
+        guard !pending.isEmpty else { return 0 }
+
+        var saved = 0
+        for entry in pending {
+            let result: Result<String, ClipboardError>
+            switch entry.item {
+            case let .text(text):
+                result = await container.repository.saveText(
+                    text: text,
+                    sourceApp: "Share Sheet",
+                    sourceAppBundleId: nil
+                )
+            case let .url(url):
+                result = await container.repository.saveText(
+                    text: url,
+                    sourceApp: "Share Sheet",
+                    sourceAppBundleId: nil
+                )
+            case .image:
+                guard let imageData = entry.imageData else { continue }
+                result = await container.repository.saveImage(
+                    imageData: imageData,
+                    thumbnail: entry.thumbnailData,
+                    sourceApp: "Share Sheet",
+                    sourceAppBundleId: nil,
+                    isAnimated: false
+                )
+            }
+            if case .success = result { saved += 1 }
+        }
+        return saved
+    }
+
     func autoAddFromClipboard() async {
         guard container.settings.autoAddFromClipboard else { return }
         guard let content = container.clipboardService.readCurrentClipboard() else { return }
@@ -243,7 +278,11 @@ struct ClipKittyiOSApp: App {
             .environment(container.haptics)
             .onChange(of: scenePhase) { _, newPhase in
                 if newPhase == .active {
-                    Task { await appState.autoAddFromClipboard() }
+                    Task {
+                        let added = await appState.processPendingShareItems()
+                        if added > 0 { appState.refreshFeed() }
+                        await appState.autoAddFromClipboard()
+                    }
                 }
             }
 
