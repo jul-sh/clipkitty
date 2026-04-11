@@ -434,19 +434,28 @@ struct TextPreviewView: NSViewRepresentable {
             }
 
             let lineWidth = (substring as NSString? ?? "").size(withAttributes: attributes).width
-            if lineWidth >= availableWidth {
-                maxLineWidth = availableWidth
+            maxLineWidth = max(maxLineWidth, lineWidth)
+
+            // For items with many lines, stop early if a line already fills the width
+            if lineWidth >= availableWidth, lineCount > 2 || nsText.length > 200 {
                 stop.pointee = true
                 return
             }
-
-            maxLineWidth = max(maxLineWidth, lineWidth)
         }
 
         if lineCount == 0 || lineCount > Self.maxAutoScaleLines { return fontSize }
         if maxLineWidth <= 0 { return fontSize }
 
-        let scale = min(1.5, availableWidth / maxLineWidth) * 0.95
+        // For short items (1-2 lines, <=200 chars) allow scaling even when lines
+        // exceed the container width; the text will wrap but remain more readable.
+        // For longer items, cap the scale so we never shrink below base size.
+        let rawScale = availableWidth / maxLineWidth
+        let scale: CGFloat
+        if lineCount <= 2, nsText.length <= 200 {
+            scale = min(1.5, max(rawScale, 1.0)) * 0.95
+        } else {
+            scale = min(1.5, rawScale) * 0.95
+        }
         return fontSize * scale
     }
 
