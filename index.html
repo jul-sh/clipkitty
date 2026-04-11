@@ -193,12 +193,12 @@
 cd clipkitty
 make
 </code></pre>
-<p>Build a specific variant by setting <code>CONFIGURATION</code>. If you want the hardened one, you are building a different binary with different capabilities, not the same app with a few checkboxes unchecked.</p>
+<p>Build a specific variant by setting <code>CONFIGURATION</code>. Bazel is the authoritative Apple build graph; <code>make</code> is just the thin convenience wrapper that materializes Bazel outputs into <a href="/Users/julsh/git/clipkitty/Build/Products">Build/Products</a>. If you want the hardened one, you are building a different binary with different capabilities, not the same app with a few checkboxes unchecked.</p>
 <pre><code class="language-bash">make all CONFIGURATION=SparkleRelease  # With auto-update support
 make all CONFIGURATION=Hardened        # Hardened (no network/files/sync)
 make -C distribution hardened          # Hardened signed DMG
 </code></pre>
-<p>Requires macOS 15+ and Swift 6.2+.</p>
+<p>Requires macOS 15+, Xcode 26.4+, and either <code>bazelisk</code> on <code>PATH</code> or the pinned Nix shell (<code>nix develop</code>).</p>
 <h3>How Search Works</h3>
 <p>Search is a latency problem disguised as a text problem.</p>
 <p>The search system has a few hard requirements:</p>
