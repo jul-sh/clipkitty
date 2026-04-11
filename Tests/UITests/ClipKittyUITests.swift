@@ -186,18 +186,19 @@ final class ClipKittyUITests: XCTestCase {
     }
 
     /// Resolve the project root directory. Checks, in order:
-    /// 1. Bazel runfiles via TEST_SRCDIR (set by Bazel test runner)
-    /// 2. #filePath (works when the source path is absolute)
+    /// 1. CLIPKITTY_PROJECT_ROOT env var (set by test runner from BUILD_WORKSPACE_DIRECTORY)
+    /// 2. Bazel runfiles via TEST_SRCDIR (set by Bazel test runner)
+    /// 3. #filePath (works when the source path is absolute)
     private func resolveProjectRoot() -> URL {
-        // Bazel sets TEST_SRCDIR pointing to the runfiles tree.
-        // The workspace files are at $TEST_SRCDIR/__main__/.
+        if let envRoot = ProcessInfo.processInfo.environment["CLIPKITTY_PROJECT_ROOT"] {
+            return URL(fileURLWithPath: envRoot)
+        }
         if let srcdir = ProcessInfo.processInfo.environment["TEST_SRCDIR"] {
             let candidate = URL(fileURLWithPath: srcdir).appendingPathComponent("__main__")
             if FileManager.default.fileExists(atPath: candidate.appendingPathComponent("distribution").path) {
                 return candidate
             }
         }
-        // Fallback: resolve from source file path (works in Xcode / direct invocation).
         return URL(fileURLWithPath: #filePath)
             .deletingLastPathComponent()
             .deletingLastPathComponent()

@@ -279,7 +279,7 @@ marketing-screenshots-localized:
 				VERSION=$(VERSION) \
 				BUILD_NUMBER=$(BUILD_NUMBER) \
 				TEST=ClipKittyUITests/testTakeMarketingScreenshots \
-				BAZEL_ARGS=--test_output=streamed"; \
+				BAZEL_ARGS='--test_output=streamed --spawn_strategy=local --test_env=BUILD_WORKSPACE_DIRECTORY=$(PROJECT_ROOT)'"; \
 		if [ "$$locale" = "en" ]; then \
 			cp /tmp/clipkitty_marketing_1_history.png $(PROJECT_ROOT)/marketing/$$locale/screenshot_1.png; \
 			cp /tmp/clipkitty_marketing_2_search.png $(PROJECT_ROOT)/marketing/$$locale/screenshot_2.png; \
@@ -413,7 +413,7 @@ ios-marketing-screenshots-localized:
 			VERSION=$(VERSION) \
 			BUILD_NUMBER=$(BUILD_NUMBER) \
 			TEST=ClipKittyiOSScreenshotTests/testTakeMarketingScreenshots \
-			BAZEL_ARGS=--test_output=streamed; \
+			BAZEL_ARGS='--test_output=streamed --spawn_strategy=local --test_env=BUILD_WORKSPACE_DIRECTORY=$(PROJECT_ROOT)'; \
 		if [ "$$locale" = "en" ]; then \
 			cp /tmp/clipkitty_ios_marketing_1_history.png $(PROJECT_ROOT)/marketing-ios/$$locale/screenshot_1.png 2>/dev/null || true; \
 			cp /tmp/clipkitty_ios_marketing_2_search.png $(PROJECT_ROOT)/marketing-ios/$$locale/screenshot_2.png 2>/dev/null || true; \
