@@ -198,14 +198,6 @@ struct CardView: View {
             Label(String(localized: "Preview"), systemImage: "eye")
         }
 
-        if case .symbol(.text) = metadata.icon {
-            Button {
-                previewItemId = metadata.itemId
-            } label: {
-                Label(String(localized: "Edit"), systemImage: "pencil")
-            }
-        }
-
         Button {
             if isBookmarked {
                 viewModel.removeTag(.bookmark, fromItem: metadata.itemId)
