@@ -111,10 +111,13 @@ enum MacBuildVariant: CaseIterable {
         capabilities.map(\.compileCondition).sorted().joined(separator: " ")
     }
 
-    /// Flags for ClipKittyAppleServices (cross-platform: sync + link previews)
+    /// Flags for ClipKittyAppleServices (cross-platform: sync + link previews).
+    /// Link previews are always enabled here because the iOS app unconditionally
+    /// uses LinkPreviewView; the hardened macOS app simply doesn't call it.
     var appleServicesCompilationConditions: String {
-        capabilities.intersection([.linkPreviews, .iCloudSync])
-            .map(\.compileCondition).sorted().joined(separator: " ")
+        var flags = capabilities.intersection([.iCloudSync])
+        flags.insert(.linkPreviews)
+        return flags.map(\.compileCondition).sorted().joined(separator: " ")
     }
 
     /// Flags for ClipKittyMacPlatform (file clipboard + synthetic paste)
