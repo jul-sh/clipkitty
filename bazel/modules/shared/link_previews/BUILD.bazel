@@ -1,0 +1,16 @@
+load("@build_bazel_rules_swift//swift:swift_library.bzl", "swift_library")
+load("//:bazel/clipkitty_build_settings.bzl", "swift_defines")
+
+package(default_visibility = [
+    "//:__pkg__",
+    "//bazel:__subpackages__",
+])
+
+swift_library(
+    name = "ClipKittyShared",
+    srcs = ["//:shared_srcs"],
+    copts = swift_defines(["ENABLE_LINK_PREVIEWS"]),
+    module_name = "ClipKittyShared",
+    tags = ["manual"],
+    deps = ["//bazel/modules/rust:ClipKittyRust"],
+)

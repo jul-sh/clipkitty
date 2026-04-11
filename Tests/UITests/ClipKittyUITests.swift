@@ -185,6 +185,25 @@ final class ClipKittyUITests: XCTestCase {
         }
     }
 
+    /// Resolve the project root directory. Checks, in order:
+    /// 1. Bazel runfiles via TEST_SRCDIR (set by Bazel test runner)
+    /// 2. #filePath (works when the source path is absolute)
+    private func resolveProjectRoot() -> URL {
+        // Bazel sets TEST_SRCDIR pointing to the runfiles tree.
+        // The workspace files are at $TEST_SRCDIR/__main__/.
+        if let srcdir = ProcessInfo.processInfo.environment["TEST_SRCDIR"] {
+            let candidate = URL(fileURLWithPath: srcdir).appendingPathComponent("__main__")
+            if FileManager.default.fileExists(atPath: candidate.appendingPathComponent("distribution").path) {
+                return candidate
+            }
+        }
+        // Fallback: resolve from source file path (works in Xcode / direct invocation).
+        return URL(fileURLWithPath: #filePath)
+            .deletingLastPathComponent()
+            .deletingLastPathComponent()
+            .deletingLastPathComponent()
+    }
+
     private func isAppSandboxed(_ appURL: URL) -> Bool {
         let binaryURL = appURL.appendingPathComponent("Contents/MacOS/ClipKitty")
         let task = Process()
@@ -207,10 +226,7 @@ final class ClipKittyUITests: XCTestCase {
     }
 
     private func setupTestDatabase(in appSupportDir: URL) throws {
-        let projectRoot = URL(fileURLWithPath: #filePath)
-            .deletingLastPathComponent()
-            .deletingLastPathComponent()
-            .deletingLastPathComponent()
+        let projectRoot = resolveProjectRoot()
 
         // Read the database filename from temp file (written by Makefile)
         // If it exists, use that filename; otherwise fall back to "SyntheticData.sqlite"
@@ -229,12 +245,8 @@ final class ClipKittyUITests: XCTestCase {
         Thread.sleep(forTimeInterval: 0.2)
 
         try? FileManager.default.removeItem(at: targetURL)
-        // Remove all Tantivy index versions so the app rebuilds from scratch
-        if let contents = try? FileManager.default.contentsOfDirectory(at: appSupportDir, includingPropertiesForKeys: nil) {
-            for item in contents where item.lastPathComponent.hasPrefix("tantivy_index_") {
-                try? FileManager.default.removeItem(at: item)
-            }
-        }
+        // Preserve existing Tantivy indexes across runs so the app does not
+        // need to rebuild them from scratch on every test invocation.
         // SQLite WAL files: handle both hyphen (-wal) and dot (.wal) naming conventions
         try? FileManager.default.removeItem(at: URL(fileURLWithPath: targetURL.path + "-wal"))
         try? FileManager.default.removeItem(at: URL(fileURLWithPath: targetURL.path + "-shm"))
@@ -879,7 +891,7 @@ final class ClipKittyUITests: XCTestCase {
                    atomically: true, encoding: .utf8)
 
         /// Helper to type with natural delays
-        func typeSlowly(_ text: String, delay: TimeInterval = 0.0125) {
+        func typeSlowly(_ text: String, delay: TimeInterval = 0.025) {
             for char in text {
                 searchField.typeText(String(char))
                 Thread.sleep(forTimeInterval: delay)
@@ -934,13 +946,8 @@ final class ClipKittyUITests: XCTestCase {
         // SCENE 4: Image Search
         // ============================================================
         clearSearch()
-        Thread.sleep(forTimeInterval: 0.5)
-        let sceneFilterButton = app.buttons["FilterDropdown"]
-        sceneFilterButton.click()
-        Thread.sleep(forTimeInterval: 0.5)
-        let sceneImagesOption = app.buttons["Filter_images"]
-        sceneImagesOption.click()
-        Thread.sleep(forTimeInterval: 2.0)
+        typeSlowly(queries["fast"] ?? "fast")
+        Thread.sleep(forTimeInterval: 3.0)
 
         // ============================================================
         // OUTRO

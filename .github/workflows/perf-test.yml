@@ -45,8 +45,8 @@ jobs:
       - name: Install CI tools from Nix
         run: |
           nix profile install --no-update-lock-file --inputs-from . nixpkgs#age
-          nix profile install --no-update-lock-file .#tuist
-          tuist version
+          nix profile install --no-update-lock-file .#bazelisk
+          bazelisk version
 
       - name: Decrypt secrets
         id: secrets
@@ -81,14 +81,11 @@ jobs:
       - name: Build Rust Core
         run: make rust LOCKED=1
 
-      - name: Generate Xcode Project
-        run: make generate
-
       - name: Verify lockfiles unchanged
         run: ./Scripts/check-lockfile-drift.sh
 
       - name: Build App (Release)
-        run: make build CONFIGURATION=Release UNIVERSAL=1 SKIP_SIGNING=1 LOCKED=1
+        run: make build CONFIGURATION=Release UNIVERSAL=1 LOCKED=1
         env:
           AGE_SECRET_KEY: ${{ secrets.AGE_SECRET_KEY }}
 

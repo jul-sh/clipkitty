@@ -1,8 +1,8 @@
-# Swift / Xcode
-Package.resolved  # Xcode-generated stray state; authoritative lockfiles are Tuist/ and distribution/SparkleUpdater/
+# Swift / Apple tooling
 .build/
 .make/
 build/
+/Build/
 .swiftpm/
 *.xcodeproj/
 *.xcworkspace/
@@ -12,6 +12,12 @@ DerivedDataTests/
 perf_traces/
 *.xcresult/
 *.trace/
+
+# Bazel
+/bazel-bin
+/bazel-clipkitty
+/bazel-out
+/bazel-testlogs
 
 # Tuist
 Derived/

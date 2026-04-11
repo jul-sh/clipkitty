@@ -1,0 +1,19 @@
+load("@build_bazel_rules_swift//swift:swift_library.bzl", "swift_library")
+load("//:bazel/clipkitty_build_settings.bzl", "IOS_DEFAULT_DEFINES", "swift_defines")
+
+package(default_visibility = [
+    "//:__pkg__",
+    "//bazel:__subpackages__",
+])
+
+swift_library(
+    name = "ClipKittyAppleServices",
+    srcs = ["//:apple_services_srcs"],
+    copts = swift_defines(IOS_DEFAULT_DEFINES),
+    module_name = "ClipKittyAppleServices",
+    tags = ["manual"],
+    deps = [
+        "//bazel/modules/rust:ClipKittyRust",
+        "//bazel/modules/shared/link_previews:ClipKittyShared",
+    ],
+)

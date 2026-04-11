@@ -191,25 +191,18 @@ def main():
         versions = data.get("data", data) if isinstance(data, dict) else data
         version_id = None
 
-        if versions and args.version:
+        need_create = False
+        if not versions:
+            need_create = True
+        elif args.version:
             existing_version = versions[0].get("attributes", {}).get("versionString", "")
-            if existing_version == args.version:
-                version_id = versions[0]["id"]
+            if existing_version != args.version:
+                print(f"Existing PREPARE_FOR_SUBMISSION version is {existing_version}, but requested {args.version}.")
+                need_create = True
             else:
-                # Delete the stale draft so we can create a fresh one
-                stale_id = versions[0]["id"]
-                print(f"Deleting stale PREPARE_FOR_SUBMISSION version {existing_version} (ID: {stale_id})...")
-                r = run(
-                    ["asc", "versions", "delete",
-                     "--version-id", stale_id, "--confirm"],
-                    check=False, capture=True,
-                )
-                if r.returncode != 0:
-                    print(f"Warning: Could not delete stale version: {r.stderr.strip()}")
-        elif versions:
-            version_id = versions[0]["id"]
+                version_id = versions[0]["id"]
 
-        if not version_id:
+        if need_create:
             if args.version:
                 print(f"Creating new App Store version {args.version}...")
                 r = run(
@@ -227,10 +220,13 @@ def main():
                     print("Skipping metadata and screenshot upload (binary was uploaded successfully).")
                     return
             else:
-                print("Warning: No App Store version in PREPARE_FOR_SUBMISSION state.")
-                print("Skipping metadata and screenshot upload (binary was uploaded successfully).")
-                print("Hint: Pass --version to auto-create a new version, or create one manually in App Store Connect.")
-                return
+                if versions:
+                    version_id = versions[0]["id"]
+                else:
+                    print("Warning: No App Store version in PREPARE_FOR_SUBMISSION state.")
+                    print("Skipping metadata and screenshot upload (binary was uploaded successfully).")
+                    print("Hint: Pass --version to auto-create a new version, or create one manually in App Store Connect.")
+                    return
 
         print(f"Target version ID: {version_id}")
 
@@ -289,7 +285,7 @@ def main():
         screenshot_count = 0
         if not os.path.isdir(marketing_dir):
             print(f"  Warning: marketing directory not found: {marketing_dir}")
-            print(f"  No screenshots will be uploaded for {args.platform}.")
+            print(f"  No screenshots will be uploaded for {platform_name}.")
         if os.path.isdir(marketing_dir):
             for entry in sorted(os.listdir(marketing_dir)):
                 src_dir = os.path.join(marketing_dir, entry)

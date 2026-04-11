@@ -1,0 +1,469 @@
+load("@build_bazel_rules_apple//apple:ios.bzl", "ios_application", "ios_extension", "ios_ui_test", "ios_unit_test")
+load("@build_bazel_rules_apple//apple:macos.bzl", "macos_application", "macos_ui_test", "macos_unit_test")
+load("@build_bazel_rules_apple//apple:versioning.bzl", "apple_bundle_version")
+load("@build_bazel_rules_swift//swift:swift_library.bzl", "swift_library")
+load("//:bazel/clipkitty_build_settings.bzl", "CURRENT_PROJECT_VERSION", "IOS_BUNDLE_ID", "IOS_DEFAULT_DEFINES", "IOS_MINIMUM_OS", "IOS_SHARE_BUNDLE_ID", "MACOS_BUNDLE_ID", "MACOS_HARDENED_BUNDLE_ID", "MACOS_MINIMUM_OS", "MARKETING_VERSION", "SPARKLE_FEED_URL", "SPARKLE_OLD_PUBLIC_KEY", "SPARKLE_PUBLIC_KEY", "swift_defines")
+
+package(default_visibility = ["//visibility:private"])
+
+exports_files(
+    [
+        "Sources/ClipKittyRust/ClipKittyRustFFI.c",
+        "Sources/ClipKittyRust/libpurr.a",
+        "Sources/ClipKittyRust/purrFFI.h",
+        "Sources/ClipKittyRust/ios-device/libpurr.a",
+        "Sources/ClipKittyRust/ios-simulator/libpurr.a",
+    ],
+    visibility = ["//bazel:__subpackages__"],
+)
+
+filegroup(
+    name = "rust_wrapper_srcs",
+    srcs = glob(["Sources/ClipKittyRustWrapper/**/*.swift"]),
+    visibility = ["//bazel:__subpackages__"],
+)
+
+filegroup(
+    name = "shared_srcs",
+    srcs = glob(["Sources/Shared/**/*.swift"]),
+    visibility = ["//bazel:__subpackages__"],
+)
+
+filegroup(
+    name = "apple_services_srcs",
+    srcs = glob(["Sources/AppleServices/**/*.swift"]),
+    visibility = ["//bazel:__subpackages__"],
+)
+
+filegroup(
+    name = "apple_services_base_srcs",
+    srcs = glob(
+        ["Sources/AppleServices/**/*.swift"],
+        exclude = ["Sources/AppleServices/SyncEngine.swift"],
+    ),
+    visibility = ["//bazel:__subpackages__"],
+)
+
+filegroup(
+    name = "mac_platform_srcs",
+    srcs = glob(["Sources/MacPlatform/**/*.swift"]),
+    visibility = ["//bazel:__subpackages__"],
+)
+
+filegroup(
+    name = "mac_app_srcs",
+    srcs = glob(["Sources/MacApp/**/*.swift"]),
+    visibility = ["//bazel:__subpackages__"],
+)
+
+filegroup(
+    name = "mac_app_resources",
+    srcs = glob(["Sources/MacApp/Assets.xcassets/**"]) + [
+        "Sources/MacApp/PrivacyInfo.xcprivacy",
+        "Sources/MacApp/Resources/Localizable.xcstrings",
+        "Sources/MacApp/Resources/menu-bar.svg",
+    ] + glob(["Sources/MacApp/Resources/Fonts/**"]),
+)
+
+filegroup(
+    name = "ios_app_srcs",
+    srcs = glob(["Sources/iOSApp/**/*.swift"]),
+)
+
+filegroup(
+    name = "ios_app_resources",
+    srcs = glob(["AppIcon.icon/**"]) + [
+        "Sources/iOSApp/PrivacyInfo.xcprivacy",
+        "Sources/iOSApp/Resources/Localizable.xcstrings",
+    ] + glob(["Sources/iOSApp/Resources/Fonts/**"]),
+)
+
+filegroup(
+    name = "share_extension_srcs",
+    srcs = glob(["Sources/ShareExtension/**/*.swift"]),
+)
+
+filegroup(
+    name = "ios_smoke_test_srcs",
+    srcs = glob(["Sources/iOSSmokeTest/**/*.swift"]),
+)
+
+filegroup(
+    name = "sparkle_updater_srcs",
+    srcs = glob(["distribution/SparkleUpdater/Sources/SparkleUpdater/**/*.swift"]),
+)
+
+apple_bundle_version(
+    name = "clipkitty_version",
+    build_label_pattern = "ClipKitty_{version}_build_{build}",
+    build_version = "{build}",
+    capture_groups = {
+        "build": "\\d+",
+        "version": "\\d+\\.\\d+\\.\\d+",
+    },
+    fallback_build_label = "ClipKitty_%s_build_%s" % (MARKETING_VERSION, CURRENT_PROJECT_VERSION),
+    short_version_string = "{version}",
+)
+
+# Variant-specific Swift modules keep the same `module_name` across multiple
+# feature configurations. Housing them in distinct Bazel packages avoids output
+# collisions while preserving source-level imports.
+swift_library(
+    name = "SparkleUpdater",
+    srcs = [":sparkle_updater_srcs"],
+    module_name = "SparkleUpdater",
+    tags = ["manual"],
+    visibility = ["//bazel/modules/mac_app/sparkle:__pkg__"],
+    deps = ["@swiftpkg_sparkle//:Sparkle"],
+)
+
+genrule(
+    name = "MacAppSparkleInfoPlist",
+    outs = ["MacApp-Sparkle.generated.plist"],
+    cmd = """
+cat >"$@" <<'EOF'
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN"
+  "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+<plist version="1.0">
+<dict>
+  <key>CFBundleDisplayName</key>
+  <string>ClipKitty</string>
+  <key>CKBuildChannel</key>
+  <string>Sparkle</string>
+  <key>SUAutomaticallyUpdate</key>
+  <true/>
+  <key>SUEnableAutomaticChecks</key>
+  <true/>
+  <key>SUEnableInstallerLauncherService</key>
+  <true/>
+  <key>SUFeedURL</key>
+  <string>%s</string>
+  <key>SUPublicEDKey</key>
+  <string>%s</string>
+EOF
+if [ -n "%s" ]; then
+  cat >>"$@" <<'EOF'
+  <key>SUOldPublicEDKey</key>
+  <string>%s</string>
+EOF
+fi
+cat >>"$@" <<'EOF'
+</dict>
+</plist>
+EOF
+""" % (
+        SPARKLE_FEED_URL,
+        SPARKLE_PUBLIC_KEY,
+        SPARKLE_OLD_PUBLIC_KEY,
+        SPARKLE_OLD_PUBLIC_KEY,
+    ),
+)
+
+swift_library(
+    name = "ClipKittyiOS_lib",
+    srcs = [":ios_app_srcs"],
+    copts = swift_defines(IOS_DEFAULT_DEFINES),
+    module_name = "ClipKittyiOS",
+    tags = ["manual"],
+    deps = [
+        "//bazel/modules/apple_services/default:ClipKittyAppleServices",
+        "//bazel/modules/rust:ClipKittyRust",
+        "//bazel/modules/shared/link_previews:ClipKittyShared",
+    ],
+)
+
+swift_library(
+    name = "ClipKittyShare_lib",
+    srcs = [":share_extension_srcs"],
+    module_name = "ClipKittyShare",
+    tags = ["manual"],
+    deps = [
+        "//bazel/modules/rust:ClipKittyRust",
+        "//bazel/modules/shared/link_previews:ClipKittyShared",
+    ],
+)
+
+swift_library(
+    name = "ClipKittyiOSSmokeTest_lib",
+    srcs = [":ios_smoke_test_srcs"],
+    module_name = "ClipKittyiOSSmokeTest",
+    tags = ["manual"],
+    deps = [
+        "//bazel/modules/apple_services/default:ClipKittyAppleServices",
+        "//bazel/modules/rust:ClipKittyRust",
+        "//bazel/modules/shared/link_previews:ClipKittyShared",
+    ],
+)
+
+macos_application(
+    name = "ClipKitty",
+    bundle_id = MACOS_BUNDLE_ID,
+    bundle_name = "ClipKitty",
+    entitlements = "Sources/MacApp/ClipKitty.debug.entitlements",
+    infoplists = [
+        "bazel/plists/MacApp-Base.plist",
+        "bazel/plists/MacApp-Debug.plist",
+    ],
+    minimum_os_version = MACOS_MINIMUM_OS,
+    resources = [":mac_app_resources"],
+    version = ":clipkitty_version",
+    deps = ["//bazel/modules/mac_app/debug:ClipKitty"],
+)
+
+macos_application(
+    name = "ClipKittyRelease",
+    bundle_id = MACOS_BUNDLE_ID,
+    bundle_name = "ClipKitty",
+    entitlements = "Sources/MacApp/ClipKitty.oss.entitlements",
+    infoplists = [
+        "bazel/plists/MacApp-Base.plist",
+        "bazel/plists/MacApp-Release.plist",
+    ],
+    minimum_os_version = MACOS_MINIMUM_OS,
+    resources = [":mac_app_resources"],
+    version = ":clipkitty_version",
+    deps = ["//bazel/modules/mac_app/release:ClipKitty"],
+)
+
+macos_application(
+    name = "ClipKittySpark",
+    bundle_id = MACOS_BUNDLE_ID,
+    bundle_name = "ClipKitty",
+    entitlements = "Sources/MacApp/ClipKitty.sparkle.entitlements",
+    infoplists = [
+        "bazel/plists/MacApp-Base.plist",
+        ":MacAppSparkleInfoPlist",
+    ],
+    minimum_os_version = MACOS_MINIMUM_OS,
+    resources = [":mac_app_resources"],
+    version = ":clipkitty_version",
+    deps = ["//bazel/modules/mac_app/sparkle:ClipKitty"],
+)
+
+macos_application(
+    name = "ClipKittyAppStore",
+    bundle_id = MACOS_BUNDLE_ID,
+    bundle_name = "ClipKitty",
+    entitlements = "Sources/MacApp/ClipKitty.appstore.entitlements",
+    infoplists = [
+        "bazel/plists/MacApp-Base.plist",
+        "bazel/plists/MacApp-AppStore.plist",
+    ],
+    minimum_os_version = MACOS_MINIMUM_OS,
+    resources = [":mac_app_resources"],
+    version = ":clipkitty_version",
+    deps = ["//bazel/modules/mac_app/appstore:ClipKitty"],
+)
+
+macos_application(
+    name = "ClipKittyHardened",
+    bundle_id = MACOS_HARDENED_BUNDLE_ID,
+    bundle_name = "ClipKitty",
+    entitlements = "Sources/MacApp/ClipKitty.hardened.entitlements",
+    infoplists = [
+        "bazel/plists/MacApp-Base.plist",
+        "bazel/plists/MacApp-Hardened.plist",
+    ],
+    minimum_os_version = MACOS_MINIMUM_OS,
+    resources = [":mac_app_resources"],
+    version = ":clipkitty_version",
+    deps = ["//bazel/modules/mac_app/hardened:ClipKitty"],
+)
+
+ios_extension(
+    name = "ClipKittyShare",
+    bundle_id = IOS_SHARE_BUNDLE_ID,
+    bundle_name = "ClipKittyShare",
+    entitlements = "Sources/ShareExtension/ClipKittyShare.entitlements",
+    families = [
+        "iphone",
+        "ipad",
+    ],
+    infoplists = ["bazel/plists/ShareExtension-Info.plist"],
+    minimum_os_version = IOS_MINIMUM_OS,
+    version = ":clipkitty_version",
+    deps = [":ClipKittyShare_lib"],
+)
+
+ios_application(
+    name = "ClipKittyiOS",
+    bundle_id = IOS_BUNDLE_ID,
+    bundle_name = "ClipKitty",
+    entitlements = "Sources/iOSApp/ClipKittyiOS.entitlements",
+    extensions = [":ClipKittyShare"],
+    families = [
+        "iphone",
+        "ipad",
+    ],
+    infoplists = ["bazel/plists/iOSApp-Base.plist"],
+    minimum_os_version = IOS_MINIMUM_OS,
+    resources = [":ios_app_resources"],
+    version = ":clipkitty_version",
+    deps = [":ClipKittyiOS_lib"],
+)
+
+ios_application(
+    name = "ClipKittyiOSTestHost",
+    bundle_id = IOS_BUNDLE_ID,
+    bundle_name = "ClipKittyiOSTestHost",
+    entitlements = "Sources/iOSApp/ClipKittyiOS.entitlements",
+    extensions = [":ClipKittyShare"],
+    families = [
+        "iphone",
+        "ipad",
+    ],
+    infoplists = ["bazel/plists/iOSApp-Base.plist"],
+    minimum_os_version = IOS_MINIMUM_OS,
+    resources = [":ios_app_resources"],
+    version = ":clipkitty_version",
+    deps = [":ClipKittyiOS_lib"],
+)
+
+ios_application(
+    name = "ClipKittyiOSAppStore",
+    bundle_id = IOS_BUNDLE_ID,
+    bundle_name = "ClipKitty",
+    entitlements = "Sources/iOSApp/ClipKittyiOS.appstore.entitlements",
+    extensions = [":ClipKittyShare"],
+    families = [
+        "iphone",
+        "ipad",
+    ],
+    infoplists = ["bazel/plists/iOSApp-Base.plist"],
+    minimum_os_version = IOS_MINIMUM_OS,
+    resources = [":ios_app_resources"],
+    version = ":clipkitty_version",
+    deps = [":ClipKittyiOS_lib"],
+)
+
+ios_application(
+    name = "ClipKittyiOSAppStoreTestHost",
+    bundle_id = IOS_BUNDLE_ID,
+    bundle_name = "ClipKittyiOSAppStoreTestHost",
+    entitlements = "Sources/iOSApp/ClipKittyiOS.appstore.entitlements",
+    extensions = [":ClipKittyShare"],
+    families = [
+        "iphone",
+        "ipad",
+    ],
+    infoplists = ["bazel/plists/iOSApp-Base.plist"],
+    minimum_os_version = IOS_MINIMUM_OS,
+    resources = [":ios_app_resources"],
+    version = ":clipkitty_version",
+    deps = [":ClipKittyiOS_lib"],
+)
+
+ios_application(
+    name = "ClipKittyiOSSmokeTest",
+    bundle_id = "com.eviljuliette.clipkitty.ios-smoke-test",
+    families = ["iphone"],
+    infoplists = ["bazel/plists/iOSSmokeTest-Info.plist"],
+    minimum_os_version = IOS_MINIMUM_OS,
+    version = ":clipkitty_version",
+    deps = [":ClipKittyiOSSmokeTest_lib"],
+)
+
+swift_library(
+    name = "ClipKittyTests_lib",
+    testonly = True,
+    srcs = glob(["Tests/UnitTests/**/*.swift"]),
+    module_name = "ClipKittyTests",
+    tags = ["manual"],
+    deps = [
+        "//bazel/modules/apple_services/base:ClipKittyAppleServices",
+        "//bazel/modules/mac_app/debug:ClipKitty",
+        "//bazel/modules/mac_platform/full:ClipKittyMacPlatform",
+        "//bazel/modules/rust:ClipKittyRust",
+        "//bazel/modules/shared/link_previews:ClipKittyShared",
+    ],
+)
+
+macos_unit_test(
+    name = "ClipKittyTests",
+    bundle_id = "com.eviljuliette.clipkitty.tests",
+    minimum_os_version = MACOS_MINIMUM_OS,
+    deps = [":ClipKittyTests_lib"],
+)
+
+filegroup(
+    name = "uitest_data",
+    srcs = glob(["distribution/SyntheticData*.sqlite"]),
+)
+
+swift_library(
+    name = "ClipKittyUITests_lib",
+    testonly = True,
+    srcs = glob(["Tests/UITests/**/*.swift"]),
+    data = [":uitest_data"],
+    module_name = "ClipKittyUITests",
+    tags = ["manual"],
+)
+
+macos_ui_test(
+    name = "ClipKittyUITests",
+    bundle_id = "com.clipkitty.UITests",
+    minimum_os_version = MACOS_MINIMUM_OS,
+    runner = "//bazel/runners:macos_ui_runner",
+    test_host = ":ClipKitty",
+    deps = [":ClipKittyUITests_lib"],
+)
+
+macos_ui_test(
+    name = "ClipKittyAppStoreUITests",
+    bundle_id = "com.clipkitty.UITests.AppStore",
+    minimum_os_version = MACOS_MINIMUM_OS,
+    runner = "//bazel/runners:macos_ui_runner",
+    test_host = ":ClipKittyAppStore",
+    deps = [":ClipKittyUITests_lib"],
+)
+
+swift_library(
+    name = "ClipKittyiOSTests_lib",
+    testonly = True,
+    srcs = glob(["Tests/iOSTests/**/*.swift"]),
+    module_name = "ClipKittyiOSTests",
+    tags = ["manual"],
+    deps = [
+        "//bazel/modules/apple_services/default:ClipKittyAppleServices",
+        "//bazel/modules/rust:ClipKittyRust",
+        "//bazel/modules/shared/link_previews:ClipKittyShared",
+        ":ClipKittyiOS_lib",
+    ],
+)
+
+ios_unit_test(
+    name = "ClipKittyiOSTests",
+    bundle_id = "com.eviljuliette.clipkitty.tests.ios",
+    minimum_os_version = IOS_MINIMUM_OS,
+    runner = "//bazel/runners:ios_unit_runner",
+    test_host = ":ClipKittyiOSTestHost",
+    deps = [":ClipKittyiOSTests_lib"],
+)
+
+swift_library(
+    name = "ClipKittyiOSUITests_lib",
+    testonly = True,
+    srcs = glob(["Tests/iOSUITests/**/*.swift"]),
+    data = [":uitest_data"],
+    module_name = "ClipKittyiOSUITests",
+    tags = ["manual"],
+)
+
+ios_ui_test(
+    name = "ClipKittyiOSUITests",
+    bundle_id = "com.eviljuliette.clipkitty.uitests.ios",
+    minimum_os_version = IOS_MINIMUM_OS,
+    runner = "//bazel/runners:ios_ui_runner",
+    test_host = ":ClipKittyiOSTestHost",
+    deps = [":ClipKittyiOSUITests_lib"],
+)
+
+ios_ui_test(
+    name = "ClipKittyiOSAppStoreUITests",
+    bundle_id = "com.eviljuliette.clipkitty.uitests.ios.appstore",
+    minimum_os_version = IOS_MINIMUM_OS,
+    runner = "//bazel/runners:ios_ui_runner",
+    test_host = ":ClipKittyiOSAppStoreTestHost",
+    deps = [":ClipKittyiOSUITests_lib"],
+)

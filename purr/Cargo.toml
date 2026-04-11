@@ -6,7 +6,7 @@ publish = false
 
 [lib]
 crate-type = ["lib", "staticlib", "cdylib"]
-# SYNC: Library name must match Project.swift linkedLibrary("purr")
+# SYNC: Library name must match the Bazel-linked static library artifact name.
 # Output: libpurr.a (static), libpurr.dylib (dynamic)
 name = "purr"
 

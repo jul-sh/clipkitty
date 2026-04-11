@@ -41,6 +41,8 @@ This gives you defense in depth. First, the code that does network requests and 
 
 Open the URL. If an attestation exists, you'll see the exact commit that produced your binary. From there you can browse the exact source code used for that build.
 
+The Apple app bundles themselves are produced by Bazel, with the Swift package graph pinned by [Package.resolved](Package.resolved) and the Bazel module graph pinned by [MODULE.bazel.lock](MODULE.bazel.lock).
+
 ## Further Reading
 
 - [GitHub Artifact Attestations](https://docs.github.com/en/actions/security-for-github-actions/using-artifact-attestations)

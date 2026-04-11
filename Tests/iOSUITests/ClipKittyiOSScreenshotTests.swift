@@ -90,11 +90,24 @@ final class ClipKittyiOSScreenshotTests: XCTestCase {
 
     /// Copies the locale-appropriate SyntheticData.sqlite to a temp path and returns
     /// the path for the app to use via `CLIPKITTY_SCREENSHOT_DB` environment variable.
+    /// Resolve the project root directory. Checks, in order:
+    /// 1. Bazel runfiles via TEST_SRCDIR (set by Bazel test runner)
+    /// 2. #filePath (works when the source path is absolute)
+    private func resolveProjectRoot() -> URL {
+        if let srcdir = ProcessInfo.processInfo.environment["TEST_SRCDIR"] {
+            let candidate = URL(fileURLWithPath: srcdir).appendingPathComponent("__main__")
+            if FileManager.default.fileExists(atPath: candidate.appendingPathComponent("distribution").path) {
+                return candidate
+            }
+        }
+        return URL(fileURLWithPath: #filePath)
+            .deletingLastPathComponent()
+            .deletingLastPathComponent()
+            .deletingLastPathComponent()
+    }
+
     private func setupTestDatabase() throws -> String {
-        let projectRoot = URL(fileURLWithPath: #filePath)
-            .deletingLastPathComponent() // iOSUITests/
-            .deletingLastPathComponent() // Tests/
-            .deletingLastPathComponent() // project root
+        let projectRoot = resolveProjectRoot()
 
         let databaseFilename = readTempConfig(Self.dbConfigFile, defaultValue: "SyntheticData.sqlite") ?? "SyntheticData.sqlite"
         let sqliteSourceURL = projectRoot.appendingPathComponent("distribution/\(databaseFilename)")
