@@ -285,7 +285,7 @@ def main():
         screenshot_count = 0
         if not os.path.isdir(marketing_dir):
             print(f"  Warning: marketing directory not found: {marketing_dir}")
-            print(f"  No screenshots will be uploaded for {platform_name}.")
+            print(f"  No screenshots will be uploaded for {args.platform}.")
         if os.path.isdir(marketing_dir):
             for entry in sorted(os.listdir(marketing_dir)):
                 src_dir = os.path.join(marketing_dir, entry)
