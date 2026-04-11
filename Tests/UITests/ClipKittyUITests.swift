@@ -133,11 +133,9 @@ final class ClipKittyUITests: XCTestCase {
 
         // Wait for the search field — it's always present regardless of how
         // the accessibility system classifies the NSPanel (window vs dialog).
-        // The timeout must accommodate Tantivy index rebuilds which happen on
-        // every test run (the setup deletes the index for a clean slate).
         let searchField = app.textFields["SearchField"]
         XCTAssertTrue(
-            searchField.waitForExistence(timeout: 60),
+            searchField.waitForExistence(timeout: 15),
             "App UI did not appear. Hierarchy: \(app.debugDescription)"
         )
         Thread.sleep(forTimeInterval: 0.5)
@@ -209,15 +207,10 @@ final class ClipKittyUITests: XCTestCase {
     }
 
     private func setupTestDatabase(in appSupportDir: URL) throws {
-        let projectRoot: URL
-        if let envRoot = ProcessInfo.processInfo.environment["CLIPKITTY_PROJECT_ROOT"] {
-            projectRoot = URL(fileURLWithPath: envRoot)
-        } else {
-            projectRoot = URL(fileURLWithPath: #filePath)
-                .deletingLastPathComponent()
-                .deletingLastPathComponent()
-                .deletingLastPathComponent()
-        }
+        let projectRoot = URL(fileURLWithPath: #filePath)
+            .deletingLastPathComponent()
+            .deletingLastPathComponent()
+            .deletingLastPathComponent()
 
         // Read the database filename from temp file (written by Makefile)
         // If it exists, use that filename; otherwise fall back to "SyntheticData.sqlite"

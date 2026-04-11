@@ -17,7 +17,7 @@ enum FontManager {
     static func registerFonts() {
         guard let resourceURL = Bundle.main.resourceURL else { return }
 
-        // Bazel packages these fonts at the app bundle resource root
+        // Tuist flattens resources into the app bundle root
         guard let fontFiles = try? FileManager.default.contentsOfDirectory(
             at: resourceURL,
             includingPropertiesForKeys: nil

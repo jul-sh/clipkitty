@@ -45,8 +45,8 @@ jobs:
       - name: Install CI tools from Nix
         run: |
           nix profile install --no-update-lock-file --inputs-from . nixpkgs#age
-          nix profile install --no-update-lock-file .#bazelisk
-          bazelisk version
+          nix profile install --no-update-lock-file .#tuist
+          tuist version
 
       - name: Decrypt secrets
         id: secrets
@@ -80,6 +80,9 @@ jobs:
 
       - name: Build Rust Core
         run: make rust LOCKED=1
+
+      - name: Generate Xcode Project
+        run: make generate
 
       - name: Verify lockfiles unchanged
         run: ./Scripts/check-lockfile-drift.sh
