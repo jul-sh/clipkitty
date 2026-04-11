@@ -879,7 +879,7 @@ final class ClipKittyUITests: XCTestCase {
                    atomically: true, encoding: .utf8)
 
         /// Helper to type with natural delays
-        func typeSlowly(_ text: String, delay: TimeInterval = 0.025) {
+        func typeSlowly(_ text: String, delay: TimeInterval = 0.0125) {
             for char in text {
                 searchField.typeText(String(char))
                 Thread.sleep(forTimeInterval: delay)
@@ -934,8 +934,13 @@ final class ClipKittyUITests: XCTestCase {
         // SCENE 4: Image Search
         // ============================================================
         clearSearch()
-        typeSlowly(queries["fast"] ?? "fast")
-        Thread.sleep(forTimeInterval: 3.0)
+        Thread.sleep(forTimeInterval: 0.5)
+        let sceneFilterButton = app.buttons["FilterDropdown"]
+        sceneFilterButton.click()
+        Thread.sleep(forTimeInterval: 0.5)
+        let sceneImagesOption = app.buttons["Filter_images"]
+        sceneImagesOption.click()
+        Thread.sleep(forTimeInterval: 2.0)
 
         // ============================================================
         // OUTRO
