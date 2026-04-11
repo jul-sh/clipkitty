@@ -3,12 +3,12 @@
 //! Run: cargo run --bin generate-bindings
 //!
 //! ┌─────────────────────────────────────────────────────────────────────────────┐
-//! │ DEPENDENCY MAP - Output paths must match the Bazel + Makefile bridge        │
+//! │ DEPENDENCY MAP - Output paths must match Project.swift expectations         │
 //! │                                                                             │
 //! │ Inputs:                                                                     │
 //! │   target/release/libpurr.dylib       ← Built library for bindgen            │
 //! │                                                                             │
-//! │ Outputs (paths consumed by the Apple Bazel targets):                        │
+//! │ Outputs (paths match Project.swift):                                        │
 //! │   Sources/ClipKittyRust/purrFFI.h             ← C header                    │
 //! │   Sources/ClipKittyRust/module.modulemap      ← Clang module map            │
 //! │   Sources/ClipKittyRust/libpurr.a             ← macOS universal static lib  │

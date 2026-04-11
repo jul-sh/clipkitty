@@ -1,13 +1,13 @@
 #!/bin/bash
 # Records a video of ClipKitty via a UI test.
-# Uses Bazel-backed XCTest UI test screen recording (xcresult bundle) instead of
+# Uses Xcode's built-in UI test screen recording (xcresult bundle) instead of
 # screencapture, so no TCC Screen Recording permission is needed.
 # ffmpeg is provided via the Nix dev shell (flake.nix).
 #
 # Usage:
 #   ./record-preview-video.sh --db SyntheticData_video.sqlite --output intro_video.mov --duration 50
 
-set -euo pipefail
+set -e
 
 # ── Argument parsing ─────────────────────────────────────────────────────────
 TEST_NAME="testRecordIntroVideo"
@@ -29,7 +29,7 @@ SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 PROJECT_ROOT="$(dirname "$SCRIPT_DIR")"
 OUTPUT_DIR="$PROJECT_ROOT/marketing"
 FINAL_VIDEO="$OUTPUT_DIR/$OUTPUT_NAME"
-RESULT_BUNDLE="$PROJECT_ROOT/bazel-testlogs/ClipKittyUITests/test.outputs/tests.xcresult"
+RESULT_BUNDLE="/tmp/clipkitty_video_result.xcresult"
 ATTACHMENTS_DIR="/tmp/xcresult-attachments"
 
 # Create output directory
@@ -73,7 +73,8 @@ if pgrep -x "ClipKitty" > /dev/null; then
 fi
 
 
-# Clean up stale exported attachments
+# Clean up stale state
+rm -rf "$RESULT_BUNDLE"
 rm -rf "$ATTACHMENTS_DIR"
 
 # Write DB selection file if a custom DB was specified
@@ -83,28 +84,40 @@ else
     rm -f /tmp/clipkitty_screenshot_db.txt
 fi
 
-echo "Running UI test (video will be captured in Bazel xcresult bundle)..."
-# Run the test in foreground. The custom Bazel macOS UI test runner writes the
-# XCTest result bundle into bazel-testlogs, so no separate screencapture
-# process is needed.
+echo "Running UI test (video will be captured in xcresult bundle)..."
+# Clean stale codesign temp files that cause "invalid or unsupported format for signature"
+# errors. These .cstemp files are left behind when a previous codesign is interrupted, and
+# xcodebuild's parallel CopySwiftLibs + CodeSign can race to produce them.
+# Nuke the entire UITests runner to force a fresh copy of system frameworks.
+rm -rf "$PROJECT_ROOT/DerivedData/Build/Products/Debug/ClipKittyUITests-Runner.app" 2>/dev/null || true
+find "$PROJECT_ROOT/DerivedData" -name "*.cstemp" -delete 2>/dev/null || true
+
+# Run the test in foreground — Xcode automatically records the screen into the
+# xcresult bundle, so no separate screencapture process is needed.
 cd "$PROJECT_ROOT"
 set +e
-make uitest \
-    TEST="ClipKittyUITests/$TEST_NAME" \
-    BAZEL_ARGS="--test_output=streamed" \
-    2>&1 | grep -E "(Test Case|passed|failed|Testing failed|TEST EXECUTE FAILED)"
-TEST_EXIT=$?
+xcodebuild test \
+    -workspace ClipKitty.xcworkspace \
+    -scheme ClipKittyUITests \
+    -testPlan ClipKittyVideoRecording \
+    -destination 'platform=macOS' \
+    -derivedDataPath DerivedData \
+    -resultBundlePath "$RESULT_BUNDLE" \
+    ${SKIP_SIGNING:+CODE_SIGNING_ALLOWED=NO} \
+    -only-testing:ClipKittyUITests/ClipKittyUITests/$TEST_NAME \
+    2>&1 | grep -E "(Test Case|passed|failed)"
+XCODEBUILD_EXIT=$?
 set -e
 
 # Clean up DB selection file
 rm -f /tmp/clipkitty_screenshot_db.txt
 
-echo "Test complete (exit code: $TEST_EXIT). Extracting video from xcresult bundle..."
+echo "Test complete (exit code: $XCODEBUILD_EXIT). Extracting video from xcresult bundle..."
 
 # ── Extract screen recording from xcresult bundle ───────────────────────────
 if [ ! -d "$RESULT_BUNDLE" ]; then
     echo "Error: xcresult bundle not found at $RESULT_BUNDLE"
-    exit "$TEST_EXIT"
+    exit 1
 fi
 
 mkdir -p "$ATTACHMENTS_DIR"

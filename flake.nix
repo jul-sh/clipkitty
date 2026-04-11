@@ -47,13 +47,13 @@
         '';
       in
       {
-        packages.bazelisk = pkgs.bazelisk;
+        packages.tuist = pkgs.tuist;
         packages.asc = asc;
 
         devShells.default = pkgs.mkShell {
           buildInputs = [
             rustToolchain
-            pkgs.bazelisk
+            pkgs.tuist
             pkgs.swiftlint
             pkgs.swiftformat
             pkgs.ffmpeg
