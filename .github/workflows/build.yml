@@ -399,11 +399,12 @@ jobs:
             > "$APP/Contents/embedded.provisionprofile"
 
           # Sign nested frameworks/bundles first (inside-out for Sparkle, XPC services, etc.)
-          # Ensure all binaries have executable permissions (Bazel zip extraction may strip them)
+          # Find all Mach-O binaries regardless of permissions (Bazel zip extraction may strip +x)
           if [ -d "$APP/Contents/Frameworks" ]; then
-            find "$APP/Contents/Frameworks" -type f \( -name "*.dylib" -o -path "*/MacOS/*" \) -exec chmod +x {} \;
-            find "$APP/Contents/Frameworks" -type f \( -perm +111 -o -name "*.dylib" \) | while read -r binary; do
-              codesign --force --options runtime --timestamp --sign "Developer ID Application" "$binary"
+            find "$APP/Contents/Frameworks" -type f | while read -r candidate; do
+              if file "$candidate" | grep -q "Mach-O"; then
+                codesign --force --options runtime --timestamp --sign "Developer ID Application" "$candidate"
+              fi
             done
           fi
 
