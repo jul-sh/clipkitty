@@ -113,10 +113,10 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate {
                 case .downloading: AppSettings.shared.updateCheckState = .downloading
                 case .installing: AppSettings.shared.updateCheckState = .installing
                 case .available: AppSettings.shared.updateCheckState = .available
-                case .checkFailed(let msg): AppSettings.shared.updateCheckState = .checkFailed(errorMessage: msg)
+                case let .checkFailed(msg): AppSettings.shared.updateCheckState = .checkFailed(errorMessage: msg)
                 }
 
-                if prevState == .checking && state != .checking {
+                if prevState == .checking, state != .checking {
                     AppSettings.shared.lastUpdateCheckDate = Date()
                     AppSettings.shared.lastUpdateCheckResult = AppSettings.shared.updateCheckState
                 }
@@ -220,7 +220,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate {
     }
 
     private func makeStatusItemImage() -> NSImage? {
-        guard let url = Bundle.module.url(forResource: "menu-bar", withExtension: "svg"),
+        guard let url = Bundle.main.url(forResource: "menu-bar", withExtension: "svg"),
               let image = NSImage(contentsOf: url)
         else {
             return nil

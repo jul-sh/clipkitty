@@ -45,6 +45,7 @@ jobs:
     runs-on: macos-26
     outputs:
       version: ${{ steps.resolve-version.outputs.version }}
+      build_number: ${{ steps.resolve-version.outputs.build_number }}
 
     steps:
       - name: Checkout
@@ -69,8 +70,8 @@ jobs:
           # Install tools from flake-locked nixpkgs (pinned via flake.lock)
           nix profile install --no-update-lock-file --inputs-from . nixpkgs#age
           nix profile install --no-update-lock-file --inputs-from . nixpkgs#cmark-gfm
-          nix profile install --no-update-lock-file .#tuist
-          tuist version
+          nix profile install --no-update-lock-file .#bazelisk
+          bazelisk version
 
       - name: Decrypt secrets
         id: secrets
@@ -96,14 +97,12 @@ jobs:
         if: github.ref == 'refs/heads/main' || github.ref == 'refs/heads/release' || (github.event_name == 'pull_request' && (github.base_ref == 'main' || github.base_ref == 'release'))
         run: |
           TARGET_BRANCH="${GITHUB_BASE_REF:-${GITHUB_REF#refs/heads/}}"
-          BASE_VERSION=$(grep '"MARKETING_VERSION":' Project.swift | head -1 | sed 's/.*: *"\(.*\)".*/\1/')
-          echo "Base version from Project.swift: $BASE_VERSION"
-
-          # Extract major.minor from Project.swift, use commit count as patch
-          IFS='.' read -r major minor _patch <<< "$BASE_VERSION"
-          COMMIT_COUNT=$(git rev-list --count HEAD)
-          VERSION="${major}.${minor}.${COMMIT_COUNT}"
-          echo "Using commit count for patch: $VERSION"
+          VERSION=$(./Scripts/resolve-release-version.sh version)
+          BUILD_NUMBER=$(./Scripts/resolve-release-version.sh build-number)
+          EMBED_LABEL=$(./Scripts/resolve-release-version.sh embed-label)
+          echo "Resolved version: $VERSION"
+          echo "Resolved build number: $BUILD_NUMBER"
+          echo "Resolved embed label: $EMBED_LABEL"
 
           if [ "$TARGET_BRANCH" = "main" ]; then
             CHANNEL="beta"
@@ -119,7 +118,11 @@ jobs:
           fi
 
           echo "VERSION=$VERSION" >> "$GITHUB_ENV"
+          echo "BUILD_NUMBER=$BUILD_NUMBER" >> "$GITHUB_ENV"
+          echo "EMBED_LABEL=$EMBED_LABEL" >> "$GITHUB_ENV"
           echo "version=$VERSION" >> "$GITHUB_OUTPUT"
+          echo "build_number=$BUILD_NUMBER" >> "$GITHUB_OUTPUT"
+          echo "embed_label=$EMBED_LABEL" >> "$GITHUB_OUTPUT"
           echo "channel=$CHANNEL" >> "$GITHUB_OUTPUT"
           echo "release_tag=$RELEASE_TAG" >> "$GITHUB_OUTPUT"
           echo "release_title=$RELEASE_TITLE" >> "$GITHUB_OUTPUT"
@@ -155,9 +158,6 @@ jobs:
       - name: Build Rust Core
         run: make rust UNIVERSAL=1 LOCKED=1
 
-      - name: Generate Xcode Project
-        run: make generate
-
       - name: Verify lockfiles unchanged
         run: ./Scripts/check-lockfile-drift.sh
 
@@ -173,28 +173,28 @@ jobs:
           AGE_SECRET_KEY: ${{ secrets.AGE_SECRET_KEY }}
 
       - name: Build App (SparkleRelease)
-        run: make build CONFIGURATION=SparkleRelease UNIVERSAL=1 SKIP_SIGNING=1 LOCKED=1
+        run: make build CONFIGURATION=SparkleRelease VERSION="$VERSION" BUILD_NUMBER="$BUILD_NUMBER" UNIVERSAL=1 SKIP_SIGNING=1 LOCKED=1
         env:
           AGE_SECRET_KEY: ${{ secrets.AGE_SECRET_KEY }}
 
       - name: Build App (AppStore)
-        run: make build CONFIGURATION=AppStore UNIVERSAL=1 SKIP_SIGNING=1 LOCKED=1
+        run: make build CONFIGURATION=AppStore VERSION="$VERSION" BUILD_NUMBER="$BUILD_NUMBER" UNIVERSAL=1 SKIP_SIGNING=1 LOCKED=1
         env:
           AGE_SECRET_KEY: ${{ secrets.AGE_SECRET_KEY }}
 
       - name: Build App (Hardened)
-        run: make build CONFIGURATION=Hardened UNIVERSAL=1 SKIP_SIGNING=1 LOCKED=1
+        run: make build CONFIGURATION=Hardened VERSION="$VERSION" BUILD_NUMBER="$BUILD_NUMBER" UNIVERSAL=1 SKIP_SIGNING=1
         env:
           AGE_SECRET_KEY: ${{ secrets.AGE_SECRET_KEY }}
 
       - name: Create AppStore Archive
         run: |
-          cd DerivedData/Build/Products/AppStore
+          cd Build/Products/AppStore
           zip -r "$GITHUB_WORKSPACE/ClipKitty-AppStore.zip" ClipKitty.app
 
       - name: Sign Hardened App
         run: |
-          APP="DerivedData/Build/Products/Hardened/ClipKitty.app"
+          APP="Build/Products/Hardened/ClipKitty.app"
 
           # Sign the app with hardened entitlements
           codesign --force --options runtime --timestamp --sign "Developer ID Application" \
@@ -204,7 +204,7 @@ jobs:
 
       - name: Verify Hardened Entitlements
         run: |
-          APP="DerivedData/Build/Products/Hardened/ClipKitty.app"
+          APP="Build/Products/Hardened/ClipKitty.app"
           echo "=== Hardened entitlements (from signed app) ==="
           codesign -d --entitlements - "$APP" 2>&1
           # Extract entitlements XML and verify contents
@@ -230,7 +230,7 @@ jobs:
 
       - name: Verify Hardened Binary Linkage
         run: |
-          BINARY="DerivedData/Build/Products/Hardened/ClipKitty.app/Contents/MacOS/ClipKitty"
+          BINARY="Build/Products/Hardened/ClipKitty.app/Contents/MacOS/ClipKitty"
           echo "=== Hardened binary linkage ==="
           otool -L "$BINARY"
           # Verify no Sparkle framework references
@@ -242,12 +242,12 @@ jobs:
 
       - name: Create Hardened Archive
         run: |
-          cd DerivedData/Build/Products/Hardened
+          cd Build/Products/Hardened
           zip -r "$GITHUB_WORKSPACE/ClipKitty-Hardened.zip" ClipKitty.app
 
       - name: Verify Hardened Feature Surface
         run: |
-          APP="DerivedData/Build/Products/Hardened/ClipKitty.app"
+          APP="Build/Products/Hardened/ClipKitty.app"
           BINARY="$APP/Contents/MacOS/ClipKitty"
           echo "=== Hardened feature surface assertions ==="
 
@@ -320,89 +320,35 @@ jobs:
           echo "Hardened feature surface verified."
 
       - name: Build iOS Smoke Test
-        run: |
-          xcodebuild build \
-            -target ClipKittyiOSSmokeTest \
-            -sdk iphoneos \
-            CODE_SIGNING_ALLOWED=NO \
-            ONLY_ACTIVE_ARCH=YES
-
-      - name: Build iOS App (AppStore)
-        run: |
-          BASE_VERSION=$(grep '"MARKETING_VERSION":' Project.swift | head -1 | sed 's/.*: *"\(.*\)".*/\1/')
-          IFS='.' read -r major minor _patch <<< "$BASE_VERSION"
-          COMMIT_COUNT=$(git rev-list --count HEAD)
-          VERSION="${major}.${minor}.${COMMIT_COUNT}"
-          xcodebuild build \
-            -workspace ClipKitty.xcworkspace \
-            -scheme ClipKittyiOS-AppStore \
-            -derivedDataPath DerivedData \
-            -destination "generic/platform=iOS" \
-            -allowProvisioningUpdates \
-            -authenticationKeyPath ${{ steps.xcode-auth.outputs.key_path }} \
-            -authenticationKeyID ${{ steps.xcode-auth.outputs.key_id }} \
-            -authenticationKeyIssuerID ${{ steps.xcode-auth.outputs.issuer_id }} \
-            MARKETING_VERSION="$VERSION" \
-            CURRENT_PROJECT_VERSION="$COMMIT_COUNT" \
-            CODE_SIGNING_ALLOWED=NO
+        run: make ios-smoke-build VERSION="$VERSION" BUILD_NUMBER="$BUILD_NUMBER" LOCKED=1
 
       - name: Generate iOS Marketing Screenshots
         run: |
-          for locale in en es zh-Hans zh-Hant ja ko fr de pt-BR ru; do
-            echo "Capturing iOS screenshots for $locale..."
-            mkdir -p marketing-ios/$locale
-            echo "$locale" > /tmp/clipkitty_ios_screenshot_locale.txt
-            echo "SyntheticData.sqlite" > /tmp/clipkitty_ios_screenshot_db.txt
-            xcodebuild test \
-              -workspace ClipKitty.xcworkspace \
-              -scheme ClipKittyiOSUITests \
-              -destination "platform=iOS Simulator,name=iPhone 17 Pro Max" \
-              -derivedDataPath DerivedData \
-              CODE_SIGNING_ALLOWED=NO \
-              -only-testing:ClipKittyiOSUITests/ClipKittyiOSScreenshotTests/testTakeMarketingScreenshots \
-              2>&1 | tee /tmp/clipkitty_ios_screenshot_test.log | grep -E "(Test Case|passed|failed)" || true
-            if grep -q "Test.*passed" /tmp/clipkitty_ios_screenshot_test.log; then
-              echo "  Test passed for $locale"
-            else
-              echo "::warning::iOS screenshot test did not pass for $locale"
-              tail -30 /tmp/clipkitty_ios_screenshot_test.log
-            fi
-            if [ "$locale" = "en" ]; then
-              cp /tmp/clipkitty_ios_marketing_1_history.png marketing-ios/$locale/screenshot_1.png 2>/dev/null || true
-              cp /tmp/clipkitty_ios_marketing_2_search.png marketing-ios/$locale/screenshot_2.png 2>/dev/null || true
-              cp /tmp/clipkitty_ios_marketing_3_filter.png marketing-ios/$locale/screenshot_3.png 2>/dev/null || true
-            else
-              cp /tmp/clipkitty_ios_${locale}_marketing_1_history.png marketing-ios/$locale/screenshot_1.png 2>/dev/null || true
-              cp /tmp/clipkitty_ios_${locale}_marketing_2_search.png marketing-ios/$locale/screenshot_2.png 2>/dev/null || true
-              cp /tmp/clipkitty_ios_${locale}_marketing_3_filter.png marketing-ios/$locale/screenshot_3.png 2>/dev/null || true
-            fi
-          done
-          rm -f /tmp/clipkitty_ios_screenshot_locale.txt /tmp/clipkitty_ios_screenshot_db.txt
+          make -C distribution ios-marketing-screenshots-localized VERSION="$VERSION" BUILD_NUMBER="$BUILD_NUMBER" LOCKED=1
           echo "Generated iOS screenshots:"
           ls -lh marketing-ios/*/screenshot_*.png 2>/dev/null || echo "::warning::No iOS screenshots were generated"
+
+      - name: Enable Developer Mode
+        run: sudo DevToolsSecurity -enable
 
       - name: Run UI Tests
         env:
           LOCKED: "1"
         run: |
           set +e
-          xcodebuild test \
-            -workspace ClipKitty.xcworkspace \
-            -scheme ClipKittyUITests \
-            -destination "platform=macOS" \
-            -derivedDataPath DerivedData \
-            CODE_SIGNING_ALLOWED=NO \
-            -skip-testing:ClipKittyUITests/ClipKittyUITests/testRecordIntroVideo \
-            -skip-testing:ClipKittyUITests/ClipKittyUITests/testTakeMarketingScreenshots \
-            -resultBundlePath TestResults.xcresult \
-            2>&1 | tee xcodebuild-test.log
+          make uitest \
+            VERSION="$VERSION" \
+            BUILD_NUMBER="$BUILD_NUMBER" \
+            TEST='-ClipKittyUITests/testRecordIntroVideo,-ClipKittyUITests/testTakeMarketingScreenshots' \
+            BAZEL_ARGS=--test_output=errors \
+            2>&1 | tee bazel-uitest.log
           TEST_EXIT=$?
           echo "::group::Test Summary"
-          grep -E "(Test Case|Test Suite|passed|failed|error:|Failing tests:)" xcodebuild-test.log || true
+          grep -E "(Test Case|Test Suite|passed|failed|error:|Failing tests:)" bazel-uitest.log || true
           echo "::endgroup::"
-          if [ -d TestResults.xcresult ]; then
+          if [ -d bazel-testlogs/ClipKittyUITests/test.outputs/tests.xcresult ]; then
             echo "::group::xcresulttool Summary"
-            xcrun xcresulttool get test-results summary --path TestResults.xcresult 2>/dev/null || true
+            xcrun xcresulttool get test-results summary --path bazel-testlogs/ClipKittyUITests/test.outputs/tests.xcresult 2>/dev/null || true
             echo "::endgroup::"
           fi
           exit $TEST_EXIT
@@ -413,8 +359,9 @@ jobs:
         with:
           name: TestResults
           path: |
-            TestResults.xcresult
-            xcodebuild-test.log
+            bazel-testlogs/ClipKittyUITests/test.outputs/tests.xcresult
+            bazel-testlogs/ClipKittyUITests/test.log
+            bazel-uitest.log
           if-no-files-found: ignore
 
 
@@ -444,7 +391,7 @@ jobs:
         run: |
           chmod +x distribution/build-dmg.sh
 
-          APP="DerivedData/Build/Products/SparkleRelease/ClipKitty.app"
+          APP="Build/Products/SparkleRelease/ClipKitty.app"
 
           # Embed Developer ID provisioning profile (required for CloudKit entitlements)
           ./distribution/read-secret.sh DEVELOPER_ID_PROVISION_PROFILE_BASE64 \
@@ -452,9 +399,12 @@ jobs:
             > "$APP/Contents/embedded.provisionprofile"
 
           # Sign nested frameworks/bundles first (inside-out for Sparkle, XPC services, etc.)
+          # Find all Mach-O binaries regardless of permissions (Bazel zip extraction may strip +x)
           if [ -d "$APP/Contents/Frameworks" ]; then
-            find "$APP/Contents/Frameworks" \( -type f -perm +111 -o -name "*.dylib" \) | while read -r binary; do
-              codesign --force --options runtime --timestamp --sign "Developer ID Application" "$binary"
+            find "$APP/Contents/Frameworks" -type f | while read -r candidate; do
+              if file "$candidate" | grep -q "Mach-O"; then
+                codesign --force --options runtime --timestamp --sign "Developer ID Application" "$candidate"
+              fi
             done
           fi
 
@@ -539,7 +489,7 @@ jobs:
         with:
           subject-path: |
             ClipKitty.dmg
-            DerivedData/Build/Products/SparkleRelease/ClipKitty.app/Contents/MacOS/ClipKitty
+            Build/Products/SparkleRelease/ClipKitty.app/Contents/MacOS/ClipKitty
             ClipKitty-Hardened.zip
 
       - name: Create Channel Release
@@ -722,8 +672,8 @@ jobs:
         run: |
           nix profile install --no-update-lock-file --inputs-from . nixpkgs#age
           nix profile install --no-update-lock-file --inputs-from . nixpkgs#ffmpeg
-          nix profile install --no-update-lock-file .#tuist
-          tuist version
+          nix profile install --no-update-lock-file .#bazelisk
+          bazelisk version
 
       - name: Decrypt secrets
         run: |
@@ -750,9 +700,6 @@ jobs:
 
       - name: Build Rust Core
         run: make rust UNIVERSAL=1 LOCKED=1
-
-      - name: Generate Xcode Project
-        run: make generate
 
       - name: Verify lockfiles unchanged
         run: ./Scripts/check-lockfile-drift.sh
@@ -819,9 +766,9 @@ jobs:
       - name: Install CI tools from Nix
         run: |
           nix profile install --no-update-lock-file --inputs-from . nixpkgs#age
-          nix profile install --no-update-lock-file .#tuist
+          nix profile install --no-update-lock-file .#bazelisk
           nix profile install --no-update-lock-file .#asc
-          tuist version
+          bazelisk version
 
       - name: Decrypt secrets
         id: secrets
@@ -901,13 +848,9 @@ jobs:
 
       - name: Build and Publish to App Store Connect
         run: |
-          BASE_VERSION=$(grep '"MARKETING_VERSION":' Project.swift | head -1 | sed 's/.*: *"\(.*\)".*/\1/')
-          IFS='.' read -r major minor _patch <<< "$BASE_VERSION"
-          COMMIT_COUNT=$(git rev-list --count HEAD)
-          VERSION="${major}.${minor}.${COMMIT_COUNT}"
           make -C distribution appstore-publish \
-            VERSION="${VERSION}" \
-            BUILD_NUMBER="${COMMIT_COUNT}" \
+            VERSION="${{ needs.build.outputs.version }}" \
+            BUILD_NUMBER="${{ needs.build.outputs.build_number }}" \
             UNIVERSAL=1 \
             SKIP_SIGNING=1 \
             LOCKED=1
@@ -922,7 +865,7 @@ jobs:
         with:
           subject-path: |
             ClipKitty.pkg
-            DerivedData/Build/Products/AppStore/ClipKitty.app/Contents/MacOS/ClipKitty
+            Build/Products/AppStore/ClipKitty.app/Contents/MacOS/ClipKitty
 
       - name: Cleanup
         if: always()
@@ -949,9 +892,9 @@ jobs:
       - name: Install CI tools from Nix
         run: |
           nix profile install --no-update-lock-file --inputs-from . nixpkgs#age
-          nix profile install --no-update-lock-file .#tuist
+          nix profile install --no-update-lock-file .#bazelisk
           nix profile install --no-update-lock-file .#asc
-          tuist version
+          bazelisk version
 
       - name: Decrypt secrets
         id: secrets
@@ -1022,21 +965,14 @@ jobs:
       - name: Build Rust Core
         run: make rust LOCKED=1
 
-      - name: Generate Xcode Project
-        run: make generate
-
       - name: Verify lockfiles unchanged
         run: ./Scripts/check-lockfile-drift.sh
 
       - name: Build and Publish iOS to App Store Connect
         run: |
-          BASE_VERSION=$(grep '"MARKETING_VERSION":' Project.swift | head -1 | sed 's/.*: *"\(.*\)".*/\1/')
-          IFS='.' read -r major minor _patch <<< "$BASE_VERSION"
-          COMMIT_COUNT=$(git rev-list --count HEAD)
-          VERSION="${major}.${minor}.${COMMIT_COUNT}"
           make -C distribution ios-appstore-publish \
-            VERSION="${VERSION}" \
-            BUILD_NUMBER="${COMMIT_COUNT}" \
+            VERSION="${{ needs.build.outputs.version }}" \
+            BUILD_NUMBER="${{ needs.build.outputs.build_number }}" \
             LOCKED=1
         env:
           AGE_SECRET_KEY: ${{ secrets.AGE_SECRET_KEY }}

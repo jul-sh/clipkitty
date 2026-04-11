@@ -88,7 +88,7 @@ cd clipkitty
 make
 ```
 
-Build a specific variant by setting `CONFIGURATION`. If you want the hardened one, you are building a different binary with different capabilities, not the same app with a few checkboxes unchecked.
+Build a specific variant by setting `CONFIGURATION`. Bazel is the authoritative Apple build graph; `make` is just the thin convenience wrapper that materializes Bazel outputs into [Build/Products](/Users/julsh/git/clipkitty/Build/Products). If you want the hardened one, you are building a different binary with different capabilities, not the same app with a few checkboxes unchecked.
 
 ```bash
 make all CONFIGURATION=SparkleRelease  # With auto-update support
@@ -96,7 +96,7 @@ make all CONFIGURATION=Hardened        # Hardened (no network/files/sync)
 make -C distribution hardened          # Hardened signed DMG
 ```
 
-Requires macOS 15+ and Swift 6.2+.
+Requires macOS 15+, Xcode 26.4+, and either `bazelisk` on `PATH` or the pinned Nix shell (`nix develop`).
 
 ### How Search Works
 
