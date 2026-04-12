@@ -165,12 +165,26 @@ def main():
             if args.dry_run:
                 print(f"[dry-run] Would upload: {pkg_path}")
             else:
-                run([
+                # altool exits 0 on validation/network failures but prints
+                # "Failed to upload package." — capture and inspect output.
+                r = run([
                     "xcrun", "altool", "--upload-package", pkg_path,
                     "--type", platform_config["altool_type"],
                     "--apiKey", asc_key_id,
                     "--apiIssuer", asc_issuer_id,
-                ])
+                ], check=False, capture=True)
+                print(r.stdout, end="")
+                if r.stderr:
+                    print(r.stderr, end="", file=sys.stderr)
+                combined = (r.stdout or "") + (r.stderr or "")
+                succeeded = "UPLOAD SUCCEEDED" in combined
+                failed = (
+                    r.returncode != 0
+                    or "Failed to upload package." in combined
+                    or " ERROR: " in combined
+                )
+                if failed or not succeeded:
+                    sys.exit(f"Binary upload failed (altool exit {r.returncode}).")
                 print("Binary uploaded.")
 
         # --- Upload metadata ---
