@@ -353,7 +353,11 @@ jobs:
             echo "Capturing iOS screenshots for $locale..."
             mkdir -p marketing-ios/$locale
             echo "$locale" > /tmp/clipkitty_ios_screenshot_locale.txt
-            echo "SyntheticData.sqlite" > /tmp/clipkitty_ios_screenshot_db.txt
+            if [ "$locale" = "en" ]; then
+              echo "SyntheticData.sqlite" > /tmp/clipkitty_ios_screenshot_db.txt
+            else
+              echo "SyntheticData_${locale}.sqlite" > /tmp/clipkitty_ios_screenshot_db.txt
+            fi
             if [ "$locale" = "en" ]; then
               prefix=""
             else

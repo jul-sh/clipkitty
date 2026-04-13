@@ -46,7 +46,11 @@ final class ClipKittyiOSScreenshotTests: XCTestCase {
         let feedScreenshot = app.screenshot()
         saveScreenshot(feedScreenshot, index: 1, name: "history")
 
-        // Screenshot 2: Fuzzy search in action (typo-tolerant: "dockr"→docker, "prodction"→production)
+        // Screenshot 2: Fuzzy search in action. "dockr push" has a
+        // deliberate typo ("dockr"→docker) to showcase the typo-tolerant
+        // fuzzy matcher. Both "docker" and "push" appear verbatim in every
+        // locale's synthetic DB (technical tokens in untranslated shell
+        // commands), so the same query works across all locales.
         let searchButton = app.buttons["bottomBar.searchButton"]
         XCTAssertTrue(searchButton.waitForExistence(timeout: 5),
                       "bottomBar.searchButton not found for locale \(locale!)")
@@ -59,7 +63,7 @@ final class ClipKittyiOSScreenshotTests: XCTestCase {
         let searchField = app.textFields["bottomBar.searchField"]
         XCTAssertTrue(searchField.waitForExistence(timeout: 3),
                       "bottomBar.searchField not found for locale \(locale!)")
-        searchField.typeText("dockr push prodction")
+        searchField.typeText("dockr push")
         sleep(2)
 
         let searchScreenshot = app.screenshot()
@@ -127,6 +131,17 @@ final class ClipKittyiOSScreenshotTests: XCTestCase {
         // Also remove WAL/SHM companions
         try? FileManager.default.removeItem(atPath: targetPath + "-wal")
         try? FileManager.default.removeItem(atPath: targetPath + "-shm")
+        // Blow away any Tantivy index dirs next to the target — otherwise
+        // a prior locale's index persists across runs and we end up
+        // searching stale content (the bootstrap check returns Ready
+        // when the index is populated, even if its docs don't match the
+        // sqlite file we just copied in).
+        let tmpDir = URL(fileURLWithPath: "/tmp")
+        if let contents = try? FileManager.default.contentsOfDirectory(atPath: tmpDir.path) {
+            for name in contents where name.hasPrefix("tantivy_index_") {
+                try? FileManager.default.removeItem(atPath: tmpDir.appendingPathComponent(name).path)
+            }
+        }
         try FileManager.default.copyItem(atPath: sqliteSourceURL.path, toPath: targetPath)
 
         let copiedSize = (try? FileManager.default.attributesOfItem(atPath: targetPath)[.size] as? Int) ?? 0
