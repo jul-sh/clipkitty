@@ -33,6 +33,7 @@ fi
 # file-by-file rather than replacing the whole tree.
 overlay_files=(
   Sources/ClipKittyRust/purrFFI.h
+  Sources/ClipKittyRust/module.modulemap
   Sources/ClipKittyRust/libpurr.a
   Sources/ClipKittyRust/ios-device/libpurr.a
   Sources/ClipKittyRust/ios-simulator/libpurr.a
