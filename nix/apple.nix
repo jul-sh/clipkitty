@@ -626,6 +626,18 @@ let
     productName = "ClipKitty";
   };
 
+  # Debug variant used by `nix run .#run` for iterative dev. Matches the
+  # old `make run` which forced CONFIGURATION=Debug.
+  clipkitty-debug = buildXcodeVariant {
+    pname = "clipkitty-debug";
+    scheme = "ClipKitty";
+    configuration = "Debug";
+    sdk = "macosx";
+    destination = "generic/platform=macOS";
+    productName = "ClipKitty";
+    productPath = "Debug/ClipKitty.app";
+  };
+
   clipkitty-hardened = buildXcodeVariant {
     pname = "clipkitty-hardened";
     scheme = "ClipKitty-Hardened";
@@ -644,6 +656,19 @@ let
     destination = "generic/platform=macOS";
     productName = "ClipKitty";
     productPath = "SparkleRelease/ClipKitty.app";
+  };
+
+  # App Store variant. Builds unsigned — the downstream signing step in
+  # distribution/ re-signs with the 3rd Party Mac Developer identities
+  # against a keychain that only exists in CI or a prepared dev box.
+  clipkitty-appstore = buildXcodeVariant {
+    pname = "clipkitty-appstore";
+    scheme = "ClipKitty";
+    configuration = "AppStore";
+    sdk = "macosx";
+    destination = "generic/platform=macOS";
+    productName = "ClipKitty";
+    productPath = "AppStore/ClipKitty.app";
   };
 
   clipkitty-ios-sim = buildXcodeVariant {
@@ -682,12 +707,13 @@ let
       clipkitty
       clipkitty-hardened
       clipkitty-sparkle
+      clipkitty-appstore
     ];
   };
 in
 {
   inherit stagedSource generatedSource;
-  inherit clipkitty clipkitty-hardened clipkitty-sparkle clipkitty-ios-sim;
+  inherit clipkitty clipkitty-debug clipkitty-hardened clipkitty-sparkle clipkitty-appstore clipkitty-ios-sim;
   inherit clipkittyIosSmokeTest;
   inherit all;
 }

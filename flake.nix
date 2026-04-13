@@ -72,8 +72,10 @@
         # `packages` attribute and the `packages.all` aggregate stay in sync.
         appleNames = [
           "clipkitty"
+          "clipkitty-debug"
           "clipkitty-hardened"
           "clipkitty-sparkle"
+          "clipkitty-appstore"
           "clipkitty-ios-sim"
         ];
 
@@ -100,6 +102,30 @@
           clipkitty-staged = applePackages.stagedSource;
           clipkitty-generated = applePackages.generatedSource;
         };
+
+        # `nix run .#run` — build a Debug variant, copy it out of the
+        # read-only nix store into DerivedData/ so Cocoa's mutable
+        # bundle bits have somewhere to live, kill any running instance,
+        # then open it. This replaces the old `make run` target which
+        # ran the Rust/generate/xcodebuild pipeline directly.
+        runApp = pkgs.writeShellApplication {
+          name = "clipkitty-run";
+          runtimeInputs = [ ];
+          text = ''
+            set -euo pipefail
+            REPO_ROOT=''${CLIPKITTY_REPO_ROOT:-$PWD}
+            cd "$REPO_ROOT"
+            nix build .#clipkitty-debug --out-link result-Debug
+            DEST="$REPO_ROOT/DerivedData/Build/Products/Debug"
+            mkdir -p "$DEST"
+            rm -rf "$DEST/ClipKitty.app"
+            cp -R "$REPO_ROOT/result-Debug/ClipKitty.app" "$DEST/ClipKitty.app"
+            chmod -R u+w "$DEST/ClipKitty.app"
+            pkill -x ClipKitty 2>/dev/null || true
+            sleep 0.5
+            /usr/bin/open "$DEST/ClipKitty.app"
+          '';
+        };
       in
       {
         # Public packages. The Darwin-only Apple targets live alongside the
@@ -120,6 +146,14 @@
               all = applePackages.all;
             }
           );
+
+        apps = lib.optionalAttrs isDarwin {
+          run = {
+            type = "app";
+            program = "${runApp}/bin/clipkitty-run";
+            meta.description = "Build and open ClipKitty.app (Debug)";
+          };
+        };
 
         checks =
           lib.optionalAttrs isDarwin {
