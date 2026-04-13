@@ -23,4 +23,28 @@ if [ -d result-generated/Tuist/.build ]; then
   cp -R result-generated/Tuist/.build Tuist/.build
 fi
 
+# Materialise the Rust Xcode overlay files that `purrXcodeOverlay`
+# produces inside the derivation: purrFFI.h, the swift wrapper,
+# libpurr.a, and the ios-device/ios-simulator staging trees. Xcode
+# references these by on-disk path, so they must exist in the checkout
+# for bare-xcodebuild steps (iOS AppStore build, UI tests, screenshot
+# tests) to resolve them. The repo also tracks some hand-written files
+# (ClipKittyRustFFI.c, ClipKittyRust.swift) in the same dirs, so overlay
+# file-by-file rather than replacing the whole tree.
+overlay_files=(
+  Sources/ClipKittyRust/purrFFI.h
+  Sources/ClipKittyRust/libpurr.a
+  Sources/ClipKittyRust/ios-device/libpurr.a
+  Sources/ClipKittyRust/ios-simulator/libpurr.a
+  Sources/ClipKittyRustWrapper/purr.swift
+)
+for rel in "${overlay_files[@]}"; do
+  src="result-generated/$rel"
+  if [ -f "$src" ]; then
+    mkdir -p "$(dirname "$rel")"
+    cp "$src" "$rel"
+    chmod u+w "$rel"
+  fi
+done
+
 chmod -R u+w "$APP_NAME.xcworkspace" "$APP_NAME.xcodeproj" Tuist/.build 2>/dev/null || true
