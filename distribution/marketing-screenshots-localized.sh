@@ -1,11 +1,18 @@
 #!/usr/bin/env bash
 #
 # Capture localized App Store marketing screenshots via the ClipKittyUITests
-# testTakeMarketingScreenshots UI test. Assumes:
-#   * ClipKitty.xcworkspace is already materialised (run Scripts/nix-generate.sh).
-#   * The AppStore variant is already staged under
-#     DerivedData/Build/Products/AppStore/ClipKitty.app
-#     (run Scripts/nix-build-app.sh AppStore first).
+# testTakeMarketingScreenshots UI test. Assumes ClipKitty.xcworkspace is
+# already materialised (run Scripts/nix-generate.sh).
+#
+# Uses the Debug config (same as Run UI Tests) so the test host app is
+# built once and reused across locales. Screenshots are about rendered UI
+# content, not the distribution variant — AppStore config would force a
+# universal rebuild that conflicts with the staged nix-built .app under
+# DerivedData/Build/Products/AppStore/.
+#
+# The test runs in its own DerivedData dir (DerivedData-marketing) so it
+# cannot disturb the staged AppStore .app that downstream upload steps
+# depend on.
 #
 # For each locale, this script:
 #   1. Writes /tmp/clipkitty_screenshot_locale.txt so the UI test can pick
@@ -25,30 +32,13 @@ set -euo pipefail
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 PROJECT_ROOT="$(cd "$SCRIPT_DIR/.." && pwd)"
 APP_NAME="ClipKitty"
-DERIVED_DATA="$PROJECT_ROOT/DerivedData"
-APP_PATH="$DERIVED_DATA/Build/Products/AppStore/$APP_NAME.app"
+MARKETING_DERIVED_DATA="$PROJECT_ROOT/DerivedData-marketing"
 
 SCREENSHOT_LOCALES=(en es zh-Hans zh-Hant ja ko fr de pt-BR ru)
 
 cd "$PROJECT_ROOT"
 
 "$SCRIPT_DIR/patch-demo-items.sh"
-
-# Re-sign the staged AppStore bundle with the local Developer ID identity so
-# xcodebuild test can launch it. The nix build leaves it unsigned because
-# macOS keychains aren't reachable from the Nix sandbox.
-SIGNING_IDENTITY="${SIGNING_IDENTITY:-}"
-if [ -z "$SIGNING_IDENTITY" ]; then
-  if security find-identity -v -p codesigning 2>/dev/null | grep -q "Developer ID Application"; then
-    SIGNING_IDENTITY="Developer ID Application"
-  else
-    SIGNING_IDENTITY="-"
-  fi
-fi
-codesign --force --options runtime \
-  --sign "$SIGNING_IDENTITY" \
-  --entitlements "$PROJECT_ROOT/Sources/MacApp/ClipKitty.appstore.entitlements" \
-  "$APP_PATH"
 
 rm -f /tmp/clipkitty_screenshot_locale.txt /tmp/clipkitty_screenshot_db.txt
 
@@ -73,9 +63,8 @@ for locale in "${SCREENSHOT_LOCALES[@]}"; do
   "$SCRIPT_DIR/prepare-screenshot-environment.sh" \
     "cd $PROJECT_ROOT && xcodebuild test \
       -scheme ClipKittyUITests \
-      -configuration AppStore \
       -destination \"platform=macOS\" \
-      -derivedDataPath DerivedData \
+      -derivedDataPath $MARKETING_DERIVED_DATA \
       $SKIP_SIGNING_FLAG \
       -only-testing:ClipKittyUITests/ClipKittyUITests/testTakeMarketingScreenshots \
       > $log_file 2>&1"
