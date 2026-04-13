@@ -509,7 +509,7 @@ let
     , scheme
     , configuration
     , sdk
-    , destination
+    , destination ? null
     , productName
     , productPath ? "${configuration}/${productName}.app"
     }:
@@ -565,6 +565,17 @@ let
 
         export HOME=$TMPDIR/xcode-home
         mkdir -p "$HOME"
+
+        # CoreSimulator reads `$HOME/Library/Developer/CoreSimulator/Devices`
+        # to enumerate installed simulators. If the directory doesn't exist
+        # (which is the case for our sandbox HOME), CoreSimulator aborts
+        # with "Cannot allocate memory" and xcodebuild reports "Found no
+        # destinations for the scheme" even for `-sdk iphonesimulator`
+        # builds that don't need a runtime. Seeding an empty directory
+        # makes CoreSimulator happy and xcodebuild fall through to SDK-only
+        # compilation.
+        mkdir -p "$HOME/Library/Developer/CoreSimulator/Devices"
+
         export CLIPKITTY_SKIP_RUST_PREBUILD=1
 
         DERIVED=$TMPDIR/derived
@@ -575,7 +586,7 @@ let
           -scheme ${lib.escapeShellArg scheme} \
           -configuration ${lib.escapeShellArg configuration} \
           -sdk ${lib.escapeShellArg sdk} \
-          -destination ${lib.escapeShellArg destination} \
+          ${lib.optionalString (destination != null) "-destination ${lib.escapeShellArg destination}"} \
           -derivedDataPath "$DERIVED" \
           CODE_SIGNING_ALLOWED=NO \
           CODE_SIGN_IDENTITY="" \
@@ -655,14 +666,22 @@ let
     productPath = "Debug-iphonesimulator/ClipKittyiOSSmokeTest.app";
   };
 
-  # Convenience aggregate: `nix build .#all` builds every app variant.
+  # Convenience aggregate: `nix build .#all` builds every macOS app
+  # variant.
+  #
+  # iOS simulator variants are intentionally NOT in `all` even though
+  # they're exposed as individual packages. Building them requires the
+  # host Xcode's "iOS 26.x" platform bundle to be downloaded via Xcode
+  # > Settings > Components — that's a separate ~10GB asset from the
+  # iOS Simulator SDK, and a clean Xcode install doesn't have it by
+  # default. We don't want `nix build .#all` to hard-fail on a host
+  # gap that the flake can't fix, so iOS targets stay opt-in.
   all = pkgs.symlinkJoin {
     name = "clipkitty-all";
     paths = [
       clipkitty
       clipkitty-hardened
       clipkitty-sparkle
-      clipkitty-ios-sim
     ];
   };
 in
