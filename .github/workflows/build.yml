@@ -348,11 +348,20 @@ jobs:
 
       - name: Generate iOS Marketing Screenshots
         run: |
+          set -euo pipefail
           for locale in en es zh-Hans zh-Hant ja ko fr de pt-BR ru; do
             echo "Capturing iOS screenshots for $locale..."
             mkdir -p marketing-ios/$locale
             echo "$locale" > /tmp/clipkitty_ios_screenshot_locale.txt
             echo "SyntheticData.sqlite" > /tmp/clipkitty_ios_screenshot_db.txt
+            if [ "$locale" = "en" ]; then
+              prefix=""
+            else
+              prefix="${locale}_"
+            fi
+            for n in 1 2 3; do
+              rm -f "/tmp/clipkitty_ios_${prefix}marketing_${n}_"*.png
+            done
             xcodebuild test \
               -workspace ClipKitty.xcworkspace \
               -scheme ClipKittyiOSUITests \
@@ -361,21 +370,14 @@ jobs:
               CODE_SIGNING_ALLOWED=NO \
               -only-testing:ClipKittyiOSUITests/ClipKittyiOSScreenshotTests/testTakeMarketingScreenshots \
               2>&1 | tee /tmp/clipkitty_ios_screenshot_test.log | grep -E "(Test Case|passed|failed)" || true
-            if grep -q "Test.*passed" /tmp/clipkitty_ios_screenshot_test.log; then
-              echo "  Test passed for $locale"
-            else
-              echo "::warning::iOS screenshot test did not pass for $locale"
-              tail -30 /tmp/clipkitty_ios_screenshot_test.log
+            if ! grep -q "Test.*passed" /tmp/clipkitty_ios_screenshot_test.log; then
+              echo "::error::iOS screenshot test did not pass for $locale"
+              tail -60 /tmp/clipkitty_ios_screenshot_test.log
+              exit 1
             fi
-            if [ "$locale" = "en" ]; then
-              cp /tmp/clipkitty_ios_marketing_1_history.png marketing-ios/$locale/screenshot_1.png 2>/dev/null || true
-              cp /tmp/clipkitty_ios_marketing_2_search.png marketing-ios/$locale/screenshot_2.png 2>/dev/null || true
-              cp /tmp/clipkitty_ios_marketing_3_filter.png marketing-ios/$locale/screenshot_3.png 2>/dev/null || true
-            else
-              cp /tmp/clipkitty_ios_${locale}_marketing_1_history.png marketing-ios/$locale/screenshot_1.png 2>/dev/null || true
-              cp /tmp/clipkitty_ios_${locale}_marketing_2_search.png marketing-ios/$locale/screenshot_2.png 2>/dev/null || true
-              cp /tmp/clipkitty_ios_${locale}_marketing_3_filter.png marketing-ios/$locale/screenshot_3.png 2>/dev/null || true
-            fi
+            cp "/tmp/clipkitty_ios_${prefix}marketing_1_history.png" "marketing-ios/$locale/screenshot_1.png"
+            cp "/tmp/clipkitty_ios_${prefix}marketing_2_search.png" "marketing-ios/$locale/screenshot_2.png"
+            cp "/tmp/clipkitty_ios_${prefix}marketing_3_filter.png" "marketing-ios/$locale/screenshot_3.png"
           done
           rm -f /tmp/clipkitty_ios_screenshot_locale.txt /tmp/clipkitty_ios_screenshot_db.txt
           echo "Generated iOS screenshots:"
