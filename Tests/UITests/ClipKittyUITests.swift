@@ -899,28 +899,28 @@ final class ClipKittyUITests: XCTestCase {
         // SCENE 1: Welcome (search for it)
         // ============================================================
         typeSlowly(queries["welcome"] ?? "welcome clipkitty")
-        Thread.sleep(forTimeInterval: 2.5)
+        Thread.sleep(forTimeInterval: 0.625)
 
         // ============================================================
         // SCENE 2: Find it forever
         // ============================================================
         clearSearch()
         typeSlowly(queries["find_forever"] ?? "copy once find forever")
-        Thread.sleep(forTimeInterval: 1.5)
+        Thread.sleep(forTimeInterval: 0.375)
 
         // ============================================================
         // SCENE 3: Multi-line Preview
         // ============================================================
         clearSearch()
         typeSlowly(queries["multiline"] ?? "Multi-line preview")
-        Thread.sleep(forTimeInterval: 2.0)
+        Thread.sleep(forTimeInterval: 0.5)
 
         // ============================================================
         // SCENE 3.5: Bookmark
         // ============================================================
         clearSearch()
         typeSlowly(queries["secure_private"] ?? "secure private")
-        Thread.sleep(forTimeInterval: 0.8)
+        Thread.sleep(forTimeInterval: 0.2)
 
         // Open actions menu with Cmd+K (highlight starts at index 0 = Bookmark)
         searchField.typeKey("k", modifierFlags: .command)
@@ -935,7 +935,7 @@ final class ClipKittyUITests: XCTestCase {
         // ============================================================
         clearSearch()
         typeSlowly(queries["fast"] ?? "fast")
-        Thread.sleep(forTimeInterval: 2.0)
+        Thread.sleep(forTimeInterval: 0.5)
 
         // ============================================================
         // OUTRO
