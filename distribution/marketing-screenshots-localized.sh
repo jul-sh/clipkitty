@@ -68,6 +68,7 @@ for locale in "${SCREENSHOT_LOCALES[@]}"; do
     echo "SyntheticData_${locale}.sqlite" > /tmp/clipkitty_screenshot_db.txt
   fi
 
+  log_file="/tmp/clipkitty_marketing_xcodebuild_${locale}.log"
   "$SCRIPT_DIR/prepare-screenshot-environment.sh" \
     "cd $PROJECT_ROOT && xcodebuild test \
       -scheme ClipKittyUITests \
@@ -76,7 +77,17 @@ for locale in "${SCREENSHOT_LOCALES[@]}"; do
       -derivedDataPath DerivedData \
       $SKIP_SIGNING_FLAG \
       -only-testing:ClipKittyUITests/ClipKittyUITests/testTakeMarketingScreenshots \
-      2>&1 | grep -E '(Test Case|passed|failed)' || true"
+      > $log_file 2>&1; rc=\$?; grep -E '(Test Case|passed|failed)' $log_file || true; exit \$rc"
+  if [ "$locale" = "en" ]; then
+    expected_screenshot=/tmp/clipkitty_marketing_1_history.png
+  else
+    expected_screenshot="/tmp/clipkitty_${locale}_marketing_1_history.png"
+  fi
+  if [ ! -f "$expected_screenshot" ]; then
+    echo "::error::No screenshots produced for $locale. xcodebuild log tail:"
+    tail -200 "$log_file" || true
+    exit 1
+  fi
 
   if [ "$locale" = "en" ]; then
     cp /tmp/clipkitty_marketing_1_history.png "marketing/$locale/screenshot_1.png"
