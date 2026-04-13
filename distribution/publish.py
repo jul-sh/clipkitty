@@ -57,6 +57,14 @@ LOCALE_MAP = {
     "zh-Hans": "zh-Hans", "zh-Hant": "zh-Hant",
 }
 
+# Fastlane files that map to app-info (app-wide) fields rather than
+# version-level fields. `asc migrate import` targets whichever app-info
+# record asc's resolver picks, which isn't necessarily the editable one
+# (apps in PENDING_RELEASE have a locked app-info alongside the
+# READY_FOR_DISTRIBUTION editable one). We skip these files here and
+# leave app-info updates to a manual flow.
+APP_INFO_FILES = {"name.txt", "subtitle.txt", "privacy_url.txt"}
+
 
 def run(cmd, *, check=True, capture=False, env=None):
     merged = {**os.environ, **(env or {})}
@@ -88,6 +96,159 @@ def read_asc_auth(field):
 def resolve_app_id(platform_config, app_id_override):
     """Resolve the app ID: --app-id flag overrides platform config."""
     return app_id_override or platform_config["app_id"]
+
+
+def asc_json(cmd):
+    """Run an asc command that returns JSON; exit on failure."""
+    r = subprocess.run(cmd, capture_output=True, text=True)
+    if r.returncode != 0:
+        sys.exit(f"Error running {' '.join(cmd)}: {r.stderr.strip()}")
+    return json.loads(r.stdout)
+
+
+def unwrap_data(payload):
+    """Unwrap `{data: ...}` envelopes that asc uses for some commands."""
+    if isinstance(payload, dict) and "data" in payload:
+        return payload["data"]
+    return payload
+
+
+def resolve_target_version(app_id, asc_platform, requested_version):
+    """Return the version_id of the App Store draft to write metadata to.
+
+    ASC allows exactly one editable (PREPARE_FOR_SUBMISSION) draft per
+    platform, so "find or create" is a deterministic state machine:
+
+      1. If a draft exists, reuse it. Rename it to match `requested_version`
+         if it doesn't already; on rename failure fall through with the
+         existing version string (best-effort — uploading metadata to a
+         draft with a stale versionString is still better than skipping
+         metadata entirely).
+      2. If no draft exists, create one with `requested_version`. This
+         requires `requested_version` to be set.
+
+    Deletion of the existing draft is never attempted. It fails once a
+    build has been attached to the draft (which happens earlier in every
+    CI run, via `altool --upload-package`), and the subsequent `create`
+    would fail too because the old draft still exists — leaving the
+    publish flow with no version to write metadata to.
+    """
+    versions = unwrap_data(asc_json([
+        "asc", "versions", "list",
+        "--app", app_id, "--platform", asc_platform,
+        "--state", "PREPARE_FOR_SUBMISSION",
+    ]))
+
+    if versions:
+        version_id = versions[0]["id"]
+        existing_version = versions[0].get("attributes", {}).get("versionString", "")
+        if requested_version and existing_version != requested_version:
+            print(f"Retargeting PREPARE_FOR_SUBMISSION draft {existing_version} -> {requested_version} (ID: {version_id})...")
+            r = subprocess.run(
+                ["asc", "versions", "update",
+                 "--version-id", version_id, "--version", requested_version],
+                capture_output=True, text=True,
+            )
+            if r.returncode != 0:
+                print(f"Warning: Could not rename draft: {r.stderr.strip()}")
+                print(f"Proceeding with existing draft version {existing_version}.")
+        return version_id
+
+    if not requested_version:
+        sys.exit(
+            "Error: No App Store version in PREPARE_FOR_SUBMISSION state and "
+            "no --version passed. Pass --version to auto-create one, or "
+            "create a draft manually in App Store Connect."
+        )
+
+    print(f"Creating new App Store version {requested_version}...")
+    created = unwrap_data(asc_json([
+        "asc", "versions", "create",
+        "--app", app_id, "--platform", asc_platform,
+        "--version", requested_version, "--release-type", "MANUAL",
+    ]))
+    version_id = created["id"] if isinstance(created, dict) else created[0]["id"]
+    print(f"Created version {requested_version} (ID: {version_id})")
+    return version_id
+
+
+def build_import_dir(metadata_dir):
+    """Stage a fastlane-shaped import tree for `asc migrate import`.
+
+    - Copies `metadata_dir` into `<tmp>/metadata/`.
+    - Strips files mapped to app-info fields so the import targets only
+      version-level fields (see APP_INFO_FILES).
+    - Creates an empty `<tmp>/screenshots/` (asc requires it to exist).
+
+    Returns the temp dir path; caller is responsible for cleanup.
+    """
+    import_dir = tempfile.mkdtemp()
+    import_metadata = os.path.join(import_dir, "metadata")
+    shutil.copytree(metadata_dir, import_metadata)
+    os.makedirs(os.path.join(import_dir, "screenshots"), exist_ok=True)
+
+    stripped = 0
+    for root, _, files in os.walk(import_metadata):
+        for f in files:
+            if f in APP_INFO_FILES:
+                os.unlink(os.path.join(root, f))
+                stripped += 1
+    if stripped:
+        print(
+            f"Skipping {stripped} app-info file(s) "
+            f"({', '.join(sorted(APP_INFO_FILES))}); "
+            "these must be updated manually in App Store Connect."
+        )
+    return import_dir
+
+
+def strip_release_notes(import_metadata):
+    removed = 0
+    for root, _, files in os.walk(import_metadata):
+        for f in files:
+            if f == "release_notes.txt":
+                os.unlink(os.path.join(root, f))
+                removed += 1
+    return removed
+
+
+def upload_version_metadata(app_id, version_id, metadata_dir, dry_run):
+    """Import version-level metadata for `version_id` via `asc migrate import`.
+
+    Handles the first-submission case where `whatsNew` can't be edited by
+    retrying once without release_notes.txt. Every asc invocation here uses
+    `check=False` so we surface the real stderr on final failure instead of
+    crashing with a CalledProcessError traceback.
+    """
+    import_dir = build_import_dir(metadata_dir)
+    import_metadata = os.path.join(import_dir, "metadata")
+    try:
+        import_cmd = [
+            "asc", "migrate", "import",
+            "--app", app_id,
+            "--version-id", version_id,
+            "--fastlane-dir", import_dir,
+        ]
+
+        if dry_run:
+            print(f"\n[dry-run] Would import metadata to version {version_id}:")
+            print(f"  Metadata: {metadata_dir}")
+            run(import_cmd + ["--dry-run"], check=False)
+            return
+
+        r = run(import_cmd, check=False, capture=True)
+        if r.returncode != 0 and "whatsNew" in r.stderr and "cannot be edited" in r.stderr:
+            print("whatsNew rejected (first submission), retrying without release notes...")
+            removed = strip_release_notes(import_metadata)
+            print(f"  Removed {removed} release_notes.txt file(s) from import set.")
+            r = run(import_cmd, check=False, capture=True)
+
+        if r.returncode != 0:
+            sys.stderr.write(r.stderr)
+            sys.exit(f"Error: asc migrate import failed (exit {r.returncode}).")
+        print("Metadata uploaded.")
+    finally:
+        shutil.rmtree(import_dir, ignore_errors=True)
 
 
 def main():
@@ -137,7 +298,6 @@ def main():
 
     # asc CLI uses ASC_PRIVATE_KEY_PATH (supports arbitrary paths)
     asc_key_fd, asc_key_path = tempfile.mkstemp()
-    import_dir = None
     try:
         key_bytes = base64.b64decode(asc_private_key_b64)
         os.write(asc_key_fd, key_bytes)
@@ -191,95 +351,12 @@ def main():
 
         print("\n=== Uploading metadata ===")
 
-        # Find the editable App Store version
-        r = run(
-            ["asc", "versions", "list",
-             "--app", app_id, "--platform", platform_config["asc_platform"],
-             "--state", "PREPARE_FOR_SUBMISSION"],
-            capture=True, check=False,
+        version_id = resolve_target_version(
+            app_id, platform_config["asc_platform"], args.version,
         )
-        if r.returncode != 0:
-            sys.exit(f"Error listing versions: {r.stderr.strip()}")
-
-        data = json.loads(r.stdout)
-        versions = data.get("data", data) if isinstance(data, dict) else data
-        version_id = None
-
-        if versions:
-            version_id = versions[0]["id"]
-            existing_version = versions[0].get("attributes", {}).get("versionString", "")
-            if args.version and existing_version != args.version:
-                # Reuse the existing draft and retarget it at the requested version.
-                # Deleting would fail once a build has been attached (common on iOS,
-                # where altool uploads a build earlier in this same run), and losing
-                # metadata/screenshot upload over a cosmetic version-string mismatch
-                # is worse than a best-effort rename.
-                print(f"Retargeting PREPARE_FOR_SUBMISSION draft {existing_version} -> {args.version} (ID: {version_id})...")
-                r = run(
-                    ["asc", "versions", "update",
-                     "--version-id", version_id, "--version", args.version],
-                    check=False, capture=True,
-                )
-                if r.returncode != 0:
-                    print(f"Warning: Could not update draft version string: {r.stderr.strip()}")
-                    print(f"Proceeding with existing draft {existing_version}.")
-
-        if not version_id:
-            if args.version:
-                print(f"Creating new App Store version {args.version}...")
-                r = run(
-                    ["asc", "versions", "create",
-                     "--app", app_id, "--platform", platform_config["asc_platform"],
-                     "--version", args.version, "--release-type", "MANUAL"],
-                    capture=True, check=False,
-                )
-                if r.returncode == 0:
-                    create_data = json.loads(r.stdout)
-                    version_id = create_data.get("data", create_data).get("id") if isinstance(create_data, dict) else create_data.get("id")
-                    print(f"Created version {args.version} (ID: {version_id})")
-                else:
-                    print(f"Warning: Could not create version {args.version}: {r.stderr.strip()}")
-                    print("Skipping metadata and screenshot upload (binary was uploaded successfully).")
-                    return
-            else:
-                print("Warning: No App Store version in PREPARE_FOR_SUBMISSION state.")
-                print("Skipping metadata and screenshot upload (binary was uploaded successfully).")
-                print("Hint: Pass --version to auto-create a new version, or create one manually in App Store Connect.")
-                return
-
         print(f"Target version ID: {version_id}")
 
-        # Assemble fastlane-style import directory (metadata only, no screenshots).
-        # asc migrate import requires a screenshots/ dir to exist even if empty.
-        import_dir = tempfile.mkdtemp()
-        import_metadata = os.path.join(import_dir, "metadata")
-        shutil.copytree(metadata_dir, import_metadata)
-        os.makedirs(os.path.join(import_dir, "screenshots"), exist_ok=True)
-
-        import_cmd = [
-            "asc", "migrate", "import",
-            "--app", app_id,
-            "--version-id", version_id,
-            "--fastlane-dir", import_dir,
-        ]
-
-        if args.dry_run:
-            print(f"\n[dry-run] Would import metadata to version {version_id}:")
-            print(f"  Metadata: {metadata_dir}")
-            run(import_cmd + ["--dry-run"])
-        else:
-            r = run(import_cmd, check=False, capture=True)
-            if r.returncode != 0 and "whatsNew" in r.stderr and "cannot be edited" in r.stderr:
-                print("whatsNew rejected (first submission), retrying without release notes...")
-                for root, _, files in os.walk(import_metadata):
-                    for f in files:
-                        if f == "release_notes.txt":
-                            os.unlink(os.path.join(root, f))
-                run(import_cmd)
-            elif r.returncode != 0:
-                print(r.stderr, file=sys.stderr)
-                sys.exit(r.returncode)
-            print("Metadata uploaded.")
+        upload_version_metadata(app_id, version_id, metadata_dir, args.dry_run)
 
         # --- Upload screenshots ---
 
@@ -370,8 +447,6 @@ def main():
         os.unlink(asc_key_path)
         if not altool_key_existed and os.path.isfile(altool_key_path):
             os.unlink(altool_key_path)
-        if import_dir and os.path.isdir(import_dir):
-            shutil.rmtree(import_dir)
 
 
 if __name__ == "__main__":
