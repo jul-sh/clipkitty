@@ -78,17 +78,14 @@ jobs:
           p12-file-base64: ${{ steps.secrets.outputs.MACOS_P12_BASE64 }}
           p12-password: ${{ steps.secrets.outputs.MACOS_P12_PASSWORD }}
 
-      - name: Build Rust Core
-        run: make rust LOCKED=1
-
       - name: Generate Xcode Project
-        run: make generate
+        run: ./Scripts/nix-generate.sh
 
       - name: Verify lockfiles unchanged
         run: ./Scripts/check-lockfile-drift.sh
 
       - name: Build App (Release)
-        run: make build CONFIGURATION=Release UNIVERSAL=1 SKIP_SIGNING=1 LOCKED=1
+        run: ./Scripts/nix-build-app.sh Release
         env:
           AGE_SECRET_KEY: ${{ secrets.AGE_SECRET_KEY }}
 

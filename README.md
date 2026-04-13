@@ -85,18 +85,18 @@ Download `ClipKitty-Hardened.zip` from [GitHub Releases](https://github.com/jul-
 ```bash
 git clone https://github.com/jul-sh/clipkitty
 cd clipkitty
-make
+nix build .#clipkitty          # Release macOS bundle
 ```
 
-Build a specific variant by setting `CONFIGURATION`. If you want the hardened one, you are building a different binary with different capabilities, not the same app with a few checkboxes unchecked.
+The build graph lives entirely in `flake.nix` + `nix/*.nix`. Every variant is a nix package, including the debug app, the hardened variant, and the sparkle/appstore release candidates. If you want the hardened one, you are building a different binary with different capabilities, not the same app with a few checkboxes unchecked.
 
 ```bash
-make all CONFIGURATION=SparkleRelease  # With auto-update support
-make all CONFIGURATION=Hardened        # Hardened (no network/files/sync)
-make -C distribution hardened          # Hardened signed DMG
+nix build .#clipkitty-sparkle   # With auto-update support
+nix build .#clipkitty-hardened  # Hardened (no network/files/sync)
+nix run .#run                   # Launch a Debug build
 ```
 
-Requires macOS 15+ and Swift 6.2+.
+Requires macOS 15+, Nix with flakes enabled, and a host Xcode install for the sandbox escape into `xcrun`/`tuist`.
 
 ### How Search Works
 

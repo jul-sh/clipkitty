@@ -714,7 +714,7 @@ let project = Project(
 
         // MARK: ClipKittyUITests — UI tests
 
-        // Debug runs should sign locally so `make uitest` can execute without
+        // Debug runs should sign locally so local UI test runs can execute without
         // requiring a Developer ID identity. Non-debug builds can still opt into
         // Developer ID signing for stable TCC behavior across rebuilds.
         .target(

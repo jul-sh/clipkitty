@@ -152,11 +152,8 @@ jobs:
             ~/Library/Keychains/dev_signing.keychain-db \
             ~/Library/Keychains/login.keychain-db
 
-      - name: Build Rust Core
-        run: make rust UNIVERSAL=1 LOCKED=1
-
       - name: Generate Xcode Project
-        run: make generate
+        run: ./Scripts/nix-generate.sh
 
       - name: Verify lockfiles unchanged
         run: ./Scripts/check-lockfile-drift.sh
@@ -173,17 +170,17 @@ jobs:
           AGE_SECRET_KEY: ${{ secrets.AGE_SECRET_KEY }}
 
       - name: Build App (SparkleRelease)
-        run: make build CONFIGURATION=SparkleRelease UNIVERSAL=1 SKIP_SIGNING=1 LOCKED=1
+        run: ./Scripts/nix-build-app.sh SparkleRelease
         env:
           AGE_SECRET_KEY: ${{ secrets.AGE_SECRET_KEY }}
 
       - name: Build App (AppStore)
-        run: make build CONFIGURATION=AppStore UNIVERSAL=1 SKIP_SIGNING=1 LOCKED=1
+        run: ./Scripts/nix-build-app.sh AppStore
         env:
           AGE_SECRET_KEY: ${{ secrets.AGE_SECRET_KEY }}
 
       - name: Build App (Hardened)
-        run: make build CONFIGURATION=Hardened UNIVERSAL=1 SKIP_SIGNING=1 LOCKED=1
+        run: ./Scripts/nix-build-app.sh Hardened
         env:
           AGE_SECRET_KEY: ${{ secrets.AGE_SECRET_KEY }}
 
@@ -446,7 +443,7 @@ jobs:
 
       - name: Generate Marketing Screenshots
         run: |
-          make -C distribution marketing-screenshots-localized UNIVERSAL=1 SKIP_SIGNING=1 LOCKED=1
+          SKIP_SIGNING=1 LOCKED=1 ./distribution/marketing-screenshots-localized.sh
           ls -lh marketing/*/screenshot_*.png
         env:
           AGE_SECRET_KEY: ${{ secrets.AGE_SECRET_KEY }}
@@ -456,7 +453,7 @@ jobs:
         run: kill "$(cat /tmp/retina-display.pid 2>/dev/null)" 2>/dev/null || true
 
       - name: Generate Icon PNG
-        run: make -C distribution icon-png
+        run: ./distribution/icon-png.sh
 
       - name: Build and Sign DMG
         run: |
@@ -766,11 +763,8 @@ jobs:
         with:
           swift-version: "6.2"
 
-      - name: Build Rust Core
-        run: make rust UNIVERSAL=1 LOCKED=1
-
       - name: Generate Xcode Project
-        run: make generate
+        run: ./Scripts/nix-generate.sh
 
       - name: Verify lockfiles unchanged
         run: ./Scripts/check-lockfile-drift.sh
@@ -783,7 +777,7 @@ jobs:
           AGE_SECRET_KEY: ${{ secrets.AGE_SECRET_KEY }}
 
       - name: Build App
-        run: make build UNIVERSAL=1 SKIP_SIGNING=1 LOCKED=1
+        run: ./Scripts/nix-build-app.sh Release
         env:
           AGE_SECRET_KEY: ${{ secrets.AGE_SECRET_KEY }}
 
@@ -799,7 +793,7 @@ jobs:
           sleep 5
 
       - name: Generate Localized Intro Videos
-        run: make -C distribution intro-video-localized UNIVERSAL=1 SKIP_SIGNING=1 LOCKED=1
+        run: SKIP_SIGNING=1 LOCKED=1 ./distribution/intro-video-localized.sh
         env:
           AGE_SECRET_KEY: ${{ secrets.AGE_SECRET_KEY }}
 
@@ -923,18 +917,16 @@ jobs:
         env:
           AGE_SECRET_KEY: ${{ secrets.AGE_SECRET_KEY }}
 
+      - name: Generate Xcode Project
+        run: ./Scripts/nix-generate.sh
+
       - name: Build and Publish to App Store Connect
         run: |
           BASE_VERSION=$(grep '"MARKETING_VERSION":' Project.swift | head -1 | sed 's/.*: *"\(.*\)".*/\1/')
           IFS='.' read -r major minor _patch <<< "$BASE_VERSION"
           COMMIT_COUNT=$(git rev-list --count HEAD)
           VERSION="${major}.${minor}.${COMMIT_COUNT}"
-          make -C distribution appstore-publish \
-            VERSION="${VERSION}" \
-            BUILD_NUMBER="${COMMIT_COUNT}" \
-            UNIVERSAL=1 \
-            SKIP_SIGNING=1 \
-            LOCKED=1
+          ./distribution/appstore-publish.sh "$VERSION" "$COMMIT_COUNT"
         env:
           AGE_SECRET_KEY: ${{ secrets.AGE_SECRET_KEY }}
 
@@ -1051,11 +1043,8 @@ jobs:
         env:
           AGE_SECRET_KEY: ${{ secrets.AGE_SECRET_KEY }}
 
-      - name: Build Rust Core
-        run: make rust LOCKED=1
-
       - name: Generate Xcode Project
-        run: make generate
+        run: ./Scripts/nix-generate.sh
 
       - name: Verify lockfiles unchanged
         run: ./Scripts/check-lockfile-drift.sh
@@ -1066,10 +1055,7 @@ jobs:
           IFS='.' read -r major minor _patch <<< "$BASE_VERSION"
           COMMIT_COUNT=$(git rev-list --count HEAD)
           VERSION="${major}.${minor}.${COMMIT_COUNT}"
-          make -C distribution ios-appstore-publish \
-            VERSION="${VERSION}" \
-            BUILD_NUMBER="${COMMIT_COUNT}" \
-            LOCKED=1
+          ./distribution/ios-appstore-publish.sh "$VERSION" "$COMMIT_COUNT"
         env:
           AGE_SECRET_KEY: ${{ secrets.AGE_SECRET_KEY }}
 

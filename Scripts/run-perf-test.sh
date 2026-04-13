@@ -112,7 +112,8 @@ mkdir -p "$OUTPUT_DIR"
 if [ "$SKIP_BUILD" = false ]; then
     echo ">>> Building app (Release)..."
     cd "$PROJECT_ROOT"
-    make all CONFIGURATION=Release
+    "$PROJECT_ROOT/Scripts/nix-generate.sh"
+    "$PROJECT_ROOT/Scripts/nix-build-app.sh" Release
     echo "    Build complete."
 else
     echo ">>> Skipping build (--skip-build)"

@@ -321,7 +321,7 @@ def main():
         sys.exit("Error: asc CLI not found. Enter the Nix dev shell (nix develop) or run: nix profile install .#asc")
 
     if not args.metadata_only and not os.path.isfile(pkg_path):
-        sys.exit(f"Error: {pkg_path} not found. Run: make -C distribution appstore")
+        sys.exit(f"Error: {pkg_path} not found. Run: distribution/appstore-publish.sh &lt;VERSION&gt; &lt;BUILD_NUMBER&gt;")
 
     # --- Decrypt secrets ---
 
