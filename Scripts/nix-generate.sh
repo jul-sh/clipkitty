@@ -15,12 +15,19 @@ APP_NAME="ClipKitty"
 echo "Materialising generated Xcode project via nix..."
 nix build .#clipkitty-generated --out-link result-generated
 
-rm -rf "$APP_NAME.xcworkspace" "$APP_NAME.xcodeproj" Tuist/.build
+rm -rf "$APP_NAME.xcworkspace" "$APP_NAME.xcodeproj" Tuist/.build Derived
 cp -R "result-generated/$APP_NAME.xcworkspace" ./
 cp -R "result-generated/$APP_NAME.xcodeproj" ./
 if [ -d result-generated/Tuist/.build ]; then
   mkdir -p Tuist
   cp -R result-generated/Tuist/.build Tuist/.build
+fi
+
+# Tuist emits Info.plist files and Swift asset/bundle/font accessors into
+# Derived/ (InfoPlists/, Sources/). xcodebuild references these by path
+# from Project.swift, so they must be on disk for bare-xcodebuild steps.
+if [ -d result-generated/Derived ]; then
+  cp -R result-generated/Derived ./
 fi
 
 # Materialise the Rust Xcode overlay files that `purrXcodeOverlay`
@@ -48,4 +55,4 @@ for rel in "${overlay_files[@]}"; do
   fi
 done
 
-chmod -R u+w "$APP_NAME.xcworkspace" "$APP_NAME.xcodeproj" Tuist/.build 2>/dev/null || true
+chmod -R u+w "$APP_NAME.xcworkspace" "$APP_NAME.xcodeproj" Tuist/.build Derived 2>/dev/null || true
