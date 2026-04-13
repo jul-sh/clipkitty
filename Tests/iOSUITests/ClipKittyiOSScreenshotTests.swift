@@ -100,7 +100,7 @@ final class ClipKittyiOSScreenshotTests: XCTestCase {
         let sqliteSourceURL = projectRoot.appendingPathComponent("distribution/\(databaseFilename)")
 
         guard FileManager.default.fileExists(atPath: sqliteSourceURL.path) else {
-            XCTFail("\(databaseFilename) not found at: \(sqliteSourceURL.path). Run 'git lfs pull' and 'make -C distribution synthetic-data'.")
+            XCTFail("\(databaseFilename) not found at: \(sqliteSourceURL.path). Run 'git lfs pull' and ensure distribution/SyntheticData*.sqlite is checked out.")
             return ""
         }
 
