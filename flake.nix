@@ -135,6 +135,10 @@
         packages =
           {
             bazelisk = pkgs.bazelisk;
+            # Re-export tools CI workflows install with
+            # `nix profile install .#<name>` so they come from this
+            # flake's pinned nixpkgs.
+            tuist = pkgs.tuist;
           }
           // lib.optionalAttrs (asc != null) { inherit asc; }
           // lib.optionalAttrs isDarwin (
