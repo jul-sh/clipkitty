@@ -17,6 +17,10 @@ perf_traces/
 Derived/
 Tuist/.build/
 
+# Nix build symlinks (result, result-Release, result-Hardened, ...)
+/result
+/result-*
+
 # Node
 node_modules
 
