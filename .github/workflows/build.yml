@@ -379,7 +379,16 @@ jobs:
           done
           rm -f /tmp/clipkitty_ios_screenshot_locale.txt /tmp/clipkitty_ios_screenshot_db.txt
           echo "Generated iOS screenshots:"
-          ls -lh marketing-ios/*/screenshot_*.png 2>/dev/null || echo "::warning::No iOS screenshots were generated"
+          if ! ls -lh marketing-ios/*/screenshot_*.png 2>/dev/null; then
+            echo "::error::No iOS screenshots were generated"
+            exit 1
+          fi
+          for locale in en es zh-Hans zh-Hant ja ko fr de pt-BR ru; do
+            if [ ! -f "marketing-ios/$locale/screenshot_1.png" ]; then
+              echo "::error::Missing marketing-ios/$locale/screenshot_1.png"
+              exit 1
+            fi
+          done
 
       - name: Run UI Tests
         env:
@@ -1010,7 +1019,15 @@ jobs:
         with:
           name: ios-assets
           path: marketing-ios
-        continue-on-error: true
+
+      - name: Verify iOS screenshots present
+        run: |
+          for locale in en es zh-Hans zh-Hant ja ko fr de pt-BR ru; do
+            if [ ! -f "marketing-ios/$locale/screenshot_1.png" ]; then
+              echo "::error::Missing marketing-ios/$locale/screenshot_1.png — cannot publish to ASC"
+              exit 1
+            fi
+          done
 
       - name: Prepare API Key
         run: |

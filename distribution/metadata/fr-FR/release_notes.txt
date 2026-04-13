@@ -1,4 +1,1 @@
-NOUVEAU : Synchronisation iCloud; synchronisez optionnellement votre historique de presse-papiers sur tous vos appareils.
-
-- Activez iCloud Sync dans les réglages pour garder vos clips synchronisés entre appareils
-- Utilise votre conteneur iCloud privé sans serveurs tiers
+Corrections de bugs et améliorations des performances. Merci d'utiliser ClipKitty !

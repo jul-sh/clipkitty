@@ -320,6 +320,8 @@ def main():
                 if not pngs:
                     print(f"  Warning: no screenshots found in {src_dir}")
                     continue
+                if args.platform == "ios":
+                    pngs = pngs[:1]
 
                 for device_type in platform_config["screenshot_device_types"]:
                     # Delete existing screenshots before uploading new ones to avoid duplicates

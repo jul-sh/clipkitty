@@ -1,4 +1,1 @@
-NUEVO: Sincronización iCloud; sincroniza opcionalmente tu historial de portapapeles en todos tus dispositivos.
-
-- Activa iCloud Sync en los ajustes para mantener tus clips sincronizados entre dispositivos
-- Utiliza tu contenedor privado de iCloud sin servidores de terceros
+Correcciones de errores y mejoras de rendimiento. ¡Gracias por usar ClipKitty!

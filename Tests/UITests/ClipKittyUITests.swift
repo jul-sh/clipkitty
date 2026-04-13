@@ -886,10 +886,10 @@ final class ClipKittyUITests: XCTestCase {
             }
         }
 
-        /// Helper to clear search field
+        /// Helper to clear search field. No trailing delay — the next typed char
+        /// should hit the empty field immediately.
         func clearSearch() {
             searchField.typeKey(.delete, modifierFlags: .command)
-            Thread.sleep(forTimeInterval: 0.2)
         }
 
         // Load locale-specific search queries from JSON (written by rust-data-gen --video-only)
@@ -931,15 +931,10 @@ final class ClipKittyUITests: XCTestCase {
         Thread.sleep(forTimeInterval: 1.5)
 
         // ============================================================
-        // SCENE 4: Image Search
+        // SCENE 4: Image Search (search "fast" — localized — to find the cat image)
         // ============================================================
         clearSearch()
-        Thread.sleep(forTimeInterval: 0.5)
-        let sceneFilterButton = app.buttons["FilterDropdown"]
-        sceneFilterButton.click()
-        Thread.sleep(forTimeInterval: 0.5)
-        let sceneImagesOption = app.buttons["Filter_images"]
-        sceneImagesOption.click()
+        typeSlowly(queries["fast"] ?? "fast")
         Thread.sleep(forTimeInterval: 2.0)
 
         // ============================================================

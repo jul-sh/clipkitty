@@ -1,4 +1,1 @@
-NEU: iCloud-Synchronisierung; synchronisiere optional deine Zwischenablage-History über alle deine Geräte.
-
-- Aktiviere iCloud Sync in den Einstellungen, um deine Clips geräteübergreifend zu synchronisieren
-- Nutzt deinen privaten iCloud-Container ohne Drittanbieter-Server
+Fehlerbehebungen und Leistungsverbesserungen. Danke, dass du ClipKitty verwendest!
