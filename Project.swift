@@ -412,7 +412,17 @@ enum IOSBuildVariant: CaseIterable {
 
 /// Rust pre-build action shared across all macOS app schemes.
 /// Detects purr/ changes via git tree hash and rebuilds bindings when needed.
+///
+/// When CLIPKITTY_SKIP_RUST_PREBUILD=1 is set, the script is a no-op: this is
+/// the contract with the Nix flake, which supplies Rust bridge artifacts into
+/// the staged source tree before invoking xcodebuild and doesn't want
+/// Xcode to try to regenerate them.
 private let rustPreBuildScript = """
+if [ "${CLIPKITTY_SKIP_RUST_PREBUILD:-0}" = "1" ]; then
+    echo "CLIPKITTY_SKIP_RUST_PREBUILD=1 — Rust bridge already supplied, skipping."
+    exit 0
+fi
+
 # Use git tree hash to detect purr/ changes (fast, handles branches/rebases)
 cd "$PROJECT_DIR"
 MARKER=".make/rust-tree-hash"
