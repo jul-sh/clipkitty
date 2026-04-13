@@ -205,23 +205,24 @@ def main():
         versions = data.get("data", data) if isinstance(data, dict) else data
         version_id = None
 
-        if versions and args.version:
+        if versions:
+            version_id = versions[0]["id"]
             existing_version = versions[0].get("attributes", {}).get("versionString", "")
-            if existing_version == args.version:
-                version_id = versions[0]["id"]
-            else:
-                # Delete the stale draft so we can create a fresh one
-                stale_id = versions[0]["id"]
-                print(f"Deleting stale PREPARE_FOR_SUBMISSION version {existing_version} (ID: {stale_id})...")
+            if args.version and existing_version != args.version:
+                # Reuse the existing draft and retarget it at the requested version.
+                # Deleting would fail once a build has been attached (common on iOS,
+                # where altool uploads a build earlier in this same run), and losing
+                # metadata/screenshot upload over a cosmetic version-string mismatch
+                # is worse than a best-effort rename.
+                print(f"Retargeting PREPARE_FOR_SUBMISSION draft {existing_version} -> {args.version} (ID: {version_id})...")
                 r = run(
-                    ["asc", "versions", "delete",
-                     "--version-id", stale_id, "--confirm"],
+                    ["asc", "versions", "update",
+                     "--version-id", version_id, "--version", args.version],
                     check=False, capture=True,
                 )
                 if r.returncode != 0:
-                    print(f"Warning: Could not delete stale version: {r.stderr.strip()}")
-        elif versions:
-            version_id = versions[0]["id"]
+                    print(f"Warning: Could not update draft version string: {r.stderr.strip()}")
+                    print(f"Proceeding with existing draft {existing_version}.")
 
         if not version_id:
             if args.version:
