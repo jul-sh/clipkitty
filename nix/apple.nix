@@ -512,6 +512,11 @@ let
     , destination ? null
     , productName
     , productPath ? "${configuration}/${productName}.app"
+      # Distribution variants must ship universal (arm64 + x86_64) for
+      # macOS intel compatibility; Debug/simulator variants stay
+      # host-arch-only for build speed. Pass `universal = true` to
+      # force `ONLY_ACTIVE_ARCH=NO` and both slices in ARCHS.
+    , universal ? false
     }:
     stdenv.mkDerivation {
       inherit pname;
@@ -595,6 +600,7 @@ let
           ENABLE_USER_SCRIPT_SANDBOXING=NO \
           SWIFT_DISABLE_SANDBOX=YES \
           OTHER_SWIFT_FLAGS='$(inherited) -disable-sandbox' \
+          ${lib.optionalString universal "ONLY_ACTIVE_ARCH=NO ARCHS='arm64 x86_64'"} \
           build
 
         # Collect the built product from DerivedData. Xcode lays it out
@@ -624,6 +630,7 @@ let
     sdk = "macosx";
     destination = "generic/platform=macOS";
     productName = "ClipKitty";
+    universal = true;
   };
 
   # Debug variant used by `nix run .#run` for iterative dev. Matches the
@@ -646,6 +653,7 @@ let
     destination = "generic/platform=macOS";
     productName = "ClipKitty";
     productPath = "Hardened/ClipKitty.app";
+    universal = true;
   };
 
   clipkitty-sparkle = buildXcodeVariant {
@@ -656,6 +664,7 @@ let
     destination = "generic/platform=macOS";
     productName = "ClipKitty";
     productPath = "SparkleRelease/ClipKitty.app";
+    universal = true;
   };
 
   # App Store variant. Builds unsigned — the downstream signing step in
@@ -669,6 +678,7 @@ let
     destination = "generic/platform=macOS";
     productName = "ClipKitty";
     productPath = "AppStore/ClipKitty.app";
+    universal = true;
   };
 
   clipkitty-ios-sim = buildXcodeVariant {
