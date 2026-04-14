@@ -62,6 +62,7 @@ for locale in "${SCREENSHOT_LOCALES[@]}"; do
   set +e
   "$SCRIPT_DIR/prepare-screenshot-environment.sh" \
     "cd $PROJECT_ROOT && xcodebuild test \
+      -workspace $APP_NAME.xcworkspace \
       -scheme ClipKittyUITests \
       -destination \"platform=macOS\" \
       -derivedDataPath $MARKETING_DERIVED_DATA \
