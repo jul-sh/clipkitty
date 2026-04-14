@@ -346,6 +346,9 @@ jobs:
             CURRENT_PROJECT_VERSION="$COMMIT_COUNT" \
             CODE_SIGNING_ALLOWED=NO
 
+      - name: Generate Localized Demo Databases
+        run: LOCKED=1 ./distribution/patch-demo-items.sh
+
       - name: Generate iOS Marketing Screenshots
         run: |
           set -euo pipefail
