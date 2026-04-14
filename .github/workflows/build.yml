@@ -179,8 +179,8 @@ jobs:
         env:
           AGE_SECRET_KEY: ${{ secrets.AGE_SECRET_KEY }}
 
-      - name: Build App (Hardened)
-        run: ./Scripts/nix-build-app.sh Hardened
+      - name: Build and Sign App (Hardened)
+        run: ./Scripts/nix-sign-app.sh Hardened
         env:
           AGE_SECRET_KEY: ${{ secrets.AGE_SECRET_KEY }}
 
@@ -188,16 +188,6 @@ jobs:
         run: |
           cd DerivedData/Build/Products/AppStore
           zip -r "$GITHUB_WORKSPACE/ClipKitty-AppStore.zip" ClipKitty.app
-
-      - name: Sign Hardened App
-        run: |
-          APP="DerivedData/Build/Products/Hardened/ClipKitty.app"
-
-          # Sign the app with hardened entitlements
-          codesign --force --options runtime --timestamp --sign "Developer ID Application" \
-            --entitlements Sources/MacApp/ClipKitty.hardened.entitlements \
-            "$APP"
-          codesign --verify --deep --strict "$APP"
 
       - name: Verify Hardened Entitlements
         run: |

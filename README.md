@@ -61,6 +61,8 @@ Because auto-updates are gone, you can audit a specific version and stick to it.
 
 The hardened build uses a separate bundle ID (`com.eviljuliette.clipkitty.hardened`), which means macOS gives it its own sandbox container. Your clipboard history does not carry over between hardened and non-hardened installs, in either direction. This is intentional; the two builds are isolated from each other.
 
+For local source builds, `nix build .#clipkitty-hardened` gives you the hardened feature set as an unsigned pre-sign bundle. To apply the sandbox entitlements as a real signed app, run `./Scripts/nix-sign-app.sh Hardened` with a suitable Developer ID identity available in your keychain.
+
 Download `ClipKitty-Hardened.zip` from [GitHub Releases](https://github.com/jul-sh/clipkitty/releases).
 
 ## Getting Started
@@ -92,7 +94,8 @@ The build graph lives entirely in `flake.nix` + `nix/*.nix`. Every variant is a 
 
 ```bash
 nix build .#clipkitty-sparkle   # With auto-update support
-nix build .#clipkitty-hardened  # Hardened (no network/files/sync)
+nix build .#clipkitty-hardened  # Hardened feature set, unsigned pre-sign bundle
+./Scripts/nix-sign-app.sh Hardened  # Apply hardened entitlements with local signing
 nix run .#run                   # Launch a Debug build
 ```
 
