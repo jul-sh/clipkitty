@@ -47,11 +47,34 @@ final class AppContainer {
             return .failure(.databasePathFailed(error.localizedDescription))
         }
 
+        // Inspect the bootstrap plan first so we can rebuild the Tantivy
+        // index when it's missing or out-of-date relative to the sqlite
+        // file. This matches the macOS flow in Sources/MacApp/ClipboardStore.swift
+        // and is required for any scenario where the sqlite file is present
+        // but the sibling `tantivy_index_<version>/` directory isn't — e.g.
+        // a fresh install after an iCloud restore, or the UI screenshot
+        // test pointing at a synthetic DB copied to /tmp. Without this,
+        // searches silently return zero results.
+        let plan: StoreBootstrapPlan
+        do {
+            plan = try inspectStoreBootstrap(dbPath: dbPath)
+        } catch {
+            return .failure(.databaseOpenFailed(error.localizedDescription))
+        }
+
         let store: ClipKittyRust.ClipboardStore
         do {
             store = try ClipKittyRust.ClipboardStore(dbPath: dbPath)
         } catch {
             return .failure(.databaseOpenFailed(error.localizedDescription))
+        }
+
+        if plan == .rebuildIndex {
+            do {
+                try store.rebuildIndex()
+            } catch {
+                return .failure(.databaseOpenFailed("Index rebuild failed: \(error.localizedDescription)"))
+            }
         }
 
         let repository = ClipboardRepository(store: store)

@@ -37,50 +37,57 @@ final class ClipKittyiOSScreenshotTests: XCTestCase {
     }
 
     func testTakeMarketingScreenshots() {
+        // All UI lookups use stable accessibilityIdentifier values so this
+        // test works under every locale. If an element can't be found, fail
+        // loudly — silent fallthrough produces duplicate screenshots that
+        // ship to the App Store unnoticed.
+
         // Screenshot 1: History feed (default state)
         let feedScreenshot = app.screenshot()
         saveScreenshot(feedScreenshot, index: 1, name: "history")
 
-        // Screenshot 2: Fuzzy search in action (typo-tolerant: "dockr"→docker, "prodction"→production)
-        let searchButton = app.buttons["Search"]
-        if searchButton.waitForExistence(timeout: 5) {
-            searchButton.tap()
-            sleep(1)
+        // Screenshot 2: Fuzzy search in action. "dockr push" has a
+        // deliberate typo ("dockr"→docker) to showcase the typo-tolerant
+        // fuzzy matcher. Both "docker" and "push" appear verbatim in every
+        // locale's synthetic DB (technical tokens in untranslated shell
+        // commands), so the same query works across all locales.
+        let searchButton = app.buttons["bottomBar.searchButton"]
+        XCTAssertTrue(searchButton.waitForExistence(timeout: 5),
+                      "bottomBar.searchButton not found for locale \(locale!)")
+        searchButton.tap()
+        sleep(1)
 
-            // Dismiss the iOS keyboard "slide to type" tutorial if it appears
-            dismissKeyboardTutorial()
+        // Dismiss the iOS keyboard "slide to type" tutorial if it appears
+        dismissKeyboardTutorial()
 
-            let searchField = app.textFields["Search"]
-            if searchField.waitForExistence(timeout: 3) {
-                searchField.typeText("dockr push prodction")
-                sleep(2)
-            }
-        }
+        let searchField = app.textFields["bottomBar.searchField"]
+        XCTAssertTrue(searchField.waitForExistence(timeout: 3),
+                      "bottomBar.searchField not found for locale \(locale!)")
+        searchField.typeText("dockr push")
+        sleep(2)
 
         let searchScreenshot = app.screenshot()
         saveScreenshot(searchScreenshot, index: 2, name: "search")
 
         // Dismiss search
-        let closeButton = app.buttons["Close search"]
-        if closeButton.waitForExistence(timeout: 3) {
-            closeButton.tap()
-            sleep(1)
-        }
+        let closeButton = app.buttons["bottomBar.closeSearchButton"]
+        XCTAssertTrue(closeButton.waitForExistence(timeout: 3),
+                      "bottomBar.closeSearchButton not found for locale \(locale!)")
+        closeButton.tap()
+        sleep(1)
 
-        // Screenshot 3: Filtered view (e.g., by Images)
-        // Find and tap the filter pill to expand it
-        let filterPill = app.buttons.matching(NSPredicate(format: "label CONTAINS 'All' OR label CONTAINS 'chevron'")).firstMatch
-        if filterPill.waitForExistence(timeout: 5) {
-            filterPill.tap()
-            sleep(1)
+        // Screenshot 3: Filtered view (by Images)
+        let filterPill = app.buttons["bottomBar.filterPill"]
+        XCTAssertTrue(filterPill.waitForExistence(timeout: 5),
+                      "bottomBar.filterPill not found for locale \(locale!)")
+        filterPill.tap()
+        sleep(1)
 
-            // Tap "Images" filter if available
-            let imagesFilter = app.buttons["Images"]
-            if imagesFilter.waitForExistence(timeout: 3) {
-                imagesFilter.tap()
-                sleep(2)
-            }
-        }
+        let imagesFilter = app.buttons["bottomBar.filterOption.images"]
+        XCTAssertTrue(imagesFilter.waitForExistence(timeout: 3),
+                      "bottomBar.filterOption.images not found for locale \(locale!)")
+        imagesFilter.tap()
+        sleep(2)
 
         let filterScreenshot = app.screenshot()
         saveScreenshot(filterScreenshot, index: 3, name: "filter")
@@ -124,6 +131,17 @@ final class ClipKittyiOSScreenshotTests: XCTestCase {
         // Also remove WAL/SHM companions
         try? FileManager.default.removeItem(atPath: targetPath + "-wal")
         try? FileManager.default.removeItem(atPath: targetPath + "-shm")
+        // Blow away any Tantivy index dirs next to the target — otherwise
+        // a prior locale's index persists across runs and we end up
+        // searching stale content (the bootstrap check returns Ready
+        // when the index is populated, even if its docs don't match the
+        // sqlite file we just copied in).
+        let tmpDir = URL(fileURLWithPath: "/tmp")
+        if let contents = try? FileManager.default.contentsOfDirectory(atPath: tmpDir.path) {
+            for name in contents where name.hasPrefix("tantivy_index_") {
+                try? FileManager.default.removeItem(atPath: tmpDir.appendingPathComponent(name).path)
+            }
+        }
         try FileManager.default.copyItem(atPath: sqliteSourceURL.path, toPath: targetPath)
 
         let copiedSize = (try? FileManager.default.attributesOfItem(atPath: targetPath)[.size] as? Int) ?? 0

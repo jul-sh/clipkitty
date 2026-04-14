@@ -114,6 +114,7 @@ struct BottomControlBar: View {
         }
         .buttonStyle(.plain)
         .accessibilityLabel(String(localized: "Search"))
+        .accessibilityIdentifier("bottomBar.searchButton")
     }
 
     // MARK: - Search field (expanded)
@@ -124,6 +125,7 @@ struct BottomControlBar: View {
                 .foregroundStyle(.secondary)
             TextField(String(localized: "Search"), text: $searchText)
                 .focused($isSearchFocused)
+                .accessibilityIdentifier("bottomBar.searchField")
                 .textFieldStyle(.plain)
                 .autocorrectionDisabled()
                 .submitLabel(.search)
@@ -177,6 +179,7 @@ struct BottomControlBar: View {
                             isActive ? .regular.interactive() : .regular,
                             in: .capsule
                         )
+                        .accessibilityIdentifier("bottomBar.filterOption.\(option.identifier)")
                     }
                 }
                 .glassEffectID("filter", in: barNamespace)
@@ -203,6 +206,7 @@ struct BottomControlBar: View {
                 .buttonStyle(.plain)
                 .glassEffect(.regular.interactive(), in: .capsule)
                 .glassEffectID("filter", in: barNamespace)
+                .accessibilityIdentifier("bottomBar.filterPill")
             }
         }
     }
@@ -289,6 +293,7 @@ struct BottomControlBar: View {
         }
         .buttonStyle(.plain)
         .accessibilityLabel(String(localized: "Close search"))
+        .accessibilityIdentifier("bottomBar.closeSearchButton")
     }
 
     // MARK: - Filter state
@@ -455,6 +460,17 @@ private enum FilterOption: CaseIterable, Hashable {
         case .images: return String(localized: "Images")
         case .links: return String(localized: "Links")
         case .colors: return String(localized: "Colors")
+        }
+    }
+
+    var identifier: String {
+        switch self {
+        case .all: return "all"
+        case .bookmarks: return "bookmarks"
+        case .text: return "text"
+        case .images: return "images"
+        case .links: return "links"
+        case .colors: return "colors"
         }
     }
 
