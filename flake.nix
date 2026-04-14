@@ -17,9 +17,10 @@
 
         # ClipKitty's Apple app graph is macOS-only. Everything downstream of
         # flake.nix that touches Xcode, Tuist, or Apple SDKs is gated on
-        # Darwin; the flake still exposes Rust-only packages on other systems
-        # (for CI runners) and a cross-platform devShell.
+        # Darwin; other systems keep a portable Rust/test audit surface plus
+        # general CLI tooling, but not Apple build products.
         isDarwin = lib.hasSuffix "-darwin" system;
+        keytapPackage = keytap.packages.${system}.default or null;
 
         rustToolchain = pkgs.rust-bin.stable.latest.default.override {
           extensions = [ "rust-src" "rust-std" ];
@@ -128,13 +129,14 @@
         };
       in
       {
-        # Public packages. The Darwin-only Apple targets live alongside the
-        # Rust artifacts and legacy helpers so both `nix build .#clipkitty`
-        # and `nix build .#clipkitty-rust-bridge` work without sniffing
-        # around.
+        # Public packages. Darwin exposes the full Apple app graph; other
+        # systems keep only portable audit/build helpers.
         packages =
           {
             bazelisk = pkgs.bazelisk;
+            clipkitty-rust-tests = rustOutputs.rustTests;
+          }
+          // lib.optionalAttrs isDarwin {
             # Re-export tools CI workflows install with
             # `nix profile install .#<name>` so they come from this
             # flake's pinned nixpkgs.
@@ -160,23 +162,28 @@
         };
 
         checks =
-          lib.optionalAttrs isDarwin {
+          {
             rust-tests = rustOutputs.rustTests;
+          }
+          // lib.optionalAttrs isDarwin {
             clipkitty-ios-smoke-build = applePackages.clipkittyIosSmokeTest;
           };
 
         devShells.default = pkgs.mkShell {
           buildInputs = [
             rustToolchain
-            pkgs.tuist
-            pkgs.swiftlint
-            pkgs.swiftformat
             pkgs.ffmpeg
             pkgs.age
             pkgs.cmark-gfm
             pkgs.cargo-deny
-            keytap.packages.${system}.default
-          ] ++ lib.optional (asc != null) asc;
+          ]
+          ++ lib.optionals isDarwin [
+            pkgs.tuist
+            pkgs.swiftlint
+            pkgs.swiftformat
+          ]
+          ++ lib.optional (keytapPackage != null) keytapPackage
+          ++ lib.optional (asc != null) asc;
 
           shellHook = ''
             export IN_NIX_SHELL=1

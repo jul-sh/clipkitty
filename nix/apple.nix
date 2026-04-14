@@ -4,8 +4,8 @@
 #
 # Responsibilities:
 #
-#   * Fetch every Swift package pinned in the committed lockfiles from Nix
-#     (no network at build time; each package has an explicit sha256).
+#   * Fetch every Swift package pinned in nix/lib.nix from Nix (no network at
+#     build time; each package has an explicit sha256).
 #   * Stage a writable source tree that contains:
 #       - the source-filtered app checkout (clipkittyLib.appSource),
 #       - the Xcode overlay produced by nix/rust.nix,
@@ -42,53 +42,24 @@ let
   #
   # Each package we ship transitively through SwiftPM is fetched with
   # `fetchgit` at an explicit sha256. The sha256 is verified by Nix against
-  # the (deterministic) clone contents, so a bad lockfile / revision / url
-  # drift fails the build loudly instead of silently reshaping the graph.
+  # the (deterministic) clone contents, so a bad pin / revision / url drift
+  # fails the build loudly instead of silently reshaping the graph.
   #
   # New packages require a one-time hash; use
   #     nix-prefetch-git <url> <revision>
-  # to compute it and add the result below.
-
-  # Per-package metadata that can't be inferred purely from Package.resolved.
-  # `name` is the SwiftPM display name (case-sensitive, matches the
-  # Package.swift `Package(name:)`). `subpath` is the directory name SwiftPM
-  # uses under `.build/checkouts/` — it defaults to the repo basename
-  # (without `.git`), which we pin explicitly here so a URL reshuffle
-  # doesn't silently move files around.
-  swiftPackageMeta = {
-    "grdb.swift" = {
-      name = "GRDB.swift";
-      subpath = "GRDB.swift";
-      sha256 = "sha256-bqiHRby5+WHyPv45JENaveVzGRycSZiL2BEc6zCaO6g=";
-    };
-    "sparkle" = {
-      name = "Sparkle";
-      subpath = "Sparkle";
-      sha256 = "sha256-ltZehumY8/Y+HA3Abbuk6pH73OsVEtV9qEgokuiALzw=";
-    };
-    "sttextkitplus" = {
-      name = "STTextKitPlus";
-      subpath = "STTextKitPlus";
-      sha256 = "sha256-I/p9b/NMp87R2el3g2rtJxt4b54Rqx8aKAYLmP5ds7E=";
-    };
-  };
+  # to compute it and add the result to `swiftPackagePins` in nix/lib.nix.
 
   fetchSwiftPackage = identity:
     let
       pin = clipkittyLib.swiftPackagePin identity;
-      meta = swiftPackageMeta.${identity} or (throw ''
-        No swiftPackageMeta entry for '${identity}'. Compute its sha256 with
-          nix-prefetch-git ${pin.url} ${pin.rev}
-        and add an entry to swiftPackageMeta in nix/apple.nix.
-      '');
     in
     {
-      inherit (meta) name subpath;
+      inherit (pin) name subpath;
       inherit (pin) identity url rev version;
       path = pkgs.fetchgit {
         url = pin.url;
         rev = pin.rev;
-        sha256 = meta.sha256;
+        sha256 = pin.sha256;
         # SwiftPM checks out repos with their .git directory stripped;
         # match that so the store path stays deterministic.
         fetchSubmodules = false;
@@ -99,8 +70,8 @@ let
 
   # Identities that Tuist/Package.swift pulls transitively via SwiftPM. The
   # list is maintained by hand because SwiftPM's resolution graph is not
-  # something we want to re-derive from Nix — if a new transitive dep shows
-  # up in Tuist/Package.resolved, it must be enumerated here too.
+  # something we want to re-derive from Nix — if a new transitive dep is
+  # introduced in the manifests, it must be enumerated here too.
   tuistPackageIdentities = [
     "grdb.swift"
     "sttextkitplus"
@@ -114,12 +85,12 @@ let
 
   # --- Workspace-state.json generation ---------------------------------------
   #
-  # SwiftPM keeps its resolution state in `.build/workspace-state.json` as
-  # well as in `Package.resolved`. Tuist reuses that state as an
-  # optimisation: if the state on disk matches the lockfile, it skips
-  # re-resolving. We exploit that by writing a state file that tells SwiftPM
-  # "these exact revisions are already checked out locally, nothing to
-  # fetch."
+  # SwiftPM keeps its resolution state in `.build/workspace-state.json` and
+  # can also materialize `Package.resolved` on disk. Tuist reuses the
+  # workspace-state as an optimisation: if the state on disk matches the
+  # pre-staged checkouts, it skips re-resolving. We exploit that by writing a
+  # state file that tells SwiftPM "these exact revisions are already checked
+  # out locally, nothing to fetch."
   #
   # Schema version 7 matches Swift 5.10 / 6.x SwiftPM. Fields (including
   # `basedOn`, `artifacts`, `prebuilts`) must all be present even when

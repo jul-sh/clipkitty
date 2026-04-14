@@ -16,6 +16,7 @@ echo "Materialising generated Xcode project via nix..."
 nix build .#clipkitty-generated --out-link result-generated
 
 rm -rf "$APP_NAME.xcworkspace" "$APP_NAME.xcodeproj" Tuist/.build Derived
+rm -f Package.resolved Tuist/Package.resolved distribution/SparkleUpdater/Package.resolved
 cp -R "result-generated/$APP_NAME.xcworkspace" ./
 cp -R "result-generated/$APP_NAME.xcodeproj" ./
 if [ -d result-generated/Tuist/.build ]; then

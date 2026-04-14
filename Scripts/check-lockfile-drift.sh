@@ -1,22 +1,18 @@
 #!/usr/bin/env bash
-# Verify authoritative lockfiles are committed and unchanged.
-# Fails if any listed lockfile is missing from git, has staged/unstaged changes,
-# or exists as an untracked file (indicating it was regenerated).
+# Verify authoritative pinned-input files are committed and unchanged.
+# Also fail if SwiftPM resolution files appear on disk: Swift pins live in
+# nix/lib.nix and `Package.resolved` is treated as generated stray state.
 
 set -euo pipefail
 
-LOCKFILES=(
+PINNED_FILES=(
   Cargo.lock
   flake.lock
-  Tuist/Package.resolved
-  distribution/SparkleUpdater/Package.resolved
-  # Note: root Package.resolved is Xcode-generated stray state, not authoritative.
-  # The authoritative Swift lockfiles are Tuist/ and distribution/SparkleUpdater/.
 )
 
 ERRORS=0
 
-for f in "${LOCKFILES[@]}"; do
+for f in "${PINNED_FILES[@]}"; do
   # Check the file is tracked by git
   if ! git ls-files --error-unmatch "$f" >/dev/null 2>&1; then
     echo "NOT TRACKED: $f (must be committed)"
@@ -35,18 +31,25 @@ for f in "${LOCKFILES[@]}"; do
   fi
 done
 
-# Also check for untracked lockfiles that might shadow tracked ones
-for f in "${LOCKFILES[@]}"; do
-  if git ls-files --others --exclude-standard -- "$f" | grep -q .; then
-    echo "UNTRACKED COPY: $f (lockfile was regenerated outside git)"
+# Check for stray SwiftPM resolution files. They should never be tracked or
+# present in the worktree because the canonical pinset lives in nix/lib.nix.
+STRAY_SWIFT_RESOLVED=(
+  Package.resolved
+  Tuist/Package.resolved
+  distribution/SparkleUpdater/Package.resolved
+)
+
+for f in "${STRAY_SWIFT_RESOLVED[@]}"; do
+  if [ -e "$f" ]; then
+    echo "STRAY SWIFTPM STATE: $f (Swift pins belong in nix/lib.nix)"
     ERRORS=$((ERRORS + 1))
   fi
 done
 
 if [ "$ERRORS" -gt 0 ]; then
   echo ""
-  echo "Lockfile drift detected. CI lockfiles must remain committed and unchanged."
+  echo "Pinned-input drift detected."
   exit 1
 fi
 
-echo "All lockfiles committed and unchanged."
+echo "Pinned inputs are committed, unchanged, and free of stray SwiftPM lockfiles."

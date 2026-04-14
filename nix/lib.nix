@@ -8,10 +8,8 @@
 #     with all derived-state directories stripped out so a clean checkout and
 #     a dirty one hash the same way.
 #   * Define `rustSource` — the narrower source tree consumed by Rust builds.
-#   * Parse the two authoritative Swift lockfiles (`Tuist/Package.resolved`
-#     and `distribution/SparkleUpdater/Package.resolved`) and expose a single
-#     `swiftPackagePin identity` lookup so downstream Nix code never has to
-#     touch the raw JSON layout.
+#   * Define the canonical Swift package pinset used by Tuist / SwiftPM and
+#     expose a `swiftPackagePin identity` lookup for downstream derivations.
 #   * Provide the host-Xcode preflight shell snippet that every Apple-facing
 #     derivation must run first.
 #   * Provide a `stageAppTree` helper that materializes a writable copy of
@@ -33,6 +31,8 @@ let
   #   * Rust `target/` directories (both at the root and per-crate)
   #   * the `result` symlink from previous `nix build` invocations
   #   * editor / macOS metadata files
+  #   * generated SwiftPM resolution files (`Package.resolved`) — the
+  #     canonical Swift pinset lives below in `swiftPackagePins`
   #   * `distribution/` — explicitly out of scope for this workstream
   #   * everything under `Sources/ClipKittyRust*` that we know is regenerated
   #     by the Rust overlay, so cached outputs never sneak into the sandbox
@@ -61,6 +61,7 @@ let
     !(
       base == ".git"
       || base == ".DS_Store"
+      || base == "Package.resolved"
       || base == ".swiftpm"
       || base == ".make"
       || base == "DerivedData"
@@ -124,51 +125,56 @@ let
       (allowRoot || allowTree)
       && !(
         base == ".git"
+        || base == "Package.resolved"
         || base == "target"
         || base == ".DS_Store"
         || lib.hasPrefix "bazel-" base
       );
   };
 
-  # Parse a Package.resolved at `path` (relative to repo root) and expose a
-  # `byIdentity` attrset mapping package identity to its pin fields. Handles
-  # both version 2 (flat `pins`) and version 3 (wrapped `pins`) layouts, since
-  # `Tuist/Package.resolved` is v3 and `distribution/SparkleUpdater/Package.resolved`
-  # is v2.
-  readResolved = relPath:
-    let
-      raw = builtins.fromJSON (builtins.readFile (repoRoot + "/${relPath}"));
-      pins = raw.pins or [ ];
-    in
-    lib.listToAttrs (map
-      (p: {
-        name = p.identity;
-        value = {
-          identity = p.identity;
-          url = p.location;
-          rev = p.state.revision;
-          version = p.state.version or null;
-          source = relPath;
-        };
-      })
-      pins);
-
-  tuistPins = readResolved "Tuist/Package.resolved";
-  sparklePins = readResolved "distribution/SparkleUpdater/Package.resolved";
-
-  # Merge strategy: if both lockfiles pin the same identity (e.g. Sparkle),
-  # the Tuist lockfile wins because that's the one the real app build
-  # resolves against. The SparkleUpdater pin only matters if Tuist doesn't
-  # already have it, which in practice shouldn't happen.
-  allPins = sparklePins // tuistPins;
+  # Nix-owned Swift package pinset. This is the single source of truth for the
+  # remote SwiftPM revisions used by Tuist and local Swift packages.
+  #
+  # `name` is SwiftPM's case-sensitive display name. `subpath` is the checkout
+  # directory name under `.build/checkouts/`. `sha256` is the Nix hash of the
+  # stripped fetchgit tree for this revision.
+  swiftPackagePins = {
+    "grdb.swift" = {
+      identity = "grdb.swift";
+      name = "GRDB.swift";
+      subpath = "GRDB.swift";
+      url = "https://github.com/groue/GRDB.swift.git";
+      rev = "aa0079aeb82a4bf00324561a40bffe68c6fe1c26";
+      version = "7.9.0";
+      sha256 = "sha256-bqiHRby5+WHyPv45JENaveVzGRycSZiL2BEc6zCaO6g=";
+    };
+    "sparkle" = {
+      identity = "sparkle";
+      name = "Sparkle";
+      subpath = "Sparkle";
+      url = "https://github.com/sparkle-project/Sparkle.git";
+      rev = "066e75a8b3e99962685d6a90cdd5293ebffd9261";
+      version = "2.9.1";
+      sha256 = "sha256-ltZehumY8/Y+HA3Abbuk6pH73OsVEtV9qEgokuiALzw=";
+    };
+    "sttextkitplus" = {
+      identity = "sttextkitplus";
+      name = "STTextKitPlus";
+      subpath = "STTextKitPlus";
+      url = "https://github.com/krzyzanowskim/STTextKitPlus.git";
+      rev = "2ee74906f4d753458eeaa9a2f6d4538aacb86a1d";
+      version = "0.3.0";
+      sha256 = "sha256-I/p9b/NMp87R2el3g2rtJxt4b54Rqx8aKAYLmP5ds7E=";
+    };
+  };
 
   swiftPackagePin = identity:
-    if builtins.hasAttr identity allPins
-    then allPins.${identity}
+    if builtins.hasAttr identity swiftPackagePins
+    then swiftPackagePins.${identity}
     else throw ''
       No Swift package pin for '${identity}'. Known identities:
-        ${lib.concatStringsSep ", " (lib.attrNames allPins)}
-      Add it to Tuist/Package.resolved (or distribution/SparkleUpdater/Package.resolved).
+        ${lib.concatStringsSep ", " (lib.attrNames swiftPackagePins)}
+      Add it to `swiftPackagePins` in nix/lib.nix.
     '';
 
   # Host Xcode preflight. The Apple build is inherently impure on the path
@@ -244,7 +250,7 @@ let
 in
 {
   inherit appSource rustSource;
-  inherit swiftPackagePin allPins;
+  inherit swiftPackagePins swiftPackagePin;
   inherit xcodePreflightScript resolveDeveloperDirScript;
   inherit stageAppTreeScript;
 }

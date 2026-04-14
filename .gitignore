@@ -1,5 +1,5 @@
 # Swift / Xcode
-Package.resolved  # Xcode-generated stray state; authoritative lockfiles are Tuist/ and distribution/SparkleUpdater/
+/Package.resolved  # Xcode-generated stray state; Swift package pins live in nix/lib.nix
 .build/
 .make/
 build/

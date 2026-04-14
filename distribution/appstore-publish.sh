@@ -8,7 +8,7 @@
 #
 # Inputs:
 #   * A staged `DerivedData/Build/Products/AppStore/ClipKitty.app` is
-#     produced by `Scripts/nix-build-app.sh AppStore $VERSION $BUILD_NUMBER`.
+#     produced by `Scripts/nix-sign-app.sh AppStore $VERSION $BUILD_NUMBER`.
 #   * A provisioning profile from PROVISION_PROFILE_BASE64 (decrypted from
 #     secrets/) — written to ClipKitty.provisionprofile in PROJECT_ROOT.
 #   * App Store identities ("3rd Party Mac Developer Application" +
@@ -19,10 +19,9 @@
 #   * $PROJECT_ROOT/ClipKitty.pkg (signed installer package).
 #   * Upload result from `distribution/publish.py`.
 #
-# The original Makefile target also re-ran the entire nix build here; we
-# expect callers to have already built the variant via
-# Scripts/nix-build-app.sh so this script only handles the post-build
-# sign + package + upload tail that requires keychain access.
+# The original Makefile target also re-ran the entire nix build here; we now
+# delegate the build + mutable-copy + signing step to Scripts/nix-sign-app.sh
+# so Hardened and App Store flows share one post-store signing contract.
 
 set -euo pipefail
 
@@ -61,19 +60,11 @@ if [ -z "$PROV" ]; then
   PROV="$PROJECT_ROOT/ClipKitty.provisionprofile"
 fi
 
-# Re-stage the nix-built bundle with the runtime-versioned plist. The nix
-# derivation stays deterministic and doesn't embed per-commit version
-# numbers, so we set them now before signing.
-"$PROJECT_ROOT/Scripts/nix-build-app.sh" AppStore "$VERSION" "$BUILD_NUMBER"
-
-echo "Embedding provisioning profile..."
-cp "$PROV" "$APP_PATH/Contents/embedded.provisionprofile"
-
-echo "Re-signing for App Store distribution..."
-codesign --force --options runtime \
-  --sign "$APPSTORE_SIGNING_IDENTITY" \
-  --entitlements "$PROJECT_ROOT/Sources/MacApp/ClipKitty.appstore.entitlements" \
-  "$APP_PATH"
+# Re-stage the nix-built bundle with the runtime-versioned plist, embed the
+# provisioning profile into the copied-out bundle, and sign it in place.
+PROVISIONING_PROFILE="$PROV" \
+APPSTORE_SIGNING_IDENTITY="$APPSTORE_SIGNING_IDENTITY" \
+  "$PROJECT_ROOT/Scripts/nix-sign-app.sh" AppStore "$VERSION" "$BUILD_NUMBER"
 
 echo "Creating installer package..."
 rm -f "$PROJECT_ROOT/$APP_NAME.pkg"
