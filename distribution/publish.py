@@ -400,41 +400,20 @@ def main():
                     continue
 
                 for device_type in platform_config["screenshot_device_types"]:
-                    # Delete existing screenshots before uploading new ones to avoid duplicates
-                    print(f"  Deleting existing {device_type} screenshots for {asc_locale}...")
+                    # --replace deletes every existing screenshot in the target set
+                    # before uploading, so stale screenshots from prior publishes
+                    # don't pile up alongside the new ones in the ASC listing.
+                    print(f"  Uploading {len(pngs)} {device_type} screenshots for {asc_locale} (replacing existing)...")
                     if args.dry_run:
-                        print(f"    [dry-run] Would delete existing screenshots")
+                        print(f"    [dry-run] Would replace and upload {src_dir}")
                     else:
-                        r = run(
-                            ["asc", "screenshots", "list",
-                             "--version-localization", loc_id,
-                             "--device-type", device_type],
-                            capture=True, check=False,
-                        )
-                        if r.returncode == 0:
-                            existing = json.loads(r.stdout)
-                            existing_list = existing.get("data", existing) if isinstance(existing, dict) else existing
-                            for screenshot in existing_list:
-                                screenshot_id = screenshot.get("id")
-                                if screenshot_id:
-                                    run(
-                                        ["asc", "screenshots", "delete",
-                                         "--id", screenshot_id, "--confirm"],
-                                        check=False,
-                                    )
-
-                    print(f"  Uploading {len(pngs)} {device_type} screenshots for {asc_locale}...")
-                    if args.dry_run:
-                        for png in pngs:
-                            print(f"    [dry-run] {os.path.basename(png)}")
-                    else:
-                        for png in pngs:
-                            run([
-                                "asc", "screenshots", "upload",
-                                "--version-localization", loc_id,
-                                "--device-type", device_type,
-                                "--path", png,
-                            ])
+                        run([
+                            "asc", "screenshots", "upload",
+                            "--version-localization", loc_id,
+                            "--device-type", device_type,
+                            "--path", src_dir,
+                            "--replace",
+                        ])
                     screenshot_count += len(pngs)
 
         print(f"Total screenshots uploaded: {screenshot_count}")
