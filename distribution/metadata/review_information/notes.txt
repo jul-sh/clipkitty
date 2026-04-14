@@ -12,10 +12,9 @@ HOW TO TEST (macOS):
 HOW TO TEST (iPhone):
 
 1. Launch ClipKitty. The main screen shows your clipboard history.
-2. Copy some text in another app, then return to ClipKitty. The copied item appears in the feed.
-3. Tap the + button at the bottom-right to add items manually (paste from clipboard, compose text, or import a photo).
-4. Tap any item to preview it. Swipe left on an item for quick actions (delete, bookmark, edit).
-5. Use the search bar (magnifying glass) to find items. Use the filter pill to filter by type (text, images, links, colors).
+2. Tap the + button at the bottom-right to add items manually (paste from clipboard, compose text, or import a photo).
+3. Tap any item to preview it. Swipe left on an item for quick actions (delete, bookmark, edit).
+4. Use the search bar (magnifying glass) to find items. Use the filter pill to filter by type (text, images, links, colors).
 
 NOTES:
 - The app has no account system and no login. All data is stored locally by default.
