@@ -99,7 +99,7 @@ enum MacBuildVariant: CaseIterable {
         case .debug:    return [.syntheticPaste, .fileClipboardItems, .linkPreviews, .iCloudSync, .buildAttestationLink]
         case .release:  return [.syntheticPaste, .fileClipboardItems, .linkPreviews, .iCloudSync, .buildAttestationLink]
         case .sparkle:  return [.syntheticPaste, .fileClipboardItems, .linkPreviews, .iCloudSync, .buildAttestationLink, .sparkleUpdates]
-        case .appStore: return [.fileClipboardItems, .linkPreviews, .iCloudSync, .buildAttestationLink]
+        case .appStore: return [.syntheticPaste, .fileClipboardItems, .linkPreviews, .iCloudSync, .buildAttestationLink]
         case .hardened: return [.syntheticPaste, .hardened]
         }
     }
