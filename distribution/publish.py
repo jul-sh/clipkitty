@@ -72,6 +72,49 @@ def run(cmd, *, check=True, capture=False, env=None):
     return r
 
 
+def purge_untargeted_screenshots(loc_id, target_device_types, *, dry_run):
+    """Delete every screenshot in slots we aren't uploading to.
+
+    ASC carries screenshots forward from previous versions, so when we change
+    the device slot we publish to (e.g. IPHONE_67 -> IPHONE_61) the old set
+    lingers alongside the new one. `--replace` on upload only wipes the
+    *target* slot, so we have to wipe the non-target slots ourselves.
+
+    screenshotDisplayType is prefixed with "APP_" in the list response
+    (APP_IPHONE_61, APP_DESKTOP, ...) but the CLI accepts both prefixed and
+    unprefixed names on upload, so normalize both sides for comparison.
+    """
+    target_set = {
+        dt if dt.startswith("APP_") else f"APP_{dt}"
+        for dt in target_device_types
+    }
+    r = run(
+        ["asc", "screenshots", "list", "--version-localization", loc_id],
+        capture=True, check=True,
+    )
+    payload = json.loads(r.stdout)
+    for entry in payload.get("sets", []):
+        display_type = entry.get("set", {}).get("attributes", {}).get("screenshotDisplayType")
+        if display_type in target_set:
+            continue
+        screenshots = entry.get("screenshots", [])
+        if not screenshots:
+            continue
+        print(f"    Purging {len(screenshots)} screenshot(s) from untargeted slot {display_type}")
+        for screenshot in screenshots:
+            screenshot_id = screenshot.get("id")
+            if not screenshot_id:
+                continue
+            if dry_run:
+                print(f"      [dry-run] Would delete {screenshot_id}")
+            else:
+                run(
+                    ["asc", "screenshots", "delete",
+                     "--id", screenshot_id, "--confirm"],
+                    check=False,
+                )
+
+
 def decrypt_secret(name):
     r = subprocess.run(
         [os.path.join(SCRIPT_DIR, "read-secret.sh"), name],
@@ -398,6 +441,12 @@ def main():
                 if not pngs:
                     print(f"  Warning: no screenshots found in {src_dir}")
                     continue
+
+                purge_untargeted_screenshots(
+                    loc_id,
+                    platform_config["screenshot_device_types"],
+                    dry_run=args.dry_run,
+                )
 
                 for device_type in platform_config["screenshot_device_types"]:
                     # --replace deletes every existing screenshot in the target set
