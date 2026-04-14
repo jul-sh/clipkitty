@@ -399,7 +399,7 @@ ios-appstore-publish: ios-appstore ios-publish
 # ============================================================================
 
 # Capture localized iOS screenshots for all supported locales.
-# Runs XCUITests on iPhone 16 Pro Max simulator.
+# Runs XCUITests on iPhone 17 simulator (6.1" / IPHONE_61 slot, 1206×2622).
 ios-marketing-screenshots-localized:
 	@$(DIST_DIR)/patch-demo-items.sh
 	@rm -f /tmp/clipkitty_ios_screenshot_locale.txt /tmp/clipkitty_ios_screenshot_db.txt
@@ -419,7 +419,7 @@ ios-marketing-screenshots-localized:
 		xcodebuild test \
 			-workspace $(PROJECT_ROOT)/$(APP_NAME).xcworkspace \
 			-scheme ClipKittyiOSUITests \
-			-destination "platform=iOS Simulator,name=iPhone 16 Pro Max" \
+			-destination "platform=iOS Simulator,name=iPhone 17" \
 			-derivedDataPath $(DERIVED_DATA) \
 			$(if $(SKIP_SIGNING),CODE_SIGNING_ALLOWED=NO,) \
 			-only-testing:ClipKittyiOSUITests/ClipKittyiOSScreenshotTests/testTakeMarketingScreenshots \

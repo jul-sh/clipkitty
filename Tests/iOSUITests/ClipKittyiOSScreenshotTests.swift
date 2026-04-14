@@ -2,7 +2,8 @@ import XCTest
 
 /// Marketing screenshot generator for the iOS App Store listing.
 ///
-/// Captures three screenshots on iPhone 17 Pro Max (6.7-inch, 1290×2796):
+/// Captures three screenshots on iPhone 17 (6.1-inch, 1206×2622 —
+/// uploaded to ASC's IPHONE_61 slot):
 ///   1. History feed — the main clipboard history view
 ///   2. Search — search bar active with a query
 ///   3. Filter — filtered by a content type

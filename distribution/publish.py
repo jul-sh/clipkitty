@@ -47,7 +47,7 @@ PLATFORMS = {
         "pkg_name": "ClipKittyiOS.ipa",
         "metadata_dir_name": "metadata",  # Shared metadata (same app listing)
         "marketing_dir_name": "marketing-ios",
-        "screenshot_device_types": ["IPHONE_67"],
+        "screenshot_device_types": ["IPHONE_61"],
     },
 }
 
