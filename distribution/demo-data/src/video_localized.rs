@@ -408,7 +408,10 @@ const VIDEO_SCENES_ZH_HANS: LocalizedVideoScenes = LocalizedVideoScenes {
     find_forever_query: "复制 永久查找",
     multiline_query: "多行预览",
     secure_private_query: "安全 隐私",
-    fast_query: "飞快",
+    // CJK IME input is much slower per-character in XCUITest than Latin,
+    // so use ASCII "fast" here and rely on the image keywords (which
+    // include the ASCII word "fast" for CJK locales) to match.
+    fast_query: "fast",
 };
 
 pub const VIDEO_ITEMS_ZH_HANS: &[DemoItem] = &[
@@ -758,7 +761,8 @@ const VIDEO_SCENES_ZH_HANT: LocalizedVideoScenes = LocalizedVideoScenes {
     find_forever_query: "複製 永遠找到",
     multiline_query: "多行預覽",
     secure_private_query: "安全 隱私",
-    fast_query: "飛快",
+    // See zh-Hans note: keep the fast-scene query ASCII for CJK locales.
+    fast_query: "fast",
 };
 
 pub const VIDEO_ITEMS_ZH_HANT: &[DemoItem] = &[
@@ -1108,7 +1112,8 @@ const VIDEO_SCENES_JA: LocalizedVideoScenes = LocalizedVideoScenes {
     find_forever_query: "コピー いつでも見つかる",
     multiline_query: "複数行プレビュー",
     secure_private_query: "安全 プライベート",
-    fast_query: "爆速",
+    // See zh-Hans note: keep the fast-scene query ASCII for CJK locales.
+    fast_query: "fast",
 };
 
 pub const VIDEO_ITEMS_JA: &[DemoItem] = &[
@@ -1458,7 +1463,8 @@ const VIDEO_SCENES_KO: LocalizedVideoScenes = LocalizedVideoScenes {
     find_forever_query: "복사 영원히 검색",
     multiline_query: "여러 줄 미리보기",
     secure_private_query: "안전 비공개",
-    fast_query: "빠름",
+    // See zh-Hans note: keep the fast-scene query ASCII for CJK locales.
+    fast_query: "fast",
 };
 
 pub const VIDEO_ITEMS_KO: &[DemoItem] = &[

@@ -142,30 +142,12 @@ struct BrowserPreviewPane: View {
             }
         case let .image(data, description, _):
             let highlights = previewDecoration(for: content)?.highlights ?? []
-            ScrollView(.vertical, showsIndicators: true) {
-                if let image = NSImage(data: data) {
-                    VStack(spacing: 8) {
-                        Image(nsImage: image)
-                            .resizable()
-                            .aspectRatio(contentMode: .fit)
-                            .frame(maxWidth: .infinity)
-                        if !description.isEmpty {
-                            if highlights.isEmpty {
-                                Text(description)
-                                    .font(.callout)
-                                    .foregroundStyle(.secondary)
-                                    .frame(maxWidth: .infinity, alignment: .leading)
-                            } else {
-                                Text(HighlightStyler.attributedText(description, highlights: highlights))
-                                    .font(.callout)
-                                    .foregroundStyle(.secondary)
-                                    .frame(maxWidth: .infinity, alignment: .leading)
-                            }
-                        }
-                    }
-                    .padding(16)
-                }
-            }
+            ImagePreviewView(
+                itemId: item.itemMetadata.itemId,
+                data: data,
+                description: description,
+                highlights: highlights
+            )
         case let .link(url, metadataState):
             let highlights = previewDecoration(for: content)?.highlights ?? []
             ScrollView(.vertical, showsIndicators: true) {
@@ -372,5 +354,77 @@ struct BrowserPreviewPane: View {
             return String(localized: "No clipboard history")
         }
         return String(localized: "No results")
+    }
+}
+
+/// Decodes image bytes off the main thread and caches the result by item id so
+/// typing-triggered re-renders don't block the main thread on `NSImage(data:)`.
+private struct ImagePreviewView: View {
+    let itemId: String
+    let data: Data
+    let description: String
+    let highlights: [Utf16HighlightRange]
+
+    @State private var image: NSImage?
+
+    var body: some View {
+        ScrollView(.vertical, showsIndicators: true) {
+            VStack(spacing: 8) {
+                if let image {
+                    Image(nsImage: image)
+                        .resizable()
+                        .aspectRatio(contentMode: .fit)
+                        .frame(maxWidth: .infinity)
+                } else {
+                    ProgressView()
+                        .frame(maxWidth: .infinity, minHeight: 120)
+                }
+                if !description.isEmpty {
+                    if highlights.isEmpty {
+                        Text(description)
+                            .font(.callout)
+                            .foregroundStyle(.secondary)
+                            .frame(maxWidth: .infinity, alignment: .leading)
+                    } else {
+                        Text(HighlightStyler.attributedText(description, highlights: highlights))
+                            .font(.callout)
+                            .foregroundStyle(.secondary)
+                            .frame(maxWidth: .infinity, alignment: .leading)
+                    }
+                }
+            }
+            .padding(16)
+        }
+        .task(id: itemId) {
+            if let cached = ImagePreviewCache.shared.image(forKey: itemId) {
+                image = cached
+                return
+            }
+            image = nil
+            let decoded = await Task.detached(priority: .userInitiated) { [data] in
+                NSImage(data: data)
+            }.value
+            guard !Task.isCancelled, let decoded else { return }
+            ImagePreviewCache.shared.setImage(decoded, forKey: itemId)
+            image = decoded
+        }
+    }
+}
+
+private final class ImagePreviewCache {
+    static let shared = ImagePreviewCache()
+
+    private let cache: NSCache<NSString, NSImage> = {
+        let cache = NSCache<NSString, NSImage>()
+        cache.countLimit = 32
+        return cache
+    }()
+
+    func image(forKey key: String) -> NSImage? {
+        cache.object(forKey: key as NSString)
+    }
+
+    func setImage(_ image: NSImage, forKey key: String) {
+        cache.setObject(image, forKey: key as NSString)
     }
 }
