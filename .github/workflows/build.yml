@@ -372,7 +372,7 @@ jobs:
             xcodebuild test \
               -workspace ClipKitty.xcworkspace \
               -scheme ClipKittyiOSUITests \
-              -destination "platform=iOS Simulator,name=iPhone 17 Pro Max" \
+              -destination "platform=iOS Simulator,name=iPhone 17" \
               -derivedDataPath DerivedData \
               CODE_SIGNING_ALLOWED=NO \
               -only-testing:ClipKittyiOSUITests/ClipKittyiOSScreenshotTests/testTakeMarketingScreenshots \
