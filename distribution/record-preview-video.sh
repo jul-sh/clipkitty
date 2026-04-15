@@ -210,13 +210,16 @@ if $HAS_FFMPEG; then
     [ "$(echo "$TRIM_DURATION > $MAX_DURATION" | bc)" -eq 1 ] 2>/dev/null && TRIM_DURATION=$MAX_DURATION
     [ "$(echo "$TRIM_DURATION > 30" | bc)" -eq 1 ] && TRIM_DURATION=30
     echo "Trimming to ${TRIM_DURATION}s (raw: ${DURATION}s, offset: ${START_OFFSET}s, limit: 30s)"
+    # App Store Connect rejects previews without an audio track, so mux in silence.
     ffmpeg -y -ss "$START_OFFSET" -i "$RAW_VIDEO" \
+        -f lavfi -i anullsrc=channel_layout=stereo:sample_rate=44100 \
         -t $TRIM_DURATION \
         -vf "${CROP_FILTER}scale=1920:1080:force_original_aspect_ratio=decrease,pad=1920:1080:(ow-iw)/2:(oh-ih)/2:color=0xC0C0C0" \
         -c:v libx264 -preset slow -crf 18 -profile:v high -level 4.0 \
         -pix_fmt yuv420p \
+        -c:a aac -b:a 128k -ar 44100 -ac 2 \
+        -shortest \
         -movflags +faststart \
-        -an \
         "$FINAL_VIDEO"
 
     # Clean up
