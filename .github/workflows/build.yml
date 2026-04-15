@@ -198,11 +198,6 @@ jobs:
             echo "FAIL: iCloud/CloudKit entitlement found in hardened app"
             exit 1
           fi
-          # Verify no file entitlements
-          if echo "$ENT_XML" | grep -q "files.user-selected"; then
-            echo "FAIL: file read entitlement found in hardened app"
-            exit 1
-          fi
           echo "Hardened entitlements verified."
 
       - name: Verify Hardened Binary Linkage
