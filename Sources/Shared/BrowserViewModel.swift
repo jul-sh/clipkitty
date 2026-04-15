@@ -812,6 +812,18 @@ public final class BrowserViewModel {
     ) {
         let request = response.request
 
+        // Once an image preview is already loaded for the selected item, keep that
+        // selection stable across query refreshes. Rebuilding the same image-backed
+        // selection on every keystroke needlessly invalidates the preview subtree and
+        // can make typing feel sticky right when the image is visible.
+        if let currentSelectedItemState = selectedItemState,
+           currentSelectedItemState.item.itemMetadata.itemId == itemId,
+           !requiresPreviewDecoration(for: currentSelectedItemState.item, request: request),
+           case .image = currentSelectedItemState.item.content
+        {
+            return
+        }
+
         if let firstPreviewPayload = response.firstPreviewPayload,
            firstPreviewPayload.item.itemMetadata.itemId == itemId
         {
