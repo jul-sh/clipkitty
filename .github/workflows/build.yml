@@ -703,7 +703,7 @@ jobs:
   # Upload to App Store Connect via ASC CLI
   appstore:
     runs-on: macos-26
-    needs: [build, intro-videos]
+    needs: build
     if: github.event_name == 'push' && (github.ref_name == 'main' || github.ref_name == 'release')
 
     steps:
@@ -792,12 +792,6 @@ jobs:
         uses: actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093 # v4
         with:
           name: assets
-          path: .
-
-      - name: Download intro videos
-        uses: actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093 # v4
-        with:
-          name: intro-videos
           path: .
 
       - name: Prepare API Key for Automatic Signing
