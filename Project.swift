@@ -5,23 +5,23 @@ import ProjectDescription
 /// Each capability maps to a compile condition and controls what code is included.
 /// Variants declare the set of capabilities they support; everything else is derived.
 enum Capability: String, CaseIterable {
-    case syntheticPaste      // ENABLE_SYNTHETIC_PASTE
-    case fileClipboardItems  // ENABLE_FILE_CLIPBOARD_ITEMS
-    case linkPreviews        // ENABLE_LINK_PREVIEWS
-    case iCloudSync          // ENABLE_ICLOUD_SYNC
-    case sparkleUpdates      // ENABLE_SPARKLE_UPDATES
-    case buildAttestationLink   // ENABLE_BUILD_ATTESTATION_LINK
-    case hardened            // CLIPKITTY_HARDENED
+    case syntheticPaste // ENABLE_SYNTHETIC_PASTE
+    case fileClipboardItems // ENABLE_FILE_CLIPBOARD_ITEMS
+    case linkPreviews // ENABLE_LINK_PREVIEWS
+    case iCloudSync // ENABLE_ICLOUD_SYNC
+    case sparkleUpdates // ENABLE_SPARKLE_UPDATES
+    case buildAttestationLink // ENABLE_BUILD_ATTESTATION_LINK
+    case hardened // CLIPKITTY_HARDENED
 
     var compileCondition: String {
         switch self {
-        case .syntheticPaste:     return "ENABLE_SYNTHETIC_PASTE"
+        case .syntheticPaste: return "ENABLE_SYNTHETIC_PASTE"
         case .fileClipboardItems: return "ENABLE_FILE_CLIPBOARD_ITEMS"
-        case .linkPreviews:       return "ENABLE_LINK_PREVIEWS"
-        case .iCloudSync:         return "ENABLE_ICLOUD_SYNC"
-        case .sparkleUpdates:     return "ENABLE_SPARKLE_UPDATES"
-        case .buildAttestationLink:  return "ENABLE_BUILD_ATTESTATION_LINK"
-        case .hardened:           return "CLIPKITTY_HARDENED"
+        case .linkPreviews: return "ENABLE_LINK_PREVIEWS"
+        case .iCloudSync: return "ENABLE_ICLOUD_SYNC"
+        case .sparkleUpdates: return "ENABLE_SPARKLE_UPDATES"
+        case .buildAttestationLink: return "ENABLE_BUILD_ATTESTATION_LINK"
+        case .hardened: return "CLIPKITTY_HARDENED"
         }
     }
 }
@@ -96,9 +96,9 @@ enum MacBuildVariant: CaseIterable {
 
     var capabilities: Set<Capability> {
         switch self {
-        case .debug:    return [.syntheticPaste, .fileClipboardItems, .linkPreviews, .iCloudSync, .buildAttestationLink]
-        case .release:  return [.syntheticPaste, .fileClipboardItems, .linkPreviews, .iCloudSync, .buildAttestationLink]
-        case .sparkle:  return [.syntheticPaste, .fileClipboardItems, .linkPreviews, .iCloudSync, .buildAttestationLink, .sparkleUpdates]
+        case .debug: return [.syntheticPaste, .fileClipboardItems, .linkPreviews, .iCloudSync, .buildAttestationLink]
+        case .release: return [.syntheticPaste, .fileClipboardItems, .linkPreviews, .iCloudSync, .buildAttestationLink]
+        case .sparkle: return [.syntheticPaste, .fileClipboardItems, .linkPreviews, .iCloudSync, .buildAttestationLink, .sparkleUpdates]
         case .appStore: return [.syntheticPaste, .fileClipboardItems, .linkPreviews, .iCloudSync, .buildAttestationLink]
         case .hardened: return [.syntheticPaste, .hardened]
         }
@@ -191,9 +191,9 @@ enum MacBuildVariant: CaseIterable {
     /// Scheme name. nil means this variant uses the main "ClipKitty" scheme.
     var schemeName: String? {
         switch self {
-        case .debug: return nil  // Uses the main "ClipKitty" scheme
-        case .release: return nil  // Built via main scheme with CONFIGURATION=Release
-        case .sparkle: return "ClipKittySpark"  // Separate target with Sparkle dependency
+        case .debug: return nil // Uses the main "ClipKitty" scheme
+        case .release: return nil // Built via main scheme with CONFIGURATION=Release
+        case .sparkle: return "ClipKittySpark" // Separate target with Sparkle dependency
         case .appStore: return "ClipKitty-AppStore"
         case .hardened: return "ClipKitty-Hardened"
         }
@@ -305,9 +305,9 @@ enum MacBuildVariant: CaseIterable {
 enum IOSBuildVariant: CaseIterable {
     case debug
     case release
-    case sparkle   // no-op config (maps to Release settings)
+    case sparkle // no-op config (maps to Release settings)
     case appStore
-    case hardened  // no-op config for SPM compat
+    case hardened // no-op config for SPM compat
 
     var configurationName: ConfigurationName {
         switch self {
@@ -332,7 +332,7 @@ enum IOSBuildVariant: CaseIterable {
         case .debug, .release:
             return "ENABLE_ICLOUD_SYNC ENABLE_LINK_PREVIEWS"
         case .sparkle, .hardened:
-            return ""  // no-op configs
+            return "" // no-op configs
         case .appStore:
             return "ENABLE_ICLOUD_SYNC ENABLE_LINK_PREVIEWS"
         }
@@ -687,7 +687,6 @@ let project = Project(
         ),
 
     ] + makeMacAppTargets() + [
-
         // MARK: ClipKittyTests — Unit tests
 
         .target(
@@ -951,8 +950,8 @@ let project = Project(
             ),
             testAction: .testPlans(
                 [
-                    .relativeToRoot("ClipKittyUITests.xctestplan"),
-                    .relativeToRoot("ClipKittyVideoRecording.xctestplan"),
+                    .relativeToRoot("Tests/UITests/ClipKittyUITests.xctestplan"),
+                    .relativeToRoot("Tests/UITests/ClipKittyVideoRecording.xctestplan"),
                 ],
                 configuration: "Debug"
             )

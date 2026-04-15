@@ -1,5 +1,6 @@
 # Swift / Xcode
 /Package.resolved  # Xcode-generated stray state; Swift package pins live in nix/lib.nix
+Tuist/Package.resolved  # Tuist-generated stray state; Swift package pins live in nix/lib.nix
 .build/
 .make/
 build/
