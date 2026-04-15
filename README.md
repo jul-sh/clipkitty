@@ -7,8 +7,6 @@
 Unlimited history • Instant fuzzy search • iCloud Sync • Secure & Attested
 
 <img src="https://raw.githubusercontent.com/jul-sh/clipkitty/gh-pages/marketing_1.png" alt="ClipKitty clipboard history" width="820">
-<img src="https://raw.githubusercontent.com/jul-sh/clipkitty/gh-pages/marketing_2.png" alt="ClipKitty fuzzy search" width="820">
-<img src="https://raw.githubusercontent.com/jul-sh/clipkitty/gh-pages/marketing_3.png" alt="ClipKitty content filter" width="820">
 
 ## Why it exists
 
