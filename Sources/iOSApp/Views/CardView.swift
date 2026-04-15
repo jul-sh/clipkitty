@@ -13,6 +13,7 @@ struct CardView: View {
     @Environment(HapticsClient.self) private var haptics
 
     @State private var isShareLoading = false
+    @State private var fullImage: UIImage?
 
     private var metadata: ItemMetadata {
         row.metadata
@@ -162,22 +163,41 @@ struct CardView: View {
 
     @ViewBuilder
     private func thumbnailPreview(bytes: Data) -> some View {
-        HStack(spacing: 8) {
-            if let uiImage = UIImage(data: bytes) {
-                Image(uiImage: uiImage)
-                    .resizable()
-                    .aspectRatio(contentMode: .fill)
-                    .frame(width: 40, height: 40)
-                    .clipShape(RoundedRectangle(cornerRadius: 6, style: .continuous))
-            } else {
-                Image(systemName: "photo")
-                    .font(.title3)
-                    .foregroundStyle(.secondary)
-                    .frame(width: 40, height: 40)
+        VStack(alignment: .leading, spacing: 8) {
+            Group {
+                if let uiImage = fullImage ?? UIImage(data: bytes) {
+                    Image(uiImage: uiImage)
+                        .resizable()
+                        .aspectRatio(uiImage.size, contentMode: .fit)
+                        .frame(maxWidth: .infinity)
+                        .clipShape(RoundedRectangle(cornerRadius: 8, style: .continuous))
+                } else {
+                    RoundedRectangle(cornerRadius: 8, style: .continuous)
+                        .fill(.secondary.opacity(0.1))
+                        .aspectRatio(16.0 / 9.0, contentMode: .fit)
+                        .overlay(
+                            Image(systemName: "photo")
+                                .font(.title)
+                                .foregroundStyle(.secondary)
+                        )
+                }
             }
-            highlightedText(displayText, highlights: displayHighlights, font: .custom(FontManager.sansSerif, size: 15))
-                .lineLimit(2)
+            if !displayText.isEmpty {
+                highlightedText(displayText, highlights: displayHighlights, font: .custom(FontManager.sansSerif, size: 15))
+                    .lineLimit(2)
+            }
         }
+        .task(id: metadata.itemId) {
+            await loadFullImage(itemId: metadata.itemId)
+        }
+    }
+
+    private func loadFullImage(itemId: String) async {
+        fullImage = nil
+        guard let item = await container.storeClient.fetchItem(id: itemId) else { return }
+        guard case let .image(data, _, _) = item.content else { return }
+        guard !Task.isCancelled else { return }
+        fullImage = UIImage(data: data)
     }
 
     // MARK: - Context menu
