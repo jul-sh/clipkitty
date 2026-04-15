@@ -322,7 +322,9 @@ jobs:
             CODE_SIGNING_ALLOWED=NO
 
       - name: Generate iOS Marketing Screenshots
-        run: make screenshots-ios
+        run: |
+          unset TOOLCHAINS
+          make screenshots-ios
 
       - name: Run UI Tests
         env:
