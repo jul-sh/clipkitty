@@ -857,7 +857,17 @@ fn copy_dir_recursive(src: &Utf8Path, dst: &Utf8Path) -> Result<()> {
         let path = Utf8PathBuf::from_path_buf(entry.path())
             .map_err(|p| anyhow!("non-UTF-8 path: {p:?}"))?;
         let target = dst.join(path.file_name().unwrap());
-        if entry.file_type()?.is_dir() {
+        let file_type = entry.file_type()?;
+        if file_type.is_symlink() {
+            // Preserve symlinks verbatim. Framework bundles depend on their
+            // Versions/Current and top-level aliases (Resources, Headers, the
+            // binary) being symlinks; following them here would both break the
+            // bundle layout and trip fs::copy on symlink-to-directory targets.
+            let link_target = fs::read_link(path.as_std_path())
+                .with_context(|| format!("reading symlink {path}"))?;
+            std::os::unix::fs::symlink(&link_target, target.as_std_path())
+                .with_context(|| format!("recreating symlink {target}"))?;
+        } else if file_type.is_dir() {
             copy_dir_recursive(&path, &target)?;
         } else {
             fs::copy(path.as_std_path(), target.as_std_path())
