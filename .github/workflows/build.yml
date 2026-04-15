@@ -299,6 +299,9 @@ jobs:
       - name: Build iOS Smoke Test
         run: nix build '.#checks.aarch64-darwin.clipkitty-ios-smoke-build' -L
 
+      - name: Generate Xcode Workspace
+        run: make workspace
+
       - name: Build iOS App (AppStore)
         run: |
           BASE_VERSION=$(grep '"MARKETING_VERSION":' Project.swift | head -1 | sed 's/.*: *"\(.*\)".*/\1/')
