@@ -1,7 +1,9 @@
 //! Tests for preview text generation and list-decoration snippet output.
 
 use purr::search::generate_preview;
-use purr::{ClipboardStore, ClipboardStoreApi, HighlightKind, ListDecoration, ListPresentationProfile};
+use purr::{
+    ClipboardStore, ClipboardStoreApi, HighlightKind, ListDecoration, ListPresentationProfile,
+};
 use tempfile::TempDir;
 
 fn utf16_slice(text: &str, start: u64, end: u64) -> String {
@@ -123,7 +125,11 @@ async fn card_decoration_preserves_meaningful_newlines() {
     let content = "Line one\nLine two\nLine three with MATCH\nLine four";
     let row = list_decoration_for_profile(content, "MATCH", ListPresentationProfile::Card).await;
     // Card mode should keep newlines in the output
-    assert!(row.text.contains('\n'), "Card excerpt should preserve newlines, got: {:?}", row.text);
+    assert!(
+        row.text.contains('\n'),
+        "Card excerpt should preserve newlines, got: {:?}",
+        row.text
+    );
     assert!(row.text.contains("MATCH"));
     assert_eq!(row.line_number, 3);
 }
@@ -134,14 +140,19 @@ async fn card_decoration_collapses_pathological_whitespace() {
     let row = list_decoration_for_profile(content, "MATCH", ListPresentationProfile::Card).await;
     // Should collapse 8 newlines down to at most 2
     let newline_count = row.text.chars().filter(|&c| c == '\n').count();
-    assert!(newline_count <= 2, "Expected at most 2 newlines, got {}", newline_count);
+    assert!(
+        newline_count <= 2,
+        "Expected at most 2 newlines, got {}",
+        newline_count
+    );
     assert!(row.text.contains("MATCH"));
 }
 
 #[tokio::test]
 async fn card_decoration_has_larger_budget_than_compact() {
     let content = format!("MATCH {}", "word ".repeat(200));
-    let compact = list_decoration_for_profile(&content, "MATCH", ListPresentationProfile::CompactRow).await;
+    let compact =
+        list_decoration_for_profile(&content, "MATCH", ListPresentationProfile::CompactRow).await;
     let card = list_decoration_for_profile(&content, "MATCH", ListPresentationProfile::Card).await;
     // Card should produce a longer excerpt
     assert!(
@@ -168,9 +179,14 @@ async fn card_decoration_highlight_is_correct() {
 #[tokio::test]
 async fn compact_row_collapses_newlines() {
     let content = "Line one\nLine two\nLine three with MATCH";
-    let row = list_decoration_for_profile(content, "MATCH", ListPresentationProfile::CompactRow).await;
+    let row =
+        list_decoration_for_profile(content, "MATCH", ListPresentationProfile::CompactRow).await;
     // CompactRow should NOT contain newlines
-    assert!(!row.text.contains('\n'), "CompactRow should not contain newlines, got: {:?}", row.text);
+    assert!(
+        !row.text.contains('\n'),
+        "CompactRow should not contain newlines, got: {:?}",
+        row.text
+    );
 }
 
 #[tokio::test]
@@ -183,6 +199,12 @@ async fn format_excerpt_matches_profile() {
     let compact = store.format_excerpt(content.to_string(), ListPresentationProfile::CompactRow);
     let card = store.format_excerpt(content.to_string(), ListPresentationProfile::Card);
 
-    assert!(!compact.contains('\n'), "CompactRow format_excerpt should collapse newlines");
-    assert!(card.contains('\n'), "Card format_excerpt should preserve newlines");
+    assert!(
+        !compact.contains('\n'),
+        "CompactRow format_excerpt should collapse newlines"
+    );
+    assert!(
+        card.contains('\n'),
+        "Card format_excerpt should preserve newlines"
+    );
 }

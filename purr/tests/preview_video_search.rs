@@ -45,7 +45,10 @@ fn create_ranking_test_store(items: Vec<&str>) -> (ClipboardStore, TempDir) {
 
 /// Get search result contents in order
 async fn search_contents(store: &ClipboardStore, query: &str) -> Vec<String> {
-    let result = store.search(query.to_string(), ListPresentationProfile::CompactRow).await.unwrap();
+    let result = store
+        .search(query.to_string(), ListPresentationProfile::CompactRow)
+        .await
+        .unwrap();
     let ids: Vec<String> = result
         .matches
         .iter()
@@ -124,7 +127,10 @@ async fn ranking_recency_breaks_ties_for_equal_matches() {
     );
 
     // Search for "hello " - all 3 have equal quantized Tantivy scores
-    let result = store.search("hello ".to_string(), ListPresentationProfile::CompactRow).await.unwrap();
+    let result = store
+        .search("hello ".to_string(), ListPresentationProfile::CompactRow)
+        .await
+        .unwrap();
     let ids: Vec<String> = result
         .matches
         .iter()
@@ -143,7 +149,10 @@ async fn ranking_recency_breaks_ties_for_equal_matches() {
 
     // Verify deterministic ordering - with distinct timestamps, results should be stable
     for _ in 0..3 {
-        let result2 = store.search("hello ".to_string(), ListPresentationProfile::CompactRow).await.unwrap();
+        let result2 = store
+            .search("hello ".to_string(), ListPresentationProfile::CompactRow)
+            .await
+            .unwrap();
         let ids2: Vec<String> = result2
             .matches
             .iter()
@@ -574,7 +583,10 @@ tee: gateway_42235.log: Transport endpoint is not connected
 
     let (store, _temp) = create_ranking_test_store(vec![content]);
 
-    let result = store.search(query.to_string(), ListPresentationProfile::CompactRow).await.unwrap();
+    let result = store
+        .search(query.to_string(), ListPresentationProfile::CompactRow)
+        .await
+        .unwrap();
     let ids: Vec<String> = result
         .matches
         .iter()

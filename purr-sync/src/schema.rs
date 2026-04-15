@@ -2,11 +2,7 @@
 
 use crate::error::SyncResult;
 
-fn table_has_column(
-    conn: &rusqlite::Connection,
-    table: &str,
-    column: &str,
-) -> SyncResult<bool> {
+fn table_has_column(conn: &rusqlite::Connection, table: &str, column: &str) -> SyncResult<bool> {
     let pragma = format!("PRAGMA table_info({table})");
     let mut stmt = conn.prepare(&pragma)?;
     let mut rows = stmt.query([])?;

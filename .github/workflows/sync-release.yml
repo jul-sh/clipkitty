@@ -20,7 +20,7 @@ jobs:
           fetch-depth: 0
 
       - name: Verify pinned actions
-        run: ./Scripts/check-pinned-actions.sh
+        run: make check
 
       - name: Find target commit and sync release
         run: |

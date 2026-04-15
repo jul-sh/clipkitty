@@ -436,11 +436,13 @@ if [ -f "$LIB" ] && [ "$CURRENT_HASH" = "$STORED_HASH" ]; then
 fi
 
 echo "Rust changed: $STORED_HASH -> $CURRENT_HASH"
-if [ -x "Scripts/run-in-nix.sh" ]; then
-    export CARGO_TARGET_DIR="$(dirname "$(realpath "$(git rev-parse --git-common-dir)")")/target"
-    Scripts/run-in-nix.sh -c "cd purr && MACOSX_DEPLOYMENT_TARGET=14.0 cargo run ${LOCKED:+--locked} --release --bin generate-bindings"
-    mkdir -p .make && echo "$CURRENT_HASH" > "$MARKER"
+export CARGO_TARGET_DIR="$(dirname "$(realpath "$(git rev-parse --git-common-dir)")")/target"
+if [ -z "${IN_NIX_SHELL:-}" ]; then
+    nix develop --no-update-lock-file --experimental-features 'nix-command flakes' "$PROJECT_DIR#default" --command bash -c "cd purr && MACOSX_DEPLOYMENT_TARGET=14.0 cargo run ${LOCKED:+--locked} --release --bin generate-bindings"
+else
+    (cd purr && MACOSX_DEPLOYMENT_TARGET=14.0 cargo run ${LOCKED:+--locked} --release --bin generate-bindings)
 fi
+mkdir -p .make && echo "$CURRENT_HASH" > "$MARKER"
 """
 
 /// Creates a Rust pre-build execution action targeting the given app target.

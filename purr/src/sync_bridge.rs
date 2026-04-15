@@ -221,11 +221,7 @@ pub(crate) trait SyncEmitter: Send + Sync {
         snapshot: ItemSnapshotData,
     ) -> Result<(), ClipKittyError>;
 
-    fn emit_item_touched(
-        &self,
-        item_id: &str,
-        timestamp_unix: i64,
-    ) -> Result<(), ClipKittyError>;
+    fn emit_item_touched(&self, item_id: &str, timestamp_unix: i64) -> Result<(), ClipKittyError>;
 
     fn emit_text_edited(&self, item_id: &str, new_text: &str) -> Result<(), ClipKittyError>;
 
@@ -279,14 +275,9 @@ impl RealSyncEmitter {
         SyncStore::new(&self.pool)
     }
 
-    fn append_local_event_and_advance(
-        &self,
-        event: &ItemEvent,
-    ) -> Result<(), ClipKittyError> {
+    fn append_local_event_and_advance(&self, event: &ItemEvent) -> Result<(), ClipKittyError> {
         let sync = self.sync_store();
-        let current_aggregate = sync
-            .fetch_snapshot(&event.item_id)?
-            .map(|s| s.aggregate);
+        let current_aggregate = sync.fetch_snapshot(&event.item_id)?.map(|s| s.aggregate);
 
         match projector::apply_event(current_aggregate.as_ref(), &event.payload) {
             ApplyResult::Applied(delta) => {
@@ -336,20 +327,16 @@ impl RealSyncEmitter {
 
         let existing_projection = sync.fetch_projection(item_id)?;
         let projection_state = match aggregate {
-            ItemAggregate::Live(live) => {
-                match existing_projection.map(|entry| entry.state) {
-                    Some(ProjectionState::Materialized { .. }) => {
-                        ProjectionState::Materialized {
-                            versions: live.versions,
-                        }
-                    }
-                    Some(ProjectionState::PendingMaterialization { .. })
-                    | Some(ProjectionState::Tombstoned { .. })
-                    | None => ProjectionState::Materialized {
-                        versions: live.versions,
-                    },
-                }
-            }
+            ItemAggregate::Live(live) => match existing_projection.map(|entry| entry.state) {
+                Some(ProjectionState::Materialized { .. }) => ProjectionState::Materialized {
+                    versions: live.versions,
+                },
+                Some(ProjectionState::PendingMaterialization { .. })
+                | Some(ProjectionState::Tombstoned { .. })
+                | None => ProjectionState::Materialized {
+                    versions: live.versions,
+                },
+            },
             ItemAggregate::Tombstoned(tomb) => ProjectionState::Tombstoned {
                 versions: tomb.versions,
             },
@@ -394,11 +381,7 @@ impl SyncEmitter for RealSyncEmitter {
         self.append_local_event_and_advance(&event)
     }
 
-    fn emit_item_touched(
-        &self,
-        item_id: &str,
-        timestamp_unix: i64,
-    ) -> Result<(), ClipKittyError> {
+    fn emit_item_touched(&self, item_id: &str, timestamp_unix: i64) -> Result<(), ClipKittyError> {
         let sync = self.sync_store();
         if let Some(versions) = self.materialized_projection_versions(&sync, item_id)? {
             let event = ItemEvent::new_local(

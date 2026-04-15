@@ -7,8 +7,8 @@ use purr_sync::event::ItemEvent;
 use purr_sync::replay;
 use purr_sync::store::{ProjectionEntry, ProjectionState, SyncStore};
 use purr_sync::types::{
-    ApplyResult, DeferredReason, IgnoreReason, ItemEventPayload, ItemSnapshotData, TypeSpecificData,
-    VersionVector,
+    ApplyResult, DeferredReason, IgnoreReason, ItemEventPayload, ItemSnapshotData,
+    TypeSpecificData, VersionVector,
 };
 
 use purr::database::Database;
@@ -135,9 +135,7 @@ fn test_two_devices_create_and_sync() {
 
     // Verify Device B's projection has the item.
     let sync_b = device_b.sync_store();
-    let proj = sync_b
-        .fetch_projection(&events_a[0].item_id)
-        .unwrap();
+    let proj = sync_b.fetch_projection(&events_a[0].item_id).unwrap();
     assert!(proj.is_some());
     let proj = proj.unwrap();
     let versions = assert_projection_pending(&proj);

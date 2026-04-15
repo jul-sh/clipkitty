@@ -38,6 +38,17 @@
           inherit pkgs lib rustToolchain clipkittyLib;
         };
 
+        xtaskPackage = pkgs.rustPlatform.buildRustPackage {
+          pname = "clipkitty-xtask";
+          version = "0.1.0";
+          src = ./.;
+          cargoLock.lockFile = ./Cargo.lock;
+          cargoBuildFlags = [ "-p" "xtask" ];
+          cargoTestFlags = [ "-p" "xtask" ];
+          nativeBuildInputs = [ pkgs.pkg-config ];
+          buildInputs = [ pkgs.sqlite ];
+        };
+
         applePackages =
           if isDarwin
           then
@@ -135,6 +146,7 @@
           {
             bazelisk = pkgs.bazelisk;
             clipkitty-rust-tests = rustOutputs.rustTests;
+            xtask = xtaskPackage;
           }
           // lib.optionalAttrs isDarwin {
             # Re-export tools CI workflows install with
@@ -154,6 +166,11 @@
           );
 
         apps = lib.optionalAttrs isDarwin {
+          xtask = {
+            type = "app";
+            program = "${xtaskPackage}/bin/clipkitty";
+            meta.description = "ClipKitty automation CLI";
+          };
           run = {
             type = "app";
             program = "${runApp}/bin/clipkitty-run";
@@ -170,8 +187,14 @@
           };
 
         devShells.default = pkgs.mkShell {
+          # `sqlite` + `pkg-config` are link-time deps for the xtask crate
+          # (via `libsqlite3-sys`). Building `tools/xtask` from source inside
+          # this shell requires them; the flake-built `xtaskPackage` gets
+          # them through its own `buildInputs`.
+          nativeBuildInputs = [ pkgs.pkg-config ];
           buildInputs = [
             rustToolchain
+            pkgs.sqlite
             pkgs.ffmpeg
             pkgs.age
             pkgs.cmark-gfm
@@ -190,7 +213,7 @@
 
             # Install git hooks if not already installed
             if [ -d .git ] && [ ! -f .git/hooks/pre-commit ]; then
-              ./Scripts/install-hooks.sh
+              make install-hooks >/dev/null 2>&1 || true
             fi
           '';
         };
