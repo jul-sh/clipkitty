@@ -118,9 +118,11 @@ let
           || lib.hasPrefix "rust-core" rel
           || lib.hasPrefix "distribution/demo-data" rel
           || lib.hasPrefix "distribution/rust-data-gen" rel
-          # Allow the `distribution/` directory itself so cleanSourceWith
-          # can recurse into the workspace members above.
-          || rel == "distribution";
+          || lib.hasPrefix "tools/xtask" rel
+          # Allow the `distribution/` and `tools/` directories themselves so
+          # cleanSourceWith can recurse into the workspace members above.
+          || rel == "distribution"
+          || rel == "tools";
       in
       (allowRoot || allowTree)
       && !(
