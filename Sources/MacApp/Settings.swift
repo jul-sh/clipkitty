@@ -264,7 +264,7 @@ final class AppSettings: ObservableObject {
 
         launchAtLoginEnabled = defaults.bool(forKey: launchAtLoginKey)
         #if ENABLE_SYNTHETIC_PASTE
-            autoPasteEnabled = defaults.object(forKey: autoPasteKey) as? Bool ?? true
+            autoPasteEnabled = defaults.object(forKey: autoPasteKey) as? Bool ?? false
         #endif
         #if ENABLE_SPARKLE_UPDATES
             autoInstallUpdates = defaults.object(forKey: autoInstallUpdatesKey) as? Bool ?? true

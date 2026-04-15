@@ -7,7 +7,7 @@ HOW TO TEST (macOS):
 3. Click the cat icon in the menu bar, or press ⌥Space (Option+Space).
 4. Your copied items appear in a scrollable list, most recent first.
 5. Use the arrow keys (Up/Down) to navigate items. The right-side preview pane shows full content.
-6. Press Return to use the currently selected paste mode. This dismisses the panel.
+6. On first launch, the default paste mode is "To clipboard." Press Return to copy the selected item to the system clipboard. This dismisses the panel.
 
 OPTIONAL DIRECT PASTE FEATURE (macOS):
 
@@ -27,12 +27,12 @@ HOW TO TEST (iPhone):
 5. Use the search bar (magnifying glass) to find items. Use the filter pill to filter by type (text, images, links, colors).
 
 NOTES:
-- On macOS, "To active app" is an optional, user-controlled setting. It only runs after the user explicitly selects an item in ClipKitty.
-- This behavior is limited to completing a standard paste action into the previously active app and is provided as an accessibility accommodation for users who may have difficulty performing the Cmd+V key combination themselves.
-- If Accessibility permission is not granted, ClipKitty falls back to clipboard-only behavior.
-- Other approved Mac App Store clipboard managers offering the same direct-paste functionality include Maccy ("Paste automatically"), Paste - Limitless Clipboard (sends Command-V to paste current clipboard contents to the active application), ClipBook (programmatically sends Command-V to the currently active application), PasteMe ("Direct Pasting"), and CopyClip 2 - Clipboard Manager ("Paste Directly").
-- These apps are not grandfathered in. They continue to ship App Store updates with this functionality, which shows that direct paste via Accessibility remains acceptable under current review standards for clipboard managers.
-- ClipKitty follows the same pattern: the user explicitly selects an item, ClipKitty writes that item to the system pasteboard, returns focus to the previously active app, and sends Cmd+V only when the user has enabled "To active app."
+- On macOS, the default paste mode is "To clipboard."
+- "To active app" is an optional, user-controlled setting.
+- If Accessibility permission is not granted, ClipKitty continues to work in clipboard-only mode.
+- When "To active app" is enabled, ClipKitty places the user-selected item on the system pasteboard, returns focus to the previously active app, and sends Cmd+V to complete a standard paste action.
+- This feature is provided as an accessibility accommodation for users who may have difficulty performing the Cmd+V key combination themselves.
 - The app has no account system and no login. All data is stored locally by default.
 - Optional iCloud Sync (enabled in Settings) syncs clipboard history across your Mac and iPhone.
 - On first launch, clipboard history will be empty — you need to copy content to populate it.
+- Other Mac App Store clipboard managers that also offer direct paste include Maccy, Paste - Limitless Clipboard, PasteMe - Clipboard Manager, and CopyClip 2 - Clipboard Manager.
