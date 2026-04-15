@@ -467,6 +467,43 @@ def main():
 
         print(f"Total screenshots uploaded: {screenshot_count}")
 
+        # --- Upload intro videos ---
+
+        print("\n=== Uploading intro videos ===")
+
+        video_count = 0
+        if os.path.isdir(marketing_dir):
+            for entry in sorted(os.listdir(marketing_dir)):
+                src_dir = os.path.join(marketing_dir, entry)
+                if not os.path.isdir(src_dir):
+                    continue
+                asc_locale = LOCALE_MAP.get(entry)
+                if not asc_locale:
+                    continue
+                video_path = os.path.join(src_dir, "intro_video.mov")
+                if not os.path.isfile(video_path):
+                    continue
+                loc_id = locale_to_loc_id.get(asc_locale)
+                if not loc_id:
+                    print(f"  Warning: no localization for {asc_locale}, skipping intro video")
+                    continue
+
+                for device_type in platform_config["screenshot_device_types"]:
+                    print(f"  Uploading intro video for {asc_locale} ({device_type})...")
+                    if args.dry_run:
+                        print(f"    [dry-run] {video_path}")
+                    else:
+                        run([
+                            "asc", "video-previews", "upload",
+                            "--version-localization", loc_id,
+                            "--device-type", device_type,
+                            "--path", video_path,
+                            "--replace",
+                        ])
+                    video_count += 1
+
+        print(f"Total intro videos uploaded: {video_count}")
+
         print("\n=== Publish complete ===")
 
     finally:
