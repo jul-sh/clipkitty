@@ -737,11 +737,11 @@ let project = Project(
             ]
         ),
 
-        // MARK: ClipKittyiOS — iPhone app
+        // MARK: ClipKittyiOS — iPhone and iPad app
 
         .target(
             name: "ClipKittyiOS",
-            destinations: [.iPhone],
+            destinations: [.iPhone, .iPad],
             product: .app,
             bundleId: "com.eviljuliette.clipkitty",
             deploymentTargets: .iOS("26.0"),
@@ -792,7 +792,7 @@ let project = Project(
 
         .target(
             name: "ClipKittyShare",
-            destinations: [.iPhone],
+            destinations: [.iPhone, .iPad],
             product: .appExtension,
             bundleId: "com.eviljuliette.clipkitty.share",
             deploymentTargets: .iOS("26.0"),
