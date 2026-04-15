@@ -18,6 +18,7 @@ pub struct Runner<'a> {
     args: Vec<OsString>,
     cwd: Option<OsString>,
     env: Vec<(OsString, OsString)>,
+    env_remove: Vec<OsString>,
     reporter: &'a Reporter,
     stdin: Stdio,
     stdin_bytes: Option<Vec<u8>>,
@@ -32,6 +33,7 @@ impl<'a> Runner<'a> {
             args: Vec::new(),
             cwd: None,
             env: Vec::new(),
+            env_remove: Vec::new(),
             reporter,
             stdin: Stdio::null(),
             stdin_bytes: None,
@@ -61,6 +63,60 @@ impl<'a> Runner<'a> {
 
     pub fn env(mut self, key: impl Into<OsString>, value: impl Into<OsString>) -> Self {
         self.env.push((key.into(), value.into()));
+        self
+    }
+
+    /// Remove an environment variable before invoking the child. Used to
+    /// strip nix-develop-injected compiler toolchain vars (CC, CXX, SDKROOT,
+    /// NIX_*, …) from subprocesses like `xcodebuild` that must pick up the
+    /// Xcode-bundled toolchain instead.
+    pub fn env_remove(mut self, key: impl Into<OsString>) -> Self {
+        self.env_remove.push(key.into());
+        self
+    }
+
+    /// Strip the full set of nix-develop compiler / toolchain env vars so a
+    /// child process sees Apple's default Xcode toolchain unmodified.
+    pub fn sanitize_for_xcode(mut self) -> Self {
+        // Fixed names set by `nix develop` / stdenv setup hooks that would
+        // otherwise override Xcode's own compiler selection.
+        const FIXED: &[&str] = &[
+            "CC",
+            "CXX",
+            "CC_FOR_TARGET",
+            "CXX_FOR_TARGET",
+            "LD",
+            "AR",
+            "RANLIB",
+            "STRIP",
+            "NM",
+            "CFLAGS",
+            "CXXFLAGS",
+            "CPPFLAGS",
+            "LDFLAGS",
+            "CPATH",
+            "C_INCLUDE_PATH",
+            "CPLUS_INCLUDE_PATH",
+            "LIBRARY_PATH",
+            "PKG_CONFIG_PATH",
+            "SDKROOT",
+            "MACOSX_DEPLOYMENT_TARGET",
+            "TOOLCHAINS",
+            "DEVELOPER_DIR_OVERRIDE",
+        ];
+        for key in FIXED {
+            self.env_remove.push(OsString::from(*key));
+        }
+        // Every `NIX_*` env var the stdenv cc-wrapper sets (NIX_CC,
+        // NIX_CFLAGS_COMPILE, NIX_LDFLAGS, …) — strip the lot so xcodebuild
+        // never sees nix-store paths.
+        for (key, _) in std::env::vars_os() {
+            if let Some(name) = key.to_str() {
+                if name.starts_with("NIX_") {
+                    self.env_remove.push(key);
+                }
+            }
+        }
         self
     }
 
@@ -94,6 +150,9 @@ impl<'a> Runner<'a> {
         cmd.args(&self.args);
         if let Some(cwd) = &self.cwd {
             cmd.current_dir(cwd);
+        }
+        for key in &self.env_remove {
+            cmd.env_remove(key);
         }
         if !self.env.is_empty() {
             cmd.envs(self.env.iter().map(|(k, v)| (k, v)));

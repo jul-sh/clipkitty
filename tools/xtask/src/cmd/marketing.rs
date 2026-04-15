@@ -300,6 +300,7 @@ fn run_screenshot_xcodebuild(
         .arg("-only-testing")
         .arg(plan.only_testing)
         .cwd(repo.as_path())
+        .sanitize_for_xcode()
         .capture_stdout()
         .capture_stderr();
     if matches!(plan.platform, CapturePlatform::Ios)
@@ -742,6 +743,7 @@ fn record_preview_video(
         .arg("-only-testing")
         .arg(format!("ClipKittyUITests/ClipKittyUITests/{test_name}"))
         .cwd(repo.as_path())
+        .sanitize_for_xcode()
         .capture_stdout()
         .capture_stderr();
     if env::var("SKIP_SIGNING").is_ok() {

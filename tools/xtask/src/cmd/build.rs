@@ -235,6 +235,7 @@ pub(crate) fn archive_ios(
         .arg(format!("MARKETING_VERSION={}", request.version))
         .arg(format!("CURRENT_PROJECT_VERSION={}", request.build_number))
         .cwd(repo.as_path())
+        .sanitize_for_xcode()
         .run()?;
 
     reporter.info(&format!("Exporting iOS archive → {export_dir}"));
@@ -246,6 +247,7 @@ pub(crate) fn archive_ios(
         .arg("-exportOptionsPlist")
         .arg(export_plist.as_std_path())
         .cwd(repo.as_path())
+        .sanitize_for_xcode()
         .run()?;
 
     reporter.success(&format!("Exported iOS archive to {export_dir}"));
