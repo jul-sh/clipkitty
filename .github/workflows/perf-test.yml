@@ -35,7 +35,7 @@ jobs:
           lfs: true
 
       - name: Verify pinned actions
-        run: ./Scripts/check-pinned-actions.sh
+        run: make check
 
       - name: Install Nix
         uses: DeterminateSystems/nix-installer-action@b66b36319cc6fde4ea85edd583b088c65d6b8710 # main 2026-04-08
@@ -78,43 +78,23 @@ jobs:
           p12-file-base64: ${{ steps.secrets.outputs.MACOS_P12_BASE64 }}
           p12-password: ${{ steps.secrets.outputs.MACOS_P12_PASSWORD }}
 
-      - name: Build Rust Core
-        run: make rust LOCKED=1
-
-      - name: Generate Xcode Project
-        run: make generate
-
-      - name: Verify lockfiles unchanged
-        run: ./Scripts/check-lockfile-drift.sh
-
-      - name: Build App (Release)
-        run: make build CONFIGURATION=Release UNIVERSAL=1 SKIP_SIGNING=1 LOCKED=1
-        env:
-          AGE_SECRET_KEY: ${{ secrets.AGE_SECRET_KEY }}
-
-      - name: Generate Performance Database
-        run: |
-          # Use native Rust code to ensure schema compatibility
-          ./Scripts/run-in-nix.sh -c "cd purr && cargo run --locked --release --bin generate-perf-db"
+      - name: Verify repo invariants
+        run: make check
 
       - name: Run Performance Tests
         id: perf-test
         run: |
           HANG_THRESHOLD="${{ inputs.hang_threshold || '250' }}"
-          FAIL_FLAG=""
-          if [ "${{ inputs.fail_on_hangs }}" = "true" ] || [ -z "${{ inputs.fail_on_hangs }}" ]; then
-            FAIL_FLAG="--fail-on-hangs"
-          fi
-
           mkdir -p perf_traces
 
-          # Run performance tests with tracing
-          ./Scripts/run-perf-test.sh \
-            --skip-build \
-            --skip-db-gen \
-            --hang-threshold "$HANG_THRESHOLD" \
-            $FAIL_FLAG \
-            --output perf_traces \
+          PERF_FAIL_ON_HANGS=0
+          if [ "${{ inputs.fail_on_hangs }}" = "true" ] || [ -z "${{ inputs.fail_on_hangs }}" ]; then
+            PERF_FAIL_ON_HANGS=1
+          fi
+
+          make perf \
+            PERF_HANG_THRESHOLD="$HANG_THRESHOLD" \
+            PERF_FAIL_ON_HANGS="$PERF_FAIL_ON_HANGS" \
             2>&1 | tee perf_traces/full_output.log
 
           # Find the latest report
@@ -140,7 +120,7 @@ jobs:
           fi
 
       - name: Verify lockfiles unchanged after build
-        run: ./Scripts/check-lockfile-drift.sh
+        run: make check
 
       - name: Upload Trace Artifacts
         if: always()

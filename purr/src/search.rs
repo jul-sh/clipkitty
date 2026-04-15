@@ -54,11 +54,11 @@ impl ExcerptPolicy {
             ListPresentationProfile::CompactRow => Self {
                 whitespace_mode: WhitespaceMode::CollapseAll,
                 max_chars: SNIPPET_CONTEXT_CHARS * 2, // 400
-                context_chars: SNIPPET_CONTEXT_CHARS,  // 200
+                context_chars: SNIPPET_CONTEXT_CHARS, // 200
             },
             ListPresentationProfile::Card => Self {
                 whitespace_mode: WhitespaceMode::PreserveLineBreaks,
-                max_chars: SNIPPET_CONTEXT_CHARS * 4, // 800
+                max_chars: SNIPPET_CONTEXT_CHARS * 4,     // 800
                 context_chars: SNIPPET_CONTEXT_CHARS * 2, // 400
             },
         }
@@ -1059,10 +1059,7 @@ pub fn generate_preview(content: &str, max_chars: usize) -> String {
 }
 
 /// Generate a preview using a presentation profile's excerpt policy.
-pub fn generate_preview_for_profile(
-    content: &str,
-    profile: ListPresentationProfile,
-) -> String {
+pub fn generate_preview_for_profile(content: &str, profile: ListPresentationProfile) -> String {
     let trimmed = content.trim_start();
     let policy = ExcerptPolicy::for_profile(profile);
     let (preview, _, _) = generate_snippet_with_policy(trimmed, &[], &policy);

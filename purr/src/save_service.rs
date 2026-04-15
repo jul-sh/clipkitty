@@ -255,8 +255,7 @@ pub(crate) fn delete_item(
     item_id: i64,
 ) -> Result<(), ClipKittyError> {
     // Fetch the string item_id before deleting from DB (needed for index deletion).
-    let string_item_id = get_stored_item(db, item_id)?
-        .map(|item| item.item_id);
+    let string_item_id = get_stored_item(db, item_id)?.map(|item| item.item_id);
     db.delete_item(item_id)?;
     if let Some(sid) = string_item_id {
         indexer.delete_document(&sid)?;

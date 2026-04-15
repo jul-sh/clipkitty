@@ -412,7 +412,17 @@ enum IOSBuildVariant: CaseIterable {
 
 /// Rust pre-build action shared across all macOS app schemes.
 /// Detects purr/ changes via git tree hash and rebuilds bindings when needed.
+///
+/// When CLIPKITTY_SKIP_RUST_PREBUILD=1 is set, the script is a no-op: this is
+/// the contract with the Nix flake, which supplies Rust bridge artifacts into
+/// the staged source tree before invoking xcodebuild and doesn't want
+/// Xcode to try to regenerate them.
 private let rustPreBuildScript = """
+if [ "${CLIPKITTY_SKIP_RUST_PREBUILD:-0}" = "1" ]; then
+    echo "CLIPKITTY_SKIP_RUST_PREBUILD=1 — Rust bridge already supplied, skipping."
+    exit 0
+fi
+
 # Use git tree hash to detect purr/ changes (fast, handles branches/rebases)
 cd "$PROJECT_DIR"
 MARKER=".make/rust-tree-hash"
@@ -426,11 +436,13 @@ if [ -f "$LIB" ] && [ "$CURRENT_HASH" = "$STORED_HASH" ]; then
 fi
 
 echo "Rust changed: $STORED_HASH -> $CURRENT_HASH"
-if [ -x "Scripts/run-in-nix.sh" ]; then
-    export CARGO_TARGET_DIR="$(dirname "$(realpath "$(git rev-parse --git-common-dir)")")/target"
-    Scripts/run-in-nix.sh -c "cd purr && MACOSX_DEPLOYMENT_TARGET=14.0 cargo run ${LOCKED:+--locked} --release --bin generate-bindings"
-    mkdir -p .make && echo "$CURRENT_HASH" > "$MARKER"
+export CARGO_TARGET_DIR="$(dirname "$(realpath "$(git rev-parse --git-common-dir)")")/target"
+if [ -z "${IN_NIX_SHELL:-}" ]; then
+    nix develop --no-update-lock-file --experimental-features 'nix-command flakes' "$PROJECT_DIR#default" --command bash -c "cd purr && MACOSX_DEPLOYMENT_TARGET=14.0 cargo run ${LOCKED:+--locked} --release --bin generate-bindings"
+else
+    (cd purr && MACOSX_DEPLOYMENT_TARGET=14.0 cargo run ${LOCKED:+--locked} --release --bin generate-bindings)
 fi
+mkdir -p .make && echo "$CURRENT_HASH" > "$MARKER"
 """
 
 /// Creates a Rust pre-build execution action targeting the given app target.
@@ -704,7 +716,7 @@ let project = Project(
 
         // MARK: ClipKittyUITests — UI tests
 
-        // Debug runs should sign locally so `make uitest` can execute without
+        // Debug runs should sign locally so local UI test runs can execute without
         // requiring a Developer ID identity. Non-debug builds can still opt into
         // Developer ID signing for stable TCC behavior across rebuilds.
         .target(

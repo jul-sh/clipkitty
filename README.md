@@ -61,6 +61,8 @@ Because auto-updates are gone, you can audit a specific version and stick to it.
 
 The hardened build uses a separate bundle ID (`com.eviljuliette.clipkitty.hardened`), which means macOS gives it its own sandbox container. Your clipboard history does not carry over between hardened and non-hardened installs, in either direction. This is intentional; the two builds are isolated from each other.
 
+For local source builds, `nix build .#clipkitty-hardened` gives you the hardened feature set as an unsigned pre-sign bundle. To stage the signed hardened app, run `make app-hardened`. The lower-level binary remains available as `cargo run -p xtask -- app hardened` or `nix run .#xtask -- app hardened` if you specifically want to invoke `xtask` directly.
+
 Download `ClipKitty-Hardened.zip` from [GitHub Releases](https://github.com/jul-sh/clipkitty/releases).
 
 ## Getting Started
@@ -85,18 +87,21 @@ Download `ClipKitty-Hardened.zip` from [GitHub Releases](https://github.com/jul-
 ```bash
 git clone https://github.com/jul-sh/clipkitty
 cd clipkitty
-make
+make help                     # Supported automation entry points
+nix build .#clipkitty          # Release macOS bundle
 ```
 
-Build a specific variant by setting `CONFIGURATION`. If you want the hardened one, you are building a different binary with different capabilities, not the same app with a few checkboxes unchecked.
+The build graph lives entirely in `flake.nix` + `nix/*.nix`. Every variant is a nix package, including the debug app, the hardened variant, and the sparkle/appstore release candidates. If you want the hardened one, you are building a different binary with different capabilities, not the same app with a few checkboxes unchecked.
 
 ```bash
-make all CONFIGURATION=SparkleRelease  # With auto-update support
-make all CONFIGURATION=Hardened        # Hardened (no network/files/sync)
-make -C distribution hardened          # Hardened signed DMG
+nix build .#clipkitty-sparkle   # With auto-update support
+nix build .#clipkitty-hardened  # Hardened feature set, unsigned pre-sign bundle
+make app-hardened               # Stage the signed hardened app
+make workspace                  # Materialize the Xcode workspace/project
+nix run .#run                   # Launch a Debug build
 ```
 
-Requires macOS 15+ and Swift 6.2+.
+Requires macOS 15+, Nix with flakes enabled, and a host Xcode install for the sandbox escape into `xcrun`/`tuist`.
 
 ### How Search Works
 

@@ -885,14 +885,16 @@ impl Indexer {
 
     fn build_schema() -> Schema {
         let mut builder = Schema::builder();
-        builder.add_text_field("item_id", TextOptions::default()
-            .set_indexing_options(
-                TextFieldIndexing::default()
-                    .set_tokenizer("raw")
-                    .set_index_option(IndexRecordOption::Basic),
-            )
-            .set_stored()
-            .set_fast(None),
+        builder.add_text_field(
+            "item_id",
+            TextOptions::default()
+                .set_indexing_options(
+                    TextFieldIndexing::default()
+                        .set_tokenizer("raw")
+                        .set_index_option(IndexRecordOption::Basic),
+                )
+                .set_stored()
+                .set_fast(None),
         );
 
         // Content field with trigram tokenization
@@ -1889,7 +1891,9 @@ mod tests {
         // "tast" (substitution typo of "test") has zero trigram overlap:
         // tast → [tas, ast], test → [tes, est]. FuzzyTermQuery catches it.
         let indexer = Indexer::new_in_memory().unwrap();
-        indexer.add_document("1", "run the test suite", 1000).unwrap();
+        indexer
+            .add_document("1", "run the test suite", 1000)
+            .unwrap();
         indexer.add_document("2", "a slow red dog", 1000).unwrap();
         indexer.commit().unwrap();
 
@@ -1907,7 +1911,9 @@ mod tests {
     fn test_insertion_typo_recall() {
         // "tesst" (insertion typo of "test")
         let indexer = Indexer::new_in_memory().unwrap();
-        indexer.add_document("1", "run the test suite", 1000).unwrap();
+        indexer
+            .add_document("1", "run the test suite", 1000)
+            .unwrap();
         indexer.add_document("2", "a slow red dog", 1000).unwrap();
         indexer.commit().unwrap();
 
@@ -1925,7 +1931,9 @@ mod tests {
     fn test_deletion_typo_recall() {
         // "tst" (deletion typo of "test")
         let indexer = Indexer::new_in_memory().unwrap();
-        indexer.add_document("1", "run the test suite", 1000).unwrap();
+        indexer
+            .add_document("1", "run the test suite", 1000)
+            .unwrap();
         indexer.add_document("2", "a slow red dog", 1000).unwrap();
         indexer.commit().unwrap();
 
@@ -1992,8 +2000,15 @@ mod tests {
         indexer.commit().unwrap();
 
         let results = indexer.search("needlechunk", 20).unwrap();
-        let ids: Vec<String> = results.iter().map(|candidate| candidate.id.clone()).collect();
-        assert_eq!(ids, vec!["1"], "chunk matches should collapse to one parent");
+        let ids: Vec<String> = results
+            .iter()
+            .map(|candidate| candidate.id.clone())
+            .collect();
+        assert_eq!(
+            ids,
+            vec!["1"],
+            "chunk matches should collapse to one parent"
+        );
         assert!(matches!(
             results[0].match_context(),
             SearchMatchContext::Chunk(_)
@@ -2053,7 +2068,10 @@ mod tests {
         ];
 
         let head = PhaseOneAdmissionPolicy::select_phase_two_head(&candidates).into_indices();
-        let head_ids: Vec<String> = head.iter().map(|&index| candidates[index].id.clone()).collect();
+        let head_ids: Vec<String> = head
+            .iter()
+            .map(|&index| candidates[index].id.clone())
+            .collect();
         assert_eq!(head_ids.len(), 5);
         assert_eq!(head_ids, vec!["1", "2", "100", "101", "102"]);
     }
@@ -2100,14 +2118,19 @@ mod tests {
     #[test]
     fn test_two_char_words_long_query_recall() {
         let indexer = Indexer::new_in_memory().unwrap();
-        indexer.add_document("1", "ab cd ef gh ij kl", 1000).unwrap();
+        indexer
+            .add_document("1", "ab cd ef gh ij kl", 1000)
+            .unwrap();
         indexer
             .add_document("2", "ab xx cd yy ef zz gh", 1000)
             .unwrap();
         indexer.commit().unwrap();
 
         let results = indexer.search("ab cd ef gh", 10).unwrap();
-        let ids: Vec<String> = results.iter().map(|candidate| candidate.id.clone()).collect();
+        let ids: Vec<String> = results
+            .iter()
+            .map(|candidate| candidate.id.clone())
+            .collect();
         assert!(
             ids.contains(&"1".to_string()),
             "query 'ab cd ef gh' should recall the exact short-word sequence, got {:?}",
@@ -2136,7 +2159,10 @@ mod tests {
         indexer.commit().unwrap();
 
         let results = indexer.search("to be or not", 10).unwrap();
-        let ids: Vec<String> = results.iter().map(|candidate| candidate.id.clone()).collect();
+        let ids: Vec<String> = results
+            .iter()
+            .map(|candidate| candidate.id.clone())
+            .collect();
         assert!(
             ids.contains(&"1".to_string()),
             "query 'to be or not' should recall dense short-word clusters with a gap, got {:?}",
@@ -2157,7 +2183,10 @@ mod tests {
         indexer.commit().unwrap();
 
         let results = indexer.search("to be or not", 10).unwrap();
-        let ids: Vec<String> = results.iter().map(|candidate| candidate.id.clone()).collect();
+        let ids: Vec<String> = results
+            .iter()
+            .map(|candidate| candidate.id.clone())
+            .collect();
         assert!(
             ids.is_empty(),
             "query 'to be or not' should not recall scattered short words without adjacent pairs, got {:?}",
