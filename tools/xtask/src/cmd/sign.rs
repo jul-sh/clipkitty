@@ -494,8 +494,12 @@ fn decode_secret_base64(repo: &RepoRoot, name: &str, reporter: &Reporter) -> Res
     )?;
     let text =
         String::from_utf8(bytes).map_err(|err| anyhow!("{name} secret is not UTF-8: {err}"))?;
+    // Some secrets are line-wrapped base64 (standard `base64` CLI output wraps
+    // at column 76). The standard engine rejects internal whitespace, so strip
+    // it all before decoding.
+    let cleaned: String = text.chars().filter(|c| !c.is_whitespace()).collect();
     base64::engine::general_purpose::STANDARD
-        .decode(text.trim())
+        .decode(&cleaned)
         .map_err(|err| anyhow!("decoding {name}: {err}"))
 }
 
