@@ -49,7 +49,7 @@ jobs:
         uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5 # v4
         with:
           lfs: true
-          fetch-depth: 0  # Full history for commit count versioning
+          fetch-depth: 0 # Full history for commit count versioning
 
       - name: Configure macOS scrollbar behavior
         run: |
@@ -362,7 +362,6 @@ jobs:
             xcodebuild-test.log
           if-no-files-found: ignore
 
-
       - name: Create Virtual Retina Display
         run: |
           xcrun clang -framework CoreGraphics -framework Foundation \
@@ -470,9 +469,28 @@ jobs:
         run: |
           gh release delete "${{ steps.resolve-version.outputs.release_tag }}" --yes --cleanup-tag 2>/dev/null || true
 
+          cat > /tmp/release-notes-prepend.md <<'EOF'
+          ## Downloads
+
+          - **`ClipKitty.dmg`** — the standard build. Install this one.
+          - **`ClipKitty-Hardened.zip`** — a stripped-down build for particularly security sensitive enviroments.
+
+          ## About the hardened build
+
+          The hardened build is a separate ClipKitty binary with features that touches the network or filesystem compiled out — no auto-updates, no iCloud sync, no link previews, no file clipboard items, etc. What remains runs under a macOS App Sandbox that further restricts access to the network and filesystem.
+
+          It ships as a separate app (`com.eviljuliette.clipkitty.hardened`) with its own sandbox container, so it coexists with the standard build without sharing data. Because auto-updates are compiled out, you update it by downloading the next release yourself.
+
+          Every release is built on GitHub's infrastructure and cryptographically attested — see [VERIFY.md](https://github.com/jul-sh/clipkitty/blob/main/VERIFY.md) for how to check that a download matches its source commit.
+
+          ---
+
+          EOF
+
           args=(
             release create "${{ steps.resolve-version.outputs.release_tag }}"
             --title "${{ steps.resolve-version.outputs.release_title }}"
+            --notes-file /tmp/release-notes-prepend.md
             --generate-notes
             --target "$GITHUB_SHA"
             ClipKitty.dmg
@@ -710,7 +728,7 @@ jobs:
       - name: Checkout
         uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5 # v4
         with:
-          fetch-depth: 0  # Full history for commit count versioning
+          fetch-depth: 0 # Full history for commit count versioning
 
       - name: Install Nix
         uses: DeterminateSystems/nix-installer-action@b66b36319cc6fde4ea85edd583b088c65d6b8710 # main 2026-04-08
