@@ -259,10 +259,7 @@ impl StoredItem {
         ItemMetadata {
             item_id: self.item_id.clone(),
             icon: self.item_icon(),
-            snippet: crate::search::generate_preview_for_profile(
-                self.text_content(),
-                profile,
-            ),
+            snippet: crate::search::generate_preview_for_profile(self.text_content(), profile),
             source_app: self.source_app.clone(),
             source_app_bundle_id: self.source_app_bundle_id.clone(),
             timestamp_unix: self.timestamp_unix,

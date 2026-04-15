@@ -409,7 +409,9 @@ impl<'a> MatchPresentation<'a> {
         }
 
         let id_refs: Vec<&str> = item_ids.iter().map(|s| s.as_str()).collect();
-        let metadata_rows = self.db.fetch_search_item_metadata_by_string_ids(&id_refs, profile)?;
+        let metadata_rows = self
+            .db
+            .fetch_search_item_metadata_by_string_ids(&id_refs, profile)?;
         let metadata_map: HashMap<String, SearchItemMetadata> = metadata_rows
             .into_iter()
             .map(|metadata| (metadata.item_metadata.item_id.clone(), metadata))
@@ -546,12 +548,8 @@ impl<'a> MatchPresentation<'a> {
             item_metadata.snippet = self
                 .analysis_for_cached_match_context(item_id, query)
                 .map(|(context, analysis)| {
-                    search::create_list_decoration(
-                        context.content(),
-                        &analysis.highlights,
-                        profile,
-                    )
-                    .text
+                    search::create_list_decoration(context.content(), &analysis.highlights, profile)
+                        .text
                 })
                 .unwrap_or_else(|| {
                     search::generate_preview_for_profile(match_context.content(), profile)

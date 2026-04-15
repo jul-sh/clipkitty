@@ -30,15 +30,13 @@ jobs:
           flakehub: false
 
       - name: Verify lockfile integrity
-        run: |
-          ./Scripts/check-pinned-actions.sh
-          ./Scripts/check-lockfile-drift.sh
+        run: make check
 
       - name: Run Rust supply chain scan
-        run: ./Scripts/run-in-nix.sh -c "cargo deny check"
+        run: nix develop --no-update-lock-file --experimental-features 'nix-command flakes' .#default --command cargo deny check
 
       - name: Run Rust library tests
-        run: ./Scripts/run-in-nix.sh -c "cargo test --manifest-path purr/Cargo.toml --lib --locked"
+        run: nix develop --no-update-lock-file --experimental-features 'nix-command flakes' .#default --command cargo test --manifest-path purr/Cargo.toml --lib --locked
 
   build:
     needs: rust-tests
@@ -152,35 +150,27 @@ jobs:
             ~/Library/Keychains/dev_signing.keychain-db \
             ~/Library/Keychains/login.keychain-db
 
-      - name: Generate Xcode Project
-        run: ./Scripts/nix-generate.sh
-
-      - name: Verify lockfiles unchanged
-        run: ./Scripts/check-lockfile-drift.sh
+      - name: Verify repo invariants
+        run: make check
 
       - name: Prepare Xcode Authentication
         id: xcode-auth
         run: |
           mkdir -p .make/keys
-          ./distribution/asc-auth.sh private-key-b64 | base64 --decode > .make/keys/AuthKey.p8
-          echo "key_id=$(./distribution/asc-auth.sh key-id)" >> "$GITHUB_OUTPUT"
-          echo "issuer_id=$(./distribution/asc-auth.sh issuer-id)" >> "$GITHUB_OUTPUT"
+          make secrets-asc-auth FIELD=private-key-b64 | base64 --decode > .make/keys/AuthKey.p8
+          echo "key_id=$(make secrets-asc-auth FIELD=key-id)" >> "$GITHUB_OUTPUT"
+          echo "issuer_id=$(make secrets-asc-auth FIELD=issuer-id)" >> "$GITHUB_OUTPUT"
           echo "key_path=$(pwd)/.make/keys/AuthKey.p8" >> "$GITHUB_OUTPUT"
         env:
           AGE_SECRET_KEY: ${{ secrets.AGE_SECRET_KEY }}
 
-      - name: Build App (SparkleRelease)
-        run: ./Scripts/nix-build-app.sh SparkleRelease
-        env:
-          AGE_SECRET_KEY: ${{ secrets.AGE_SECRET_KEY }}
-
       - name: Build App (AppStore)
-        run: ./Scripts/nix-build-app.sh AppStore
+        run: make app-app-store
         env:
           AGE_SECRET_KEY: ${{ secrets.AGE_SECRET_KEY }}
 
-      - name: Build and Sign App (Hardened)
-        run: ./Scripts/nix-sign-app.sh Hardened
+      - name: Stage Hardened App
+        run: make app-hardened
         env:
           AGE_SECRET_KEY: ${{ secrets.AGE_SECRET_KEY }}
 
@@ -328,58 +318,8 @@ jobs:
             CURRENT_PROJECT_VERSION="$COMMIT_COUNT" \
             CODE_SIGNING_ALLOWED=NO
 
-      - name: Generate Localized Demo Databases
-        run: LOCKED=1 ./distribution/patch-demo-items.sh
-
       - name: Generate iOS Marketing Screenshots
-        run: |
-          set -euo pipefail
-          for locale in en es zh-Hans zh-Hant ja ko fr de pt-BR ru; do
-            echo "Capturing iOS screenshots for $locale..."
-            mkdir -p marketing-ios/$locale
-            echo "$locale" > /tmp/clipkitty_ios_screenshot_locale.txt
-            if [ "$locale" = "en" ]; then
-              echo "SyntheticData.sqlite" > /tmp/clipkitty_ios_screenshot_db.txt
-            else
-              echo "SyntheticData_${locale}.sqlite" > /tmp/clipkitty_ios_screenshot_db.txt
-            fi
-            if [ "$locale" = "en" ]; then
-              prefix=""
-            else
-              prefix="${locale}_"
-            fi
-            for n in 1 2 3; do
-              rm -f "/tmp/clipkitty_ios_${prefix}marketing_${n}_"*.png
-            done
-            xcodebuild test \
-              -workspace ClipKitty.xcworkspace \
-              -scheme ClipKittyiOSUITests \
-              -destination "platform=iOS Simulator,name=iPhone 17" \
-              -derivedDataPath DerivedData \
-              CODE_SIGNING_ALLOWED=NO \
-              -only-testing:ClipKittyiOSUITests/ClipKittyiOSScreenshotTests/testTakeMarketingScreenshots \
-              2>&1 | tee /tmp/clipkitty_ios_screenshot_test.log | grep -E "(Test Case|passed|failed)" || true
-            if ! grep -q "Test.*passed" /tmp/clipkitty_ios_screenshot_test.log; then
-              echo "::error::iOS screenshot test did not pass for $locale"
-              tail -60 /tmp/clipkitty_ios_screenshot_test.log
-              exit 1
-            fi
-            cp "/tmp/clipkitty_ios_${prefix}marketing_1_history.png" "marketing-ios/$locale/screenshot_1.png"
-            cp "/tmp/clipkitty_ios_${prefix}marketing_2_search.png" "marketing-ios/$locale/screenshot_2.png"
-            cp "/tmp/clipkitty_ios_${prefix}marketing_3_filter.png" "marketing-ios/$locale/screenshot_3.png"
-          done
-          rm -f /tmp/clipkitty_ios_screenshot_locale.txt /tmp/clipkitty_ios_screenshot_db.txt
-          echo "Generated iOS screenshots:"
-          if ! ls -lh marketing-ios/*/screenshot_*.png 2>/dev/null; then
-            echo "::error::No iOS screenshots were generated"
-            exit 1
-          fi
-          for locale in en es zh-Hans zh-Hant ja ko fr de pt-BR ru; do
-            if [ ! -f "marketing-ios/$locale/screenshot_1.png" ]; then
-              echo "::error::Missing marketing-ios/$locale/screenshot_1.png"
-              exit 1
-            fi
-          done
+        run: make screenshots-ios
 
       - name: Run UI Tests
         env:
@@ -428,7 +368,7 @@ jobs:
 
       - name: Generate Marketing Screenshots
         run: |
-          SKIP_SIGNING=1 LOCKED=1 ./distribution/marketing-screenshots-localized.sh
+          SKIP_SIGNING=1 LOCKED=1 make screenshots-macos
           ls -lh marketing/*/screenshot_*.png
         env:
           AGE_SECRET_KEY: ${{ secrets.AGE_SECRET_KEY }}
@@ -438,33 +378,11 @@ jobs:
         run: kill "$(cat /tmp/retina-display.pid 2>/dev/null)" 2>/dev/null || true
 
       - name: Generate Icon PNG
-        run: ./distribution/icon-png.sh
+        run: make site-icon
 
       - name: Build and Sign DMG
         run: |
-          chmod +x distribution/build-dmg.sh
-
-          APP="DerivedData/Build/Products/SparkleRelease/ClipKitty.app"
-
-          # Embed Developer ID provisioning profile (required for CloudKit entitlements)
-          ./distribution/read-secret.sh DEVELOPER_ID_PROVISION_PROFILE_BASE64 \
-            | base64 --decode \
-            > "$APP/Contents/embedded.provisionprofile"
-
-          # Sign nested frameworks/bundles first (inside-out for Sparkle, XPC services, etc.)
-          if [ -d "$APP/Contents/Frameworks" ]; then
-            find "$APP/Contents/Frameworks" \( -type f -perm +111 -o -name "*.dylib" \) | while read -r binary; do
-              codesign --force --options runtime --timestamp --sign "Developer ID Application" "$binary"
-            done
-          fi
-
-          # Sign the outer app (must come last)
-          codesign --force --options runtime --timestamp --sign "Developer ID Application" \
-            --entitlements Sources/MacApp/ClipKitty.sparkle.entitlements \
-            "$APP"
-          codesign --verify --deep --strict "$APP"
-
-          ./distribution/build-dmg.sh "$APP" ClipKitty.dmg
+          make release-dmg
           codesign --force --sign "Developer ID Application" ClipKitty.dmg
         env:
           AGE_SECRET_KEY: ${{ secrets.AGE_SECRET_KEY }}
@@ -516,7 +434,7 @@ jobs:
 
       - name: Install Sparkle CLI Tools
         if: github.event_name == 'push' && (github.ref == 'refs/heads/main' || github.ref == 'refs/heads/release')
-        run: ./Scripts/install-sparkle-cli.sh
+        run: make install-sparkle-cli
 
       - name: Sign DMG with EdDSA
         if: github.event_name == 'push' && (github.ref == 'refs/heads/main' || github.ref == 'refs/heads/release')
@@ -532,7 +450,7 @@ jobs:
           SPARKLE_EDDSA_KEY: ${{ steps.secrets.outputs.SPARKLE_EDDSA_KEY }}
 
       - name: Verify lockfiles unchanged before attestation
-        run: ./Scripts/check-lockfile-drift.sh
+        run: make check
 
       - name: Attest Build Provenance
         uses: actions/attest-build-provenance@e8998f949152b193b063cb0ec769d69d929409be # v2
@@ -661,23 +579,23 @@ jobs:
           if [ "$GITHUB_REF_NAME" = "main" ] || [ "$GITHUB_REF_NAME" = "release" ]; then
             [ -f appcast-state.json ] || printf '{}\n' > appcast-state.json
 
-            python3 "$GITHUB_WORKSPACE/distribution/update_appcast_state.py" \
-              --state-path appcast-state.json \
-              --channel "${{ steps.resolve-version.outputs.channel }}" \
-              --version "${{ steps.resolve-version.outputs.version }}" \
-              --url "${{ steps.resolve-version.outputs.release_url }}" \
-              --signature "${{ steps.eddsa-sign.outputs.ed_signature }}" \
-              --length "${{ steps.eddsa-sign.outputs.file_length }}"
+            make release-appcast-update \
+              STATE_PATH=appcast-state.json \
+              CHANNEL="${{ steps.resolve-version.outputs.channel }}" \
+              VERSION="${{ steps.resolve-version.outputs.version }}" \
+              URL="${{ steps.resolve-version.outputs.release_url }}" \
+              SIGNATURE="${{ steps.eddsa-sign.outputs.ed_signature }}" \
+              LENGTH="${{ steps.eddsa-sign.outputs.file_length }}"
 
-            python3 "$GITHUB_WORKSPACE/distribution/generate_appcast.py" \
-              --state-path appcast-state.json \
-              --output-path appcast.xml
+            make release-appcast-generate \
+              STATE_PATH=appcast-state.json \
+              OUTPUT_PATH=appcast.xml
 
             xmllint --noout appcast.xml
           fi
 
           # Generate landing page from README.md (cmark-gfm installed via Nix)
-          "$GITHUB_WORKSPACE/distribution/generate-landing-page.sh" > index.html
+          make site-landing-page > index.html
 
           git add icon.png marketing_1.png marketing_2.png marketing_3.png index.html
           git add appcast.xml appcast-state.json 2>/dev/null || true
@@ -748,26 +666,8 @@ jobs:
         with:
           swift-version: "6.2"
 
-      - name: Generate Xcode Project
-        run: ./Scripts/nix-generate.sh
-
-      - name: Verify lockfiles unchanged
-        run: ./Scripts/check-lockfile-drift.sh
-
-      - name: Prepare API Key for Automatic Signing
-        run: |
-          mkdir -p .make/keys
-          ./distribution/read-secret.sh NOTARY_KEY_BASE64 | base64 --decode > .make/keys/AuthKey.p8
-        env:
-          AGE_SECRET_KEY: ${{ secrets.AGE_SECRET_KEY }}
-
-      - name: Build App
-        run: ./Scripts/nix-build-app.sh Release
-        env:
-          AGE_SECRET_KEY: ${{ secrets.AGE_SECRET_KEY }}
-
-      - name: Generate Localized Demo Databases
-        run: LOCKED=1 ./distribution/patch-demo-items.sh
+      - name: Verify repo invariants
+        run: make check
 
       - name: Create Virtual Retina Display
         run: |
@@ -778,7 +678,7 @@ jobs:
           sleep 5
 
       - name: Generate Localized Intro Videos
-        run: SKIP_SIGNING=1 LOCKED=1 ./distribution/intro-video-localized.sh
+        run: SKIP_SIGNING=1 LOCKED=1 make intro-video
         env:
           AGE_SECRET_KEY: ${{ secrets.AGE_SECRET_KEY }}
 
@@ -787,7 +687,7 @@ jobs:
         run: kill "$(cat /tmp/retina-display.pid 2>/dev/null)" 2>/dev/null || true
 
       - name: Verify lockfiles unchanged after build
-        run: ./Scripts/check-lockfile-drift.sh
+        run: make check
 
       - name: Upload Intro Videos
         uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4
@@ -898,12 +798,9 @@ jobs:
       - name: Prepare API Key for Automatic Signing
         run: |
           mkdir -p .make/keys
-          ./distribution/asc-auth.sh private-key-b64 | base64 --decode > .make/keys/AuthKey.p8
+          make secrets-asc-auth FIELD=private-key-b64 | base64 --decode > .make/keys/AuthKey.p8
         env:
           AGE_SECRET_KEY: ${{ secrets.AGE_SECRET_KEY }}
-
-      - name: Generate Xcode Project
-        run: ./Scripts/nix-generate.sh
 
       - name: Build and Publish to App Store Connect
         run: |
@@ -911,12 +808,12 @@ jobs:
           IFS='.' read -r major minor _patch <<< "$BASE_VERSION"
           COMMIT_COUNT=$(git rev-list --count HEAD)
           VERSION="${major}.${minor}.${COMMIT_COUNT}"
-          ./distribution/appstore-publish.sh "$VERSION" "$COMMIT_COUNT"
+          make release-macos-appstore VERSION="$VERSION" BUILD_NUMBER="$COMMIT_COUNT"
         env:
           AGE_SECRET_KEY: ${{ secrets.AGE_SECRET_KEY }}
 
       - name: Verify lockfiles unchanged
-        run: ./Scripts/check-lockfile-drift.sh
+        run: make check
 
       - name: Attest App Store Build Provenance
         uses: actions/attest-build-provenance@e8998f949152b193b063cb0ec769d69d929409be # v2
@@ -1024,15 +921,12 @@ jobs:
       - name: Prepare API Key
         run: |
           mkdir -p .make/keys
-          ./distribution/asc-auth.sh private-key-b64 | base64 --decode > .make/keys/AuthKey.p8
+          make secrets-asc-auth FIELD=private-key-b64 | base64 --decode > .make/keys/AuthKey.p8
         env:
           AGE_SECRET_KEY: ${{ secrets.AGE_SECRET_KEY }}
 
-      - name: Generate Xcode Project
-        run: ./Scripts/nix-generate.sh
-
-      - name: Verify lockfiles unchanged
-        run: ./Scripts/check-lockfile-drift.sh
+      - name: Verify repo invariants
+        run: make check
 
       - name: Build and Publish iOS to App Store Connect
         run: |
@@ -1040,12 +934,12 @@ jobs:
           IFS='.' read -r major minor _patch <<< "$BASE_VERSION"
           COMMIT_COUNT=$(git rev-list --count HEAD)
           VERSION="${major}.${minor}.${COMMIT_COUNT}"
-          ./distribution/ios-appstore-publish.sh "$VERSION" "$COMMIT_COUNT"
+          make release-ios-appstore VERSION="$VERSION" BUILD_NUMBER="$COMMIT_COUNT"
         env:
           AGE_SECRET_KEY: ${{ secrets.AGE_SECRET_KEY }}
 
       - name: Verify lockfiles unchanged after build
-        run: ./Scripts/check-lockfile-drift.sh
+        run: make check
 
       - name: Cleanup
         if: always()

@@ -262,11 +262,7 @@ impl ClipboardStore {
 
     /// Format an excerpt for a given presentation profile.
     /// Exposed to Swift so optimistic edit updates don't need local truncation rules.
-    pub fn format_excerpt(
-        &self,
-        content: String,
-        presentation: ListPresentationProfile,
-    ) -> String {
+    pub fn format_excerpt(&self, content: String, presentation: ListPresentationProfile) -> String {
         crate::search::format_excerpt(&content, presentation)
     }
 }

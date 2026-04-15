@@ -380,11 +380,9 @@ impl Database {
     /// Look up the stable string item_id for a given numeric row ID.
     pub fn fetch_item_id_by_row_id(&self, row_id: i64) -> DatabaseResult<Option<String>> {
         let conn = self.get_conn()?;
-        let result = conn.query_row(
-            "SELECT item_id FROM items WHERE id = ?1",
-            [row_id],
-            |row| row.get(0),
-        );
+        let result = conn.query_row("SELECT item_id FROM items WHERE id = ?1", [row_id], |row| {
+            row.get(0)
+        });
         match result {
             Ok(id) => Ok(Some(id)),
             Err(rusqlite::Error::QueryReturnedNoRows) => Ok(None),
@@ -935,7 +933,11 @@ impl Database {
 
     /// Get IDs that would be pruned (for index deletion before database prune).
     /// Returns (row_id, item_id) pairs so callers can delete from both DB and search index.
-    pub fn get_prunable_ids(&self, max_bytes: i64, keep_ratio: f64) -> DatabaseResult<Vec<(i64, String)>> {
+    pub fn get_prunable_ids(
+        &self,
+        max_bytes: i64,
+        keep_ratio: f64,
+    ) -> DatabaseResult<Vec<(i64, String)>> {
         let current_size = self.database_size()?;
         if current_size <= max_bytes {
             return Ok(Vec::new());
@@ -956,7 +958,8 @@ impl Database {
         let items_to_delete =
             std::cmp::max(100, ((current_size - target_size) / avg_item_size) as usize);
 
-        let mut stmt = conn.prepare("SELECT id, item_id FROM items ORDER BY timestamp ASC LIMIT ?1")?;
+        let mut stmt =
+            conn.prepare("SELECT id, item_id FROM items ORDER BY timestamp ASC LIMIT ?1")?;
         let ids: Vec<(i64, String)> = stmt
             .query_map([items_to_delete as i64], |row| {
                 Ok((row.get(0)?, row.get(1)?))
@@ -1621,7 +1624,9 @@ mod tests {
         assert!(table_column_not_null(&conn, "items", "item_id").unwrap());
 
         let item_ids: Vec<String> = {
-            let mut stmt = conn.prepare("SELECT item_id FROM items ORDER BY id").unwrap();
+            let mut stmt = conn
+                .prepare("SELECT item_id FROM items ORDER BY id")
+                .unwrap();
             stmt.query_map([], |row| row.get(0))
                 .unwrap()
                 .collect::<Result<Vec<_>, _>>()
@@ -1677,7 +1682,9 @@ mod tests {
         assert!(table_column_not_null(&conn, "items", "item_id").unwrap());
 
         let item_ids: Vec<String> = {
-            let mut stmt = conn.prepare("SELECT item_id FROM items ORDER BY id").unwrap();
+            let mut stmt = conn
+                .prepare("SELECT item_id FROM items ORDER BY id")
+                .unwrap();
             stmt.query_map([], |row| row.get(0))
                 .unwrap()
                 .collect::<Result<Vec<_>, _>>()
@@ -1687,7 +1694,11 @@ mod tests {
 
         assert_eq!(item_ids.len(), 3);
         assert_eq!(
-            item_ids.iter().cloned().collect::<std::collections::HashSet<_>>().len(),
+            item_ids
+                .iter()
+                .cloned()
+                .collect::<std::collections::HashSet<_>>()
+                .len(),
             3
         );
         assert!(item_ids.iter().all(|item_id| !item_id.is_empty()));

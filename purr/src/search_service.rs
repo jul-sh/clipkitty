@@ -121,8 +121,14 @@ pub(crate) fn search_short_query_sync(
     filter: Option<&ContentTypeFilter>,
     tag: Option<ItemTag>,
 ) -> Result<Vec<ItemMatch>, ClipKittyError> {
-    SearchResultAssembler::new(db, cache, token, runtime, ListPresentationProfile::CompactRow)
-        .search_short_query(query, mode, filter, tag)
+    SearchResultAssembler::new(
+        db,
+        cache,
+        token,
+        runtime,
+        ListPresentationProfile::CompactRow,
+    )
+    .search_short_query(query, mode, filter, tag)
 }
 
 #[cfg(test)]
@@ -137,8 +143,14 @@ pub(crate) fn search_trigram_query_sync(
     filter: Option<&ContentTypeFilter>,
     tag: Option<ItemTag>,
 ) -> Result<Vec<ItemMatch>, ClipKittyError> {
-    SearchResultAssembler::new(db, cache, token, runtime, ListPresentationProfile::CompactRow)
-        .search_trigram_query(indexer, query, filter, tag)
+    SearchResultAssembler::new(
+        db,
+        cache,
+        token,
+        runtime,
+        ListPresentationProfile::CompactRow,
+    )
+    .search_trigram_query(indexer, query, filter, tag)
 }
 
 fn execute_search_sync(

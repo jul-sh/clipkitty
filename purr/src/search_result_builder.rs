@@ -91,7 +91,9 @@ impl<'a> SearchResultAssembler<'a> {
         let total_count = matches.len() as u64;
         self.hydrate_item_match_tags(&mut matches)?;
         let first_preview_payload = self.presentation().load_first_preview_payload(
-            matches.first().map(|item| item.item_metadata.item_id.as_str()),
+            matches
+                .first()
+                .map(|item| item.item_metadata.item_id.as_str()),
             query,
             self.token,
             self.runtime,
@@ -178,8 +180,13 @@ impl<'a> SearchResultAssembler<'a> {
             return Ok(Vec::new());
         }
 
-        let ids: Vec<&str> = candidates.iter().map(|candidate| candidate.id.as_str()).collect();
-        let metadata_rows = self.db.fetch_search_item_metadata_by_string_ids(&ids, self.presentation)?;
+        let ids: Vec<&str> = candidates
+            .iter()
+            .map(|candidate| candidate.id.as_str())
+            .collect();
+        let metadata_rows = self
+            .db
+            .fetch_search_item_metadata_by_string_ids(&ids, self.presentation)?;
         if self.token.is_cancelled() {
             return Err(ClipKittyError::Cancelled);
         }
@@ -243,13 +250,11 @@ impl<'a> SearchResultAssembler<'a> {
                 }
                 ItemMatch {
                     item_metadata,
-                    list_decoration: Some(
-                        presentation.list_decoration_for_cached_match(
-                            &candidate.id,
-                            query.raw_text(),
-                            self.presentation,
-                        ),
-                    ),
+                    list_decoration: Some(presentation.list_decoration_for_cached_match(
+                        &candidate.id,
+                        query.raw_text(),
+                        self.presentation,
+                    )),
                 }
             } else {
                 search::create_lazy_item_match_with_metadata(item_metadata)

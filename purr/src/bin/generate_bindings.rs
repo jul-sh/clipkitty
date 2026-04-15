@@ -98,7 +98,10 @@ fn main() {
     // iOS device + simulator are always built.
     let universal = env::var("UNIVERSAL").map_or(false, |v| v == "1");
 
-    println!("Building static libraries{}...", if universal { " (universal)" } else { "" });
+    println!(
+        "Building static libraries{}...",
+        if universal { " (universal)" } else { "" }
+    );
 
     let output_lib = swift_dest.join("libpurr.a");
 
@@ -115,7 +118,11 @@ fn main() {
         }
 
         for target in &mac_targets {
-            run_cmd("cargo", &["build", "--release", "--target", target], &rust_dir);
+            run_cmd(
+                "cargo",
+                &["build", "--release", "--target", target],
+                &rust_dir,
+            );
         }
         run_cmd(
             "lipo",
