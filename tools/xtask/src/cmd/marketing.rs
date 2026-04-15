@@ -236,6 +236,11 @@ fn run_screenshot_plan(
         let status = run_screenshot_xcodebuild(repo, plan, &log_path, reporter)?;
         let copied = copy_screenshots(repo, plan, locale, reporter)?;
         if !copied {
+            let log_tail = fs::read_to_string(log_path.as_std_path())
+                .unwrap_or_else(|err| format!("(failed to read {log_path}: {err})"));
+            reporter.info(&format!(
+                "--- xcodebuild log for {locale_code} (exit {status}) ---\n{log_tail}\n--- end log ---"
+            ));
             match plan.missing_policy {
                 MissingScreenshotPolicy::Fail => {
                     return Err(anyhow!(
