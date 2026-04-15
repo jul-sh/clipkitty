@@ -4,7 +4,7 @@
 
 **Never lose what you copied.**
 
-Unlimited history • Instant fuzzy search • Live preview • iCloud Sync • Private by default
+Unlimited history • Instant fuzzy search • iCloud Sync • Secure & Attested
 
 <img src="https://raw.githubusercontent.com/jul-sh/clipkitty/gh-pages/marketing_1.png" alt="ClipKitty clipboard history" width="820">
 <img src="https://raw.githubusercontent.com/jul-sh/clipkitty/gh-pages/marketing_2.png" alt="ClipKitty fuzzy search" width="820">
@@ -16,7 +16,16 @@ You copied that command last week. That code snippet yesterday. That address six
 
 ClipKitty stores everything. Finds it in milliseconds; whether you have 100 items or 100,000. Built for people who copy lots of things and need to find them again.
 
-## Why ClipKitty?
+## Installation
+
+<a href="https://apps.apple.com/us/app/clipkitty-clipboard-manager/id6759137247?mt=12"><img src="https://github.com/jul-sh/clipkitty/raw/main/distribution/MacAppStore.png" alt="Download on the Mac App Store" width="200"></a>
+
+### Manual Download
+
+1. Download the latest DMG from [GitHub Releases](https://github.com/jul-sh/clipkitty/releases).
+2. Drag ClipKitty to your Applications folder.
+
+## Why ClipKitty is the best clipboard manager
 
 | | ClipKitty |
 |---|---|
@@ -27,49 +36,11 @@ ClipKitty stores everything. Finds it in milliseconds; whether you have 100 item
 ## Features
 
 * **Unlimited History**: No caps, no expiration. Text, images, files, colors; everything preserved in full, forever.
-* **Fuzzy Search That Scales**: Type "improt" and find "import". Type "dockr prodction" and find "docker push production". All in milliseconds; even with millions of items.
-* **Live Preview Pane**: See full content instantly as you navigate. Multi-line text, code blocks, images; no truncation, no waiting on tooltips.
+* **Fuzzy Search That Scales**: Type "improt" and find "import". Type "dockr prodction" and find "docker push production". All in milliseconds; even with hundreds of thousands of items.
 * **OCR & Smart Search**: Search text inside images and screenshots. AI-powered descriptions make visual content searchable.
-* **Keyboard-First**: `⌥Space` to open, arrow keys to navigate, `Return` to paste. `⌘1-9` for quick access.
 * **iCloud Sync**: Optionally sync your clipboard history across all your Macs via iCloud. Enable it in settings when you want your history everywhere.
-* **Privacy-First**: 100% on-device by default. No telemetry, no accounts. Optional iCloud Sync uses only your private iCloud container.
+* **Privacy-First**: Your clipboard history is incredibly sensitive. This is why Clipkitty. 100% on-device by default. No telemetry, no accounts, ever. 
 * **Secure & Attested**: Don't take my word for it. Source code is fully open source and auditable. Builds are attested: you can [verify](VERIFY.md) the app was built from the public source code.
-
-## Installation
-
-### Quick Install 
-
-<a href="https://apps.apple.com/us/app/clipkitty-clipboard-manager/id6759137247?mt=12"><img src="https://github.com/jul-sh/clipkitty/raw/main/distribution/MacAppStore.png" alt="Download on the Mac App Store" width="200"></a>
-
-### Manual Download
-
-1. Download the latest DMG from [GitHub Releases](https://github.com/jul-sh/clipkitty/releases).
-2. Drag ClipKitty to your Applications folder.
-
-### Hardened Build
-
-The default build include a few convinience features, that you may want to disable in security sensitive settings:
-
-- **Link previews**; fetches metadata over the network to show a nice preview
-- **iCloud sync**; sends clipboard data to Apple's CloudKit
-- **Auto-updates**; phones home to check for new versions, and auto installs them
-- **File clipboard capture**; requires files system access
-
-You can already disable most of these in settings. The **Hardened** variant goes further. It compiles the code out entirely, then removes the network and filesystem entitlements from the macOS App Sandbox so the OS enforces those constraints at the kernel level. The app cannot open a socket or touch a file outside its container, even if a bug or exploit tried to. You can [verify](VERIFY.md) both layers yourself.
-
-Because auto-updates are gone, you can audit a specific version and stick to it. Everything else works identically: text, images, colors, search, keyboard shortcuts.
-
-The hardened build uses a separate bundle ID (`com.eviljuliette.clipkitty.hardened`), which means macOS gives it its own sandbox container. Your clipboard history does not carry over between hardened and non-hardened installs, in either direction. This is intentional; the two builds are isolated from each other.
-
-For local source builds, `nix build .#clipkitty-hardened` gives you the hardened feature set as an unsigned pre-sign bundle. To stage the signed hardened app, run `make app-hardened`. The lower-level binary remains available as `cargo run -p xtask -- app hardened` or `nix run .#xtask -- app hardened` if you specifically want to invoke `xtask` directly.
-
-Download `ClipKitty-Hardened.zip` from [GitHub Releases](https://github.com/jul-sh/clipkitty/releases).
-
-## Getting Started
-
-1. Press **⌥Space** to open your clipboard history.
-2. Type to fuzzy search.
-3. Use **Arrow Keys** to navigate and **Return** to paste.
 
 ## Keyboard Shortcuts
 
@@ -78,28 +49,20 @@ Download `ClipKitty-Hardened.zip` from [GitHub Releases](https://github.com/jul-
 | **⌥Space** | Open clipboard history |
 | **↑ / ↓** | Navigate |
 | **Return** | Paste selected item |
-| **⌘1–9** | Jump to item 1–9 |
 | **Tab** | Cycle content type filter |
 | **Escape** | Close |
+
+# Behind the Scenes
 
 ## Building from Source
 
 ```bash
 git clone https://github.com/jul-sh/clipkitty
 cd clipkitty
-make help                     # Supported automation entry points
 nix build .#clipkitty          # Release macOS bundle
 ```
 
-The build graph lives entirely in `flake.nix` + `nix/*.nix`. Every variant is a nix package, including the debug app, the hardened variant, and the sparkle/appstore release candidates. If you want the hardened one, you are building a different binary with different capabilities, not the same app with a few checkboxes unchecked.
-
-```bash
-nix build .#clipkitty-sparkle   # With auto-update support
-nix build .#clipkitty-hardened  # Hardened feature set, unsigned pre-sign bundle
-make app-hardened               # Stage the signed hardened app
-make workspace                  # Materialize the Xcode workspace/project
-nix run .#run                   # Launch a Debug build
-```
+The build graph lives entirely in `flake.nix` + `nix/*.nix`. Every variant is a nix package.
 
 Requires macOS 15+, Nix with flakes enabled, and a host Xcode install for the sandbox escape into `xcrun`/`tuist`.
 
@@ -136,12 +99,3 @@ ClipKitty solves that by splitting search into cheap recall and expensive judgme
    For large items, the row snippet and highlight analysis come from the best matching chunk, not from the top of the document. That makes results more legible and avoids wasting time analyzing irrelevant parts of large content on the hot path. When a full preview is opened, those chunk-local highlights are mapped back into full-document offsets.
 
 The important idea is that search quality does not come from doing expensive work on everything. It comes from doing cheap work to find plausible candidates, then doing expensive work only where it can change what the user sees.
-
-### Problems This Solves
-
-- **Typos without brute force:** trigram recall finds `improt` when the stored text says `import`.
-- **Scale without truncation:** large items stay fully searchable without forcing every query to scan their full text.
-- **Large documents stop polluting common queries:** a 1 MB document no longer ranks highly just because it contains `error` 300 times.
-- **Relevant previews:** snippets come from the matched region instead of the first lines of a huge paste.
-- **Useful highlighting:** highlighted regions reflect where the match actually happened, including inside large documents.
-- **Stable latency:** the hot path is bounded by chunk size and head size, not by total bytes in the worst matching documents.
