@@ -219,6 +219,7 @@ final class FloatingPanelController: NSObject, NSWindowDelegate {
         }
         return size
     }
+
     private static let animationScale: CGFloat = 1.05
     private static var animationMargin: CGFloat {
         ceil(max(panelSize.width, panelSize.height) * (animationScale - 1) / 2) + 2
