@@ -51,6 +51,12 @@ struct CardView: View {
             appState.showToast(.copied)
         }
         .contextMenu { contextMenuActions }
+        .onDrag {
+            let storeClient = container.storeClient
+            return DragItemProvider.make(itemId: metadata.itemId) { id in
+                await storeClient.fetchItem(id: id)
+            }
+        }
     }
 
     // MARK: - Metadata line
