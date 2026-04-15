@@ -132,10 +132,12 @@
         private var engineState: EngineState
 
         /// Wake signal for push notifications to collapse the sleep interval.
+        /// Implemented as a main-actor flag + pending continuation to avoid the
+        /// AsyncStream single-consumer iterator trap that caused a busy-loop.
         @ObservationIgnored
-        private let wakeStream: AsyncStream<Void>
+        private var pendingWake: Bool = false
         @ObservationIgnored
-        private let wakeContinuation: AsyncStream<Void>.Continuation
+        private var wakeContinuation: CheckedContinuation<Void, Never>?
 
         /// Callback invoked after a sync batch changes local content.
         @ObservationIgnored
@@ -234,10 +236,6 @@
                     lastCloudCleanupDate: lastCloudCleanupDate
                 )
             )
-
-            let (stream, continuation) = AsyncStream.makeStream(of: Void.self)
-            wakeStream = stream
-            wakeContinuation = continuation
         }
 
         // MARK: - Lifecycle
@@ -275,7 +273,16 @@
         /// Signal the coordinator to wake up immediately (e.g. from push notification).
         public func handleRemoteNotification() {
             guard coordinatorTask != nil else { return }
-            wakeContinuation.yield(())
+            signalWake()
+        }
+
+        /// Mark a wake as pending and resume any waiting sleeper.
+        private func signalWake() {
+            pendingWake = true
+            if let continuation = wakeContinuation {
+                wakeContinuation = nil
+                continuation.resume()
+            }
         }
 
         // MARK: - Status
@@ -444,19 +451,44 @@
                 }
                 let delay = backoff.currentDelay ?? interval
 
-                // Sleep OR wake immediately on push notification — first wins.
-                await withTaskGroup(of: Void.self) { group in
-                    group.addTask {
-                        try? await Task.sleep(for: .seconds(delay))
-                    }
-                    group.addTask { [wakeStream] in
-                        var iterator = wakeStream.makeAsyncIterator()
-                        _ = await iterator.next()
-                    }
-                    _ = await group.next()
-                    group.cancelAll()
+                await sleepOrWake(for: delay)
+            }
+        }
+
+        /// Sleep for `delay` seconds or return early if a wake signal arrives.
+        private func sleepOrWake(for delay: TimeInterval) async {
+            // Fast path: consume any wake that arrived while the cycle ran.
+            if pendingWake {
+                pendingWake = false
+                return
+            }
+
+            // Race a sleep task against a continuation the wake signal will
+            // resume. The sleep task resumes the continuation on expiry so
+            // we only ever resume it once.
+            let sleepTask = Task { [weak self] in
+                try? await Task.sleep(for: .seconds(delay))
+                await self?.wakeContinuationOnSleepExpiry()
+            }
+            await withCheckedContinuation { (continuation: CheckedContinuation<Void, Never>) in
+                wakeContinuation = continuation
+                if pendingWake {
+                    // A wake arrived between the fast-path check and here.
+                    pendingWake = false
+                    wakeContinuation = nil
+                    continuation.resume()
                 }
             }
+            sleepTask.cancel()
+            pendingWake = false
+        }
+
+        /// Called by the sleep task when its timer expires — resumes the
+        /// waiting coordinator cycle.
+        private func wakeContinuationOnSleepExpiry() {
+            guard let continuation = wakeContinuation else { return }
+            wakeContinuation = nil
+            continuation.resume()
         }
 
         /// Single serial coordinator cycle: fetch → apply → compact → upload → cleanup.
@@ -666,7 +698,7 @@
         private func handleAccountChanged() {
             if coordinatorTask != nil {
                 logger.info("iCloud account changed, waking sync coordinator")
-                wakeContinuation.yield(())
+                signalWake()
                 return
             }
 

@@ -25,7 +25,12 @@
                 .prepend(initialValue)
                 .removeDuplicates()
                 .sink { [weak self] enabled in
-                    self?.applyPreferenceChange(enabled)
+                    // Hop off the current run-loop cycle so SwiftUI can render
+                    // the toggle state change before CloudKit bootstrap blocks
+                    // main on synchronous SecTrust/SecKey verification.
+                    Task { @MainActor [weak self] in
+                        self?.applyPreferenceChange(enabled)
+                    }
                 }
         }
 
