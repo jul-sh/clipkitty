@@ -631,44 +631,7 @@ fn upload_screenshots(
             continue;
         }
 
-        // List all existing screenshots for this localization once, then
-        // filter by device type client-side (asc screenshots list does not
-        // accept --device-type).
-        let all_existing = asc_json(
-            repo,
-            &[
-                "screenshots",
-                "list",
-                "--version-localization",
-                localization_id,
-            ],
-            asc_env,
-            reporter,
-        )?;
-
         for device_type in platform.screenshot_device_types {
-            reporter.info(&format!(
-                "Deleting existing {device_type} screenshots for {asc_locale}..."
-            ));
-            for screenshot in &all_existing {
-                let stype = screenshot
-                    .get("attributes")
-                    .and_then(|a| a.get("screenshotDisplayType"))
-                    .and_then(Value::as_str)
-                    .unwrap_or_default();
-                if stype != *device_type {
-                    continue;
-                }
-                if let Some(id) = screenshot.get("id").and_then(Value::as_str) {
-                    let _ = asc_command(
-                        repo,
-                        &["screenshots", "delete", "--id", id, "--confirm"],
-                        asc_env,
-                        reporter,
-                    );
-                }
-            }
-
             reporter.info(&format!(
                 "Uploading {} {device_type} screenshots for {asc_locale}...",
                 pngs.len()
@@ -685,6 +648,7 @@ fn upload_screenshots(
                         device_type,
                         "--path",
                         png.as_str(),
+                        "--replace",
                     ],
                     asc_env,
                     reporter,
