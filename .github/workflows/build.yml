@@ -597,23 +597,23 @@ jobs:
           if [ "$GITHUB_REF_NAME" = "main" ] || [ "$GITHUB_REF_NAME" = "release" ]; then
             [ -f appcast-state.json ] || printf '{}\n' > appcast-state.json
 
-            make release-appcast-update \
-              STATE_PATH=appcast-state.json \
+            make -C "$GITHUB_WORKSPACE" release-appcast-update \
+              STATE_PATH="$(pwd)/appcast-state.json" \
               CHANNEL="${{ steps.resolve-version.outputs.channel }}" \
               VERSION="${{ steps.resolve-version.outputs.version }}" \
               URL="${{ steps.resolve-version.outputs.release_url }}" \
               SIGNATURE="${{ steps.eddsa-sign.outputs.ed_signature }}" \
               LENGTH="${{ steps.eddsa-sign.outputs.file_length }}"
 
-            make release-appcast-generate \
-              STATE_PATH=appcast-state.json \
-              OUTPUT_PATH=appcast.xml
+            make -C "$GITHUB_WORKSPACE" release-appcast-generate \
+              STATE_PATH="$(pwd)/appcast-state.json" \
+              OUTPUT_PATH="$(pwd)/appcast.xml"
 
             xmllint --noout appcast.xml
           fi
 
           # Generate landing page from README.md (cmark-gfm installed via Nix)
-          make site-landing-page > index.html
+          make -C "$GITHUB_WORKSPACE" site-landing-page > index.html
 
           git add icon.png marketing_1.png marketing_2.png marketing_3.png index.html
           git add appcast.xml appcast-state.json 2>/dev/null || true
