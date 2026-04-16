@@ -102,6 +102,13 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate {
 
         setupMenuBar()
 
+        NotificationCenter.default.addObserver(
+            self,
+            selector: #selector(openSettings),
+            name: .clipKittyOpenSettings,
+            object: nil
+        )
+
         #if ENABLE_SPARKLE_UPDATES
             let sparkleUpdater = SparkleAppUpdater()
             sparkleUpdater.start { state in
