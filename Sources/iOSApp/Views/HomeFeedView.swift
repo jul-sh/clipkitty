@@ -5,7 +5,6 @@ import SwiftUI
 struct HomeFeedView: View {
     @Environment(AppState.self) private var appState
     @Environment(BrowserViewModel.self) private var viewModel
-    @Environment(HapticsClient.self) private var haptics
 
     @State private var isSearchActive = false
     @State private var previewItemId: String?
@@ -95,15 +94,6 @@ struct HomeFeedView: View {
                 )
                 .onAppear {
                     loadDecorationsIfNeeded(for: row)
-                }
-                .swipeActions(edge: .trailing, allowsFullSwipe: true) {
-                    Button {
-                        previewItemId = row.metadata.itemId
-                        haptics.fire(.selection)
-                    } label: {
-                        Label("Preview", systemImage: "eye")
-                    }
-                    .tint(.blue)
                 }
                 .listRowSeparator(.hidden)
                 .listRowInsets(EdgeInsets(top: 6, leading: 0, bottom: 6, trailing: 0))

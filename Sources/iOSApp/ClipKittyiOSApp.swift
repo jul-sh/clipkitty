@@ -86,6 +86,12 @@ final class AppState {
         viewModel.handlePanelVisibilityChange(true, contentRevision: contentRevision)
     }
 
+    func ingestPendingAndClipboard() async {
+        let added = await processPendingShareItems()
+        if added > 0 { refreshFeed() }
+        await autoAddFromClipboard()
+    }
+
     func processPendingShareItems() async -> Int {
         let pending = PendingShareQueue.dequeueAll()
         guard !pending.isEmpty else { return 0 }
@@ -276,13 +282,12 @@ struct ClipKittyiOSApp: App {
             .environment(appState.viewModel)
             .environment(container.settings)
             .environment(container.haptics)
+            .task {
+                await appState.ingestPendingAndClipboard()
+            }
             .onChange(of: scenePhase) { _, newPhase in
                 if newPhase == .active {
-                    Task {
-                        let added = await appState.processPendingShareItems()
-                        if added > 0 { appState.refreshFeed() }
-                        await appState.autoAddFromClipboard()
-                    }
+                    Task { await appState.ingestPendingAndClipboard() }
                 }
             }
 
