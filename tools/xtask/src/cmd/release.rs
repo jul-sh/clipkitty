@@ -391,6 +391,8 @@ fn ensure_editable_version(
     asc_env: &[(&str, &str)],
     reporter: &Reporter,
 ) -> Result<Option<String>> {
+    // Query without --state to find versions in any editable state
+    // (PREPARE_FOR_SUBMISSION, WAITING_FOR_REVIEW, IN_REVIEW, etc.).
     let versions = asc_json(
         repo,
         &[
@@ -400,15 +402,29 @@ fn ensure_editable_version(
             platform.app_id,
             "--platform",
             platform.asc_platform,
-            "--state",
-            "PREPARE_FOR_SUBMISSION",
         ],
         asc_env,
         reporter,
     )?;
 
     let mut version_id = None;
-    if let Some(existing) = versions.first() {
+    for existing in &versions {
+        let state = existing
+            .get("attributes")
+            .and_then(|attrs| attrs.get("appStoreState"))
+            .and_then(Value::as_str)
+            .unwrap_or_default();
+        // Terminal states — ignore these, they don't block version creation.
+        if matches!(
+            state,
+            "READY_FOR_DISTRIBUTION"
+                | "REMOVED_FROM_SALE"
+                | "REPLACED_WITH_NEW_VERSION"
+                | "ACCEPTED"
+        ) {
+            continue;
+        }
+
         let existing_version = existing
             .get("attributes")
             .and_then(|attrs| attrs.get("versionString"))
@@ -418,13 +434,14 @@ fn ensure_editable_version(
             .get("id")
             .and_then(Value::as_str)
             .ok_or_else(|| anyhow!("version list entry missing id"))?;
-        if existing_version == version {
+
+        if existing_version == version && state == "PREPARE_FOR_SUBMISSION" {
             version_id = Some(existing_id.to_string());
-        } else {
+        } else if state == "PREPARE_FOR_SUBMISSION" {
             reporter.info(&format!(
-                "Deleting stale PREPARE_FOR_SUBMISSION version {existing_version} (ID: {existing_id})..."
+                "Deleting stale {state} version {existing_version} (ID: {existing_id})..."
             ));
-            let _ = asc_command(
+            asc_command(
                 repo,
                 &[
                     "versions",
@@ -435,7 +452,13 @@ fn ensure_editable_version(
                 ],
                 asc_env,
                 reporter,
-            );
+            )?;
+        } else {
+            reporter.info(&format!(
+                "Found version {existing_version} in state {state} (ID: {existing_id}) — \
+                 cannot create a new version while this exists. Skipping metadata upload."
+            ));
+            return Ok(None);
         }
     }
 
