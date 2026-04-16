@@ -358,9 +358,15 @@ final class FloatingPanelController: NSObject, NSWindowDelegate {
         store.paste(itemId: itemId, content: content)
         #if ENABLE_SYNTHETIC_PASTE
             let targetApp = hide()
-            if case .autoPaste = AppSettings.shared.pasteMode {
-                activationService.simulatePaste(to: targetApp)
-            } else {
+            switch AppSettings.shared.pasteMode {
+            case .autoPaste:
+                switch activationService.syntheticPasteBehavior(for: targetApp) {
+                case let .paste(targetApp):
+                    activationService.simulatePaste(to: targetApp)
+                case .copyOnly:
+                    snackbarWindow.showNotification(.passive(message: String(localized: "Copied"), iconSystemName: "checkmark.circle.fill"))
+                }
+            case .copyOnly, .noPermission:
                 snackbarWindow.showNotification(.passive(message: String(localized: "Copied"), iconSystemName: "checkmark.circle.fill"))
             }
         #else
