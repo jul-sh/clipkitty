@@ -696,7 +696,9 @@ jobs:
           sleep 5
 
       - name: Generate Localized Intro Videos
-        run: SKIP_SIGNING=1 LOCKED=1 make intro-video
+        run: |
+          unset TOOLCHAINS
+          SKIP_SIGNING=1 LOCKED=1 make intro-video
         env:
           AGE_SECRET_KEY: ${{ secrets.AGE_SECRET_KEY }}
 
@@ -822,6 +824,7 @@ jobs:
 
       - name: Build and Publish to App Store Connect
         run: |
+          unset TOOLCHAINS
           BASE_VERSION=$(grep '"MARKETING_VERSION":' Project.swift | head -1 | sed 's/.*: *"\(.*\)".*/\1/')
           IFS='.' read -r major minor _patch <<< "$BASE_VERSION"
           COMMIT_COUNT=$(git rev-list --count HEAD)
@@ -948,6 +951,7 @@ jobs:
 
       - name: Build and Publish iOS to App Store Connect
         run: |
+          unset TOOLCHAINS
           BASE_VERSION=$(grep '"MARKETING_VERSION":' Project.swift | head -1 | sed 's/.*: *"\(.*\)".*/\1/')
           IFS='.' read -r major minor _patch <<< "$BASE_VERSION"
           COMMIT_COUNT=$(git rev-list --count HEAD)
