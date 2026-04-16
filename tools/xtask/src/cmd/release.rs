@@ -435,24 +435,27 @@ fn ensure_editable_version(
             .and_then(Value::as_str)
             .ok_or_else(|| anyhow!("version list entry missing id"))?;
 
-        if existing_version == version && state == "PREPARE_FOR_SUBMISSION" {
+        if state == "PREPARE_FOR_SUBMISSION" {
+            if existing_version != version {
+                reporter.info(&format!(
+                    "Updating PREPARE_FOR_SUBMISSION version {existing_version} → {version} (ID: {existing_id})..."
+                ));
+                asc_command(
+                    repo,
+                    &[
+                        "versions",
+                        "update",
+                        "--version-id",
+                        existing_id,
+                        "--version",
+                        version,
+                    ],
+                    asc_env,
+                    reporter,
+                )?;
+            }
             version_id = Some(existing_id.to_string());
-        } else if state == "PREPARE_FOR_SUBMISSION" {
-            reporter.info(&format!(
-                "Deleting stale {state} version {existing_version} (ID: {existing_id})..."
-            ));
-            asc_command(
-                repo,
-                &[
-                    "versions",
-                    "delete",
-                    "--version-id",
-                    existing_id,
-                    "--confirm",
-                ],
-                asc_env,
-                reporter,
-            )?;
+            break;
         } else {
             reporter.info(&format!(
                 "Found version {existing_version} in state {state} (ID: {existing_id}) — \
