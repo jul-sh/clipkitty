@@ -301,6 +301,10 @@ fn run_screenshot_xcodebuild(
         .arg(plan.only_testing)
         .cwd(repo.as_path())
         .sanitize_for_xcode()
+        // build::generate already staged libpurr.a; skip the Xcode
+        // pre-build action so it doesn't try to rebuild Rust inside the
+        // sanitised (nix-free) xcodebuild environment.
+        .env("CLIPKITTY_SKIP_RUST_PREBUILD", "1")
         .capture_stdout()
         .capture_stderr();
     if matches!(plan.platform, CapturePlatform::Ios)
@@ -744,6 +748,10 @@ fn record_preview_video(
         .arg(format!("ClipKittyUITests/ClipKittyUITests/{test_name}"))
         .cwd(repo.as_path())
         .sanitize_for_xcode()
+        // build::generate already staged libpurr.a; skip the Xcode
+        // pre-build action so it doesn't try to rebuild Rust inside the
+        // sanitised (nix-free) xcodebuild environment.
+        .env("CLIPKITTY_SKIP_RUST_PREBUILD", "1")
         .capture_stdout()
         .capture_stderr();
     if env::var("SKIP_SIGNING").is_ok() {

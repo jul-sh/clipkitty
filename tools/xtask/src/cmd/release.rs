@@ -495,8 +495,6 @@ fn import_metadata(
         "import",
         "--app",
         platform.app_id,
-        "--platform",
-        platform.asc_platform,
         "--version-id",
         version_id,
         "--fastlane-dir",
