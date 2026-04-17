@@ -263,6 +263,11 @@ pub(crate) fn setup(
 }
 
 fn setup_appstore(repo: &RepoRoot, reporter: &Reporter) -> Result<()> {
+    if env::var("CLIPKITTY_SIGNING_EXTERNAL").is_ok_and(|v| v == "1") {
+        reporter.info("CLIPKITTY_SIGNING_EXTERNAL=1 — trusting externally installed certificates");
+        return Ok(());
+    }
+
     let keychain_path = appstore_keychain_path()?;
     delete_temp_keychain(&keychain_path, reporter)?;
     if all_codesigning_identities_available(

@@ -832,6 +832,7 @@ jobs:
           make release-macos-appstore VERSION="$VERSION" BUILD_NUMBER="$COMMIT_COUNT"
         env:
           AGE_SECRET_KEY: ${{ secrets.AGE_SECRET_KEY }}
+          CLIPKITTY_SIGNING_EXTERNAL: "1"
 
       - name: Verify lockfiles unchanged
         run: make check
