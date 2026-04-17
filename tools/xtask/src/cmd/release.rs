@@ -138,10 +138,10 @@ impl<'a> AppStoreSigningSession<'a> {
         let encoded = secrets::read_secret(self.repo, &secret_path, self.reporter)
             .with_context(|| format!("decrypting {secret_path}"))?;
         let encoded = std::str::from_utf8(&encoded)
-            .context("PROVISION_PROFILE_BASE64 secret is not valid UTF-8")?
-            .trim();
+            .context("PROVISION_PROFILE_BASE64 secret is not valid UTF-8")?;
+        let cleaned: String = encoded.chars().filter(|c| !c.is_whitespace()).collect();
         let decoded = base64::engine::general_purpose::STANDARD
-            .decode(encoded)
+            .decode(&cleaned)
             .context("decoding PROVISION_PROFILE_BASE64")?;
 
         let profile_path = self.repo.join("ClipKitty.provisionprofile");
