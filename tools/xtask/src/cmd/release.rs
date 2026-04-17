@@ -322,7 +322,7 @@ const IOS_PLATFORM: PublishPlatform = PublishPlatform {
     pkg_name: "ClipKittyiOS.ipa",
     metadata_dir_name: "metadata",
     marketing_dir_name: "marketing-ios",
-    screenshot_device_types: &["IPHONE_67"],
+    screenshot_device_types: &["IPHONE_61"],
 };
 
 const LOCALE_MAP: &[(&str, &str)] = &[
