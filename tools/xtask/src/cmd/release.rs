@@ -279,8 +279,6 @@ fn publish(repo: &RepoRoot, platform: &str, version: &str, reporter: &Reporter) 
         import_metadata(repo, platform, &version_id, &asc_env, reporter)?;
         reporter.info("\n=== Uploading screenshots ===");
         upload_screenshots(repo, platform, &version_id, &asc_env, reporter)?;
-        reporter.info("\n=== Uploading intro videos ===");
-        upload_intro_videos(repo, platform, &version_id, &asc_env, reporter)?;
         reporter.info("\n=== Publish complete ===");
         Ok(())
     })();
@@ -391,8 +389,6 @@ fn ensure_editable_version(
     asc_env: &[(&str, &str)],
     reporter: &Reporter,
 ) -> Result<Option<String>> {
-    // Query without --state to find versions in any editable state
-    // (PREPARE_FOR_SUBMISSION, WAITING_FOR_REVIEW, IN_REVIEW, etc.).
     let versions = asc_json(
         repo,
         &[
@@ -402,29 +398,16 @@ fn ensure_editable_version(
             platform.app_id,
             "--platform",
             platform.asc_platform,
+            "--state",
+            "PREPARE_FOR_SUBMISSION",
         ],
         asc_env,
         reporter,
     )?;
 
     let mut version_id = None;
-    for existing in &versions {
-        let state = existing
-            .get("attributes")
-            .and_then(|attrs| attrs.get("appStoreState"))
-            .and_then(Value::as_str)
-            .unwrap_or_default();
-        // Terminal states — ignore these, they don't block version creation.
-        if matches!(
-            state,
-            "READY_FOR_DISTRIBUTION"
-                | "REMOVED_FROM_SALE"
-                | "REPLACED_WITH_NEW_VERSION"
-                | "ACCEPTED"
-        ) {
-            continue;
-        }
 
+    if let Some(existing) = versions.first() {
         let existing_version = existing
             .get("attributes")
             .and_then(|attrs| attrs.get("versionString"))
@@ -435,33 +418,21 @@ fn ensure_editable_version(
             .and_then(Value::as_str)
             .ok_or_else(|| anyhow!("version list entry missing id"))?;
 
-        if state == "PREPARE_FOR_SUBMISSION" {
-            if existing_version != version {
-                reporter.info(&format!(
-                    "Updating PREPARE_FOR_SUBMISSION version {existing_version} → {version} (ID: {existing_id})..."
-                ));
-                asc_command(
-                    repo,
-                    &[
-                        "versions",
-                        "update",
-                        "--version-id",
-                        existing_id,
-                        "--version",
-                        version,
-                    ],
-                    asc_env,
-                    reporter,
-                )?;
-            }
+        if existing_version == version {
             version_id = Some(existing_id.to_string());
-            break;
         } else {
             reporter.info(&format!(
-                "Found version {existing_version} in state {state} (ID: {existing_id}) — \
-                 cannot create a new version while this exists. Skipping metadata upload."
+                "Deleting stale PREPARE_FOR_SUBMISSION version {existing_version} (ID: {existing_id})..."
             ));
-            return Ok(None);
+            let result = asc_command(
+                repo,
+                &["versions", "delete", "--version-id", existing_id, "--confirm"],
+                asc_env,
+                reporter,
+            );
+            if let Err(err) = result {
+                reporter.info(&format!("Warning: Could not delete stale version: {err}"));
+            }
         }
     }
 
@@ -483,11 +454,22 @@ fn ensure_editable_version(
             ],
             asc_env,
             reporter,
-        )?;
-        let created = parse_asc_data(&output.stdout)?;
-        if let Some(id) = created.get("id").and_then(Value::as_str) {
-            reporter.info(&format!("Created version {version} (ID: {id})"));
-            version_id = Some(id.to_string());
+        );
+        match output {
+            Ok(output) => {
+                let created = parse_asc_data(&output.stdout)?;
+                if let Some(id) = created.get("id").and_then(Value::as_str) {
+                    reporter.info(&format!("Created version {version} (ID: {id})"));
+                    version_id = Some(id.to_string());
+                }
+            }
+            Err(err) => {
+                reporter.info(&format!("Warning: Could not create version {version}: {err}"));
+                reporter.info(
+                    "Skipping metadata and screenshot upload (binary was uploaded successfully).",
+                );
+                return Ok(None);
+            }
         }
     }
 
@@ -633,6 +615,33 @@ fn upload_screenshots(
 
         for device_type in platform.screenshot_device_types {
             reporter.info(&format!(
+                "Deleting existing {device_type} screenshots for {asc_locale}..."
+            ));
+            let existing = asc_json(
+                repo,
+                &[
+                    "screenshots",
+                    "list",
+                    "--version-localization",
+                    localization_id,
+                    "--paginate",
+                ],
+                asc_env,
+                reporter,
+            )
+            .unwrap_or_default();
+            for screenshot in &existing {
+                if let Some(screenshot_id) = screenshot.get("id").and_then(Value::as_str) {
+                    let _ = asc_command(
+                        repo,
+                        &["screenshots", "delete", "--id", screenshot_id, "--confirm"],
+                        asc_env,
+                        reporter,
+                    );
+                }
+            }
+
+            reporter.info(&format!(
                 "Uploading {} {device_type} screenshots for {asc_locale}...",
                 pngs.len()
             ));
@@ -648,7 +657,6 @@ fn upload_screenshots(
                         device_type,
                         "--path",
                         png.as_str(),
-                        "--replace",
                     ],
                     asc_env,
                     reporter,
@@ -659,101 +667,6 @@ fn upload_screenshots(
     }
 
     reporter.info(&format!("Total screenshots uploaded: {uploaded_count}"));
-    Ok(())
-}
-
-fn upload_intro_videos(
-    repo: &RepoRoot,
-    platform: PublishPlatform,
-    version_id: &str,
-    asc_env: &[(&str, &str)],
-    reporter: &Reporter,
-) -> Result<()> {
-    let localizations = asc_json(
-        repo,
-        &[
-            "localizations",
-            "list",
-            "--version",
-            version_id,
-            "--paginate",
-        ],
-        asc_env,
-        reporter,
-    )?;
-    let mut locale_to_id = BTreeMap::new();
-    for localization in localizations {
-        if let (Some(id), Some(locale)) = (
-            localization.get("id").and_then(Value::as_str),
-            localization
-                .get("attributes")
-                .and_then(|attrs| attrs.get("locale"))
-                .and_then(Value::as_str),
-        ) {
-            locale_to_id.insert(locale.to_string(), id.to_string());
-        }
-    }
-
-    let marketing_dir = repo.join(platform.marketing_dir_name);
-    if !marketing_dir.as_std_path().is_dir() {
-        reporter.info(&format!(
-            "Warning: marketing directory not found: {marketing_dir}; skipping intro video upload."
-        ));
-        return Ok(());
-    }
-
-    let mut uploaded_count = 0usize;
-    let mut locale_dirs = fs::read_dir(marketing_dir.as_std_path())
-        .with_context(|| format!("reading {marketing_dir}"))?
-        .filter_map(|entry| entry.ok())
-        .filter_map(|entry| Utf8PathBuf::from_path_buf(entry.path()).ok())
-        .filter(|path| path.as_std_path().is_dir())
-        .collect::<Vec<_>>();
-    locale_dirs.sort();
-
-    for locale_dir in locale_dirs {
-        let Some(entry_name) = locale_dir.file_name() else {
-            continue;
-        };
-        let Some(asc_locale) = locale_code(entry_name) else {
-            continue;
-        };
-        let video_path = locale_dir.join("intro_video.mov");
-        if !video_path.as_std_path().is_file() {
-            continue;
-        }
-        let Some(localization_id) = locale_to_id.get(asc_locale) else {
-            reporter.info(&format!(
-                "Warning: no localization for {asc_locale}, skipping intro video"
-            ));
-            continue;
-        };
-
-        for device_type in platform.screenshot_device_types {
-            reporter.info(&format!(
-                "Uploading intro video for {asc_locale} ({device_type})..."
-            ));
-            asc_command(
-                repo,
-                &[
-                    "video-previews",
-                    "upload",
-                    "--version-localization",
-                    localization_id,
-                    "--device-type",
-                    device_type,
-                    "--path",
-                    video_path.as_str(),
-                    "--replace",
-                ],
-                asc_env,
-                reporter,
-            )?;
-            uploaded_count += 1;
-        }
-    }
-
-    reporter.info(&format!("Total intro videos uploaded: {uploaded_count}"));
     Ok(())
 }
 
