@@ -33,8 +33,8 @@ final class ClipKittyiOSScreenshotTests: XCTestCase {
         app.launchArguments += ["-AppleLocale", locale]
         app.launch()
 
-        // Allow the feed to settle
-        sleep(3)
+        // Allow the feed to settle and full-width image previews to load
+        sleep(8)
     }
 
     func testTakeMarketingScreenshots() {
@@ -88,7 +88,7 @@ final class ClipKittyiOSScreenshotTests: XCTestCase {
         XCTAssertTrue(imagesFilter.waitForExistence(timeout: 3),
                       "bottomBar.filterOption.images not found for locale \(locale!)")
         imagesFilter.tap()
-        sleep(2)
+        sleep(5)
 
         let filterScreenshot = app.screenshot()
         saveScreenshot(filterScreenshot, index: 3, name: "filter")
