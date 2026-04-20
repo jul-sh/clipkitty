@@ -590,6 +590,7 @@ jobs:
           fi
 
           cp "$GITHUB_WORKSPACE/icon.png" .
+          cp "$GITHUB_WORKSPACE/privacy.html" .
           cp "$GITHUB_WORKSPACE/marketing/en/screenshot_1.png" marketing_1.png
           cp "$GITHUB_WORKSPACE/marketing/en/screenshot_2.png" marketing_2.png
           cp "$GITHUB_WORKSPACE/marketing/en/screenshot_3.png" marketing_3.png
@@ -615,7 +616,7 @@ jobs:
           # Generate landing page from README.md (cmark-gfm installed via Nix)
           make -C "$GITHUB_WORKSPACE" site-landing-page > index.html
 
-          git add icon.png marketing_1.png marketing_2.png marketing_3.png index.html
+          git add icon.png privacy.html marketing_1.png marketing_2.png marketing_3.png index.html
           git add appcast.xml appcast-state.json 2>/dev/null || true
           git commit -m "Update site, screenshots and icon [skip ci]" || echo "No changes to commit"
           git push origin gh-pages
