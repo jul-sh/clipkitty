@@ -19,7 +19,7 @@ ClipKitty keeps your all clipboard history available and makes it easy to search
 ## Features
 
 - **Unlimited history**; no small item cap and no short expiration window
-- **Fast, forgiving search**; find the right item even if you only remember part of it
+- **Fast, forgiving search**; find what you're looking for, even if you only remember parts, or mispell words
 - **Full previews**; see complete text, code, images, and colors before you paste
 - **Works with more than text**; including images, files, links, and color values
 - **Optional iCloud Sync**; keep your history across devices when you want it
@@ -46,7 +46,7 @@ ClipKitty keeps your all clipboard history available and makes it easy to search
 
 ## Privacy
 
-Your clipboard history can contain sensitive information. ClipKitty keeps that history on-device by default.
+Your clipboard history contains sensitive information. ClipKitty keeps that history on-device by default.
 
 There are no accounts, no telemetry, and no third-party servers.
 
@@ -68,9 +68,7 @@ ClipKitty publishes attested builds. See [VERIFY.md](VERIFY.md).
 
 ### How Search Works
 
-Search is a latency problem disguised as a text problem.
-
-The search system has a few hard requirements:
+ClipKitty's search system has a few hard requirements:
 
 - it has to search as the user types, so every keystroke is on the hot path
 - it has to stay fast on large histories, not just toy databases
