@@ -1,10 +1,21 @@
-A maioria dos gerenciadores de área de transferência apaga seu histórico após alguns dias ou mantém apenas um histórico curto. O ClipKitty armazena tudo e permite que você encontre qualquer coisa instantaneamente.
+ClipKitty é o gerenciador de área de transferência que continua simples, mesmo quando seu histórico fica grande.
 
-Histórico Ilimitado — Sem limites, sem restrições. Se você copiou algo há um ano, ainda está lá. Texto, imagens, links, cores; nada expira, nada é cortado.
-Visualizações Multilinha — Veja exatamente o que você vai colar em um painel de visualização dedicado.
-Busca Instantânea — Encontre qualquer trecho em milissegundos, seja filtrando dez itens ou dez milhões. Feito para quem copia muitas coisas e precisa encontrá-las de novo.
-SINCRONIZAÇÃO iCLOUD
-Sincronize opcionalmente seu histórico de área de transferência em todos os seus dispositivos. Ative o iCloud Sync nas configurações e seus clips acompanham você de dispositivo em dispositivo.
-FUNCIONA COMO VOCÊ ESPERA — No Mac: ⌥Space para abrir, setas para navegar, Return para colar, ⌘1-9 para ir a qualquer item. No iPhone: toque para copiar, deslize para gerenciar. Filtre por tipo ou pesquise em tudo.
-Seguro e Privado; seus dados nunca saem da sua máquina por padrão. O ClipKitty opera inteiramente no dispositivo, sem telemetria e sem assinaturas. A sincronização opcional com iCloud utiliza exclusivamente seu contêiner privado do iCloud.
-Transparente e Aberto. — Licença permissiva com código-fonte disponível publicamente. Apoie o desenvolvimento comprando pela App Store.
+Ele salva o que você copia e facilita encontrar de novo: texto, código, links, cores, imagens e arquivos, tudo em um histórico rápido e pesquisável.
+
+HISTÓRICO ILIMITADO
+Sem limite pequeno de itens. Sem janela curta de expiração. O ClipKitty mantém seus itens copiados disponíveis pelo tempo que você quiser.
+
+BUSCA QUE REALMENTE AJUDA
+Digite o que você lembra e o ClipKitty encontra o item certo rapidamente, mesmo que a busca esteja incompleta ou com pequenos erros de digitação.
+
+VEJA TUDO ANTES DE COLAR
+Visualize texto completo, código, imagens e cores em um só lugar. Sem adivinhar a partir de trechos cortados.
+
+SINCRONIZAÇÃO iCLOUD OPCIONAL
+Sincronize seu histórico de área de transferência entre dispositivos com iCloud quando desejar.
+
+FLUXO NATURAL COM O TECLADO
+Abra com Option-Espaço, pesquise digitando, navegue com as setas e pressione Return para colar.
+
+PRIVADO POR PADRÃO
+O ClipKitty funciona no dispositivo sem telemetria, sem contas e sem servidores de terceiros. A sincronização opcional fica no seu contêiner privado do iCloud. Código aberto e publicamente auditável.

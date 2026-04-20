@@ -1,10 +1,21 @@
-La mayoría de los gestores de portapapeles eliminan tu historial después de unos días o solo conservan un historial corto. ClipKitty lo guarda todo y te permite encontrarlo al instante.
+ClipKitty es el gestor de portapapeles que se mantiene simple, incluso cuando tu historial de portapapeles crece mucho.
 
-Historial Ilimitado — Sin topes, sin límites. Si lo copiaste hace un año, sigue ahí. Texto, imágenes, enlaces, colores; nada caduca, nada se trunca.
-Vistas Multilínea — Ve exactamente lo que vas a pegar en un panel de vista previa dedicado.
-Búsqueda Instantánea — Encuentra cualquier fragmento en milisegundos, ya sea que busques entre diez elementos o diez millones. Pensado para quienes copian muchas cosas y necesitan volver a encontrarlas.
-SINCRONIZACIÓN iCLOUD
-Sincroniza opcionalmente tu historial de portapapeles en todos tus dispositivos. Activa iCloud Sync en los ajustes y tus clips te seguirán de un dispositivo a otro.
-FUNCIONA COMO ESPERAS — En Mac: ⌥Space para abrir, flechas para navegar, Return para pegar, ⌘1-9 para saltar a cualquier elemento. En iPhone: toca para copiar, desliza para gestionar. Filtra por tipo o busca en todo.
-Seguro y Privado; tus datos nunca salen de tu equipo por defecto. ClipKitty funciona completamente en el dispositivo, sin telemetría y sin suscripciones. La sincronización opcional con iCloud utiliza exclusivamente tu contenedor privado de iCloud.
-Transparente y Abierto. — Licencia permisiva con código fuente disponible públicamente. Apoya el desarrollo comprando a través del App Store.
+Guarda lo que copias y facilita encontrarlo de nuevo: texto, código, enlaces, colores, imágenes y archivos; todo en un historial rápido y buscable.
+
+HISTORIAL ILIMITADO
+Sin límite de elementos. Sin ventana de expiración. ClipKitty mantiene tus elementos copiados disponibles todo el tiempo que quieras.
+
+BÚSQUEDA QUE REALMENTE AYUDA
+Escribe lo que recuerdes y ClipKitty encuentra el elemento correcto rápidamente, incluso si la búsqueda está incompleta o tiene algún error tipográfico.
+
+VE TODO ANTES DE PEGAR
+Previsualiza texto completo, código, imágenes y colores en un solo lugar. Sin adivinar a partir de fragmentos recortados.
+
+SINCRONIZACIÓN iCLOUD OPCIONAL
+Sincroniza tu historial de portapapeles entre dispositivos con iCloud cuando lo desees.
+
+FLUJO NATURAL CON EL TECLADO
+Abre con Option-Espacio, busca escribiendo, navega con las teclas de dirección y pulsa Return para pegar.
+
+PRIVADO POR DEFECTO
+ClipKitty funciona en el dispositivo sin telemetría, sin cuentas y sin servidores de terceros. La sincronización opcional permanece en tu contenedor privado de iCloud. Código abierto y públicamente auditable.

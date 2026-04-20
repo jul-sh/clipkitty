@@ -1,19 +1,21 @@
-Most clipboard managers delete your history after a few days or only keep a short history. ClipKitty stores everything and lets you find it instantly.
+ClipKitty is the clipboard manager that stays simple; even when your clipboard history gets large.
+
+It saves what you copy and makes it easy to find again; text, code, links, colors, images, and files; all in one fast searchable history.
 
 UNLIMITED HISTORY
-No 999-item caps. No 3-month expiration. ClipKitty remembers everything from day one: text, code, URLs, hex colors, images; all preserved in full, forever.
+No small history cap. No short expiration window. ClipKitty keeps your copied items available for as long as you want them.
 
-INSTANT SEARCH THAT SCALES
-Type "dockr push prodction" and find "docker push production". Fuzzy matching works across millions of items without lag. Powered by Tantivy, the same search engine used in production databases.
+SEARCH THAT ACTUALLY HELPS
+Type what you remember and ClipKitty finds the right item fast, even if the query is incomplete or slightly misspelled.
 
-LIVE PREVIEW PANE
-See complete content before you paste. Multi-line text, full code blocks, image thumbnails, color swatches—all visible at a glance. No truncation, no waiting for hover tooltips.
+SEE EVERYTHING BEFORE YOU PASTE
+Preview full text, code, images, and colors in one place. No guessing from cut-off snippets.
 
-iCLOUD SYNC
-Optionally sync your clipboard history across all your devices. Enable iCloud Sync in settings and your clips follow you from device to device.
+OPTIONAL ICLOUD SYNC
+Sync your clipboard history across devices with iCloud when you want it.
 
-WORKS HOW YOU EXPECT
-On Mac: ⌥Space to open, arrow keys to navigate, Return to paste, ⌘1-9 to jump to any item. On iPhone: tap to copy, swipe to manage. Filter by type or search across everything.
+NATURAL KEYBOARD FLOW
+Open with Option-Space, search by typing, move with the arrow keys, and press Return to paste.
 
-PRIVACY-FIRST
-Runs 100% on-device by default with zero telemetry. No accounts, no third-party servers. Optional iCloud Sync uses only your private iCloud container; no one else can access it. Open source (GPL-3.0) with code available publicly.
+PRIVATE BY DEFAULT
+ClipKitty works on-device with no telemetry, no accounts, and no third-party servers. Optional sync stays in your private iCloud container. Open source and publicly auditable.

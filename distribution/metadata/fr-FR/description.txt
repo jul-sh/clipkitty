@@ -1,10 +1,21 @@
-La plupart des gestionnaires de presse-papiers suppriment votre historique au bout de quelques jours ou ne conservent qu'un historique limité. ClipKitty conserve tout et vous permet de retrouver n'importe quoi instantanément.
+ClipKitty est le gestionnaire de presse-papiers qui reste simple, même quand votre historique devient très volumineux.
 
-Historique Illimité — Aucun plafond, aucune limite. Si vous l'avez copié il y a un an, il est toujours là. Texte, images, liens, couleurs ; rien n'expire, rien n'est tronqué.
-Aperçus Multilignes — Voyez exactement ce que vous allez coller dans un volet d'aperçu dédié.
-Recherche Instantanée — Trouvez n'importe quel extrait en quelques millisecondes, que vous filtriez dix éléments ou dix millions. Conçu pour ceux qui copient beaucoup et ont besoin de tout retrouver.
-SYNCHRONISATION iCLOUD
-Synchronisez optionnellement votre historique de presse-papiers sur tous vos appareils. Activez iCloud Sync dans les réglages et vos clips vous suivent d'un appareil à l'autre.
-FONCTIONNE COMME PRÉVU — Sur Mac : ⌥Space pour ouvrir, touches fléchées pour naviguer, Return pour coller, ⌘1-9 pour accéder à n'importe quel élément. Sur iPhone : touchez pour copier, balayez pour gérer. Filtrez par type ou recherchez partout.
-Sécurisé et Confidentiel; vos données ne quittent jamais votre machine par défaut. ClipKitty fonctionne entièrement en local, sans télémétrie et sans abonnement. La synchronisation iCloud optionnelle utilise exclusivement votre conteneur iCloud privé.
-Transparent et Ouvert. — Licence permissive avec code source disponible publiquement. Soutenez le développement en achetant via l'App Store.
+Il enregistre ce que vous copiez et facilite la recherche : texte, code, liens, couleurs, images et fichiers, le tout dans un historique rapide et consultable.
+
+HISTORIQUE ILLIMITÉ
+Pas de limite d'éléments. Pas de fenêtre d'expiration. ClipKitty garde vos éléments copiés disponibles aussi longtemps que vous le souhaitez.
+
+RECHERCHE VRAIMENT UTILE
+Tapez ce dont vous vous souvenez et ClipKitty trouve le bon élément rapidement, même si la requête est incomplète ou légèrement mal orthographiée.
+
+TOUT VOIR AVANT DE COLLER
+Prévisualisez le texte complet, le code, les images et les couleurs au même endroit. Plus besoin de deviner à partir d'extraits tronqués.
+
+SYNCHRONISATION iCLOUD OPTIONNELLE
+Synchronisez votre historique de presse-papiers entre vos appareils avec iCloud quand vous le souhaitez.
+
+FLUX CLAVIER NATUREL
+Ouvrez avec Option-Espace, recherchez en tapant, naviguez avec les touches fléchées et appuyez sur Return pour coller.
+
+PRIVÉ PAR DÉFAUT
+ClipKitty fonctionne sur l'appareil sans télémétrie, sans compte et sans serveur tiers. La synchronisation optionnelle reste dans votre conteneur iCloud privé. Open source et publiquement vérifiable.

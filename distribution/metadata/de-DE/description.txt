@@ -1,10 +1,21 @@
-Die meisten Zwischenablage-Manager löschen deinen Verlauf nach wenigen Tagen oder speichern nur eine kurze Liste. ClipKitty speichert alles und lässt dich sofort finden, was du suchst.
+ClipKitty ist der Zwischenablage-Manager, der einfach bleibt – auch wenn dein Zwischenablage-Verlauf sehr groß wird.
 
-Unbegrenzter Verlauf — Keine Obergrenzen, keine Limits. Hast du etwas vor einem Jahr kopiert, ist es immer noch da. Text, Bilder, Links, Farben — nichts läuft ab, nichts wird abgeschnitten.
-Mehrzeilige Vorschau — Sieh genau, was du einfügen wirst, in einem eigenen Vorschaubereich.
-Sofortige Suche — Finde jeden Eintrag in Millisekunden, egal ob du zehn oder zehn Millionen Einträge durchsuchst. Entwickelt für alle, die viel kopieren und es wiederfinden müssen.
-iCLOUD-SYNCHRONISIERUNG
-Synchronisiere optional deine Zwischenablage-History über alle deine Geräte. Aktiviere iCloud Sync in den Einstellungen und deine Clips folgen dir von Gerät zu Gerät.
-FUNKTIONIERT WIE ERWARTET — Am Mac: ⌥Space zum Öffnen, Pfeiltasten zum Navigieren, Return zum Einfügen, ⌘1-9 um zu einem Element zu springen. Am iPhone: Tippen zum Kopieren, Wischen zum Verwalten. Nach Typ filtern oder alles durchsuchen.
-Sicher & Privat; deine Daten verlassen standardmäßig nie deinen Rechner. ClipKitty arbeitet vollständig lokal, ohne Telemetrie und ohne Abonnements. Die optionale iCloud-Synchronisierung nutzt ausschließlich deinen privaten iCloud-Container.
-Transparent und Offen. — Freizügige Lizenz mit öffentlich verfügbarem Quellcode. Unterstütze die Entwicklung durch einen Kauf im App Store.
+Es speichert, was du kopierst, und macht es leicht wiederzufinden: Text, Code, Links, Farben, Bilder und Dateien – alles in einem schnellen, durchsuchbaren Verlauf.
+
+UNBEGRENZTER VERLAUF
+Keine niedrige Obergrenze. Kein kurzes Ablaufdatum. ClipKitty hält deine kopierten Einträge so lange verfügbar, wie du möchtest.
+
+SUCHE, DIE WIRKLICH HILFT
+Tippe ein, woran du dich erinnerst, und ClipKitty findet den richtigen Eintrag schnell – auch wenn die Suche unvollständig oder leicht falsch geschrieben ist.
+
+ALLES SEHEN, BEVOR DU EINFÜGST
+Vorschau von vollständigem Text, Code, Bildern und Farben an einem Ort. Kein Rätselraten anhand abgeschnittener Ausschnitte.
+
+OPTIONALE iCLOUD-SYNCHRONISIERUNG
+Synchronisiere deinen Zwischenablage-Verlauf über Geräte hinweg mit iCloud, wann immer du möchtest.
+
+NATÜRLICHER TASTATURFLUSS
+Öffne mit Option-Leertaste, suche durch Tippen, navigiere mit den Pfeiltasten und drücke Return zum Einfügen.
+
+STANDARDMÄSSIG PRIVAT
+ClipKitty arbeitet lokal auf dem Gerät, ohne Telemetrie, ohne Konten und ohne Server von Drittanbietern. Die optionale Synchronisierung bleibt in deinem privaten iCloud-Container. Open Source und öffentlich überprüfbar.
