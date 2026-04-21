@@ -491,6 +491,17 @@
             continuation.resume()
         }
 
+        /// Flip UI status to `.syncing`, but only when the cycle has detected
+        /// real work. Called from the phases that actually do observable work
+        /// (remote changes arriving, pending uploads, full resync, compaction)
+        /// so that idle no-op polls don't flash "Syncing…" in settings.
+        private func markSyncing() {
+            updateActiveState { state in
+                if case .syncing = state.activity { return }
+                state.activity = .syncing
+            }
+        }
+
         /// Single serial coordinator cycle: fetch → apply → compact → upload → cleanup.
         public func runCoordinatorCycle() async {
             do {
@@ -513,15 +524,13 @@
                 prepareForAvailableCycle()
                 try await ensureZoneExists()
                 await setupSubscription()
-                updateActiveState { state in
-                    state.activity = .syncing
-                }
 
                 // ── Phase 0: Check device state ──
                 let deviceState = try store.getSyncDeviceState(deviceId: deviceId)
 
                 if deviceState.needsFullResync {
                     logger.info("Full resync required")
+                    markSyncing()
                     try await performFullResync()
                     backoff.reset()
                     updateActiveState { state in
@@ -532,6 +541,7 @@
 
                 if deviceState.indexDirty {
                     logger.info("Index dirty, rebuilding")
+                    markSyncing()
                     try store.rebuildIndex()
                     try store.clearIndexDirtyFlag()
                 }
@@ -543,6 +553,7 @@
                 let changes = await cloud.fetchZoneChanges(in: recordZone.zoneID, since: changeToken)
                 if changes.tokenExpired {
                     logger.info("Zone change token expired, triggering full resync")
+                    markSyncing()
                     try await performFullResync()
                     backoff.reset()
                     updateActiveState { state in
@@ -556,6 +567,9 @@
 
                 // ── Phase 2: Convert CKRecords + rehydrate CKAssets ──
                 let (eventRecords, snapshotRecords) = try convertCloudKitRecords(changes)
+                if !eventRecords.isEmpty || !snapshotRecords.isEmpty {
+                    markSyncing()
+                }
 
                 // ── Phase 3: Apply batch (Rust) ──
                 let batchOutcome = try store.applyRemoteBatch(
@@ -586,6 +600,7 @@
 
                 case .fullResyncRequired:
                     logger.info("Batch triggered full resync")
+                    markSyncing()
                     try await performFullResync()
                     backoff.reset()
                     updateActiveState { state in
@@ -596,10 +611,20 @@
 
                 // ── Phase 5: Periodic compaction ──
                 if shouldRunCompaction() {
+                    markSyncing()
                     await performCompaction()
                     updateMaintenanceState { maintenance in
                         maintenance.lastCompactionDate = now()
                     }
+                }
+
+                // Peek at pending upload work so the UI only flips to
+                // "Syncing…" when there is something to upload.
+                let hasPendingUploads =
+                    (try? !store.pendingLocalEvents().isEmpty) == true ||
+                    (try? !store.pendingSnapshotRecords().isEmpty) == true
+                if hasPendingUploads {
+                    markSyncing()
                 }
 
                 // ── Phase 6: Upload events ──
