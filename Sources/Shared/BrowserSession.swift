@@ -114,9 +114,36 @@ public struct DisplayRow: Equatable, Identifiable {
     }
 }
 
+/// How a selection change happened. The origin informs two independent view
+/// decisions: whether the preview pane auto-scrolls or tracks user highlights,
+/// and whether the results list needs to scroll the selection into view.
 public enum SelectionOrigin {
+    /// Programmatic selection from search results, bookmark activation, or
+    /// any flow where the user did not explicitly point at a specific row.
     case automatic
-    case user
+    /// The user clicked or tapped a row. The row is already on-screen.
+    case click
+    /// The user moved selection via keyboard (arrow keys, Cmd+N, etc.).
+    /// The target may be outside the current viewport.
+    case keyboard
+
+    /// True when the user explicitly picked this item (click or keyboard),
+    /// as opposed to a programmatic selection landing on the current item.
+    public var isUserInitiated: Bool {
+        switch self {
+        case .automatic: return false
+        case .click, .keyboard: return true
+        }
+    }
+
+    /// Whether the results list should scroll the newly-selected item into
+    /// view. A click targets a visible row; anything else may not be visible.
+    public var requiresScrollIntoView: Bool {
+        switch self {
+        case .click: return false
+        case .automatic, .keyboard: return true
+        }
+    }
 }
 
 public enum SelectedPreviewState: Equatable {

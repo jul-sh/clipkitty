@@ -65,7 +65,7 @@ final class BrowserViewModelTests: XCTestCase {
 
         XCTAssertEqual(viewModel.selectedItemId, "1")
 
-        viewModel.select(itemId: "2", origin: .user)
+        viewModel.select(itemId: "2", origin: .click)
         await flushMainActor()
 
         client.resumeFetch(id: "1", with: makeItem(id: "1", text: "first"))
@@ -1276,7 +1276,7 @@ final class BrowserViewModelTests: XCTestCase {
         client.resumeFetch(id: "1", with: makeItem(id: "1", text: "first"))
         await flushMainActor()
 
-        viewModel.select(itemId: "2", origin: .user)
+        viewModel.select(itemId: "2", origin: .click)
         await flushMainActor()
         client.resumeFetch(id: "2", with: makeItem(id: "2", text: "second"))
         await flushMainActor()
@@ -1376,7 +1376,7 @@ final class BrowserViewModelTests: XCTestCase {
         viewModel.deleteSelectedItem()
         await flushMainActor()
 
-        viewModel.select(itemId: "2", origin: .user)
+        viewModel.select(itemId: "2", origin: .click)
         viewModel.deleteSelectedItem()
         await flushMainActor()
 

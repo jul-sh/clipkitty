@@ -98,7 +98,7 @@ struct BrowserPreviewPane: View {
                     case let .loadingDecoration(previous):
                         return previous == nil ? .autoScroll : .manual
                     case .highlighted:
-                        return content.origin == .user ? .trackHighlight : .autoScroll
+                        return content.origin.isUserInitiated ? .trackHighlight : .autoScroll
                     }
                 }(),
                 onTextChange: { newText in

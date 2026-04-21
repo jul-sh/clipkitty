@@ -200,7 +200,7 @@ struct BrowserView: View {
         let index = number - 1
         guard viewModel.itemIds.indices.contains(index) else { return false }
         let itemId = viewModel.itemIds[index]
-        viewModel.select(itemId: itemId, origin: .user)
+        viewModel.select(itemId: itemId, origin: .keyboard)
         viewModel.confirmSelection()
         return true
     }

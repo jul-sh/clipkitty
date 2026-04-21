@@ -96,7 +96,7 @@ final class iOSHighlightAndEditTests: XCTestCase {
         await flushMainActor()
 
         client.resumeFetch(id: "1", with: item)
-        viewModel.select(itemId: "1", origin: .user)
+        viewModel.select(itemId: "1", origin: .click)
         await flushMainActor()
 
         // No pending edits — hasPendingEdit should be false
@@ -119,7 +119,7 @@ final class iOSHighlightAndEditTests: XCTestCase {
         await flushMainActor()
 
         client.resumeFetch(id: "1", with: item)
-        viewModel.select(itemId: "1", origin: .user)
+        viewModel.select(itemId: "1", origin: .click)
         await flushMainActor()
 
         // Start editing
@@ -155,7 +155,7 @@ final class iOSHighlightAndEditTests: XCTestCase {
         await flushMainActor()
 
         client.resumeFetch(id: "1", with: item)
-        viewModel.select(itemId: "1", origin: .user)
+        viewModel.select(itemId: "1", origin: .click)
         await flushMainActor()
 
         // Edit and then cancel
@@ -190,7 +190,7 @@ final class iOSHighlightAndEditTests: XCTestCase {
         await flushMainActor()
 
         client.resumeFetch(id: "1", with: item)
-        viewModel.select(itemId: "1", origin: .user)
+        viewModel.select(itemId: "1", origin: .click)
         await flushMainActor()
 
         viewModel.onEditingStateChange(true, for: "1")
@@ -217,7 +217,7 @@ final class iOSHighlightAndEditTests: XCTestCase {
         await flushMainActor()
 
         // Select the item — resolves from firstPreviewPayload
-        viewModel.select(itemId: "1", origin: .user)
+        viewModel.select(itemId: "1", origin: .click)
         await flushMainActor()
 
         // Verify selection is established
@@ -289,7 +289,7 @@ final class iOSHighlightAndEditTests: XCTestCase {
         await flushMainActor()
 
         client.resumeFetch(id: "1", with: item1)
-        viewModel.select(itemId: "1", origin: .user)
+        viewModel.select(itemId: "1", origin: .click)
         await flushMainActor()
 
         // Make item 1 dirty
@@ -303,7 +303,7 @@ final class iOSHighlightAndEditTests: XCTestCase {
 
         // Select item 2 — dirty state for item 1 should be cleared
         client.resumeFetch(id: "2", with: item2)
-        viewModel.select(itemId: "2", origin: .user)
+        viewModel.select(itemId: "2", origin: .click)
         await flushMainActor()
 
         XCTAssertEqual(viewModel.editSession, .inactive)

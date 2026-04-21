@@ -43,7 +43,7 @@ struct PreviewScreen: View {
             Text("Are you sure you want to delete this item? This cannot be undone.", comment: "Delete confirmation message")
         }
         .onAppear {
-            viewModel.select(itemId: itemId, origin: .user)
+            viewModel.select(itemId: itemId, origin: .click)
         }
     }
 

@@ -28,7 +28,7 @@ struct BrowserResultsList: View {
                             return false
                         }(),
                         onTap: {
-                            viewModel.select(itemId: row.metadata.itemId, origin: .user)
+                            viewModel.select(itemId: row.metadata.itemId, origin: .click)
                             focusSearchField()
                         },
                         contextMenuActions: BrowserActionItem.items(for: row.metadata.tags),
@@ -74,6 +74,14 @@ struct BrowserResultsList: View {
                 let itemsChanged = currentSignature != lastItemsSignature
                 if itemsChanged {
                     lastItemsSignature = currentSignature
+                }
+
+                // A click lands on a row the user can already see. Scrolling
+                // it to the center would yank the list under their cursor,
+                // so we leave the viewport alone. Keyboard nav and programmatic
+                // selection changes still scroll so the new selection is visible.
+                guard viewModel.selection.origin?.requiresScrollIntoView ?? true else {
+                    return
                 }
 
                 let oldIndex = indexForItem(oldItemId)

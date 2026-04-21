@@ -304,13 +304,13 @@ public final class BrowserViewModel {
         hasUserNavigated = true
         guard let currentIndex = selectedIndex else {
             if let firstItemId = itemIds.first {
-                select(itemId: firstItemId, origin: .automatic)
+                select(itemId: firstItemId, origin: .keyboard)
             }
             return
         }
         let newIndex = max(0, min(itemCount - 1, currentIndex + offset))
         guard let itemId = itemIdentifier(at: newIndex) else { return }
-        select(itemId: itemId, origin: .user)
+        select(itemId: itemId, origin: .keyboard)
     }
 
     public func select(itemId: String, origin: SelectionOrigin) {
