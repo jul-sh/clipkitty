@@ -409,8 +409,23 @@ struct TextPreviewView: NSViewRepresentable {
     private static var lastKnownContainerWidth: CGFloat = 0
 
     private func scaledFontSize(containerWidth: CGFloat) -> CGFloat {
-        let nsText = (TextPreviewView.textCache[itemId] ?? "") as NSString
-        guard nsText.length <= Self.maxAutoScaleCharacters else { return fontSize }
+        let text = TextPreviewView.textCache[itemId] ?? ""
+        return Self.scaledFontSize(
+            text: text,
+            fontName: fontName,
+            fontSize: fontSize,
+            containerWidth: containerWidth
+        )
+    }
+
+    static func scaledFontSize(
+        text: String,
+        fontName: String,
+        fontSize: CGFloat,
+        containerWidth: CGFloat
+    ) -> CGFloat {
+        let nsText = text as NSString
+        guard nsText.length <= maxAutoScaleCharacters else { return fontSize }
 
         let baseFont = NSFont(name: fontName, size: fontSize)
             ?? NSFont.monospacedSystemFont(ofSize: fontSize, weight: .regular)
@@ -428,7 +443,7 @@ struct TextPreviewView: NSViewRepresentable {
             options: [.byLines]
         ) { substring, _, _, stop in
             lineCount += 1
-            guard lineCount <= Self.maxAutoScaleLines else {
+            guard lineCount <= maxAutoScaleLines else {
                 stop.pointee = true
                 return
             }
@@ -443,19 +458,14 @@ struct TextPreviewView: NSViewRepresentable {
             }
         }
 
-        if lineCount == 0 || lineCount > Self.maxAutoScaleLines { return fontSize }
+        if lineCount == 0 || lineCount > maxAutoScaleLines { return fontSize }
         if maxLineWidth <= 0 { return fontSize }
 
-        // For short items (1-2 lines, <=200 chars) allow scaling even when lines
-        // exceed the container width; the text will wrap but remain more readable.
-        // For longer items, cap the scale so we never shrink below base size.
+        // Never shrink below the base font size: a single very long line would
+        // otherwise drive rawScale toward zero and make the preview unreadable.
+        // Text that overflows the container simply wraps at the base size.
         let rawScale = availableWidth / maxLineWidth
-        let scale: CGFloat
-        if lineCount <= 2, nsText.length <= 200 {
-            scale = min(1.5, max(rawScale, 1.0)) * 0.95
-        } else {
-            scale = min(1.5, rawScale) * 0.95
-        }
+        let scale = min(1.5, max(rawScale, 1.0)) * 0.95
         return fontSize * scale
     }
 
