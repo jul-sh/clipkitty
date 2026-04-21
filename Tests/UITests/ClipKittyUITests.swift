@@ -876,10 +876,14 @@ final class ClipKittyUITests: XCTestCase {
         // (Xcode records the screen automatically into the xcresult bundle.)
         Thread.sleep(forTimeInterval: 0.5)
 
-        /// Helper to type with natural delays
-        func typeSlowly(_ text: String, delay: TimeInterval = 0.0125) {
-            for char in text {
+        /// Helper to type with natural delays. Skips the post-delay on the
+        /// first character when the search field is currently empty, so the
+        /// first match appears without artificial latency.
+        func typeSlowly(_ text: String, delay: TimeInterval = 0.00417) {
+            let startedEmpty = (searchField.value as? String)?.isEmpty ?? true
+            for (index, char) in text.enumerated() {
                 searchField.typeText(String(char))
+                if startedEmpty && index == 0 { continue }
                 Thread.sleep(forTimeInterval: delay)
             }
         }
