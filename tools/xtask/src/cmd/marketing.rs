@@ -984,18 +984,10 @@ impl<'a> ScreenshotEnvironment<'a> {
             "tell application \"System Events\" to set visible of every process whose name is not \"ClipKitty\" to false",
             ])
         .status();
-        // Enable paste mode so screenshots/videos show "Paste" instead of "Copy"
-        let _ = Runner::new(reporter, "defaults")
-            .args([
-                "write",
-                "com.eviljuliette.clipkitty",
-                "autoPasteEnabled",
-                "-bool",
-                "true",
-            ])
-            .status();
+        // The app forces paste mode on under --use-simulated-db, so marketing
+        // screenshots and intro videos always show "Paste" on the action
+        // button regardless of accessibility permission state.
         if env::var_os("CI").is_some() {
-            grant_accessibility(reporter);
             let _ = Runner::new(reporter, "defaults")
                 .args(["write", "com.apple.dock", "persistent-apps", "-array"])
                 .status();
@@ -1034,49 +1026,6 @@ impl Drop for ScreenshotEnvironment<'_> {
             }
         }
     }
-}
-
-/// Grant accessibility permission to the app so `AXIsProcessTrusted()` returns
-/// true and the action button shows "Paste". CI runners have SIP disabled, so
-/// direct TCC.db writes work. We try two common schema shapes (macOS 15+ added
-/// extra columns) and silently fall back to `tccutil` if neither works.
-fn grant_accessibility(reporter: &Reporter) {
-    const TCC_DB: &str = "/Library/Application Support/com.apple.TCC/TCC.db";
-    const BUNDLE_ID: &str = "com.eviljuliette.clipkitty";
-
-    // Schema v1 (macOS 14 and earlier): 6 core columns.
-    let ok = Runner::new(reporter, "sudo")
-        .args([
-            "sqlite3",
-            TCC_DB,
-            &format!(
-                "INSERT OR REPLACE INTO access \
-                 (service, client, client_type, auth_value, auth_reason, auth_version) \
-                 VALUES ('kTCCServiceAccessibility', '{BUNDLE_ID}', 0, 2, 0, 1);"
-            ),
-        ])
-        .status()
-        .map(|s| s.success())
-        .unwrap_or(false);
-    if ok {
-        return;
-    }
-
-    // Fallback: reset + re-insert (clears any conflicting row).
-    let _ = Runner::new(reporter, "sudo")
-        .args(["tccutil", "reset", "Accessibility", BUNDLE_ID])
-        .status();
-    let _ = Runner::new(reporter, "sudo")
-        .args([
-            "sqlite3",
-            TCC_DB,
-            &format!(
-                "INSERT INTO access \
-                 (service, client, client_type, auth_value, auth_reason, auth_version) \
-                 VALUES ('kTCCServiceAccessibility', '{BUNDLE_ID}', 0, 2, 0, 1);"
-            ),
-        ])
-        .status();
 }
 
 fn osascript_capture(reporter: &Reporter, script: &str) -> Result<String> {

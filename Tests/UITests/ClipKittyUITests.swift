@@ -122,6 +122,13 @@ final class ClipKittyUITests: XCTestCase {
 
         app.launchArguments = ["--use-simulated-db"]
 
+        // Marketing screenshots and the intro video need the preview pane to
+        // show "Paste" so the featured direct-paste capability is visible.
+        // Forcing the mode here avoids per-machine TCC.db manipulation.
+        if name.contains("testRecordIntroVideo") || name.contains("testTakeMarketingScreenshots") {
+            app.launchArguments += ["--force-paste-mode"]
+        }
+
         // Set app locale for localized screenshots
         if let locale = screenshotLocale {
             app.launchArguments += ["-AppleLanguages", "(\(locale))"]

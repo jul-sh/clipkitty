@@ -100,6 +100,13 @@ final class AppSettings: ObservableObject {
         /// Check if the app can post synthetic keyboard events (e.g. Cmd+V for direct paste)
         /// Uses the permission monitor for reactive updates.
         var hasPostEventPermission: Bool {
+            // Marketing screenshots and the intro video need the preview pane
+            // to show "Paste" without depending on TCC.db state. The launcher
+            // sets --force-paste-mode for those runs only; other UI tests
+            // still exercise the real permission-denied path.
+            if CommandLine.arguments.contains("--force-paste-mode") {
+                return true
+            }
             return accessibilityPermissionMonitor.isGranted
         }
 
@@ -122,6 +129,7 @@ final class AppSettings: ObservableObject {
         /// - Returns `.copyOnly` when user explicitly chose copy-only mode
         /// - Returns `.noPermission` when user wants autoPaste but permission is not granted
         var pasteMode: PasteMode {
+            if CommandLine.arguments.contains("--force-paste-mode") { return .autoPaste }
             guard autoPasteEnabled else { return .copyOnly }
             guard hasPostEventPermission else { return .noPermission }
             return .autoPaste
