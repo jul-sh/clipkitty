@@ -111,18 +111,20 @@ final class BrowserViewModelTests: XCTestCase {
         XCTAssertEqual(request, SearchRequest(text: "", filter: .all))
         XCTAssertEqual(previous?.response.items.map(\.itemMetadata.itemId), ["1"])
         XCTAssertEqual(viewModel.itemIds, ["1"])
-        XCTAssertEqual(viewModel.selectedItemId, "1")
+        // Selection clears immediately on display reset so the panel re-opens
+        // at the top of the list rather than keeping the prior highlight.
+        XCTAssertNil(viewModel.selectedItemId)
 
         client.resumeSearch(with: BrowserSearchResponse(
             request: SearchRequest(text: "", filter: .all),
-            items: [makeMatch(id: "2", snippet: "second")],
-            firstItem: secondItem,
-            totalCount: 1
+            items: [makeMatch(id: "1", snippet: "first"), makeMatch(id: "2", snippet: "second")],
+            firstItem: firstItem,
+            totalCount: 2
         ))
         await flushMainActor()
 
-        XCTAssertEqual(viewModel.itemIds, ["2"])
-        XCTAssertEqual(viewModel.selectedItemId, "2")
+        XCTAssertEqual(viewModel.itemIds, ["1", "2"])
+        XCTAssertEqual(viewModel.selectedItemId, "1")
     }
 
     func testHiddenContentRevisionRefreshKeepsPreviousResultsVisible() async {

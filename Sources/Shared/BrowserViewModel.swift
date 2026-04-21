@@ -228,6 +228,9 @@ public final class BrowserViewModel {
         overlayState = .none
         mutationState = .idle
         editSession = .inactive
+        // Clear selection so the fresh search lands on the top item rather
+        // than carrying the prior highlight across a hide/show cycle.
+        setDisplayedSelection(.none)
         // Preserve displayed content so the fresh search can enter `.loading(previous:)`
         // instead of flashing the empty state while the new results are loading.
         hasAppliedInitialSearch = false
