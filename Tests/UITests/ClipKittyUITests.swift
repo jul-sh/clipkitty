@@ -827,12 +827,12 @@ final class ClipKittyUITests: XCTestCase {
     /// Scene 1: Welcome — search "welcome clipkitty" to find the welcome message
     /// Scene 2: Find it forever — "Copy it once, find it forever"
     /// Scene 3: Multi-line preview — "Multi-line preview" shows balloon ASCII art
-    /// Scene 3.5: Bookmark — "secure and private" then Cmd+K → Enter to bookmark
     /// Scene 4: Image search — type the localized word for "fast" to find the
     ///          cartoon cat. For CJK locales the query is ASCII "fast"
     ///          (overridden in video_localized.rs) because IME input is
     ///          much slower per-character in XCUITest; the image keywords
     ///          include "fast" as a substring for those locales.
+    /// Scene 4.5: Bookmark — "secure and private" then Cmd+K → Enter to bookmark
     func testRecordIntroVideo() {
         let searchField = app.textFields.firstMatch
         XCTAssertTrue(searchField.waitForExistence(timeout: 5), "Search field not found")
@@ -938,7 +938,17 @@ final class ClipKittyUITests: XCTestCase {
         Thread.sleep(forTimeInterval: 0.5)
 
         // ============================================================
-        // SCENE 3.5: Bookmark
+        // SCENE 4: Image Search — type the (possibly localized) "fast" query
+        // to find the cat image. CJK locales override this to ASCII "fast"
+        // in video_localized.rs; the image keywords include "fast" for
+        // those locales so search still matches.
+        // ============================================================
+        clearSearch()
+        typeSlowly(queries["fast"] ?? "fast")
+        Thread.sleep(forTimeInterval: 1.5)
+
+        // ============================================================
+        // SCENE 4.5: Bookmark
         // ============================================================
         clearSearch()
         typeSlowly(queries["secure_private"] ?? "secure private")
@@ -950,16 +960,6 @@ final class ClipKittyUITests: XCTestCase {
 
         // Press Return to activate Bookmark (already highlighted at index 0)
         app.typeKey(.return, modifierFlags: [])
-        Thread.sleep(forTimeInterval: 1.5)
-
-        // ============================================================
-        // SCENE 4: Image Search — type the (possibly localized) "fast" query
-        // to find the cat image. CJK locales override this to ASCII "fast"
-        // in video_localized.rs; the image keywords include "fast" for
-        // those locales so search still matches.
-        // ============================================================
-        clearSearch()
-        typeSlowly(queries["fast"] ?? "fast")
         Thread.sleep(forTimeInterval: 1.5)
 
         // ============================================================
