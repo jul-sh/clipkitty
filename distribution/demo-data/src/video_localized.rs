@@ -56,7 +56,7 @@ pub fn get_localized_video_items(locale: &str) -> Option<&'static [DemoItem]> {
 const VIDEO_SCENES_ES: LocalizedVideoScenes = LocalizedVideoScenes {
     welcome_query: "hola clipkitty",
     find_forever_query: "copia encuentra siempre",
-    multiline_query: "ve antes de pegar",
+    multiline_query: "vista previa multilínea",
     secure_private_query: "privado código abierto",
     fast_query: "rápido",
 };
@@ -76,7 +76,7 @@ pub const VIDEO_ITEMS_ES: &[DemoItem] = &[
         offset: -120,
     },
     DemoItem {
-        content: "Ve antes de pegar,\nsin sorpresas de varias líneas.\n\n\u{2063}          \u{1F388}\u{1F388}  \u{2601}\u{FE0F}\n         \u{1F388}\u{1F388}\u{1F388}\n \u{2601}\u{FE0F}     \u{1F388}\u{1F388}\u{1F388}\u{1F388}\n   \u{2601}\u{FE0F}    \u{2063}\u{1F388}\u{1F388}\u{1F388}\n           \\|/\n           \u{1F3E0}   \u{2601}\u{FE0F}\n   \u{2601}\u{FE0F}         \u{2601}\u{FE0F}",
+        content: "Vista previa multilínea\n\n\u{2063}          \u{1F388}\u{1F388}  \u{2601}\u{FE0F}\n         \u{1F388}\u{1F388}\u{1F388}\n \u{2601}\u{FE0F}     \u{1F388}\u{1F388}\u{1F388}\u{1F388}\n   \u{2601}\u{FE0F}    \u{2063}\u{1F388}\u{1F388}\u{1F388}\n           \\|/\n           \u{1F3E0}   \u{2601}\u{FE0F}\n   \u{2601}\u{FE0F}         \u{2601}\u{FE0F}",
         source_app: "Notas",
         bundle_id: "com.apple.Notes",
         offset: -300,
@@ -429,7 +429,7 @@ pub const VIDEO_ITEMS_ZH_HANS: &[DemoItem] = &[
         offset: -120,
     },
     DemoItem {
-        content: "多行预览，\n粘贴前先看清。\n\n\u{2063}          \u{1F388}\u{1F388}  \u{2601}\u{FE0F}\n         \u{1F388}\u{1F388}\u{1F388}\n \u{2601}\u{FE0F}     \u{1F388}\u{1F388}\u{1F388}\u{1F388}\n   \u{2601}\u{FE0F}    \u{2063}\u{1F388}\u{1F388}\u{1F388}\n           \\|/\n           \u{1F3E0}   \u{2601}\u{FE0F}\n   \u{2601}\u{FE0F}         \u{2601}\u{FE0F}",
+        content: "多行预览\n\n\u{2063}          \u{1F388}\u{1F388}  \u{2601}\u{FE0F}\n         \u{1F388}\u{1F388}\u{1F388}\n \u{2601}\u{FE0F}     \u{1F388}\u{1F388}\u{1F388}\u{1F388}\n   \u{2601}\u{FE0F}    \u{2063}\u{1F388}\u{1F388}\u{1F388}\n           \\|/\n           \u{1F3E0}   \u{2601}\u{FE0F}\n   \u{2601}\u{FE0F}         \u{2601}\u{FE0F}",
         source_app: "备忘录",
         bundle_id: "com.apple.Notes",
         offset: -300,
@@ -780,7 +780,7 @@ pub const VIDEO_ITEMS_ZH_HANT: &[DemoItem] = &[
         offset: -120,
     },
     DemoItem {
-        content: "多行預覽，\n貼上前先看清。\n\n\u{2063}          \u{1F388}\u{1F388}  \u{2601}\u{FE0F}\n         \u{1F388}\u{1F388}\u{1F388}\n \u{2601}\u{FE0F}     \u{1F388}\u{1F388}\u{1F388}\u{1F388}\n   \u{2601}\u{FE0F}    \u{2063}\u{1F388}\u{1F388}\u{1F388}\n           \\|/\n           \u{1F3E0}   \u{2601}\u{FE0F}\n   \u{2601}\u{FE0F}         \u{2601}\u{FE0F}",
+        content: "多行預覽\n\n\u{2063}          \u{1F388}\u{1F388}  \u{2601}\u{FE0F}\n         \u{1F388}\u{1F388}\u{1F388}\n \u{2601}\u{FE0F}     \u{1F388}\u{1F388}\u{1F388}\u{1F388}\n   \u{2601}\u{FE0F}    \u{2063}\u{1F388}\u{1F388}\u{1F388}\n           \\|/\n           \u{1F3E0}   \u{2601}\u{FE0F}\n   \u{2601}\u{FE0F}         \u{2601}\u{FE0F}",
         source_app: "備忘錄",
         bundle_id: "com.apple.Notes",
         offset: -300,
@@ -1131,7 +1131,7 @@ pub const VIDEO_ITEMS_JA: &[DemoItem] = &[
         offset: -120,
     },
     DemoItem {
-        content: "複数行プレビューで、\n貼り付け前に確認。\n\n\u{2063}          \u{1F388}\u{1F388}  \u{2601}\u{FE0F}\n         \u{1F388}\u{1F388}\u{1F388}\n \u{2601}\u{FE0F}     \u{1F388}\u{1F388}\u{1F388}\u{1F388}\n   \u{2601}\u{FE0F}    \u{2063}\u{1F388}\u{1F388}\u{1F388}\n           \\|/\n           \u{1F3E0}   \u{2601}\u{FE0F}\n   \u{2601}\u{FE0F}         \u{2601}\u{FE0F}",
+        content: "複数行プレビュー\n\n\u{2063}          \u{1F388}\u{1F388}  \u{2601}\u{FE0F}\n         \u{1F388}\u{1F388}\u{1F388}\n \u{2601}\u{FE0F}     \u{1F388}\u{1F388}\u{1F388}\u{1F388}\n   \u{2601}\u{FE0F}    \u{2063}\u{1F388}\u{1F388}\u{1F388}\n           \\|/\n           \u{1F3E0}   \u{2601}\u{FE0F}\n   \u{2601}\u{FE0F}         \u{2601}\u{FE0F}",
         source_app: "メモ",
         bundle_id: "com.apple.Notes",
         offset: -300,
@@ -1482,7 +1482,7 @@ pub const VIDEO_ITEMS_KO: &[DemoItem] = &[
         offset: -120,
     },
     DemoItem {
-        content: "붙여넣기 전에\n여러 줄 그대로 미리보기.\n\n\u{2063}          \u{1F388}\u{1F388}  \u{2601}\u{FE0F}\n         \u{1F388}\u{1F388}\u{1F388}\n \u{2601}\u{FE0F}     \u{1F388}\u{1F388}\u{1F388}\u{1F388}\n   \u{2601}\u{FE0F}    \u{2063}\u{1F388}\u{1F388}\u{1F388}\n           \\|/\n           \u{1F3E0}   \u{2601}\u{FE0F}\n   \u{2601}\u{FE0F}         \u{2601}\u{FE0F}",
+        content: "여러 줄 미리보기\n\n\u{2063}          \u{1F388}\u{1F388}  \u{2601}\u{FE0F}\n         \u{1F388}\u{1F388}\u{1F388}\n \u{2601}\u{FE0F}     \u{1F388}\u{1F388}\u{1F388}\u{1F388}\n   \u{2601}\u{FE0F}    \u{2063}\u{1F388}\u{1F388}\u{1F388}\n           \\|/\n           \u{1F3E0}   \u{2601}\u{FE0F}\n   \u{2601}\u{FE0F}         \u{2601}\u{FE0F}",
         source_app: "메모",
         bundle_id: "com.apple.Notes",
         offset: -300,
@@ -1812,7 +1812,7 @@ pub const VIDEO_ITEMS_KO: &[DemoItem] = &[
 const VIDEO_SCENES_FR: LocalizedVideoScenes = LocalizedVideoScenes {
     welcome_query: "bienvenue clipkitty",
     find_forever_query: "copiez retrouvez vie",
-    multiline_query: "aperçu plusieurs lignes",
+    multiline_query: "aperçu multiligne",
     secure_private_query: "privé open source",
     fast_query: "rapide",
 };
@@ -1832,7 +1832,7 @@ pub const VIDEO_ITEMS_FR: &[DemoItem] = &[
         offset: -120,
     },
     DemoItem {
-        content: "Aperçu sur plusieurs lignes :\nvous voyez avant de coller.\n\n\u{2063}          \u{1F388}\u{1F388}  \u{2601}\u{FE0F}\n         \u{1F388}\u{1F388}\u{1F388}\n \u{2601}\u{FE0F}     \u{1F388}\u{1F388}\u{1F388}\u{1F388}\n   \u{2601}\u{FE0F}    \u{2063}\u{1F388}\u{1F388}\u{1F388}\n           \\|/\n           \u{1F3E0}   \u{2601}\u{FE0F}\n   \u{2601}\u{FE0F}         \u{2601}\u{FE0F}",
+        content: "Aperçu multiligne\n\n\u{2063}          \u{1F388}\u{1F388}  \u{2601}\u{FE0F}\n         \u{1F388}\u{1F388}\u{1F388}\n \u{2601}\u{FE0F}     \u{1F388}\u{1F388}\u{1F388}\u{1F388}\n   \u{2601}\u{FE0F}    \u{2063}\u{1F388}\u{1F388}\u{1F388}\n           \\|/\n           \u{1F3E0}   \u{2601}\u{FE0F}\n   \u{2601}\u{FE0F}         \u{2601}\u{FE0F}",
         source_app: "Notes",
         bundle_id: "com.apple.Notes",
         offset: -300,
@@ -2162,7 +2162,7 @@ pub const VIDEO_ITEMS_FR: &[DemoItem] = &[
 const VIDEO_SCENES_DE: LocalizedVideoScenes = LocalizedVideoScenes {
     welcome_query: "willkommen clipkitty",
     find_forever_query: "einmal kopiert griffbereit",
-    multiline_query: "ganze absätze einfügen",
+    multiline_query: "mehrzeilige vorschau",
     secure_private_query: "privat open source",
     fast_query: "schnell",
 };
@@ -2182,7 +2182,7 @@ pub const VIDEO_ITEMS_DE: &[DemoItem] = &[
         offset: -120,
     },
     DemoItem {
-        content: "Ganze Absätze auf einen Blick,\nbevor du einfügst.\n\n\u{2063}          \u{1F388}\u{1F388}  \u{2601}\u{FE0F}\n         \u{1F388}\u{1F388}\u{1F388}\n \u{2601}\u{FE0F}     \u{1F388}\u{1F388}\u{1F388}\u{1F388}\n   \u{2601}\u{FE0F}    \u{2063}\u{1F388}\u{1F388}\u{1F388}\n           \\|/\n           \u{1F3E0}   \u{2601}\u{FE0F}\n   \u{2601}\u{FE0F}         \u{2601}\u{FE0F}",
+        content: "Mehrzeilige Vorschau\n\n\u{2063}          \u{1F388}\u{1F388}  \u{2601}\u{FE0F}\n         \u{1F388}\u{1F388}\u{1F388}\n \u{2601}\u{FE0F}     \u{1F388}\u{1F388}\u{1F388}\u{1F388}\n   \u{2601}\u{FE0F}    \u{2063}\u{1F388}\u{1F388}\u{1F388}\n           \\|/\n           \u{1F3E0}   \u{2601}\u{FE0F}\n   \u{2601}\u{FE0F}         \u{2601}\u{FE0F}",
         source_app: "Notizen",
         bundle_id: "com.apple.Notes",
         offset: -300,
@@ -2512,7 +2512,7 @@ pub const VIDEO_ITEMS_DE: &[DemoItem] = &[
 const VIDEO_SCENES_PT_BR: LocalizedVideoScenes = LocalizedVideoScenes {
     welcome_query: "bem-vindo clipkitty",
     find_forever_query: "copiou achou sempre",
-    multiline_query: "preview várias linhas",
+    multiline_query: "prévia várias linhas",
     secure_private_query: "privado código aberto",
     fast_query: "rápido",
 };
@@ -2532,7 +2532,7 @@ pub const VIDEO_ITEMS_PT_BR: &[DemoItem] = &[
         offset: -120,
     },
     DemoItem {
-        content: "Preview de várias linhas:\nveja antes de colar.\n\n\u{2063}          \u{1F388}\u{1F388}  \u{2601}\u{FE0F}\n         \u{1F388}\u{1F388}\u{1F388}\n \u{2601}\u{FE0F}     \u{1F388}\u{1F388}\u{1F388}\u{1F388}\n   \u{2601}\u{FE0F}    \u{2063}\u{1F388}\u{1F388}\u{1F388}\n           \\|/\n           \u{1F3E0}   \u{2601}\u{FE0F}\n   \u{2601}\u{FE0F}         \u{2601}\u{FE0F}",
+        content: "Prévia de várias linhas\n\n\u{2063}          \u{1F388}\u{1F388}  \u{2601}\u{FE0F}\n         \u{1F388}\u{1F388}\u{1F388}\n \u{2601}\u{FE0F}     \u{1F388}\u{1F388}\u{1F388}\u{1F388}\n   \u{2601}\u{FE0F}    \u{2063}\u{1F388}\u{1F388}\u{1F388}\n           \\|/\n           \u{1F3E0}   \u{2601}\u{FE0F}\n   \u{2601}\u{FE0F}         \u{2601}\u{FE0F}",
         source_app: "Notas",
         bundle_id: "com.apple.Notes",
         offset: -300,
@@ -2862,7 +2862,7 @@ pub const VIDEO_ITEMS_PT_BR: &[DemoItem] = &[
 const VIDEO_SCENES_RU: LocalizedVideoScenes = LocalizedVideoScenes {
     welcome_query: "добро пожаловать clipkitty",
     find_forever_query: "скопировал найдёшь когда угодно",
-    multiline_query: "видно целиком вставки",
+    multiline_query: "многострочный предпросмотр",
     secure_private_query: "приватность открытый исходный код",
     fast_query: "быстро",
 };
@@ -2882,7 +2882,7 @@ pub const VIDEO_ITEMS_RU: &[DemoItem] = &[
         offset: -120,
     },
     DemoItem {
-        content: "Видно всё целиком\nещё до вставки.\n\n\u{2063}          \u{1F388}\u{1F388}  \u{2601}\u{FE0F}\n         \u{1F388}\u{1F388}\u{1F388}\n \u{2601}\u{FE0F}     \u{1F388}\u{1F388}\u{1F388}\u{1F388}\n   \u{2601}\u{FE0F}    \u{2063}\u{1F388}\u{1F388}\u{1F388}\n           \\|/\n           \u{1F3E0}   \u{2601}\u{FE0F}\n   \u{2601}\u{FE0F}         \u{2601}\u{FE0F}",
+        content: "Многострочный предпросмотр\n\n\u{2063}          \u{1F388}\u{1F388}  \u{2601}\u{FE0F}\n         \u{1F388}\u{1F388}\u{1F388}\n \u{2601}\u{FE0F}     \u{1F388}\u{1F388}\u{1F388}\u{1F388}\n   \u{2601}\u{FE0F}    \u{2063}\u{1F388}\u{1F388}\u{1F388}\n           \\|/\n           \u{1F3E0}   \u{2601}\u{FE0F}\n   \u{2601}\u{FE0F}         \u{2601}\u{FE0F}",
         source_app: "Заметки",
         bundle_id: "com.apple.Notes",
         offset: -300,
