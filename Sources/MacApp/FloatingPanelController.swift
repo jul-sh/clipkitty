@@ -23,6 +23,11 @@ private enum PanelState: Equatable {
     }
 }
 
+private enum PanelDismissalDestination {
+    case previousApplication
+    case appWindow
+}
+
 @MainActor
 final class FloatingPanelController: NSObject, NSWindowDelegate {
     private var panel: NSPanel!
@@ -299,6 +304,15 @@ final class FloatingPanelController: NSObject, NSWindowDelegate {
 
     @discardableResult
     func hide() -> NSRunningApplication? {
+        hide(destination: .previousApplication)
+    }
+
+    func hideForAppWindow() {
+        hide(destination: .appWindow)
+    }
+
+    @discardableResult
+    private func hide(destination: PanelDismissalDestination) -> NSRunningApplication? {
         snackbarObservationTask?.cancel()
         snackbarObservationTask = nil
         snackbarWindow.panelDidHide()
@@ -338,7 +352,12 @@ final class FloatingPanelController: NSObject, NSWindowDelegate {
         CATransaction.commit()
 
         panelState = .hidden
-        activationService.activate(previousApp)
+        switch destination {
+        case .previousApplication:
+            activationService.activate(previousApp)
+        case .appWindow:
+            break
+        }
         return previousApp
     }
 
