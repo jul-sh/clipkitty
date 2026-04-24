@@ -884,15 +884,30 @@ final class ClipKittyUITests: XCTestCase {
         // (Xcode records the screen automatically into the xcresult bundle.)
         Thread.sleep(forTimeInterval: 0.5)
 
+        // Per-scene per-character latencies for the `typeText` call itself
+        // (not the post-delay sleep). High values here indicate the app's main
+        // thread was blocked when the synthetic key event was delivered.
+        var typingSamples: [(scene: String, query: String, latenciesMs: [Double])] = []
+
         /// Helper to type with natural delays. Skips the post-delay on the
         /// first character when the search field is currently empty, so the
-        /// first match appears without artificial latency.
-        func typeSlowly(_ text: String, delay: TimeInterval = 0.00417) {
+        /// first match appears without artificial latency. When `scene` is
+        /// provided, per-char `typeText` latencies are recorded for later
+        /// export.
+        func typeSlowly(_ text: String, scene: String? = nil, delay: TimeInterval = 0.00417) {
             let startedEmpty = (searchField.value as? String)?.isEmpty ?? true
+            var latenciesMs: [Double] = []
+            latenciesMs.reserveCapacity(text.count)
             for (index, char) in text.enumerated() {
+                let start = CFAbsoluteTimeGetCurrent()
                 searchField.typeText(String(char))
+                let elapsedMs = (CFAbsoluteTimeGetCurrent() - start) * 1000.0
+                latenciesMs.append(elapsedMs)
                 if startedEmpty && index == 0 { continue }
                 Thread.sleep(forTimeInterval: delay)
+            }
+            if let scene {
+                typingSamples.append((scene: scene, query: text, latenciesMs: latenciesMs))
             }
         }
 
@@ -921,28 +936,28 @@ final class ClipKittyUITests: XCTestCase {
         // ============================================================
         // SCENE 1: Welcome (search for it)
         // ============================================================
-        typeSlowly(queries["welcome"] ?? "welcome clipkitty")
+        typeSlowly(queries["welcome"] ?? "welcome clipkitty", scene: "welcome")
         Thread.sleep(forTimeInterval: 0.625)
 
         // ============================================================
         // SCENE 2: Find it forever
         // ============================================================
         clearSearch()
-        typeSlowly(queries["find_forever"] ?? "copy once find forever")
+        typeSlowly(queries["find_forever"] ?? "copy once find forever", scene: "find_forever")
         Thread.sleep(forTimeInterval: 0.375)
 
         // ============================================================
         // SCENE 3: Multi-line Preview
         // ============================================================
         clearSearch()
-        typeSlowly(queries["multiline"] ?? "Multi-line preview")
+        typeSlowly(queries["multiline"] ?? "Multi-line preview", scene: "multiline")
         Thread.sleep(forTimeInterval: 0.5)
 
         // ============================================================
         // SCENE 3.5: Secure & private
         // ============================================================
         clearSearch()
-        typeSlowly(queries["secure_private"] ?? "secure private")
+        typeSlowly(queries["secure_private"] ?? "secure private", scene: "secure_private")
         Thread.sleep(forTimeInterval: 1.5)
 
         // ============================================================
@@ -953,7 +968,7 @@ final class ClipKittyUITests: XCTestCase {
         // matches.
         // ============================================================
         clearSearch()
-        typeSlowly(queries["fast"] ?? "fast")
+        typeSlowly(queries["fast"] ?? "fast", scene: "fast")
         Thread.sleep(forTimeInterval: 1.5)
 
         // Open actions menu with Cmd+K (highlight starts at index 0 = Bookmark)
@@ -970,7 +985,80 @@ final class ClipKittyUITests: XCTestCase {
         clearSearch()
         Thread.sleep(forTimeInterval: 0.5)
 
+        writeTypingLatencyReport(
+            locale: screenshotLocale ?? "en",
+            samples: typingSamples
+        )
+
         // Demo finished — the xcresult screen recording ends when the test returns.
+    }
+
+    /// Writes per-character `typeText` latencies to
+    /// `/tmp/clipkitty_video_typing_latency.json` so the marketing pipeline
+    /// can copy the report next to the recorded `.mov`. High latencies here
+    /// signal the app's main thread was blocked between keystrokes.
+    private func writeTypingLatencyReport(
+        locale: String,
+        samples: [(scene: String, query: String, latenciesMs: [Double])]
+    ) {
+        struct SceneReport: Encodable {
+            let name: String
+            let query: String
+            let charLatenciesMs: [Double]
+            let meanMs: Double
+            let p95Ms: Double
+            let maxMs: Double
+        }
+        struct Report: Encodable {
+            let locale: String
+            let scenes: [SceneReport]
+            let overallMeanMs: Double
+            let overallP95Ms: Double
+            let overallMaxMs: Double
+        }
+
+        func percentile(_ values: [Double], _ p: Double) -> Double {
+            guard !values.isEmpty else { return 0 }
+            let sorted = values.sorted()
+            let rank = p * Double(sorted.count - 1)
+            let lower = Int(rank.rounded(.down))
+            let upper = Int(rank.rounded(.up))
+            if lower == upper { return sorted[lower] }
+            let weight = rank - Double(lower)
+            return sorted[lower] * (1 - weight) + sorted[upper] * weight
+        }
+
+        let scenes: [SceneReport] = samples.map { sample in
+            let values = sample.latenciesMs
+            let mean = values.isEmpty ? 0 : values.reduce(0, +) / Double(values.count)
+            return SceneReport(
+                name: sample.scene,
+                query: sample.query,
+                charLatenciesMs: values.map { ($0 * 100).rounded() / 100 },
+                meanMs: (mean * 100).rounded() / 100,
+                p95Ms: (percentile(values, 0.95) * 100).rounded() / 100,
+                maxMs: ((values.max() ?? 0) * 100).rounded() / 100
+            )
+        }
+        let allValues = samples.flatMap { $0.latenciesMs }
+        let overallMean = allValues.isEmpty ? 0 : allValues.reduce(0, +) / Double(allValues.count)
+        let report = Report(
+            locale: locale,
+            scenes: scenes,
+            overallMeanMs: (overallMean * 100).rounded() / 100,
+            overallP95Ms: (percentile(allValues, 0.95) * 100).rounded() / 100,
+            overallMaxMs: ((allValues.max() ?? 0) * 100).rounded() / 100
+        )
+
+        for scene in scenes {
+            print("[typing-latency] \(scene.name): mean=\(scene.meanMs)ms p95=\(scene.p95Ms)ms max=\(scene.maxMs)ms chars=\(scene.charLatenciesMs.count)")
+        }
+        print("[typing-latency] overall: mean=\(report.overallMeanMs)ms p95=\(report.overallP95Ms)ms max=\(report.overallMaxMs)ms")
+
+        let encoder = JSONEncoder()
+        encoder.outputFormatting = [.prettyPrinted, .sortedKeys]
+        guard let data = try? encoder.encode(report) else { return }
+        try? data.write(to: URL(fileURLWithPath: "/tmp/clipkitty_video_typing_latency.json"))
     }
 
     /// Captures multiple screenshot states for marketing materials.

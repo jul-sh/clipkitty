@@ -36,6 +36,7 @@ const VIDEO_RESULT_BUNDLE: &str = "/tmp/clipkitty_video_result.xcresult";
 const VIDEO_ATTACHMENTS_DIR: &str = "/tmp/xcresult-attachments";
 const VIDEO_BOUNDS_FILE: &str = "/tmp/clipkitty_window_bounds.txt";
 const VIDEO_OFFSET_FILE: &str = "/tmp/clipkitty_video_start_offset.txt";
+const VIDEO_TYPING_LATENCY_FILE: &str = "/tmp/clipkitty_video_typing_latency.json";
 const SILVER_BACKGROUND: &str = "/System/Library/Desktop Pictures/Solid Colors/Silver.png";
 
 pub fn run(cmd: &MarketingCmd, dry_run: bool, reporter: &Reporter) -> Result<()> {
@@ -792,10 +793,32 @@ fn record_preview_video(
             .with_context(|| format!("copying {raw_video} to {output_path}"))?;
     }
 
+    move_typing_latency_report(output_path, reporter);
+
     remove_if_exists(&attachments_dir)?;
     remove_if_exists(&result_bundle)?;
     close_clipkitty(reporter);
     Ok(())
+}
+
+/// If the UI test wrote a typing-latency report, move it next to the video
+/// (`<video stem>_typing.json`) so it travels with the `.mov` as a CI artifact.
+fn move_typing_latency_report(video_path: &Utf8Path, reporter: &Reporter) {
+    let src = Utf8PathBuf::from(VIDEO_TYPING_LATENCY_FILE);
+    if !src.as_std_path().exists() {
+        return;
+    }
+    let stem = video_path.file_stem().unwrap_or("intro_video");
+    let dest = match video_path.parent() {
+        Some(parent) => parent.join(format!("{stem}_typing.json")),
+        None => Utf8PathBuf::from(format!("{stem}_typing.json")),
+    };
+    match fs::rename(src.as_std_path(), dest.as_std_path()) {
+        Ok(()) => reporter.info(&format!("  saved {dest}")),
+        Err(err) => reporter.info(&format!(
+            "  warn: could not move typing latency report to {dest}: {err}"
+        )),
+    }
 }
 
 fn postprocess_video(
