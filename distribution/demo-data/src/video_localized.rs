@@ -70,7 +70,7 @@ pub const VIDEO_ITEMS_ES: &[DemoItem] = &[
         offset: -200,
     },
     DemoItem {
-        content: "Cópialo una vez,\nencuéntralo siempre.\n\n\u{2022} Historial ilimitado\n\u{2022} Búsqueda difusa, tolerante a errores",
+        content: "Cópialo una vez,\nencuéntralo siempre.\n\n\u{2022} Historial ilimitado\n\u{2022} Búsqueda que perdona erratas",
         source_app: "Notas",
         bundle_id: "com.apple.Notes",
         offset: -120,
@@ -423,7 +423,7 @@ pub const VIDEO_ITEMS_ZH_HANS: &[DemoItem] = &[
         offset: -200,
     },
     DemoItem {
-        content: "复制一次，永久留存。\n\n\u{2022} 无限历史记录\n\u{2022} 模糊搜索，容错输入",
+        content: "复制一次，永久留存。\n\n\u{2022} 无限历史记录\n\u{2022} 打错字也能搜到",
         source_app: "备忘录",
         bundle_id: "com.apple.Notes",
         offset: -120,
@@ -774,7 +774,7 @@ pub const VIDEO_ITEMS_ZH_HANT: &[DemoItem] = &[
         offset: -200,
     },
     DemoItem {
-        content: "複製一次，永遠找得到。\n\n\u{2022} 無限歷史記錄\n\u{2022} 模糊搜尋，容錯打字",
+        content: "複製一次，永遠找得到。\n\n\u{2022} 無限歷史記錄\n\u{2022} 打錯字也搜得到",
         source_app: "備忘錄",
         bundle_id: "com.apple.Notes",
         offset: -120,
@@ -1125,7 +1125,7 @@ pub const VIDEO_ITEMS_JA: &[DemoItem] = &[
         offset: -200,
     },
     DemoItem {
-        content: "一度コピーすれば、ずっと見つかる。\n\n\u{2022} 履歴は無制限\n\u{2022} あいまい検索、タイポにも強い",
+        content: "一度コピーすれば、ずっと見つかる。\n\n\u{2022} 履歴は無制限\n\u{2022} 打ち間違えても、ちゃんと見つかる",
         source_app: "メモ",
         bundle_id: "com.apple.Notes",
         offset: -120,
@@ -1476,7 +1476,7 @@ pub const VIDEO_ITEMS_KO: &[DemoItem] = &[
         offset: -200,
     },
     DemoItem {
-        content: "한 번 복사하면,\n평생 찾을 수 있어요.\n\n\u{2022} 무제한 기록\n\u{2022} 오타도 잡아내는 퍼지 검색",
+        content: "한 번 복사하면,\n평생 찾을 수 있어요.\n\n\u{2022} 무제한 기록\n\u{2022} 오타가 나도 찾아주는 검색",
         source_app: "메모",
         bundle_id: "com.apple.Notes",
         offset: -120,
@@ -1826,7 +1826,7 @@ pub const VIDEO_ITEMS_FR: &[DemoItem] = &[
         offset: -200,
     },
     DemoItem {
-        content: "Copiez une fois, retrouvez pour toujours.\n\n\u{2022} Historique illimité\n\u{2022} Recherche floue, tolérante aux fautes",
+        content: "Copiez une fois, retrouvez pour toujours.\n\n\u{2022} Historique illimité\n\u{2022} Une recherche qui pardonne les fautes de frappe",
         source_app: "Notes",
         bundle_id: "com.apple.Notes",
         offset: -120,
@@ -2176,7 +2176,7 @@ pub const VIDEO_ITEMS_DE: &[DemoItem] = &[
         offset: -200,
     },
     DemoItem {
-        content: "Einmal kopieren,\nfür immer finden.\n\n\u{2022} Unbegrenzter Verlauf\n\u{2022} Fuzzy-Suche, verzeiht Tippfehler",
+        content: "Einmal kopieren,\nfür immer finden.\n\n\u{2022} Unbegrenzter Verlauf\n\u{2022} Suche verzeiht Tippfehler",
         source_app: "Notizen",
         bundle_id: "com.apple.Notes",
         offset: -120,
@@ -2526,7 +2526,7 @@ pub const VIDEO_ITEMS_PT_BR: &[DemoItem] = &[
         offset: -200,
     },
     DemoItem {
-        content: "Copie uma vez,\nencontre para sempre.\n\n\u{2022} Histórico ilimitado\n\u{2022} Busca fuzzy, tolerante a erros",
+        content: "Copie uma vez,\nencontre para sempre.\n\n\u{2022} Histórico ilimitado\n\u{2022} Busca que perdoa erros de digitação",
         source_app: "Notas",
         bundle_id: "com.apple.Notes",
         offset: -120,
@@ -2876,7 +2876,7 @@ pub const VIDEO_ITEMS_RU: &[DemoItem] = &[
         offset: -200,
     },
     DemoItem {
-        content: "Скопировал раз,\nнайдёшь всегда.\n\n\u{2022} Безлимитная история\n\u{2022} Умный поиск, прощает опечатки",
+        content: "Скопировал раз,\nнайдёшь всегда.\n\n\u{2022} Безлимитная история\n\u{2022} Поиск, прощающий опечатки",
         source_app: "Заметки",
         bundle_id: "com.apple.Notes",
         offset: -120,

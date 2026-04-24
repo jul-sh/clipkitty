@@ -14,7 +14,7 @@ pub const SCENE_WELCOME: DemoItem = DemoItem {
 };
 
 pub const SCENE_FIND_FOREVER: DemoItem = DemoItem {
-    content: "Copy it once, find it forever.\n\n\u{2022} Unlimited history\n\u{2022} Fuzzy search, forgiving of typos",
+    content: "Copy it once, find it forever.\n\n\u{2022} Unlimited history\n\u{2022} Search that forgives typos",
     source_app: "Notes",
     bundle_id: "com.apple.Notes",
     // Smallest offset of any demo item so this sits at the top of history
