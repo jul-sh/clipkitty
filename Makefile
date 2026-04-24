@@ -15,7 +15,7 @@ XTASK := $(NIX_RUN) cargo run --quiet -p xtask --
 PERF_FAIL_ON_HANGS ?= 1
 PERF_HANG_THRESHOLD ?= 250
 
-.PHONY: help check workspace install-hooks install-sparkle-cli app-hardened app-app-store release-dmg release-macos-appstore release-ios-appstore release-version release-appcast-generate release-appcast-update screenshots-macos screenshots-ios intro-video perf site-icon site-landing-page secrets-asc-auth shell
+.PHONY: help check workspace install-hooks install-sparkle-cli app-hardened app-app-store release-dmg release-macos-appstore release-ios-appstore release-version release-appcast-generate release-appcast-update screenshots-macos screenshots-ios screenshots-ipad intro-video perf site-icon site-landing-page secrets-asc-auth shell
 
 help: ## Show the supported automation entry points.
 	@awk 'BEGIN {FS = ":.*## "; printf "\nClipKitty automation entry points\n\n"} /^[a-zA-Z0-9_.-]+:.*## / { printf "  %-26s %s\n", $$1, $$2 }' $(MAKEFILE_LIST)
@@ -67,6 +67,9 @@ screenshots-macos: ## Capture localized macOS screenshots.
 
 screenshots-ios: ## Capture localized iOS screenshots.
 	@$(XTASK) marketing screenshots ios
+
+screenshots-ipad: ## Capture localized iPad screenshots.
+	@$(XTASK) marketing screenshots ipad
 
 intro-video: ## Generate localized intro videos.
 	@$(XTASK) marketing intro-video

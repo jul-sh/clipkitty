@@ -101,7 +101,7 @@ fn macos_appstore(
         .arg(pkg.as_std_path())
         .run()?;
 
-    publish(repo, "macos", &args.version, reporter)
+    publish(repo, "macos", &args.version, &[], reporter)
 }
 
 struct AppStoreSigningSession<'a> {
@@ -215,10 +215,16 @@ fn ios_appstore(
         reporter,
     )?;
 
-    publish(repo, "ios", &args.version, reporter)
+    publish(repo, "ios", &args.version, &[IPAD_PLATFORM], reporter)
 }
 
-fn publish(repo: &RepoRoot, platform: &str, version: &str, reporter: &Reporter) -> Result<()> {
+fn publish(
+    repo: &RepoRoot,
+    platform: &str,
+    version: &str,
+    extra_screenshot_platforms: &[PublishPlatform],
+    reporter: &Reporter,
+) -> Result<()> {
     let platform = publish_platform(platform)?;
     if !tool_exists(reporter, "asc")? {
         return Err(anyhow!(
@@ -290,8 +296,15 @@ fn publish(repo: &RepoRoot, platform: &str, version: &str, reporter: &Reporter) 
             return Ok(());
         };
         import_metadata(repo, platform, &version_id, &asc_env, reporter)?;
-        reporter.info("\n=== Uploading screenshots ===");
+        reporter.info(&format!(
+            "\n=== Uploading {} screenshots ===",
+            platform.label
+        ));
         upload_screenshots(repo, platform, &version_id, &asc_env, reporter)?;
+        for extra in extra_screenshot_platforms {
+            reporter.info(&format!("\n=== Uploading {} screenshots ===", extra.label));
+            upload_screenshots(repo, *extra, &version_id, &asc_env, reporter)?;
+        }
         reporter.info("\n=== Publish complete ===");
         Ok(())
     })();
@@ -334,6 +347,21 @@ const IOS_PLATFORM: PublishPlatform = PublishPlatform {
     metadata_dir_name: "metadata",
     marketing_dir_name: "marketing-ios",
     screenshot_device_types: &["IPHONE_61"],
+};
+
+/// Shares `IOS_PLATFORM`'s app_id, IPA, and ASC version row. Only the
+/// screenshot tree and device-type enum differ, so this is never used
+/// for binary or metadata upload; it's passed as an extra screenshot
+/// platform to `publish`.
+const IPAD_PLATFORM: PublishPlatform = PublishPlatform {
+    label: "iPad",
+    app_id: "6759137247",
+    altool_type: "ios",
+    asc_platform: "IOS",
+    pkg_name: "ClipKittyiOS.ipa",
+    metadata_dir_name: "metadata",
+    marketing_dir_name: "marketing-ipad",
+    screenshot_device_types: &["IPAD_PRO_3GEN_129"],
 };
 
 const LOCALE_MAP: &[(&str, &str)] = &[

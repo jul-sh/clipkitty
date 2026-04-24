@@ -313,6 +313,11 @@ jobs:
           unset TOOLCHAINS
           make screenshots-ios
 
+      - name: Generate iPad Marketing Screenshots
+        run: |
+          unset TOOLCHAINS
+          make screenshots-ipad
+
       - name: Run UI Tests
         env:
           LOCKED: "1"
@@ -559,7 +564,9 @@ jobs:
         uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4
         with:
           name: ios-assets
-          path: marketing-ios/*/screenshot_*.png
+          path: |
+            marketing-ios/*/screenshot_*.png
+            marketing-ipad/*/screenshot_*.png
           if-no-files-found: ignore
 
       - name: Deploy to gh-pages
@@ -922,13 +929,17 @@ jobs:
         uses: actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093 # v4
         with:
           name: ios-assets
-          path: marketing-ios
+          path: .
 
       - name: Verify iOS screenshots present
         run: |
           for locale in en es zh-Hans zh-Hant ja ko fr de pt-BR ru; do
             if [ ! -f "marketing-ios/$locale/screenshot_1.png" ]; then
-              echo "::error::Missing marketing-ios/$locale/screenshot_1.png — cannot publish to ASC"
+              echo "::error::Missing marketing-ios/$locale/screenshot_1.png; cannot publish to ASC"
+              exit 1
+            fi
+            if [ ! -f "marketing-ipad/$locale/screenshot_1.png" ]; then
+              echo "::error::Missing marketing-ipad/$locale/screenshot_1.png; cannot publish to ASC"
               exit 1
             fi
           done

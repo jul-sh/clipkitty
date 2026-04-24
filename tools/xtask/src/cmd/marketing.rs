@@ -32,6 +32,7 @@ const SCREENSHOT_LOCALE_FILE: &str = "/tmp/clipkitty_screenshot_locale.txt";
 const SCREENSHOT_DB_FILE: &str = "/tmp/clipkitty_screenshot_db.txt";
 const IOS_SCREENSHOT_LOCALE_FILE: &str = "/tmp/clipkitty_ios_screenshot_locale.txt";
 const IOS_SCREENSHOT_DB_FILE: &str = "/tmp/clipkitty_ios_screenshot_db.txt";
+const IOS_SCREENSHOT_DEVICE_FILE: &str = "/tmp/clipkitty_ios_screenshot_device.txt";
 const VIDEO_RESULT_BUNDLE: &str = "/tmp/clipkitty_video_result.xcresult";
 const VIDEO_ATTACHMENTS_DIR: &str = "/tmp/xcresult-attachments";
 const VIDEO_BOUNDS_FILE: &str = "/tmp/clipkitty_window_bounds.txt";
@@ -46,6 +47,7 @@ pub fn run(cmd: &MarketingCmd, dry_run: bool, reporter: &Reporter) -> Result<()>
         MarketingCmd::Screenshots(args) => match args.platform {
             ScreenshotPlatform::MacOs => screenshots_macos(&repo, dry_run, reporter),
             ScreenshotPlatform::Ios => screenshots_ios(&repo, dry_run, reporter),
+            ScreenshotPlatform::IPad => screenshots_ipad(&repo, dry_run, reporter),
         },
         MarketingCmd::IntroVideo => intro_video(&repo, dry_run, reporter),
     }
@@ -97,10 +99,38 @@ impl MarketingLocale {
     }
 }
 
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum IosDeviceKind {
+    IPhone,
+    IPad,
+}
+
+impl IosDeviceKind {
+    /// The token the Swift test reads from
+    /// `/tmp/clipkitty_ios_screenshot_device.txt` to pick its
+    /// save-path prefix. Must match `DeviceKind.filenameStem` in the
+    /// Swift side.
+    fn swift_token(self) -> &'static str {
+        match self {
+            Self::IPhone => "iphone",
+            Self::IPad => "ipad",
+        }
+    }
+
+    /// Tmp-file prefix used by the Swift test when saving PNGs, shared
+    /// with `copy_screenshots` here so the two sides can't drift.
+    fn tmp_prefix_stem(self) -> &'static str {
+        match self {
+            Self::IPhone => "ios",
+            Self::IPad => "ipad",
+        }
+    }
+}
+
 #[derive(Debug, Clone, Copy)]
 enum CapturePlatform {
     MacOs,
-    Ios,
+    Ios(IosDeviceKind),
 }
 
 #[derive(Debug, Clone, Copy)]
@@ -149,7 +179,7 @@ impl ScreenshotPlan {
 
     fn ios() -> Self {
         Self {
-            platform: CapturePlatform::Ios,
+            platform: CapturePlatform::Ios(IosDeviceKind::IPhone),
             locale_file: IOS_SCREENSHOT_LOCALE_FILE,
             db_file: IOS_SCREENSHOT_DB_FILE,
             marketing_root: "marketing-ios",
@@ -163,6 +193,30 @@ impl ScreenshotPlan {
             prepare_macos_environment: false,
         }
     }
+
+    fn ipad() -> Self {
+        Self {
+            platform: CapturePlatform::Ios(IosDeviceKind::IPad),
+            locale_file: IOS_SCREENSHOT_LOCALE_FILE,
+            db_file: IOS_SCREENSHOT_DB_FILE,
+            marketing_root: "marketing-ipad",
+            scheme: "ClipKittyiOSUITests",
+            destination: "platform=iOS Simulator,name=iPad Pro 13-inch (M5)",
+            derived_data: "DerivedData",
+            only_testing:
+                "ClipKittyiOSUITests/ClipKittyiOSScreenshotTests/testTakeMarketingScreenshots",
+            db_mode: ScreenshotDbMode::LocalizedDatabases,
+            missing_policy: MissingScreenshotPolicy::Fail,
+            prepare_macos_environment: false,
+        }
+    }
+
+    fn ios_device_kind(self) -> Option<IosDeviceKind> {
+        match self.platform {
+            CapturePlatform::MacOs => None,
+            CapturePlatform::Ios(kind) => Some(kind),
+        }
+    }
 }
 
 fn screenshots_macos(repo: &RepoRoot, dry_run: bool, reporter: &Reporter) -> Result<()> {
@@ -171,6 +225,10 @@ fn screenshots_macos(repo: &RepoRoot, dry_run: bool, reporter: &Reporter) -> Res
 
 fn screenshots_ios(repo: &RepoRoot, dry_run: bool, reporter: &Reporter) -> Result<()> {
     run_screenshot_plan(repo, ScreenshotPlan::ios(), dry_run, reporter)
+}
+
+fn screenshots_ipad(repo: &RepoRoot, dry_run: bool, reporter: &Reporter) -> Result<()> {
+    run_screenshot_plan(repo, ScreenshotPlan::ipad(), dry_run, reporter)
 }
 
 fn run_screenshot_plan(
@@ -196,10 +254,14 @@ fn run_screenshot_plan(
         patch_demo_items(repo, false, reporter)?;
     }
 
-    let temp_files = TempSelectionFiles::new(&[
+    let mut temp_paths = vec![
         Utf8PathBuf::from(plan.locale_file),
         Utf8PathBuf::from(plan.db_file),
-    ]);
+    ];
+    if plan.ios_device_kind().is_some() {
+        temp_paths.push(Utf8PathBuf::from(IOS_SCREENSHOT_DEVICE_FILE));
+    }
+    let temp_files = TempSelectionFiles::new(&temp_paths);
 
     for locale in MarketingLocale::ALL {
         let locale_code = locale.as_code();
@@ -221,6 +283,13 @@ fn run_screenshot_plan(
             format!("{}\n", screenshot_db_name(locale, plan.db_mode)),
         )
         .with_context(|| format!("writing {}", plan.db_file))?;
+        if let Some(device_kind) = plan.ios_device_kind() {
+            fs::write(
+                IOS_SCREENSHOT_DEVICE_FILE,
+                format!("{}\n", device_kind.swift_token()),
+            )
+            .with_context(|| format!("writing {IOS_SCREENSHOT_DEVICE_FILE}"))?;
+        }
 
         let _environment = if plan.prepare_macos_environment {
             Some(ScreenshotEnvironment::prepare(reporter)?)
@@ -232,7 +301,10 @@ fn run_screenshot_plan(
             CapturePlatform::MacOs => Utf8PathBuf::from(format!(
                 "/tmp/clipkitty_marketing_xcodebuild_{locale_code}.log"
             )),
-            CapturePlatform::Ios => Utf8PathBuf::from("/tmp/clipkitty_ios_screenshot_test.log"),
+            CapturePlatform::Ios(kind) => Utf8PathBuf::from(format!(
+                "/tmp/clipkitty_{}_screenshot_test.log",
+                kind.tmp_prefix_stem()
+            )),
         };
         let status = run_screenshot_xcodebuild(repo, plan, &log_path, reporter)?;
         let copied = copy_screenshots(repo, plan, locale, reporter)?;
@@ -308,7 +380,7 @@ fn run_screenshot_xcodebuild(
         .env("CLIPKITTY_SKIP_RUST_PREBUILD", "1")
         .capture_stdout()
         .capture_stderr();
-    if matches!(plan.platform, CapturePlatform::Ios)
+    if matches!(plan.platform, CapturePlatform::Ios(_))
         || env::var("SKIP_SIGNING").ok().as_deref() == Some("1")
     {
         runner = runner.arg("CODE_SIGNING_ALLOWED=NO");
@@ -340,8 +412,13 @@ fn copy_screenshots(
     let prefix = match (plan.platform, locale) {
         (CapturePlatform::MacOs, MarketingLocale::En) => "/tmp/clipkitty_marketing".to_string(),
         (CapturePlatform::MacOs, _) => format!("/tmp/clipkitty_{locale_code}_marketing"),
-        (CapturePlatform::Ios, MarketingLocale::En) => "/tmp/clipkitty_ios_marketing".to_string(),
-        (CapturePlatform::Ios, _) => format!("/tmp/clipkitty_ios_{locale_code}_marketing"),
+        (CapturePlatform::Ios(kind), MarketingLocale::En) => {
+            format!("/tmp/clipkitty_{}_marketing", kind.tmp_prefix_stem())
+        }
+        (CapturePlatform::Ios(kind), _) => format!(
+            "/tmp/clipkitty_{}_{locale_code}_marketing",
+            kind.tmp_prefix_stem()
+        ),
     };
     let target_dir = repo.join(format!("{}/{}", plan.marketing_root, locale_code));
     let mut copied = 0usize;
