@@ -7,7 +7,7 @@ use crate::DemoItem;
 // ── Target items: the item each scene's search must find ─────────────
 
 pub const SCENE_WELCOME: DemoItem = DemoItem {
-    content: "Welcome to ClipKitty! \u{1F431}\n\nBest clipboard manager.",
+    content: "Welcome to ClipKitty \u{1F431}\n\nYour clipboard, remembered.",
     source_app: "Safari",
     bundle_id: "com.apple.Safari",
     offset: -200,
@@ -24,14 +24,14 @@ pub const SCENE_FIND_FOREVER: DemoItem = DemoItem {
 };
 
 pub const SCENE_MULTILINE: DemoItem = DemoItem {
-    content: "Multi-line preview, so you see\nbefore you paste.\n\n\u{2063}          \u{1F388}\u{1F388}  \u{2601}\u{FE0F}\n         \u{1F388}\u{1F388}\u{1F388}\n \u{2601}\u{FE0F}     \u{1F388}\u{1F388}\u{1F388}\u{1F388}\n   \u{2601}\u{FE0F}    \u{2063}\u{1F388}\u{1F388}\u{1F388}\n           \\|/\n           \u{1F3E0}   \u{2601}\u{FE0F}\n   \u{2601}\u{FE0F}         \u{2601}\u{FE0F}",
+    content: "Multi-line preview, so you see\nthe whole thing before you paste.\n\n\u{2063}          \u{1F388}\u{1F388}  \u{2601}\u{FE0F}\n         \u{1F388}\u{1F388}\u{1F388}\n \u{2601}\u{FE0F}     \u{1F388}\u{1F388}\u{1F388}\u{1F388}\n   \u{2601}\u{FE0F}    \u{2063}\u{1F388}\u{1F388}\u{1F388}\n           \\|/\n           \u{1F3E0}   \u{2601}\u{FE0F}\n   \u{2601}\u{FE0F}         \u{2601}\u{FE0F}",
     source_app: "Notes",
     bundle_id: "com.apple.Notes",
     offset: -300,
 };
 
 pub const SCENE_SECURE_PRIVATE: DemoItem = DemoItem {
-    content: "\u{2022} Private by default\n\u{2022} No telemetry, no accounts\n\u{2022} Open Source",
+    content: "\u{2022} Private by default\n\u{2022} No accounts, no telemetry\n\u{2022} Open Source",
     source_app: "Safari",
     bundle_id: "com.apple.Safari",
     offset: -500,
@@ -62,7 +62,7 @@ pub const VIDEO_SCENES: &[VideoScene] = &[
         target: &SCENE_MULTILINE,
     },
     VideoScene {
-        query: "secure private",
+        query: "private open source",
         target: &SCENE_SECURE_PRIVATE,
     },
 ];
@@ -261,7 +261,7 @@ pub const VIDEO_ITEMS: &[DemoItem] = &[
         offset: -28 * 86400,
     },
 
-    // ── "secure private" partials ──
+    // ── "private open source" partials ──
     DemoItem {
         content: "ssh-keygen -t ed25519 -C \"secure-deploy-key\"",
         source_app: "Terminal",

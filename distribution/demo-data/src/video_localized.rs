@@ -54,35 +54,35 @@ pub fn get_localized_video_items(locale: &str) -> Option<&'static [DemoItem]> {
 // ============================================================================
 
 const VIDEO_SCENES_ES: LocalizedVideoScenes = LocalizedVideoScenes {
-    welcome_query: "bienvenido clipkitty",
+    welcome_query: "hola clipkitty",
     find_forever_query: "copia encuentra siempre",
-    multiline_query: "vista previa multilínea",
-    secure_private_query: "seguro privado",
+    multiline_query: "ve antes de pegar",
+    secure_private_query: "privado código abierto",
     fast_query: "rápido",
 };
 
 pub const VIDEO_ITEMS_ES: &[DemoItem] = &[
     // Scene targets
     DemoItem {
-        content: "¡Bienvenido a ClipKitty! \u{1F431}\n\nEl mejor gestor de portapapeles.",
+        content: "¡Hola! Soy ClipKitty \u{1F431}\n\nTu portapapeles con memoria.",
         source_app: "Safari",
         bundle_id: "com.apple.Safari",
         offset: -200,
     },
     DemoItem {
-        content: "Cópialo una vez,\nencuéntralo siempre.\n\n\u{2022} Historial ilimitado\n\u{2022} Búsqueda que perdona erratas",
+        content: "Cópialo una vez,\nencuéntralo siempre.\n\n\u{2022} Historial sin límites\n\u{2022} Búsqueda que perdona erratas",
         source_app: "Notas",
         bundle_id: "com.apple.Notes",
         offset: -120,
     },
     DemoItem {
-        content: "Vista previa multilínea,\nve antes de pegar.\n\n\u{2063}          \u{1F388}\u{1F388}  \u{2601}\u{FE0F}\n         \u{1F388}\u{1F388}\u{1F388}\n \u{2601}\u{FE0F}     \u{1F388}\u{1F388}\u{1F388}\u{1F388}\n   \u{2601}\u{FE0F}    \u{2063}\u{1F388}\u{1F388}\u{1F388}\n           \\|/\n           \u{1F3E0}   \u{2601}\u{FE0F}\n   \u{2601}\u{FE0F}         \u{2601}\u{FE0F}",
+        content: "Ve antes de pegar,\nsin sorpresas de varias líneas.\n\n\u{2063}          \u{1F388}\u{1F388}  \u{2601}\u{FE0F}\n         \u{1F388}\u{1F388}\u{1F388}\n \u{2601}\u{FE0F}     \u{1F388}\u{1F388}\u{1F388}\u{1F388}\n   \u{2601}\u{FE0F}    \u{2063}\u{1F388}\u{1F388}\u{1F388}\n           \\|/\n           \u{1F3E0}   \u{2601}\u{FE0F}\n   \u{2601}\u{FE0F}         \u{2601}\u{FE0F}",
         source_app: "Notas",
         bundle_id: "com.apple.Notes",
         offset: -300,
     },
     DemoItem {
-        content: "\u{2022} Privado por defecto\n\u{2022} Sin telemetría ni cuentas\n\u{2022} Código abierto",
+        content: "\u{2022} Privado por defecto\n\u{2022} Sin cuentas ni telemetría\n\u{2022} Código abierto",
         source_app: "Safari",
         bundle_id: "com.apple.Safari",
         offset: -500,
@@ -405,9 +405,9 @@ pub const VIDEO_ITEMS_ES: &[DemoItem] = &[
 
 const VIDEO_SCENES_ZH_HANS: LocalizedVideoScenes = LocalizedVideoScenes {
     welcome_query: "欢迎 clipkitty",
-    find_forever_query: "复制 永久查找",
+    find_forever_query: "复制 找回",
     multiline_query: "多行预览",
-    secure_private_query: "安全 隐私",
+    secure_private_query: "隐私 开源",
     // CJK IME input is much slower per-character in XCUITest than Latin,
     // so use ASCII "fast" here and rely on the image keywords (which
     // include the ASCII word "fast" for CJK locales) to match.
@@ -417,13 +417,13 @@ const VIDEO_SCENES_ZH_HANS: LocalizedVideoScenes = LocalizedVideoScenes {
 pub const VIDEO_ITEMS_ZH_HANS: &[DemoItem] = &[
     // Scene targets
     DemoItem {
-        content: "欢迎使用 ClipKitty! \u{1F431}\n\n最好的剪贴板管理器。",
+        content: "欢迎使用 ClipKitty！\u{1F431}\n\n你复制过的，它都记得。",
         source_app: "Safari",
         bundle_id: "com.apple.Safari",
         offset: -200,
     },
     DemoItem {
-        content: "复制一次，永久留存。\n\n\u{2022} 无限历史记录\n\u{2022} 打错字也能搜到",
+        content: "复制一次，随时找回。\n\n\u{2022} 历史记录无上限\n\u{2022} 打错字也能搜到",
         source_app: "备忘录",
         bundle_id: "com.apple.Notes",
         offset: -120,
@@ -435,7 +435,7 @@ pub const VIDEO_ITEMS_ZH_HANS: &[DemoItem] = &[
         offset: -300,
     },
     DemoItem {
-        content: "\u{2022} 默认隐私保护\n\u{2022} 无遥测，无账户\n\u{2022} 开源",
+        content: "\u{2022} 隐私优先，默认本地\n\u{2022} 不收数据，无需账号\n\u{2022} 开源透明",
         source_app: "Safari",
         bundle_id: "com.apple.Safari",
         offset: -500,
@@ -627,7 +627,7 @@ pub const VIDEO_ITEMS_ZH_HANS: &[DemoItem] = &[
         offset: -28 * 86400,
     },
 
-    // ── "安全 隐私" partials ──
+    // ── "隐私 开源" partials ──
     DemoItem {
         content: "ssh-keygen -t ed25519 -C \"secure-deploy-key\"",
         source_app: "Terminal",
@@ -758,9 +758,9 @@ pub const VIDEO_ITEMS_ZH_HANS: &[DemoItem] = &[
 
 const VIDEO_SCENES_ZH_HANT: LocalizedVideoScenes = LocalizedVideoScenes {
     welcome_query: "歡迎 clipkitty",
-    find_forever_query: "複製 永遠找到",
+    find_forever_query: "複製 找回來",
     multiline_query: "多行預覽",
-    secure_private_query: "安全 隱私",
+    secure_private_query: "隱私 原始碼",
     // See zh-Hans note: keep the fast-scene query ASCII for CJK locales.
     fast_query: "fast",
 };
@@ -768,13 +768,13 @@ const VIDEO_SCENES_ZH_HANT: LocalizedVideoScenes = LocalizedVideoScenes {
 pub const VIDEO_ITEMS_ZH_HANT: &[DemoItem] = &[
     // Scene targets
     DemoItem {
-        content: "歡迎使用 ClipKitty! \u{1F431}\n\n最好的剪貼簿管理器。",
+        content: "歡迎使用 ClipKitty！\u{1F431}\n\n你的剪貼簿小管家。",
         source_app: "Safari",
         bundle_id: "com.apple.Safari",
         offset: -200,
     },
     DemoItem {
-        content: "複製一次，永遠找得到。\n\n\u{2022} 無限歷史記錄\n\u{2022} 打錯字也搜得到",
+        content: "複製一次，隨時找回來。\n\n\u{2022} 歷史記錄不設限\n\u{2022} 打錯字也搜得到",
         source_app: "備忘錄",
         bundle_id: "com.apple.Notes",
         offset: -120,
@@ -786,7 +786,7 @@ pub const VIDEO_ITEMS_ZH_HANT: &[DemoItem] = &[
         offset: -300,
     },
     DemoItem {
-        content: "\u{2022} 預設隱私保護\n\u{2022} 無追蹤、無帳號\n\u{2022} 開放原始碼",
+        content: "\u{2022} 預設保護隱私\n\u{2022} 不追蹤、不用註冊帳號\n\u{2022} 開放原始碼",
         source_app: "Safari",
         bundle_id: "com.apple.Safari",
         offset: -500,
@@ -978,7 +978,7 @@ pub const VIDEO_ITEMS_ZH_HANT: &[DemoItem] = &[
         offset: -28 * 86400,
     },
 
-    // ── "安全 隱私" partials ──
+    // ── "隱私 開放原始碼" partials ──
     DemoItem {
         content: "ssh-keygen -t ed25519 -C \"secure-deploy-key\"",
         source_app: "Terminal",
@@ -1109,9 +1109,9 @@ pub const VIDEO_ITEMS_ZH_HANT: &[DemoItem] = &[
 
 const VIDEO_SCENES_JA: LocalizedVideoScenes = LocalizedVideoScenes {
     welcome_query: "ようこそ clipkitty",
-    find_forever_query: "コピー いつでも見つかる",
+    find_forever_query: "コピー 見つかる",
     multiline_query: "複数行プレビュー",
-    secure_private_query: "安全 プライベート",
+    secure_private_query: "プライバシー オープンソース",
     // See zh-Hans note: keep the fast-scene query ASCII for CJK locales.
     fast_query: "fast",
 };
@@ -1119,13 +1119,13 @@ const VIDEO_SCENES_JA: LocalizedVideoScenes = LocalizedVideoScenes {
 pub const VIDEO_ITEMS_JA: &[DemoItem] = &[
     // Scene targets
     DemoItem {
-        content: "ClipKitty へようこそ! \u{1F431}\n\n最高のクリップボード管理。",
+        content: "ClipKitty へようこそ！\u{1F431}\n\nコピーしたもの、ぜんぶ覚えてます。",
         source_app: "Safari",
         bundle_id: "com.apple.Safari",
         offset: -200,
     },
     DemoItem {
-        content: "一度コピーすれば、ずっと見つかる。\n\n\u{2022} 履歴は無制限\n\u{2022} 打ち間違えても、ちゃんと見つかる",
+        content: "一度コピーすれば、あとで必ず見つかる。\n\n\u{2022} 履歴は無制限\n\u{2022} うろ覚え検索にも対応",
         source_app: "メモ",
         bundle_id: "com.apple.Notes",
         offset: -120,
@@ -1137,7 +1137,7 @@ pub const VIDEO_ITEMS_JA: &[DemoItem] = &[
         offset: -300,
     },
     DemoItem {
-        content: "\u{2022} 最初からプライベート\n\u{2022} 計測なし、アカウント不要\n\u{2022} オープンソース",
+        content: "\u{2022} プライバシー重視\n\u{2022} トラッキングなし、アカウント不要\n\u{2022} オープンソース",
         source_app: "Safari",
         bundle_id: "com.apple.Safari",
         offset: -500,
@@ -1329,7 +1329,7 @@ pub const VIDEO_ITEMS_JA: &[DemoItem] = &[
         offset: -28 * 86400,
     },
 
-    // ── "安全 プライベート" partials ──
+    // ── "プライベート オープンソース" partials ──
     DemoItem {
         content: "ssh-keygen -t ed25519 -C \"secure-deploy-key\"",
         source_app: "Terminal",
@@ -1459,10 +1459,10 @@ pub const VIDEO_ITEMS_JA: &[DemoItem] = &[
 // ============================================================================
 
 const VIDEO_SCENES_KO: LocalizedVideoScenes = LocalizedVideoScenes {
-    welcome_query: "환영 clipkitty",
-    find_forever_query: "복사 영원히 검색",
+    welcome_query: "반가워 clipkitty",
+    find_forever_query: "복사 찾아",
     multiline_query: "여러 줄 미리보기",
-    secure_private_query: "안전 비공개",
+    secure_private_query: "프라이버시 오픈 소스",
     // See zh-Hans note: keep the fast-scene query ASCII for CJK locales.
     fast_query: "fast",
 };
@@ -1470,31 +1470,31 @@ const VIDEO_SCENES_KO: LocalizedVideoScenes = LocalizedVideoScenes {
 pub const VIDEO_ITEMS_KO: &[DemoItem] = &[
     // Scene targets
     DemoItem {
-        content: "ClipKitty에 오신 것을 환영합니다! \u{1F431}\n\n최고의 클립보드 관리자.",
+        content: "반가워요, ClipKitty예요! \u{1F431}\n\n복사한 건 전부 기억해요.",
         source_app: "Safari",
         bundle_id: "com.apple.Safari",
         offset: -200,
     },
     DemoItem {
-        content: "한 번 복사하면,\n평생 찾을 수 있어요.\n\n\u{2022} 무제한 기록\n\u{2022} 오타가 나도 찾아주는 검색",
+        content: "한 번 복사하면\n언제든 다시 찾아요.\n\n\u{2022} 기록은 무제한\n\u{2022} 오타쯤은 눈감아주는 검색",
         source_app: "메모",
         bundle_id: "com.apple.Notes",
         offset: -120,
     },
     DemoItem {
-        content: "여러 줄 미리보기로,\n붙여넣기 전에 확인.\n\n\u{2063}          \u{1F388}\u{1F388}  \u{2601}\u{FE0F}\n         \u{1F388}\u{1F388}\u{1F388}\n \u{2601}\u{FE0F}     \u{1F388}\u{1F388}\u{1F388}\u{1F388}\n   \u{2601}\u{FE0F}    \u{2063}\u{1F388}\u{1F388}\u{1F388}\n           \\|/\n           \u{1F3E0}   \u{2601}\u{FE0F}\n   \u{2601}\u{FE0F}         \u{2601}\u{FE0F}",
+        content: "붙여넣기 전에\n여러 줄 그대로 미리보기.\n\n\u{2063}          \u{1F388}\u{1F388}  \u{2601}\u{FE0F}\n         \u{1F388}\u{1F388}\u{1F388}\n \u{2601}\u{FE0F}     \u{1F388}\u{1F388}\u{1F388}\u{1F388}\n   \u{2601}\u{FE0F}    \u{2063}\u{1F388}\u{1F388}\u{1F388}\n           \\|/\n           \u{1F3E0}   \u{2601}\u{FE0F}\n   \u{2601}\u{FE0F}         \u{2601}\u{FE0F}",
         source_app: "메모",
         bundle_id: "com.apple.Notes",
         offset: -300,
     },
     DemoItem {
-        content: "\u{2022} 기본값은 프라이버시\n\u{2022} 추적 없음, 계정 없음\n\u{2022} 오픈 소스",
+        content: "\u{2022} 프라이버시는 기본\n\u{2022} 추적도 계정도 없이\n\u{2022} 오픈 소스",
         source_app: "Safari",
         bundle_id: "com.apple.Safari",
         offset: -500,
     },
 
-    // ── "환영 clipkitty" partials ──
+    // ── "반가워 clipkitty" partials ──
     DemoItem {
         content: "환영 이메일 템플릿: 안녕하세요 {{name}}님, 가입해 주셔서 감사합니다!",
         source_app: "Mail",
@@ -1680,7 +1680,7 @@ pub const VIDEO_ITEMS_KO: &[DemoItem] = &[
         offset: -28 * 86400,
     },
 
-    // ── "안전 비공개" partials ──
+    // ── "프라이버시 오픈 소스" partials ──
     DemoItem {
         content: "ssh-keygen -t ed25519 -C \"secure-deploy-key\"",
         source_app: "Terminal",
@@ -1811,34 +1811,34 @@ pub const VIDEO_ITEMS_KO: &[DemoItem] = &[
 
 const VIDEO_SCENES_FR: LocalizedVideoScenes = LocalizedVideoScenes {
     welcome_query: "bienvenue clipkitty",
-    find_forever_query: "copiez retrouvez toujours",
-    multiline_query: "aperçu multiligne",
-    secure_private_query: "sécurisé privé",
+    find_forever_query: "copiez retrouvez vie",
+    multiline_query: "aperçu plusieurs lignes",
+    secure_private_query: "privé open source",
     fast_query: "rapide",
 };
 
 pub const VIDEO_ITEMS_FR: &[DemoItem] = &[
     // Scene targets
     DemoItem {
-        content: "Bienvenue sur ClipKitty ! \u{1F431}\n\nLe meilleur gestionnaire\nde presse-papiers.",
+        content: "Bienvenue dans ClipKitty ! \u{1F431}\n\nVotre presse-papiers, en mieux.",
         source_app: "Safari",
         bundle_id: "com.apple.Safari",
         offset: -200,
     },
     DemoItem {
-        content: "Copiez une fois, retrouvez pour toujours.\n\n\u{2022} Historique illimité\n\u{2022} Une recherche qui pardonne les fautes de frappe",
+        content: "Copiez une fois,\nretrouvez à vie.\n\n\u{2022} Historique illimité\n\u{2022} Recherche tolérante aux fautes",
         source_app: "Notes",
         bundle_id: "com.apple.Notes",
         offset: -120,
     },
     DemoItem {
-        content: "Aperçu multiligne,\nvoyez avant de coller.\n\n\u{2063}          \u{1F388}\u{1F388}  \u{2601}\u{FE0F}\n         \u{1F388}\u{1F388}\u{1F388}\n \u{2601}\u{FE0F}     \u{1F388}\u{1F388}\u{1F388}\u{1F388}\n   \u{2601}\u{FE0F}    \u{2063}\u{1F388}\u{1F388}\u{1F388}\n           \\|/\n           \u{1F3E0}   \u{2601}\u{FE0F}\n   \u{2601}\u{FE0F}         \u{2601}\u{FE0F}",
+        content: "Aperçu sur plusieurs lignes :\nvous voyez avant de coller.\n\n\u{2063}          \u{1F388}\u{1F388}  \u{2601}\u{FE0F}\n         \u{1F388}\u{1F388}\u{1F388}\n \u{2601}\u{FE0F}     \u{1F388}\u{1F388}\u{1F388}\u{1F388}\n   \u{2601}\u{FE0F}    \u{2063}\u{1F388}\u{1F388}\u{1F388}\n           \\|/\n           \u{1F3E0}   \u{2601}\u{FE0F}\n   \u{2601}\u{FE0F}         \u{2601}\u{FE0F}",
         source_app: "Notes",
         bundle_id: "com.apple.Notes",
         offset: -300,
     },
     DemoItem {
-        content: "\u{2022} Privé par défaut\n\u{2022} Aucune télémétrie, aucun compte\n\u{2022} Open Source",
+        content: "\u{2022} Privé par défaut\n\u{2022} Zéro télémétrie, zéro compte\n\u{2022} Open Source",
         source_app: "Safari",
         bundle_id: "com.apple.Safari",
         offset: -500,
@@ -2030,7 +2030,7 @@ pub const VIDEO_ITEMS_FR: &[DemoItem] = &[
         offset: -28 * 86400,
     },
 
-    // ── "sécurisé privé" partials ──
+    // ── "privé open source" partials ──
     DemoItem {
         content: "ssh-keygen -t ed25519 -C \"secure-deploy-key\"",
         source_app: "Terminal",
@@ -2161,34 +2161,34 @@ pub const VIDEO_ITEMS_FR: &[DemoItem] = &[
 
 const VIDEO_SCENES_DE: LocalizedVideoScenes = LocalizedVideoScenes {
     welcome_query: "willkommen clipkitty",
-    find_forever_query: "kopieren finden immer",
-    multiline_query: "mehrzeilige Vorschau",
-    secure_private_query: "sicher privat",
+    find_forever_query: "einmal kopiert griffbereit",
+    multiline_query: "ganze absätze einfügen",
+    secure_private_query: "privat open source",
     fast_query: "schnell",
 };
 
 pub const VIDEO_ITEMS_DE: &[DemoItem] = &[
     // Scene targets
     DemoItem {
-        content: "Willkommen bei ClipKitty! \u{1F431}\n\nDer beste Zwischenablage-Manager.",
+        content: "Willkommen bei ClipKitty! \u{1F431}\n\nDeine Zwischenablage mit Gedächtnis.",
         source_app: "Safari",
         bundle_id: "com.apple.Safari",
         offset: -200,
     },
     DemoItem {
-        content: "Einmal kopieren,\nfür immer finden.\n\n\u{2022} Unbegrenzter Verlauf\n\u{2022} Suche verzeiht Tippfehler",
+        content: "Einmal kopiert,\nfür immer griffbereit.\n\n\u{2022} Verlauf ohne Limit\n\u{2022} Suche verzeiht Tippfehler",
         source_app: "Notizen",
         bundle_id: "com.apple.Notes",
         offset: -120,
     },
     DemoItem {
-        content: "Mehrzeilige Vorschau,\nsieh vor dem Einfügen.\n\n\u{2063}          \u{1F388}\u{1F388}  \u{2601}\u{FE0F}\n         \u{1F388}\u{1F388}\u{1F388}\n \u{2601}\u{FE0F}     \u{1F388}\u{1F388}\u{1F388}\u{1F388}\n   \u{2601}\u{FE0F}    \u{2063}\u{1F388}\u{1F388}\u{1F388}\n           \\|/\n           \u{1F3E0}   \u{2601}\u{FE0F}\n   \u{2601}\u{FE0F}         \u{2601}\u{FE0F}",
+        content: "Ganze Absätze auf einen Blick,\nbevor du einfügst.\n\n\u{2063}          \u{1F388}\u{1F388}  \u{2601}\u{FE0F}\n         \u{1F388}\u{1F388}\u{1F388}\n \u{2601}\u{FE0F}     \u{1F388}\u{1F388}\u{1F388}\u{1F388}\n   \u{2601}\u{FE0F}    \u{2063}\u{1F388}\u{1F388}\u{1F388}\n           \\|/\n           \u{1F3E0}   \u{2601}\u{FE0F}\n   \u{2601}\u{FE0F}         \u{2601}\u{FE0F}",
         source_app: "Notizen",
         bundle_id: "com.apple.Notes",
         offset: -300,
     },
     DemoItem {
-        content: "\u{2022} Standardmäßig privat\n\u{2022} Keine Telemetrie, keine Konten\n\u{2022} Open Source",
+        content: "\u{2022} Privat ab Werk\n\u{2022} Keine Telemetrie, keine Konten\n\u{2022} Open Source",
         source_app: "Safari",
         bundle_id: "com.apple.Safari",
         offset: -500,
@@ -2380,7 +2380,7 @@ pub const VIDEO_ITEMS_DE: &[DemoItem] = &[
         offset: -28 * 86400,
     },
 
-    // ── "sicher privat" partials ──
+    // ── "privat open source" partials ──
     DemoItem {
         content: "ssh-keygen -t ed25519 -C \"secure-deploy-key\"",
         source_app: "Terminal",
@@ -2511,34 +2511,34 @@ pub const VIDEO_ITEMS_DE: &[DemoItem] = &[
 
 const VIDEO_SCENES_PT_BR: LocalizedVideoScenes = LocalizedVideoScenes {
     welcome_query: "bem-vindo clipkitty",
-    find_forever_query: "copie encontre sempre",
-    multiline_query: "pré-visualização multilinha",
-    secure_private_query: "seguro privado",
+    find_forever_query: "copiou achou sempre",
+    multiline_query: "preview várias linhas",
+    secure_private_query: "privado código aberto",
     fast_query: "rápido",
 };
 
 pub const VIDEO_ITEMS_PT_BR: &[DemoItem] = &[
     // Scene targets
     DemoItem {
-        content: "Bem-vindo ao ClipKitty! \u{1F431}\n\nO melhor gerenciador\nde área de transferência.",
+        content: "Bem-vindo ao ClipKitty! \u{1F431}\n\nSua área de transferência com memória.",
         source_app: "Safari",
         bundle_id: "com.apple.Safari",
         offset: -200,
     },
     DemoItem {
-        content: "Copie uma vez,\nencontre para sempre.\n\n\u{2022} Histórico ilimitado\n\u{2022} Busca que perdoa erros de digitação",
+        content: "Copiou uma vez,\nachou para sempre.\n\n\u{2022} Histórico sem limite\n\u{2022} Busca que releva typo",
         source_app: "Notas",
         bundle_id: "com.apple.Notes",
         offset: -120,
     },
     DemoItem {
-        content: "Pré-visualização multilinha,\nveja antes de colar.\n\n\u{2063}          \u{1F388}\u{1F388}  \u{2601}\u{FE0F}\n         \u{1F388}\u{1F388}\u{1F388}\n \u{2601}\u{FE0F}     \u{1F388}\u{1F388}\u{1F388}\u{1F388}\n   \u{2601}\u{FE0F}    \u{2063}\u{1F388}\u{1F388}\u{1F388}\n           \\|/\n           \u{1F3E0}   \u{2601}\u{FE0F}\n   \u{2601}\u{FE0F}         \u{2601}\u{FE0F}",
+        content: "Preview de várias linhas:\nveja antes de colar.\n\n\u{2063}          \u{1F388}\u{1F388}  \u{2601}\u{FE0F}\n         \u{1F388}\u{1F388}\u{1F388}\n \u{2601}\u{FE0F}     \u{1F388}\u{1F388}\u{1F388}\u{1F388}\n   \u{2601}\u{FE0F}    \u{2063}\u{1F388}\u{1F388}\u{1F388}\n           \\|/\n           \u{1F3E0}   \u{2601}\u{FE0F}\n   \u{2601}\u{FE0F}         \u{2601}\u{FE0F}",
         source_app: "Notas",
         bundle_id: "com.apple.Notes",
         offset: -300,
     },
     DemoItem {
-        content: "\u{2022} Privado por padrão\n\u{2022} Sem telemetria, sem contas\n\u{2022} Código aberto",
+        content: "\u{2022} Privado por padrão\n\u{2022} Sem contas, sem telemetria\n\u{2022} Código aberto",
         source_app: "Safari",
         bundle_id: "com.apple.Safari",
         offset: -500,
@@ -2668,7 +2668,7 @@ pub const VIDEO_ITEMS_PT_BR: &[DemoItem] = &[
         offset: -23 * 86400,
     },
 
-    // ── "pré-visualização multilinha" partials ──
+    // ── "preview várias linhas" partials ──
     DemoItem {
         content: "lineHeight: 1.5;\nfont-size: 14px;\ntext-rendering: optimizeLegibility;",
         source_app: "TextEdit",
@@ -2861,34 +2861,34 @@ pub const VIDEO_ITEMS_PT_BR: &[DemoItem] = &[
 
 const VIDEO_SCENES_RU: LocalizedVideoScenes = LocalizedVideoScenes {
     welcome_query: "добро пожаловать clipkitty",
-    find_forever_query: "скопируй найди всегда",
-    multiline_query: "многострочный предпросмотр",
-    secure_private_query: "безопасно приватно",
+    find_forever_query: "скопировал найдёшь когда угодно",
+    multiline_query: "видно целиком вставки",
+    secure_private_query: "приватность открытый исходный код",
     fast_query: "быстро",
 };
 
 pub const VIDEO_ITEMS_RU: &[DemoItem] = &[
     // Scene targets
     DemoItem {
-        content: "Добро пожаловать\nв ClipKitty! \u{1F431}\n\nЛучший менеджер буфера обмена.",
+        content: "Добро пожаловать в ClipKitty! \u{1F431}\n\nБуфер обмена, который помнит всё.",
         source_app: "Safari",
         bundle_id: "com.apple.Safari",
         offset: -200,
     },
     DemoItem {
-        content: "Скопировал раз,\nнайдёшь всегда.\n\n\u{2022} Безлимитная история\n\u{2022} Поиск, прощающий опечатки",
+        content: "Скопировал один раз;\nнайдёшь когда угодно.\n\n\u{2022} История без ограничений\n\u{2022} Поиск прощает опечатки",
         source_app: "Заметки",
         bundle_id: "com.apple.Notes",
         offset: -120,
     },
     DemoItem {
-        content: "Многострочный предпросмотр,\nсмотри перед вставкой.\n\n\u{2063}          \u{1F388}\u{1F388}  \u{2601}\u{FE0F}\n         \u{1F388}\u{1F388}\u{1F388}\n \u{2601}\u{FE0F}     \u{1F388}\u{1F388}\u{1F388}\u{1F388}\n   \u{2601}\u{FE0F}    \u{2063}\u{1F388}\u{1F388}\u{1F388}\n           \\|/\n           \u{1F3E0}   \u{2601}\u{FE0F}\n   \u{2601}\u{FE0F}         \u{2601}\u{FE0F}",
+        content: "Видно всё целиком\nещё до вставки.\n\n\u{2063}          \u{1F388}\u{1F388}  \u{2601}\u{FE0F}\n         \u{1F388}\u{1F388}\u{1F388}\n \u{2601}\u{FE0F}     \u{1F388}\u{1F388}\u{1F388}\u{1F388}\n   \u{2601}\u{FE0F}    \u{2063}\u{1F388}\u{1F388}\u{1F388}\n           \\|/\n           \u{1F3E0}   \u{2601}\u{FE0F}\n   \u{2601}\u{FE0F}         \u{2601}\u{FE0F}",
         source_app: "Заметки",
         bundle_id: "com.apple.Notes",
         offset: -300,
     },
     DemoItem {
-        content: "\u{2022} Приватность по умолчанию\n\u{2022} Без телеметрии и аккаунтов\n\u{2022} Открытый исходный код",
+        content: "\u{2022} Приватность по умолчанию\n\u{2022} Без аккаунтов и телеметрии\n\u{2022} Открытый исходный код",
         source_app: "Safari",
         bundle_id: "com.apple.Safari",
         offset: -500,
@@ -3018,7 +3018,7 @@ pub const VIDEO_ITEMS_RU: &[DemoItem] = &[
         offset: -23 * 86400,
     },
 
-    // ── "многострочный предпросмотр" partials ──
+    // ── "видно целиком вставки" partials ──
     DemoItem {
         content: "lineHeight: 1.5;\nfont-size: 14px;\ntext-rendering: optimizeLegibility;",
         source_app: "TextEdit",
@@ -3080,7 +3080,7 @@ pub const VIDEO_ITEMS_RU: &[DemoItem] = &[
         offset: -28 * 86400,
     },
 
-    // ── "безопасно приватно" partials ──
+    // ── "приватность открытый исходный" partials ──
     DemoItem {
         content: "ssh-keygen -t ed25519 -C \"secure-deploy-key\"",
         source_app: "Terminal",
