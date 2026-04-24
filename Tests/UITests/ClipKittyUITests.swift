@@ -1563,14 +1563,19 @@ final class ClipKittyUITests: XCTestCase {
 
     /// Tests that the Settings window opens without crashing and all tabs are accessible.
     func testSettingsWindowOpensAllTabs() {
-        // Hide the panel first so settings isn't overlaid
-        app.typeKey(.escape, modifierFlags: [])
-        Thread.sleep(forTimeInterval: 0.5)
+        let baselineVisibleWindowCount = app.windows.allElementsBoundByIndex
+            .filter { $0.exists && $0.isHittable }
+            .count
 
-        // Open settings via Cmd+,
+        // Open settings via Cmd+, even if the ClipKitty panel is already showing.
         app.typeKey(",", modifierFlags: .command)
         let settingsWindow = app.windows["ClipKitty Settings"]
         XCTAssertTrue(settingsWindow.waitForExistence(timeout: 5), "Settings window should appear")
+        let expectedVisibleWindowCount = baselineVisibleWindowCount + 1
+        let expectedWindowCountShown = waitForCondition(timeout: 3) {
+            self.app.windows.allElementsBoundByIndex.filter { $0.exists && $0.isHittable }.count == expectedVisibleWindowCount
+        }
+        XCTAssertTrue(expectedWindowCountShown, "Cmd+, should add only the real settings window")
 
         // General tab should be visible by default
         let generalTab = settingsWindow.buttons["SettingsTab_General"]
@@ -1604,6 +1609,13 @@ final class ClipKittyUITests: XCTestCase {
             generalTabNav.click()
             Thread.sleep(forTimeInterval: 0.5)
         }
+
+        // Trigger Cmd+, again to ensure it refocuses the same window instead of spawning another one.
+        app.typeKey(",", modifierFlags: .command)
+        let stillExpectedWindowCountShown = waitForCondition(timeout: 3) {
+            self.app.windows.allElementsBoundByIndex.filter { $0.exists && $0.isHittable }.count == expectedVisibleWindowCount
+        }
+        XCTAssertTrue(stillExpectedWindowCountShown, "Cmd+, should keep reusing the same settings window")
 
         // Verify the settings window is still alive (didn't crash)
         XCTAssertTrue(settingsWindow.exists, "Settings window should still exist after tab navigation")

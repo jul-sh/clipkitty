@@ -104,7 +104,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate {
 
         NotificationCenter.default.addObserver(
             self,
-            selector: #selector(openSettings),
+            selector: #selector(handleOpenSettingsNotification(_:)),
             name: .clipKittyOpenSettings,
             object: nil
         )
@@ -239,6 +239,10 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate {
 
     @objc private func showPanel() {
         panelController.show()
+    }
+
+    @objc private func handleOpenSettingsNotification(_: Notification) {
+        openSettings()
     }
 
     @objc private func openSettings() {
