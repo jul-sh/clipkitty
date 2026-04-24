@@ -961,7 +961,7 @@ final class ClipKittyUITests: XCTestCase {
         // ============================================================
         clearSearch()
         typeSlowly(queries["fast"] ?? "fast", scene: "fast")
-        Thread.sleep(forTimeInterval: 0.75)
+        Thread.sleep(forTimeInterval: 0.3)
 
         // Open actions menu with Cmd+K (highlight starts at index 0 = Bookmark)
         searchField.typeKey("k", modifierFlags: .command)
