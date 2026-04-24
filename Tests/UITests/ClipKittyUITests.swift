@@ -893,7 +893,7 @@ final class ClipKittyUITests: XCTestCase {
         /// first match appears without artificial latency. When `scene` is
         /// provided, per-char `typeText` latencies are recorded for later
         /// export.
-        func typeSlowly(_ text: String, scene: String? = nil, delay: TimeInterval = 0.00417) {
+        func typeSlowly(_ text: String, scene: String? = nil, delay: TimeInterval = 0.00555) {
             let startedEmpty = (searchField.value as? String)?.isEmpty ?? true
             var latenciesMs: [Double] = []
             latenciesMs.reserveCapacity(text.count)
