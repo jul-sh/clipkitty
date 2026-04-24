@@ -201,7 +201,7 @@ impl ScreenshotPlan {
             db_file: IOS_SCREENSHOT_DB_FILE,
             marketing_root: "marketing-ipad",
             scheme: "ClipKittyiOSUITests",
-            destination: "platform=iOS Simulator,name=iPad Pro 13-inch (M4)",
+            destination: "platform=iOS Simulator,name=iPad Pro 13-inch (M5)",
             derived_data: "DerivedData",
             only_testing:
                 "ClipKittyiOSUITests/ClipKittyiOSScreenshotTests/testTakeMarketingScreenshots",

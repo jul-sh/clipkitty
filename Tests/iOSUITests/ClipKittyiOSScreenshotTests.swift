@@ -3,7 +3,7 @@ import XCTest
 /// Marketing screenshot generator for the iOS App Store listing.
 ///
 /// Captures three screenshots on either iPhone 17 (6.1-inch, 1206x2622;
-/// uploaded to ASC's IPHONE_61 slot) or iPad Pro 13-inch M4 (2064x2752;
+/// uploaded to ASC's IPHONE_61 slot) or iPad Pro 13-inch M5 (2064x2752;
 /// uploaded to ASC's IPAD_PRO_3GEN_129 slot). The scenes are identical
 /// across devices; only the simulator chosen by the xcodebuild
 /// destination differs.
