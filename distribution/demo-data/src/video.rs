@@ -17,7 +17,10 @@ pub const SCENE_FIND_FOREVER: DemoItem = DemoItem {
     content: "Copy it once, find it forever.\n\nUnlimited clipboard history.",
     source_app: "Notes",
     bundle_id: "com.apple.Notes",
-    offset: -120,
+    // Smallest offset of any demo item so this sits at the top of history
+    // when the intro video opens, giving us a recognizable first item before
+    // any search.
+    offset: -5,
 };
 
 pub const SCENE_MULTILINE: DemoItem = DemoItem {
