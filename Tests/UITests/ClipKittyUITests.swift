@@ -893,7 +893,7 @@ final class ClipKittyUITests: XCTestCase {
         /// first match appears without artificial latency. When `scene` is
         /// provided, per-char `typeText` latencies are recorded for later
         /// export.
-        func typeSlowly(_ text: String, scene: String? = nil, delay: TimeInterval = 0.00555) {
+        func typeSlowly(_ text: String, scene: String? = nil, delay: TimeInterval = 0.006) {
             let startedEmpty = (searchField.value as? String)?.isEmpty ?? true
             var latenciesMs: [Double] = []
             latenciesMs.reserveCapacity(text.count)
@@ -949,7 +949,7 @@ final class ClipKittyUITests: XCTestCase {
         // SCENE 2.5: Secure & private
         // ============================================================
         clearSearch()
-        typeSlowly(queries["secure_private"] ?? "secure private", scene: "secure_private")
+        typeSlowly(queries["secure_private"] ?? "private open source", scene: "secure_private")
         Thread.sleep(forTimeInterval: 1.5)
 
         // ============================================================
