@@ -1563,19 +1563,18 @@ final class ClipKittyUITests: XCTestCase {
 
     /// Tests that the Settings window opens without crashing and all tabs are accessible.
     func testSettingsWindowOpensAllTabs() {
-        let baselineVisibleWindowCount = app.windows.allElementsBoundByIndex
-            .filter { $0.exists && $0.isHittable }
-            .count
-
         // Open settings via Cmd+, even if the ClipKitty panel is already showing.
         app.typeKey(",", modifierFlags: .command)
         let settingsWindow = app.windows["ClipKitty Settings"]
         XCTAssertTrue(settingsWindow.waitForExistence(timeout: 5), "Settings window should appear")
-        let expectedVisibleWindowCount = baselineVisibleWindowCount + 1
-        let expectedWindowCountShown = waitForCondition(timeout: 3) {
-            self.app.windows.allElementsBoundByIndex.filter { $0.exists && $0.isHittable }.count == expectedVisibleWindowCount
+        let settingsWindowIsTopmost = waitForCondition(timeout: 3) {
+            settingsWindow.isHittable
         }
-        XCTAssertTrue(expectedWindowCountShown, "Cmd+, should add only the real settings window")
+        XCTAssertTrue(settingsWindowIsTopmost, "Settings window should be topmost and interactable")
+        let singleVisibleWindowShown = waitForCondition(timeout: 3) {
+            self.app.windows.allElementsBoundByIndex.filter { $0.exists && $0.isHittable }.count == 1
+        }
+        XCTAssertTrue(singleVisibleWindowShown, "Cmd+, should leave only the real settings window visible")
 
         // General tab should be visible by default
         let generalTab = settingsWindow.buttons["SettingsTab_General"]
@@ -1612,10 +1611,10 @@ final class ClipKittyUITests: XCTestCase {
 
         // Trigger Cmd+, again to ensure it refocuses the same window instead of spawning another one.
         app.typeKey(",", modifierFlags: .command)
-        let stillExpectedWindowCountShown = waitForCondition(timeout: 3) {
-            self.app.windows.allElementsBoundByIndex.filter { $0.exists && $0.isHittable }.count == expectedVisibleWindowCount
+        let stillSingleVisibleWindowShown = waitForCondition(timeout: 3) {
+            self.app.windows.allElementsBoundByIndex.filter { $0.exists && $0.isHittable }.count == 1
         }
-        XCTAssertTrue(stillExpectedWindowCountShown, "Cmd+, should keep reusing the same settings window")
+        XCTAssertTrue(stillSingleVisibleWindowShown, "Cmd+, should keep reusing the same settings window")
 
         // Verify the settings window is still alive (didn't crash)
         XCTAssertTrue(settingsWindow.exists, "Settings window should still exist after tab navigation")
