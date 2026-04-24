@@ -2,26 +2,52 @@ import XCTest
 
 /// Marketing screenshot generator for the iOS App Store listing.
 ///
-/// Captures three screenshots on iPhone 17 (6.1-inch, 1206×2622 —
-/// uploaded to ASC's IPHONE_61 slot):
-///   1. History feed — the main clipboard history view
-///   2. Search — search bar active with a query
-///   3. Filter — filtered by a content type
+/// Captures three screenshots on either iPhone 17 (6.1-inch, 1206x2622;
+/// uploaded to ASC's IPHONE_61 slot) or iPad Pro 13-inch M4 (2064x2752;
+/// uploaded to ASC's IPAD_PRO_3GEN_129 slot). The scenes are identical
+/// across devices; only the simulator chosen by the xcodebuild
+/// destination differs.
+///   1. History feed; the main clipboard history view
+///   2. Search; search bar active with a query
+///   3. Filter; filtered by a content type
 ///
 /// Locale is read from `/tmp/clipkitty_ios_screenshot_locale.txt`.
 /// Database filename is read from `/tmp/clipkitty_ios_screenshot_db.txt`.
-/// Screenshots are written to `/tmp/clipkitty_ios_{locale}_marketing_{n}_{name}.png`.
+/// Device kind (`iphone` or `ipad`) is read from
+/// `/tmp/clipkitty_ios_screenshot_device.txt` and picks the output
+/// filename prefix so back-to-back iPhone and iPad runs don't overwrite
+/// each other's PNGs.
+/// Screenshots are written to
+/// `/tmp/clipkitty_{ios|ipad}_[{locale}_]marketing_{n}_{name}.png`
+/// (the locale segment is omitted for English, matching the existing
+/// iPhone behaviour).
 final class ClipKittyiOSScreenshotTests: XCTestCase {
+    private enum DeviceKind {
+        case iPhone
+        case iPad
+
+        var filenameStem: String {
+            switch self {
+            case .iPhone: return "ios"
+            case .iPad: return "ipad"
+            }
+        }
+    }
+
     private var app: XCUIApplication!
     private var locale: String!
+    private var deviceKind: DeviceKind = .iPhone
 
     private static let localeConfigFile = "clipkitty_ios_screenshot_locale.txt"
     private static let dbConfigFile = "clipkitty_ios_screenshot_db.txt"
+    private static let deviceConfigFile = "clipkitty_ios_screenshot_device.txt"
 
     override func setUpWithError() throws {
         continueAfterFailure = false
 
         locale = readTempConfig(Self.localeConfigFile, defaultValue: "en") ?? "en"
+        deviceKind = (readTempConfig(Self.deviceConfigFile, defaultValue: "iphone") ?? "iphone")
+            == "ipad" ? .iPad : .iPhone
 
         let screenshotDBPath = try setupTestDatabase()
 
@@ -177,8 +203,8 @@ final class ClipKittyiOSScreenshotTests: XCTestCase {
     }
 
     private func saveScreenshot(_ screenshot: XCUIScreenshot, index: Int, name: String) {
-        let prefix = locale == "en" ? "" : "\(locale!)_"
-        let filename = "clipkitty_ios_\(prefix)marketing_\(index)_\(name).png"
+        let localePrefix = locale == "en" ? "" : "\(locale!)_"
+        let filename = "clipkitty_\(deviceKind.filenameStem)_\(localePrefix)marketing_\(index)_\(name).png"
         let path = "/tmp/\(filename)"
 
         let data = screenshot.pngRepresentation

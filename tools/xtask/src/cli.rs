@@ -201,6 +201,8 @@ pub enum ScreenshotPlatform {
     MacOs,
     #[value(name = "ios")]
     Ios,
+    #[value(name = "ipad")]
+    IPad,
 }
 
 #[derive(Args, Debug)]
