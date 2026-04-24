@@ -70,7 +70,7 @@ pub const VIDEO_ITEMS_ES: &[DemoItem] = &[
         offset: -200,
     },
     DemoItem {
-        content: "Cópialo una vez,\nencuéntralo siempre.\n\nHistorial ilimitado.",
+        content: "Cópialo una vez,\nencuéntralo siempre.\n\n\u{2022} Historial ilimitado\n\u{2022} Búsqueda difusa, tolerante a errores",
         source_app: "Notas",
         bundle_id: "com.apple.Notes",
         offset: -120,
@@ -82,7 +82,7 @@ pub const VIDEO_ITEMS_ES: &[DemoItem] = &[
         offset: -300,
     },
     DemoItem {
-        content: "- Seguro y privado\n- Tus datos son tuyos\n- Código abierto",
+        content: "\u{2022} Privado por defecto\n\u{2022} Sin telemetría ni cuentas\n\u{2022} Código abierto",
         source_app: "Safari",
         bundle_id: "com.apple.Safari",
         offset: -500,
@@ -423,7 +423,7 @@ pub const VIDEO_ITEMS_ZH_HANS: &[DemoItem] = &[
         offset: -200,
     },
     DemoItem {
-        content: "复制一次，永久查找。\n\n无限剪贴板历史记录。",
+        content: "复制一次，永久留存。\n\n\u{2022} 无限历史记录\n\u{2022} 模糊搜索，容错输入",
         source_app: "备忘录",
         bundle_id: "com.apple.Notes",
         offset: -120,
@@ -435,7 +435,7 @@ pub const VIDEO_ITEMS_ZH_HANS: &[DemoItem] = &[
         offset: -300,
     },
     DemoItem {
-        content: "- 安全且隐私\n- 数据始终属于你\n- 开源",
+        content: "\u{2022} 默认隐私保护\n\u{2022} 无遥测，无账户\n\u{2022} 开源",
         source_app: "Safari",
         bundle_id: "com.apple.Safari",
         offset: -500,
@@ -774,7 +774,7 @@ pub const VIDEO_ITEMS_ZH_HANT: &[DemoItem] = &[
         offset: -200,
     },
     DemoItem {
-        content: "複製一次，永遠找得到。\n\n無限剪貼簿歷史記錄。",
+        content: "複製一次，永遠找得到。\n\n\u{2022} 無限歷史記錄\n\u{2022} 模糊搜尋，容錯打字",
         source_app: "備忘錄",
         bundle_id: "com.apple.Notes",
         offset: -120,
@@ -786,7 +786,7 @@ pub const VIDEO_ITEMS_ZH_HANT: &[DemoItem] = &[
         offset: -300,
     },
     DemoItem {
-        content: "- 安全且隱私\n- 資料始終屬於你\n- 開源",
+        content: "\u{2022} 預設隱私保護\n\u{2022} 無追蹤、無帳號\n\u{2022} 開放原始碼",
         source_app: "Safari",
         bundle_id: "com.apple.Safari",
         offset: -500,
@@ -1125,7 +1125,7 @@ pub const VIDEO_ITEMS_JA: &[DemoItem] = &[
         offset: -200,
     },
     DemoItem {
-        content: "一度コピーすれば、\nいつでも見つかる。\n\n無制限のクリップボード履歴。",
+        content: "一度コピーすれば、ずっと見つかる。\n\n\u{2022} 履歴は無制限\n\u{2022} あいまい検索、タイポにも強い",
         source_app: "メモ",
         bundle_id: "com.apple.Notes",
         offset: -120,
@@ -1137,7 +1137,7 @@ pub const VIDEO_ITEMS_JA: &[DemoItem] = &[
         offset: -300,
     },
     DemoItem {
-        content: "- 安全でプライベート\n- データはあなたのもの\n- オープンソース",
+        content: "\u{2022} 最初からプライベート\n\u{2022} 計測なし、アカウント不要\n\u{2022} オープンソース",
         source_app: "Safari",
         bundle_id: "com.apple.Safari",
         offset: -500,
@@ -1476,7 +1476,7 @@ pub const VIDEO_ITEMS_KO: &[DemoItem] = &[
         offset: -200,
     },
     DemoItem {
-        content: "한 번 복사하면,\n영원히 검색 가능.\n\n무제한 클립보드 기록.",
+        content: "한 번 복사하면,\n평생 찾을 수 있어요.\n\n\u{2022} 무제한 기록\n\u{2022} 오타도 잡아내는 퍼지 검색",
         source_app: "메모",
         bundle_id: "com.apple.Notes",
         offset: -120,
@@ -1488,7 +1488,7 @@ pub const VIDEO_ITEMS_KO: &[DemoItem] = &[
         offset: -300,
     },
     DemoItem {
-        content: "- 안전하고 비공개\n- 데이터는 당신의 것\n- 오픈 소스",
+        content: "\u{2022} 기본값은 프라이버시\n\u{2022} 추적 없음, 계정 없음\n\u{2022} 오픈 소스",
         source_app: "Safari",
         bundle_id: "com.apple.Safari",
         offset: -500,
@@ -1826,7 +1826,7 @@ pub const VIDEO_ITEMS_FR: &[DemoItem] = &[
         offset: -200,
     },
     DemoItem {
-        content: "Copiez une fois,\nretrouvez toujours.\n\nHistorique illimité.",
+        content: "Copiez une fois, retrouvez pour toujours.\n\n\u{2022} Historique illimité\n\u{2022} Recherche floue, tolérante aux fautes",
         source_app: "Notes",
         bundle_id: "com.apple.Notes",
         offset: -120,
@@ -1838,7 +1838,7 @@ pub const VIDEO_ITEMS_FR: &[DemoItem] = &[
         offset: -300,
     },
     DemoItem {
-        content: "- Sécurisé et privé\n- Vos données restent vôtres\n- Open Source",
+        content: "\u{2022} Privé par défaut\n\u{2022} Aucune télémétrie, aucun compte\n\u{2022} Open Source",
         source_app: "Safari",
         bundle_id: "com.apple.Safari",
         offset: -500,
@@ -2176,7 +2176,7 @@ pub const VIDEO_ITEMS_DE: &[DemoItem] = &[
         offset: -200,
     },
     DemoItem {
-        content: "Einmal kopieren,\nimmer finden.\n\nUnbegrenzter Verlauf.",
+        content: "Einmal kopieren,\nfür immer finden.\n\n\u{2022} Unbegrenzter Verlauf\n\u{2022} Fuzzy-Suche, verzeiht Tippfehler",
         source_app: "Notizen",
         bundle_id: "com.apple.Notes",
         offset: -120,
@@ -2188,7 +2188,7 @@ pub const VIDEO_ITEMS_DE: &[DemoItem] = &[
         offset: -300,
     },
     DemoItem {
-        content: "- Sicher und privat\n- Deine Daten gehören dir\n- Open Source",
+        content: "\u{2022} Standardmäßig privat\n\u{2022} Keine Telemetrie, keine Konten\n\u{2022} Open Source",
         source_app: "Safari",
         bundle_id: "com.apple.Safari",
         offset: -500,
@@ -2526,7 +2526,7 @@ pub const VIDEO_ITEMS_PT_BR: &[DemoItem] = &[
         offset: -200,
     },
     DemoItem {
-        content: "Copie uma vez,\nencontre para sempre.\n\nHistórico ilimitado.",
+        content: "Copie uma vez,\nencontre para sempre.\n\n\u{2022} Histórico ilimitado\n\u{2022} Busca fuzzy, tolerante a erros",
         source_app: "Notas",
         bundle_id: "com.apple.Notes",
         offset: -120,
@@ -2538,7 +2538,7 @@ pub const VIDEO_ITEMS_PT_BR: &[DemoItem] = &[
         offset: -300,
     },
     DemoItem {
-        content: "- Seguro e privado\n- Seus dados são seus\n- Código aberto",
+        content: "\u{2022} Privado por padrão\n\u{2022} Sem telemetria, sem contas\n\u{2022} Código aberto",
         source_app: "Safari",
         bundle_id: "com.apple.Safari",
         offset: -500,
@@ -2876,7 +2876,7 @@ pub const VIDEO_ITEMS_RU: &[DemoItem] = &[
         offset: -200,
     },
     DemoItem {
-        content: "Скопируй один раз —\nнайди всегда.\n\nБезлимитная история.",
+        content: "Скопировал раз,\nнайдёшь всегда.\n\n\u{2022} Безлимитная история\n\u{2022} Умный поиск, прощает опечатки",
         source_app: "Заметки",
         bundle_id: "com.apple.Notes",
         offset: -120,
@@ -2888,7 +2888,7 @@ pub const VIDEO_ITEMS_RU: &[DemoItem] = &[
         offset: -300,
     },
     DemoItem {
-        content: "- Безопасно и приватно\n- Ваши данные — только ваши\n- Открытый исходный код",
+        content: "\u{2022} Приватность по умолчанию\n\u{2022} Без телеметрии и аккаунтов\n\u{2022} Открытый исходный код",
         source_app: "Safari",
         bundle_id: "com.apple.Safari",
         offset: -500,
