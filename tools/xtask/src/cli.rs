@@ -117,6 +117,25 @@ pub enum ReleaseCmd {
     /// Appcast generation and state update (Sparkle).
     #[command(subcommand)]
     Appcast(AppcastCmd),
+    /// Print the resolved release version for the current repo state.
+    Version(VersionArgs),
+}
+
+#[derive(Args, Debug)]
+pub struct VersionArgs {
+    /// Which field to print (default: marketing version).
+    #[arg(value_enum, default_value_t = VersionField::Version)]
+    pub field: VersionField,
+}
+
+#[derive(ValueEnum, Debug, Clone, Copy, PartialEq, Eq)]
+pub enum VersionField {
+    /// `CFBundleShortVersionString`; e.g. `1.12.1225`.
+    #[value(name = "version")]
+    Version,
+    /// `CFBundleVersion`; the bare commit count.
+    #[value(name = "build-number")]
+    BuildNumber,
 }
 
 #[derive(Args, Debug)]

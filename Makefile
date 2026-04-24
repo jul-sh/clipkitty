@@ -15,7 +15,7 @@ XTASK := $(NIX_RUN) cargo run --quiet -p xtask --
 PERF_FAIL_ON_HANGS ?= 1
 PERF_HANG_THRESHOLD ?= 250
 
-.PHONY: help check workspace install-hooks install-sparkle-cli app-hardened app-app-store release-dmg release-macos-appstore release-ios-appstore release-appcast-generate release-appcast-update screenshots-macos screenshots-ios intro-video perf site-icon site-landing-page secrets-asc-auth shell
+.PHONY: help check workspace install-hooks install-sparkle-cli app-hardened app-app-store release-dmg release-macos-appstore release-ios-appstore release-version release-appcast-generate release-appcast-update screenshots-macos screenshots-ios intro-video perf site-icon site-landing-page secrets-asc-auth shell
 
 help: ## Show the supported automation entry points.
 	@awk 'BEGIN {FS = ":.*## "; printf "\nClipKitty automation entry points\n\n"} /^[a-zA-Z0-9_.-]+:.*## / { printf "  %-26s %s\n", $$1, $$2 }' $(MAKEFILE_LIST)
@@ -52,6 +52,9 @@ release-macos-appstore: guard-VERSION guard-BUILD_NUMBER ## Publish the macOS Ap
 
 release-ios-appstore: guard-VERSION guard-BUILD_NUMBER ## Publish the iOS App Store build. Use VERSION=... BUILD_NUMBER=...
 	@$(XTASK) release ios-appstore "$(VERSION)" "$(BUILD_NUMBER)"
+
+release-version: guard-FIELD ## Resolve release version. Use FIELD=version|build-number
+	@$(XTASK) release version "$(FIELD)"
 
 release-appcast-generate: guard-STATE_PATH guard-OUTPUT_PATH ## Render appcast XML. Use STATE_PATH=... OUTPUT_PATH=...
 	@$(XTASK) release appcast generate --state-path "$(STATE_PATH)" --output-path "$(OUTPUT_PATH)"

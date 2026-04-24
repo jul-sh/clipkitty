@@ -7,17 +7,19 @@ use crate::cmd::{build, sign};
 use crate::model::{MacVariant, SideEffectLevel};
 use crate::output::Reporter;
 use crate::repo::RepoRoot;
+use crate::version;
 
 pub fn run(args: &AppArgs, dry_run: bool, reporter: &Reporter) -> Result<()> {
     let _ = SideEffectLevel::LocalMutation;
     let repo = RepoRoot::discover(reporter)?;
+    let resolved = version::resolve(&repo, reporter)?;
     match args.target {
         AppTarget::Hardened => sign::sign_app(
             &repo,
             &sign::SignAppRequest {
                 variant: MacVariant::Hardened,
-                version: None,
-                build_number: None,
+                version: Some(resolved.version),
+                build_number: Some(resolved.build_number),
             },
             dry_run,
             reporter,
@@ -26,8 +28,8 @@ pub fn run(args: &AppArgs, dry_run: bool, reporter: &Reporter) -> Result<()> {
             &repo,
             &build::BuildAppRequest {
                 variant: MacVariant::AppStore,
-                version: None,
-                build_number: None,
+                version: Some(resolved.version),
+                build_number: Some(resolved.build_number),
             },
             dry_run,
             reporter,

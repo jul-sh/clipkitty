@@ -94,14 +94,8 @@ jobs:
         if: github.ref == 'refs/heads/main' || github.ref == 'refs/heads/release' || (github.event_name == 'pull_request' && (github.base_ref == 'main' || github.base_ref == 'release'))
         run: |
           TARGET_BRANCH="${GITHUB_BASE_REF:-${GITHUB_REF#refs/heads/}}"
-          BASE_VERSION=$(grep '"MARKETING_VERSION":' Project.swift | head -1 | sed 's/.*: *"\(.*\)".*/\1/')
-          echo "Base version from Project.swift: $BASE_VERSION"
-
-          # Extract major.minor from Project.swift, use commit count as patch
-          IFS='.' read -r major minor _patch <<< "$BASE_VERSION"
-          COMMIT_COUNT=$(git rev-list --count HEAD)
-          VERSION="${major}.${minor}.${COMMIT_COUNT}"
-          echo "Using commit count for patch: $VERSION"
+          VERSION=$(make release-version FIELD=version)
+          echo "Resolved release version: $VERSION"
 
           if [ "$TARGET_BRANCH" = "main" ]; then
             CHANNEL="beta"
@@ -299,10 +293,8 @@ jobs:
 
       - name: Build iOS App (AppStore)
         run: |
-          BASE_VERSION=$(grep '"MARKETING_VERSION":' Project.swift | head -1 | sed 's/.*: *"\(.*\)".*/\1/')
-          IFS='.' read -r major minor _patch <<< "$BASE_VERSION"
-          COMMIT_COUNT=$(git rev-list --count HEAD)
-          VERSION="${major}.${minor}.${COMMIT_COUNT}"
+          VERSION=$(make release-version FIELD=version)
+          COMMIT_COUNT=$(make release-version FIELD=build-number)
           xcodebuild build \
             -workspace ClipKitty.xcworkspace \
             -scheme ClipKittyiOS-AppStore \
@@ -828,10 +820,8 @@ jobs:
       - name: Build and Publish to App Store Connect
         run: |
           unset TOOLCHAINS
-          BASE_VERSION=$(grep '"MARKETING_VERSION":' Project.swift | head -1 | sed 's/.*: *"\(.*\)".*/\1/')
-          IFS='.' read -r major minor _patch <<< "$BASE_VERSION"
-          COMMIT_COUNT=$(git rev-list --count HEAD)
-          VERSION="${major}.${minor}.${COMMIT_COUNT}"
+          VERSION=$(make release-version FIELD=version)
+          COMMIT_COUNT=$(make release-version FIELD=build-number)
           make release-macos-appstore VERSION="$VERSION" BUILD_NUMBER="$COMMIT_COUNT"
         env:
           AGE_SECRET_KEY: ${{ secrets.AGE_SECRET_KEY }}
@@ -956,10 +946,8 @@ jobs:
       - name: Build and Publish iOS to App Store Connect
         run: |
           unset TOOLCHAINS
-          BASE_VERSION=$(grep '"MARKETING_VERSION":' Project.swift | head -1 | sed 's/.*: *"\(.*\)".*/\1/')
-          IFS='.' read -r major minor _patch <<< "$BASE_VERSION"
-          COMMIT_COUNT=$(git rev-list --count HEAD)
-          VERSION="${major}.${minor}.${COMMIT_COUNT}"
+          VERSION=$(make release-version FIELD=version)
+          COMMIT_COUNT=$(make release-version FIELD=build-number)
           make release-ios-appstore VERSION="$VERSION" BUILD_NUMBER="$COMMIT_COUNT"
         env:
           AGE_SECRET_KEY: ${{ secrets.AGE_SECRET_KEY }}

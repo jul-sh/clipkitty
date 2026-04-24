@@ -12,3 +12,4 @@ pub mod nix;
 pub mod output;
 pub mod process;
 pub mod repo;
+pub mod version;

@@ -20,6 +20,7 @@ use tempfile::{tempdir, NamedTempFile};
 
 use crate::cli::{
     AppcastCmd, AppcastGenerateArgs, AppcastUpdateStateArgs, DmgArgs, ReleaseCmd, ReleaseMacArgs,
+    VersionArgs, VersionField,
 };
 use crate::cmd::build;
 use crate::cmd::secrets;
@@ -28,6 +29,7 @@ use crate::model::{AscAuthField, MacVariant, SetupAction, SideEffectLevel};
 use crate::output::Reporter;
 use crate::process::Runner;
 use crate::repo::RepoRoot;
+use crate::version;
 
 pub fn run(cmd: &ReleaseCmd, dry_run: bool, reporter: &Reporter) -> Result<()> {
     let _ = SideEffectLevel::Credentialed;
@@ -37,7 +39,18 @@ pub fn run(cmd: &ReleaseCmd, dry_run: bool, reporter: &Reporter) -> Result<()> {
         ReleaseCmd::IosAppstore(args) => ios_appstore(&repo, args, dry_run, reporter),
         ReleaseCmd::Dmg(args) => dmg(&repo, args, dry_run, reporter),
         ReleaseCmd::Appcast(sub) => appcast(&repo, sub, dry_run, reporter),
+        ReleaseCmd::Version(args) => print_version(&repo, args, reporter),
     }
+}
+
+fn print_version(repo: &RepoRoot, args: &VersionArgs, reporter: &Reporter) -> Result<()> {
+    let resolved = version::resolve(repo, reporter)?;
+    let value = match args.field {
+        VersionField::Version => resolved.version,
+        VersionField::BuildNumber => resolved.build_number,
+    };
+    println!("{value}");
+    Ok(())
 }
 
 fn macos_appstore(
@@ -836,12 +849,13 @@ fn dmg(repo: &RepoRoot, args: &DmgArgs, dry_run: bool, reporter: &Reporter) -> R
         return Ok(());
     }
 
+    let resolved = version::resolve(repo, reporter)?;
     sign::sign_app(
         repo,
         &sign::SignAppRequest {
             variant: MacVariant::SparkleRelease,
-            version: None,
-            build_number: None,
+            version: Some(resolved.version),
+            build_number: Some(resolved.build_number),
         },
         false,
         reporter,
