@@ -1,21 +1,21 @@
-ClipKitty é o gerenciador de área de transferência que continua simples, mesmo quando seu histórico fica grande.
+O ClipKitty guarda tudo que você copia e continua leve, mesmo quando seu histórico cresce.
 
-Ele salva o que você copia e facilita encontrar de novo: texto, código, links, cores, imagens e arquivos, tudo em um histórico rápido e pesquisável.
+Texto, código, links, cores, imagens e arquivos: tudo num só lugar, fácil de achar de novo.
 
-HISTÓRICO ILIMITADO
-Sem limite pequeno de itens. Sem janela curta de expiração. O ClipKitty mantém seus itens copiados disponíveis pelo tempo que você quiser.
+HISTÓRICO SEM LIMITE
+Nada de teto baixo de itens nem prazo curto pra expirar. O que você copiou fica disponível pelo tempo que você quiser.
 
-BUSCA QUE REALMENTE AJUDA
-Digite o que você lembra e o ClipKitty encontra o item certo rapidamente, mesmo que a busca esteja incompleta ou com pequenos erros de digitação.
+BUSCA QUE PERDOA ERRO DE DIGITAÇÃO
+Digite o que lembrar, mesmo pela metade ou com algum dedo trocado, e o ClipKitty acha o item certo na hora.
 
-VEJA TUDO ANTES DE COLAR
-Visualize texto completo, código, imagens e cores em um só lugar. Sem adivinhar a partir de trechos cortados.
+VEJA ANTES DE COLAR
+Prévia de texto, código, imagens e cores num painel só. Chega de colar no escuro a partir de um trechinho cortado.
 
 SINCRONIZAÇÃO iCLOUD OPCIONAL
-Sincronize seu histórico de área de transferência entre dispositivos com iCloud quando desejar.
+Quando quiser, leve seu histórico de um aparelho pra outro pelo iCloud. Quando não quiser, é só deixar desligado.
 
-FLUXO NATURAL COM O TECLADO
-Abra com Option-Espaço, pesquise digitando, navegue com as setas e pressione Return para colar.
+FLUXO NATURAL NO TECLADO
+Abra com Option-Espaço, pesquise digitando, ande com as setas e aperte Return pra colar.
 
 PRIVADO POR PADRÃO
-O ClipKitty funciona no dispositivo sem telemetria, sem contas e sem servidores de terceiros. A sincronização opcional fica no seu contêiner privado do iCloud. Código aberto e publicamente auditável.
+O ClipKitty roda no seu aparelho, sem telemetria, sem conta e sem servidor de terceiro. A sincronização opcional usa o seu contêiner privado do iCloud. É código aberto e pode ser auditado por qualquer pessoa.

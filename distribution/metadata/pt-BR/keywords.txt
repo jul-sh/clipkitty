@@ -1,1 +1,1 @@
-área de transferência,histórico,gerenciador,copiar,colar,buscar,sincronização,icloud
+clipboard,transferência,histórico,copiar,colar,gerenciador,buscar,sincronizar,icloud

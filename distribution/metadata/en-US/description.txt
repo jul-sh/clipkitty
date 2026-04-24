@@ -1,21 +1,21 @@
-ClipKitty is the clipboard manager that stays simple; even when your clipboard history gets large.
+ClipKitty remembers everything you copy, so you can find it again in seconds.
 
-It saves what you copy and makes it easy to find again; text, code, links, colors, images, and files; all in one fast searchable history.
+Text, code, links, colors, images, files; all in one fast, searchable history.
 
 UNLIMITED HISTORY
-No small history cap. No short expiration window. ClipKitty keeps your copied items available for as long as you want them.
+No small cap. No short expiration. ClipKitty keeps your copied items for as long as you want them.
 
-SEARCH THAT ACTUALLY HELPS
-Type what you remember and ClipKitty finds the right item fast, even if the query is incomplete or slightly misspelled.
+SEARCH THAT FORGIVES TYPOS
+Type what you remember. ClipKitty finds the right item even when your query is incomplete or misspelled.
 
-SEE EVERYTHING BEFORE YOU PASTE
-Preview full text, code, images, and colors in one place. No guessing from cut-off snippets.
+SEE BEFORE YOU PASTE
+Preview full text, code, images, and colors in place. No guessing from cut-off snippets.
 
 OPTIONAL ICLOUD SYNC
-Sync your clipboard history across devices with iCloud when you want it.
+Keep your clipboard history in step across your Mac, iPhone, and iPad when you want it. Off by default.
 
 NATURAL KEYBOARD FLOW
-Open with Option-Space, search by typing, move with the arrow keys, and press Return to paste.
+Open with Option-Space. Search by typing. Move with the arrow keys. Press Return to paste.
 
 PRIVATE BY DEFAULT
 ClipKitty works on-device with no telemetry, no accounts, and no third-party servers. Optional sync stays in your private iCloud container. Open source and publicly auditable.

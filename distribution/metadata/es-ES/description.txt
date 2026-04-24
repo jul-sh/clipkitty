@@ -1,21 +1,21 @@
-ClipKitty es el gestor de portapapeles que se mantiene simple, incluso cuando tu historial de portapapeles crece mucho.
+ClipKitty es un gestor de portapapeles sencillo, por muy largo que se ponga tu historial.
 
-Guarda lo que copias y facilita encontrarlo de nuevo: texto, código, enlaces, colores, imágenes y archivos; todo en un historial rápido y buscable.
+Guarda lo que copias y te ayuda a volver a encontrarlo: texto, código, enlaces, colores, imágenes y archivos, todo en un historial rápido y con buscador.
 
-HISTORIAL ILIMITADO
-Sin límite de elementos. Sin ventana de expiración. ClipKitty mantiene tus elementos copiados disponibles todo el tiempo que quieras.
+HISTORIAL SIN LÍMITES
+Sin tope de elementos ni fecha de caducidad. Lo que copiaste hace un mes sigue ahí cuando lo necesites.
 
-BÚSQUEDA QUE REALMENTE AYUDA
-Escribe lo que recuerdes y ClipKitty encuentra el elemento correcto rápidamente, incluso si la búsqueda está incompleta o tiene algún error tipográfico.
+BUSCADOR QUE PERDONA ERRATAS
+Escribe lo que recuerdes y ClipKitty da con el elemento correcto, aunque te comas letras o bailen las teclas.
 
-VE TODO ANTES DE PEGAR
-Previsualiza texto completo, código, imágenes y colores en un solo lugar. Sin adivinar a partir de fragmentos recortados.
+VE QUÉ VAS A PEGAR
+Previsualiza el texto entero, el código, las imágenes y los colores antes de pegar. Se acabó adivinar a partir de un fragmento recortado.
 
 SINCRONIZACIÓN iCLOUD OPCIONAL
-Sincroniza tu historial de portapapeles entre dispositivos con iCloud cuando lo desees.
+Activa iCloud cuando quieras y ten tu historial en todos tus dispositivos. Si lo prefieres, lo dejas apagado.
 
-FLUJO NATURAL CON EL TECLADO
-Abre con Option-Espacio, busca escribiendo, navega con las teclas de dirección y pulsa Return para pegar.
+TODO CON EL TECLADO
+Ábrelo con Opción+Espacio, busca escribiendo, muévete con las flechas y pulsa Intro para pegar.
 
-PRIVADO POR DEFECTO
-ClipKitty funciona en el dispositivo sin telemetría, sin cuentas y sin servidores de terceros. La sincronización opcional permanece en tu contenedor privado de iCloud. Código abierto y públicamente auditable.
+PRIVADO DE SERIE
+ClipKitty funciona en tu dispositivo: sin telemetría, sin cuentas, sin servidores ajenos. La sincronización opcional se queda en tu contenedor privado de iCloud. Código abierto y auditable por cualquiera.

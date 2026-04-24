@@ -1,1 +1,1 @@
-portapapeles,historial,gestor,copiar,pegar,buscar,fragmentos,sincronización,icloud,productividad
+portapapeles,historial,copiar,pegar,gestor,buscador,atajos,productividad,sync,icloud,mac

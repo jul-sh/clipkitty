@@ -1,1 +1,1 @@
-presse-papiers,historique,gestionnaire,copier,coller,recherche,extraits,synchronisation,icloud
+presse-papier,historique,copier,coller,clipboard,gestionnaire,extrait,snippet,icloud,sync
