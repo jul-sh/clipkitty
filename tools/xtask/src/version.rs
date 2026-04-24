@@ -7,8 +7,8 @@
 //! This is the single source of truth for both the GitHub release tag and
 //! the `CFBundleShortVersionString` / `CFBundleVersion` stamped into every
 //! shipped app bundle. Keeping them wired together avoids the class of bug
-//! where the release tag and the installed app disagree — which in turn
-//! would make Sparkle compare stale numbers and silently skip updates.
+//! where the release tag and the installed app disagree; that divergence
+//! makes Sparkle compare stale numbers and silently skip updates.
 
 use std::fs;
 
@@ -21,9 +21,9 @@ use crate::repo::RepoRoot;
 /// Marketing version + build number for one release build.
 #[derive(Debug, Clone)]
 pub struct ResolvedVersion {
-    /// `CFBundleShortVersionString` — e.g. `1.12.1225`.
+    /// `CFBundleShortVersionString`; e.g. `1.12.1225`.
     pub version: String,
-    /// `CFBundleVersion` — the bare commit count, e.g. `1225`.
+    /// `CFBundleVersion`; the bare commit count, e.g. `1225`.
     pub build_number: String,
 }
 
