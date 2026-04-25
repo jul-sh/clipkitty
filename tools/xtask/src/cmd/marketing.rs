@@ -968,6 +968,8 @@ fn postprocess_video(
             "{crop_filter}scale=1920:1080:force_original_aspect_ratio=decrease,pad=1920:1080:(ow-iw)/2:(oh-ih)/2:color=0xC0C0C0"
         ))
         .args([
+            "-r",
+            "30",
             "-c:v",
             "libx264",
             "-preset",
