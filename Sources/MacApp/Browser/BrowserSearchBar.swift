@@ -37,6 +37,12 @@ struct BrowserSearchBar<FilterPopoverContent: View>: View {
                 .focused(focusTarget, equals: .search)
                 .id(colorScheme)
                 .accessibilityIdentifier("SearchField")
+                // Suppress system text-suggestion / Writing Tools popovers
+                // that would otherwise overlay the result list when focus
+                // returns to the search field.
+                .autocorrectionDisabled()
+                .textContentType(.none)
+                .modifier(DisableWritingTools())
                 .onKeyPress(.upArrow) {
                     onMoveSelection(-1)
                     return .handled
@@ -117,5 +123,15 @@ struct BrowserSearchBar<FilterPopoverContent: View>: View {
         }
         .padding(.horizontal, 17)
         .padding(.vertical, 13)
+    }
+}
+
+private struct DisableWritingTools: ViewModifier {
+    func body(content: Content) -> some View {
+        if #available(macOS 15.1, *) {
+            content.writingToolsBehavior(.disabled)
+        } else {
+            content
+        }
     }
 }

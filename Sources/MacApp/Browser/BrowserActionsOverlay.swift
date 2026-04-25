@@ -66,11 +66,18 @@ struct BrowserActionsOverlay: View {
                 focusTarget: focusTarget,
                 performAction: { action in
                     guard let itemId = viewModel.selectedItemId else { return }
-                    viewModel.performAction(
-                        action.browserAction,
-                        itemId: itemId,
-                        dismissOverlay: viewModel.closeOverlay
-                    )
+                    // Close the popover first, then run the side effect on the
+                    // next runloop tick. Mutating state in the same frame as
+                    // the popover dismissal sometimes leaves an orphaned
+                    // shadow placeholder behind under the search field.
+                    viewModel.closeOverlay()
+                    DispatchQueue.main.async {
+                        viewModel.performAction(
+                            action.browserAction,
+                            itemId: itemId,
+                            dismissOverlay: {}
+                        )
+                    }
                 },
                 dismiss: viewModel.closeOverlay
             )
