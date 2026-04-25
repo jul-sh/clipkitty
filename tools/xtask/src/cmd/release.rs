@@ -659,6 +659,14 @@ fn upload_screenshots(
         let pngs = expected_screenshot_paths(&locale_dir, *asc_locale, platform.label)?;
 
         for device_type in platform.screenshot_device_types {
+            clear_existing_screenshots_for_device(
+                repo,
+                localization_id,
+                *asc_locale,
+                device_type,
+                asc_env,
+                reporter,
+            )?;
             reporter.info(&format!(
                 "Replacing with {} {device_type} screenshots for {asc_locale}...",
                 pngs.len()
@@ -690,6 +698,50 @@ fn upload_screenshots(
     }
 
     reporter.info(&format!("Total screenshots uploaded: {uploaded_count}"));
+    Ok(())
+}
+
+fn clear_existing_screenshots_for_device(
+    repo: &RepoRoot,
+    localization_id: &str,
+    asc_locale: &str,
+    device_type: &str,
+    asc_env: &[(&str, &str)],
+    reporter: &Reporter,
+) -> Result<()> {
+    let screenshots = asc_json(
+        repo,
+        &[
+            "screenshots",
+            "list",
+            "--version-localization",
+            localization_id,
+        ],
+        asc_env,
+        reporter,
+    )?;
+    let ids = media_ids_with_attribute(
+        &screenshots,
+        "appScreenshots",
+        &["screenshotDisplayType"],
+        device_type,
+    );
+    if ids.is_empty() {
+        return Ok(());
+    }
+
+    reporter.info(&format!(
+        "Clearing {} existing {device_type} screenshots for {asc_locale}...",
+        ids.len()
+    ));
+    for id in ids {
+        asc_command(
+            repo,
+            &["screenshots", "delete", "--id", &id, "--confirm"],
+            asc_env,
+            reporter,
+        )?;
+    }
     Ok(())
 }
 
@@ -741,10 +793,10 @@ fn upload_app_previews(
     let mut uploaded = Vec::new();
     for (source_locale, asc_locale) in LOCALE_MAP {
         let Some(localization_id) = locale_to_id.get(*asc_locale) else {
-            reporter.info(&format!(
-                "Warning: no localization for {asc_locale}, skipping app preview video"
+            return Err(anyhow!(
+                "no ASC localization for {asc_locale}; cannot upload {} app preview video",
+                platform.label
             ));
-            continue;
         };
 
         let video = marketing_dir.join(format!("{source_locale}/intro_video.mov"));
@@ -755,6 +807,14 @@ fn upload_app_previews(
         }
 
         for preview_type in platform.preview_device_types {
+            clear_existing_app_previews_for_device(
+                repo,
+                localization_id,
+                *asc_locale,
+                preview_type,
+                asc_env,
+                reporter,
+            )?;
             reporter.info(&format!(
                 "Replacing {preview_type} app preview for {asc_locale} with {video}..."
             ));
@@ -789,6 +849,50 @@ fn upload_app_previews(
         "Total app preview videos uploaded: {}",
         uploaded.len()
     ));
+    Ok(())
+}
+
+fn clear_existing_app_previews_for_device(
+    repo: &RepoRoot,
+    localization_id: &str,
+    asc_locale: &str,
+    preview_type: &str,
+    asc_env: &[(&str, &str)],
+    reporter: &Reporter,
+) -> Result<()> {
+    let previews = asc_json(
+        repo,
+        &[
+            "video-previews",
+            "list",
+            "--version-localization",
+            localization_id,
+        ],
+        asc_env,
+        reporter,
+    )?;
+    let ids = media_ids_with_attribute(
+        &previews,
+        "appPreviews",
+        &["previewType", "appPreviewType"],
+        preview_type,
+    );
+    if ids.is_empty() {
+        return Ok(());
+    }
+
+    reporter.info(&format!(
+        "Clearing {} existing {preview_type} app preview videos for {asc_locale}...",
+        ids.len()
+    ));
+    for id in ids {
+        asc_command(
+            repo,
+            &["video-previews", "delete", "--id", &id, "--confirm"],
+            asc_env,
+            reporter,
+        )?;
+    }
     Ok(())
 }
 
@@ -1015,16 +1119,20 @@ fn app_preview_state(preview: &Value) -> AppPreviewState {
         .asset
         .iter()
         .chain(states.video.iter())
-        .any(|state| {
-            state.contains("FAIL") || state.contains("ERROR") || state.contains("INVALID")
-        })
+        .any(|state| state.contains("FAIL") || state.contains("ERROR") || state.contains("INVALID"))
     {
         return AppPreviewState::Failed(summary);
     }
 
-    if states.asset.iter().all(|state| is_finished_delivery_state(state))
+    if states
+        .asset
+        .iter()
+        .all(|state| is_finished_delivery_state(state))
         && !states.video.is_empty()
-        && states.video.iter().all(|state| is_finished_delivery_state(state))
+        && states
+            .video
+            .iter()
+            .all(|state| is_finished_delivery_state(state))
     {
         return AppPreviewState::Ready;
     }
@@ -1109,6 +1217,36 @@ fn collect_state_values(value: &Value, states: &mut Vec<String>) {
         Value::String(state) => states.push(state.to_ascii_uppercase()),
         _ => {}
     }
+}
+
+fn media_ids_with_attribute(
+    items: &[Value],
+    type_name: &str,
+    attribute_names: &[&str],
+    expected_value: &str,
+) -> Vec<String> {
+    let mut ids = Vec::new();
+    for item in items {
+        let Some(id) = item.get("id").and_then(Value::as_str) else {
+            continue;
+        };
+        if item.get("type").and_then(Value::as_str) != Some(type_name) {
+            continue;
+        }
+        let Some(attributes) = item.get("attributes") else {
+            continue;
+        };
+        let matches_expected = attribute_names.iter().any(|name| {
+            attributes
+                .get(*name)
+                .and_then(Value::as_str)
+                .is_some_and(|value| value == expected_value)
+        });
+        if matches_expected {
+            ids.push(id.to_string());
+        }
+    }
+    ids
 }
 
 fn version_locale_ids(
@@ -1680,7 +1818,8 @@ fn xml_escape(value: &str) -> String {
 #[cfg(test)]
 mod tests {
     use super::{
-        AppPreviewState, app_preview_state, collect_ids, is_preview_upload_in_progress_error,
+        app_preview_state, collect_ids, is_preview_upload_in_progress_error,
+        media_ids_with_attribute, AppPreviewState,
     };
     use serde_json::json;
 
@@ -1758,5 +1897,60 @@ mod tests {
         assert!(is_preview_upload_in_progress_error(
             "Error: There are still preview uploads in progress."
         ));
+    }
+
+    #[test]
+    fn media_ids_with_attribute_filters_by_type_and_attribute() {
+        let media = vec![
+            json!(
+            {
+                "type": "appScreenshots",
+                "id": "screenshot-1",
+                "attributes": { "screenshotDisplayType": "DESKTOP" }
+            }),
+            json!(
+            {
+                "type": "appScreenshots",
+                "id": "screenshot-2",
+                "attributes": { "screenshotDisplayType": "IPHONE_65" }
+            }),
+            json!(
+            {
+                "type": "appPreviews",
+                "id": "preview-1",
+                "attributes": { "previewType": "DESKTOP" }
+            }),
+        ];
+
+        assert_eq!(
+            media_ids_with_attribute(
+                &media,
+                "appScreenshots",
+                &["screenshotDisplayType"],
+                "DESKTOP"
+            ),
+            vec!["screenshot-1".to_string()]
+        );
+    }
+
+    #[test]
+    fn media_ids_with_attribute_accepts_fallback_attribute_names() {
+        let media = vec![json!(
+            {
+                "type": "appPreviews",
+                "id": "preview-1",
+                "attributes": { "appPreviewType": "DESKTOP" }
+            }
+        )];
+
+        assert_eq!(
+            media_ids_with_attribute(
+                &media,
+                "appPreviews",
+                &["previewType", "appPreviewType"],
+                "DESKTOP"
+            ),
+            vec!["preview-1".to_string()]
+        );
     }
 }
