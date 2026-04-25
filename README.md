@@ -90,7 +90,7 @@ ClipKitty solves that by splitting search into cheap recall and expensive judgme
 4. **Collapse chunks back to one parent item immediately.**
    Large items are chunked internally, but the product is still item-based. During Phase 1 collection, ClipKitty keeps only the best hit per parent item. If 20 chunks from one giant document match, that still becomes one candidate, not 20.
 5. **Make large documents earn their way in.**
-   A huge document almost always contains common words like `the`, `error`, or `function`. Without adjustment, those documents float upward on weak evidence and flood the expensive path. Phase 1 therefore blends Tantivy relevance with recency and a size-aware penalty for weak large-document matches. Strong local evidence still wins. Weak “it matched somewhere” evidence does not.
+   A huge document almost always contains common words like `the`, `error`, or `function`. Without adjustment, those documents float upward on weak evidence and flood the expensive path. Phase 1 therefore blends Tantivy relevance with an evidence-density score, recency, and a size-aware BM25 penalty for weak large-document matches. Strong local evidence such as word proximity still wins. Weak “it matched somewhere in one of many chunks” evidence does not.
 6. **Only rerank the head.**
    Phase 2 is the high-quality, expensive reranker. It does more detailed matching and prepares the signals used for final ordering. But there is no reason to spend that cost on the entire tail. ClipKitty reranks only a bounded top slice, then appends the rest in Phase 1 order.
 7. **Use the matched region for snippets, highlights, and preview bootstrapping.**

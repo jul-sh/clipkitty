@@ -12,12 +12,14 @@ pub(crate) const WORD_MATCH_SIGNAL: f32 = 100_000.0;
 /// Field order defines the lexicographic ranking policy via `derive(Ord)`:
 /// 1. word_match_count — number of query words with exact word-level matches
 /// 2. proximity_tier — number of adjacent query-word pairs found nearby
-/// 3. recency_score — logarithmic recency decay (0-2550, scaled 10x from u8)
-/// 4. bm25_remainder — BM25 score below the proximity band, quantized to u16
+/// 3. evidence_density_score — weak huge-parent matches decay before recency
+/// 4. recency_score — logarithmic recency decay (0-2550, scaled 10x from u8)
+/// 5. bm25_remainder — BM25 score below the proximity band, quantized to u16
 #[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord)]
 pub(crate) struct PhaseOneBlendedScore {
     pub word_match_count: u32,
     pub proximity_tier: u16,
+    pub evidence_density_score: u16,
     pub recency_score: u16,
     pub bm25_remainder: u16,
 }
@@ -40,6 +42,7 @@ impl PhaseOneBlendedScore {
         let base = base - (word_match_count as f64 * WORD_MATCH_SIGNAL as f64);
 
         let proximity_tier = (base / PROXIMITY_BOOST_SCALE as f64).floor();
+        let proximity_tier_score = proximity_tier as u16;
         let base_remainder = base - (proximity_tier * PROXIMITY_BOOST_SCALE as f64);
         let adjusted_remainder = if proximity_tier == 0.0 {
             (base_remainder - phase_one_size_penalty(parent_len)).max(0.0)
@@ -47,17 +50,55 @@ impl PhaseOneBlendedScore {
             base_remainder
         };
 
+        let evidence_density_score =
+            compute_evidence_density_score(parent_len, word_match_count, proximity_tier_score);
         let recency_score = compute_recency(timestamp, now);
 
         Self {
             word_match_count,
-            proximity_tier: proximity_tier as u16,
+            proximity_tier: proximity_tier_score,
+            evidence_density_score,
             recency_score: (recency_score * 10.0).round() as u16,
             bm25_remainder: (adjusted_remainder * 100.0)
                 .round()
                 .clamp(0.0, u16::MAX as f64) as u16,
         }
     }
+}
+
+const MAX_EVIDENCE_DENSITY_SCORE: u16 = 1000;
+
+/// Compensate for the "lottery ticket" advantage of huge parents.
+///
+/// Chunking makes matching local, but a 2 MB parent still has many more chunks
+/// that can accidentally match a common query than a compact item. Proximity is
+/// strong local evidence, so it keeps full density. Otherwise, length decays the
+/// score and exact word matches soften that decay.
+fn compute_evidence_density_score(
+    parent_len: usize,
+    word_match_count: u32,
+    proximity_tier: u16,
+) -> u16 {
+    if parent_len <= CHUNK_PARENT_THRESHOLD_BYTES || proximity_tier > 0 {
+        return MAX_EVIDENCE_DENSITY_SCORE;
+    }
+
+    let parent_ratio = parent_len as f64 / CHUNK_PARENT_THRESHOLD_BYTES as f64;
+    let doublings = parent_ratio.log2().max(0.0);
+    if doublings == 0.0 {
+        return MAX_EVIDENCE_DENSITY_SCORE;
+    }
+
+    let (penalty_per_doubling, floor) = match word_match_count {
+        0 => (220.0, 120.0),
+        1 => (170.0, 220.0),
+        2 => (120.0, 380.0),
+        _ => (80.0, 560.0),
+    };
+
+    (MAX_EVIDENCE_DENSITY_SCORE as f64 - doublings * penalty_per_doubling)
+        .round()
+        .clamp(floor, MAX_EVIDENCE_DENSITY_SCORE as f64) as u16
 }
 
 /// Logarithmic recency curve: 0–255 range, decaying over ~400 hours.
@@ -86,6 +127,7 @@ impl PhaseOneBlendedScore {
         Self {
             word_match_count: 0,
             proximity_tier: 0,
+            evidence_density_score: MAX_EVIDENCE_DENSITY_SCORE,
             recency_score: 0,
             bm25_remainder: raw.round().clamp(0.0, u16::MAX as f32) as u16,
         }
@@ -170,5 +212,61 @@ pub(crate) struct PhaseTwoHead {
 impl PhaseTwoHead {
     pub(crate) fn into_indices(self) -> Vec<usize> {
         self.indices
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    const NOW: i64 = 1_700_000_000;
+
+    fn raw_score(word_matches: u32, proximity_tier: u16, bm25: f32) -> f32 {
+        word_matches as f32 * WORD_MATCH_SIGNAL
+            + proximity_tier as f32 * PROXIMITY_BOOST_SCALE
+            + bm25
+    }
+
+    #[test]
+    fn weak_large_parent_gets_lower_evidence_density_than_compact_item() {
+        let compact = PhaseOneBlendedScore::decode(raw_score(1, 0, 8.0), NOW, 2_048, NOW);
+        let large = PhaseOneBlendedScore::decode(raw_score(1, 0, 8.0), NOW, 2 * 1024 * 1024, NOW);
+
+        assert_eq!(compact.evidence_density_score, MAX_EVIDENCE_DENSITY_SCORE);
+        assert!(
+            large.evidence_density_score < compact.evidence_density_score,
+            "weak evidence from huge parents should decay before recency/BM25"
+        );
+    }
+
+    #[test]
+    fn proximity_match_keeps_full_evidence_density_for_large_parent() {
+        let large = PhaseOneBlendedScore::decode(raw_score(1, 1, 8.0), NOW, 2 * 1024 * 1024, NOW);
+
+        assert_eq!(large.evidence_density_score, MAX_EVIDENCE_DENSITY_SCORE);
+    }
+
+    #[test]
+    fn exact_word_matches_soften_but_do_not_remove_large_parent_decay() {
+        let one_word =
+            PhaseOneBlendedScore::decode(raw_score(1, 0, 8.0), NOW, 2 * 1024 * 1024, NOW);
+        let three_words =
+            PhaseOneBlendedScore::decode(raw_score(3, 0, 8.0), NOW, 2 * 1024 * 1024, NOW);
+
+        assert!(three_words.evidence_density_score > one_word.evidence_density_score);
+        assert!(three_words.evidence_density_score < MAX_EVIDENCE_DENSITY_SCORE);
+    }
+
+    #[test]
+    fn evidence_density_sorts_before_recency_for_weak_large_matches() {
+        let old_compact =
+            PhaseOneBlendedScore::decode(raw_score(1, 0, 1.0), NOW - 400 * 3600, 2_048, NOW);
+        let fresh_large =
+            PhaseOneBlendedScore::decode(raw_score(1, 0, 500.0), NOW, 2 * 1024 * 1024, NOW);
+
+        assert!(
+            old_compact > fresh_large,
+            "compact weak evidence should beat newer huge-parent weak evidence"
+        );
     }
 }
