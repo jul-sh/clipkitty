@@ -476,7 +476,10 @@ fn intro_video(repo: &RepoRoot, dry_run: bool, reporter: &Reporter) -> Result<()
             ],
             reporter,
         )?;
-        inject_images_impl(repo, &video_db, locale, reporter)?;
+        // The intro video only ever searches for the "fast" cat image, so
+        // drop every other image to keep the recorded DB minimal.
+        strip_images_from_database(&video_db)?;
+        inject_images_impl(repo, &video_db, locale, ImageFilter::FastOnly, reporter)?;
 
         let _environment = ScreenshotEnvironment::prepare(reporter)?;
         record_preview_video(
@@ -537,7 +540,7 @@ fn patch_demo_items(repo: &RepoRoot, dry_run: bool, reporter: &Reporter) -> Resu
             )?;
             path
         };
-        inject_images_impl(repo, &db_path, locale, reporter)?;
+        inject_images_impl(repo, &db_path, locale, ImageFilter::All, reporter)?;
     }
 
     reporter.success("Demo databases refreshed.");
@@ -569,10 +572,28 @@ fn strip_images_from_database(db_path: &Utf8Path) -> Result<()> {
     Ok(())
 }
 
+#[derive(Debug, Clone, Copy)]
+enum ImageFilter {
+    All,
+    /// Only inject the "fast" cat image. Used for the intro video DB so the
+    /// recording doesn't carry around dozens of unused image rows.
+    FastOnly,
+}
+
+impl ImageFilter {
+    fn keep(self, item: &ManifestItem) -> bool {
+        match self {
+            Self::All => true,
+            Self::FastOnly => item.file == "fast.heic",
+        }
+    }
+}
+
 fn inject_images_impl(
     repo: &RepoRoot,
     db_path: &Utf8Path,
     locale: MarketingLocale,
+    filter: ImageFilter,
     reporter: &Reporter,
 ) -> Result<()> {
     let images_dir = repo.join("distribution/images");
@@ -609,6 +630,9 @@ fn inject_images_impl(
     let tx = conn.transaction()?;
     let mut inserted = 0usize;
     for item in manifest {
+        if !filter.keep(&item) {
+            continue;
+        }
         let asset = item.asset_for(locale);
         let image_path = images_dir.join(&asset.file);
         let thumb_path = images_dir.join(&asset.thumbnail);
