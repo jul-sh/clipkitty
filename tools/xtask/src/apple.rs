@@ -5,7 +5,7 @@
 
 use std::fs;
 
-use anyhow::{Result, anyhow};
+use anyhow::{anyhow, Result};
 use camino::{Utf8Path, Utf8PathBuf};
 
 use crate::output::Reporter;

@@ -39,8 +39,7 @@ pub fn resolve(repo: &RepoRoot, reporter: &Reporter) -> Result<ResolvedVersion> 
 
 fn read_base_major_minor(repo: &RepoRoot) -> Result<(String, String)> {
     let path = repo.join("Project.swift");
-    let text = fs::read_to_string(path.as_std_path())
-        .with_context(|| format!("reading {path}"))?;
+    let text = fs::read_to_string(path.as_std_path()).with_context(|| format!("reading {path}"))?;
     let base = text
         .lines()
         .find_map(parse_marketing_version_line)
@@ -95,7 +94,10 @@ mod tests {
     #[test]
     fn ignores_unrelated_lines() {
         assert_eq!(parse_marketing_version_line("\"OTHER\": \"1.2.3\","), None);
-        assert_eq!(parse_marketing_version_line("// MARKETING_VERSION = 1.0"), None);
+        assert_eq!(
+            parse_marketing_version_line("// MARKETING_VERSION = 1.0"),
+            None
+        );
     }
 
     #[test]
