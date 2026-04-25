@@ -523,8 +523,7 @@ fn patch_demo_items(repo: &RepoRoot, dry_run: bool, reporter: &Reporter) -> Resu
             base_db.clone()
         } else {
             let path = repo.join(format!("distribution/SyntheticData_{locale_code}.sqlite"));
-            fs::copy(base_db.as_std_path(), path.as_std_path())
-                .with_context(|| format!("copying {base_db} to {path}"))?;
+            copy_base_database_without_images(&base_db, &path)?;
             run_rust_data_gen(
                 repo,
                 &[
@@ -544,6 +543,13 @@ fn patch_demo_items(repo: &RepoRoot, dry_run: bool, reporter: &Reporter) -> Resu
     }
 
     reporter.success("Demo databases refreshed.");
+    Ok(())
+}
+
+fn copy_base_database_without_images(base_db: &Utf8Path, target_db: &Utf8Path) -> Result<()> {
+    fs::copy(base_db.as_std_path(), target_db.as_std_path())
+        .with_context(|| format!("copying {base_db} to {target_db}"))?;
+    strip_images_from_database(target_db)?;
     Ok(())
 }
 
@@ -1184,3 +1190,94 @@ fn tool_exists(name: &str) -> bool {
         .unwrap_or(false)
 }
 
+#[cfg(test)]
+mod tests {
+    use super::copy_base_database_without_images;
+    use camino::Utf8PathBuf;
+    use rusqlite::{params, Connection};
+
+    #[test]
+    fn copied_localized_database_drops_inherited_images() {
+        let tempdir = tempfile::tempdir().expect("tempdir");
+        let base_db =
+            Utf8PathBuf::from_path_buf(tempdir.path().join("base.sqlite")).expect("utf8 temp path");
+        let localized_db = Utf8PathBuf::from_path_buf(tempdir.path().join("localized.sqlite"))
+            .expect("utf8 temp path");
+
+        let conn = Connection::open(base_db.as_std_path()).expect("open base db");
+        conn.execute_batch(
+            "
+            CREATE TABLE items (
+                id INTEGER PRIMARY KEY AUTOINCREMENT,
+                item_id TEXT NOT NULL,
+                contentType TEXT NOT NULL,
+                contentHash TEXT NOT NULL,
+                content TEXT NOT NULL,
+                timestamp TEXT NOT NULL,
+                sourceApp TEXT,
+                sourceAppBundleId TEXT,
+                thumbnail BLOB,
+                colorRgba INTEGER
+            );
+            CREATE TABLE text_items (
+                itemId INTEGER PRIMARY KEY REFERENCES items(id) ON DELETE CASCADE,
+                value TEXT NOT NULL
+            );
+            CREATE TABLE image_items (
+                itemId INTEGER PRIMARY KEY REFERENCES items(id) ON DELETE CASCADE,
+                data BLOB NOT NULL,
+                description TEXT NOT NULL DEFAULT 'Image',
+                is_animated INTEGER NOT NULL DEFAULT 0,
+                locale TEXT DEFAULT 'en'
+            );
+            ",
+        )
+        .expect("create schema");
+
+        conn.execute(
+            "INSERT INTO items (item_id, contentType, contentHash, content, timestamp) VALUES ('text-1', 'text', 'text-hash', 'Hello', '2026-01-01 00:00:00')",
+            [],
+        )
+        .expect("insert text item");
+        let text_id = conn.last_insert_rowid();
+        conn.execute(
+            "INSERT INTO text_items (itemId, value) VALUES (?1, 'Hello')",
+            params![text_id],
+        )
+        .expect("insert text child");
+
+        conn.execute(
+            "INSERT INTO items (item_id, contentType, contentHash, content, timestamp) VALUES ('image-1', 'image', 'image-hash', 'Fast cat', '2026-01-01 00:00:01')",
+            [],
+        )
+        .expect("insert image item");
+        let image_id = conn.last_insert_rowid();
+        conn.execute(
+            "INSERT INTO image_items (itemId, data, description, locale) VALUES (?1, x'010203', 'Fast cat', 'en')",
+            params![image_id],
+        )
+        .expect("insert image child");
+        drop(conn);
+
+        copy_base_database_without_images(&base_db, &localized_db).expect("copy stripped db");
+
+        let conn = Connection::open(localized_db.as_std_path()).expect("open localized db");
+        let image_items: i64 = conn
+            .query_row("SELECT COUNT(*) FROM image_items", [], |row| row.get(0))
+            .expect("count image children");
+        let image_parent_items: i64 = conn
+            .query_row(
+                "SELECT COUNT(*) FROM items WHERE contentType = 'image'",
+                [],
+                |row| row.get(0),
+            )
+            .expect("count image parents");
+        let text_items: i64 = conn
+            .query_row("SELECT COUNT(*) FROM text_items", [], |row| row.get(0))
+            .expect("count text children");
+
+        assert_eq!(image_items, 0);
+        assert_eq!(image_parent_items, 0);
+        assert_eq!(text_items, 1);
+    }
+}
