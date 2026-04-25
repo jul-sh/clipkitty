@@ -393,6 +393,7 @@ private struct ImagePreviewView: View {
                     }
                 }
             }
+            .frame(maxWidth: .infinity, alignment: .leading)
             .padding(16)
         }
         .task(id: itemId) {
