@@ -9,6 +9,8 @@ use std::env;
 use std::ffi::OsString;
 use std::fmt::Write as _;
 use std::fs;
+use std::thread;
+use std::time::{Duration, Instant};
 
 use anyhow::{anyhow, Context, Result};
 use base64::Engine;
@@ -301,6 +303,13 @@ fn publish(
             platform.label
         ));
         upload_screenshots(repo, platform, &version_id, &asc_env, reporter)?;
+        if !platform.preview_device_types.is_empty() {
+            reporter.info(&format!(
+                "\n=== Uploading {} app preview videos ===",
+                platform.label
+            ));
+            upload_app_previews(repo, platform, &version_id, &asc_env, reporter)?;
+        }
         for extra in extra_screenshot_platforms {
             reporter.info(&format!("\n=== Uploading {} screenshots ===", extra.label));
             upload_screenshots(repo, *extra, &version_id, &asc_env, reporter)?;
@@ -325,6 +334,7 @@ struct PublishPlatform {
     metadata_dir_name: &'static str,
     marketing_dir_name: &'static str,
     screenshot_device_types: &'static [&'static str],
+    preview_device_types: &'static [&'static str],
 }
 
 const MACOS_PLATFORM: PublishPlatform = PublishPlatform {
@@ -336,6 +346,7 @@ const MACOS_PLATFORM: PublishPlatform = PublishPlatform {
     metadata_dir_name: "metadata",
     marketing_dir_name: "marketing",
     screenshot_device_types: &["APP_DESKTOP"],
+    preview_device_types: &["DESKTOP"],
 };
 
 const IOS_PLATFORM: PublishPlatform = PublishPlatform {
@@ -347,6 +358,7 @@ const IOS_PLATFORM: PublishPlatform = PublishPlatform {
     metadata_dir_name: "metadata",
     marketing_dir_name: "marketing-ios",
     screenshot_device_types: &["IPHONE_61"],
+    preview_device_types: &[],
 };
 
 /// Shares `IOS_PLATFORM`'s app_id, IPA, and ASC version row. Only the
@@ -362,6 +374,7 @@ const IPAD_PLATFORM: PublishPlatform = PublishPlatform {
     metadata_dir_name: "metadata",
     marketing_dir_name: "marketing-ipad",
     screenshot_device_types: &["IPAD_PRO_3GEN_129"],
+    preview_device_types: &[],
 };
 
 const LOCALE_MAP: &[(&str, &str)] = &[
@@ -656,52 +669,30 @@ fn upload_screenshots(
 
         for device_type in platform.screenshot_device_types {
             reporter.info(&format!(
-                "Deleting existing {device_type} screenshots for {asc_locale}..."
-            ));
-            let existing = asc_json(
-                repo,
-                &[
-                    "screenshots",
-                    "list",
-                    "--version-localization",
-                    localization_id,
-                    "--paginate",
-                ],
-                asc_env,
-                reporter,
-            )
-            .unwrap_or_default();
-            for screenshot in &existing {
-                if let Some(screenshot_id) = screenshot.get("id").and_then(Value::as_str) {
-                    let _ = asc_command(
-                        repo,
-                        &["screenshots", "delete", "--id", screenshot_id, "--confirm"],
-                        asc_env,
-                        reporter,
-                    );
-                }
-            }
-
-            reporter.info(&format!(
-                "Uploading {} {device_type} screenshots for {asc_locale}...",
+                "Replacing with {} {device_type} screenshots for {asc_locale}...",
                 pngs.len()
             ));
-            for png in &pngs {
-                asc_command(
-                    repo,
-                    &[
-                        "screenshots",
-                        "upload",
-                        "--version-localization",
-                        localization_id,
-                        "--device-type",
-                        device_type,
-                        "--path",
-                        png.as_str(),
-                    ],
-                    asc_env,
-                    reporter,
-                )?;
+            for (index, png) in pngs.iter().enumerate() {
+                let upload_mode = if index == 0 {
+                    ScreenshotUploadMode::ReplaceTargetSet
+                } else {
+                    ScreenshotUploadMode::AppendAfterReplace
+                };
+                let mut args = vec![
+                    "screenshots",
+                    "upload",
+                    "--version-localization",
+                    localization_id,
+                    "--device-type",
+                    device_type,
+                    "--path",
+                    png.as_str(),
+                ];
+                match upload_mode {
+                    ScreenshotUploadMode::ReplaceTargetSet => args.push("--replace"),
+                    ScreenshotUploadMode::AppendAfterReplace => {}
+                }
+                asc_command(repo, &args, asc_env, reporter)?;
             }
             uploaded_count += pngs.len();
         }
@@ -709,6 +700,452 @@ fn upload_screenshots(
 
     reporter.info(&format!("Total screenshots uploaded: {uploaded_count}"));
     Ok(())
+}
+
+enum ScreenshotUploadMode {
+    ReplaceTargetSet,
+    AppendAfterReplace,
+}
+
+fn upload_app_previews(
+    repo: &RepoRoot,
+    platform: PublishPlatform,
+    version_id: &str,
+    asc_env: &[(&str, &str)],
+    reporter: &Reporter,
+) -> Result<()> {
+    let locale_to_id = version_locale_ids(repo, version_id, asc_env, reporter)?;
+    let marketing_dir = repo.join(platform.marketing_dir_name);
+    if !marketing_dir.as_std_path().is_dir() {
+        return Err(anyhow!(
+            "marketing directory not found: {marketing_dir}; run `make intro-video` before publishing {} app previews",
+            platform.label
+        ));
+    }
+
+    let mut uploaded = Vec::new();
+    for (source_locale, asc_locale) in LOCALE_MAP {
+        let Some(localization_id) = locale_to_id.get(*asc_locale) else {
+            reporter.info(&format!(
+                "Warning: no localization for {asc_locale}, skipping app preview video"
+            ));
+            continue;
+        };
+
+        let video = marketing_dir.join(format!("{source_locale}/intro_video.mov"));
+        if !video.as_std_path().is_file() {
+            return Err(anyhow!(
+                "missing localized app preview video for {asc_locale}: {video}; run `make intro-video` before publishing"
+            ));
+        }
+
+        for preview_type in platform.preview_device_types {
+            reporter.info(&format!(
+                "Replacing {preview_type} app preview for {asc_locale} with {video}..."
+            ));
+            let output = upload_app_preview_with_retry(
+                repo,
+                localization_id,
+                asc_locale,
+                preview_type,
+                &video,
+                asc_env,
+                reporter,
+            )?;
+            let preview_ids = parse_asc_data(&output.stdout)
+                .map(|data| collect_ids(&data))
+                .unwrap_or_default();
+            uploaded.push(UploadedAppPreview {
+                localization_id: localization_id.clone(),
+                asc_locale: (*asc_locale).to_string(),
+                preview_type: (*preview_type).to_string(),
+                expected_ids: preview_ids,
+            });
+        }
+    }
+
+    if uploaded.is_empty() {
+        reporter.info("No app preview videos uploaded.");
+        return Ok(());
+    }
+
+    wait_for_app_previews(repo, &uploaded, asc_env, reporter)?;
+    reporter.info(&format!(
+        "Total app preview videos uploaded: {}",
+        uploaded.len()
+    ));
+    Ok(())
+}
+
+fn upload_app_preview_with_retry(
+    repo: &RepoRoot,
+    localization_id: &str,
+    asc_locale: &str,
+    preview_type: &str,
+    video: &Utf8Path,
+    asc_env: &[(&str, &str)],
+    reporter: &Reporter,
+) -> Result<crate::process::CommandOutput> {
+    let started = Instant::now();
+    let timeout = Duration::from_secs(30 * 60);
+    loop {
+        let args = [
+            "video-previews",
+            "upload",
+            "--version-localization",
+            localization_id,
+            "--device-type",
+            preview_type,
+            "--path",
+            video.as_str(),
+            "--replace",
+        ];
+        let output = asc_command_output(repo, &args, asc_env, reporter)?;
+        if output.status.success() {
+            return Ok(output);
+        }
+
+        let output_text = command_output_text(&output);
+        if !is_preview_upload_in_progress_error(&output_text) {
+            return Err(anyhow!("`asc {}` failed: {}", args.join(" "), output_text));
+        }
+
+        if started.elapsed() >= timeout {
+            return Err(anyhow!(
+                "timed out waiting to replace {asc_locale} {preview_type} app preview: {}",
+                output_text
+            ));
+        }
+
+        reporter.info(&format!(
+            "{asc_locale} {preview_type} preview upload is blocked by an existing ASC upload; waiting before retry..."
+        ));
+        wait_for_blocking_app_previews(
+            repo,
+            localization_id,
+            asc_locale,
+            preview_type,
+            asc_env,
+            reporter,
+        )?;
+    }
+}
+
+fn wait_for_blocking_app_previews(
+    repo: &RepoRoot,
+    localization_id: &str,
+    asc_locale: &str,
+    preview_type: &str,
+    asc_env: &[(&str, &str)],
+    reporter: &Reporter,
+) -> Result<()> {
+    let timeout = Duration::from_secs(30 * 60);
+    let poll_interval = Duration::from_secs(30);
+    let started = Instant::now();
+
+    loop {
+        let previews = asc_json(
+            repo,
+            &[
+                "video-previews",
+                "list",
+                "--version-localization",
+                localization_id,
+            ],
+            asc_env,
+            reporter,
+        )?;
+        let mut pending = Vec::new();
+        for preview in &previews {
+            match app_preview_state(preview) {
+                AppPreviewState::Ready => {}
+                AppPreviewState::Pending(summary) => pending.push(summary),
+                AppPreviewState::Failed(summary) => {
+                    return Err(anyhow!(
+                        "{asc_locale} {preview_type} existing app preview processing failed: {summary}"
+                    ));
+                }
+            }
+        }
+
+        if pending.is_empty() {
+            return Ok(());
+        }
+
+        if started.elapsed() >= timeout {
+            return Err(anyhow!(
+                "timed out waiting for blocking {asc_locale} {preview_type} app preview uploads: {}",
+                pending.join("; ")
+            ));
+        }
+
+        reporter.info(&format!(
+            "Waiting for blocking {asc_locale} {preview_type} app preview uploads: {}",
+            pending.join("; ")
+        ));
+        thread::sleep(poll_interval);
+    }
+}
+
+fn is_preview_upload_in_progress_error(message: &str) -> bool {
+    message.contains("There are still preview uploads in progress")
+}
+
+struct UploadedAppPreview {
+    localization_id: String,
+    asc_locale: String,
+    preview_type: String,
+    expected_ids: Vec<String>,
+}
+
+fn wait_for_app_previews(
+    repo: &RepoRoot,
+    uploaded: &[UploadedAppPreview],
+    asc_env: &[(&str, &str)],
+    reporter: &Reporter,
+) -> Result<()> {
+    let timeout = Duration::from_secs(30 * 60);
+    let poll_interval = Duration::from_secs(30);
+    let started = Instant::now();
+
+    loop {
+        let mut pending = Vec::new();
+        for target in uploaded {
+            let previews = asc_json(
+                repo,
+                &[
+                    "video-previews",
+                    "list",
+                    "--version-localization",
+                    &target.localization_id,
+                ],
+                asc_env,
+                reporter,
+            )?;
+            let matching_previews = previews
+                .iter()
+                .filter(|preview| preview_matches_upload(target, preview))
+                .collect::<Vec<_>>();
+
+            if matching_previews.is_empty() {
+                pending.push(format!(
+                    "{} {} has not appeared in ASC yet",
+                    target.asc_locale, target.preview_type
+                ));
+                continue;
+            }
+
+            for preview in matching_previews {
+                match app_preview_state(preview) {
+                    AppPreviewState::Ready => {}
+                    AppPreviewState::Pending(summary) => pending.push(format!(
+                        "{} {} is still processing ({summary})",
+                        target.asc_locale, target.preview_type
+                    )),
+                    AppPreviewState::Failed(summary) => {
+                        return Err(anyhow!(
+                            "{} {} app preview processing failed: {summary}",
+                            target.asc_locale,
+                            target.preview_type
+                        ));
+                    }
+                }
+            }
+        }
+
+        if pending.is_empty() {
+            reporter.info("All app preview videos finished processing.");
+            return Ok(());
+        }
+
+        if started.elapsed() >= timeout {
+            return Err(anyhow!(
+                "timed out waiting for app preview processing: {}",
+                pending.join("; ")
+            ));
+        }
+
+        reporter.info(&format!(
+            "Waiting for app preview processing: {}",
+            pending.join("; ")
+        ));
+        thread::sleep(poll_interval);
+    }
+}
+
+fn preview_matches_upload(target: &UploadedAppPreview, preview: &Value) -> bool {
+    if target.expected_ids.is_empty() {
+        return true;
+    }
+    preview
+        .get("id")
+        .and_then(Value::as_str)
+        .is_some_and(|id| target.expected_ids.iter().any(|expected| expected == id))
+}
+
+enum AppPreviewState {
+    Ready,
+    Pending(String),
+    Failed(String),
+}
+
+fn app_preview_state(preview: &Value) -> AppPreviewState {
+    let states = app_preview_delivery_states(preview);
+    if states.asset.is_empty() && states.video.is_empty() {
+        return AppPreviewState::Pending("ASC has not reported delivery states yet".to_string());
+    }
+
+    let summary = states.summary();
+    if states
+        .asset
+        .iter()
+        .chain(states.video.iter())
+        .any(|state| {
+            state.contains("FAIL") || state.contains("ERROR") || state.contains("INVALID")
+        })
+    {
+        return AppPreviewState::Failed(summary);
+    }
+
+    if states.asset.iter().all(|state| is_finished_delivery_state(state))
+        && !states.video.is_empty()
+        && states.video.iter().all(|state| is_finished_delivery_state(state))
+    {
+        return AppPreviewState::Ready;
+    }
+
+    AppPreviewState::Pending(summary)
+}
+
+struct AppPreviewDeliveryStates {
+    asset: Vec<String>,
+    video: Vec<String>,
+}
+
+impl AppPreviewDeliveryStates {
+    fn summary(&self) -> String {
+        let mut parts = Vec::new();
+        if self.asset.is_empty() {
+            parts.push("assetDeliveryState: missing".to_string());
+        } else {
+            parts.push(format!("assetDeliveryState: {}", self.asset.join(", ")));
+        }
+        if self.video.is_empty() {
+            parts.push("videoDeliveryState: missing".to_string());
+        } else {
+            parts.push(format!("videoDeliveryState: {}", self.video.join(", ")));
+        }
+        parts.join("; ")
+    }
+}
+
+fn app_preview_delivery_states(preview: &Value) -> AppPreviewDeliveryStates {
+    let mut asset = Vec::new();
+    let mut video = Vec::new();
+    if let Some(attrs) = preview.get("attributes") {
+        collect_named_states(attrs, "assetDeliveryState", &mut asset);
+        collect_named_states(attrs, "videoDeliveryState", &mut video);
+    }
+    asset.sort();
+    asset.dedup();
+    video.sort();
+    video.dedup();
+    AppPreviewDeliveryStates { asset, video }
+}
+
+fn is_finished_delivery_state(state: &str) -> bool {
+    matches!(state, "COMPLETE" | "READY" | "DELIVERED" | "ACCEPTED")
+}
+
+fn collect_named_states(value: &Value, key: &str, states: &mut Vec<String>) {
+    match value {
+        Value::Object(map) => {
+            if let Some(named) = map.get(key) {
+                collect_state_values(named, states);
+            }
+            for child in map.values() {
+                collect_named_states(child, key, states);
+            }
+        }
+        Value::Array(items) => {
+            for item in items {
+                collect_named_states(item, key, states);
+            }
+        }
+        _ => {}
+    }
+}
+
+fn collect_state_values(value: &Value, states: &mut Vec<String>) {
+    match value {
+        Value::Object(map) => {
+            if let Some(state) = map.get("state").and_then(Value::as_str) {
+                states.push(state.to_ascii_uppercase());
+            }
+            for child in map.values() {
+                collect_state_values(child, states);
+            }
+        }
+        Value::Array(items) => {
+            for item in items {
+                collect_state_values(item, states);
+            }
+        }
+        Value::String(state) => states.push(state.to_ascii_uppercase()),
+        _ => {}
+    }
+}
+
+fn version_locale_ids(
+    repo: &RepoRoot,
+    version_id: &str,
+    asc_env: &[(&str, &str)],
+    reporter: &Reporter,
+) -> Result<BTreeMap<String, String>> {
+    let localizations = asc_json(
+        repo,
+        &[
+            "localizations",
+            "list",
+            "--version",
+            version_id,
+            "--paginate",
+        ],
+        asc_env,
+        reporter,
+    )?;
+    let mut locale_to_id = BTreeMap::new();
+    for localization in localizations {
+        if let (Some(id), Some(locale)) = (
+            localization.get("id").and_then(Value::as_str),
+            localization
+                .get("attributes")
+                .and_then(|attrs| attrs.get("locale"))
+                .and_then(Value::as_str),
+        ) {
+            locale_to_id.insert(locale.to_string(), id.to_string());
+        }
+    }
+    Ok(locale_to_id)
+}
+
+fn collect_ids(value: &Value) -> Vec<String> {
+    match value {
+        Value::Object(map) => {
+            let mut ids = Vec::new();
+            if map.get("type").and_then(Value::as_str) == Some("appPreviews") {
+                if let Some(id) = map.get("id").and_then(Value::as_str) {
+                    ids.push(id.to_string());
+                }
+            }
+            for child in map.values() {
+                ids.extend(collect_ids(child));
+            }
+            ids
+        }
+        Value::Array(items) => items.iter().flat_map(collect_ids).collect(),
+        _ => Vec::new(),
+    }
 }
 
 fn remove_release_notes(dir: &Utf8Path) -> Result<bool> {
@@ -758,6 +1195,23 @@ fn asc_command(
     asc_env: &[(&str, &str)],
     reporter: &Reporter,
 ) -> Result<crate::process::CommandOutput> {
+    let output = asc_command_output(repo, args, asc_env, reporter)?;
+    if !output.status.success() {
+        return Err(anyhow!(
+            "`asc {}` failed: {}",
+            args.join(" "),
+            command_output_text(&output)
+        ));
+    }
+    Ok(output)
+}
+
+fn asc_command_output(
+    repo: &RepoRoot,
+    args: &[&str],
+    asc_env: &[(&str, &str)],
+    reporter: &Reporter,
+) -> Result<crate::process::CommandOutput> {
     let mut runner = Runner::new(reporter, "asc").cwd(repo.as_path());
     for arg in args {
         runner = runner.arg(*arg);
@@ -766,15 +1220,13 @@ fn asc_command(
         runner = runner.env(*key, *value);
     }
     let output = runner.capture_stdout().capture_stderr().output_status()?;
-    if !output.status.success() {
-        let stderr = String::from_utf8_lossy(&output.stderr);
-        return Err(anyhow!(
-            "`asc {}` failed: {}",
-            args.join(" "),
-            stderr.trim()
-        ));
-    }
     Ok(output)
+}
+
+fn command_output_text(output: &crate::process::CommandOutput) -> String {
+    let stdout = String::from_utf8_lossy(&output.stdout);
+    let stderr = String::from_utf8_lossy(&output.stderr);
+    format!("{stdout}{stderr}").trim().to_string()
 }
 
 fn parse_asc_data(bytes: &[u8]) -> Result<Value> {
@@ -1214,4 +1666,88 @@ fn xml_escape(value: &str) -> String {
         .replace('<', "&lt;")
         .replace('>', "&gt;")
         .replace('"', "&quot;")
+}
+
+#[cfg(test)]
+mod tests {
+    use super::{
+        AppPreviewState, app_preview_state, collect_ids, is_preview_upload_in_progress_error,
+    };
+    use serde_json::json;
+
+    #[test]
+    fn app_preview_state_waits_for_processing_video() {
+        let preview = json!({
+            "type": "appPreviews",
+            "id": "preview-1",
+            "attributes": {
+                "assetDeliveryState": { "state": "COMPLETE" },
+                "videoDeliveryState": { "state": "PROCESSING" }
+            }
+        });
+
+        let AppPreviewState::Pending(summary) = app_preview_state(&preview) else {
+            panic!("expected pending preview state");
+        };
+        assert!(summary.contains("PROCESSING"));
+    }
+
+    #[test]
+    fn app_preview_state_requires_video_delivery_state() {
+        let preview = json!({
+            "type": "appPreviews",
+            "id": "preview-1",
+            "attributes": {
+                "assetDeliveryState": { "state": "UPLOAD_COMPLETE" }
+            }
+        });
+
+        let AppPreviewState::Pending(summary) = app_preview_state(&preview) else {
+            panic!("expected pending preview state");
+        };
+        assert!(summary.contains("videoDeliveryState: missing"));
+    }
+
+    #[test]
+    fn app_preview_state_fails_on_delivery_error() {
+        let preview = json!({
+            "type": "appPreviews",
+            "id": "preview-1",
+            "attributes": {
+                "assetDeliveryState": { "state": "FAILED" },
+                "videoDeliveryState": { "state": "PROCESSING" }
+            }
+        });
+
+        let AppPreviewState::Failed(summary) = app_preview_state(&preview) else {
+            panic!("expected failed preview state");
+        };
+        assert!(summary.contains("FAILED"));
+    }
+
+    #[test]
+    fn collect_ids_only_returns_app_preview_ids() {
+        let response = json!({
+            "data": {
+                "type": "appPreviewSets",
+                "id": "set-1",
+                "relationships": {
+                    "appPreviews": {
+                        "data": [
+                            { "type": "appPreviews", "id": "preview-1" }
+                        ]
+                    }
+                }
+            }
+        });
+
+        assert_eq!(collect_ids(&response), vec!["preview-1".to_string()]);
+    }
+
+    #[test]
+    fn detects_blocking_preview_upload_message() {
+        assert!(is_preview_upload_in_progress_error(
+            "Error: There are still preview uploads in progress."
+        ));
+    }
 }
