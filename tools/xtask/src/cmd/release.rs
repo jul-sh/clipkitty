@@ -294,9 +294,6 @@ fn publish(
         upload_binary(repo, platform, &asc_key_id, &asc_issuer_id, reporter)?;
         reporter.info("\n=== Uploading metadata ===");
         let version_id = ensure_editable_version(repo, platform, version, &asc_env, reporter)?;
-        let Some(version_id) = version_id else {
-            return Ok(());
-        };
         import_metadata(repo, platform, &version_id, &asc_env, reporter)?;
         reporter.info(&format!(
             "\n=== Uploading {} screenshots ===",
@@ -390,6 +387,9 @@ const LOCALE_MAP: &[(&str, &str)] = &[
     ("zh-Hant", "zh-Hant"),
 ];
 
+const EXPECTED_SCREENSHOT_FILES: &[&str] =
+    &["screenshot_1.png", "screenshot_2.png", "screenshot_3.png"];
+
 fn publish_platform(name: &str) -> Result<PublishPlatform> {
     match name {
         "macos" => Ok(MACOS_PLATFORM),
@@ -442,7 +442,7 @@ fn ensure_editable_version(
     version: &str,
     asc_env: &[(&str, &str)],
     reporter: &Reporter,
-) -> Result<Option<String>> {
+) -> Result<String> {
     let versions = asc_json(
         repo,
         &[
@@ -459,8 +459,6 @@ fn ensure_editable_version(
         reporter,
     )?;
 
-    let mut version_id = None;
-
     if let Some(existing) = versions.first() {
         let existing_version = existing
             .get("attributes")
@@ -473,67 +471,88 @@ fn ensure_editable_version(
             .ok_or_else(|| anyhow!("version list entry missing id"))?;
 
         if existing_version == version {
-            version_id = Some(existing_id.to_string());
-        } else {
             reporter.info(&format!(
-                "Deleting stale PREPARE_FOR_SUBMISSION version {existing_version} (ID: {existing_id})..."
+                "Using existing App Store version {version} (ID: {existing_id})"
             ));
-            let result = asc_command(
-                repo,
-                &["versions", "delete", "--version-id", existing_id, "--confirm"],
-                asc_env,
-                reporter,
-            );
-            if let Err(err) = result {
-                reporter.info(&format!("Warning: Could not delete stale version: {err}"));
-            }
+            reporter.info(&format!("Target version ID: {existing_id}"));
+            return Ok(existing_id.to_string());
         }
-    }
 
-    if version_id.is_none() {
-        reporter.info(&format!("Creating new App Store version {version}..."));
-        let output = asc_command(
-            repo,
-            &[
-                "versions",
-                "create",
-                "--app",
-                platform.app_id,
-                "--platform",
-                platform.asc_platform,
-                "--version",
-                version,
-                "--release-type",
-                "MANUAL",
-            ],
-            asc_env,
-            reporter,
-        );
-        match output {
-            Ok(output) => {
-                let created = parse_asc_data(&output.stdout)?;
-                if let Some(id) = created.get("id").and_then(Value::as_str) {
-                    reporter.info(&format!("Created version {version} (ID: {id})"));
-                    version_id = Some(id.to_string());
-                }
-            }
-            Err(err) => {
-                reporter.info(&format!("Warning: Could not create version {version}: {err}"));
-                reporter.info(
-                    "Skipping metadata and screenshot upload (binary was uploaded successfully).",
-                );
-                return Ok(None);
-            }
-        }
-    }
-
-    if let Some(id) = &version_id {
+        reporter.info(&format!(
+            "Updating existing PREPARE_FOR_SUBMISSION version {existing_version} (ID: {existing_id}) to {version}..."
+        ));
+        let id = update_app_store_version(repo, existing_id, version, asc_env, reporter)
+            .with_context(|| {
+                format!(
+                    "updating existing App Store version {existing_version} (ID: {existing_id}) to {version}"
+                )
+            })?;
         reporter.info(&format!("Target version ID: {id}"));
-        Ok(Some(id.clone()))
-    } else {
-        reporter.info("Warning: no editable App Store version available; skipping metadata and screenshot upload.");
-        Ok(None)
+        return Ok(id);
     }
+
+    reporter.info(&format!("Creating new App Store version {version}..."));
+    let output = asc_command(
+        repo,
+        &[
+            "versions",
+            "create",
+            "--app",
+            platform.app_id,
+            "--platform",
+            platform.asc_platform,
+            "--version",
+            version,
+            "--release-type",
+            "MANUAL",
+        ],
+        asc_env,
+        reporter,
+    )
+    .with_context(|| {
+        format!(
+            "creating editable App Store version {version}; metadata, screenshots, and preview videos were not uploaded"
+        )
+    })?;
+    let created = parse_asc_data(&output.stdout)?;
+    let id = created
+        .get("id")
+        .and_then(Value::as_str)
+        .ok_or_else(|| anyhow!("created version response missing id"))?;
+    reporter.info(&format!("Created version {version} (ID: {id})"));
+    reporter.info(&format!("Target version ID: {id}"));
+    Ok(id.to_string())
+}
+
+fn update_app_store_version(
+    repo: &RepoRoot,
+    version_id: &str,
+    version: &str,
+    asc_env: &[(&str, &str)],
+    reporter: &Reporter,
+) -> Result<String> {
+    let output = asc_command(
+        repo,
+        &[
+            "versions",
+            "update",
+            "--version-id",
+            version_id,
+            "--version",
+            version,
+            "--release-type",
+            "MANUAL",
+        ],
+        asc_env,
+        reporter,
+    )?;
+    let updated = parse_asc_data(&output.stdout)?;
+    let id = updated
+        .get("id")
+        .and_then(Value::as_str)
+        .unwrap_or(version_id);
+    reporter.info(&format!("Updated App Store version {version} (ID: {id})"));
+    Ok(id.to_string())
 }
 
 fn import_metadata(
@@ -619,53 +638,25 @@ fn upload_screenshots(
         }
     }
 
+    let mut uploaded_count = 0usize;
     let marketing_dir = repo.join(platform.marketing_dir_name);
     if !marketing_dir.as_std_path().is_dir() {
-        reporter.info(&format!(
-            "Warning: marketing directory not found: {marketing_dir}; skipping screenshot upload."
+        return Err(anyhow!(
+            "marketing directory not found: {marketing_dir}; generate or download {} screenshots before publishing",
+            platform.label
         ));
-        return Ok(());
     }
 
-    let mut uploaded_count = 0usize;
-    let mut locale_dirs = fs::read_dir(marketing_dir.as_std_path())
-        .with_context(|| format!("reading {marketing_dir}"))?
-        .filter_map(|entry| entry.ok())
-        .filter_map(|entry| Utf8PathBuf::from_path_buf(entry.path()).ok())
-        .filter(|path| path.as_std_path().is_dir())
-        .collect::<Vec<_>>();
-    locale_dirs.sort();
-
-    for locale_dir in locale_dirs {
-        let Some(entry_name) = locale_dir.file_name() else {
-            continue;
-        };
-        let Some(asc_locale) = locale_code(entry_name) else {
-            continue;
-        };
-        let Some(localization_id) = locale_to_id.get(asc_locale) else {
-            reporter.info(&format!(
-                "Warning: no localization for {asc_locale}, skipping screenshots"
+    for (source_locale, asc_locale) in LOCALE_MAP {
+        let Some(localization_id) = locale_to_id.get(*asc_locale) else {
+            return Err(anyhow!(
+                "no ASC localization for {asc_locale}; cannot upload {} screenshots",
+                platform.label
             ));
-            continue;
         };
 
-        let mut pngs = fs::read_dir(locale_dir.as_std_path())
-            .with_context(|| format!("reading {locale_dir}"))?
-            .filter_map(|entry| entry.ok())
-            .filter_map(|entry| Utf8PathBuf::from_path_buf(entry.path()).ok())
-            .filter(|path| {
-                path.extension() == Some("png")
-                    && path
-                        .file_name()
-                        .is_some_and(|name| name.starts_with("screenshot_"))
-            })
-            .collect::<Vec<_>>();
-        pngs.sort();
-        if pngs.is_empty() {
-            reporter.info(&format!("Warning: no screenshots found in {locale_dir}"));
-            continue;
-        }
+        let locale_dir = marketing_dir.join(source_locale);
+        let pngs = expected_screenshot_paths(&locale_dir, *asc_locale, platform.label)?;
 
         for device_type in platform.screenshot_device_types {
             reporter.info(&format!(
@@ -700,6 +691,30 @@ fn upload_screenshots(
 
     reporter.info(&format!("Total screenshots uploaded: {uploaded_count}"));
     Ok(())
+}
+
+fn expected_screenshot_paths(
+    locale_dir: &Utf8Path,
+    asc_locale: &str,
+    platform_label: &str,
+) -> Result<Vec<Utf8PathBuf>> {
+    if !locale_dir.as_std_path().is_dir() {
+        return Err(anyhow!(
+            "missing {platform_label} screenshot directory for {asc_locale}: {locale_dir}"
+        ));
+    }
+
+    let mut paths = Vec::with_capacity(EXPECTED_SCREENSHOT_FILES.len());
+    for filename in EXPECTED_SCREENSHOT_FILES {
+        let path = locale_dir.join(filename);
+        if !path.as_std_path().is_file() {
+            return Err(anyhow!(
+                "missing {platform_label} screenshot for {asc_locale}: {path}"
+            ));
+        }
+        paths.push(path);
+    }
+    Ok(paths)
 }
 
 enum ScreenshotUploadMode {
@@ -1165,12 +1180,6 @@ fn remove_release_notes(dir: &Utf8Path) -> Result<bool> {
         }
     }
     Ok(removed)
-}
-
-fn locale_code(entry: &str) -> Option<&'static str> {
-    LOCALE_MAP
-        .iter()
-        .find_map(|(source, target)| (*source == entry).then_some(*target))
 }
 
 fn asc_json(
