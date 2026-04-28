@@ -208,6 +208,7 @@ jobs:
 
       - name: Create Hardened Archive
         run: |
+          codesign --force --sign "Developer ID Application" --entitlements Sources/MacApp/ClipKitty.hardened.entitlements DerivedData/Build/Products/Hardened/ClipKitty.app
           cd DerivedData/Build/Products/Hardened
           zip -r "$GITHUB_WORKSPACE/ClipKitty-Hardened.zip" ClipKitty.app
 
@@ -408,6 +409,30 @@ jobs:
           NOTARY_KEY_BASE64: ${{ steps.secrets.outputs.NOTARY_KEY_BASE64 }}
           NOTARY_KEY_ID: ${{ steps.secrets.outputs.NOTARY_KEY_ID }}
           NOTARY_ISSUER_ID: ${{ steps.secrets.outputs.NOTARY_ISSUER_ID }}
+
+      - name: Notarize Hardened ZIP
+        run: |
+          xcrun notarytool submit ClipKitty-Hardened.zip \
+            --key auth_key.p8 \
+            --key-id "$NOTARY_KEY_ID" \
+            --issuer "$NOTARY_ISSUER_ID" \
+            --wait --output-format json | tee notarization_result_hardened.json
+
+          STATUS=$(python3 -c "import json,sys; print(json.load(sys.stdin)['status'])" < notarization_result_hardened.json)
+
+          if [ "$STATUS" != "Accepted" ]; then
+            echo "::error::Notarization failed for Hardened ZIP with status: $STATUS"
+            SUBMISSION_ID=$(python3 -c "import json,sys; print(json.load(sys.stdin)['id'])" < notarization_result_hardened.json)
+            xcrun notarytool log "$SUBMISSION_ID" \
+              --key auth_key.p8 \
+              --key-id "$NOTARY_KEY_ID" \
+              --issuer "$NOTARY_ISSUER_ID" || true
+            exit 1
+          fi
+        env:
+          NOTARY_KEY_ID: ${{ steps.secrets.outputs.NOTARY_KEY_ID }}
+          NOTARY_ISSUER_ID: ${{ steps.secrets.outputs.NOTARY_ISSUER_ID }}
+
 
       - name: Clean up Notary Key
         if: always()
