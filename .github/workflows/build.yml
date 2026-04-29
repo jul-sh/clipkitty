@@ -208,7 +208,8 @@ jobs:
 
       - name: Create Hardened Archive
         run: |
-          codesign --force --sign "Developer ID Application" --entitlements Sources/MacApp/ClipKitty.hardened.entitlements DerivedData/Build/Products/Hardened/ClipKitty.app
+          codesign --force --options runtime --sign "Developer ID Application" --entitlements Sources/MacApp/ClipKitty.hardened.entitlements DerivedData/Build/Products/Hardened/ClipKitty.app
+          codesign --display --verbose=4 DerivedData/Build/Products/Hardened/ClipKitty.app 2>&1 | grep -q "runtime"
           cd DerivedData/Build/Products/Hardened
           zip -r "$GITHUB_WORKSPACE/ClipKitty-Hardened.zip" ClipKitty.app
 
