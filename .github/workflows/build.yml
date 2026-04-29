@@ -596,7 +596,7 @@ jobs:
           if-no-files-found: ignore
 
       - name: Deploy to gh-pages
-        if: github.event_name == 'push' && (github.ref == 'refs/heads/main' || github.ref == 'refs/heads/release')
+        if: always() && github.event_name == 'push' && (github.ref == 'refs/heads/main' || github.ref == 'refs/heads/release')
         run: |
           git config --global user.name "github-actions[bot]"
           git config --global user.email "github-actions[bot]@users.noreply.github.com"
@@ -620,7 +620,7 @@ jobs:
           cp "$GITHUB_WORKSPACE/marketing/en/screenshot_2.png" marketing_2.png
           cp "$GITHUB_WORKSPACE/marketing/en/screenshot_3.png" marketing_3.png
 
-          if [ "$GITHUB_REF_NAME" = "main" ] || [ "$GITHUB_REF_NAME" = "release" ]; then
+          if [ -n "${{ steps.eddsa-sign.outputs.ed_signature }}" ] && [ -n "${{ steps.eddsa-sign.outputs.file_length }}" ]; then
             [ -f appcast-state.json ] || printf '{}\n' > appcast-state.json
 
             make -C "$GITHUB_WORKSPACE" release-appcast-update \
@@ -636,6 +636,8 @@ jobs:
               OUTPUT_PATH="$(pwd)/appcast.xml"
 
             xmllint --noout appcast.xml
+          else
+            echo "Skipping appcast update because the signed update metadata was not produced."
           fi
 
           # Generate landing page from README.md (cmark-gfm installed via Nix)
