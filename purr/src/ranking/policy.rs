@@ -10,16 +10,12 @@ pub const LARGE_DOC_THRESHOLD_BYTES: usize = 32 * 1024; // 32KB
 /// 1. foundational match quality
 /// 2. coarse recency band
 /// 3. detailed tie-break quality
-/// 4. smooth recency decay
-/// 5. BM25 tie-break
-/// 6. raw timestamp
+/// 4. raw timestamp
 #[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord)]
 pub struct BucketScore {
     pub quality_tier: QualityTier,
     pub recency_bucket: RecencyBucket,
     pub quality_detail: QualityDetail,
-    pub recency_score: u8,
-    pub bm25_quantized: u16,
     pub recency: i64,
 }
 
@@ -255,32 +251,6 @@ pub(super) fn compute_recency_bucket(timestamp: i64, now: i64) -> RecencyBucket 
         }
         _ => RecencyBucket::Stale,
     }
-}
-
-/// Smooth recency score using logarithmic decay, quantized to u8 (0-255).
-/// Logarithmic scale distributes resolution across human-meaningful time ranges
-/// (minutes, hours, days, weeks) — unlike exponential decay which concentrates
-/// resolution around a single half-life.
-///
-/// Approximate values at notable ages:
-///   now       → 255
-///   5 min     → 227
-///   30 min    → 187
-///   1 hour    → 169
-///   6 hours   → 119
-///   24 hours  →  80
-///   7 days    →  25
-///   17 days   →   0
-pub(super) fn compute_recency_score(timestamp: i64, now: i64) -> u8 {
-    let age_secs = (now - timestamp).max(0) as f64;
-    let age_hours = age_secs / 3600.0;
-    // k: time scaling — higher values increase sensitivity to small age differences.
-    // max_hours: age at which score reaches 0.
-    let k: f64 = 20.0;
-    let max_hours: f64 = 400.0;
-    let denom = (1.0 + k * max_hours).ln();
-    let score = 255.0 * (1.0 - (1.0 + k * age_hours).ln() / denom);
-    score.round().clamp(0.0, 255.0) as u8
 }
 
 #[cfg(test)]

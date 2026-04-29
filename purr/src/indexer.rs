@@ -456,7 +456,6 @@ fn score_phase_two_candidate(
         last_word_is_prefix: phase_two_query.last_word_is_prefix,
         prefix_preference: phase_two_query.prefix_preference,
         timestamp: candidate.timestamp,
-        bm25_remainder: candidate.phase_one_score.bm25_remainder,
         now,
     });
 
@@ -484,7 +483,6 @@ fn score_phase_two_candidate(
         last_word_is_prefix: phase_two_query.last_word_is_prefix,
         prefix_preference: phase_two_query.prefix_preference,
         timestamp: candidate.timestamp,
-        bm25_remainder: candidate.phase_one_score.bm25_remainder,
         now,
     });
 

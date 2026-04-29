@@ -28,8 +28,7 @@ pub(crate) use self::matching::{
     prefix_match_for_query_word, PrefixMatch, WordMatchKind,
 };
 use self::policy::{
-    compute_quality_detail, compute_quality_tier, compute_recency_bucket, compute_recency_score,
-    compute_structure_detail,
+    compute_quality_detail, compute_quality_tier, compute_recency_bucket, compute_structure_detail,
 };
 #[cfg(test)]
 use self::policy::{
@@ -59,8 +58,6 @@ pub struct ScoringContext<'a> {
     pub prefix_preference: Option<PrefixPreferenceQuery<'a>>,
     /// Document timestamp (unix seconds)
     pub timestamp: i64,
-    /// Pre-quantized BM25 remainder from Phase 1 (already u16-scaled).
-    pub bm25_remainder: u16,
     /// Current time (unix seconds)
     pub now: i64,
 }
@@ -589,8 +586,6 @@ impl QualitySignals {
 struct RankingBreakdown {
     quality_signals: QualitySignals,
     recency_bucket: RecencyBucket,
-    recency_score: u8,
-    bm25_quantized: u16,
 }
 
 impl RankingBreakdown {
@@ -599,8 +594,6 @@ impl RankingBreakdown {
             quality_tier: self.quality_signals.quality_tier(),
             recency_bucket: self.recency_bucket,
             quality_detail: self.quality_signals.quality_detail(),
-            recency_score: self.recency_score,
-            bm25_quantized: self.bm25_quantized,
             recency: timestamp,
         }
     }
@@ -623,8 +616,6 @@ fn build_ranking_breakdown(ctx: &ScoringContext<'_>) -> RankingBreakdown {
     RankingBreakdown {
         quality_signals,
         recency_bucket: compute_recency_bucket(ctx.timestamp, ctx.now),
-        recency_score: compute_recency_score(ctx.timestamp, ctx.now),
-        bm25_quantized: ctx.bm25_remainder,
     }
 }
 
@@ -655,8 +646,6 @@ fn build_ranking_breakdown_with_perf(
         RankingBreakdown {
             quality_signals,
             recency_bucket: compute_recency_bucket(ctx.timestamp, ctx.now),
-            recency_score: compute_recency_score(ctx.timestamp, ctx.now),
-            bm25_quantized: ctx.bm25_remainder,
         },
         perf,
     )
@@ -673,8 +662,6 @@ pub fn compute_bucket_score(ctx: &ScoringContext<'_>) -> BucketScore {
             quality_tier: QualityTier::NoMatch,
             recency_bucket: compute_recency_bucket(ctx.timestamp, ctx.now),
             quality_detail: QualityDetail::default(),
-            recency_score: compute_recency_score(ctx.timestamp, ctx.now),
-            bm25_quantized: ctx.bm25_remainder,
             recency: ctx.timestamp,
         };
     }
@@ -692,8 +679,6 @@ pub(crate) fn compute_bucket_score_with_perf(
                 quality_tier: QualityTier::NoMatch,
                 recency_bucket: compute_recency_bucket(ctx.timestamp, ctx.now),
                 quality_detail: QualityDetail::default(),
-                recency_score: compute_recency_score(ctx.timestamp, ctx.now),
-                bm25_quantized: ctx.bm25_remainder,
                 recency: ctx.timestamp,
             },
             RankingPerfBreakdown::default(),
@@ -1500,7 +1485,6 @@ mod tests {
         last_word_is_prefix: bool,
         prefix_preference: Option<PrefixPreferenceQuery<'_>>,
         timestamp: i64,
-        bm25: f32,
         now: i64,
     ) -> BucketScore {
         let document = prepare_document_for_ranking(content);
@@ -1519,7 +1503,6 @@ mod tests {
             last_word_is_prefix,
             prefix_preference,
             timestamp,
-            bm25_remainder: (bm25 * 100.0).clamp(0.0, u16::MAX as f32) as u16,
             now,
         })
     }
@@ -1991,16 +1974,8 @@ mod tests {
         assert!(prepare_document_for_ranking(&content_prefix).is_fast_mode());
         assert!(prepare_document_for_ranking(&later_exact).is_fast_mode());
 
-        let prefix_score = score(
-            &content_prefix,
-            &["error"],
-            false,
-            None,
-            now - 3600,
-            1.0,
-            now,
-        );
-        let later_score = score(&later_exact, &["error"], false, None, now - 3600, 1.0, now);
+        let prefix_score = score(&content_prefix, &["error"], false, None, now - 3600, now);
+        let later_score = score(&later_exact, &["error"], false, None, now - 3600, now);
 
         assert!(
             prefix_score > later_score,
@@ -2150,97 +2125,6 @@ mod tests {
         assert_eq!(compute_exactness("hallo", &["hello"], &matches), 0);
     }
 
-    // ── recency_score tests ───────────────────────────────────────
-
-    #[test]
-    fn test_recency_score_now() {
-        let now = 1700000000i64;
-        assert_eq!(compute_recency_score(now, now), 255);
-    }
-
-    #[test]
-    fn test_recency_score_at_old_tier_boundaries() {
-        let now = 1700000000i64;
-        let at_1h = compute_recency_score(now - 3600, now);
-        let at_24h = compute_recency_score(now - 86400, now);
-        let at_7d = compute_recency_score(now - 604800, now);
-
-        assert!(
-            (160..=180).contains(&(at_1h as u16)),
-            "1h: expected ~169, got {}",
-            at_1h
-        );
-        assert!(
-            (70..=90).contains(&(at_24h as u16)),
-            "24h: expected ~80, got {}",
-            at_24h
-        );
-        assert!(
-            (15..=35).contains(&(at_7d as u16)),
-            "7d: expected ~25, got {}",
-            at_7d
-        );
-        // 24h-7d gap should be clearly larger than 7d score itself
-        assert!(
-            at_24h - at_7d > at_7d,
-            "24h-7d gap ({}) should exceed 7d score ({})",
-            at_24h - at_7d,
-            at_7d
-        );
-    }
-
-    #[test]
-    fn test_recency_score_very_old() {
-        let now = 1700000000i64;
-        let seventeen_days = 17 * 86400;
-        assert_eq!(compute_recency_score(now - seventeen_days, now), 0);
-    }
-
-    #[test]
-    fn test_recency_score_monotonically_decreasing() {
-        let now = 1700000000i64;
-        let mut prev = 255u8;
-        for minutes in 1..=50000 {
-            let score = compute_recency_score(now - minutes * 60, now);
-            assert!(
-                score <= prev,
-                "score should decrease: {} > {} at {}min",
-                score,
-                prev,
-                minutes
-            );
-            prev = score;
-        }
-    }
-
-    #[test]
-    fn test_recency_score_differentiates_within_first_hour() {
-        let now = 1700000000i64;
-        // Items 5 min, 15 min, 30 min, 55 min apart should all have distinct scores
-        let at_5m = compute_recency_score(now - 300, now);
-        let at_15m = compute_recency_score(now - 900, now);
-        let at_30m = compute_recency_score(now - 1800, now);
-        let at_55m = compute_recency_score(now - 3300, now);
-        assert!(
-            at_5m > at_15m,
-            "5min ({}) should beat 15min ({})",
-            at_5m,
-            at_15m
-        );
-        assert!(
-            at_15m > at_30m,
-            "15min ({}) should beat 30min ({})",
-            at_15m,
-            at_30m
-        );
-        assert!(
-            at_30m > at_55m,
-            "30min ({}) should beat 55min ({})",
-            at_30m,
-            at_55m
-        );
-    }
-
     #[test]
     fn test_recency_bucket_boundaries() {
         let now = 1700000000i64;
@@ -2337,7 +2221,6 @@ mod tests {
             false,
             None,
             now - 3600,
-            1.0,
             now,
         );
         let short_terms = score(
@@ -2346,7 +2229,6 @@ mod tests {
             false,
             None,
             now - 3600,
-            1.0,
             now,
         );
         assert!(
@@ -2364,7 +2246,6 @@ mod tests {
             false,
             None,
             now,
-            1.0,
             now,
         );
         let scattered_full = score(
@@ -2373,7 +2254,6 @@ mod tests {
             false,
             None,
             now,
-            1.0,
             now,
         );
         assert!(
@@ -2386,14 +2266,13 @@ mod tests {
     fn test_recency_dominates_typo() {
         let now = 1700000000i64;
         // Typo match from now vs exact match from 10 days ago
-        let typo_new = score("riversde park", &["riverside"], false, None, now, 1.0, now);
+        let typo_new = score("riversde park", &["riverside"], false, None, now, now);
         let exact_old = score(
             "riverside park",
             &["riverside"],
             false,
             None,
             now - 864000,
-            1.0,
             now,
         );
         assert_eq!(typo_new.quality_tier, exact_old.quality_tier);
@@ -2413,7 +2292,6 @@ mod tests {
             false,
             None,
             now - 3600,
-            1.0,
             now,
         );
         let typo = score(
@@ -2422,7 +2300,6 @@ mod tests {
             false,
             None,
             now - 3600,
-            1.0,
             now,
         );
         assert!(
@@ -2434,8 +2311,8 @@ mod tests {
     #[test]
     fn test_single_word_prefix_beats_slightly_newer_fuzzy_match() {
         let now = 1700000000i64;
-        let older_prefix = score("claude", &["cla"], true, None, now - 60, 1.0, now);
-        let newer_fuzzy = score("cli", &["cla"], true, None, now, 1.0, now);
+        let older_prefix = score("claude", &["cla"], true, None, now - 60, now);
+        let newer_fuzzy = score("cli", &["cla"], true, None, now, now);
         assert!(
             older_prefix > newer_fuzzy,
             "A strong single-word prefix should beat a slightly newer fuzzy near-match"
@@ -2445,16 +2322,8 @@ mod tests {
     #[test]
     fn test_content_prefix_beats_moderately_newer_word_prefix() {
         let now = 1700000000i64;
-        let older_content_prefix = score("claude notes", &["cla"], true, None, now - 600, 1.0, now);
-        let newer_word_prefix = score(
-            "say claude notes",
-            &["cla"],
-            true,
-            None,
-            now - 180,
-            1.0,
-            now,
-        );
+        let older_content_prefix = score("claude notes", &["cla"], true, None, now - 600, now);
+        let newer_word_prefix = score("say claude notes", &["cla"], true, None, now - 180, now);
         assert!(
             older_content_prefix > newer_word_prefix,
             "Across a moderate age gap, content-prefix should beat a newer non-initial word-prefix match"
@@ -2464,24 +2333,9 @@ mod tests {
     #[test]
     fn test_recent_word_prefix_beats_ancient_content_prefix() {
         let now = 1700000000i64;
-        let ancient_content_prefix = score(
-            "claude notes",
-            &["cla"],
-            true,
-            None,
-            now - 60 * 86400,
-            1.0,
-            now,
-        );
-        let recent_word_prefix = score(
-            "say claude notes",
-            &["cla"],
-            true,
-            None,
-            now - 600,
-            1.0,
-            now,
-        );
+        let ancient_content_prefix =
+            score("claude notes", &["cla"], true, None, now - 60 * 86400, now);
+        let recent_word_prefix = score("say claude notes", &["cla"], true, None, now - 600, now);
         assert!(
             recent_word_prefix > ancient_content_prefix,
             "Across a massive age gap, recency should beat the stronger content-prefix match"
@@ -2491,8 +2345,8 @@ mod tests {
     #[test]
     fn test_word_prefix_beats_moderately_newer_infix_substring() {
         let now = 1700000000i64;
-        let older_word_prefix = score("portal notes", &["port"], true, None, now - 600, 1.0, now);
-        let newer_infix = score("import notes", &["port"], true, None, now - 180, 1.0, now);
+        let older_word_prefix = score("portal notes", &["port"], true, None, now - 600, now);
+        let newer_infix = score("import notes", &["port"], true, None, now - 180, now);
         assert!(
             older_word_prefix > newer_infix,
             "Across a moderate age gap, word-prefix should beat a newer raw infix substring"
@@ -2502,8 +2356,8 @@ mod tests {
     #[test]
     fn test_subword_prefix_beats_moderately_newer_infix_substring() {
         let now = 1700000000i64;
-        let older_subword = score("responseCode", &["code"], true, None, now - 600, 1.0, now);
-        let newer_infix = score("barcode", &["code"], true, None, now - 180, 1.0, now);
+        let older_subword = score("responseCode", &["code"], true, None, now - 600, now);
+        let newer_infix = score("barcode", &["code"], true, None, now - 180, now);
         assert!(
             older_subword > newer_infix,
             "Across a moderate age gap, subword-prefix should beat a newer raw infix substring"
@@ -2513,16 +2367,9 @@ mod tests {
     #[test]
     fn test_recent_infix_substring_beats_ancient_word_prefix() {
         let now = 1700000000i64;
-        let ancient_word_prefix = score(
-            "portal notes",
-            &["port"],
-            true,
-            None,
-            now - 60 * 86400,
-            1.0,
-            now,
-        );
-        let recent_infix = score("import notes", &["port"], true, None, now - 180, 1.0, now);
+        let ancient_word_prefix =
+            score("portal notes", &["port"], true, None, now - 60 * 86400, now);
+        let recent_infix = score("import notes", &["port"], true, None, now - 180, now);
         assert!(
             recent_infix > ancient_word_prefix,
             "Across a massive age gap, recency should still beat the stronger word-prefix match"
@@ -2532,8 +2379,8 @@ mod tests {
     #[test]
     fn test_infix_substring_beats_moderately_newer_typo_match() {
         let now = 1700000000i64;
-        let older_infix = score("import config", &["port"], true, None, now - 600, 1.0, now);
-        let newer_typo = score("pory config", &["port"], true, None, now - 180, 1.0, now);
+        let older_infix = score("import config", &["port"], true, None, now - 600, now);
+        let newer_typo = score("pory config", &["port"], true, None, now - 180, now);
         assert!(
             older_infix > newer_typo,
             "Across a moderate age gap, zero-edit infix substring should beat a newer typo match"
@@ -2543,8 +2390,8 @@ mod tests {
     #[test]
     fn test_light_typo_beats_moderately_newer_infix_substring() {
         let now = 1700000000i64;
-        let older_light_typo = score("the", &["teh"], true, None, now - 600, 1.0, now);
-        let newer_infix = score("import config", &["port"], true, None, now - 180, 1.0, now);
+        let older_light_typo = score("the", &["teh"], true, None, now - 600, now);
+        let newer_infix = score("import config", &["port"], true, None, now - 180, now);
         assert!(
             older_light_typo > newer_infix,
             "Across a moderate age gap, a common transposition should beat a newer raw infix substring"
@@ -2554,8 +2401,8 @@ mod tests {
     #[test]
     fn test_repeated_char_typo_beats_moderately_newer_infix_substring() {
         let now = 1700000000i64;
-        let older_repeated_char = score("hello", &["helllo"], true, None, now - 600, 1.0, now);
-        let newer_infix = score("import config", &["port"], true, None, now - 180, 1.0, now);
+        let older_repeated_char = score("hello", &["helllo"], true, None, now - 600, now);
+        let newer_infix = score("import config", &["port"], true, None, now - 180, now);
         assert!(
             older_repeated_char > newer_infix,
             "Across a moderate age gap, a repeated-char typo should beat a newer raw infix substring"
@@ -2565,8 +2412,8 @@ mod tests {
     #[test]
     fn test_exact_short_typo_beats_slightly_newer_common_transposition() {
         let now = 1700000000i64;
-        let older_exact = score("teh", &["teh"], true, None, now - 60, 1.0, now);
-        let newer_transposition = score("the", &["teh"], true, None, now, 1.0, now);
+        let older_exact = score("teh", &["teh"], true, None, now - 60, now);
+        let newer_transposition = score("the", &["teh"], true, None, now, now);
         assert!(
             older_exact > newer_transposition,
             "Within roughly the same recency, the literal query should beat a recent transposition match"
@@ -2576,8 +2423,8 @@ mod tests {
     #[test]
     fn test_exact_match_beats_moderately_newer_typo_match() {
         let now = 1700000000i64;
-        let older_exact = score("the", &["the"], false, None, now - 600, 1.0, now);
-        let newer_typo = score("teh", &["the"], false, None, now - 180, 1.0, now);
+        let older_exact = score("the", &["the"], false, None, now - 600, now);
+        let newer_typo = score("teh", &["the"], false, None, now - 180, now);
         assert!(
             older_exact > newer_typo,
             "Across a moderate age gap, exact match quality should beat a newer typo match"
@@ -2587,8 +2434,8 @@ mod tests {
     #[test]
     fn test_recent_common_transposition_beats_ancient_exact_typo() {
         let now = 1700000000i64;
-        let ancient_exact = score("teh", &["teh"], true, None, now - 864000, 1.0, now);
-        let recent_transposition = score("the", &["teh"], true, None, now, 1.0, now);
+        let ancient_exact = score("teh", &["teh"], true, None, now - 864000, now);
+        let recent_transposition = score("the", &["teh"], true, None, now, now);
         assert!(
             recent_transposition > ancient_exact,
             "A recent common transposition should still beat an ancient literal typo"
@@ -2598,8 +2445,8 @@ mod tests {
     #[test]
     fn test_recent_typo_beats_ancient_exact_match() {
         let now = 1700000000i64;
-        let ancient_exact = score("the", &["the"], false, None, now - 90 * 86400, 1.0, now);
-        let recent_typo = score("teh", &["the"], false, None, now - 180, 1.0, now);
+        let ancient_exact = score("the", &["the"], false, None, now - 90 * 86400, now);
+        let recent_typo = score("teh", &["the"], false, None, now - 180, now);
         assert!(
             recent_typo > ancient_exact,
             "Across a massive age gap, recency should beat the stronger exact match"
@@ -2616,7 +2463,6 @@ mod tests {
             false,
             None,
             now - 1800,
-            1.0,
             now,
         );
         let old = score(
@@ -2625,7 +2471,6 @@ mod tests {
             false,
             None,
             now - 864000,
-            1.0,
             now,
         );
         assert_eq!(recent.quality_tier, old.quality_tier);
@@ -2644,18 +2489,9 @@ mod tests {
             false,
             None,
             now - 30,
-            1.0,
             now,
         );
-        let newer_reversed = score(
-            "world hello",
-            &["hello", "world"],
-            false,
-            None,
-            now,
-            1.0,
-            now,
-        );
+        let newer_reversed = score("world hello", &["hello", "world"], false, None, now, now);
         assert!(older_phrase.quality_tier > newer_reversed.quality_tier);
         assert!(
             older_phrase > newer_reversed,
@@ -2680,21 +2516,11 @@ mod tests {
     #[test]
     fn test_full_bucket_score_integration() {
         let now = 1700000000i64;
-        let s = score(
-            "hello world",
-            &["hello", "world"],
-            false,
-            None,
-            now,
-            5.0,
-            now,
-        );
+        let s = score("hello world", &["hello", "world"], false, None, now, now);
         assert_eq!(s.quality_tier, QualityTier::ContentPrefix);
         assert_eq!(s.words_matched_weight(), 50); // 5² + 5² = 50
-        assert_eq!(s.recency_score, 255); // just now
         assert_eq!(quality_detail_typo_score(s.quality_detail), 255);
         assert!(quality_detail_structure(s.quality_detail) > StructureDetail::default());
-        assert_eq!(s.bm25_quantized, 500); // 5.0 * 100
     }
 
     // ── new exactness level 6 & 5 tests ─────────────────────────
