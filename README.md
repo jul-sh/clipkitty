@@ -84,7 +84,15 @@ The simplest index is a prefix tree over the words at the start of each item. Th
 
 ClipKitty uses a trigram-based index for candidate recall. A trigram is a three-character slice of text: `import` contains `imp`, `mpo`, `por`, and `ort`. At query time, it uses those precomputed slices to follow posting lists to likely matches instead of scanning the full history, while also returning useful match-quality signals such as overlap and word-position evidence. This is fast, but it is still an approximation: shared trigrams are not the same as a good human match.
 
-To mitigate those weaknesses, ClipKitty takes the best matches from recall and reranks them separately. Because this is already a much smaller set, ClipKitty can afford to spend more compute finding the best human match: fine grained typo tolerance, recency, document size, and intelligent highlighting all matter here.
+To mitigate those weaknesses, ClipKitty takes the best matches from recall and reranks them separately. Because this is already a much smaller set, ClipKitty can afford to spend more compute approximating what a human would call "the good match", not just what shares characters with the query.
+
+The reranker first tokenizes the query and the candidate clip into words, then tries to align each query word to one real word in the clip.
+
+Each possible word match is graded by how trustworthy it is. Exact matches are best. Prefix matches are very good, because the user may still be typing. camelCase and digit-boundary matches count as subword prefixes, so `loader` can match `PreviewLoader` and `address` can match `IPv6Address`. Ordinary substrings count for less, because they are often accidental. Typos are not all treated the same either: adjacent transpositions and repeated-key mistakes are common finger errors, so they beat generic substitutions, and multi-edit guesses are weaker still. Short words get less forgiveness because a one-letter change in `cat` can easily become a different word, while a one-letter change in `postgres` is probably just a typo.
+
+Then it asks whether the whole alignment looks like something a person would have picked. Did most of the important query words match? Are they in the same order? Are they close together, or scattered across a giant log? A compact phrase match usually feels intentional. A distant match across thousands of characters usually feels suspicious, even if every word technically appears.
+
+Those signals get turned into a small ordered score: coarse match quality first, then human-scale recency buckets like last hour, day, week, month, and quarter, then the finer match quality differences. The order is intentional. Clipboard history is temporal, so recency should matter a lot, but not so much that a weak recent match beats the obvious phrase from yesterday. The result is that `rails console` inside `docker compose exec api rails console` beats a random clip with `rails` near the top and `console` far away, while `improt` can still find `import` without letting every vaguely similar word jump the line.
 
 The important idea is that search quality does not come from doing expensive work on everything. It comes from doing cheap work to find plausible candidates, then doing expensive work only where it can change what the user sees.
 
