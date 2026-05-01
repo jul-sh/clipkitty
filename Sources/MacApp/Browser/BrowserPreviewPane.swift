@@ -368,31 +368,41 @@ private struct ImagePreviewView: View {
     @State private var image: NSImage?
 
     var body: some View {
-        VStack(spacing: 8) {
-            if let image {
-                Image(nsImage: image)
-                    .resizable()
-                    .aspectRatio(contentMode: .fit)
-                    .frame(maxWidth: .infinity, maxHeight: .infinity)
-            } else {
-                ProgressView()
-                    .frame(maxWidth: .infinity, maxHeight: .infinity)
-            }
-            if !description.isEmpty {
-                Group {
-                    if highlights.isEmpty {
-                        Text(description)
+        // Cap the image to the pane's height so it never overflows on its
+        // own, but place the image+description stack inside a ScrollView so
+        // long descriptions remain fully readable by scrolling the whole
+        // preview.
+        GeometryReader { geo in
+            ScrollView(.vertical, showsIndicators: true) {
+                VStack(spacing: 8) {
+                    if let image {
+                        Image(nsImage: image)
+                            .resizable()
+                            .aspectRatio(contentMode: .fit)
+                            .frame(maxWidth: .infinity)
+                            .frame(maxHeight: max(geo.size.height - 32, 120))
                     } else {
-                        Text(HighlightStyler.attributedText(description, highlights: highlights))
+                        ProgressView()
+                            .frame(maxWidth: .infinity, minHeight: 120)
+                    }
+                    if !description.isEmpty {
+                        Group {
+                            if highlights.isEmpty {
+                                Text(description)
+                            } else {
+                                Text(HighlightStyler.attributedText(description, highlights: highlights))
+                            }
+                        }
+                        .font(.callout)
+                        .foregroundStyle(.secondary)
+                        .frame(maxWidth: .infinity, alignment: .leading)
+                        .textSelection(.enabled)
                     }
                 }
-                .font(.callout)
-                .foregroundStyle(.secondary)
-                .frame(maxWidth: .infinity, alignment: .leading)
-                .lineLimit(3)
+                .padding(16)
+                .frame(minHeight: geo.size.height - 32, alignment: .top)
             }
         }
-        .padding(16)
         .task(id: itemId) {
             if let cached = ImagePreviewCache.shared.image(forKey: itemId) {
                 image = cached
