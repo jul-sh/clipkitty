@@ -837,22 +837,27 @@ final class ClipKittyUITests: XCTestCase {
         let searchField = app.textFields.firstMatch
         XCTAssertTrue(searchField.waitForExistence(timeout: 5), "Search field not found")
 
-        // Save window bounds to temp file for video cropping (same padding + 16:10 as screenshots)
+        // Save window bounds to temp file for video cropping. Uses the same
+        // padding as screenshots, but a 16:9 aspect ratio (vs. 16:10 for
+        // screenshots). Height is derived from the 16:10 screenshot fit so
+        // the inner 16:10 region of the 16:9 frame matches the screenshot
+        // crop exactly — i.e. cropping this 16:9 video to 16:10 yields the
+        // screenshot view. Width grows accordingly.
         let window = app.dialogs.firstMatch
         if window.exists {
             let frame = window.frame
             let scaleFactor = NSScreen.main?.backingScaleFactor ?? 2.0
 
-            // Use same padding and 16:10 aspect ratio as screenshots
             var cropWidth = frame.width + Self.windowPadding * 2
             var cropHeight = frame.height + Self.windowPadding * 2
-            let targetRatio: CGFloat = 16.0 / 10.0
-            let currentRatio = cropWidth / cropHeight
-            if currentRatio < targetRatio {
-                cropWidth = cropHeight * targetRatio
+            let screenshotRatio: CGFloat = 16.0 / 10.0
+            if cropWidth / cropHeight < screenshotRatio {
+                cropWidth = cropHeight * screenshotRatio
             } else {
-                cropHeight = cropWidth / targetRatio
+                cropHeight = cropWidth / screenshotRatio
             }
+            // Expand width to 16:9 around the same height/center.
+            cropWidth = cropHeight * (16.0 / 9.0)
 
             // Center crop on window, convert to pixels
             let cropX = max((frame.midX - cropWidth / 2) * scaleFactor, 0)
@@ -902,7 +907,7 @@ final class ClipKittyUITests: XCTestCase {
                 searchField.typeText(String(char))
                 let elapsedMs = (CFAbsoluteTimeGetCurrent() - start) * 1000.0
                 latenciesMs.append(elapsedMs)
-                if startedEmpty && index == 0 { continue }
+                if startedEmpty, index == 0 { continue }
                 Thread.sleep(forTimeInterval: delay)
             }
             if let scene {
