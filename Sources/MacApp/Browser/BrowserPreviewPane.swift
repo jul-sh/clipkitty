@@ -153,8 +153,8 @@ struct BrowserPreviewPane: View {
             ScrollView(.vertical, showsIndicators: true) {
                 VStack(alignment: .leading, spacing: 16) {
                     #if ENABLE_LINK_PREVIEWS
-                    LinkPreviewView(url: url, metadataState: metadataState)
-                        .frame(maxWidth: .infinity)
+                        LinkPreviewView(url: url, metadataState: metadataState)
+                            .frame(maxWidth: .infinity)
                     #endif
 
                     if highlights.isEmpty {
@@ -368,34 +368,31 @@ private struct ImagePreviewView: View {
     @State private var image: NSImage?
 
     var body: some View {
-        ScrollView(.vertical, showsIndicators: true) {
-            VStack(spacing: 8) {
-                if let image {
-                    Image(nsImage: image)
-                        .resizable()
-                        .aspectRatio(contentMode: .fit)
-                        .frame(maxWidth: .infinity)
-                } else {
-                    ProgressView()
-                        .frame(maxWidth: .infinity, minHeight: 120)
-                }
-                if !description.isEmpty {
+        VStack(spacing: 8) {
+            if let image {
+                Image(nsImage: image)
+                    .resizable()
+                    .aspectRatio(contentMode: .fit)
+                    .frame(maxWidth: .infinity, maxHeight: .infinity)
+            } else {
+                ProgressView()
+                    .frame(maxWidth: .infinity, maxHeight: .infinity)
+            }
+            if !description.isEmpty {
+                Group {
                     if highlights.isEmpty {
                         Text(description)
-                            .font(.callout)
-                            .foregroundStyle(.secondary)
-                            .frame(maxWidth: .infinity, alignment: .leading)
                     } else {
                         Text(HighlightStyler.attributedText(description, highlights: highlights))
-                            .font(.callout)
-                            .foregroundStyle(.secondary)
-                            .frame(maxWidth: .infinity, alignment: .leading)
                     }
                 }
+                .font(.callout)
+                .foregroundStyle(.secondary)
+                .frame(maxWidth: .infinity, alignment: .leading)
+                .lineLimit(3)
             }
-            .frame(maxWidth: .infinity, alignment: .leading)
-            .padding(16)
         }
+        .padding(16)
         .task(id: itemId) {
             if let cached = ImagePreviewCache.shared.image(forKey: itemId) {
                 image = cached
