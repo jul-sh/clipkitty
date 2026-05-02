@@ -13,8 +13,8 @@ use tokio_util::sync::CancellationToken;
 const EAGER_MATCH_DATA_COUNT: usize = 1;
 /// Content length threshold for "short" items that get eager row decoration.
 const SHORT_CONTENT_THRESHOLD: usize = 1024;
-/// Skip eager short-item decoration when results exceed this count.
-const EAGER_SHORT_RESULT_LIMIT: usize = 0;
+/// Number of early short-content results to eagerly decorate.
+const EAGER_SHORT_MATCH_WINDOW: usize = 24;
 const SHORT_QUERY_MAX_RESULTS: usize = 50;
 const SHORT_QUERY_RECENT_WINDOW: usize = 5000;
 const SHORT_QUERY_CONTENT_CAP: usize = 512;
@@ -212,7 +212,6 @@ impl<'a> SearchResultAssembler<'a> {
             .map(|metadata| (metadata.item_metadata.item_id.clone(), metadata))
             .collect();
 
-        let few_results = metadata_map.len() <= EAGER_SHORT_RESULT_LIMIT;
         let presentation = self.presentation();
         #[cfg(test)]
         crate::match_presentation::test_support::before_eager_matches();
@@ -242,7 +241,9 @@ impl<'a> SearchResultAssembler<'a> {
                 self.presentation,
             );
             let is_short = candidate.content().len() <= SHORT_CONTENT_THRESHOLD;
-            let item_match = if eager_index < EAGER_MATCH_DATA_COUNT || (is_short && few_results) {
+            let item_match = if eager_index < EAGER_MATCH_DATA_COUNT
+                || (is_short && eager_index < EAGER_SHORT_MATCH_WINDOW)
+            {
                 #[cfg(test)]
                 crate::match_presentation::test_support::on_eager_match(eager_index);
                 if self.token.is_cancelled() {
