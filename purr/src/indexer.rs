@@ -12,7 +12,9 @@ use crate::ranking::compute_bucket_score;
 use crate::ranking::{
     compute_bucket_score_with_perf, RankingPerfBreakdown, LARGE_DOC_THRESHOLD_BYTES,
 };
-use crate::ranking::{prepare_document_for_ranking, PrefixPreferenceQuery, ScoringContext};
+use crate::ranking::{
+    prepare_document_for_ranking, PrefixPreferenceQuery, QualityTier, ScoringContext,
+};
 use crate::search::{self, SearchQuery};
 pub(crate) use crate::search_admission::CHUNK_PARENT_THRESHOLD_BYTES;
 use crate::search_admission::{
@@ -460,7 +462,7 @@ fn score_phase_two_candidate(
     });
 
     PhaseTwoCandidateScore {
-        bucket: (bucket.words_matched_weight() > 0).then_some(bucket),
+        bucket: (!matches!(bucket.quality_tier, QualityTier::NoMatch)).then_some(bucket),
     }
 }
 
@@ -487,7 +489,7 @@ fn score_phase_two_candidate(
     });
 
     PhaseTwoCandidateScore {
-        bucket: (bucket.words_matched_weight() > 0).then_some(bucket),
+        bucket: (!matches!(bucket.quality_tier, QualityTier::NoMatch)).then_some(bucket),
         perf: PhaseTwoCandidatePerf {
             doc_bytes: content.len(),
             prep_ns,
