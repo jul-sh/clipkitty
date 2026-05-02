@@ -73,6 +73,33 @@ async fn list_decoration_short_text_returns_full_content() {
 }
 
 #[tokio::test]
+async fn trigram_search_eagerly_decorates_initial_short_results() {
+    let dir = TempDir::new().unwrap();
+    let db_path = dir.path().join("test.db");
+    let store = ClipboardStore::new(db_path.to_str().unwrap().to_string()).unwrap();
+
+    for index in 0..3 {
+        store
+            .save_text(format!("needle result {index}"), None, None)
+            .unwrap();
+    }
+
+    let result = store
+        .search("needle".to_string(), ListPresentationProfile::CompactRow)
+        .await
+        .unwrap();
+
+    assert_eq!(result.matches.len(), 3);
+    assert!(
+        result
+            .matches
+            .iter()
+            .all(|item| item.list_decoration.is_some()),
+        "expected every short initial trigram match to be eagerly decorated"
+    );
+}
+
+#[tokio::test]
 async fn list_decoration_normalizes_whitespace() {
     let row = list_decoration_for("Hello\n\n\nWorld", "Hello").await;
     assert_eq!(row.text, "Hello World");
