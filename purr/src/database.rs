@@ -4,8 +4,8 @@
 //! Uses r2d2 connection pooling to allow concurrent reads without mutex blocking.
 
 use crate::interface::{
-    ClipboardContent, ContentTypeFilter, FileEntry, FileStatus, ItemIcon, ItemMetadata, ItemTag,
-    LinkMetadataState, ListPresentationProfile,
+    BaselineExcerpt, ClipboardContent, ContentTypeFilter, FileEntry, FileStatus, ItemIcon,
+    ItemMetadata, ItemTag, LinkMetadataState, ListPresentationProfile,
 };
 use crate::models::StoredItem;
 use crate::search::{generate_preview_for_profile, SNIPPET_CONTEXT_CHARS};
@@ -56,13 +56,19 @@ const GENERATED_ITEM_ID_SQL: &str = r#"lower(
     hex(randomblob(6))
 )"#;
 
-/// Intermediate row with raw content prefix — snippet formatting deferred to caller.
+/// Intermediate row with raw content prefix; excerpt formatting is deferred to caller.
 struct RawBrowseMetadata {
     item_metadata: ItemMetadata,
     content_prefix: String,
 }
 
-/// Intermediate row for search metadata — snippet formatting deferred to caller.
+#[derive(Debug, Clone)]
+pub(crate) struct BrowseItemMetadata {
+    pub(crate) item_metadata: ItemMetadata,
+    pub(crate) baseline_excerpt: BaselineExcerpt,
+}
+
+/// Intermediate row for search metadata; excerpt formatting is deferred to caller.
 struct RawSearchItemMetadata {
     row_id: i64,
     content_hash: String,
@@ -77,6 +83,7 @@ pub(crate) struct SearchItemMetadata {
     pub(crate) content_hash: String,
     pub(crate) db_type: String,
     pub(crate) item_metadata: ItemMetadata,
+    pub(crate) baseline_excerpt: BaselineExcerpt,
 }
 
 /// Parse timestamp string from database to DateTime<Utc>
@@ -635,14 +642,14 @@ impl Database {
 
     /// Fetch lightweight item metadata for list display.
     /// No JOINs needed — `thumbnail` covers link images too.
-    pub fn fetch_item_metadata(
+    pub(crate) fn fetch_item_metadata(
         &self,
         before_timestamp: Option<DateTime<Utc>>,
         limit: usize,
         filter: Option<&ContentTypeFilter>,
         tag: Option<&ItemTag>,
         presentation: ListPresentationProfile,
-    ) -> DatabaseResult<(Vec<ItemMetadata>, u64)> {
+    ) -> DatabaseResult<(Vec<BrowseItemMetadata>, u64)> {
         let conn = self.get_conn()?;
 
         let type_filter_clause = Self::content_type_where_clause(filter, "");
@@ -704,10 +711,11 @@ impl Database {
 
         let items = raw_items
             .into_iter()
-            .map(|raw| {
-                let mut metadata = raw.item_metadata;
-                metadata.snippet = generate_preview_for_profile(&raw.content_prefix, presentation);
-                metadata
+            .map(|raw| BrowseItemMetadata {
+                item_metadata: raw.item_metadata,
+                baseline_excerpt: BaselineExcerpt {
+                    text: generate_preview_for_profile(&raw.content_prefix, presentation),
+                },
             })
             .collect();
 
@@ -783,15 +791,14 @@ impl Database {
 
         let items: Vec<SearchItemMetadata> = raw_items
             .into_iter()
-            .map(|raw| {
-                let mut metadata = raw.item_metadata;
-                metadata.snippet = generate_preview_for_profile(&raw.content_prefix, presentation);
-                SearchItemMetadata {
-                    row_id: raw.row_id,
-                    content_hash: raw.content_hash,
-                    db_type: raw.db_type,
-                    item_metadata: metadata,
-                }
+            .map(|raw| SearchItemMetadata {
+                row_id: raw.row_id,
+                content_hash: raw.content_hash,
+                db_type: raw.db_type,
+                item_metadata: raw.item_metadata,
+                baseline_excerpt: BaselineExcerpt {
+                    text: generate_preview_for_profile(&raw.content_prefix, presentation),
+                },
             })
             .collect();
 
@@ -1423,7 +1430,7 @@ impl Database {
         Ok(())
     }
 
-    /// Convert a database row to raw browse metadata — snippet formatting deferred to caller.
+    /// Convert a database row to raw browse metadata; excerpt formatting is deferred to caller.
     fn row_to_raw_browse_metadata(row: &rusqlite::Row) -> rusqlite::Result<RawBrowseMetadata> {
         let _id: i64 = row.get(0)?;
         let content: String = row.get(1)?;
@@ -1445,7 +1452,6 @@ impl Database {
             item_metadata: ItemMetadata {
                 item_id,
                 icon,
-                snippet: String::new(),
                 source_app,
                 source_app_bundle_id,
                 timestamp_unix: timestamp.timestamp(),
@@ -1481,7 +1487,6 @@ impl Database {
             item_metadata: ItemMetadata {
                 item_id,
                 icon,
-                snippet: String::new(),
                 source_app,
                 source_app_bundle_id,
                 timestamp_unix: timestamp.timestamp(),
@@ -1576,7 +1581,7 @@ mod tests {
         assert_eq!(total_count, 1);
         assert_eq!(items.len(), 1);
         assert_eq!(
-            items[0].snippet,
+            items[0].baseline_excerpt.text,
             generate_preview_for_profile(&content, ListPresentationProfile::CompactRow)
         );
     }

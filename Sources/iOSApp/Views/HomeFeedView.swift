@@ -93,7 +93,7 @@ struct HomeFeedView: View {
                     previewItemId: $previewItemId
                 )
                 .onAppear {
-                    loadDecorationsIfNeeded(for: row)
+                    loadMatchedExcerptIfNeeded(for: row)
                 }
                 .listRowSeparator(.hidden)
                 .listRowInsets(EdgeInsets(top: 6, leading: 0, bottom: 6, trailing: 0))
@@ -174,10 +174,8 @@ struct HomeFeedView: View {
             || viewModel.selectedTagFilter != nil
     }
 
-    private func loadDecorationsIfNeeded(for row: DisplayRow) {
-        if row.listDecoration == nil {
-            viewModel.loadListDecorationsForItems([row.id])
-        }
+    private func loadMatchedExcerptIfNeeded(for row: DisplayRow) {
+        viewModel.loadMatchedExcerptsForItems([row.id])
     }
 }
 

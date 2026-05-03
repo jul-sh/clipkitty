@@ -2,38 +2,41 @@ import ClipKittyRust
 @testable import ClipKittyShared
 import XCTest
 
-/// Tests for iOS card highlight rendering from Rust list decorations,
+/// Tests for iOS card highlight rendering from Rust matched excerpts,
 /// preview decoration consumption, and inline edit transitions.
 @MainActor
 final class iOSHighlightAndEditTests: XCTestCase {
-    // MARK: - Card Highlights from ListDecoration
+    // MARK: - Card Highlights from RowPresentation
 
-    func testDisplayRowUsesListDecorationTextWhenAvailable() {
-        let decoration = ListDecoration(
-            text: "Decorated snippet",
+    func testDisplayRowUsesMatchedExcerptTextWhenAvailable() {
+        let excerpt = MatchedExcerpt(
+            text: "Decorated excerpt",
             highlights: [Utf16HighlightRange(utf16Start: 0, utf16End: 9, kind: .exact)],
             lineNumber: 1
         )
         let row = DisplayRow(
-            metadata: makeMetadata(id: "1", snippet: "Raw snippet"),
-            listDecoration: decoration
+            metadata: makeMetadata(id: "1"),
+            presentation: .search(presentation: .ready(excerpt: excerpt))
         )
 
-        // The card should prefer listDecoration.text over metadata.snippet
-        XCTAssertEqual(row.listDecoration?.text, "Decorated snippet")
-        XCTAssertEqual(row.listDecoration?.highlights.count, 1)
-        XCTAssertEqual(row.listDecoration?.highlights.first?.kind, .exact)
+        guard case let .search(.ready(renderedExcerpt)) = row.presentation else {
+            return XCTFail("Expected ready matched excerpt")
+        }
+        XCTAssertEqual(renderedExcerpt.text, "Decorated excerpt")
+        XCTAssertEqual(renderedExcerpt.highlights.count, 1)
+        XCTAssertEqual(renderedExcerpt.highlights.first?.kind, .exact)
     }
 
-    func testDisplayRowFallsBackToMetadataSnippetWithoutDecoration() {
+    func testDisplayRowUsesBaselinePresentation() {
         let row = DisplayRow(
-            metadata: makeMetadata(id: "1", snippet: "Fallback snippet"),
-            listDecoration: nil
+            metadata: makeMetadata(id: "1"),
+            presentation: .baseline(excerpt: BaselineExcerpt(text: "Fallback excerpt"))
         )
 
-        // Without decoration, card should use metadata.snippet
-        XCTAssertNil(row.listDecoration)
-        XCTAssertEqual(row.metadata.snippet, "Fallback snippet")
+        guard case let .baseline(excerpt) = row.presentation else {
+            return XCTFail("Expected baseline excerpt")
+        }
+        XCTAssertEqual(excerpt.text, "Fallback excerpt")
     }
 
     // MARK: - Preview Decoration State
@@ -87,7 +90,7 @@ final class iOSHighlightAndEditTests: XCTestCase {
         let item = makeItem(id: "1", text: "Original text")
         client.enqueueSearchResponse(BrowserSearchResponse(
             request: SearchRequest(text: "", filter: .all),
-            items: [makeMatch(id: "1", snippet: "Original text")],
+            items: [makeMatch(id: "1", excerpt: "Original text")],
             firstPreviewPayload: PreviewPayload(item: item, decoration: nil),
             totalCount: 1
         ))
@@ -110,7 +113,7 @@ final class iOSHighlightAndEditTests: XCTestCase {
         let item = makeItem(id: "1", text: "Original text")
         client.enqueueSearchResponse(BrowserSearchResponse(
             request: SearchRequest(text: "", filter: .all),
-            items: [makeMatch(id: "1", snippet: "Original text")],
+            items: [makeMatch(id: "1", excerpt: "Original text")],
             firstPreviewPayload: PreviewPayload(item: item, decoration: nil),
             totalCount: 1
         ))
@@ -146,7 +149,7 @@ final class iOSHighlightAndEditTests: XCTestCase {
         let item = makeItem(id: "1", text: "Original text")
         client.enqueueSearchResponse(BrowserSearchResponse(
             request: SearchRequest(text: "", filter: .all),
-            items: [makeMatch(id: "1", snippet: "Original text")],
+            items: [makeMatch(id: "1", excerpt: "Original text")],
             firstPreviewPayload: PreviewPayload(item: item, decoration: nil),
             totalCount: 1
         ))
@@ -181,7 +184,7 @@ final class iOSHighlightAndEditTests: XCTestCase {
         let item = makeItem(id: "1", text: "Same text")
         client.enqueueSearchResponse(BrowserSearchResponse(
             request: SearchRequest(text: "", filter: .all),
-            items: [makeMatch(id: "1", snippet: "Same text")],
+            items: [makeMatch(id: "1", excerpt: "Same text")],
             firstPreviewPayload: PreviewPayload(item: item, decoration: nil),
             totalCount: 1
         ))
@@ -208,7 +211,7 @@ final class iOSHighlightAndEditTests: XCTestCase {
         let item = makeItem(id: "1", text: "search term here")
         client.enqueueSearchResponse(BrowserSearchResponse(
             request: SearchRequest(text: "", filter: .all),
-            items: [makeMatch(id: "1", snippet: "search term here")],
+            items: [makeMatch(id: "1", excerpt: "search term here")],
             firstPreviewPayload: PreviewPayload(item: item, decoration: nil),
             totalCount: 1
         ))
@@ -278,8 +281,8 @@ final class iOSHighlightAndEditTests: XCTestCase {
         client.enqueueSearchResponse(BrowserSearchResponse(
             request: SearchRequest(text: "", filter: .all),
             items: [
-                makeMatch(id: "1", snippet: "First item"),
-                makeMatch(id: "2", snippet: "Second item"),
+                makeMatch(id: "1", excerpt: "First item"),
+                makeMatch(id: "2", excerpt: "Second item"),
             ],
             firstPreviewPayload: PreviewPayload(item: item1, decoration: nil),
             totalCount: 2
@@ -328,13 +331,11 @@ final class iOSHighlightAndEditTests: XCTestCase {
 
     private func makeMetadata(
         id: String,
-        snippet: String,
         icon: ItemIcon = .symbol(iconType: .text)
     ) -> ItemMetadata {
         ItemMetadata(
             itemId: id,
             icon: icon,
-            snippet: snippet,
             sourceApp: nil,
             sourceAppBundleId: nil,
             timestampUnix: 0,
@@ -344,17 +345,17 @@ final class iOSHighlightAndEditTests: XCTestCase {
 
     private func makeMatch(
         id: String,
-        snippet: String
+        excerpt: String
     ) -> ItemMatch {
         ItemMatch(
-            itemMetadata: makeMetadata(id: id, snippet: snippet),
-            listDecoration: nil
+            itemMetadata: makeMetadata(id: id),
+            presentation: .baseline(excerpt: BaselineExcerpt(text: excerpt))
         )
     }
 
     private func makeItem(id: String, text: String) -> ClipboardItem {
         ClipboardItem(
-            itemMetadata: makeMetadata(id: id, snippet: text),
+            itemMetadata: makeMetadata(id: id),
             content: .text(value: text)
         )
     }

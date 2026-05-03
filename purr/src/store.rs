@@ -4,8 +4,8 @@ use crate::database::Database;
 use crate::indexer::{IndexInspection, Indexer};
 use crate::interface::{
     ClipKittyError, ClipboardItem, ClipboardStoreApi, ItemQueryFilter, ItemTag,
-    ListDecorationResult, ListPresentationProfile, PreviewPayload, SearchOutcome, SearchResult,
-    StoreBootstrapPlan,
+    ListPresentationProfile, MatchedExcerptRequest, MatchedExcerptResolution, PreviewPayload,
+    SearchOutcome, SearchResult, StoreBootstrapPlan,
 };
 #[cfg(feature = "sync")]
 use crate::sync_bridge::{RealSyncEmitter, SyncEmitter};
@@ -385,19 +385,11 @@ impl ClipboardStoreApi for ClipboardStore {
         Ok(items)
     }
 
-    fn compute_list_decorations(
+    fn resolve_matched_excerpts(
         &self,
-        item_ids: Vec<String>,
-        query: String,
-        presentation: ListPresentationProfile,
-    ) -> Result<Vec<ListDecorationResult>, ClipKittyError> {
-        search_service::compute_list_decorations(
-            &self.db,
-            &self.analysis_cache,
-            item_ids,
-            query,
-            presentation,
-        )
+        requests: Vec<MatchedExcerptRequest>,
+    ) -> Result<Vec<MatchedExcerptResolution>, ClipKittyError> {
+        search_service::resolve_matched_excerpts(&self.db, &self.analysis_cache, requests)
     }
 
     fn load_preview_payload(

@@ -7,7 +7,7 @@ use std::collections::hash_map::DefaultHasher;
 use std::hash::{Hash, Hasher};
 
 use crate::interface::{
-    ClipboardContent, ClipboardItem, FileEntry, FileStatus, ItemIcon, ItemMetadata,
+    BaselineExcerpt, ClipboardContent, ClipboardItem, FileEntry, FileStatus, ItemIcon, ItemMetadata,
     ListPresentationProfile,
 };
 #[cfg(test)]
@@ -240,13 +240,10 @@ impl StoredItem {
     }
 
     /// Convert to ItemMetadata for list display
-    /// Preview is generous (SNIPPET_CONTEXT_CHARS * 2) - Swift handles final truncation
     pub fn to_metadata(&self) -> ItemMetadata {
-        use crate::search::SNIPPET_CONTEXT_CHARS;
         ItemMetadata {
             item_id: self.item_id.clone(),
             icon: self.item_icon(),
-            snippet: self.display_text(SNIPPET_CONTEXT_CHARS * 2),
             source_app: self.source_app.clone(),
             source_app_bundle_id: self.source_app_bundle_id.clone(),
             timestamp_unix: self.timestamp_unix,
@@ -254,16 +251,21 @@ impl StoredItem {
         }
     }
 
-    /// Convert to ItemMetadata using a presentation-profile-aware snippet.
-    pub fn to_metadata_for_profile(&self, profile: ListPresentationProfile) -> ItemMetadata {
+    /// Convert to ItemMetadata; row excerpts are modeled separately.
+    pub fn to_metadata_for_profile(&self, _profile: ListPresentationProfile) -> ItemMetadata {
         ItemMetadata {
             item_id: self.item_id.clone(),
             icon: self.item_icon(),
-            snippet: crate::search::generate_preview_for_profile(self.text_content(), profile),
             source_app: self.source_app.clone(),
             source_app_bundle_id: self.source_app_bundle_id.clone(),
             timestamp_unix: self.timestamp_unix,
             tags: Vec::new(),
+        }
+    }
+
+    pub fn baseline_excerpt_for_profile(&self, profile: ListPresentationProfile) -> BaselineExcerpt {
+        BaselineExcerpt {
+            text: crate::search::generate_preview_for_profile(self.text_content(), profile),
         }
     }
 
@@ -396,7 +398,7 @@ mod tests {
     }
 
     #[test]
-    fn test_stored_item_multi_file_snippet() {
+    fn test_stored_item_multi_file_display_text() {
         // 2 files: "a.txt, b.txt"
         let item = StoredItem::new_files(
             vec!["/tmp/a.txt".into(), "/tmp/b.txt".into()],

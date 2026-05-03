@@ -1,8 +1,8 @@
 use crate::database::Database;
 use crate::indexer::Indexer;
 use crate::interface::{
-    ClipKittyError, ItemMatch, ItemQueryFilter, ListDecorationResult, ListPresentationProfile,
-    PreviewPayload, SearchResult,
+    ClipKittyError, ItemMatch, ItemQueryFilter, ListPresentationProfile, MatchedExcerptRequest,
+    MatchedExcerptResolution, PreviewPayload, SearchResult,
 };
 use crate::match_presentation::{HighlightAnalysisCache, MatchPresentation};
 use crate::search;
@@ -90,14 +90,12 @@ pub(crate) async fn execute_search(
         .build_search_result(parsed_query.raw_text(), matches)
 }
 
-pub(crate) fn compute_list_decorations(
+pub(crate) fn resolve_matched_excerpts(
     db: &Database,
     cache: &HighlightAnalysisCache,
-    item_ids: Vec<String>,
-    query: String,
-    presentation: ListPresentationProfile,
-) -> Result<Vec<ListDecorationResult>, ClipKittyError> {
-    MatchPresentation::new(db, cache).compute_list_decorations(item_ids, query, presentation)
+    requests: Vec<MatchedExcerptRequest>,
+) -> Result<Vec<MatchedExcerptResolution>, ClipKittyError> {
+    MatchPresentation::new(db, cache).resolve_matched_excerpts(requests)
 }
 
 pub(crate) fn load_preview_payload(

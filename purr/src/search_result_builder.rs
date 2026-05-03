@@ -1,7 +1,7 @@
-use crate::database::{Database, SearchItemMetadata};
+use crate::database::{BrowseItemMetadata, Database, SearchItemMetadata};
 use crate::interface::{
-    ClipKittyError, ContentTypeFilter, ItemMatch, ItemMetadata, ItemQueryFilter, ItemTag,
-    ListPresentationProfile, SearchResult,
+    ClipKittyError, ContentTypeFilter, ItemMatch, ItemQueryFilter, ItemTag, ListPresentationProfile,
+    MatchedExcerptRequest, RowPresentation, SearchResult, SearchRowPresentation,
 };
 use crate::match_presentation::{HighlightAnalysisCache, MatchPresentation};
 use crate::models::StoredItem;
@@ -63,16 +63,20 @@ impl<'a> SearchResultAssembler<'a> {
         )?;
         self.hydrate_item_metadata_tags(&mut items)?;
         let first_preview_payload = self.presentation().load_first_preview_payload(
-            items.first().map(|item| item.item_id.as_str()),
+            items
+                .first()
+                .map(|item| item.item_metadata.item_id.as_str()),
             "",
             self.token,
             self.runtime,
         )?;
         let matches = items
             .into_iter()
-            .map(|item_metadata| ItemMatch {
-                item_metadata,
-                list_decoration: None,
+            .map(|item| ItemMatch {
+                item_metadata: item.item_metadata,
+                presentation: RowPresentation::Baseline {
+                    excerpt: item.baseline_excerpt,
+                },
             })
             .collect();
 
@@ -232,14 +236,6 @@ impl<'a> SearchResultAssembler<'a> {
                 candidate.scoring_phase(),
             );
 
-            let mut item_metadata = metadata.item_metadata.clone();
-            presentation.apply_match_context_snippet(
-                &candidate.id,
-                query.raw_text(),
-                &mut item_metadata,
-                candidate.match_context(),
-                self.presentation,
-            );
             let is_short = candidate.content().len() <= SHORT_CONTENT_THRESHOLD;
             let item_match = if eager_index < EAGER_MATCH_DATA_COUNT
                 || (is_short && eager_index < EAGER_SHORT_MATCH_WINDOW)
@@ -250,15 +246,40 @@ impl<'a> SearchResultAssembler<'a> {
                     return Err(ClipKittyError::Cancelled);
                 }
                 ItemMatch {
-                    item_metadata,
-                    list_decoration: Some(presentation.list_decoration_for_cached_match(
-                        &candidate.id,
-                        query.raw_text(),
-                        self.presentation,
-                    )),
+                    item_metadata: metadata.item_metadata.clone(),
+                    presentation: RowPresentation::Search {
+                        presentation: SearchRowPresentation::Ready {
+                            excerpt: presentation.matched_excerpt_for_cached_match(
+                                &candidate.id,
+                                query.raw_text(),
+                                self.presentation,
+                            ),
+                        },
+                    },
                 }
             } else {
-                search::create_lazy_item_match_with_metadata(item_metadata)
+                let placeholder = presentation.placeholder_for_deferred_match(
+                    &candidate.id,
+                    query.raw_text(),
+                    &metadata.content_hash,
+                    &metadata.baseline_excerpt,
+                    candidate.match_context(),
+                    self.presentation,
+                );
+                ItemMatch {
+                    item_metadata: metadata.item_metadata.clone(),
+                    presentation: RowPresentation::Search {
+                        presentation: SearchRowPresentation::Deferred {
+                            request: MatchedExcerptRequest {
+                                item_id: candidate.id.clone(),
+                                query: query.raw_text().to_string(),
+                                presentation_profile: self.presentation,
+                                content_hash: metadata.content_hash.clone(),
+                            },
+                            placeholder,
+                        },
+                    },
+                }
             };
             if self.token.is_cancelled() {
                 return Err(ClipKittyError::Cancelled);
@@ -297,12 +318,16 @@ impl<'a> SearchResultAssembler<'a> {
             .filter_map(|id| {
                 item_map.get(id).map(|item| ItemMatch {
                     item_metadata: item.to_metadata_for_profile(self.presentation),
-                    list_decoration: Some(presentation.list_decoration_for_item(
-                        &item.item_id,
-                        item.content.text_content(),
-                        query,
-                        self.presentation,
-                    )),
+                    presentation: RowPresentation::Search {
+                        presentation: SearchRowPresentation::Ready {
+                            excerpt: presentation.matched_excerpt_for_item(
+                                &item.item_id,
+                                item.content.text_content(),
+                                query,
+                                self.presentation,
+                            ),
+                        },
+                    },
                 })
             })
             .collect())
@@ -323,11 +348,20 @@ impl<'a> SearchResultAssembler<'a> {
         Ok(())
     }
 
-    fn hydrate_item_metadata_tags(&self, items: &mut [ItemMetadata]) -> Result<(), ClipKittyError> {
-        let ids: Vec<String> = items.iter().map(|item| item.item_id.clone()).collect();
+    fn hydrate_item_metadata_tags(
+        &self,
+        items: &mut [BrowseItemMetadata],
+    ) -> Result<(), ClipKittyError> {
+        let ids: Vec<String> = items
+            .iter()
+            .map(|item| item.item_metadata.item_id.clone())
+            .collect();
         let tags_by_id = self.db.get_tags_for_item_ids(&ids)?;
         for item in items {
-            item.tags = tags_by_id.get(&item.item_id).cloned().unwrap_or_default();
+            item.item_metadata.tags = tags_by_id
+                .get(&item.item_metadata.item_id)
+                .cloned()
+                .unwrap_or_default();
         }
         Ok(())
     }

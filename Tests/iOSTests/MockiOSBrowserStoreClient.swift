@@ -72,8 +72,8 @@ final class MockiOSBrowserStoreClient: BrowserStoreClient {
         }
     }
 
-    func loadListDecorations(itemIds: [String], query _: String, presentation _: ListPresentationProfile) async -> [ListDecorationResult] {
-        itemIds.map { ListDecorationResult(itemId: $0, decoration: nil) }
+    func resolveMatchedExcerpts(requests: [MatchedExcerptRequest]) async -> [MatchedExcerptResolution] {
+        requests.map { .unavailable(itemId: $0.itemId, reason: .itemMissing) }
     }
 
     func loadPreviewPayload(itemId _: String, query _: String) async -> PreviewPayload? {

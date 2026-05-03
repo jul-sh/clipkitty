@@ -113,7 +113,7 @@ impl ItemTag {
 
 /// Presentation profile for list surfaces.
 ///
-/// Selects how Rust formats excerpts (snippets) for the calling UI.
+/// Selects how Rust formats row excerpts for the calling UI.
 /// Compact rows collapse all whitespace into a single line; cards preserve
 /// meaningful line breaks for multiline display.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, uniffi::Enum)]
@@ -399,7 +399,13 @@ pub struct Utf16HighlightRange {
     pub kind: HighlightKind,
 }
 
-/// Snippet decoration data for list surfaces (compact rows and cards).
+/// Query-independent excerpt for list surfaces.
+#[derive(Debug, Clone, PartialEq, Eq, uniffi::Record)]
+pub struct BaselineExcerpt {
+    pub text: String,
+}
+
+/// Matched excerpt data for list surfaces (compact rows and cards).
 ///
 /// # Display Contract: Two-layer truncation with ellipsis
 ///
@@ -417,8 +423,8 @@ pub struct Utf16HighlightRange {
 /// - Adds "…" prefix if window start > 0, adds "…" suffix if window end < text length
 /// - Adjusts highlight indices: subtracts window start, adds 1 if Swift added prefix ellipsis
 #[derive(Debug, Clone, PartialEq, Default, uniffi::Record)]
-pub struct ListDecoration {
-    /// Snippet text. CompactRow: whitespace-normalized single line. Card: multiline-friendly.
+pub struct MatchedExcerpt {
+    /// Excerpt text. CompactRow: whitespace-normalized single line. Card: multiline-friendly.
     pub text: String,
     /// Highlight ranges into `text`, adjusted for normalization and leading ellipsis prefix.
     pub highlights: Vec<Utf16HighlightRange>,
@@ -426,11 +432,77 @@ pub struct ListDecoration {
     pub line_number: u64,
 }
 
-/// Decoration payload for a single list-decoration request result.
-#[derive(Debug, Clone, PartialEq, uniffi::Record)]
-pub struct ListDecorationResult {
+/// Request needed to resolve a deferred matched excerpt.
+#[derive(Debug, Clone, PartialEq, Eq, uniffi::Record)]
+pub struct MatchedExcerptRequest {
     pub item_id: String,
-    pub decoration: Option<ListDecoration>,
+    pub query: String,
+    pub presentation_profile: ListPresentationProfile,
+    /// Guards against resolving stale requests after the item content changed.
+    pub content_hash: String,
+}
+
+/// Why a matched excerpt could not be produced.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, uniffi::Enum)]
+pub enum ExcerptUnavailableReason {
+    ItemMissing,
+    ContentChanged,
+    EmptyQuery,
+}
+
+/// Explicit placeholder to render while a matched excerpt is deferred.
+#[derive(Debug, Clone, PartialEq, uniffi::Enum)]
+pub enum ExcerptPlaceholder {
+    Baseline {
+        excerpt: BaselineExcerpt,
+    },
+    CompatibleCached {
+        source_query: String,
+        excerpt: MatchedExcerpt,
+    },
+    Provisional {
+        excerpt: BaselineExcerpt,
+    },
+}
+
+/// Query-specific row presentation.
+#[derive(Debug, Clone, PartialEq, uniffi::Enum)]
+pub enum SearchRowPresentation {
+    Ready {
+        excerpt: MatchedExcerpt,
+    },
+    Deferred {
+        request: MatchedExcerptRequest,
+        placeholder: ExcerptPlaceholder,
+    },
+    Unavailable {
+        fallback: BaselineExcerpt,
+        reason: ExcerptUnavailableReason,
+    },
+}
+
+/// Complete row presentation state.
+#[derive(Debug, Clone, PartialEq, uniffi::Enum)]
+pub enum RowPresentation {
+    Baseline {
+        excerpt: BaselineExcerpt,
+    },
+    Search {
+        presentation: SearchRowPresentation,
+    },
+}
+
+/// Result of resolving a deferred matched excerpt request.
+#[derive(Debug, Clone, PartialEq, uniffi::Enum)]
+pub enum MatchedExcerptResolution {
+    Ready {
+        item_id: String,
+        excerpt: MatchedExcerpt,
+    },
+    Unavailable {
+        item_id: String,
+        reason: ExcerptUnavailableReason,
+    },
 }
 
 /// Preview-only highlight decoration for the full item content.
@@ -453,7 +525,6 @@ pub struct PreviewPayload {
 pub struct ItemMetadata {
     pub item_id: String,
     pub icon: ItemIcon,
-    pub snippet: String,
     pub source_app: Option<String>,
     pub source_app_bundle_id: Option<String>,
     pub timestamp_unix: i64,
@@ -464,8 +535,7 @@ pub struct ItemMetadata {
 #[derive(Debug, Clone, PartialEq, uniffi::Record)]
 pub struct ItemMatch {
     pub item_metadata: ItemMetadata,
-    /// List decoration data. None for lazy results - call compute_list_decorations to populate.
-    pub list_decoration: Option<ListDecoration>,
+    pub presentation: RowPresentation,
 }
 
 /// Search result container
@@ -654,14 +724,11 @@ pub trait ClipboardStoreApi: Send + Sync {
         presentation: ListPresentationProfile,
     ) -> Result<SearchResult, ClipKittyError>;
 
-    /// Compute list decorations for multiple items given the search query.
-    /// Called on-demand for visible items in the list view.
-    fn compute_list_decorations(
+    /// Resolve deferred matched excerpts for visible rows.
+    fn resolve_matched_excerpts(
         &self,
-        item_ids: Vec<String>,
-        query: String,
-        presentation: ListPresentationProfile,
-    ) -> Result<Vec<ListDecorationResult>, ClipKittyError>;
+        requests: Vec<MatchedExcerptRequest>,
+    ) -> Result<Vec<MatchedExcerptResolution>, ClipKittyError>;
 
     /// Load the preview payload for a single item given the search query.
     fn load_preview_payload(
