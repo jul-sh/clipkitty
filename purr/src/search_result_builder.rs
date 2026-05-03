@@ -1,7 +1,7 @@
-use crate::database::{BrowseItemMetadata, Database, SearchItemMetadata};
+use crate::database::{Database, RowMetadata, SearchRowMetadata};
 use crate::interface::{
     ClipKittyError, ContentTypeFilter, ItemMatch, ItemQueryFilter, ItemTag, ListPresentationProfile,
-    MatchedExcerptRequest, RowPresentation, SearchResult, SearchRowPresentation,
+    MatchedExcerptRequest, RowPresentation, SearchResult,
 };
 use crate::match_presentation::{HighlightAnalysisCache, MatchPresentation};
 use crate::models::StoredItem;
@@ -54,7 +54,7 @@ impl<'a> SearchResultAssembler<'a> {
         filter: ItemQueryFilter,
     ) -> Result<SearchResult, ClipKittyError> {
         let (content_type_filter, tag_filter) = split_filter(filter);
-        let (mut items, total_count) = self.db.fetch_item_metadata(
+        let (mut items, total_count) = self.db.fetch_browse_row_metadata(
             None,
             1000,
             content_type_filter.as_ref(),
@@ -190,7 +190,7 @@ impl<'a> SearchResultAssembler<'a> {
             .collect();
         let metadata_rows = self
             .db
-            .fetch_search_item_metadata_by_string_ids(&ids, self.presentation)?;
+            .fetch_search_row_metadata_by_string_ids(&ids, self.presentation)?;
         if self.token.is_cancelled() {
             return Err(ClipKittyError::Cancelled);
         }
@@ -206,14 +206,16 @@ impl<'a> SearchResultAssembler<'a> {
             None
         };
 
-        let metadata_map: HashMap<String, SearchItemMetadata> = metadata_rows
+        let metadata_map: HashMap<String, SearchRowMetadata> = metadata_rows
             .into_iter()
             .filter(|metadata| match &tagged_ids {
-                Some(tagged_ids) => tagged_ids.contains(&metadata.item_metadata.item_id),
+                Some(tagged_ids) => {
+                    tagged_ids.contains(&metadata.row_metadata.item_metadata.item_id)
+                }
                 None => true,
             })
             .filter(|metadata| metadata_matches_filter(metadata, filter))
-            .map(|metadata| (metadata.item_metadata.item_id.clone(), metadata))
+            .map(|metadata| (metadata.row_metadata.item_metadata.item_id.clone(), metadata))
             .collect();
 
         let presentation = self.presentation();
@@ -246,15 +248,13 @@ impl<'a> SearchResultAssembler<'a> {
                     return Err(ClipKittyError::Cancelled);
                 }
                 ItemMatch {
-                    item_metadata: metadata.item_metadata.clone(),
-                    presentation: RowPresentation::Search {
-                        presentation: SearchRowPresentation::Ready {
-                            excerpt: presentation.matched_excerpt_for_cached_match(
-                                &candidate.id,
-                                query.raw_text(),
-                                self.presentation,
-                            ),
-                        },
+                    item_metadata: metadata.row_metadata.item_metadata.clone(),
+                    presentation: RowPresentation::Matched {
+                        excerpt: presentation.matched_excerpt_for_cached_match(
+                            &candidate.id,
+                            query.raw_text(),
+                            self.presentation,
+                        ),
                     },
                 }
             } else {
@@ -262,22 +262,20 @@ impl<'a> SearchResultAssembler<'a> {
                     &candidate.id,
                     query.raw_text(),
                     &metadata.content_hash,
-                    &metadata.baseline_excerpt,
+                    &metadata.row_metadata.baseline_excerpt,
                     candidate.match_context(),
                     self.presentation,
                 );
                 ItemMatch {
-                    item_metadata: metadata.item_metadata.clone(),
-                    presentation: RowPresentation::Search {
-                        presentation: SearchRowPresentation::Deferred {
-                            request: MatchedExcerptRequest {
-                                item_id: candidate.id.clone(),
-                                query: query.raw_text().to_string(),
-                                presentation_profile: self.presentation,
-                                content_hash: metadata.content_hash.clone(),
-                            },
-                            placeholder,
+                    item_metadata: metadata.row_metadata.item_metadata.clone(),
+                    presentation: RowPresentation::Deferred {
+                        request: MatchedExcerptRequest {
+                            item_id: candidate.id.clone(),
+                            query: query.raw_text().to_string(),
+                            presentation_profile: self.presentation,
+                            content_hash: metadata.content_hash.clone(),
                         },
+                        placeholder,
                     },
                 }
             };
@@ -318,15 +316,13 @@ impl<'a> SearchResultAssembler<'a> {
             .filter_map(|id| {
                 item_map.get(id).map(|item| ItemMatch {
                     item_metadata: item.to_metadata_for_profile(self.presentation),
-                    presentation: RowPresentation::Search {
-                        presentation: SearchRowPresentation::Ready {
-                            excerpt: presentation.matched_excerpt_for_item(
-                                &item.item_id,
-                                item.content.text_content(),
-                                query,
-                                self.presentation,
-                            ),
-                        },
+                    presentation: RowPresentation::Matched {
+                        excerpt: presentation.matched_excerpt_for_item(
+                            &item.item_id,
+                            item.content.text_content(),
+                            query,
+                            self.presentation,
+                        ),
                     },
                 })
             })
@@ -350,7 +346,7 @@ impl<'a> SearchResultAssembler<'a> {
 
     fn hydrate_item_metadata_tags(
         &self,
-        items: &mut [BrowseItemMetadata],
+        items: &mut [RowMetadata],
     ) -> Result<(), ClipKittyError> {
         let ids: Vec<String> = items
             .iter()
@@ -372,7 +368,7 @@ impl<'a> SearchResultAssembler<'a> {
 }
 
 fn metadata_matches_filter(
-    metadata: &SearchItemMetadata,
+    metadata: &SearchRowMetadata,
     filter: Option<&ContentTypeFilter>,
 ) -> bool {
     match filter {

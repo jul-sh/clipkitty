@@ -3,7 +3,7 @@
 use purr::search::generate_preview;
 use purr::{
     ClipboardStore, ClipboardStoreApi, HighlightKind, ListPresentationProfile, MatchedExcerpt,
-    RowPresentation, SearchRowPresentation,
+    RowPresentation,
 };
 use tempfile::TempDir;
 
@@ -28,9 +28,7 @@ async fn matched_excerpt_for_profile(
 
     let result = store.search(query.to_string(), profile).await.unwrap();
     match &result.matches[0].presentation {
-        RowPresentation::Search {
-            presentation: SearchRowPresentation::Ready { excerpt },
-        } => excerpt.clone(),
+        RowPresentation::Matched { excerpt } => excerpt.clone(),
         other => panic!("expected ready matched excerpt, got {other:?}"),
     }
 }
@@ -102,9 +100,7 @@ async fn trigram_search_eagerly_decorates_initial_short_results() {
             .iter()
             .all(|item| matches!(
                 item.presentation,
-                RowPresentation::Search {
-                    presentation: SearchRowPresentation::Ready { .. }
-                }
+                RowPresentation::Matched { .. }
             )),
         "expected every short initial trigram match to have a ready matched excerpt"
     );

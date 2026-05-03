@@ -465,10 +465,13 @@ pub enum ExcerptPlaceholder {
     },
 }
 
-/// Query-specific row presentation.
+/// Complete row presentation state.
 #[derive(Debug, Clone, PartialEq, uniffi::Enum)]
-pub enum SearchRowPresentation {
-    Ready {
+pub enum RowPresentation {
+    Baseline {
+        excerpt: BaselineExcerpt,
+    },
+    Matched {
         excerpt: MatchedExcerpt,
     },
     Deferred {
@@ -478,17 +481,6 @@ pub enum SearchRowPresentation {
     Unavailable {
         fallback: BaselineExcerpt,
         reason: ExcerptUnavailableReason,
-    },
-}
-
-/// Complete row presentation state.
-#[derive(Debug, Clone, PartialEq, uniffi::Enum)]
-pub enum RowPresentation {
-    Baseline {
-        excerpt: BaselineExcerpt,
-    },
-    Search {
-        presentation: SearchRowPresentation,
     },
 }
 

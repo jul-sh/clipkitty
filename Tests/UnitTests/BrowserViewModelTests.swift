@@ -1461,7 +1461,7 @@ final class BrowserViewModelTests: XCTestCase {
                 timestampUnix: 0,
                 tags: tags
             ),
-            presentation: .search(presentation: .deferred(
+            presentation: .deferred(
                 request: MatchedExcerptRequest(
                     itemId: id,
                     query: query,
@@ -1469,7 +1469,7 @@ final class BrowserViewModelTests: XCTestCase {
                     contentHash: "hash-\(id)-\(query)"
                 ),
                 placeholder: .baseline(excerpt: BaselineExcerpt(text: text))
-            ))
+            )
         )
     }
 

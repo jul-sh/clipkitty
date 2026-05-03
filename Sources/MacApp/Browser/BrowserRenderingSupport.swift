@@ -1244,20 +1244,17 @@ struct ItemRow: View {
         switch presentation {
         case let .baseline(excerpt):
             return (excerpt.text, [], nil)
-        case let .search(searchPresentation):
-            switch searchPresentation {
-            case let .ready(excerpt):
+        case let .matched(excerpt):
+            return (excerpt.text, excerpt.highlights, excerpt.lineNumber)
+        case let .deferred(_, placeholder):
+            switch placeholder {
+            case let .baseline(excerpt), let .provisional(excerpt):
+                return (excerpt.text, [], nil)
+            case let .compatibleCached(_, excerpt):
                 return (excerpt.text, excerpt.highlights, excerpt.lineNumber)
-            case let .deferred(_, placeholder):
-                switch placeholder {
-                case let .baseline(excerpt), let .provisional(excerpt):
-                    return (excerpt.text, [], nil)
-                case let .compatibleCached(_, excerpt):
-                    return (excerpt.text, excerpt.highlights, excerpt.lineNumber)
-                }
-            case let .unavailable(fallback, _):
-                return (fallback.text, [], nil)
             }
+        case let .unavailable(fallback, _):
+            return (fallback.text, [], nil)
         }
     }
 

@@ -1,5 +1,5 @@
 use crate::candidate::{ScoringPhase, SearchMatchContext};
-use crate::database::{Database, SearchItemMetadata};
+use crate::database::{Database, SearchRowMetadata};
 use crate::interface::{
     BaselineExcerpt, ClipKittyError, ClipboardItem, ExcerptPlaceholder,
     ExcerptUnavailableReason, ListPresentationProfile, MatchedExcerpt, MatchedExcerptRequest,
@@ -442,13 +442,13 @@ impl<'a> MatchPresentation<'a> {
         let id_refs: Vec<&str> = item_ids.iter().map(|s| s.as_str()).collect();
         let metadata_rows = self
             .db
-            .fetch_search_item_metadata_by_string_ids(&id_refs, ListPresentationProfile::CompactRow)?;
-        let metadata_map: HashMap<String, SearchItemMetadata> = metadata_rows
+            .fetch_search_row_metadata_by_string_ids(&id_refs, ListPresentationProfile::CompactRow)?;
+        let metadata_map: HashMap<String, SearchRowMetadata> = metadata_rows
             .into_iter()
-            .map(|metadata| (metadata.item_metadata.item_id.clone(), metadata))
+            .map(|metadata| (metadata.row_metadata.item_metadata.item_id.clone(), metadata))
             .collect();
         // Find items not in match-context cache (need full content for highlighting).
-        let missing_row_ids: Vec<i64> = requests
+        let missing_item_ids: Vec<String> = requests
             .iter()
             .filter(|request| {
                 let Some(metadata) = metadata_map.get(request.item_id.as_str()) else {
@@ -465,13 +465,9 @@ impl<'a> MatchPresentation<'a> {
                     None => true,
                 }
             })
-            .filter_map(|request| {
-                metadata_map
-                    .get(request.item_id.as_str())
-                    .map(|metadata| metadata.row_id)
-            })
+            .map(|request| request.item_id.clone())
             .collect();
-        let items = self.db.fetch_items_by_ids(&missing_row_ids)?;
+        let items = self.db.fetch_items_by_item_ids(&missing_item_ids)?;
         let item_map: HashMap<String, StoredItem> = items
             .into_iter()
             .map(|item| (item.item_id.clone(), item))

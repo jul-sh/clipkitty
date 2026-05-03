@@ -16,10 +16,10 @@ final class iOSHighlightAndEditTests: XCTestCase {
         )
         let row = DisplayRow(
             metadata: makeMetadata(id: "1"),
-            presentation: .search(presentation: .ready(excerpt: excerpt))
+            presentation: .matched(excerpt: excerpt)
         )
 
-        guard case let .search(.ready(renderedExcerpt)) = row.presentation else {
+        guard case let .matched(renderedExcerpt) = row.presentation else {
             return XCTFail("Expected ready matched excerpt")
         }
         XCTAssertEqual(renderedExcerpt.text, "Decorated excerpt")

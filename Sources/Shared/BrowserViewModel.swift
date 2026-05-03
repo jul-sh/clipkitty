@@ -1541,14 +1541,9 @@ public final class BrowserViewModel {
         }
         guard resolvedMatchedExcerptsByItemId[itemId] == nil else { return nil }
         switch displayRows[index].presentation {
-        case let .search(searchPresentation):
-            switch searchPresentation {
-            case let .deferred(request, _):
-                return request
-            case .ready, .unavailable:
-                return nil
-            }
-        case .baseline:
+        case let .deferred(request, _):
+            return request
+        case .baseline, .matched, .unavailable:
             return nil
         }
     }
@@ -1823,14 +1818,9 @@ public final class BrowserViewModel {
     private func presentationApplyingResolvedExcerpt(_ presentation: RowPresentation, itemId: String) -> RowPresentation {
         guard let excerpt = resolvedMatchedExcerptsByItemId[itemId] else { return presentation }
         switch presentation {
-        case let .search(searchPresentation):
-            switch searchPresentation {
-            case .deferred:
-                return .search(presentation: .ready(excerpt: excerpt))
-            case .ready, .unavailable:
-                return presentation
-            }
-        case .baseline:
+        case .deferred:
+            return .matched(excerpt: excerpt)
+        case .baseline, .matched, .unavailable:
             return presentation
         }
     }

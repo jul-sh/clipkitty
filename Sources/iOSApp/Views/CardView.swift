@@ -23,20 +23,17 @@ struct CardView: View {
         switch row.presentation {
         case let .baseline(excerpt):
             return (excerpt.text, [])
-        case let .search(searchPresentation):
-            switch searchPresentation {
-            case let .ready(excerpt):
+        case let .matched(excerpt):
+            return (excerpt.text, excerpt.highlights)
+        case let .deferred(_, placeholder):
+            switch placeholder {
+            case let .baseline(excerpt), let .provisional(excerpt):
+                return (excerpt.text, [])
+            case let .compatibleCached(_, excerpt):
                 return (excerpt.text, excerpt.highlights)
-            case let .deferred(_, placeholder):
-                switch placeholder {
-                case let .baseline(excerpt), let .provisional(excerpt):
-                    return (excerpt.text, [])
-                case let .compatibleCached(_, excerpt):
-                    return (excerpt.text, excerpt.highlights)
-                }
-            case let .unavailable(fallback, _):
-                return (fallback.text, [])
             }
+        case let .unavailable(fallback, _):
+            return (fallback.text, [])
         }
     }
 
