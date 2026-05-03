@@ -72,6 +72,9 @@ public final class BrowserViewModel {
         private var metadataTask: Task<Void, Never>?
     #endif
     private var matchedExcerptTasks: [String: Task<Void, Never>] = [:]
+    private var pendingMatchedExcerptItemIds: Set<String> = []
+    private var prefetchTask: Task<Void, Never>?
+    private var previewSpinnerTask: Task<Void, Never>?
     private var pendingDeleteTask: Task<Void, Never>?
     private var pendingTagSettleTask: Task<Void, Never>?
     private var queryGeneration = 0
@@ -209,6 +212,11 @@ public final class BrowserViewModel {
         #endif
         matchedExcerptTasks.values.forEach { $0.cancel() }
         matchedExcerptTasks.removeAll()
+        pendingMatchedExcerptItemIds.removeAll()
+        prefetchTask?.cancel()
+        prefetchTask = nil
+        previewSpinnerTask?.cancel()
+        previewSpinnerTask = nil
         pendingDeleteTask?.cancel()
         pendingDeleteTask = nil
         pendingTagSettleTask?.cancel()
@@ -220,7 +228,7 @@ public final class BrowserViewModel {
         #endif
         latestKnownContentRevision = contentRevision
         lastLoadedContentRevision = nil
-        previewSpinnerVisible = false
+        hidePreviewSpinner()
         hasUserNavigated = false
         prefetchCache.removeAll()
         previewPayloadsByItemId.removeAll()
@@ -362,7 +370,9 @@ public final class BrowserViewModel {
         let uniqueIds = Array(Set(ids)).sorted()
         guard !uniqueIds.isEmpty else { return }
 
-        let excerptRequests = uniqueIds.compactMap { deferredMatchedExcerptRequest(for: $0) }
+        let excerptRequests = uniqueIds
+            .filter { !pendingMatchedExcerptItemIds.contains($0) }
+            .compactMap { deferredMatchedExcerptRequest(for: $0) }
         guard !excerptRequests.isEmpty else { return }
 
         let generation = queryGeneration
@@ -371,12 +381,20 @@ public final class BrowserViewModel {
             .joined(separator: ",")
         let key = "\(generation)|\(requestSignature)"
         guard matchedExcerptTasks[key] == nil else { return }
+        let pendingItemIds = excerptRequests.map { $0.itemId }
+        pendingMatchedExcerptItemIds.formUnion(pendingItemIds)
 
         matchedExcerptTasks[key] = Task { [weak self] in
             guard let self else { return }
             let results = await self.client.resolveMatchedExcerpts(requests: excerptRequests)
             await MainActor.run {
-                defer { self.matchedExcerptTasks[key] = nil }
+                defer {
+                    self.matchedExcerptTasks[key] = nil
+                    if self.queryGeneration == generation {
+                        self.pendingMatchedExcerptItemIds.subtract(pendingItemIds)
+                    }
+                }
+                guard !Task.isCancelled else { return }
                 guard self.queryGeneration == generation,
                       self.contentState.request == request
                 else {
@@ -677,6 +695,9 @@ public final class BrowserViewModel {
         searchExecution.cancel()
         matchedExcerptTasks.values.forEach { $0.cancel() }
         matchedExcerptTasks.removeAll()
+        pendingMatchedExcerptItemIds.removeAll()
+        prefetchTask?.cancel()
+        prefetchTask = nil
 
         if displayedContent?.response.request != request {
             setDisplayedSelection(selectionDuringSearchTransition(to: request))
@@ -907,6 +928,8 @@ public final class BrowserViewModel {
         defer { os_signpost(.end, log: poi, name: "loadSelectedItem", signpostID: signpostID) }
 
         previewTask?.cancel()
+        prefetchTask?.cancel()
+        prefetchTask = nil
         #if ENABLE_LINK_PREVIEWS
             metadataTask?.cancel()
         #endif
@@ -928,7 +951,7 @@ public final class BrowserViewModel {
             #if ENABLE_LINK_PREVIEWS
                 maybeRefreshLinkMetadata(for: firstPreviewPayload.item, generation: generation)
             #endif
-            previewSpinnerVisible = false
+            hidePreviewSpinner()
             guard !previewPayloadSatisfiesDecorationRequirement(firstPreviewPayload, for: request) else {
                 return
             }
@@ -948,7 +971,7 @@ public final class BrowserViewModel {
             #if ENABLE_LINK_PREVIEWS
                 maybeRefreshLinkMetadata(for: cachedPreviewPayload.item, generation: generation)
             #endif
-            previewSpinnerVisible = false
+            hidePreviewSpinner()
             guard !previewPayloadSatisfiesDecorationRequirement(cachedPreviewPayload, for: request) else {
                 return
             }
@@ -982,7 +1005,7 @@ public final class BrowserViewModel {
             #if ENABLE_LINK_PREVIEWS
                 maybeRefreshLinkMetadata(for: cachedItem, generation: generation)
             #endif
-            previewSpinnerVisible = false
+            hidePreviewSpinner()
             guard requiresPreviewDecoration(for: cachedItem, request: request) else {
                 return
             }
@@ -1005,7 +1028,7 @@ public final class BrowserViewModel {
                         return
                     }
 
-                    self.previewSpinnerVisible = false
+                    self.hidePreviewSpinner()
                     self.setDisplayedSelection(.failed(itemId: itemId, origin: origin))
                 }
                 return
@@ -1032,7 +1055,7 @@ public final class BrowserViewModel {
                 #endif
 
                 guard self.requiresPreviewDecoration(for: item, request: request) else {
-                    self.previewSpinnerVisible = false
+                    self.hidePreviewSpinner()
                     return
                 }
 
@@ -1064,7 +1087,7 @@ public final class BrowserViewModel {
                     return
                 }
 
-                self.previewSpinnerVisible = false
+                self.hidePreviewSpinner()
                 guard let payload else {
                     self.resolveSelectionWithoutPreviewDecoration(itemId: itemId, origin: origin)
                     return
@@ -1160,13 +1183,19 @@ public final class BrowserViewModel {
         let start = max(0, currentIndex - prefetchRadius)
         let end = min(itemIds.count - 1, currentIndex + prefetchRadius)
         guard start <= end else { return }
-        let idsToPrefetch = (start ... end).map { itemIds[$0] }
+        let idsToPrefetch = (start ... end).map { itemIds[$0] }.filter { prefetchCache[$0] == nil }
+        guard !idsToPrefetch.isEmpty else { return }
+        let generation = queryGeneration
 
-        Task { [weak self] in
+        prefetchTask?.cancel()
+        prefetchTask = Task { [weak self] in
             guard let self else { return }
-            for itemId in idsToPrefetch where self.prefetchCache[itemId] == nil {
+            for itemId in idsToPrefetch {
+                guard !Task.isCancelled else { return }
                 guard let item = await self.client.fetchItem(id: itemId) else { continue }
+                guard !Task.isCancelled else { return }
                 await MainActor.run {
+                    guard self.queryGeneration == generation else { return }
                     if self.indexOfItem(itemId) != nil {
                         self.prefetchCache[itemId] = item
                     }
@@ -1189,10 +1218,17 @@ public final class BrowserViewModel {
         )
     }
 
-    private func schedulePreviewSpinner(for generation: Int, itemId: String) {
+    private func hidePreviewSpinner() {
+        previewSpinnerTask?.cancel()
+        previewSpinnerTask = nil
         previewSpinnerVisible = false
-        Task { [weak self] in
+    }
+
+    private func schedulePreviewSpinner(for generation: Int, itemId: String) {
+        hidePreviewSpinner()
+        previewSpinnerTask = Task { [weak self] in
             try? await Task.sleep(for: .milliseconds(150))
+            guard !Task.isCancelled else { return }
             await MainActor.run {
                 guard let self,
                       self.previewGeneration == generation,
@@ -1201,6 +1237,7 @@ public final class BrowserViewModel {
                 else {
                     return
                 }
+                self.previewSpinnerTask = nil
                 self.previewSpinnerVisible = true
             }
         }
@@ -1810,9 +1847,13 @@ public final class BrowserViewModel {
             ))
         }
 
-        itemIds = nextItemIds
-        itemIndexById = nextIndexById
-        displayRows = nextDisplayRows
+        if itemIds != nextItemIds {
+            itemIds = nextItemIds
+            itemIndexById = nextIndexById
+        }
+        if displayRows != nextDisplayRows {
+            displayRows = nextDisplayRows
+        }
     }
 
     private func presentationApplyingResolvedExcerpt(_ presentation: RowPresentation, itemId: String) -> RowPresentation {

@@ -1217,6 +1217,84 @@ private enum RowIconCache {
     }
 }
 
+private enum RowThumbnailCache {
+    private static let cache: NSCache<NSString, NSImage> = {
+        let cache = NSCache<NSString, NSImage>()
+        cache.countLimit = 128
+        cache.totalCostLimit = 16 * 1024 * 1024
+        return cache
+    }()
+
+    static func key(itemId: String, data: Data) -> String {
+        var hasher = Hasher()
+        hasher.combine(itemId)
+        hasher.combine(data.count)
+        data.withUnsafeBytes { rawBuffer in
+            let bytes = rawBuffer.bindMemory(to: UInt8.self)
+            for byte in bytes.prefix(16) {
+                hasher.combine(byte)
+            }
+            if bytes.count > 16 {
+                for byte in bytes.suffix(16) {
+                    hasher.combine(byte)
+                }
+            }
+        }
+        return "\(itemId)-\(data.count)-\(hasher.finalize())"
+    }
+
+    static func image(forKey key: String) -> NSImage? {
+        cache.object(forKey: key as NSString)
+    }
+
+    static func setImage(_ image: NSImage, forKey key: String, cost: Int) {
+        cache.setObject(image, forKey: key as NSString, cost: cost)
+    }
+}
+
+private struct RowThumbnailView: View {
+    let itemId: String
+    let data: Data
+
+    @State private var decodedImage: NSImage?
+
+    private var cacheKey: String {
+        RowThumbnailCache.key(itemId: itemId, data: data)
+    }
+
+    var body: some View {
+        Group {
+            if let image = decodedImage ?? RowThumbnailCache.image(forKey: cacheKey) {
+                Image(nsImage: image)
+                    .resizable()
+                    .aspectRatio(contentMode: .fill)
+            } else {
+                Image(systemName: "photo")
+                    .resizable()
+            }
+        }
+        .task(id: cacheKey) {
+            await decodeImage(cacheKey: cacheKey, data: data)
+        }
+    }
+
+    @MainActor
+    private func decodeImage(cacheKey: String, data: Data) async {
+        if let cachedImage = RowThumbnailCache.image(forKey: cacheKey) {
+            decodedImage = cachedImage
+            return
+        }
+
+        decodedImage = nil
+        let image = await Task.detached(priority: .utility) { [data] in
+            NSImage(data: data)
+        }.value
+        guard !Task.isCancelled, let image else { return }
+        RowThumbnailCache.setImage(image, forKey: cacheKey, cost: data.count)
+        decodedImage = image
+    }
+}
+
 struct ItemRow: View {
     let metadata: ItemMetadata
     let presentation: RowPresentation
@@ -1284,14 +1362,7 @@ struct ItemRow: View {
                             Group {
                                 switch metadata.icon {
                                 case let .thumbnail(bytes):
-                                    if let nsImage = NSImage(data: Data(bytes)) {
-                                        Image(nsImage: nsImage)
-                                            .resizable()
-                                            .aspectRatio(contentMode: .fill)
-                                    } else {
-                                        Image(systemName: "photo")
-                                            .resizable()
-                                    }
+                                    RowThumbnailView(itemId: metadata.itemId, data: bytes)
                                 case let .colorSwatch(rgba):
                                     RoundedRectangle(cornerRadius: 6)
                                         .fill(Color(nsColor: NSColor(

@@ -16,6 +16,12 @@ struct PreviewScreen: View {
     @State private var showDeleteConfirmation = false
 
     private let isUITestPreviewDebugEnabled = CommandLine.arguments.contains("--use-simulated-db")
+    private static let detailDateFormatter: DateFormatter = {
+        let formatter = DateFormatter()
+        formatter.dateStyle = .long
+        formatter.timeStyle = .medium
+        return formatter
+    }()
 
     var body: some View {
         Group {
@@ -266,12 +272,16 @@ struct PreviewScreen: View {
 
     private func imageContent(data: Data, description: String, highlights: [Utf16HighlightRange]) -> some View {
         VStack(spacing: 8) {
-            if let uiImage = UIImage(data: data) {
-                Image(uiImage: uiImage)
-                    .resizable()
-                    .aspectRatio(contentMode: .fit)
-                    .frame(maxWidth: .infinity)
+            DecodedImageView(
+                namespace: "preview-image",
+                itemId: itemId,
+                data: data
+            ) {
+                ProgressView()
+                    .frame(maxWidth: .infinity, minHeight: 180)
             }
+            .frame(maxWidth: .infinity)
+
             if !description.isEmpty {
                 if highlights.isEmpty {
                     Text(description)
@@ -314,10 +324,7 @@ struct PreviewScreen: View {
 
     private func formattedDate(from unix: Int64) -> String {
         let date = Date(timeIntervalSince1970: TimeInterval(unix))
-        let formatter = DateFormatter()
-        formatter.dateStyle = .long
-        formatter.timeStyle = .medium
-        return formatter.string(from: date)
+        return Self.detailDateFormatter.string(from: date)
     }
 
     // MARK: - Action Bar
