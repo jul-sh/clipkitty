@@ -1,6 +1,7 @@
 import ClipKittyAppleServices
 import ClipKittyRust
 import ClipKittyShared
+import ClipKittyShortcuts
 import SwiftUI
 
 // MARK: - App Launch State
@@ -253,6 +254,7 @@ struct ClipKittyiOSApp: App {
 
     init() {
         FontManager.registerFonts()
+        ClipKittyAppShortcuts.updateAppShortcutParameters()
     }
 
     var body: some Scene {
