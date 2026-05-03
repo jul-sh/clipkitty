@@ -27,18 +27,16 @@ pub(crate) use self::matching::{
     does_word_match, does_word_match_fast, does_word_match_fast_raw, max_edit_distance,
     prefix_match_for_query_word, PrefixMatch, WordMatchKind,
 };
-use self::policy::{
-    compute_quality_detail, compute_quality_tier, compute_recency_bucket, compute_structure_detail,
-};
+use self::policy::{compute_quality_detail, compute_quality_tier, compute_recency_bucket};
 #[cfg(test)]
 use self::policy::{
-    quality_detail_structure, quality_detail_typo_score, recency_bucket_last_day_max_age_secs,
-    recency_bucket_last_hour_max_age_secs, recency_bucket_last_month_max_age_secs,
-    recency_bucket_last_quarter_max_age_secs, recency_bucket_last_week_max_age_secs,
+    recency_bucket_last_day_max_age_secs, recency_bucket_last_hour_max_age_secs,
+    recency_bucket_last_month_max_age_secs, recency_bucket_last_quarter_max_age_secs,
+    recency_bucket_last_week_max_age_secs,
 };
 pub use self::policy::{
-    BucketScore, PrefixPreferenceQuery, QualityDetail, QualityTier, RecencyBucket, StructureDetail,
-    LARGE_DOC_THRESHOLD_BYTES,
+    BucketScore, CoverageBand, MatchClassBand, PhraseShapeBand, PrefixPreferenceBand,
+    PrefixPreferenceQuery, QualityDetail, QualityTier, RecencyBucket, LARGE_DOC_THRESHOLD_BYTES,
 };
 
 /// Context for computing bucket scores on a candidate document.
@@ -554,9 +552,7 @@ struct QualitySignals {
     words_matched_weight: u16,
     prefix_preference_score: u8,
     exactness: ExactnessSignals,
-    proximity_score: u16,
     match_class_score: u8,
-    typo_score: u8,
     span_stats: Option<MatchSpanStats>,
 }
 
@@ -575,9 +571,10 @@ impl QualitySignals {
         compute_quality_detail(
             self.prefix_preference_score,
             self.match_class_score,
+            self.total_query_weight,
             self.words_matched_weight,
-            self.typo_score,
-            compute_structure_detail(self.proximity_score, self.exactness, self.span_stats),
+            self.exactness,
+            self.span_stats,
         )
     }
 }
@@ -764,9 +761,7 @@ fn build_quality_signals(
         words_matched_weight: words_matched_weight(word_matches),
         prefix_preference_score,
         exactness,
-        proximity_score: compute_proximity(word_matches),
         match_class_score: compute_match_class_score(word_matches),
-        typo_score: compute_typo_score(word_matches),
         span_stats: compute_match_span_stats(word_matches),
     }
 }
@@ -883,15 +878,6 @@ fn compute_alignment_quality_signals(
         0,
         alignment_exactness_signals(word_matches),
     )
-}
-
-fn compute_typo_score(word_matches: &[WordMatch]) -> u8 {
-    let total_edit_dist: u8 = word_matches
-        .iter()
-        .filter(|m| !matches!(m.state, WordMatchState::Unmatched))
-        .map(|m| m.edit_distance())
-        .sum();
-    255u8.saturating_sub(total_edit_dist)
 }
 
 fn compute_match_class_score(word_matches: &[WordMatch]) -> u8 {
@@ -1321,6 +1307,7 @@ fn classify_single_insert_delete(shorter: &str, longer: &str) -> Option<bool> {
 }
 
 /// Compute proximity score from matched word positions.
+#[cfg(test)]
 fn compute_proximity(word_matches: &[WordMatch]) -> u16 {
     let matched: Vec<&WordMatch> = word_matches
         .iter()
@@ -2481,6 +2468,34 @@ mod tests {
     }
 
     #[test]
+    fn test_recency_breaks_ties_when_only_proximity_differs_inside_same_band() {
+        let now = 1700000000i64;
+        let newer_farther = score(
+            "hello alpha beta gamma delta world",
+            &["hello", "world"],
+            false,
+            None,
+            now - 60,
+            now,
+        );
+        let older_closer = score(
+            "hello alpha beta gamma world",
+            &["hello", "world"],
+            false,
+            None,
+            now - 600,
+            now,
+        );
+
+        assert_eq!(newer_farther.quality_tier, older_closer.quality_tier);
+        assert_eq!(newer_farther.quality_detail, older_closer.quality_detail);
+        assert!(
+            newer_farther > older_closer,
+            "Within the same coarse quality band, recency should beat tiny proximity differences"
+        );
+    }
+
+    #[test]
     fn test_phrase_quality_can_beat_small_recency_gap() {
         let now = 1700000000i64;
         let older_phrase = score(
@@ -2518,9 +2533,15 @@ mod tests {
         let now = 1700000000i64;
         let s = score("hello world", &["hello", "world"], false, None, now, now);
         assert_eq!(s.quality_tier, QualityTier::ContentPrefix);
-        assert_eq!(s.words_matched_weight(), 50); // 5² + 5² = 50
-        assert_eq!(quality_detail_typo_score(s.quality_detail), 255);
-        assert!(quality_detail_structure(s.quality_detail) > StructureDetail::default());
+        assert_eq!(
+            s.quality_detail,
+            QualityDetail {
+                prefix_preference: PrefixPreferenceBand::None,
+                match_class: MatchClassBand::Exact,
+                coverage: CoverageBand::Full,
+                phrase_shape: PhraseShapeBand::ContentPrefix,
+            }
+        );
     }
 
     // ── new exactness level 6 & 5 tests ─────────────────────────

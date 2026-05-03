@@ -272,7 +272,7 @@ fn score_alignment(word_matches: &[WordMatch], total_query_weight: u16) -> Align
 
     AlignmentScore {
         quality_tier: signals.quality_tier(),
-        words_matched_weight: quality_detail.words_matched_weight,
+        words_matched_weight: signals.words_matched_weight,
         matched_query_mask: alignment_matched_query_mask(word_matches),
         quality_detail,
     }

@@ -19,12 +19,6 @@ pub struct BucketScore {
     pub recency: i64,
 }
 
-impl BucketScore {
-    pub fn words_matched_weight(&self) -> u16 {
-        self.quality_detail.words_matched_weight
-    }
-}
-
 /// Coarse, foundational quality levels that should be readable at a glance.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Default)]
 pub enum QualityTier {
@@ -47,17 +41,17 @@ pub enum RecencyBucket {
     LastHour = 5,
 }
 
-/// Fine-grained ranking detail used only after `quality_tier` and `recency_bucket`.
+/// Coarse ranking detail used only after `quality_tier` and `recency_bucket`.
 ///
-/// The field order here is still the ranking policy, but each field now has a
-/// named type instead of being packed into an integer.
+/// The field order here is still the ranking policy. Each field is deliberately
+/// banded so tiny match-quality differences collapse and smooth recency can
+/// break ties between similar-feeling results.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Default)]
 pub struct QualityDetail {
-    pub prefix_preference_score: u8,
-    pub match_class_score: u8,
-    pub words_matched_weight: u16,
-    pub structure_detail: StructureDetail,
-    pub typo_score: u8,
+    pub prefix_preference: PrefixPreferenceBand,
+    pub match_class: MatchClassBand,
+    pub coverage: CoverageBand,
+    pub phrase_shape: PhraseShapeBand,
 }
 
 /// Prefix preference state carried from the `^query` mode.
@@ -65,22 +59,6 @@ pub struct QualityDetail {
 pub struct PrefixPreferenceQuery<'a> {
     pub raw_query_lower: &'a str,
     pub stripped_query_lower: &'a str,
-}
-
-#[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Default)]
-pub struct StructureDetail {
-    order_rank: MatchOrderRank,
-    density_score: u8,
-    proximity_score: u8,
-    exactness_band: ExactnessBand,
-}
-
-#[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Default)]
-pub enum MatchOrderRank {
-    #[default]
-    None = 0,
-    Forward = 1,
-    Contiguous = 2,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Default)]
@@ -93,6 +71,52 @@ pub(crate) enum ExactnessBand {
     QuerySubstring = 4,
     AnchoredSequence = 5,
     ContentPrefix = 6,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Default)]
+pub enum PrefixPreferenceBand {
+    #[default]
+    None = 0,
+    StrippedContentPrefix = 1,
+    RawQueryContains = 2,
+    RawQueryContentPrefix = 3,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Default)]
+pub enum MatchClassBand {
+    #[default]
+    None = 0,
+    Subsequence = 1,
+    MultiEditTypo = 2,
+    WeakTypo = 3,
+    InfixSubstring = 4,
+    CommonTypo = 5,
+    SubwordPrefix = 6,
+    Prefix = 7,
+    Exact = 8,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Default)]
+pub enum CoverageBand {
+    #[default]
+    None = 0,
+    Weak = 1,
+    Adequate = 2,
+    Strong = 3,
+    Full = 4,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Default)]
+pub enum PhraseShapeBand {
+    #[default]
+    None = 0,
+    Scattered = 1,
+    Forward = 2,
+    TightForward = 3,
+    Contiguous = 4,
+    QuerySubstring = 5,
+    AnchoredSequence = 6,
+    ContentPrefix = 7,
 }
 
 impl ExactnessBand {
@@ -173,60 +197,93 @@ pub(super) fn compute_quality_tier(
     QualityTier::NoMatch
 }
 
-pub(super) fn compute_structure_detail(
-    proximity_score: u16,
-    exactness: ExactnessSignals,
-    span_stats: Option<MatchSpanStats>,
-) -> StructureDetail {
-    let exactness_band = exactness.band();
-    let Some(stats) = span_stats else {
-        return StructureDetail {
-            exactness_band,
-            ..StructureDetail::default()
-        };
-    };
-    if stats.matched_count < 2 {
-        return StructureDetail {
-            exactness_band,
-            ..StructureDetail::default()
-        };
-    }
-
-    let order_rank = if stats.in_sequence {
-        if stats.span == stats.matched_count {
-            MatchOrderRank::Contiguous
-        } else {
-            MatchOrderRank::Forward
-        }
-    } else {
-        MatchOrderRank::None
-    };
-    let density_score = (((stats.matched_count as u32) * u8::MAX as u32) / stats.span.max(1) as u32)
-        .min(u8::MAX as u32) as u8;
-    let proximity_score = (proximity_score >> 8) as u8;
-
-    StructureDetail {
-        order_rank,
-        density_score,
-        proximity_score,
-        exactness_band,
-    }
-}
-
 pub(super) fn compute_quality_detail(
     prefix_preference_score: u8,
     match_class_score: u8,
+    total_query_weight: u16,
     words_matched_weight: u16,
-    typo_score: u8,
-    structure_detail: StructureDetail,
+    exactness: ExactnessSignals,
+    span_stats: Option<MatchSpanStats>,
 ) -> QualityDetail {
     QualityDetail {
-        prefix_preference_score,
-        match_class_score,
-        words_matched_weight,
-        structure_detail,
-        typo_score,
+        prefix_preference: compute_prefix_preference_band(prefix_preference_score),
+        match_class: compute_match_class_band(match_class_score),
+        coverage: compute_coverage_band(total_query_weight, words_matched_weight),
+        phrase_shape: compute_phrase_shape_band(exactness, span_stats),
     }
+}
+
+fn compute_prefix_preference_band(prefix_preference_score: u8) -> PrefixPreferenceBand {
+    match prefix_preference_score {
+        0 => PrefixPreferenceBand::None,
+        1 => PrefixPreferenceBand::StrippedContentPrefix,
+        2 => PrefixPreferenceBand::RawQueryContains,
+        _ => PrefixPreferenceBand::RawQueryContentPrefix,
+    }
+}
+
+fn compute_match_class_band(match_class_score: u8) -> MatchClassBand {
+    // Boundaries sit halfway between the raw per-match class scores.
+    match match_class_score {
+        0 => MatchClassBand::None,
+        1..=107 => MatchClassBand::Subsequence,
+        108..=131 => MatchClassBand::MultiEditTypo,
+        132..=167 => MatchClassBand::WeakTypo,
+        168..=183 => MatchClassBand::InfixSubstring,
+        184..=215 => MatchClassBand::CommonTypo,
+        216..=231 => MatchClassBand::SubwordPrefix,
+        232..=247 => MatchClassBand::Prefix,
+        248..=u8::MAX => MatchClassBand::Exact,
+    }
+}
+
+fn compute_coverage_band(total_query_weight: u16, words_matched_weight: u16) -> CoverageBand {
+    if words_matched_weight == 0 {
+        return CoverageBand::None;
+    }
+    if total_query_weight == 0 {
+        return CoverageBand::Full;
+    }
+
+    match ((words_matched_weight as u32) * 100 / total_query_weight as u32) as u8 {
+        0 => CoverageBand::None,
+        1..=59 => CoverageBand::Weak,
+        60..=79 => CoverageBand::Adequate,
+        80..=94 => CoverageBand::Strong,
+        95..=u8::MAX => CoverageBand::Full,
+    }
+}
+
+fn compute_phrase_shape_band(
+    exactness: ExactnessSignals,
+    span_stats: Option<MatchSpanStats>,
+) -> PhraseShapeBand {
+    match exactness.band() {
+        ExactnessBand::ContentPrefix => return PhraseShapeBand::ContentPrefix,
+        ExactnessBand::AnchoredSequence => return PhraseShapeBand::AnchoredSequence,
+        ExactnessBand::QuerySubstring => return PhraseShapeBand::QuerySubstring,
+        ExactnessBand::FuzzyOnly
+        | ExactnessBand::MixedZeroCost
+        | ExactnessBand::AllZeroCost
+        | ExactnessBand::AllExact => {}
+    }
+
+    let Some(stats) = span_stats else {
+        return PhraseShapeBand::None;
+    };
+    if stats.matched_count < 2 {
+        return PhraseShapeBand::None;
+    }
+    if !stats.in_sequence {
+        return PhraseShapeBand::Scattered;
+    }
+    if stats.span == stats.matched_count {
+        return PhraseShapeBand::Contiguous;
+    }
+    if stats.span <= stats.matched_count * 2 {
+        return PhraseShapeBand::TightForward;
+    }
+    PhraseShapeBand::Forward
 }
 
 /// Coarse human-scale recency bands.
@@ -251,16 +308,6 @@ pub(super) fn compute_recency_bucket(timestamp: i64, now: i64) -> RecencyBucket 
         }
         _ => RecencyBucket::Stale,
     }
-}
-
-#[cfg(test)]
-pub(super) fn quality_detail_structure(quality_detail: QualityDetail) -> StructureDetail {
-    quality_detail.structure_detail
-}
-
-#[cfg(test)]
-pub(super) fn quality_detail_typo_score(quality_detail: QualityDetail) -> u8 {
-    quality_detail.typo_score
 }
 
 #[cfg(test)]
