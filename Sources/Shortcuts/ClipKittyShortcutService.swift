@@ -2,7 +2,39 @@ import ClipKittyRust
 import ClipKittyShared
 import Foundation
 
-enum ClipKittyShortcutError: LocalizedError, Sendable {
+protocol ClipKittyShortcutServicing: Sendable {
+    func saveText(_ text: String) async throws -> ShortcutSavedClip
+    func saveCurrentClipboard() async throws -> ShortcutSavedClip
+    func searchText(query: String, limit: Int) async throws -> [String]
+    func fetchRecentText(limit: Int) async throws -> [String]
+    func copyLatestText() async throws -> String
+}
+
+enum ClipKittyShortcutRuntime {
+    @TaskLocal static var serviceFactory: @Sendable () -> any ClipKittyShortcutServicing = {
+        ClipKittyShortcutService()
+    }
+
+    static func makeService() -> any ClipKittyShortcutServicing {
+        serviceFactory()
+    }
+}
+
+struct ShortcutPasteboardClient: Sendable {
+    let read: @Sendable () async -> ShortcutPasteboardRead
+    let writeText: @Sendable (String) async -> Void
+
+    static let live = ShortcutPasteboardClient(
+        read: {
+            await ShortcutPasteboard.read()
+        },
+        writeText: { text in
+            await ShortcutPasteboard.writeText(text)
+        }
+    )
+}
+
+enum ClipKittyShortcutError: Equatable, LocalizedError, Sendable {
     case emptyText
     case emptyClipboard
     case unsupportedClipboardContent(String)
@@ -55,15 +87,22 @@ private enum ShortcutTextExtraction: Sendable {
     }
 }
 
-final class ClipKittyShortcutService {
-    private let databasePathProvider: () throws -> String
+final class ClipKittyShortcutService: ClipKittyShortcutServicing {
+    private let databasePathProvider: @Sendable () throws -> String
+    private let pasteboardClient: ShortcutPasteboardClient
 
-    init(databasePathProvider: @escaping () throws -> String = ShortcutDatabasePath.resolve) {
+    init(
+        databasePathProvider: @escaping @Sendable () throws -> String = {
+            try ShortcutDatabasePath.resolve()
+        },
+        pasteboardClient: ShortcutPasteboardClient = .live
+    ) {
         self.databasePathProvider = databasePathProvider
+        self.pasteboardClient = pasteboardClient
     }
 
-    convenience init(databasePath: String) {
-        self.init(databasePathProvider: { databasePath })
+    convenience init(databasePath: String, pasteboardClient: ShortcutPasteboardClient = .live) {
+        self.init(databasePathProvider: { databasePath }, pasteboardClient: pasteboardClient)
     }
 
     func saveText(_ text: String) async throws -> ShortcutSavedClip {
@@ -81,7 +120,7 @@ final class ClipKittyShortcutService {
     }
 
     func saveCurrentClipboard() async throws -> ShortcutSavedClip {
-        let clipboardRead = await ShortcutPasteboard.read()
+        let clipboardRead = await pasteboardClient.read()
         switch clipboardRead {
         case let .content(content):
             return try await save(content)
@@ -104,7 +143,7 @@ final class ClipKittyShortcutService {
         let values = try await fetchRecentText(limit: 1)
         switch firstText(in: values) {
         case let .found(value):
-            await ShortcutPasteboard.writeText(value)
+            await pasteboardClient.writeText(value)
             return value
         case .notFound:
             throw ClipKittyShortcutError.noTextClips
